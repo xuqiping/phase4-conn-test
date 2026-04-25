@@ -1,0 +1,58 @@
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 敏感配置 (.env 等)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json
+config.local.*
+*.secret
+
+# 日志和临时文件
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+output/
+tmp/
+temp/
+
+# 用户自定义 - 含 application 的文件
+*application*.*
+
+# Git 同步脚本日志
+.git-sync.log

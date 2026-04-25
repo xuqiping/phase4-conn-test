@@ -1,0 +1,56 @@
+- generic [ref=e1]:
+  - link "登录" [ref=e6] [cursor=pointer]:
+    - /url: https://accounts.google.com/ServiceLogin?passive=1209600&continue=https://gemini.google.com/&followup=https://gemini.google.com/&ec=GAZAkgU
+  - main [ref=e8]:
+    - generic:
+      - button "主菜单" [ref=e10] [cursor=pointer]:
+        - img [ref=e11]: menu
+      - button "发起新对话" [disabled] [ref=e15]:
+        - generic [ref=e17]: Gemini
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - heading "与 Gemini 对话" [level=1] [ref=e31]
+        - generic [ref=e37]:
+          - heading "认识 Gemini：你的私人 AI 助理" [level=1] [ref=e44]
+          - generic [ref=e49]:
+            - button "撰写，按钮，点按即可使用工具" [ref=e51] [cursor=pointer]:
+              - generic [ref=e52]: 撰写
+            - button "计划，按钮，点按即可使用工具" [ref=e54] [cursor=pointer]:
+              - generic [ref=e55]: 计划
+            - button "研究，按钮，点按即可使用工具" [ref=e57] [cursor=pointer]:
+              - generic [ref=e58]: 研究
+            - button "学习，按钮，点按即可使用工具" [ref=e60] [cursor=pointer]:
+              - generic [ref=e61]: 学习
+      - generic [ref=e62]:
+        - group [ref=e63]:
+          - generic [ref=e66]:
+            - textbox "为 Gemini 输入提示" [active] [ref=e71]:
+              - text: 问问 Gemini
+              - paragraph [ref=e72]
+            - generic [ref=e73]:
+              - button "打开文件上传菜单" [ref=e78] [cursor=pointer]:
+                - img [ref=e79]: add_2
+              - button "工具" [ref=e85] [cursor=pointer]:
+                - img [ref=e87]: page_info
+            - generic [ref=e90]:
+              - group [ref=e93]:
+                - button "打开模式选择器" [ref=e94]:
+                  - generic [ref=e96]:
+                    - generic [ref=e97]: 快速
+                    - img [ref=e98]: keyboard_arrow_down
+              - generic [ref=e101]:
+                - button "麦克风" [ref=e104] [cursor=pointer]:
+                  - img [ref=e106]: mic
+                - text: send
+        - paragraph [ref=e111]:
+          - text: 须遵守
+          - link "《Google 条款》 在新窗口中打开" [ref=e112] [cursor=pointer]:
+            - /url: https://policies.google.com/terms
+            - text: 《Google 条款》
+            - generic [ref=e113]: 在新窗口中打开
+          - text: 和
+          - link "《Google 隐私权政策》 在新窗口中打开" [ref=e114] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy
+            - text: 《Google 隐私权政策》
+            - generic [ref=e115]: 在新窗口中打开
+          - text: 。Gemini 是一款 AI 工具，其回答未必正确无误。
