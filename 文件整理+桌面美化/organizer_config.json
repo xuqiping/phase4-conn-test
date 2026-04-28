@@ -13,14 +13,8 @@
   },
   "custom_categories": {
     "Office文档/excel": [
-      "xlsx"
+      "xls"
     ]
   },
-  "rules": [
-    {
-      "keyword": ".xlsx",
-      "target": "Office文档/excel",
-      "regex": false
-    }
-  ]
+  "rules": []
 }
