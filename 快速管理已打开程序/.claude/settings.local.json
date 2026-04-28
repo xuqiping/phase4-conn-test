@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python 快速清理工具.py)",
+      "Bash(python -c ' *)",
+      "Bash(npm --version)",
+      "Bash(npm install *)"
+    ]
+  }
+}

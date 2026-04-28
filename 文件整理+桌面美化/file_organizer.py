@@ -567,7 +567,7 @@ class FileOrganizerApp(QMainWindow):
         self.input_cat_name.setPlaceholderText("分类名 (如: 设计文件)")
         cat_input_row.addWidget(self.input_cat_name)
         btn_add_cat = QPushButton("+ 添加")
-        btn_add_cat.clicked.connect(self._add_custom_category)
+        btn_add_cat.clicked.connect(lambda: self._add_custom_category())
         cat_input_row.addWidget(btn_add_cat)
         cat_layout.addLayout(cat_input_row)
         self.custom_cat_list = QListWidget()

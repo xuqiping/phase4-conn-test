@@ -1,0 +1,26 @@
+{
+  "dir_names": {
+    "Office文档": "Office文档",
+    "文档": "文档",
+    "图片": "图片",
+    "视频": "视频",
+    "音频": "音频",
+    "压缩包": "压缩包",
+    "代码": "代码",
+    "程序": "程序",
+    "快捷方式": "快捷方式",
+    "Office文档/excel": "Office文档/excel"
+  },
+  "custom_categories": {
+    "Office文档/excel": [
+      "xlsx"
+    ]
+  },
+  "rules": [
+    {
+      "keyword": ".xlsx",
+      "target": "Office文档/excel",
+      "regex": false
+    }
+  ]
+}
