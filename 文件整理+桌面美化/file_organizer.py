@@ -4,6 +4,7 @@ import shutil
 import re
 import json
 import time
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from PyQt5.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QFileDialog, QProgressBar,
     QGroupBox, QListWidget, QListWidgetItem, QMessageBox, QTextEdit,
     QSplitter, QHeaderView, QAbstractItemView, QCheckBox,
-    QTableWidget, QTableWidgetItem, QTabWidget
+    QTableWidget, QTableWidgetItem, QTabWidget, QDialog
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QFont
@@ -227,6 +228,143 @@ class SizeCalcThread(QThread):
                 self.progress.emit(done, total)
 
         self.all_done.emit()
+
+
+class LockDetectThread(QThread):
+    """后台线程：使用 Windows Restart Manager 检测占用指定目录的进程"""
+    result_ready = pyqtSignal(object, str)
+    progress = pyqtSignal(str)
+    MAX_FILES = 200
+
+    def __init__(self, dir_path):
+        super().__init__()
+        self.dir_path = dir_path
+
+    @staticmethod
+    def _collect_files(dir_path):
+        files = []
+        try:
+            for root, _dirs, filenames in os.walk(dir_path):
+                for f in filenames:
+                    files.append(os.path.join(root, f))
+        except Exception:
+            pass
+        return files
+
+    def run(self):
+        files = self._collect_files(self.dir_path)
+        if not files:
+            self.result_ready.emit([], "")
+            return
+
+        self.progress.emit(f"共 {len(files)} 个文件，检测占用中...")
+        if len(files) > self.MAX_FILES:
+            files = files[:self.MAX_FILES]
+            self.progress.emit(f"文件过多，只检测前 {self.MAX_FILES} 个样本...")
+
+        import ctypes
+        from ctypes import wintypes
+
+        rstrtmgr = ctypes.windll.rstrtmgr
+        CCH_RM_SESSION_KEY = 32
+        CCH_RM_MAX_APP_NAME = 255
+        CCH_RM_MAX_SVC_NAME = 63
+
+        class RM_UNIQUE_PROCESS(ctypes.Structure):
+            _fields_ = [
+                ("dwProcessId", wintypes.DWORD),
+                ("ProcessStartTime", wintypes.FILETIME),
+            ]
+
+        class RM_PROCESS_INFO(ctypes.Structure):
+            _fields_ = [
+                ("Process", RM_UNIQUE_PROCESS),
+                ("strAppName", wintypes.WCHAR * (CCH_RM_MAX_APP_NAME + 1)),
+                ("strServiceShortName", wintypes.WCHAR * (CCH_RM_MAX_SVC_NAME + 1)),
+                ("ApplicationType", ctypes.c_int),
+                ("AppStatus", wintypes.ULONG),
+                ("TSSessionId", wintypes.DWORD),
+                ("bRestartable", wintypes.BOOL),
+            ]
+
+        ERROR_MORE_DATA = 234
+        RM_SESSION_HANDLE = wintypes.DWORD
+        RM_REBOOT_REASON = wintypes.DWORD
+
+        session_handle = RM_SESSION_HANDLE()
+        session_key = (wintypes.WCHAR * (CCH_RM_SESSION_KEY + 1))()
+        ret = rstrtmgr.RmStartSession(ctypes.byref(session_handle), 0, session_key)
+        if ret != 0:
+            self.result_ready.emit(None, f"启动检测会话失败 (错误码: {ret})")
+            return
+
+        try:
+            file_arr = (wintypes.LPCWSTR * len(files))()
+            for i, fp in enumerate(files):
+                file_arr[i] = os.path.abspath(fp)
+
+            ret = rstrtmgr.RmRegisterResources(
+                session_handle,
+                len(files),
+                ctypes.cast(file_arr, ctypes.POINTER(wintypes.LPCWSTR)),
+                0, None, 0, None
+            )
+            if ret != 0:
+                self.result_ready.emit(None, f"注册资源失败 (错误码: {ret})")
+                return
+
+            proc_needed = wintypes.UINT()
+            proc_count = wintypes.UINT(0)
+            reboot_reasons = RM_REBOOT_REASON()
+
+            ret = rstrtmgr.RmGetList(
+                session_handle,
+                ctypes.byref(proc_needed),
+                ctypes.byref(proc_count),
+                None,
+                ctypes.byref(reboot_reasons)
+            )
+
+            if ret == ERROR_MORE_DATA:
+                proc_count = proc_needed
+            elif ret == 259:
+                pass
+            elif ret != 0:
+                self.result_ready.emit(None, f"查询进程列表失败 (错误码: {ret})")
+                return
+
+            if proc_count.value == 0:
+                self.result_ready.emit([], "")
+                return
+
+            proc_info = (RM_PROCESS_INFO * proc_count.value)()
+            ret = rstrtmgr.RmGetList(
+                session_handle,
+                ctypes.byref(proc_needed),
+                ctypes.byref(proc_count),
+                proc_info,
+                ctypes.byref(reboot_reasons)
+            )
+            if ret != 0 and ret != 259:
+                self.result_ready.emit(None, f"获取进程信息失败 (错误码: {ret})")
+                return
+
+            results = []
+            seen = set()
+            for i in range(proc_count.value):
+                pi = proc_info[i]
+                pid = pi.Process.dwProcessId
+                if pid not in seen:
+                    seen.add(pid)
+                    results.append({
+                        "pid": pid,
+                        "name": pi.strAppName,
+                        "type": pi.ApplicationType,
+                        "restartable": bool(pi.bRestartable),
+                    })
+            self.result_ready.emit(results, "")
+        finally:
+            rstrtmgr.RmEndSession(session_handle)
 
 
 class FileOrganizerApp(QMainWindow):
@@ -463,6 +601,8 @@ class FileOrganizerApp(QMainWindow):
         self.del_tree.setAlternatingRowColors(True)
         self.del_tree.setAnimated(True)
         self.del_tree.itemExpanded.connect(self._on_del_tree_item_expanded)
+        self.del_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.del_tree.customContextMenuRequested.connect(self._on_del_tree_context_menu)
         tab_delete_layout.addWidget(self.del_tree, stretch=1)
 
         self.lbl_del_count = QLabel("共 0 项")
@@ -742,6 +882,71 @@ class FileOrganizerApp(QMainWindow):
         if state == "unloaded":
             self._load_dir_children(item)
 
+    def _on_del_tree_context_menu(self, pos):
+        item = self.del_tree.itemAt(pos)
+        if not item:
+            return
+        path = self._del_path_map.get(id(item))
+        from PyQt5.QtWidgets import QMenu, QAction
+        menu = QMenu(self)
+
+        if path and os.path.isdir(path):
+            act_open = QAction("打开文件夹", self)
+            act_open.triggered.connect(lambda: os.startfile(path))
+            menu.addAction(act_open)
+
+            act_refresh = QAction("刷新", self)
+            act_refresh.triggered.connect(lambda: self._refresh_dir_item(item))
+            menu.addAction(act_refresh)
+
+            act_lock = QAction("检测占用进程...", self)
+            act_lock.triggered.connect(lambda: self._check_and_close_locks(item))
+            menu.addAction(act_lock)
+
+            if item.childCount() > 1:
+                menu.addSeparator()
+                act_asc = QAction("子项升序", self)
+                act_asc.triggered.connect(lambda: self._sort_tree_items(item, False, False))
+                menu.addAction(act_asc)
+                act_desc = QAction("子项降序", self)
+                act_desc.triggered.connect(lambda: self._sort_tree_items(item, True, False))
+                menu.addAction(act_desc)
+
+        if not menu.isEmpty():
+            menu.exec_(self.del_tree.viewport().mapToGlobal(pos))
+
+    def _refresh_dir_item(self, item):
+        """刷新指定目录项的内容"""
+        path = self._del_path_map.get(id(item))
+        if not path or not os.path.isdir(path):
+            return
+
+        # 顶层目录直接全量刷新
+        if item.parent() is None:
+            self._scan_for_delete()
+            return
+
+        # 递归清理旧子项的路径映射
+        def _clean_paths(parent):
+            for i in range(parent.childCount()):
+                child = parent.child(i)
+                self._del_path_map.pop(id(child), None)
+                _clean_paths(child)
+
+        _clean_paths(item)
+
+        was_expanded = item.isExpanded()
+        while item.childCount() > 0:
+            item.takeChild(0)
+
+        if was_expanded:
+            self._load_dir_children(item)
+            item.setExpanded(True)
+        else:
+            item.setData(0, Qt.UserRole, "unloaded")
+            placeholder = QTreeWidgetItem(["", "加载中...", "", ""])
+            item.addChild(placeholder)
+
     def _load_dir_children(self, parent_item):
         """懒加载文件夹子内容"""
         parent_item.setData(0, Qt.UserRole, "loaded")
@@ -918,12 +1123,24 @@ class FileOrganizerApp(QMainWindow):
     def _sort_tree_items(self, parent, reverse, by_name):
         """对指定父节点下的子项排序，并递归排序已展开的子目录"""
         count = parent.childCount() if parent else self.del_tree.topLevelItemCount()
+        if count < 2:
+            return
         items = []
+        expanded_map = {}
+
+        def _record_expanded(it):
+            if it.text(3) == "文件夹":
+                expanded_map[id(it)] = it.isExpanded()
+                for c in range(it.childCount()):
+                    _record_expanded(it.child(c))
+
         for _ in range(count):
             if parent:
-                items.append(parent.takeChild(0))
+                item = parent.takeChild(0)
             else:
-                items.append(self.del_tree.takeTopLevelItem(0))
+                item = self.del_tree.takeTopLevelItem(0)
+            _record_expanded(item)
+            items.append(item)
 
         if by_name:
             items.sort(key=lambda item: item.text(1).lower())
@@ -935,6 +1152,15 @@ class FileOrganizerApp(QMainWindow):
                 parent.addChild(item)
             else:
                 self.del_tree.addTopLevelItem(item)
+
+        def _restore_expanded(it):
+            if id(it) in expanded_map:
+                it.setExpanded(expanded_map[id(it)])
+            for c in range(it.childCount()):
+                _restore_expanded(it.child(c))
+
+        for item in items:
+            _restore_expanded(item)
             # 如果该文件夹已展开（子项已加载），递归排序子项
             if item.text(3) == "文件夹" and item.data(0, Qt.UserRole) == "loaded":
                 self._sort_tree_items(item, reverse, by_name)
@@ -970,6 +1196,101 @@ class FileOrganizerApp(QMainWindow):
         for item in self._iter_all_items():
             item.setCheckState(0, Qt.Checked if item.text(3) == "文件夹" else Qt.Unchecked)
         self.del_tree.blockSignals(False)
+
+    # ── 占用检测与关闭 ──
+    def _show_lock_dialog(self, processes):
+        """显示占用进程选择对话框，返回用户选中的进程列表"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("检测到文件占用")
+        dialog.setMinimumSize(500, 320)
+        layout = QVBoxLayout(dialog)
+
+        layout.addWidget(QLabel("以下进程正在占用该目录中的文件，导致无法删除："))
+
+        table = QTableWidget(len(processes), 3)
+        table.setHorizontalHeaderLabels(["", "进程名称", "PID"])
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+
+        checkboxes = []
+        for row, proc in enumerate(processes):
+            cb = QCheckBox()
+            cb.setChecked(True)
+            checkboxes.append(cb)
+            table.setCellWidget(row, 0, cb)
+            table.setItem(row, 1, QTableWidgetItem(proc["name"] or "未知"))
+            table.setItem(row, 2, QTableWidgetItem(str(proc["pid"])))
+        layout.addWidget(table)
+
+        tip = QLabel("提示：关闭进程可能导致未保存的数据丢失，请先保存工作。")
+        tip.setStyleSheet("color: #c0392b; font-size: 11px;")
+        layout.addWidget(tip)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_close = QPushButton("关闭选中进程")
+        btn_close.clicked.connect(dialog.accept)
+        btn_layout.addWidget(btn_close)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_layout.addWidget(btn_cancel)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return []
+        return [processes[i] for i, cb in enumerate(checkboxes) if cb.isChecked()]
+
+    def _check_and_close_locks(self, parent_item):
+        """检测并关闭占用指定目录的进程"""
+        path = self._del_path_map.get(id(parent_item))
+        if not path or not os.path.isdir(path):
+            return
+
+        self.del_log.append(f"正在扫描占用: {os.path.basename(path)} ...")
+        self._lock_detect_thread = LockDetectThread(path)
+        self._lock_detect_thread.progress.connect(self._on_lock_detect_progress)
+        self._lock_detect_thread.result_ready.connect(self._on_lock_detect_done)
+        self._lock_detect_thread.start()
+
+    def _on_lock_detect_progress(self, msg):
+        self.del_log.append(msg)
+
+    def _on_lock_detect_done(self, processes, err):
+        if err:
+            QMessageBox.warning(self, "检测失败", err)
+            return
+        if not processes:
+            QMessageBox.information(self, "提示", "未检测到占用进程，可以直接删除")
+            return
+
+        selected = self._show_lock_dialog(processes)
+        if not selected:
+            self.del_log.append("用户取消关闭进程")
+            return
+
+        closed = 0
+        failed = []
+        for proc in selected:
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/PID", str(proc["pid"])],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    closed += 1
+                else:
+                    err_msg = result.stderr.strip() or "未知错误"
+                    failed.append(f"{proc['name']} (PID {proc['pid']}): {err_msg}")
+            except Exception as e:
+                failed.append(f"{proc['name']} (PID {proc['pid']}): {e}")
+
+        msg = f"已请求关闭 {closed}/{len(selected)} 个进程"
+        if failed:
+            msg += f"\n\n失败 {len(failed)} 个:\n" + "\n".join(failed[:10])
+        self.del_log.append(msg)
+        QMessageBox.information(self, "关闭结果", msg)
 
     def _delete_selected(self):
         selected = []
