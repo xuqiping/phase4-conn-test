@@ -54,5 +54,14 @@ temp/
 # 用户自定义 - 含 application 的文件
 *application*.*
 
+# Node.js
+node_modules/
+
+# Rust / Cargo
+target/
+
+# 语音识别模型文件
+models/
+
 # Git 同步脚本日志
 .git-sync.log
