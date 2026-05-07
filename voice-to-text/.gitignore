@@ -9,6 +9,7 @@ src-tauri/target/
 # 模型文件不入库 (步骤 3 用户手动下载到此处)
 models/*
 !models/README.md
+models.zip
 
 # IDE
 .vscode/

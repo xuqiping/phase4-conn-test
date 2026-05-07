@@ -43,13 +43,29 @@ async fn start_recording(
 
     let receiver = capture.get_receiver().unwrap();
 
-    // Resolve model dir: in dev mode current_dir is src-tauri, so check parent first
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    let models_dir = if cwd.join("..").join("models").exists() {
-        cwd.join("..").join("models")
-    } else {
-        cwd.join("models")
-    };
+    // Resolve model dir:
+    // 1. First check next to the executable (production / distribution)
+    // 2. Then check ../models (dev mode, cwd is src-tauri)
+    // 3. Then check ./models (fallback)
+    let models_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("models")))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| {
+                    let parent = cwd.join("..").join("models");
+                    if parent.exists() { Some(parent) } else { None }
+                })
+        })
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| cwd.join("models"))
+                .filter(|p| p.exists())
+        })
+        .ok_or("cannot find models directory")?;
     let model_dir = models_dir
         .join("sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16")
         .to_str()
