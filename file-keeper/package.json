@@ -1,0 +1,36 @@
+{
+  "name": "file-keeper",
+  "version": "0.1.0",
+  "description": "轻量级跨平台文件收藏管理器",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "pinia": "^2.1.7",
+    "naive-ui": "^2.38.0",
+    "@vueuse/core": "^10.9.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.4.0",
+    "vue-tsc": "^2.0.0",
+    "vite": "^5.2.0",
+    "@types/uuid": "^9.0.8",
+    "sass": "^1.75.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-store": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-global-shortcut": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.0.0"
+  }
+}
