@@ -369,7 +369,7 @@ import {
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { pickFile, validatePath } from './api/files'
+import { pickFile, pickFolder, validatePath } from './api/files'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -423,49 +423,66 @@ const confirmClosePID = ref<number | null>(null)
 
 async function handleAddFile() {
   try {
-    // Show file picker
-    const filePath = await pickFile()
+    // Ask user to choose file or folder
+    const choice = confirm('添加文件夹？\n确定 = 文件夹\n取消 = 文件')
 
-    if (!filePath) {
+    let selectedPath: string | null
+
+    if (choice) {
+      // Pick folder
+      selectedPath = await pickFolder()
+    } else {
+      // Pick file
+      selectedPath = await pickFile()
+    }
+
+    if (!selectedPath) {
       return // User cancelled
     }
 
     // Validate path
-    const isValid = await validatePath(filePath)
+    const isValid = await validatePath(selectedPath)
     if (!isValid) {
-      console.error('文件不存在或无法访问')
+      console.error('路径不存在或无法访问')
       return
     }
 
-    // Extract file name from path
-    const fileName = filePath.split(/[/\\]/).pop() || filePath
+    // Extract name from path
+    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
 
-    // Determine file type from extension
-    const ext = fileName.split('.').pop()?.toLowerCase() || ''
+    // Determine type and icon
+    let type: 'file' | 'folder' = 'file'
     let icon = 'file'
-    if (['doc', 'docx'].includes(ext)) icon = 'word'
-    else if (['xls', 'xlsx'].includes(ext)) icon = 'excel'
-    else if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) icon = 'image'
-  else if (['js', 'ts', 'py', 'java'].includes(ext)) icon = 'code'
+
+    if (choice) {
+    type = 'folder'
+      icon = 'folder'
+    } else {
+      const ext = name.split('.').pop()?.toLowerCase() || ''
+      if (['doc', 'docx'].includes(ext)) icon = 'word'
+      else if (['xls', 'xlsx'].includes(ext)) icon = 'excel'
+      else if (['png', 'jpeg', 'gif'].includes(ext)) icon = 'image'
+      else if (['js', 'ts', 'py', 'java'].includes(ext)) icon = 'code'
+    }
 
     // Add to store
-    const newFile = fileStore.addFile({
-      name: fileName,
-      path: filePath,
-      type: 'file',
+    const newItem = fileStore.addFile({
+      name,
+      path: selectedPath,
+      type,
       icon,
       tags: [],
       groupId: groupStore.currentGroupId
     })
 
-    if (!newFile) {
-      console.error('文件已存在')
+    if (!newItem) {
+      console.error('项目已存在')
       return
     }
 
-    console.log(`已添加文件: ${fileName}`)
+    console.log(`已添加${type === 'folder' ? '文件夹' : '文件'}: ${name}`)
   } catch (error) {
-    console.error('添加文件失败:', error)
+    console.error('添加失败:', error)
   }
 }
 
