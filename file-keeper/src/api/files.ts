@@ -1,5 +1,24 @@
 // Tauri API 封装 - 文件操作
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
+
+export async function pickFile(): Promise<string | null> {
+  const selected = await open({
+  multiple: false,
+    directory: false
+  })
+
+  return selected as string | null
+}
+
+export async function pickFolder(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    directory: true
+  })
+
+  return selected as string | null
+}
 
 export async function openFile(path: string): Promise<void> {
   return invoke('open_file', { path })

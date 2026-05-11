@@ -9,28 +9,36 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "vue": "^3.4.0",
-    "pinia": "^2.1.7",
-    "naive-ui": "^2.38.0",
     "@vueuse/core": "^10.9.0",
-    "uuid": "^9.0.1"
+    "lucide-vue-next": "^0.344.0",
+    "naive-ui": "^2.38.0",
+    "pinia": "^2.1.7",
+    "uuid": "^9.0.1",
+    "vue": "^3.4.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.0.0",
-    "typescript": "^5.4.0",
-    "vue-tsc": "^2.0.0",
-    "vite": "^5.2.0",
-    "@types/uuid": "^9.0.8",
-    "sass": "^1.75.0",
-    "@tauri-apps/cli": "^2.0.0",
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-store": "^2.0.0",
-    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/cli": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-global-shortcut": "^2.0.0",
-    "@tauri-apps/plugin-opener": "^2.0.0"
+    "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-store": "^2.0.0",
+    "@types/uuid": "^9.0.8",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vitest/ui": "^4.1.5",
+    "@vue/test-utils": "^2.4.10",
+    "jsdom": "^29.1.1",
+    "sass": "^1.75.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vitest": "^4.1.5",
+    "vue-tsc": "^2.0.0"
   }
 }
