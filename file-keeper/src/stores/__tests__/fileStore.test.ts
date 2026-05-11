@@ -74,4 +74,29 @@ describe('fileStore', () => {
       expect(store.files).toHaveLength(initialCount)
     })
   })
+
+  describe('recordOpen', () => {
+    it('should increment openCount and update lastOpened', () => {
+      const store = useFileStore()
+      const file = store.files[0]
+      const initialCount = file.openCount
+      const beforeTime = Date.now()
+
+      store.recordOpen(file.id)
+
+    const updatedFile = store.files.find(f => f.id === file.id)
+      expect(updatedFile?.openCount).toBe(initialCount + 1)
+      expect(updatedFile?.lastOpened).toBeGreaterThanOrEqual(beforeTime)
+      expect(updatedFile?.lastOpened).toBeLessThanOrEqual(Date.now())
+  })
+
+    it('should do nothing when file not found', () => {
+      const store = useFileStore()
+      const initialFiles = [...store.files]
+
+      store.recordOpen('non-existent-id')
+
+      expect(store.files).toEqual(initialFiles)
+    })
+  })
 })

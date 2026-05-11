@@ -154,7 +154,7 @@ export const useFileStore = defineStore('file', () => {
     }
   }
 
-  function recordOpen(id: string) {
+  function recordOpen(id: string): void {
     const file = files.value.find(f => f.id === id)
     if (file) {
       file.openCount++
