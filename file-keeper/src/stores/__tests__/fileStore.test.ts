@@ -20,10 +20,10 @@ describe('fileStore', () => {
       })
 
       expect(newFile).toBeDefined()
-      expect(newFile.id).toBeDefined()
-      expect(newFile.name).toBe('test.txt')
-      expect(newFile.openCount).toBe(0)
-    expect(newFile.createdAt).toBeDefined()
+      expect(newFile!.id).toBeDefined()
+      expect(newFile!.name).toBe('test.txt')
+      expect(newFile!.openCount).toBe(0)
+    expect(newFile!.createdAt).toBeDefined()
       expect(store.files).toHaveLength(7) // 6 mock + 1 new
     })
 
