@@ -137,11 +137,14 @@ export const useFileStore = defineStore('file', () => {
     return newFile
   }
 
-  function removeFile(id: string) {
+  function removeFile(id: string): boolean {
     const index = files.value.findIndex(f => f.id === id)
-    if (index !== -1) {
-      files.value.splice(index, 1)
+    if (index === -1) {
+      return false
     }
+
+    files.value.splice(index, 1)
+    return true
   }
 
   function updateFile(id: string, updates: Partial<FileItem>) {

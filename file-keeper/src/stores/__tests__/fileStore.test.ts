@@ -46,8 +46,32 @@ describe('fileStore', () => {
         groupId: 'all'
       })
 
-      expect(result).toBeNull()
+        expect(result).toBeNull()
     expect(store.files).toHaveLength(7) // 6 mock + 1 new (not 8)
+    })
+  })
+
+  describe('removeFile', () => {
+    it('should remove a file by id', () => {
+      const store = useFileStore()
+      const initialCount = store.files.length
+      const fileToRemove = store.files[0]
+
+      const result = store.removeFile(fileToRemove.id)
+
+      expect(result).toBe(true)
+      expect(store.files).toHaveLength(initialCount - 1)
+      expect(store.files.find(f => f.id === fileToRemove.id)).toBeUndefined()
+  })
+
+    it('should return false when file not found', () => {
+      const store = useFileStore()
+      const initialCount = store.files.length
+
+      const result = store.removeFile('non-existent-id')
+
+      expect(result).toBe(false)
+      expect(store.files).toHaveLength(initialCount)
     })
   })
 })
