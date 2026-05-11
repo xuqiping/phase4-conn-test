@@ -68,6 +68,20 @@
       <button class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center" @click="handleAddGroup">
         <Plus :size="14" class="mr-1" /> 新建分组
       </button>
+      <button
+        class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center ml-auto"
+        @click="showGroupManager = true"
+        title="管理分组"
+      >
+        <FolderCog :size="16" />
+      </button>
+      <button
+        class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center ml-auto"
+        @click="showGroupManager = true"
+        title="管理分组"
+      >
+        <FolderCog :size="16" />
+      </button>
     </div>
 
     <!-- 4. 主内容区 -->
@@ -200,7 +214,7 @@
         <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('edit')">
       <Edit3 :size="14" class="mr-2" /> 编辑信息
         </button>
-        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#3838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
+        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
           <Tag :size="14" class="mr-2" /> 添加标签
         </button>
 
@@ -335,6 +349,20 @@
       </div>
     </transition>
 
+    <!-- 分组管理对话框 -->
+    <GroupManager
+      :visible="showGroupManager"
+      @close="showGroupManager = false"
+      @add-group="handleAddGroup"
+    />
+
+    <!-- 分组管理对话框 -->
+    <GroupManager
+      :visible="showGroupManager"
+      @close="showGroupManager = false"
+      @add-group="handleAddGroup"
+    />
+
     <!-- 全局点击处理 -->
     <div v-if="contextMenu.show" class="fixed inset-0 z-40" @click="closeContextMenu"></div>
   </div>
@@ -342,6 +370,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   Search,
   Plus,
@@ -356,6 +385,7 @@ import {
   Sun,
   PlayCircle,
   FolderInput,
+  FolderCog,
   Edit3,
   Tag,
   Activity,
@@ -369,7 +399,8 @@ import {
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { pickFile, pickFolder, validatePath } from './api/files'
+import { pickFile, pickFolder, validatePath, openFile, showInFolder } from './api/files'
+import GroupManager from './components/GroupManager.vue'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -400,19 +431,18 @@ function setViewMode(mode: 'grid' | 'list') {
 }
 
 // Window Controls
+const appWindow = getCurrentWindow()
+
 function minimizeWindow() {
-  // TODO: Implement with Tauri API
-  console.log('Minimize window')
+  appWindow.minimize()
 }
 
 function maximizeWindow() {
-  // TODO: Implement with Tauri API
-  console.log('Maximize window')
+  appWindow.toggleMaximize()
 }
 
 function closeWindow() {
-  // TODO: Implement with Tauri API
-  console.log('Close window')
+  appWindow.close()
 }
 
 // File Operations
@@ -423,73 +453,83 @@ const confirmClosePID = ref<number | null>(null)
 
 async function handleAddFile() {
   try {
-    // Ask user to choose file or folder
-    const choice = confirm('添加文件夹？\n确定 = 文件夹\n取消 = 文件')
+    const choice = confirm('添加文件？\n确定 = 文件\n取消 = 文件夹')
 
     let selectedPath: string | null
 
     if (choice) {
-      // Pick folder
-      selectedPath = await pickFolder()
-    } else {
-      // Pick file
       selectedPath = await pickFile()
+    } else {
+      selectedPath = await pickFolder()
     }
 
     if (!selectedPath) {
-      return // User cancelled
-    }
-
-    // Validate path
-    const isValid = await validatePath(selectedPath)
-    if (!isValid) {
-      console.error('路径不存在或无法访问')
       return
     }
 
-    // Extract name from path
-    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
+    const isValid = await validatePath(selectedPath)
+    if (!isValid) {
+      alert('路径不存在或无法访问')
+      return
+    }
 
-    // Determine type and icon
+    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
     let type: 'file' | 'folder' = 'file'
     let icon = 'file'
 
     if (choice) {
-    type = 'folder'
-      icon = 'folder'
-    } else {
       const ext = name.split('.').pop()?.toLowerCase() || ''
       if (['doc', 'docx'].includes(ext)) icon = 'word'
       else if (['xls', 'xlsx'].includes(ext)) icon = 'excel'
-      else if (['png', 'jpeg', 'gif'].includes(ext)) icon = 'image'
+      else if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) icon = 'image'
       else if (['js', 'ts', 'py', 'java'].includes(ext)) icon = 'code'
+    } else {
+      type = 'folder'
+      icon = 'folder'
     }
 
-    // Add to store
     const newItem = fileStore.addFile({
       name,
       path: selectedPath,
       type,
       icon,
       tags: [],
-      groupId: groupStore.currentGroupId
+      groupId: groupStore.currentGroupId === 'all' || groupStore.currentGroupId === 'recent'
+        ? (groupStore.customGroups[0]?.id || 'all')
+        : groupStore.currentGroupId
     })
 
     if (!newItem) {
-      console.error('项目已存在')
+      alert('该项目已存在')
       return
     }
 
     console.log(`已添加${type === 'folder' ? '文件夹' : '文件'}: ${name}`)
   } catch (error) {
     console.error('添加失败:', error)
+    alert(`添加失败: ${error}`)
   }
 }
 
-function handleFileClick(file: FileItem) {
-  // TODO: Implement file opening
-  fileStore.recordOpen(file.id)
-  console.log(`打开文件: ${file.name}`)
+async function handleFileClick(file: FileItem) {
+  try {
+    fileStore.recordOpen(file.id)
+    await openFile(file.path)
+    console.log(`已打开: ${file.name}`)
+  } catch (error) {
+    console.error(`打开失败: ${error}`)
+    alert(`打开失败: ${error}`)
+  }
+}
+
+async function handleShowInFolder(file: FileItem) {
+  try {
+    await showInFolder(file.path)
+    console.log(`已在文件夹中显示: ${file.name}`)
+  } catch (error) {
+    console.error(`打开文件夹失败: ${error}`)
+    alert(`打开文件夹失败: ${error}`)
+  }
 }
 
 // Context Menu
@@ -533,8 +573,8 @@ function handleMenuAction(action: string) {
       handleFileClick(file)
       break
     case 'show-in-folder':
-      console.log('在文件夹中显示功能待实现')
-      break
+      handleShowInFolder(file)
+    break
     case 'edit':
       console.log('编辑信息功能待实现')
       break
@@ -591,6 +631,7 @@ function handleRemoveFile(file: FileItem) {
 
 // Group Management
 const showAddGroupDialog = ref(false)
+const showGroupManager = ref(false)
 const newGroupName = ref('')
 
 function handleAddGroup() {
