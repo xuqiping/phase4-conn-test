@@ -211,6 +211,46 @@
         <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('edit')">
       <Edit3 :size="14" class="mr-2" /> 编辑信息
         </button>
+
+        <!-- 移动到分组（带子菜单） -->
+        <div
+          class="relative"
+          @mouseenter="showMoveToGroupSubmenu = true"
+          @mouseleave="showMoveToGroupSubmenu = false"
+        >
+          <button
+            class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center justify-between text-gray-700 dark:text-gray-200 transition-colors"
+          >
+            <span class="flex items-center">
+              <FolderInput :size="14" class="mr-2" />
+              移动到分组
+            </span>
+            <ChevronRight :size="14" class="text-gray-400" />
+          </button>
+
+          <!-- 子菜单 -->
+          <transition name="fade">
+            <div
+              v-if="showMoveToGroupSubmenu"
+              :class="[
+                'absolute top-0 py-1 w-44 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] text-sm',
+                moveToGroupSubmenuOnLeft ? 'right-full mr-1' : 'left-full ml-1'
+              ]"
+            >
+              <button
+                v-for="group in groupStore.groups"
+                :key="group.id"
+                @click.stop="handleMoveToGroup(group.id)"
+                class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors"
+              >
+                <Check v-if="contextMenu.file?.groupId === group.id" :size="14" class="mr-2 text-primary" />
+                <span v-else class="w-[22px] mr-2" />
+                <span class="truncate">{{ group.name }}</span>
+              </button>
+            </div>
+          </transition>
+        </div>
+
         <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
           <Tag :size="14" class="mr-2" /> 添加标签
         </button>
@@ -381,6 +421,8 @@ import {
   Moon,
   Sun,
   PlayCircle,
+  ChevronRight,
+  Check,
   FolderInput,
   FolderCog,
   Edit3,
@@ -478,6 +520,14 @@ const contextMenu = ref({
   file: null as FileItem | null
 })
 
+// 移动到分组子菜单
+const showMoveToGroupSubmenu = ref(false)
+const moveToGroupSubmenuOnLeft = ref(false)
+
+// 移动到分组子菜单
+const showMoveToGroupSubmenu = ref(false)
+const moveToGroupSubmenuOnLeft = ref(false)
+
 function handleContextMenu(event: MouseEvent, file: FileItem) {
   event.preventDefault()
 
@@ -496,10 +546,36 @@ function handleContextMenu(event: MouseEvent, file: FileItem) {
     file
   }
   selectedFile.value = file
+
+  // 子菜单位置边界检测
+  moveToGroupSubmenuOnLeft.value = (x + 224 + 176 > window.innerWidth)
 }
 
 function closeContextMenu() {
   contextMenu.value.show = false
+  showMoveToGroupSubmenu.value = false
+}
+
+function handleMoveToGroup(targetGroupId: string) {
+  const file = contextMenu.value.file
+  if (!file) return
+  if (file.groupId === targetGroupId) {
+    closeContextMenu()
+    return
+  }
+  fileStore.updateFile(file.id, { groupId: targetGroupId })
+  closeContextMenu()
+}
+
+function handleMoveToGroup(targetGroupId: string) {
+  const file = contextMenu.value.file
+  if (!file) return
+  if (file.groupId === targetGroupId) {
+    closeContextMenu()
+    return
+  }
+  fileStore.updateFile(file.id, { groupId: targetGroupId })
+  closeContextMenu()
 }
 
 function handleMenuAction(action: string) {
