@@ -323,10 +323,11 @@
         <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
 
         <button
-          @click="handleMenuAction('view-processes')"
-          class="w-full text-left px-4 py-2 bg-green-50/50 hover:bg-green-100 dark:bg-[#2d4a3e]/30 dark:hover:bg-[#2d4a3e] flex items-center text-primary font-medium transition-colors"
+          @click="handleMenuAction('close-processes')"
+          class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors"
         >
-          <Activity :size="14" class="mr-2" /> 查看已打开的进程
+          <XCircle :size="14" class="mr-2" />
+          关闭已打开的进程
         </button>
 
         <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
@@ -337,19 +338,25 @@
       </div>
     </transition>
 
-    <!-- 进程管理对话框 -->
+    <!-- Process Manager Dialog -->
     <transition name="fade">
-      <div v-if="showProcessManager" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" @click="showProcessManager = false">
-        <div class="bg-white dark:bg-dark-panel w-full max-w-lg rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border overflow-hidden flex flex-col transform transition-all" @click.stop>
-
+      <div
+        v-if="showProcessManager"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+        @click="showProcessManager = false"
+      >
+        <div
+          class="bg-white dark:bg-dark-panel w-full max-w-2xl rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border overflow-hidden"
+          @click.stop
+        >
           <!-- Header -->
           <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex items-center justify-between bg-gray-50 dark:bg-dark-hover">
-            <div class="flex items-center text-primary">
-        <Activity :size="20" class="mr-2" />
-              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100">进程管理器</h2>
+            <div>
+              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100">进程管理</h2>
+              <p class="text-xs text-gray-500 mt-1">{{ processManagerFile?.name }}</p>
             </div>
             <button
-          @click="showProcessManager = false"
+              @click="showProcessManager = false"
               class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors p-1 rounded-md hover:bg-gray-200 dark:hover:bg-[#3d3d3d]"
             >
               <X :size="18" />
@@ -358,58 +365,58 @@
 
           <!-- Content -->
           <div class="p-6">
-            <div class="mb-4">
-          <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">正在检查被占用的文件：</p>
-          <div class="flex items-center font-medium text-sm text-gray-800 dark:text-gray-200 bg-gray-100 dark:bg-dark-bg p-3 rounded-md border border-gray-200 dark:border-[#333]">
-                <component :is="getFileIcon(selectedFile?.type || 'file')" :size="16" :class="[getFileColor(selectedFile?.type || 'file'), 'mr-2']" />
-                <span class="truncate">{{ selectedFile?.name }}</span>
-              </div>
+            <!-- Loading State -->
+            <div v-if="loadingProcesses" class="text-center py-8">
+              <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <p class="text-sm text-gray-500 mt-2">正在扫描进程...</p>
             </div>
 
-            <div class="space-y-3">
-              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">相关的系统进程 ({{ currentProcesses.length }})</h3>
+            <!-- Empty State -->
+            <div v-else-if="fileProcesses.length === 0" class="text-center py-8">
+              <FileX :size="48" class="mx-auto text-gray-300 mb-3" />
+              <p class="text-gray-500">未找到打开此文件的进程</p>
+            </div>
 
-            <div v-for="process in currentProcesses" :key="process.pid" class="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:border-gray-300 dark:hover:border-[#555] bg-white dark:bg-dark-panel group transition-colors">
-          <div class="flex-1 min-w-0 mr-4">
-           <div class="flex items-center text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">
-                  <Box :size="14" class="mr-1.5 text-blue-500" />
-             {{ process.name }}
-                    <span class="ml-2 text-xs font-normal text-gray-400 bg-gray-100 dark:bg-[#333] px-1.5 py-0.5 rounded">PID: {{ process.pid }}</span>
-           </div>
-                  <div class="text-xs text-gray-500 truncate" :title="process.windowTitle">
-               窗口: {{ process.windowTitle }}
-          </div>
-        </div>
-
-              <div v-if="confirmClosePID === process.pid" class="flex items-center space-x-2">
-                  <span class="text-xs text-red-500 font-medium">确认结束?</span>
-                  <button
-                @click="confirmClosePID = null"
-           class="px-2 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-[#333] dark:hover:bg-[#444] rounded text-gray-600 dark:text-gray-300"
-                  >取消</button>
-            <button @click="handleKillProcess(process.pid)" class="px-2 py-1.5 text-xs bg-red-500 hover:bg-red-600 text-white rounded font-medium shadow-sm shadow-red-500/20">结束</button>
+            <!-- Process List -->
+            <div v-else class="space-y-2">
+              <div
+                v-for="process in fileProcesses"
+                :key="process.pid"
+                class="flex items-center justify-between p-4 rounded-lg border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover"
+              >
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center space-x-2">
+                    <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ process.name }}</span>
+                    <span class="text-xs text-gray-400">PID: {{ process.pid }}</span>
+                  </div>
+                  <p v-if="process.windowTitle" class="text-xs text-gray-500 mt-1 truncate">{{ process.windowTitle }}</p>
+                  <p v-if="process.path" class="text-xs text-gray-400 mt-1 truncate">{{ process.path }}</p>
                 </div>
-            <button
-                  v-else
-             @click="confirmClosePID = process.pid"
-                  class="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-xs font-medium text-red-500 border border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-all"
-       >
-                  关闭进程
+                <button
+                  @click="handleCloseProcess(process.pid)"
+                  class="ml-4 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors flex items-center space-x-1"
+                >
+                  <XCircle :size="14" />
+                  <span>关闭</span>
                 </button>
               </div>
-         </div>
+            </div>
           </div>
 
           <!-- Footer -->
-          <div class="px-6 py-4 border-t border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover flex justify-end space-x-3">
-          <button
-              @click="showProcessManager = false"
-              class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3d3d3d] rounded-md transition-colors font-medium"
+          <div class="px-6 py-4 border-t border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover flex justify-between">
+            <button
+              @click="loadFileProcesses(processManagerFile!.path)"
+              :disabled="loadingProcesses"
+              class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3d3d3d] rounded-md transition-colors font-medium disabled:opacity-50"
             >
-            关闭
+              刷新
             </button>
-            <button @click="handleKillAllProcesses" class="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors font-medium shadow-sm shadow-red-500/20">
-              一键关闭所有
+            <button
+              @click="showProcessManager = false"
+              class="px-4 py-2 text-sm bg-primary hover:bg-[#369b6e] text-white rounded-md transition-colors font-medium shadow-sm shadow-primary/20"
+            >
+              关闭
             </button>
           </div>
         </div>
@@ -494,20 +501,22 @@ import {
   FolderCog,
   Edit3,
   Tag,
-  Activity,
   Trash2,
   MoreVertical,
   FileText,
   Folder,
   Image,
   Code,
-  FolderOpen
+  FolderOpen,
+  XCircle,
+  FileX
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useSelectionStore } from './stores/selectionStore'
 import { openFile, showInFolder } from './api/files'
+import { findFileProcesses, closeProcess } from './api/processes'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
@@ -654,11 +663,13 @@ function closeWindow() {
 }
 
 // File Operations
-const selectedFile = ref<FileItem | null>(null)
 const editingFile = ref<FileItem | null>(null)
+
+// Process Management
 const showProcessManager = ref(false)
-const currentProcesses = ref<ProcessInfo[]>([])
-const confirmClosePID = ref<number | null>(null)
+const processManagerFile = ref<FileItem | null>(null)
+const fileProcesses = ref<ProcessInfo[]>([])
+const loadingProcesses = ref(false)
 
 async function handleFileClick(file: FileItem) {
   try {
@@ -710,7 +721,6 @@ function handleContextMenu(event: MouseEvent, file: FileItem) {
     y,
     file
   }
-  selectedFile.value = file
 
   // 子菜单位置边界检测
   moveToGroupSubmenuOnLeft.value = (x + 224 + 176 > window.innerWidth)
@@ -756,8 +766,8 @@ function handleMenuAction(action: string) {
     case 'add-tag':
       console.log('添加标签功能待实现')
       break
-    case 'view-processes':
-      handleViewProcesses(file)
+    case 'close-processes':
+      handleShowProcesses(file)
       break
     case 'remove':
       handleRemoveFile(file)
@@ -767,36 +777,38 @@ function handleMenuAction(action: string) {
   closeContextMenu()
 }
 
-function handleViewProcesses(file: FileItem) {
-  selectedFile.value = file
-  // Mock processes for demo
-  currentProcesses.value = [
-    {
-      pid: 14235,
-      name: 'Microsoft Word',
-      windowTitle: `${file.name} - Word`
-    },
-    {
-    pid: 8492,
-      name: 'WPS Office',
-      windowTitle: `${file.name} - WPS`
-    }
-  ]
+async function handleShowProcesses(file: FileItem) {
+  processManagerFile.value = file
   showProcessManager.value = true
+  await loadFileProcesses(file.path)
 }
 
-function handleKillProcess(pid: number) {
-  // TODO: Implement process killing
-  console.log('Kill process:', pid)
-  currentProcesses.value = currentProcesses.value.filter(p => p.pid !== pid)
-  confirmClosePID.value = null
+async function loadFileProcesses(filePath: string) {
+  loadingProcesses.value = true
+  try {
+    fileProcesses.value = await findFileProcesses(filePath)
+  } catch (error) {
+    console.error('Failed to load processes:', error)
+    alert(`加载进程失败: ${error}`)
+  } finally {
+    loadingProcesses.value = false
+  }
 }
 
-function handleKillAllProcesses() {
-  // TODO: Implement kill all processes
-  console.log('Kill all processes')
-  currentProcesses.value = []
-  showProcessManager.value = false
+async function handleCloseProcess(pid: number) {
+  const confirmed = confirm(`确定关闭进程 PID ${pid}？`)
+  if (!confirmed) return
+
+  try {
+    await closeProcess(pid)
+    // Reload processes after closing
+    if (processManagerFile.value) {
+      await loadFileProcesses(processManagerFile.value.path)
+    }
+  } catch (error) {
+    console.error('Failed to close process:', error)
+    alert(`关闭进程失败: ${error}`)
+  }
 }
 
 function handleRemoveFile(file: FileItem) {
