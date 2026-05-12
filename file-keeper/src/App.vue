@@ -618,10 +618,6 @@ const contextMenu = ref({
 const showMoveToGroupSubmenu = ref(false)
 const moveToGroupSubmenuOnLeft = ref(false)
 
-// 移动到分组子菜单
-const showMoveToGroupSubmenu = ref(false)
-const moveToGroupSubmenuOnLeft = ref(false)
-
 function handleContextMenu(event: MouseEvent, file: FileItem) {
   event.preventDefault()
 
