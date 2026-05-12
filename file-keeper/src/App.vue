@@ -50,6 +50,47 @@
       </div>
     </div>
 
+    <!-- Batch Operations Toolbar -->
+    <transition name="fade">
+      <div
+        v-if="selectionStore.hasSelection"
+        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border px-6 py-3 flex items-center space-x-4"
+      >
+        <span class="text-sm text-gray-600 dark:text-gray-300">
+          已选择 <strong class="text-primary">{{ selectionStore.selectedCount }}</strong> 项
+        </span>
+        <div class="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
+        <button
+          @click="handleBatchOpen"
+        class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+      >
+          <FolderOpen :size="14" />
+      <span>打开</span>
+     </button>
+        <button
+          @click="showBatchMoveMenu = true"
+          class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+        >
+        <FolderInput :size="14" />
+          <span>移动</span>
+        </button>
+        <button
+          @click="handleBatchDelete"
+      class="flex items-center space-x-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
+        >
+      <Trash2 :size="14" />
+          <span>删除</span>
+        </button>
+        <div class="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
+        <button
+          @click="selectionStore.clearSelection"
+          class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+        >
+      取消
+        </button>
+      </div>
+    </transition>
+
     <!-- 3. 分组标签栏 -->
     <div class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
       <button
@@ -96,9 +137,29 @@
             v-for="file in fileStore.filteredFiles"
             :key="file.id"
          @contextmenu.prevent="handleContextMenu($event, file)"
-          @click="handleFileClick(file)"
+        @click="handleFileClick(file)"
+          @mouseenter="hoveredFileId = file.id"
+       @mouseleave="hoveredFileId = null"
             class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col hover:-translate-y-1"
           >
+            <!-- Selection Checkbox -->
+            <div
+            v-if="selectionStore.hasSelection || file.id === hoveredFileId"
+            class="absolute top-2 left-2 z-10"
+           @click.stop="selectionStore.toggleSelection(file.id)"
+          >
+              <div
+       :class="[
+                  'w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-all',
+                  selectionStore.isSelected(file.id)
+                  ? 'bg-primary border-primary'
+                    : 'bg-white dark:bg-dark-panel border-gray-300 dark:border-gray-600 hover:border-primary'
+                ]"
+              >
+          <Check v-if="selectionStore.isSelected(file.id)" :size="14" class="text-white" />
+              </div>
+            </div>
+
             <button
            @click.stop="handleContextMenu($event, file)"
             class="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-[#383838] transition-all text-gray-500"
@@ -439,11 +500,13 @@ import {
   FileText,
   Folder,
   Image,
-  Code
+  Code,
+  FolderOpen
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useSelectionStore } from './stores/selectionStore'
 import { openFile, showInFolder } from './api/files'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
@@ -456,6 +519,35 @@ import type { ProcessInfo } from './types/process'
 const fileStore = useFileStore()
 const groupStore = useGroupStore()
 const settingsStore = useSettingsStore()
+const selectionStore = useSelectionStore()
+
+// Hover state for checkboxes
+const hoveredFileId = ref<string | null>(null)
+
+// Batch operations
+const showBatchMoveMenu = ref(false)
+
+function handleBatchOpen() {
+  const ids = Array.from(selectionStore.selectedIds)
+  fileStore.batchOpen(ids)
+  selectionStore.clearSelection()
+}
+
+function handleBatchDelete() {
+  const ids = Array.from(selectionStore.selectedIds)
+  const confirmed = confirm(`确定删除选中的 ${ids.length} 个项目？`)
+  if (confirmed) {
+    fileStore.batchDelete(ids)
+    selectionStore.clearSelection()
+  }
+}
+
+function handleBatchMove(targetGroupId: string) {
+  const ids = Array.from(selectionStore.selectedIds)
+  fileStore.batchMove(ids, targetGroupId)
+  selectionStore.clearSelection()
+  showBatchMoveMenu.value = false
+}
 
 // Theme
 const currentTheme = computed(() => settingsStore.settings.theme)

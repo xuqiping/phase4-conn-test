@@ -2,8 +2,12 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { FileItem } from '../types/file'
 import { v4 as uuidv4 } from 'uuid'
+import { useGroupStore } from './groupStore'
+import { openFile } from '../api/files'
 
 export const useFileStore = defineStore('file', () => {
+  const groupStore = useGroupStore()
+
   // State
   const files = ref<FileItem[]>([
     {
@@ -80,23 +84,22 @@ export const useFileStore = defineStore('file', () => {
     }
   ])
   const searchQuery = ref('')
-  const currentGroupId = ref('all')
 
   // Getters
   const filteredFiles = computed(() => {
     let result = files.value
 
     // Filter by group
-    if (currentGroupId.value === 'all') {
+    if (groupStore.currentGroupId === 'all') {
       // Show all files
-    } else if (currentGroupId.value === 'recent') {
+    } else if (groupStore.currentGroupId === 'recent') {
       // Show recently opened files (openCount > 20 or opened in last 7 days)
       result = result.filter(f =>
         f.openCount > 20 ||
         (f.lastOpened && Date.now() - f.lastOpened < 7 * 24 * 60 * 60 * 1000)
       )
     } else {
-      result = result.filter(f => f.groupId === currentGroupId.value)
+      result = result.filter(f => f.groupId === groupStore.currentGroupId)
     }
 
     // Filter by search query
@@ -166,19 +169,44 @@ export const useFileStore = defineStore('file', () => {
     searchQuery.value = query
   }
 
-  function setCurrentGroup(groupId: string) {
-    currentGroupId.value = groupId
-  }
-
   function loadFiles(data: FileItem[]) {
     files.value = data
+  }
+
+  function batchOpen(ids: string[]) {
+    const filesToOpen = files.value.filter(f => ids.includes(f.id))
+    filesToOpen.forEach(file => {
+      openFile(file.path).catch(err => {
+        console.error(`Failed to open ${file.name}:`, err)
+      })
+      recordOpen(file.id)
+    })
+  }
+
+  function batchDelete(ids: string[]) {
+    ids.forEach(id => removeFile(id))
+  }
+
+  function batchMove(ids: string[], targetGroupId: string) {
+    ids.forEach(id => {
+      updateFile(id, { groupId: targetGroupId })
+    })
+  }
+
+  function batchAddTags(ids: string[], tags: string[]) {
+    ids.forEach(id => {
+      const file = files.value.find(f => f.id === id)
+      if (file) {
+        const newTags = [...new Set([...file.tags, ...tags])]
+        updateFile(id, { tags: newTags })
+      }
+    })
   }
 
   return {
     // State
     files,
     searchQuery,
-    currentGroupId,
     // Getters
     filteredFiles,
     recentFiles,
@@ -188,8 +216,11 @@ export const useFileStore = defineStore('file', () => {
     updateFile,
     recordOpen,
     setSearchQuery,
-    setCurrentGroup,
-    loadFiles
+    loadFiles,
+    batchOpen,
+    batchDelete,
+    batchMove,
+    batchAddTags
   }
 }, {
   persist: {
