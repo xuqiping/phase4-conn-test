@@ -82,7 +82,13 @@
     </div>
 
     <!-- 4. 主内容区 -->
-    <div class="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-dark-bg">
+    <div
+      class="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-dark-bg relative transition-colors duration-200"
+      :class="{ 'bg-primary/5 dark:bg-primary/5': isDraggingOver }"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+    >
 
       <!-- 空状态 -->
       <div v-if="fileStore.filteredFiles.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400">
@@ -451,6 +457,7 @@ import { openFile, showInFolder } from './api/files'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
+import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -478,6 +485,73 @@ const viewMode = computed(() => settingsStore.settings.defaultView)
 
 function setViewMode(mode: 'grid' | 'list') {
   settingsStore.setViewMode(mode)
+}
+
+// Drag and Drop
+const isDraggingOver = ref(false)
+
+function handleDragOver(e: DragEvent) {
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  isDraggingOver.value = true
+}
+
+function handleDragLeave(e: DragEvent) {
+  const target = e.currentTarget as HTMLElement
+  const relatedTarget = e.relatedTarget as HTMLElement
+  if (!target.contains(relatedTarget)) {
+    isDraggingOver.value = false
+  }
+}
+
+async function handleDrop(e: DragEvent) {
+  e.preventDefault()
+  isDraggingOver.value = false
+
+  const items = e.dataTransfer?.items
+  if (!items) return
+
+  for (let i = 0; i < items.length; i++) {
+    const entry = items[i].webkitGetAsEntry()
+    if (entry) {
+      await processDroppedEntry(entry)
+    }
+  }
+}
+
+async function processDroppedEntry(entry: FileSystemEntry) {
+  try {
+    const rawPath = (entry as any).fullPath || entry.name
+
+    const { validatePath } = await import('./api/files')
+    const isValid = await validatePath(rawPath)
+    if (!isValid) {
+      console.warn(`拖拽路径无效: ${rawPath}`)
+      return
+    }
+
+    const name = entry.name
+    const type: 'file' | 'folder' = entry.isDirectory ? 'folder' : 'file'
+    const icon = type === 'folder' ? 'folder' : deriveIconFromExt(name)
+
+    const newItem = fileStore.addFile({
+      name,
+      path: rawPath,
+      type,
+      icon,
+      tags: [],
+      groupId: resolveGroupId(
+        groupStore.currentGroupId,
+        groupStore.customGroups[0]?.id
+      )
+    })
+
+    if (!newItem) {
+      console.warn(`项目已存在: ${rawPath}`)
+    }
+  } catch (error) {
+    console.error('拖拽处理失败:', error)
+  }
 }
 
 // Window Controls
