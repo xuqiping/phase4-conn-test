@@ -72,13 +72,6 @@
       >
         <FolderCog :size="16" />
       </button>
-      <button
-        class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center ml-auto"
-        @click="showGroupManager = true"
-        title="管理分组"
-      >
-        <FolderCog :size="16" />
-      </button>
     </div>
 
     <!-- 4. 主内容区 -->
@@ -205,7 +198,7 @@
     <transition name="fade">
       <div
         v-if="contextMenu.show"
-        class="fixed z-50 w-56 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] py-1 text-sm overflow-hidden"
+        class="fixed z-50 w-56 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] py-1 text-sm"
         :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
         @click.stop
       >
@@ -229,11 +222,12 @@
         <!-- 移动到分组（带子菜单） -->
         <div
           class="relative"
-          @mouseenter="showMoveToGroupSubmenu = true"
           @mouseleave="showMoveToGroupSubmenu = false"
         >
           <button
             class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center justify-between text-gray-700 dark:text-gray-200 transition-colors"
+            @click.stop="showMoveToGroupSubmenu = !showMoveToGroupSubmenu"
+            @mouseenter="showMoveToGroupSubmenu = true"
           >
             <span class="flex items-center">
               <FolderInput :size="14" class="mr-2" />
@@ -243,14 +237,11 @@
           </button>
 
           <!-- 子菜单 -->
-          <transition name="fade">
-            <div
-              v-if="showMoveToGroupSubmenu"
-              :class="[
-                'absolute top-0 py-1 w-44 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] text-sm',
-                moveToGroupSubmenuOnLeft ? 'right-full mr-1' : 'left-full ml-1'
-              ]"
-            >
+          <div
+            v-show="showMoveToGroupSubmenu"
+            class="absolute top-0 py-1 w-44 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] text-sm z-10"
+            :class="moveToGroupSubmenuOnLeft ? 'right-full mr-1' : 'left-full ml-1'"
+          >
               <button
                 v-for="group in groupStore.groups"
                 :key="group.id"
@@ -262,7 +253,7 @@
                 <span class="truncate">{{ group.name }}</span>
               </button>
             </div>
-          </transition>
+          </div>
         </div>
 
         <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
@@ -399,13 +390,6 @@
         </div>
       </div>
     </transition>
-
-    <!-- 分组管理对话框 -->
-    <GroupManager
-      :visible="showGroupManager"
-      @close="showGroupManager = false"
-      @add-group="handleAddGroup"
-    />
 
     <!-- 分组管理对话框 -->
     <GroupManager
