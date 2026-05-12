@@ -120,9 +120,11 @@
                 :class="['mb-3 opacity-90 group-hover:opacity-100 group-hover:scale-110 transition-transform duration-300', getFileColor(file.icon || file.type)]"
                 :stroke-width="1.5"
               />
-              <h3 class="text-sm font-medium text-center line-clamp-2 leading-snug w-full px-2" :title="file.name">
-                {{ file.name }}
-              </h3>
+              <h3
+                class="text-sm font-medium text-center line-clamp-2 leading-snug w-full px-2"
+                :title="file.name"
+                v-html="highlightText(file.name, fileStore.searchQuery)"
+              />
             </div>
 
             <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 w-full pt-3 border-t border-gray-100 dark:border-[#333]">
@@ -150,8 +152,14 @@
             <div class="w-1/2 flex items-center pr-4">
               <component :is="getFileIcon(file.icon || file.type)" :size="18" :class="[getFileColor(file.icon || file.type), 'mr-3 flex-shrink-0']" />
             <div class="flex flex-col truncate">
-              <span class="text-sm font-medium truncate">{{ file.name }}</span>
-                <span class="text-[11px] text-gray-400 truncate mt-0.5">{{ file.path }}</span>
+              <span
+                class="text-sm font-medium truncate"
+                v-html="highlightText(file.name, fileStore.searchQuery)"
+              />
+                <span
+                  class="text-[11px] text-gray-400 truncate mt-0.5"
+                  v-html="highlightText(file.path, fileStore.searchQuery)"
+                />
               </div>
             </div>
           <div class="w-1/6 text-sm text-gray-500">{{ getGroupName(file.groupId) }}</div>
@@ -458,6 +466,7 @@ import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
+import { highlightText } from './utils/highlight'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
