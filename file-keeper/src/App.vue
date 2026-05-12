@@ -33,10 +33,7 @@
       </div>
 
       <div class="flex items-center space-x-3">
-        <button class="flex items-center space-x-1 bg-primary hover:bg-[#369b6e] text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm shadow-primary/20" @click="handleAddFile">
-          <Plus :size="16" />
-      <span>添加文件</span>
-        </button>
+        <AddFileButton />
 
         <button
           @click="toggleTheme"
@@ -399,8 +396,9 @@ import {
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { pickFile, pickFolder, validatePath, openFile, showInFolder } from './api/files'
+import { openFile, showInFolder } from './api/files'
 import GroupManager from './components/GroupManager.vue'
+import AddFileButton from './components/AddFileButton.vue'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -450,66 +448,6 @@ const selectedFile = ref<FileItem | null>(null)
 const showProcessManager = ref(false)
 const currentProcesses = ref<ProcessInfo[]>([])
 const confirmClosePID = ref<number | null>(null)
-
-async function handleAddFile() {
-  try {
-    const choice = confirm('添加文件？\n确定 = 文件\n取消 = 文件夹')
-
-    let selectedPath: string | null
-
-    if (choice) {
-      selectedPath = await pickFile()
-    } else {
-      selectedPath = await pickFolder()
-    }
-
-    if (!selectedPath) {
-      return
-    }
-
-    const isValid = await validatePath(selectedPath)
-    if (!isValid) {
-      alert('路径不存在或无法访问')
-      return
-    }
-
-    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
-    let type: 'file' | 'folder' = 'file'
-    let icon = 'file'
-
-    if (choice) {
-      const ext = name.split('.').pop()?.toLowerCase() || ''
-      if (['doc', 'docx'].includes(ext)) icon = 'word'
-      else if (['xls', 'xlsx'].includes(ext)) icon = 'excel'
-      else if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) icon = 'image'
-      else if (['js', 'ts', 'py', 'java'].includes(ext)) icon = 'code'
-    } else {
-      type = 'folder'
-      icon = 'folder'
-    }
-
-    const newItem = fileStore.addFile({
-      name,
-      path: selectedPath,
-      type,
-      icon,
-      tags: [],
-      groupId: groupStore.currentGroupId === 'all' || groupStore.currentGroupId === 'recent'
-        ? (groupStore.customGroups[0]?.id || 'all')
-        : groupStore.currentGroupId
-    })
-
-    if (!newItem) {
-      alert('该项目已存在')
-      return
-    }
-
-    console.log(`已添加${type === 'folder' ? '文件夹' : '文件'}: ${name}`)
-  } catch (error) {
-    console.error('添加失败:', error)
-    alert(`添加失败: ${error}`)
-  }
-}
 
 async function handleFileClick(file: FileItem) {
   try {
