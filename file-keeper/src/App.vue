@@ -252,11 +252,10 @@
                 <span v-else class="w-[22px] mr-2" />
                 <span class="truncate">{{ group.name }}</span>
               </button>
-            </div>
-          </div>
+         </div>
         </div>
 
-        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
+     <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors" @click="handleMenuAction('add-tag')">
           <Tag :size="14" class="mr-2" /> 添加标签
         </button>
 
