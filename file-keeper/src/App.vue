@@ -400,6 +400,15 @@
       @add-group="handleAddGroup"
     />
 
+    <!-- 编辑文件对话框 -->
+    <EditFileDialog
+      v-if="editingFile"
+      :visible="!!editingFile"
+      :file="editingFile"
+      @close="editingFile = null"
+      @saved="handleFileSaved"
+    />
+
     <!-- 全局点击处理 -->
     <div v-if="contextMenu.show" class="fixed inset-0 z-40" @click="closeContextMenu"></div>
   </div>
@@ -441,6 +450,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { openFile, showInFolder } from './api/files'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
+import EditFileDialog from './components/EditFileDialog.vue'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -487,6 +497,7 @@ function closeWindow() {
 
 // File Operations
 const selectedFile = ref<FileItem | null>(null)
+const editingFile = ref<FileItem | null>(null)
 const showProcessManager = ref(false)
 const currentProcesses = ref<ProcessInfo[]>([])
 const confirmClosePID = ref<number | null>(null)
@@ -556,6 +567,13 @@ function closeContextMenu() {
   showMoveToGroupSubmenu.value = false
 }
 
+function handleFileSaved(updates: Partial<FileItem>) {
+  if (editingFile.value) {
+    fileStore.updateFile(editingFile.value.id, updates)
+    editingFile.value = null
+  }
+}
+
 function handleMoveToGroup(targetGroupId: string) {
   const file = contextMenu.value.file
   if (!file) return
@@ -590,8 +608,8 @@ function handleMenuAction(action: string) {
       handleShowInFolder(file)
     break
     case 'edit':
-      console.log('编辑信息功能待实现')
-      break
+      editingFile.value = file
+      return // don't close context menu, dialog handles it
     case 'add-tag':
       console.log('添加标签功能待实现')
       break
