@@ -7,6 +7,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn()
 }))
 
+vi.mock('@tauri-apps/api/path', () => ({
+  documentDir: vi.fn(() => Promise.resolve('C:\\Users\\Test\\Documents'))
+}))
+
 describe('files API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -20,8 +24,12 @@ describe('files API', () => {
 
       expect(result).toBe('/path/to/file.txt')
       expect(open).toHaveBeenCalledWith({
-        multiple: false,
-        directory: false
+        directory: false,
+        filters: [{
+          name: 'All Files',
+          extensions: []
+        }],
+        defaultPath: 'C:\\Users\\Test\\Documents'
       })
     })
 
