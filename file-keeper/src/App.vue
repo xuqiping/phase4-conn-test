@@ -664,17 +664,6 @@ function handleMoveToGroup(targetGroupId: string) {
   closeContextMenu()
 }
 
-function handleMoveToGroup(targetGroupId: string) {
-  const file = contextMenu.value.file
-  if (!file) return
-  if (file.groupId === targetGroupId) {
-    closeContextMenu()
-    return
-  }
-  fileStore.updateFile(file.id, { groupId: targetGroupId })
-  closeContextMenu()
-}
-
 function handleMenuAction(action: string) {
   const file = contextMenu.value.file
   if (!file) return
