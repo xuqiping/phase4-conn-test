@@ -53,7 +53,10 @@
           <Moon v-else :size="18" />
         </button>
 
-        <button class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors">
+        <button
+          @click="showSettings = true"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+        >
           <Settings :size="18" />
         </button>
       </div>
@@ -394,6 +397,13 @@
       </div>
     </transition>
 
+    <!-- Settings Dialog -->
+    <SettingsDialog
+      :show="showSettings"
+      @close="showSettings = false"
+      @save="handleSaveSettings"
+    />
+
     <!-- Process Manager Dialog -->
     <transition name="fade">
       <div
@@ -579,6 +589,7 @@ import { findFileProcesses, closeProcess } from './api/processes'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import type { FileItem } from './types/file'
@@ -594,6 +605,7 @@ const hoveredFileId = ref<string | null>(null)
 
 // Batch operations
 const showBatchMoveMenu = ref(false)
+const showSettings = ref(false)
 
 function handleBatchOpen() {
   const ids = Array.from(selectionStore.selectedIds)
@@ -787,24 +799,93 @@ async function closeWindow() {
   }
 }
 
+async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' }) {
+  const oldShortcut = settingsStore.settings.globalShortcut
+
+  // Update settings
+  settingsStore.updateSettings(settings)
+
+  // Re-register global shortcut if changed
+  if (settings.globalShortcut !== oldShortcut) {
+    try {
+      // Unregister old shortcut
+      if (oldShortcut) {
+        await unregisterGlobalShortcut(oldShortcut)
+      }
+
+      // Register new shortcut
+      if (settings.globalShortcut) {
+        await registerGlobalShortcut(settings.globalShortcut, async () => {
+          if (shortcutHandling) return; shortcutHandling = true; try {
+          const isVisible = await appWindow.isVisible()
+      if (isVisible) { await appWindow.hide() } else { await appWindow.show(); await appWindow.setFocus() }
+          } finally { setTimeout(() => { shortcutHandling = false }, 300) }
+        })
+        console.log(`Global shortcut updated: ${settings.globalShortcut}`)
+      }
+    } catch (error) {
+      console.error('Failed to update global shortcut:', error)
+      alert(`快捷键更新失败: ${error}`)
+    }
+  }
+
+  showSettings.value = false
+}
+
 // Global Shortcut Registration & Tauri DnD
 let dndUnlisten: (() => void) | null = null
+let closeRequestedUnlisten: (() => void) | null = null
+let shortcutHandling = false // Prevent double-trigger
 
 onMounted(async () => {
+  // Intercept window close event to minimize to tray
+  closeRequestedUnlisten = await appWindow.onCloseRequested(async (event) => {
+    console.log('Close requested event triggered')
+    console.log('minimizeToTray setting:', settingsStore.settings.minimizeToTray)
+    if (settingsStore.settings.minimizeToTray) {
+      console.log('Preventing close and hiding window')
+      event.preventDefault()
+      await appWindow.hide()
+    } else {
+      console.log('Allowing window to close')
+    }
+  })
+  console.log('Close requested listener registered')
+
   const shortcut = settingsStore.settings.globalShortcut
+  console.log('Attempting to register global shortcut:', shortcut)
   try {
     await registerGlobalShortcut(shortcut, async () => {
-      const isVisible = await appWindow.isVisible()
-      if (isVisible) {
-        await appWindow.hide()
-      } else {
-      await appWindow.show()
-    await appWindow.setFocus()
+      if (shortcutHandling) {
+        console.log('Shortcut already handling, ignoring duplicate trigger')
+        return
+      }
+
+      shortcutHandling = true
+      console.log('Global shortcut triggered!')
+
+      try {
+        const isVisible = await appWindow.isVisible()
+        console.log('Window visible:', isVisible)
+        if (isVisible) {
+          await appWindow.hide()
+        console.log('Window hidden')
+        } else {
+          await appWindow.show()
+        await appWindow.setFocus()
+          console.log('Window shown and focused')
+        }
+      } finally {
+        // Reset flag after a short delay
+        setTimeout(() => {
+          shortcutHandling = false
+        }, 300)
       }
     })
-    console.log(`Global shortcut registered: ${shortcut}`)
+    console.log(`Global shortcut registered successfully: ${shortcut}`)
   } catch (error) {
     console.error('Failed to register global shortcut:', error)
+    alert(`快捷键注册失败: ${error}`)
   }
 
   // Tauri native drag-drop (provides real file paths)
@@ -836,6 +917,10 @@ onUnmounted(async () => {
   if (dndUnlisten) {
     dndUnlisten()
     dndUnlisten = null
+  }
+  if (closeRequestedUnlisten) {
+    closeRequestedUnlisten()
+    closeRequestedUnlisten = null
   }
 })
 
