@@ -179,7 +179,21 @@
                 :title="file.name"
                 v-html="highlightText(file.name, fileStore.searchQuery)"
               />
-            </div>
+               </div>
+
+          <!-- Tags -->
+            <div v-if="file.tags && file.tags.length > 0" class="mt-2 flex flex-wrap gap-1 justify-center">
+              <span
+                v-for="tag in file.tags.slice(0, 3)"
+             :key="tag"
+                class="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20"
+          >
+                {{ tag }}
+              </span>
+              <span v-if="file.tags.length > 3" class="text-[10px] text-gray-400">
+                +{{ file.tags.length - 3 }}
+            </span>
+        </div>
 
             <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 w-full pt-3 border-t border-gray-100 dark:border-[#333]">
             <span class="truncate max-w-[80px]" :title="getGroupName(file.groupId)">{{ getGroupName(file.groupId) }}</span>
@@ -588,50 +602,50 @@ const isDraggingOver = ref(false)
 function handleDragOver(e: DragEvent) {
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-  isDraggingOver.value = true
 }
 
-function handleDragLeave(e: DragEvent) {
-  const target = e.currentTarget as HTMLElement
-  const relatedTarget = e.relatedTarget as HTMLElement
-  if (!target.contains(relatedTarget)) {
-    isDraggingOver.value = false
-  }
+function handleDragLeave(_e: DragEvent) {
+  // Handled by Tauri onDragDropEvent
 }
 
-async function handleDrop(e: DragEvent) {
+function handleDrop(e: DragEvent) {
+  // Prevent default browser behavior; actual file drop is handled by Tauri
   e.preventDefault()
-  isDraggingOver.value = false
+}
 
-  const items = e.dataTransfer?.items
-  if (!items) return
-
-  for (let i = 0; i < items.length; i++) {
-    const entry = items[i].webkitGetAsEntry()
-    if (entry) {
-      await processDroppedEntry(entry)
-    }
+async function handleTauriDroppedPaths(paths: string[]) {
+  for (const filePath of paths) {
+    await processDroppedPath(filePath)
   }
 }
 
-async function processDroppedEntry(entry: FileSystemEntry) {
+async function processDroppedPath(filePath: string) {
   try {
-    const rawPath = (entry as any).fullPath || entry.name
-
     const { validatePath } = await import('./api/files')
-    const isValid = await validatePath(rawPath)
+    const isValid = await validatePath(filePath)
     if (!isValid) {
-      console.warn(`拖拽路径无效: ${rawPath}`)
+      console.warn(`拖拽路径无效: ${filePath}`)
       return
     }
+    // Determine if it's a file or folder based on path (no extension usually means folder, but check via stat)
+    const { stat } = await import('@tauri-apps/plugin-fs')
+    let isFolder = false
+    try {
+      const info = await stat(filePath)
+      isFolder = info.isDirectory
+    } catch {
+      // Fallback: check if there's a file extension
+      const lastSegment = filePath.split(/[/\\]/).pop() || ''
+      isFolder = !lastSegment.includes('.')
+    }
 
-    const name = entry.name
-    const type: 'file' | 'folder' = entry.isDirectory ? 'folder' : 'file'
-    const icon = type === 'folder' ? 'folder' : deriveIconFromExt(name)
+    const name = filePath.split(/[/\\]/).pop() || filePath
+    const type: 'file' | 'folder' = isFolder ? 'folder' : 'file'
+    const icon = isFolder ? 'folder' : deriveIconFromExt(name)
 
     const newItem = fileStore.addFile({
       name,
-      path: rawPath,
+      path: filePath,
       type,
       icon,
       tags: [],
@@ -642,12 +656,13 @@ async function processDroppedEntry(entry: FileSystemEntry) {
     })
 
     if (!newItem) {
-      console.warn(`项目已存在: ${rawPath}`)
+    console.warn(`项目已存在: ${filePath}`)
     }
   } catch (error) {
     console.error('拖拽处理失败:', error)
   }
 }
+
 
 // Window Controls
 const appWindow = getCurrentWindow()
@@ -673,7 +688,9 @@ async function closeWindow() {
   }
 }
 
-// Global Shortcut Registration
+// Global Shortcut Registration & Tauri DnD
+let dndUnlisten: (() => void) | null = null
+
 onMounted(async () => {
   const shortcut = settingsStore.settings.globalShortcut
   try {
@@ -683,21 +700,43 @@ onMounted(async () => {
         await appWindow.hide()
       } else {
       await appWindow.show()
-        await appWindow.setFocus()
+    await appWindow.setFocus()
       }
     })
     console.log(`Global shortcut registered: ${shortcut}`)
   } catch (error) {
     console.error('Failed to register global shortcut:', error)
   }
-})
 
+  // Tauri native drag-drop (provides real file paths)
+  try {
+    dndUnlisten = await appWindow.onDragDropEvent((event) => {
+      if (event.payload.type === 'enter' || event.payload.type === 'over') {
+        isDraggingOver.value = true
+      } else if (event.payload.type === 'leave') {
+        isDraggingOver.value = false
+      } else if (event.payload.type === 'drop') {
+        isDraggingOver.value = false
+        const paths = (event.payload as any).paths as string[] | undefined
+        if (paths && paths.length > 0) {
+        handleTauriDroppedPaths(paths)
+        }
+      }
+    })
+  } catch (error) {
+    console.error('Failed to register drag-drop listener:', error)
+  }
+})
 onUnmounted(async () => {
   const shortcut = settingsStore.settings.globalShortcut
   try {
     await unregisterGlobalShortcut(shortcut)
   } catch (error) {
     console.error('Failed to unregister shortcut:', error)
+  }
+  if (dndUnlisten) {
+    dndUnlisten()
+    dndUnlisten = null
   }
 })
 
@@ -828,9 +867,10 @@ function handleMenuAction(action: string) {
     break
     case 'edit':
       editingFile.value = file
-      return // don't close context menu, dialog handles it
+      closeContextMenu()
+      return
     case 'add-tag':
-      console.log('添加标签功能待实现')
+      handleAddTag(file)
       break
     case 'close-processes':
       handleShowProcesses(file)
@@ -841,6 +881,31 @@ function handleMenuAction(action: string) {
   }
 
   closeContextMenu()
+}
+
+function handleAddTag(file: FileItem) {
+  const tagName = prompt('请输入标签名称（最多20个字符）：')
+  if (!tagName) return
+
+  if (tagName.length > 20) {
+    alert('标签名称不能超过20个字符')
+    return
+  }
+
+  const currentTags = file.tags || []
+  if (currentTags.includes(tagName)) {
+    alert('该标签已存在')
+    return
+  }
+
+  if (currentTags.length >= 10) {
+    alert('最多只能添加10个标签')
+    return
+  }
+
+  fileStore.updateFile(file.id, {
+    tags: [...currentTags, tagName]
+  })
 }
 
 async function handleShowProcesses(file: FileItem) {

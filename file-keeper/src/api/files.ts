@@ -7,7 +7,7 @@ export async function pickFile(): Promise<string | null> {
   const defaultPath = await documentDir()
   const selected = await open({
     directory: false,
-    filters: [{ name: 'All Files', extensions: [] }],
+    multiple: false,
     defaultPath: defaultPath ?? undefined
   })
 

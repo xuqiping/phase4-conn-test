@@ -25,10 +25,7 @@ describe('files API', () => {
       expect(result).toBe('/path/to/file.txt')
       expect(open).toHaveBeenCalledWith({
         directory: false,
-        filters: [{
-          name: 'All Files',
-          extensions: []
-        }],
+        multiple: false,
         defaultPath: 'C:\\Users\\Test\\Documents'
       })
     })
@@ -61,6 +58,6 @@ describe('files API', () => {
       const result = await pickFolder()
 
       expect(result).toBeNull()
-    })
+  })
   })
 })
