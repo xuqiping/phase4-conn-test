@@ -84,6 +84,13 @@
           <span>移动</span>
         </button>
         <button
+          @click="handleBatchAddTag"
+          class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+        >
+          <Tag :size="14" />
+      <span>添加标签</span>
+        </button>
+        <button
           @click="handleBatchDelete"
       class="flex items-center space-x-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
         >
@@ -97,6 +104,32 @@
         >
       取消
         </button>
+      </div>
+    </transition>
+
+    <!-- Batch Move Menu -->
+    <transition name="fade">
+      <div
+     v-if="showBatchMoveMenu"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        @click="showBatchMoveMenu = false"
+      >
+        <div
+          class="bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border p-4 min-w-[200px]"
+          @click.stop
+        >
+          <h3 class="text-sm font-semibold mb-3 text-gray-800 dark:text-gray-100">移动到分组</h3>
+          <div class="space-y-1">
+            <button
+              v-for="group in groupStore.customGroups"
+              :key="group.id"
+              @click="handleBatchMove(group.id)"
+              class="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-dark-hover transition-colors text-gray-700 dark:text-gray-200"
+            >
+              {{ group.name }}
+         </button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -146,7 +179,7 @@
             v-for="file in fileStore.filteredFiles"
             :key="file.id"
          @contextmenu.prevent="handleContextMenu($event, file)"
-        @click="handleFileClick(file)"
+        @click="handleCardClick($event, file)"
           @mouseenter="hoveredFileId = file.id"
        @mouseleave="hoveredFileId = null"
             class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col hover:-translate-y-1"
@@ -584,6 +617,20 @@ function handleBatchMove(targetGroupId: string) {
   showBatchMoveMenu.value = false
 }
 
+function handleBatchAddTag() {
+  const tagName = prompt('请输入标签名称（最多20个字符）：')
+  if (!tagName) return
+
+  if (tagName.length > 20) {
+    alert('标签名称不能超过20个字符')
+    return
+  }
+
+  const ids = Array.from(selectionStore.selectedIds)
+  fileStore.batchAddTags(ids, [tagName])
+  selectionStore.clearSelection()
+}
+
 // Theme
 const currentTheme = computed(() => settingsStore.settings.theme)
 
@@ -836,6 +883,17 @@ async function handleFileClick(file: FileItem) {
   } catch (error) {
     console.error(`打开失败: ${error}`)
     alert(`打开失败: ${error}`)
+  }
+}
+
+function handleCardClick(event: MouseEvent, file: FileItem) {
+  // Check if Ctrl/Cmd key is pressed for multi-select
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault()
+    selectionStore.toggleSelection(file.id)
+  } else {
+  // Normal click - open file
+    handleFileClick(file)
   }
 }
 
