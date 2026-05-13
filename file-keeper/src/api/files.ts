@@ -15,9 +15,11 @@ export async function pickFile(): Promise<string | null> {
 }
 
 export async function pickFolder(): Promise<string | null> {
+  const defaultPath = await documentDir()
   const selected = await open({
+    directory: true,
     multiple: false,
-    directory: true
+    defaultPath: defaultPath ?? undefined
   })
 
   return selected as string | null
