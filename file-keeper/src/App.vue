@@ -480,8 +480,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { onKeyStroke } from '@vueuse/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { registerGlobalShortcut, unregisterGlobalShortcut } from './api/shortcuts'
 import {
   Search,
   Plus,
@@ -650,17 +652,81 @@ async function processDroppedEntry(entry: FileSystemEntry) {
 // Window Controls
 const appWindow = getCurrentWindow()
 
-function minimizeWindow() {
-  appWindow.minimize()
+async function minimizeWindow() {
+  await appWindow.minimize()
 }
 
-function maximizeWindow() {
-  appWindow.toggleMaximize()
+async function maximizeWindow() {
+  const isMaximized = await appWindow.isMaximized()
+  if (isMaximized) {
+    await appWindow.unmaximize()
+  } else {
+    await appWindow.maximize()
+  }
 }
 
-function closeWindow() {
-  appWindow.close()
+async function closeWindow() {
+  if (settingsStore.settings.minimizeToTray) {
+    await appWindow.hide()
+  } else {
+    await appWindow.close()
+  }
 }
+
+// Global Shortcut Registration
+onMounted(async () => {
+  const shortcut = settingsStore.settings.globalShortcut
+  try {
+    await registerGlobalShortcut(shortcut, async () => {
+      const isVisible = await appWindow.isVisible()
+      if (isVisible) {
+        await appWindow.hide()
+      } else {
+      await appWindow.show()
+        await appWindow.setFocus()
+      }
+    })
+    console.log(`Global shortcut registered: ${shortcut}`)
+  } catch (error) {
+    console.error('Failed to register global shortcut:', error)
+  }
+})
+
+onUnmounted(async () => {
+  const shortcut = settingsStore.settings.globalShortcut
+  try {
+    await unregisterGlobalShortcut(shortcut)
+  } catch (error) {
+    console.error('Failed to unregister shortcut:', error)
+  }
+})
+
+// Keyboard Shortcuts for Batch Operations
+// Ctrl+A to select all visible files
+onKeyStroke('a', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    const visibleIds = fileStore.filteredFiles.map(f => f.id)
+    selectionStore.selectAll(visibleIds)
+  }
+})
+
+// Escape to clear selection
+onKeyStroke('Escape', () => {
+  if (selectionStore.hasSelection) {
+    selectionStore.clearSelection()
+  }
+  if (contextMenu.value.show) {
+    closeContextMenu()
+  }
+})
+
+// Delete key to batch delete
+onKeyStroke('Delete', () => {
+  if (selectionStore.hasSelection) {
+    handleBatchDelete()
+  }
+})
 
 // File Operations
 const editingFile = ref<FileItem | null>(null)
