@@ -9,7 +9,7 @@ use commands::files::{open_file, validate_path, show_in_folder};
 use commands::processes::{find_file_processes, close_process, close_file_processes};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::image::Image;
+use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
@@ -32,9 +32,9 @@ fn main() {
 
             // Build tray icon
             let _tray = TrayIconBuilder::new()
-                .icon(Image::from_bytes(include_bytes!("../icons/icon.ico")).unwrap_or_else(|_| Image::default()))
-                .tooltip("File Keeper")
-                .menu(&menu)
+          .icon(app.default_window_icon().unwrap().clone())
+       .tooltip("File Keeper")
+             .menu(&menu)
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
                         "show" => {
