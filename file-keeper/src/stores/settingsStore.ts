@@ -7,7 +7,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({
     theme: 'dark',
     defaultView: 'grid',
-    globalShortcut: 'CommandOrControl+Shift+F',
+    globalShortcut: 'CommandOrControl+Alt+K',
     minimizeToTray: true,
     autoStart: false,
     language: 'zh-CN',

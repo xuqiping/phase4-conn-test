@@ -105,11 +105,29 @@ export const useFileStore = defineStore('file', () => {
     // Filter by search query
     if (searchQuery.value) {
       const query = searchQuery.value.toLowerCase()
+
+      // Check if query contains wildcard
+      if (query.includes('*')) {
+        // Convert wildcard pattern to regex
+        const regexPattern = query
+          .split('*')
+          .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) // Escape special chars
+          .join('.*') // Replace * with .*
+        const regex = new RegExp(regexPattern, 'i')
+
+        result = result.filter(f =>
+       regex.test(f.name) ||
+          regex.test(f.path) ||
+        f.tags.some(tag => regex.test(tag))
+    )
+      } else {
+        // Normal substring search
       result = result.filter(f =>
-        f.name.toLowerCase().includes(query) ||
-        f.path.toLowerCase().includes(query) ||
-        f.tags.some(tag => tag.toLowerCase().includes(query))
-      )
+          f.name.toLowerCase().includes(query) ||
+          f.path.toLowerCase().includes(query) ||
+          f.tags.some(tag => tag.toLowerCase().includes(query))
+        )
+      }
     }
 
     return result

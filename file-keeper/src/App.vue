@@ -35,6 +35,15 @@
       <div class="flex items-center space-x-3">
         <AddFileButton />
 
+      <button
+          @click="handleAddFolder"
+          class="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
+          title="添加文件夹"
+        >
+          <FolderPlus :size="16" />
+          <span>添加文件夹</span>
+        </button>
+
         <button
           @click="toggleTheme"
           class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
@@ -44,7 +53,10 @@
           <Moon v-else :size="18" />
         </button>
 
-        <button class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors">
+        <button
+          @click="showSettings = true"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+        >
           <Settings :size="18" />
         </button>
       </div>
@@ -75,6 +87,13 @@
           <span>移动</span>
         </button>
         <button
+          @click="handleBatchAddTag"
+          class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+        >
+          <Tag :size="14" />
+      <span>添加标签</span>
+        </button>
+        <button
           @click="handleBatchDelete"
       class="flex items-center space-x-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
         >
@@ -88,6 +107,32 @@
         >
       取消
         </button>
+      </div>
+    </transition>
+
+    <!-- Batch Move Menu -->
+    <transition name="fade">
+      <div
+     v-if="showBatchMoveMenu"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        @click="showBatchMoveMenu = false"
+      >
+        <div
+          class="bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border p-4 min-w-[200px]"
+          @click.stop
+        >
+          <h3 class="text-sm font-semibold mb-3 text-gray-800 dark:text-gray-100">移动到分组</h3>
+          <div class="space-y-1">
+            <button
+              v-for="group in groupStore.customGroups"
+              :key="group.id"
+              @click="handleBatchMove(group.id)"
+              class="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-dark-hover transition-colors text-gray-700 dark:text-gray-200"
+            >
+              {{ group.name }}
+         </button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -137,7 +182,7 @@
             v-for="file in fileStore.filteredFiles"
             :key="file.id"
          @contextmenu.prevent="handleContextMenu($event, file)"
-        @click="handleFileClick(file)"
+        @click="handleCardClick($event, file)"
           @mouseenter="hoveredFileId = file.id"
        @mouseleave="hoveredFileId = null"
             class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col hover:-translate-y-1"
@@ -179,7 +224,21 @@
                 :title="file.name"
                 v-html="highlightText(file.name, fileStore.searchQuery)"
               />
-            </div>
+               </div>
+
+          <!-- Tags -->
+            <div v-if="file.tags && file.tags.length > 0" class="mt-2 flex flex-wrap gap-1 justify-center">
+              <span
+                v-for="tag in file.tags.slice(0, 3)"
+             :key="tag"
+                class="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20"
+          >
+                {{ tag }}
+              </span>
+              <span v-if="file.tags.length > 3" class="text-[10px] text-gray-400">
+                +{{ file.tags.length - 3 }}
+            </span>
+        </div>
 
             <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 w-full pt-3 border-t border-gray-100 dark:border-[#333]">
             <span class="truncate max-w-[80px]" :title="getGroupName(file.groupId)">{{ getGroupName(file.groupId) }}</span>
@@ -338,6 +397,13 @@
       </div>
     </transition>
 
+    <!-- Settings Dialog -->
+    <SettingsDialog
+      :show="showSettings"
+      @close="showSettings = false"
+      @save="handleSaveSettings"
+    />
+
     <!-- Process Manager Dialog -->
     <transition name="fade">
       <div
@@ -480,11 +546,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { onKeyStroke } from '@vueuse/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { registerGlobalShortcut, unregisterGlobalShortcut } from './api/shortcuts'
 import {
   Search,
   Plus,
+  FolderPlus,
   Settings,
   X,
   Maximize2,
@@ -520,6 +589,7 @@ import { findFileProcesses, closeProcess } from './api/processes'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import type { FileItem } from './types/file'
@@ -535,6 +605,7 @@ const hoveredFileId = ref<string | null>(null)
 
 // Batch operations
 const showBatchMoveMenu = ref(false)
+const showSettings = ref(false)
 
 function handleBatchOpen() {
   const ids = Array.from(selectionStore.selectedIds)
@@ -556,6 +627,20 @@ function handleBatchMove(targetGroupId: string) {
   fileStore.batchMove(ids, targetGroupId)
   selectionStore.clearSelection()
   showBatchMoveMenu.value = false
+}
+
+function handleBatchAddTag() {
+  const tagName = prompt('请输入标签名称（最多20个字符）：')
+  if (!tagName) return
+
+  if (tagName.length > 20) {
+    alert('标签名称不能超过20个字符')
+    return
+  }
+
+  const ids = Array.from(selectionStore.selectedIds)
+  fileStore.batchAddTags(ids, [tagName])
+  selectionStore.clearSelection()
 }
 
 // Theme
@@ -580,56 +665,98 @@ function setViewMode(mode: 'grid' | 'list') {
   settingsStore.setViewMode(mode)
 }
 
+// Add Folder Handler
+async function handleAddFolder() {
+  try {
+    const { pickFolder, validatePath } = await import('./api/files')
+    const selectedPath = await pickFolder()
+
+    if (!selectedPath) {
+      return
+    }
+
+    const isValid = await validatePath(selectedPath)
+    if (!isValid) {
+      alert('路径不存在或无法访问')
+      return
+    }
+
+    const name = selectedPath.split(/[/\\]/).pop() || selectedPath
+
+    const newItem = fileStore.addFile({
+      name,
+      path: selectedPath,
+      type: 'folder',
+      icon: 'folder',
+      tags: [],
+      groupId: resolveGroupId(
+        groupStore.currentGroupId,
+     groupStore.customGroups[0]?.id
+      )
+    })
+
+    if (!newItem) {
+      alert('该文件夹已存在')
+      return
+    }
+
+    console.log(`已添加文件夹: ${name}`)
+  } catch (error) {
+    console.error('添加文件夹失败:', error)
+    alert(`添加文件夹失败: ${error}`)
+  }
+}
+
 // Drag and Drop
 const isDraggingOver = ref(false)
 
 function handleDragOver(e: DragEvent) {
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-  isDraggingOver.value = true
 }
 
-function handleDragLeave(e: DragEvent) {
-  const target = e.currentTarget as HTMLElement
-  const relatedTarget = e.relatedTarget as HTMLElement
-  if (!target.contains(relatedTarget)) {
-    isDraggingOver.value = false
-  }
+function handleDragLeave(_e: DragEvent) {
+  // Handled by Tauri onDragDropEvent
 }
 
-async function handleDrop(e: DragEvent) {
+function handleDrop(e: DragEvent) {
+  // Prevent default browser behavior; actual file drop is handled by Tauri
   e.preventDefault()
-  isDraggingOver.value = false
+}
 
-  const items = e.dataTransfer?.items
-  if (!items) return
-
-  for (let i = 0; i < items.length; i++) {
-    const entry = items[i].webkitGetAsEntry()
-    if (entry) {
-      await processDroppedEntry(entry)
-    }
+async function handleTauriDroppedPaths(paths: string[]) {
+  for (const filePath of paths) {
+    await processDroppedPath(filePath)
   }
 }
 
-async function processDroppedEntry(entry: FileSystemEntry) {
+async function processDroppedPath(filePath: string) {
   try {
-    const rawPath = (entry as any).fullPath || entry.name
-
     const { validatePath } = await import('./api/files')
-    const isValid = await validatePath(rawPath)
+    const isValid = await validatePath(filePath)
     if (!isValid) {
-      console.warn(`拖拽路径无效: ${rawPath}`)
+      console.warn(`拖拽路径无效: ${filePath}`)
       return
     }
+    // Determine if it's a file or folder based on path (no extension usually means folder, but check via stat)
+    const { stat } = await import('@tauri-apps/plugin-fs')
+    let isFolder = false
+    try {
+      const info = await stat(filePath)
+      isFolder = info.isDirectory
+    } catch {
+      // Fallback: check if there's a file extension
+      const lastSegment = filePath.split(/[/\\]/).pop() || ''
+      isFolder = !lastSegment.includes('.')
+    }
 
-    const name = entry.name
-    const type: 'file' | 'folder' = entry.isDirectory ? 'folder' : 'file'
-    const icon = type === 'folder' ? 'folder' : deriveIconFromExt(name)
+    const name = filePath.split(/[/\\]/).pop() || filePath
+    const type: 'file' | 'folder' = isFolder ? 'folder' : 'file'
+    const icon = isFolder ? 'folder' : deriveIconFromExt(name)
 
     const newItem = fileStore.addFile({
       name,
-      path: rawPath,
+      path: filePath,
       type,
       icon,
       tags: [],
@@ -640,27 +767,189 @@ async function processDroppedEntry(entry: FileSystemEntry) {
     })
 
     if (!newItem) {
-      console.warn(`项目已存在: ${rawPath}`)
+    console.warn(`项目已存在: ${filePath}`)
     }
   } catch (error) {
     console.error('拖拽处理失败:', error)
   }
 }
 
+
 // Window Controls
 const appWindow = getCurrentWindow()
 
-function minimizeWindow() {
-  appWindow.minimize()
+async function minimizeWindow() {
+  await appWindow.minimize()
 }
 
-function maximizeWindow() {
-  appWindow.toggleMaximize()
+async function maximizeWindow() {
+  const isMaximized = await appWindow.isMaximized()
+  if (isMaximized) {
+    await appWindow.unmaximize()
+  } else {
+    await appWindow.maximize()
+  }
 }
 
-function closeWindow() {
-  appWindow.close()
+async function closeWindow() {
+  if (settingsStore.settings.minimizeToTray) {
+    await appWindow.hide()
+  } else {
+    await appWindow.close()
+  }
 }
+
+async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' }) {
+  const oldShortcut = settingsStore.settings.globalShortcut
+
+  // Update settings
+  settingsStore.updateSettings(settings)
+
+  // Re-register global shortcut if changed
+  if (settings.globalShortcut !== oldShortcut) {
+    try {
+      // Unregister old shortcut
+      if (oldShortcut) {
+        await unregisterGlobalShortcut(oldShortcut)
+      }
+
+      // Register new shortcut
+      if (settings.globalShortcut) {
+        await registerGlobalShortcut(settings.globalShortcut, async () => {
+          if (shortcutHandling) return; shortcutHandling = true; try {
+          const isVisible = await appWindow.isVisible()
+      if (isVisible) { await appWindow.hide() } else { await appWindow.show(); await appWindow.setFocus() }
+          } finally { setTimeout(() => { shortcutHandling = false }, 300) }
+        })
+        console.log(`Global shortcut updated: ${settings.globalShortcut}`)
+      }
+    } catch (error) {
+      console.error('Failed to update global shortcut:', error)
+      alert(`快捷键更新失败: ${error}`)
+    }
+  }
+
+  showSettings.value = false
+}
+
+// Global Shortcut Registration & Tauri DnD
+let dndUnlisten: (() => void) | null = null
+let closeRequestedUnlisten: (() => void) | null = null
+let shortcutHandling = false // Prevent double-trigger
+
+onMounted(async () => {
+  // Intercept window close event to minimize to tray
+  closeRequestedUnlisten = await appWindow.onCloseRequested(async (event) => {
+    console.log('Close requested event triggered')
+    console.log('minimizeToTray setting:', settingsStore.settings.minimizeToTray)
+    if (settingsStore.settings.minimizeToTray) {
+      console.log('Preventing close and hiding window')
+      event.preventDefault()
+      await appWindow.hide()
+    } else {
+      console.log('Allowing window to close')
+    }
+  })
+  console.log('Close requested listener registered')
+
+  const shortcut = settingsStore.settings.globalShortcut
+  console.log('Attempting to register global shortcut:', shortcut)
+  try {
+    await registerGlobalShortcut(shortcut, async () => {
+      if (shortcutHandling) {
+        console.log('Shortcut already handling, ignoring duplicate trigger')
+        return
+      }
+
+      shortcutHandling = true
+      console.log('Global shortcut triggered!')
+
+      try {
+        const isVisible = await appWindow.isVisible()
+        console.log('Window visible:', isVisible)
+        if (isVisible) {
+          await appWindow.hide()
+        console.log('Window hidden')
+        } else {
+          await appWindow.show()
+        await appWindow.setFocus()
+          console.log('Window shown and focused')
+        }
+      } finally {
+        // Reset flag after a short delay
+        setTimeout(() => {
+          shortcutHandling = false
+        }, 300)
+      }
+    })
+    console.log(`Global shortcut registered successfully: ${shortcut}`)
+  } catch (error) {
+    console.error('Failed to register global shortcut:', error)
+    alert(`快捷键注册失败: ${error}`)
+  }
+
+  // Tauri native drag-drop (provides real file paths)
+  try {
+    dndUnlisten = await appWindow.onDragDropEvent((event) => {
+      if (event.payload.type === 'enter' || event.payload.type === 'over') {
+        isDraggingOver.value = true
+      } else if (event.payload.type === 'leave') {
+        isDraggingOver.value = false
+      } else if (event.payload.type === 'drop') {
+        isDraggingOver.value = false
+        const paths = (event.payload as any).paths as string[] | undefined
+        if (paths && paths.length > 0) {
+        handleTauriDroppedPaths(paths)
+        }
+      }
+    })
+  } catch (error) {
+    console.error('Failed to register drag-drop listener:', error)
+  }
+})
+onUnmounted(async () => {
+  const shortcut = settingsStore.settings.globalShortcut
+  try {
+    await unregisterGlobalShortcut(shortcut)
+  } catch (error) {
+    console.error('Failed to unregister shortcut:', error)
+  }
+  if (dndUnlisten) {
+    dndUnlisten()
+    dndUnlisten = null
+  }
+  if (closeRequestedUnlisten) {
+    closeRequestedUnlisten()
+    closeRequestedUnlisten = null
+  }
+})
+
+// Keyboard Shortcuts for Batch Operations
+// Ctrl+A to select all visible files
+onKeyStroke('a', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    const visibleIds = fileStore.filteredFiles.map(f => f.id)
+    selectionStore.selectAll(visibleIds)
+  }
+})
+
+// Escape to clear selection
+onKeyStroke('Escape', () => {
+  if (selectionStore.hasSelection) {
+    selectionStore.clearSelection()
+  }
+  if (contextMenu.value.show) {
+    closeContextMenu()
+  }
+})
+
+// Delete key to batch delete
+onKeyStroke('Delete', () => {
+  if (selectionStore.hasSelection) {
+    handleBatchDelete()
+  }
+})
 
 // File Operations
 const editingFile = ref<FileItem | null>(null)
@@ -679,6 +968,17 @@ async function handleFileClick(file: FileItem) {
   } catch (error) {
     console.error(`打开失败: ${error}`)
     alert(`打开失败: ${error}`)
+  }
+}
+
+function handleCardClick(event: MouseEvent, file: FileItem) {
+  // Check if Ctrl/Cmd key is pressed for multi-select
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault()
+    selectionStore.toggleSelection(file.id)
+  } else {
+  // Normal click - open file
+    handleFileClick(file)
   }
 }
 
@@ -762,9 +1062,10 @@ function handleMenuAction(action: string) {
     break
     case 'edit':
       editingFile.value = file
-      return // don't close context menu, dialog handles it
+      closeContextMenu()
+      return
     case 'add-tag':
-      console.log('添加标签功能待实现')
+      handleAddTag(file)
       break
     case 'close-processes':
       handleShowProcesses(file)
@@ -775,6 +1076,31 @@ function handleMenuAction(action: string) {
   }
 
   closeContextMenu()
+}
+
+function handleAddTag(file: FileItem) {
+  const tagName = prompt('请输入标签名称（最多20个字符）：')
+  if (!tagName) return
+
+  if (tagName.length > 20) {
+    alert('标签名称不能超过20个字符')
+    return
+  }
+
+  const currentTags = file.tags || []
+  if (currentTags.includes(tagName)) {
+    alert('该标签已存在')
+    return
+  }
+
+  if (currentTags.length >= 10) {
+    alert('最多只能添加10个标签')
+    return
+  }
+
+  fileStore.updateFile(file.id, {
+    tags: [...currentTags, tagName]
+  })
 }
 
 async function handleShowProcesses(file: FileItem) {
