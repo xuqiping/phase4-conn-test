@@ -33,7 +33,8 @@
       </div>
 
       <div class="flex items-center space-x-3">
-        <AddFileButton />
+        <RecentFiles @open-file="handleFileClick" />
+      <AddFileButton />
 
       <button
           @click="handleAddFolder"
@@ -588,18 +589,21 @@ import {
   Code,
   FolderOpen,
   XCircle,
-  FileX
+  FileX,
+  Clock
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useSelectionStore } from './stores/selectionStore'
+import { useRecentStore } from './stores/recentStore'
 import { openFile, showInFolder } from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import RecentFiles from './components/RecentFiles.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import type { FileItem } from './types/file'
@@ -609,6 +613,7 @@ const fileStore = useFileStore()
 const groupStore = useGroupStore()
 const settingsStore = useSettingsStore()
 const selectionStore = useSelectionStore()
+const recentStore = useRecentStore()
 
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)
@@ -973,6 +978,7 @@ const loadingProcesses = ref(false)
 async function handleFileClick(file: FileItem) {
   try {
     fileStore.recordOpen(file.id)
+    recentStore.addRecent(file)
     await openFile(file.path)
     console.log(`已打开: ${file.name}`)
   } catch (error) {
