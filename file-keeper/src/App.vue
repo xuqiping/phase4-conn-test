@@ -213,7 +213,16 @@
         </button>
 
             <div class="flex-1 flex flex-col items-center justify-center py-4">
+              <!-- Real icon (base64 data URL) -->
+              <img
+                v-if="file.icon && file.icon.startsWith('data:image')"
+            :src="file.icon"
+                class="w-12 h-12 mb-3 object-contain opacity-90 group-hover:opacity-100 group-hover:scale-110 transition-transform duration-300"
+           :alt="file.name"
+          />
+              <!-- Fallback to icon type -->
               <component
+                v-else
                 :is="getFileIcon(file.icon || file.type)"
                 :size="48"
                 :class="['mb-3 opacity-90 group-hover:opacity-100 group-hover:scale-110 transition-transform duration-300', getFileColor(file.icon || file.type)]"
@@ -263,7 +272,8 @@
             class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-[#333] hover:bg-gray-50 dark:hover:bg-dark-hover transition-colors group cursor-pointer"
           >
             <div class="w-1/2 flex items-center pr-4">
-              <component :is="getFileIcon(file.icon || file.type)" :size="18" :class="[getFileColor(file.icon || file.type), 'mr-3 flex-shrink-0']" />
+              <img v-if="file.icon && file.icon.startsWith('data:image')" :src="file.icon" class="w-[18px] h-[18px] mr-3 flex-shrink-0 object-contain" :alt="file.name" />
+              <component v-else :is="getFileIcon(file.icon || file.type)" :size="18" :class="[getFileColor(file.icon || file.type), 'mr-3 flex-shrink-0']" />
             <div class="flex flex-col truncate">
               <span
                 class="text-sm font-medium truncate"

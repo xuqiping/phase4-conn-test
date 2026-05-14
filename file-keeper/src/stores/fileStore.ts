@@ -4,6 +4,8 @@ import type { FileItem } from '../types/file'
 import { v4 as uuidv4 } from 'uuid'
 import { useGroupStore } from './groupStore'
 import { openFile } from '../api/files'
+import { getFileIcon } from '../api/icons'
+import { deriveIconFromExt } from '../utils/file'
 
 export const useFileStore = defineStore('file', () => {
   const groupStore = useGroupStore()
@@ -141,16 +143,20 @@ export const useFileStore = defineStore('file', () => {
   })
 
   // Actions
-  function addFile(file: Omit<FileItem, 'id' | 'createdAt' | 'openCount'>): FileItem | null {
+  async function addFile(file: Omit<FileItem, 'id' | 'createdAt' | 'openCount'>): Promise<FileItem | null> {
     // Check for duplicate path
     const existing = files.value.find(f => f.path === file.path)
     if (existing) {
       return null
     }
 
+    // Load icon from system
+    const iconData = await getFileIcon(file.path)
+
     const newFile: FileItem = {
       ...file,
       id: uuidv4(),
+      icon: iconData || file.icon || deriveIconFromExt(file.name),
       openCount: 0,
       createdAt: Date.now()
     }
