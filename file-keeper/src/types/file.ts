@@ -11,4 +11,5 @@ export interface FileItem {
   createdAt: number             // 创建时间戳
   lastOpened?: number           // 最后打开时间
   openCount: number          // 打开次数
+  orderIndex: number            // 排序索引
 }

@@ -104,6 +104,9 @@ export const useFileStore = defineStore('file', () => {
       result = result.filter(f => f.groupId === groupStore.currentGroupId)
     }
 
+    // Sort by orderIndex
+    result = result.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+
     // Filter by search query
     if (searchQuery.value) {
       const query = searchQuery.value.toLowerCase()
@@ -143,7 +146,7 @@ export const useFileStore = defineStore('file', () => {
   })
 
   // Actions
-  async function addFile(file: Omit<FileItem, 'id' | 'createdAt' | 'openCount'>): Promise<FileItem | null> {
+  async function addFile(file: Omit<FileItem, 'id' | 'createdAt' | 'openCount' | 'orderIndex'>): Promise<FileItem | null> {
     // Check for duplicate path
     const existing = files.value.find(f => f.path === file.path)
     if (existing) {
@@ -153,11 +156,15 @@ export const useFileStore = defineStore('file', () => {
     // Load icon from system
     const iconData = await getFileIcon(file.path)
 
+    // Calculate next orderIndex
+    const maxOrderIndex = files.value.reduce((max, f) => Math.max(max, f.orderIndex ?? 0), -1)
+
     const newFile: FileItem = {
       ...file,
       id: uuidv4(),
       icon: iconData || file.icon || deriveIconFromExt(file.name),
       openCount: 0,
+      orderIndex: maxOrderIndex + 1,
       createdAt: Date.now()
     }
     files.value.push(newFile)
@@ -194,7 +201,22 @@ export const useFileStore = defineStore('file', () => {
   }
 
   function loadFiles(data: FileItem[]) {
-    files.value = data
+    // Initialize orderIndex for files that don't have it
+    data.forEach((file, idx) => {
+      if (file.orderIndex === undefined) {
+        file.orderIndex = idx
+      }
+    })
+  files.value = data
+  }
+
+  function updateOrder(orderedIds: string[]) {
+    const newOrderMap = new Map(orderedIds.map((id, idx) => [id, idx]))
+    files.value.forEach(file => {
+    if (newOrderMap.has(file.id)) {
+        file.orderIndex = newOrderMap.get(file.id)!
+      }
+    })
   }
 
   function batchOpen(ids: string[]) {
@@ -241,6 +263,7 @@ export const useFileStore = defineStore('file', () => {
     recordOpen,
     setSearchQuery,
     loadFiles,
+    updateOrder,
     batchOpen,
     batchDelete,
     batchMove,
