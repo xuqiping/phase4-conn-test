@@ -4,6 +4,7 @@ use tauri::command;
 mod windows_impl {
     use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES};
     use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
+    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
     use windows::core::PWSTR;
 
     pub fn extract_icon(path: &str) -> Option<String> {
@@ -12,7 +13,7 @@ mod windows_impl {
           let mut info: SHFILEINFOW = std::mem::zeroed();
             let result = SHGetFileInfoW(
          PWSTR(wide_path.as_ptr() as *mut u16),
-                0x80, // FILE_ATTRIBUTE_NORMAL
+                FILE_FLAGS_AND_ATTRIBUTES(0x80), // FILE_ATTRIBUTE_NORMAL
                 Some(&mut info),
                 std::mem::size_of::<SHFILEINFOW>() as u32,
                 SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES,
