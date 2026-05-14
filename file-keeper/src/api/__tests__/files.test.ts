@@ -48,7 +48,8 @@ describe('files API', () => {
       expect(result).toBe('/path/to/folder')
       expect(open).toHaveBeenCalledWith({
         multiple: false,
-        directory: true
+        directory: true,
+        defaultPath: expect.any(String)
       })
     })
 

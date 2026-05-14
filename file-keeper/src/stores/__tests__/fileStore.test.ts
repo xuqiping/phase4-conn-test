@@ -1,17 +1,22 @@
 // src/stores/__tests__/fileStore.test.ts
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useFileStore } from '../fileStore'
+
+// Mock the icons API
+vi.mock('../../api/icons', () => ({
+  getFileIcon: vi.fn().mockResolvedValue(null)
+}))
 
 describe('fileStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
   })
   describe('addFile', () => {
-    it('should add a new file to the store', () => {
+    it('should add a new file to the store', async () => {
       const store = useFileStore()
 
-      const newFile = store.addFile({
+      const newFile = await store.addFile({
         name: 'test.txt',
         path: '/path/to/test.txt',
         type: 'file',
@@ -27,10 +32,10 @@ describe('fileStore', () => {
       expect(store.files).toHaveLength(7) // 6 mock + 1 new
     })
 
-    it('should not add duplicate files with same path', () => {
+    it('should not add duplicate files with same path', async () => {
       const store = useFileStore()
 
-      store.addFile({
+      await store.addFile({
         name: 'test.txt',
         path: '/path/to/test.txt',
         type: 'file',
@@ -38,7 +43,7 @@ describe('fileStore', () => {
         groupId: 'all'
       })
 
-      const result = store.addFile({
+      const result = await store.addFile({
         name: 'test.txt',
      path: '/path/to/test.txt',
         type: 'file',
