@@ -3,7 +3,7 @@ use tauri::command;
 #[cfg(windows)]
 mod windows_impl {
     use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES};
-    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
+    use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
     use windows::core::PWSTR;
 
     pub fn extract_icon(path: &str) -> Option<String> {
