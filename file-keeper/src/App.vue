@@ -659,7 +659,7 @@ function handleBatchAddTag() {
 }
 
 // Theme
-const currentTheme = computed(() => settingsStore.settings.theme)
+const currentTheme = computed(() => settingsStore.effectiveTheme)
 
 watch(currentTheme, (newTheme) => {
   if (newTheme === 'dark') {
@@ -814,7 +814,7 @@ async function closeWindow() {
   }
 }
 
-async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' }) {
+async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
   const oldShortcut = settingsStore.settings.globalShortcut
 
   // Update settings

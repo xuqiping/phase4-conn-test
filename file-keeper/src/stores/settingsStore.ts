@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { usePreferredDark } from '@vueuse/core'
 import type { Settings } from '../types/settings'
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -12,6 +13,17 @@ export const useSettingsStore = defineStore('settings', () => {
     autoStart: false,
     language: 'zh-CN',
     itemsPerPage: 50
+  })
+
+  // System theme detection
+  const isSystemDark = usePreferredDark()
+
+  // Computed effective theme
+  const effectiveTheme = computed(() => {
+    if (settings.value.theme === 'auto') {
+      return isSystemDark.value ? 'dark' : 'light'
+    }
+    return settings.value.theme
   })
 
   // Actions
@@ -28,7 +40,10 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function toggleTheme() {
-    settings.value.theme = settings.value.theme === 'dark' ? 'light' : 'dark'
+    const themeOrder: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto']
+    const currentIndex = themeOrder.indexOf(settings.value.theme)
+    const nextIndex = (currentIndex + 1) % themeOrder.length
+    settings.value.theme = themeOrder[nextIndex]
   }
 
   function loadSettings(data: Settings) {
@@ -38,6 +53,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     // State
     settings,
+    effectiveTheme,
     // Actions
     updateSettings,
     setTheme,

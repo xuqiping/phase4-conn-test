@@ -101,6 +101,17 @@
               >
                 深色
               </button>
+              <button
+                @click="localTheme = 'auto'" 
+                :class="[
+                  'flex-1 px-3 py-2 text-sm rounded-md transition-colors',
+           localTheme === 'auto'
+                 ? 'bg-primary text-white'
+                : 'bg-gray-100 dark:bg-dark-hover text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#383838]'
+                ]"
+       >
+              跟随系统
+              </button>
             </div>
           </div>
     </div>
@@ -136,7 +147,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  save: [settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' }]
+  save: [settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
 }>()
 
 const settingsStore = useSettingsStore()
