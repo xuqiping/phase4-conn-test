@@ -1057,6 +1057,7 @@ name = "file-keeper"
 version = "0.1.0"
 dependencies = [
  "cocoa",
+ "core-foundation 0.9.4",
  "objc",
  "opener",
  "serde",
