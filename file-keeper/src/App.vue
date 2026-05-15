@@ -178,15 +178,17 @@
 
       <template v-else>
         <!-- 网格视图 -->
-     <div v-if="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        <div
+     <div v-if="viewMode === 'grid'" ref="gridContainer" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div
             v-for="file in fileStore.filteredFiles"
-            :key="file.id"
-         @contextmenu.prevent="handleContextMenu($event, file)"
-        @click="handleCardClick($event, file)"
-          @mouseenter="hoveredFileId = file.id"
-       @mouseleave="hoveredFileId = null"
-            class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col hover:-translate-y-1"
+       :key="file.id"
+            :data-id="file.id"
+       draggable="false"
+            @contextmenu.prevent="handleContextMenu($event, file)"
+            @click="handleCardClick($event, file)"
+      @mouseenter="hoveredFileId = file.id"
+         @mouseleave="hoveredFileId = null"
+          class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-move flex flex-col select-none"
           >
             <!-- Selection Checkbox -->
             <div
@@ -606,6 +608,7 @@ import SettingsDialog from './components/SettingsDialog.vue'
 import RecentFiles from './components/RecentFiles.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
+import { useSortableFiles } from './composables/useSortableFiles'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -617,6 +620,10 @@ const recentStore = useRecentStore()
 
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)
+
+// Drag-reorder for grid view
+const gridContainer = ref<HTMLElement | null>(null)
+useSortableFiles(gridContainer)
 
 // Batch operations
 const showBatchMoveMenu = ref(false)
@@ -698,7 +705,7 @@ async function handleAddFolder() {
 
     const name = selectedPath.split(/[/\\]/).pop() || selectedPath
 
-    const newItem = fileStore.addFile({
+    const newItem = await fileStore.addFile({
       name,
       path: selectedPath,
       type: 'folder',
@@ -727,7 +734,20 @@ const isDraggingOver = ref(false)
 
 function handleDragOver(e: DragEvent) {
   e.preventDefault()
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+
+  // Check if this is a file drag from outside (system) or internal reorder
+  if (e.dataTransfer) {
+    // If dragging files from system, types will include 'Files'
+    // If dragging internally (Sortable), types will be different or empty
+  const isExternalFileDrag = e.dataTransfer.types.includes('Files')
+
+    if (isExternalFileDrag) {
+      e.dataTransfer.dropEffect = 'copy'
+    } else {
+      // Internal drag (Sortable) - allow move
+      e.dataTransfer.dropEffect = 'move'
+    }
+  }
 }
 
 function handleDragLeave(_e: DragEvent) {
@@ -740,19 +760,36 @@ function handleDrop(e: DragEvent) {
 }
 
 async function handleTauriDroppedPaths(paths: string[]) {
+  const duplicates: string[] = []
+  const invalids: string[] = []
   for (const filePath of paths) {
-    await processDroppedPath(filePath)
+    const result = await processDroppedPath(filePath)
+    if (result === 'duplicate') duplicates.push(filePath)
+    else if (result === 'invalid') invalids.push(filePath)
+  }
+
+  const messages: string[] = []
+  if (duplicates.length > 0) {
+    const list = duplicates.map(p => p.split(/[/\\]/).pop() || p).join('\n  ')
+    messages.push(`以下项目已存在，已忽略：\n  ${list}`)
+  }
+  if (invalids.length > 0) {
+    const list = invalids.map(p => p.split(/[/\\]/).pop() || p).join('\n  ')
+    messages.push(`以下路径无效，已忽略：\n  ${list}`)
+  }
+  if (messages.length > 0) {
+    alert(messages.join('\n\n'))
   }
 }
 
-async function processDroppedPath(filePath: string) {
+async function processDroppedPath(filePath: string): Promise<'added' | 'duplicate' | 'invalid' | 'error'> {
   try {
     const { validatePath } = await import('./api/files')
     const isValid = await validatePath(filePath)
     if (!isValid) {
       console.warn(`拖拽路径无效: ${filePath}`)
-      return
-    }
+      return 'invalid'
+  }
     // Determine if it's a file or folder based on path (no extension usually means folder, but check via stat)
     const { stat } = await import('@tauri-apps/plugin-fs')
     let isFolder = false
@@ -769,23 +806,26 @@ async function processDroppedPath(filePath: string) {
     const type: 'file' | 'folder' = isFolder ? 'folder' : 'file'
     const icon = isFolder ? 'folder' : deriveIconFromExt(name)
 
-    const newItem = fileStore.addFile({
-      name,
+    const newItem = await fileStore.addFile({
+   name,
       path: filePath,
       type,
       icon,
       tags: [],
       groupId: resolveGroupId(
         groupStore.currentGroupId,
-        groupStore.customGroups[0]?.id
+      groupStore.customGroups[0]?.id
       )
     })
 
     if (!newItem) {
     console.warn(`项目已存在: ${filePath}`)
+      return 'duplicate'
     }
+    return 'added'
   } catch (error) {
     console.error('拖拽处理失败:', error)
+  return 'error'
   }
 }
 
@@ -1228,3 +1268,32 @@ function formatLastOpened(timestamp?: number): string {
   return `${Math.floor(days / 30)}个月前`
 }
 </script>
+
+<style scoped>
+/* Sortable.js drag and drop styles */
+.sortable-fallback {
+  display: block !important;
+  opacity: 0.9 !important;
+  cursor: move !important;
+  transform: scale(1.05) rotate(2deg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+  z-index: 9999 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+}
+
+.sortable-ghost {
+  opacity: 0.4;
+  background: #f0f0f0;
+  border: 2px dashed #3b82f6;
+}
+
+.sortable-chosen {
+  opacity: 0.8;
+  cursor: move;
+}
+
+.sortable-drag {
+  opacity: 0;
+}
+</style>
