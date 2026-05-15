@@ -1056,10 +1056,12 @@ dependencies = [
 name = "file-keeper"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cocoa",
  "core-foundation 0.9.4",
  "objc",
  "opener",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "sysinfo",

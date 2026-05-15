@@ -45,7 +45,7 @@ async function handleAddFile() {
     const type: 'file' | 'folder' = isFile ? 'file' : 'folder'
     const icon = isFile ? deriveIconFromExt(name) : 'folder'
 
-    const newItem = fileStore.addFile({
+    const newItem = await fileStore.addFile({
       name,
       path: selectedPath,
       type,

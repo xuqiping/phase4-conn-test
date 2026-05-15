@@ -15,9 +15,12 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@types/sortablejs": "^1.15.9",
     "@vueuse/core": "^10.9.0",
+    "@vueuse/integrations": "^14.3.0",
     "lucide-vue-next": "^0.344.0",
     "pinia": "^2.1.7",
+    "sortablejs": "^1.15.7",
     "uuid": "^9.0.1",
     "vue": "^3.4.0"
   },
