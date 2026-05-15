@@ -591,8 +591,7 @@ import {
   Code,
   FolderOpen,
   XCircle,
-  FileX,
-  Clock
+  FileX
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
@@ -855,33 +854,49 @@ async function closeWindow() {
 }
 
 async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
-  const oldShortcut = settingsStore.settings.globalShortcut
+  // Persist non-shortcut settings up front so they survive even if the
+  // shortcut registration step fails below.
+  settingsStore.updateSettings({
+    minimizeToTray: settings.minimizeToTray,
+    theme: settings.theme,
+  })
 
-  // Update settings
-  settingsStore.updateSettings(settings)
+  const desired = settings.globalShortcut
+  // `registeredShortcut` tracks the shortcut currently live with the OS.
+  // It diverges from settingsStore.settings.globalShortcut whenever a previous
+  // register() failed — never unregister based on the store value.
+  if (desired === registeredShortcut) {
+    settingsStore.updateSettings({ globalShortcut: desired })
+    showSettings.value = false
+    return
+  }
 
-  // Re-register global shortcut if changed
-  if (settings.globalShortcut !== oldShortcut) {
+  // Best-effort unregister of whatever is currently live. If it fails (e.g. the
+  // OS already dropped it), warn and continue — don't block the user.
+  if (registeredShortcut) {
     try {
-      // Unregister old shortcut
-      if (oldShortcut) {
-        await unregisterGlobalShortcut(oldShortcut)
-      }
-
-      // Register new shortcut
-      if (settings.globalShortcut) {
-        await registerGlobalShortcut(settings.globalShortcut, async () => {
-          if (shortcutHandling) return; shortcutHandling = true; try {
-          const isVisible = await appWindow.isVisible()
-      if (isVisible) { await appWindow.hide() } else { await appWindow.show(); await appWindow.setFocus() }
-          } finally { setTimeout(() => { shortcutHandling = false }, 300) }
-        })
-        console.log(`Global shortcut updated: ${settings.globalShortcut}`)
-      }
+      await unregisterGlobalShortcut(registeredShortcut)
     } catch (error) {
-      console.error('Failed to update global shortcut:', error)
-      alert(`快捷键更新失败: ${error}`)
+      console.warn(`Failed to unregister "${registeredShortcut}", continuing:`, error)
     }
+    registeredShortcut = null
+  }
+
+  // Try to register the new one. On conflict (another app owns it) we still
+  // save the user's chosen string so the dialog reflects their intent.
+  if (desired) {
+    try {
+      await registerGlobalShortcut(desired, handleGlobalShortcut)
+      registeredShortcut = desired
+      settingsStore.updateSettings({ globalShortcut: desired })
+      console.log(`Global shortcut updated: ${desired}`)
+    } catch (error) {
+      console.error('Failed to register new shortcut:', error)
+      settingsStore.updateSettings({ globalShortcut: desired })
+      alert(`快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
+    }
+  } else {
+    settingsStore.updateSettings({ globalShortcut: '' })
   }
 
   showSettings.value = false
@@ -891,56 +906,46 @@ async function handleSaveSettings(settings: { globalShortcut: string; minimizeTo
 let dndUnlisten: (() => void) | null = null
 let closeRequestedUnlisten: (() => void) | null = null
 let shortcutHandling = false // Prevent double-trigger
+// Tracks the shortcut currently registered with the OS. Stays null when a
+// register() call fails, so we never try to unregister a string the OS doesn't know about.
+let registeredShortcut: string | null = null
+
+async function handleGlobalShortcut() {
+  if (shortcutHandling) return
+  shortcutHandling = true
+  try {
+    const isVisible = await appWindow.isVisible()
+    if (isVisible) {
+      await appWindow.hide()
+    } else {
+      await appWindow.show()
+      await appWindow.setFocus()
+    }
+  } finally {
+    setTimeout(() => { shortcutHandling = false }, 300)
+  }
+}
 
 onMounted(async () => {
   // Intercept window close event to minimize to tray
   closeRequestedUnlisten = await appWindow.onCloseRequested(async (event) => {
-    console.log('Close requested event triggered')
-    console.log('minimizeToTray setting:', settingsStore.settings.minimizeToTray)
     if (settingsStore.settings.minimizeToTray) {
-      console.log('Preventing close and hiding window')
       event.preventDefault()
       await appWindow.hide()
-    } else {
-      console.log('Allowing window to close')
     }
   })
-  console.log('Close requested listener registered')
 
   const shortcut = settingsStore.settings.globalShortcut
-  console.log('Attempting to register global shortcut:', shortcut)
-  try {
-    await registerGlobalShortcut(shortcut, async () => {
-      if (shortcutHandling) {
-        console.log('Shortcut already handling, ignoring duplicate trigger')
-        return
-      }
-
-      shortcutHandling = true
-      console.log('Global shortcut triggered!')
-
-      try {
-        const isVisible = await appWindow.isVisible()
-        console.log('Window visible:', isVisible)
-        if (isVisible) {
-          await appWindow.hide()
-        console.log('Window hidden')
-        } else {
-          await appWindow.show()
-        await appWindow.setFocus()
-          console.log('Window shown and focused')
-        }
-      } finally {
-        // Reset flag after a short delay
-        setTimeout(() => {
-          shortcutHandling = false
-        }, 300)
-      }
-    })
-    console.log(`Global shortcut registered successfully: ${shortcut}`)
-  } catch (error) {
-    console.error('Failed to register global shortcut:', error)
-    alert(`快捷键注册失败: ${error}`)
+  if (shortcut) {
+    try {
+      await registerGlobalShortcut(shortcut, handleGlobalShortcut)
+      registeredShortcut = shortcut
+      console.log(`Global shortcut registered: ${shortcut}`)
+    } catch (error) {
+      console.error('Failed to register global shortcut on startup:', error)
+      // Don't alert on startup — the user didn't trigger this. Just log and
+      // leave registeredShortcut = null so a later save can register cleanly.
+    }
   }
 
   // Tauri native drag-drop (provides real file paths)
@@ -963,11 +968,13 @@ onMounted(async () => {
   }
 })
 onUnmounted(async () => {
-  const shortcut = settingsStore.settings.globalShortcut
-  try {
-    await unregisterGlobalShortcut(shortcut)
-  } catch (error) {
-    console.error('Failed to unregister shortcut:', error)
+  if (registeredShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredShortcut)
+    } catch (error) {
+      console.warn('Failed to unregister shortcut on unmount:', error)
+    }
+    registeredShortcut = null
   }
   if (dndUnlisten) {
     dndUnlisten()
@@ -1270,30 +1277,44 @@ function formatLastOpened(timestamp?: number): string {
 </script>
 
 <style scoped>
-/* Sortable.js drag and drop styles */
+/* Sortable.js drag and drop styles
+   IMPORTANT: do NOT override `transform`, `position`, `top`, `left`, `width`,
+   `height`, or `opacity` with !important — sortablejs sets these inline on the
+   cloned ghost element to make it follow the mouse. Overriding them with
+   !important breaks the mouse-following behavior. We only style the *look* of
+   the ghost (shadow, slight scale of children, cursor). */
+
+/* The cloned element shown under the cursor while dragging.
+   Uses a soft shadow + cursor change for a Windows-like drag preview. */
 .sortable-fallback {
-  display: block !important;
-  opacity: 0.9 !important;
-  cursor: move !important;
-  transform: scale(1.05) rotate(2deg);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-  z-index: 9999 !important;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.28),
+    0 4px 10px rgba(0, 0, 0, 0.18) !important;
+  border-radius: 0.5rem !important;
+  cursor: grabbing !important;
+  transition: none !important;
+  /* Slight tint so the ghost reads as "lifted" against the underlying grid */
+  outline: 1px solid rgba(59, 130, 246, 0.45) !important;
+}
+
+.sortable-fallback * {
+  transition: none !important;
   pointer-events: none !important;
-  position: fixed !important;
 }
 
+/* The placeholder left in the original spot — shows the drop target slot. */
 .sortable-ghost {
-  opacity: 0.4;
-  background: #f0f0f0;
-  border: 2px dashed #3b82f6;
+  opacity: 0.35 !important;
+  background: rgba(59, 130, 246, 0.08) !important;
+  border: 2px dashed #3b82f6 !important;
 }
 
+.sortable-ghost > * {
+  visibility: hidden;
+}
+
+/* The originally chosen item before drag starts — just a cursor hint. */
 .sortable-chosen {
-  opacity: 0.8;
-  cursor: move;
-}
-
-.sortable-drag {
-  opacity: 0;
+  cursor: grabbing;
 }
 </style>
