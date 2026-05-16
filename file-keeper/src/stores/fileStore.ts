@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { watchDebounced } from '@vueuse/core'
 import type { FileItem } from '../types/file'
 import { v4 as uuidv4 } from 'uuid'
 import { useGroupStore } from './groupStore'
@@ -86,6 +87,16 @@ export const useFileStore = defineStore('file', () => {
     }
   ])
   const searchQuery = ref('')
+  const debouncedSearchQuery = ref('')
+
+  // Watch searchQuery with debounce
+  watchDebounced(
+    searchQuery,
+    (newQuery) => {
+      debouncedSearchQuery.value = newQuery
+    },
+    { debounce: 300 }
+  )
 
   // Getters
   const filteredFiles = computed(() => {
@@ -108,8 +119,8 @@ export const useFileStore = defineStore('file', () => {
     result = result.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
 
     // Filter by search query
-    if (searchQuery.value) {
-      const query = searchQuery.value.toLowerCase()
+    if (debouncedSearchQuery.value) {
+      const query = debouncedSearchQuery.value.toLowerCase()
 
       // Check if query contains wildcard
       if (query.includes('*')) {
