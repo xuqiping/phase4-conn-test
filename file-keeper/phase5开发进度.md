@@ -3,7 +3,7 @@
 **目标**: 完成 File Keeper v0.1.0 性能优化、Windows 平台测试和打包发布
 
 **开始时间**: 2026-05-16  
-**当前状态**: 进行中 (Task 1-4 已完成 + 额外优化)
+**当前状态**: 进行中 (Task 1-5 已完成 + 额外优化)
 
 ---
 
@@ -79,18 +79,19 @@
 - 图标区 `py-4` → `py-2`, 加 `min-h-0`
 - 修复了标签/底部文字溢出卡片的问题
 
+### ✅ Task 5: 集成虚拟滚动到列表视图
+**提交**: `54b1e06 feat: add virtual scroll to list view`
+
+**完成内容**:
+- 创建 `listContainerRef` 和 `listVirtualScroll` 组合函数
+- 配置 `itemHeight: 60`, `itemsPerRow: 1`, `overscan: 5`
+- 列表视图改用虚拟滚动结构，绝对定位每行
+- 容器高度 `calc(100vh - 280px)`
+- 保持所有现有功能（图标、标签、悬停状态、右键菜单）
+
 ---
 
 ## 待完成任务 (按原计划)
-
-### ⏳ Task 5: 集成虚拟滚动到列表视图
-**文件**: `src/App.vue:262-320` (行号已变化)
-
-**步骤**:
-- 创建 `listContainerRef`
-- 配置 `listVirtualScroll` (itemHeight: 60, itemsPerRow: 1)
-- 更新列表视图模板为虚拟滚动结构
-- 测试滚动流畅度
 
 ### ⏳ Task 6: 集成图标懒加载到 App.vue
 **文件**: `src/App.vue`, `src/stores/fileStore.ts`
@@ -131,8 +132,7 @@
 
 1. **拖拽排序失效**: 虚拟滚动导致 `useSortableFiles` 无法工作，已用可编辑序号徽章替代
 2. **图标懒加载未集成**: Task 3 创建了 composable，但 Task 6 未完成，图标仍在 `addFile` 时同步提取
-3. **列表视图未优化**: 仍使用完整渲染，未应用虚拟滚动
-4. **TypeScript 错误**: `useIconLazyLoad.ts:24` 有一个类型错误 (Task 3 遗留)
+3. **TypeScript 错误**: `useIconLazyLoad.ts:24` 有一个类型错误 (Task 3 遗留)
 
 ---
 
