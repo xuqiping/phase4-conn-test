@@ -3,7 +3,7 @@
 **目标**: 完成 File Keeper v0.1.0 性能优化、Windows 平台测试和打包发布
 
 **开始时间**: 2026-05-16  
-**当前状态**: 进行中 (Task 1-5 已完成 + 额外优化)
+**当前状态**: 进行中 (Task 1-6 已完成 + 额外优化)
 
 ---
 
@@ -89,18 +89,21 @@
 - 容器高度 `calc(100vh - 280px)`
 - 保持所有现有功能（图标、标签、悬停状态、右键菜单）
 
+### ✅ Task 6: 集成图标懒加载到 App.vue
+**提交**: `6d25cfd feat: integrate icon lazy loading`
+
+**完成内容**:
+- 导入 `useIconLazyLoad` 到 App.vue
+- 创建 `setupIconLazyLoad` 函数处理懒加载逻辑
+- 为网格视图和列表视图的每个卡片添加 ref 回调
+- 修改 `addFile` 方法，不再同步提取图标（icon 初始为空字符串）
+- 移除 fileStore 中未使用的导入 (`getFileIcon`, `deriveIconFromExt`)
+- 修复 `useIconLazyLoad.ts` 的 TypeScript 类型错误（处理 null 返回值）
+- 图标现在按需加载，卡片进入视口时才提取
+
 ---
 
 ## 待完成任务 (按原计划)
-
-### ⏳ Task 6: 集成图标懒加载到 App.vue
-**文件**: `src/App.vue`, `src/stores/fileStore.ts`
-
-**步骤**:
-- 导入 `useIconLazyLoad`
-- 为每个卡片设置 ref 和懒加载逻辑
-- 更新 `addFile` 方法，不再立即提取图标
-- 测试图标按需加载
 
 ### ⏳ Task 7: 性能测试与验证
 **文件**: `docs/testing/v0.1.0-performance-test.md`
@@ -131,15 +134,12 @@
 ## 已知问题
 
 1. **拖拽排序失效**: 虚拟滚动导致 `useSortableFiles` 无法工作，已用可编辑序号徽章替代
-2. **图标懒加载未集成**: Task 3 创建了 composable，但 Task 6 未完成，图标仍在 `addFile` 时同步提取
-3. **TypeScript 错误**: `useIconLazyLoad.ts:24` 有一个类型错误 (Task 3 遗留)
 
 ---
 
 ## 技术债务
 
 - `useSortableFiles` 和 `gridContainer` ref 仍在代码中但已无效，可以清理
-- 需要在 Task 6 完成后修复 `useIconLazyLoad` 的 TypeScript 错误
 - 虚拟滚动的 `itemHeight` 是硬编码的，未来可能需要响应式计算
 
 ---
@@ -147,14 +147,12 @@
 ## 下一步建议
 
 **优先级 1 (核心功能)**:
-1. **Task 5**: 列表视图虚拟滚动 (保持性能一致)
-2. **Task 6**: 图标懒加载集成 (提升启动速度)
-3. **Task 7**: 性能测试 (验证优化效果)
+1. **Task 7**: 性能测试 (验证优化效果)
 
 **优先级 2 (发布准备)**:
-4. Task 8-9: 文档和图标
-5. Task 10-12: 打包和测试
+2. Task 8-9: 文档和图标
+3. Task 10-12: 打包和测试
+
 **可选优化**:
 - 清理无效的 `useSortableFiles` 代码
-- 修复 TypeScript 类型错误
 - 响应式列数计算 (当前固定 5 列)
