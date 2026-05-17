@@ -100,6 +100,7 @@ export const useFileStore = defineStore('file', () => {
 
   // Getters
   const filteredFiles = computed(() => {
+    const perfStart = performance.now()
     let result = files.value
 
     // Filter by group
@@ -155,6 +156,13 @@ export const useFileStore = defineStore('file', () => {
           f.tags.some(tag => tag.toLowerCase().includes(query))
         )
       }
+    }
+
+    // Performance monitoring
+    const perfEnd = performance.now()
+    const filterTime = perfEnd - perfStart
+    if (debouncedSearchQuery.value && filterTime > 50) {
+      console.log(`[Performance] Search filter took ${filterTime.toFixed(2)}ms for ${result.length} results`)
     }
 
     return result

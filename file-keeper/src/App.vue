@@ -1079,6 +1079,9 @@ async function handleGlobalShortcut() {
 }
 
 onMounted(async () => {
+  // Performance monitoring: record app startup time
+  const startupTime = performance.now()
+
   // Intercept window close event to minimize to tray
   closeRequestedUnlisten = await appWindow.onCloseRequested(async (event) => {
     if (settingsStore.settings.minimizeToTray) {
@@ -1118,6 +1121,12 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to register drag-drop listener:', error)
   }
+
+  // Performance monitoring: log startup time
+  const endTime = performance.now()
+  const loadTime = endTime - startupTime
+  console.log(`[Performance] App startup time: ${loadTime.toFixed(2)}ms`)
+  console.log(`[Performance] Total files loaded: ${fileStore.files.length}`)
 })
 onUnmounted(async () => {
   if (registeredShortcut) {
