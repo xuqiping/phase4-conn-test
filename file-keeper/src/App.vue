@@ -33,6 +33,22 @@
       </div>
 
       <div class="flex items-center space-x-3">
+        <!-- 快速排序 -->
+        <div class="flex items-center space-x-1.5 text-sm">
+          <ArrowUpDown :size="14" class="text-gray-400" />
+       <span class="text-xs text-gray-500 dark:text-gray-400 select-none">排序</span>
+          <select
+         v-model="fileStore.sortBy"
+            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
+      title="排序方式"
+          >
+            <option value="custom">自定义顺序</option>
+            <option value="openCount">打开次数</option>
+            <option value="lastOpened">最近打开</option>
+            <option value="name">名称</option>
+            <option value="createdAt">添加时间</option>
+       </select>
+        </div>
         <RecentFiles @open-file="handleFileClick" />
       <AddFileButton />
 
@@ -178,19 +194,34 @@
 
       <template v-else>
         <!-- 网格视图 -->
-     <div v-if="viewMode === 'grid'" ref="gridContainer" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            <div
-            v-for="file in fileStore.filteredFiles"
+     <div
+          v-if="viewMode === 'grid'"
+          ref="gridContainerRef"
+          class="relative overflow-y-auto"
+          style="height: calc(100vh - 220px);"
+          @scroll="gridVirtualScroll.handleScroll"
+     >
+          <div :style="{ height: `${gridVirtualScroll.totalHeight.value}px`, position: 'relative' }">
+               <div
+            v-for="{ item: file, index, offsetTop } in gridVirtualScroll.visibleItems.value"
        :key="file.id"
             :data-id="file.id"
+            :style="{
+           position: 'absolute',
+            top: `${offsetTop}px`,
+              left: `${(index % 5) * 20}%`,
+            width: '19%',
+                height: '210px'
+            }"
        draggable="false"
             @contextmenu.prevent="handleContextMenu($event, file)"
             @click="handleCardClick($event, file)"
       @mouseenter="hoveredFileId = file.id"
          @mouseleave="hoveredFileId = null"
-          class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-move flex flex-col select-none"
+            class="group bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-3 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-move flex flex-col select-none overflow-hidden"
           >
-            <!-- Selection Checkbox -->
+
+          <!-- Selection Checkbox -->
             <div
             v-if="selectionStore.hasSelection || file.id === hoveredFileId"
             class="absolute top-2 left-2 z-10"
@@ -215,7 +246,7 @@
               <MoreVertical :size="16" />
         </button>
 
-            <div class="flex-1 flex flex-col items-center justify-center py-4">
+        <div class="flex-1 flex flex-col items-center justify-center py-2 min-h-0 w-full">
               <!-- Real icon (base64 data URL) -->
               <img
                 v-if="file.icon && file.icon.startsWith('data:image')"
@@ -252,11 +283,40 @@
             </span>
         </div>
 
-            <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 w-full pt-3 border-t border-gray-100 dark:border-[#333]">
-            <span class="truncate max-w-[80px]" :title="getGroupName(file.groupId)">{{ getGroupName(file.groupId) }}</span>
-           <span>打开 {{ file.openCount }} 次</span>
+            <!-- Footer: 分组 | 序号 | 打开次数 -->
+            <div class="mt-2 relative flex items-center justify-between gap-2 text-[11px] text-gray-400 dark:text-gray-500 w-full pt-2 border-t border-gray-100 dark:border-[#333] flex-shrink-0">
+              <span class="truncate flex-1 min-w-0" :title="getGroupName(file.groupId)">{{ getGroupName(file.groupId) }}</span>
+            
+              <!-- 序号徽章（绝对居中） -->
+              <div class="absolute left-1/2 -translate-x-1/2" @click.stop>
+             <input
+          v-if="editingOrderId === file.id"
+              v-model="editingOrderValue"
+            type="number"
+                  min="1"
+              class="w-10 h-5 text-[11px] text-center bg-white dark:bg-dark-bg border border-primary rounded focus:outline-none px-0.5"
+                  @keyup.enter="commitEditOrder(file)"
+                  @keyup.esc="cancelEditOrder()"
+                  @blur="commitEditOrder(file)"
+               :ref="autofocusInput"
+                />
+           <button
+                v-else
+       :class="['min-w-[48px] h-5 px-2 flex items-center justify-center text-[10px] font-medium rounded transition-colors whitespace-nowrap',
+            fileStore.sortBy === 'custom'
+                 ? 'bg-primary/15 text-primary border border-primary/40 hover:bg-primary/25 cursor-pointer'
+                 : 'bg-gray-100 dark:bg-dark-hover text-gray-400 border border-gray-200 dark:border-dark-border cursor-not-allowed']"
+             :title="fileStore.sortBy === 'custom' ? '点击修改顺序' : '切换到自定义顺序后可编辑'"
+                  @click.stop="startEditOrder(file, index + 1)"
+                >
+            排序 {{ index + 1 }}
+            </button>
+              </div>
+              
+              <span class="flex-shrink-0 whitespace-nowrap">打开 {{ file.openCount }} 次</span>
             </div>
           </div>
+        </div>
         </div>
 
         <!-- 列表视图 -->
@@ -567,6 +627,7 @@ import {
   Search,
   Plus,
   FolderPlus,
+  ArrowUpDown,
   Settings,
   X,
   Maximize2,
@@ -621,7 +682,8 @@ const recentStore = useRecentStore()
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)
 
-// Drag-reorder for grid view
+// Drag-reorder for grid view (disabled while virtual scroll is active —
+// custom order is now edited via the per-card numeric badge instead).
 const gridContainer = ref<HTMLElement | null>(null)
 useSortableFiles(gridContainer)
 
@@ -631,11 +693,43 @@ const gridVirtualScroll = useVirtualScroll(
   gridContainerRef,
   computed(() => fileStore.filteredFiles),
   {
-    itemHeight: 200,  // 每个卡片高度约 200px
+    itemHeight: 220,  // 每个卡片高度（含间距）
     itemsPerRow: 5,   // 默认每行 5 个
     overscan: 10      // 缓冲区 10 个项目
   }
 )
+
+// Order-badge inline editing (only meaningful when sortBy === 'custom')
+const editingOrderId = ref<string | null>(null)
+const editingOrderValue = ref('')
+
+function startEditOrder(file: FileItem, currentPosition: number) {
+  if (fileStore.sortBy !== 'custom') return
+  editingOrderId.value = file.id
+  editingOrderValue.value = String(currentPosition)
+}
+
+function commitEditOrder(file: FileItem) {
+  if (editingOrderId.value !== file.id) return
+  const target = parseInt(editingOrderValue.value, 10)
+  if (Number.isFinite(target) && target > 0) {
+    fileStore.moveToPosition(file.id, target)
+  }
+  editingOrderId.value = null
+  editingOrderValue.value = ''
+}
+
+function cancelEditOrder() {
+  editingOrderId.value = null
+  editingOrderValue.value = ''
+}
+
+function autofocusInput(el: any) {
+  if (el && typeof el.focus === 'function') {
+    el.focus()
+    if (typeof el.select === 'function') el.select()
+  }
+}
 
 // Batch operations
 const showBatchMoveMenu = ref(false)

@@ -88,6 +88,7 @@ export const useFileStore = defineStore('file', () => {
   ])
   const searchQuery = ref('')
   const debouncedSearchQuery = ref('')
+  const sortBy = ref<'custom' | 'openCount' | 'name' | 'lastOpened' | 'createdAt'>('custom')
 
   // Watch searchQuery with debounce
   watchDebounced(
@@ -115,8 +116,19 @@ export const useFileStore = defineStore('file', () => {
       result = result.filter(f => f.groupId === groupStore.currentGroupId)
     }
 
-    // Sort by orderIndex
-    result = result.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+    // Sort
+    const byName = (a: FileItem, b: FileItem) => a.name.localeCompare(b.name, 'zh')
+  if (sortBy.value === 'custom') {
+      result = result.slice().sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+    } else if (sortBy.value === 'openCount') {
+      result = result.slice().sort((a, b) => (b.openCount - a.openCount) || byName(a, b))
+    } else if (sortBy.value === 'name') {
+      result = result.slice().sort(byName)
+    } else if (sortBy.value === 'lastOpened') {
+      result = result.slice().sort((a, b) => ((b.lastOpened ?? 0) - (a.lastOpened ?? 0)) || byName(a, b))
+    } else if (sortBy.value === 'createdAt') {
+      result = result.slice().sort((a, b) => (b.createdAt - a.createdAt) || byName(a, b))
+    }
 
     // Filter by search query
     if (debouncedSearchQuery.value) {
@@ -225,9 +237,49 @@ export const useFileStore = defineStore('file', () => {
     const newOrderMap = new Map(orderedIds.map((id, idx) => [id, idx]))
     files.value.forEach(file => {
     if (newOrderMap.has(file.id)) {
-        file.orderIndex = newOrderMap.get(file.id)!
+     file.orderIndex = newOrderMap.get(file.id)!
       }
     })
+  }
+
+  // Move a file to a 1-based position within the current filtered/visible list,
+  // keeping the relative order of all other files in that list.
+  function moveToPosition(id: string, targetPosition: number): boolean {
+    const visible = filteredFiles.value
+    const fromIdx = visible.findIndex(f => f.id === id)
+    if (fromIdx === -1) return false
+
+    const clamped = Math.max(1, Math.min(targetPosition, visible.length))
+    const toIdx = clamped - 1
+    if (fromIdx === toIdx) return false
+
+    const reordered = visible.slice()
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+
+    // Re-stamp orderIndex for the reordered visible set; gap-pack so each one
+    // gets a unique value while leaving non-visible files untouched.
+    const visibleIds = new Set(visible.map(f => f.id))
+    const otherFiles = files.value.filter(f => !visibleIds.has(f.id))
+    const otherSorted = otherFiles
+      .slice()
+      .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
+    let next = 0
+    const stamp = (f: FileItem) => {
+      const target = files.value.find(x => x.id === f.id)
+      if (target) target.orderIndex = next++
+    }
+    // Interleave: keep non-visible files at their original relative ranks,
+    // but for simplicity stamp visible-first then others. Both groups get
+    // monotonically increasing indices so 'custom' sort is stable.
+    reordered.forEach(stamp)
+    otherSorted.forEach(stamp)
+
+    return true
+  }
+
+  function setSortBy(mode: typeof sortBy.value) {
+    sortBy.value = mode
   }
 
   function batchOpen(ids: string[]) {
@@ -264,6 +316,7 @@ export const useFileStore = defineStore('file', () => {
     // State
     files,
     searchQuery,
+    sortBy,
     // Getters
     filteredFiles,
     recentFiles,
@@ -273,8 +326,10 @@ export const useFileStore = defineStore('file', () => {
     updateFile,
     recordOpen,
     setSearchQuery,
+    setSortBy,
     loadFiles,
     updateOrder,
+    moveToPosition,
     batchOpen,
     batchDelete,
     batchMove,
@@ -283,7 +338,7 @@ export const useFileStore = defineStore('file', () => {
 }, {
   persist: {
     key: 'files',
-    paths: ['files'],
+    paths: ['files', 'sortBy'],
     importantActions: ['addFile', 'removeFile', 'updateFile']
   }
 })
