@@ -3,7 +3,7 @@
 **目标**: 完成 File Keeper v0.1.0 性能优化、Windows 平台测试和打包发布
 
 **开始时间**: 2026-05-16  
-**当前状态**: 进行中 (Task 1-6 已完成 + 额外优化)
+**当前状态**: 进行中 (Task 1-7 框架完成，待手动测试)
 
 ---
 
@@ -101,18 +101,29 @@
 - 修复 `useIconLazyLoad.ts` 的 TypeScript 类型错误（处理 null 返回值）
 - 图标现在按需加载，卡片进入视口时才提取
 
+### ✅ Task 7: 性能测试与验证（框架完成）
+**提交**: `fa78f08 feat: add performance monitoring and testing framework`
+
+**完成内容**:
+- 在 App.vue 的 `onMounted` 中添加启动时间测量
+- 在 fileStore 的 `filteredFiles` 中添加搜索性能日志
+- 创建 `docs/testing/v0.1.0-performance-test.md` 测试计划和结果表格
+- 创建 `docs/testing/generate-test-data.js` 测试数据生成脚本
+- 创建 `docs/testing/performance-test-guide.md` 详细测试步骤
+
+**测试覆盖**:
+- 启动时间测试（0/100/500/1000 文件）
+- 滚动性能测试（网格/列表视图，1000 文件）
+- 搜索响应时间测试（1/10/100/500 结果）
+- 内存占用测试（0/100/500/1000 文件）
+- 图标懒加载验证
+- 虚拟滚动验证
+
+**待执行**: 需要手动运行测试并记录结果到测试报告
+
 ---
 
 ## 待完成任务 (按原计划)
-
-### ⏳ Task 7: 性能测试与验证
-**文件**: `docs/testing/v0.1.0-performance-test.md`
-
-**测试项**:
-- 启动时间 < 500ms
-- 1000 文件滚动帧率 ≥ 55fps
-- 搜索响应时间 < 100ms
-- 内存占用 < 100MB
 
 ### ⏳ Task 8: 编写应用场景文档
 **文件**: `docs/USE_CASES.md`
