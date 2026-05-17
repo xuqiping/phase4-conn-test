@@ -328,40 +328,56 @@
             <div class="w-1/6 text-right">最后打开</div>
           </div>
           <div
-            v-for="file in fileStore.filteredFiles"
-        :key="file.id"
-          @contextmenu.prevent="handleContextMenu($event, file)"
-            @click="handleFileClick(file)"
-            class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-[#333] hover:bg-gray-50 dark:hover:bg-dark-hover transition-colors group cursor-pointer"
+            ref="listContainerRef"
+            class="relative overflow-y-auto"
+            style="height: calc(100vh - 280px);"
+       @scroll="listVirtualScroll.handleScroll"
           >
-            <div class="w-1/2 flex items-center pr-4">
-              <img v-if="file.icon && file.icon.startsWith('data:image')" :src="file.icon" class="w-[18px] h-[18px] mr-3 flex-shrink-0 object-contain" :alt="file.name" />
-              <component v-else :is="getFileIcon(file.icon || file.type)" :size="18" :class="[getFileColor(file.icon || file.type), 'mr-3 flex-shrink-0']" />
-            <div class="flex flex-col truncate">
-              <span
-                class="text-sm font-medium truncate"
-                v-html="highlightText(file.name, fileStore.searchQuery)"
-              />
-                <span
-                  class="text-[11px] text-gray-400 truncate mt-0.5"
-                  v-html="highlightText(file.path, fileStore.searchQuery)"
-                />
-              </div>
-            </div>
-          <div class="w-1/6 text-sm text-gray-500">{{ getGroupName(file.groupId) }}</div>
-            <div class="w-1/6 flex flex-wrap gap-1">
-              <span v-for="tag in file.tags.slice(0, 2)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-[#383838] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-[#444]">
-                {{ tag }}
-              </span>
-         </div>
-            <div class="w-1/6 text-right text-sm text-gray-400 flex items-center justify-end space-x-4">
-              <span>{{ formatLastOpened(file.lastOpened) }}</span>
-              <button
-                @click.stop="handleContextMenu($event, file)"
-            class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition-all text-gray-500"
+            <div :style="{ height: `${listVirtualScroll.totalHeight.value}px`, position: 'relative' }">
+              <div
+          v-for="{ item: file, offsetTop } in listVirtualScroll.visibleItems.value"
+        :key="file.id"
+                :style="{
+                  position: 'absolute',
+             top: `${offsetTop}px`,
+            left: 0,
+                  right: 0,
+          height: '60px'
+                }"
+                @contextmenu.prevent="handleContextMenu($event, file)"
+                @click="handleFileClick(file)"
+                class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-[#333] hover:bg-gray-50 dark:hover:bg-dark-hover transition-colors group cursor-pointer"
               >
-                <MoreVertical :size="16" />
-              </button>
+       <div class="w-1/2 flex items-center pr-4">
+                  <img v-if="file.icon && file.icon.startsWith('data:image')" :src="file.icon" class="w-[18px] h-[18px] mr-3 flex-shrink-0 object-contain" :alt="file.name" />
+             <component v-else :is="getFileIcon(file.icon || file.type)" :size="18" :class="[getFileColor(file.icon || file.type), 'mr-3 flex-shrink-0']" />
+                  <div class="flex flex-col truncate">
+                 <span
+                 class="text-sm font-medium truncate"
+            v-html="highlightText(file.name, fileStore.searchQuery)"
+                  />
+           <span
+                      class="text-[11px] text-gray-400 truncate mt-0.5"
+                    v-html="highlightText(file.path, fileStore.searchQuery)"
+                    />
+               </div>
+                </div>
+                <div class="w-1/6 text-sm text-gray-500">{{ getGroupName(file.groupId) }}</div>
+                <div class="w-1/6 flex flex-wrap gap-1">
+                  <span v-for="tag in file.tags.slice(0, 2)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-[#383838] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-[#444]">
+                    {{ tag }}
+                  </span>
+         </div>
+        <div class="w-1/6 text-right text-sm text-gray-400 flex items-center justify-end space-x-4">
+                  <span>{{ formatLastOpened(file.lastOpened) }}</span>
+                  <button
+                    @click.stop="handleContextMenu($event, file)"
+                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition-all text-gray-500"
+               >
+               <MoreVertical :size="16" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -696,6 +712,18 @@ const gridVirtualScroll = useVirtualScroll(
     itemHeight: 220,  // 每个卡片高度（含间距）
     itemsPerRow: 5,   // 默认每行 5 个
     overscan: 10      // 缓冲区 10 个项目
+  }
+)
+
+// Virtual scroll for list view
+const listContainerRef = ref<HTMLElement | null>(null)
+const listVirtualScroll = useVirtualScroll(
+  listContainerRef,
+  computed(() => fileStore.filteredFiles),
+  {
+    itemHeight: 60,   // 每行高度约 60px
+    itemsPerRow: 1,   // 列表视图每行 1 个
+    overscan: 5       // 缓冲区 5 个项目
   }
 )
 
