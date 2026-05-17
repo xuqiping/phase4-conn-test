@@ -5,8 +5,7 @@ import type { FileItem } from '../types/file'
 import { v4 as uuidv4 } from 'uuid'
 import { useGroupStore } from './groupStore'
 import { openFile } from '../api/files'
-import { getFileIcon } from '../api/icons'
-import { deriveIconFromExt } from '../utils/file'
+// getFileIcon and deriveIconFromExt removed - icons now loaded lazily via useIconLazyLoad
 
 export const useFileStore = defineStore('file', () => {
   const groupStore = useGroupStore()
@@ -177,7 +176,8 @@ export const useFileStore = defineStore('file', () => {
     }
 
     // Load icon from system
-    const iconData = await getFileIcon(file.path)
+    // const iconData = await getFileIcon(file.path)
+    // Icon will be loaded lazily via useIconLazyLoad
 
     // Calculate next orderIndex
     const maxOrderIndex = files.value.reduce((max, f) => Math.max(max, f.orderIndex ?? 0), -1)
@@ -185,7 +185,7 @@ export const useFileStore = defineStore('file', () => {
     const newFile: FileItem = {
       ...file,
       id: uuidv4(),
-      icon: iconData || file.icon || deriveIconFromExt(file.name),
+      icon: file.icon || '', // Empty - will be loaded lazily
       openCount: 0,
       orderIndex: maxOrderIndex + 1,
       createdAt: Date.now()

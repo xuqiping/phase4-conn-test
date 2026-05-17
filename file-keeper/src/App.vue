@@ -206,6 +206,7 @@
             v-for="{ item: file, index, offsetTop } in gridVirtualScroll.visibleItems.value"
        :key="file.id"
             :data-id="file.id"
+      :ref="(el) => setupIconLazyLoad(el as HTMLElement, file)"
             :style="{
            position: 'absolute',
             top: `${offsetTop}px`,
@@ -337,6 +338,7 @@
               <div
           v-for="{ item: file, offsetTop } in listVirtualScroll.visibleItems.value"
         :key="file.id"
+              :ref="(el) => setupIconLazyLoad(el as HTMLElement, file)"
                 :style="{
                   position: 'absolute',
              top: `${offsetTop}px`,
@@ -686,6 +688,7 @@ import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import { useSortableFiles } from './composables/useSortableFiles'
 import { useVirtualScroll } from './composables/useVirtualScroll'
+import { useIconLazyLoad } from './composables/useIconLazyLoad'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -726,6 +729,20 @@ const listVirtualScroll = useVirtualScroll(
     overscan: 5       // 缓冲区 5 个项目
   }
 )
+
+// Icon lazy loading setup
+function setupIconLazyLoad(el: HTMLElement | null, file: FileItem) {
+  if (!el || file.icon) return // Skip if element is null or icon already loaded
+
+  useIconLazyLoad(
+    ref(el),
+    ref(file),
+    (icon: string) => {
+      // Update the file's icon in the store
+      fileStore.updateFile(file.id, { icon })
+    }
+  )
+}
 
 // Order-badge inline editing (only meaningful when sortBy === 'custom')
 const editingOrderId = ref<string | null>(null)

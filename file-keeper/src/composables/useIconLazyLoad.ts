@@ -21,10 +21,10 @@ async function processQueue() {
 
     getFileIcon(task.file.path)
       .then(icon => {
-        task.callback(icon)
+        task.callback(icon || '')
       })
    .catch(() => {
-        // 提取失败，使用扩展名图标
+        // 提取失败，使用空字符串
         task.callback('')
       })
       .finally(() => {
