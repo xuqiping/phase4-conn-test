@@ -121,21 +121,25 @@
 
 **待执行**: 需要手动运行测试并记录结果到测试报告
 
+### ✅ Task 8: 编写应用场景文档
+**文件**: `docs/USE_CASES.md`
+**状态**: 已完成
+
+### ✅ Task 9: 准备应用图标
+**文件**: `src-tauri/icons/32x32.svg`, `src-tauri/icons/128x128.svg`, `src-tauri/icons/256x256.svg`
+**状态**: 已完成
+
+### ✅ Task 10: 配置 Tauri 打包参数
+**文件**: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
+**状态**: 已完成 - 配置了 Windows MSI 打包参数
+
+### ✅ Task 11: 更新文档 (README & CHANGELOG)
+**文件**: `README.md`, `CHANGELOG.md`
+**状态**: 已完成
+
 ---
 
-## 待完成任务 (按原计划)
-
-### ⏳ Task 8: 编写应用场景文档
-**文件**: `docs/USE_CASES.md`
-
-### ⏳ Task 9: 准备应用图标
-**文件**: `icons/32x32.png`, `icons/128x128.png`, `icons/icon.ico`
-
-### ⏳ Task 10: 配置 Tauri 打包参数
-**文件**: `src-tauri/tauri.conf.json`
-
-### ⏳ Task 11: 更新文档 (README & CHANGELOG)
-**文件**: `README.md`, `CHANGELOG.md`
+## 待完成任务
 
 ### ⏳ Task 12: 构建和测试安装包
 **输出**: `File-Keeper_0.1.0_x64_en-US.msi`

@@ -1,9 +1,13 @@
 [package]
 name = "file-keeper"
 version = "0.1.0"
-description = "轻量级跨平台文件收藏管理器"
-authors = ["you"]
+description = "轻量级跨平台文件收藏管理器 - 快速访问常用文件的可视化工具"
+authors = ["File Keeper Team"]
+license = "MIT"
+repository = "https://github.com/yourusername/file-keeper"
+homepage = "https://github.com/yourusername/file-keeper"
 edition = "2021"
+rust-version = "1.70"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
