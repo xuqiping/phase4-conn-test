@@ -198,7 +198,7 @@
           v-if="viewMode === 'grid'"
           ref="gridContainerRef"
           class="relative overflow-y-auto"
-          style="height: calc(100vh - 220px);"
+          style="height: calc(100vh - 250px);"
           @scroll="gridVirtualScroll.handleScroll"
      >
           <div :style="{ height: `${gridVirtualScroll.totalHeight.value}px`, position: 'relative' }">
@@ -688,7 +688,6 @@ import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import { useSortableFiles } from './composables/useSortableFiles'
 import { useVirtualScroll } from './composables/useVirtualScroll'
-import { useIconLazyLoad } from './composables/useIconLazyLoad'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
 
@@ -730,18 +729,104 @@ const listVirtualScroll = useVirtualScroll(
   }
 )
 
-// Icon lazy loading setup
-function setupIconLazyLoad(el: HTMLElement | null, file: FileItem) {
-  if (!el || file.icon) return // Skip if element is null or icon already loaded
+// Icon lazy loading setup - 使用单个全局 IntersectionObserver
+const iconObserver = ref<IntersectionObserver | null>(null)
+const observedElements = new Map<HTMLElement, FileItem>()
 
-  useIconLazyLoad(
-    ref(el),
-    ref(file),
-    (icon: string) => {
-      // Update the file's icon in the store
-      fileStore.updateFile(file.id, { icon })
-    }
-  )
+// 图标提取队列
+const iconQueue: Array<{ file: FileItem; callback: (icon: string) => void }> = []
+let isProcessingIcons = false
+const MAX_CONCURRENT_ICONS = 3 // 降低并发数，避免卡顿
+let activeIconCount = 0
+let processQueueTimer: number | null = null
+let getFileIconFn: ((path: string) => Promise<string | null>) | null = null
+
+// 使用 requestIdleCallback 避免阻塞主线程
+function scheduleIconProcessing() {
+  if (processQueueTimer !== null) return
+
+  const scheduleCallback = (window as any).requestIdleCallback ||
+    ((cb: () => void) => setTimeout(cb, 16))
+
+  processQueueTimer = scheduleCallback(() => {
+    processQueueTimer = null
+    processIconQueue()
+  })
+}
+
+async function processIconQueue() {
+  if (isProcessingIcons || iconQueue.length === 0) return
+
+  isProcessingIcons = true
+
+  // 只导入一次
+  if (!getFileIconFn) {
+    const { getFileIcon } = await import('./api/icons')
+    getFileIconFn = getFileIcon
+  }
+
+  while (iconQueue.length > 0 && activeIconCount < MAX_CONCURRENT_ICONS) {
+    const task = iconQueue.shift()
+    if (!task) break
+
+    activeIconCount++
+
+    getFileIconFn(task.file.path)
+      .then(icon => {
+        task.callback(icon || '')
+      })
+      .catch(() => {
+        task.callback('')
+      })
+      .finally(() => {
+        activeIconCount--
+        if (iconQueue.length > 0) {
+        scheduleIconProcessing()
+        }
+      })
+  }
+
+  isProcessingIcons = false
+}
+
+function setupIconLazyLoad(el: HTMLElement | null, file: FileItem) {
+  if (!el || file.icon) return
+
+  // 初始化全局 observer（只创建一次）
+  if (!iconObserver.value) {
+    iconObserver.value = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const element = entry.target as HTMLElement
+          const fileItem = observedElements.get(element)
+
+            if (fileItem && !fileItem.icon) {
+              // 添加到队列
+        iconQueue.push({
+            file: fileItem,
+             callback: (icon: string) => {
+               fileStore.updateFile(fileItem.id, { icon })
+              }
+          })
+          scheduleIconProcessing()
+            }
+
+            // 停止观察此元素
+            iconObserver.value?.unobserve(element)
+            observedElements.delete(element)
+          }
+        })
+      },
+      {
+        threshold: 0.1,
+        rootMargin: '100px' // 提前 100px 开始加载
+      }
+    )
+  }
+  // 记录元素和文件的映射
+  observedElements.set(el, file)
+  iconObserver.value.observe(el)
 }
 
 // Order-badge inline editing (only meaningful when sortBy === 'custom')
@@ -1129,6 +1214,20 @@ onMounted(async () => {
   console.log(`[Performance] Total files loaded: ${fileStore.files.length}`)
 })
 onUnmounted(async () => {
+  // 清理图标 observer 和定时器
+  if (processQueueTimer !== null) {
+    const cancelCallback = (window as any).cancelIdleCallback ||
+      ((id: number) => clearTimeout(id))
+    cancelCallback(processQueueTimer)
+    processQueueTimer = null
+  }
+  if (iconObserver.value) {
+    iconObserver.value.disconnect()
+    iconObserver.value = null
+  }
+  observedElements.clear()
+  iconQueue.length = 0
+
   if (registeredShortcut) {
     try {
       await unregisterGlobalShortcut(registeredShortcut)

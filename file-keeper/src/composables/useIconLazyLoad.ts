@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { getFileIcon } from '../api/icons'
 import type { FileItem } from '../types/file'
 
@@ -23,7 +23,7 @@ async function processQueue() {
       .then(icon => {
         task.callback(icon || '')
       })
-   .catch(() => {
+      .catch(() => {
         // 提取失败，使用空字符串
         task.callback('')
       })
@@ -43,34 +43,46 @@ export function useIconLazyLoad(
 ) {
   const observer = ref<IntersectionObserver | null>(null)
 
-  onMounted(() => {
-    if (!elementRef.value) return
+  // 使用 watch 代替 onMounted，这样可以在任何时候调用
+  const stopWatch = watch(
+    elementRef,
+    (el) => {
+      if (!el) return
 
-    observer.value = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting && !file.value.icon) {
-            // 添加到队列
-            iconQueue.push({
-           file: file.value,
-              callback: onIconLoaded
-            })
-            processQueue()
+      // 清理旧的 observer
+      if (observer.value) {
+        observer.value.disconnect()
+      }
+
+      observer.value = new IntersectionObserver(
+        (entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting && !file.value.icon) {
+              // 添加到队列
+              iconQueue.push({
+         file: file.value,
+                callback: onIconLoaded
+              })
+              processQueue()
 
             // 停止观察
-          observer.value?.unobserve(entry.target)
-          }
-        })
-      },
-      { threshold: 0.1 }
-    )
+              observer.value?.unobserve(entry.target)
+            }
+          })
+        },
+        { threshold: 0.1 }
+      )
 
-    observer.value.observe(elementRef.value)
-  })
+      observer.value.observe(el)
+    },
+    { immediate: true }
+  )
 
   onUnmounted(() => {
-    if (observer.value && elementRef.value) {
-      observer.value.unobserve(elementRef.value)
+    stopWatch()
+    if (observer.value) {
+      observer.value.disconnect()
+      observer.value = null
     }
   })
 }

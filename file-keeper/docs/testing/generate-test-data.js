@@ -9,6 +9,77 @@
  */
 
 /**
+ * 获取 fileStore 的辅助函数
+ */
+function getFileStore() {
+  // 方法 1: 通过开发模式暴露的全局 Pinia 实例
+  try {
+    const pinia = window.__PINIA__
+    if (pinia?._s) {
+      const store = pinia._s.get('file')
+      if (store) {
+        console.log('✓ 通过 window.__PINIA__ 连接成功')
+        return store
+      }
+    }
+  } catch (e) {
+    console.warn('方法 1 失败:', e.message)
+  }
+
+  // 方法 2: 通过 Vue DevTools 钩子
+  try {
+    const hook = window.__VUE_DEVTOOLS_GLOBAL_HOOK__
+    if (hook?.apps?.length > 0) {
+      const app = hook.apps[0]
+      const pinia = app?.appContext?.config?.globalProperties?.$pinia
+      if (pinia?._s) {
+        const store = pinia._s.get('file')
+        if (store) {
+          console.log('✓ 通过 Vue DevTools 连接成功')
+          return store
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('方法 2 失败:', e.message)
+  }
+
+  // 方法 3: 通过 DOM 元素的 Vue 实例
+  try {
+    const appElement = document.querySelector('#app')
+    if (appElement) {
+   // 尝试多种可能的路径
+      const paths = [
+        '__vueParentComponent.appContext.app.config.globalProperties.$pinia',
+        '__vueParentComponent.ctx.$pinia',
+        '__vue_app__.config.globalProperties.$pinia'
+      ]
+
+      for (const path of paths) {
+        try {
+          const parts = path.split('.')
+        let obj = appElement
+          for (const part of parts) {
+            obj = obj?.[part]
+          }
+        if (obj?._s) {
+         const store = obj._s.get('file')
+            if (store) {
+              console.log(`✓ 通过 DOM 路径连接成功: ${path}`)
+              return store
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn('方法 3 失败:', e.message)
+  }
+
+  return null
+}
+
+/**
  * 生成指定数量的测试文件
  * @param {number} count - 要生成的文件数量
  * @param {boolean} clearExisting - 是否清空现有文件
@@ -17,13 +88,20 @@ async function generateTestFiles(count, clearExisting = false) {
   console.log(`开始生成 ${count} 个测试文件...`)
   const startTime = performance.now()
 
-  // 获取 store (需要在 Vue 应用上下文中)
-  const fileStore = window.__VUE_DEVTOOLS_GLOBAL_HOOK__?.apps[0]?.appContext?.config?.globalProperties?.$pinia?._s?.get('file')
+  // 获取 store
+  const fileStore = getFileStore()
 
   if (!fileStore) {
-    console.error('无法访问 fileStore，请确保应用已加载')
+    console.error('❌ 无法访问 fileStore')
+    console.error('请确保:')
+    console.error('  1. 应用已完全加载')
+    console.error('  2. 在应用页面的控制台中运行此脚本')
+    console.error('  3. 尝试刷新页面后重新运行')
+    console.error('  4. 确保应用运行在开发模式 (npm run tauri:dev)')
     return
   }
+
+  console.log('✓ 成功连接到 fileStore')
 
   // 清空现有文件
   if (clearExisting) {
@@ -51,7 +129,7 @@ async function generateTestFiles(count, clearExisting = false) {
       const tag = tags[Math.floor(Math.random() * tags.length)]
       if (!fileTags.includes(tag)) {
         fileTags.push(tag)
-    }
+      }
     }
 
     await fileStore.addFile({
@@ -80,10 +158,10 @@ async function generateTestFiles(count, clearExisting = false) {
  * 清空所有文件
  */
 function clearAllFiles() {
-  const fileStore = window.__VUE_DEVTOOLS_GLOBAL_HOOK__?.apps[0]?.appContext?.config?.globalProperties?.$pinia?._s?.get('file')
+  const fileStore = getFileStore()
 
   if (!fileStore) {
-    console.error('无法访问 fileStore')
+    console.error('❌ 无法访问 fileStore')
     return
   }
 
@@ -91,7 +169,7 @@ function clearAllFiles() {
   const ids = fileStore.files.map(f => f.id)
   ids.forEach(id => fileStore.removeFile(id))
 
-  console.log(`已清空 ${count} 个文件`)
+  console.log(`✓ 已清空 ${count} 个文件`)
 }
 
 /**
@@ -99,35 +177,50 @@ function clearAllFiles() {
  * @param {number} count - 要打开的文件数量
  */
 function simulateFileOpens(count) {
-  const fileStore = window.__VUE_DEVTOOLS_GLOBAL_HOOK__?.apps[0]?.appContext?.config?.globalProperties?.$pinia?._s?.get('file')
+  const fileStore = getFileStore()
 
   if (!fileStore) {
-    console.error('无法访问 fileStore')
+    console.error('❌ 无法访问 fileStore')
     return
   }
 
   const files = fileStore.files
   if (files.length === 0) {
-    console.error('没有文件可以打开')
+    console.error('❌ 没有文件可以打开')
     return
   }
 
   for (let i = 0; i < count; i++) {
     const randomFile = files[Math.floor(Math.random() * files.length)]
-    fileStore.recordOpen(randomFile.id)
+  fileStore.recordOpen(randomFile.id)
   }
 
-  console.log(`已模拟打开 ${count} 次文件`)
+  console.log(`✓ 已模拟打开 ${count} 次文件`)
 }
 
 // 导出到全局作用域
 window.generateTestFiles = generateTestFiles
 window.clearAllFiles = clearAllFiles
 window.simulateFileOpens = simulateFileOpens
+window.getFileStore = getFileStore
 
-console.log('测试数据生成脚本已加载')
+console.log('✓ 测试数据生成脚本已加载')
 console.log('可用命令:')
-console.log('  generateTestFiles(1000)     - 生成 1000 个测试文件')
+console.log('  generateTestFiles(1000)      - 生成 1000 个测试文件')
 console.log('  generateTestFiles(500, true) - 清空现有文件并生成 500 个')
 console.log('  clearAllFiles()              - 清空所有文件')
 console.log('  simulateFileOpens(100)       - 模拟打开 100 次文件')
+console.log('  getFileStore()            - 测试 store 连接')
+console.log('')
+console.log('测试 store 连接...')
+const testStore = getFileStore()
+if (testStore) {
+  console.log(`✓ Store 连接成功! 当前有 ${testStore.files.length} 个文件`)
+} else {
+  console.error('❌ Store 连接失败')
+  console.error('请确保应用运行在开发模式: npm run tauri:dev')
+  console.error('如果问题仍然存在，请尝试:')
+  console.error('  1. 刷新页面')
+  console.error('  2. 重新复制粘贴此脚本')
+  console.error('  3. 检查控制台是否有其他错误')
+}
