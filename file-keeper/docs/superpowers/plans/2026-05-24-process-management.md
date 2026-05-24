@@ -684,7 +684,16 @@ async function closeSelected() {
 }
 ```
 
-- [ ] **Step 5: Export all methods**
+- [ ] **Step 5: Add clearProcesses method for cleanup**
+
+```typescript
+function clearProcesses() {
+  processes.value = []
+  selectedIds.value.clear()
+}
+```
+
+- [ ] **Step 6: Export all methods**
 
 Add to return statement:
 ```typescript
@@ -697,19 +706,20 @@ return {
   clearSelection,
   closeProcess,
   closeSelected,
+  clearProcesses,
 }
 ```
 
-- [ ] **Step 6: Verify TypeScript compilation**
+- [ ] **Step 7: Verify TypeScript compilation**
 
 Run: `cd file-keeper && npm run type-check`
 Expected: No errors
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/stores/processStore.ts
-git commit -m "feat(frontend): add process store"
+git commit -m "feat(frontend): add process store with cleanup method"
 ```
 
 ---
@@ -795,4 +805,37 @@ git commit -m "feat(frontend): add process store"
 - Virtual scrolling for performance
 - Configurable settings and confirmations
 - Complete documentation
+
+
+---
+
+## IMPORTANT: Tab-Aware Performance Optimization
+
+**Requirement Update**: Process monitoring should ONLY be active when the user is on the process management tab. When the user switches to the file management tab, all monitoring should stop to save system resources.
+
+### Implementation Strategy:
+
+**In ProcessManagement.vue:**
+- Use `onActivated()` hook to start monitoring when tab becomes active
+- Use `onDeactivated()` hook to stop monitoring when tab becomes inactive
+- Call `processStore.clearProcesses()` on deactivation to free memory
+
+**In App.vue:**
+- Use `v-if` (not `v-show`) for ProcessManagement component
+- This ensures complete mount/unmount cycle, triggering lifecycle hooks
+- Alternative: Use KeepAlive with proper activation hooks
+
+**In processStore.ts:**
+- Add `clearProcesses()` method to clear process list
+- Ensure `stopAutoRefresh()` properly clears timers
+- No background monitoring when component is not active
+
+**Testing Checklist:**
+- [ ] Process list loads only when switching to process tab
+- [ ] Auto-refresh stops when switching away from process tab
+- [ ] No background API calls when on file management tab
+- [ ] Memory is freed when leaving process tab
+- [ ] Switching back to process tab re-initializes properly
+
+This optimization ensures zero performance impact when users are managing files.
 
