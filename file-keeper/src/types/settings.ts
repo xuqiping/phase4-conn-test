@@ -7,4 +7,5 @@ export interface Settings {
   minimizeToTray: boolean       // 最小化到托盘
   defaultView: 'grid' | 'list'  // 默认视图
   itemsPerPage: number          // 每页显示数量
+  iconMode: 'real' | 'generic'  // 图标模式：真实图标或通用图标
 }

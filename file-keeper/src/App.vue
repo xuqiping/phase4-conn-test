@@ -48,8 +48,23 @@
             <option value="name">名称</option>
             <option value="createdAt">添加时间</option>
        </select>
+           </div>
+
+        <!-- 图标模式切换 -->
+      <div class="flex items-center space-x-1.5 text-sm">
+          <Box :size="14" class="text-gray-400" />
+          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">图标</span>
+      <select
+        v-model="settingsStore.settings.iconMode"
+            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
+            title="图标显示模式"
+          >
+            <option value="real">真实图标</option>
+            <option value="generic">通用图标</option>
+          </select>
         </div>
-        <RecentFiles @open-file="handleFileClick" />
+
+    <RecentFiles @open-file="handleFileClick" />
       <AddFileButton />
 
       <button
@@ -219,7 +234,7 @@
             @click="handleCardClick($event, file)"
       @mouseenter="hoveredFileId = file.id"
          @mouseleave="hoveredFileId = null"
-            class="group bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-3 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-move flex flex-col select-none overflow-hidden"
+            class="group bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-3 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col select-none overflow-hidden"
           >
 
           <!-- Selection Checkbox -->
@@ -637,7 +652,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { onKeyStroke } from '@vueuse/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { registerGlobalShortcut, unregisterGlobalShortcut } from './api/shortcuts'
@@ -790,7 +805,17 @@ async function processIconQueue() {
 }
 
 function setupIconLazyLoad(el: HTMLElement | null, file: FileItem) {
-  if (!el || file.icon) return
+  if (!el) return
+
+  // 如果已经有图标且是正确的类型，不需要重新加载
+  const isBase64Icon = file.icon && file.icon.startsWith('data:image')
+  const needsRealIcon = settingsStore.settings.iconMode === 'real'
+  const hasCorrectIcon = file.icon && (
+    (needsRealIcon && isBase64Icon) ||
+    (!needsRealIcon && !isBase64Icon)
+  )
+
+  if (hasCorrectIcon) return
 
   // 初始化全局 observer（只创建一次）
   if (!iconObserver.value) {
@@ -945,7 +970,7 @@ async function handleAddFolder() {
       name,
       path: selectedPath,
       type: 'folder',
-      icon: 'folder',
+      icon: '', // Icon will be loaded lazily
       tags: [],
       groupId: resolveGroupId(
         groupStore.currentGroupId,
@@ -1040,7 +1065,8 @@ async function processDroppedPath(filePath: string): Promise<'added' | 'duplicat
 
     const name = filePath.split(/[/\\]/).pop() || filePath
     const type: 'file' | 'folder' = isFolder ? 'folder' : 'file'
-    const icon = isFolder ? 'folder' : deriveIconFromExt(name)
+    // Icon will be loaded lazily via useIconLazyLoad
+    const icon = ''
 
     const newItem = await fileStore.addFile({
    name,
@@ -1213,6 +1239,28 @@ onMounted(async () => {
   console.log(`[Performance] App startup time: ${loadTime.toFixed(2)}ms`)
   console.log(`[Performance] Total files loaded: ${fileStore.files.length}`)
 })
+
+// Watch for icon mode changes and reload all icons
+watch(
+  () => settingsStore.settings.iconMode,
+  async (newMode) => {
+    console.log('Icon mode changed to:', newMode)
+
+    if (newMode === 'generic') {
+      // 通用图标模式：直接设置通用图标
+   fileStore.files.forEach(file => {
+        file.icon = file.type === 'folder' ? 'folder' : deriveIconFromExt(file.name)
+      })
+    } else {
+      // 真实图标模式：清空图标，等待懒加载
+      fileStore.files.forEach(file => {
+      file.icon = ''
+      })
+      // 强制触发重新渲染，让懒加载重新工作
+      await nextTick()
+    }
+  }
+)
 onUnmounted(async () => {
   // 清理图标 observer 和定时器
   if (processQueueTimer !== null) {

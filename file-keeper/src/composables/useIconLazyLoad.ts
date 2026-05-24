@@ -1,6 +1,8 @@
 import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { getFileIcon } from '../api/icons'
 import type { FileItem } from '../types/file'
+import { useSettingsStore } from '../stores/settingsStore'
+import { deriveIconFromExt } from '../utils/file'
 
 // 图标提取队列
 const iconQueue: Array<{ file: FileItem; callback: (icon: string) => void }> = []
@@ -12,6 +14,7 @@ async function processQueue() {
   if (isProcessing || iconQueue.length === 0) return
 
   isProcessing = true
+  const settingsStore = useSettingsStore()
 
   while (iconQueue.length > 0 && activeCount < MAX_CONCURRENT) {
     const task = iconQueue.shift()
@@ -19,18 +22,30 @@ async function processQueue() {
 
     activeCount++
 
-    getFileIcon(task.file.path)
-      .then(icon => {
-        task.callback(icon || '')
-      })
-      .catch(() => {
-        // 提取失败，使用空字符串
-        task.callback('')
-      })
-      .finally(() => {
-        activeCount--
-        processQueue()
-      })
+    const useRealIcon = settingsStore.settings.iconMode === 'real'
+
+    if (!useRealIcon) {
+      // 通用图标模式：直接使用扩展名推导
+      const genericIcon = task.file.type === 'folder' ? 'folder' : deriveIconFromExt(task.file.name)
+      task.callback(genericIcon)
+      activeCount--
+      // 继续处理队列中的下一个任务
+      setTimeout(() => processQueue(), 0)
+    } else {
+      // 真实图标模式：调用后端提取
+      getFileIcon(task.file.path, useRealIcon)
+        .then(icon => {
+          task.callback(icon || '')
+        })
+        .catch(() => {
+          // 提取失败，使用空字符串
+          task.callback('')
+        })
+        .finally(() => {
+          activeCount--
+          processQueue()
+        })
+    }
   }
 
   isProcessing = false

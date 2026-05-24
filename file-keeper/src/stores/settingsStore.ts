@@ -11,8 +11,9 @@ export const useSettingsStore = defineStore('settings', () => {
     globalShortcut: 'CommandOrControl+Alt+K',
     minimizeToTray: true,
     autoStart: false,
-    language: 'zh-CN',
-    itemsPerPage: 50
+  language: 'zh-CN',
+    itemsPerPage: 50,
+    iconMode: 'real' // 默认使用真实图标
   })
 
   // System theme detection
@@ -39,6 +40,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.defaultView = mode
   }
 
+  function setIconMode(mode: 'real' | 'generic') {
+    settings.value.iconMode = mode
+  }
+
   function toggleTheme() {
     const themeOrder: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto']
     const currentIndex = themeOrder.indexOf(settings.value.theme)
@@ -58,6 +63,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateSettings,
     setTheme,
     setViewMode,
+    setIconMode,
     toggleTheme,
     loadSettings
   }
