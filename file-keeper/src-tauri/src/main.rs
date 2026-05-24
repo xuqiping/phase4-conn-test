@@ -3,6 +3,7 @@
 
 mod commands;
 mod platform;
+mod types;
 mod utils;
 
 use commands::files::{open_file, validate_path, show_in_folder};
