@@ -19,12 +19,11 @@ export type ProcessCategory =
 export interface ProcessInfo {
   pid: number
   name: string
+  window_title: string
   category: ProcessCategory
-  memory: number
-  cpu: number
-  runtime: number
-  path?: string
-  windowTitle?: string
+  memory_mb: number
+  cpu_usage: number
+  window_handle: number
 }
 
 // Column configuration

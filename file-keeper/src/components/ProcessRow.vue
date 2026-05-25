@@ -28,23 +28,15 @@
       </div>
 
       <div v-if="isColumnVisible('memory')" class="row-cell cell-memory">
-      {{ formatMemory(process.memory) }}
+        {{ formatMemory(process.memory_mb) }}
       </div>
 
-    <div v-if="isColumnVisible('cpu')" class="row-cell cell-cpu">
-        {{ process.cpu.toFixed(1) }}%
-      </div>
-
-      <div v-if="isColumnVisible('runtime')" class="row-cell cell-runtime">
-        {{ formatRuntime(process.runtime) }}
-      </div>
-
-      <div v-if="isColumnVisible('path')" class="row-cell cell-path">
-        <span :title="process.path">{{ truncate(process.path, 40) }}</span>
+      <div v-if="isColumnVisible('cpu')" class="row-cell cell-cpu">
+        {{ process.cpu_usage.toFixed(1) }}%
       </div>
 
       <div v-if="isColumnVisible('windowTitle')" class="row-cell cell-window-title">
-        <span :title="process.windowTitle">{{ truncate(process.windowTitle, 30) }}</span>
+        <span :title="process.window_title">{{ truncate(process.window_title, 30) }}</span>
       </div>
     </div>
 
