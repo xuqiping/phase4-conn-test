@@ -6,10 +6,10 @@
       @scroll="handleScroll"
     >
       <div class="virtual-scroll-spacer" :style="{ height: `${totalHeight}px` }">
-        <div
-        v-for="{ item, index, offsetTop } in visibleItems"
-      :key="item.pid"
-      class="process-row-wrapper"
+          <div
+        v-for="{ item, offsetTop } in visibleItems"
+          :key="item.pid"
+          class="process-row-wrapper"
           :style="{ transform: `translateY(${offsetTop}px)` }"
         >
           <ProcessRow

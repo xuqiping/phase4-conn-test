@@ -168,8 +168,30 @@
       </div>
     </transition>
 
-    <!-- 3. 分组标签栏 -->
+    <!-- 3. 主标签栏 (Files / Processes) -->
     <div class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
+      <button
+        @click="currentTab = 'files'"
+        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                 currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+      >
+      <Folder :size="16" />
+        <span>文件管理</span>
+    <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+      </button>
+      <button
+        @click="currentTab = 'processes'"
+        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+               currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+    >
+        <Activity :size="16" />
+        <span>进程管理</span>
+        <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+      </button>
+    </div>
+
+    <!-- 3b. 分组标签栏 (只在文件管理时显示) -->
+    <div v-if="currentTab === 'files'" class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
       <button
         v-for="group in groupStore.groups"
         :key="group.id"
@@ -192,8 +214,9 @@
       </button>
     </div>
 
-    <!-- 4. 主内容区 -->
+    <!-- 4. 主内容区 (文件管理) -->
     <div
+      v-if="currentTab === 'files'"
       class="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-dark-bg relative transition-colors duration-200"
       :class="{ 'bg-primary/5 dark:bg-primary/5': isDraggingOver }"
       @dragover="handleDragOver"
@@ -399,6 +422,11 @@
           </div>
         </div>
       </template>
+    </div>
+
+    <!-- Process Management Tab -->
+    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden">
+      <ProcessManagement />
     </div>
 
     <!-- 5. 状态栏 -->
@@ -685,7 +713,8 @@ import {
   Code,
   FolderOpen,
   XCircle,
-  FileX
+  FileX,
+  Activity
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
@@ -699,6 +728,7 @@ import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import RecentFiles from './components/RecentFiles.vue'
+import ProcessManagement from './components/ProcessManagement.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import { useSortableFiles } from './composables/useSortableFiles'
@@ -711,6 +741,9 @@ const groupStore = useGroupStore()
 const settingsStore = useSettingsStore()
 const selectionStore = useSelectionStore()
 const recentStore = useRecentStore()
+
+// Current tab state
+const currentTab = ref<'files' | 'processes'>('files')
 
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)

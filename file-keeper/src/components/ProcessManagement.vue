@@ -69,6 +69,7 @@ function startAutoRefresh() {
       }
     }, settingsStore.settings.refreshInterval)
   }
+}
 
 function stopAutoRefresh() {
   if (autoRefreshTimer !== null) {

@@ -61,7 +61,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { XCircle } from 'lucide-vue-next'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import type { ProcessInfo } from '../types/process'
