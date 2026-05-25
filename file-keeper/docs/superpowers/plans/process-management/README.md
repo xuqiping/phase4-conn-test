@@ -14,25 +14,29 @@
 
 This implementation is split into 4 weekly plans to reduce token consumption:
 
-### [Week 1: Backend Foundation](./week1-backend-foundation.md)
+### [Week 1: Backend Foundation](./week1-backend-foundation.md) ✅ COMPLETED
 **Tasks 1-7** - Rust types, dependencies, process mappings, process monitor, Tauri commands
 - Estimated: 40 hours
 - Deliverable: Fully functional backend API for process enumeration and control
+- **Status**: ✅ Completed on 2026-05-25
 
-### [Week 2: Frontend Foundation](./week2-frontend-foundation.md)
+### [Week 2: Frontend Foundation](./week2-frontend-foundation.md) 🔄 IN PROGRESS
 **Tasks 8-18** - TypeScript types, API layer, stores, core Vue components, App integration
 - Estimated: 40 hours
 - Deliverable: Complete UI with basic functionality
+- **Status**: ⏳ Not started
 
-### [Week 3: Advanced Features](./week3-advanced-features.md)
+### [Week 3: Advanced Features](./week3-advanced-features.md) ⏳ PENDING
 **Tasks 19-22** - Auto-refresh, column customization, confirmation logic, error handling
 - Estimated: 40 hours
 - Deliverable: Polished user experience with all advanced features
+- **Status**: ⏳ Not started
 
-### [Week 4: Polish and Testing](./week4-polish-testing.md)
+### [Week 4: Polish and Testing](./week4-polish-testing.md) ⏳ PENDING
 **Tasks 23-27** - Complete mappings, performance testing, manual testing, documentation
 - Estimated: 40 hours
 - Deliverable: Production-ready feature with full documentation
+- **Status**: ⏳ Not started
 
 ---
 
@@ -109,6 +113,28 @@ This implementation is split into 4 weekly plans to reduce token consumption:
 
 ---
 
+## 📈 Progress Tracking
+
+**Overall Progress**: 25% (Week 1 of 4 completed)
+
+**Completed**:
+- ✅ Week 1: Backend Foundation (7/7 tasks)
+  - Rust type definitions
+  - Dependencies added (sysinfo, lazy_static, windows crate)
+  - Process mappings (Browser, Office, Explorer, Terminal, Archive)
+  - Process enumeration using Windows API
+  - Process close operations
+  - Tauri commands registered
+
+**Next Steps**:
+- 🔄 Week 2: Frontend Foundation (0/11 tasks)
+  - TypeScript types
+  - API layer
+  - Pinia stores
+  - Vue components
+
+---
+
 ## 🚀 Getting Started
 
 1. Read the design spec: `../specs/2026-05-24-process-management-design.md`
@@ -119,4 +145,6 @@ This implementation is split into 4 weekly plans to reduce token consumption:
 ---
 
 **Total Duration**: 4 weeks (160 hours)
-**Last Updated**: 2026-05-24
+**Started**: 2026-05-25
+**Last Updated**: 2026-05-25
+**Current Status**: Week 1 completed, Week 2 ready to start
