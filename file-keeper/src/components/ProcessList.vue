@@ -7,16 +7,16 @@
     >
       <div class="virtual-scroll-spacer" :style="{ height: `${totalHeight}px` }">
       <div
-          v-for="{ item, offsetTop } in visibleItems"
-          :key="item.pid"
+          v-for="item in visibleItems"
+          :key="item.item.pid"
           class="process-row-wrapper"
-          :style="{ transform: `translateY(${offsetTop}px)` }"
+          :style="{ transform: `translateY(${item.offsetTop}px)` }"
         >
           <ProcessRow
-            :process="item"
-            :selected="processStore.selectedIds.has(item.pid)"
-            @toggle-select="processStore.toggleSelect(item.pid)"
-            @close="handleCloseProcess(item.pid)"
+            :process="item.item"
+            :selected="processStore.selectedIds.has(item.item.pid)"
+            @toggle-select="processStore.toggleSelect(item.item.pid)"
+            @close="handleCloseProcess(item.item.pid)"
           />
         </div>
       </div>
@@ -26,11 +26,11 @@
       <span class="status-item">
         Total: {{ processStore.filteredProcesses.length }}
       </span>
-   <span v-if="processStore.selectedCount > 0" class="status-item">
+      <span v-if="processStore.selectedCount > 0" class="status-item">
         Selected: {{ processStore.selectedCount }}
       </span>
       <span v-if="processStore.error" class="status-item error">
-        {{ processStore.error }}
+     {{ processStore.error }}
       </span>
     </div>
   </div>
@@ -74,8 +74,8 @@ async function handleCloseProcess(pid: number) {
         toast?.success(`Process ${process.name} (PID: ${pid}) closed successfully`)
       } else {
         toast?.error(`Failed to close process ${process.name} (PID: ${pid})`)
-   }
-  })
+      }
+    })
   } else {
     const success = await processStore.closeProcess(pid)
     if (success) {
