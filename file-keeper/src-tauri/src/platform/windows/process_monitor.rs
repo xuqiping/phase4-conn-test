@@ -2,9 +2,11 @@ use crate::types::process::{ProcessCategory, ProcessInfo};
 use super::process_mappings::load_process_mappings;
 use std::collections::HashMap;
 use sysinfo::{System, ProcessRefreshKind};
+use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    PostMessageW, WM_CLOSE,
 };
 
 pub struct ProcessMonitor {
@@ -63,6 +65,31 @@ impl ProcessMonitor {
 
         Ok(result)
     }
+
+    /// Close a single process by sending WM_CLOSE to its window
+    pub fn close_process(&self, window_handle: usize) -> Result<(), String> {
+      unsafe {
+               let hwnd = HWND(window_handle as *mut core::ffi::c_void);
+         PostMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), LPARAM(0))
+              .map_err(|e| format!("Failed to close process: {}", e))?;
+        }
+        Ok(())
+    }
+
+    /// Close multiple processes
+    pub fn close_processes(&self, window_handles: Vec<usize>) -> Result<CloseResult, String> {
+        let mut succeeded = 0;
+        let mut failed = 0;
+
+        for handle in window_handles {
+          match self.close_process(handle) {
+                Ok(_) => succeeded += 1,
+                Err(_) => failed += 1,
+            }
+     }
+
+        Ok(CloseResult { succeeded, failed })
+    }
 }
 
 // Temporary struct to hold window information during enumeration
@@ -71,6 +98,13 @@ struct WindowInfo {
     pid: u32,
     window_title: String,
     window_handle: usize,
+}
+
+/// Result of closing processes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloseResult {
+    pub succeeded: usize,
+    pub failed: usize,
 }
 
 /// Callback function for EnumWindows
