@@ -37,12 +37,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, inject } from 'vue'
 import { useProcessStore } from '../stores/processStore'
 import { useVirtualScroll } from '../composables/useVirtualScroll'
 import ProcessRow from './ProcessRow.vue'
+import type { ProcessInfo } from '../types/process'
 
 const processStore = useProcessStore()
+const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
 
 const containerRef = ref<HTMLElement | null>(null)
 
@@ -60,9 +62,21 @@ const { visibleItems, totalHeight, handleScroll } = useVirtualScroll(
 )
 
 async function handleCloseProcess(pid: number) {
-  const success = await processStore.closeProcess(pid)
+  const process = processStore.processes.find(p => p.pid === pid)
+  if (!process) return
+
+  if (requestConfirmation) {
+    requestConfirmation([process], async () => {
+      const success = await processStore.closeProcess(pid)
+      if (success) {
+        console.log(`Process ${pid} closed successfully`)
+      }
+    })
+  } else {
+    const success = await processStore.closeProcess(pid)
   if (success) {
-    console.log(`Process ${pid} closed successfully`)
+      console.log(`Process ${pid} closed successfully`)
+    }
   }
 }
 </script>

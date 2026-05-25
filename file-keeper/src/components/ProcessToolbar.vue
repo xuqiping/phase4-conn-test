@@ -90,14 +90,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted, inject } from 'vue'
 import { RefreshCw, Clock, CheckSquare, Square, X, XCircle, Settings } from 'lucide-vue-next'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import ColumnSettings from './ColumnSettings.vue'
+import type { ProcessInfo } from '../types/process'
 
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
+const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
 
 const countdown = ref(0)
 const showColumnSettings = ref(false)
@@ -111,7 +113,6 @@ function handleRefresh() {
 function toggleAutoRefresh() {
   const newValue = !settingsStore.settings.autoRefresh
   settingsStore.updateAutoRefresh(newValue)
-
   if (newValue) {
     resetCountdown()
     startCountdown()
@@ -121,8 +122,15 @@ function toggleAutoRefresh() {
 }
 
 function handleCloseSelected() {
-  // This will be handled by parent component with confirmation dialog
-  processStore.closeSelected()
+  const selectedProcesses = processStore.selectedProcesses
+
+  if (requestConfirmation) {
+    requestConfirmation(selectedProcesses, async () => {
+      await processStore.closeSelected()
+    })
+  } else {
+    processStore.closeSelected()
+  }
 }
 
 function handleColumnsSaved() {

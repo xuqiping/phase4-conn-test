@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
+import { ref, provide, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import ProcessToolbar from './ProcessToolbar.vue'
@@ -27,8 +27,38 @@ const settingsStore = useProcessSettingsStore()
 
 const showConfirmDialog = ref(false)
 const processesToClose = ref<ProcessInfo[]>([])
+let pendingCloseAction: (() => void) | null = null
 let autoRefreshTimer: number | null = null
 let visibilityChangeHandler: (() => void) | null = null
+
+// Provide confirmation function to child components
+provide('requestConfirmation', async (processes: ProcessInfo[], onConfirm: () => void) => {
+  const mode = settingsStore.settings.confirmMode
+
+  // Check if confirmation is needed
+  if (mode === 'never') {
+    onConfirm()
+    return
+  }
+
+  if (mode === 'whitelist') {
+    // Only confirm if any process is in whitelist
+    const hasWhitelisted = processes.some(p =>
+      settingsStore.settings.whitelist.some(name =>
+        p.name.toLowerCase().includes(name.toLowerCase())
+      )
+    )
+    if (!hasWhitelisted) {
+      onConfirm()
+      return
+    }
+  }
+
+  // Show confirmation dialog
+  processesToClose.value = processes
+  pendingCloseAction = onConfirm
+  showConfirmDialog.value = true
+})
 
 // Start monitoring when tab becomes active
 onActivated(() => {
@@ -101,21 +131,21 @@ function removeVisibilityListener() {
 
 function handleConfirmClose() {
   showConfirmDialog.value = false
-  // Close logic will be handled by the component that triggered the dialog
+  if (pendingCloseAction) {
+    pendingCloseAction()
+    pendingCloseAction = null
+  }
   processesToClose.value = []
 }
 
 function handleCancelClose() {
   showConfirmDialog.value = false
+  pendingCloseAction = null
   processesToClose.value = []
 }
 
 // Expose methods for child components to trigger confirmation
 defineExpose({
-  showConfirmDialog: (processes: ProcessInfo[]) => {
-    processesToClose.value = processes
-    showConfirmDialog.value = true
-  },
   startAutoRefresh,
   stopAutoRefresh
 })
