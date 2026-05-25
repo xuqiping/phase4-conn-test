@@ -64,26 +64,43 @@
     </div>
 
     <div class="toolbar-right">
+      <button
+        class="btn"
+        @click="showColumnSettings = true"
+        title="Column Settings"
+      >
+        <Settings :size="16" />
+        Columns
+      </button>
+
       <span class="status-text">
         {{ processStore.filteredProcesses.length }} processes
         <span v-if="processStore.lastRefreshTime > 0" class="last-refresh">
-          · Last refresh: {{ formatLastRefresh() }}
+        · Last refresh: {{ formatLastRefresh() }}
         </span>
       </span>
     </div>
   </div>
+
+  <ColumnSettings
+    v-if="showColumnSettings"
+    @close="showColumnSettings = false"
+    @save="handleColumnsSaved"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
-import { RefreshCw, Clock, CheckSquare, Square, X, XCircle } from 'lucide-vue-next'
+import { RefreshCw, Clock, CheckSquare, Square, X, XCircle, Settings } from 'lucide-vue-next'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import ColumnSettings from './ColumnSettings.vue'
 
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
 
 const countdown = ref(0)
+const showColumnSettings = ref(false)
 let countdownTimer: number | null = null
 
 function handleRefresh() {
@@ -106,6 +123,11 @@ function toggleAutoRefresh() {
 function handleCloseSelected() {
   // This will be handled by parent component with confirmation dialog
   processStore.closeSelected()
+}
+
+function handleColumnsSaved() {
+  // Columns are automatically saved by the ColumnSettings component
+  // This is just for any additional logic if needed
 }
 
 function resetCountdown() {
