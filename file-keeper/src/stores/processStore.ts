@@ -55,21 +55,31 @@ export const useProcessStore = defineStore('process', () => {
   async function refresh() {
     if (isRefreshing.value) return
 
+    const startTime = performance.now()
     isRefreshing.value = true
     error.value = null
 
     try {
+      const apiStartTime = performance.now()
       const result = await processApi.getRunningProcesses()
+      const apiEndTime = performance.now()
+
       processes.value = result
       lastRefreshTime.value = Date.now()
 
       // Remove selected IDs that no longer exist
       const currentPids = new Set(result.map(p => p.pid))
-    selectedIds.value.forEach(pid => {
+      selectedIds.value.forEach(pid => {
         if (!currentPids.has(pid)) {
-        selectedIds.value.delete(pid)
+          selectedIds.value.delete(pid)
         }
       })
+
+    const totalTime = performance.now() - startTime
+    const apiTime = apiEndTime - apiStartTime
+      const renderTime = totalTime - apiTime
+
+      console.log(`[PERF] Process refresh - Total: ${totalTime.toFixed(2)}ms, API: ${apiTime.toFixed(2)}ms, Render: ${renderTime.toFixed(2)}ms, Count: ${result.length}`)
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
       console.error('Failed to refresh processes:', err)
