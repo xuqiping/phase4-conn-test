@@ -96,10 +96,12 @@ import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import ColumnSettings from './ColumnSettings.vue'
 import type { ProcessInfo } from '../types/process'
+import type { useToast } from '../composables/useToast'
 
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
 const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
+const toast = inject<ReturnType<typeof useToast>>('toast')
 
 const countdown = ref(0)
 const showColumnSettings = ref(false)
@@ -126,10 +128,23 @@ function handleCloseSelected() {
 
   if (requestConfirmation) {
     requestConfirmation(selectedProcesses, async () => {
-      await processStore.closeSelected()
+      const result = await processStore.closeSelected()
+      if (result.success > 0) {
+        toast?.success(`Successfully closed ${result.success} process(es)`)
+      }
+      if (result.failed > 0) {
+        toast?.error(`Failed to close ${result.failed} process(es)`)
+      }
     })
   } else {
-    processStore.closeSelected()
+    processStore.closeSelected().then(result => {
+      if (result.success > 0) {
+        toast?.success(`Successfully closed ${result.success} process(es)`)
+      }
+      if (result.failed > 0) {
+        toast?.error(`Failed to close ${result.failed} process(es)`)
+   }
+    })
   }
 }
 

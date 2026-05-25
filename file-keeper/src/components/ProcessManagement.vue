@@ -9,6 +9,7 @@
       @confirm="handleConfirmClose"
     @cancel="handleCancelClose"
     />
+    <ToastContainer />
   </div>
 </template>
 
@@ -16,14 +17,16 @@
 import { ref, provide, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import { useToast } from '../composables/useToast'
 import ProcessToolbar from './ProcessToolbar.vue'
 import ProcessFilter from './ProcessFilter.vue'
 import ProcessList from './ProcessList.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ToastContainer from './ToastContainer.vue'
 import type { ProcessInfo } from '../types/process'
-
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
+const toast = useToast()
 
 const showConfirmDialog = ref(false)
 const processesToClose = ref<ProcessInfo[]>([])
@@ -50,7 +53,7 @@ provide('requestConfirmation', async (processes: ProcessInfo[], onConfirm: () =>
     )
     if (!hasWhitelisted) {
       onConfirm()
-      return
+    return
     }
   }
 
@@ -59,6 +62,9 @@ provide('requestConfirmation', async (processes: ProcessInfo[], onConfirm: () =>
   pendingCloseAction = onConfirm
   showConfirmDialog.value = true
 })
+
+// Provide toast function to child components
+provide('toast', toast)
 
 // Start monitoring when tab becomes active
 onActivated(() => {

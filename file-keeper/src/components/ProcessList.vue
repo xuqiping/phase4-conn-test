@@ -42,9 +42,11 @@ import { useProcessStore } from '../stores/processStore'
 import { useVirtualScroll } from '../composables/useVirtualScroll'
 import ProcessRow from './ProcessRow.vue'
 import type { ProcessInfo } from '../types/process'
+import type { useToast } from '../composables/useToast'
 
 const processStore = useProcessStore()
 const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
+const toast = inject<ReturnType<typeof useToast>>('toast')
 
 const containerRef = ref<HTMLElement | null>(null)
 
@@ -69,13 +71,17 @@ async function handleCloseProcess(pid: number) {
     requestConfirmation([process], async () => {
       const success = await processStore.closeProcess(pid)
       if (success) {
-        console.log(`Process ${pid} closed successfully`)
-      }
-    })
+        toast?.success(`Process ${process.name} (PID: ${pid}) closed successfully`)
+      } else {
+        toast?.error(`Failed to close process ${process.name} (PID: ${pid})`)
+   }
+  })
   } else {
     const success = await processStore.closeProcess(pid)
-  if (success) {
-      console.log(`Process ${pid} closed successfully`)
+    if (success) {
+      toast?.success(`Process ${process.name} (PID: ${pid}) closed successfully`)
+    } else {
+      toast?.error(`Failed to close process ${process.name} (PID: ${pid})`)
     }
   }
 }
