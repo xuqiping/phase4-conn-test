@@ -1,7 +1,7 @@
 use crate::platform::ProcessInfo;
 
 #[cfg(target_os = "windows")]
-use crate::platform::windows::WindowsProcessMatcher as PlatformMatcher;
+use crate::platform::windows_file_matcher::WindowsProcessMatcher as PlatformMatcher;
 
 #[cfg(target_os = "macos")]
 use crate::platform::macos::MacOSProcessMatcher as PlatformMatcher;
