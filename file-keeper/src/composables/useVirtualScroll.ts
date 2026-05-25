@@ -23,7 +23,9 @@ export function useVirtualScroll<T>(
   // 计算可见行范围
   const visibleRange = computed(() => {
     const start = Math.floor(scrollTop.value / itemHeight)
-    const end = Math.ceil((scrollTop.value + containerHeight.value) / itemHeight)
+    // 确保至少渲染一些项目，即使容器高度为 0
+    const viewportHeight = containerHeight.value || 600 // 默认 600px
+    const end = Math.ceil((scrollTop.value + viewportHeight) / itemHeight)
 
     return {
       start: Math.max(0, start - overscan),
