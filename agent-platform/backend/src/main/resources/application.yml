@@ -66,3 +66,7 @@ logging:
   level:
     com.superprogrammer: DEBUG
     org.springframework.security: DEBUG
+
+# Agent Markdown数据目录（可选，配置后启用Markdown同步功能）
+agent:
+  data-path: ${AGENT_DATA_PATH:}
