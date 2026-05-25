@@ -177,8 +177,10 @@ defineExpose({
 .process-management {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  gap: 1rem;
-  padding: 1rem;
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  overflow: hidden;
 }
 </style>

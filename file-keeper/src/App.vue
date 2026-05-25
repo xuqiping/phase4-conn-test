@@ -425,7 +425,7 @@
     </div>
 
     <!-- Process Management Tab -->
-    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden">
+    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden flex flex-col">
       <ProcessManagement />
     </div>
 
