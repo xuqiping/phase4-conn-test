@@ -14,27 +14,23 @@ export async function getRunningProcesses(): Promise<ProcessInfo[]> {
 }
 
 /**
- * Close a single process by PID
+ * Close a single process by window handle
  */
-export async function closeProcess(pid: number): Promise<CloseResult> {
+export async function closeProcess(windowHandle: number): Promise<void> {
   try {
-    return await invoke<CloseResult>('close_process', { pid })
+    await invoke('close_app_process', { windowHandle })
   } catch (error) {
-    console.error(`Failed to close process ${pid}:`, error)
-    return {
-      pid,
-      success: false,
-      error: String(error)
-    }
+    console.error(`Failed to close process with handle ${windowHandle}:`, error)
+    throw new Error(`Failed to close process: ${error}`)
   }
 }
 
 /**
- * Close multiple processes by PIDs
+ * Close multiple processes by window handles
  */
-export async function closeProcesses(pids: number[]): Promise<CloseResult[]> {
+export async function closeProcesses(windowHandles: number[]): Promise<CloseResult> {
   try {
-    return await invoke<CloseResult[]>('close_processes', { pids })
+    return await invoke<CloseResult>('close_app_processes', { windowHandles })
   } catch (error) {
     console.error('Failed to close processes:', error)
     throw new Error(`Failed to close processes: ${error}`)

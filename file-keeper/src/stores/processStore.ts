@@ -122,16 +122,17 @@ export const useProcessStore = defineStore('process', () => {
 
   async function closeProcess(pid: number): Promise<boolean> {
     try {
-      const result = await processApi.closeProcess(pid)
-      if (result.success) {
-        // Remove from list
-        processes.value = processes.value.filter(p => p.pid !== pid)
-     selectedIds.value.delete(pid)
-        return true
-      } else {
-        error.value = result.error || 'Failed to close process'
-        return false
+      const process = processes.value.find(p => p.pid === pid)
+      if (!process) {
+      error.value = 'Process not found'
+    return false
       }
+
+      await processApi.closeProcess(process.window_handle)
+      // Remove from list
+      processes.value = processes.value.filter(p => p.pid !== pid)
+      selectedIds.value.delete(pid)
+      return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
       return false
@@ -145,27 +146,22 @@ export const useProcessStore = defineStore('process', () => {
     }
 
     try {
-      const results = await processApi.closeProcesses(pidsToClose)
+      const processesToClose = processes.value.filter(p => pidsToClose.includes(p.pid))
+      const windowHandles = processesToClose.map(p => p.window_handle)
 
-   let successCount = 0
-      let failedCount = 0
+      const result = await processApi.closeProcesses(windowHandles)
 
-      results.forEach(result => {
-        if (result.success) {
-          successCount++
-          // Remove from list
-          processes.value = processes.value.filter(p => p.pid !== result.pid)
-          selectedIds.value.delete(result.pid)
-        } else {
-          failedCount++
-        }
-      })
-
-      if (failedCount > 0) {
-        error.value = `Failed to close ${failedCount} process(es)`
+      // Remove closed processes from list (optimistically remove all selected)
+      if (result.succeeded > 0) {
+        processes.value = processes.value.filter(p => !pidsToClose.includes(p.pid))
+        pidsToClose.forEach(pid => selectedIds.value.delete(pid))
       }
 
-      return { success: successCount, failed: failedCount }
+      if (result.failed > 0) {
+        error.value = `Failed to close ${result.failed} process(es)`
+      }
+
+      return { success: result.succeeded, failed: result.failed }
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
       return { success: 0, failed: pidsToClose.length }

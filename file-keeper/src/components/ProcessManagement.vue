@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
+import { ref, provide, watch, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
 import { useToast } from '../composables/useToast'
@@ -149,6 +149,22 @@ function handleCancelClose() {
   pendingCloseAction = null
   processesToClose.value = []
 }
+
+// Watch for auto-refresh setting changes and react immediately
+watch(() => settingsStore.settings.autoRefresh, (enabled) => {
+  if (enabled) {
+    startAutoRefresh()
+  } else {
+    stopAutoRefresh()
+  }
+})
+
+// Also watch for interval changes
+watch(() => settingsStore.settings.refreshInterval, () => {
+  if (settingsStore.settings.autoRefresh) {
+    startAutoRefresh() // Restart with new interval
+  }
+})
 
 // Expose methods for child components to trigger confirmation
 defineExpose({
