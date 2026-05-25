@@ -6,8 +6,8 @@
       @scroll="handleScroll"
     >
       <div class="virtual-scroll-spacer" :style="{ height: `${totalHeight}px` }">
-          <div
-        v-for="{ item, offsetTop } in visibleItems"
+      <div
+          v-for="{ item, offsetTop } in visibleItems"
           :key="item.pid"
           class="process-row-wrapper"
           :style="{ transform: `translateY(${offsetTop}px)` }"
@@ -24,10 +24,10 @@
 
     <div class="status-bar">
       <span class="status-item">
-      Total: {{ processStore.filteredProcesses.length }}
-    </span>
-      <span v-if="processStore.selectedCount > 0" class="status-item">
-      Selected: {{ processStore.selectedCount }}
+        Total: {{ processStore.filteredProcesses.length }}
+      </span>
+   <span v-if="processStore.selectedCount > 0" class="status-item">
+        Selected: {{ processStore.selectedCount }}
       </span>
       <span v-if="processStore.error" class="status-item error">
         {{ processStore.error }}
