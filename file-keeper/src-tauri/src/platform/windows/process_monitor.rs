@@ -1,6 +1,6 @@
 use crate::types::process::{ProcessCategory, ProcessInfo};
 use super::process_mappings::load_process_mappings;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use sysinfo::{System, ProcessRefreshKind};
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -37,9 +37,16 @@ impl ProcessMonitor {
             .map_err(|e| format!("Failed to enumerate windows: {}", e))?;
         }
 
-        // Get process details for each window
+           // Get process details for each window
         let mut result = Vec::new();
-        for proc_info in processes {
+    let mut seen_pids = HashSet::new();
+
+    for proc_info in processes {
+            // Skip duplicate PIDs (same process with multiple windows)
+       if !seen_pids.insert(proc_info.pid) {
+                continue;
+            }
+
             if let Some(process) = self.system.process(sysinfo::Pid::from_u32(proc_info.pid)) {
              let process_name = process.name().to_string().to_lowercase();
            let category = self
