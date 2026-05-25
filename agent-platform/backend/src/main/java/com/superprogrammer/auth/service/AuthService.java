@@ -206,4 +206,11 @@ public class AuthService {
     public boolean isTokenBlacklisted(String jti) {
         return Boolean.TRUE.equals(redisTemplate.hasKey(TOKEN_BLACKLIST_PREFIX + jti));
     }
+
+    /**
+     * 获取用户权限编码列表（供JwtAuthenticationFilter使用）
+     */
+    public List<String> getUserPermissionCodes(Long userId) {
+        return userMapper.selectPermissionCodesByUserId(userId);
+    }
 }
