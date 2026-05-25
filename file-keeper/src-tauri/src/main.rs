@@ -8,6 +8,7 @@ mod utils;
 
 use commands::files::{open_file, validate_path, show_in_folder};
 use commands::processes::{find_file_processes, close_process, close_file_processes};
+use commands::process_management::{get_running_processes, close_app_process, close_app_processes};
 use commands::icons::get_file_icon;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -75,12 +76,15 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             open_file,
-            validate_path,
+         validate_path,
             show_in_folder,
             find_file_processes,
             close_process,
-            close_file_processes,
-            get_file_icon
+          close_file_processes,
+            get_file_icon,
+            get_running_processes,
+        close_app_process,
+            close_app_processes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
