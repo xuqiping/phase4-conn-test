@@ -1,24 +1,18 @@
 <template>
   <div class="process-list-container">
-    <div
-      ref="containerRef"
-      class="process-list"
-      @scroll="handleScroll"
-    >
-      <div class="virtual-scroll-spacer" :style="{ height: `${totalHeight}px` }">
-        <div
-          v-for="item in visibleItems"
-          :key="`${item.item.pid}-${item.index}`"
-          class="process-row-wrapper"
-          :style="{ transform: `translateY(${item.offsetTop}px)` }"
-        >
-          <ProcessRow
-            :process="item.item"
-            :selected="processStore.selectedIds.has(item.item.pid)"
-            @toggle-select="processStore.toggleSelect(item.item.pid)"
-            @close="handleCloseProcess(item.item.pid)"
-          />
-        </div>
+    <div class="process-list">
+   <div v-if="processStore.filteredProcesses.length === 0" class="empty-state">
+        <p>No processes found</p>
+      </div>
+      <div v-else>
+        <ProcessRow
+       v-for="process in processStore.filteredProcesses"
+          :key="process.pid"
+          :process="process"
+          :selected="processStore.selectedIds.has(process.pid)"
+          @toggle-select="processStore.toggleSelect(process.pid)"
+      @close="handleCloseProcess(process.pid)"
+        />
       </div>
     </div>
 
@@ -37,9 +31,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject } from 'vue'
+import { inject } from 'vue'
 import { useProcessStore } from '../stores/processStore'
-import { useVirtualScroll } from '../composables/useVirtualScroll'
 import ProcessRow from './ProcessRow.vue'
 import type { ProcessInfo } from '../types/process'
 import type { useToast } from '../composables/useToast'
@@ -47,21 +40,6 @@ import type { useToast } from '../composables/useToast'
 const processStore = useProcessStore()
 const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
 const toast = inject<ReturnType<typeof useToast>>('toast')
-
-const containerRef = ref<HTMLElement | null>(null)
-
-// Virtual scrolling setup
-const ITEM_HEIGHT = 48 // Height of each process row in pixels
-
-const { visibleItems, totalHeight, handleScroll } = useVirtualScroll(
-  containerRef,
-  computed(() => processStore.filteredProcesses),
-  {
-    itemHeight: ITEM_HEIGHT,
-    itemsPerRow: 1,
-    overscan: 10
-  }
-)
 
 async function handleCloseProcess(pid: number) {
   const process = processStore.processes.find(p => p.pid === pid)
@@ -102,20 +80,14 @@ async function handleCloseProcess(pid: number) {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  position: relative;
 }
 
-.virtual-scroll-spacer {
-  position: relative;
-  width: 100%;
-}
-
-.process-row-wrapper {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  will-change: transform;
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
 }
 
 .status-bar {
