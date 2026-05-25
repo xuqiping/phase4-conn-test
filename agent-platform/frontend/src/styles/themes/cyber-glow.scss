@@ -1,0 +1,47 @@
+// ============================================================
+// Cyber Glow 主题 — 赛博朋克风格
+// 暗紫底 + 霓虹粉蓝强调 + 发光边框
+// ============================================================
+
+[data-theme="cyber-glow"] {
+  // === 主色 ===
+  --color-primary:         #E040FB;
+  --color-primary-hover:   #EA80FC;
+  --color-primary-active:  #C026D3;
+  --color-primary-light:   rgba(224, 64, 251, 0.12);
+  --color-primary-rgb:     224, 64, 251;
+
+  // === 语义色 ===
+  --color-secondary:       #A78BFA;
+  --color-success:         #4ADE80;
+  --color-warning:         #FCD34D;
+  --color-danger:          #FB7185;
+  --color-info:            #38BDF8;
+
+  // === 背景层级 ===
+  --color-bg:              #0A0510;
+  --color-surface:         #110B1A;
+  --color-card:            #1A1028;
+  --color-elevated:        #241638;
+  --color-overlay:         rgba(10, 5, 16, 0.85);
+
+  // === 文字 ===
+  --color-text-primary:    #F0E6FF;
+  --color-text-secondary:  #9B8BB8;
+  --color-text-tertiary:   #5A4A72;
+  --color-text-inverse:    #0A0510;
+  --color-text-link:       #E040FB;
+
+  // === 边框 ===
+  --color-border:          #2D1F42;
+  --color-border-light:    #1E1530;
+  --color-border-focus:    #E040FB;
+
+  // === 特殊 ===
+  --color-gradient-start:  #E040FB;
+  --color-gradient-end:    #38BDF8;
+  --color-neon-pink:       #FF2E97;
+  --color-neon-blue:       #00D4FF;
+  --shadow-primary:        0 4px 20px rgba(224, 64, 251, 0.3);
+  --shadow-glow:           0 0 40px rgba(224, 64, 251, 0.12);
+}

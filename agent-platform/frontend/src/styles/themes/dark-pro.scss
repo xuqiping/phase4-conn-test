@@ -1,0 +1,45 @@
+// ============================================================
+// Dark Pro 主题 — 专业深灰色调
+// 中性灰底 + 绿色强调 + 视觉疲劳最小
+// ============================================================
+
+[data-theme="dark-pro"] {
+  // === 主色 ===
+  --color-primary:         #10B981;
+  --color-primary-hover:   #34D399;
+  --color-primary-active:  #059669;
+  --color-primary-light:   rgba(16, 185, 129, 0.12);
+  --color-primary-rgb:     16, 185, 129;
+
+  // === 语义色 ===
+  --color-secondary:       #9CA3AF;
+  --color-success:         #34D399;
+  --color-warning:         #FBBF24;
+  --color-danger:          #F87171;
+  --color-info:            #60A5FA;
+
+  // === 背景层级 ===
+  --color-bg:              #0A0A0A;
+  --color-surface:         #111111;
+  --color-card:            #1A1A1A;
+  --color-elevated:        #222222;
+  --color-overlay:         rgba(0, 0, 0, 0.75);
+
+  // === 文字 ===
+  --color-text-primary:    #F3F4F6;
+  --color-text-secondary:  #9CA3AF;
+  --color-text-tertiary:   #4B5563;
+  --color-text-inverse:    #0A0A0A;
+  --color-text-link:       #10B981;
+
+  // === 边框 ===
+  --color-border:          #2A2A2A;
+  --color-border-light:    #1F1F1F;
+  --color-border-focus:    #10B981;
+
+  // === 特殊 ===
+  --color-gradient-start:  #10B981;
+  --color-gradient-end:    #06B6D4;
+  --shadow-primary:        0 4px 16px rgba(16, 185, 129, 0.2);
+  --shadow-glow:           0 0 30px rgba(16, 185, 129, 0.08);
+}
