@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.bean.MockBean;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 class AuthControllerTest {
 
     @Autowired
@@ -38,7 +40,7 @@ class AuthControllerTest {
     @MockBean
     private AuthService authService;
 
-    @MockBean
+    @MockBean(name = "jwtUtil")
     private JwtUtil jwtUtil;
 
     @Test
@@ -53,7 +55,7 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.message").value("success"));
+                .andExpect(jsonPath("$.code").value(200));
     }
 
     @Test

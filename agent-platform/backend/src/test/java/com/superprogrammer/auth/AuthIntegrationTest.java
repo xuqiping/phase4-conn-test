@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -25,6 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AuthIntegrationTest {
 
@@ -83,9 +85,10 @@ class AuthIntegrationTest {
                 .andReturn();
 
         String responseBody = result.getResponse().getContentAsString();
-        var response = objectMapper.readValue(responseBody,
+        @SuppressWarnings("unchecked")
+        R<TokenResponse> response = objectMapper.readValue(responseBody,
                 objectMapper.getTypeFactory().constructParametricType(R.class, TokenResponse.class));
-        TokenResponse tokenResponse = (TokenResponse) response.getData();
+        TokenResponse tokenResponse = response.getData();
         accessToken = tokenResponse.getAccessToken();
         refreshToken = tokenResponse.getRefreshToken();
     }
@@ -124,9 +127,10 @@ class AuthIntegrationTest {
                 .andReturn();
 
         String loginBody = loginResult.getResponse().getContentAsString();
-        var loginResponse = objectMapper.readValue(loginBody,
+        @SuppressWarnings("unchecked")
+        R<TokenResponse> loginResponse = objectMapper.readValue(loginBody,
                 objectMapper.getTypeFactory().constructParametricType(R.class, TokenResponse.class));
-        String token = ((TokenResponse) loginResponse.getData()).getAccessToken();
+        String token = loginResponse.getData().getAccessToken();
 
         // 用token访问受保护接口
         mockMvc.perform(get("/api/auth/me")
@@ -149,9 +153,10 @@ class AuthIntegrationTest {
                 .andReturn();
 
         String loginBody = loginResult.getResponse().getContentAsString();
-        var loginResponse = objectMapper.readValue(loginBody,
+        @SuppressWarnings("unchecked")
+        R<TokenResponse> loginResponse = objectMapper.readValue(loginBody,
                 objectMapper.getTypeFactory().constructParametricType(R.class, TokenResponse.class));
-        String rToken = ((TokenResponse) loginResponse.getData()).getRefreshToken();
+        String rToken = loginResponse.getData().getRefreshToken();
 
         // 刷新token
         String refreshRequestBody = "{\"refreshToken\":\"" + rToken + "\"}";
@@ -176,10 +181,11 @@ class AuthIntegrationTest {
                 .andReturn();
 
         String loginBody = loginResult.getResponse().getContentAsString();
-        var loginResponse = objectMapper.readValue(loginBody,
+        @SuppressWarnings("unchecked")
+        R<TokenResponse> loginResponse = objectMapper.readValue(loginBody,
                 objectMapper.getTypeFactory().constructParametricType(R.class, TokenResponse.class));
-        String token = ((TokenResponse) loginResponse.getData()).getAccessToken();
-        String rToken = ((TokenResponse) loginResponse.getData()).getRefreshToken();
+        String token = loginResponse.getData().getAccessToken();
+        String rToken = loginResponse.getData().getRefreshToken();
 
         // 登出
         mockMvc.perform(post("/api/auth/logout")

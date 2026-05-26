@@ -9,8 +9,8 @@ import com.superprogrammer.agent.entity.Skill;
 import com.superprogrammer.agent.mapper.AgentGroupMapper;
 import com.superprogrammer.agent.mapper.AgentMapper;
 import com.superprogrammer.agent.mapper.SkillMapper;
-import com.superprogrammer.agent.mapper.SkillStepMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,7 +18,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -37,13 +37,10 @@ class AgentServiceTest {
     private AgentMapper agentMapper;
 
     @Mock
-    private SkillMapper skillMapper;
+    private SkillService skillService;
 
     @Mock
-    private SkillStepMapper skillStepMapper;
-
-    @InjectMocks
-    private SkillService skillService;
+    private SkillMapper skillMapper;
 
     @InjectMocks
     private AgentService agentService;
@@ -60,7 +57,7 @@ class AgentServiceTest {
         testGroup.setIcon("robot");
         testGroup.setDescription("通用对话和问答类Agent");
         testGroup.setSortOrder(1);
-        testGroup.setCreatedAt(LocalDateTime.now());
+        testGroup.setCreatedAt(OffsetDateTime.now());
 
         testAgent = new Agent();
         testAgent.setId(1L);
@@ -68,8 +65,8 @@ class AgentServiceTest {
         testAgent.setDescription("帮助编写和调试代码");
         testAgent.setGroupId(1L);
         testAgent.setStatus("PUBLISHED");
-        testAgent.setCreatedAt(LocalDateTime.now());
-        testAgent.setUpdatedAt(LocalDateTime.now());
+        testAgent.setCreatedAt(OffsetDateTime.now());
+        testAgent.setUpdatedAt(OffsetDateTime.now());
 
         testSkill = new Skill();
         testSkill.setId(1L);
@@ -78,7 +75,7 @@ class AgentServiceTest {
         testSkill.setDescription("根据需求生成代码");
         testSkill.setType("SEQUENCE");
         testSkill.setSortOrder(1);
-        testSkill.setCreatedAt(LocalDateTime.now());
+        testSkill.setCreatedAt(OffsetDateTime.now());
     }
 
     @Test
@@ -138,8 +135,15 @@ class AgentServiceTest {
     void getAgentDetail_success() {
         when(agentMapper.selectById(1L)).thenReturn(testAgent);
         when(agentGroupMapper.selectById(1L)).thenReturn(testGroup);
-        when(skillMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(testSkill));
+        when(skillService.listByAgentId(1L))
+                .thenReturn(Arrays.asList(
+                        SkillVO.builder()
+                                .id(1L)
+                                .name("代码生成")
+                                .description("根据需求生成代码")
+                                .type("SEQUENCE")
+                                .sortOrder(1)
+                                .build()));
 
         AgentDetailVO result = agentService.getAgentDetail(1L);
 
@@ -160,10 +164,17 @@ class AgentServiceTest {
 
     @Test
     void getSkillDetail_success() {
-        when(skillMapper.selectById(1L)).thenReturn(testSkill);
-        when(agentMapper.selectById(1L)).thenReturn(testAgent);
-        when(skillStepMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Collections.emptyList());
+        when(skillService.getDetail(1L))
+                .thenReturn(SkillDetailVO.builder()
+                        .id(1L)
+                        .agentId(1L)
+                        .agentName("代码助手")
+                        .name("代码生成")
+                        .description("根据需求生成代码")
+                        .type("SEQUENCE")
+                        .sortOrder(1)
+                        .steps(Collections.emptyList())
+                        .build());
 
         SkillDetailVO result = agentService.getSkillDetail(1L);
 
@@ -174,7 +185,7 @@ class AgentServiceTest {
 
     @Test
     void getSkillDetail_notFound_throwsException() {
-        when(skillMapper.selectById(999L)).thenReturn(null);
+        when(skillService.getDetail(999L)).thenThrow(new BusinessException(ErrorCode.NOT_FOUND, "技能不存在"));
 
         assertThrows(BusinessException.class, () -> agentService.getSkillDetail(999L));
     }

@@ -1,0 +1,39 @@
+# 测试环境配置 — H2内存数据库，禁用Flyway和Redis
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  h2:
+    console:
+      enabled: true
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-h2.sql
+
+  flyway:
+    enabled: false
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+jwt:
+  secret: dGVzdFNlY3JldEtleUZvclRlc3RpbmdQdXJwb3Nlc09ubHlMb25nRW5vdWdo
+  access-expiration: 60000
+  refresh-expiration: 3600000
+
+logging:
+  level:
+    com.superprogrammer: WARN
+    org.springframework.security: WARN

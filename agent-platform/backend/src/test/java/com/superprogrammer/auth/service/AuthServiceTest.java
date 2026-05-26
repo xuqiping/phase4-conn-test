@@ -20,7 +20,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
@@ -68,8 +68,8 @@ class AuthServiceTest {
         testUser.setPassword("$2a$10$encoded_password");
         testUser.setEmail("test@example.com");
         testUser.setStatus("ACTIVE");
-        testUser.setCreatedAt(LocalDateTime.now());
-        testUser.setUpdatedAt(LocalDateTime.now());
+        testUser.setCreatedAt(OffsetDateTime.now());
+        testUser.setUpdatedAt(OffsetDateTime.now());
 
         registerRequest = new RegisterRequest();
         registerRequest.setUsername("newuser");
@@ -86,7 +86,7 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(passwordEncoder.encode("password123")).thenReturn("$2a$10$encoded");
         when(userMapper.insert(any(User.class))).thenReturn(1);
-        when(userRoleMapper.insert(any(UserRole.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
         assertDoesNotThrow(() -> authService.register(registerRequest));
 
@@ -177,6 +177,8 @@ class AuthServiceTest {
         String accessToken = "valid-access-token";
         String refreshToken = "valid-refresh-token";
 
+        when(jwtUtil.isTokenValid(accessToken)).thenReturn(true);
+        when(jwtUtil.isTokenValid(refreshToken)).thenReturn(true);
         when(jwtUtil.getTokenId(accessToken)).thenReturn("access-jti");
         when(jwtUtil.getTokenId(refreshToken)).thenReturn("refresh-jti");
         when(jwtUtil.getRemainingTtl(accessToken)).thenReturn(50000L);

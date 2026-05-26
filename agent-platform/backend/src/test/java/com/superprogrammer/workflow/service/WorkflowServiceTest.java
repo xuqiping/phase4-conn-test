@@ -18,7 +18,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -54,8 +54,8 @@ class WorkflowServiceTest {
         testWorkflow.setDescription("用于测试的工作流");
         testWorkflow.setStatus("DRAFT");
         testWorkflow.setOwnerId(1L);
-        testWorkflow.setCreatedAt(LocalDateTime.now());
-        testWorkflow.setUpdatedAt(LocalDateTime.now());
+        testWorkflow.setCreatedAt(OffsetDateTime.now());
+        testWorkflow.setUpdatedAt(OffsetDateTime.now());
     }
 
     @Test
@@ -226,7 +226,6 @@ class WorkflowServiceTest {
                 .thenReturn(Collections.emptyList());
         when(workflowEdgeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.emptyList());
-        when(workflowNodeMapper.insert(any(WorkflowNode.class))).thenReturn(1);
 
         WorkflowVO result = workflowService.duplicateWorkflow(1L, 1L);
 

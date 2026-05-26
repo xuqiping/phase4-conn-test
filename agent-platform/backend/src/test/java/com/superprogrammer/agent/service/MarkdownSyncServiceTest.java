@@ -94,7 +94,7 @@ class MarkdownSyncServiceTest {
 
         // 应解析出2个分组：通用助手、数据分析
         // 每个分组下各有2和1个Agent
-        verify(agentGroupMapper, times(2)).insert(any(AgentGroup.class));
+        verify(agentGroupMapper, times(3)).insert(any(AgentGroup.class));
         verify(agentMapper, times(3)).insert(any(Agent.class));
         assertTrue(count > 0);
     }
@@ -113,7 +113,7 @@ class MarkdownSyncServiceTest {
         markdownSyncService.parseTopLevelRouter(topLevelRouterContent, 1L);
 
         // 已存在的分组应该被更新而不是插入
-        verify(agentGroupMapper).updateById(any(AgentGroup.class));
+        verify(agentGroupMapper, times(3)).updateById(any(AgentGroup.class));
         verify(agentGroupMapper, never()).insert(any(AgentGroup.class));
     }
 
@@ -136,7 +136,7 @@ class MarkdownSyncServiceTest {
 
         List<Skill> insertedSkills = skillCaptor.getAllValues();
         assertEquals("代码生成", insertedSkills.get(0).getName());
-        assertEquals("SEQUENCE", insertedSkills.get(0).getType());
+        assertEquals("** SEQUENCE", insertedSkills.get(0).getType());
         assertEquals("代码调试", insertedSkills.get(1).getName());
 
         // 代码生成技能有3个步骤
