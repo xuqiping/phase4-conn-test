@@ -280,8 +280,9 @@ async function handleLogin() {
     // 跳转到之前的页面或首页
     const redirect = (route.query.redirect as string) || '/agents'
     router.push(redirect)
-  } catch (error: any) {
-    message.error(error.message || '登录失败，请检查用户名和密码')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '登录失败，请检查用户名和密码'
+    message.error(msg)
   }
 }
 
@@ -311,8 +312,9 @@ async function handleRegister() {
     registerForm.email = ''
     registerForm.password = ''
     registerForm.confirmPassword = ''
-  } catch (error: any) {
-    message.error(error.message || '注册失败')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '注册失败'
+    message.error(msg)
   }
 }
 </script>

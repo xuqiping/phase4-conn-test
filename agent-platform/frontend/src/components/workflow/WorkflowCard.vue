@@ -76,6 +76,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NIcon, NButton, NTag, NTooltip, useDialog, useMessage } from 'naive-ui'
 import {
   GitBranchOutline,
@@ -101,23 +102,23 @@ const emit = defineEmits<{
 const dialog = useDialog()
 const message = useMessage()
 
-const statusTagType = (() => {
-  const map: Record<string, string> = {
+const statusTagType = computed(() => {
+  const map: Record<string, 'default' | 'success' | 'warning' | 'error'> = {
     draft: 'default',
-    published: 'success',
+    active: 'success',
     archived: 'warning'
   }
   return map[props.workflow.status] || 'default'
-})()
+})
 
-const statusLabel = (() => {
+const statusLabel = computed(() => {
   const map: Record<string, string> = {
     draft: '草稿',
-    published: '已发布',
+    active: '已激活',
     archived: '已归档'
   }
-  return map[props.workflow.status] || '未知'
-})()
+  return map[props.workflow.status] || props.workflow.status
+})
 
 /** 格式化时间 */
 function formatTime(dateStr: string): string {

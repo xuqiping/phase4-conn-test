@@ -213,7 +213,7 @@ async function handleSave() {
       data: n.data
     }))
 
-    const edges = flowCanvasRef.value.edges.map((e: any) => ({
+    const edges = flowCanvasRef.value.edges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
