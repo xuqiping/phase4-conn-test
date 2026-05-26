@@ -19,7 +19,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -98,7 +98,7 @@ public class AuthService {
         String refreshToken = jwtUtil.generateRefreshToken(user.getId());
 
         // 更新最后登录时间
-        user.setLastLoginAt(LocalDateTime.now());
+        user.setLastLoginAt(OffsetDateTime.now());
         userMapper.updateById(user);
 
         log.info("用户登录成功: {}", user.getUsername());

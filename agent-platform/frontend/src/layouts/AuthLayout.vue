@@ -16,7 +16,7 @@
 
     <!-- 内容区域 — 居中卡片 -->
     <div class="auth-layout__content">
-      <router-view />
+      <slot />
     </div>
   </div>
 </template>

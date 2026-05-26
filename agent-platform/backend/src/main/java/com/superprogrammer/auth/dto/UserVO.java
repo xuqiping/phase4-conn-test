@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Data
@@ -20,8 +20,8 @@ public class UserVO {
     private String email;
     private String avatar;
     private String status;
-    private LocalDateTime lastLoginAt;
-    private LocalDateTime createdAt;
+    private OffsetDateTime lastLoginAt;
+    private OffsetDateTime createdAt;
     private List<String> roles;
     private List<String> permissions;
 }

@@ -53,7 +53,7 @@ WHERE r.code = 'admin';
 
 -- 2.4 初始管理员用户（密码: admin123）
 INSERT INTO users (username, password, email, status) VALUES
-    ('admin', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iKTVKIUi', 'admin@platform.com', 'ACTIVE');
+    ('admin', '$2b$10$dinNKZ7q5nyOQXsC.P6uo.eqMpM6WlTeRO.2yV26dGK4V1tV0p2Kq', 'admin@platform.com', 'ACTIVE');
 
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r

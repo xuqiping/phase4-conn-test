@@ -6,7 +6,7 @@ import com.superprogrammer.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -23,5 +23,5 @@ public class User extends BaseEntity {
 
     private String status;
 
-    private LocalDateTime lastLoginAt;
+    private OffsetDateTime lastLoginAt;
 }

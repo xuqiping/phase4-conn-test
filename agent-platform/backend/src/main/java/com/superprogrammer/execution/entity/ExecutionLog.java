@@ -6,7 +6,7 @@ import com.superprogrammer.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -25,9 +25,9 @@ public class ExecutionLog extends BaseEntity {
 
     private String nodeLogs;
 
-    private LocalDateTime startedAt;
+    private OffsetDateTime startedAt;
 
-    private LocalDateTime completedAt;
+    private OffsetDateTime completedAt;
 
     private Long duration;
 

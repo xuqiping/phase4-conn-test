@@ -60,7 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true
     try {
       const res = await authApi.login(params)
-      const { accessToken: at, refreshToken: rt, userInfo: info } = res.data
+      const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
 
       accessToken.value = at
       refreshToken.value = rt
@@ -113,8 +113,8 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUserInfo() {
     try {
       const res = await authApi.getMe()
-      userInfo.value = res.data
-      setStorage(STORAGE_KEYS.USER_INFO, res.data)
+      userInfo.value = res.data.data
+      setStorage(STORAGE_KEYS.USER_INFO, res.data.data)
     } catch {
       // 获取失败，可能token已过期
       await logout()
@@ -131,7 +131,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     const res = await authApi.refresh(refreshToken.value)
-    const newToken = res.data.accessToken
+    const newToken = res.data.data.accessToken
 
     accessToken.value = newToken
     setStorage(STORAGE_KEYS.ACCESS_TOKEN, newToken)

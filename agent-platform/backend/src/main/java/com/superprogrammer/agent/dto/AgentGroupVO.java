@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Data
 @Builder
@@ -20,5 +20,5 @@ public class AgentGroupVO {
     private String description;
     private Integer sortOrder;
     private Long agentCount;
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 }

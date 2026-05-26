@@ -10,7 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Slf4j
@@ -29,7 +29,7 @@ public class ExecutionLogService {
         executionLog.setWorkflowName(workflowName);
         executionLog.setTriggeredBy(triggeredBy);
         executionLog.setStatus("RUNNING");
-        executionLog.setStartedAt(LocalDateTime.now());
+        executionLog.setStartedAt(OffsetDateTime.now());
         executionLog.setCreatedBy(triggeredBy);
         executionLog.setUpdatedBy(triggeredBy);
         executionLogMapper.insert(executionLog);
@@ -47,7 +47,7 @@ public class ExecutionLogService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "执行记录不存在");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now();
         executionLog.setStatus("SUCCESS");
         executionLog.setCompletedAt(now);
         executionLog.setDuration(
@@ -67,7 +67,7 @@ public class ExecutionLogService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "执行记录不存在");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now();
         executionLog.setStatus("FAILED");
         executionLog.setCompletedAt(now);
         executionLog.setDuration(

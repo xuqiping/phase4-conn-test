@@ -23,8 +23,7 @@ export default defineConfig({
   css: {
     preprocessorOptions: {
       scss: {
-        // 全局注入变量文件，组件内可直接使用变量
-        additionalData: `@use "@/styles/variables" as *;\n`
+        api: 'modern-compiler'
       }
     }
   }
