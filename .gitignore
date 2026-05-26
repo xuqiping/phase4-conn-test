@@ -51,8 +51,14 @@ output/
 tmp/
 temp/
 
-# 用户自定义 - 含 application 的文件
-*application*.*
+# Java / Spring Boot
+target/
+*.class
+*.jar
+*.war
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
 
 # Node.js
 node_modules/
