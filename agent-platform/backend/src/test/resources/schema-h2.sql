@@ -185,34 +185,33 @@ CREATE TABLE IF NOT EXISTS execution_logs (
     version         INT          NOT NULL DEFAULT 0
 );
 
--- 测试初始数据
-INSERT INTO roles (id, name, code, description) VALUES (1, '普通用户', 'user', '可以创建和执行工作流');
-INSERT INTO roles (id, name, code, description) VALUES (2, 'Agent管理员', 'agent_admin', '可以管理Agent和技能');
-INSERT INTO roles (id, name, code, description) VALUES (3, '系统管理员', 'admin', '拥有所有权限');
+-- 测试初始数据（MERGE避免重复插入）
+MERGE INTO roles (id, name, code, description) KEY(id) VALUES (1, '普通用户', 'user', '可以创建和执行工作流');
+MERGE INTO roles (id, name, code, description) KEY(id) VALUES (2, 'Agent管理员', 'agent_admin', '可以管理Agent和技能');
+MERGE INTO roles (id, name, code, description) KEY(id) VALUES (3, '系统管理员', 'admin', '拥有所有权限');
 
-INSERT INTO permissions (id, name, code, resource, action) VALUES
-    (1, '查看Agent', 'agent:read', 'agent', 'read'),
-    (2, '创建Agent', 'agent:create', 'agent', 'create'),
-    (3, '编辑Agent', 'agent:update', 'agent', 'update'),
-    (4, '删除Agent', 'agent:delete', 'agent', 'delete'),
-    (5, '发布Agent', 'agent:publish', 'agent', 'publish'),
-    (6, '管理技能', 'skill:manage', 'skill', 'manage'),
-    (7, '查看工作流', 'workflow:read', 'workflow', 'read'),
-    (8, '创建工作流', 'workflow:create', 'workflow', 'create'),
-    (9, '编辑工作流', 'workflow:update', 'workflow', 'update'),
-    (10, '删除工作流', 'workflow:delete', 'workflow', 'delete'),
-    (11, '发布工作流', 'workflow:publish', 'workflow', 'publish'),
-    (12, '执行工作流', 'execution:run', 'execution', 'run'),
-    (13, '查看执行日志', 'execution:read', 'execution', 'read'),
-    (14, '管理用户', 'user:manage', 'user', 'manage'),
-    (15, '管理角色', 'role:manage', 'role', 'manage');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (1, '查看Agent', 'agent:read', 'agent', 'read');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (2, '创建Agent', 'agent:create', 'agent', 'create');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (3, '编辑Agent', 'agent:update', 'agent', 'update');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (4, '删除Agent', 'agent:delete', 'agent', 'delete');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (5, '发布Agent', 'agent:publish', 'agent', 'publish');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (6, '管理技能', 'skill:manage', 'skill', 'manage');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (7, '查看工作流', 'workflow:read', 'workflow', 'read');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (8, '创建工作流', 'workflow:create', 'workflow', 'create');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (9, '编辑工作流', 'workflow:update', 'workflow', 'update');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (10, '删除工作流', 'workflow:delete', 'workflow', 'delete');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (11, '发布工作流', 'workflow:publish', 'workflow', 'publish');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (12, '执行工作流', 'execution:run', 'execution', 'run');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (13, '查看执行日志', 'execution:read', 'execution', 'read');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (14, '管理用户', 'user:manage', 'user', 'manage');
+MERGE INTO permissions (id, name, code, resource, action) KEY(id) VALUES (15, '管理角色', 'role:manage', 'role', 'manage');
 
 -- admin拥有所有权限
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT 3, id FROM permissions;
+DELETE FROM role_permissions WHERE role_id = 3;
+INSERT INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions;
 
--- 测试admin用户（密码: admin123）
-INSERT INTO users (id, username, password, email, status)
-VALUES (1, 'admin', '$2b$10$dinNKZ7q5nyOQXsC.P6uo.eqMpM6WlTeRO.2yV26dGK4V1tV0p2Kq', 'admin@platform.com', 'ACTIVE');
+-- 测试admin用户（密码: admin123），ID=100避免与测试插入数据冲突
+MERGE INTO users (id, username, password, email, status) KEY(id)
+VALUES (100, 'admin', '$2b$10$dinNKZ7q5nyOQXsC.P6uo.eqMpM6WlTeRO.2yV26dGK4V1tV0p2Kq', 'admin@platform.com', 'ACTIVE');
 
-INSERT INTO user_roles (user_id, role_id) VALUES (1, 3);
+MERGE INTO user_roles (user_id, role_id) KEY(user_id, role_id) VALUES (100, 3);

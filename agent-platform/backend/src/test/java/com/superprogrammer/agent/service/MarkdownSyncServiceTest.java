@@ -182,7 +182,7 @@ class MarkdownSyncServiceTest {
 
         markdownSyncService.parseSubAgentRouter(subAgentRouterContent, agent, 1L);
 
-        // 代码生成技能已存在，应该被更新
-        verify(skillMapper).updateById(any(Skill.class));
+        // 代码生成+代码调试两个技能均已存在，各更新一次
+        verify(skillMapper, times(2)).updateById(any(Skill.class));
     }
 }
