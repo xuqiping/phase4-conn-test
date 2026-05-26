@@ -5,6 +5,7 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -16,6 +17,7 @@ import java.util.UUID;
 @Component
 @Getter
 @Setter
+@ConfigurationProperties(prefix = "jwt")
 public class JwtUtil {
 
     private String secret;

@@ -58,6 +58,9 @@ mybatis-plus:
       logic-not-delete-value: 0
 
 jwt:
+  # !! 安全警告 !!
+  # 以下默认密钥仅用于本地开发环境，生产环境务必通过环境变量 JWT_SECRET 设置独立密钥
+  # 生成方式: openssl rand -base64 64 | tr -d '\n'
   secret: ${JWT_SECRET:bXlTdXBlclNlY3JldEtleUZvckFnZW50UGxhdGZvcm1Qcm9qZWN0MjAyNg==}
   access-expiration: 900000
   refresh-expiration: 604800000
