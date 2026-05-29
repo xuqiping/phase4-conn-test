@@ -13,6 +13,56 @@
   --color-dark-hover: #2d2d2d;
 }
 
+:root {
+  color-scheme: light;
+  --primary-color: #42b883;
+  --primary-hover: #369b6e;
+  --danger-color: #ef4444;
+  --danger-hover: #dc2626;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-hover: #f1f5f9;
+  --border-color: #e2e8f0;
+  --border-hover: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --accent-subtle-bg: #f0fdf4;
+  --accent-subtle-hover: #dcfce7;
+  --accent-subtle-border: #bbf7d0;
+  --accent-subtle-text: #15803d;
+  --primary-bg: #f0fdf4;
+  --danger-bg: #fef2f2;
+  --danger-subtle-bg: #fef2f2;
+  --danger-subtle-hover: #fee2e2;
+  --danger-subtle-border: #fecaca;
+  --danger-subtle-text: #dc2626;
+}
+
+.dark {
+  color-scheme: dark;
+  --primary-color: #42b883;
+  --primary-hover: #369b6e;
+  --danger-color: #f87171;
+  --danger-hover: #ef4444;
+  --bg-primary: #252525;
+  --bg-secondary: #1e1e1e;
+  --bg-hover: #2d2d2d;
+  --border-color: #3d3d3d;
+  --border-hover: #4b5563;
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --accent-subtle-bg: rgba(66, 184, 131, 0.14);
+  --accent-subtle-hover: rgba(66, 184, 131, 0.22);
+  --accent-subtle-border: rgba(110, 231, 183, 0.28);
+  --accent-subtle-text: #86efac;
+  --primary-bg: rgba(66, 184, 131, 0.14);
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --danger-subtle-bg: rgba(248, 113, 113, 0.12);
+  --danger-subtle-hover: rgba(248, 113, 113, 0.2);
+  --danger-subtle-border: rgba(248, 113, 113, 0.26);
+  --danger-subtle-text: #fca5a5;
+}
+
 /* Global Styles */
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;

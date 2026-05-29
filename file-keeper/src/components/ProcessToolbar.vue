@@ -7,7 +7,7 @@
         @click="handleRefresh"
       >
     <RefreshCw :class="{ 'animate-spin': processStore.isRefreshing }" :size="16" />
-        Refresh
+        {{ t('process.refresh') }}
       </button>
 
       <button
@@ -16,7 +16,7 @@
         @click="toggleAutoRefresh"
       >
         <Clock :size="16" />
-        Auto
+        {{ t('process.autoRefresh') }}
         <span v-if="settingsStore.settings.autoRefresh && countdown > 0" class="countdown">
           ({{ countdown }}s)
       </span>
@@ -30,7 +30,7 @@
         @click="processStore.selectAll()"
       >
         <CheckSquare :size="16" />
-        Select All
+        {{ t('process.selectAll') }}
       </button>
 
       <button
@@ -39,7 +39,7 @@
         @click="processStore.invertSelection()"
       >
         <Square :size="16" />
-        Invert
+        {{ t('process.invert') }}
       </button>
 
       <button
@@ -48,7 +48,7 @@
         @click="processStore.deselectAll()"
       >
         <X :size="16" />
-        Clear
+        {{ t('process.deselect') }}
       </button>
 
       <div class="divider" />
@@ -59,7 +59,7 @@
         @click="handleCloseSelected"
       >
         <XCircle :size="16" />
-      Close Selected ({{ processStore.selectedCount }})
+      {{ t('process.closeSelected') }} ({{ processStore.selectedCount }})
       </button>
     </div>
 
@@ -67,16 +67,16 @@
       <button
         class="btn"
         @click="showColumnSettings = true"
-        title="Column Settings"
+        :title="t('process.columns')"
       >
         <Settings :size="16" />
-        Columns
+        {{ t('process.columns') }}
       </button>
 
       <span class="status-text">
-        {{ processStore.filteredProcesses.length }} processes
+        {{ t('process.total', { count: processStore.filteredProcesses.length }) }}
         <span v-if="processStore.lastRefreshTime > 0" class="last-refresh">
-        · Last refresh: {{ formatLastRefresh() }}
+        · {{ t('process.lastRefresh', { time: formatLastRefresh() }) }}
         </span>
       </span>
     </div>
@@ -94,12 +94,14 @@ import { ref, watch, onUnmounted, inject } from 'vue'
 import { RefreshCw, Clock, CheckSquare, Square, X, XCircle, Settings } from 'lucide-vue-next'
 import { useProcessStore } from '../stores/processStore'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import { useI18n } from '../composables/useI18n'
 import ColumnSettings from './ColumnSettings.vue'
 import type { ProcessInfo } from '../types/process'
 import type { useToast } from '../composables/useToast'
 
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
+const { t } = useI18n()
 const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
 const toast = inject<ReturnType<typeof useToast>>('toast')
 
@@ -130,10 +132,10 @@ function handleCloseSelected() {
     requestConfirmation(selectedProcesses, async () => {
       const result = await processStore.closeSelected()
       if (result.success > 0) {
-        toast?.success(`Successfully closed ${result.success} process(es)`)
+        toast?.success(t('process.batchCloseSuccess', { count: result.success }))
       }
       if (result.failed > 0) {
-        toast?.error(`Failed to close ${result.failed} process(es)`)
+        toast?.error(t('process.batchCloseFailed', { count: result.failed }))
       }
     })
   } else {
@@ -180,14 +182,14 @@ function stopCountdown() {
 }
 
 function formatLastRefresh(): string {
-  if (processStore.lastRefreshTime === 0) return 'Never'
+  if (processStore.lastRefreshTime === 0) return t('process.never')
 
   const seconds = Math.floor((Date.now() - processStore.lastRefreshTime) / 1000)
-  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 60) return t('process.secondsAgo', { count: seconds })
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return t('process.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  return `${hours}h ago`
+  return t('process.hoursAgo', { count: hours })
 }
 
 // Watch for auto-refresh changes
@@ -239,6 +241,7 @@ onUnmounted(() => {
   cursor: pointer;
   font-size: 0.875rem;
   transition: all 0.2s;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .btn:hover:not(:disabled) {
@@ -252,31 +255,37 @@ onUnmounted(() => {
 }
 
 .btn-primary {
-  background: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
+  background: var(--bg-primary);
+  color: var(--accent-subtle-text);
+  border-color: var(--accent-subtle-border);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
+  background: var(--accent-subtle-bg);
+  border-color: var(--accent-subtle-border);
 }
 
 .btn-danger {
-  background: var(--danger-color);
-  color: white;
-  border-color: var(--danger-color);
+  background: var(--bg-primary);
+  color: var(--danger-subtle-text);
+  border-color: var(--danger-subtle-border);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger-hover);
-  border-color: var(--danger-hover);
+  background: var(--danger-subtle-bg);
+  border-color: var(--danger-subtle-border);
 }
 
 .btn-active {
-  background: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
+  background: var(--accent-subtle-bg);
+  color: var(--accent-subtle-text);
+  border-color: var(--accent-subtle-border);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-subtle-border) 65%, transparent);
+}
+
+.btn-active:hover:not(:disabled) {
+  background: var(--accent-subtle-hover);
+  border-color: var(--accent-subtle-border);
 }
 
 .divider {

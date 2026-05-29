@@ -49,7 +49,6 @@ export interface ProcessSettings {
 
 // Close result from backend
 export interface CloseResult {
-  pid: number
-  success: boolean
-  error?: string
+  succeeded: number
+  failed: number
 }

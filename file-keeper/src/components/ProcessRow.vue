@@ -3,6 +3,7 @@
     class="process-row"
     :class="{ selected }"
     @click="$emit('toggle-select')"
+    @contextmenu.prevent="handleContextMenu"
   >
     <div class="row-checkbox">
       <input
@@ -13,37 +14,37 @@
     </div>
 
     <div class="row-content">
-      <div v-if="isColumnVisible('name')" class="row-cell cell-name">
-        <span class="process-name" :title="process.name">{{ process.name }}</span>
-      </div>
+      <div
+        v-for="column in visibleColumns"
+        :key="column.key"
+        :class="['row-cell', getProcessColumnClass(column.key)]"
+      >
+        <span v-if="column.key === 'name'" class="process-name" :title="process.name">{{ process.name }}</span>
 
-      <div v-if="isColumnVisible('category')" class="row-cell cell-category">
-        <span class="category-badge" :class="`category-${process.category.toLowerCase()}`">
-          {{ process.category }}
+        <span v-else-if="column.key === 'category'" class="category-badge" :class="`category-${process.category.toLowerCase()}`">
+          {{ t(`process.category_${process.category}`) }}
         </span>
-      </div>
 
-      <div v-if="isColumnVisible('pid')" class="row-cell cell-pid">
-        {{ process.pid }}
-      </div>
+        <template v-else-if="column.key === 'pid'">
+          {{ process.pid }}
+        </template>
 
-      <div v-if="isColumnVisible('memory')" class="row-cell cell-memory">
-        {{ formatMemory(process.memory_mb) }}
-      </div>
+        <template v-else-if="column.key === 'memory'">
+          {{ formatMemory(process.memory_mb) }}
+        </template>
 
-      <div v-if="isColumnVisible('cpu')" class="row-cell cell-cpu">
-        {{ process.cpu_usage.toFixed(1) }}%
-      </div>
+        <template v-else-if="column.key === 'cpu'">
+          {{ process.cpu_usage.toFixed(1) }}%
+        </template>
 
-      <div v-if="isColumnVisible('windowTitle')" class="row-cell cell-window-title">
-        <span :title="process.window_title">{{ truncate(process.window_title, 30) }}</span>
+        <span v-else-if="column.key === 'windowTitle'" :title="process.window_title">{{ truncate(process.window_title, 30) }}</span>
       </div>
     </div>
 
     <div class="row-actions">
       <button
         class="btn-close"
-        title="Close process"
+        :title="t('process.menuCloseProcess')"
         @click.stop="$emit('close')"
       >
         <XCircle :size="16" />
@@ -53,8 +54,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { XCircle } from 'lucide-vue-next'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import { useI18n } from '../composables/useI18n'
+import { getProcessColumnClass, getVisibleProcessColumns } from './processColumns'
 import type { ProcessInfo } from '../types/process'
 
 interface Props {
@@ -64,36 +68,38 @@ interface Props {
 
 defineProps<Props>()
 
-defineEmits<{
+const emit = defineEmits<{
   'toggle-select': []
   close: []
+  'context-menu': [event: MouseEvent]
 }>()
 
 const settingsStore = useProcessSettingsStore()
+const { t } = useI18n()
 
-function isColumnVisible(key: string): boolean {
-  const column = settingsStore.settings.columns.find(col => col.key === key)
-  return column?.visible ?? false
-}
+const visibleColumns = computed(() => getVisibleProcessColumns(settingsStore.settings.columns))
 
-function formatMemory(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
+const memoryFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1
+})
 
-function formatRuntime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
-  return `${Math.floor(seconds / 86400)}d`
+function formatMemory(memoryMb: number): string {
+  if (memoryMb >= 1024) {
+    return `${memoryFormatter.format(memoryMb / 1024)} GB`
+  }
+
+  return `${memoryFormatter.format(memoryMb)} MB`
 }
 
 function truncate(text: string | undefined, maxLength: number): string {
   if (!text) return '-'
   if (text.length <= maxLength) return text
   return text.substring(0, maxLength - 3) + '...'
+}
+
+function handleContextMenu(event: MouseEvent) {
+  emit('context-menu', event)
 }
 </script>
 
@@ -121,7 +127,11 @@ function truncate(text: string | undefined, maxLength: number): string {
 }
 
 .row-checkbox {
+  width: 16px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .row-checkbox input[type="checkbox"] {
@@ -224,7 +234,10 @@ function truncate(text: string | undefined, maxLength: number): string {
 }
 
 .row-actions {
+  width: 60px;
   flex-shrink: 0;
+  display: flex;
+  justify-content: center;
 }
 
 .btn-close {

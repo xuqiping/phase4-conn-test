@@ -9,9 +9,10 @@ export const useSettingsStore = defineStore('settings', () => {
     theme: 'dark',
     defaultView: 'grid',
     globalShortcut: 'CommandOrControl+Alt+K',
+    clipboardShortcut: 'CommandOrControl+Shift+V',
     minimizeToTray: true,
     autoStart: false,
-  language: 'zh-CN',
+    language: 'zh-CN',
     itemsPerPage: 50,
     iconMode: 'real' // 默认使用真实图标
   })

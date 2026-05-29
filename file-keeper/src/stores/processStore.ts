@@ -3,6 +3,9 @@ import { ref, computed } from 'vue'
 import type { ProcessInfo, ProcessCategory } from '../types/process'
 import * as processApi from '../api/process'
 
+type ProcessSortKey = 'name' | 'category' | 'pid' | 'memory' | 'cpu' | 'windowTitle'
+type ProcessSortDirection = 'asc' | 'desc'
+
 export const useProcessStore = defineStore('process', () => {
   // State
   const processes = ref<ProcessInfo[]>([])
@@ -11,13 +14,46 @@ export const useProcessStore = defineStore('process', () => {
   const isRefreshing = ref(false)
   const lastRefreshTime = ref<number>(0)
   const error = ref<string | null>(null)
+  const sortKey = ref<ProcessSortKey | null>(null)
+  const sortDirection = ref<ProcessSortDirection>('asc')
+
+  function compareText(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+  }
+
+  function compareProcesses(a: ProcessInfo, b: ProcessInfo, key: ProcessSortKey): number {
+    switch (key) {
+      case 'name':
+        return compareText(a.name, b.name)
+      case 'category':
+        return compareText(a.category, b.category) || compareText(a.name, b.name)
+      case 'pid':
+        return a.pid - b.pid || compareText(a.name, b.name)
+      case 'memory':
+        return a.memory_mb - b.memory_mb || compareText(a.name, b.name)
+      case 'cpu':
+        return a.cpu_usage - b.cpu_usage || compareText(a.name, b.name)
+      case 'windowTitle':
+        return compareText(a.window_title, b.window_title) || compareText(a.name, b.name)
+    }
+  }
+
+  function getDefaultSortDirection(key: ProcessSortKey): ProcessSortDirection {
+    return key === 'memory' || key === 'cpu' ? 'desc' : 'asc'
+  }
 
   // Computed
   const filteredProcesses = computed(() => {
-    if (currentCategory.value === 'All') {
-      return processes.value
+    const filtered = currentCategory.value === 'All'
+      ? processes.value
+      : processes.value.filter(p => p.category === currentCategory.value)
+
+    if (!sortKey.value) {
+      return filtered
     }
-    return processes.value.filter(p => p.category === currentCategory.value)
+
+    const direction = sortDirection.value === 'asc' ? 1 : -1
+    return filtered.slice().sort((a, b) => direction * compareProcesses(a, b, sortKey.value!))
   })
 
   const selectedCount = computed(() => selectedIds.value.size)
@@ -48,7 +84,7 @@ export const useProcessStore = defineStore('process', () => {
   })
 
   const selectedProcesses = computed(() => {
-    return processes.value.filter(p => selectedIds.value.has(p.pid))
+    return processes.value.filter(p => selectedIds.value.has(p.window_handle))
   })
 
   // Actions
@@ -67,11 +103,11 @@ export const useProcessStore = defineStore('process', () => {
       processes.value = result
       lastRefreshTime.value = Date.now()
 
-      // Remove selected IDs that no longer exist
-      const currentPids = new Set(result.map(p => p.pid))
-      selectedIds.value.forEach(pid => {
-        if (!currentPids.has(pid)) {
-          selectedIds.value.delete(pid)
+      // Remove selected rows that no longer exist
+      const currentWindowHandles = new Set(result.map(p => p.window_handle))
+      selectedIds.value.forEach(windowHandle => {
+        if (!currentWindowHandles.has(windowHandle)) {
+          selectedIds.value.delete(windowHandle)
         }
       })
 
@@ -88,17 +124,17 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
-  function toggleSelect(pid: number) {
-    if (selectedIds.value.has(pid)) {
-      selectedIds.value.delete(pid)
+  function toggleSelect(windowHandle: number) {
+    if (selectedIds.value.has(windowHandle)) {
+      selectedIds.value.delete(windowHandle)
     } else {
-      selectedIds.value.add(pid)
+      selectedIds.value.add(windowHandle)
     }
   }
 
   function selectAll() {
     filteredProcesses.value.forEach(p => {
-      selectedIds.value.add(p.pid)
+      selectedIds.value.add(p.window_handle)
     })
   }
 
@@ -109,8 +145,8 @@ export const useProcessStore = defineStore('process', () => {
   function invertSelection() {
     const newSelection = new Set<number>()
     filteredProcesses.value.forEach(p => {
-      if (!selectedIds.value.has(p.pid)) {
-        newSelection.add(p.pid)
+      if (!selectedIds.value.has(p.window_handle)) {
+        newSelection.add(p.window_handle)
       }
     })
     selectedIds.value = newSelection
@@ -120,9 +156,19 @@ export const useProcessStore = defineStore('process', () => {
     currentCategory.value = category
   }
 
-  async function closeProcess(pid: number): Promise<boolean> {
+  function setSort(key: ProcessSortKey) {
+    if (sortKey.value === key) {
+      sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+      return
+    }
+
+    sortKey.value = key
+    sortDirection.value = getDefaultSortDirection(key)
+  }
+
+  async function closeProcess(windowHandle: number): Promise<boolean> {
     try {
-      const process = processes.value.find(p => p.pid === pid)
+      const process = processes.value.find(p => p.window_handle === windowHandle)
       if (!process) {
       error.value = 'Process not found'
     return false
@@ -130,8 +176,8 @@ export const useProcessStore = defineStore('process', () => {
 
       await processApi.closeProcess(process.window_handle)
       // Remove from list
-      processes.value = processes.value.filter(p => p.pid !== pid)
-      selectedIds.value.delete(pid)
+      processes.value = processes.value.filter(p => p.window_handle !== windowHandle)
+      selectedIds.value.delete(windowHandle)
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
@@ -140,21 +186,18 @@ export const useProcessStore = defineStore('process', () => {
   }
 
   async function closeSelected(): Promise<{ success: number; failed: number }> {
-    const pidsToClose = Array.from(selectedIds.value)
-    if (pidsToClose.length === 0) {
+    const windowHandlesToClose = Array.from(selectedIds.value)
+    if (windowHandlesToClose.length === 0) {
       return { success: 0, failed: 0 }
     }
 
     try {
-      const processesToClose = processes.value.filter(p => pidsToClose.includes(p.pid))
-      const windowHandles = processesToClose.map(p => p.window_handle)
-
-      const result = await processApi.closeProcesses(windowHandles)
+      const result = await processApi.closeProcesses(windowHandlesToClose)
 
       // Remove closed processes from list (optimistically remove all selected)
       if (result.succeeded > 0) {
-        processes.value = processes.value.filter(p => !pidsToClose.includes(p.pid))
-        pidsToClose.forEach(pid => selectedIds.value.delete(pid))
+        processes.value = processes.value.filter(p => !windowHandlesToClose.includes(p.window_handle))
+        windowHandlesToClose.forEach(windowHandle => selectedIds.value.delete(windowHandle))
       }
 
       if (result.failed > 0) {
@@ -164,7 +207,7 @@ export const useProcessStore = defineStore('process', () => {
       return { success: result.succeeded, failed: result.failed }
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
-      return { success: 0, failed: pidsToClose.length }
+      return { success: 0, failed: windowHandlesToClose.length }
     }
   }
 
@@ -187,6 +230,8 @@ export const useProcessStore = defineStore('process', () => {
     isRefreshing,
     lastRefreshTime,
     error,
+    sortKey,
+    sortDirection,
     // Computed
     filteredProcesses,
     selectedCount,
@@ -199,6 +244,7 @@ export const useProcessStore = defineStore('process', () => {
     deselectAll,
     invertSelection,
     setCategory,
+    setSort,
     closeProcess,
     closeSelected,
     clearProcesses,

@@ -1,12 +1,12 @@
 use crate::types::process::{ProcessCategory, ProcessInfo};
 use super::process_mappings::load_process_mappings;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use sysinfo::{System, ProcessRefreshKind};
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    PostMessageW, WM_CLOSE,
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    PostMessageW, SetForegroundWindow, ShowWindow, WM_CLOSE, SW_RESTORE,
 };
 
 pub struct ProcessMonitor {
@@ -39,14 +39,8 @@ impl ProcessMonitor {
 
            // Get process details for each window
         let mut result = Vec::new();
-    let mut seen_pids = HashSet::new();
 
     for proc_info in processes {
-            // Skip duplicate PIDs (same process with multiple windows)
-       if !seen_pids.insert(proc_info.pid) {
-                continue;
-            }
-
             if let Some(process) = self.system.process(sysinfo::Pid::from_u32(proc_info.pid)) {
              let process_name = process.name().to_string().to_lowercase();
            let category = self
@@ -80,6 +74,22 @@ impl ProcessMonitor {
          PostMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), LPARAM(0))
               .map_err(|e| format!("Failed to close process: {}", e))?;
         }
+        Ok(())
+    }
+
+    pub fn activate_window(&self, window_handle: usize) -> Result<(), String> {
+        unsafe {
+            let hwnd = HWND(window_handle as *mut core::ffi::c_void);
+
+            if IsIconic(hwnd).as_bool() {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+
+            if !SetForegroundWindow(hwnd).as_bool() {
+                return Err("Failed to bring window to foreground".to_string());
+            }
+        }
+
         Ok(())
     }
 

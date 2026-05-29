@@ -4,7 +4,7 @@
       <div class="settings-header">
         <h3 class="settings-title">
           <Settings :size="20" />
-          Column Settings
+          {{ t('process.columnSettingsTitle') }}
         </h3>
         <button class="btn-close-dialog" @click="$emit('close')">
           <X :size="20" />
@@ -13,7 +13,7 @@
 
       <div class="settings-body">
         <p class="settings-description">
-          Customize which columns to display and their order. Drag to reorder.
+          {{ t('process.columnSettingsDesc') }}
         </p>
 
         <div ref="columnListRef" class="column-list">
@@ -41,14 +41,14 @@
 
       <div class="settings-footer">
         <button class="btn btn-secondary" @click="handleReset">
-          Reset to Default
+          {{ t('process.resetToDefault') }}
         </button>
         <div class="footer-actions">
           <button class="btn btn-secondary" @click="$emit('close')">
-            Cancel
+            {{ t('process.cancel') }}
           </button>
         <button class="btn btn-primary" @click="handleSave">
-            Save Changes
+            {{ t('process.saveChanges') }}
           </button>
         </div>
       </div>
@@ -61,7 +61,11 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { Settings, X, GripVertical } from 'lucide-vue-next'
 import Sortable from 'sortablejs'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import { useI18n } from '../composables/useI18n'
+import { getColumnSettingsSortableOptions, reorderColumns } from './processColumns'
 import type { ColumnConfig } from '../types/process'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   close: []
@@ -78,18 +82,12 @@ let sortableInstance: Sortable | null = null
 
 onMounted(() => {
   if (columnListRef.value) {
-    sortableInstance = Sortable.create(columnListRef.value, {
-      animation: 150,
-      handle: '.drag-handle',
-      ghostClass: 'sortable-ghost',
-      dragClass: 'sortable-drag',
-      onEnd: (evt) => {
-        if (evt.oldIndex !== undefined && evt.newIndex !== undefined) {
-          const movedItem = localColumns.value.splice(evt.oldIndex, 1)[0]
-          localColumns.value.splice(evt.newIndex, 0, movedItem)
-        }
-      }
-    })
+    sortableInstance = Sortable.create(
+      columnListRef.value,
+      getColumnSettingsSortableOptions((oldIndex, newIndex) => {
+        localColumns.value = reorderColumns(localColumns.value, oldIndex, newIndex)
+      })
+    )
   }
 })
 

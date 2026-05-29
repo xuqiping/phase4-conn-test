@@ -36,3 +36,12 @@ export async function closeProcesses(windowHandles: number[]): Promise<CloseResu
     throw new Error(`Failed to close processes: ${error}`)
   }
 }
+
+export async function activateWindow(windowHandle: number): Promise<void> {
+  try {
+    await invoke('activate_app_window', { windowHandle })
+  } catch (error) {
+    console.error(`Failed to activate window with handle ${windowHandle}:`, error)
+    throw new Error(`Failed to activate window: ${error}`)
+  }
+}

@@ -4,7 +4,7 @@
       <div class="dialog-header">
         <h3 class="dialog-title">
           <AlertTriangle :size="20" />
-          Confirm Close Processes
+          {{ t('process.confirmClose') }}
         </h3>
         <button class="btn-close-dialog" @click="$emit('cancel')">
           <X :size="20" />
@@ -13,28 +13,30 @@
 
       <div class="dialog-body">
         <p class="warning-text">
-        You are about to close {{ processes.length }} process(es).
-       This action cannot be undone.
+          {{ processes.length === 1
+            ? t('process.confirmCloseSingle', { name: processes[0].name })
+            : t('process.confirmCloseMultiple', { count: processes.length })
+          }}
         </p>
 
         <div v-if="whitelistedProcesses.length > 0" class="whitelist-warning">
        <AlertTriangle :size="16" />
           <span>
-         <strong>Warning:</strong> The following important processes are in your selection:
+         <strong>{{ t('process.warning') }}:</strong> {{ t('process.whitelistWarningDetail') }}
           </span>
         </div>
 
         <div class="process-list">
           <div
             v-for="process in processes"
-            :key="process.pid"
+            :key="process.window_handle"
          class="process-item"
          :class="{ whitelisted: isWhitelisted(process.name) }"
           >
       <span class="process-name">{{ process.name }}</span>
          <span class="process-pid">PID: {{ process.pid }}</span>
             <span v-if="isWhitelisted(process.name)" class="whitelist-badge">
-              Important
+              {{ t('process.important') }}
             </span>
         </div>
         </div>
@@ -42,10 +44,10 @@
 
       <div class="dialog-footer">
         <button class="btn btn-secondary" @click="$emit('cancel')">
-          Cancel
+          {{ t('process.cancel') }}
         </button>
         <button class="btn btn-danger" @click="$emit('confirm')">
-          Close {{ processes.length }} Process(es)
+          {{ t('process.closeCount', { count: processes.length }) }}
         </button>
       </div>
     </div>
@@ -56,7 +58,10 @@
 import { computed } from 'vue'
 import { AlertTriangle, X } from 'lucide-vue-next'
 import { useProcessSettingsStore } from '../stores/processSettingsStore'
+import { useI18n } from '../composables/useI18n'
 import type { ProcessInfo } from '../types/process'
+
+const { t } = useI18n()
 
 interface Props {
   processes: ProcessInfo[]

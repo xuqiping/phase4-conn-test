@@ -1,26 +1,26 @@
 <template>
   <div class="process-filter">
     <div class="filter-header">
-      <span class="filter-label">Category:</span>
+      <span class="filter-label">{{ t('process.filter_categoryLabel') }}</span>
       <select
         v-model="selectedCategory"
       class="category-select"
         @change="handleCategoryChange"
       >
-        <option value="All">All ({{ processStore.categoryCounts.All }})</option>
-        <option value="Browser">Browser ({{ processStore.categoryCounts.Browser }})</option>
-        <option value="Office">Office ({{ processStore.categoryCounts.Office }})</option>
-        <option value="Explorer">Explorer ({{ processStore.categoryCounts.Explorer }})</option>
-        <option value="Terminal">Terminal ({{ processStore.categoryCounts.Terminal }})</option>
-        <option value="Archive">Archive ({{ processStore.categoryCounts.Archive }})</option>
-        <option value="Document">Document ({{ processStore.categoryCounts.Document }})</option>
-        <option value="Media">Media ({{ processStore.categoryCounts.Media }})</option>
-        <option value="Image">Image ({{ processStore.categoryCounts.Image }})</option>
-        <option value="Communication">Communication ({{ processStore.categoryCounts.Communication }})</option>
-        <option value="Download">Download ({{ processStore.categoryCounts.Download }})</option>
-        <option value="Game">Game ({{ processStore.categoryCounts.Game }})</option>
-        <option value="System">System ({{ processStore.categoryCounts.System }})</option>
-        <option value="Other">Other ({{ processStore.categoryCounts.Other }})</option>
+        <option value="All">{{ t('process.category_All') }} ({{ processStore.categoryCounts.All }})</option>
+        <option value="Browser">{{ t('process.category_Browser') }} ({{ processStore.categoryCounts.Browser }})</option>
+        <option value="Office">{{ t('process.category_Office') }} ({{ processStore.categoryCounts.Office }})</option>
+        <option value="Explorer">{{ t('process.category_Explorer') }} ({{ processStore.categoryCounts.Explorer }})</option>
+        <option value="Terminal">{{ t('process.category_Terminal') }} ({{ processStore.categoryCounts.Terminal }})</option>
+        <option value="Archive">{{ t('process.category_Archive') }} ({{ processStore.categoryCounts.Archive }})</option>
+        <option value="Document">{{ t('process.category_Document') }} ({{ processStore.categoryCounts.Document }})</option>
+        <option value="Media">{{ t('process.category_Media') }} ({{ processStore.categoryCounts.Media }})</option>
+        <option value="Image">{{ t('process.category_Image') }} ({{ processStore.categoryCounts.Image }})</option>
+        <option value="Communication">{{ t('process.category_Communication') }} ({{ processStore.categoryCounts.Communication }})</option>
+        <option value="Download">{{ t('process.category_Download') }} ({{ processStore.categoryCounts.Download }})</option>
+        <option value="Game">{{ t('process.category_Game') }} ({{ processStore.categoryCounts.Game }})</option>
+        <option value="System">{{ t('process.category_System') }} ({{ processStore.categoryCounts.System }})</option>
+        <option value="Other">{{ t('process.category_Other') }} ({{ processStore.categoryCounts.Other }})</option>
       </select>
     </div>
 
@@ -32,7 +32,7 @@
         :class="{ active: selectedCategory === category }"
       @click="selectQuickFilter(category)"
       >
-        {{ category }} ({{ processStore.categoryCounts[category] }})
+        {{ t(`process.category_${category}`) }} ({{ processStore.categoryCounts[category] }})
       </button>
     </div>
   </div>
@@ -41,9 +41,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useProcessStore } from '../stores/processStore'
+import { useI18n } from '../composables/useI18n'
 import type { ProcessCategory } from '../types/process'
 
 const processStore = useProcessStore()
+const { t } = useI18n()
 
 const selectedCategory = ref<ProcessCategory>('All')
 
@@ -138,8 +140,15 @@ watch(() => processStore.currentCategory, (newCategory) => {
 }
 
 .quick-filter-btn.active {
-  background: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
+  background: var(--accent-subtle-bg);
+  color: var(--accent-subtle-text);
+  border-color: var(--accent-subtle-border);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-subtle-border) 65%, transparent);
+}
+
+.quick-filter-btn.active:hover {
+  background: var(--accent-subtle-hover);
+  border-color: var(--accent-subtle-border);
+  color: var(--accent-subtle-text);
 }
 </style>

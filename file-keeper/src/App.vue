@@ -1,6 +1,6 @@
 <template>
   <div
-    :class="['min-h-screen w-full flex flex-col font-sans transition-colors duration-300',
+    :class="['h-screen w-full flex flex-col overflow-hidden font-sans transition-colors duration-300',
              currentTheme === 'dark' ? 'dark bg-dark-bg text-gray-200' : 'bg-gray-50 text-gray-800']"
     @click="closeContextMenu"
   >
@@ -26,7 +26,7 @@
         <Search :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
         <input
           type="text"
-          placeholder="搜索文件、路径或标签..."
+          :placeholder="t('file.searchPlaceholder')"
           v-model="fileStore.searchQuery"
           class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary focus:bg-white dark:focus:bg-dark-bg rounded-md outline-none text-sm transition-all duration-200 shadow-sm"
      />
@@ -36,31 +36,31 @@
         <!-- 快速排序 -->
         <div class="flex items-center space-x-1.5 text-sm">
           <ArrowUpDown :size="14" class="text-gray-400" />
-       <span class="text-xs text-gray-500 dark:text-gray-400 select-none">排序</span>
+       <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.sortLabel') }}</span>
           <select
          v-model="fileStore.sortBy"
             class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
-      title="排序方式"
+      :title="t('file.sortTitle')"
           >
-            <option value="custom">自定义顺序</option>
-            <option value="openCount">打开次数</option>
-            <option value="lastOpened">最近打开</option>
-            <option value="name">名称</option>
-            <option value="createdAt">添加时间</option>
+            <option value="custom">{{ t('file.sortCustom') }}</option>
+            <option value="openCount">{{ t('file.sortOpenCount') }}</option>
+            <option value="lastOpened">{{ t('file.sortLastOpened') }}</option>
+            <option value="name">{{ t('file.sortName') }}</option>
+            <option value="createdAt">{{ t('file.sortCreatedAt') }}</option>
        </select>
            </div>
 
         <!-- 图标模式切换 -->
       <div class="flex items-center space-x-1.5 text-sm">
           <Box :size="14" class="text-gray-400" />
-          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">图标</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.iconLabel') }}</span>
       <select
         v-model="settingsStore.settings.iconMode"
             class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
-            title="图标显示模式"
+            :title="t('file.iconModeTitle')"
           >
-            <option value="real">真实图标</option>
-            <option value="generic">通用图标</option>
+            <option value="real">{{ t('file.iconReal') }}</option>
+            <option value="generic">{{ t('file.iconGeneric') }}</option>
           </select>
         </div>
 
@@ -70,16 +70,25 @@
       <button
           @click="handleAddFolder"
           class="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
-          title="添加文件夹"
+          :title="t('file.addFolder')"
         >
           <FolderPlus :size="16" />
-          <span>添加文件夹</span>
+          <span>{{ t('file.addFolder') }}</span>
+        </button>
+
+        <button
+          @click="toggleLocale"
+          class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
+          :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
+        >
+          <Languages :size="16" />
+          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
         </button>
 
         <button
           @click="toggleTheme"
           class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-          title="切换主题"
+          :title="t('file.toggleTheme')"
         >
           <Sun v-if="currentTheme === 'dark'" :size="18" />
           <Moon v-else :size="18" />
@@ -101,7 +110,7 @@
         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border px-6 py-3 flex items-center space-x-4"
       >
         <span class="text-sm text-gray-600 dark:text-gray-300">
-          已选择 <strong class="text-primary">{{ selectionStore.selectedCount }}</strong> 项
+          {{ t('file.selectedItems', { count: selectionStore.selectedCount }) }}
         </span>
         <div class="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
         <button
@@ -109,35 +118,35 @@
         class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
       >
           <FolderOpen :size="14" />
-      <span>打开</span>
+      <span>{{ t('file.open') }}</span>
      </button>
         <button
           @click="showBatchMoveMenu = true"
           class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
         >
         <FolderInput :size="14" />
-          <span>移动</span>
+          <span>{{ t('file.move') }}</span>
         </button>
         <button
           @click="handleBatchAddTag"
           class="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
         >
           <Tag :size="14" />
-      <span>添加标签</span>
+      <span>{{ t('file.addTag') }}</span>
         </button>
         <button
           @click="handleBatchDelete"
       class="flex items-center space-x-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
         >
       <Trash2 :size="14" />
-          <span>删除</span>
+          <span>{{ t('file.delete') }}</span>
         </button>
         <div class="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
         <button
           @click="selectionStore.clearSelection"
           class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
         >
-      取消
+      {{ t('file.unselect') }}
         </button>
       </div>
     </transition>
@@ -153,7 +162,7 @@
           class="bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border p-4 min-w-[200px]"
           @click.stop
         >
-          <h3 class="text-sm font-semibold mb-3 text-gray-800 dark:text-gray-100">移动到分组</h3>
+          <h3 class="text-sm font-semibold mb-3 text-gray-800 dark:text-gray-100">{{ t('file.moveToGroup') }}</h3>
           <div class="space-y-1">
             <button
               v-for="group in groupStore.customGroups"
@@ -176,7 +185,7 @@
                  currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
       >
       <Folder :size="16" />
-        <span>文件管理</span>
+        <span>{{ t('file.filesTab') }}</span>
     <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
       </button>
       <button
@@ -185,8 +194,17 @@
                currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
     >
         <Activity :size="16" />
-        <span>进程管理</span>
+        <span>{{ t('file.processesTab') }}</span>
         <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+      </button>
+      <button
+        @click="currentTab = 'clipboard'"
+        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+               currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+      >
+        <Clipboard :size="16" />
+        <span>{{ t('tabs.clipboard') }}</span>
+        <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
       </button>
     </div>
 
@@ -203,12 +221,12 @@
         <div v-if="groupStore.currentGroupId === group.id" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
       </button>
       <button class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center" @click="handleAddGroup">
-        <Plus :size="14" class="mr-1" /> 新建分组
+        <Plus :size="14" class="mr-1" /> {{ t('file.newGroup') }}
       </button>
       <button
         class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center ml-auto"
         @click="showGroupManager = true"
-        title="管理分组"
+:title="t('file.manageGroups')"
       >
         <FolderCog :size="16" />
       </button>
@@ -227,7 +245,7 @@
       <!-- 空状态 -->
       <div v-if="fileStore.filteredFiles.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400">
         <Search :size="48" class="mb-4 opacity-20" />
-        <p>未找到匹配的文件</p>
+        <p>{{ t('file.emptySearch') }}</p>
       </div>
 
       <template v-else>
@@ -425,13 +443,18 @@
     </div>
 
     <!-- Process Management Tab -->
-    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden flex flex-col">
+    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden flex flex-col min-h-0">
       <ProcessManagement />
+    </div>
+
+    <!-- Clipboard Management Tab -->
+    <div v-if="currentTab === 'clipboard'" class="flex-1 overflow-hidden flex flex-col min-h-0">
+      <ClipboardManagement />
     </div>
 
     <!-- 5. 状态栏 -->
     <div class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
-      <div>共 {{ fileStore.filteredFiles.length }} 个项目</div>
+      <div>{{ t('file.totalItems', { count: fileStore.filteredFiles.length }) }}</div>
       <div class="flex items-center space-x-2 bg-gray-100 dark:bg-dark-bg p-1 rounded-md">
         <button
           @click="setViewMode('grid')"
@@ -581,7 +604,7 @@
             <div v-else class="space-y-2">
               <div
                 v-for="process in fileProcesses"
-                :key="process.pid"
+                :key="process.window_handle"
                 class="flex items-center justify-between p-4 rounded-lg border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover"
               >
                 <div class="flex-1 min-w-0">
@@ -589,11 +612,10 @@
                     <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ process.name }}</span>
                     <span class="text-xs text-gray-400">PID: {{ process.pid }}</span>
                   </div>
-                  <p v-if="process.windowTitle" class="text-xs text-gray-500 mt-1 truncate">{{ process.windowTitle }}</p>
-                  <p v-if="process.path" class="text-xs text-gray-400 mt-1 truncate">{{ process.path }}</p>
+                  <p v-if="process.window_title" class="text-xs text-gray-500 mt-1 truncate">{{ process.window_title }}</p>
                 </div>
                 <button
-                  @click="handleCloseProcess(process.pid)"
+                  @click="handleCloseProcess(process.window_handle, process.pid)"
                   class="ml-4 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors flex items-center space-x-1"
                 >
                   <XCircle :size="14" />
@@ -674,6 +696,8 @@
       @saved="handleFileSaved"
     />
 
+    <ClipboardQuickPanel />
+
     <!-- 全局点击处理 -->
     <div v-if="contextMenu.show" class="fixed inset-0 z-40" @click="closeContextMenu"></div>
   </div>
@@ -714,13 +738,17 @@ import {
   FolderOpen,
   XCircle,
   FileX,
-  Activity
+  Activity,
+  Clipboard,
+  Languages
 } from 'lucide-vue-next'
 import { useFileStore } from './stores/fileStore'
 import { useGroupStore } from './stores/groupStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useSelectionStore } from './stores/selectionStore'
 import { useRecentStore } from './stores/recentStore'
+import { useClipboardStore } from './stores/clipboardStore'
+import { useI18n } from './composables/useI18n'
 import { openFile, showInFolder } from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
 import GroupManager from './components/GroupManager.vue'
@@ -729,6 +757,8 @@ import EditFileDialog from './components/EditFileDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import RecentFiles from './components/RecentFiles.vue'
 import ProcessManagement from './components/ProcessManagement.vue'
+import ClipboardManagement from './components/ClipboardManagement.vue'
+import ClipboardQuickPanel from './components/ClipboardQuickPanel.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import { useSortableFiles } from './composables/useSortableFiles'
@@ -741,9 +771,11 @@ const groupStore = useGroupStore()
 const settingsStore = useSettingsStore()
 const selectionStore = useSelectionStore()
 const recentStore = useRecentStore()
+const clipboardStore = useClipboardStore()
+const { t, locale, toggleLocale } = useI18n()
 
 // Current tab state
-const currentTab = ref<'files' | 'processes'>('files')
+const currentTab = ref<'files' | 'processes' | 'clipboard'>('files')
 
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)
@@ -1149,51 +1181,14 @@ async function closeWindow() {
   }
 }
 
-async function handleSaveSettings(settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
-  // Persist non-shortcut settings up front so they survive even if the
-  // shortcut registration step fails below.
+async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
   settingsStore.updateSettings({
     minimizeToTray: settings.minimizeToTray,
     theme: settings.theme,
   })
 
-  const desired = settings.globalShortcut
-  // `registeredShortcut` tracks the shortcut currently live with the OS.
-  // It diverges from settingsStore.settings.globalShortcut whenever a previous
-  // register() failed — never unregister based on the store value.
-  if (desired === registeredShortcut) {
-    settingsStore.updateSettings({ globalShortcut: desired })
-    showSettings.value = false
-    return
-  }
-
-  // Best-effort unregister of whatever is currently live. If it fails (e.g. the
-  // OS already dropped it), warn and continue — don't block the user.
-  if (registeredShortcut) {
-    try {
-      await unregisterGlobalShortcut(registeredShortcut)
-    } catch (error) {
-      console.warn(`Failed to unregister "${registeredShortcut}", continuing:`, error)
-    }
-    registeredShortcut = null
-  }
-
-  // Try to register the new one. On conflict (another app owns it) we still
-  // save the user's chosen string so the dialog reflects their intent.
-  if (desired) {
-    try {
-      await registerGlobalShortcut(desired, handleGlobalShortcut)
-      registeredShortcut = desired
-      settingsStore.updateSettings({ globalShortcut: desired })
-      console.log(`Global shortcut updated: ${desired}`)
-    } catch (error) {
-      console.error('Failed to register new shortcut:', error)
-      settingsStore.updateSettings({ globalShortcut: desired })
-      alert(`快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
-    }
-  } else {
-    settingsStore.updateSettings({ globalShortcut: '' })
-  }
+  await updateGlobalShortcut(settings.globalShortcut)
+  await updateClipboardShortcut(settings.clipboardShortcut)
 
   showSettings.value = false
 }
@@ -1202,9 +1197,11 @@ async function handleSaveSettings(settings: { globalShortcut: string; minimizeTo
 let dndUnlisten: (() => void) | null = null
 let closeRequestedUnlisten: (() => void) | null = null
 let shortcutHandling = false // Prevent double-trigger
+let clipboardShortcutHandling = false
 // Tracks the shortcut currently registered with the OS. Stays null when a
 // register() call fails, so we never try to unregister a string the OS doesn't know about.
 let registeredShortcut: string | null = null
+let registeredClipboardShortcut: string | null = null
 
 async function handleGlobalShortcut() {
   if (shortcutHandling) return
@@ -1219,6 +1216,78 @@ async function handleGlobalShortcut() {
     }
   } finally {
     setTimeout(() => { shortcutHandling = false }, 300)
+  }
+}
+
+async function handleClipboardShortcut() {
+  if (clipboardShortcutHandling) return
+  clipboardShortcutHandling = true
+  try {
+    clipboardStore.openQuickPanel()
+  } finally {
+    setTimeout(() => { clipboardShortcutHandling = false }, 300)
+  }
+}
+
+async function updateGlobalShortcut(desired: string) {
+  if (desired === registeredShortcut) {
+    settingsStore.updateSettings({ globalShortcut: desired })
+    return
+  }
+
+  if (registeredShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredShortcut)
+    } catch (error) {
+      console.warn(`Failed to unregister "${registeredShortcut}", continuing:`, error)
+    }
+    registeredShortcut = null
+  }
+
+  if (desired) {
+    try {
+      await registerGlobalShortcut(desired, handleGlobalShortcut)
+      registeredShortcut = desired
+      settingsStore.updateSettings({ globalShortcut: desired })
+      console.log(`Global shortcut updated: ${desired}`)
+    } catch (error) {
+      console.error('Failed to register new shortcut:', error)
+      settingsStore.updateSettings({ globalShortcut: desired })
+      alert(`主窗口快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
+    }
+  } else {
+    settingsStore.updateSettings({ globalShortcut: '' })
+  }
+}
+
+async function updateClipboardShortcut(desired: string) {
+  if (desired === registeredClipboardShortcut) {
+    settingsStore.updateSettings({ clipboardShortcut: desired })
+    return
+  }
+
+  if (registeredClipboardShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredClipboardShortcut)
+    } catch (error) {
+      console.warn(`Failed to unregister "${registeredClipboardShortcut}", continuing:`, error)
+    }
+    registeredClipboardShortcut = null
+  }
+
+  if (desired) {
+    try {
+      await registerGlobalShortcut(desired, handleClipboardShortcut)
+      registeredClipboardShortcut = desired
+      settingsStore.updateSettings({ clipboardShortcut: desired })
+      console.log(`Clipboard shortcut updated: ${desired}`)
+    } catch (error) {
+      console.error('Failed to register clipboard shortcut:', error)
+      settingsStore.updateSettings({ clipboardShortcut: desired })
+      alert(`剪贴板面板快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
+    }
+  } else {
+    settingsStore.updateSettings({ clipboardShortcut: '' })
   }
 }
 
@@ -1245,6 +1314,23 @@ onMounted(async () => {
       // Don't alert on startup — the user didn't trigger this. Just log and
       // leave registeredShortcut = null so a later save can register cleanly.
     }
+  }
+
+  const clipboardShortcut = settingsStore.settings.clipboardShortcut
+  if (clipboardShortcut) {
+    try {
+      await registerGlobalShortcut(clipboardShortcut, handleClipboardShortcut)
+      registeredClipboardShortcut = clipboardShortcut
+      console.log(`Clipboard shortcut registered: ${clipboardShortcut}`)
+    } catch (error) {
+      console.error('Failed to register clipboard shortcut on startup:', error)
+    }
+  }
+
+  try {
+    await clipboardStore.startMonitor()
+  } catch (error) {
+    console.error('Failed to start clipboard monitor:', error)
   }
 
   // Tauri native drag-drop (provides real file paths)
@@ -1309,6 +1395,12 @@ onUnmounted(async () => {
   observedElements.clear()
   iconQueue.length = 0
 
+  try {
+    await clipboardStore.stopMonitor()
+  } catch (error) {
+    console.warn('Failed to stop clipboard monitor on unmount:', error)
+  }
+
   if (registeredShortcut) {
     try {
       await unregisterGlobalShortcut(registeredShortcut)
@@ -1316,6 +1408,14 @@ onUnmounted(async () => {
       console.warn('Failed to unregister shortcut on unmount:', error)
     }
     registeredShortcut = null
+  }
+  if (registeredClipboardShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredClipboardShortcut)
+    } catch (error) {
+      console.warn('Failed to unregister clipboard shortcut on unmount:', error)
+    }
+    registeredClipboardShortcut = null
   }
   if (dndUnlisten) {
     dndUnlisten()
@@ -1525,12 +1625,12 @@ async function loadFileProcesses(filePath: string) {
   }
 }
 
-async function handleCloseProcess(pid: number) {
+async function handleCloseProcess(windowHandle: number, pid: number) {
   const confirmed = confirm(`确定关闭进程 PID ${pid}？`)
   if (!confirmed) return
 
   try {
-    await closeProcess(pid)
+    await closeProcess(windowHandle)
     // Reload processes after closing
     if (processManagerFile.value) {
       await loadFileProcesses(processManagerFile.value.path)

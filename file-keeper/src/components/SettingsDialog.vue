@@ -30,7 +30,7 @@
           <div class="flex items-center space-x-2">
            <input
             v-model="localShortcut"
-              @keydown="handleShortcutKeydown"
+              @keydown="handleMainShortcutKeydown"
                 placeholder="按下快捷键组合..."
         class="flex-1 px-3 py-2 bg-gray-100 dark:bg-dark-hover border border-gray-300 dark:border-dark-border rounded-md outline-none focus:border-primary text-sm"
                 readonly
@@ -44,6 +44,31 @@
       </div>
             <p class="text-xs text-gray-500 mt-1">
               点击输入框后按下快捷键组合（如 Ctrl+Shift+K）
+            </p>
+          </div>
+
+          <!-- Clipboard Shortcut -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              剪贴板面板快捷键
+            </label>
+            <div class="flex items-center space-x-2">
+              <input
+                v-model="localClipboardShortcut"
+                @keydown="handleClipboardShortcutKeydown"
+                placeholder="按下快捷键组合..."
+                class="flex-1 px-3 py-2 bg-gray-100 dark:bg-dark-hover border border-gray-300 dark:border-dark-border rounded-md outline-none focus:border-primary text-sm"
+                readonly
+              />
+              <button
+                @click="clearClipboardShortcut"
+                class="px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+              >
+                清除
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              用于快速打开剪贴板历史面板（默认 Ctrl+Shift+V）
             </p>
           </div>
 
@@ -147,12 +172,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  save: [settings: { globalShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
+  save: [settings: { globalShortcut: string; clipboardShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
 }>()
 
 const settingsStore = useSettingsStore()
 
 const localShortcut = ref(settingsStore.settings.globalShortcut)
+const localClipboardShortcut = ref(settingsStore.settings.clipboardShortcut)
 const localMinimizeToTray = ref(settingsStore.settings.minimizeToTray)
 const localTheme = ref(settingsStore.settings.theme)
 
@@ -160,12 +186,13 @@ const localTheme = ref(settingsStore.settings.theme)
 watch(() => props.show, (newShow) => {
   if (newShow) {
     localShortcut.value = settingsStore.settings.globalShortcut
+    localClipboardShortcut.value = settingsStore.settings.clipboardShortcut
     localMinimizeToTray.value = settingsStore.settings.minimizeToTray
     localTheme.value = settingsStore.settings.theme
   }
 })
 
-function handleShortcutKeydown(event: KeyboardEvent) {
+function formatShortcut(event: KeyboardEvent): string | null {
   event.preventDefault()
 
   const keys: string[] = []
@@ -180,17 +207,28 @@ function handleShortcutKeydown(event: KeyboardEvent) {
     keys.push('Shift')
   }
 
-  // Get the actual key (not modifier)
   if (event.key && !['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
     keys.push(event.key.toUpperCase())
   }
 
-  if (keys.length >= 2) {
-    // Convert to Tauri format: CommandOrControl+Alt+K
-    const shortcut = keys
-      .map(k => k === 'Ctrl' || k === 'Cmd' ? 'CommandOrControl' : k)
-      .join('+')
+  if (keys.length < 2) return null
+
+  return keys
+    .map(k => k === 'Ctrl' || k === 'Cmd' ? 'CommandOrControl' : k)
+    .join('+')
+}
+
+function handleMainShortcutKeydown(event: KeyboardEvent) {
+  const shortcut = formatShortcut(event)
+  if (shortcut) {
     localShortcut.value = shortcut
+  }
+}
+
+function handleClipboardShortcutKeydown(event: KeyboardEvent) {
+  const shortcut = formatShortcut(event)
+  if (shortcut) {
+    localClipboardShortcut.value = shortcut
   }
 }
 
@@ -198,9 +236,14 @@ function clearShortcut() {
   localShortcut.value = ''
 }
 
+function clearClipboardShortcut() {
+  localClipboardShortcut.value = ''
+}
+
 function handleSave() {
   emit('save', {
     globalShortcut: localShortcut.value,
+    clipboardShortcut: localClipboardShortcut.value,
     minimizeToTray: localMinimizeToTray.value,
     theme: localTheme.value
   })

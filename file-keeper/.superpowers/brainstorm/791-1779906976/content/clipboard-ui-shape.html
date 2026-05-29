@@ -1,0 +1,75 @@
+<h2>复制粘贴强化功能：首版界面形态选择</h2>
+<p class="subtitle">请重点看“日常呼出是否顺手、功能是否容易理解、会不会把现有 File Keeper 变复杂”。可以在页面点击一个选项，也可以直接在终端回复。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A：主应用新增“剪贴板”标签页</div>
+        <div class="mockup-body">
+          <div class="mock-nav">文件管理　进程管理　<span style="color:#22c55e;font-weight:700">剪贴板</span></div>
+          <div style="display:flex;gap:12px;margin-top:12px">
+            <div class="mock-sidebar" style="width:120px">全部<br>文本<br>图片<br>文件<br>链接</div>
+            <div class="mock-content" style="flex:1">
+              <input class="mock-input" placeholder="搜索剪贴板历史..." />
+              <div class="placeholder" style="margin-top:10px;height:48px">文本记录</div>
+              <div class="placeholder" style="margin-top:8px;height:48px">图片/文件记录</div>
+              <div class="placeholder" style="margin-top:8px;height:48px">富文本记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 标签页式</h3>
+      <p>最容易接入现有应用，适合管理和设置；但快捷粘贴体验不够像专业剪贴板工具。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B：全局快捷键呼出小面板</div>
+        <div class="mockup-body" style="display:flex;justify-content:center">
+          <div style="width:360px;border:1px solid #d1d5db;border-radius:14px;padding:12px;background:#fff;box-shadow:0 18px 40px rgba(0,0,0,.18)">
+            <input class="mock-input" placeholder="直接输入搜索，↑↓ 选择，Enter 粘贴" />
+            <div class="placeholder" style="margin-top:10px;height:42px">① 刚复制的文本</div>
+            <div class="placeholder" style="margin-top:8px;height:42px">② 截图缩略图</div>
+            <div class="placeholder" style="margin-top:8px;height:42px">③ 文件集合</div>
+            <div style="font-size:12px;color:#6b7280;margin-top:8px">Enter 复制 / 自动粘贴，Shift+Enter 纯文本</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 快捷面板式</h3>
+      <p>最适合日常高频粘贴，键盘优先；但管理大量历史、设置和清理缓存时不如完整页面舒服。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C：快捷面板 + 主应用管理页</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:14px;align-items:flex-start">
+            <div style="width:250px;border:1px solid #d1d5db;border-radius:14px;padding:10px;background:#fff;box-shadow:0 12px 30px rgba(0,0,0,.15)">
+              <input class="mock-input" placeholder="搜索并粘贴" />
+              <div class="placeholder" style="margin-top:8px;height:34px">最近文本</div>
+              <div class="placeholder" style="margin-top:6px;height:34px">截图</div>
+            </div>
+            <div style="flex:1">
+              <div class="mock-nav">文件管理　进程管理　<span style="color:#22c55e;font-weight:700">剪贴板</span></div>
+              <div class="placeholder" style="margin-top:10px;height:42px">筛选 / 批量删除 / 空间占用</div>
+              <div class="placeholder" style="margin-top:8px;height:42px">详细预览 / 类型设置 / 后缀规则</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 混合式</h3>
+      <p>快捷面板负责“快搜快粘贴”，主应用标签页负责“管理、设置、清理”；复杂度最高，但体验最完整。</p>
+    </div>
+  </div>
+</div>

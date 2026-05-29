@@ -41,3 +41,12 @@ pub fn close_app_processes(window_handles: Vec<usize>) -> Result<CloseResult, St
 
     monitor.close_processes(window_handles)
 }
+
+#[tauri::command]
+pub fn activate_app_window(window_handle: usize) -> Result<(), String> {
+    let monitor = PROCESS_MONITOR
+        .lock()
+        .map_err(|e| format!("Failed to lock process monitor: {}", e))?;
+
+    monitor.activate_window(window_handle)
+}
