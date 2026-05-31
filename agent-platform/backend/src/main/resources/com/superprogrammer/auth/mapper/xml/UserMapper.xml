@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.auth.mapper.UserMapper">
+
+    <!-- 根据用户名查询角色编码列表 -->
+    <select id="selectRoleCodesByUsername" resultType="java.lang.String">
+        SELECT r.code
+        FROM roles r
+        INNER JOIN user_roles ur ON ur.role_id = r.id
+        INNER JOIN users u ON u.id = ur.user_id
+        WHERE u.username = #{username}
+          AND u.deleted = 0
+          AND r.deleted = 0
+    </select>
+
+    <!-- 根据用户ID查询权限编码列表 -->
+    <select id="selectPermissionCodesByUserId" resultType="java.lang.String">
+        SELECT DISTINCT p.code
+        FROM permissions p
+        INNER JOIN role_permissions rp ON rp.permission_id = p.id
+        INNER JOIN user_roles ur ON ur.role_id = rp.role_id
+        WHERE ur.user_id = #{userId}
+          AND p.deleted = 0
+    </select>
+
+</mapper>

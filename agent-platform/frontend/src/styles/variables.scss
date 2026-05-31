@@ -1,0 +1,115 @@
+// ============================================================
+// 设计Token — CSS自定义属性骨架
+// 色值由各主题文件覆盖，此处定义默认值（等同于Deep Space主题）
+// 参考: docs/superpowers/design/design-system.md
+// ============================================================
+
+:root {
+  // === 主色 ===
+  --color-primary:         #4F7CFF;
+  --color-primary-hover:   #6B91FF;
+  --color-primary-active:  #3A66E8;
+  --color-primary-light:   rgba(79, 124, 255, 0.12);
+  --color-primary-rgb:     79, 124, 255;
+
+  // === 语义色 ===
+  --color-secondary:       #8B8FA3;
+  --color-success:         #4ADE80;
+  --color-warning:         #FBBF24;
+  --color-danger:          #F87171;
+  --color-info:            #60A5FA;
+
+  // === 背景层级 ===
+  --color-bg:              #060A13;
+  --color-surface:         #0C1220;
+  --color-card:            #131B2E;
+  --color-elevated:        #1A2440;
+  --color-overlay:         rgba(6, 10, 19, 0.8);
+
+  // === 文字 ===
+  --color-text-primary:    #E8ECF4;
+  --color-text-secondary:  #8B8FA3;
+  --color-text-tertiary:   #4A5068;
+  --color-text-inverse:    #060A13;
+  --color-text-link:       #4F7CFF;
+
+  // === 边框 ===
+  --color-border:          #1E2A45;
+  --color-border-light:    #151D32;
+  --color-border-focus:    #4F7CFF;
+
+  // === 渐变与特效 ===
+  --color-gradient-start:  #4F7CFF;
+  --color-gradient-end:    #9333EA;
+
+  // === 字体系统 ===
+  --font-family-base:  'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+  --font-family-code:  'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  --font-size-xs:    12px;
+  --font-size-sm:    13px;
+  --font-size-base:  14px;
+  --font-size-md:    16px;
+  --font-size-lg:    18px;
+  --font-size-xl:    20px;
+  --font-size-2xl:   24px;
+  --font-size-3xl:   30px;
+
+  --line-height-tight:   1.25;
+  --line-height-base:    1.5;
+  --line-height-relaxed: 1.75;
+
+  --font-weight-normal:    400;
+  --font-weight-medium:    500;
+  --font-weight-semibold:  600;
+  --font-weight-bold:      700;
+
+  // === 间距系统 ===
+  --spacing-0:   0;
+  --spacing-1:   4px;
+  --spacing-2:   8px;
+  --spacing-3:   12px;
+  --spacing-4:   16px;
+  --spacing-5:   20px;
+  --spacing-6:   24px;
+  --spacing-8:   32px;
+  --spacing-10:  40px;
+  --spacing-12:  48px;
+  --spacing-16:  64px;
+
+  // === 圆角系统 ===
+  --radius-none:  0;
+  --radius-sm:    4px;
+  --radius-base:  6px;
+  --radius-md:    8px;
+  --radius-lg:    12px;
+  --radius-xl:    16px;
+  --radius-full:  9999px;
+
+  // === 阴影系统 ===
+  --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-base:    0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md:      0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg:      0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-xl:      0 12px 40px rgba(0, 0, 0, 0.7);
+  --shadow-primary: 0 4px 16px rgba(79, 124, 255, 0.25);
+  --shadow-glow:    0 0 30px rgba(79, 124, 255, 0.1);
+
+  // === 动效系统 ===
+  --duration-instant: 100ms;
+  --duration-fast:    200ms;
+  --duration-normal:  300ms;
+  --duration-slow:    500ms;
+  --duration-slower:  800ms;
+
+  --ease-linear:   linear;
+  --ease-in:       cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:      cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out:   cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce:   cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  // === 布局常量 ===
+  --sidebar-width:        240px;
+  --sidebar-collapsed-width: 64px;
+  --header-height:        56px;
+}
