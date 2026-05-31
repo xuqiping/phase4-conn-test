@@ -3,8 +3,23 @@
     <ClipboardToolbar
       v-model:search-query="clipboardStore.searchQuery"
       v-model:kind="clipboardStore.kindFilter"
+      v-model:date-preset="clipboardStore.datePreset"
+      v-model:custom-start-date="clipboardStore.customStartDate"
+      v-model:custom-end-date="clipboardStore.customEndDate"
       @search="clipboardStore.searchItems"
+      @open-settings="showSettings = true"
     />
+
+    <div
+      v-if="copyNotice"
+      class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-lg border px-4 py-2 text-sm shadow-lg"
+      :class="copyNotice.type === 'success'
+        ? 'border-primary/30 bg-primary/5 text-primary dark:border-primary/30 dark:bg-primary/10 dark:text-green-300'
+        : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300'
+      "
+    >
+      {{ copyNotice.message }}
+    </div>
 
     <div class="grid min-h-0 flex-1 grid-cols-[180px_minmax(320px,1fr)_360px] overflow-hidden">
       <aside class="space-y-3 border-r border-gray-200 p-3 dark:border-dark-border">
@@ -24,15 +39,32 @@
       <ClipboardList
         :items="clipboardStore.items"
         :selected-item-id="clipboardStore.selectedItemId"
+        :selected-ids="clipboardStore.selectedIds"
         @select="selectItem"
+        @toggle-selected="clipboardStore.toggleSelected"
+        @copy="copyContextItems"
+        @copy-selected="copySelectedItems"
+        @open-url="openItemUrl"
+        @open-file="openItemFile"
+        @open-folder="openItemFolder"
+        @copy-file-path="copyItemFilePath"
+        @edit-note="editItemNote"
+        @delete="deleteItem"
+        @delete-selected="deleteSelectedItems"
+        @select-all="clipboardStore.selectAllVisible"
+        @invert-selection="clipboardStore.invertVisibleSelection"
+        @clear-selection="clipboardStore.clearSelection"
       />
 
       <ClipboardPreview
         :item="clipboardStore.selectedItem"
         :detail="clipboardStore.selectedDetail"
-        @copy="clipboardStore.copyItem"
+        :note-focus-key="noteFocusKey"
+        :note-editing="noteEditing"
+        @copy="copySingleItem"
         @paste="clipboardStore.pasteItem"
         @delete="clipboardStore.deleteItem"
+        @save-note="saveItemNote"
       />
     </div>
 
@@ -46,8 +78,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { clearClipboardHistory } from '../api/clipboard'
+import { openFile, showInFolder } from '../api/files'
 import { useClipboardStore } from '../stores/clipboardStore'
 import ClipboardList from './ClipboardList.vue'
 import ClipboardPreview from './ClipboardPreview.vue'
@@ -55,10 +89,15 @@ import ClipboardSecurityEvents from './ClipboardSecurityEvents.vue'
 import ClipboardSettings from './ClipboardSettings.vue'
 import ClipboardStorageUsage from './ClipboardStorageUsage.vue'
 import ClipboardToolbar from './ClipboardToolbar.vue'
-import type { ClipboardKind, ClipboardSettings as ClipboardSettingsType } from '../types/clipboard'
+import type { ClipboardKind, ClipboardPasteFormat, ClipboardSettings as ClipboardSettingsType } from '../types/clipboard'
 
 const clipboardStore = useClipboardStore()
 const showSettings = ref(false)
+const copyNotice = ref<{ type: 'success' | 'error'; message: string } | null>(null)
+const noteFocusKey = ref(0)
+const noteEditing = ref(false)
+let copyNoticeTimer: ReturnType<typeof setTimeout> | null = null
+let noteEditingTimer: ReturnType<typeof setTimeout> | null = null
 
 const filters: Array<{ kind: ClipboardKind | 'all'; label: string }> = [
   { kind: 'all', label: '全部' },
@@ -71,12 +110,23 @@ const filters: Array<{ kind: ClipboardKind | 'all'; label: string }> = [
   { kind: 'security_event', label: '安全事件' }
 ]
 
-onMounted(async () => {
-  await Promise.all([
-    clipboardStore.loadItems(),
-    clipboardStore.loadSettings(),
-    clipboardStore.refreshStorageUsage()
-  ])
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+  void clipboardStore.loadItems()
+  void clipboardStore.loadSettings()
+  setTimeout(() => {
+    void clipboardStore.refreshStorageUsage()
+  }, 300)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  if (copyNoticeTimer) {
+    clearTimeout(copyNoticeTimer)
+  }
+  if (noteEditingTimer) {
+    clearTimeout(noteEditingTimer)
+  }
 })
 
 function setKind(kind: ClipboardKind | 'all') {
@@ -86,6 +136,178 @@ function setKind(kind: ClipboardKind | 'all') {
 
 function selectItem(id: string) {
   clipboardStore.loadDetail(id)
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  const target = event.target
+  const element = target instanceof HTMLElement ? target : null
+  const tagName = element?.tagName.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || element?.isContentEditable) {
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && clipboardStore.selectedIds.size > 0) {
+    event.preventDefault()
+    void copySelectedItems()
+  }
+}
+
+function showCopyNotice(type: 'success' | 'error', message: string) {
+  copyNotice.value = { type, message }
+  if (copyNoticeTimer) {
+    clearTimeout(copyNoticeTimer)
+  }
+  copyNoticeTimer = setTimeout(() => {
+    copyNotice.value = null
+    copyNoticeTimer = null
+  }, 2200)
+}
+
+function copyErrorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err)
+}
+
+async function copySingleItem(id: string, format: ClipboardPasteFormat = 'original') {
+  try {
+    await clipboardStore.copyItem(id, format)
+    showCopyNotice('success', '已复制到剪贴板')
+  } catch (err) {
+    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function copySelectedItems() {
+  if (clipboardStore.selectedIds.size === 0) return
+  try {
+    const copiedCount = await clipboardStore.copySelectedItems()
+    if (copiedCount) {
+      showCopyNotice('success', `已复制 ${copiedCount} 条记录到剪贴板`)
+    }
+  } catch (err) {
+    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function copyContextItems(id: string) {
+  const ids = clipboardStore.selectedIdsForAction(id)
+  try {
+    if (ids.length > 1) {
+      const copiedCount = await clipboardStore.copySelectedItems()
+      showCopyNotice('success', `已复制 ${copiedCount || ids.length} 条记录到剪贴板`)
+    } else {
+      await clipboardStore.copyItem(ids[0])
+      showCopyNotice('success', '已复制到剪贴板')
+    }
+  } catch (err) {
+    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+  }
+}
+
+function firstFilePath(files: Awaited<ReturnType<typeof clipboardStore.loadDetail>>['files']) {
+  return files?.[0]?.cachedPath || files?.[0]?.originalPath || null
+}
+
+async function openItemUrl(id: string) {
+  try {
+    const detail = await clipboardStore.loadDetail(id)
+    const url = detail.url || detail.text || detail.summary || detail.title
+    if (!/^https?:\/\//i.test(url)) {
+      showCopyNotice('error', '无法打开：链接格式不正确')
+      return
+    }
+    await openUrl(url)
+    showCopyNotice('success', '已打开链接')
+  } catch (err) {
+    showCopyNotice('error', `打开链接失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function openItemFile(id: string) {
+  try {
+    const detail = await clipboardStore.loadDetail(id)
+    const path = firstFilePath(detail.files) || detail.imagePath
+    if (!path) {
+      showCopyNotice('error', '无法打开：没有可用文件路径')
+      return
+    }
+    await openFile(path)
+    showCopyNotice('success', '已打开文件')
+  } catch (err) {
+    showCopyNotice('error', `打开文件失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function openItemFolder(id: string) {
+  try {
+    const detail = await clipboardStore.loadDetail(id)
+    const path = firstFilePath(detail.files) || detail.imagePath
+    if (!path) {
+      showCopyNotice('error', '无法打开目录：没有可用路径')
+      return
+    }
+    await showInFolder(path)
+    showCopyNotice('success', '已打开文件所在目录')
+  } catch (err) {
+    showCopyNotice('error', `打开文件所在目录失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function copyItemFilePath(id: string) {
+  try {
+    await clipboardStore.copyItem(id, 'plain_text')
+    showCopyNotice('success', '已复制文件路径')
+  } catch (err) {
+    showCopyNotice('error', `复制文件路径失败：${copyErrorMessage(err)}`)
+  }
+}
+
+function showNoteEditor() {
+  noteEditing.value = true
+  showCopyNotice('success', '已打开备注编辑')
+  if (noteEditingTimer) {
+    clearTimeout(noteEditingTimer)
+  }
+  noteEditingTimer = setTimeout(() => {
+    noteEditing.value = false
+    noteEditingTimer = null
+  }, 3000)
+}
+
+function focusNoteEditor() {
+  void nextTick(() => {
+    noteFocusKey.value += 1
+  })
+}
+
+function editItemNote(id: string) {
+  const detailPromise = Promise.resolve(clipboardStore.loadDetail(id))
+  showNoteEditor()
+  focusNoteEditor()
+  void detailPromise
+    .then(() => focusNoteEditor())
+    .catch(err => showCopyNotice('error', `备注编辑打开失败：${copyErrorMessage(err)}`))
+}
+
+async function saveItemNote(id: string, note: string) {
+  try {
+    const savedNote = await clipboardStore.updateItemNote(id, note)
+    noteEditing.value = false
+    showCopyNotice('success', savedNote ? '备注已保存' : '备注已清空')
+  } catch (err) {
+    showCopyNotice('error', `备注保存失败：${copyErrorMessage(err)}`)
+  }
+}
+
+async function deleteItem(id: string) {
+  const ids = clipboardStore.selectedIdsForAction(id)
+  if (ids.length > 1) {
+    await clipboardStore.deleteSelectedItems()
+  } else {
+    await clipboardStore.deleteItem(ids[0])
+  }
+}
+
+async function deleteSelectedItems() {
+  await clipboardStore.deleteSelectedItems()
 }
 
 async function saveSettings(settings: ClipboardSettingsType) {

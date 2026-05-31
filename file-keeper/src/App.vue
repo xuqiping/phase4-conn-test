@@ -20,93 +20,10 @@
       </div>
     </div>
 
-    <!-- 2. 工具栏 -->
-    <div class="px-6 py-4 flex items-center justify-between bg-white dark:bg-dark-bg">
-      <div class="relative w-96 group">
-        <Search :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
-        <input
-          type="text"
-          :placeholder="t('file.searchPlaceholder')"
-          v-model="fileStore.searchQuery"
-          class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary focus:bg-white dark:focus:bg-dark-bg rounded-md outline-none text-sm transition-all duration-200 shadow-sm"
-     />
-      </div>
-
-      <div class="flex items-center space-x-3">
-        <!-- 快速排序 -->
-        <div class="flex items-center space-x-1.5 text-sm">
-          <ArrowUpDown :size="14" class="text-gray-400" />
-       <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.sortLabel') }}</span>
-          <select
-         v-model="fileStore.sortBy"
-            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
-      :title="t('file.sortTitle')"
-          >
-            <option value="custom">{{ t('file.sortCustom') }}</option>
-            <option value="openCount">{{ t('file.sortOpenCount') }}</option>
-            <option value="lastOpened">{{ t('file.sortLastOpened') }}</option>
-            <option value="name">{{ t('file.sortName') }}</option>
-            <option value="createdAt">{{ t('file.sortCreatedAt') }}</option>
-       </select>
-           </div>
-
-        <!-- 图标模式切换 -->
-      <div class="flex items-center space-x-1.5 text-sm">
-          <Box :size="14" class="text-gray-400" />
-          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.iconLabel') }}</span>
-      <select
-        v-model="settingsStore.settings.iconMode"
-            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
-            :title="t('file.iconModeTitle')"
-          >
-            <option value="real">{{ t('file.iconReal') }}</option>
-            <option value="generic">{{ t('file.iconGeneric') }}</option>
-          </select>
-        </div>
-
-    <RecentFiles @open-file="handleFileClick" />
-      <AddFileButton />
-
-      <button
-          @click="handleAddFolder"
-          class="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
-          :title="t('file.addFolder')"
-        >
-          <FolderPlus :size="16" />
-          <span>{{ t('file.addFolder') }}</span>
-        </button>
-
-        <button
-          @click="toggleLocale"
-          class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
-          :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
-        >
-          <Languages :size="16" />
-          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
-        </button>
-
-        <button
-          @click="toggleTheme"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-          :title="t('file.toggleTheme')"
-        >
-          <Sun v-if="currentTheme === 'dark'" :size="18" />
-          <Moon v-else :size="18" />
-        </button>
-
-        <button
-          @click="showSettings = true"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-        >
-          <Settings :size="18" />
-        </button>
-      </div>
-    </div>
-
     <!-- Batch Operations Toolbar -->
     <transition name="fade">
       <div
-        v-if="selectionStore.hasSelection"
+        v-if="currentTab === 'files' && selectionStore.hasSelection"
         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border px-6 py-3 flex items-center space-x-4"
       >
         <span class="text-sm text-gray-600 dark:text-gray-300">
@@ -154,7 +71,7 @@
     <!-- Batch Move Menu -->
     <transition name="fade">
       <div
-     v-if="showBatchMoveMenu"
+     v-if="currentTab === 'files' && showBatchMoveMenu"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
         @click="showBatchMoveMenu = false"
       >
@@ -206,6 +123,89 @@
         <span>{{ t('tabs.clipboard') }}</span>
         <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
       </button>
+    </div>
+
+    <!-- 2. 工具栏 -->
+    <div v-if="currentTab === 'files'" class="px-6 py-4 flex items-center justify-between bg-white dark:bg-dark-bg">
+      <div class="relative w-96 group">
+        <Search :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
+        <input
+          type="text"
+          :placeholder="t('file.searchPlaceholder')"
+          v-model="fileStore.searchQuery"
+          class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary focus:bg-white dark:focus:bg-dark-bg rounded-md outline-none text-sm transition-all duration-200 shadow-sm"
+        />
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <!-- 快速排序 -->
+        <div class="flex items-center space-x-1.5 text-sm">
+          <ArrowUpDown :size="14" class="text-gray-400" />
+          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.sortLabel') }}</span>
+          <select
+            v-model="fileStore.sortBy"
+            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
+            :title="t('file.sortTitle')"
+          >
+            <option value="custom">{{ t('file.sortCustom') }}</option>
+            <option value="openCount">{{ t('file.sortOpenCount') }}</option>
+            <option value="lastOpened">{{ t('file.sortLastOpened') }}</option>
+            <option value="name">{{ t('file.sortName') }}</option>
+            <option value="createdAt">{{ t('file.sortCreatedAt') }}</option>
+          </select>
+        </div>
+
+        <!-- 图标模式切换 -->
+        <div class="flex items-center space-x-1.5 text-sm">
+          <Box :size="14" class="text-gray-400" />
+          <span class="text-xs text-gray-500 dark:text-gray-400 select-none">{{ t('file.iconLabel') }}</span>
+          <select
+            v-model="settingsStore.settings.iconMode"
+            class="bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary rounded-md px-2 py-1.5 text-sm outline-none cursor-pointer"
+            :title="t('file.iconModeTitle')"
+          >
+            <option value="real">{{ t('file.iconReal') }}</option>
+            <option value="generic">{{ t('file.iconGeneric') }}</option>
+          </select>
+        </div>
+
+        <RecentFiles @open-file="handleFileClick" />
+        <AddFileButton />
+
+        <button
+          @click="handleAddFolder"
+          class="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
+          :title="t('file.addFolder')"
+        >
+          <FolderPlus :size="16" />
+          <span>{{ t('file.addFolder') }}</span>
+        </button>
+
+        <button
+          @click="toggleLocale"
+          class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
+          :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
+        >
+          <Languages :size="16" />
+          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
+        </button>
+
+        <button
+          @click="toggleTheme"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+          :title="t('file.toggleTheme')"
+        >
+          <Sun v-if="currentTheme === 'dark'" :size="18" />
+          <Moon v-else :size="18" />
+        </button>
+
+        <button
+          @click="showSettings = true"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+        >
+          <Settings :size="18" />
+        </button>
+      </div>
     </div>
 
     <!-- 3b. 分组标签栏 (只在文件管理时显示) -->
@@ -453,7 +453,7 @@
     </div>
 
     <!-- 5. 状态栏 -->
-    <div class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
+    <div v-if="currentTab === 'files'" class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
       <div>{{ t('file.totalItems', { count: fileStore.filteredFiles.length }) }}</div>
       <div class="flex items-center space-x-2 bg-gray-100 dark:bg-dark-bg p-1 rounded-md">
         <button
@@ -474,7 +474,7 @@
     <!-- 右键菜单 -->
     <transition name="fade">
       <div
-        v-if="contextMenu.show"
+        v-if="currentTab === 'files' && contextMenu.show"
         class="fixed z-50 w-56 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] py-1 text-sm"
         :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
         @click.stop

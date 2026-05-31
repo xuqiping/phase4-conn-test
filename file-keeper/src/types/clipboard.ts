@@ -19,6 +19,10 @@ export type ClipboardPasteFormat =
 
 export type FileExtensionMode = 'allow_all' | 'allow_list' | 'block_list'
 
+export type ClipboardFileSaveMode = 'backup' | 'reference_only'
+
+export type ClipboardDateRangePreset = 'all' | 'today' | 'yesterday' | 'last7Days' | 'last30Days' | 'custom'
+
 export interface ClipboardSourceApp {
   processName: string
   windowTitle: string
@@ -39,6 +43,7 @@ export interface ClipboardItemSummary {
   thumbnailPath?: string
   cacheBytes: number
   cacheState: 'none' | 'cached' | 'reference_only' | 'cleaned'
+  note?: string
 }
 
 export interface ClipboardFileEntry {
@@ -78,6 +83,8 @@ export interface ClipboardQuery {
   kind?: ClipboardKind | 'all'
   favoriteOnly?: boolean
   sourceApp?: string
+  startAt?: number
+  endAt?: number
   limit: number
   offset: number
 }
@@ -99,6 +106,8 @@ export interface ClipboardSettings {
   totalNonTextLimitMb: number
   itemSizeLimitMb: number
   typeLimitsMb: ClipboardTypeLimitMb
+  fileSaveMode: ClipboardFileSaveMode
+  backupDirectory: string | null
   fileExtensionMode: FileExtensionMode
   fileExtensions: string[]
   excludedApps: string[]

@@ -1,8 +1,9 @@
-use tauri::{AppHandle, Manager, State};
+use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Emitter, Manager, State};
 use crate::clipboard::{ClipboardItemSummary, ClipboardQuery, ClipboardService, ClipboardSettings, ClipboardStorageTypeUsage, ClipboardStorageUsage};
 
 #[tauri::command]
-pub fn start_clipboard_monitor(service: State<'_, ClipboardService>) -> Result<(), String> {
+pub fn start_clipboard_monitor(app: AppHandle, service: State<'_, ClipboardService>) -> Result<(), String> {
     let running = service.monitor_flag();
     if running.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
@@ -12,12 +13,42 @@ pub fn start_clipboard_monitor(service: State<'_, ClipboardService>) -> Result<(
     std::thread::spawn(move || {
         let service = unsafe { &*(service_ptr as *const ClipboardService) };
         let mut last_text = String::new();
+        let mut last_files = String::new();
+        let mut last_image_hash = String::new();
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             #[cfg(target_os = "windows")]
-            if let Ok(Some(text)) = crate::platform::windows::clipboard::read_text() {
-                if !text.is_empty() && text != last_text {
-                    last_text = text.clone();
-                    let _ = service.collect_text_snapshot(&text, None);
+            {
+                if let Ok(Some(files)) = crate::platform::windows::clipboard::read_files() {
+                    let signature = files.join("\n");
+                    if !signature.is_empty() && signature != last_files {
+                        last_files = signature;
+                        if let Ok(id) = service.collect_file_snapshot(&files, None) {
+                            let _ = app.emit("clipboard://changed", id);
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+
+                if let Ok(Some(image)) = crate::platform::windows::clipboard::read_image() {
+                    let image_hash = hash_bytes(&image);
+                    if image_hash != last_image_hash {
+                        last_image_hash = image_hash;
+                        if let Ok(Some(id)) = service.collect_image_bytes_snapshot(&image) {
+                            let _ = app.emit("clipboard://changed", id);
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+
+                if let Ok(Some(text)) = crate::platform::windows::clipboard::read_text() {
+                    if !text.is_empty() && text != last_text {
+                        last_text = text.clone();
+                        if let Ok(Some(id)) = service.collect_text_snapshot(&text, None) {
+                            let _ = app.emit("clipboard://changed", id);
+                        }
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -74,6 +105,11 @@ pub fn delete_clipboard_item(id: String, service: State<'_, ClipboardService>) -
 }
 
 #[tauri::command]
+pub fn update_clipboard_item_note(id: String, note: Option<String>, service: State<'_, ClipboardService>) -> Result<Option<String>, String> {
+    service.update_note(&id, note.as_deref())
+}
+
+#[tauri::command]
 pub fn get_clipboard_settings(service: State<'_, ClipboardService>) -> Result<ClipboardSettings, String> {
     service.load_settings()
 }
@@ -101,8 +137,7 @@ pub fn get_clipboard_storage_usage(service: State<'_, ClipboardService>) -> Resu
 
 #[tauri::command]
 pub fn get_clipboard_item_detail(id: String, service: State<'_, ClipboardService>) -> Result<crate::clipboard::ClipboardItemDetail, String> {
-    let query = ClipboardQuery { query: None, kind: None, favorite_only: None, source_app: None, limit: 1, offset: 0 };
-    let item = service.list_items(&query)?.into_iter().find(|item| item.id == id).ok_or_else(|| "剪贴板记录不存在".to_string())?;
+    let item = service.get_item_summary(&id)?.ok_or_else(|| "剪贴板记录不存在".to_string())?;
     let text = service.get_text(&id)?;
     let files = service.get_files(&id)?;
     let image_meta = service.get_image_meta(&id)?;
@@ -134,18 +169,65 @@ pub fn get_clipboard_item_detail(id: String, service: State<'_, ClipboardService
 }
 
 #[tauri::command]
-pub fn copy_clipboard_item(id: String, _format: crate::clipboard::ClipboardPasteFormat, service: State<'_, ClipboardService>) -> Result<(), String> {
-    let text = service.get_text(&id)?.ok_or_else(|| "该记录没有可复制的文本内容".to_string())?;
+pub fn copy_clipboard_item(id: String, format: crate::clipboard::ClipboardPasteFormat, service: State<'_, ClipboardService>) -> Result<(), String> {
+    if matches!(format, crate::clipboard::ClipboardPasteFormat::Original | crate::clipboard::ClipboardPasteFormat::FileCopy) {
+        if let Some(paths) = service.get_file_copy_paths(&id)? {
+            return write_files_to_system_clipboard(&paths, &service);
+        }
+    }
+
+    let text = service.get_copy_text(&id)?.ok_or_else(|| "该记录没有可复制的内容".to_string())?;
+    write_text_to_system_clipboard(&text, &service)
+}
+
+#[tauri::command]
+pub fn copy_clipboard_items(ids: Vec<String>, format: crate::clipboard::ClipboardPasteFormat, service: State<'_, ClipboardService>) -> Result<(), String> {
+    if matches!(format, crate::clipboard::ClipboardPasteFormat::Original | crate::clipboard::ClipboardPasteFormat::FileCopy) {
+        let mut file_paths = Vec::new();
+        for id in &ids {
+            if let Some(paths) = service.get_file_copy_paths(id)? {
+                file_paths.extend(paths);
+            } else {
+                file_paths.clear();
+                break;
+            }
+        }
+        if !file_paths.is_empty() {
+            return write_files_to_system_clipboard(&file_paths, &service);
+        }
+    }
+
+    let text = service.get_joined_text(&ids)?;
+    write_text_to_system_clipboard(&text, &service)
+}
+
+fn write_text_to_system_clipboard(text: &str, service: &ClipboardService) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        crate::platform::windows::clipboard::write_text(&text)?;
-        service.mark_written_text(&text)?;
+        crate::platform::windows::clipboard::write_text(text)?;
+        service.mark_written_text(text)?;
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = text;
+        let _ = service;
         Err("当前平台尚未实现剪贴板写入".to_string())
+    }
+}
+
+fn write_files_to_system_clipboard(paths: &[String], service: &ClipboardService) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::platform::windows::clipboard::write_files(paths)?;
+        service.mark_written_text(&paths.join("\n"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = paths;
+        let _ = service;
+        Err("当前平台尚未实现文件剪贴板写入".to_string())
     }
 }
 
@@ -193,6 +275,12 @@ pub fn rebuild_clipboard_index() -> Result<(), String> {
 #[tauri::command]
 pub fn retry_link_preview(id: String, service: State<'_, ClipboardService>) -> Result<(), String> {
     service.retry_link_preview(&id)
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 pub fn clipboard_database_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {

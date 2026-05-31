@@ -5,7 +5,7 @@
       <span>{{ usedLabel }} / {{ limitLabel }}</span>
     </div>
     <div class="mt-2 h-2 rounded bg-gray-100 dark:bg-dark-hover">
-      <div class="h-2 rounded bg-primary" :style="{ width: `${percent}%` }"></div>
+      <div class="h-2 rounded bg-slate-400 dark:bg-slate-500" :style="{ width: `${percent}%` }"></div>
     </div>
     <button class="mt-3 w-full rounded bg-gray-100 px-3 py-1.5 text-xs dark:bg-dark-hover" @click="$emit('clearCache')">
       清理非文本缓存

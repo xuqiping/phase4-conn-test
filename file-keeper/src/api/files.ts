@@ -14,8 +14,8 @@ export async function pickFile(): Promise<string | null> {
   return selected as string | null
 }
 
-export async function pickFolder(): Promise<string | null> {
-  const defaultPath = await documentDir()
+export async function pickFolder(defaultPathOverride?: string): Promise<string | null> {
+  const defaultPath = defaultPathOverride || await documentDir()
   const selected = await open({
     directory: true,
     multiple: false,

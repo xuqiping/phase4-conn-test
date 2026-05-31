@@ -19,8 +19,8 @@
             v-for="(item, index) in clipboardStore.items"
             :key="item.id"
             :class="[
-              'w-full rounded-lg px-3 py-2 text-left text-sm',
-              index === selectedIndex ? 'bg-primary/10 text-primary' : 'hover:bg-gray-50 dark:hover:bg-dark-hover'
+              'w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+              index === selectedIndex ? 'border-primary/30 bg-white text-gray-900 shadow-sm dark:bg-dark-panel dark:text-gray-100' : 'border-transparent hover:bg-gray-50 dark:hover:bg-dark-hover'
             ]"
             @mouseenter="selectedIndex = index"
             @click="confirmSelection(false)"

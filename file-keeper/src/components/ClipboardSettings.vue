@@ -40,6 +40,31 @@
         </section>
 
         <section class="space-y-3">
+          <h3 class="text-sm font-semibold">文件和图片保存方式</h3>
+          <select data-test="file-save-mode" v-model="local.fileSaveMode" class="w-full rounded border px-3 py-2 dark:bg-dark-hover">
+            <option value="backup">备份副本到本地缓存目录</option>
+            <option value="reference_only">仅记录原始文件地址</option>
+          </select>
+          <div class="space-y-2 rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-hover">
+            <div class="text-xs font-medium text-gray-500 dark:text-gray-400">备份位置</div>
+            <div class="break-all text-xs text-gray-600 dark:text-gray-300">
+              {{ local.backupDirectory || '默认应用数据目录 / clipboard-cache' }}
+            </div>
+            <div class="flex gap-2">
+              <button type="button" class="rounded bg-gray-100 px-3 py-1.5 text-xs hover:bg-gray-200 dark:bg-dark-panel dark:hover:bg-dark-border" @click="chooseBackupDirectory">
+                选择目录
+              </button>
+              <button type="button" class="rounded bg-gray-100 px-3 py-1.5 text-xs hover:bg-gray-200 dark:bg-dark-panel dark:hover:bg-dark-border" @click="local.backupDirectory = null">
+                使用默认目录
+              </button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            保存方式和备份位置只影响之后新复制进来的文件和图片；已有历史不会自动转换或迁移。
+          </p>
+        </section>
+
+        <section class="space-y-3">
           <h3 class="text-sm font-semibold">空间规则</h3>
           <label class="block text-sm">
             非文本缓存上限（MB）
@@ -70,7 +95,7 @@
 
       <div class="flex justify-end gap-3 border-t border-gray-200 px-5 py-4 dark:border-dark-border">
         <button class="rounded px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-hover" @click="$emit('close')">取消</button>
-        <button data-test="save-settings" class="rounded bg-primary px-4 py-2 text-sm text-white" @click="save">保存</button>
+        <button data-test="save-settings" class="rounded border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-dark-border dark:bg-dark-panel dark:text-gray-200 dark:hover:bg-dark-hover" @click="save">保存</button>
       </div>
     </div>
   </div>
@@ -78,6 +103,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { pickFolder } from '../api/files'
 import { useI18n } from '../composables/useI18n'
 import type { ClipboardSettings } from '../types/clipboard'
 
@@ -98,6 +124,13 @@ watch(() => props.settings, (settings) => {
   local.value = { ...settings, typeLimitsMb: { ...settings.typeLimitsMb } }
   extensionsText.value = settings.fileExtensions.join(', ')
 })
+
+async function chooseBackupDirectory() {
+  const selected = await pickFolder(local.value.backupDirectory ?? undefined)
+  if (selected) {
+    local.value.backupDirectory = selected
+  }
+}
 
 function save() {
   emit('save', {

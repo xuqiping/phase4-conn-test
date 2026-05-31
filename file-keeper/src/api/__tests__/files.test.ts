@@ -53,6 +53,18 @@ describe('files API', () => {
       })
     })
 
+    it('should use custom default path when picking a folder', async () => {
+      vi.mocked(open).mockResolvedValue('/path/to/folder')
+
+      await pickFolder('D:/ClipboardBackup')
+
+      expect(open).toHaveBeenCalledWith({
+        multiple: false,
+        directory: true,
+        defaultPath: 'D:/ClipboardBackup'
+      })
+    })
+
     it('should return null when user cancels', async () => {
       vi.mocked(open).mockResolvedValue(null)
 

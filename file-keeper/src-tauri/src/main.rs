@@ -19,6 +19,7 @@ use commands::clipboard::{
     clear_clipboard_history,
     clipboard_database_path,
     copy_clipboard_item,
+    copy_clipboard_items,
     delete_clipboard_item,
     get_clipboard_item_detail,
     get_clipboard_items,
@@ -32,6 +33,7 @@ use commands::clipboard::{
     set_clipboard_ocr_text_for_testing,
     start_clipboard_monitor,
     stop_clipboard_monitor,
+    update_clipboard_item_note,
     update_clipboard_settings,
 };
 use clipboard::ClipboardService;
@@ -127,9 +129,11 @@ fn main() {
             add_clipboard_html_for_testing,
             set_clipboard_ocr_text_for_testing,
             copy_clipboard_item,
+            copy_clipboard_items,
             paste_clipboard_item,
             remember_clipboard_target_window,
             delete_clipboard_item,
+            update_clipboard_item_note,
             clear_clipboard_history,
             get_clipboard_settings,
             update_clipboard_settings,

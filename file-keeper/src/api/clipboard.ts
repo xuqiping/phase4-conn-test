@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import type {
   ClipboardItemDetail,
   ClipboardItemSummary,
@@ -32,6 +33,10 @@ export async function copyClipboardItem(id: string, format: ClipboardPasteFormat
   await invoke('copy_clipboard_item', { id, format })
 }
 
+export async function copyClipboardItems(ids: string[], format: ClipboardPasteFormat): Promise<void> {
+  await invoke('copy_clipboard_items', { ids, format })
+}
+
 export async function pasteClipboardItem(id: string, format: ClipboardPasteFormat): Promise<void> {
   await invoke('paste_clipboard_item', { id, format })
 }
@@ -42,6 +47,14 @@ export async function rememberClipboardTargetWindow(): Promise<void> {
 
 export async function deleteClipboardItem(id: string): Promise<void> {
   await invoke('delete_clipboard_item', { id })
+}
+
+export async function updateClipboardItemNote(id: string, note: string | null): Promise<string | null> {
+  return await invoke<string | null>('update_clipboard_item_note', { id, note })
+}
+
+export async function listenClipboardChanged(handler: () => void): Promise<() => void> {
+  return await listen('clipboard://changed', handler)
 }
 
 export async function clearClipboardHistory(scope: 'all' | 'non_text_cache' | 'security_events'): Promise<void> {

@@ -43,6 +43,13 @@ pub enum FileExtensionMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardFileSaveMode {
+    Backup,
+    ReferenceOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardSourceApp {
     pub process_name: String,
@@ -66,6 +73,7 @@ pub struct ClipboardItemSummary {
     pub thumbnail_path: Option<String>,
     pub cache_bytes: i64,
     pub cache_state: CacheState,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +121,8 @@ pub struct ClipboardQuery {
     pub kind: Option<String>,
     pub favorite_only: Option<bool>,
     pub source_app: Option<String>,
+    pub start_at: Option<i64>,
+    pub end_at: Option<i64>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -138,9 +148,17 @@ pub struct ClipboardSettings {
     pub total_non_text_limit_mb: i64,
     pub item_size_limit_mb: i64,
     pub type_limits_mb: ClipboardTypeLimitMb,
+    #[serde(default = "default_file_save_mode")]
+    pub file_save_mode: ClipboardFileSaveMode,
+    #[serde(default)]
+    pub backup_directory: Option<String>,
     pub file_extension_mode: FileExtensionMode,
     pub file_extensions: Vec<String>,
     pub excluded_apps: Vec<String>,
+}
+
+fn default_file_save_mode() -> ClipboardFileSaveMode {
+    ClipboardFileSaveMode::Backup
 }
 
 impl Default for ClipboardSettings {
@@ -160,6 +178,8 @@ impl Default for ClipboardSettings {
                 html: 500,
                 link_preview: 200,
             },
+            file_save_mode: ClipboardFileSaveMode::Backup,
+            backup_directory: None,
             file_extension_mode: FileExtensionMode::AllowAll,
             file_extensions: Vec::new(),
             excluded_apps: Vec::new(),

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   copyClipboardItem,
+  copyClipboardItems,
   deleteClipboardItem,
   getClipboardItemDetail,
   getClipboardItems,
@@ -12,6 +13,7 @@ import {
   searchClipboardItems,
   startClipboardMonitor,
   stopClipboardMonitor,
+  updateClipboardItemNote,
   updateClipboardSettings
 } from '../clipboard'
 import type { ClipboardSettings } from '../../types/clipboard'
@@ -30,10 +32,10 @@ describe('clipboard api', () => {
   it('loads clipboard items with query payload', async () => {
     mockedInvoke.mockResolvedValueOnce([{ id: 'item-1', kind: 'text', title: 'hello' }])
 
-    const result = await getClipboardItems({ query: 'hel', kind: 'text', limit: 20, offset: 0 })
+    const result = await getClipboardItems({ query: 'hel', kind: 'text', startAt: 100, endAt: 200, limit: 20, offset: 0 })
 
     expect(mockedInvoke).toHaveBeenCalledWith('get_clipboard_items', {
-      query: { query: 'hel', kind: 'text', limit: 20, offset: 0 }
+      query: { query: 'hel', kind: 'text', startAt: 100, endAt: 200, limit: 20, offset: 0 }
     })
     expect(result[0].id).toBe('item-1')
   })
@@ -72,6 +74,17 @@ describe('clipboard api', () => {
     })
   })
 
+  it('copies multiple clipboard items with format', async () => {
+    mockedInvoke.mockResolvedValue(undefined)
+
+    await copyClipboardItems(['item-1', 'item-2'], 'plain_text')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('copy_clipboard_items', {
+      ids: ['item-1', 'item-2'],
+      format: 'plain_text'
+    })
+  })
+
   it('remembers clipboard target window', async () => {
     mockedInvoke.mockResolvedValue(undefined)
 
@@ -86,6 +99,16 @@ describe('clipboard api', () => {
     await deleteClipboardItem('item-1')
 
     expect(mockedInvoke).toHaveBeenCalledWith('delete_clipboard_item', { id: 'item-1' })
+  })
+
+  it('updates clipboard item note', async () => {
+    mockedInvoke.mockResolvedValueOnce('important').mockResolvedValueOnce(null)
+
+    await updateClipboardItemNote('item-1', 'important')
+    await updateClipboardItemNote('item-1', null)
+
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'update_clipboard_item_note', { id: 'item-1', note: 'important' })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'update_clipboard_item_note', { id: 'item-1', note: null })
   })
 
   it('starts and stops monitor', async () => {
@@ -109,6 +132,8 @@ describe('clipboard api', () => {
       totalNonTextLimitMb: 2048,
       itemSizeLimitMb: 200,
       typeLimitsMb: { image: 1024, file: 2048, html: 500, linkPreview: 200 },
+      fileSaveMode: 'backup',
+      backupDirectory: null,
       fileExtensionMode: 'allow_all',
       fileExtensions: [],
       excludedApps: []
