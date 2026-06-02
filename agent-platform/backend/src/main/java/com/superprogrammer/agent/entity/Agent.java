@@ -22,4 +22,6 @@ public class Agent extends BaseEntity {
     private String status;
 
     private String config;
+
+    private Long parentId;
 }

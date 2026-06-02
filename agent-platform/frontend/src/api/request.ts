@@ -7,6 +7,7 @@
 
 import axios from 'axios'
 import type { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
+import { createDiscreteApi } from 'naive-ui'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 
 declare module 'axios' {
@@ -125,9 +126,12 @@ request.interceptors.response.use(
       }
     }
 
-    // 其他错误
-    const message = error.response?.data?.message || error.message || '网络错误'
-    showErrorMessage(message)
+    // 其他错误 — 拼装可读的错误信息
+    const status = error.response?.status
+    const serverMsg = error.response?.data?.message
+    const errMsg = serverMsg || error.message || '网络错误'
+    const displayMsg = status ? `${status} · ${errMsg}` : errMsg
+    showErrorMessage(displayMsg)
     return Promise.reject(error)
   }
 )
@@ -136,15 +140,17 @@ request.interceptors.response.use(
  * 显示错误消息（使用Naive UI的discrete message API）
  * 因为拦截器在组件外部运行，需要使用discrete方式创建message实例
  */
-function showErrorMessage(message: string) {
-  // 动态导入Naive UI的discrete API
+let messageApi: ReturnType<typeof createDiscreteApi>['message'] | null = null
+
+function showErrorMessage(msg: string) {
   import('naive-ui').then(({ createDiscreteApi, darkTheme }) => {
-    const { message } = createDiscreteApi(['message'], {
-      configProviderProps: {
-        theme: darkTheme
-      }
-    })
-    message.error(message, { duration: 3000 })
+    if (!messageApi) {
+      const api = createDiscreteApi(['message'], {
+        configProviderProps: { theme: darkTheme }
+      })
+      messageApi = api.message
+    }
+    messageApi!.error(msg, { duration: 4000 })
   })
 }
 

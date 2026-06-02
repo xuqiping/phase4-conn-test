@@ -41,6 +41,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/register").permitAll()
                         .requestMatchers("/api/auth/refresh").permitAll()
+                        // WebSocket端点（通过拦截器认证）
+                        .requestMatchers("/ws/chat").permitAll()
                         // 其他路径需要认证
                         .anyRequest().authenticated()
                 )

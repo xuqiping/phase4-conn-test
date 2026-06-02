@@ -44,18 +44,21 @@
 </template>
 
 <script setup lang="ts">
-import { h } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { NIcon } from 'naive-ui'
 import {
-  HomeOutline,
   GridOutline,
   GitBranchOutline,
   PulseOutline,
   SettingsOutline,
   ChevronBackOutline,
-  ChevronForwardOutline
+  ChevronForwardOutline,
+  PeopleOutline,
+  ShieldCheckmarkOutline,
+  ChatbubblesOutline
 } from '@vicons/ionicons5'
+import { useAuthStore } from '@/stores/auth'
 
 defineProps<{
   collapsed: boolean
@@ -66,14 +69,27 @@ defineEmits<{
 }>()
 
 const route = useRoute()
+const authStore = useAuthStore()
+
+const isAdmin = computed(() => authStore.userInfo?.roles?.includes('admin'))
 
 /** 导航项配置 */
-const navItems = [
-  { path: '/agents', label: 'Agent大厅', icon: GridOutline },
-  { path: '/workflow', label: '工作流', icon: GitBranchOutline },
-  { path: '/executions', label: '执行监控', icon: PulseOutline },
-  { path: '/settings', label: '设置', icon: SettingsOutline }
-]
+const navItems = computed(() => {
+  const items = [
+    { path: '/agents', label: 'Agent大厅', icon: GridOutline },
+    { path: '/chat', label: '智能对话', icon: ChatbubblesOutline },
+    { path: '/workflow', label: '工作流', icon: GitBranchOutline },
+    { path: '/executions', label: '执行监控', icon: PulseOutline }
+  ]
+  if (isAdmin.value) {
+    items.push(
+      { path: '/admin/users', label: '用户管理', icon: PeopleOutline },
+      { path: '/admin/roles', label: '角色权限', icon: ShieldCheckmarkOutline }
+    )
+  }
+  items.push({ path: '/settings', label: '设置', icon: SettingsOutline })
+  return items
+})
 
 /** 判断导航项是否处于激活状态 */
 function isNavItemActive(path: string): boolean {

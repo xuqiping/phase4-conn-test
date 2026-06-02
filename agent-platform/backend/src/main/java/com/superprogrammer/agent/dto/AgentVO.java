@@ -1,4 +1,3 @@
-// agent-platform/backend/src/main/java/com/superprogrammer/agent/dto/AgentVO.java
 package com.superprogrammer.agent.dto;
 
 import lombok.AllArgsConstructor;
@@ -21,6 +20,10 @@ public class AgentVO {
     private String status;
     private Long groupId;
     private String groupName;
+    private Long parentId;
+    private String parentName;
     private Integer skillCount;
+    private Integer subAgentCount;
+    private Boolean isLeaf;
     private OffsetDateTime createdAt;
 }

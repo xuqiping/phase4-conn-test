@@ -122,5 +122,21 @@ export const agentApi = {
    */
   getSkillDetail(id: number) {
     return request.get<ApiResponse<SkillDetail>>(`/skills/${id}`)
+  },
+
+  createAgent(data: { name: string; description?: string; avatar?: string; groupId: number }) {
+    return request.post<ApiResponse<Agent>>('/agents', data)
+  },
+
+  updateAgent(id: number, data: { name?: string; description?: string; avatar?: string; groupId?: number }) {
+    return request.put<ApiResponse<Agent>>(`/agents/${id}`, data)
+  },
+
+  deleteAgent(id: number) {
+    return request.delete<ApiResponse<void>>(`/agents/${id}`)
+  },
+
+  updateAgentStatus(id: number, status: string) {
+    return request.put<ApiResponse<void>>(`/agents/${id}/status`, { status })
   }
 }

@@ -41,6 +41,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Agent详情' }
       },
       {
+        path: 'chat',
+        name: 'Chat',
+        component: () => import('@/views/ChatView.vue'),
+        meta: { title: '智能对话' }
+      },
+      {
+        path: 'chat/:sessionId',
+        name: 'ChatSession',
+        component: () => import('@/views/ChatView.vue'),
+        meta: { title: '智能对话' }
+      },
+      {
         path: 'workflow',
         name: 'WorkflowList',
         component: () => import('@/views/WorkflowListView.vue'),
@@ -51,6 +63,24 @@ const routes: RouteRecordRaw[] = [
         name: 'WorkflowEditor',
         component: () => import('@/views/WorkflowEditorView.vue'),
         meta: { title: '工作流编辑器' }
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/SettingsView.vue'),
+        meta: { title: '设置' }
+      },
+      {
+        path: 'admin/users',
+        name: 'UserManage',
+        component: () => import('@/views/admin/UserManageView.vue'),
+        meta: { title: '用户管理' }
+      },
+      {
+        path: 'admin/roles',
+        name: 'RoleManage',
+        component: () => import('@/views/admin/RoleManageView.vue'),
+        meta: { title: '角色权限' }
       }
     ]
   },

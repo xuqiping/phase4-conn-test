@@ -37,7 +37,7 @@ public class GlobalExceptionHandler {
             errors.put(fieldName, errorMessage);
         });
         log.warn("参数校验失败: {}", errors);
-        return ResponseEntity.badRequest().body(R.fail(400, "参数校验失败"));
+        return ResponseEntity.badRequest().body(R.fail(400, "参数校验失败: " + errors));
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
@@ -63,9 +63,30 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<R<Void>> handleException(Exception e) {
-        log.error("未预期异常", e);
+        String detail = extractRootMessage(e);
+        // 只截断超长消息，保留关键信息
+        if (detail.length() > 300) {
+            detail = detail.substring(0, 300) + "...";
+        }
+        log.error("未预期异常: {}", detail, e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(R.fail(ErrorCode.INTERNAL_ERROR));
+                .body(R.fail(500, detail));
+    }
+
+    /**
+     * 提取异常根因消息，避免只返回 "服务器内部错误" 这种无意义信息
+     */
+    private String extractRootMessage(Throwable e) {
+        Throwable cause = e;
+        // 最多追溯5层
+        for (int i = 0; i < 5 && cause.getCause() != null && cause.getCause() != cause; i++) {
+            cause = cause.getCause();
+        }
+        String msg = cause.getMessage();
+        if (msg == null || msg.isBlank()) {
+            return e.getClass().getSimpleName();
+        }
+        return msg;
     }
 
     private HttpStatus resolveHttpStatus(int code) {

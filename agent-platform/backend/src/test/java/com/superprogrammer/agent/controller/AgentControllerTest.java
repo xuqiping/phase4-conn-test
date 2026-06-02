@@ -58,7 +58,7 @@ class AgentControllerTest {
                 .skillCount(3)
                 .createdAt(OffsetDateTime.now())
                 .build();
-        when(agentService.listAgents(isNull(), isNull()))
+        when(agentService.listAgents(isNull(), isNull(), isNull()))
                 .thenReturn(Arrays.asList(agentVO));
 
         mockMvc.perform(get("/api/agents")
@@ -71,7 +71,7 @@ class AgentControllerTest {
 
     @Test
     void listAgents_withGroupId_filtersCorrectly() throws Exception {
-        when(agentService.listAgents(eq(1L), isNull()))
+        when(agentService.listAgents(eq(1L), isNull(), isNull()))
                 .thenReturn(Arrays.asList());
 
         mockMvc.perform(get("/api/agents?groupId=1")
@@ -82,7 +82,7 @@ class AgentControllerTest {
 
     @Test
     void listAgents_withKeyword_filtersCorrectly() throws Exception {
-        when(agentService.listAgents(isNull(), eq("代码")))
+        when(agentService.listAgents(isNull(), eq("代码"), isNull()))
                 .thenReturn(Arrays.asList());
 
         mockMvc.perform(get("/api/agents?keyword=代码")
