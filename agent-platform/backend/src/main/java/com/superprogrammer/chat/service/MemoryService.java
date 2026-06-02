@@ -51,7 +51,7 @@ public class MemoryService {
     public void extractMemoriesAsync(Long userId, String userMessage, String assistantResponse) {
         try {
             LlmRequest request = LlmRequest.builder()
-                    .model("deepseek-chat")
+                    .model("doubao-seed-2.0-code")
                     .messages(List.of(
                             LlmMessage.builder().role("user").content(
                                     String.format(EXTRACTION_PROMPT, userMessage, assistantResponse)).build()))

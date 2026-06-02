@@ -19,7 +19,8 @@ const emit = defineEmits<{
   change: [model: string]
 }>()
 
-const selectedModel = ref<string | null>(null)
+const preferredModel = 'doubao-seed-2.0-code'
+const selectedModel = ref<string | null>(preferredModel)
 const models = ref<AvailableModel[]>([])
 
 const options = computed(() => {
@@ -42,8 +43,10 @@ onMounted(async () => {
   try {
     const res = await llmApi.listAvailableModels()
     models.value = res.data.data
-    if (models.value.length && !selectedModel.value) {
-      selectedModel.value = models.value[0].modelId
+    if (models.value.length) {
+      selectedModel.value = models.value.some(m => m.modelId === preferredModel)
+        ? preferredModel
+        : models.value[0].modelId
       emit('change', selectedModel.value)
     }
   } catch {

@@ -32,7 +32,7 @@ public class LlmCallHandler implements StepActionHandler {
             JsonNode config = objectMapper.readTree(configJson);
 
             String promptTemplate = config.at("/promptTemplate").asText("");
-            String model = config.at("/model").asText("deepseek-chat");
+            String model = config.at("/model").asText("doubao-seed-2.0-code");
             String outputKey = config.at("/outputKey").asText("output");
             double temperature = config.at("/temperature").asDouble(0.7);
 

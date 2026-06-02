@@ -15,9 +15,10 @@ import reactor.core.publisher.Flux;
 public class DefaultChatStrategy implements ExecutionStrategy {
 
     private final LlmGateway llmGateway;
+    private static final String DEFAULT_MODEL = "doubao-seed-2.0-code";
 
     private String resolveModel(ExecutionContext context) {
-        return context.getModel() != null ? context.getModel() : "deepseek-chat";
+        return context.getModel() != null ? context.getModel() : DEFAULT_MODEL;
     }
 
     @Override

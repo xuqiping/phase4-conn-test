@@ -88,7 +88,7 @@ public class AgentRouter {
                 agent.getName(), userMessage, catalog);
 
         LlmRequest request = LlmRequest.builder()
-                .model("deepseek-chat")
+                .model("doubao-seed-2.0-code")
                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                 .temperature(0.3)
                 .build();

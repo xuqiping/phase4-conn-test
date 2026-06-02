@@ -67,8 +67,11 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(String.class)
-                .filter(line -> !line.isBlank() && line.startsWith("data: "))
-                .map(line -> line.substring(6))
+                .flatMap(chunk -> Flux.fromArray(chunk.split("\\R")))
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .map(line -> line.startsWith("data:") ? line.substring(5).trim() : line)
+                .filter(data -> data.startsWith("{") || "[DONE]".equals(data))
                 .filter(data -> !"[DONE]".equals(data))
                 .map(this::parseStreamChunk)
                 .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty());

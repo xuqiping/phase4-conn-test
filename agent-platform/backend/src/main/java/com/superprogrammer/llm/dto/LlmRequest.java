@@ -13,7 +13,7 @@ import java.util.List;
 @AllArgsConstructor
 public class LlmRequest {
     @Builder.Default
-    private String model = "deepseek-chat";
+    private String model = "doubao-seed-2.0-code";
     private List<LlmMessage> messages;
     @Builder.Default
     private Double temperature = 0.7;

@@ -25,7 +25,7 @@ class DefaultChatStrategyTest {
     void execute_shouldCallLlmAndReturnResponse() {
         LlmResponse mockResp = LlmResponse.builder()
                 .content("你好！有什么可以帮助你的？")
-                .model("deepseek-chat")
+                .model("doubao-seed-2.0-code")
                 .duration(500L)
                 .usage(TokenUsage.builder().promptTokens(10).completionTokens(20).totalTokens(30).build())
                 .build();
@@ -38,7 +38,7 @@ class DefaultChatStrategyTest {
 
         assertEquals("你好！有什么可以帮助你的？", result);
         verify(llmGateway).chat(argThat(req ->
-                req.getModel().equals("deepseek-chat") &&
+                req.getModel().equals("doubao-seed-2.0-code") &&
                 req.getMessages().stream().anyMatch(m -> "user".equals(m.getRole()) && "你好".equals(m.getContent()))
         ), any());
     }

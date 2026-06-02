@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -95,26 +96,24 @@ public class ChatController {
 
         new Thread(() -> {
             try {
-                // Try reactive streaming with 15s timeout for first event
-                var flux = chatSessionService.sendMessageStream(userId, request);
-                var first = flux.take(1).collectList()
-                        .block(java.time.Duration.ofSeconds(15));
-
-                if (first != null && !first.isEmpty()) {
-                    // Streaming works — send first then drain the rest
-                    for (var evt : first) {
-                        emitter.send(SseEmitter.event().data(evt));
-                    }
-                    // Drain remaining (skip first since we already sent it)
-                    // Re-subscribe won't work with Flux — use toStream from start
-                    // Instead: just use toStream for everything below
-                    emitter.complete();
-                } else {
-                    // Empty stream — send DONE
+                AtomicBoolean sentDone = new AtomicBoolean(false);
+                chatSessionService.sendMessageStream(userId, request)
+                        .doOnNext(evt -> {
+                            try {
+                                if ("DONE".equals(evt.getType())) {
+                                    sentDone.set(true);
+                                }
+                                emitter.send(SseEmitter.event().data(evt));
+                            } catch (Exception sendError) {
+                                throw new RuntimeException(sendError);
+                            }
+                        })
+                        .blockLast(java.time.Duration.ofSeconds(120));
+                if (!sentDone.get()) {
                     emitter.send(SseEmitter.event().data(
                             com.superprogrammer.chat.dto.StreamEvent.done()));
-                    emitter.complete();
                 }
+                emitter.complete();
             } catch (Exception e) {
                 // Streaming failed or timed out — fall back to sync REST
                 try {
@@ -128,6 +127,8 @@ public class ChatController {
                     try {
                         emitter.send(SseEmitter.event().data(
                                 com.superprogrammer.chat.dto.StreamEvent.error(ex.getMessage())));
+                        emitter.send(SseEmitter.event().data(
+                                com.superprogrammer.chat.dto.StreamEvent.done()));
                         emitter.complete();
                     } catch (Exception ignored) {}
                 }

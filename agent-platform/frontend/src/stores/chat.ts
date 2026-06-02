@@ -13,9 +13,24 @@ export const useChatStore = defineStore('chat', () => {
   const streamingContent = ref('')
   const streamingThinking = ref('')
   const wsConnected = ref(false)
-  const selectedModel = ref<string | null>(null)
+  const selectedModel = ref<string | null>('doubao-seed-2.0-code')
 
   let ws: WebSocket | null = null
+
+  function appendAssistantMessage(content: string, metadata: string | null = null) {
+    messages.value.push({
+      id: Date.now(),
+      sessionId: currentSessionId.value ?? 0,
+      role: 'ASSISTANT',
+      content,
+      metadata,
+      createdAt: new Date().toISOString()
+    })
+  }
+
+  function appendAssistantError(content?: string) {
+    appendAssistantMessage(content || '消息发送失败，请检查模型配置或稍后重试。', JSON.stringify({ error: true }))
+  }
 
   const currentSession = computed(() =>
     sessions.value.find(s => s.id === currentSessionId.value) ?? null
@@ -181,6 +196,7 @@ export const useChatStore = defineStore('chat', () => {
                   streamingContent.value = ''
                   streamingThinking.value = ''
                   sending.value = false
+                  appendAssistantError(evt.content)
                   console.error('Stream error:', evt.content)
                   break
               }
@@ -256,6 +272,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'ERROR':
           streamingContent.value = ''
           sending.value = false
+          appendAssistantError(data.message || data.content)
           break
       }
     }

@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.superprogrammer.chat.dto.StreamEvent;
 import reactor.core.publisher.Flux;
@@ -198,6 +199,7 @@ public class ChatSessionService {
         Long sessionId = session.getId();
         StringBuilder fullResponse = new StringBuilder();
         StringBuilder fullThinking = new StringBuilder();
+        AtomicBoolean hasError = new AtomicBoolean(false);
 
         return orchestrationEngine.executeStream(context, request.getMessage())
                 .doOnNext(evt -> {
@@ -205,9 +207,15 @@ public class ChatSessionService {
                         fullResponse.append(evt.getContent());
                     } else if ("THINKING".equals(evt.getType()) && evt.getContent() != null) {
                         fullThinking.append(evt.getContent());
+                    } else if ("ERROR".equals(evt.getType())) {
+                        hasError.set(true);
                     }
                 })
                 .concatWith(Flux.defer(() -> {
+                    if (hasError.get()) {
+                        return Flux.just(StreamEvent.done());
+                    }
+
                     String responseText = fullResponse.toString();
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);

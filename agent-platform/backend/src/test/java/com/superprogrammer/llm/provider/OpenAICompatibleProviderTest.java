@@ -68,4 +68,31 @@ class OpenAICompatibleProviderTest {
     void getName_shouldReturnName() {
         assertEquals("test", provider.getName());
     }
+
+    @Test
+    void chatStream_shouldParseSseChunks() {
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+                        data: {"choices":[{"delta":{"content":"!"}}]}
+
+                        data: [DONE]
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        List<String> chunks = provider.chatStream(request)
+                .map(com.superprogrammer.chat.dto.StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        assertEquals(List.of("Hello", "!"), chunks);
+    }
 }

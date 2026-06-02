@@ -3,6 +3,7 @@ package com.superprogrammer.chat.controller;
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
 import com.superprogrammer.chat.dto.SessionVO;
+import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.chat.service.ChatSessionService;
 import com.superprogrammer.common.result.R;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,8 +14,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.web.servlet.MockMvc;
+import reactor.core.publisher.Flux;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,6 +26,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 @ExtendWith(MockitoExtension.class)
 class ChatControllerTest {
@@ -100,5 +110,68 @@ class ChatControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("Hi!", response.getBody().getData().getContent());
+    }
+
+    @Test
+    void sendMessageNewStream_streamsAllChunks() throws Exception {
+        when(chatSessionService.sendMessageStream(eq(100L), any(ChatRequest.class)))
+                .thenReturn(Flux.just(
+                        StreamEvent.chunk("Hi"),
+                        StreamEvent.chunk(" there"),
+                        StreamEvent.done()));
+
+        MockMvc mockMvc = standaloneSetup(chatController).build();
+
+        var mvcResult = mockMvc.perform(post("/api/chat/messages/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Hello\"}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mockMvc.perform(asyncDispatch(mvcResult))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Hi")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(" there")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DONE")));
+    }
+
+    @Test
+    void sendMessageNewStream_sendsDoneAfterErrorEvent() throws Exception {
+        when(chatSessionService.sendMessageStream(eq(100L), any(ChatRequest.class)))
+                .thenReturn(Flux.just(StreamEvent.error("LLM调用失败")));
+
+        MockMvc mockMvc = standaloneSetup(chatController).build();
+
+        var mvcResult = mockMvc.perform(post("/api/chat/messages/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Hello\"}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mockMvc.perform(asyncDispatch(mvcResult))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("ERROR")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DONE")));
+    }
+
+    @Test
+    void sendMessageNewStream_sendsDoneWhenStreamingAndFallbackFail() throws Exception {
+        when(chatSessionService.sendMessageStream(eq(100L), any(ChatRequest.class)))
+                .thenReturn(Flux.error(new RuntimeException("LLM stream failed")));
+        when(chatSessionService.sendMessage(eq(100L), any(ChatRequest.class)))
+                .thenThrow(new RuntimeException("LLM调用失败"));
+
+        MockMvc mockMvc = standaloneSetup(chatController).build();
+
+        var mvcResult = mockMvc.perform(post("/api/chat/messages/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Hello\"}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mockMvc.perform(asyncDispatch(mvcResult))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("ERROR")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DONE")));
     }
 }
