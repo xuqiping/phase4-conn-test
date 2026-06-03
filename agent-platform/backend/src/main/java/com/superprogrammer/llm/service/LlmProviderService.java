@@ -50,6 +50,7 @@ public class LlmProviderService {
         }
         if (updates.getName() != null) existing.setName(updates.getName());
         if (updates.getDisplayName() != null) existing.setDisplayName(updates.getDisplayName());
+        if (updates.getProtocol() != null) existing.setProtocol(updates.getProtocol());
         if (updates.getApiEndpoint() != null) existing.setApiEndpoint(updates.getApiEndpoint());
         if (updates.getApiKeyEnc() != null && !updates.getApiKeyEnc().isBlank()) {
             existing.setApiKeyEnc(aesEncryptService.encrypt(updates.getApiKeyEnc()));
@@ -181,6 +182,7 @@ public class LlmProviderService {
                 .id(entity.getId())
                 .name(entity.getName())
                 .displayName(entity.getDisplayName())
+                .protocol(entity.getProtocol())
                 .apiEndpoint(entity.getApiEndpoint())
                 .models(entity.getModels())
                 .config(entity.getConfig())

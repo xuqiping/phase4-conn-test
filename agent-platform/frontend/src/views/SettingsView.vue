@@ -10,6 +10,9 @@
       <n-tab-pane v-if="authStore.isAdmin" name="global" tab="全局模型供应商">
         <ProviderManageTab />
       </n-tab-pane>
+      <n-tab-pane v-if="authStore.isAdmin" name="auth" tab="认证设置">
+        <AuthSettingsTab />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -19,6 +22,7 @@ import { NTabs, NTabPane } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import UserProviderTab from '@/components/settings/UserProviderTab.vue'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
+import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
 
 const authStore = useAuthStore()
 </script>

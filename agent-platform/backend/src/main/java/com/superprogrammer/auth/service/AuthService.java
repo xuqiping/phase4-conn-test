@@ -12,6 +12,7 @@ import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -35,6 +36,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final SystemSettingService systemSettingService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -94,7 +96,8 @@ public class AuthService {
         List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
 
         // 生成JWT Token
-        String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getUsername(), roleCodes);
+        long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
+        String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getUsername(), roleCodes, accessExpirationMs);
         String refreshToken = jwtUtil.generateRefreshToken(user.getId());
 
         // 更新最后登录时间
@@ -107,7 +110,7 @@ public class AuthService {
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .tokenType("Bearer")
-                .expiresIn(jwtUtil.getAccessExpiration())
+                .expiresIn(accessExpirationMs)
                 .userInfo(TokenResponse.UserInfo.builder()
                         .id(user.getId())
                         .username(user.getUsername())
@@ -148,12 +151,13 @@ public class AuthService {
         }
 
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
-        String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes);
+        long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
+        String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs);
 
         return TokenResponse.builder()
                 .accessToken(newAccessToken)
                 .tokenType("Bearer")
-                .expiresIn(jwtUtil.getAccessExpiration())
+                .expiresIn(accessExpirationMs)
                 .build();
     }
 

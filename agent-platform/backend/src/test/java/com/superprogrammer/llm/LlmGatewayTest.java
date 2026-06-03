@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.*;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
+import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,9 @@ class LlmGatewayTest {
     private UserLlmProviderService userLlmProviderService;
 
     @Mock
+    private LlmProviderService llmProviderService;
+
+    @Mock
     private ObjectMapper objectMapper;
 
     private LlmGateway gateway;
@@ -51,7 +55,7 @@ class LlmGatewayTest {
         lenient().when(openaiProvider.supports(anyString())).thenReturn(true);
 
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
-        gateway = new LlmGateway(llmConfig, userLlmProviderService, objectMapper);
+        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper);
     }
 
     @Test
@@ -88,7 +92,7 @@ class LlmGatewayTest {
     @Test
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
-        LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, objectMapper);
+        LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
     }

@@ -11,6 +11,7 @@ public class LlmProviderVO {
     private Long id;
     private String name;
     private String displayName;
+    private String protocol;
     private String apiEndpoint;
     private String models;
     private String config;

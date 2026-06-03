@@ -8,6 +8,7 @@ public class LlmProviderCreateRequest {
     @NotBlank
     private String name;
     private String displayName;
+    private String protocol;
     @NotBlank
     private String apiEndpoint;
     private String apiKey;

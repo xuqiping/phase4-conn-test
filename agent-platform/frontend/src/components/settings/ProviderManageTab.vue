@@ -18,6 +18,9 @@
         <n-form-item label="显示名">
           <n-input v-model:value="form.displayName" placeholder="OpenAI" />
         </n-form-item>
+        <n-form-item label="协议">
+          <n-select v-model:value="form.protocol" :options="protocolOptions" />
+        </n-form-item>
         <n-form-item label="API端点">
           <n-input v-model:value="form.apiEndpoint" placeholder="https://api.openai.com/v1" />
         </n-form-item>
@@ -42,7 +45,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
-import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, useMessage } from 'naive-ui'
+import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
 import type { LlmProvider, LlmProviderCreateRequest } from '@/api/llm'
@@ -59,16 +62,26 @@ const testingId = ref<number | null>(null)
 const form = ref<LlmProviderCreateRequest>({
   name: '',
   displayName: '',
+  protocol: 'OPENAI_COMPATIBLE',
   apiEndpoint: '',
   apiKey: '',
   models: '',
   sortOrder: 0
 })
 
+const protocolOptions = [
+  { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
+  { label: 'Anthropic / Claude', value: 'ANTHROPIC' }
+]
+
 const columns = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '名称', key: 'name', width: 100 },
   { title: '显示名', key: 'displayName', width: 120 },
+  {
+    title: '协议', key: 'protocol', width: 130,
+    render: (row: LlmProvider) => row.protocol === 'ANTHROPIC' ? 'Anthropic' : 'OpenAI兼容'
+  },
   { title: '端点', key: 'apiEndpoint', ellipsis: true },
   { title: '状态', key: 'status', width: 80 },
   { title: '排序', key: 'sortOrder', width: 60 },
@@ -96,7 +109,7 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', displayName: '', apiEndpoint: '', apiKey: '', models: '', sortOrder: 0 }
+  form.value = { name: '', displayName: '', protocol: 'OPENAI_COMPATIBLE', apiEndpoint: '', apiKey: '', models: '', sortOrder: 0 }
   showModal.value = true
 }
 
@@ -105,6 +118,7 @@ function openEdit(row: LlmProvider) {
   form.value = {
     name: row.name,
     displayName: row.displayName ?? '',
+    protocol: row.protocol ?? 'OPENAI_COMPATIBLE',
     apiEndpoint: row.apiEndpoint ?? '',
     apiKey: '',
     models: row.models ?? '',

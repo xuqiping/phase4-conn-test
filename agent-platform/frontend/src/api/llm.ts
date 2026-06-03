@@ -5,6 +5,7 @@ export interface LlmProvider {
   id: number
   name: string
   displayName: string | null
+  protocol: 'OPENAI_COMPATIBLE' | 'ANTHROPIC'
   apiEndpoint: string | null
   models: string | null
   config: string | null
@@ -17,6 +18,7 @@ export interface LlmProvider {
 export interface LlmProviderCreateRequest {
   name: string
   displayName?: string
+  protocol?: 'OPENAI_COMPATIBLE' | 'ANTHROPIC'
   apiEndpoint: string
   apiKey?: string
   models?: string

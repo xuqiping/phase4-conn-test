@@ -78,6 +78,7 @@ public class LlmController {
         LlmProviderEntity entity = new LlmProviderEntity();
         entity.setName(request.getName());
         entity.setDisplayName(request.getDisplayName());
+        entity.setProtocol(request.getProtocol());
         entity.setApiEndpoint(request.getApiEndpoint());
         entity.setApiKeyEnc(request.getApiKey());
         entity.setModels(request.getModels());

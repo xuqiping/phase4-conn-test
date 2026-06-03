@@ -14,11 +14,17 @@ import java.util.*;
 @Slf4j
 public class ClaudeProvider implements LlmProviderInterface {
 
+    private final String name;
     private final Set<String> supportedModels;
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
     public ClaudeProvider(String baseUrl, String apiKey, List<String> models, ObjectMapper objectMapper) {
+        this("claude", baseUrl, apiKey, models, objectMapper);
+    }
+
+    public ClaudeProvider(String name, String baseUrl, String apiKey, List<String> models, ObjectMapper objectMapper) {
+        this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
         // Normalize: strip trailing /v1 to avoid duplication
@@ -33,7 +39,7 @@ public class ClaudeProvider implements LlmProviderInterface {
 
     @Override
     public String getName() {
-        return "claude";
+        return name;
     }
 
     @Override
@@ -66,8 +72,11 @@ public class ClaudeProvider implements LlmProviderInterface {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(String.class)
-                .filter(line -> !line.isBlank() && line.startsWith("data: "))
-                .map(line -> line.substring(6))
+                .flatMap(chunk -> Flux.fromArray(chunk.split("\\R")))
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .map(line -> line.startsWith("data:") ? line.substring(5).trim() : line)
+                .filter(data -> data.startsWith("{") || "[DONE]".equals(data))
                 .filter(data -> !"[DONE]".equals(data))
                 .map(this::parseClaudeChunk)
                 .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty());

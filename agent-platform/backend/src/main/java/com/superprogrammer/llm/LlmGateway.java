@@ -5,10 +5,12 @@ import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.entity.UserLlmProviderEntity;
 import com.superprogrammer.llm.provider.ClaudeProvider;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 import com.superprogrammer.llm.provider.OpenAICompatibleProvider;
+import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +27,7 @@ public class LlmGateway {
 
     private final LlmConfig llmConfig;
     private final UserLlmProviderService userLlmProviderService;
+    private final LlmProviderService llmProviderService;
     private final ObjectMapper objectMapper;
 
     public LlmResponse chat(LlmRequest request) {
@@ -58,14 +61,19 @@ public class LlmGateway {
             for (UserLlmProviderEntity up : userProviders) {
                 String apiKey = userLlmProviderService.getDecryptedApiKey(userId, up.getId());
                 String endpoint = up.getApiEndpoint();
+                LlmProviderEntity globalEntity = llmProviderService.getByName(up.getProviderName());
                 List<String> models = parseModels(up.getModels());
+                if (models.isEmpty() && globalEntity != null) {
+                    models = parseModels(globalEntity.getModels());
+                }
                 if (endpoint == null || endpoint.isBlank()) {
                     // Inherit from global provider
                     LlmProviderInterface global = findGlobalProvider(up.getProviderName());
                     if (global == null) continue;
                     return global; // use global provider directly
                 }
-                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), endpoint, apiKey, models);
+                String protocol = globalEntity != null ? globalEntity.getProtocol() : null;
+                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), protocol, endpoint, apiKey, models);
                 if (provider != null && provider.supports(model)) {
                     log.debug("使用用户Provider: userId={}, provider={}", userId, up.getProviderName());
                     return provider;
@@ -91,6 +99,7 @@ public class LlmGateway {
                         e.setId(vo.getId());
                         e.setProviderName(vo.getProviderName());
                         e.setApiEndpoint(vo.getApiEndpoint());
+                        e.setModels(vo.getModels());
                         e.setUserId(userId);
                         return e;
                     })
@@ -108,12 +117,19 @@ public class LlmGateway {
                 .orElse(null);
     }
 
-    private LlmProviderInterface createProviderInstance(String name, String baseUrl, String apiKey, List<String> models) {
+    private LlmProviderInterface createProviderInstance(String name, String protocol, String baseUrl, String apiKey, List<String> models) {
         if (baseUrl == null || baseUrl.isBlank()) return null;
-        return switch (name) {
-            case "claude" -> new ClaudeProvider(baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
+        return switch (resolveProtocol(name, protocol)) {
+            case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
             default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
         };
+    }
+
+    private String resolveProtocol(String name, String protocol) {
+        if (protocol != null && !protocol.isBlank()) {
+            return protocol.trim().toUpperCase();
+        }
+        return "claude".equals(name) ? "ANTHROPIC" : "OPENAI_COMPATIBLE";
     }
 
     private List<String> parseModels(String modelsJson) {

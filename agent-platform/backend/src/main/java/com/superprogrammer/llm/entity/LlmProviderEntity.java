@@ -11,6 +11,7 @@ import lombok.EqualsAndHashCode;
 public class LlmProviderEntity extends BaseEntity {
     private String name;
     private String displayName;
+    private String protocol;
     private String apiEndpoint;
     private String apiKeyEnc;
     private String models;
