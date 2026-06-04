@@ -7,10 +7,12 @@ const OVERLAY_READY_POLL_MS = 50
 export async function openScreenshotOverlayWindow(): Promise<void> {
   const existing = await WebviewWindow.getByLabel(SCREENSHOT_OVERLAY_LABEL)
   if (existing) {
+    console.log('[ScreenshotOverlay] Reusing existing window')
     await focusOverlayWindow(existing)
     return
   }
 
+  console.log('[ScreenshotOverlay] Creating new window...')
   const overlay = new WebviewWindow(SCREENSHOT_OVERLAY_LABEL, {
     url: '/?screenshotOverlay=1',
     title: 'Screenshot Overlay',
@@ -25,7 +27,9 @@ export async function openScreenshotOverlayWindow(): Promise<void> {
   })
 
   const readyWindow = await waitForOverlayWindow(overlay)
+  console.log('[ScreenshotOverlay] Window ready, focusing...')
   await focusOverlayWindow(readyWindow)
+  console.log('[ScreenshotOverlay] Window focused and ready')
 }
 
 export async function closeScreenshotOverlayWindow(): Promise<void> {

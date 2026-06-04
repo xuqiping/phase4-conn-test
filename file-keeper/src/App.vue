@@ -1246,16 +1246,21 @@ async function handleClipboardShortcut() {
 }
 
 async function handleScreenshotShortcut() {
-  if (screenshotShortcutHandling || isScreenshotOverlayOpen) return
+  if (screenshotShortcutHandling || isScreenshotOverlayOpen) {
+    console.log('[Screenshot] Shortcut blocked:', { screenshotShortcutHandling, isScreenshotOverlayOpen })
+    return
+  }
   screenshotShortcutHandling = true
+  console.log('[Screenshot] Opening overlay window...')
   try {
     isScreenshotOverlayOpen = true
     await openScreenshotOverlayWindow()
+    console.log('[Screenshot] Overlay window opened successfully')
   } catch (error) {
+    console.error('[Screenshot] Failed to open overlay:', error)
     isScreenshotOverlayOpen = false
+    screenshotShortcutHandling = false
     alert(t('screenshot.captureFailed', { error: error instanceof Error ? error.message : String(error) }))
-  } finally {
-    setTimeout(() => { screenshotShortcutHandling = false }, 300)
   }
 }
 
