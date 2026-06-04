@@ -119,6 +119,44 @@ export default {
     title: 'Clipboard',
     quickPanel: 'Quick Panel',
     shortcut: 'Clipboard panel shortcut',
+    settings: 'Clipboard Settings',
+    cacheState: {
+      cached: 'Cached',
+      referenceOnly: 'Reference Only'
+    },
+    notePrefix: 'Note: ',
+    unknownSource: 'Unknown Source',
+    kindLabels: {
+      text: 'Text',
+    html: 'Rich Text',
+      image: 'Image',
+      file: 'File',
+      url: 'Link',
+      color: 'Color',
+      mixed: 'Mixed',
+      security_event: 'Security',
+      unknown: 'Unknown'
+    },
+    stats: {
+    selectedCount: '{count} selected',
+      totalCount: '{count} total'
+    },
+    actions: {
+      selectAll: 'Select All',
+      invertSelection: 'Invert Selection',
+      batchCopy: 'Batch Copy',
+      deleteSelected: 'Delete Selected',
+      clearSelection: 'Clear Selection',
+      copy: 'Copy',
+      copyFile: 'Copy File',
+      openLink: 'Open Link',
+      openFile: 'Open File',
+      showInFolder: 'Show in Folder',
+      copyFilePath: 'Copy File Path',
+      editNote: 'Edit Note',
+      delete: 'Delete'
+    },
+    emptyState: 'No clipboard history',
     privacy: {
       sensitiveProtection: 'Suspected passwords, tokens, bank cards, and private keys are not saved by default.',
       linkPreview: 'Link previews fetch page titles and descriptions from the network. Enable this only if you want these links to be visited.',

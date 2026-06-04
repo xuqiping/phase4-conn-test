@@ -2,8 +2,8 @@
   <div class="min-h-0 flex-1 overflow-auto p-3" @click="closeContextMenu">
     <div class="sticky top-0 z-20 mb-3 flex items-center justify-between rounded-lg border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm shadow-sm">
       <span class="text-[var(--text-secondary)]">
-        <template v-if="selectedIds.size > 0">已选择 {{ selectedIds.size }} 条记录</template>
-        <template v-else>共 {{ items.length }} 条记录</template>
+        <template v-if="selectedIds.size > 0">{{ t('clipboard.stats.selectedCount', { count: selectedIds.size }) }}</template>
+        <template v-else>{{ t('clipboard.stats.totalCount', { count: items.length }) }}</template>
       </span>
       <div class="flex items-center gap-2">
         <button class="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] shadow-sm transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="items.length === 0" @click.stop="$emit('selectAll')">
@@ -48,7 +48,7 @@
       @click.stop
     >
       <button class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]" @click="copyContextItem">
-        {{ contextMenu.kind === 'file' ? '复制文件' : '复制' }}
+        {{ contextMenu.kind === 'file' ? t('clipboard.actions.copyFile') : t('clipboard.actions.copy') }}
       </button>
       <button
         v-if="contextMenu.kind === 'url'"
@@ -90,6 +90,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import ClipboardItemRow from './ClipboardItemRow.vue'
 import type { ClipboardItemSummary } from '../types/clipboard'
 
@@ -98,6 +99,8 @@ defineProps<{
   selectedItemId: string | null
   selectedIds: Set<string>
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   select: [id: string]

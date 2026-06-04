@@ -119,6 +119,44 @@ export default {
     title: '剪贴板',
     quickPanel: '快捷面板',
     shortcut: '剪贴板面板快捷键',
+    settings: '剪贴板设置',
+    cacheState: {
+      cached: '已缓存',
+      referenceOnly: '仅引用'
+    },
+    notePrefix: '备注：',
+    unknownSource: '未知来源',
+    kindLabels: {
+      text: '文本',
+      html: '富文本',
+      image: '图片',
+      file: '文件',
+      url: '链接',
+      color: '颜色',
+      mixed: '混合',
+      security_event: '安全',
+      unknown: '未知'
+    },
+    stats: {
+      selectedCount: '已选择 {count} 条记录',
+      totalCount: '共 {count} 条记录'
+    },
+    actions: {
+      selectAll: '全选',
+      invertSelection: '反选',
+      batchCopy: '批量复制',
+      deleteSelected: '删除选中',
+      clearSelection: '取消选择',
+    copy: '复制',
+      copyFile: '复制文件',
+      openLink: '打开链接',
+      openFile: '打开文件',
+      showInFolder: '打开文件所在目录',
+      copyFilePath: '复制文件路径',
+      editNote: '编辑备注',
+      delete: '删除'
+    },
+    emptyState: '暂无剪贴板历史',
     privacy: {
       sensitiveProtection: '默认不会保存疑似密码、令牌、银行卡、私钥等敏感内容。',
       linkPreview: '链接预览会联网读取网页标题和描述，开启前请确认你愿意访问这些链接。',

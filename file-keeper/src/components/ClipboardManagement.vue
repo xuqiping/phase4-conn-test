@@ -23,7 +23,7 @@
 
     <div class="grid min-h-0 flex-1 grid-cols-[180px_minmax(320px,1fr)_360px] overflow-hidden">
       <aside class="space-y-3 border-r border-gray-200 p-3 dark:border-dark-border">
-        <h2 class="text-base font-semibold">剪贴板</h2>
+        <h2 class="text-base font-semibold">{{ t('clipboard.title') }}</h2>
         <nav class="space-y-1 text-sm">
           <button v-for="filter in filters" :key="filter.kind" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" @click="setKind(filter.kind)">
             {{ filter.label }}
@@ -79,6 +79,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { clearClipboardHistory } from '../api/clipboard'
 import { openFile, showInFolder } from '../api/files'
@@ -93,6 +94,7 @@ import type { ClipboardKind, ClipboardPasteFormat, ClipboardSettings as Clipboar
 
 const clipboardStore = useClipboardStore()
 const showSettings = ref(false)
+const { t } = useI18n()
 const copyNotice = ref<{ type: 'success' | 'error'; message: string } | null>(null)
 const noteFocusKey = ref(0)
 const noteEditing = ref(false)
