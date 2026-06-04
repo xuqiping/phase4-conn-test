@@ -94,35 +94,65 @@
       </div>
     </transition>
 
-    <!-- 3. 主标签栏 (Files / Processes) -->
-    <div class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
-      <button
-        @click="currentTab = 'files'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-                 currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+    <!-- 3. 主标签栏 (Files / Processes / Clipboard) 和全局操作按钮 -->
+    <div class="px-6 flex items-center justify-between border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
+      <div class="flex items-center space-x-6">
+        <button
+          @click="currentTab = 'files'"
+     :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+          <Folder :size="16" />
+          <span>{{ t('file.filesTab') }}</span>
+          <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+     <button
+          @click="currentTab = 'processes'"
+          :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                   currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+          <Activity :size="16" />
+          <span>{{ t('file.processesTab') }}</span>
+          <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+        <button
+          @click="currentTab = 'clipboard'"
+          :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                   currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+       <Clipboard :size="16" />
+          <span>{{ t('tabs.clipboard') }}</span>
+          <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+      </div>
+
+      <!-- 全局操作按钮 -->
+      <div class="flex items-center space-x-3">
+        <button
+          @click="toggleLocale"
+        class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
+       :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
       >
-      <Folder :size="16" />
-        <span>{{ t('file.filesTab') }}</span>
-    <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
-      <button
-        @click="currentTab = 'processes'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-               currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
-    >
-        <Activity :size="16" />
-        <span>{{ t('file.processesTab') }}</span>
-        <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
-      <button
-        @click="currentTab = 'clipboard'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-               currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
-      >
-        <Clipboard :size="16" />
-        <span>{{ t('tabs.clipboard') }}</span>
-        <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
+          <Languages :size="16" />
+          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
+        </button>
+
+        <button
+          @click="toggleTheme"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+          :title="t('file.toggleTheme')"
+        >
+          <Sun v-if="currentTheme === 'dark'" :size="18" />
+          <Moon v-else :size="18" />
+        </button>
+
+     <button
+          @click="showSettings = true"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+        >
+          <Settings :size="18" />
+        </button>
+      </div>
     </div>
 
     <!-- 2. 工具栏 -->
@@ -181,30 +211,6 @@
           <span>{{ t('file.addFolder') }}</span>
         </button>
 
-        <button
-          @click="toggleLocale"
-          class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
-          :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
-        >
-          <Languages :size="16" />
-          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
-        </button>
-
-        <button
-          @click="toggleTheme"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-          :title="t('file.toggleTheme')"
-        >
-          <Sun v-if="currentTheme === 'dark'" :size="18" />
-          <Moon v-else :size="18" />
-        </button>
-
-        <button
-          @click="showSettings = true"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-        >
-          <Settings :size="18" />
-        </button>
       </div>
     </div>
 
