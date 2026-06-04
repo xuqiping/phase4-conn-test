@@ -1,5 +1,5 @@
 // Global shortcut management API
-import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
+import { register, unregister, type ShortcutEvent } from '@tauri-apps/plugin-global-shortcut'
 
 /**
  * Register a global keyboard shortcut
@@ -11,7 +11,11 @@ export async function registerGlobalShortcut(
   handler: () => void
 ): Promise<void> {
   try {
-    await register(shortcut, handler)
+    await register(shortcut, (event: ShortcutEvent) => {
+      if (event.state === 'Pressed') {
+        handler()
+      }
+    })
   } catch (error) {
     console.error('Failed to register shortcut:', error)
     throw error

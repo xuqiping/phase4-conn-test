@@ -13,6 +13,18 @@ impl OcrEngine for DisabledOcrEngine {
 pub fn recognize_image(image_path: &str) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+      windows_ocr(image_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = image_path;
+        Ok(String::new())
+    }
+}
+
+pub fn recognize_with_windows_system(image_path: &str) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
         windows_ocr(image_path)
     }
     #[cfg(not(target_os = "windows"))]

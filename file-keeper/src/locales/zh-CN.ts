@@ -125,5 +125,11 @@ export default {
       autoPaste: '自动粘贴会尝试切回原窗口并模拟 Ctrl+V；如果失败，内容仍会复制到剪贴板。',
       fileCopy: '文件历史默认保存副本，并受到空间上限和后缀规则限制。'
     }
+  },
+  screenshot: {
+    dragHint: '拖拽选择截图区域，按 Esc 取消',
+    shortcut: '截图快捷键',
+    captureSuccess: '截图已保存到剪贴板历史',
+    captureFailed: '截图失败：{error}'
   }
 }

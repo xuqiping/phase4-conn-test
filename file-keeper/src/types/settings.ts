@@ -4,6 +4,7 @@ export interface Settings {
   language: 'zh-CN' | 'en-US'
   globalShortcut: string        // 全局快捷键
   clipboardShortcut: string     // 剪贴板面板快捷键
+  screenshotShortcut: string    // 截图快捷键
   autoStart: boolean          // 开机自启
   minimizeToTray: boolean       // 最小化到托盘
   defaultView: 'grid' | 'list'  // 默认视图

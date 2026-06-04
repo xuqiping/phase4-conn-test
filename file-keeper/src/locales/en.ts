@@ -125,5 +125,11 @@ export default {
       autoPaste: 'Auto paste tries to restore the target window and send Ctrl+V. If it fails, the content remains copied to the clipboard.',
       fileCopy: 'File history stores copies by default and is limited by storage and extension rules.'
     }
+  },
+  screenshot: {
+    dragHint: 'Drag to select a screenshot region. Press Esc to cancel.',
+    shortcut: 'Screenshot Shortcut',
+    captureSuccess: 'Screenshot saved to clipboard history',
+    captureFailed: 'Screenshot failed: {error}'
   }
 }
