@@ -1256,6 +1256,7 @@ async function handleScreenshotShortcut() {
     isScreenshotOverlayOpen = true
     await openScreenshotOverlayWindow()
     console.log('[Screenshot] Overlay window opened successfully')
+    screenshotShortcutHandling = false  // 成功后立即释放锁
   } catch (error) {
     console.error('[Screenshot] Failed to open overlay:', error)
     isScreenshotOverlayOpen = false
