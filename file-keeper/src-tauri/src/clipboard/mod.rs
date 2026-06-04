@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod link_preview;
 pub mod ocr;
+pub mod ocr_provider;
 pub mod search;
 pub mod security;
 pub mod storage;
@@ -134,6 +135,32 @@ impl ClipboardService {
 
     pub fn add_file_for_testing(&self, path: &str, size_bytes: i64) -> Result<String, String> {
         self.collect_file_snapshot(&[path.to_string()], Some(&[size_bytes]))
+    }
+
+    pub fn collect_screenshot_bytes_snapshot(&self, png_bytes: &[u8]) -> Result<String, String> {
+        let settings = self.load_settings()?;
+        let size_bytes = png_bytes.len() as i64;
+        if !cache::within_item_size_limit(size_bytes, settings.item_size_limit_mb) {
+            return Err("截图超过单记录大小限制".to_string());
+        }
+     let Some(cache_dir) = &self.cache_dir else {
+            return Err("截图记录需要缓存目录".to_string());
+        };
+        let target_dir = cache_dir.join("images");
+        std::fs::create_dir_all(&target_dir).map_err(|err| err.to_string())?;
+      let target_path = target_dir.join(format!("screenshot-{}.png", Uuid::new_v4()));
+        std::fs::write(&target_path, png_bytes).map_err(|err| err.to_string())?;
+        let image = image::load_from_memory(png_bytes).map_err(|err| err.to_string())?;
+        let image_path = target_path.to_string_lossy().to_string();
+        let id = self.storage.lock().map_err(|err| err.to_string())?.insert_image_item(&image_path, image.width() as i64, image.height() as i64, "png", size_bytes)?;
+        if settings.enable_ocr {
+        if let Ok(result) = ocr_provider::recognize_image(&image_path) {
+                if !result.text.trim().is_empty() {
+               let _ = self.update_ocr_text(&id, &result.text);
+          }
+            }
+        }
+        Ok(id)
     }
 
     pub fn collect_image_bytes_snapshot(&self, png_bytes: &[u8]) -> Result<Option<String>, String> {
@@ -725,5 +752,35 @@ mod tests {
 
         assert_eq!(note.as_deref(), Some("重要"));
         assert_eq!(item.note.as_deref(), Some("重要"));
+    }
+
+    #[test]
+    fn screenshot_bytes_are_saved_as_cached_image_record() {
+        let (service, root) = temp_service();
+        let mut settings = service.load_settings().unwrap();
+        settings.enable_ocr = false;
+        service.save_settings(&settings).unwrap();
+
+        let id = service.collect_screenshot_bytes_snapshot(&test_png_bytes()).unwrap();
+        let item = service.get_item_summary(&id).unwrap().unwrap();
+        let image_meta = service.get_image_meta(&id).unwrap().unwrap();
+
+        assert_eq!(item.kind, ClipboardKind::Image);
+        assert_eq!(item.cache_state, CacheState::Cached);
+        assert!(PathBuf::from(&image_meta.0).starts_with(root.join("clipboard-cache").join("images")));
+        assert!(std::path::Path::new(&image_meta.0).exists());
+        assert_eq!(image_meta.1, 2);
+        assert_eq!(image_meta.2, 3);
+    }
+
+    #[test]
+    fn screenshot_ocr_text_is_saved_as_note() {
+        let service = ClipboardService::in_memory().unwrap();
+        let image = service.storage.lock().unwrap().insert_image_item("C:/Users/me/screenshot.png", 120, 80, "png", 4096).unwrap();
+
+        service.update_ocr_text(&image, "  screenshot text  ").unwrap();
+        let item = service.get_item_summary(&image).unwrap().unwrap();
+
+        assert_eq!(item.note.as_deref(), Some("screenshot text"));
     }
 }

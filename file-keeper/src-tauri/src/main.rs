@@ -36,6 +36,7 @@ use commands::clipboard::{
     update_clipboard_item_note,
     update_clipboard_settings,
 };
+use commands::screenshot::{capture_screenshot_region, get_screenshot_ocr_status};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -139,7 +140,9 @@ fn main() {
             update_clipboard_settings,
             get_clipboard_storage_usage,
             rebuild_clipboard_index,
-            retry_link_preview
+            retry_link_preview,
+            capture_screenshot_region,
+            get_screenshot_ocr_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
