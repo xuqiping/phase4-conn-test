@@ -54,7 +54,10 @@ pub fn capture_screenshot_region(
 ) -> Result<ScreenshotCaptureResult, String> {
     let region = physical_region(&region)?;
     let png_bytes = crate::platform::windows::screenshot::capture_screen_region(&region)?;
-    let item_id = service.collect_screenshot_bytes_snapshot(&png_bytes)?;
+    let app_for_ocr = app.clone();
+    let item_id = service.collect_screenshot_bytes_snapshot_with_ocr_update(&png_bytes, move |updated_id| {
+        let _ = app_for_ocr.emit("clipboard://changed", updated_id);
+    })?;
     let _ = app.emit("clipboard://changed", item_id.clone());
     Ok(ScreenshotCaptureResult { item_id })
 }

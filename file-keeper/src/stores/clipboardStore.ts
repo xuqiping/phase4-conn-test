@@ -184,6 +184,7 @@ export const useClipboardStore = defineStore('clipboard', () => {
       selectedDetail.value = null
     }
     const detail = await getClipboardItemDetail(id)
+    items.value = items.value.map(item => item.id === id ? { ...item, note: detail.note } : item)
     if (selectedItemId.value === id) {
       selectedDetail.value = detail
     }

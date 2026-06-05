@@ -1,5 +1,5 @@
-use regex::Regex;
 use crate::clipboard::types::ClipboardSourceApp;
+use regex::Regex;
 
 const SENSITIVE_APPS: &[&str] = &[
     "1password",
@@ -33,15 +33,24 @@ pub fn is_sensitive_content(text: &str) -> Option<String> {
     None
 }
 
-pub fn is_sensitive_source(source: &ClipboardSourceApp, excluded_apps: &[String]) -> Option<String> {
+pub fn is_sensitive_source(
+    source: &ClipboardSourceApp,
+    excluded_apps: &[String],
+) -> Option<String> {
     let process = source.process_name.to_lowercase();
     let title = source.window_title.to_lowercase();
 
-    if excluded_apps.iter().any(|app| process.contains(&app.to_lowercase())) {
+    if excluded_apps
+        .iter()
+        .any(|app| process.contains(&app.to_lowercase()))
+    {
         return Some("excluded_app".to_string());
     }
 
-    if SENSITIVE_APPS.iter().any(|app| process.contains(app) || title.contains(app)) {
+    if SENSITIVE_APPS
+        .iter()
+        .any(|app| process.contains(app) || title.contains(app))
+    {
         return Some("sensitive_app".to_string());
     }
 
@@ -60,7 +69,8 @@ fn contains_private_key(text: &str) -> bool {
 
 fn contains_token(text: &str) -> bool {
     let jwt = Regex::new(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$").unwrap();
-    let api_key = Regex::new(r"(?i)(api[_-]?key|access[_-]?token|secret)[=:]\s*[A-Za-z0-9_\-]{16,}").unwrap();
+    let api_key =
+        Regex::new(r"(?i)(api[_-]?key|access[_-]?token|secret)[=:]\s*[A-Za-z0-9_\-]{16,}").unwrap();
     jwt.is_match(text) || api_key.is_match(text)
 }
 
@@ -77,7 +87,9 @@ fn luhn_valid(digits: &str) -> bool {
     let mut double = false;
 
     for ch in digits.chars().rev() {
-        let Some(mut digit) = ch.to_digit(10) else { return false };
+        let Some(mut digit) = ch.to_digit(10) else {
+            return false;
+        };
         if double {
             digit *= 2;
             if digit > 9 {

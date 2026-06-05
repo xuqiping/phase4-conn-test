@@ -6,7 +6,8 @@ export default {
     confirm: '确定',
     close: '关闭',
     cancel: '取消',
-    refresh: '刷新'
+    refresh: '刷新',
+    save: '保存'
   },
   file: {
     searchPlaceholder: '搜索文件、路径或标签...',
@@ -134,8 +135,9 @@ export default {
       url: '链接',
       color: '颜色',
       mixed: '混合',
-      security_event: '安全',
-      unknown: '未知'
+      security_event: '安全事件',
+      unknown: '未知',
+      all: '全部'
     },
     stats: {
       selectedCount: '已选择 {count} 条记录',
@@ -154,8 +156,88 @@ export default {
       showInFolder: '打开文件所在目录',
       copyFilePath: '复制文件路径',
       editNote: '编辑备注',
-      delete: '删除'
+      delete: '删除',
+      paste: '粘贴',
+      plainText: '纯文本',
+      search: '搜索',
+      close: '关闭',
+      clear: '清空',
+      saveNote: '保存备注',
+      chooseDirectory: '选择目录',
+      useDefaultDirectory: '使用默认目录',
+      clearNonTextCache: '清理非文本缓存'
     },
+    notices: {
+      copied: '已复制到剪贴板',
+      copyFailed: '复制失败：{error}',
+      copiedCount: '已复制 {count} 条记录到剪贴板',
+      invalidLink: '无法打开：链接格式不正确',
+      linkOpened: '已打开链接',
+      openLinkFailed: '打开链接失败：{error}',
+      noFilePath: '无法打开：没有可用文件路径',
+      fileOpened: '已打开文件',
+      openFileFailed: '打开文件失败：{error}',
+      noFolderPath: '无法打开目录：没有可用路径',
+      folderOpened: '已打开文件所在目录',
+      openFolderFailed: '打开文件所在目录失败：{error}',
+      filePathCopied: '已复制文件路径',
+      copyFilePathFailed: '复制文件路径失败：{error}',
+      noteEditorOpened: '已打开备注编辑',
+      openNoteEditorFailed: '备注编辑打开失败：{error}',
+      noteSaved: '备注已保存',
+      noteCleared: '备注已清空',
+      noteSaveFailed: '备注保存失败：{error}'
+    },
+    toolbar: {
+      searchPlaceholder: '搜索内容、来源应用、OCR 文本...',
+      allTime: '全部时间',
+      today: '今天',
+      yesterday: '昨天',
+      last7Days: '近 7 天',
+      last30Days: '近 30 天',
+      custom: '自定义'
+    },
+    preview: {
+      empty: '选择一条历史记录查看预览',
+      note: '备注',
+      noteEditing: '正在编辑备注',
+      notePlaceholder: '给这条记录添加备注，备注可参与搜索',
+      imageAlt: '剪贴板图片',
+      cachedFile: '已保存副本',
+      referenceOnlyFile: '仅保存引用',
+      linkPreviewMissing: '链接预览未联网抓取'
+    },
+    security: {
+      title: '安全防护',
+      description: '敏感内容会被拦截，不保存原文。'
+    },
+    storage: {
+      title: '缓存空间'
+    },
+    settingsForm: {
+      securityTitle: '安全防护',
+      protectSensitiveContent: '默认拦截密码、密钥、银行卡等敏感内容',
+      urlPreview: 'URL 联网预览',
+      pasteBehaviorTitle: '粘贴行为',
+      autoPaste: '自动粘贴到原窗口',
+      enableOcr: '启用 OCR',
+      fileSaveTitle: '文件和图片保存方式',
+      backupMode: '备份副本到本地缓存目录',
+      referenceOnlyMode: '仅记录原始文件地址',
+      backupLocation: '备份位置',
+      defaultBackupDirectory: '默认应用数据目录 / clipboard-cache',
+      fileSaveHint: '保存方式和备份位置只影响之后新复制进来的文件和图片；已有历史不会自动转换或迁移。',
+      storageRulesTitle: '空间规则',
+      totalNonTextLimit: '非文本缓存上限（MB）',
+      itemSizeLimit: '单条记录大小上限（MB）',
+      extensionRulesTitle: '后缀规则',
+      extensionAllowAll: '不限制，默认都可以保存',
+      extensionAllowList: '只保存这些后缀',
+      extensionBlockList: '排除这些后缀',
+      extensionListLabel: '后缀列表，用逗号分隔'
+    },
+    quickPanelSearchPlaceholder: '搜索剪贴板历史...',
+    quickPanelHint: 'Enter 粘贴 · Shift+Enter 纯文本 · Esc 关闭',
     emptyState: '暂无剪贴板历史',
     privacy: {
       sensitiveProtection: '默认不会保存疑似密码、令牌、银行卡、私钥等敏感内容。',

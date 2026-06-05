@@ -3,7 +3,7 @@
     <input
       :value="searchQuery"
       class="w-80 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-primary dark:border-dark-border dark:bg-dark-hover"
-      placeholder="搜索内容、来源应用、OCR 文本..."
+      :placeholder="t('clipboard.toolbar.searchPlaceholder')"
       @input="handleSearchInput"
       @keydown.enter="searchImmediately"
     />
@@ -12,26 +12,26 @@
       class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm dark:border-dark-border dark:bg-dark-hover"
       @change="handleKindChange"
     >
-      <option value="all">全部</option>
-      <option value="text">文本</option>
-      <option value="html">富文本</option>
-      <option value="image">图片</option>
-      <option value="file">文件</option>
-      <option value="url">链接</option>
-      <option value="color">颜色</option>
-      <option value="security_event">安全事件</option>
+      <option value="all">{{ t('clipboard.kindLabels.all') }}</option>
+      <option value="text">{{ t('clipboard.kindLabels.text') }}</option>
+      <option value="html">{{ t('clipboard.kindLabels.html') }}</option>
+      <option value="image">{{ t('clipboard.kindLabels.image') }}</option>
+      <option value="file">{{ t('clipboard.kindLabels.file') }}</option>
+      <option value="url">{{ t('clipboard.kindLabels.url') }}</option>
+      <option value="color">{{ t('clipboard.kindLabels.color') }}</option>
+      <option value="security_event">{{ t('clipboard.kindLabels.security_event') }}</option>
     </select>
     <select
       :value="datePreset"
       class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm dark:border-dark-border dark:bg-dark-hover"
       @change="handleDatePresetChange"
     >
-      <option value="all">全部时间</option>
-      <option value="today">今天</option>
-      <option value="yesterday">昨天</option>
-      <option value="last7Days">近 7 天</option>
-      <option value="last30Days">近 30 天</option>
-      <option value="custom">自定义</option>
+      <option value="all">{{ t('clipboard.toolbar.allTime') }}</option>
+      <option value="today">{{ t('clipboard.toolbar.today') }}</option>
+      <option value="yesterday">{{ t('clipboard.toolbar.yesterday') }}</option>
+      <option value="last7Days">{{ t('clipboard.toolbar.last7Days') }}</option>
+      <option value="last30Days">{{ t('clipboard.toolbar.last30Days') }}</option>
+      <option value="custom">{{ t('clipboard.toolbar.custom') }}</option>
     </select>
     <template v-if="datePreset === 'custom'">
       <input
@@ -47,15 +47,16 @@
         @change="handleCustomEndChange"
       />
     </template>
-    <button class="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50 dark:border-dark-border dark:bg-dark-panel dark:text-gray-200 dark:hover:bg-dark-hover" @click="searchImmediately">搜索</button>
+    <button class="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50 dark:border-dark-border dark:bg-dark-panel dark:text-gray-200 dark:hover:bg-dark-hover" @click="searchImmediately">{{ t('clipboard.actions.search') }}</button>
     <button data-test="clipboard-settings-button" class="ml-auto rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50 dark:border-dark-border dark:bg-dark-panel dark:text-gray-200 dark:hover:bg-dark-hover" @click="$emit('openSettings')">
-      剪贴板设置
+      {{ t('clipboard.settings') }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import type { ClipboardDateRangePreset } from '../types/clipboard'
 
 defineProps<{
@@ -65,6 +66,8 @@ defineProps<{
   customStartDate: string
   customEndDate: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:searchQuery': [value: string]

@@ -6,7 +6,8 @@ export default {
     confirm: 'Confirm',
     close: 'Close',
     cancel: 'Cancel',
-    refresh: 'Refresh'
+    refresh: 'Refresh',
+    save: 'Save'
   },
   file: {
     searchPlaceholder: 'Search files, paths, or tags...',
@@ -128,17 +129,18 @@ export default {
     unknownSource: 'Unknown Source',
     kindLabels: {
       text: 'Text',
-    html: 'Rich Text',
+      html: 'Rich Text',
       image: 'Image',
       file: 'File',
       url: 'Link',
       color: 'Color',
       mixed: 'Mixed',
-      security_event: 'Security',
-      unknown: 'Unknown'
+      security_event: 'Security Event',
+      unknown: 'Unknown',
+      all: 'All'
     },
     stats: {
-    selectedCount: '{count} selected',
+      selectedCount: '{count} selected',
       totalCount: '{count} total'
     },
     actions: {
@@ -154,8 +156,88 @@ export default {
       showInFolder: 'Show in Folder',
       copyFilePath: 'Copy File Path',
       editNote: 'Edit Note',
-      delete: 'Delete'
+      delete: 'Delete',
+      paste: 'Paste',
+      plainText: 'Plain Text',
+      search: 'Search',
+      close: 'Close',
+      clear: 'Clear',
+      saveNote: 'Save Note',
+      chooseDirectory: 'Choose Directory',
+      useDefaultDirectory: 'Use Default Directory',
+      clearNonTextCache: 'Clear Non-text Cache'
     },
+    notices: {
+      copied: 'Copied to clipboard',
+      copyFailed: 'Copy failed: {error}',
+      copiedCount: 'Copied {count} records to clipboard',
+      invalidLink: 'Cannot open: invalid link format',
+      linkOpened: 'Link opened',
+      openLinkFailed: 'Open link failed: {error}',
+      noFilePath: 'Cannot open: no available file path',
+      fileOpened: 'File opened',
+      openFileFailed: 'Open file failed: {error}',
+      noFolderPath: 'Cannot open folder: no available path',
+      folderOpened: 'Folder opened',
+      openFolderFailed: 'Open folder failed: {error}',
+      filePathCopied: 'File path copied',
+      copyFilePathFailed: 'Copy file path failed: {error}',
+      noteEditorOpened: 'Note editor opened',
+      openNoteEditorFailed: 'Open note editor failed: {error}',
+      noteSaved: 'Note saved',
+      noteCleared: 'Note cleared',
+      noteSaveFailed: 'Save note failed: {error}'
+    },
+    toolbar: {
+      searchPlaceholder: 'Search content, source app, OCR text...',
+      allTime: 'All Time',
+      today: 'Today',
+      yesterday: 'Yesterday',
+      last7Days: 'Last 7 Days',
+      last30Days: 'Last 30 Days',
+      custom: 'Custom'
+    },
+    preview: {
+      empty: 'Select a history record to preview',
+      note: 'Note',
+      noteEditing: 'Editing note',
+      notePlaceholder: 'Add a note to this record. Notes are searchable.',
+      imageAlt: 'Clipboard image',
+      cachedFile: 'Copy saved',
+      referenceOnlyFile: 'Reference only',
+      linkPreviewMissing: 'Link preview not fetched'
+    },
+    security: {
+      title: 'Security Protection',
+      description: 'Sensitive content is blocked and not saved as raw text.'
+    },
+    storage: {
+      title: 'Cache Space'
+    },
+    settingsForm: {
+      securityTitle: 'Security Protection',
+      protectSensitiveContent: 'Block passwords, keys, bank cards and other sensitive content by default',
+      urlPreview: 'URL network preview',
+      pasteBehaviorTitle: 'Paste Behavior',
+      autoPaste: 'Auto paste to original window',
+      enableOcr: 'Enable OCR',
+      fileSaveTitle: 'File and Image Save Mode',
+      backupMode: 'Back up copies to local cache directory',
+      referenceOnlyMode: 'Only record original file paths',
+      backupLocation: 'Backup Location',
+      defaultBackupDirectory: 'Default app data directory / clipboard-cache',
+      fileSaveHint: 'Save mode and backup location only affect newly copied files and images; existing history is not converted or migrated automatically.',
+      storageRulesTitle: 'Storage Rules',
+      totalNonTextLimit: 'Non-text cache limit (MB)',
+      itemSizeLimit: 'Single record size limit (MB)',
+      extensionRulesTitle: 'Extension Rules',
+      extensionAllowAll: 'No restriction; save all by default',
+      extensionAllowList: 'Only save these extensions',
+      extensionBlockList: 'Exclude these extensions',
+      extensionListLabel: 'Extension list, separated by commas'
+    },
+    quickPanelSearchPlaceholder: 'Search clipboard history...',
+    quickPanelHint: 'Enter paste · Shift+Enter plain text · Esc close',
     emptyState: 'No clipboard history',
     privacy: {
       sensitiveProtection: 'Suspected passwords, tokens, bank cards, and private keys are not saved by default.',
