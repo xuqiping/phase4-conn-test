@@ -10,6 +10,7 @@ import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,6 +50,9 @@ class AuthServiceTest {
 
     @Mock
     private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private SystemSettingService systemSettingService;
 
     @Mock
     private ValueOperations<String, String> valueOperations;
@@ -107,9 +111,9 @@ class AuthServiceTest {
     void login_success() {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList())).thenReturn("access-token");
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
         when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
-        when(jwtUtil.getAccessExpiration()).thenReturn(900000L);
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
         when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
         when(userMapper.updateById(any(User.class))).thenReturn(1);
@@ -120,7 +124,7 @@ class AuthServiceTest {
         assertEquals("access-token", response.getAccessToken());
         assertEquals("refresh-token", response.getRefreshToken());
         assertEquals("Bearer", response.getTokenType());
-        assertEquals(900000L, response.getExpiresIn());
+        assertEquals(300000L, response.getExpiresIn());
         assertNotNull(response.getUserInfo());
         assertEquals(1L, response.getUserInfo().getId());
         assertEquals("testuser", response.getUserInfo().getUsername());
@@ -150,8 +154,8 @@ class AuthServiceTest {
         when(jwtUtil.getTypeFromToken("valid-refresh-token")).thenReturn("refresh");
         when(jwtUtil.getUserIdFromToken("valid-refresh-token")).thenReturn(1L);
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
-        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList())).thenReturn("new-access-token");
-        when(jwtUtil.getAccessExpiration()).thenReturn(900000L);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L))).thenReturn("new-access-token");
         when(userMapper.selectById(1L)).thenReturn(testUser);
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
 
@@ -159,7 +163,7 @@ class AuthServiceTest {
 
         assertNotNull(response);
         assertEquals("new-access-token", response.getAccessToken());
-        assertEquals(900000L, response.getExpiresIn());
+        assertEquals(300000L, response.getExpiresIn());
     }
 
     @Test

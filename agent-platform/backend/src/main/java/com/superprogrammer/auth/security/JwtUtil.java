@@ -30,8 +30,12 @@ public class JwtUtil {
     }
 
     public String generateAccessToken(Long userId, String username, List<String> roles) {
+        return generateAccessToken(userId, username, roles, accessExpiration);
+    }
+
+    public String generateAccessToken(Long userId, String username, List<String> roles, Long expirationMs) {
         Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + accessExpiration);
+        Date expiryDate = new Date(now.getTime() + expirationMs);
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))

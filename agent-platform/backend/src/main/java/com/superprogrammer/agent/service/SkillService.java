@@ -83,6 +83,18 @@ public class SkillService {
                 .build();
     }
 
+    public void deleteByAgentId(Long agentId) {
+        LambdaQueryWrapper<Skill> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Skill::getAgentId, agentId);
+        List<Skill> skills = skillMapper.selectList(wrapper);
+        for (Skill skill : skills) {
+            LambdaQueryWrapper<SkillStep> stepWrapper = new LambdaQueryWrapper<>();
+            stepWrapper.eq(SkillStep::getSkillId, skill.getId());
+            skillStepMapper.delete(stepWrapper);
+            skillMapper.deleteById(skill.getId());
+        }
+    }
+
     private SkillVO toSkillVO(Skill skill) {
         return SkillVO.builder()
                 .id(skill.getId())

@@ -98,7 +98,7 @@ class AgentServiceTest {
         when(agentGroupMapper.selectById(1L)).thenReturn(testGroup);
         when(skillMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(3L);
 
-        List<AgentVO> result = agentService.listAgents(1L, null);
+        List<AgentVO> result = agentService.listAgents(1L, null, null);
 
         assertEquals(1, result.size());
         assertEquals("代码助手", result.get(0).getName());
@@ -113,7 +113,7 @@ class AgentServiceTest {
         when(agentGroupMapper.selectById(1L)).thenReturn(testGroup);
         when(skillMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(2L);
 
-        List<AgentVO> result = agentService.listAgents(null, "代码");
+        List<AgentVO> result = agentService.listAgents(null, "代码", null);
 
         assertEquals(1, result.size());
         assertEquals("代码助手", result.get(0).getName());
@@ -126,7 +126,7 @@ class AgentServiceTest {
         when(agentGroupMapper.selectById(1L)).thenReturn(testGroup);
         when(skillMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
 
-        List<AgentVO> result = agentService.listAgents(null, null);
+        List<AgentVO> result = agentService.listAgents(null, null, null);
 
         assertEquals(1, result.size());
     }

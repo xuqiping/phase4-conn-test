@@ -33,14 +33,24 @@
           <div class="agent-detail__hero-info">
             <div class="agent-detail__hero-name-row">
               <h1 class="agent-detail__hero-name">{{ agentDetail.name }}</h1>
-              <div
-                class="agent-detail__hero-status"
-                :class="{
-                  'agent-detail__hero-status--active': agentDetail.status === 'ACTIVE'
-                }"
-              >
-                {{ agentDetail.status === 'ACTIVE' ? '在线' : '离线' }}
-              </div>
+              <n-tag :type="statusTagType" size="small" round>{{ statusLabel }}</n-tag>
+              <div style="flex:1" />
+              <template v-if="canManage">
+                <n-button size="small" @click="showEditModal = true">编辑</n-button>
+                <n-button
+                  v-if="agentDetail.status === 'DRAFT'"
+                  size="small"
+                  type="success"
+                  @click="publishAgent"
+                >发布</n-button>
+                <n-button
+                  v-if="agentDetail.status === 'PUBLISHED'"
+                  size="small"
+                  type="warning"
+                  @click="offlineAgent"
+                >下线</n-button>
+                <n-button size="small" type="error" @click="confirmDelete">删除</n-button>
+              </template>
             </div>
             <p class="agent-detail__hero-desc">{{ agentDetail.description || '暂无描述' }}</p>
             <div class="agent-detail__hero-meta">
@@ -89,33 +99,124 @@
         </template>
       </n-empty>
     </div>
+
+    <!-- 编辑弹窗 -->
+    <AgentFormModal
+      v-model:show="showEditModal"
+      :groups="groups"
+      :edit-data="editData"
+      @updated="async () => { showEditModal = false; await loadAgent() }"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { NIcon, NSpin, NEmpty, NButton } from 'naive-ui'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { NIcon, NSpin, NEmpty, NButton, NTag, useMessage, useDialog } from 'naive-ui'
 import {
   ChevronForwardOutline,
   FolderOutline,
   FlashOutline
 } from '@vicons/ionicons5'
-import { agentApi } from '@/api/agent'
+import { agentApi, type AgentGroup } from '@/api/agent'
 import type { AgentDetail, SkillDetail as SkillDetailType } from '@/api/agent'
+import { useAuthStore } from '@/stores/auth'
 import SkillList from '@/components/SkillList.vue'
 import SkillDetail from '@/components/SkillDetail.vue'
+import AgentFormModal from '@/components/AgentFormModal.vue'
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+const message = useMessage()
+const dialog = useDialog()
 
-// === 状态 ===
 const agentDetail = ref<AgentDetail | null>(null)
+const groups = ref<AgentGroup[]>([])
 const selectedSkill = ref<SkillDetailType | null>(null)
 const selectedSkillId = ref<number | null>(null)
 const loading = ref(true)
 const skillLoading = ref(false)
+const showEditModal = ref(false)
 
-// === 方法 ===
+const canManage = computed(() =>
+  authStore.hasPermission('agent:update') || authStore.hasPermission('agent:delete') || authStore.hasPermission('agent:publish')
+)
+
+const statusMap: Record<string, { type: 'success' | 'warning' | 'default' | 'error'; label: string }> = {
+  DRAFT: { type: 'default', label: '草稿' },
+  PUBLISHED: { type: 'success', label: '已发布' },
+  OFFLINE: { type: 'warning', label: '已下线' }
+}
+const statusTagType = computed(() => statusMap[agentDetail.value?.status || '']?.type || 'default')
+const statusLabel = computed(() => statusMap[agentDetail.value?.status || '']?.label || agentDetail.value?.status)
+
+const editData = computed(() => agentDetail.value ? {
+  id: agentDetail.value.id,
+  name: agentDetail.value.name,
+  description: agentDetail.value.description,
+  avatar: agentDetail.value.avatar,
+  groupId: agentDetail.value.groupId
+} : null)
+
+async function loadGroups() {
+  try {
+    const res = await agentApi.getGroups()
+    groups.value = res.data.data || []
+  } catch { /* ignore */ }
+}
+
+function confirmDelete() {
+  if (!agentDetail.value) return
+  dialog.warning({
+    title: '确认删除',
+    content: `确定要删除Agent「${agentDetail.value.name}」吗？`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await agentApi.deleteAgent(agentDetail.value!.id)
+        message.success('删除成功')
+        router.push('/agents')
+      } catch { message.error('删除失败') }
+    }
+  })
+}
+
+async function publishAgent() {
+  if (!agentDetail.value) return
+  try {
+    await agentApi.updateAgentStatus(agentDetail.value.id, 'PUBLISHED')
+    message.success('发布成功')
+    await loadAgent()
+  } catch { message.error('发布失败') }
+}
+
+async function offlineAgent() {
+  if (!agentDetail.value) return
+  try {
+    await agentApi.updateAgentStatus(agentDetail.value.id, 'OFFLINE')
+    message.success('已下线')
+    await loadAgent()
+  } catch { message.error('操作失败') }
+}
+
+async function loadAgent() {
+  const agentId = Number(route.params.id)
+  if (!agentId) { loading.value = false; return }
+  try {
+    const res = await agentApi.getAgentDetail(agentId)
+    agentDetail.value = res.data.data
+    if (agentDetail.value?.skills?.length > 0) {
+      await onSkillSelect(agentDetail.value.skills[0].id)
+    }
+  } catch (e) {
+    console.error('加载Agent详情失败:', e)
+  } finally {
+    loading.value = false
+  }
+}
 
 async function onSkillSelect(skillId: number) {
   selectedSkillId.value = skillId
@@ -131,29 +232,8 @@ async function onSkillSelect(skillId: number) {
   }
 }
 
-// === 数据加载 ===
-
 onMounted(async () => {
-  const agentId = Number(route.params.id)
-  if (!agentId) {
-    loading.value = false
-    return
-  }
-
-  try {
-    const res = await agentApi.getAgentDetail(agentId)
-    agentDetail.value = res.data.data
-
-    // 默认选中第一个技能
-    if (agentDetail.value?.skills?.length > 0) {
-      const firstSkill = agentDetail.value.skills[0]
-      await onSkillSelect(firstSkill.id)
-    }
-  } catch (e) {
-    console.error('加载Agent详情失败:', e)
-  } finally {
-    loading.value = false
-  }
+  await Promise.all([loadAgent(), loadGroups()])
 })
 </script>
 
@@ -266,19 +346,6 @@ onMounted(async () => {
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin: 0;
-}
-
-.agent-detail__hero-status {
-  font-size: var(--font-size-xs);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  color: var(--color-text-tertiary);
-  background: var(--color-elevated);
-
-  &--active {
-    color: var(--color-success);
-    background: rgba(74, 222, 128, 0.1);
-  }
 }
 
 .agent-detail__hero-desc {
