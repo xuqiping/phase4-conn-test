@@ -6,6 +6,7 @@
     <ConfirmDialog
       v-if="showConfirmDialog"
       :processes="processesToClose"
+      :action="confirmAction"
       @confirm="handleConfirmClose"
     @cancel="handleCancelClose"
     />
@@ -30,6 +31,7 @@ const toast = useToast()
 
 const showConfirmDialog = ref(false)
 const processesToClose = ref<ProcessInfo[]>([])
+const confirmAction = ref<'close' | 'kill'>('close')
 let pendingCloseAction: (() => void) | null = null
 let autoRefreshTimer: number | null = null
 let visibilityChangeHandler: (() => void) | null = null
@@ -58,6 +60,14 @@ provide('requestConfirmation', async (processes: ProcessInfo[], onConfirm: () =>
   }
 
   // Show confirmation dialog
+  confirmAction.value = 'close'
+  processesToClose.value = processes
+  pendingCloseAction = onConfirm
+  showConfirmDialog.value = true
+})
+
+provide('requestKillConfirmation', (processes: ProcessInfo[], onConfirm: () => void) => {
+  confirmAction.value = 'kill'
   processesToClose.value = processes
   pendingCloseAction = onConfirm
   showConfirmDialog.value = true

@@ -63,7 +63,10 @@
         <div class="process-context-menu__divider"></div>
 
         <button class="process-context-menu__item process-context-menu__item--danger" @click="handleContextMenuAction('close')">
-          {{ t('process.menuCloseProcess') }}
+          {{ t('process.menuCloseApp') }}
+        </button>
+        <button class="process-context-menu__item process-context-menu__item--danger process-context-menu__item--strong-danger" @click="handleContextMenuAction('kill')">
+          {{ t('process.menuKillProcess') }}
         </button>
       </div>
     </transition>
@@ -189,7 +192,7 @@ function closeContextMenu() {
   }
 }
 
-async function handleContextMenuAction(action: 'activate' | 'copy' | 'close') {
+async function handleContextMenuAction(action: 'activate' | 'copy' | 'close' | 'kill') {
   const process = contextMenu.value.process
   if (!process) return
 
@@ -221,8 +224,44 @@ async function handleContextMenuAction(action: 'activate' | 'copy' | 'close') {
     return
   }
 
+  if (action === 'kill') {
+    closeContextMenu()
+    await handleKillProcess(process.pid)
+    return
+  }
+
   closeContextMenu()
   await handleCloseProcess(process.window_handle)
+}
+
+function isWhitelisted(processName: string): boolean {
+  return settingsStore.settings.whitelist.some(name =>
+    processName.toLowerCase().includes(name.toLowerCase())
+  )
+}
+
+function getKillProcessErrorMessage(process: ProcessInfo): string {
+  if (isAccessDeniedCloseError(processStore.error)) {
+    return t('process.killSingleFailedAccessDenied', { name: process.name, pid: process.pid })
+  }
+
+  return t('process.killSingleFailed', { name: process.name, pid: process.pid })
+}
+
+async function handleKillProcess(pid: number) {
+  const process = processStore.processes.find(p => p.pid === pid)
+  if (!process) return
+
+  if (isWhitelisted(process.name)) {
+    toast?.warning(t('process.killWhitelistWarningToast', { name: process.name, pid: process.pid }))
+  }
+
+  const success = await processStore.killProcess(pid)
+  if (success) {
+    toast?.success(t('process.killSingleSuccess', { name: process.name, pid: process.pid }))
+  } else {
+    toast?.error(getKillProcessErrorMessage(process))
+  }
 }
 
 async function handleCloseProcess(windowHandle: number) {
@@ -491,6 +530,10 @@ async function handleCloseProcess(windowHandle: number) {
 
 .process-context-menu__item--danger:hover {
   background: var(--danger-bg);
+}
+
+.process-context-menu__item--strong-danger {
+  font-weight: 600;
 }
 
 .process-context-menu__divider {
