@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:file_keeper_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  main:
+    banner-mode: off
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+file-keeper:
+  bootstrap:
+    super-admin:
+      email:
+      phone:
+      password:
+  auth:
+    jwt:
+      secret: test-file-keeper-jwt-secret-at-least-32-bytes
+      access-token-minutes: 15
+    refresh-token:
+      days: 7
+    verification:
+      code-minutes: 10
+      verified-minutes: 30
+      dev-fixed-code: "123456"

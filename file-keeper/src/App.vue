@@ -23,7 +23,7 @@
     <!-- Batch Operations Toolbar -->
     <transition name="fade">
       <div
-        v-if="currentTab === 'files' && selectionStore.hasSelection"
+        v-if="currentTab === 'files' && canUseTab('files') && selectionStore.hasSelection"
         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white dark:bg-dark-panel rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border px-6 py-3 flex items-center space-x-4"
       >
         <span class="text-sm text-gray-600 dark:text-gray-300">
@@ -71,7 +71,7 @@
     <!-- Batch Move Menu -->
     <transition name="fade">
       <div
-     v-if="currentTab === 'files' && showBatchMoveMenu"
+     v-if="currentTab === 'files' && canUseTab('files') && showBatchMoveMenu"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
         @click="showBatchMoveMenu = false"
       >
@@ -98,27 +98,30 @@
     <div class="px-6 flex items-center justify-between border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
       <div class="flex items-center space-x-6">
         <button
-          @click="currentTab = 'files'"
+          @click="switchTab('files')"
+          :title="canUseTab('files') ? '' : moduleTitle('files')"
      :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-                currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+                currentTab === 'files' ? 'text-primary' : (canUseTab('files') ? 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200' : 'text-gray-300 dark:text-gray-600 cursor-not-allowed')]"
         >
           <Folder :size="16" />
           <span>{{ t('file.filesTab') }}</span>
           <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
         </button>
      <button
-          @click="currentTab = 'processes'"
+          @click="switchTab('processes')"
+          :title="canUseTab('processes') ? '' : moduleTitle('processes')"
           :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-                   currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+                   currentTab === 'processes' ? 'text-primary' : (canUseTab('processes') ? 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200' : 'text-gray-300 dark:text-gray-600 cursor-not-allowed')]"
         >
           <Activity :size="16" />
           <span>{{ t('file.processesTab') }}</span>
           <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
         </button>
         <button
-          @click="currentTab = 'clipboard'"
+          @click="switchTab('clipboard')"
+          :title="canUseTab('clipboard') ? '' : moduleTitle('clipboard')"
           :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-                   currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+                   currentTab === 'clipboard' ? 'text-primary' : (canUseTab('clipboard') ? 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200' : 'text-gray-300 dark:text-gray-600 cursor-not-allowed')]"
         >
        <Clipboard :size="16" />
           <span>{{ t('tabs.clipboard') }}</span>
@@ -156,7 +159,7 @@
     </div>
 
     <!-- 2. 工具栏 -->
-    <div v-if="currentTab === 'files'" class="px-6 py-4 flex items-center justify-between bg-white dark:bg-dark-bg">
+    <div v-if="currentTab === 'files' && canUseTab('files')" class="px-6 py-4 flex items-center justify-between bg-white dark:bg-dark-bg">
       <div class="relative w-96 group">
         <Search :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
         <input
@@ -215,7 +218,7 @@
     </div>
 
     <!-- 3b. 分组标签栏 (只在文件管理时显示) -->
-    <div v-if="currentTab === 'files'" class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
+    <div v-if="currentTab === 'files' && canUseTab('files')" class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
       <button
         v-for="group in groupStore.groups"
         :key="group.id"
@@ -240,7 +243,7 @@
 
     <!-- 4. 主内容区 (文件管理) -->
     <div
-      v-if="currentTab === 'files'"
+      v-if="currentTab === 'files' && canUseTab('files')"
       class="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-dark-bg relative transition-colors duration-200"
       :class="{ 'bg-primary/5 dark:bg-primary/5': isDraggingOver }"
       @dragover="handleDragOver"
@@ -449,17 +452,17 @@
     </div>
 
     <!-- Process Management Tab -->
-    <div v-if="currentTab === 'processes'" class="flex-1 overflow-hidden flex flex-col min-h-0">
+    <div v-if="currentTab === 'processes' && canUseTab('processes')" class="flex-1 overflow-hidden flex flex-col min-h-0">
       <ProcessManagement />
     </div>
 
     <!-- Clipboard Management Tab -->
-    <div v-if="currentTab === 'clipboard'" class="flex-1 overflow-hidden flex flex-col min-h-0">
+    <div v-if="currentTab === 'clipboard' && canUseTab('clipboard')" class="flex-1 overflow-hidden flex flex-col min-h-0">
       <ClipboardManagement />
     </div>
 
     <!-- 5. 状态栏 -->
-    <div v-if="currentTab === 'files'" class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
+    <div v-if="currentTab === 'files' && canUseTab('files')" class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
       <div>{{ t('file.totalItems', { count: fileStore.filteredFiles.length }) }}</div>
       <div class="flex items-center space-x-2 bg-gray-100 dark:bg-dark-bg p-1 rounded-md">
         <button
@@ -480,7 +483,7 @@
     <!-- 右键菜单 -->
     <transition name="fade">
       <div
-        v-if="currentTab === 'files' && contextMenu.show"
+        v-if="currentTab === 'files' && canUseTab('files') && contextMenu.show"
         class="fixed z-50 w-56 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] py-1 text-sm"
         :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
         @click.stop
@@ -545,6 +548,7 @@
         <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
 
         <button
+          v-if="canUseTab('processes')"
           @click="handleMenuAction('close-processes')"
           class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors"
         >
@@ -755,6 +759,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { useSelectionStore } from './stores/selectionStore'
 import { useRecentStore } from './stores/recentStore'
 import { useClipboardStore } from './stores/clipboardStore'
+import { useCommercialAuthStore } from './stores/commercialAuthStore'
 import { useI18n } from './composables/useI18n'
 import { openFile, showInFolder } from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
@@ -782,10 +787,70 @@ const settingsStore = useSettingsStore()
 const selectionStore = useSelectionStore()
 const recentStore = useRecentStore()
 const clipboardStore = useClipboardStore()
+const commercialAuthStore = useCommercialAuthStore()
 const { t, locale, toggleLocale } = useI18n()
+const commercialServerUrl = import.meta.env.VITE_FILE_KEEPER_SERVER_URL || 'http://localhost:8080'
 
 // Current tab state
 const currentTab = ref<'files' | 'processes' | 'clipboard'>('files')
+
+function canUseTab(tab: 'files' | 'processes' | 'clipboard') {
+  return commercialAuthStore.isModuleAllowed(tab)
+}
+
+function moduleTitle(tab: 'files' | 'processes' | 'clipboard') {
+  return commercialAuthStore.denialReason(tab) || '当前模块未授权'
+}
+
+function switchTab(tab: 'files' | 'processes' | 'clipboard') {
+  if (!canUseTab(tab)) {
+    console.warn(moduleTitle(tab))
+    return
+  }
+  currentTab.value = tab
+}
+
+function firstAvailableTab() {
+  return (['files', 'processes', 'clipboard'] as const).find(tab => canUseTab(tab))
+}
+
+function ensureAuthorizedTab() {
+  if (canUseTab(currentTab.value)) {
+    return
+  }
+  const fallbackTab = firstAvailableTab()
+  if (fallbackTab) {
+    currentTab.value = fallbackTab
+  }
+}
+
+let clipboardMonitorRunning = false
+async function syncClipboardMonitor() {
+  if (canUseTab('clipboard')) {
+    if (clipboardMonitorRunning) {
+      return
+    }
+    clipboardMonitorRunning = true
+    try {
+      await clipboardStore.startMonitor()
+    } catch (error) {
+      clipboardMonitorRunning = false
+      console.error('Failed to start clipboard monitor:', error)
+    }
+    return
+  }
+
+  if (!clipboardMonitorRunning) {
+    return
+  }
+  try {
+    await clipboardStore.stopMonitor()
+  } catch (error) {
+    console.warn('Failed to stop clipboard monitor after authorization change:', error)
+  } finally {
+    clipboardMonitorRunning = false
+  }
+}
 
 // Hover state for checkboxes
 const hoveredFileId = ref<string | null>(null)
@@ -1013,6 +1078,18 @@ watch(currentTheme, (newTheme) => {
   }
 }, { immediate: true })
 
+watch(
+  () => [
+    commercialAuthStore.isModuleAllowed('files'),
+    commercialAuthStore.isModuleAllowed('processes'),
+    commercialAuthStore.isModuleAllowed('clipboard')
+  ],
+  async () => {
+    ensureAuthorizedTab()
+    await syncClipboardMonitor()
+  }
+)
+
 function toggleTheme() {
   settingsStore.toggleTheme()
 }
@@ -1236,6 +1313,10 @@ async function handleGlobalShortcut() {
 }
 
 async function handleClipboardShortcut() {
+  if (!canUseTab('clipboard')) {
+    console.warn(moduleTitle('clipboard'))
+    return
+  }
   if (clipboardShortcutHandling) return
   clipboardShortcutHandling = true
   try {
@@ -1246,6 +1327,10 @@ async function handleClipboardShortcut() {
 }
 
 async function handleScreenshotShortcut() {
+  if (!canUseTab('clipboard')) {
+    console.warn(moduleTitle('clipboard'))
+    return
+  }
   if (screenshotShortcutHandling || isScreenshotOverlayOpen) {
     console.log('[Screenshot] Shortcut blocked:', { screenshotShortcutHandling, isScreenshotOverlayOpen })
     return
@@ -1278,6 +1363,15 @@ async function handleScreenshotCancel() {
 async function handleScreenshotCapture(region: ScreenshotRegion) {
   isScreenshotOverlayOpen = false
   screenshotShortcutHandling = false
+  if (!canUseTab('clipboard')) {
+    console.warn(moduleTitle('clipboard'))
+    try {
+      await closeScreenshotOverlayWindow()
+    } catch (error) {
+      // 遮罩窗口可能已被 Host 销毁，忽略 "window not found" 错误
+    }
+    return
+  }
   try {
     await closeScreenshotOverlayWindow()
   } catch (error) {
@@ -1293,7 +1387,7 @@ async function handleScreenshotCapture(region: ScreenshotRegion) {
     return
   }
 
-  currentTab.value = 'clipboard'
+  switchTab('clipboard')
   clipboardStore.searchQuery = ''
   clipboardStore.kindFilter = 'all'
   clipboardStore.favoriteOnly = false
@@ -1422,6 +1516,14 @@ onMounted(async () => {
 
   await (settingsStore as { $persistReady?: Promise<void> }).$persistReady
 
+  try {
+    await commercialAuthStore.initializeAnonymous(commercialServerUrl)
+    ensureAuthorizedTab()
+    await syncClipboardMonitor()
+  } catch (error) {
+    console.error('Failed to initialize commercial authorization:', error)
+  }
+
   const shortcut = settingsStore.settings.globalShortcut
   if (shortcut) {
     try {
@@ -1455,12 +1557,6 @@ onMounted(async () => {
     } catch (error) {
       console.error('Failed to register screenshot shortcut on startup:', error)
     }
-  }
-
-  try {
-    await clipboardStore.startMonitor()
-  } catch (error) {
-    console.error('Failed to start clipboard monitor:', error)
   }
 
   // Tauri native drag-drop (provides real file paths)
@@ -1525,10 +1621,14 @@ onUnmounted(async () => {
   observedElements.clear()
   iconQueue.length = 0
 
-  try {
-    await clipboardStore.stopMonitor()
-  } catch (error) {
-    console.warn('Failed to stop clipboard monitor on unmount:', error)
+  if (clipboardMonitorRunning) {
+    try {
+      await clipboardStore.stopMonitor()
+    } catch (error) {
+      console.warn('Failed to stop clipboard monitor on unmount:', error)
+    } finally {
+      clipboardMonitorRunning = false
+    }
   }
 
   if (registeredShortcut) {
@@ -1754,12 +1854,21 @@ function handleAddTag(file: FileItem) {
 }
 
 async function handleShowProcesses(file: FileItem) {
+  if (!canUseTab('processes')) {
+    console.warn(moduleTitle('processes'))
+    return
+  }
   processManagerFile.value = file
   showProcessManager.value = true
   await loadFileProcesses(file.path)
 }
 
 async function loadFileProcesses(filePath: string) {
+  if (!canUseTab('processes')) {
+    console.warn(moduleTitle('processes'))
+    showProcessManager.value = false
+    return
+  }
   loadingProcesses.value = true
   try {
     fileProcesses.value = await findFileProcesses(filePath)
@@ -1772,6 +1881,11 @@ async function loadFileProcesses(filePath: string) {
 }
 
 async function handleCloseProcess(windowHandle: number, pid: number) {
+  if (!canUseTab('processes')) {
+    console.warn(moduleTitle('processes'))
+    showProcessManager.value = false
+    return
+  }
   const confirmed = confirm(`确定关闭进程 PID ${pid}？`)
   if (!confirmed) return
 

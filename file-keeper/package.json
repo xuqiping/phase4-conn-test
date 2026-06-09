@@ -36,7 +36,7 @@
     "@tauri-apps/plugin-store": "^2.0.0",
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-vue": "^5.0.0",
-    "@vitest/ui": "^4.1.5",
+    "@vitest/ui": "^3.2.6",
     "@vue/test-utils": "^2.4.10",
     "autoprefixer": "^10.5.0",
     "jsdom": "^29.1.1",
@@ -45,7 +45,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",
-    "vitest": "^4.1.5",
+    "vitest": "^3.2.6",
     "vue-tsc": "^2.0.0"
   }
 }

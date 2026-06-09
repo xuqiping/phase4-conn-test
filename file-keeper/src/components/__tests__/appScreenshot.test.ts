@@ -52,6 +52,12 @@ vi.mock('../../api/screenshot', () => ({
   captureScreenshotRegion: vi.fn().mockResolvedValue({ itemId: 'shot-1' })
 }))
 
+vi.mock('../../api/clipboard', () => ({
+  startClipboardMonitor: vi.fn().mockResolvedValue(undefined),
+  stopClipboardMonitor: vi.fn().mockResolvedValue(undefined),
+  listenClipboardChanged: vi.fn().mockResolvedValue(() => {})
+}))
+
 vi.mock('../../api/files', () => ({
   openFile: vi.fn(),
   showInFolder: vi.fn(),
@@ -61,6 +67,46 @@ vi.mock('../../api/files', () => ({
 vi.mock('../../api/processes', () => ({
   findFileProcesses: vi.fn().mockResolvedValue([]),
   closeProcess: vi.fn()
+}))
+
+vi.mock('@tauri-apps/plugin-store', () => ({
+  Store: {
+    load: vi.fn().mockResolvedValue({
+      get: vi.fn().mockResolvedValue({
+        deviceId: 'test-device',
+        fingerprintHash: 'test-fp',
+        deviceName: 'Test'
+      }),
+      set: vi.fn(),
+      save: vi.fn()
+    })
+  }
+}))
+
+vi.mock('../../api/commercialAuth', () => ({
+  getOrCreateDeviceIdentity: vi.fn().mockResolvedValue({
+    deviceId: 'test-device',
+    fingerprintHash: 'test-fp',
+    deviceName: 'Test'
+  }),
+  startAnonymousTrial: vi.fn().mockResolvedValue({
+    deviceId: 'test-device',
+    inFullTrial: true,
+    trialExpired: false,
+    allowedModuleCodes: ['files', 'processes', 'clipboard']
+  }),
+  getAnonymousAuthorization: vi.fn().mockResolvedValue({
+    mode: 'anonymous' as const,
+    onlineRequired: true,
+    deviceId: 'test-device',
+    modules: [
+      { moduleCode: 'files' as const, allowed: true, reason: null, expiresAt: null },
+      { moduleCode: 'processes' as const, allowed: true, reason: null, expiresAt: null },
+      { moduleCode: 'clipboard' as const, allowed: true, reason: null, expiresAt: null }
+    ]
+  }),
+  isCommercialAuthApiError: vi.fn().mockReturnValue(false),
+  CommercialAuthApiError: class extends Error {}
 }))
 
 class MockIntersectionObserver {
@@ -92,10 +138,10 @@ afterEach(() => {
 })
 
 async function waitForScreenshotRegistration(shortcut: string) {
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 50; index += 1) {
     const registered = vi.mocked(shortcutApi.registerGlobalShortcut).mock.calls.find(call => call[0] === shortcut)
     if (registered) return registered
-    await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 10))
   }
   return undefined
 }
