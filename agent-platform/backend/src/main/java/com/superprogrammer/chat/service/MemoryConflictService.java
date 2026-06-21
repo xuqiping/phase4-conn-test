@@ -50,7 +50,9 @@ public class MemoryConflictService {
                     "value", snap.value(), "confidence", snap.confidence())));
             c.setNewEmbedding(snap.halfvec());
             c.setExistingMemoryIds(existingIds);
-            conflictMapper.insertConflict(c, existingIds.toString());   // [7,8] → ::bigint[]
+            // PG bigint[] 字面量须 {id1,id2}（花括无空格），非 List.toString() 的 [a, b]
+            String arrLiteral = "{" + String.join(",", existingIds.stream().map(String::valueOf).toList()) + "}";
+            conflictMapper.insertConflict(c, arrLiteral);
         } catch (Exception e) {
             log.warn("createPending 失败: {}", e.getMessage());
         }

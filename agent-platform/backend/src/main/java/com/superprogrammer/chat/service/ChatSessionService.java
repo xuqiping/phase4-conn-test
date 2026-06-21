@@ -278,9 +278,11 @@ public class ChatSessionService {
 
     private String extractDecision(String routed) {
         if (routed == null) return "UNCLEAR";
-        for (String d : new String[]{"KEEP_NEW", "KEEP_BOTH", "KEEP_OLD", "DISCARD"}) {
-            if (routed.contains("\"decision\":\"" + d + "\"")) return d;
-        }
+        // 路由返回 keep: A=旧 / B=新 / BOTH / NONE
+        if (routed.contains("\"keep\":\"B\"")) return "KEEP_NEW";
+        if (routed.contains("\"keep\":\"A\"")) return "KEEP_OLD";
+        if (routed.contains("\"keep\":\"BOTH\"")) return "KEEP_BOTH";
+        if (routed.contains("\"keep\":\"NONE\"")) return "DISCARD";
         return "UNCLEAR";
     }
 

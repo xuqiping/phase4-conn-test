@@ -38,20 +38,26 @@ public class MemoryConflictJudge {
             JSON:""";
 
     private static final String JUDGE_PROMPT = """
-            判断新事实与同信息块已有记忆是否冲突（语义矛盾，如"有女儿"vs"有儿子"、"喜欢Java"vs"喜欢Python"）。
-            新事实:
-            %s
-            已有记忆:
-            %s
-            返回JSON数组，每条新事实一个元素: {"factIdx":0基序号,"conflict":true或false,"conflictingIds":[已有记忆id数组],"askText":"若冲突，用中文给用户的提问，如 你之前说有个女儿小红，现在说有个儿子小明，保留哪条？"}
-            无冲突也每条返回（conflict=false）。
+            判断新事实与同信息块已有记忆是否【语义冲突】。
+            冲突定义：新事实与某条已有记忆描述的是用户的【同一属性/同一件事】，但给出了【不同且互相矛盾】的值。
+            注意：
+            - key 名可能不同但语义相同（如 favorite_language / favorite_programming_language / 本命语言 是同一属性；child_name / son_name / daughter_name 都指"孩子的名字/存在"），以【语义】为准，不要因 key 字面不同就判非冲突。
+            - 若用户原文含"更正/改/不是/其实/换"等修改措辞，强烈提示这是对旧信息的修改 → 视为冲突。
+            - 例：旧"喜欢Java" vs 新"喜欢Python"=冲突；旧"有女儿小红" vs 新"有儿子小明"=冲突（同一"孩子"属性）；旧"已婚" vs 新"喜欢跑步"=非冲突（不同属性）。
+            用户原文: %s
+            新事实: %s
+            已有记忆: %s
+            返回JSON数组，每条新事实一个元素: {"factIdx":0基,"conflict":true或false,"conflictingIds":[与之冲突的已有记忆id数组],"askText":"若冲突，中文给用户的提问，如 你之前说喜欢Java，现在说喜欢Python，保留哪条？"}
+            无冲突也每条返回（conflict=false, conflictingIds=[]）。
             JSON:""";
 
     private static final String ROUTER_PROMPT = """
-            用户刚收到一个记忆冲突提问: "%s"
-            用户最新消息: "%s"
-            判断用户这条消息是否在回答该冲突，若是给出决定。
-            返回JSON: {"isAnswer":true或false,"decision":"KEEP_NEW|KEEP_OLD|KEEP_BOTH|DISCARD|UNCLEAR"}
+            用户收到一个记忆冲突提问后回复了消息。判断用户想保留哪条。
+            冲突提问: "%s"
+            候选：A=【之前/原来】的旧信息（提问里"之前提到/原来"指代的那条）；B=【现在/更正】后的新信息（提问里"现在/更正说"指代的那条）。
+            用户回复: "%s"
+            返回JSON: {"isAnswer":true或false,"keep":"A"|"B"|"BOTH"|"NONE"|"UNCLEAR"}
+            规则：keep=A=保留旧弃新；keep=B=保留新弃旧；keep=BOTH=两条都留；keep=NONE=都删；用户回复与冲突无关→isAnswer=false。
             JSON:""";
 
     /** 抽取事实（含 block 候选）。失败/空返 empty。 */
@@ -71,14 +77,14 @@ public class MemoryConflictJudge {
         return out;
     }
 
-    /** batch 冲突判定。失败返全 false（fail-safe）。 */
-    public List<JudgeResult> judge(List<ExtractedFact> facts, List<UserMemory> blockMembers) {
+    /** batch 冲突判定（传 userMessage 保留"更正"等修改信号）。失败返全 false（fail-safe）。 */
+    public List<JudgeResult> judge(List<ExtractedFact> facts, List<UserMemory> blockMembers, String userMessage) {
         try {
             String newJson = objectMapper.writeValueAsString(facts.stream()
                     .map(f -> java.util.Map.of("idx", facts.indexOf(f), "key", f.key(), "value", f.value())).toList());
             String memJson = objectMapper.writeValueAsString(blockMembers.stream()
                     .map(m -> java.util.Map.of("id", m.getId(), "key", m.getMemoryKey(), "value", m.getMemoryValue())).toList());
-            String json = stripFence(chat(String.format(JUDGE_PROMPT, newJson, memJson)));
+            String json = stripFence(chat(String.format(JUDGE_PROMPT, userMessage == null ? "" : userMessage, newJson, memJson)));
             List<JudgeResult> out = new ArrayList<>();
             Pattern p = Pattern.compile(
                     "\"factIdx\"\\s*:\\s*(\\d+).*?\"conflict\"\\s*:\\s*(true|false)(?:.*?\"conflictingIds\"\\s*:\\s*\\[([^\\]]*)\\])?(?:.*?\"askText\"\\s*:\\s*\"([^\"]*)\")?",

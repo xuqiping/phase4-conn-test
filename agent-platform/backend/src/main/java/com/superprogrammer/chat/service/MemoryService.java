@@ -57,7 +57,7 @@ public class MemoryService {
                     insertClean(userId, f, br);          // 新块，无冲突
                     continue;
                 }
-                List<JudgeResult> jr = judge.judge(List.of(f), members);
+                List<JudgeResult> jr = judge.judge(List.of(f), members, userMessage);
                 JudgeResult r = (jr == null || jr.isEmpty()) ? null : jr.get(0);
                 if (r == null || !r.conflict()) {
                     insertClean(userId, f, br);          // 同块但不矛盾

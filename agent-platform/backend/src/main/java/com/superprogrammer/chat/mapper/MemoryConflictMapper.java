@@ -16,17 +16,18 @@ import java.util.List;
 @Mapper
 public interface MemoryConflictMapper extends BaseMapper<MemoryConflict> {
 
-    /** 自定义插入（halfvec + bigint[] + jsonb casts）。id 回填。 */
+    /** 自定义插入（halfvec + bigint[] + jsonb casts）。id 回填。
+     *  实体须 @Param("c")——MyBatis 混用实体+@Param 时，属性名须带前缀。 */
     @Insert("""
             INSERT INTO memory_conflicts
                 (user_id, session_id, block_label, new_memory, new_embedding, existing_memory_ids,
                  ask_text, status, expires_at, created_at)
             VALUES
-                (#{userId}, #{sessionId}, #{blockLabel}, #{newMemory}::jsonb, #{newEmbedding}::halfvec,
-                 #{existingIds}::bigint[], #{askText}, #{status}, #{expiresAt}, now())
+                (#{c.userId}, #{c.sessionId}, #{c.blockLabel}, #{c.newMemory}::jsonb, #{c.newEmbedding}::halfvec,
+                 #{existingIds}::bigint[], #{c.askText}, #{c.status}, #{c.expiresAt}, now())
             """)
-    @Options(useGeneratedKeys = true, keyProperty = "id")
-    void insertConflict(MemoryConflict c, @Param("existingIds") String existingIdsJson);
+    @Options(useGeneratedKeys = true, keyProperty = "c.id")
+    void insertConflict(@Param("c") MemoryConflict c, @Param("existingIds") String existingIdsJson);
 
     /** 会话活跃 PENDING（只选标量列；含已过期，由 service 判 expires_at 懒 flag）。 */
     @Select("SELECT id, user_id, session_id, block_label, ask_text, status, expires_at, created_at " +

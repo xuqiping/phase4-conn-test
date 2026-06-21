@@ -15,16 +15,17 @@ import java.util.List;
 @Mapper
 public interface UserMemoryMapper extends BaseMapper<UserMemory> {
 
-    /** 带 embedding 的插入（halfvec 走 ::halfvec）。clean 记忆 conflict_id 传 null。 */
+    /** 带 embedding 的插入（halfvec 走 ::halfvec）。clean 记忆 conflict_id 传 null。
+     *  实体须 @Param("m")——MyBatis 混用实体+@Param 时，属性名须带前缀。 */
     @Insert("""
             INSERT INTO user_memories
-                (user_id, category, key, value, source, confidence, block_label, embedding, conflict_id, created_at, updated_at)
+                (user_id, category, memory_key, memory_value, source, confidence, block_label, embedding, conflict_id, created_at, updated_at)
             VALUES
-                (#{userId}, #{category}, #{memoryKey}, #{memoryValue}, #{source}, #{confidence},
-                 #{blockLabel}, #{halfvec}::halfvec, #{conflictId}, now(), now())
+                (#{m.userId}, #{m.category}, #{m.memoryKey}, #{m.memoryValue}, #{m.source}, #{m.confidence},
+                 #{m.blockLabel}, #{halfvec}::halfvec, #{m.conflictId}, now(), now())
             """)
-    @Options(useGeneratedKeys = true, keyProperty = "id")
-    void insertMemory(UserMemory m, @Param("halfvec") String halfvec);
+    @Options(useGeneratedKeys = true, keyProperty = "m.id")
+    void insertMemory(@Param("m") UserMemory m, @Param("halfvec") String halfvec);
 
     /** 更新 embedding + block（重抽/改块时）。 */
     @Update("UPDATE user_memories SET embedding=#{halfvec}::halfvec, block_label=#{blockLabel}, updated_at=now() WHERE id=#{id}")
