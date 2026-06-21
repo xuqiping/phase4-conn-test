@@ -19,7 +19,8 @@
 - ✅ **M6 记忆抽取实测 完成（2026-06-20，PASS）**：global ON + CHAT 发「我叫张三，28岁，后端工程师，爱用 Java」→ `extractMemoriesAsync` → `GET /api/chat/memories` 4 行新记忆（FACT name=张三/age=28/occupation=后端工程师 + PREFERENCE favorite_programming_language=Java，全 conf 1.0 source INFERRED，秒级）。负例 PASS：会话 `ragEnabled=false` 覆盖全局 → 抽取跳过（「李四 99 岁」未入库，8 轮 poll 0 新行）→ 门控正确。环境已还原（4 记忆清空 + toggle OFF）。
 - ✅ **个人记忆冲突解决 完成（2026-06-21，BUILD SUCCESS + 冒烟全绿）**：embed 聚类分块 + LLM 语义冲突判定 + 会话锁交互式解决（用户 NL 决定保留哪条；无关/超时→FLAGGED 共存可见）。V27（user_memories 加 block_label/embedding/conflict_id + memory_conflicts 表）+ V28（删 V6 unique(user_id,key) 供冲突共存）。2 新端点（`GET /memories/conflicts` + `PUT .../resolve`）。冒烟 3 场景全通（KEEP_NEW 同会话 / FLAGGED 共存 / resolve 端点）。**7 个 dev→runtime bug 全修**（mapper @Param / 列名 key→memory_key / bigint[] 字面量 / 路由 A/B / judge 强化 / 删唯一索引 / resolve PENDING vs FLAGGED 分支）。**refine**：记忆模式 ON 时冲突检测改同步（askText 同轮投递，消竞态），代价 ~20-60s/轮（gate 默认关）。设计见 `设计/后续其他功能设计/个人记忆知识库设计（含记忆冲突解决）.md`，计划+执行结果见 `项目开发进度/当前项目开发进度-个人记忆知识库（含冲突解决）.md`。
 - ✅ **M5 WORKFLOW RETRIEVAL 冒烟 完成（2026-06-21，PASS）**：造 workflow（START→RETRIEVAL→END，config kbId:1 query）+ workflow_kb_bindings[1] + rag_enabled=true，`POST /api/workflows/{id}/run` → Java(gateway=sidecar)→sidecar LangGraph→RETRIEVAL 回调 Java `/callbacks/nodes/execute`→`retrieveEvidence(KB1,"如何安装部署系统")`→证据（`[1] 安装步骤 PostgreSQL16/pgvector/SpringBoot8080`）返回→下游 END。8 events 全 EXECUTION_COMPLETED。**抓出 1 bug 修**：sidecar `RuntimeNodeCallbackResponse` 的 `selectedSkillIds`/`stepOutputs`（SKILL 专用）对 RETRIEVAL/AGENT 回调为 null → pydantic `list_type` 校验失败 → EXECUTION_FAILED；加 `@field_validator(before)` null→[]。
-- ⏭️ **下一步**：提交 git（V12–V28 + 全部本次改动，部署前硬门）/ answer_cache(B) / 前端检索节点 UI / 记忆冲突 judge 准确率调优（Phase1 gap）。
+- ✅ **answer_cache(B) 完成（2026-06-21，BUILD SUCCESS + 冒烟绿）**：阶段4-B 落地。语义答案缓存接进 retrieve()（单KB debug，存完整 answer）+ retrieveEvidence()（多KB 生产路径 CHAT/AGENT/WORKFLOW/ask，存证据 systemPrompt，不省生成）。HNSW key_embedding 近邻 + per-user 强制 SQL 过滤 + P3 permission_signature(sha256 可见集+kb_scope) + P2a evidence hash 复校。懒失效（无主动 purge：权限变→签名变 miss；doc 删/重传→hash 变 miss）。opt-in 默认关（rag.answer-cache.enabled=false）。`mvn compile` 全绿（IDE 全程 Lombok 误报，BUILD SUCCESS 证实）；运行时冒烟绿（同 query 8121ms→190ms CACHE_HIT ~43x，usage_count++，trace CACHE_HIT 落库；近义 miss 属预期）；冒烟抓出 1 trace bug 已修。详见下「answer_cache(B) 已落地」。
+- ⏭️ **下一步**：提交 git（V12–V28 + 全部本次改动，部署前硬门）/ 前端检索节点 UI / 记忆冲突 judge 准确率调优（Phase1 gap）/ answer_cache 运行时冒烟。
 - 📌 偏好：所有产出文件写项目内目录（不写 `~/.claude`），见 memory `feedback-files-in-repo`。
 - ⚠️ git：V12–V26 全 untracked（含本次 3 bug 修复 + 2 新端点 + 2 DTO/VO），部署前须提交。
 
@@ -237,6 +238,56 @@
 
 ---
 
+### answer_cache(B) 已落地（✅ 2026-06-21，`mvn compile` BUILD SUCCESS + 冒烟绿）
+
+范围 = 阶段4-B：跨会话语义答案缓存（v6 §8.9a `rag_answer_cache` 表 V17 已建好，Java 侧补齐）。opt-in 默认关，开 → 重复/近义 query 短路检索。**接进两个检索入口**（用户选 C）：
+
+- `retrieve()`（单KB debug 端点 `/api/knowledge/retrieve`，生成 answer）：step2 命中 → 跳过 step3-8 + 生成，回放缓存 answer；SUPPORTED 后写缓存（answer 列填 JSON{answer,citations,injectedIndexes}）。
+- `retrieveEvidence()`（多KB，CHAT/AGENT/WORKFLOW/ask 生产路径，不生成）：step2 命中 → 跳过 step3-7 检索，回放缓存证据 systemPrompt；SUPPORTED 后写缓存（answer 列填 JSON{systemPrompt,citations,injectedIndexes}，answer 字段空）。**不省生成**（调用方按 persona 重新流式生成，正确——答案因人而异；仅检索段 ~3s + 1 次 embed 计费被缓存跳过）。
+
+**新增文件（6）：**
+- `knowledge/config/AnswerCacheProperties.java` — `@Component @ConfigurationProperties("rag.answer-cache")`：enabled=false(opt-in)/simThreshold=0.90/topN=5/ttlDays=7。镜像 VisibilityCacheProperties。
+- `knowledge/entity/RagAnswerCache.java` — 非 BaseEntity（表无 deleted/version），标量列全映射，**key_embedding halfvec 列不映射**（走自定义 SQL）。镜像 KnowledgeEmbedding。
+- `knowledge/dto/CacheCandidateRow.java` — HNSW 近邻检索结果行（id/queryCanonical/cosineDistance/answer/provenanceNodeIds/evidenceHashes/permissionSignature/confidence）。
+- `knowledge/dto/CachedPayload.java` — 命中 payload（answer 可空/systemPrompt 可空/citations/injectedIndexes）+ 内嵌 CitationRef{index,documentId,title,nodeId}。
+- `knowledge/mapper/RagAnswerCacheMapper.java` — `searchCandidates`（HNSW `<=>` + `WHERE scope_user_id=? AND status='ACTIVE'` per-user 强制）/ `insert`（`::halfvec`，无 ON CONFLICT，重复行靠 decay 清）/ `bumpUsage`。
+- `knowledge/service/internal/AnswerCacheService.java` — 核心：`permissionSignature(List<KbScope>)`=HashUtil.sha256(canonical 可见集+kb_scope)；`lookup(qHalf,userId,sig)` HNSW 近邻→sim≥threshold→P3 签名比对→P2a reverifyNode 逐条 hash 复校→bumpUsage+反序列化 answer 列；`store(...)` 组装实体+decay_at+insert（gate+swallow error，缓存写失败不阻断检索）。`KbScope{kbId,allDocs,docIds}` 值对象。
+
+**修改（2 代码 + 1 yml）：**
+- `RagRetrievalService.java`：注入 AnswerCacheService + AnswerCacheProperties。
+  - retrieve()：step2 插入（qHalf 后、step3 前，命中→trace `CACHE_HIT`+buildVo 回放+return）+ SUPPORTED 后 store（abstain 不写，A2）。
+  - retrieveEvidence()：**重构**——per-kb step1（canRead+step1VisibleSet）从循环上提成 `List<KbScopeCtx>`（单次算清，循环复用 vs，行为不变：bm25Fallback/B3/A2/I3 全保留）→ step2 lookup（命中→writeTraceMerged `CACHE_HIT`+回放 EvidenceResult）→ 循环跑 step3/5/6 → SUPPORTED 后 store。
+  - 新增 verdict `"CACHE_HIT"`（trace 列自由 String，无 schema 改）+ `KbScopeCtx` record + `toCitationVOs`/`toCitationRefs` 转换。
+- `application.yml`：`rag.answer-cache: {enabled:false, sim-threshold:0.90, top-n:5, ttl-days:7}`（镜像 visibility-cache 块）。
+
+**校验链（懒失效，无主动 purge）：**
+- **P3 permission_signature**：sha256(per-kb visible 全集 doc-id 或 ALL，按 kbId 排序)。grant/revoke 改可见集 → 签名变 → 旧缓存签名不匹配 → 自动 miss。
+- **P2a evidence hash 复校**：命中候选 provenance node 经 `reverifyNode` 取现 content_hash，逐一比对该缓存 evidence_hashes。doc 删（CASCADE 节点删→null）/重传（新 content_hash）→ 失配 → miss。
+- **P2b（doc_id⊆visible_set）冗余**：P3 签名对完整可见集做无损 sha256，签名匹配即可见集 byte-identical → 缓存时可见的 evidence doc 必仍可见，P2b 由 P3 蕴含，不单列（省去 node doc_id 查询）。
+- **per-user 强制**：searchCandidates SQL 恒带 `scope_user_id=?`，HNSW 跨用户近邻被 WHERE 滤掉，跨用户永不命中。
+
+**复用（零新增读 SQL 除 searchCandidates）：** `HashUtil.sha256`（permission_signature）/ `RagRetrievalQueryMapper.reverifyNode`（P2a）/ `HalfVecUtil`+`LlmGateway.embed`（query embedding，B4 单次复用，命中也不重嵌）/ `VisibilitySetService`（可见集，Redis 缓存）。`VisibilityInvalidationEvent` **不挂钩**（listener 硬绑 `vis:` 命名空间，且 P2/P3 已覆盖其 grant/revoke/delete 触发场景）。
+
+**Phase1 偏离/已知 gap：**
+- retrieveEvidence 不省生成（CHAT/AGENT/WORKFLOW 按 persona 重新流式生成）。
+- stale 行清理：`decay_at` 写入但无 worker 扫除（留阶段7 ReconciliationJob）。
+- store 不查近义已有行直接 insert（重复语义行靠 decay 清，YAGNI）。
+- `doc_version_set` 列 unused（P2a hash 已覆盖内容变更）。
+- simThreshold=0.90 保守（防假命中返错答案）；doubao abs sim 偏低，近义命中可能偏严，可调。
+- 单测（P2 跨用户不命中、doc 编辑逐条 miss、P3 签名变更）统一留阶段7。
+
+**冒烟已验（✅ 2026-06-21，KB1 smoke_doc，admin JWT，yml `enabled:true`）：**
+- **同 query CACHE_HIT**：`如何安装部署系统` 首查 SUPPORTED 8121ms（存 answer+citations+injectedIndexes，sig=549b896f…，provenance nodes=[2] hashes=[f017f936…]，usage_count=0，decay_at=7天后）→ 同 query 再查 **CACHE_HIT 190ms**（~43x，0 LLM/embed 计费），usage_count→1→2，trace `CACHE_HIT` 落库 `l2_lexical_fallback=f`。
+- **近义 query miss（预期）**：`系统安装部署步骤` 4564ms SUPPORTED（sim<0.90 保守阈，doubao abs sim 偏低故近义难达阈，属预期非 bug；调参点）。
+- psql 实测：`rag_answer_cache` 行 `answer` 列 JSON = `{answer, citations:[{index:1,docId:2,title:安装步骤,nodeId:2}], injectedIndexes:[1]}`；permission_signature 64 hex；`scope_user_id` 强制 per-user。
+
+**冒烟抓出并修复的 1 个 bug：**
+- **CACHE_HIT trace 写入失败（`l2_lexical_fallback NOT NULL`，同旧 bug #2 同类）**：CACHE_HIT 路径在 step6 前 short-circuit → `trace.l2LexicalFallback` 未设 → null 违 `NOT NULL DEFAULT FALSE` → writeTrace 静默丢（catch 吞错）。retrieveEvidence 多 KB 同病。**修**：两处 CACHE_HIT path 写 trace 前补 `trace.setL2LexicalFallback(false)`。
+
+**环境还原：** yml `enabled:false`（opt-in 默认关）+ backend 重启（cache off）+ `DELETE FROM rag_answer_cache`（2 测试行清）+ 冒烟 3 trace 清。
+
+---
+
 ### B1 修复 + 阶段5 已落地（✅ 2026-06-20，`mvn compile` BUILD SUCCESS，冒烟待跑）
 
 范围 = RAG 接进 Chat/Agent/Workflow 三模式 + 修 canRead 权限 gap（B1）。
@@ -359,7 +410,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | 3 | `RagRetrievalService` 完整 8 步（核心）+ 不变式 | ✅ 完成（2026-06-19，冒烟全绿） |
-| 4 | 权限可见集（Redis，USER+ROLE+DEPT 三层并集）+ answer_cache（per-user） | 🟡 可见集 ✅（4-A，2026-06-19）；answer_cache(B) 待做 |
+| 4 | 权限可见集（Redis，USER+ROLE+DEPT 三层并集）+ answer_cache（per-user） | ✅ 可见集（4-A，2026-06-19）+ answer_cache(B)（2026-06-21，BUILD SUCCESS + 冒烟绿） |
 | 5 | Chat/Agent/Workflow 集成（KB 绑定 scope，P4 求交） | ✅ 完成（2026-06-20，BUILD SUCCESS）；冒烟 retrieve/ask/CHAT/AGENT 绿 + 3 bug 已修；WORKFLOW(M5) 待跑 |
 | 6 | 前端 `/knowledge` 页 + 检索调试面板 | 未开始（后端 `/retrieval-logs` + `/memories` 端点已就绪可对接） |
 | 7 | 一致性对账 + 失效链路 + **全部单测/集成测收尾** + Phase1 验收 + E2E | 未开始 |
