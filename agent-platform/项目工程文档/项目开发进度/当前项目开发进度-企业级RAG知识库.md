@@ -18,7 +18,8 @@
 - ✅ **运行时冒烟（部分）+ 3 bug 修复 + 记忆/trace 端点 完成（2026-06-20，BUILD SUCCESS + 冒烟绿）**：起 backend+sidecar+frontend，retrieve/ask/CHAT(M1/M2/M3)/AGENT(M4) 全 PASS。冒烟抓出 3 bug 全修：①CHAT kbIds 不落库→RAG 不可达 ②retrieveEvidence trace `l2_lexical_fallback NOT NULL` 静默丢（/ask 同病）③Agent.config jsonb 写失败（setRagEnabled 500）。新增 `/api/chat/memories`（查/删/清空）+ `/api/knowledge/retrieval-logs`（分页查/删/按时间清理）。详见下「冒烟 + 3 bug 修复 + 记忆/trace 端点 已落地」。
 - ✅ **M6 记忆抽取实测 完成（2026-06-20，PASS）**：global ON + CHAT 发「我叫张三，28岁，后端工程师，爱用 Java」→ `extractMemoriesAsync` → `GET /api/chat/memories` 4 行新记忆（FACT name=张三/age=28/occupation=后端工程师 + PREFERENCE favorite_programming_language=Java，全 conf 1.0 source INFERRED，秒级）。负例 PASS：会话 `ragEnabled=false` 覆盖全局 → 抽取跳过（「李四 99 岁」未入库，8 轮 poll 0 新行）→ 门控正确。环境已还原（4 记忆清空 + toggle OFF）。
 - ✅ **个人记忆冲突解决 完成（2026-06-21，BUILD SUCCESS + 冒烟全绿）**：embed 聚类分块 + LLM 语义冲突判定 + 会话锁交互式解决（用户 NL 决定保留哪条；无关/超时→FLAGGED 共存可见）。V27（user_memories 加 block_label/embedding/conflict_id + memory_conflicts 表）+ V28（删 V6 unique(user_id,key) 供冲突共存）。2 新端点（`GET /memories/conflicts` + `PUT .../resolve`）。冒烟 3 场景全通（KEEP_NEW 同会话 / FLAGGED 共存 / resolve 端点）。**7 个 dev→runtime bug 全修**（mapper @Param / 列名 key→memory_key / bigint[] 字面量 / 路由 A/B / judge 强化 / 删唯一索引 / resolve PENDING vs FLAGGED 分支）。**refine**：记忆模式 ON 时冲突检测改同步（askText 同轮投递，消竞态），代价 ~20-60s/轮（gate 默认关）。设计见 `设计/后续其他功能设计/个人记忆知识库设计（含记忆冲突解决）.md`，计划+执行结果见 `项目开发进度/当前项目开发进度-个人记忆知识库（含冲突解决）.md`。
-- ⏭️ **下一步**：M5 WORKFLOW RETRIEVAL 节点（造 workflow+sidecar 回调，重型）/ 提交 git（V12–V28 + 全部本次改动，部署前硬门）/ answer_cache(B) / 前端检索节点 UI / 记忆冲突 judge 准确率调优（Phase1 gap）。
+- ✅ **M5 WORKFLOW RETRIEVAL 冒烟 完成（2026-06-21，PASS）**：造 workflow（START→RETRIEVAL→END，config kbId:1 query）+ workflow_kb_bindings[1] + rag_enabled=true，`POST /api/workflows/{id}/run` → Java(gateway=sidecar)→sidecar LangGraph→RETRIEVAL 回调 Java `/callbacks/nodes/execute`→`retrieveEvidence(KB1,"如何安装部署系统")`→证据（`[1] 安装步骤 PostgreSQL16/pgvector/SpringBoot8080`）返回→下游 END。8 events 全 EXECUTION_COMPLETED。**抓出 1 bug 修**：sidecar `RuntimeNodeCallbackResponse` 的 `selectedSkillIds`/`stepOutputs`（SKILL 专用）对 RETRIEVAL/AGENT 回调为 null → pydantic `list_type` 校验失败 → EXECUTION_FAILED；加 `@field_validator(before)` null→[]。
+- ⏭️ **下一步**：提交 git（V12–V28 + 全部本次改动，部署前硬门）/ answer_cache(B) / 前端检索节点 UI / 记忆冲突 judge 准确率调优（Phase1 gap）。
 - 📌 偏好：所有产出文件写项目内目录（不写 `~/.claude`），见 memory `feedback-files-in-repo`。
 - ⚠️ git：V12–V26 全 untracked（含本次 3 bug 修复 + 2 新端点 + 2 DTO/VO），部署前须提交。
 
@@ -383,6 +384,6 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 ## 六、待办（非阶段任务）
 
 - [ ] **V12–V26 + 本次改动提交 git**（当前全 untracked；含 3 bug 修复 + `/api/chat/memories` + `/api/knowledge/retrieval-logs` + DTO/VO）。部署前必须。
-- [ ] **M5 WORKFLOW 冒烟**：造含 RETRIEVAL 节点 workflow def + workflow.rag_enabled + workflow_kb_bindings + sidecar 回调往返。
+- [x] **M5 WORKFLOW 冒烟（✅ 2026-06-21 PASS）**：START→RETRIEVAL→END workflow + bind KB1 + rag_enabled → run → RETRIEVAL 回调 retrieveEvidence 返证据 `[1]` → EXECUTION_COMPLETED。修 sidecar callback response null→[] 校验。
 - [x] **M6 记忆抽取实测（✅ 2026-06-20 PASS）**：global ON + CHAT msg → 4 行新记忆（name/age/occupation/favorite_language，conf 1.0 INFERRED）；会话 `ragEnabled=false` 负例→0 新行（门控正确）。环境已还原。
 - [ ] 部署目标 WinServer 2019 前置条件已文档化：`项目工程文档/WinServer2019部署前置条件.md`。
