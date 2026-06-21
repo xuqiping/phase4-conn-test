@@ -2,7 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { chatApi } from '@/api/chat'
 import type { ChatSession, ChatMessage, ChatResponse } from '@/api/chat'
-import { getStorage, STORAGE_KEYS } from '@/utils/storage'
+import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+
+const DEFAULT_CHAT_MODEL = 'doubao-seed-2.0-code'
+const DEFAULT_CHAT_TARGET = 'none'
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<ChatSession[]>([])
@@ -13,7 +16,12 @@ export const useChatStore = defineStore('chat', () => {
   const streamingContent = ref('')
   const streamingThinking = ref('')
   const wsConnected = ref(false)
-  const selectedModel = ref<string | null>('doubao-seed-2.0-code')
+  const selectedModel = ref<string | null>(
+    getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_MODEL) || DEFAULT_CHAT_MODEL
+  )
+  const selectedTarget = ref<string>(
+    getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_TARGET) || DEFAULT_CHAT_TARGET
+  )
 
   let ws: WebSocket | null = null
 
@@ -35,6 +43,27 @@ export const useChatStore = defineStore('chat', () => {
   const currentSession = computed(() =>
     sessions.value.find(s => s.id === currentSessionId.value) ?? null
   )
+
+  const visibleTargetValue = computed(() => {
+    const session = currentSession.value
+    if (session?.agentId) return `agent:${session.agentId}`
+    if (session?.workflowId) return `workflow:${session.workflowId}`
+    if (currentSessionId.value) return DEFAULT_CHAT_TARGET
+    return selectedTarget.value
+  })
+
+  function resolveTargetPayload(targetValue = selectedTarget.value) {
+    const [type, rawId] = targetValue.split(':')
+    const id = Number(rawId)
+    if (!Number.isFinite(id)) return {}
+    if (type === 'agent') return { agentId: id }
+    if (type === 'workflow') return { workflowId: id }
+    return {}
+  }
+
+  function resolveSelectedTargetPayload() {
+    return resolveTargetPayload()
+  }
 
   async function fetchSessions() {
     loading.value = true
@@ -66,7 +95,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // REST send (non-streaming fallback)
-  async function sendMessage(content: string, agentId?: number, workflowId?: number) {
+  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean) {
     sending.value = true
     try {
       messages.value.push({
@@ -81,9 +110,17 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled })
       } else {
-        res = await chatApi.sendNewMessage({ message: content, agentId, workflowId, model: selectedModel.value ?? undefined })
+        const targetPayload = agentId || workflowId
+          ? { agentId, workflowId }
+          : resolveSelectedTargetPayload()
+        res = await chatApi.sendNewMessage({
+          message: content,
+          ...targetPayload,
+          model: selectedModel.value ?? undefined,
+          ragEnabled
+        })
       }
 
       const chatRes = res.data.data
@@ -109,7 +146,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // SSE streaming
-  async function sendStreamingMessage(content: string) {
+  async function sendStreamingMessage(content: string, ragEnabled?: boolean) {
     sending.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
@@ -127,11 +164,14 @@ export const useChatStore = defineStore('chat', () => {
       const fetchPromise = currentSessionId.value
         ? chatApi.streamMessage(currentSessionId.value, {
             message: content,
-            model: selectedModel.value ?? undefined
+            model: selectedModel.value ?? undefined,
+            ragEnabled
           })
         : chatApi.streamNewMessage({
             message: content,
-            model: selectedModel.value ?? undefined
+            ...resolveSelectedTargetPayload(),
+            model: selectedModel.value ?? undefined,
+            ragEnabled
           })
 
       // 10s timeout for initial response
@@ -145,7 +185,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!response.ok || !response.body) {
         sending.value = false
         messages.value.pop()
-        return sendMessage(content)
+        return sendMessage(content, undefined, undefined, ragEnabled)
       }
 
       const reader = response.body.getReader()
@@ -313,6 +353,37 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function setSelectedModel(model: string | null) {
+    selectedModel.value = model
+    if (model) {
+      setStorage(STORAGE_KEYS.CHAT_SELECTED_MODEL, model)
+    }
+  }
+
+  function setSelectedTarget(target: string | null) {
+    selectedTarget.value = target || DEFAULT_CHAT_TARGET
+    setStorage(STORAGE_KEYS.CHAT_SELECTED_TARGET, selectedTarget.value)
+  }
+
+  async function updateCurrentSessionTarget(target: string | null) {
+    const nextTarget = target || DEFAULT_CHAT_TARGET
+    if (!currentSessionId.value) {
+      setSelectedTarget(nextTarget)
+      return
+    }
+
+    const payload = resolveTargetPayload(nextTarget)
+    const res = await chatApi.updateSessionTarget(currentSessionId.value, payload)
+    const updatedSession = res.data.data
+    const index = sessions.value.findIndex(session => session.id === updatedSession.id)
+    if (index >= 0) {
+      sessions.value[index] = updatedSession
+    } else {
+      sessions.value.unshift(updatedSession)
+    }
+    setSelectedTarget(nextTarget)
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -324,6 +395,12 @@ export const useChatStore = defineStore('chat', () => {
     streamingThinking,
     wsConnected,
     selectedModel,
+    selectedTarget,
+    visibleTargetValue,
+    setSelectedModel,
+    setSelectedTarget,
+    updateCurrentSessionTarget,
+    resolveSelectedTargetPayload,
     fetchSessions,
     selectSession,
     deleteSession,

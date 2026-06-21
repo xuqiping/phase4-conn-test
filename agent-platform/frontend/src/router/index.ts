@@ -65,6 +65,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '工作流编辑器' }
       },
       {
+        path: 'executions',
+        name: 'ExecutionMonitor',
+        component: () => import('@/views/ExecutionMonitorView.vue'),
+        meta: { title: '执行监控' }
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),

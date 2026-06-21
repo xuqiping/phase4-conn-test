@@ -10,7 +10,9 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: 'refresh_token',
   USER_INFO: 'user_info',
   THEME: 'app_theme',
-  SIDEBAR_COLLAPSED: 'sidebar_collapsed'
+  SIDEBAR_COLLAPSED: 'sidebar_collapsed',
+  CHAT_SELECTED_MODEL: 'chat_selected_model',
+  CHAT_SELECTED_TARGET: 'chat_selected_target'
 } as const
 
 /**

@@ -2,7 +2,7 @@
   <header class="app-header">
     <!-- 左侧：折叠按钮 + 面包屑 -->
     <div class="app-header__left">
-      <button class="app-header__menu-btn" @click="$emit('toggle-sidebar')">
+      <button class="app-header__menu-btn" @click="$emit('toggleSidebar')">
         <n-icon size="20" :component="MenuOutline" />
       </button>
       <span class="app-header__page-title">{{ pageTitle }}</span>

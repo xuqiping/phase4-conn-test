@@ -3,6 +3,8 @@ import { createPinia } from 'pinia'
 import naive from 'naive-ui'
 import router from './router'
 import App from './App.vue'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
 
 // 导入全局样式（顺序很重要：变量 -> 主题 -> 全局）
 import './styles/variables.scss'

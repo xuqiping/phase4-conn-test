@@ -10,18 +10,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { NSelect } from 'naive-ui'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 
+const props = defineProps<{
+  modelValue?: string | null
+}>()
+
 const emit = defineEmits<{
+  'update:modelValue': [model: string]
   change: [model: string]
 }>()
 
 const preferredModel = 'doubao-seed-2.0-code'
-const selectedModel = ref<string | null>(preferredModel)
+const selectedModel = ref<string | null>(props.modelValue || preferredModel)
 const models = ref<AvailableModel[]>([])
+
+watch(
+  () => props.modelValue,
+  value => {
+    if (value && value !== selectedModel.value) {
+      selectedModel.value = value
+    }
+  }
+)
 
 const options = computed(() => {
   const grouped = new Map<string, { label: string; key: string; type: string; children: { label: string; value: string }[] }>()
@@ -44,10 +58,16 @@ onMounted(async () => {
     const res = await llmApi.listAvailableModels()
     models.value = res.data.data
     if (models.value.length) {
-      selectedModel.value = models.value.some(m => m.modelId === preferredModel)
+      const availableModelIds = new Set(models.value.map(m => m.modelId))
+      if (selectedModel.value && availableModelIds.has(selectedModel.value)) {
+        return
+      }
+      const nextModel = availableModelIds.has(preferredModel)
         ? preferredModel
         : models.value[0].modelId
-      emit('change', selectedModel.value)
+      selectedModel.value = nextModel
+      emit('update:modelValue', nextModel)
+      emit('change', nextModel)
     }
   } catch {
     // Silent fail — model selector is optional
@@ -55,6 +75,7 @@ onMounted(async () => {
 })
 
 function handleChange(value: string) {
+  emit('update:modelValue', value)
   emit('change', value)
 }
 </script>

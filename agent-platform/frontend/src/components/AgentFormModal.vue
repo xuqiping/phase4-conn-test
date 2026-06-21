@@ -1,5 +1,5 @@
 <template>
-  <n-modal v-model:show="visible" preset="card" :title="isEdit ? '编辑 Agent' : '新建 Agent'" style="max-width:500px">
+  <n-modal v-model:show="visible" preset="card" :title="modalTitle" style="max-width:500px">
     <n-form ref="formRef" :model="form" :rules="rules" label-placement="top">
       <n-form-item label="名称" path="name">
         <n-input v-model:value="form.name" placeholder="请输入Agent名称" />
@@ -17,7 +17,7 @@
     <template #action>
       <n-button @click="visible = false">取消</n-button>
       <n-button type="primary" :loading="saving" @click="handleSubmit">
-        {{ isEdit ? '保存' : '创建' }}
+        {{ submitText }}
       </n-button>
     </template>
   </n-modal>
@@ -32,11 +32,13 @@ import { agentApi, type AgentGroup } from '@/api/agent'
 const props = defineProps<{
   groups: AgentGroup[]
   editData?: { id: number; name: string; description: string | null; avatar: string | null; groupId: number | null } | null
+  saveMode?: 'update' | 'copy'
 }>()
 
 const emit = defineEmits<{
   (e: 'created'): void
   (e: 'updated'): void
+  (e: 'copied'): void
 }>()
 
 const message = useMessage()
@@ -45,6 +47,15 @@ const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
 
 const isEdit = computed(() => !!props.editData)
+const isCopyMode = computed(() => props.saveMode === 'copy')
+const modalTitle = computed(() => {
+  if (!isEdit.value) return '新建 Agent'
+  return isCopyMode.value ? '复制 Agent' : '编辑 Agent'
+})
+const submitText = computed(() => {
+  if (!isEdit.value) return '创建'
+  return isCopyMode.value ? '复制并保存' : '保存'
+})
 
 const form = ref({
   name: '',
@@ -73,7 +84,7 @@ watch(visible, (val) => {
   } else if (val) {
     form.value = { name: '', description: '', groupId: null, avatar: '' }
   }
-})
+}, { immediate: true })
 
 async function handleSubmit() {
   try { await formRef.value?.validate() } catch { return }
@@ -82,14 +93,21 @@ async function handleSubmit() {
   saving.value = true
   try {
     if (isEdit.value && props.editData) {
-      await agentApi.updateAgent(props.editData.id, {
+      const payload = {
         name: form.value.name,
         description: form.value.description || undefined,
         avatar: form.value.avatar || undefined,
         groupId: form.value.groupId
-      })
-      message.success('更新成功')
-      emit('updated')
+      }
+      if (isCopyMode.value) {
+        await agentApi.copyAgent(props.editData.id, payload)
+        message.success('复制成功')
+        emit('copied')
+      } else {
+        await agentApi.updateAgent(props.editData.id, payload)
+        message.success('更新成功')
+        emit('updated')
+      }
     } else {
       await agentApi.createAgent({
         name: form.value.name,
@@ -102,9 +120,13 @@ async function handleSubmit() {
     }
     visible.value = false
   } catch {
-    message.error(isEdit.value ? '更新失败' : '创建失败')
+    message.error(isEdit.value ? (isCopyMode.value ? '复制失败' : '更新失败') : '创建失败')
   } finally {
     saving.value = false
   }
 }
+
+defineExpose({
+  handleSubmit
+})
 </script>

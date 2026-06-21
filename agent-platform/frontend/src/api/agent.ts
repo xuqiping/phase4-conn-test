@@ -57,6 +57,43 @@ export interface AgentDetail {
   updatedAt: string
 }
 
+/** 当前用户对 Agent 的访问能力 */
+export interface AgentAccess {
+  agentId: number
+  canUse: boolean
+  canReadPrompt: boolean
+  canCopy: boolean
+  canManage: boolean
+}
+
+/** Agent 授权记录 */
+export interface AgentPermission {
+  id: number
+  agentId: number
+  userId: number
+  username: string | null
+  canUse: boolean
+  canReadPrompt: boolean
+  canCopy: boolean
+  updatedAt: string
+}
+
+/** 保存 Agent 授权请求 */
+export interface AgentPermissionSaveRequest {
+  userId: number
+  canUse: boolean
+  canReadPrompt: boolean
+  canCopy: boolean
+}
+
+/** 复制 Agent 请求 */
+export interface AgentCopyRequest {
+  name?: string
+  description?: string
+  avatar?: string
+  groupId?: number
+}
+
 /** 技能步骤 */
 export interface SkillStep {
   id: number
@@ -64,6 +101,24 @@ export interface SkillStep {
   name: string
   action: string | null
   config: string | null
+}
+
+/** 保存技能步骤请求 */
+export interface SkillStepSaveRequest {
+  stepOrder: number
+  name: string
+  action?: string
+  config?: string
+}
+
+/** 保存技能请求 */
+export interface SkillSaveRequest {
+  name: string
+  description?: string
+  type?: string
+  config?: string
+  sortOrder?: number
+  steps: SkillStepSaveRequest[]
 }
 
 /** 技能详情 */
@@ -108,6 +163,18 @@ export const agentApi = {
     return request.get<ApiResponse<AgentDetail>>(`/agents/${id}`)
   },
 
+  getAgentAccess(id: number) {
+    return request.get<ApiResponse<AgentAccess>>(`/agents/${id}/access`)
+  },
+
+  listAgentPermissions(id: number) {
+    return request.get<ApiResponse<AgentPermission[]>>(`/agents/${id}/permissions`)
+  },
+
+  saveAgentPermissions(id: number, data: AgentPermissionSaveRequest[]) {
+    return request.put<ApiResponse<AgentPermission[]>>(`/agents/${id}/permissions`, data)
+  },
+
   /**
    * 获取Agent的技能列表
    * GET /api/agents/{id}/skills
@@ -124,8 +191,24 @@ export const agentApi = {
     return request.get<ApiResponse<SkillDetail>>(`/skills/${id}`)
   },
 
+  createSkill(agentId: number, data: SkillSaveRequest) {
+    return request.post<ApiResponse<SkillDetail>>(`/agents/${agentId}/skills`, data)
+  },
+
+  updateSkill(id: number, data: SkillSaveRequest) {
+    return request.put<ApiResponse<SkillDetail>>(`/skills/${id}`, data)
+  },
+
+  deleteSkill(id: number) {
+    return request.delete<ApiResponse<void>>(`/skills/${id}`)
+  },
+
   createAgent(data: { name: string; description?: string; avatar?: string; groupId: number }) {
     return request.post<ApiResponse<Agent>>('/agents', data)
+  },
+
+  copyAgent(id: number, data: AgentCopyRequest) {
+    return request.post<ApiResponse<AgentDetail>>(`/agents/${id}/copy`, data)
   },
 
   updateAgent(id: number, data: { name?: string; description?: string; avatar?: string; groupId?: number }) {

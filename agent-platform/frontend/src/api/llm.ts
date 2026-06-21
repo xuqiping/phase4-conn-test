@@ -1,6 +1,8 @@
 import request from './request'
 import type { ApiResponse } from './request'
 
+export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'CHAT_EMBEDDING'
+
 export interface LlmProvider {
   id: number
   name: string
@@ -11,6 +13,8 @@ export interface LlmProvider {
   config: string | null
   status: string
   sortOrder: number
+  category: ProviderCategory
+  dim: number | null
   createdAt: string
   updatedAt: string
 }
@@ -24,6 +28,7 @@ export interface LlmProviderCreateRequest {
   models?: string
   config?: string
   sortOrder?: number
+  category?: ProviderCategory
 }
 
 export interface UserLlmProvider {
@@ -82,6 +87,11 @@ export const llmApi = {
 
   testProviderConnection(id: number) {
     return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test`)
+  },
+
+  // Embedding 专用测试（纯 embedding provider 不支持 chat，走 embed 取维度）
+  testProviderEmbedding(id: number) {
+    return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test-embed`)
   },
 
   // User: Own providers
