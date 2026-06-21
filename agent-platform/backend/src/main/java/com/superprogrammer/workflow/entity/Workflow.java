@@ -18,4 +18,7 @@ public class Workflow extends BaseEntity {
     private String status;
 
     private Long ownerId;
+
+    /** 记忆模式开关（V26，null=继承 global）。 */
+    private Boolean ragEnabled;
 }

@@ -18,6 +18,8 @@ public class ExecutionContext {
     private final List<LlmMessage> messageHistory;
     private String model;
     private Long userId;
+    /** 记忆模式开关（RagModeResolver 解析结果），供 AgentRoutingStrategy 等策略读取门控 RAG/记忆。 */
+    private boolean ragEnabled;
 
     public ExecutionContext(Long sessionId, String mode, Long agentId, Long workflowId) {
         this.sessionId = sessionId;
@@ -38,6 +40,10 @@ public class ExecutionContext {
 
     public void setUserId(Long userId) {
         this.userId = userId;
+    }
+
+    public void setRagEnabled(boolean ragEnabled) {
+        this.ragEnabled = ragEnabled;
     }
 
     public void addMessage(String role, String content) {

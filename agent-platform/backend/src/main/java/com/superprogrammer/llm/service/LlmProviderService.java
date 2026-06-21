@@ -18,26 +18,47 @@ import com.superprogrammer.llm.dto.TestConnectionResult;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class LlmProviderService {
 
+    private static final String DEFAULT_CATEGORY = "CHAT";
+    private static final Set<String> CATEGORIES = Set.of("CHAT", "EMBEDDING", "CHAT_EMBEDDING");
+
+    /** 规范化 category：合法原样返回，null/blank/非法 → CHAT（容错 warn 不抛 400）。 */
+    private String normalizeCategory(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_CATEGORY;
+        }
+        String upper = raw.trim().toUpperCase();
+        if (!CATEGORIES.contains(upper)) {
+            log.warn("非法 category={}, 回退 {}", raw, DEFAULT_CATEGORY);
+            return DEFAULT_CATEGORY;
+        }
+        return upper;
+    }
+
     private final LlmProviderMapper mapper;
     private final AesEncryptService aesEncryptService;
     private final LlmConfig llmConfig;
+    private final com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper embeddingModelVersionMapper;
 
-    public LlmProviderService(LlmProviderMapper mapper, AesEncryptService aesEncryptService, @Lazy LlmConfig llmConfig) {
+    public LlmProviderService(LlmProviderMapper mapper, AesEncryptService aesEncryptService, @Lazy LlmConfig llmConfig,
+                              com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper embeddingModelVersionMapper) {
         this.mapper = mapper;
         this.aesEncryptService = aesEncryptService;
         this.llmConfig = llmConfig;
+        this.embeddingModelVersionMapper = embeddingModelVersionMapper;
     }
 
     public LlmProviderEntity create(LlmProviderEntity entity) {
         if (entity.getApiKeyEnc() != null && !entity.getApiKeyEnc().isBlank()) {
             entity.setApiKeyEnc(aesEncryptService.encrypt(entity.getApiKeyEnc()));
         }
+        entity.setCategory(normalizeCategory(entity.getCategory()));
         mapper.insert(entity);
         llmConfig.reload();
         return entity;
@@ -59,6 +80,9 @@ public class LlmProviderService {
         if (updates.getConfig() != null) existing.setConfig(updates.getConfig());
         if (updates.getStatus() != null) existing.setStatus(updates.getStatus());
         if (updates.getSortOrder() != null) existing.setSortOrder(updates.getSortOrder());
+        if (updates.getCategory() != null && !updates.getCategory().isBlank()) {
+            existing.setCategory(normalizeCategory(updates.getCategory()));
+        }
         mapper.updateById(existing);
         llmConfig.reload();
         return existing;
@@ -76,8 +100,9 @@ public class LlmProviderService {
         LambdaQueryWrapper<LlmProviderEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(LlmProviderEntity::getDeleted, 0)
                .orderByAsc(LlmProviderEntity::getSortOrder);
+        Integer activeDim = embeddingModelVersionMapper.findActiveDimension();
         return mapper.selectList(wrapper).stream()
-                .map(this::toVO)
+                .map(e -> toVO(e, activeDim))
                 .collect(Collectors.toList());
     }
 
@@ -119,6 +144,39 @@ public class LlmProviderService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "供应商不存在");
         }
         return doTestConnection(entity, getDecryptedApiKey(providerId));
+    }
+
+    /**
+     * embedding 专用连通测试：embed("hello") 验证 endpoint/apiKey/model 路由，
+     * 返回向量维度。纯 embedding provider 不支持 chat()，须走此路径。
+     */
+    public TestConnectionResult testEmbedding(Long providerId) {
+        LlmProviderEntity entity = mapper.selectById(providerId);
+        if (entity == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "供应商不存在");
+        }
+        String model = pickFirstModel(entity);
+        if (model == null) {
+            return TestConnectionResult.fail("未配置模型列表");
+        }
+        if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
+            return TestConnectionResult.fail("未配置API端点");
+        }
+        try {
+            LlmProviderInterface provider = llmConfig.createProvider(entity, getDecryptedApiKey(providerId));
+            long start = System.currentTimeMillis();
+            float[] vec = provider.embed("hello", model);
+            long duration = System.currentTimeMillis() - start;
+            return TestConnectionResult.builder()
+                    .success(true)
+                    .message("连接成功 (维度 " + vec.length + ")")
+                    .model(model)
+                    .durationMs(duration)
+                    .build();
+        } catch (Exception e) {
+            log.warn("embedding 连通测试失败 [provider={}]: {}", entity.getName(), e.getMessage());
+            return TestConnectionResult.fail(extractRootMessage(e));
+        }
     }
 
     /**
@@ -178,6 +236,10 @@ public class LlmProviderService {
     }
 
     private LlmProviderVO toVO(LlmProviderEntity entity) {
+        return toVO(entity, null);
+    }
+
+    private LlmProviderVO toVO(LlmProviderEntity entity, Integer activeEmbeddingDim) {
         return LlmProviderVO.builder()
                 .id(entity.getId())
                 .name(entity.getName())
@@ -188,6 +250,8 @@ public class LlmProviderService {
                 .config(entity.getConfig())
                 .status(entity.getStatus())
                 .sortOrder(entity.getSortOrder())
+                .category(entity.getCategory())
+                .dim("EMBEDDING".equals(entity.getCategory()) ? activeEmbeddingDim : null)
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();

@@ -73,3 +73,20 @@ logging:
 # Agent Markdown数据目录（可选，配置后启用Markdown同步功能）
 agent:
   data-path: ${AGENT_DATA_PATH:}
+
+runtime:
+  gateway:
+    mode: sidecar
+    sidecar-base-url: http://localhost:8090
+    java-callback-base-url: http://localhost:8080
+
+rag:
+  visibility-cache:
+    enabled: true
+    ttl-ms: 1800000
+    scan-count: 100
+  answer-cache:
+    enabled: false
+    sim-threshold: 0.90
+    top-n: 5
+    ttl-days: 7

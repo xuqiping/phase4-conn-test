@@ -11,6 +11,9 @@ import com.superprogrammer.chat.mapper.ChatMessageMapper;
 import com.superprogrammer.chat.mapper.ChatSessionMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.engine.OrchestrationEngine;
+import com.superprogrammer.runtime.dto.ExecutionEvent;
+import com.superprogrammer.runtime.service.RuntimeExecutionService;
+import com.superprogrammer.workflow.entity.Workflow;
 import com.superprogrammer.workflow.mapper.WorkflowMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,6 +38,8 @@ class ChatSessionServiceTest {
     @Mock private WorkflowMapper workflowMapper;
     @Mock private OrchestrationEngine orchestrationEngine;
     @Mock private MemoryService memoryService;
+    @Mock private ChatTargetService chatTargetService;
+    @Mock private RuntimeExecutionService runtimeExecutionService;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
@@ -84,6 +90,7 @@ class ChatSessionServiceTest {
 
         assertEquals("AGENT", vo.getMode());
         assertEquals("CodeBot", vo.getAgentName());
+        verify(chatTargetService).validateTarget(100L, 10L, null);
     }
 
     @Test
@@ -99,6 +106,21 @@ class ChatSessionServiceTest {
         SessionVO vo = chatSessionService.createSession(100L, request);
 
         assertEquals("WORKFLOW", vo.getMode());
+        verify(chatTargetService).validateTarget(100L, null, 5L);
+    }
+
+    @Test
+    void createSession_rejectsBothAgentAndWorkflow() {
+        doThrow(new BusinessException(com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "不能同时选择智能体和工作流"))
+                .when(chatTargetService).validateTarget(100L, 10L, 5L);
+
+        ChatRequest request = new ChatRequest();
+        request.setMessage("Run both");
+        request.setAgentId(10L);
+        request.setWorkflowId(5L);
+
+        assertThrows(BusinessException.class, () -> chatSessionService.createSession(100L, request));
+        verify(sessionMapper, never()).insert(any(ChatSession.class));
     }
 
     @Test
@@ -142,6 +164,30 @@ class ChatSessionServiceTest {
     void getSession_wrongUser_throws() {
         when(sessionMapper.selectById(1L)).thenReturn(testSession);
         assertThrows(BusinessException.class, () -> chatSessionService.getSession(999L, 1L));
+    }
+
+    @Test
+    void updateSessionTarget_changesExistingSessionWorkflow() {
+        Workflow workflow = new Workflow();
+        workflow.setId(8L);
+        workflow.setName("New Workflow");
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(workflowMapper.selectById(8L)).thenReturn(workflow);
+
+        ChatRequest request = new ChatRequest();
+        request.setWorkflowId(8L);
+
+        SessionVO vo = chatSessionService.updateSessionTarget(100L, 1L, request);
+
+        assertEquals("WORKFLOW", vo.getMode());
+        assertEquals(8L, vo.getWorkflowId());
+        assertEquals("New Workflow", vo.getWorkflowName());
+        verify(chatTargetService).validateTarget(100L, null, 8L);
+        verify(sessionMapper).updateById(argThat(session ->
+                session.getId().equals(1L)
+                        && "WORKFLOW".equals(session.getMode())
+                        && session.getWorkflowId().equals(8L)
+                        && session.getAgentId() == null));
     }
 
     @Test
@@ -199,5 +245,62 @@ class ChatSessionServiceTest {
         ChatResponse response = chatSessionService.sendMessage(100L, request);
 
         assertEquals("Response", response.getContent());
+    }
+
+    @Test
+    void sendMessageStream_workflowStreamsRuntimeThinkingAndFinalOutput() {
+        ChatSession workflowSession = new ChatSession();
+        workflowSession.setId(2L);
+        workflowSession.setUserId(100L);
+        workflowSession.setMode("WORKFLOW");
+        workflowSession.setWorkflowId(8L);
+        workflowSession.setStatus("ACTIVE");
+        workflowSession.setDeleted(0);
+
+        when(sessionMapper.insert(any(ChatSession.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatSession.class).setId(2L);
+            return 1;
+        });
+        when(sessionMapper.selectById(2L)).thenReturn(workflowSession);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(20L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(runtimeExecutionService.runWorkflowFromChat(8L, 100L, "你好啊"))
+                .thenReturn(reactor.core.publisher.Flux.just(
+                        ExecutionEvent.builder()
+                                .type("NODE_STARTED")
+                                .nodeId("start-1")
+                                .status("RUNNING")
+                                .input(Map.of("ccc", "你好啊"))
+                                .build(),
+                        ExecutionEvent.builder()
+                                .type("NODE_COMPLETED")
+                                .nodeId("skill-1")
+                                .status("SUCCESS")
+                                .output(Map.of("text", "最终回答"))
+                                .build(),
+                        ExecutionEvent.builder()
+                                .type("EXECUTION_COMPLETED")
+                                .status("SUCCESS")
+                                .build()));
+
+        ChatRequest request = new ChatRequest();
+        request.setMessage("你好啊");
+        request.setWorkflowId(8L);
+
+        List<com.superprogrammer.chat.dto.StreamEvent> events =
+                chatSessionService.sendMessageStream(100L, request).collectList().block();
+
+        assertNotNull(events);
+        assertTrue(events.stream().anyMatch(event ->
+                "THINKING".equals(event.getType()) && event.getContent().contains("start-1")));
+        assertTrue(events.stream().anyMatch(event ->
+                "CHUNK".equals(event.getType()) && event.getContent().equals("最终回答")));
+        verify(runtimeExecutionService).runWorkflowFromChat(8L, 100L, "你好啊");
+        verify(orchestrationEngine, never()).executeStream(any(), any());
+        verify(messageMapper, atLeastOnce()).insert(argThat(message ->
+                "ASSISTANT".equals(message.getRole()) && "最终回答".equals(message.getContent())));
     }
 }

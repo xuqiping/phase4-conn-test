@@ -29,8 +29,7 @@ class SkillExecutorTest {
 
     @BeforeEach
     void setUp() {
-        executor = new SkillExecutor(skillStepMapper);
-        executor.setHandlers(List.of(llmCallHandler));
+        executor = new SkillExecutor(skillStepMapper, List.of(llmCallHandler));
     }
 
     @Test

@@ -2,6 +2,8 @@ package com.superprogrammer.chat.dto;
 
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class ChatRequest {
 
@@ -10,4 +12,8 @@ public class ChatRequest {
     private Long agentId;
     private Long workflowId;
     private String model;
+    /** CHAT 模式检索 scope（阶段5 RAG）。 */
+    private List<Long> kbIds;
+    /** 记忆模式开关（V26，非 null 时持久化到会话；null=不改）。 */
+    private Boolean ragEnabled;
 }

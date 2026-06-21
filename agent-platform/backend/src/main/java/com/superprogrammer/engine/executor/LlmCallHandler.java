@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
@@ -31,17 +32,23 @@ public class LlmCallHandler implements StepActionHandler {
         try {
             JsonNode config = objectMapper.readTree(configJson);
 
+            String systemPromptTemplate = config.at("/systemPrompt").asText("");
             String promptTemplate = config.at("/promptTemplate").asText("");
             String model = config.at("/model").asText("doubao-seed-2.0-code");
             String outputKey = config.at("/outputKey").asText("output");
             double temperature = config.at("/temperature").asDouble(0.7);
 
+            String systemPrompt = context.getVariableStore().renderTemplate(systemPromptTemplate);
             String prompt = context.getVariableStore().renderTemplate(promptTemplate);
+            List<LlmMessage> messages = new ArrayList<>();
+            if (systemPrompt != null && !systemPrompt.isBlank()) {
+                messages.add(LlmMessage.builder().role("system").content(systemPrompt).build());
+            }
+            messages.add(LlmMessage.builder().role("user").content(prompt).build());
 
             LlmRequest request = LlmRequest.builder()
                     .model(model)
-                    .messages(List.of(
-                            LlmMessage.builder().role("user").content(prompt).build()))
+                    .messages(messages)
                     .temperature(temperature)
                     .build();
 

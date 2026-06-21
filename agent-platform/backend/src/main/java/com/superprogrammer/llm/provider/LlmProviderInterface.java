@@ -10,4 +10,7 @@ public interface LlmProviderInterface {
     LlmResponse chat(LlmRequest request);
     Flux<StreamEvent> chatStream(LlmRequest request);
     boolean supports(String model);
+
+    /** 文本向量嵌入。Phase1 供 RAG dense 召回 + answer_cache ANN。返回 float[]，维度随模型。 */
+    float[] embed(String text, String model);
 }

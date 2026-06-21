@@ -1,28 +1,40 @@
-// agent-platform/backend/src/test/java/com/superprogrammer/workflow/controller/WorkflowControllerTest.java
 package com.superprogrammer.workflow.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.auth.security.JwtUtil;
-import com.superprogrammer.workflow.dto.*;
+import com.superprogrammer.runtime.dto.ExecutionEvent;
+import com.superprogrammer.runtime.service.RuntimeExecutionService;
+import com.superprogrammer.workflow.dto.WorkflowCreateRequest;
+import com.superprogrammer.workflow.dto.WorkflowDetailVO;
+import com.superprogrammer.workflow.dto.WorkflowEdgeDTO;
+import com.superprogrammer.workflow.dto.WorkflowNodeDTO;
+import com.superprogrammer.workflow.dto.WorkflowVO;
 import com.superprogrammer.workflow.service.WorkflowService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.MediaType;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import reactor.core.publisher.Flux;
 
 import java.time.OffsetDateTime;
-import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -39,6 +51,9 @@ class WorkflowControllerTest {
     @MockBean
     private WorkflowService workflowService;
 
+    @MockBean
+    private RuntimeExecutionService runtimeExecutionService;
+
     @MockBean(name = "jwtUtil")
     private JwtUtil jwtUtil;
 
@@ -51,8 +66,7 @@ class WorkflowControllerTest {
                 .ownerId(1L)
                 .createdAt(OffsetDateTime.now())
                 .build();
-        when(workflowService.listWorkflows(1L))
-                .thenReturn(Arrays.asList(workflowVO));
+        when(workflowService.listWorkflows(1L)).thenReturn(List.of(workflowVO));
 
         mockMvc.perform(get("/api/workflows")
                         .header("Authorization", "Bearer test-token"))
@@ -75,8 +89,7 @@ class WorkflowControllerTest {
                 .ownerId(1L)
                 .build();
 
-        when(workflowService.createWorkflow(any(WorkflowCreateRequest.class), eq(1L)))
-                .thenReturn(result);
+        when(workflowService.createWorkflow(any(WorkflowCreateRequest.class), eq(1L))).thenReturn(result);
 
         mockMvc.perform(post("/api/workflows")
                         .header("Authorization", "Bearer test-token")
@@ -105,13 +118,13 @@ class WorkflowControllerTest {
                 .id(1L)
                 .name("测试工作流")
                 .status("DRAFT")
-                .nodes(Arrays.asList(
+                .nodes(List.of(
                         WorkflowNodeDTO.builder().nodeId("node-1").type("START").label("开始").build()
                 ))
-                .edges(Arrays.asList())
+                .edges(List.<WorkflowEdgeDTO>of())
                 .build();
 
-        when(workflowService.getWorkflowDetail(1L)).thenReturn(detailVO);
+        when(workflowService.getWorkflowDetail(eq(1L), eq(1L), anyBoolean())).thenReturn(detailVO);
 
         mockMvc.perform(get("/api/workflows/1")
                         .header("Authorization", "Bearer test-token"))
@@ -124,8 +137,8 @@ class WorkflowControllerTest {
     void updateWorkflow_success() throws Exception {
         WorkflowCreateRequest request = WorkflowCreateRequest.builder()
                 .name("更新后")
-                .nodes(Arrays.asList())
-                .edges(Arrays.asList())
+                .nodes(List.of())
+                .edges(List.of())
                 .build();
 
         WorkflowVO result = WorkflowVO.builder()
@@ -133,7 +146,7 @@ class WorkflowControllerTest {
                 .name("更新后")
                 .build();
 
-        when(workflowService.updateWorkflow(eq(1L), any(WorkflowCreateRequest.class), eq(1L)))
+        when(workflowService.updateWorkflow(eq(1L), any(WorkflowCreateRequest.class), eq(1L), anyBoolean()))
                 .thenReturn(result);
 
         mockMvc.perform(put("/api/workflows/1")
@@ -168,15 +181,36 @@ class WorkflowControllerTest {
     }
 
     @Test
+    void runWorkflow_returnsRuntimeEvents() throws Exception {
+        when(runtimeExecutionService.runWorkflow(eq(1L), eq(1L), any()))
+                .thenReturn(Flux.just(ExecutionEvent.builder()
+                        .executionId("100")
+                        .rootExecutionId("100")
+                        .nodeId("start-1")
+                        .type("NODE_COMPLETED")
+                        .status("SUCCESS")
+                        .metadata(Map.of("checkpointRef", "checkpoint-100"))
+                        .build()));
+
+        mockMvc.perform(post("/api/workflows/1/run")
+                        .header("Authorization", "Bearer test-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].executionId").value("100"))
+                .andExpect(jsonPath("$.data[0].nodeId").value("start-1"));
+    }
+
+    @Test
     void exportWorkflow_success() throws Exception {
         WorkflowDetailVO detailVO = WorkflowDetailVO.builder()
                 .id(1L)
                 .name("导出工作流")
-                .nodes(Arrays.asList())
-                .edges(Arrays.asList())
+                .nodes(List.of())
+                .edges(List.of())
                 .build();
 
-        when(workflowService.getWorkflowDetail(1L)).thenReturn(detailVO);
+        when(workflowService.getWorkflowDetail(eq(1L), eq(1L), anyBoolean())).thenReturn(detailVO);
 
         mockMvc.perform(get("/api/workflows/1/export")
                         .header("Authorization", "Bearer test-token"))
@@ -188,10 +222,10 @@ class WorkflowControllerTest {
     void importWorkflow_success() throws Exception {
         WorkflowCreateRequest request = WorkflowCreateRequest.builder()
                 .name("导入的工作流")
-                .nodes(Arrays.asList(
+                .nodes(List.of(
                         WorkflowNodeDTO.builder().nodeId("n1").type("START").build()
                 ))
-                .edges(Arrays.asList())
+                .edges(List.of())
                 .build();
 
         WorkflowVO result = WorkflowVO.builder()
@@ -199,8 +233,7 @@ class WorkflowControllerTest {
                 .name("导入的工作流")
                 .build();
 
-        when(workflowService.createWorkflow(any(WorkflowCreateRequest.class), eq(1L)))
-                .thenReturn(result);
+        when(workflowService.createWorkflow(any(WorkflowCreateRequest.class), eq(1L))).thenReturn(result);
 
         mockMvc.perform(post("/api/workflows/import")
                         .header("Authorization", "Bearer test-token")

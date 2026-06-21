@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 public class VariableStore {
 
-    private static final Pattern TEMPLATE_PATTERN = Pattern.compile("\\{\\{(\\w+)}}");
+    private static final Pattern TEMPLATE_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)?)\\s*}}");
 
     private final Map<String, String> variables = new LinkedHashMap<>();
 

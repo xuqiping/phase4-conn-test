@@ -15,4 +15,6 @@ public class LlmProviderCreateRequest {
     private String models;
     private String config;
     private Integer sortOrder;
+    /** CHAT / EMBEDDING / CHAT_EMBEDDING。空→CHAT。 */
+    private String category;
 }

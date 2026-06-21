@@ -54,6 +54,18 @@ public class LlmGateway {
         return provider.chatStream(request);
     }
 
+    public float[] embed(String text, String model) {
+        LlmProviderInterface provider = findProvider(model, null);
+        log.info("embedding 调用 model={} provider={}", model, provider.getName());
+        return provider.embed(text, model);
+    }
+
+    public float[] embed(String text, String model, Long userId) {
+        LlmProviderInterface provider = findProvider(model, userId);
+        log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), userId);
+        return provider.embed(text, model);
+    }
+
     private LlmProviderInterface findProvider(String model, Long userId) {
         // Step 1: Check user provider overrides
         if (userId != null) {

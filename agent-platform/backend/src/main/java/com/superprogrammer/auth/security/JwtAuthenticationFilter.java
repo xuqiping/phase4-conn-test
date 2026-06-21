@@ -17,6 +17,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -60,9 +61,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             List<String> permissions = authService.getUserPermissionCodes(userId);
 
             // 构建GrantedAuthority列表（包含角色和权限）
-            List<SimpleGrantedAuthority> authorities = permissions.stream()
+            List<SimpleGrantedAuthority> authorities = new ArrayList<>(permissions.stream()
                     .map(SimpleGrantedAuthority::new)
-                    .collect(Collectors.toList());
+                    .collect(Collectors.toList()));
+            if (roles != null) {
+                authorities.addAll(roles.stream()
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                        .toList());
+            }
 
             // 设置SecurityContext
             UsernamePasswordAuthenticationToken authentication =

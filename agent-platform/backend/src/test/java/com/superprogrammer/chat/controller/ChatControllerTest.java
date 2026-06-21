@@ -2,9 +2,11 @@ package com.superprogrammer.chat.controller;
 
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
+import com.superprogrammer.chat.dto.ChatTargetVO;
 import com.superprogrammer.chat.dto.SessionVO;
 import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.chat.service.ChatSessionService;
+import com.superprogrammer.chat.service.ChatTargetService;
 import com.superprogrammer.common.result.R;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 class ChatControllerTest {
 
     @Mock private ChatSessionService chatSessionService;
+    @Mock private ChatTargetService chatTargetService;
 
     @InjectMocks
     private ChatController chatController;
@@ -88,6 +91,21 @@ class ChatControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(1, response.getBody().getData().size());
+    }
+
+    @Test
+    void listTargets_returnsAvailableChatTargets() {
+        List<ChatTargetVO> targets = List.of(
+                ChatTargetVO.builder().type("NONE").targetKey("none").name("无").available(true).build(),
+                ChatTargetVO.builder().type("AGENT").targetKey("agent:10").id(10L).name("CodeBot").available(true).build());
+        when(chatTargetService.listTargets(eq(100L), any())).thenReturn(targets);
+
+        ResponseEntity<R<List<ChatTargetVO>>> response = chatController.listTargets();
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(2, response.getBody().getData().size());
+        assertEquals("none", response.getBody().getData().get(0).getTargetKey());
+        assertEquals("agent:10", response.getBody().getData().get(1).getTargetKey());
     }
 
     @Test
@@ -173,5 +191,27 @@ class ChatControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("ERROR")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("DONE")));
+    }
+
+    @Test
+    void sendMessageNewStream_preservesSecurityContextInWorkerThread() throws Exception {
+        when(chatSessionService.sendMessageStream(eq(100L), any(ChatRequest.class)))
+                .thenAnswer(inv -> SecurityContextHolder.getContext().getAuthentication() == null
+                        ? Flux.just(StreamEvent.error("missing security context"), StreamEvent.done())
+                        : Flux.just(StreamEvent.chunk("authorized"), StreamEvent.done()));
+
+        MockMvc mockMvc = standaloneSetup(chatController).build();
+
+        var mvcResult = mockMvc.perform(post("/api/chat/messages/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Hello\",\"workflowId\":8}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mockMvc.perform(asyncDispatch(mvcResult))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("authorized")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("missing security context"))));
     }
 }
