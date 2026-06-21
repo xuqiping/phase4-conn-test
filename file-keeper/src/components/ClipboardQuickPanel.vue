@@ -6,7 +6,7 @@
           ref="inputRef"
           v-model="clipboardStore.searchQuery"
           class="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-primary dark:border-dark-border dark:bg-dark-hover"
-          placeholder="搜索剪贴板历史..."
+          :placeholder="t('clipboard.quickPanelSearchPlaceholder')"
           @input="clipboardStore.searchItems"
           @keydown.down.prevent="moveSelection(1)"
           @keydown.up.prevent="moveSelection(-1)"
@@ -31,8 +31,8 @@
         </div>
 
         <div class="mt-3 flex justify-between border-t border-gray-100 pt-2 text-xs text-gray-400 dark:border-dark-border">
-          <span>Enter 粘贴 · Shift+Enter 纯文本 · Esc 关闭</span>
-          <button @click="clipboardStore.closeQuickPanel">关闭</button>
+          <span>{{ t('clipboard.quickPanelHint') }}</span>
+          <button @click="clipboardStore.closeQuickPanel">{{ t('clipboard.actions.close') }}</button>
         </div>
       </div>
     </div>
@@ -41,9 +41,11 @@
 
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import { useClipboardStore } from '../stores/clipboardStore'
 
 const clipboardStore = useClipboardStore()
+const { t } = useI18n()
 const selectedIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 

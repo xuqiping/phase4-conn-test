@@ -21,14 +21,14 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
           <span class="text-xs font-medium text-primary">{{ kindLabel }}</span>
-          <span v-if="item.cacheState === 'cached'" class="text-[11px] text-green-600">已缓存</span>
-          <span v-if="item.cacheState === 'reference_only'" class="text-[11px] text-amber-600">仅引用</span>
+          <span v-if="item.cacheState === 'cached'" class="text-[11px] text-green-600">{{ t('clipboard.cacheState.cached') }}</span>
+          <span v-if="item.cacheState === 'reference_only'" class="text-[11px] text-amber-600">{{ t('clipboard.cacheState.referenceOnly') }}</span>
         </div>
         <div class="mt-1 truncate text-sm font-medium">{{ item.title }}</div>
         <div class="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{{ item.summary }}</div>
-        <div v-if="item.note" class="mt-1 line-clamp-1 text-xs text-amber-600 dark:text-amber-300">备注：{{ item.note }}</div>
+        <div v-if="item.note" class="mt-1 line-clamp-1 text-xs text-amber-600 dark:text-amber-300">{{ t('clipboard.notePrefix') }}{{ item.note }}</div>
         <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400">
-          <span>{{ item.sourceApp?.processName || '未知来源' }}</span>
+          <span>{{ item.sourceApp?.processName || t('clipboard.unknownSource') }}</span>
           <span>{{ timeLabel }}</span>
         </div>
       </div>
@@ -41,9 +41,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { ClipboardItemSummary } from '../types/clipboard'
 
+const { t } = useI18n()
 const props = defineProps<{
   item: ClipboardItemSummary
   selected: boolean
@@ -57,19 +59,8 @@ defineEmits<{
   contextmenu: [event: MouseEvent]
 }>()
 
-const labels: Record<string, string> = {
-  text: '文本',
-  html: '富文本',
-  image: '图片',
-  file: '文件',
-  url: '链接',
-  color: '颜色',
-  mixed: '混合',
-  security_event: '安全'
-}
-
 const isHighlighted = computed(() => props.checked)
-const kindLabel = computed(() => labels[props.item.kind] ?? '未知')
+const kindLabel = computed(() => t(`clipboard.kindLabels.${props.item.kind}`) || t('clipboard.kindLabels.unknown'))
 const timeLabel = computed(() => new Date(props.item.createdAt).toLocaleString())
 const thumbnailSrc = computed(() => props.item.thumbnailPath ? convertLocalPath(props.item.thumbnailPath) : '')
 

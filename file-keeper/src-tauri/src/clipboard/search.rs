@@ -39,7 +39,10 @@ fn detect_rgb_color(input: &str) -> Option<(String, String)> {
     let r = captures.get(1)?.as_str().parse::<u8>().ok()?;
     let g = captures.get(2)?.as_str().parse::<u8>().ok()?;
     let b = captures.get(3)?.as_str().parse::<u8>().ok()?;
-    Some((format!("#{:02X}{:02X}{:02X}", r, g, b), format!("rgb({}, {}, {})", r, g, b)))
+    Some((
+        format!("#{:02X}{:02X}{:02X}", r, g, b),
+        format!("rgb({}, {}, {})", r, g, b),
+    ))
 }
 
 #[cfg(test)]
@@ -61,11 +64,17 @@ mod tests {
 
     #[test]
     fn detects_hex_color() {
-        assert_eq!(detect_color("#22c55e"), Some(("#22C55E".to_string(), "rgb(34, 197, 94)".to_string())));
+        assert_eq!(
+            detect_color("#22c55e"),
+            Some(("#22C55E".to_string(), "rgb(34, 197, 94)".to_string()))
+        );
     }
 
     #[test]
     fn detects_rgb_color() {
-        assert_eq!(detect_color("rgb(34, 197, 94)"), Some(("#22C55E".to_string(), "rgb(34, 197, 94)".to_string())));
+        assert_eq!(
+            detect_color("rgb(34, 197, 94)"),
+            Some(("#22C55E".to_string(), "rgb(34, 197, 94)".to_string()))
+        );
     }
 }

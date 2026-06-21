@@ -162,6 +162,21 @@ describe('clipboardStore', () => {
     expect(store.selectedDetail?.note).toBe('重要备注')
   })
 
+  it('merges loaded detail note back into the list item', async () => {
+    mockedApi.getClipboardItemDetail.mockResolvedValueOnce({
+      ...item('1', 'screenshot'),
+      note: 'OCR text',
+      availableFormats: ['original']
+    })
+    const store = useClipboardStore()
+    store.items = [item('1', 'screenshot')]
+
+    await store.loadDetail('1')
+
+    expect(store.selectedDetail?.note).toBe('OCR text')
+    expect(store.items[0].note).toBe('OCR text')
+  })
+
   it('clears preview when selected item is unchecked', () => {
     const store = useClipboardStore()
     store.items = [item('1', 'hello')]

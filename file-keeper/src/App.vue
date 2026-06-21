@@ -94,35 +94,65 @@
       </div>
     </transition>
 
-    <!-- 3. 主标签栏 (Files / Processes) -->
-    <div class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
-      <button
-        @click="currentTab = 'files'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-                 currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+    <!-- 3. 主标签栏 (Files / Processes / Clipboard) 和全局操作按钮 -->
+    <div class="px-6 flex items-center justify-between border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
+      <div class="flex items-center space-x-6">
+        <button
+          @click="currentTab = 'files'"
+     :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                currentTab === 'files' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+          <Folder :size="16" />
+          <span>{{ t('file.filesTab') }}</span>
+          <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+     <button
+          @click="currentTab = 'processes'"
+          :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                   currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+          <Activity :size="16" />
+          <span>{{ t('file.processesTab') }}</span>
+          <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+        <button
+          @click="currentTab = 'clipboard'"
+          :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                   currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+       <Clipboard :size="16" />
+          <span>{{ t('tabs.clipboard') }}</span>
+          <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+      </div>
+
+      <!-- 全局操作按钮 -->
+      <div class="flex items-center space-x-3">
+        <button
+          @click="toggleLocale"
+        class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
+       :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
       >
-      <Folder :size="16" />
-        <span>{{ t('file.filesTab') }}</span>
-    <div v-if="currentTab === 'files'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
-      <button
-        @click="currentTab = 'processes'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-               currentTab === 'processes' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
-    >
-        <Activity :size="16" />
-        <span>{{ t('file.processesTab') }}</span>
-        <div v-if="currentTab === 'processes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
-      <button
-        @click="currentTab = 'clipboard'"
-        :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
-               currentTab === 'clipboard' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
-      >
-        <Clipboard :size="16" />
-        <span>{{ t('tabs.clipboard') }}</span>
-        <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
-      </button>
+          <Languages :size="16" />
+          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
+        </button>
+
+        <button
+          @click="toggleTheme"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+          :title="t('file.toggleTheme')"
+        >
+          <Sun v-if="currentTheme === 'dark'" :size="18" />
+          <Moon v-else :size="18" />
+        </button>
+
+     <button
+          @click="showSettings = true"
+          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+        >
+          <Settings :size="18" />
+        </button>
+      </div>
     </div>
 
     <!-- 2. 工具栏 -->
@@ -181,30 +211,6 @@
           <span>{{ t('file.addFolder') }}</span>
         </button>
 
-        <button
-          @click="toggleLocale"
-          class="flex items-center space-x-1.5 px-3 py-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors text-sm"
-          :title="locale === 'zh-CN' ? t('common.switchToEnglish') : t('common.switchToChinese')"
-        >
-          <Languages :size="16" />
-          <span>{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
-        </button>
-
-        <button
-          @click="toggleTheme"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-          :title="t('file.toggleTheme')"
-        >
-          <Sun v-if="currentTheme === 'dark'" :size="18" />
-          <Moon v-else :size="18" />
-        </button>
-
-        <button
-          @click="showSettings = true"
-          class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
-        >
-          <Settings :size="18" />
-        </button>
       </div>
     </div>
 
@@ -707,6 +713,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { onKeyStroke } from '@vueuse/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { registerGlobalShortcut, unregisterGlobalShortcut } from './api/shortcuts'
 import {
   Search,
@@ -751,6 +758,8 @@ import { useClipboardStore } from './stores/clipboardStore'
 import { useI18n } from './composables/useI18n'
 import { openFile, showInFolder } from './api/files'
 import { findFileProcesses, closeProcess } from './api/processes'
+import { captureScreenshotRegion } from './api/screenshot'
+import { closeScreenshotOverlayWindow, openScreenshotOverlayWindow } from './api/screenshotOverlay'
 import GroupManager from './components/GroupManager.vue'
 import AddFileButton from './components/AddFileButton.vue'
 import EditFileDialog from './components/EditFileDialog.vue'
@@ -765,6 +774,7 @@ import { useSortableFiles } from './composables/useSortableFiles'
 import { useVirtualScroll } from './composables/useVirtualScroll'
 import type { FileItem } from './types/file'
 import type { ProcessInfo } from './types/process'
+import type { ScreenshotRegion } from './types/screenshot'
 
 const fileStore = useFileStore()
 const groupStore = useGroupStore()
@@ -954,6 +964,7 @@ function autofocusInput(el: any) {
 // Batch operations
 const showBatchMoveMenu = ref(false)
 const showSettings = ref(false)
+let isScreenshotOverlayOpen = false
 
 function handleBatchOpen() {
   const ids = Array.from(selectionStore.selectedIds)
@@ -1181,7 +1192,7 @@ async function closeWindow() {
   }
 }
 
-async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
+async function handleSaveSettings(settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }) {
   settingsStore.updateSettings({
     minimizeToTray: settings.minimizeToTray,
     theme: settings.theme,
@@ -1189,6 +1200,7 @@ async function handleSaveSettings(settings: { globalShortcut: string; clipboardS
 
   await updateGlobalShortcut(settings.globalShortcut)
   await updateClipboardShortcut(settings.clipboardShortcut)
+  await updateScreenshotShortcut(settings.screenshotShortcut)
 
   showSettings.value = false
 }
@@ -1196,12 +1208,16 @@ async function handleSaveSettings(settings: { globalShortcut: string; clipboardS
 // Global Shortcut Registration & Tauri DnD
 let dndUnlisten: (() => void) | null = null
 let closeRequestedUnlisten: (() => void) | null = null
+let screenshotCaptureUnlisten: UnlistenFn | null = null
+let screenshotCancelUnlisten: UnlistenFn | null = null
 let shortcutHandling = false // Prevent double-trigger
 let clipboardShortcutHandling = false
+let screenshotShortcutHandling = false
 // Tracks the shortcut currently registered with the OS. Stays null when a
 // register() call fails, so we never try to unregister a string the OS doesn't know about.
 let registeredShortcut: string | null = null
 let registeredClipboardShortcut: string | null = null
+let registeredScreenshotShortcut: string | null = null
 
 async function handleGlobalShortcut() {
   if (shortcutHandling) return
@@ -1227,6 +1243,69 @@ async function handleClipboardShortcut() {
   } finally {
     setTimeout(() => { clipboardShortcutHandling = false }, 300)
   }
+}
+
+async function handleScreenshotShortcut() {
+  if (screenshotShortcutHandling || isScreenshotOverlayOpen) {
+    console.log('[Screenshot] Shortcut blocked:', { screenshotShortcutHandling, isScreenshotOverlayOpen })
+    return
+  }
+  screenshotShortcutHandling = true
+  console.log('[Screenshot] Opening overlay window...')
+  try {
+    isScreenshotOverlayOpen = true
+    await openScreenshotOverlayWindow()
+    console.log('[Screenshot] Overlay window opened successfully')
+    screenshotShortcutHandling = false  // 成功后立即释放锁
+  } catch (error) {
+    console.error('[Screenshot] Failed to open overlay:', error)
+    isScreenshotOverlayOpen = false
+    screenshotShortcutHandling = false
+    alert(t('screenshot.captureFailed', { error: error instanceof Error ? error.message : String(error) }))
+  }
+}
+
+async function handleScreenshotCancel() {
+  isScreenshotOverlayOpen = false
+  screenshotShortcutHandling = false
+  try {
+    await closeScreenshotOverlayWindow()
+  } catch (error) {
+    // 遮罩窗口可能已被 Host 销毁，忽略 "window not found" 错误
+  }
+}
+
+async function handleScreenshotCapture(region: ScreenshotRegion) {
+  isScreenshotOverlayOpen = false
+  screenshotShortcutHandling = false
+  try {
+    await closeScreenshotOverlayWindow()
+  } catch (error) {
+    // 遮罩窗口可能已被 Host 销毁，忽略 "window not found" 错误
+  }
+  await nextTick()
+  let itemId: string
+  try {
+    const result = await captureScreenshotRegion(region)
+    itemId = result.itemId
+  } catch (error) {
+    alert(t('screenshot.captureFailed', { error: error instanceof Error ? error.message : String(error) }))
+    return
+  }
+
+  currentTab.value = 'clipboard'
+  clipboardStore.searchQuery = ''
+  clipboardStore.kindFilter = 'all'
+  clipboardStore.favoriteOnly = false
+  clipboardStore.datePreset = 'all'
+
+  try {
+    await clipboardStore.loadItems()
+    await clipboardStore.loadDetail(itemId)
+  } catch (error) {
+    console.warn('Failed to refresh clipboard history after screenshot capture:', error)
+  }
+  alert(t('screenshot.captureSuccess'))
 }
 
 async function updateGlobalShortcut(desired: string) {
@@ -1291,6 +1370,37 @@ async function updateClipboardShortcut(desired: string) {
   }
 }
 
+async function updateScreenshotShortcut(desired: string) {
+  if (desired === registeredScreenshotShortcut) {
+    settingsStore.updateSettings({ screenshotShortcut: desired })
+    return
+  }
+
+  if (registeredScreenshotShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredScreenshotShortcut)
+    } catch (error) {
+      console.warn(`Failed to unregister "${registeredScreenshotShortcut}", continuing:`, error)
+    }
+    registeredScreenshotShortcut = null
+  }
+
+  if (desired) {
+    try {
+      await registerGlobalShortcut(desired, handleScreenshotShortcut)
+      registeredScreenshotShortcut = desired
+      settingsStore.updateSettings({ screenshotShortcut: desired })
+      console.log(`Screenshot shortcut updated: ${desired}`)
+    } catch (error) {
+      console.error('Failed to register screenshot shortcut:', error)
+      settingsStore.updateSettings({ screenshotShortcut: desired })
+      alert(`截图快捷键注册失败（可能与系统其他程序冲突）：${error}\n\n请尝试更换其他组合。`)
+    }
+  } else {
+    settingsStore.updateSettings({ screenshotShortcut: '' })
+  }
+}
+
 onMounted(async () => {
   // Performance monitoring: record app startup time
   const startupTime = performance.now()
@@ -1302,6 +1412,15 @@ onMounted(async () => {
       await appWindow.hide()
     }
   })
+
+  screenshotCaptureUnlisten = await listen<ScreenshotRegion>('screenshot://capture', async (event) => {
+    await handleScreenshotCapture(event.payload)
+  })
+  screenshotCancelUnlisten = await listen('screenshot://cancel', async () => {
+    await handleScreenshotCancel()
+  })
+
+  await (settingsStore as { $persistReady?: Promise<void> }).$persistReady
 
   const shortcut = settingsStore.settings.globalShortcut
   if (shortcut) {
@@ -1324,6 +1443,17 @@ onMounted(async () => {
       console.log(`Clipboard shortcut registered: ${clipboardShortcut}`)
     } catch (error) {
       console.error('Failed to register clipboard shortcut on startup:', error)
+    }
+  }
+
+  const screenshotShortcut = settingsStore.settings.screenshotShortcut
+  if (screenshotShortcut) {
+    try {
+      await registerGlobalShortcut(screenshotShortcut, handleScreenshotShortcut)
+      registeredScreenshotShortcut = screenshotShortcut
+      console.log(`Screenshot shortcut registered: ${screenshotShortcut}`)
+    } catch (error) {
+      console.error('Failed to register screenshot shortcut on startup:', error)
     }
   }
 
@@ -1417,6 +1547,14 @@ onUnmounted(async () => {
     }
     registeredClipboardShortcut = null
   }
+  if (registeredScreenshotShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredScreenshotShortcut)
+    } catch (error) {
+      console.warn('Failed to unregister screenshot shortcut on unmount:', error)
+    }
+    registeredScreenshotShortcut = null
+  }
   if (dndUnlisten) {
     dndUnlisten()
     dndUnlisten = null
@@ -1424,6 +1562,14 @@ onUnmounted(async () => {
   if (closeRequestedUnlisten) {
     closeRequestedUnlisten()
     closeRequestedUnlisten = null
+  }
+  if (screenshotCaptureUnlisten) {
+    screenshotCaptureUnlisten()
+    screenshotCaptureUnlisten = null
+  }
+  if (screenshotCancelUnlisten) {
+    screenshotCancelUnlisten()
+    screenshotCancelUnlisten = null
   }
 })
 

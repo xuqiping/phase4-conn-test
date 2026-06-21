@@ -2,30 +2,30 @@
   <div class="min-h-0 flex-1 overflow-auto p-3" @click="closeContextMenu">
     <div class="sticky top-0 z-20 mb-3 flex items-center justify-between rounded-lg border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm shadow-sm">
       <span class="text-[var(--text-secondary)]">
-        <template v-if="selectedIds.size > 0">已选择 {{ selectedIds.size }} 条记录</template>
-        <template v-else>共 {{ items.length }} 条记录</template>
+        <template v-if="selectedIds.size > 0">{{ t('clipboard.stats.selectedCount', { count: selectedIds.size }) }}</template>
+        <template v-else>{{ t('clipboard.stats.totalCount', { count: items.length }) }}</template>
       </span>
       <div class="flex items-center gap-2">
         <button class="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] shadow-sm transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="items.length === 0" @click.stop="$emit('selectAll')">
-          全选
+          {{ t('clipboard.actions.selectAll') }}
         </button>
         <button class="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] shadow-sm transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="items.length === 0" @click.stop="$emit('invertSelection')">
-          反选
+          {{ t('clipboard.actions.invertSelection') }}
         </button>
         <button class="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] shadow-sm transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="selectedIds.size === 0" @click.stop="$emit('copySelected')">
-          批量复制
+          {{ t('clipboard.actions.batchCopy') }}
         </button>
         <button class="inline-flex items-center rounded-md border border-[var(--danger-subtle-border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--danger-subtle-text)] shadow-sm transition-colors hover:bg-[var(--danger-subtle-bg)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="selectedIds.size === 0" @click.stop="$emit('deleteSelected')">
-          删除选中
+          {{ t('clipboard.actions.deleteSelected') }}
         </button>
         <button class="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] shadow-sm transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50" :disabled="selectedIds.size === 0" @click.stop="$emit('clearSelection')">
-          取消选择
+          {{ t('clipboard.actions.clearSelection') }}
         </button>
       </div>
     </div>
 
     <div v-if="items.length === 0" class="flex h-full items-center justify-center text-sm text-gray-400">
-      暂无剪贴板历史
+      {{ t('clipboard.emptyState') }}
     </div>
     <div v-else class="space-y-2">
       <ClipboardItemRow
@@ -48,41 +48,41 @@
       @click.stop
     >
       <button class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]" @click="copyContextItem">
-        {{ contextMenu.kind === 'file' ? '复制文件' : '复制' }}
+        {{ contextMenu.kind === 'file' ? t('clipboard.actions.copyFile') : t('clipboard.actions.copy') }}
       </button>
       <button
         v-if="contextMenu.kind === 'url'"
         class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         @click="openContextItemUrl"
       >
-        打开链接
+        {{ t('clipboard.actions.openLink') }}
       </button>
       <button
         v-if="contextMenu.kind === 'file' || contextMenu.kind === 'image'"
         class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         @click="openContextItemFile"
       >
-        打开文件
+        {{ t('clipboard.actions.openFile') }}
       </button>
       <button
         v-if="contextMenu.kind === 'file' || contextMenu.kind === 'image'"
         class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         @click="openContextItemFolder"
       >
-        打开文件所在目录
+        {{ t('clipboard.actions.showInFolder') }}
       </button>
       <button
         v-if="contextMenu.kind === 'file'"
         class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
         @click="copyContextItemPath"
       >
-        复制文件路径
+        {{ t('clipboard.actions.copyFilePath') }}
       </button>
       <button class="block w-full px-3 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--bg-hover)]" @click="editContextItemNote">
-        编辑备注
+        {{ t('clipboard.actions.editNote') }}
       </button>
       <button class="block w-full px-3 py-2 text-left text-[var(--danger-subtle-text)] hover:bg-[var(--danger-subtle-bg)]" @click="deleteContextItem">
-        删除
+        {{ t('clipboard.actions.delete') }}
       </button>
     </div>
   </div>
@@ -90,6 +90,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import ClipboardItemRow from './ClipboardItemRow.vue'
 import type { ClipboardItemSummary } from '../types/clipboard'
 
@@ -98,6 +99,8 @@ defineProps<{
   selectedItemId: string | null
   selectedIds: Set<string>
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   select: [id: string]

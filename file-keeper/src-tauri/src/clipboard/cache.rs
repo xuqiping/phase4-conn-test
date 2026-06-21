@@ -1,5 +1,5 @@
-use std::path::Path;
 use crate::clipboard::types::FileExtensionMode;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheCandidate {
@@ -22,9 +22,10 @@ pub fn extension_allowed(path: &str, mode: &FileExtensionMode, extensions: &[Str
         .unwrap_or("")
         .to_lowercase();
 
-    let configured = extensions
-        .iter()
-        .any(|item| item.trim_start_matches('.').eq_ignore_ascii_case(&extension));
+    let configured = extensions.iter().any(|item| {
+        item.trim_start_matches('.')
+            .eq_ignore_ascii_case(&extension)
+    });
 
     match mode {
         FileExtensionMode::AllowAll => true,
@@ -42,9 +43,14 @@ pub fn within_item_size_limit(bytes: i64, limit_mb: i64) -> bool {
 
 pub fn cleanup_candidates(mut candidates: Vec<CacheCandidate>, bytes_to_free: i64) -> Vec<String> {
     candidates.sort_by(|left, right| {
-        left.is_pinned.cmp(&right.is_pinned)
+        left.is_pinned
+            .cmp(&right.is_pinned)
             .then(left.is_favorite.cmp(&right.is_favorite))
-            .then(left.last_used_at.unwrap_or(left.created_at).cmp(&right.last_used_at.unwrap_or(right.created_at)))
+            .then(
+                left.last_used_at
+                    .unwrap_or(left.created_at)
+                    .cmp(&right.last_used_at.unwrap_or(right.created_at)),
+            )
             .then(left.created_at.cmp(&right.created_at))
     });
 
@@ -69,19 +75,39 @@ mod tests {
 
     #[test]
     fn allows_all_extensions_when_unconfigured() {
-        assert!(extension_allowed("report.exe", &FileExtensionMode::AllowAll, &[]));
+        assert!(extension_allowed(
+            "report.exe",
+            &FileExtensionMode::AllowAll,
+            &[]
+        ));
     }
 
     #[test]
     fn allow_list_only_allows_configured_extension() {
-        assert!(extension_allowed("report.pdf", &FileExtensionMode::AllowList, &["pdf".to_string()]));
-        assert!(!extension_allowed("report.exe", &FileExtensionMode::AllowList, &["pdf".to_string()]));
+        assert!(extension_allowed(
+            "report.pdf",
+            &FileExtensionMode::AllowList,
+            &["pdf".to_string()]
+        ));
+        assert!(!extension_allowed(
+            "report.exe",
+            &FileExtensionMode::AllowList,
+            &["pdf".to_string()]
+        ));
     }
 
     #[test]
     fn block_list_blocks_configured_extension() {
-        assert!(!extension_allowed("secret.key", &FileExtensionMode::BlockList, &["key".to_string()]));
-        assert!(extension_allowed("report.docx", &FileExtensionMode::BlockList, &["key".to_string()]));
+        assert!(!extension_allowed(
+            "secret.key",
+            &FileExtensionMode::BlockList,
+            &["key".to_string()]
+        ));
+        assert!(extension_allowed(
+            "report.docx",
+            &FileExtensionMode::BlockList,
+            &["key".to_string()]
+        ));
     }
 
     #[test]
@@ -93,12 +119,43 @@ mod tests {
     #[test]
     fn cleanup_prefers_unpinned_unfavorite_oldest_unused_items() {
         let candidates = vec![
-            CacheCandidate { id: "pinned".to_string(), bytes: 10, last_used_at: None, created_at: 1, is_favorite: false, is_pinned: true },
-            CacheCandidate { id: "favorite".to_string(), bytes: 10, last_used_at: None, created_at: 2, is_favorite: true, is_pinned: false },
-            CacheCandidate { id: "new".to_string(), bytes: 10, last_used_at: Some(100), created_at: 3, is_favorite: false, is_pinned: false },
-            CacheCandidate { id: "old".to_string(), bytes: 10, last_used_at: None, created_at: 0, is_favorite: false, is_pinned: false },
+            CacheCandidate {
+                id: "pinned".to_string(),
+                bytes: 10,
+                last_used_at: None,
+                created_at: 1,
+                is_favorite: false,
+                is_pinned: true,
+            },
+            CacheCandidate {
+                id: "favorite".to_string(),
+                bytes: 10,
+                last_used_at: None,
+                created_at: 2,
+                is_favorite: true,
+                is_pinned: false,
+            },
+            CacheCandidate {
+                id: "new".to_string(),
+                bytes: 10,
+                last_used_at: Some(100),
+                created_at: 3,
+                is_favorite: false,
+                is_pinned: false,
+            },
+            CacheCandidate {
+                id: "old".to_string(),
+                bytes: 10,
+                last_used_at: None,
+                created_at: 0,
+                is_favorite: false,
+                is_pinned: false,
+            },
         ];
 
-        assert_eq!(cleanup_candidates(candidates, 20), vec!["old".to_string(), "new".to_string()]);
+        assert_eq!(
+            cleanup_candidates(candidates, 20),
+            vec!["old".to_string(), "new".to_string()]
+        );
     }
 }

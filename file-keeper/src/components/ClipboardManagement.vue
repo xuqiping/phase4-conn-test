@@ -23,7 +23,7 @@
 
     <div class="grid min-h-0 flex-1 grid-cols-[180px_minmax(320px,1fr)_360px] overflow-hidden">
       <aside class="space-y-3 border-r border-gray-200 p-3 dark:border-dark-border">
-        <h2 class="text-base font-semibold">剪贴板</h2>
+        <h2 class="text-base font-semibold">{{ t('clipboard.title') }}</h2>
         <nav class="space-y-1 text-sm">
           <button v-for="filter in filters" :key="filter.kind" class="block w-full rounded px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-dark-hover" @click="setKind(filter.kind)">
             {{ filter.label }}
@@ -32,7 +32,7 @@
         <ClipboardStorageUsage :usage="clipboardStore.storageUsage" @clear-cache="clearNonTextCache" />
         <ClipboardSecurityEvents />
         <button class="w-full rounded bg-gray-100 px-3 py-2 text-sm dark:bg-dark-hover" @click="showSettings = true">
-          剪贴板设置
+          {{ t('clipboard.settings') }}
         </button>
       </aside>
 
@@ -78,7 +78,8 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '../composables/useI18n'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { clearClipboardHistory } from '../api/clipboard'
 import { openFile, showInFolder } from '../api/files'
@@ -93,22 +94,23 @@ import type { ClipboardKind, ClipboardPasteFormat, ClipboardSettings as Clipboar
 
 const clipboardStore = useClipboardStore()
 const showSettings = ref(false)
+const { t } = useI18n()
 const copyNotice = ref<{ type: 'success' | 'error'; message: string } | null>(null)
 const noteFocusKey = ref(0)
 const noteEditing = ref(false)
 let copyNoticeTimer: ReturnType<typeof setTimeout> | null = null
 let noteEditingTimer: ReturnType<typeof setTimeout> | null = null
 
-const filters: Array<{ kind: ClipboardKind | 'all'; label: string }> = [
-  { kind: 'all', label: '全部' },
-  { kind: 'text', label: '文本' },
-  { kind: 'html', label: '富文本' },
-  { kind: 'image', label: '图片' },
-  { kind: 'file', label: '文件' },
-  { kind: 'url', label: '链接' },
-  { kind: 'color', label: '颜色' },
-  { kind: 'security_event', label: '安全事件' }
-]
+const filters = computed<Array<{ kind: ClipboardKind | 'all'; label: string }>>(() => [
+  { kind: 'all', label: t('clipboard.kindLabels.all') },
+  { kind: 'text', label: t('clipboard.kindLabels.text') },
+  { kind: 'html', label: t('clipboard.kindLabels.html') },
+  { kind: 'image', label: t('clipboard.kindLabels.image') },
+  { kind: 'file', label: t('clipboard.kindLabels.file') },
+  { kind: 'url', label: t('clipboard.kindLabels.url') },
+  { kind: 'color', label: t('clipboard.kindLabels.color') },
+  { kind: 'security_event', label: t('clipboard.kindLabels.security_event') }
+])
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
@@ -169,9 +171,9 @@ function copyErrorMessage(err: unknown) {
 async function copySingleItem(id: string, format: ClipboardPasteFormat = 'original') {
   try {
     await clipboardStore.copyItem(id, format)
-    showCopyNotice('success', '已复制到剪贴板')
+    showCopyNotice('success', t('clipboard.notices.copied'))
   } catch (err) {
-    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.copyFailed', { error: copyErrorMessage(err) }))
   }
 }
 
@@ -180,10 +182,10 @@ async function copySelectedItems() {
   try {
     const copiedCount = await clipboardStore.copySelectedItems()
     if (copiedCount) {
-      showCopyNotice('success', `已复制 ${copiedCount} 条记录到剪贴板`)
+      showCopyNotice('success', t('clipboard.notices.copiedCount', { count: copiedCount }))
     }
   } catch (err) {
-    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.copyFailed', { error: copyErrorMessage(err) }))
   }
 }
 
@@ -192,13 +194,13 @@ async function copyContextItems(id: string) {
   try {
     if (ids.length > 1) {
       const copiedCount = await clipboardStore.copySelectedItems()
-      showCopyNotice('success', `已复制 ${copiedCount || ids.length} 条记录到剪贴板`)
+      showCopyNotice('success', t('clipboard.notices.copiedCount', { count: copiedCount || ids.length }))
     } else {
       await clipboardStore.copyItem(ids[0])
-      showCopyNotice('success', '已复制到剪贴板')
+      showCopyNotice('success', t('clipboard.notices.copied'))
     }
   } catch (err) {
-    showCopyNotice('error', `复制失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.copyFailed', { error: copyErrorMessage(err) }))
   }
 }
 
@@ -211,13 +213,13 @@ async function openItemUrl(id: string) {
     const detail = await clipboardStore.loadDetail(id)
     const url = detail.url || detail.text || detail.summary || detail.title
     if (!/^https?:\/\//i.test(url)) {
-      showCopyNotice('error', '无法打开：链接格式不正确')
+      showCopyNotice('error', t('clipboard.notices.invalidLink'))
       return
     }
     await openUrl(url)
-    showCopyNotice('success', '已打开链接')
+    showCopyNotice('success', t('clipboard.notices.linkOpened'))
   } catch (err) {
-    showCopyNotice('error', `打开链接失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.openLinkFailed', { error: copyErrorMessage(err) }))
   }
 }
 
@@ -226,13 +228,13 @@ async function openItemFile(id: string) {
     const detail = await clipboardStore.loadDetail(id)
     const path = firstFilePath(detail.files) || detail.imagePath
     if (!path) {
-      showCopyNotice('error', '无法打开：没有可用文件路径')
+      showCopyNotice('error', t('clipboard.notices.noFilePath'))
       return
     }
     await openFile(path)
-    showCopyNotice('success', '已打开文件')
+    showCopyNotice('success', t('clipboard.notices.fileOpened'))
   } catch (err) {
-    showCopyNotice('error', `打开文件失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.openFileFailed', { error: copyErrorMessage(err) }))
   }
 }
 
@@ -241,28 +243,28 @@ async function openItemFolder(id: string) {
     const detail = await clipboardStore.loadDetail(id)
     const path = firstFilePath(detail.files) || detail.imagePath
     if (!path) {
-      showCopyNotice('error', '无法打开目录：没有可用路径')
+      showCopyNotice('error', t('clipboard.notices.noFolderPath'))
       return
     }
     await showInFolder(path)
-    showCopyNotice('success', '已打开文件所在目录')
+    showCopyNotice('success', t('clipboard.notices.folderOpened'))
   } catch (err) {
-    showCopyNotice('error', `打开文件所在目录失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.openFolderFailed', { error: copyErrorMessage(err) }))
   }
 }
 
 async function copyItemFilePath(id: string) {
   try {
     await clipboardStore.copyItem(id, 'plain_text')
-    showCopyNotice('success', '已复制文件路径')
+    showCopyNotice('success', t('clipboard.notices.filePathCopied'))
   } catch (err) {
-    showCopyNotice('error', `复制文件路径失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.copyFilePathFailed', { error: copyErrorMessage(err) }))
   }
 }
 
 function showNoteEditor() {
   noteEditing.value = true
-  showCopyNotice('success', '已打开备注编辑')
+  showCopyNotice('success', t('clipboard.notices.noteEditorOpened'))
   if (noteEditingTimer) {
     clearTimeout(noteEditingTimer)
   }
@@ -284,16 +286,16 @@ function editItemNote(id: string) {
   focusNoteEditor()
   void detailPromise
     .then(() => focusNoteEditor())
-    .catch(err => showCopyNotice('error', `备注编辑打开失败：${copyErrorMessage(err)}`))
+    .catch(err => showCopyNotice('error', t('clipboard.notices.openNoteEditorFailed', { error: copyErrorMessage(err) })))
 }
 
 async function saveItemNote(id: string, note: string) {
   try {
     const savedNote = await clipboardStore.updateItemNote(id, note)
     noteEditing.value = false
-    showCopyNotice('success', savedNote ? '备注已保存' : '备注已清空')
+    showCopyNotice('success', savedNote ? t('clipboard.notices.noteSaved') : t('clipboard.notices.noteCleared'))
   } catch (err) {
-    showCopyNotice('error', `备注保存失败：${copyErrorMessage(err)}`)
+    showCopyNotice('error', t('clipboard.notices.noteSaveFailed', { error: copyErrorMessage(err) }))
   }
 }
 

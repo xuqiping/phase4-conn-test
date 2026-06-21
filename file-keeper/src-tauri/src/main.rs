@@ -9,7 +9,7 @@ mod utils;
 
 use commands::files::{open_file, validate_path, show_in_folder};
 use commands::processes::{find_file_processes, close_process, close_file_processes};
-use commands::process_management::{get_running_processes, close_app_process, close_app_processes, activate_app_window};
+use commands::process_management::{get_running_processes, close_app_process, close_app_processes, kill_app_process, kill_app_processes, activate_app_window};
 use commands::icons::get_file_icon;
 use commands::clipboard::{
     add_clipboard_file_for_testing,
@@ -36,6 +36,7 @@ use commands::clipboard::{
     update_clipboard_item_note,
     update_clipboard_settings,
 };
+use commands::screenshot::{capture_screenshot_region, get_screenshot_ocr_status};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -117,6 +118,8 @@ fn main() {
             get_running_processes,
         close_app_process,
             close_app_processes,
+            kill_app_process,
+            kill_app_processes,
             activate_app_window,
             start_clipboard_monitor,
             stop_clipboard_monitor,
@@ -139,7 +142,9 @@ fn main() {
             update_clipboard_settings,
             get_clipboard_storage_usage,
             rebuild_clipboard_index,
-            retry_link_preview
+            retry_link_preview,
+            capture_screenshot_region,
+            get_screenshot_ocr_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

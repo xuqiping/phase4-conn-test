@@ -37,6 +37,24 @@ export async function closeProcesses(windowHandles: number[]): Promise<CloseResu
   }
 }
 
+export async function killProcess(pid: number): Promise<void> {
+  try {
+    await invoke('kill_app_process', { pid })
+  } catch (error) {
+    console.error(`Failed to kill process with pid ${pid}:`, error)
+    throw new Error(`Failed to kill process: ${error}`)
+  }
+}
+
+export async function killProcesses(pids: number[]): Promise<CloseResult> {
+  try {
+    return await invoke<CloseResult>('kill_app_processes', { pids })
+  } catch (error) {
+    console.error('Failed to kill processes:', error)
+    throw new Error(`Failed to kill processes: ${error}`)
+  }
+}
+
 export async function activateWindow(windowHandle: number): Promise<void> {
   try {
     await invoke('activate_app_window', { windowHandle })

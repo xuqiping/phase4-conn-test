@@ -10,6 +10,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultView: 'grid',
     globalShortcut: 'CommandOrControl+Alt+K',
     clipboardShortcut: 'CommandOrControl+Shift+V',
+    screenshotShortcut: 'CommandOrControl+Shift+X',
     minimizeToTray: true,
     autoStart: false,
     language: 'zh-CN',

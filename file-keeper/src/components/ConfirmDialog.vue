@@ -4,7 +4,7 @@
       <div class="dialog-header">
         <h3 class="dialog-title">
           <AlertTriangle :size="20" />
-          {{ t('process.confirmClose') }}
+          {{ action === 'kill' ? t('process.confirmKill') : t('process.confirmClose') }}
         </h3>
         <button class="btn-close-dialog" @click="$emit('cancel')">
           <X :size="20" />
@@ -13,16 +13,25 @@
 
       <div class="dialog-body">
         <p class="warning-text">
-          {{ processes.length === 1
-            ? t('process.confirmCloseSingle', { name: processes[0].name })
-            : t('process.confirmCloseMultiple', { count: processes.length })
+          {{ action === 'kill'
+            ? t('process.confirmKillMultiple', { count: processes.length })
+            : processes.length === 1
+              ? t('process.confirmCloseSingle', { name: processes[0].name })
+              : t('process.confirmCloseMultiple', { count: processes.length })
           }}
         </p>
 
-        <div v-if="whitelistedProcesses.length > 0" class="whitelist-warning">
+        <div v-if="action === 'kill'" class="whitelist-warning whitelist-warning--danger">
        <AlertTriangle :size="16" />
           <span>
-         <strong>{{ t('process.warning') }}:</strong> {{ t('process.whitelistWarningDetail') }}
+         <strong>{{ t('process.warning') }}:</strong> {{ t('process.killDangerWarning') }}
+          </span>
+        </div>
+
+        <div v-if="whitelistedProcesses.length > 0" class="whitelist-warning" :class="{ 'whitelist-warning--danger': action === 'kill' }">
+       <AlertTriangle :size="16" />
+          <span>
+         <strong>{{ t('process.warning') }}:</strong> {{ action === 'kill' ? t('process.killWhitelistWarningDetail') : t('process.whitelistWarningDetail') }}
           </span>
         </div>
 
@@ -47,7 +56,10 @@
           {{ t('process.cancel') }}
         </button>
         <button class="btn btn-danger" @click="$emit('confirm')">
-          {{ t('process.closeCount', { count: processes.length }) }}
+          {{ action === 'kill'
+            ? t('process.killCount', { count: processes.length })
+            : t('process.closeCount', { count: processes.length })
+          }}
         </button>
       </div>
     </div>
@@ -65,9 +77,12 @@ const { t } = useI18n()
 
 interface Props {
   processes: ProcessInfo[]
+  action?: 'close' | 'kill'
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  action: 'close'
+})
 
 defineEmits<{
   confirm: []
@@ -176,6 +191,11 @@ function isWhitelisted(processName: string): boolean {
 
 .whitelist-warning strong {
   font-weight: 600;
+}
+
+.whitelist-warning--danger {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .process-list {

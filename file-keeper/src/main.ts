@@ -1,12 +1,14 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
+import ScreenshotOverlayHost from './components/ScreenshotOverlayHost.vue'
 import { createPersistPlugin } from './plugins/persistPlugin'
 
 // Import global styles
 import './styles/global.css'
 
-const app = createApp(App)
+const isScreenshotOverlayWindow = new URLSearchParams(window.location.search).has('screenshotOverlay')
+const app = createApp(isScreenshotOverlayWindow ? ScreenshotOverlayHost : App)
 const pinia = createPinia()
 
 app.use(pinia)

@@ -72,6 +72,32 @@
             </p>
           </div>
 
+          <!-- Screenshot Shortcut -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              截图快捷键
+            </label>
+            <div class="flex items-center space-x-2">
+              <input
+                data-test="screenshot-shortcut"
+                v-model="localScreenshotShortcut"
+                @keydown="handleScreenshotShortcutKeydown"
+                placeholder="按下快捷键组合..."
+                class="flex-1 px-3 py-2 bg-gray-100 dark:bg-dark-hover border border-gray-300 dark:border-dark-border rounded-md outline-none focus:border-primary text-sm"
+                readonly
+              />
+              <button
+                @click="clearScreenshotShortcut"
+                class="px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover rounded-md transition-colors"
+              >
+                清除
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              用于快速进入框选截图模式（默认 Ctrl+Shift+X）
+            </p>
+          </div>
+
           <!-- Minimize to Tray -->
           <div class="flex items-center justify-between">
         <div>
@@ -150,6 +176,7 @@
             取消
         </button>
           <button
+            data-test="save-settings"
             @click="handleSave"
             class="px-4 py-2 text-sm bg-primary hover:bg-[#369b6e] text-white rounded-md transition-colors font-medium shadow-sm shadow-primary/20"
           >
@@ -172,13 +199,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  save: [settings: { globalShortcut: string; clipboardShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
+  save: [settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
 }>()
 
 const settingsStore = useSettingsStore()
 
 const localShortcut = ref(settingsStore.settings.globalShortcut)
 const localClipboardShortcut = ref(settingsStore.settings.clipboardShortcut)
+const localScreenshotShortcut = ref(settingsStore.settings.screenshotShortcut)
 const localMinimizeToTray = ref(settingsStore.settings.minimizeToTray)
 const localTheme = ref(settingsStore.settings.theme)
 
@@ -187,6 +215,7 @@ watch(() => props.show, (newShow) => {
   if (newShow) {
     localShortcut.value = settingsStore.settings.globalShortcut
     localClipboardShortcut.value = settingsStore.settings.clipboardShortcut
+    localScreenshotShortcut.value = settingsStore.settings.screenshotShortcut
     localMinimizeToTray.value = settingsStore.settings.minimizeToTray
     localTheme.value = settingsStore.settings.theme
   }
@@ -232,6 +261,13 @@ function handleClipboardShortcutKeydown(event: KeyboardEvent) {
   }
 }
 
+function handleScreenshotShortcutKeydown(event: KeyboardEvent) {
+  const shortcut = formatShortcut(event)
+  if (shortcut) {
+    localScreenshotShortcut.value = shortcut
+  }
+}
+
 function clearShortcut() {
   localShortcut.value = ''
 }
@@ -240,10 +276,15 @@ function clearClipboardShortcut() {
   localClipboardShortcut.value = ''
 }
 
+function clearScreenshotShortcut() {
+  localScreenshotShortcut.value = ''
+}
+
 function handleSave() {
   emit('save', {
     globalShortcut: localShortcut.value,
     clipboardShortcut: localClipboardShortcut.value,
+    screenshotShortcut: localScreenshotShortcut.value,
     minimizeToTray: localMinimizeToTray.value,
     theme: localTheme.value
   })

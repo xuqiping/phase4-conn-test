@@ -211,6 +211,54 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  async function killProcess(pid: number): Promise<boolean> {
+    const windowHandlesToRemove = processes.value
+      .filter(process => process.pid === pid)
+      .map(process => process.window_handle)
+
+    if (windowHandlesToRemove.length === 0) {
+      error.value = 'Process not found'
+      return false
+    }
+
+    try {
+      await processApi.killProcess(pid)
+      processes.value = processes.value.filter(process => process.pid !== pid)
+      windowHandlesToRemove.forEach(windowHandle => selectedIds.value.delete(windowHandle))
+      return true
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err)
+      return false
+    }
+  }
+
+  async function killSelected(): Promise<{ success: number; failed: number }> {
+    const selectedProcessRows = processes.value.filter(process => selectedIds.value.has(process.window_handle))
+    const pidsToKill = Array.from(new Set(selectedProcessRows.map(process => process.pid)))
+
+    if (pidsToKill.length === 0) {
+      return { success: 0, failed: 0 }
+    }
+
+    try {
+      const result = await processApi.killProcesses(pidsToKill)
+
+      if (result.succeeded > 0) {
+        processes.value = processes.value.filter(process => !pidsToKill.includes(process.pid))
+        selectedIds.value.clear()
+      }
+
+      if (result.failed > 0) {
+        error.value = `Failed to kill ${result.failed} process(es)`
+      }
+
+      return { success: result.succeeded, failed: result.failed }
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err)
+      return { success: 0, failed: pidsToKill.length }
+    }
+  }
+
   function clearProcesses() {
     processes.value = []
     selectedIds.value.clear()
@@ -247,6 +295,8 @@ export const useProcessStore = defineStore('process', () => {
     setSort,
     closeProcess,
     closeSelected,
+    killProcess,
+    killSelected,
     clearProcesses,
     clearError
   }

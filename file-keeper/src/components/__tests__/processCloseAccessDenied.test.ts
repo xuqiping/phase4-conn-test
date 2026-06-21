@@ -49,7 +49,7 @@ describe('process close access denied feedback', () => {
     await flushPromises()
 
     expect(toast.error).toHaveBeenCalledWith(
-      '无法关闭进程 File Keeper (PID: 4242)：目标应用可能以更高权限运行。请尝试以管理员身份启动 File Keeper 后重试。'
+      '无法关闭应用 File Keeper (PID: 4242)：目标应用可能以更高权限运行。请尝试以管理员身份启动 File Keeper 后重试。'
     )
   })
 })

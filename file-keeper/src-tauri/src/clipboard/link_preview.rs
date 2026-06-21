@@ -24,7 +24,10 @@ fn extract_title(html: &str) -> Option<String> {
 }
 
 fn extract_meta_description(html: &str) -> Option<String> {
-    let re = Regex::new(r#"(?is)<meta\s+[^>]*name=[\"']description[\"'][^>]*content=[\"']([^\"']+)[\"'][^>]*>"#).unwrap();
+    let re = Regex::new(
+        r#"(?is)<meta\s+[^>]*name=[\"']description[\"'][^>]*content=[\"']([^\"']+)[\"'][^>]*>"#,
+    )
+    .unwrap();
     re.captures(html)
         .and_then(|captures| captures.get(1))
         .map(|value| clean_text(value.as_str()))
@@ -86,6 +89,9 @@ mod tests {
         "#;
         let preview = parse_preview(html);
         assert_eq!(preview.title.as_deref(), Some("Example & Title"));
-        assert_eq!(preview.description.as_deref(), Some("Text with extra spaces"));
+        assert_eq!(
+            preview.description.as_deref(),
+            Some("Text with extra spaces")
+        );
     }
 }

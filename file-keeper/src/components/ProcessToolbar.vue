@@ -61,6 +61,15 @@
         <XCircle :size="16" />
       {{ t('process.closeSelected') }} ({{ processStore.selectedCount }})
       </button>
+
+      <button
+        class="btn btn-danger btn-danger-strong"
+        :disabled="processStore.selectedCount === 0"
+        @click="handleKillSelected"
+      >
+        <XCircle :size="16" />
+      {{ t('process.killSelected') }} ({{ processStore.selectedCount }})
+      </button>
     </div>
 
     <div class="toolbar-right">
@@ -102,7 +111,8 @@ import type { useToast } from '../composables/useToast'
 const processStore = useProcessStore()
 const settingsStore = useProcessSettingsStore()
 const { t } = useI18n()
-const requestConfirmation = inject<(processes: ProcessInfo[], onConfirm: () => void) => void>('requestConfirmation')
+const requestConfirmation = inject<((processes: ProcessInfo[], onConfirm: () => void) => void) | undefined>('requestConfirmation', undefined)
+const requestKillConfirmation = inject<((processes: ProcessInfo[], onConfirm: () => void) => void) | undefined>('requestKillConfirmation', undefined)
 const toast = inject<ReturnType<typeof useToast>>('toast')
 
 const countdown = ref(0)
@@ -147,6 +157,29 @@ function handleCloseSelected() {
         toast?.error(`Failed to close ${result.failed} process(es)`)
    }
     })
+  }
+}
+
+function handleKillSelected() {
+  const selectedProcesses = processStore.selectedProcesses
+
+  const onConfirm = async () => {
+    const result = await processStore.killSelected()
+    if (result.success > 0) {
+      toast?.success(t('process.batchKillSuccess', { count: result.success }))
+    }
+    if (result.failed > 0) {
+      toast?.error(t('process.batchKillFailed', { count: result.failed }))
+    }
+  }
+
+  if (requestKillConfirmation) {
+    requestKillConfirmation(selectedProcesses, onConfirm)
+    return
+  }
+
+  if (window.confirm(t('process.confirmKillMultiple', { count: selectedProcesses.length }))) {
+    onConfirm()
   }
 }
 
@@ -274,6 +307,16 @@ onUnmounted(() => {
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-subtle-bg);
   border-color: var(--danger-subtle-border);
+}
+
+.btn-danger-strong {
+  color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+
+.btn-danger-strong:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger-color);
 }
 
 .btn-active {
