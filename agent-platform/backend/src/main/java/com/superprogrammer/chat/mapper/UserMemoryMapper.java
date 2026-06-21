@@ -47,4 +47,8 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
     /** 取同块全部 clean 成员（conflict_id IS NULL）—— 冲突判定输入。 */
     @Select("SELECT * FROM user_memories WHERE user_id=#{userId} AND block_label=#{blockLabel} AND conflict_id IS NULL")
     List<UserMemory> findCleanByBlock(@Param("userId") Long userId, @Param("blockLabel") String blockLabel);
+
+    /** 取某冲突组的全部行（FLAGGED resolve 用）。 */
+    @Select("SELECT * FROM user_memories WHERE conflict_id=#{conflictId}")
+    List<UserMemory> findByConflictId(@Param("conflictId") Long conflictId);
 }

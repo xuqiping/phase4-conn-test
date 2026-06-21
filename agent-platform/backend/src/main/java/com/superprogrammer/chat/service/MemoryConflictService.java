@@ -88,28 +88,41 @@ public class MemoryConflictService {
         }
     }
 
-    /** 执行用户决定。 */
+    /** 执行用户决定。PENDING（new 未入库）与 FLAGGED（new 已入库，旧行共存）分别处理。 */
     @Transactional
     public boolean resolve(Long userId, Long conflictId, String decision) {
         MemoryConflict c = conflictMapper.findByIdScalars(conflictId);
         if (c == null || !c.getUserId().equals(userId)) return false;
         if (!List.of("KEEP_NEW", "KEEP_OLD", "KEEP_BOTH", "DISCARD").contains(decision)) return false;
         try {
-            Map<String, Object> snap = readSnap(c.getId());
-            String halfvec = conflictMapper.getNewEmbeddingText(c.getId());
-            List<Long> ids = parseCsv(conflictMapper.getExistingIdsCsv(c.getId()));
-            switch (decision) {
-                case "KEEP_NEW" -> {
-                    UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap);
-                    memoryMapper.insertMemory(m, halfvec);
-                    hardDelete(ids);
+            List<Long> oldIds = parseCsv(conflictMapper.getExistingIdsCsv(c.getId()));
+            if ("PENDING".equals(c.getStatus())) {
+                // new 尚未入库（快照）
+                Map<String, Object> snap = readSnap(c.getId());
+                String halfvec = conflictMapper.getNewEmbeddingText(c.getId());
+                switch (decision) {
+                    case "KEEP_NEW" -> { insertSnap(c, snap, halfvec); hardDelete(oldIds); }
+                    case "KEEP_BOTH" -> insertSnap(c, snap, halfvec);   // clean
+                    case "KEEP_OLD" -> { /* 丢新，旧留 */ }
+                    case "DISCARD" -> hardDelete(oldIds);
                 }
-                case "KEEP_BOTH" -> {     // clean，不打标
-                    UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap);
-                    memoryMapper.insertMemory(m, halfvec);
+            } else {
+                // FLAGGED：new 已入库，新旧行都带 conflict_id
+                List<UserMemory> rows = memoryMapper.findByConflictId(c.getId());
+                List<Long> newIds = rows.stream().map(UserMemory::getId)
+                        .filter(id -> !oldIds.contains(id)).collect(java.util.stream.Collectors.toList());
+                switch (decision) {
+                    case "KEEP_NEW" -> { hardDelete(oldIds); memoryMapper.setConflictId(newIds, null); }
+                    case "KEEP_OLD" -> { hardDelete(newIds); memoryMapper.setConflictId(oldIds, null); }
+                    case "KEEP_BOTH" -> {   // 都留，清冲突标
+                        List<Long> all = new ArrayList<>(oldIds); all.addAll(newIds);
+                        memoryMapper.setConflictId(all, null);
+                    }
+                    case "DISCARD" -> {
+                        List<Long> all = new ArrayList<>(oldIds); all.addAll(newIds);
+                        hardDelete(all);
+                    }
                 }
-                case "KEEP_OLD" -> { /* 丢新，旧留 */ }
-                case "DISCARD" -> hardDelete(ids);
             }
             conflictMapper.updateStatus(c.getId(), "RESOLVED", decision);
             return true;
@@ -117,6 +130,11 @@ public class MemoryConflictService {
             log.warn("resolve 失败 conflictId={}: {}", conflictId, e.getMessage());
             return false;
         }
+    }
+
+    private void insertSnap(MemoryConflict c, Map<String, Object> snap, String halfvec) {
+        UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap);
+        memoryMapper.insertMemory(m, halfvec);
     }
 
     /** 列用户 FLAGGED 冲突（分组）。 */
