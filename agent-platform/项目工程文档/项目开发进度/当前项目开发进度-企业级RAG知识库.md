@@ -34,6 +34,8 @@
 - ✅ **必做收口 #3 完成（2026-06-23，vue-tsc EXIT 0）**：记忆/冲突列表 UI。ChatView 加「记忆」按钮 + 抽屉挂 `MemoryManagerPanel`（两区：我的记忆表=查/删/清空 + 记忆冲突=FLAGGED 分组候选 + KEEP_NEW/OLD/BOTH/DISCARD 解决）。api/chat.ts 加 `UserMemory`/`MemoryCandidate`/`MemoryConflict` 类型 + 5 法（list/delete/clear/listConflicts/resolve）。记忆按 current userId 隔离自服务，无需权限。详见下「八、必做收口」。
 - ✅ **必做收口 #1 完成（2026-06-23，vue-tsc EXIT 0）**：RAG 流式问答 SSE。`/knowledge` 加「RAG 问答」tab 挂 `RagAskPanel`：KB 多选 + query → `askStream` 异步生成器消费 SSE（CHUNK 追加答案 / CITATION 解析引用列表 / ERROR/DONE 收尾 / 停止=abort）。api/knowledge.ts 加 `askStream(query,kbIds,signal)` + SSE 解析（镜像 workflow runStream + chat store CHUNK 范式）。引用列表 [n] 标注 doc/node。**🎉 8 项必做收口全部完成**。
 - ✅ **8 项必做收口 全部完成（2026-06-23）**：#8 rag_memory_facts decay / #7 autoRepair REINDEX / #4 目录树端点 / #5 workflow toggle / #6 Agent/Workflow toggle / #2 检索审计表 / #3 记忆冲突列表 / #1 RAG 问答 SSE。后端 `mvn test` **294 测 0 错**（281→294，+13 新测，零回归）+ 前端 `vue-tsc --noEmit` **EXIT 0**。详见下「八、必做收口」各节 + §四「阶段6」表已无 Defer。
+- ✅ **8 项收口前端浏览器冒烟 全绿（2026-06-23，playwright-mcp）**：收口原各节标「未跑：浏览器冒烟（留后续）」的 5 项前端全部实跑验通：#1 RAG 问答 SSE（流式+[1]引用 doc2/node2）/ #2 检索审计表（trace 行+详情 JSON+删除）/ #5 workflow toggle + #6 Agent toggle（ON/DB 持久/reload 回显/OFF 全态）/ #3 记忆/冲突列表（4 记忆抽取+FLAGGED 共存+KEEP_NEW 解决）。详见下「八、必做收口」各节末尾「浏览器冒烟」段。**坑**：ChatView `ragEnabled=ref(false)` 建会话默认 OFF 门控抽取（经后端 API 带 ragEnabled=true 绕开）+ 中文 body Git Bash GBK 报错（`--data-binary @file`）。环境已还原（toggle OFF / 记忆+冲突=0 / agent4 config `{}` / wf8 NULL）。
+- ✅ **git 提交（未推送，2026-06-23）**：本次会话 5 主题 commit（阶段7 后端收口 / 测试基建 / VO+judge / 前端 / 文档），本地 ahead origin/main 6 commit。无 push（按用户要求）。
 - 📌 偏好：所有产出文件写项目内目录（不写 `~/.claude`），见 memory `feedback-files-in-repo`。
 - ✅ git：V12–V28 + answer_cache 全套已提交并推送 origin/main（2026-06-22，5 主题 commit + merge origin/main 的 file-keeper 工作，详见下「六、待办」）。
 
@@ -554,6 +556,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 - [x] **judge 调优 + 前端检索节点 UI 运行时冒烟（✅ 2026-06-22 双绿）**：见 §〇「运行时冒烟 收口」+「运行时冒烟 已落地」。冒烟期误判 2「瑕疵」，深查纠正根因 + 已修（下 2 条）。
 - [x] **修瑕疵①：WorkflowVO/DetailVO 暴露 ragEnabled（✅ 2026-06-22）**— 初判「save 清空」实为 VO 不返字段（+ 测试 curl 用错 key `ragEnabled` vs 控制器要的 `enabled`；DB 实际持久）。2 VO 加字段 + 2 builder 加 `.ragEnabled()`，复验 detail/list 返 True。前端 workflow 级 toggle UI 仍待（已知 gap）。
 - [x] **修瑕疵②：`listFlagged` 新候选 id=null（✅ 2026-06-22）**— 弃 `readSnap` 重建（丢 id）改 `findByConflictId` 取全组真实行，复验两 candidate id 非空（45/46）。
+- [x] **8 项收口前端浏览器冒烟 全绿（✅ 2026-06-23，playwright-mcp）**— 收口原各节「未跑：浏览器冒烟（留后续）」5 项前端全实跑：#1 RAG 问答 SSE / #2 检索审计表 / #5+#6 workflow+Agent toggle 全态 / #3 记忆/冲突列表（抽取+FLAGGED+KEEP_NEW 解决）。详见 §〇 速览 + §八 各节「浏览器冒烟」段。
 - [ ] 部署目标 WinServer 2019 前置条件已文档化：`项目工程文档/WinServer2019部署前置条件.md`。
 
 ---
@@ -679,7 +682,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 
 **验证：** `npx vue-tsc --noEmit` → **EXIT 0**（无类型错）。
 
-**未跑（留后续）：** 浏览器冒烟（起 backend + 前端，拖 switch 验 PUT 200 + DB rag_enabled 持久 + 重载回显），复用 playwright-mcp 套路。
+**浏览器冒烟（✅ 2026-06-23，playwright-mcp 全绿）：** workflow toggle（id=8）+ Agent toggle（id=4）各全态验通：拖 NSwitch「记忆模式」ON → DB 持久（workflow `rag_enabled=t` / agent config `{ragEnabled:true}`）+ UI 乐观更新 active → reload 页面回显仍 ON（VO/DetailVO 暴露 ragEnabled 正确）→ 再点 OFF 还原（rag_enabled=NULL / config `{}`）。PUT `/rag-enabled` body 契约 `{"enabled":...}` 确认。
 
 ### #2 前端检索审计表 UI 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
 
@@ -700,7 +703,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 
 **验证：** `npx vue-tsc --noEmit` → **EXIT 0**（修 1 处 pagination.prefix 签名：itemCount `number|undefined` → 接收 optional）。
 
-**未跑（留后续）：** 浏览器冒烟（起 backend，admin 登录→/knowledge→检索审计 tab→触发检索后验 trace 行 + 详情 JSON + 删除），复用 playwright-mcp。
+**浏览器冒烟（✅ 2026-06-23，playwright-mcp 全绿）：** admin 登录→/knowledge→检索审计 tab → trace 行 27 显（BALANCED/SUPPORTED/「如何安装部署系统」/170ms/KB[1]）→ 点详情抽屉验 trace JSON（traceId + token 预算 effectiveContextCap 6000 promptTokens 196 + 候选 L0 cosSim 0.5009 doc2 + 证据 L2 node2 citationIndex1 hash f017f936…）→ 行删（确认对话框）→ 表清空「共 0 条」。
 
 ### #3 前端记忆/冲突列表 UI 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
 
@@ -719,7 +722,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 
 **验证：** `npx vue-tsc --noEmit` → **EXIT 0**。
 
-**未跑（留后续）：** 浏览器冒烟（起 backend + 开记忆模式对话产记忆 → 点「记忆」验列表 + 冲突分组 + 解决按钮），复用 playwright-mcp。
+**浏览器冒烟（✅ 2026-06-23，playwright-mcp + 后端 API 全绿）：** 全局 toggle ON + CHAT 会话 ragEnabled=true（注：ChatView `ragEnabled=ref(false)` 建会话默认 OFF 且每次 send 写 false 门控抽取，故经后端 API `POST /sessions` 带 ragEnabled=true 产记忆）→ 发「张三 28 后端工程师 喜欢Java」→ 4 行新记忆抽取（name=张三/age=28/occupation=后端工程师/favorite_language=Java，全 conf 1.0 INFERRED，block 聚类）→ 发「更正喜欢 Python」→ conflict 11 PENDING askText 追问 → 发无关「天气」→ FLAGGED（Java+Python 同 conflict_id=11 共存）→ /chat/99 点「记忆」抽屉：我的记忆表（8 条 + ⚠冲突标记）+ 待解决冲突分组（偏好/askText/两候选）+ 4 解决按钮 → 点「保留新」(KEEP_NEW) → conflict RESOLVED + Java 删 Python(id=54) 留 + 抽屉冲突区消失双刷新。**坑**：中文 body 经 Git Bash GBK 报 UTF-8 错 → `--data-binary @file`。
 
 ### #1 前端 RAG 问答 SSE 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
 
@@ -740,7 +743,7 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 
 **验证：** `npx vue-tsc --noEmit` → **EXIT 0**。
 
-**未跑（留后续）：** 浏览器冒烟（起 backend + Ark key，/knowledge→RAG 问答→选 KB→问「如何安装部署系统」→验 CHUNK 流式 + CITATION 引用 [1] 标注），复用 playwright-mcp。
+**浏览器冒烟（✅ 2026-06-23，playwright-mcp 全绿）：** admin 登录→/knowledge→RAG 问答 tab → 选 smoke-kb（P4 求交）+ query「如何安装部署系统」→ 提问 → 流式答案返回「系统安装部署需严格遵循以下步骤[1]：1. PostgreSQL 16…2. agent_platform+pgvector…3. Flyway…4. Redis…5. Spring Boot 8080」+ 引用列表「[1] 安装步骤 doc#2·node#2」（CHUNK 追加 + CITATION 解析 + DONE 收尾全链路验通）。
 
 
 
