@@ -86,6 +86,7 @@ public class WorkflowService {
                 .ownerId(workflow.getOwnerId())
                 .nodes(nodes.stream().map(node -> toNodeDTO(node, userId, admin)).collect(Collectors.toList()))
                 .edges(edges.stream().map(this::toEdgeDTO).collect(Collectors.toList()))
+                .ragEnabled(workflow.getRagEnabled())
                 .createdAt(workflow.getCreatedAt())
                 .updatedAt(workflow.getUpdatedAt())
                 .build();
@@ -527,6 +528,7 @@ public class WorkflowService {
                 .description(workflow.getDescription())
                 .status(workflow.getStatus())
                 .ownerId(workflow.getOwnerId())
+                .ragEnabled(workflow.getRagEnabled())
                 .createdAt(workflow.getCreatedAt())
                 .updatedAt(workflow.getUpdatedAt())
                 .build();

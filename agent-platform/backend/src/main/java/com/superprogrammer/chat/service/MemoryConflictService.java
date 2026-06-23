@@ -148,19 +148,9 @@ public class MemoryConflictService {
             vo.setStatus(c.getStatus());
             vo.setAskText(c.getAskText());
             vo.setCreatedAt(c.getCreatedAt() == null ? null : c.getCreatedAt().toString());
+            // FLAGGED：新旧行均带 conflict_id 入库（见 flag()），直接查 DB 取全组真实 id（修旧版新候选 id=null）
             List<MemoryCandidateVO> cands = new ArrayList<>();
-            List<Long> ids = parseCsv(conflictMapper.getExistingIdsCsv(c.getId()));
-            if (!ids.isEmpty()) {
-                for (UserMemory m : memoryMapper.selectBatchIds(ids)) cands.add(toCand(m));
-            }
-            try {
-                Map<String, Object> snap = readSnap(c.getId());
-                MemoryCandidateVO nc = new MemoryCandidateVO();
-                nc.setMemoryKey((String) snap.get("key"));
-                nc.setMemoryValue((String) snap.get("value"));
-                nc.setCategory((String) snap.get("category"));
-                cands.add(nc);
-            } catch (Exception ignored) {}
+            for (UserMemory m : memoryMapper.findByConflictId(c.getId())) cands.add(toCand(m));
             vo.setCandidates(cands);
             out.add(vo);
         }

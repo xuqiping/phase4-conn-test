@@ -257,10 +257,9 @@ public class ChatSessionService {
         if (!ragOn || userMessage == null) return new ConflictIntercept(false, null);
         com.superprogrammer.chat.entity.MemoryConflict pending = conflictService.getActivePendingOrExpire(session.getId(), userId);
         if (pending == null) return new ConflictIntercept(false, null);
-        String routed = conflictJudge.route(pending.getAskText(), userMessage);
-        String decision = extractDecision(routed);
-        boolean isAnswer = routed != null && routed.contains("\"isAnswer\":true") && !"UNCLEAR".equals(decision);
-        if (isAnswer) {
+        com.superprogrammer.chat.service.internal.RouteResult routed = conflictJudge.route(pending.getAskText(), userMessage);
+        String decision = routed.toDecision();
+        if (routed.isAnswer() && !"UNCLEAR".equals(decision)) {
             conflictService.resolve(userId, pending.getId(), decision);
             String confirm = switch (decision) {
                 case "KEEP_NEW" -> "好的，已保留新信息，删除旧记录。";
@@ -274,16 +273,6 @@ public class ChatSessionService {
         // 无关 / UNCLEAR：flag 共存，继续正常处理本条
         conflictService.flag(pending);
         return new ConflictIntercept(false, null);
-    }
-
-    private String extractDecision(String routed) {
-        if (routed == null) return "UNCLEAR";
-        // 路由返回 keep: A=旧 / B=新 / BOTH / NONE
-        if (routed.contains("\"keep\":\"B\"")) return "KEEP_NEW";
-        if (routed.contains("\"keep\":\"A\"")) return "KEEP_OLD";
-        if (routed.contains("\"keep\":\"BOTH\"")) return "KEEP_BOTH";
-        if (routed.contains("\"keep\":\"NONE\"")) return "DISCARD";
-        return "UNCLEAR";
     }
 
     private List<ChatMessage> loadContextWindow(Long sessionId) {

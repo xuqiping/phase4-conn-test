@@ -22,6 +22,8 @@ public class WorkflowDetailVO {
     private Long ownerId;
     private List<WorkflowNodeDTO> nodes;
     private List<WorkflowEdgeDTO> edges;
+    /** 记忆模式开关（V26，null=继承 global）。 */
+    private Boolean ragEnabled;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

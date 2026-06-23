@@ -19,6 +19,8 @@ public class WorkflowVO {
     private String description;
     private String status;
     private Long ownerId;
+    /** 记忆模式开关（V26，null=继承 global）。 */
+    private Boolean ragEnabled;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }
