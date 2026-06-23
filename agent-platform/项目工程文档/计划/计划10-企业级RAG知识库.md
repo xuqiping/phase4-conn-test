@@ -176,13 +176,15 @@ V17 第 19 行 `CREATE EXTENSION IF NOT EXISTS vector`。Windows PG16 需预编�
 
 ### 阶段 6：前端知识库页（4-5 天）
 
-- [ ] `/knowledge` 路由 + `MainLayout` 侧栏项。
-- [ ] KB 管理列表/表单/权限授权弹窗。
-- [ ] 文档上传（拖拽 + 解析/索引进度轮询）。
-- [ ] 目录树（L0 摘要展开）+ 文档详情。
-- [ ] 检索调试面板（query → 候选 L0 / 证据 L2 / 引用 / trace / token 预算）。
-- [ ] RAG 问答区（SSE 流式，引用点击溯源）。
-- [ ] `api/knowledge.ts` + `stores/knowledge.ts`，复用三暗色主题。
+> 进度（2026-06-22）：**MVP 完成**（vue-tsc + playwright 浏览器冒烟绿），核心 3 项 + api/store 落地；2 项 defer。详见 `项目开发进度/当前项目开发进度-企业级RAG知识库.md`「〇」节。
+
+- [x] `/knowledge` 路由 + `MainLayout` 侧栏项。
+- [x] KB 管理列表/表单/权限授权弹窗。
+- [x] 文档上传（拖拽 + 解析/索引进度轮询）。
+- [ ] 目录树（L0 摘要展开）+ 文档详情。 — **defer**：后端无 KnowledgeNodeController/端点，需先建。
+- [x] 检索调试面板（query → 候选 L0 / 证据 L2 / 引用 / trace / token 预算）。
+- [ ] RAG 问答区（SSE 流式，引用点击溯源）。 — **defer**：需写 `/ask` SSE CITATION consumer。
+- [x] `api/knowledge.ts` + `stores/knowledge.ts`，复用三暗色主题。
 
 ### 阶段 7：一致性对账 + 失效链路 + Phase1 验收（2-3 天）
 

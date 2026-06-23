@@ -20,7 +20,20 @@
 - ✅ **个人记忆冲突解决 完成（2026-06-21，BUILD SUCCESS + 冒烟全绿）**：embed 聚类分块 + LLM 语义冲突判定 + 会话锁交互式解决（用户 NL 决定保留哪条；无关/超时→FLAGGED 共存可见）。V27（user_memories 加 block_label/embedding/conflict_id + memory_conflicts 表）+ V28（删 V6 unique(user_id,key) 供冲突共存）。2 新端点（`GET /memories/conflicts` + `PUT .../resolve`）。冒烟 3 场景全通（KEEP_NEW 同会话 / FLAGGED 共存 / resolve 端点）。**7 个 dev→runtime bug 全修**（mapper @Param / 列名 key→memory_key / bigint[] 字面量 / 路由 A/B / judge 强化 / 删唯一索引 / resolve PENDING vs FLAGGED 分支）。**refine**：记忆模式 ON 时冲突检测改同步（askText 同轮投递，消竞态），代价 ~20-60s/轮（gate 默认关）。设计见 `设计/后续其他功能设计/个人记忆知识库设计（含记忆冲突解决）.md`，计划+执行结果见 `项目开发进度/当前项目开发进度-个人记忆知识库（含冲突解决）.md`。
 - ✅ **M5 WORKFLOW RETRIEVAL 冒烟 完成（2026-06-21，PASS）**：造 workflow（START→RETRIEVAL→END，config kbId:1 query）+ workflow_kb_bindings[1] + rag_enabled=true，`POST /api/workflows/{id}/run` → Java(gateway=sidecar)→sidecar LangGraph→RETRIEVAL 回调 Java `/callbacks/nodes/execute`→`retrieveEvidence(KB1,"如何安装部署系统")`→证据（`[1] 安装步骤 PostgreSQL16/pgvector/SpringBoot8080`）返回→下游 END。8 events 全 EXECUTION_COMPLETED。**抓出 1 bug 修**：sidecar `RuntimeNodeCallbackResponse` 的 `selectedSkillIds`/`stepOutputs`（SKILL 专用）对 RETRIEVAL/AGENT 回调为 null → pydantic `list_type` 校验失败 → EXECUTION_FAILED；加 `@field_validator(before)` null→[]。
 - ✅ **answer_cache(B) 完成（2026-06-21，BUILD SUCCESS + 冒烟绿）**：阶段4-B 落地。语义答案缓存接进 retrieve()（单KB debug，存完整 answer）+ retrieveEvidence()（多KB 生产路径 CHAT/AGENT/WORKFLOW/ask，存证据 systemPrompt，不省生成）。HNSW key_embedding 近邻 + per-user 强制 SQL 过滤 + P3 permission_signature(sha256 可见集+kb_scope) + P2a evidence hash 复校。懒失效（无主动 purge：权限变→签名变 miss；doc 删/重传→hash 变 miss）。opt-in 默认关（rag.answer-cache.enabled=false）。`mvn compile` 全绿（IDE 全程 Lombok 误报，BUILD SUCCESS 证实）；运行时冒烟绿（同 query 8121ms→190ms CACHE_HIT ~43x，usage_count++，trace CACHE_HIT 落库；近义 miss 属预期）；冒烟抓出 1 trace bug 已修。详见下「answer_cache(B) 已落地」。
-- ⏭️ **下一步**：前端检索节点 UI（ComponentPalette/FlowCanvas/PropertyPanel）/ 记忆冲突 judge 准确率调优（Phase1 gap）/ answer_cache 生产路径冒烟（CHAT/AGENT 绑 KB 同义 query）/ 阶段7 单测+E2E 收尾。
+- ✅ **前端检索节点 UI 完成（2026-06-22，vue-tsc EXIT=0 + 浏览器冒烟全绿）**：工作流编辑器 RETRIEVAL 节点前端闭环（阶段5 follow-up gap 收口）。详见下「前端检索节点 UI 已落地」。
+- ✅ **记忆冲突 judge 准确率调优 完成（2026-06-22，`mvn compile` BUILD SUCCESS + 冒烟全绿）**：regex→Jackson（杀 count-mismatch 静默漏判）+ temp 0.3→0.0 + prompt key 归一/few-shot + route 结构化（弃 string-contains）。详见 `项目开发进度/当前项目开发进度-个人记忆知识库（含冲突解决）.md` 末尾「judge 准确率调优 已落地」。
+- ✅ **运行时冒烟 收口（2026-06-22，judge + 前端检索节点 UI 双项全绿）**：① judge 调优冒烟 — 场景1 KEEP_NEW（Java→Python 更正→PENDING+askText→「保留Python」→RESOLVED，Python 留 Java 删）+ 场景2 FLAGGED（无关「天气」→两条同 block 共存打 FLAGGED）全 PASS，原非确定性消除。② 前端检索节点 UI 冒烟（playwright-mcp 驱动）— 拖拽渲染 + 属性面板 KB 多选/查询 + save round-trip（type=RETRIEVAL + config kbIds/query 持久化）+ 连边 onConnect + 运行 execution SUCCESS，RETRIEVAL 回调返证据「[1] 安装步骤 PostgreSQL16/pgvector/Flyway/Redis/SpringBoot8080」。**冒烟期误判 2「瑕疵」，深查后纠正根因 + 已修（见下「运行时冒烟 已落地」+「2 根因修复 已落地」）**：① 初判「save 清空 ragEnabled」实为「WorkflowVO/DetailVO 不暴露 ragEnabled」+ 测试 curl 用错 key（`ragEnabled` vs 控制器要的 `enabled`，DB 实际持久）② `listFlagged` VO 新候选 `id=null`（真 bug，snapshot 重建丢 id）。**两均修 + 复验 PASS**（detail/list 返 ragEnabled；FLAGGED 两 candidate id 非空）。环境已还原（toggle OFF / memories+conflicts+retrieval_logs=0 / 测试 workflow 删 / sidecar 停）。详见下「运行时冒烟 已落地」+「2 根因修复 已落地」。
+- ✅ **answer_cache 生产路径冒烟 完成（2026-06-22，PASS）**：retrieveEvidence 多KB路径（CHAT+AGENT）缓存全链路验通。CHAT：绑 KB1 同 query 二查 trace `CACHE_HIT` 167ms（检索段短路，~3-8s→167ms），cache 行 `answer` 列=`{systemPrompt,citations,injectedIndexes}` JSON（非最终答案，证不省生成），usage_count 0→1，scope_user_id 强制 per-user。AGENT：agent_kb_bindings→[1] + Agent.config ragEnabled=true，2 次 AGENT 调用均 cross-mode 命中 CHAT 存的 cache 行（cache 按 user+query+permission_signature 索引而非 mode，CHAT/AGENT 共享是设计特性），trace 2 新行 CACHE_HIT（254/198ms），usage_count 1→3。2nd AGENT 答案带 agent4 persona → 证按 persona 重新生成。环境已还原（yml enabled=false + agent4 config={} + cache/trace/sessions 清 + backend/sidecar 停）。**已知**：近义 query 仍 miss（doubao abs sim 偏低 < 0.90 保守阈，line 283 已记，非 bug）；stale 行清理 worker 仍留阶段7。
+- ✅ **阶段6 前端知识库页 MVP 完成（2026-06-22，`vue-tsc` EXIT 0 + 浏览器冒烟全绿）**：单 `/knowledge` 路由 + n-tabs 两 tab。Tab「知识库管理」：KB 表格（全列）+ 行操作（文档/编辑/授权/删除，按 `knowledge:write` + VO `canManage` 门控）+ KbFormModal（新建/编辑，name/visibility/summaryStrategy/embeddingModel/rerankModel）+ KbPermissionModal（USER/ROLE/DEPARTMENT 授权 + 即时 grant/revoke）+ 文档抽屉 DocumentManager（n-upload-dragger `:custom-request` FormData 上传，新 pattern + 3s 状态轮询 PENDING→…→INDEXED/FAILED 停 + unmount 清 timer）。Tab「检索调试」：RetrievalDebugPanel（kbId/maxL0/docTypes + query → `POST /retrieve` → abstained 徽标/answer/引用表/候选L0表/证据L2表/token预算/traceId+latency）。新增 7 文件（KnowledgeView + stores/knowledge + 4 组件 + 扩展 api/knowledge.ts）+ 改 router/Sidebar。**冒烟**：playwright-mcp 登录→/knowledge→KB 表显 smoke-kb（canManage 显授权按钮）→检索调试 query「如何安装部署系统」→ SUPPORTED 带 `[1]` 答案 + 引用 doc2「安装步骤」+ 候选L0 cosSim 0.5010 + 证据L2 + token(prompt188/cap6000) + trace 6789ms；文档抽屉显 smoke_doc.md「已索引」+ 拖拽区。**Defer**：RAG 问答 SSE 区（`/ask` CITATION consumer）、检索审计表（retrieval-logs，knowledge:manage）、记忆/冲突列表、目录树（**后端无端点**需建 KnowledgeNodeController）。
+- ✅ **下一步（已全部完成 2026-06-23）**：阶段6 后续（RAG问答区 SSE #1 + 检索审计表 UI #2 + 记忆/冲突列表 UI #3）/ 目录树 `KnowledgeNodeController` 端点 #4 / ReconciliationJob autoRepair 扩 `claimBatch` 支持 REINDEX #7 / rag_memory_facts decay #8 — 全部收口，见下「八、必做收口」。后端 `mvn test` 294 绿 / 前端 vue-tsc EXIT 0。
+- ✅ **必做收口 #8 完成（2026-06-23，`mvn test` 17 测绿）**：`rag_memory_facts` decay 兜底（sibling purge，对齐 answer_cache）。建 `RagMemoryFact` 实体（非 BaseEntity，halfvec 不映射）+ `RagMemoryFactMapper`（`deleteDecayed`/`countDecayed`，镜像 RagAnswerCacheMapper）+ `ReconciliationTxService.purgeDecayedMemoryFacts`（批次循环）+ `ReconciliationWorker.poll()` 全局清（接 answer_cache purge 后）+ TxService 构造器 5→6 参 + 3 新测。M2 软提示表当前无生产者→调用通常返 0，接口就位供将来启用无需再补对账。详见下「八、必做收口」。
+- ✅ **必做收口 #7 完成（2026-06-23，`mvn test` 43 测绿）**：ReconciliationJob autoRepair 闭环（drift→REINDEX 修复链路打通）。`claimBatch` 扩认领 UPSERT+REINDEX（`.in(jobType,...)` 替 `.eq`，REINDEX 处理同 UPSERT：重嵌 node.content+upsert）+ `enqueueReindexJobs` 真实现（读 node 当前 content_hash，建 job，ON CONFLICT(idempotency_key) DO NOTHING 幂等，不再 seam）+ 新 `repairDrift(kbId)` 入口（findDriftedNodeIds→enqueue）+ worker scanBatch `autoRepair&&drift>0`→repairDrift。autoRepair 默认仍 false（opt-in，启用担 re-embed 计费，与 enabled 同哲学）。详见下「八、必做收口」。
+- ✅ **必做收口 #4 完成（2026-06-23，`mvn test` 3 测绿）**：目录树后端端点 `GET /api/knowledge/documents/{docId}/nodes`（`knowledge:read` + canRead 门）。flat 节点列表（id/parentId/level/nodeType/title/tokenCount/status），前端按 parentId 建树渲染文档大纲（L0 摘要 + L2 原文子节点）。不暴露 content（L2 原文可能大）+ contentHash（内部用）。deleted 由 @TableLogic 自动滤。详见下「八、必做收口」。
+- ✅ **必做收口 #5 + #6 完成（2026-06-23，vue-tsc EXIT 0）**：前端 workflow 级 + Agent detail 记忆模式 toggle。workflow 编辑器 topbar + Agent 详情 hero 各加 NSwitch「记忆模式」（镜像 ChatView session toggle 范式：size="small" + tooltip），调专用 `PUT /{id}/rag-enabled {"enabled":...}` 端点（乐观更新+失败回滚）。workflow 类型加 `ragEnabled?`（VO 已暴露）；Agent 从 config JSONB 解析 ragEnabled（VO 无扁平字段）。详见下「八、必做收口」。
+- ✅ **必做收口 #2 完成（2026-06-23，vue-tsc EXIT 0）**：检索审计表 UI。`/knowledge` 加「检索审计」tab（gate `knowledge:manage`），`RetrievalAuditPanel` 组件：分页表（id/时间/用户/模式/verdict 标签/查询/延迟/KB）+ 过滤（userId/kbId/mode/时间范围）+ 行删 + 按时间批量清（默认 7 天前）+ 详情抽屉（trace/verdict/延迟/token预算/候选L0/证据L2 JSON pretty）。api/knowledge.ts 加 `RagRetrievalLog` 类型 + 3 法（page/delete/deleteBefore）。详见下「八、必做收口」。
+- ✅ **必做收口 #3 完成（2026-06-23，vue-tsc EXIT 0）**：记忆/冲突列表 UI。ChatView 加「记忆」按钮 + 抽屉挂 `MemoryManagerPanel`（两区：我的记忆表=查/删/清空 + 记忆冲突=FLAGGED 分组候选 + KEEP_NEW/OLD/BOTH/DISCARD 解决）。api/chat.ts 加 `UserMemory`/`MemoryCandidate`/`MemoryConflict` 类型 + 5 法（list/delete/clear/listConflicts/resolve）。记忆按 current userId 隔离自服务，无需权限。详见下「八、必做收口」。
+- ✅ **必做收口 #1 完成（2026-06-23，vue-tsc EXIT 0）**：RAG 流式问答 SSE。`/knowledge` 加「RAG 问答」tab 挂 `RagAskPanel`：KB 多选 + query → `askStream` 异步生成器消费 SSE（CHUNK 追加答案 / CITATION 解析引用列表 / ERROR/DONE 收尾 / 停止=abort）。api/knowledge.ts 加 `askStream(query,kbIds,signal)` + SSE 解析（镜像 workflow runStream + chat store CHUNK 范式）。引用列表 [n] 标注 doc/node。**🎉 8 项必做收口全部完成**。
+- ✅ **8 项必做收口 全部完成（2026-06-23）**：#8 rag_memory_facts decay / #7 autoRepair REINDEX / #4 目录树端点 / #5 workflow toggle / #6 Agent/Workflow toggle / #2 检索审计表 / #3 记忆冲突列表 / #1 RAG 问答 SSE。后端 `mvn test` **294 测 0 错**（281→294，+13 新测，零回归）+ 前端 `vue-tsc --noEmit` **EXIT 0**。详见下「八、必做收口」各节 + §四「阶段6」表已无 Defer。
 - 📌 偏好：所有产出文件写项目内目录（不写 `~/.claude`），见 memory `feedback-files-in-repo`。
 - ✅ git：V12–V28 + answer_cache 全套已提交并推送 origin/main（2026-06-22，5 主题 commit + merge origin/main 的 file-keeper 工作，详见下「六、待办」）。
 
@@ -288,6 +301,63 @@
 
 ---
 
+### 前端检索节点 UI 已落地（✅ 2026-06-22，`vue-tsc --noEmit` EXIT=0，冒烟待跑）
+
+范围 = 阶段5 follow-up gap「前端检索节点 UI 未做」收口。工作流编辑器可视化建 RETRIEVAL 节点闭环（前：仅能经 API 建）。
+
+**新增文件（2）：**
+- `frontend/src/api/knowledge.ts` — KB 列表 API（`GET /knowledge/bases`，复用 request 实例）+ `KnowledgeBase` 类型（对应后端 `KnowledgeBaseVO` 子集：id/name/visibility/embeddingModel/canRead/canManage 等）。
+- `frontend/src/components/workflow/RetrievalNode.vue` — 画布节点组件（镜像 `AgentRefNode`）：顶部 Handle + 紫色(#8b5cf6) 检索图标 header + body 显 label + meta（`KB {ids} · 已设查询/无查询`）+ 底部 Handle。
+
+**修改（4）：**
+- `ComponentPalette.vue`：新「知识检索」section（位于「流程控制」与「输入组件」间），拖拽项 `onDragStart('retrieval', '知识检索', { sourceType: 'RETRIEVAL' })`；import `DocumentTextOutline` + 加 `.palette-item__icon--retrieval` 紫色样式。
+- `FlowCanvas.vue`：`nodeTypes` 注册 `retrieval: markRaw(RetrievalNode)` + import；`onDrop` data 透传 `kbId/kbIds/query`（round-trip 配套）。
+- `PropertyPanel.vue`：新 `v-if="type==='retrieval'"` section — KB 多选 `n-select multiple`（绑 `kbIds`，回退显 `kbId` 单值）+ 查询 `n-input textarea`（占位提示支持 `{{上游别名.输出变量}}` 模板）+ 说明 notice（运行时 KB∩用户可见集 + 需开记忆/RAG 模式）；`typeMap`+`iconMap`（SearchOutline）+`supportsAlias` 加 `retrieval`；加 `knowledgeBases` ref + `knowledgeBaseOptions` computed + `loadReferenceOptions` 并发拉 KB（失败降级空，不阻断 Agent/Workflow 选项）；`.property-panel__type-icon--retrieval` 紫色样式。emit `update-node-data` + `updateNodeData` value 类型 widen 加 `number[]`（kbIds 多选）。
+- `WorkflowEditorView.vue`：`onUpdateNodeData` value 类型同步 widen 加 `number[]`。
+
+**决策：** UI 用 `kbIds`（多选，对齐后端 `RuntimeNodeCallbackService` RETRIEVAL 读 nodeConfig `kbIds` ∩ 用户）；`kbId`（types 已有）保留作单值回退显示，不单独 UI。query 暂静态 textarea（支持模板占位提示，实际模板解析留后续）。
+
+**运行时冒烟（✅ 2026-06-22，playwright-mcp 全绿）：** 起 backend + sidecar + frontend，造 workflow id=11（START→RETRIEVAL→END）+ rag_enabled=true。从「知识检索」面板项拖拽到画布 → RetrievalNode 渲染（meta 随配置响应：未绑定→`KB 1 · 已设查询`）→ 属性面板 KB 多选选 smoke-kb + 查询填「如何安装部署系统」→ 鼠标拖 handle 连边 START→RETRIEVAL→END（onConnect）→ 保存 → 后端 def 持久化：node type=`RETRIEVAL` + config=`{"kbIds":[1],"query":"如何安装部署系统","nodeAlias":...}` + 2 edges（mapper `retrieval`↔`RETRIEVAL` + CONFIG_KEYS 全通）→ 运行 execution id=63 SUCCESS，RETRIEVAL NODE_COMPLETED 证据「[1] 安装步骤 PostgreSQL16/pgvector/Flyway/Redis/SpringBoot8080」+ EXECUTION_COMPLETED。
+
+---
+
+### 运行时冒烟 已落地（✅ 2026-06-22，judge + 前端检索节点 UI 双项全绿）
+
+范围 = 收口 §〇「judge 调优冒烟待跑」+「前端检索节点 UI 冒烟待跑」两项运行时验证。
+
+**A. judge 准确率调优冒烟（PLAYwright-mcp 驱动 + API 轮询）：** global toggle ON + admin CHAT session。
+- **场景1 KEEP_NEW**：r1「最喜欢 Java」→ 存 favorite_language=Java（block=偏好，clean）→ r2「更正更喜欢 Python」→ judge Jackson 解析 + temp 0.0 确定性判定 → conflict id=8 PENDING + askText 追加回复 → r3「保留 Python」→ interceptConflict route B→KEEP_NEW → RESOLVED，Python(id=42) 留 Java(id=41) 删。✓
+- **场景2 FLAGGED**：r1 Java → r2 Python → PENDING id=9 → r3 无关「今天天气」→ route isAnswer=false → 双行共存打 FLAGGED（id=43/44 同 block 偏好 + conflict_id=9）→ status=FLAGGED。✓
+- **结论**：原「同 Java/Python 场景有时标有时不标」非确定性消除。Jackson（杀 count-mismatch 静默漏判）+ temp 0.0 + key 归一 + 结构化 route 双场景稳定。fail-safe（任何解析失败→不冲突/不答，不丢事实）未触发。
+
+**B. 前端检索节点 UI 冒烟（playwright-mcp 浏览器驱动）：** 见上「前端检索节点 UI 已落地」末尾「运行时冒烟」段。drag→config→save round-trip→连边→运行→sidecar 回调出证据 全链路绿。
+
+**冒烟期误判的 2「瑕疵」— 深查后纠正根因 + 已修（见下「2 根因修复 已落地」）：**
+1. **初判「save 清空 ragEnabled」→ 实为「VO 不暴露 ragEnabled」+ 测试 curl 用错 key**：冒烟时 curl PUT `/rag-enabled` body 发 `{"ragEnabled":true}`，但 `WorkflowController.setWorkflowRagEnabled` 读 `body.get("enabled")` → 取到 null → 写 null（DB 测试呈现「空」误导）。**用正确 key `{"enabled":true}` 复测：DB `rag_enabled=t` 持久，且跨 save update（`updateWorkflow` 仅 set name/desc/updatedBy + NOT_NULL 策略）保留**。真 gap 是 `WorkflowVO`/`WorkflowDetailVO` + `toWorkflowVO`/`getWorkflowDetail` builder 都**不含 ragEnabled** → 前端 GET 恒 null。前端无 workflow 级 toggle UI 是已知 gap（记忆模式开关 doc「Agent/Workflow detail 页 ragEnabled UI 未做」）。
+2. **`listFlagged` VO 新候选 `id=null`（真 bug，已修）**：旧版 `listFlagged` 从 snapshot 文本（`readSnap`，createPending 时存，**不含 id** 因新行未插）重建新候选 → id 丢。FLAGGED 路径下新行已入库且 `flag()` 标新+旧 conflict_id。改用 `findByConflictId(c.id)` 取全组真实行 → `toCand` 带 id。复验两 candidate id 非空（45/46）。
+
+**旁证（非 bug）：** `GET /memories/conflicts` 仅返 FLAGGED（PENDING 不返）— 设计如此（PENDING=锁会话等行内答，FLAGGED=待端点 resolve），先前误判为空 bug 已澄清。
+
+**环境还原：** global toggle OFF（默认）/ `user_memories`+`memory_conflicts`+`rag_retrieval_logs` 清空 / 测试 workflow 删 / sidecar 停。backend(:8080)+frontend(:5173) 保留用户原运行状。
+
+---
+
+### 2 根因修复 已落地（✅ 2026-06-22，`mvn compile` BUILD SUCCESS + 复验绿）
+
+范围 = 收口「运行时冒烟 已落地」误判的 2 瑕疵。
+
+**Fix① WorkflowVO/DetailVO 暴露 ragEnabled（4 文件改）：**
+- `workflow/dto/WorkflowVO.java` + `WorkflowDetailVO.java`：加 `private Boolean ragEnabled;` 字段。
+- `workflow/service/WorkflowService.java`：`toWorkflowVO` + `getWorkflowDetail` 两个 builder 加 `.ragEnabled(workflow.getRagEnabled())`。
+- **复验（✅）**：新建 wf `ragEnabled=None`（继承）→ PUT `/rag-enabled {"enabled":true}` → GET detail `ragEnabled=True` + GET list `ragEnabled=True`（修前恒 null）。DB `rag_enabled` 跨 save 保留（NOT_NULL 策略，非 save 清空）。
+- **澄清**：`WorkflowController.setWorkflowRagEnabled` body 契约是 `{"enabled":...}`（非 `ragEnabled`）。前端 workflow 级 toggle UI 仍待（已知 gap，非阻塞；run 靠 global 或 PUT 端点设值）。
+
+**Fix② listFlagged 用 findByConflictId 取真实 id（1 文件改）：**
+- `chat/service/MemoryConflictService.java` `listFlagged`：弃「`selectBatchIds(old ids)` + `readSnap` 重建新候选（丢 id）」双路径 → 改 `memoryMapper.findByConflictId(c.id)` 单查取全组（FLAGGED 下新+旧行均带 conflict_id，见 `flag()`）→ `toCand` 带真实 id。`readSnap` 仍被 `flag()`/`resolve()` PENDING 路径用，保留。
+- **复验（✅）**：重跑场景2 产 FLAGGED conflict 10 → GET `/memories/conflicts` 两 candidate id 非空（45=Java, 46=Python；修前 Python id=null）。
+
+---
+
 ### B1 修复 + 阶段5 已落地（✅ 2026-06-20，`mvn compile` BUILD SUCCESS，冒烟待跑）
 
 范围 = RAG 接进 Chat/Agent/Workflow 三模式 + 修 canRead 权限 gap（B1）。
@@ -405,6 +475,50 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 
 ---
 
+### 阶段7 已落地（✅ 2026-06-23，`mvn test` 281 绿 + `mvn test -Dsurefire.excludedGroups=` 含 PG 集成测 328 绿 + `mvn spring-boot:run` 解锁）
+
+范围 = 一致性对账（ReconciliationJob 新特性）+ knowledge 包全套单测 + PG+pgvector 集成测脚手架 + v6 §10.2 验收。收口「开发期不写测试，全留阶段7」策略。
+
+**A. 修陈旧测试（解 `mvn test-compile` 红灯 + `spring-boot:run` 要 `-Dmaven.test.skip`）：** 4 个测试跟构造/签名漂移：
+- `LlmProviderServiceTest`/`TestConnectionTest`：`LlmProviderService` 构造 3→4 参（+`EmbeddingModelVersionMapper`，计划11 引入）→ 加第 4 mock。
+- `RuntimeNodeCallbackServiceTest`：构造 5→8 参（+`RagScopeResolver`/`RagRetrievalService`/`RagModeResolver`，阶段5 引入）→ 加 3 mock + 8 处构造调用 replace_all。
+- `MemoryServiceTest`：V27 记忆冲突重构后 `extractMemoriesAsync(long,String,String)` 删（换 `processMemory`）+ deps 全变（`memoryMapper/classifier/judge/conflictService`）→ 重写守 `buildMemoryContext` 契约（含 FLAGGED 前缀 + counterpart 聚合）。
+- `ChatSessionServiceTest`：`@InjectMocks` 缺 6 个 RAG/记忆依赖（`ragModeResolver` 等 null → NPE）→ 补 6 `@Mock`，`resolve()` 返 primitive boolean 默认 false → 跳 RAG/记忆路径。
+
+**B. 集成测脚手架（本地真实 PG16+pgvector，H2 跑不了 halfvec/HNSW/tsvector）：**
+- 独立测试库 `agent_platform_it`（同 PG16 集群，复用 pgvector 0.8.2；一次性 `CREATE DATABASE`）。
+- `application-it.yml`：datasource 指向 `agent_platform_it` + Flyway 净跑 V1..V28（验真实 migration + halfvec/HNSW DDL）+ Redis 真实 + `rag.visibility-cache/answer-cache.enabled=false`（确定性）+ `knowledge.index.poll-ms=999999999`（防 @Scheduled IndexJobWorker 抢测内 seed job 去 embed 无 key 报错）+ `runtime.gateway.mode=mock`（避 sidecar）。
+- `AbstractIntegrationTest`：`@Tag("integration") @SpringBootTest @ActiveProfiles("it") @Import(TestSecurityConfig)` 基类。
+- `pom.xml`：surefire `<excludedGroups>${surefire.excludedGroups}</excludedGroups>`（属性占位，默认 `integration`；CLI `-Dsurefire.excludedGroups=` 清空跑集成测）。`mvn test`=单测 only；`mvn test -Dsurefire.excludedGroups=`=全集。
+- 主 `application.yml`：加 `spring.task.scheduling.pool.size:2`（@Scheduled 默认单线程池，IndexJobWorker + ReconciliationWorker 两轮询共存须 ≥2，防慢对账饿死 embed 轮询）。
+- **Flyway 28 migrations 实测成功应用到 agent_platform_it**（含 V17 vector 扩展 + halfvec/HNSW DDL + 各 seed）。
+
+**C. knowledge 包单测（96 测，纯 Mockito，默认 `mvn test` 跑）：**
+- `RagConfigTest`（B1 effectiveContextCap=6000 + B3=D×cap + 常量锚）/ `CitationCheckerTest`（A1 正则：代码块剥离/越界→null/去重升序/`a[1]b`·`[123]`·`[1a]` 拒）/ `HalfVecUtilTest`（Locale.US 小数点 + dim 2048 + null 防御）/ `HashUtilTest`（sha256 确定性 + 已知向量 + null=空）。
+- `AnswerCacheServiceTest`（P3 permissionSignature canonical：kbId 排序/ALL/EMPTY/排序 docIds；P2a verifyNodeHashes 失配；lookup gate/sim-floor-break/P3-mismatch-continue/命中 bumpUsage；store gate；异常吞）/ `RagRetrievalServiceTest`（forbidden gate / NO_VISIBLE_DOCS / NO_DENSE_HITS / B4 单 embed / A2 LOW_CONFIDENCE abstain — bestSim=parentL0Sim 非 rerankScore）/ `IndexJobWorkerTest`（I2 pre-embed re-check：node null/非 ACTIVE/hash 不匹配→voidJob；embed dim≠2048 抛→failJob）/ `IndexJobTxServiceTest`（failJob backoff DEAD vs PENDING 退避；completeUpsert I2 完成前复校；claim 状态机；doc→INDEXED — `@BeforeAll` init MP TableInfo 填 lambda 缓存使 `LambdaUpdateWrapper.getParamNameValuePairs()` 可断言）/ `RagScopeResolverTest`（P4 求交 + 同模型约束 + mode 派发 — `KnowledgeBase` 是 @Data 致两实例 .equals() 相等，`eq()` 跨实例串台，canRead stub 须用 `same()` 恒等）。
+
+**D. 集成测（9 测，PG+pgvector，`mvn test -Dsurefire.excludedGroups=` 跑）：**
+- `RagAnswerCacheMapperIT`（halfvec key_embedding insert + HNSW searchCandidates `<=>` 距离排序 + per-user 强制隔离 + status='ACTIVE' 过滤 + bumpUsage + deleteDecayed/countDecayed）。
+- `ReconciliationIT`（seed drift/orphan/DEAD → scanKb 计数对 + purgeOrphanEmbeddings 删后 rescan=0 — 验 Phase E 特性 + 4 新 `KnowledgeIndexJobMapper` 法的 drift/orphan/dead SQL）。
+
+**E. ReconciliationJob 新特性（v6 §7.3.6 最小对账 + §8.9a decay 兜底）：**
+- `KnowledgeReconciliationReport` 实体（V17 表已建，非 BaseEntity，同 KnowledgeIndexJob）+ `KnowledgeReconciliationReportMapper`（+listRecentByKb 供未来管理 UI）。
+- `ReconciliationTxService`（镜像 IndexJobTxService，每法 @Transactional 短事务无 LLM）：`scanKb`（聚合 total/drift/orphan/dead 计数 + 插报告行）/ `purgeDecayedAnswerCache`（循环 deleteDecayed 至空或 maxBatches）/ `purgeOrphanEmbeddings` / `enqueueReindexJobs`（**seam，autoRepair=false 默认不调**）。
+- `ReconciliationWorker`（@Scheduled `${rag.reconciliation.poll-ms:600000}`，独立 `reconciliationTaskExecutor` core1/max2 不抢 embed 管线）：分批扫 ACTIVE KB → scanKb+落报告 → orphan>0 触发清理 → 全局批量清 answer_cache decay 行。异常吞不崩 scheduler。
+- `ReconciliationProperties`（opt-in `enabled=false`/pollMs 600000/decayBatch 500/kbBatch 20/autoRepair=false）+ `ReconciliationTaskExecutorConfig`。
+- 改 4 mapper：`KnowledgeIndexJobMapper`+4 法（countDeadFailedByKb/countStuckRunningByKb/findDriftedNodeIds drift join/countOrphanEmbeddings LEFT JOIN）/ `RagAnswerCacheMapper`+2 法（deleteDecayed 硬删非 status 翻 ARCHIVED—HNSW 索引会带 ARCHIVED 拖慢每次查 + countDecayed）/ `KnowledgeBaseMapper`+listActiveKbIds / `KnowledgeNodeMapper`+countActiveByKb / `KnowledgeEmbeddingMapper`+deleteOrphansByKb。
+- `application.yml` `rag.reconciliation` 块（镜像 answer-cache 样式）。
+- 单测 14：`ReconciliationTxServiceTest`（计数/批次循环/maxBatches 上限/seam no-op）/ `ReconciliationWorkerTest`（enabled gate/扫描/orphan 触发/空 KB 仍清 decay/异常吞）/ `ReconciliationPropertiesTest`（默认值锚）。
+- ~~**REINDEX 自动修复出阶段7-minimal 范围**~~：~~`claimBatch` 只认 `job_type='UPSERT'`，今插 REINDEX 永不被消费 → 堆积~~ → **✅ 已闭环（必做收口 #7，2026-06-23）**：claimBatch 扩认领 UPSERT+REINDEX + enqueueReindexJobs 真实现（ON CONFLICT 幂等）+ repairDrift 入口 + worker scanBatch 接 autoRepair。`enqueueReindexJobs` 不再是 seam。autoRepair 默认仍 false（opt-in，启用担 re-embed 计费）。见下「八、必做收口」。~~**`rag_memory_facts` decay 出范围**~~（V17 表有 decay_at 但无 Java 实体/mapper，待该实体建加 sibling purge）→ **✅ 已闭环（必做收口 #8，2026-06-23）**：见下「八、必做收口」。
+
+**F. H2↔pgvector 架构债收口（6 个全 context @SpringBootTest 迁 IT）：** post-RAG 全 Spring context 含 pgvector beans，H2 结构性加载不了（`llmConfig` init 查 `llm_providers.category` 缺列 → 50 错，V12-V28 schema 漂移累积，非本会话引入）。**5 个全 context 控制器测**（AgentController/AuthController/AuthIntegration/Execution/RuntimeCallback/Workflow）标 `@Tag("integration")` + 切 `@ActiveProfiles("it")` → 迁真 PG（Flyway 净跑后 context 正常加载，47 测全绿）。`AuthIntegrationTest` 加 `@AfterAll` 清 integrationuser（跨 run 可重复，否则残留用户致 step1 register 收 409）。**结论：需全 context = 需 pgvector = 集成测**；纯单测（Mockito 无 context）留默认 `mvn test`。
+
+**v6 §10.2 九条验收映射：** ⑤per-user 缓存隔离→`RagAnswerCacheMapperIT` ✅ ⑦幂等重嵌+re-check→`IndexJobTxServiceTest`+`ReconciliationIT` ✅ ⑧Citation 硬校+abstain→`CitationCheckerTest`+`RagRetrievalServiceTest` A1/A2 ✅ ⑨token 上限→`RagConfigTest` B1 ✅；①②③④⑥（建库/上传/解析索引/L0L1L2/引用/版本/删文档清向量）需全栈，阶段3-6 冒烟已逐一验过（见各「已落地」冒烟段），playwright-mcp E2E runbook 见末尾「阶段7 验收 E2E」。
+
+**最终验证：** `mvn test-compile` BUILD SUCCESS / `mvn test` **281 测 0 错**（单测，H2/none profile）/ `mvn test -Dsurefire.excludedGroups=` **328 测 0 错**（单测 H2 + 集成测 PG）/ `mvn spring-boot:run` 不再需 `-Dmaven.test.skip=true`。
+
+---
+
 ## 四、后续阶段（未开始）
 
 | 阶段 | 内容 | 状态 |
@@ -412,8 +526,8 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 | 3 | `RagRetrievalService` 完整 8 步（核心）+ 不变式 | ✅ 完成（2026-06-19，冒烟全绿） |
 | 4 | 权限可见集（Redis，USER+ROLE+DEPT 三层并集）+ answer_cache（per-user） | ✅ 可见集（4-A，2026-06-19）+ answer_cache(B)（2026-06-21，BUILD SUCCESS + 冒烟绿） |
 | 5 | Chat/Agent/Workflow 集成（KB 绑定 scope，P4 求交） | ✅ 完成（2026-06-20，BUILD SUCCESS）；冒烟 retrieve/ask/CHAT/AGENT 绿 + 3 bug 已修；WORKFLOW(M5) 待跑 |
-| 6 | 前端 `/knowledge` 页 + 检索调试面板 | 未开始（后端 `/retrieval-logs` + `/memories` 端点已就绪可对接） |
-| 7 | 一致性对账 + 失效链路 + **全部单测/集成测收尾** + Phase1 验收 + E2E | 未开始 |
+| 6 | 前端 `/knowledge` 页 + 检索调试面板 | ✅ 完成（2026-06-23）：MVP(2026-06-22) KB管理+文档上传+检索调试；**必做收口补全** RAG问答 SSE(#1)/检索审计表(#2)/记忆冲突列表(#3)/目录树端点(#4) 全落地，vue-tsc 绿。原 Defer 全收口 |
+| 7 | 一致性对账 + 失效链路 + **全部单测/集成测收尾** + Phase1 验收 + E2E | ✅ 完成（2026-06-23）：ReconciliationJob 特性 + knowledge 全套单测(96) + PG 集成测脚手架 + 2 mapper/feature IT + 5 H2-context 测迁 IT；`mvn test` 281 绿 / `mvn test -Dsurefire.excludedGroups=`（含 PG 集成测）328 绿 / `mvn spring-boot:run` 不再需 `-Dmaven.test.skip` |
 
 ---
 
@@ -437,4 +551,201 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 - [x] **V12–V28 + 本次改动提交 git（✅ 2026-06-22 推送 origin/main）**：5 主题 commit（migrations V12-V26 / backend RAG 核心+集成+记忆开关+answer_cache / frontend / sidecar / docs），merge origin/main 的 file-keeper 工作（多项目 monorepo，零文件重叠，干净 merge），push 成功。排除垃圾（backend/uploads + login-page.png 入 .gitignore）。
 - [x] **M5 WORKFLOW 冒烟（✅ 2026-06-21 PASS）**：START→RETRIEVAL→END workflow + bind KB1 + rag_enabled → run → RETRIEVAL 回调 retrieveEvidence 返证据 `[1]` → EXECUTION_COMPLETED。修 sidecar callback response null→[] 校验。
 - [x] **M6 记忆抽取实测（✅ 2026-06-20 PASS）**：global ON + CHAT msg → 4 行新记忆（name/age/occupation/favorite_language，conf 1.0 INFERRED）；会话 `ragEnabled=false` 负例→0 新行（门控正确）。环境已还原。
+- [x] **judge 调优 + 前端检索节点 UI 运行时冒烟（✅ 2026-06-22 双绿）**：见 §〇「运行时冒烟 收口」+「运行时冒烟 已落地」。冒烟期误判 2「瑕疵」，深查纠正根因 + 已修（下 2 条）。
+- [x] **修瑕疵①：WorkflowVO/DetailVO 暴露 ragEnabled（✅ 2026-06-22）**— 初判「save 清空」实为 VO 不返字段（+ 测试 curl 用错 key `ragEnabled` vs 控制器要的 `enabled`；DB 实际持久）。2 VO 加字段 + 2 builder 加 `.ragEnabled()`，复验 detail/list 返 True。前端 workflow 级 toggle UI 仍待（已知 gap）。
+- [x] **修瑕疵②：`listFlagged` 新候选 id=null（✅ 2026-06-22）**— 弃 `readSnap` 重建（丢 id）改 `findByConflictId` 取全组真实行，复验两 candidate id 非空（45/46）。
 - [ ] 部署目标 WinServer 2019 前置条件已文档化：`项目工程文档/WinServer2019部署前置条件.md`。
+
+---
+
+## 七、阶段7 验收 E2E runbook（v6 §10.2 ①②③④⑥，全栈 playwright-mcp 驱动）
+
+> 自动化部分（⑤⑦⑧⑨）已由阶段7 单测/集成测覆盖（见上「阶段7 已落地」F 节映射）。本节为需全栈的人工/半自动 E2E 步骤，复用阶段6 前端知识库页冒烟的 playwright-mcp 套路（按 memory `feedback-browser-automation` 用 playwright 不用 camoufox）。
+
+**前置：** backend(:8080) + runtime-sidecar(:8090) + frontend(:5173) 起，admin 录 Ark key（embedding+chat provider test-embed/test 通过），Redis 开。KB `smoke-kb`（id=1）有 INDEXED 文档。
+
+**① 建库 / ② 上传解析索引 / ③ L0+L1+L2 生成：**
+1. `/knowledge` → 「知识库管理」tab → 新建 KB（PER_SECTION 摘要）。
+2. 文档抽屉拖拽上传 md → 轮询 PENDING→PARSING→SUMMARIZING→EMBEDDING→INDEXED。
+3. psql 验：`knowledge_documents.status='INDEXED'` + 每 section 一 L0（`level='L0'`）+ 其 L2 子节点（`level='L2'`, `parent_id` 指向 L0）+ `l1_metadata` 非空 + `knowledge_index_jobs` 全 DONE + `knowledge_embeddings_doubao` 行数=L0 数 dim=2048 + I1 `e.content_hash=n.content_hash`=t。
+
+**④ RAG 回答带引用：**
+4. 「检索调试」tab → 选 KB + query「如何安装部署系统」→ SUPPORTED + 答案带合法 `[1]` + 引用表显文档标题 + 候选 L0 cosSim + 证据 L2 + token 预算。无关 query（「量子物理」）→ abstain LOW_CONFIDENCE 固定话术。
+
+**⑥ 文档更新旧版本不进检索 / 删文档不再召回 + 向量清：**
+5. 删文档 → psql 验 `knowledge_nodes` 软删（deleted=1）+ `knowledge_embeddings_doubao` 行 CASCADE 删（FK ON DELETE CASCADE，node_id）→ 重检索该 query → 不再召回（或召回空）。
+
+**ReconciliationJob 冒烟（opt-in）：** `application.yml` 临时 `rag.reconciliation.enabled=true` + 起 backend → 手插 decayed `rag_answer_cache` 行（decay_at<now）+ drift node（改 node.content_hash 不更 emb）+ DEAD job → 等 poll-ms 或手触 → 验 `knowledge_reconciliation_reports` 新行（drift/orphan/dead 数对）+ decayed 行被删 + log「清理 decayed rows」。还原 `enabled=false`。
+
+**环境还原：** 测后清 `rag_answer_cache`/`rag_retrieval_logs`/`knowledge_reconciliation_reports` 测试行 + toggle OFF + sidecar 停。
+
+---
+
+## 八、必做收口（用户 2026-06-23 追加：离"完全完成"的 8 项功能缺口）
+
+> 依据 §四/§六 扫描得出的**真正未做**项（Phase2/可选/YAGNI/长期债不计入）。一项一项做，每完成一项更本文档。
+
+| # | 项 | 类型 | 状态 |
+|---|----|------|------|
+| 8 | `rag_memory_facts` decay 兜底（sibling purge） | 后端 | ✅ 完成（2026-06-23，17 测绿） |
+| 7 | ReconciliationJob autoRepair（claimBatch 扩 REINDEX + flip flag） | 后端 | ✅ 完成（2026-06-23，43 测绿） |
+| 4 | `KnowledgeNodeController` 目录树端点 | 后端 | ✅ 完成（2026-06-23，3 测绿） |
+| 5 | 前端 workflow 级 ragEnabled toggle UI | 前端 | ✅ 完成（2026-06-23，vue-tsc 绿） |
+| 6 | 前端 Agent/Workflow detail 页 ragEnabled NSwitch | 前端 | ✅ 完成（2026-06-23，vue-tsc 绿） |
+| 2 | 前端检索审计表 UI（`/knowledge/retrieval-logs`） | 前端 | ✅ 完成（2026-06-23，vue-tsc 绿） |
+| 3 | 前端记忆/冲突列表 UI（`/memories` + `/conflicts`） | 前端 | ✅ 完成（2026-06-23，vue-tsc 绿） |
+| 1 | 前端 RAG 问答 SSE（`/ask` CITATION consumer） | 前端 | ✅ 完成（2026-06-23，vue-tsc 绿） |
+
+### #8 rag_memory_facts decay 兜底 已落地（✅ 2026-06-23，`mvn test` 17 测绿）
+
+范围 = 闭环阶段7 对账遗留的 `rag_memory_facts` decay gap（V17 表有 `decay_at` 但 Java 零引用）。镜像 `rag_answer_cache` decay purge：建实体+mapper+sibling purge 接进 ReconciliationWorker。
+
+**新增文件（2）：**
+- `knowledge/entity/RagMemoryFact.java` — 非 BaseEntity（表无 deleted/version），标量列全映射，**key_embedding(halfvec) 不映射**（写入/检索须走自定义 SQL；当前仅 decay 扫删用不到）。镜像 `KnowledgeEmbedding`。
+- `knowledge/mapper/RagMemoryFactMapper.java` — `deleteDecayed(batch)` 批量硬删 decay 过期 ACTIVE 行（子查询 LIMIT batch，避免 HNSW 带 ARCHIVED 拖慢）+ `countDecayed()` 计数。镜像 `RagAnswerCacheMapper` deleteDecayed/countDecayed。
+
+**修改（2 代码 + 2 测）：**
+- `ReconciliationTxService.java`：注入 `RagMemoryFactMapper`（构造器 5→6 参）+ 新 `purgeDecayedMemoryFacts(batchSize, maxBatches)`（循环 deleteDecayed 至空或 maxBatches，同 `purgeDecayedAnswerCache` 范式）。
+- `ReconciliationWorker.poll()`：answer_cache purge 后加 `purgeDecayedMemoryFacts`（全局清，不依赖 KB）。
+- `ReconciliationTxServiceTest`：+1 mock + 构造器 6 参 + 3 新测（loopsUntilEmpty / nothingToDelete / respectsMaxBatches）。
+- `ReconciliationWorkerTest`：enabled + noKbs 两测加 `verify(txService).purgeDecayedMemoryFacts(...)` 锁行为。
+
+**验证：** `mvn test -Dtest='ReconciliationTxServiceTest,ReconciliationWorkerTest,ReconciliationPropertiesTest'` → **17 测 0 错**（TxService 7→10 / Worker 5 / Properties 2）+ `mvn test-compile` BUILD SUCCESS。
+
+**设计说明：** M2 语义软提示特性未启用 → 该表当前无生产者写入 → `purgeDecayedMemoryFacts` 调用通常返 0。实体+mapper+sibling purge 先就位，保证将来启用 M2 时无需再补对账路径（防御性闭环，非死代码）。`decay-batch` 配置复用 `rag.reconciliation.decay-batch`（answer_cache + memory_facts 共享批次大小，无新配置项）。
+
+### #7 ReconciliationJob autoRepair 已落地（✅ 2026-06-23，`mvn test` 43 测绿）
+
+范围 = 打通阶段7 标记的 drift→REINDEX 修复链路（原 `enqueueReindexJobs` 是 no-op seam，claimBatch 不消费 REINDEX，今插 job 会堆积）。现在 `autoRepair=true` 即自动修复 KB 漂移节点。
+
+**修改（5 文件）：**
+- `KnowledgeIndexJobMapper.java`：新 `insertReindexJobIgnoreConflict(j)` — `@Insert ... ON CONFLICT (idempotency_key) DO NOTHING`（idempotency_key UNIQUE，幂等：同 node+hash 已 PENDING/RUNNING/DONE 跳过）。仅写 node_id/kb_id/job_type='REINDEX'/content_hash/idempotency_key + now()，其余列（status/attempt/max_attempt/visibility_event）走 DB 默认。
+- `IndexJobTxService.claimBatch`：`.eq(jobType,"UPSERT")` → `.in(jobType, List.of("UPSERT","REINDEX"))`。REINDEX 处理同 UPSERT（process() 重嵌 node.content + completeUpsert upsert 向量；REINDEX job 的 content_hash=node 当前值，drift 修复后向量 hash 对齐 node）。
+- `ReconciliationTxService`：`enqueueReindexJobs` 真实现（drift node 逐个读 node，null/非 ACTIVE 跳过，content_hash=node 当前，idempotency_key=sha256(nodeId:contentHash:REINDEX)，调 insertReindexJobIgnoreConflict 累加返新入队数）+ 新 `repairDrift(kbId)`（findDriftedNodeIds→enqueueReindexJobs）。`@Transactional` 短事务无 LLM。
+- `ReconciliationWorker.scanBatch`：`props.isAutoRepair() && r.getDriftCount()>0` → `txService.repairDrift(kbId)`。
+- `ReconciliationProperties` javadoc + `application.yml` 注释：autoRepair 现功能可用（claimBatch 已消费 REINDEX），翻 true 即修复（担 re-embed 计费）。
+
+**不变式保持：**
+- **I2 re-check**：REINDEX job 走同一 process() 流程，embed 前 + completeUpsert tx 内两次复校 node.content_hash==job.contentHash；node 再变 → mismatch → voidJob（下一轮 scan 重发新 hash 的 job）。
+- **I4 幂等**：idempotency_key UNIQUE + ON CONFLICT DO NOTHING → 同 node+hash 不重复入队；embedding.node_id UNIQUE ON CONFLICT 就地覆盖 → 重嵌不产多行向量。
+- **dead/退避**：REINDEX job 复用 claimBatch 的 attempt+1 + failJob 指数退避（BACKOFF_BASE_SEC<<shift，cap 300）+ max_attempt→DEAD。
+
+**决策：autoRepair 默认仍 false（不改 yml 默认值）。** 理由：① 与 `enabled`/`answer-cache`/`visibility-cache` 全 opt-in 哲学一致；② drift 修复 = re-embed = LLM 计费，静默默认开会产生成本；③ worker 整体 `enabled=false` 默认不跑，autoRepair 值在 enabled 前无意义。用户需修复时 yml 设 `rag.reconciliation.enabled=true` + `auto-repair=true` 即可（两 flag 都开）。若用户期望默认开 autoRepair，单行 yml 改即可。
+
+**验证：** `mvn test -Dtest='ReconciliationTxServiceTest,ReconciliationWorkerTest,ReconciliationPropertiesTest,IndexJobTxServiceTest,IndexJobWorkerTest'` → **43 测 0 错**（ReconTxService 10→15：+4 enqueue 测 +2 repairDrift 测 -1 删 seam；ReconWorker 5→7：+2 autoRepair on/off 测；IndexJobTx 12/IndexJobWorker 7 claimBatch 扩认领不破现有 mock 测）。`mvn test-compile` BUILD SUCCESS。
+
+**未跑（留后续）：** REINDEX 端到端 IT（需 enabled=true worker 跑 + Ark embed key 修真实 drift，重型，留冒烟）；ReconciliationIT（现有）只验 report-only 路径（autoRepair=false），不覆盖 repairDrift 真插 job。
+
+### #4 KnowledgeNodeController 目录树端点 已落地（✅ 2026-06-23，`mvn test` 3 测绿）
+
+范围 = 闭环阶段6 defer「目录树需先后端建 `KnowledgeNodeController` 端点」。文档大纲（L0 摘要 + L2 原文子节点）flat 列表端点，供前端 `/knowledge` 目录树 tab 建 n-tree。
+
+**新增文件（3）：**
+- `knowledge/dto/KnowledgeNodeVO.java` — flat 节点 VO（id/parentId/documentId/level/nodeType/title/tokenCount/status）。不暴露 content（L2 原文可能大，目录树只需标题）+ contentHash（内部不变式用，非 UI）。`@Data @Builder`。
+- `knowledge/service/KnowledgeNodeService.java` — `listByDocument(docId, operatorId, admin)`：doc 存在性校（NOT_FOUND）+ canRead 门（doc 所属 KB，FORBIDDEN）+ 按 id 升序查（parser 按 section 顺序写，L0 先于其 L2 子节点 → 前端按 parentId 重建层级）。deleted 由 KnowledgeNode @TableLogic 自动滤。
+- `knowledge/controller/KnowledgeNodeController.java` — `GET /api/knowledge/documents/{docId}/nodes` `@RequirePermission("knowledge:read")` → `R<List<KnowledgeNodeVO>>`。镜像 KnowledgeDocumentController 的 getCurrentUserId/isAdmin helper。
+
+**测（3）：** `KnowledgeNodeServiceTest`（Mockito）— canRead 通过返 flat + L2.parentId 指向 L0 / canRead 拒抛「无权」且不查 node / doc 不存在抛 NOT_FOUND。@Data `KnowledgeBase` 实体 mock 用 `same()` 恒等（避 `eq()` 跨实例串台，见 memory `reference-rag-test-infra`）。
+
+**决策：** 返回 flat 非 nested 树（REST 解耦 + 灵活，前端 n-tree 用 key/parentId 转换）。doc 级（非 KB 级）：目录树 = 文档大纲，KB 级可前端拉 docs 列表后逐 doc 拼。未含 hasEmbedding 字段（需 join embeddings，留后续 debug 增强）。
+
+**验证：** `mvn test -Dtest='KnowledgeNodeServiceTest'` → **3 测 0 错** + `mvn test-compile` BUILD SUCCESS。
+
+### #5 + #6 前端 workflow/Agent 记忆模式 toggle 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
+
+范围 = 闭环「前端 workflow 级 toggle UI 未做」(#5) + 「Agent/Workflow detail 页 ragEnabled NSwitch 未做」(#6)。两处 NSwitch「记忆模式」调专用 rag-enabled 端点，与 ChatView session toggle 范式统一（label「记忆模式」+ size="small" + tooltip）。
+
+**API 层（2）：**
+- `frontend/src/api/workflow.ts`：加 `setRagEnabled(id, enabled)` → `PUT /workflows/${id}/rag-enabled` body `{ enabled }`（key 是 `enabled` 非 `ragEnabled`，对齐后端 `WorkflowController.setWorkflowRagEnabled` 契约）。
+- `frontend/src/api/agent.ts`：加 `setRagEnabled(id, enabled)` → `PUT /agents/${id}/rag-enabled` body `{ enabled }`（同 key，写 Agent.config JSONB）。
+
+**类型（1）：** `frontend/src/types/workflow.ts`：`Workflow` + `WorkflowListItem` 加 `ragEnabled?: boolean | null`（后端 WorkflowVO/DetailVO 已暴露，瑕疵①修复时加的字段，前端类型漏跟）。
+
+**#5 workflow toggle（`WorkflowEditorView.vue`）：**
+- topbar 状态 tag 后加 NSwitch「记忆模式」（`workflow-editor__rag-toggle` span）。
+- ref `workflowRagEnabled`（load 时 `workflow.ragEnabled === true`，null/未设→off）+ `onWorkflowRagToggle(val)`（乐观 set ref → `workflowApi.setRagEnabled` → 成功 message / 失败回滚 prev）。
+- 加 `NSwitch` import。
+
+**#6 Agent toggle（`AgentDetailView.vue`）：**
+- hero-meta（技能数 tag 后）加 NSwitch「记忆模式」（`agent-detail__rag-toggle`），`:disabled="!canManage"`（只读用户不能改）。
+- computed `agentRagEnabled`：Agent.ragEnabled 存在 config JSONB（VO 无扁平字段）→ `parseAgentConfig(config).ragEnabled === true`（容错 null/非法 JSON→{}）。
+- `onAgentRagToggle(val)`：乐观更新本地 `agentDetail.config`（重序列化带新 ragEnabled）→ `agentApi.setRagEnabled` → 成功 message / 失败回滚 prevConfig。
+- `parseAgentConfig` 助手 + `NSwitch` import。
+
+**设计决策：**
+- 两端均用专用 rag-enabled 端点（非通用 update）——语义清晰 + 后端 `setRagEnabled` 单独处理（workflow 写列 / agent 写 config jsonb，含 `JsonbStringTypeHandler`）。
+- 三态 null（继承全局）：NSwitch 二态无法显继承 → null 渲染为 off。用户要「继承」可不操作（保持默认）或后续加三态控件。与 ChatView session toggle 同处理。
+- tooltip 文案区分覆盖层级：workflow「覆盖全局；检索节点回调受其约束」/ agent「覆盖全局」。
+
+**验证：** `npx vue-tsc --noEmit` → **EXIT 0**（无类型错）。
+
+**未跑（留后续）：** 浏览器冒烟（起 backend + 前端，拖 switch 验 PUT 200 + DB rag_enabled 持久 + 重载回显），复用 playwright-mcp 套路。
+
+### #2 前端检索审计表 UI 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
+
+范围 = 闭环阶段6 defer「检索审计表（retrieval-logs，knowledge:manage）」。`/knowledge` 页加第 3 个 tab「检索审计」，管理员可查 rag_retrieval_logs trace + 清理。
+
+**新增文件（1）：**
+- `frontend/src/components/knowledge/RetrievalAuditPanel.vue` — 审计面板：
+  - **分页表**（remote）：id / 时间 / userId / mode / cragVerdict（tag，SUPPORTED→success / LOW_CONFIDENCE→warning / ERROR/CITATION_CHECK_FAIL→error）/ 查询（ellipsis tooltip）/ latencyMs / kbIds / 操作（详情+删除）。
+  - **过滤栏**：userId / kbId（NInputNumber）/ mode（NSelect CHAT/AGENT/WORKFLOW/DEBUG）/ 时间范围（NDatePicker datetimerange）+ 查询/重置。
+  - **清理**：行删（DELETE /{id}）+ 按时间批量清（DELETE ?before=ISO-8601，默认 7 天前保守，dialog 二次确认不可恢复）。
+  - **详情抽屉**：NDescriptions 显 trace/用户/KB/模式/verdict/延迟/BM25 fallback/时间/查询 + 大 JSON 字段（tokenBudget/candidatesL0/evidenceL2）prettify 展示（max-height 滚动）。
+
+**修改（2）：**
+- `frontend/src/api/knowledge.ts`：加 `RagRetrievalLog` 类型（镜像后端 RagRetrievalLogVO，含大 JSON 字段）+ `RetrievalLogPageQuery` + 3 法 `pageRetrievalLogs(q)`/`deleteRetrievalLog(id)`/`deleteRetrievalLogsBefore(before)`（复用 `PageResult` from `@/api/admin`）。
+- `frontend/src/views/KnowledgeView.vue`：加「检索审计」tab（`v-if="canManage"`，`authStore.hasPermission('knowledge:manage')`）+ import RetrievalAuditPanel + canManage computed。
+
+**设计：** 审计含用户 query（近似 PII）→ 仅 knowledge:manage 可见，tab 对无权用户隐藏。verdict→color 映射对齐检索调试面板观察习惯。批量清默认 7 天前（保守，避免误清近期 trace）；管理员需更早可后续加自定义时间输入。
+
+**验证：** `npx vue-tsc --noEmit` → **EXIT 0**（修 1 处 pagination.prefix 签名：itemCount `number|undefined` → 接收 optional）。
+
+**未跑（留后续）：** 浏览器冒烟（起 backend，admin 登录→/knowledge→检索审计 tab→触发检索后验 trace 行 + 详情 JSON + 删除），复用 playwright-mcp。
+
+### #3 前端记忆/冲突列表 UI 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
+
+范围 = 闭环阶段6 defer「记忆/冲突列表」。用户长期记忆自服务查询/管理 + FLAGGED 冲突手动解决。
+
+**新增文件（1）：**
+- `frontend/src/components/chat/MemoryManagerPanel.vue` — 两区面板：
+  - **我的记忆**（n-data-table）：分类（PREFERENCE/FACT/FEEDBACK tag）/键/值（ellipsis）/置信度（2 位小数）/来源/冲突（FLAGGED→⚠ counterpart 摘要）/更新时间/操作（删单条）。header-extra「清空全部」（dialog 二次确认 error 级）。空态 n-empty 提示「开启记忆模式对话后 AI 自动抽取」。
+  - **记忆冲突**（n-card，仅 FLAGGED 非空时显）：按 conflict 分组 → block tag + askText + candidates 列表（category/key/value）+ 4 解决按钮（保留新/保留旧/都保留/全删，对应 KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD，loading 防重）。
+
+**修改（2）：**
+- `frontend/src/api/chat.ts`：加 `UserMemory`/`MemoryCandidate`/`MemoryConflict` 类型（镜像后端 UserMemoryVO/MemoryCandidateVO/MemoryConflictVO）+ 5 法 `listMemories`/`deleteMemory(id)`/`clearMemories()`/`listMemoryConflicts()`/`resolveMemoryConflict(id, decision)`。
+- `frontend/src/views/ChatView.vue`：rag-toggle 旁加「记忆」按钮（quaternary）→ NDrawer(width 720) 挂 MemoryManagerPanel；加 `NDrawer/NDrawerContent` import + `showMemory` ref。
+
+**设计：** 记忆按 current userId 隔离（用户私有资产，无需 knowledge/chat 权限），挂 ChatView 抽屉（记忆在对话语境最相关，发现性好）。冲突解决 4 选项对齐后端 `MemoryConflictResolveRequest.decision` 枚举；解决后双刷新（冲突 + 记忆表，因 KEEP_* 会改记忆行）。空态引导用户开记忆模式。
+
+**验证：** `npx vue-tsc --noEmit` → **EXIT 0**。
+
+**未跑（留后续）：** 浏览器冒烟（起 backend + 开记忆模式对话产记忆 → 点「记忆」验列表 + 冲突分组 + 解决按钮），复用 playwright-mcp。
+
+### #1 前端 RAG 问答 SSE 已落地（✅ 2026-06-23，`vue-tsc --noEmit` EXIT 0）
+
+范围 = 闭环阶段6 defer「RAG 问答区（/ask CITATION consumer）」。`/knowledge` 加「RAG 问答」tab，多 KB 选 + query → 流式答案 + 引用标注。
+
+**新增文件（1）：**
+- `frontend/src/components/knowledge/RagAskPanel.vue` — 流式问答面板：
+  - **输入区**：KB 多选（NSelect，loadBases 拉列表）+ query textarea（enter 提交）+ 提问/停止按钮（停止=AbortController.abort）。
+  - **流式消费**：迭代 `askStream` → CHUNK 追加 `answer`（whitespace-pre-wrap）/ CITATION 解析 JSON → citations 列表 / ERROR 显错 / DONE 收尾。thinking 态（asking 且无 answer）显 NSpin「检索与生成中…」。
+  - **引用列表**：CITATION 事件 content=RagCitation[] → `[n]` tag + 标题 + doc#/node# 元信息。
+  - abstain（无可检索范围）：后端返单 CHUNK 文案，前端照常显（无 citation）。
+
+**修改（2）：**
+- `frontend/src/api/knowledge.ts`：加 `AskStreamEvent` 类型 + `askStream(query, kbIds, signal)` 异步生成器（fetch SSE + reader 逐事件 yield，镜像 `workflowApi.runStream` + chat store CHUNK 解析范式）+ `parseAskSseEvent` 助手（按 `data:` 行拼 JSON）。加 `getStorage/STORAGE_KEYS` import（JWT 注入）。
+- `frontend/src/views/KnowledgeView.vue`：加「RAG 问答」tab + import RagAskPanel。
+
+**设计：** 复用既有 `RagCitation` 类型（index/documentId/title/nodeId，与 CITATION JSON 对齐）。KB 多选走后端 P4 求交（用户权限 ∩ 所选），无可见 KB → abstain 文案。AbortController 组件 unmount 时 abort 防泄漏。答案暂纯文本渲染（whitespace-pre-wrap），未接 markdown 渲染器（留后续，对齐 MessageBubble 若需富文本）。
+
+**验证：** `npx vue-tsc --noEmit` → **EXIT 0**。
+
+**未跑（留后续）：** 浏览器冒烟（起 backend + Ark key，/knowledge→RAG 问答→选 KB→问「如何安装部署系统」→验 CHUNK 流式 + CITATION 引用 [1] 标注），复用 playwright-mcp。
+
+
+
+
+
+
+
+
