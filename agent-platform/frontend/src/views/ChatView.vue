@@ -89,6 +89,9 @@
               <span class="chat-view__rag-label">记忆模式</span>
               <n-switch v-model:value="ragEnabled" :disabled="chatStore.sending" size="small" />
             </div>
+            <n-button size="small" quaternary @click="showMemory = true" title="查看/管理长期记忆与冲突">
+              记忆
+            </n-button>
           </template>
         </ChatInput>
       </template>
@@ -100,13 +103,20 @@
         <n-button type="primary" @click="newSession">开始对话</n-button>
       </div>
     </div>
+
+    <!-- 记忆管理抽屉 -->
+    <n-drawer v-model:show="showMemory" :width="720" placement="right">
+      <n-drawer-content title="我的记忆" closable>
+        <MemoryManagerPanel />
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NSpin, NSwitch } from 'naive-ui'
+import { NButton, NIcon, NSpin, NSwitch, NDrawer, NDrawerContent } from 'naive-ui'
 import {
   AddOutline,
   TrashOutline,
@@ -119,6 +129,7 @@ import MessageBubble from '@/components/chat/MessageBubble.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ModelSelector from '@/components/chat/ModelSelector.vue'
 import TargetSelector from '@/components/chat/TargetSelector.vue'
+import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 
 const route = useRoute()
 const chatStore = useChatStore()
@@ -127,6 +138,7 @@ const messagesRef = ref<HTMLElement | null>(null)
 const isComposing = ref(false)
 /** 记忆模式会话级开关（V26，随每条消息持久化到 session.rag_enabled）。 */
 const ragEnabled = ref(false)
+const showMemory = ref(false)
 
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 

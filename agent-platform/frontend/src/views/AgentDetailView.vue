@@ -64,6 +64,18 @@
                 <n-icon size="12" :component="FlashOutline" />
                 {{ agentDetail.skills.length }} 个技能
               </span>
+              <span
+                class="agent-detail__hero-tag agent-detail__rag-toggle"
+                title="开启后该 Agent 会话启用 RAG 证据 + 用户记忆（覆盖全局）"
+              >
+                记忆模式
+                <n-switch
+                  :value="agentRagEnabled"
+                  size="small"
+                  :disabled="!canManage"
+                  @update:value="onAgentRagToggle"
+                />
+              </span>
             </div>
           </div>
         </div>
@@ -143,7 +155,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NIcon, NSpin, NEmpty, NButton, NTag, useMessage, useDialog } from 'naive-ui'
+import { NIcon, NSpin, NEmpty, NButton, NTag, NSwitch, useMessage, useDialog } from 'naive-ui'
 import {
   ChevronForwardOutline,
   FolderOutline,
@@ -179,6 +191,8 @@ const editingSkill = ref<SkillDetailType | null>(null)
 const canManage = computed(() => agentAccess.value?.canManage === true)
 const canCopy = computed(() => agentAccess.value?.canCopy === true)
 const canManageSkills = computed(() => canManage.value && authStore.hasPermission('skill:manage'))
+/** Agent 记忆模式：ragEnabled 存在 Agent.config JSONB，前端解析 config 取值（null=继承→显 off） */
+const agentRagEnabled = computed(() => parseAgentConfig(agentDetail.value?.config).ragEnabled === true)
 const agentFormSaveMode = computed(() => canManage.value ? 'update' : 'copy')
 
 const statusMap: Record<string, { type: 'success' | 'warning' | 'default' | 'error'; label: string }> = {
@@ -228,6 +242,32 @@ async function publishAgent() {
     message.success('发布成功')
     await loadAgent()
   } catch { message.error('发布失败') }
+}
+
+/** 记忆模式开关：乐观更新本地 config + 调 rag-enabled 端点，失败回滚 */
+async function onAgentRagToggle(val: boolean) {
+  if (!agentDetail.value || !canManage.value) return
+  const prevConfig = agentDetail.value.config
+  const cfg = parseAgentConfig(prevConfig)
+  cfg.ragEnabled = val
+  agentDetail.value.config = JSON.stringify(cfg)
+  try {
+    await agentApi.setRagEnabled(agentDetail.value.id, val)
+    message.success(val ? '已开启 Agent 记忆模式' : '已关闭 Agent 记忆模式')
+  } catch {
+    agentDetail.value.config = prevConfig
+    message.error('设置失败')
+  }
+}
+
+/** 解析 Agent.config JSONB（容错：null/非法→空对象） */
+function parseAgentConfig(config: string | null | undefined): Record<string, unknown> {
+  try {
+    const o = JSON.parse(config || '{}')
+    return o && typeof o === 'object' ? o as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
 }
 
 async function offlineAgent() {

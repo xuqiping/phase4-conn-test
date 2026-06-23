@@ -156,6 +156,8 @@ export interface Workflow {
   ownerId?: number
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
+  /** 记忆模式开关（null=继承全局，true/false 显式覆盖）；后端 WorkflowVO 暴露 */
+  ragEnabled?: boolean | null
   createdAt: string
   updatedAt: string
 }
@@ -184,6 +186,8 @@ export interface WorkflowListItem {
   description: string | null
   status: WorkflowStatus
   nodeCount: number
+  /** 记忆模式开关（null=继承全局） */
+  ragEnabled?: boolean | null
   createdAt: string
   updatedAt: string
 }

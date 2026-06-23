@@ -130,6 +130,14 @@ export const workflowApi = {
    */
   importJson(data: Workflow) {
     return request.post<ApiResponse<Workflow>>('/workflows/import', data)
+  },
+
+  /**
+   * 设置工作流记忆模式开关
+   * PUT /api/workflows/{id}/rag-enabled，body key 为 "enabled"（true/false）
+   */
+  setRagEnabled(id: number, enabled: boolean) {
+    return request.put<ApiResponse<void>>(`/workflows/${id}/rag-enabled`, { enabled })
   }
 }
 

@@ -59,6 +59,7 @@ import InputNode from './InputNode.vue'
 import SkillNode from './SkillNode.vue'
 import AgentRefNode from './AgentRefNode.vue'
 import WorkflowRefNode from './WorkflowRefNode.vue'
+import RetrievalNode from './RetrievalNode.vue'
 import type { ExecutionEvent } from '@/api/execution'
 import type { WorkflowEdge, WorkflowNode } from '@/types/workflow'
 import { applyRuntimeEventsToEdges, applyRuntimeEventsToNodes } from '@/utils/workflowRuntime'
@@ -73,7 +74,8 @@ const nodeTypes = {
   input: markRaw(InputNode),
   skill: markRaw(SkillNode),
   agent_ref: markRaw(AgentRefNode),
-  workflow_ref: markRaw(WorkflowRefNode)
+  workflow_ref: markRaw(WorkflowRefNode),
+  retrieval: markRaw(RetrievalNode)
 } as unknown as NodeTypesObject
 
 const defaultEdgeOptions = {
@@ -248,7 +250,10 @@ function onDrop(event: DragEvent) {
       required: parsed.required,
       defaultValue: parsed.defaultValue,
       placeholder: parsed.placeholder,
-      accept: parsed.accept
+      accept: parsed.accept,
+      kbId: parsed.kbId,
+      kbIds: parsed.kbIds,
+      query: parsed.query
     }
   }])
   emit('nodes-change')

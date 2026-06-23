@@ -221,5 +221,13 @@ export const agentApi = {
 
   updateAgentStatus(id: number, status: string) {
     return request.put<ApiResponse<void>>(`/agents/${id}/status`, { status })
+  },
+
+  /**
+   * 设置 Agent 记忆模式开关（写入 Agent.config JSONB ragEnabled）
+   * PUT /api/agents/{id}/rag-enabled，body key 为 "enabled"（true/false）
+   */
+  setRagEnabled(id: number, enabled: boolean) {
+    return request.put<ApiResponse<void>>(`/agents/${id}/rag-enabled`, { enabled })
   }
 }

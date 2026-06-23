@@ -56,7 +56,8 @@ import {
   ChevronForwardOutline,
   PeopleOutline,
   ShieldCheckmarkOutline,
-  ChatbubblesOutline
+  ChatbubblesOutline,
+  BookOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
@@ -79,7 +80,8 @@ const navItems = computed(() => {
     { path: '/agents', label: 'Agent大厅', icon: GridOutline },
     { path: '/chat', label: '智能对话', icon: ChatbubblesOutline },
     { path: '/workflow', label: '工作流', icon: GitBranchOutline },
-    { path: '/executions', label: '执行监控', icon: PulseOutline }
+    { path: '/executions', label: '执行监控', icon: PulseOutline },
+    { path: '/knowledge', label: '知识库', icon: BookOutline }
   ]
   if (isAdmin.value) {
     items.push(

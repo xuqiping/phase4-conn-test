@@ -22,6 +22,17 @@
         <n-tag v-if="workflowStatus" :type="statusTagType" size="small">
           {{ statusLabel }}
         </n-tag>
+        <span
+          class="workflow-editor__rag-toggle"
+          title="开启后该工作流运行启用 RAG 证据 + 用户记忆（覆盖全局；检索节点回调受其约束）"
+        >
+          记忆模式
+          <n-switch
+            :value="workflowRagEnabled"
+            size="small"
+            @update:value="onWorkflowRagToggle"
+          />
+        </span>
       </div>
 
       <div class="workflow-editor__topbar-right">
@@ -143,7 +154,8 @@ import {
   NIcon,
   NInput,
   NTag,
-  NDivider
+  NDivider,
+  NSwitch
 } from 'naive-ui'
 import {
   ArrowBackOutline,
@@ -178,6 +190,8 @@ const workflowName = ref('未命名工作流')
 const workflowDescription = ref('')
 const workflowStatus = ref<WorkflowStatus>('draft')
 const workflowOwnerId = ref<number | null>(null)
+/** 记忆模式开关（null=继承全局 → UI 显 off；true/false 显式覆盖） */
+const workflowRagEnabled = ref(false)
 const saving = ref(false)
 const running = ref(false)
 const runtimeEvents = ref<ExecutionEvent[]>([])
@@ -229,7 +243,7 @@ function onNodesChange() {
 }
 
 /** 更新节点数据 */
-function onUpdateNodeData(nodeId: string, key: string, value: string | number | boolean | Record<string, string>) {
+function onUpdateNodeData(nodeId: string, key: string, value: string | number | boolean | number[] | Record<string, string>) {
   if (!flowCanvasRef.value) return
   const nodes = flowCanvasRef.value.nodes
   const node = nodes.find((n: WorkflowNode) => n.id === nodeId)
@@ -293,6 +307,20 @@ async function handleSave() {
     message.error('保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+/** 记忆模式开关：乐观更新 + 调 rag-enabled 端点，失败回滚 */
+async function onWorkflowRagToggle(val: boolean) {
+  const prev = workflowRagEnabled.value
+  workflowRagEnabled.value = val
+  if (workflowId.value == null) return
+  try {
+    await workflowApi.setRagEnabled(workflowId.value, val)
+    message.success(val ? '已开启工作流记忆模式' : '已关闭工作流记忆模式')
+  } catch {
+    workflowRagEnabled.value = prev
+    message.error('设置失败')
   }
 }
 
@@ -426,6 +454,7 @@ async function initWorkflow() {
       workflowDescription.value = workflow.description || ''
       workflowStatus.value = workflow.status
       workflowOwnerId.value = workflow.ownerId || null
+      workflowRagEnabled.value = workflow.ragEnabled === true
 
       // 等待画布就绪后设置节点
       await new Promise(resolve => setTimeout(resolve, 100))

@@ -98,6 +98,36 @@
         </div>
       </section>
 
+      <section v-if="selectedNode.type === 'retrieval'" class="property-panel__section">
+        <div class="property-panel__section-title">知识检索</div>
+        <div class="property-panel__field">
+          <label class="property-panel__label">知识库</label>
+          <n-select
+            :value="selectedNode.data.kbIds && selectedNode.data.kbIds.length > 0 ? selectedNode.data.kbIds : (selectedNode.data.kbId ? [selectedNode.data.kbId] : [])"
+            :options="knowledgeBaseOptions"
+            size="small"
+            placeholder="选择知识库（可多选）"
+            multiple
+            filterable
+            @update:value="(val: number[]) => updateNodeData('kbIds', val)"
+          />
+        </div>
+        <div class="property-panel__field">
+          <label class="property-panel__label">查询</label>
+          <n-input
+            :value="selectedNode.data.query || ''"
+            type="textarea"
+            size="small"
+            :rows="3"
+            placeholder="输入检索查询（支持 {{上游别名.输出变量}} 模板）"
+            @update:value="(val: string) => updateNodeData('query', val)"
+          />
+        </div>
+        <div class="property-panel__notice">
+          运行时按节点绑定知识库 ∩ 当前用户可见集检索证据，证据文本注入下游节点（v6 §2.4 检索节点回调）。需工作流开启记忆/RAG 模式。
+        </div>
+      </section>
+
       <section v-if="selectedNode.type === 'input' || selectedNode.type === 'start'" class="property-panel__section">
         <div class="property-panel__section-title">输入组件</div>
         <div class="property-panel__field">
@@ -302,11 +332,13 @@ import {
   FlashOutline,
   PeopleOutline,
   GitBranchOutline,
-  CloudUploadOutline
+  CloudUploadOutline,
+  SearchOutline
 } from '@vicons/ionicons5'
 import type { Component } from 'vue'
 import { agentApi, type Agent } from '@/api/agent'
 import { workflowApi } from '@/api/workflow'
+import { knowledgeApi, type KnowledgeBase } from '@/api/knowledge'
 import type { SkillInputParam, WorkflowEdge, WorkflowListItem, WorkflowNode } from '@/types/workflow'
 import { collectAvailableVariables } from '@/utils/workflowRuntime'
 
@@ -318,11 +350,12 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update-node-data', nodeId: string, key: string, value: string | number | boolean | Record<string, string>): void
+  (e: 'update-node-data', nodeId: string, key: string, value: string | number | boolean | number[] | Record<string, string>): void
 }>()
 
 const agents = ref<Agent[]>([])
 const workflows = ref<WorkflowListItem[]>([])
+const knowledgeBases = ref<KnowledgeBase[]>([])
 const showVariableMenu = ref(false)
 const promptSlashIndex = ref<number | null>(null)
 const mappingMenuIndex = ref<number | null>(null)
@@ -335,7 +368,8 @@ const typeName = computed(() => {
     input: '输入',
     skill: '能力',
     agent_ref: 'Agent 引用',
-    workflow_ref: '工作流引用'
+    workflow_ref: '工作流引用',
+    retrieval: '知识检索'
   }
   return typeMap[props.selectedNode?.type || ''] || '节点'
 })
@@ -347,12 +381,13 @@ const typeIcon = computed(() => {
     input: CloudUploadOutline,
     skill: FlashOutline,
     agent_ref: PeopleOutline,
-    workflow_ref: GitBranchOutline
+    workflow_ref: GitBranchOutline,
+    retrieval: SearchOutline
   }
   return iconMap[props.selectedNode?.type || ''] || FlashOutline
 })
 
-const supportsAlias = computed(() => ['start', 'input', 'skill', 'agent_ref', 'workflow_ref'].includes(props.selectedNode?.type || ''))
+const supportsAlias = computed(() => ['start', 'input', 'skill', 'agent_ref', 'workflow_ref', 'retrieval'].includes(props.selectedNode?.type || ''))
 
 const inputParams = computed<SkillInputParam[]>(() => {
   const params = props.selectedNode?.data.inputParams
@@ -409,12 +444,19 @@ const workflowOptions = computed(() =>
   }))
 )
 
+const knowledgeBaseOptions = computed(() =>
+  knowledgeBases.value.map(kb => ({
+    label: kb.name,
+    value: kb.id
+  }))
+)
+
 const inputTypeOptions = [
   { label: '文本', value: 'text' },
   { label: '多行文本', value: 'textarea' }
 ]
 
-function updateNodeData(key: string, value: string | number | boolean | Record<string, string>) {
+function updateNodeData(key: string, value: string | number | boolean | number[] | Record<string, string>) {
   const promptKeys = ['systemPrompt', 'promptTemplate', 'outputKey', 'model', 'temperature']
   if (promptKeys.includes(key) && !promptConfigEditable.value) {
     return
@@ -544,6 +586,12 @@ async function loadReferenceOptions() {
     agents.value = []
     workflows.value = []
   }
+  try {
+    const kbRes = await knowledgeApi.listBases()
+    knowledgeBases.value = kbRes.data.data
+  } catch {
+    knowledgeBases.value = []
+  }
 }
 
 watch(() => props.selectedNode?.id, () => {
@@ -631,6 +679,10 @@ onMounted(() => {
 
 .property-panel__type-icon--input {
   background: #38bdf8;
+}
+
+.property-panel__type-icon--retrieval {
+  background: #8b5cf6;
 }
 
 .property-panel__type-name {
