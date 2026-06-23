@@ -1,5 +1,6 @@
 package com.superprogrammer.knowledge.mapper;
 
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -34,4 +35,13 @@ public interface KnowledgeEmbeddingMapper {
                 @Param("halfvec") String halfvec,
                 @Param("contentHash") String contentHash,
                 @Param("contextHash") String contextHash);
+
+    /** 阶段7 对账：删 KB 下孤儿向量（node 软删/丢失）。 */
+    @Delete("""
+            DELETE FROM knowledge_embeddings_doubao e
+             WHERE e.kb_id = #{kbId}
+               AND (NOT EXISTS (SELECT 1 FROM knowledge_nodes n WHERE n.id = e.node_id AND n.deleted = 0)
+                    OR EXISTS (SELECT 1 FROM knowledge_nodes n WHERE n.id = e.node_id AND n.status = 'ARCHIVED'))
+            """)
+    int deleteOrphansByKb(@Param("kbId") Long kbId);
 }

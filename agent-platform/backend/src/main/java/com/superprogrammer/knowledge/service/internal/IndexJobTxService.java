@@ -49,7 +49,8 @@ public class IndexJobTxService {
     /**
      * 认领一批待处理 job（FOR UPDATE SKIP LOCKED，多 worker 安全）。
      * 认领即置 RUNNING + attempt+1 + lockedUntil，返回内存实体供 worker 异步处理。
-     * 认领条件：UPSERT 类型 + (PENDING 或 RUNNING 过期) + 锁过期/无锁。
+     * 认领条件：UPSERT 或 REINDEX 类型（两者处理同：重嵌 node.content + upsert 向量，
+     * REINDEX 的 content_hash=node 当前值，drift 修复）+ (PENDING 或 RUNNING 过期) + 锁过期/无锁。
      */
     @Transactional(rollbackFor = Exception.class)
     public List<KnowledgeIndexJob> claimBatch(int limit) {
@@ -57,7 +58,7 @@ public class IndexJobTxService {
         LambdaQueryWrapper<KnowledgeIndexJob> w = new LambdaQueryWrapper<>();
         w.and(q -> q.eq(KnowledgeIndexJob::getStatus, "PENDING")
                         .or().eq(KnowledgeIndexJob::getStatus, "RUNNING"))
-                .eq(KnowledgeIndexJob::getJobType, "UPSERT")
+                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX"))
                 .and(q -> q.isNull(KnowledgeIndexJob::getLockedUntil)
                         .or().lt(KnowledgeIndexJob::getLockedUntil, now))
                 .last("LIMIT " + limit + " FOR UPDATE SKIP LOCKED");

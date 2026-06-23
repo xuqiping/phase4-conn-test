@@ -2,6 +2,7 @@ package com.superprogrammer.knowledge.mapper;
 
 import com.superprogrammer.knowledge.dto.CacheCandidateRow;
 import com.superprogrammer.knowledge.entity.RagAnswerCache;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -63,4 +64,31 @@ public interface RagAnswerCacheMapper {
     /** 命中时计数 + 刷新 updated_at（命中频次观测 + LRU 清理依据）。 */
     @Update("UPDATE rag_answer_cache SET usage_count = usage_count + 1, updated_at = now() WHERE id = #{id}")
     void bumpUsage(@Param("id") Long id);
+
+    // ============================ 阶段7 decay 清理（ReconciliationJob）============================
+
+    /**
+     * 批量硬删 decay 过期的 ACTIVE 行（缓存非权威优化数据，硬删避免 HNSW 索引带 ARCHIVED 行拖慢每次查）。
+     * P2/P3 校验链保证缺行=miss 不损正确性。返回实际删除数。
+     */
+    @Delete("""
+            DELETE FROM rag_answer_cache
+             WHERE id IN (
+                 SELECT id FROM rag_answer_cache
+                  WHERE status = 'ACTIVE'
+                    AND decay_at IS NOT NULL
+                    AND decay_at < now()
+                  LIMIT #{batch}
+             )
+            """)
+    int deleteDecayed(@Param("batch") int batch);
+
+    /** decay 过期 ACTIVE 行计数（报告/观测，不删）。 */
+    @Select("""
+            SELECT COUNT(0) FROM rag_answer_cache
+             WHERE status = 'ACTIVE'
+               AND decay_at IS NOT NULL
+               AND decay_at < now()
+            """)
+    Long countDecayed();
 }
