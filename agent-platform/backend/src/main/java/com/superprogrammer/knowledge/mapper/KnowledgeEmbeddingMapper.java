@@ -44,4 +44,15 @@ public interface KnowledgeEmbeddingMapper {
                     OR EXISTS (SELECT 1 FROM knowledge_nodes n WHERE n.id = e.node_id AND n.status = 'ARCHIVED'))
             """)
     int deleteOrphansByKb(@Param("kbId") Long kbId);
+
+    /**
+     * 删文档：硬删该文档全部节点的向量行（emb 表无 deleted 列，本就硬删语义）。
+     * JOIN nodes 按 document_id 匹配（含已软删 node，彻底清），同事务与 doc/nodes 软删一起执行。
+     * 修 Gap-1：doc 软删后向量 orphan 泄漏。
+     */
+    @Delete("""
+            DELETE FROM knowledge_embeddings_doubao
+             WHERE node_id IN (SELECT id FROM knowledge_nodes WHERE document_id = #{documentId})
+            """)
+    int deleteByDocument(@Param("documentId") Long documentId);
 }

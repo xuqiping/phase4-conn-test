@@ -36,6 +36,10 @@
 - ✅ **8 项必做收口 全部完成（2026-06-23）**：#8 rag_memory_facts decay / #7 autoRepair REINDEX / #4 目录树端点 / #5 workflow toggle / #6 Agent/Workflow toggle / #2 检索审计表 / #3 记忆冲突列表 / #1 RAG 问答 SSE。后端 `mvn test` **294 测 0 错**（281→294，+13 新测，零回归）+ 前端 `vue-tsc --noEmit` **EXIT 0**。详见下「八、必做收口」各节 + §四「阶段6」表已无 Defer。
 - ✅ **8 项收口前端浏览器冒烟 全绿（2026-06-23，playwright-mcp）**：收口原各节标「未跑：浏览器冒烟（留后续）」的 5 项前端全部实跑验通：#1 RAG 问答 SSE（流式+[1]引用 doc2/node2）/ #2 检索审计表（trace 行+详情 JSON+删除）/ #5 workflow toggle + #6 Agent toggle（ON/DB 持久/reload 回显/OFF 全态）/ #3 记忆/冲突列表（4 记忆抽取+FLAGGED 共存+KEEP_NEW 解决）。详见下「八、必做收口」各节末尾「浏览器冒烟」段。**坑**：ChatView `ragEnabled=ref(false)` 建会话默认 OFF 门控抽取（经后端 API 带 ragEnabled=true 绕开）+ 中文 body Git Bash GBK 报错（`--data-binary @file`）。环境已还原（toggle OFF / 记忆+冲突=0 / agent4 config `{}` / wf8 NULL）。
 - ✅ **git 提交（未推送，2026-06-23）**：本次会话 5 主题 commit（阶段7 后端收口 / 测试基建 / VO+judge / 前端 / 文档），本地 ahead origin/main 6 commit。无 push（按用户要求）。
+- ✅ **阶段7 验收 E2E runbook 全绿（2026-06-23，后端 API + psql 直驱）**：v6 §10.2 ①②③④⑥ + ReconciliationJob 冒烟全实跑验通。建 e2e-kb(KB2)+上传 md→状态机 PENDING→PARSING→SUMMARIZING→EMBEDDING→INDEXED 全过→psql 验 L0/L2 层级(parent_id 指 L0)+L1 metadata 非空+jobs 全 DONE+向量 dim 2048+I1 hash 对齐=t(①②③)；检索 KB1 smoke-kb 相关 query topSim 0.5010>SUPPORTED 答案带合法 `[1]` 引用(promptTokens 188≤cap 6000)+无关 query topSim 0.195 abstain LOW_CONFIDENCE 拒答不编造(④)；删 doc→重检索 candidates=0 abstain NO_DENSE_HITS(dense SQL `d.deleted=0` 滤软删 doc，检索安全)(⑥)；ReconciliationJob SQL 级冒烟 drift/dead/decay_ans/decay_fact 4 类检测全抓+purge 全删残留 0。**⚠️ 发现 Gap-1（已修，见下行）**：`KnowledgeDocumentService.delete` 只软删 doc，**不软删 nodes、不 CASCADE 清向量** → doc 软删后 node(deleted=0)+向量成真孤儿；且 `countOrphanEmbeddings` orphan SQL 只看 `node.deleted/status` 不看 `doc.deleted` → ReconciliationJob 也抓不到（KB2 doc3 实测 job 抓 0 / 真孤儿 1）。检索安全(dense SQL 已滤 doc.deleted)，但存储泄漏。详见下「九、E2E 发现的 gap」。
+- ✅ **Gap-1 修复 完成（2026-06-23，`mvn test` 297 测绿 + 复跑 E2E 验 orphan 被清）**：`KnowledgeDocumentService.delete` 注入 `KnowledgeNodeMapper`+`KnowledgeEmbeddingMapper`，软删 doc 后**同事务软删该 doc 全部 nodes**（`nodeMapper.delete(wrapper eq documentId)`，@TableLogic 设 deleted=1）+**硬删对应向量行**（新 `KnowledgeEmbeddingMapper.deleteByDocument(docId)`，JOIN nodes 按 document_id，emb 表无 deleted 列本就硬删语义）。选即时清（非靠 opt-in 对账 worker）= 不泄漏 + 匹配 runbook CASCADE 原文。复跑 E2E：删 doc4→nodes 全 deleted=1 + 向量 0 行（删前 1）+ orphan SQL 抓 0 + 重检索仍 NO_DENSE_HITS 安全。新增 `KnowledgeDocumentServiceTest`（3 测：正常删验三清理+事件 / 无 manage 权限拒不触清理 / doc 不存在抛）。环境已还原（KB3/doc4/orphan/trace 清 / 临时文件删 / KB1 未污染）。详见下「九、Gap-1 修复」。
+
+
 - 📌 偏好：所有产出文件写项目内目录（不写 `~/.claude`），见 memory `feedback-files-in-repo`。
 - ✅ git：V12–V28 + answer_cache 全套已提交并推送 origin/main（2026-06-22，5 主题 commit + merge origin/main 的 file-keeper 工作，详见下「六、待办」）。
 
@@ -558,10 +562,13 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 - [x] **修瑕疵②：`listFlagged` 新候选 id=null（✅ 2026-06-22）**— 弃 `readSnap` 重建（丢 id）改 `findByConflictId` 取全组真实行，复验两 candidate id 非空（45/46）。
 - [x] **8 项收口前端浏览器冒烟 全绿（✅ 2026-06-23，playwright-mcp）**— 收口原各节「未跑：浏览器冒烟（留后续）」5 项前端全实跑：#1 RAG 问答 SSE / #2 检索审计表 / #5+#6 workflow+Agent toggle 全态 / #3 记忆/冲突列表（抽取+FLAGGED+KEEP_NEW 解决）。详见 §〇 速览 + §八 各节「浏览器冒烟」段。
 - [ ] 部署目标 WinServer 2019 前置条件已文档化：`项目工程文档/WinServer2019部署前置条件.md`。
+- [x] **doc 软删 orphan 泄漏（E2E 2026-06-23 发现 → 当日修）**：`KnowledgeDocumentService.delete` 只软删 doc，不软删 nodes、不清向量 → doc 软删后 node(deleted=0)+向量成真孤儿；`countOrphanEmbeddings` orphan SQL 只看 `node.deleted/status` 不看 `doc.deleted` → ReconciliationJob 也抓不到 → **存储泄漏**。检索安全（dense SQL `d.deleted=0` 已滤）。**已修**：delete 同事务软删 nodes（@TableLogic deleted=1）+ 硬删向量（新 `deleteByDocument`，emb 表无 deleted 列本就硬删）→ 即时清，不靠 opt-in worker。`mvn test` 297 绿 + 复跑 E2E 验 nodes deleted=1 + 向量 0 + orphan 0 + 检索仍安全。详见 §九「Gap-1 修复」。
 
 ---
 
 ## 七、阶段7 验收 E2E runbook（v6 §10.2 ①②③④⑥，全栈 playwright-mcp 驱动）
+
+> ✅ **已跑（2026-06-23，后端 API + psql 直驱全绿）**。详见 §〇「阶段7 验收 E2E runbook 全绿」+ 下「九、E2E 发现的 gap」。
 
 > 自动化部分（⑤⑦⑧⑨）已由阶段7 单测/集成测覆盖（见上「阶段7 已落地」F 节映射）。本节为需全栈的人工/半自动 E2E 步骤，复用阶段6 前端知识库页冒烟的 playwright-mcp 套路（按 memory `feedback-browser-automation` 用 playwright 不用 camoufox）。
 
@@ -744,6 +751,58 @@ resolveForWorkflowCallback(executionId): 经 executionLog 取 workflowId → res
 **验证：** `npx vue-tsc --noEmit` → **EXIT 0**。
 
 **浏览器冒烟（✅ 2026-06-23，playwright-mcp 全绿）：** admin 登录→/knowledge→RAG 问答 tab → 选 smoke-kb（P4 求交）+ query「如何安装部署系统」→ 提问 → 流式答案返回「系统安装部署需严格遵循以下步骤[1]：1. PostgreSQL 16…2. agent_platform+pgvector…3. Flyway…4. Redis…5. Spring Boot 8080」+ 引用列表「[1] 安装步骤 doc#2·node#2」（CHUNK 追加 + CITATION 解析 + DONE 收尾全链路验通）。
+
+---
+
+## 九、E2E 发现的 gap（2026-06-23，阶段7 验收 runbook 实跑 → 当日修复）
+
+### Gap-1：doc 软删 → nodes + 向量 orphan 泄漏（已修 ✅ 2026-06-23）
+
+**现象（KB2 doc3 实测）：** 删 doc（`DELETE /api/knowledge/documents/3`）→ doc 软删 `deleted=1` ✅，但 **nodes 仍 `deleted=0`（2 个全活）+ `knowledge_embeddings_doubao` 向量行仍 1 条未清**。runbook ⑥ 描述「knowledge_nodes 软删(deleted=1) + knowledge_embeddings_doubao CASCADE 删（FK ON DELETE CASCADE）」**未实现**。
+
+**根因（`KnowledgeDocumentService.delete` line 91）：**
+```java
+documentMapper.deleteById(id);  // 仅软删 doc（@TableLogic），不碰 nodes/向量
+applicationEventPublisher.publishEvent(new VisibilityInvalidationEvent(doc.getKbId()));  // 只失效可见集缓存
+```
+- nodes 表虽有 `deleted` 列（@TableLogic），delete 不软删它。
+- embeddings 表**无 deleted 列**（V17 §8.3 设计：重嵌就地覆盖），FK `ON DELETE CASCADE(node_id)` 要 node **硬删**才触发，但 node 是软删 → CASCADE 永不触发 → 向量常驻。
+
+**二级 gap（ReconciliationJob 兜底也失效）：** `countOrphanEmbeddings`/`deleteOrphansByKb` orphan 判定 = `node_id IS NULL OR node.deleted<>0 OR node.status='ARCHIVED'`（[KnowledgeIndexJobMapper.java:62](backend/src/main/java/com/superprogrammer/knowledge/mapper/KnowledgeIndexJobMapper.java#L62)），**不看 `doc.deleted`**。doc 软删后 node 仍 `deleted=0/ACTIVE` → orphan SQL 不匹配 → **对账抓不到、永不清理**。实测 KB2：job SQL 抓 orphan=0 / 真孤儿（按 doc.deleted 判）=1。
+
+**影响范围：**
+- ❌ **检索正确性：不受影响**（dense SQL `AND d.deleted = 0` 已滤软删 doc，[RagRetrievalQueryMapper.java:43](backend/src/main/java/com/superprogrammer/knowledge/mapper/RagRetrievalQueryMapper.java#L43)；删后重检索 candidates=0 abstain NO_DENSE_HITS 实测验证）。
+- ⚠️ **存储泄漏**：每删一 doc，其全部 L0/L2 nodes + 向量行（2048 维 halfvec）永久滞留 → DB 单调膨胀（HNSW 索引随膨胀变慢）。
+- ⚠️ **对账自愈失效**：设计本意「删除靠对账兜底」，但 orphan SQL 漏 doc 维度 → 兜底破。
+
+**修向（两选一，建议 A）：**
+- **A（推荐，最小改动 + 对账自愈）：** `KnowledgeDocumentService.delete` 同事务软删该 doc 的所有 nodes（`UPDATE knowledge_nodes SET deleted=1 WHERE document_id=?`）→ orphan SQL（node.deleted<>0）即命中 → `purgeOrphanEmbeddings` 清向量。改动 1 行 + 1 mapper 法（batch 软删 by documentId）。与现有对账哲学一致（非删时即时清，靠 worker 兜底）。
+- **B（即时清，匹配 runbook 原文 CASCADE 语义）：** delete 同事务硬删该 doc 的向量行（`DELETE FROM knowledge_embeddings_doubao WHERE node_id IN (nodes of doc)`，emb 表无 deleted 本就硬删）+ 软删 nodes。即时干净，不依赖 worker 轮询。
+- 两方案都应**补 ReconciliationIT 覆盖 doc 软删 → orphan 被抓/清**（当前 ReconciliationIT 只 seed node 级 orphan，未覆盖 doc 级）。
+
+**为何 E2E 才抓到：** 单测（IndexJobTxServiceTest 等）mock mapper，不触真 delete 链路；ReconciliationIT seed 的 orphan 是 node 软删级，绕过 doc 软删路径。全栈 E2E 删真实 doc 才暴露 node/向量未清。
+
+**严重度：中**。非数据正确性问题（检索安全），但生产长期跑会 DB 膨胀 + HNSW 性能退化。建议纳入下一轮收口（§六 待办已记）。
+
+### Gap-1 修复 已落地（✅ 2026-06-23，`mvn test` 297 测绿 + 复跑 E2E 验）
+
+**方案：即时清（方法 B，非方法 A）。** 理由：① emb 表无 deleted 列，本就硬删语义（重嵌 = ON CONFLICT 就地覆盖，无版本历史）→ 硬删一致；② 不依赖 opt-in ReconciliationJob（worker 默认 `enabled=false`，靠它清 = 长期泄漏窗口）；③ 匹配 runbook ⑥ 原文「向量 CASCADE 删」即时语义。方法 A（软删 nodes 等对账清）虽 1 行改，但留 opt-in worker 的清理窗口 + 依赖 orphan SQL 正确，不如即时清彻底。
+
+**改动（2 代码 + 1 测）：**
+- `knowledge/mapper/KnowledgeEmbeddingMapper.java`：新 `deleteByDocument(documentId)` — `@Delete` JOIN nodes 按 document_id 匹配（含已软删 node，彻底清）硬删向量行。
+- `knowledge/service/KnowledgeDocumentService.java`：注入 `KnowledgeNodeMapper` + `KnowledgeEmbeddingMapper`（构造器 4→6 参）；`delete()` 软删 doc 后加 `nodeMapper.delete(wrapper eq documentId)`（@TableLogic → deleted=1）+ `embeddingMapper.deleteByDocument(id)`（硬删向量），同事务，visibility 失效事件不变。
+- `knowledge/service/KnowledgeDocumentServiceTest.java`（新，3 测）：正常删验三清理（doc deleteById + nodeMapper.delete + embeddingMapper.deleteByDocument）+ VisibilityInvalidationEvent(kbId) 发布 / 无 manage 权限拒不触任何清理 / doc 不存在抛且不触清理。
+
+**复跑 E2E 验（gap-test-kb KB3 + doc4，重启 backend 后）：**
+- 删前：nodes 2（deleted=0）+ 向量 1 行。
+- 删后：**nodes 全 deleted=1**（2 个软删）+ **向量 0 行**（硬删清）+ orphan SQL（node.deleted<>0）抓 **0**（无残活向量）+ doc4 deleted=1。
+- 重检索 KB3：candidates=0 abstain NO_DENSE_HITS（检索安全保持，dense SQL `d.deleted=0` 仍滤）。
+- 对比修复前（KB2 doc3：nodes deleted=0 + 向量 1 行泄漏 + orphan SQL 抓不到）→ 修复后彻底清。
+
+**验证：** `mvn test -Dtest='KnowledgeDocumentServiceTest'` 3 测 0 错 / `mvn test` 全量 **297 测 0 错**（294→297，+3 新测，零回归）/ `mvn test-compile` BUILD SUCCESS（IDE 全程 Lombok 误报，BUILD 证实）。
+
+**环境还原：** KB3/doc4/orphan/trace 清空 / 临时文件删 / KB1 smoke-kb 未受污染（doc2 INDEXED + 1 L0 + 1 向量）。
+
 
 
 

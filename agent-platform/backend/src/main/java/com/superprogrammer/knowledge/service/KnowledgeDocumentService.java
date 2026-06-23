@@ -8,9 +8,12 @@ import com.superprogrammer.file.service.StoredFile;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
+import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.event.DocumentUploadedEvent;
 import com.superprogrammer.knowledge.event.VisibilityInvalidationEvent;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -26,6 +29,8 @@ import java.util.List;
 public class KnowledgeDocumentService {
 
     private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeNodeMapper nodeMapper;
+    private final KnowledgeEmbeddingMapper embeddingMapper;
     private final KnowledgeBaseService knowledgeBaseService;
     private final FileStorageService fileStorageService;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -89,6 +94,11 @@ public class KnowledgeDocumentService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员或知识库创建者可删除文档");
         }
         documentMapper.deleteById(id);
+        // 文档删除 → 软删其全部节点 + 硬删对应向量行（emb 表无 deleted 列，本就硬删语义）。
+        // 修 Gap-1：原仅软删 doc，node(deleted=0)+向量成真孤儿，且 orphan SQL 只看 node 不看 doc → 对账也漏。
+        nodeMapper.delete(new LambdaQueryWrapper<KnowledgeNode>()
+                .eq(KnowledgeNode::getDocumentId, id));
+        embeddingMapper.deleteByDocument(id);
         // 文档删除 → 该 KB 可见集缓存失效（doc_id 移除）
         applicationEventPublisher.publishEvent(new VisibilityInvalidationEvent(doc.getKbId()));
     }
