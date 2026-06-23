@@ -5,6 +5,7 @@ import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TestConnectionResult;
 import com.superprogrammer.llm.dto.TokenUsage;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
+import com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,11 +33,14 @@ class TestConnectionTest {
     @Mock
     private LlmProviderInterface provider;
 
+    @Mock
+    private EmbeddingModelVersionMapper embeddingModelVersionMapper;
+
     private LlmProviderService service;
 
     @BeforeEach
     void setUp() {
-        service = new LlmProviderService(mapper, aesEncryptService, llmConfig);
+        service = new LlmProviderService(mapper, aesEncryptService, llmConfig, embeddingModelVersionMapper);
     }
 
     private LlmProviderEntity buildEntity() {

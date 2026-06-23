@@ -2,6 +2,7 @@ package com.superprogrammer.llm.service;
 
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
+import com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,11 +28,14 @@ class LlmProviderServiceTest {
     @Mock
     private LlmConfig llmConfig;
 
+    @Mock
+    private EmbeddingModelVersionMapper embeddingModelVersionMapper;
+
     private LlmProviderService service;
 
     @BeforeEach
     void setUp() {
-        service = new LlmProviderService(mapper, aesEncryptService, llmConfig);
+        service = new LlmProviderService(mapper, aesEncryptService, llmConfig, embeddingModelVersionMapper);
     }
 
     @Test

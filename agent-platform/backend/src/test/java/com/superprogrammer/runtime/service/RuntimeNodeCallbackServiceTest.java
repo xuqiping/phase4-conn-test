@@ -42,9 +42,18 @@ class RuntimeNodeCallbackServiceTest {
     @Mock
     private AgentPermissionService agentPermissionService;
 
+    @Mock
+    private com.superprogrammer.knowledge.service.RagScopeResolver ragScopeResolver;
+
+    @Mock
+    private com.superprogrammer.knowledge.service.RagRetrievalService ragRetrievalService;
+
+    @Mock
+    private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
+
     @Test
     void executeNode_runsSkillExecutorForSkillNode() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -86,7 +95,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_mapsPromptInputToTemplateInputWhenMessageIsAbsent() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -118,7 +127,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_passesNodePromptConfigAsFirstStepOverride() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -155,7 +164,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_appliesNodeInputMappingsWithScopedReferences() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -190,7 +199,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_routesAgentRefAndRunsSelectedSkills() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");
@@ -231,7 +240,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_rejectsSkillWhenOwningAgentIsNotPublishedAndUserIsNotOwner() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -256,7 +265,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_allowsDraftAgentForOwner() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");
@@ -283,7 +292,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_rejectsPublishedAgentWhenUserLacksObjectUsePermission() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");

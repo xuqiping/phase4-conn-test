@@ -2,8 +2,8 @@ package com.superprogrammer.chat.service;
 
 import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.chat.mapper.UserMemoryMapper;
-import com.superprogrammer.llm.LlmGateway;
-import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.chat.service.internal.MemoryBlockClassifier;
+import com.superprogrammer.chat.service.internal.MemoryConflictJudge;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,11 +18,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+/**
+ * V27 记忆冲突重构后的 MemoryService 单测。
+ * 注：旧 extractMemoriesAsync(long,String,String) 已被同步 processMemory 取代，
+ * 其抽取/归块/冲突判定链由 judge/classifier/conflictService 协作，覆盖见后续阶段7 扩展。
+ * 此处仅守 buildMemoryContext 注入契约（FLAGGED 前缀 + counterpart 聚合）。
+ */
 @ExtendWith(MockitoExtension.class)
 class MemoryServiceTest {
 
     @Mock private UserMemoryMapper memoryMapper;
-    @Mock private LlmGateway llmGateway;
+    @Mock private MemoryBlockClassifier classifier;
+    @Mock private MemoryConflictJudge judge;
+    @Mock private MemoryConflictService conflictService;
 
     @InjectMocks
     private MemoryService memoryService;
@@ -62,33 +70,20 @@ class MemoryServiceTest {
     }
 
     @Test
-    void extractMemoriesAsync_parsesValidJson() {
-        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder()
-                .content("""
-                        [{"category":"PREFERENCE","key":"editor","value":"VSCode","confidence":0.8}]""")
-                .build());
-        when(memoryMapper.selectOne(any())).thenReturn(null);
-        when(memoryMapper.insert(any())).thenReturn(1);
+    void buildMemoryContext_flagsConflictingMemoryWithCounterpart() {
+        testMemory.setConflictId(7L);
+        UserMemory counterpart = new UserMemory();
+        counterpart.setId(2L);
+        counterpart.setUserId(100L);
+        counterpart.setMemoryValue("Python");
+        // 主行查询（conflictId!=null 过滤前已含）+ counterpart 查询（同 conflictId 排除自身）
+        when(memoryMapper.selectList(any())).thenReturn(List.of(testMemory), List.of(counterpart));
 
-        memoryService.extractMemoriesAsync(100L, "I use VSCode", "Good choice!");
+        String context = memoryService.buildMemoryContext(100L);
 
-        verify(memoryMapper, timeout(2000)).insert(any(UserMemory.class));
-    }
-
-    @Test
-    void extractMemoriesAsync_emptyResponse() {
-        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder()
-                .content("[]").build());
-
-        memoryService.extractMemoriesAsync(100L, "Hello", "Hi");
-
-        verify(memoryMapper, never()).insert(any());
-    }
-
-    @Test
-    void extractMemoriesAsync_llmFailure_doesNotThrow() {
-        when(llmGateway.chat(any())).thenThrow(new RuntimeException("LLM down"));
-
-        assertDoesNotThrow(() -> memoryService.extractMemoriesAsync(100L, "test", "test"));
+        assertNotNull(context);
+        assertTrue(context.contains("[⚠️冲突]"));
+        assertTrue(context.contains("Java"));
+        assertTrue(context.contains("Python"));
     }
 }

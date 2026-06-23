@@ -1,0 +1,83 @@
+# 集成测 profile — 本地真实 PG16 + pgvector（独立库 agent_platform_it）+ Redis。
+# 仅 @Tag("integration") + @ActiveProfiles("it") 的 IT 用；mvn test 默认排除该组。
+# H2 跑不了 halfvec / HNSW <=> / tsvector @@，故 RAG mapper SQL 必须走真实 pgvector。
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${IT_DB_HOST:localhost}:${IT_DB_PORT:5432}/${IT_DB_NAME:agent_platform_it}
+    username: ${IT_DB_USER:postgres}
+    password: ${IT_DB_PASSWORD:aa64221886}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 30000
+      connection-timeout: 30000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: 0
+      timeout: 5000ms
+
+  flyway:
+    enabled: true                 # 真实 migration V1..V28 跑净（验 halfvec/HNSW DDL + seed）
+    locations: classpath:db/migration
+    baseline-on-migrate: false    # 独立空库，从 V1 跑，不 baseline
+    baseline-version: 0
+    clean-disabled: false
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+mybatis-plus:
+  mapper-locations: classpath*:/com/superprogrammer/**/mapper/xml/*.xml
+  type-aliases-package: com.superprogrammer.**.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+jwt:
+  secret: dGVzdFNlY3JldEtleUZvclRlc3RpbmdQdXJwb3Nlc09ubHlMb25nRW5vdWdo
+  access-expiration: 60000
+  refresh-expiration: 3600000
+
+runtime:
+  gateway:
+    mode: mock                    # IT 不依赖 runtime-sidecar
+
+agent:
+  data-path: ""
+
+# IT 期间禁缓存（确定性，RAG 路径不触 Redis）+ 拉爆 index worker 轮询间隔
+# （防 @Scheduled IndexJobWorker 抢测内 seed 的 PENDING job 去 embed 无 key 报错）
+knowledge:
+  index:
+    poll-ms: 999999999
+
+rag:
+  visibility-cache:
+    enabled: false
+  answer-cache:
+    enabled: false
+    sim-threshold: 0.90
+    top-n: 5
+    ttl-days: 7
+  reconciliation:
+    enabled: false
+
+logging:
+  level:
+    com.superprogrammer: WARN
+    org.springframework.security: WARN
+    org.flywaydb: INFO

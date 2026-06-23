@@ -6,15 +6,19 @@ import com.superprogrammer.auth.dto.LoginRequest;
 import com.superprogrammer.auth.dto.RegisterRequest;
 import com.superprogrammer.auth.dto.TokenResponse;
 import com.superprogrammer.common.result.R;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -25,9 +29,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test")
+@Tag("integration")
+@ActiveProfiles("it")
 @Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)   // @AfterAll 实例方法可注入 jdbc 清理测试用户
 class AuthIntegrationTest {
 
     @Autowired
@@ -36,8 +42,17 @@ class AuthIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private static String accessToken;
     private static String refreshToken;
+
+    /** 清理本类注册的 integrationuser，使跨 run 可重复（否则残留用户致 step1 收 409）。 */
+    @AfterAll
+    void cleanup() {
+        jdbc.update("DELETE FROM users WHERE username = 'integrationuser'");
+    }
 
     @Test
     @Order(1)

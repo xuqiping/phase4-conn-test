@@ -22,6 +22,8 @@
         <mybatis-plus.version>3.5.5</mybatis-plus.version>
         <jjwt.version>0.12.5</jjwt.version>
         <tika.version>2.9.2</tika.version>
+        <!-- mvn test 默认排除 integration 组；跑集成测：mvn test -Dsurefire.excludedGroups= -Dtest=XxxIT -->
+        <surefire.excludedGroups>integration</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -159,6 +161,14 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- mvn test = 单测 only；mvn test -Dsurefire.excludedGroups= -Dtest=XxxIT = PG+pgvector 集成测 -->
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

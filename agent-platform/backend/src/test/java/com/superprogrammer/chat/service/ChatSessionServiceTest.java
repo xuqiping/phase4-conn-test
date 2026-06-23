@@ -40,6 +40,13 @@ class ChatSessionServiceTest {
     @Mock private MemoryService memoryService;
     @Mock private ChatTargetService chatTargetService;
     @Mock private RuntimeExecutionService runtimeExecutionService;
+    // RAG/记忆集成后新增依赖（阶段5/记忆冲突）；mock 默认让 ragModeResolver.resolve()→false → 跳 RAG/记忆路径
+    @Mock private com.superprogrammer.knowledge.service.RagScopeResolver ragScopeResolver;
+    @Mock private com.superprogrammer.knowledge.service.RagRetrievalService ragRetrievalService;
+    @Mock private com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
+    @Mock private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
+    @Mock private MemoryConflictService conflictService;
+    @Mock private com.superprogrammer.chat.service.internal.MemoryConflictJudge conflictJudge;
 
     @InjectMocks
     private ChatSessionService chatSessionService;

@@ -4,6 +4,7 @@ import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackRequest;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackResponse;
 import com.superprogrammer.runtime.service.RuntimeNodeCallbackService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -26,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test")
+@Tag("integration")
+@ActiveProfiles("it")
 @Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 class RuntimeCallbackControllerTest {
 

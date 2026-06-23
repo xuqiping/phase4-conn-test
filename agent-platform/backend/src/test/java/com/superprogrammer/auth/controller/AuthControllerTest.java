@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.auth.dto.*;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.auth.service.AuthService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -27,7 +28,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test")
+@Tag("integration")
+@ActiveProfiles("it")
 @Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 class AuthControllerTest {
 

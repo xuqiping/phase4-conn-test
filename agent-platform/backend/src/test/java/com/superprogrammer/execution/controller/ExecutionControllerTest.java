@@ -8,6 +8,7 @@ import com.superprogrammer.execution.service.ExecutionLogService;
 import com.superprogrammer.execution.vo.ExecutionRecoveryInfoVO;
 import com.superprogrammer.runtime.dto.ExecutionEvent;
 import com.superprogrammer.runtime.service.RuntimeExecutionService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -31,7 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test")
+@Tag("integration")
+@ActiveProfiles("it")
 @Import(com.superprogrammer.common.config.TestSecurityConfig.class)
 class ExecutionControllerTest {
 
