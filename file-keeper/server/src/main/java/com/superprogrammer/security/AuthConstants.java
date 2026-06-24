@@ -12,6 +12,7 @@ public final class AuthConstants {
     public static final String MODULE_FILES = "files";
     public static final String MODULE_PROCESSES = "processes";
     public static final String MODULE_CLIPBOARD = "clipboard";
+    public static final String MODULE_WORK_REPORT = "work-report";
 
     public static final int ANONYMOUS_FULL_TRIAL_DAYS = 7;
     public static final int ANONYMOUS_FREE_MODULE_CHANGE_DAYS = 30;

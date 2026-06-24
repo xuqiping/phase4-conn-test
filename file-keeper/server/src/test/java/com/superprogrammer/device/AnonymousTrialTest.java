@@ -13,6 +13,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import org.springframework.data.redis.core.StringRedisTemplate;
+
 import java.time.OffsetDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,9 +37,15 @@ class AnonymousTrialTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
     @BeforeEach
     void cleanUp() {
         jdbcTemplate.update("delete from anonymous_device_trials");
+        jdbcTemplate.update("delete from system_settings");
+        redisTemplate.delete(redisTemplate.keys("anon:start:fp:*"));
+        redisTemplate.delete(redisTemplate.keys("anon:start:ip:*"));
     }
 
     @Test
@@ -49,10 +57,11 @@ class AnonymousTrialTest {
                 .andExpect(jsonPath("$.data.deviceId").value("anon-001"))
                 .andExpect(jsonPath("$.data.inFullTrial").value(true))
                 .andExpect(jsonPath("$.data.trialExpired").value(false))
-                .andExpect(jsonPath("$.data.allowedModuleCodes.length()").value(3))
+                .andExpect(jsonPath("$.data.allowedModuleCodes.length()").value(4))
                 .andExpect(jsonPath("$.data.allowedModuleCodes[0]").value("files"))
                 .andExpect(jsonPath("$.data.allowedModuleCodes[1]").value("processes"))
-                .andExpect(jsonPath("$.data.allowedModuleCodes[2]").value("clipboard"));
+                .andExpect(jsonPath("$.data.allowedModuleCodes[2]").value("clipboard"))
+                .andExpect(jsonPath("$.data.allowedModuleCodes[3]").value("work-report"));
 
         mockMvc.perform(post("/api/anonymous/trial/start")
                         .contentType("application/json")
@@ -133,6 +142,61 @@ class AnonymousTrialTest {
         mockMvc.perform(get("/api/anonymous/trial/status?deviceId=anon-004&fingerprintHash=fp-004"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(403));
+    }
+
+    @Test
+    void trialDurationFollowsConfiguredDays() throws Exception {
+        jdbcTemplate.update(
+                "insert into system_settings (setting_key, setting_value, description, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values ('anonymous_trial_days', '3', 'test', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)"
+        );
+
+        mockMvc.perform(post("/api/anonymous/trial/start")
+                        .contentType("application/json")
+                        .content("{\"deviceId\":\"anon-cfg-001\",\"fingerprintHash\":\"fp-cfg-001\",\"deviceName\":\"Laptop\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.inFullTrial").value(true));
+
+        OffsetDateTime expiresAt = jdbcTemplate.queryForObject(
+                "select trial_expires_at from anonymous_device_trials where device_id = 'anon-cfg-001'", OffsetDateTime.class);
+        OffsetDateTime startedAt = jdbcTemplate.queryForObject(
+                "select trial_started_at from anonymous_device_trials where device_id = 'anon-cfg-001'", OffsetDateTime.class);
+        long daysBetween = java.time.Duration.between(startedAt, expiresAt).toDays();
+        assertEquals(3, daysBetween);
+    }
+
+    @Test
+    void freeModuleChangeIntervalFollowsConfiguredDays() throws Exception {
+        jdbcTemplate.update(
+                "insert into system_settings (setting_key, setting_value, description, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values ('free_module_change_days', '10', 'test', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)"
+        );
+
+        // 过期试用 + 已选免费模块，上次更换在 11 天前（超过配置的 10 天间隔）→ 允许更换
+        insertTrial("anon-cfg-002", "fp-cfg-002", "Laptop", OffsetDateTime.now().minusDays(1), "files", OffsetDateTime.now().minusDays(11), "active");
+        jdbcTemplate.update(
+                "update anonymous_device_trials set last_free_module_changed_at = ? where device_id = 'anon-cfg-002'",
+                OffsetDateTime.now().minusDays(11)
+        );
+
+        mockMvc.perform(post("/api/anonymous/trial/change-free-module")
+                        .contentType("application/json")
+                        .content("{\"deviceId\":\"anon-cfg-002\",\"fingerprintHash\":\"fp-cfg-002\",\"freeModuleCode\":\"clipboard\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.freeModuleCode").value("clipboard"));
+
+        // 新设备，上次更换在 9 天前（未超过配置的 10 天间隔）→ 拒绝
+        insertTrial("anon-cfg-003", "fp-cfg-003", "Laptop", OffsetDateTime.now().minusDays(1), "files", OffsetDateTime.now().minusDays(9), "active");
+        jdbcTemplate.update(
+                "update anonymous_device_trials set last_free_module_changed_at = ? where device_id = 'anon-cfg-003'",
+                OffsetDateTime.now().minusDays(9)
+        );
+
+        mockMvc.perform(post("/api/anonymous/trial/change-free-module")
+                        .contentType("application/json")
+                        .content("{\"deviceId\":\"anon-cfg-003\",\"fingerprintHash\":\"fp-cfg-003\",\"freeModuleCode\":\"clipboard\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(422));
     }
 
     private void insertTrial(String deviceId, String fingerprintHash, String deviceName, OffsetDateTime trialExpiresAt,

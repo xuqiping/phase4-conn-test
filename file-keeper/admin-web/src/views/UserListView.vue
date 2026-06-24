@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, h, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   NDataTable, NSpace, NH2, NSelect, NButton, NTag, useMessage, useDialog,
   type DataTableColumns
@@ -38,6 +38,7 @@ import type { UserSummary } from '@/types'
 import { USER_STATUS_MAP } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
 
@@ -127,5 +128,11 @@ function handleAction(id: number, action: 'approve' | 'disable' | 'enable') {
   })
 }
 
-onMounted(loadUsers)
+onMounted(() => {
+  const q = route.query.status
+  if (q && typeof q === 'string') {
+    statusFilter.value = q
+  }
+  loadUsers()
+})
 </script>

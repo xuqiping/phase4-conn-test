@@ -39,6 +39,7 @@ export interface DeviceInfo {
   deviceName: string
   status: string
   lastSeenAt: string | null
+  timeSyncAnomalyCount: number
 }
 
 export interface AuthResponse {
@@ -48,7 +49,7 @@ export interface AuthResponse {
   user: UserSummary
 }
 
-export type ModuleCode = 'files' | 'processes' | 'clipboard'
+export type ModuleCode = 'files' | 'processes' | 'clipboard' | 'work-report'
 
 export const USER_STATUS_MAP: Record<string, { label: string; type: 'default' | 'info' | 'success' | 'warning' | 'error' }> = {
   pending_verification: { label: '待验证', type: 'warning' },
@@ -60,5 +61,51 @@ export const USER_STATUS_MAP: Record<string, { label: string; type: 'default' | 
 export const MODULE_LABEL_MAP: Record<string, string> = {
   files: '文件管理',
   processes: '进程管理',
-  clipboard: '剪贴板'
+  clipboard: '剪贴板',
+  'work-report': '工作汇报'
+}
+
+export interface DashboardStats {
+  totalUsers: number
+  pendingReviewUsers: number
+  activeUsers: number
+  disabledUsers: number
+  pendingVerificationUsers: number
+  activeDevices: number
+  expiringSoonEntitlements: number
+  expiredEntitlements: number
+}
+
+export interface SystemSettings {
+  defaultDeviceLimit: number
+  defaultOfflineCacheMinutes: number
+  anonymousTrialDays: number
+  freeModuleChangeDays: number
+}
+
+export interface AnonymousDevice {
+  id: number
+  deviceId: string
+  fingerprintHash: string
+  deviceName: string
+  status: string
+  trialStartedAt: string | null
+  trialExpiresAt: string | null
+  freeModuleCode: string | null
+  freeModuleSelectedAt: string | null
+  lastFreeModuleChangedAt: string | null
+  lastSeenAt: string | null
+  firstSeenIp: string | null
+  userAgentHash: string | null
+  trialResetCount: number
+}
+
+export interface IpDeviceCount {
+  firstSeenIp: string
+  deviceCount: number
+}
+
+export const ANONYMOUS_DEVICE_STATUS_MAP: Record<string, { label: string; type: 'default' | 'info' | 'success' | 'warning' | 'error' }> = {
+  active: { label: '正常', type: 'success' },
+  disabled: { label: '已禁用', type: 'error' }
 }

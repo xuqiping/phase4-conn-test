@@ -29,17 +29,20 @@ public class UserRepository {
         return count != null && count > 0;
     }
 
-    public UserSummary insertPendingReviewUser(String email, String phone, String passwordHash) {
+    public UserSummary insertPendingReviewUser(String email, String phone, String passwordHash,
+                                                int deviceLimit, int offlineCacheMinutes) {
         boolean emailVerified = email != null;
         boolean phoneVerified = phone != null;
         jdbcTemplate.update(
                 "insert into users (email, phone, password_hash, role, status, email_verified, phone_verified, device_limit, offline_cache_minutes, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, ?, 'user', 'pending_review', ?, ?, 1, 0, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
+                        "values (?, ?, ?, 'user', 'pending_review', ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
                 email,
                 phone,
                 passwordHash,
                 emailVerified,
-                phoneVerified
+                phoneVerified,
+                deviceLimit,
+                offlineCacheMinutes
         );
         return findSummaryByContact(email != null ? "email" : "phone", email != null ? email : phone);
     }

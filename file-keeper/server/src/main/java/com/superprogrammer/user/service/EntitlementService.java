@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -23,7 +24,8 @@ public class EntitlementService {
     private static final Set<String> VALID_MODULES = Set.of(
             AuthConstants.MODULE_FILES,
             AuthConstants.MODULE_PROCESSES,
-            AuthConstants.MODULE_CLIPBOARD
+            AuthConstants.MODULE_CLIPBOARD,
+            AuthConstants.MODULE_WORK_REPORT
     );
 
     private final EntitlementRepository entitlementRepository;
@@ -41,6 +43,13 @@ public class EntitlementService {
     public ModuleEntitlementDto grant(Long adminUserId, Long userId, GrantEntitlementRequest request) {
         validateModuleCode(request.moduleCode());
         userRepository.requireById(userId);
+        Optional<Long> deletedId = entitlementRepository.findDeletedIdByUserAndModule(userId, request.moduleCode());
+        if (deletedId.isPresent()) {
+            ModuleEntitlementDto dto = entitlementRepository.restore(deletedId.get(), request.expiresAt());
+            auditLogService.record(adminUserId, "entitlement.grant", "entitlement", String.valueOf(dto.id()),
+                    "恢复并授予模块 " + request.moduleCode());
+            return dto;
+        }
         if (entitlementRepository.existsByUserAndModule(userId, request.moduleCode())) {
             throw new BusinessException(ErrorCode.CONFLICT, "该用户已拥有此模块权益");
         }
@@ -67,7 +76,7 @@ public class EntitlementService {
 
     private void validateModuleCode(String moduleCode) {
         if (!VALID_MODULES.contains(moduleCode)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes 或 clipboard");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes、clipboard 或 work-report");
         }
     }
 

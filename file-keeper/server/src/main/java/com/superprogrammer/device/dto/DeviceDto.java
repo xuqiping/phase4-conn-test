@@ -9,6 +9,7 @@ public record DeviceDto(
         String fingerprintHash,
         String deviceName,
         String status,
-        OffsetDateTime lastSeenAt
+        OffsetDateTime lastSeenAt,
+        Integer timeSyncAnomalyCount
 ) {
 }

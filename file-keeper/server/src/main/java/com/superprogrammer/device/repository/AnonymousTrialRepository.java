@@ -18,7 +18,7 @@ public class AnonymousTrialRepository {
 
     public Optional<AnonymousTrialRecord> findByDeviceId(String deviceId) {
         List<AnonymousTrialRecord> records = jdbcTemplate.query(
-                "select id, device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, free_module_code, free_module_selected_at, last_free_module_changed_at, status " +
+                "select id, device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, free_module_code, free_module_selected_at, last_free_module_changed_at, status, first_seen_ip, user_agent_hash, trial_reset_count " +
                         "from anonymous_device_trials where device_id = ? and deleted = 0",
                 trialMapper(),
                 deviceId
@@ -26,17 +26,35 @@ public class AnonymousTrialRepository {
         return records.stream().findFirst();
     }
 
-    public AnonymousTrialRecord insert(String deviceId, String fingerprintHash, String deviceName, OffsetDateTime trialStartedAt, OffsetDateTime trialExpiresAt) {
+    public AnonymousTrialRecord insert(String deviceId, String fingerprintHash, String deviceName, OffsetDateTime trialStartedAt, OffsetDateTime trialExpiresAt, String firstSeenIp, String userAgentHash) {
         jdbcTemplate.update(
-                "insert into anonymous_device_trials (device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, status, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, ?, ?, ?, 'active', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
+                "insert into anonymous_device_trials (device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, status, first_seen_ip, user_agent_hash, trial_reset_count, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values (?, ?, ?, ?, ?, 'active', ?, ?, 0, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
                 deviceId,
                 fingerprintHash,
                 deviceName,
                 trialStartedAt,
-                trialExpiresAt
+                trialExpiresAt,
+                firstSeenIp,
+                userAgentHash
         );
         return findByDeviceId(deviceId).orElseThrow();
+    }
+
+    public int countByFirstSeenIp(String firstSeenIp) {
+        Integer count = jdbcTemplate.queryForObject(
+                "select count(*) from anonymous_device_trials where first_seen_ip = ? and deleted = 0",
+                Integer.class,
+                firstSeenIp
+        );
+        return count != null ? count : 0;
+    }
+
+    public int incrementResetCount(String deviceId) {
+        return jdbcTemplate.update(
+                "update anonymous_device_trials set trial_reset_count = trial_reset_count + 1, updated_at = CURRENT_TIMESTAMP where device_id = ? and deleted = 0",
+                deviceId
+        );
     }
 
     public AnonymousTrialRecord updateFreeModule(String deviceId, String freeModuleCode, OffsetDateTime changedAt) {
@@ -61,7 +79,10 @@ public class AnonymousTrialRepository {
                 rs.getString("free_module_code"),
                 toOffsetDateTime(rs.getTimestamp("free_module_selected_at")),
                 toOffsetDateTime(rs.getTimestamp("last_free_module_changed_at")),
-                rs.getString("status")
+                rs.getString("status"),
+                rs.getString("first_seen_ip"),
+                rs.getString("user_agent_hash"),
+                rs.getInt("trial_reset_count")
         );
     }
 
@@ -79,7 +100,10 @@ public class AnonymousTrialRepository {
             String freeModuleCode,
             OffsetDateTime freeModuleSelectedAt,
             OffsetDateTime lastFreeModuleChangedAt,
-            String status
+            String status,
+            String firstSeenIp,
+            String userAgentHash,
+            int trialResetCount
     ) {
     }
 }

@@ -37,6 +37,8 @@ use commands::clipboard::{
     update_clipboard_settings,
 };
 use commands::screenshot::{capture_screenshot_region, get_screenshot_ocr_status};
+use commands::auth::{set_offline_token, clear_offline_token, check_offline_access, OfflineTokenState};
+use commands::work_report::{fetch_git_logs, show_work_report_notification, export_report_markdown};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -54,6 +56,7 @@ fn main() {
             let clipboard_service = ClipboardService::new(database_path)
                 .map_err(|err| Box::<dyn std::error::Error>::from(err))?;
             app.manage(clipboard_service);
+            app.manage(OfflineTokenState::new());
 
             // Build tray menu
             let show_item = MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
@@ -144,7 +147,13 @@ fn main() {
             rebuild_clipboard_index,
             retry_link_preview,
             capture_screenshot_region,
-            get_screenshot_ocr_status
+            get_screenshot_ocr_status,
+            set_offline_token,
+            clear_offline_token,
+            check_offline_access,
+            fetch_git_logs,
+            show_work_report_notification,
+            export_report_markdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

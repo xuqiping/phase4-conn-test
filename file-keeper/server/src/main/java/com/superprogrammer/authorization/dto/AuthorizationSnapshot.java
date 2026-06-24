@@ -13,6 +13,7 @@ public record AuthorizationSnapshot(
         Integer deviceLimit,
         boolean onlineRequired,
         OffsetDateTime offlineUsableUntil,
+        String offlineToken,
         DeviceBinding deviceBinding,
         List<ModuleAccess> modules
 ) {

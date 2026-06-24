@@ -91,7 +91,8 @@ const grantForm = reactive<{ moduleCode: ModuleCode | null; expiresTs: number | 
 const moduleOptions = [
   { label: '文件管理 (files)', value: 'files' },
   { label: '进程管理 (processes)', value: 'processes' },
-  { label: '剪贴板 (clipboard)', value: 'clipboard' }
+  { label: '剪贴板 (clipboard)', value: 'clipboard' },
+  { label: '工作汇报 (work-report)', value: 'work-report' }
 ]
 
 const entitlementColumns: DataTableColumns<ModuleEntitlement> = [
@@ -111,6 +112,7 @@ const deviceColumns: DataTableColumns<DeviceInfo> = [
   { title: '设备ID', key: 'deviceId', ellipsis: { tooltip: true } },
   { title: '设备名', key: 'deviceName', ellipsis: { tooltip: true } },
   { title: '状态', key: 'status', width: 80, render: (row) => h(NTag, { type: row.status === 'active' ? 'success' : 'error', size: 'small' }, () => row.status) },
+  { title: '时间异常次数', key: 'timeSyncAnomalyCount', width: 120, render: (row) => row.timeSyncAnomalyCount > 0 ? h(NTag, { type: 'error', size: 'small' }, () => String(row.timeSyncAnomalyCount)) : h('span', {}, '0') },
   { title: '最后活跃', key: 'lastSeenAt', render: (row) => row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '-' },
   {
     title: '操作', key: 'actions', width: 80,

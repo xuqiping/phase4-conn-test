@@ -19,8 +19,10 @@ public class ClientAuthorizationController {
     private final AuthorizationService authorizationService;
 
     @GetMapping("/authorization")
-    public R<AuthorizationSnapshot> authorization(Authentication authentication, @RequestParam String deviceId) {
+    public R<AuthorizationSnapshot> authorization(Authentication authentication,
+                                                  @RequestParam String deviceId,
+                                                  @RequestParam(required = false) Long clientTimestamp) {
         AuthPrincipal principal = (AuthPrincipal) authentication.getPrincipal();
-        return R.ok(authorizationService.authenticatedSnapshot(principal.userId(), deviceId));
+        return R.ok(authorizationService.authenticatedSnapshot(principal.userId(), deviceId, clientTimestamp));
     }
 }

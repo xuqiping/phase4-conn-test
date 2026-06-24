@@ -13,7 +13,9 @@ import com.superprogrammer.user.entity.User;
 import com.superprogrammer.user.repository.EntitlementRepository;
 import com.superprogrammer.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -29,7 +31,8 @@ public class AuthorizationService {
     private static final List<String> MODULE_CODES = List.of(
             AuthConstants.MODULE_FILES,
             AuthConstants.MODULE_PROCESSES,
-            AuthConstants.MODULE_CLIPBOARD
+            AuthConstants.MODULE_CLIPBOARD,
+            AuthConstants.MODULE_WORK_REPORT
     );
 
     private final UserRepository userRepository;
@@ -37,7 +40,12 @@ public class AuthorizationService {
     private final DeviceRepository deviceRepository;
     private final AnonymousTrialRepository anonymousTrialRepository;
 
-    public AuthorizationSnapshot authenticatedSnapshot(Long userId, String deviceId) {
+    @Value("${file-keeper.auth.jwt.secret}")
+    private String jwtSecret;
+
+    private static final long TIME_SYNC_ANOMALY_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+    public AuthorizationSnapshot authenticatedSnapshot(Long userId, String deviceId, Long clientTimestamp) {
         User user = userRepository.requireById(userId);
         Optional<DeviceDto> device = deviceRepository.findByUserIdAndDeviceId(userId, deviceId);
         boolean deviceBound = device.isPresent();
@@ -48,17 +56,41 @@ public class AuthorizationService {
         List<ModuleAccess> modules = MODULE_CODES.stream()
                 .map(moduleCode -> authenticatedModuleAccess(moduleCode, entitlements.get(moduleCode), accountActive, deviceBound, deviceActive))
                 .toList();
-        boolean onlineRequired = user.getOfflineCacheMinutes() == 0;
+        boolean onlineRequired = user.getOfflineCacheMinutes() == 0 || !StringUtils.hasText(jwtSecret);
+        OffsetDateTime offlineUsableUntil = onlineRequired ? null : OffsetDateTime.now().plusMinutes(user.getOfflineCacheMinutes());
+        String offlineToken = onlineRequired ? null : buildOfflineToken(user.getId(), deviceId, offlineUsableUntil, modules);
+
+        if (clientTimestamp != null && deviceBound && device.isPresent()) {
+            checkTimeSyncAnomaly(device.get().id(), clientTimestamp);
+        }
+
         return new AuthorizationSnapshot(
                 "authenticated",
                 user.getId(),
                 user.getStatus(),
                 user.getDeviceLimit(),
                 onlineRequired,
-                onlineRequired ? null : OffsetDateTime.now().plusMinutes(user.getOfflineCacheMinutes()),
+                offlineUsableUntil,
+                offlineToken,
                 new AuthorizationSnapshot.DeviceBinding(deviceId, deviceBound, deviceActive),
                 modules
         );
+    }
+
+    private void checkTimeSyncAnomaly(Long deviceId, Long clientTimestamp) {
+        long serverTime = System.currentTimeMillis();
+        long diff = Math.abs(serverTime - clientTimestamp);
+        if (diff > TIME_SYNC_ANOMALY_THRESHOLD_MS) {
+            deviceRepository.incrementTimeSyncAnomaly(deviceId);
+        }
+    }
+
+    private String buildOfflineToken(Long userId, String deviceId, OffsetDateTime offlineUsableUntil, List<ModuleAccess> modules) {
+        List<String> allowedModules = modules.stream()
+                .filter(ModuleAccess::allowed)
+                .map(ModuleAccess::moduleCode)
+                .toList();
+        return OfflineTokenSigner.sign(jwtSecret, userId, deviceId, offlineUsableUntil, allowedModules);
     }
 
     public AnonymousAuthorizationSnapshot anonymousSnapshot(String deviceId, String fingerprintHash) {

@@ -5,6 +5,7 @@ import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.security.AuthConstants;
 import com.superprogrammer.security.JwtService;
 import com.superprogrammer.security.RefreshTokenService;
+import com.superprogrammer.settings.service.SystemSettingService;
 import com.superprogrammer.user.dto.*;
 import com.superprogrammer.user.entity.User;
 import com.superprogrammer.user.repository.UserRepository;
@@ -22,6 +23,7 @@ public class UserAuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
+    private final SystemSettingService systemSettingService;
 
     public UserSummary register(RegisterRequest request) {
         String email = StringUtils.hasText(request.email())
@@ -42,7 +44,9 @@ public class UserAuthService {
             throw new BusinessException(ErrorCode.CONFLICT, "联系方式已注册");
         }
         verificationService.consumeVerified(contactType, contact);
-        return userRepository.insertPendingReviewUser(email, phone, passwordEncoder.encode(request.password()));
+        return userRepository.insertPendingReviewUser(email, phone, passwordEncoder.encode(request.password()),
+                systemSettingService.getDefaultDeviceLimit(),
+                systemSettingService.getDefaultOfflineCacheMinutes());
     }
 
     public AuthResponse clientLogin(LoginRequest request) {

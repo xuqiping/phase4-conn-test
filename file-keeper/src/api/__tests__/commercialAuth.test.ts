@@ -1,49 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Store } from '@tauri-apps/plugin-store'
-import {
-  CommercialAuthApiError,
-  getOrCreateDeviceIdentity,
-  startAnonymousTrial,
-  getAnonymousAuthorization,
-  registerClientDevice,
-  getClientAuthorization,
-  type DeviceIdentity
-} from '../commercialAuth'
+import type { DeviceIdentity } from '../commercialAuth'
+
+let Store: typeof import('@tauri-apps/plugin-store').Store
+let CommercialAuthApiError: typeof import('../commercialAuth').CommercialAuthApiError
+let getOrCreateDeviceIdentity: typeof import('../commercialAuth').getOrCreateDeviceIdentity
+let startAnonymousTrial: typeof import('../commercialAuth').startAnonymousTrial
+let getAnonymousAuthorization: typeof import('../commercialAuth').getAnonymousAuthorization
+let registerClientDevice: typeof import('../commercialAuth').registerClientDevice
+let getClientAuthorization: typeof import('../commercialAuth').getClientAuthorization
+let selectFreeModule: typeof import('../commercialAuth').selectFreeModule
+let changeFreeModule: typeof import('../commercialAuth').changeFreeModule
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   set: vi.fn(),
   save: vi.fn(),
   fetch: vi.fn(),
-  randomUUID: vi.fn()
-}))
-
-const { mockStoreLoad } = vi.hoisted(() => ({
-  mockStoreLoad: vi.fn()
+  randomUUID: vi.fn(),
+  storeLoad: vi.fn()
 }))
 
 vi.mock('@tauri-apps/plugin-store', () => ({
   Store: {
-    load: mockStoreLoad
+    load: (...args: unknown[]) => mocks.storeLoad(...args)
   }
 }))
 
 describe('commercialAuth API', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules()
     mocks.get.mockReset()
     mocks.set.mockReset()
     mocks.save.mockReset()
     mocks.fetch.mockReset()
     mocks.randomUUID.mockReset()
-    mockStoreLoad.mockReset()
-    mockStoreLoad.mockResolvedValue({
+    mocks.storeLoad.mockReset()
+    mocks.storeLoad.mockResolvedValue({
       get: mocks.get,
       set: mocks.set,
       save: mocks.save
     })
     vi.stubGlobal('fetch', mocks.fetch)
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() })
     vi.spyOn(crypto, 'randomUUID').mockImplementation(mocks.randomUUID)
     mocks.randomUUID.mockReturnValue('uuid-001')
+
+    Store = (await import('@tauri-apps/plugin-store')).Store
+    vi.spyOn(Store, 'load').mockImplementation(mocks.storeLoad as typeof Store.load)
+    const commercialAuth = await import('../commercialAuth')
+    CommercialAuthApiError = commercialAuth.CommercialAuthApiError
+    getOrCreateDeviceIdentity = commercialAuth.getOrCreateDeviceIdentity
+    startAnonymousTrial = commercialAuth.startAnonymousTrial
+    getAnonymousAuthorization = commercialAuth.getAnonymousAuthorization
+    registerClientDevice = commercialAuth.registerClientDevice
+    getClientAuthorization = commercialAuth.getClientAuthorization
+    selectFreeModule = commercialAuth.selectFreeModule
+    changeFreeModule = commercialAuth.changeFreeModule
   })
 
   afterEach(() => {
@@ -74,11 +86,9 @@ describe('commercialAuth API', () => {
 
     const result = await getOrCreateDeviceIdentity('Desktop')
 
-    expect(result).toEqual({
-      deviceId: 'device-uuid-001',
-      fingerprintHash: 'fingerprint-uuid-001',
-      deviceName: 'Desktop'
-    })
+    expect(result.deviceId).toBe('device-uuid-001')
+    expect(result.deviceName).toBe('Desktop')
+    expect(result.fingerprintHash).toBeTruthy()
     expect(mocks.set).toHaveBeenCalledWith('deviceIdentity', result)
     expect(mocks.save).toHaveBeenCalled()
   })
@@ -241,5 +251,92 @@ describe('commercialAuth API', () => {
       fingerprintHash: 'bad',
       deviceName: 'Laptop'
     })).rejects.toBe(networkError)
+  })
+
+  it('selects an anonymous free module with device identity', async () => {
+    const identity: DeviceIdentity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mocks.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        code: 200,
+        data: {
+          deviceId: 'device-001',
+          inFullTrial: false,
+          trialExpired: true,
+          freeModuleCode: 'files',
+          allowedModuleCodes: ['files']
+        }
+      })
+    })
+
+    const result = await selectFreeModule('http://localhost:8080/', identity, 'files')
+
+    expect(mocks.fetch).toHaveBeenCalledWith('http://localhost:8080/api/anonymous/trial/select-free-module', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'device-001',
+        fingerprintHash: 'fingerprint-001',
+        freeModuleCode: 'files'
+      })
+    })
+    expect(result.freeModuleCode).toBe('files')
+  })
+
+  it('changes an anonymous free module with device identity', async () => {
+    const identity: DeviceIdentity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mocks.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        code: 200,
+        data: {
+          deviceId: 'device-001',
+          inFullTrial: false,
+          trialExpired: true,
+          freeModuleCode: 'clipboard',
+          allowedModuleCodes: ['clipboard']
+        }
+      })
+    })
+
+    const result = await changeFreeModule('http://localhost:8080/', identity, 'clipboard')
+
+    expect(mocks.fetch).toHaveBeenCalledWith('http://localhost:8080/api/anonymous/trial/change-free-module', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'device-001',
+        fingerprintHash: 'fingerprint-001',
+        freeModuleCode: 'clipboard'
+      })
+    })
+    expect(result.freeModuleCode).toBe('clipboard')
+  })
+
+  it('surfaces backend restriction message when changing free module too soon', async () => {
+    const identity: DeviceIdentity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mocks.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ code: 1009, msg: '免费模块每 30 天只能更换一次', data: null })
+    })
+
+    await expect(changeFreeModule('http://localhost:8080', identity, 'processes')).rejects.toMatchObject({
+      message: '免费模块每 30 天只能更换一次',
+      status: 409,
+      code: 1009
+    })
   })
 })

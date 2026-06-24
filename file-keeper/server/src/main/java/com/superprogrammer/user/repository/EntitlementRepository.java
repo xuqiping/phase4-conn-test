@@ -50,6 +50,15 @@ public class EntitlementRepository {
         return count != null && count > 0;
     }
 
+    public Optional<Long> findDeletedIdByUserAndModule(Long userId, String moduleCode) {
+        List<Long> results = jdbcTemplate.query(
+                "select id from user_module_entitlements where user_id = ? and module_code = ? and deleted = 1 limit 1",
+                (rs, rowNum) -> rs.getLong("id"),
+                userId, moduleCode
+        );
+        return results.stream().findFirst();
+    }
+
     public ModuleEntitlementDto insert(Long userId, String moduleCode, OffsetDateTime expiresAt) {
         jdbcTemplate.update(
                 "insert into user_module_entitlements (user_id, module_code, enabled, expires_at, created_by, created_at, updated_by, updated_at, deleted) " +
@@ -57,6 +66,14 @@ public class EntitlementRepository {
                 userId, moduleCode, expiresAt
         );
         return findByUserAndModule(userId, moduleCode).orElseThrow();
+    }
+
+    public ModuleEntitlementDto restore(Long entitlementId, OffsetDateTime expiresAt) {
+        jdbcTemplate.update(
+                "update user_module_entitlements set deleted = 0, enabled = true, expires_at = ?, updated_at = CURRENT_TIMESTAMP where id = ?",
+                expiresAt, entitlementId
+        );
+        return findById(entitlementId).orElseThrow();
     }
 
     public ModuleEntitlementDto update(Long entitlementId, Boolean enabled, OffsetDateTime expiresAt) {

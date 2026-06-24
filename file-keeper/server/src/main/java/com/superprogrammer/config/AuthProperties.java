@@ -42,6 +42,7 @@ public class AuthProperties {
         @NotBlank(message = "JWT secret must not be blank")
         private String secret;
         private long accessTokenMinutes = 15;
+        private long clientAccessTokenHours = 24;
     }
 
     @Data

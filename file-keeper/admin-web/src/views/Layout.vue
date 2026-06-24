@@ -23,7 +23,7 @@
 import { computed, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NButton } from 'naive-ui'
-import { PeopleOutline } from '@vicons/ionicons5'
+import { PeopleOutline, StatsChartOutline, SettingsOutline, PhonePortraitOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -32,14 +32,29 @@ const authStore = useAuthStore()
 
 const currentRoute = computed(() => {
   if (route.name === 'user-detail') return 'users'
-  return (route.name as string) || 'users'
+  return (route.name as string) || 'dashboard'
 })
 
 const menuOptions = [
   {
+    label: 'Dashboard',
+    key: 'dashboard',
+    icon: () => h(StatsChartOutline)
+  },
+  {
     label: '用户管理',
     key: 'users',
     icon: () => h(PeopleOutline)
+  },
+  {
+    label: '匿名设备',
+    key: 'anonymous-devices',
+    icon: () => h(PhonePortraitOutline)
+  },
+  {
+    label: '系统设置',
+    key: 'settings',
+    icon: () => h(SettingsOutline)
   }
 ]
 

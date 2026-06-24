@@ -19,7 +19,7 @@ public class DeviceRepository {
 
     public List<DeviceDto> findByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, device_id, fingerprint_hash, device_name, status, last_seen_at " +
+                "select id, user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, time_sync_anomaly_count " +
                         "from user_devices where user_id = ? and deleted = 0 order by id",
                 deviceMapper(), userId
         );
@@ -27,7 +27,7 @@ public class DeviceRepository {
 
     public Optional<DeviceDto> findByUserIdAndDeviceId(Long userId, String deviceId) {
         List<DeviceDto> results = jdbcTemplate.query(
-                "select id, user_id, device_id, fingerprint_hash, device_name, status, last_seen_at " +
+                "select id, user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, time_sync_anomaly_count " +
                         "from user_devices where user_id = ? and device_id = ? and deleted = 0",
                 deviceMapper(), userId, deviceId
         );
@@ -65,6 +65,13 @@ public class DeviceRepository {
         );
     }
 
+    public void incrementTimeSyncAnomaly(Long id) {
+        jdbcTemplate.update(
+                "update user_devices set time_sync_anomaly_count = time_sync_anomaly_count + 1, updated_at = CURRENT_TIMESTAMP where id = ? and deleted = 0",
+                id
+        );
+    }
+
     private RowMapper<DeviceDto> deviceMapper() {
         return (rs, rowNum) -> new DeviceDto(
                 rs.getLong("id"),
@@ -73,7 +80,8 @@ public class DeviceRepository {
                 rs.getString("fingerprint_hash"),
                 rs.getString("device_name"),
                 rs.getString("status"),
-                toOffsetDateTime(rs.getTimestamp("last_seen_at"))
+                toOffsetDateTime(rs.getTimestamp("last_seen_at")),
+                rs.getInt("time_sync_anomaly_count")
         );
     }
 

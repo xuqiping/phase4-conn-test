@@ -21,7 +21,9 @@ public class JwtService {
 
     public String createAccessToken(Long userId, String role, String status) {
         Instant now = Instant.now();
-        Instant expiresAt = now.plus(authProperties.getJwt().getAccessTokenMinutes(), ChronoUnit.MINUTES);
+        Instant expiresAt = isAdmin(role)
+                ? now.plus(authProperties.getJwt().getAccessTokenMinutes(), ChronoUnit.MINUTES)
+                : now.plus(authProperties.getJwt().getClientAccessTokenHours(), ChronoUnit.HOURS);
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("role", role)
@@ -30,6 +32,10 @@ public class JwtService {
                 .expiration(Date.from(expiresAt))
                 .signWith(signingKey())
                 .compact();
+    }
+
+    private boolean isAdmin(String role) {
+        return AuthConstants.ROLE_SUPER_ADMIN.equals(role);
     }
 
     public AuthPrincipal parseAccessToken(String token) {

@@ -1,6 +1,7 @@
 package com.superprogrammer.user;
 
 import com.superprogrammer.support.TestStoreConfig;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -30,6 +31,12 @@ class UserRegistrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void cleanUp() {
+        jdbcTemplate.update("delete from users");
+        jdbcTemplate.update("delete from system_settings");
+    }
 
     @Test
     void registersEmailUserAfterVerification() throws Exception {
@@ -82,5 +89,34 @@ class UserRegistrationTest {
                         .content("{\"contactType\":\"email\",\"contact\":\"taken@example.com\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void registersUserWithConfiguredDefaults() throws Exception {
+        jdbcTemplate.update(
+                "insert into system_settings (setting_key, setting_value, description, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values ('default_device_limit', '5', 'test', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)"
+        );
+        jdbcTemplate.update(
+                "insert into system_settings (setting_key, setting_value, description, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values ('default_offline_cache_minutes', '90', 'test', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)"
+        );
+
+        mockMvc.perform(post("/api/client/verification/send")
+                        .contentType("application/json")
+                        .content("{\"contactType\":\"email\",\"contact\":\"configured@example.com\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/client/verification/check")
+                        .contentType("application/json")
+                        .content("{\"contactType\":\"email\",\"contact\":\"configured@example.com\",\"code\":\"123456\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/client/auth/register")
+                        .contentType("application/json")
+                        .content("{\"email\":\"configured@example.com\",\"password\":\"Password123!\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deviceLimit").value(5))
+                .andExpect(jsonPath("$.data.offlineCacheMinutes").value(90));
     }
 }

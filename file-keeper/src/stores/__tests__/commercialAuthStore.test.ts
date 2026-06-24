@@ -12,6 +12,8 @@ describe('commercialAuthStore', () => {
     vi.spyOn(commercialAuthApi, 'getOrCreateDeviceIdentity')
     vi.spyOn(commercialAuthApi, 'startAnonymousTrial')
     vi.spyOn(commercialAuthApi, 'getAnonymousAuthorization')
+    vi.spyOn(commercialAuthApi, 'selectFreeModule')
+    vi.spyOn(commercialAuthApi, 'changeFreeModule')
     vi.spyOn(commercialAuthApi, 'registerClientDevice')
     vi.spyOn(commercialAuthApi, 'getClientAuthorization')
   })
@@ -79,6 +81,130 @@ describe('commercialAuthStore', () => {
     expect(store.isModuleAllowed('files')).toBe(false)
   })
 
+  it('selects a free module and refreshes anonymous authorization', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mockedApi.getOrCreateDeviceIdentity.mockResolvedValueOnce(identity)
+    mockedApi.selectFreeModule.mockResolvedValueOnce({
+      deviceId: 'device-001',
+      deviceName: 'Laptop',
+      inFullTrial: false,
+      trialExpired: true,
+      freeModuleCode: 'files',
+      allowedModuleCodes: ['files']
+    })
+    mockedApi.getAnonymousAuthorization.mockResolvedValueOnce({
+      mode: 'anonymous',
+      onlineRequired: true,
+      deviceId: 'device-001',
+      modules: [
+        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null },
+        { moduleCode: 'processes', allowed: false, reason: '非当前免费模块', expiresAt: null },
+        { moduleCode: 'clipboard', allowed: false, reason: '非当前免费模块', expiresAt: null }
+      ]
+    })
+    const store = useCommercialAuthStore()
+
+    await store.selectFreeModule('http://localhost:8080', 'files')
+
+    expect(mockedApi.selectFreeModule).toHaveBeenCalledWith('http://localhost:8080', identity, 'files')
+    expect(mockedApi.getAnonymousAuthorization).toHaveBeenCalledWith('http://localhost:8080', identity)
+    expect(store.trialStatus?.freeModuleCode).toBe('files')
+    expect(store.anonymousAuthorization?.modules[0].allowed).toBe(true)
+    expect(store.isModuleAllowed('files')).toBe(true)
+    expect(store.isModuleAllowed('processes')).toBe(false)
+    expect(store.error).toBeNull()
+  })
+
+  it('changes a free module using the existing device identity', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mockedApi.changeFreeModule.mockResolvedValueOnce({
+      deviceId: 'device-001',
+      deviceName: 'Laptop',
+      inFullTrial: false,
+      trialExpired: true,
+      freeModuleCode: 'clipboard',
+      allowedModuleCodes: ['clipboard']
+    })
+    mockedApi.getAnonymousAuthorization.mockResolvedValueOnce({
+      mode: 'anonymous',
+      onlineRequired: true,
+      deviceId: 'device-001',
+      modules: [
+        { moduleCode: 'files', allowed: false, reason: '非当前免费模块', expiresAt: null },
+        { moduleCode: 'processes', allowed: false, reason: '非当前免费模块', expiresAt: null },
+        { moduleCode: 'clipboard', allowed: true, reason: null, expiresAt: null }
+      ]
+    })
+    const store = useCommercialAuthStore()
+    store.deviceIdentity = identity
+
+    await store.changeFreeModule('http://localhost:8080', 'clipboard')
+
+    expect(mockedApi.getOrCreateDeviceIdentity).not.toHaveBeenCalled()
+    expect(mockedApi.changeFreeModule).toHaveBeenCalledWith('http://localhost:8080', identity, 'clipboard')
+    expect(mockedApi.getAnonymousAuthorization).toHaveBeenCalledWith('http://localhost:8080', identity)
+    expect(store.trialStatus?.freeModuleCode).toBe('clipboard')
+    expect(store.isModuleAllowed('clipboard')).toBe(true)
+  })
+
+  it('stores backend restriction errors when free module cannot be changed', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    const restriction = new commercialAuthApi.CommercialAuthApiError('免费模块每 30 天只能更换一次', 409, 1009)
+    mockedApi.changeFreeModule.mockRejectedValueOnce(restriction)
+    const store = useCommercialAuthStore()
+    store.deviceIdentity = identity
+
+    await expect(store.changeFreeModule('http://localhost:8080', 'processes')).rejects.toThrow('免费模块每 30 天只能更换一次')
+
+    expect(mockedApi.changeFreeModule).toHaveBeenCalledWith('http://localhost:8080', identity, 'processes')
+    expect(mockedApi.getAnonymousAuthorization).not.toHaveBeenCalled()
+    expect(store.error).toBe('免费模块每 30 天只能更换一次')
+    expect(store.loading).toBe(false)
+  })
+
+  it('refreshes authenticated authorization without registering the device again', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    mockedApi.getClientAuthorization.mockResolvedValueOnce({
+      mode: 'authenticated',
+      userId: 10,
+      accountStatus: 'active',
+      deviceLimit: 2,
+      onlineRequired: true,
+      offlineUsableUntil: null,
+      deviceBinding: { deviceId: 'device-001', bound: true, active: true },
+      modules: [
+        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null },
+        { moduleCode: 'processes', allowed: true, reason: null, expiresAt: null },
+        { moduleCode: 'clipboard', allowed: false, reason: '模块未授权或已过期', expiresAt: null }
+      ]
+    })
+    const store = useCommercialAuthStore()
+    store.deviceIdentity = identity
+
+    await store.refreshAuthenticatedAuthorization('http://localhost:8080', 'access-token')
+
+    expect(mockedApi.registerClientDevice).not.toHaveBeenCalled()
+    expect(mockedApi.getClientAuthorization).toHaveBeenCalledWith('http://localhost:8080', 'access-token', identity, expect.any(Number))
+    expect(store.clientAuthorization?.mode).toBe('authenticated')
+    expect(store.isModuleAllowed('files')).toBe(true)
+  })
+
   it('merges authenticated authorization with anonymous fallback per module', async () => {
     const identity = {
       deviceId: 'device-001',
@@ -123,7 +249,7 @@ describe('commercialAuthStore', () => {
 
     expect(mockedApi.getOrCreateDeviceIdentity).toHaveBeenCalled()
     expect(mockedApi.registerClientDevice).toHaveBeenCalledWith('http://localhost:8080', 'access-token', identity)
-    expect(mockedApi.getClientAuthorization).toHaveBeenCalledWith('http://localhost:8080', 'access-token', identity)
+    expect(mockedApi.getClientAuthorization).toHaveBeenCalledWith('http://localhost:8080', 'access-token', identity, expect.any(Number))
     expect(store.deviceIdentity?.deviceId).toBe('device-001')
     expect(store.clientDevice?.status).toBe('active')
     expect(store.clientAuthorization?.mode).toBe('authenticated')
