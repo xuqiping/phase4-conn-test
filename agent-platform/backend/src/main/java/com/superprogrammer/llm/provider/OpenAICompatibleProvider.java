@@ -18,11 +18,14 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     private final Set<String> supportedModels;
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    /** 原始 baseUrl（未剥离 /v1），供 embedding 绝对 URL 拼接，兼容 Ark /api/v3 与 OpenAI /v1 */
+    private final String originalBaseUrl;
 
     public OpenAICompatibleProvider(String name, String baseUrl, String apiKey, List<String> models, ObjectMapper objectMapper) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
+        this.originalBaseUrl = baseUrl == null ? "" : baseUrl;
         // Normalize: strip trailing /v1 to avoid /v1/v1/ duplication
         String normalized = baseUrl.replaceAll("/v1/?$", "");
         this.webClient = WebClient.builder()
@@ -82,6 +85,36 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         if (model == null) return false;
         if (supportedModels.isEmpty()) return true; // no model list = accept all (fallback)
         return supportedModels.contains(model);
+    }
+
+    @Override
+    public float[] embed(String text, String model) {
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", model);
+            body.put("input", text);
+            // 用原始 baseUrl 拼绝对 URL：Ark /api/v3 → /api/v3/embeddings；OpenAI /v1 → /v1/embeddings
+            String url = originalBaseUrl.replaceAll("/+$", "") + "/embeddings";
+            String responseJson = webClient.post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            JsonNode root = objectMapper.readTree(responseJson);
+            JsonNode arr = root.at("/data/0/embedding");
+            if (arr == null || !arr.isArray() || arr.isEmpty()) {
+                throw new RuntimeException("embedding 响应为空: " + responseJson);
+            }
+            float[] vec = new float[arr.size()];
+            for (int i = 0; i < arr.size(); i++) {
+                vec[i] = (float) arr.get(i).asDouble();
+            }
+            return vec;
+        } catch (Exception e) {
+            throw new RuntimeException("embedding 调用失败 [provider=" + name + "]: " + e.getMessage(), e);
+        }
     }
 
     private Map<String, Object> buildRequestBody(LlmRequest request) {

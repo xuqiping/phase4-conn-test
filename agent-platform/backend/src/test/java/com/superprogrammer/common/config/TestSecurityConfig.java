@@ -50,6 +50,7 @@ public class TestSecurityConfig {
             List<SimpleGrantedAuthority> authorities = ALL_PERMISSIONS.stream()
                     .map(SimpleGrantedAuthority::new)
                     .collect(Collectors.toList());
+            authorities.add(new SimpleGrantedAuthority("ROLE_admin"));
 
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(1L, "admin", authorities);

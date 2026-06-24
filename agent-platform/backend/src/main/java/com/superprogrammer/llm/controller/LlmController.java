@@ -67,6 +67,13 @@ public class LlmController {
         return ResponseEntity.ok(R.ok(result));
     }
 
+    @PostMapping("/providers/{id}/test-embed")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<TestConnectionResult>> testEmbedding(@PathVariable Long id) {
+        TestConnectionResult result = providerService.testEmbedding(id);
+        return ResponseEntity.ok(R.ok(result));
+    }
+
     @PostMapping("/providers/reload")
     @RequirePermission("role:manage")
     public ResponseEntity<R<Void>> reloadProviders() {
@@ -84,6 +91,7 @@ public class LlmController {
         entity.setModels(request.getModels());
         entity.setConfig(request.getConfig());
         entity.setSortOrder(request.getSortOrder());
+        entity.setCategory(request.getCategory());
         entity.setStatus("ACTIVE");
         return entity;
     }

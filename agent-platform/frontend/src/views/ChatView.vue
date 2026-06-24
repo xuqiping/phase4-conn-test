@@ -76,7 +76,19 @@
           @send="handleSend"
         >
           <template #tools>
-            <ModelSelector @change="handleModelChange" />
+            <TargetSelector
+              :model-value="chatStore.visibleTargetValue"
+              :disabled="chatStore.sending"
+              @change="handleTargetChange"
+            />
+            <ModelSelector
+              :model-value="chatStore.selectedModel"
+              @change="handleModelChange"
+            />
+            <div class="chat-view__rag-toggle" title="开启后启用 RAG 证据 + 用户记忆（可被全局/Agent/工作流级覆盖）">
+              <span class="chat-view__rag-label">记忆模式</span>
+              <n-switch v-model:value="ragEnabled" :disabled="chatStore.sending" size="small" />
+            </div>
           </template>
         </ChatInput>
       </template>
@@ -94,7 +106,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NSpin } from 'naive-ui'
+import { NButton, NIcon, NSpin, NSwitch } from 'naive-ui'
 import {
   AddOutline,
   TrashOutline,
@@ -106,12 +118,15 @@ import SessionList from '@/components/chat/SessionList.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ModelSelector from '@/components/chat/ModelSelector.vue'
+import TargetSelector from '@/components/chat/TargetSelector.vue'
 
 const route = useRoute()
 const chatStore = useChatStore()
 const messagesRef = ref<HTMLElement | null>(null)
 
 const isComposing = ref(false)
+/** 记忆模式会话级开关（V26，随每条消息持久化到 session.rag_enabled）。 */
+const ragEnabled = ref(false)
 
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 
@@ -153,11 +168,15 @@ async function handleSelectSession(sessionId: number) {
 }
 
 function handleSend(message: string) {
-  chatStore.sendStreamingMessage(message)
+  chatStore.sendStreamingMessage(message, ragEnabled.value)
 }
 
 function handleModelChange(model: string) {
-  chatStore.selectedModel = model
+  chatStore.setSelectedModel(model)
+}
+
+async function handleTargetChange(target: string) {
+  await chatStore.updateCurrentSessionTarget(target)
 }
 
 async function handleDelete() {
@@ -185,6 +204,18 @@ async function handleDelete() {
 .chat-view__sidebar-header {
   padding: 12px;
   border-bottom: 1px solid var(--color-border-light);
+}
+
+.chat-view__rag-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.chat-view__rag-label {
+  white-space: nowrap;
 }
 
 .chat-view__main {

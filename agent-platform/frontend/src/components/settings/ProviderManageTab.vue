@@ -30,6 +30,9 @@
         <n-form-item label="模型列表">
           <n-input v-model:value="form.models" type="textarea" :autosize="{ minRows: 2 }" placeholder='["gpt-4o", "gpt-4o-mini"]' />
         </n-form-item>
+        <n-form-item label="类型">
+          <n-select v-model:value="form.category" :options="categoryOptions" />
+        </n-form-item>
         <n-form-item label="排序">
           <n-input-number v-model:value="form.sortOrder" :min="0" />
         </n-form-item>
@@ -45,10 +48,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
-import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, useMessage } from 'naive-ui'
+import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NTag, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
-import type { LlmProvider, LlmProviderCreateRequest } from '@/api/llm'
+import type { LlmProvider, LlmProviderCreateRequest, ProviderCategory } from '@/api/llm'
 
 const message = useMessage()
 const loading = ref(false)
@@ -66,13 +69,27 @@ const form = ref<LlmProviderCreateRequest>({
   apiEndpoint: '',
   apiKey: '',
   models: '',
-  sortOrder: 0
+  sortOrder: 0,
+  category: 'CHAT'
 })
 
 const protocolOptions = [
   { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
   { label: 'Anthropic / Claude', value: 'ANTHROPIC' }
 ]
+
+const categoryOptions = [
+  { label: '对话 (CHAT)', value: 'CHAT' },
+  { label: '向量 (EMBEDDING)', value: 'EMBEDDING' },
+  { label: '对话+向量 (CHAT_EMBEDDING)', value: 'CHAT_EMBEDDING' }
+]
+
+/** category badge 配色：向量=绿，双用=橙，对话=蓝（默认）。 */
+const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' }> = {
+  EMBEDDING: { label: '向量', type: 'success' },
+  CHAT_EMBEDDING: { label: '对话+向量', type: 'warning' },
+  CHAT: { label: '对话', type: 'info' }
+}
 
 const columns = [
   { title: 'ID', key: 'id', width: 60 },
@@ -84,6 +101,17 @@ const columns = [
   },
   { title: '端点', key: 'apiEndpoint', ellipsis: true },
   { title: '状态', key: 'status', width: 80 },
+  {
+    title: '类型', key: 'category', width: 110,
+    render: (row: LlmProvider) => {
+      const tag = CATEGORY_TAG[row.category ?? 'CHAT'] ?? CATEGORY_TAG['CHAT']
+      return h(NTag, { size: 'small', type: tag.type, bordered: false }, { default: () => tag.label })
+    }
+  },
+  {
+    title: '维度', key: 'dim', width: 80,
+    render: (row: LlmProvider) => row.dim ?? '—'
+  },
   { title: '排序', key: 'sortOrder', width: 60 },
   {
     title: '操作', key: 'actions', width: 200,
@@ -94,6 +122,11 @@ const columns = [
     ]
   }
 ]
+
+/** 仅向量 provider（category=EMBEDDING）走 embed 测试；CHAT / CHAT_EMBEDDING 走 chat 测试（双用优先验对话链路）。 */
+function isEmbedding(row: LlmProvider): boolean {
+  return row.category === 'EMBEDDING'
+}
 
 onMounted(load)
 
@@ -109,7 +142,7 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', displayName: '', protocol: 'OPENAI_COMPATIBLE', apiEndpoint: '', apiKey: '', models: '', sortOrder: 0 }
+  form.value = { name: '', displayName: '', protocol: 'OPENAI_COMPATIBLE', apiEndpoint: '', apiKey: '', models: '', sortOrder: 0, category: 'CHAT' }
   showModal.value = true
 }
 
@@ -122,7 +155,8 @@ function openEdit(row: LlmProvider) {
     apiEndpoint: row.apiEndpoint ?? '',
     apiKey: '',
     models: row.models ?? '',
-    sortOrder: row.sortOrder
+    sortOrder: row.sortOrder,
+    category: (row.category ?? 'CHAT') as ProviderCategory
   }
   showModal.value = true
 }
@@ -152,16 +186,26 @@ async function handleDelete(id: number) {
   await load()
 }
 
+/** 按行分流：embedding 走 embed 测试（成功提示带维度），其余走 chat 测试。 */
+async function runTest(id: number, embed: boolean) {
+  const res = embed
+    ? await llmApi.testProviderEmbedding(id)
+    : await llmApi.testProviderConnection(id)
+  const r = res.data.data
+  if (r.success) {
+    // embed: message 含维度；chat: 拼 model + 耗时
+    message.success(embed ? r.message : `连接成功 · ${r.model} · ${r.durationMs}ms`)
+  } else {
+    message.error(r.message)
+  }
+}
+
 async function handleTest(id: number) {
+  const row = providers.value.find(p => p.id === id)
+  const embed = row ? isEmbedding(row) : false
   testingId.value = id
   try {
-    const res = await llmApi.testProviderConnection(id)
-    const r = res.data.data
-    if (r.success) {
-      message.success(`连接成功 · ${r.model} · ${r.durationMs}ms`)
-    } else {
-      message.error(r.message)
-    }
+    await runTest(id, embed)
   } catch {
     // error handled by interceptor
   } finally {
@@ -176,15 +220,9 @@ async function handleTestInModal() {
   }
   testing.value = true
   try {
-    // If editing existing provider, test by id
+    // If editing existing provider, test by id（按 category 分流：EMBEDDING 走 embed，其余走 chat）
     if (editingId.value) {
-      const res = await llmApi.testProviderConnection(editingId.value)
-      const r = res.data.data
-      if (r.success) {
-        message.success(`连接成功 · ${r.model} · ${r.durationMs}ms`)
-      } else {
-        message.error(r.message)
-      }
+      await runTest(editingId.value, form.value.category === 'EMBEDDING')
     } else {
       message.info('请先保存供应商后再测试连通')
     }

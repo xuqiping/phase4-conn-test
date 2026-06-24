@@ -18,4 +18,6 @@ public class LlmProviderEntity extends BaseEntity {
     private String config;
     private String status;
     private Integer sortOrder;
+    /** CHAT / EMBEDDING / CHAT_EMBEDDING。驱动测试分流 + 前端 badge。null→CHAT。 */
+    private String category;
 }

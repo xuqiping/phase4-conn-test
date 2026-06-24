@@ -18,7 +18,6 @@ import { authApi } from '@/api/auth'
 const mockedLogin = vi.mocked(authApi.login)
 const mockedRegister = vi.mocked(authApi.register)
 const mockedLogout = vi.mocked(authApi.logout)
-const mockedGetMe = vi.mocked(authApi.getMe)
 
 describe('auth store', () => {
   beforeEach(() => {

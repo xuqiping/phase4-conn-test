@@ -36,6 +36,7 @@
               <n-tag :type="statusTagType" size="small" round>{{ statusLabel }}</n-tag>
               <div style="flex:1" />
               <template v-if="canManage">
+                <n-button size="small" @click="showPermissionModal = true">授权</n-button>
                 <n-button size="small" @click="showEditModal = true">编辑</n-button>
                 <n-button
                   v-if="agentDetail.status === 'DRAFT'"
@@ -51,6 +52,7 @@
                 >下线</n-button>
                 <n-button size="small" type="error" @click="confirmDelete">删除</n-button>
               </template>
+              <n-button v-else-if="canCopy" size="small" @click="showEditModal = true">复制编辑</n-button>
             </div>
             <p class="agent-detail__hero-desc">{{ agentDetail.description || '暂无描述' }}</p>
             <div class="agent-detail__hero-meta">
@@ -72,6 +74,14 @@
         <!-- 左侧：技能列表 -->
         <div class="agent-detail__skill-list">
           <div class="agent-detail__skill-list-header">
+            <n-button
+              v-if="canManageSkills"
+              size="small"
+              type="primary"
+              @click="openCreateSkill"
+            >
+              新增能力
+            </n-button>
             <h3>技能列表</h3>
           </div>
           <SkillList
@@ -86,7 +96,13 @@
           <div v-if="skillLoading" class="agent-detail__skill-loading">
             <n-spin size="medium" />
           </div>
-          <SkillDetail v-else :skill="selectedSkill" />
+          <template v-else>
+            <div v-if="canManageSkills && selectedSkill" class="agent-detail__skill-actions">
+              <n-button size="small" @click="openEditSkill">编辑能力</n-button>
+              <n-button size="small" type="error" @click="confirmDeleteSkill">删除能力</n-button>
+            </div>
+            <SkillDetail :skill="selectedSkill" />
+          </template>
         </div>
       </div>
     </template>
@@ -105,7 +121,21 @@
       v-model:show="showEditModal"
       :groups="groups"
       :edit-data="editData"
+      :save-mode="agentFormSaveMode"
       @updated="async () => { showEditModal = false; await loadAgent() }"
+      @copied="onAgentCopied"
+    />
+    <SkillFormModal
+      v-if="agentDetail"
+      v-model:show="showSkillModal"
+      :agent-id="agentDetail.id"
+      :edit-data="editingSkill"
+      @saved="onSkillSaved"
+    />
+    <AgentPermissionModal
+      v-if="agentDetail"
+      v-model:show="showPermissionModal"
+      :agent-id="agentDetail.id"
     />
   </div>
 </template>
@@ -120,11 +150,13 @@ import {
   FlashOutline
 } from '@vicons/ionicons5'
 import { agentApi, type AgentGroup } from '@/api/agent'
-import type { AgentDetail, SkillDetail as SkillDetailType } from '@/api/agent'
+import type { AgentAccess, AgentDetail, SkillDetail as SkillDetailType } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import SkillList from '@/components/SkillList.vue'
 import SkillDetail from '@/components/SkillDetail.vue'
 import AgentFormModal from '@/components/AgentFormModal.vue'
+import SkillFormModal from '@/components/SkillFormModal.vue'
+import AgentPermissionModal from '@/components/AgentPermissionModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,16 +165,21 @@ const message = useMessage()
 const dialog = useDialog()
 
 const agentDetail = ref<AgentDetail | null>(null)
+const agentAccess = ref<AgentAccess | null>(null)
 const groups = ref<AgentGroup[]>([])
 const selectedSkill = ref<SkillDetailType | null>(null)
 const selectedSkillId = ref<number | null>(null)
 const loading = ref(true)
 const skillLoading = ref(false)
 const showEditModal = ref(false)
+const showSkillModal = ref(false)
+const showPermissionModal = ref(false)
+const editingSkill = ref<SkillDetailType | null>(null)
 
-const canManage = computed(() =>
-  authStore.hasPermission('agent:update') || authStore.hasPermission('agent:delete') || authStore.hasPermission('agent:publish')
-)
+const canManage = computed(() => agentAccess.value?.canManage === true)
+const canCopy = computed(() => agentAccess.value?.canCopy === true)
+const canManageSkills = computed(() => canManage.value && authStore.hasPermission('skill:manage'))
+const agentFormSaveMode = computed(() => canManage.value ? 'update' : 'copy')
 
 const statusMap: Record<string, { type: 'success' | 'warning' | 'default' | 'error'; label: string }> = {
   DRAFT: { type: 'default', label: '草稿' },
@@ -202,20 +239,76 @@ async function offlineAgent() {
   } catch { message.error('操作失败') }
 }
 
+async function onAgentCopied() {
+  showEditModal.value = false
+  message.success('已复制为你的 Agent')
+  router.push('/agents')
+}
+
 async function loadAgent() {
   const agentId = Number(route.params.id)
   if (!agentId) { loading.value = false; return }
   try {
-    const res = await agentApi.getAgentDetail(agentId)
-    agentDetail.value = res.data.data
+    const [detailRes, accessRes] = await Promise.all([
+      agentApi.getAgentDetail(agentId),
+      agentApi.getAgentAccess(agentId)
+    ])
+    agentDetail.value = detailRes.data.data
+    agentAccess.value = accessRes.data.data
     if (agentDetail.value?.skills?.length > 0) {
-      await onSkillSelect(agentDetail.value.skills[0].id)
+      const nextSkillId = selectedSkillId.value &&
+        agentDetail.value.skills.some(skill => skill.id === selectedSkillId.value)
+        ? selectedSkillId.value
+        : agentDetail.value.skills[0].id
+      await onSkillSelect(nextSkillId)
+    } else {
+      selectedSkillId.value = null
+      selectedSkill.value = null
     }
   } catch (e) {
     console.error('加载Agent详情失败:', e)
   } finally {
     loading.value = false
   }
+}
+
+function openCreateSkill() {
+  editingSkill.value = null
+  showSkillModal.value = true
+}
+
+function openEditSkill() {
+  if (!selectedSkill.value) return
+  editingSkill.value = selectedSkill.value
+  showSkillModal.value = true
+}
+
+async function onSkillSaved(skill: SkillDetailType) {
+  showSkillModal.value = false
+  selectedSkillId.value = skill.id
+  await loadAgent()
+}
+
+function confirmDeleteSkill() {
+  if (!selectedSkill.value) return
+  const skill = selectedSkill.value
+  dialog.warning({
+    title: '确认删除能力',
+    content: `确定删除能力「${skill.name}」吗？`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await agentApi.deleteSkill(skill.id)
+        message.success('能力删除成功')
+        selectedSkillId.value = null
+        selectedSkill.value = null
+        await loadAgent()
+      } catch {
+        message.error('能力删除失败')
+      }
+    }
+  })
 }
 
 async function onSkillSelect(skillId: number) {
@@ -392,6 +485,10 @@ onMounted(async () => {
 .agent-detail__skill-list-header {
   padding: var(--spacing-4);
   border-bottom: 1px solid var(--color-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
 
   h3 {
     margin: 0;
@@ -407,6 +504,13 @@ onMounted(async () => {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: auto;
+}
+
+.agent-detail__skill-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4) var(--spacing-4) 0;
 }
 
 .agent-detail__skill-loading {

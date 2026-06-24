@@ -18,6 +18,7 @@ venv.bak/
 .coverage
 htmlcov/
 *.egg-info/
+.runtime-checkpoints/
 build/
 dist/
 
@@ -79,3 +80,7 @@ models/
 
 # Claude Code 本地配置(机器专属，不入库)
 .claude/settings.local.json
+
+# agent-platform 运行时上传 / 散落截图（不入库）
+agent-platform/backend/uploads/
+agent-platform/login-page.png

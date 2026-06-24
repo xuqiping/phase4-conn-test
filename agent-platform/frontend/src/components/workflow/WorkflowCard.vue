@@ -77,7 +77,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NIcon, NButton, NTag, NTooltip, useDialog, useMessage } from 'naive-ui'
+import { NIcon, NButton, NTag, NTooltip, useDialog } from 'naive-ui'
 import {
   GitBranchOutline,
   GitCommitOutline,
@@ -86,7 +86,7 @@ import {
   DownloadOutline,
   TrashOutline
 } from '@vicons/ionicons5'
-import type { WorkflowListItem, WorkflowStatus } from '@/types/workflow'
+import type { WorkflowListItem } from '@/types/workflow'
 
 const props = defineProps<{
   workflow: WorkflowListItem
@@ -100,7 +100,6 @@ const emit = defineEmits<{
 }>()
 
 const dialog = useDialog()
-const message = useMessage()
 
 const statusTagType = computed(() => {
   const map: Record<string, 'default' | 'success' | 'warning' | 'error'> = {

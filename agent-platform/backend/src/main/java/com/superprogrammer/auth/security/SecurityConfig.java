@@ -4,10 +4,10 @@ package com.superprogrammer.auth.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -37,10 +37,12 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 // 配置请求授权
                 .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         // 白名单路径：登录、注册、刷新Token
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/register").permitAll()
                         .requestMatchers("/api/auth/refresh").permitAll()
+                        .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // WebSocket端点（通过拦截器认证）
                         .requestMatchers("/ws/chat").permitAll()
                         // 其他路径需要认证

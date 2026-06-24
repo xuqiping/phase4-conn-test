@@ -17,6 +17,9 @@ public class LlmProviderVO {
     private String config;
     private String status;
     private Integer sortOrder;
+    private String category;
+    /** 只读：向量维度（仅 category=EMBEDDING 有值，取自 embedding_model_versions ACTIVE 行）。 */
+    private Integer dim;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

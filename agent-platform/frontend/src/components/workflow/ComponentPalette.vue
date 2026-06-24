@@ -1,20 +1,11 @@
-<!-- ============================================================
-  组件面板 — 左侧280px，搜索框+按Agent分组的技能列表+拖拽
-  ============================================================ -->
 <template>
-  <div class="component-palette">
+  <aside class="component-palette">
     <div class="component-palette__header">
       <span class="component-palette__title">组件面板</span>
     </div>
 
-    <!-- 搜索框 -->
     <div class="component-palette__search">
-      <n-input
-        v-model:value="searchKeyword"
-        placeholder="搜索技能..."
-        clearable
-        size="small"
-      >
+      <n-input v-model:value="searchKeyword" placeholder="搜索技能、Agent 或组件" clearable size="small">
         <template #prefix>
           <n-icon :component="SearchOutline" />
         </template>
@@ -22,47 +13,117 @@
     </div>
 
     <div class="component-palette__content">
-      <!-- 流程控制节点 -->
-      <div class="component-palette__section">
+      <section class="component-palette__section">
         <div class="component-palette__section-title">流程控制</div>
         <div class="component-palette__items">
-          <div
-            class="palette-item palette-item--control"
-            draggable="true"
-            @dragstart="onDragStart($event, 'start', '开始')"
-          >
+          <div class="palette-item palette-item--control" draggable="true" @dragstart="onDragStart($event, 'start', '开始')">
             <div class="palette-item__icon palette-item__icon--start">
-              <n-icon size="16" color="#fff">
-                <PlayOutline />
-              </n-icon>
+              <n-icon size="16" color="#fff"><PlayOutline /></n-icon>
             </div>
             <span class="palette-item__name">开始</span>
           </div>
-          <div
-            class="palette-item palette-item--control"
-            draggable="true"
-            @dragstart="onDragStart($event, 'end', '结束')"
-          >
+          <div class="palette-item palette-item--control" draggable="true" @dragstart="onDragStart($event, 'end', '结束')">
             <div class="palette-item__icon palette-item__icon--end">
-              <n-icon size="16" color="#fff">
-                <StopOutline />
-              </n-icon>
+              <n-icon size="16" color="#fff"><StopOutline /></n-icon>
             </div>
             <span class="palette-item__name">结束</span>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- 按Agent分组的技能列表 -->
+      <section class="component-palette__section">
+        <div class="component-palette__section-title">
+          <n-icon size="14" :component="CloudUploadOutline" />
+          <span>输入组件</span>
+        </div>
+        <div class="component-palette__items">
+          <div
+            v-for="item in filteredInputComponents"
+            :key="item.inputType"
+            class="palette-item"
+            draggable="true"
+            @dragstart="onDragStart($event, 'input', item.label, {
+              inputKey: item.inputKey,
+              inputType: item.inputType,
+              required: item.required,
+              placeholder: item.placeholder,
+              accept: item.accept
+            })"
+          >
+            <div class="palette-item__icon palette-item__icon--input">
+              <n-icon size="12" color="#fff"><CloudUploadOutline /></n-icon>
+            </div>
+            <div class="palette-item__info">
+              <span class="palette-item__name">{{ item.label }}</span>
+              <span class="palette-item__desc">{{ item.description }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div v-if="loading" class="component-palette__loading">
         <n-spin size="small" />
       </div>
+
       <template v-else>
-        <div
-          v-for="group in filteredGroups"
-          :key="group.agentId"
-          class="component-palette__section"
-        >
+        <section v-if="filteredAgentRefs.length > 0" class="component-palette__section">
+          <div class="component-palette__section-title">
+            <n-icon size="14" :component="PeopleOutline" />
+            <span>Agent 引用</span>
+          </div>
+          <div class="component-palette__items">
+            <div
+              v-for="agent in filteredAgentRefs"
+              :key="agent.id"
+              class="palette-item"
+              draggable="true"
+              @dragstart="onDragStart($event, 'agent_ref', agent.name, {
+                agentId: agent.id,
+                agentName: agent.name,
+                description: agent.description,
+                sourceType: 'AGENT'
+              })"
+            >
+              <div class="palette-item__icon palette-item__icon--agent-ref">
+                <n-icon size="12" color="#fff"><PeopleOutline /></n-icon>
+              </div>
+              <div class="palette-item__info">
+                <span class="palette-item__name">{{ agent.name }}</span>
+                <span v-if="agent.description" class="palette-item__desc">{{ agent.description }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="filteredWorkflowRefs.length > 0" class="component-palette__section">
+          <div class="component-palette__section-title">
+            <n-icon size="14" :component="GitBranchOutline" />
+            <span>工作流引用</span>
+          </div>
+          <div class="component-palette__items">
+            <div
+              v-for="workflow in filteredWorkflowRefs"
+              :key="workflow.id"
+              class="palette-item"
+              draggable="true"
+              @dragstart="onDragStart($event, 'workflow_ref', workflow.name, {
+                workflowId: workflow.id,
+                workflowName: workflow.name,
+                sourceType: 'WORKFLOW'
+              })"
+            >
+              <div class="palette-item__icon palette-item__icon--workflow-ref">
+                <n-icon size="12" color="#fff"><GitBranchOutline /></n-icon>
+              </div>
+              <div class="palette-item__info">
+                <span class="palette-item__name">{{ workflow.name }}</span>
+                <span v-if="workflow.description" class="palette-item__desc">{{ workflow.description }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-for="group in filteredGroups" :key="group.agentId" class="component-palette__section">
           <div class="component-palette__section-title">
             <n-icon size="14" :component="FlashOutline" />
             <span>{{ group.agentName }}</span>
@@ -76,13 +137,12 @@
               @dragstart="onDragStart($event, 'skill', skill.name, {
                 skillId: skill.id,
                 agentId: group.agentId,
-                agentName: group.agentName
+                agentName: group.agentName,
+                description: skill.description
               })"
             >
               <div class="palette-item__icon" :style="{ background: group.color }">
-                <n-icon size="12" color="#fff">
-                  <FlashOutline />
-                </n-icon>
+                <n-icon size="12" color="#fff"><FlashOutline /></n-icon>
               </div>
               <div class="palette-item__info">
                 <span class="palette-item__name">{{ skill.name }}</span>
@@ -90,22 +150,24 @@
               </div>
             </div>
           </div>
-        </div>
+        </section>
+
         <div v-if="filteredGroups.length === 0" class="component-palette__empty">
-          <span>{{ searchKeyword ? '未找到匹配技能' : '暂无可用技能' }}</span>
+          <span>{{ searchKeyword ? '没有匹配的技能' : '暂无可用技能' }}</span>
         </div>
       </template>
     </div>
-  </div>
+  </aside>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { NInput, NIcon, NSpin } from 'naive-ui'
-import { SearchOutline, PlayOutline, StopOutline, FlashOutline } from '@vicons/ionicons5'
-import { agentApi, type AgentDetail } from '@/api/agent'
+import { SearchOutline, PlayOutline, StopOutline, FlashOutline, PeopleOutline, GitBranchOutline, CloudUploadOutline } from '@vicons/ionicons5'
+import { agentApi, type Agent, type AgentDetail } from '@/api/agent'
+import { workflowApi } from '@/api/workflow'
+import type { WorkflowListItem } from '@/types/workflow'
 
-/** 技能分组 */
 interface SkillGroup {
   agentId: number
   agentName: string
@@ -117,22 +179,26 @@ interface SkillGroup {
   }>
 }
 
-const emit = defineEmits<{
-  (e: 'drag-start', event: DragEvent, nodeType: string, label: string, data?: Record<string, unknown>): void
-}>()
-
 const searchKeyword = ref('')
 const loading = ref(false)
 const groups = ref<SkillGroup[]>([])
+const agentRefs = ref<Agent[]>([])
+const workflowRefs = ref<WorkflowListItem[]>([])
 
-/** Agent主题色列表 */
+const inputComponents = [
+  { label: '文本输入', inputKey: 'message', inputType: 'text', required: false, placeholder: '请输入文本', description: '单行文本输入' },
+  { label: '提示词输入', inputKey: 'prompt', inputType: 'textarea', required: true, placeholder: '请输入提示词', description: '多行提示词输入' },
+  { label: '图片输入', inputKey: 'image', inputType: 'image', required: false, placeholder: '', accept: 'image/*', description: '上传本地图片' },
+  { label: '视频输入', inputKey: 'video', inputType: 'video', required: false, placeholder: '', accept: 'video/*', description: '上传本地视频' },
+  { label: '文件输入', inputKey: 'file', inputType: 'file', required: false, placeholder: '', accept: '*/*', description: '上传本地文件' }
+]
+
 const agentColors = [
   '#4F7CFF', '#9333EA', '#F59E0B',
   '#10B981', '#EF4444', '#EC4899',
   '#6366F1', '#14B8A6'
 ]
 
-/** 根据关键词过滤分组 */
 const filteredGroups = computed(() => {
   if (!searchKeyword.value) return groups.value
   const keyword = searchKeyword.value.toLowerCase()
@@ -147,19 +213,46 @@ const filteredGroups = computed(() => {
     .filter(group => group.skills.length > 0)
 })
 
-/** 拖拽开始 */
+const filteredAgentRefs = computed(() => {
+  if (!searchKeyword.value) return agentRefs.value
+  const keyword = searchKeyword.value.toLowerCase()
+  return agentRefs.value.filter(agent =>
+    agent.name.toLowerCase().includes(keyword) ||
+    (agent.description && agent.description.toLowerCase().includes(keyword))
+  )
+})
+
+const filteredWorkflowRefs = computed(() => {
+  if (!searchKeyword.value) return workflowRefs.value
+  const keyword = searchKeyword.value.toLowerCase()
+  return workflowRefs.value.filter(workflow =>
+    workflow.name.toLowerCase().includes(keyword) ||
+    (workflow.description && workflow.description.toLowerCase().includes(keyword))
+  )
+})
+
+const filteredInputComponents = computed(() => {
+  if (!searchKeyword.value) return inputComponents
+  const keyword = searchKeyword.value.toLowerCase()
+  return inputComponents.filter(item =>
+    item.label.toLowerCase().includes(keyword) ||
+    item.description.toLowerCase().includes(keyword) ||
+    item.inputKey.toLowerCase().includes(keyword)
+  )
+})
+
 function onDragStart(event: DragEvent, nodeType: string, label: string, extraData?: Record<string, unknown>) {
   const payload = JSON.stringify({ nodeType, label, ...extraData })
   event.dataTransfer!.setData('application/vueflow', payload)
   event.dataTransfer!.effectAllowed = 'move'
 }
 
-/** 加载Agent及其技能 */
 async function loadAgentsWithSkills() {
   loading.value = true
   try {
     const res = await agentApi.listAgents()
     const agents = res.data.data
+    agentRefs.value = agents
     const groupList: SkillGroup[] = []
 
     for (let i = 0; i < agents.length; i++) {
@@ -180,13 +273,23 @@ async function loadAgentsWithSkills() {
           })
         }
       } catch {
-        // 单个Agent加载失败不影响其他
+        // 单个 Agent 加载失败不影响其它组件。
       }
     }
 
     groups.value = groupList
+    await loadWorkflowRefs()
   } finally {
     loading.value = false
+  }
+}
+
+async function loadWorkflowRefs() {
+  try {
+    const res = await workflowApi.list()
+    workflowRefs.value = res.data.data
+  } catch {
+    workflowRefs.value = []
   }
 }
 
@@ -265,25 +368,18 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-2);
+  padding: var(--spacing-2);
   border-radius: var(--radius-base);
   cursor: grab;
   transition: background var(--duration-fast) var(--ease-in-out);
-
-  &:hover {
-    background: var(--color-elevated);
-  }
-
-  &:active {
-    cursor: grabbing;
-  }
 }
 
-.palette-item--control {
-  .palette-item__name {
-    font-size: var(--font-size-sm);
-    color: var(--color-text-primary);
-  }
+.palette-item:hover {
+  background: var(--color-elevated);
+}
+
+.palette-item:active {
+  cursor: grabbing;
 }
 
 .palette-item__icon {
@@ -298,11 +394,23 @@ onMounted(() => {
 }
 
 .palette-item__icon--start {
-  background: linear-gradient(135deg, #4ADE80, #22C55E);
+  background: linear-gradient(135deg, #4ade80, #22c55e);
 }
 
 .palette-item__icon--end {
-  background: linear-gradient(135deg, #F87171, #EF4444);
+  background: linear-gradient(135deg, #f87171, #ef4444);
+}
+
+.palette-item__icon--agent-ref {
+  background: #14b8a6;
+}
+
+.palette-item__icon--workflow-ref {
+  background: #f59e0b;
+}
+
+.palette-item__icon--input {
+  background: #38bdf8;
 }
 
 .palette-item__info {

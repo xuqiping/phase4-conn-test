@@ -55,7 +55,7 @@ import { NModal, NIcon } from 'naive-ui'
 import { CheckmarkOutline } from '@vicons/ionicons5'
 import { useThemeStore, THEME_LIST, type ThemeName } from '@/stores/theme'
 
-const props = defineProps<{
+defineProps<{
   show: boolean
 }>()
 

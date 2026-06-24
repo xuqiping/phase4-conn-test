@@ -5,9 +5,11 @@ import com.superprogrammer.agent.dto.*;
 import com.superprogrammer.agent.entity.Agent;
 import com.superprogrammer.agent.entity.AgentGroup;
 import com.superprogrammer.agent.entity.Skill;
+import com.superprogrammer.agent.entity.SkillStep;
 import com.superprogrammer.agent.mapper.AgentGroupMapper;
 import com.superprogrammer.agent.mapper.AgentMapper;
 import com.superprogrammer.agent.mapper.SkillMapper;
+import com.superprogrammer.agent.mapper.SkillStepMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,8 @@ public class AgentService {
     private final AgentMapper agentMapper;
     private final SkillMapper skillMapper;
     private final SkillService skillService;
+    private final AgentPermissionService agentPermissionService;
+    private final SkillStepMapper skillStepMapper;
 
     public List<AgentGroupVO> listGroups() {
         LambdaQueryWrapper<AgentGroup> wrapper = new LambdaQueryWrapper<>();
@@ -51,6 +55,10 @@ public class AgentService {
     }
 
     public List<AgentVO> listAgents(Long groupId, String keyword, Long parentId) {
+        return listAgents(groupId, keyword, parentId, null, true);
+    }
+
+    public List<AgentVO> listAgents(Long groupId, String keyword, Long parentId, Long userId, boolean admin) {
         LambdaQueryWrapper<Agent> wrapper = new LambdaQueryWrapper<>();
         if (parentId != null) {
             wrapper.eq(Agent::getParentId, parentId);
@@ -64,7 +72,10 @@ public class AgentService {
                                 .like(Agent::getDescription, keyword))
                 .orderByDesc(Agent::getCreatedAt);
         List<Agent> agents = agentMapper.selectList(wrapper);
-        return agents.stream().map(this::toAgentVO).collect(Collectors.toList());
+        return agents.stream()
+                .filter(agent -> userId == null || agentPermissionService.canUse(agent.getId(), userId, admin))
+                .map(this::toAgentVO)
+                .collect(Collectors.toList());
     }
 
     public List<AgentVO> listSubAgents(Long parentId) {
@@ -76,6 +87,13 @@ public class AgentService {
     }
 
     public AgentDetailVO getAgentDetail(Long agentId) {
+        return getAgentDetail(agentId, null, true);
+    }
+
+    public AgentDetailVO getAgentDetail(Long agentId, Long userId, boolean admin) {
+        if (userId != null && !agentPermissionService.canUse(agentId, userId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent");
+        }
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Agent不存在");
@@ -112,11 +130,112 @@ public class AgentService {
             builder.subAgents(listSubAgents(agentId));
         }
 
-        return builder.build();
+        AgentDetailVO detail = builder.build();
+        if (userId != null && !agentPermissionService.canReadPrompt(agentId, userId, admin)) {
+            detail.setConfig(null);
+        }
+        return detail;
     }
 
     public SkillDetailVO getSkillDetail(Long skillId) {
         return skillService.getDetail(skillId);
+    }
+
+    public SkillDetailVO getSkillDetail(Long skillId, Long userId, boolean admin) {
+        SkillDetailVO detail = skillService.getDetail(skillId);
+        Long agentId = detail.getAgentId();
+        if (agentId != null && !agentPermissionService.canUse(agentId, userId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该能力");
+        }
+        if (agentId != null && !agentPermissionService.canReadPrompt(agentId, userId, admin)) {
+            redactSkillDetail(detail);
+        }
+        return detail;
+    }
+
+    public AgentDetailVO copyAgent(Long sourceAgentId, AgentCopyRequest request, Long userId, boolean admin) {
+        if (!agentPermissionService.canCopy(sourceAgentId, userId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权复制该 Agent");
+        }
+        Agent source = agentMapper.selectById(sourceAgentId);
+        if (source == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "Agent不存在");
+        }
+
+        Agent copy = new Agent();
+        copy.setName(valueOrDefault(request == null ? null : request.getName(), source.getName() + " Copy"));
+        copy.setDescription(valueOrDefault(request == null ? null : request.getDescription(), source.getDescription()));
+        copy.setAvatar(valueOrDefault(request == null ? null : request.getAvatar(), source.getAvatar()));
+        copy.setGroupId(request != null && request.getGroupId() != null ? request.getGroupId() : source.getGroupId());
+        copy.setStatus("DRAFT");
+        copy.setConfig(valueOrDefault(request == null ? null : request.getConfig(), source.getConfig()));
+        copy.setParentId(source.getParentId());
+        copy.setCreatedBy(userId);
+        copy.setUpdatedBy(userId);
+        agentMapper.insert(copy);
+
+        copySourceSkills(sourceAgentId, copy.getId(), userId);
+        return AgentDetailVO.builder()
+                .id(copy.getId())
+                .name(copy.getName())
+                .description(copy.getDescription())
+                .avatar(copy.getAvatar())
+                .status(copy.getStatus())
+                .config(copy.getConfig())
+                .groupId(copy.getGroupId())
+                .createdAt(copy.getCreatedAt())
+                .updatedAt(copy.getUpdatedAt())
+                .build();
+    }
+
+    private void copySourceSkills(Long sourceAgentId, Long targetAgentId, Long userId) {
+        LambdaQueryWrapper<Skill> skillWrapper = new LambdaQueryWrapper<>();
+        skillWrapper.eq(Skill::getAgentId, sourceAgentId)
+                .eq(Skill::getDeleted, 0)
+                .orderByAsc(Skill::getSortOrder);
+        for (Skill sourceSkill : skillMapper.selectList(skillWrapper)) {
+            Skill copiedSkill = new Skill();
+            copiedSkill.setAgentId(targetAgentId);
+            copiedSkill.setName(sourceSkill.getName());
+            copiedSkill.setDescription(sourceSkill.getDescription());
+            copiedSkill.setType(sourceSkill.getType());
+            copiedSkill.setConfig(sourceSkill.getConfig());
+            copiedSkill.setSortOrder(sourceSkill.getSortOrder());
+            copiedSkill.setCreatedBy(userId);
+            copiedSkill.setUpdatedBy(userId);
+            skillMapper.insert(copiedSkill);
+            copySourceSteps(sourceSkill.getId(), copiedSkill.getId(), userId);
+        }
+    }
+
+    private void copySourceSteps(Long sourceSkillId, Long targetSkillId, Long userId) {
+        LambdaQueryWrapper<SkillStep> stepWrapper = new LambdaQueryWrapper<>();
+        stepWrapper.eq(SkillStep::getSkillId, sourceSkillId)
+                .eq(SkillStep::getDeleted, 0)
+                .orderByAsc(SkillStep::getStepOrder);
+        for (SkillStep sourceStep : skillStepMapper.selectList(stepWrapper)) {
+            SkillStep copiedStep = new SkillStep();
+            copiedStep.setSkillId(targetSkillId);
+            copiedStep.setStepOrder(sourceStep.getStepOrder());
+            copiedStep.setName(sourceStep.getName());
+            copiedStep.setAction(sourceStep.getAction());
+            copiedStep.setConfig(sourceStep.getConfig());
+            copiedStep.setCreatedBy(userId);
+            copiedStep.setUpdatedBy(userId);
+            skillStepMapper.insert(copiedStep);
+        }
+    }
+
+    private String valueOrDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private void redactSkillDetail(SkillDetailVO detail) {
+        detail.setConfig(null);
+        if (detail.getSteps() == null) {
+            return;
+        }
+        detail.getSteps().forEach(step -> step.setConfig(null));
     }
 
     public AgentVO createAgent(Agent agent) {

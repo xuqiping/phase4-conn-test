@@ -89,6 +89,11 @@ public class ClaudeProvider implements LlmProviderInterface {
         return model.startsWith("claude-") || model.startsWith("anthropic/");
     }
 
+    @Override
+    public float[] embed(String text, String model) {
+        throw new UnsupportedOperationException("Claude 协议不支持 embedding，请用 OpenAI 兼容 provider（如 Doubao）");
+    }
+
     private Map<String, Object> buildRequestBody(LlmRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.getModel());

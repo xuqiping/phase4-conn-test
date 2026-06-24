@@ -2,14 +2,17 @@ package com.superprogrammer.chat.controller;
 
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
+import com.superprogrammer.chat.dto.ChatTargetVO;
 import com.superprogrammer.chat.dto.SessionVO;
 import com.superprogrammer.chat.entity.ChatMessage;
 import com.superprogrammer.chat.service.ChatSessionService;
+import com.superprogrammer.chat.service.ChatTargetService;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -23,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChatController {
 
     private final ChatSessionService chatSessionService;
+    private final ChatTargetService chatTargetService;
 
     @PostMapping("/sessions")
     public ResponseEntity<R<SessionVO>> createSession(@RequestBody ChatRequest request) {
@@ -38,10 +42,26 @@ public class ChatController {
         return ResponseEntity.ok(R.ok(sessions));
     }
 
+    @GetMapping("/targets")
+    public ResponseEntity<R<List<ChatTargetVO>>> listTargets() {
+        Long userId = getCurrentUserId();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return ResponseEntity.ok(R.ok(chatTargetService.listTargets(userId, authentication)));
+    }
+
     @GetMapping("/sessions/{id}")
     public ResponseEntity<R<SessionVO>> getSession(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         SessionVO session = chatSessionService.getSession(userId, id);
+        return ResponseEntity.ok(R.ok(session));
+    }
+
+    @PutMapping("/sessions/{id}/target")
+    public ResponseEntity<R<SessionVO>> updateSessionTarget(
+            @PathVariable Long id,
+            @RequestBody ChatRequest request) {
+        Long userId = getCurrentUserId();
+        SessionVO session = chatSessionService.updateSessionTarget(userId, id, request);
         return ResponseEntity.ok(R.ok(session));
     }
 
@@ -93,9 +113,11 @@ public class ChatController {
 
     private SseEmitter doStream(Long userId, ChatRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
+        SecurityContext securityContext = SecurityContextHolder.getContext();
 
         new Thread(() -> {
             try {
+                SecurityContextHolder.setContext(securityContext);
                 AtomicBoolean sentDone = new AtomicBoolean(false);
                 chatSessionService.sendMessageStream(userId, request)
                         .doOnNext(evt -> {
@@ -132,6 +154,8 @@ public class ChatController {
                         emitter.complete();
                     } catch (Exception ignored) {}
                 }
+            } finally {
+                SecurityContextHolder.clearContext();
             }
         }).start();
 
