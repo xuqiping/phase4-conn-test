@@ -137,8 +137,17 @@ public class MemoryConflictService {
             Map<String, Object> snap = readSnap(c.getId());
             String halfvec = conflictMapper.getNewEmbeddingText(c.getId());
             List<Long> ids = parseCsv(conflictMapper.getExistingIdsCsv(c.getId()));
-            UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap);
+            // V35：从 old 行继承 scope（home + 可见性 + 项目），否则新行落默认 global 撞既有 global 同 key 唯一约束
+            List<UserMemory> oldRows = ids.isEmpty() ? List.of() : memoryMapper.selectBatchIds(ids);
+            UserMemory ref = oldRows.isEmpty() ? null : oldRows.get(0);
+            Long home = ref == null ? null : ref.getHomeProjectId();
+            Boolean isGlobal = ref == null ? null : ref.getIsGlobal();
+            List<Long> pids = ref == null ? List.of() : memoryMapper.findProjectIdsByMemory(ref.getId());
+            UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, home, isGlobal);
             memoryMapper.insertMemory(m, halfvec);
+            if (!Boolean.TRUE.equals(m.getIsGlobal()) && !pids.isEmpty()) {
+                memoryMapper.insertMemoryProjects(m.getId(), pids);
+            }
             ids.add(m.getId());
             memoryMapper.setConflictId(ids, c.getId());
             conflictMapper.updateStatus(c.getId(), "FLAGGED", "FLAGGED");
@@ -219,9 +228,18 @@ public class MemoryConflictService {
                 // new 尚未入库（快照）
                 Map<String, Object> snap = readSnap(c.getId());
                 String halfvec = conflictMapper.getNewEmbeddingText(c.getId());
+                // V35 修「保留新→冲突不存在」：insertSnap 落新行前先从 old 行继承 scope（home + 可见性 + 项目），
+                //   否则 buildFromSnap 默认 home=null(global)，与既有 global 同 key clean 行撞 uk_user_memories_user_key_home
+                //   → DuplicateKeyException → @Transactional 整体回滚（hardDelete 也回滚）→ resolve 返 false。
+                //   必须在 hardDelete 前读 old 行（删完就查不到了）。
+                List<UserMemory> oldRows = (oldIds == null || oldIds.isEmpty()) ? List.of() : memoryMapper.selectBatchIds(oldIds);
+                UserMemory ref = oldRows.isEmpty() ? null : oldRows.get(0);
+                Long snapHome = ref == null ? null : ref.getHomeProjectId();
+                Boolean snapGlobal = ref == null ? Boolean.TRUE : ref.getIsGlobal();
+                List<Long> snapProjIds = ref == null ? List.of() : memoryMapper.findProjectIdsByMemory(ref.getId());
                 switch (decision) {
-                    // V29 unique(clean 同user同key唯一)：KEEP_NEW 须先删 old 再插 new，否则同 key 撞唯一
-                    case "KEEP_NEW" -> { hardDelete(oldIds); insertSnap(c, snap, halfvec); }
+                    // KEEP_NEW 须先删 old 再插 new（同 user 同 home 同 key 唯一）；新行继承 old scope
+                    case "KEEP_NEW" -> { hardDelete(oldIds); insertSnapScoped(c, snap, halfvec, snapHome, snapGlobal, snapProjIds); }
                     // KEEP_BOTH 合并成一条 clean：old 同 key 行 value 追加 new 值（去重），清 conflict_id，删多余同 key 行
                     case "KEEP_BOTH" -> mergePendingKeepBoth(c, snap, oldIds);
                     case "KEEP_OLD" -> { /* 丢新，旧留 clean */ }
@@ -251,9 +269,16 @@ public class MemoryConflictService {
         }
     }
 
-    private void insertSnap(MemoryConflict c, Map<String, Object> snap, String halfvec) {
-        UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap);
+    /** 落快照新行为 clean（KEEP_NEW / flag / merge 兜底用）。
+     *  V35：带 scope（home + 可见性 + 项目挂载），与既有 V34 home 语义对齐——
+     *  否则默认 global home 会撞既有 global 同 key clean 唯一约束。 */
+    private void insertSnapScoped(MemoryConflict c, Map<String, Object> snap, String halfvec,
+                                  Long homeProjectId, Boolean isGlobal, List<Long> projectIds) {
+        UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, homeProjectId, isGlobal);
         memoryMapper.insertMemory(m, halfvec);
+        if (!Boolean.TRUE.equals(m.getIsGlobal()) && projectIds != null && !projectIds.isEmpty()) {
+            memoryMapper.insertMemoryProjects(m.getId(), projectIds);
+        }
     }
 
     // ---- KEEP_BOTH 合并成一条 clean（取代旧"双行共存"，避免同 key 多行脏数据）----
@@ -267,7 +292,12 @@ public class MemoryConflictService {
         List<UserMemory> oldRows = (oldIds == null || oldIds.isEmpty()) ? List.of() : memoryMapper.selectBatchIds(oldIds);
         List<UserMemory> sameKey = oldRows.stream().filter(m -> key.equals(m.getMemoryKey())).toList();
         if (sameKey.isEmpty()) {
-            insertSnap(c, snap, conflictMapper.getNewEmbeddingText(c.getId()));
+            // V35：兜底插新行继承 old scope，避免默认 global 撞唯一约束
+            UserMemory ref2 = oldRows.isEmpty() ? null : oldRows.get(0);
+            insertSnapScoped(c, snap, conflictMapper.getNewEmbeddingText(c.getId()),
+                    ref2 == null ? null : ref2.getHomeProjectId(),
+                    ref2 == null ? null : ref2.getIsGlobal(),
+                    ref2 == null ? List.of() : memoryMapper.findProjectIdsByMemory(ref2.getId()));
             return;
         }
         Long survivor = sameKey.get(0).getId();
@@ -369,7 +399,8 @@ public class MemoryConflictService {
         memoryMapper.deleteBatchIds(ids);
     }
 
-    private UserMemory buildFromSnap(Long userId, String block, Map<String, Object> snap) {
+    private UserMemory buildFromSnap(Long userId, String block, Map<String, Object> snap,
+                                     Long homeProjectId, Boolean isGlobal) {
         UserMemory m = new UserMemory();
         m.setUserId(userId);
         m.setCategory((String) snap.get("category"));
@@ -378,6 +409,9 @@ public class MemoryConflictService {
         m.setSource("INFERRED");
         m.setConfidence(new BigDecimal(String.valueOf(snap.get("confidence"))));
         m.setBlockLabel(block);
+        // V35：落 home + 可见性，否则默认 global 撞既有 global 同 key 唯一约束
+        m.setHomeProjectId(homeProjectId);
+        m.setIsGlobal(isGlobal == null ? Boolean.TRUE : isGlobal);
         return m;
     }
 

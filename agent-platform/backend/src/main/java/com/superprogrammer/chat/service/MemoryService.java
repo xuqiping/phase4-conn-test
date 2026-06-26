@@ -164,22 +164,30 @@ public class MemoryService {
             }
         }
 
-        // ② 查块成员（每块一次，缓存→一致快照）+ 分流
+        // ② 查块成员（每块一次，缓存→一致快照）+ 跨块同 key 记忆（home-scoped）+ 分流
+        // V35 修「记忆直接被修改了」：同 key 既有记忆可能在【别的块】（块成员查询是 block-scoped，看不到），
+        //   旧逻辑「块成员空→immediateInserts→applyClean」会用 findSameKeyClean（跨块）找到别块同类记忆当「细化」
+        //   原地 UPDATE 覆盖，绕过冲突判定 → 用户感知「记忆被直接改了，没问我」。
+        //   修法：分流以「块成员 ∪ 跨块同 key 记忆」为准，二者皆空才真·新块直插；否则进 judge 让 LLM 判冲突。
         Map<String, List<UserMemory>> membersByBlock = new HashMap<>();
-        List<FactClassed> immediateInserts = new ArrayList<>();           // 新块，无冲突可能
+        Map<String, List<UserMemory>> sameKeyByFactKey = new HashMap<>();   // 跨块同 key clean 记忆（home-scoped，冲突候选补集）
+        List<FactClassed> immediateInserts = new ArrayList<>();             // 真·新（块内无成员 且 跨块无同 key），无冲突可能
         Map<String, List<FactClassed>> judgeBuckets = new java.util.LinkedHashMap<>();  // 待判定，按块聚合
         for (FactClassed fc : classed) {
             List<UserMemory> members = membersByBlock.computeIfAbsent(fc.br.blockLabel(),
                     bl -> queryCache.getCleanByBlock(writeScope, bl,
                             () -> memoryMapper.findCleanByBlock(userId, bl, writeScope.includeGlobal(), writeScope.safeProjectIds())));
-            if (members.isEmpty()) {
-                immediateInserts.add(fc);
-                continue;
-            }
+            List<UserMemory> sameKey = sameKeyByFactKey.computeIfAbsent(fc.f.key(),
+                    k -> memoryMapper.findCleanByHomeKey(userId, k, writeTargetProjectId));
             final String fk = fc.f.key(), fv = fc.f.value();
-            boolean dup = members.stream().anyMatch(m -> fk.equals(m.getMemoryKey()) && fv.equals(m.getMemoryValue()));
+            boolean dup = members.stream().anyMatch(m -> fk.equals(m.getMemoryKey()) && fv.equals(m.getMemoryValue()))
+                    || sameKey.stream().anyMatch(m -> fk.equals(m.getMemoryKey()) && fv.equals(m.getMemoryValue()));
             if (dup) {
                 log.info("processFacts 重复跳过 key={} value={}", fk, fv);
+                continue;
+            }
+            if (members.isEmpty() && sameKey.isEmpty()) {
+                immediateInserts.add(fc);
                 continue;
             }
             judgeBuckets.computeIfAbsent(fc.br.blockLabel(), k -> new ArrayList<>()).add(fc);
@@ -189,12 +197,18 @@ public class MemoryService {
         for (var entry : judgeBuckets.entrySet()) {
             String block = entry.getKey();
             List<FactClassed> bucket = entry.getValue();
-            List<UserMemory> members = membersByBlock.get(block);
-            log.info("processFacts batch judge block={} facts={} members={}", block, bucket.size(), members.size());
+            List<UserMemory> members = membersByBlock.getOrDefault(block, java.util.List.of());
+            // comparison set = 块成员 ∪ 桶内各 fact 跨块同 key 记忆：让 LLM 看到别块同类记忆，否则跨块同 key 漏判冲突
+            java.util.LinkedHashMap<Long, UserMemory> cmpMap = new java.util.LinkedHashMap<>();
+            for (UserMemory m : members) cmpMap.put(m.getId(), m);
+            for (FactClassed fc : bucket)
+                for (UserMemory m : sameKeyByFactKey.getOrDefault(fc.f.key(), java.util.List.of())) cmpMap.put(m.getId(), m);
+            List<UserMemory> cmpSet = new ArrayList<>(cmpMap.values());
+            log.info("processFacts batch judge block={} facts={} cmpSet={}", block, bucket.size(), cmpSet.size());
             List<ExtractedFact> bucketFacts = bucket.stream().map(FactClassed::f).collect(Collectors.toList());
             List<JudgeResult> jrs;
             try {
-                jrs = judge.judge(bucketFacts, members, userMessage);
+                jrs = judge.judge(bucketFacts, cmpSet, userMessage);
             } catch (Exception e) {
                 log.warn("processFacts batch judge 失败 block={}: {} → 全部 fail-safe applyClean", block, e.getMessage());
                 bucket.forEach(fc -> applyClean(writeScope, writeTargetProjectId, fc.f, fc.br));
@@ -206,13 +220,19 @@ public class MemoryService {
                 JudgeResult r = (jrs == null || i >= jrs.size()) ? null : jrs.get(i);
                 try {
                     if (r == null || !r.conflict()) {
-                        applyClean(writeScope, writeTargetProjectId, f, fc.br);          // 同块但不矛盾（同 key 细化则 UPDATE）
+                        applyClean(writeScope, writeTargetProjectId, f, fc.br);          // 不矛盾（同 key 细化则 UPDATE）
                         continue;
                     }
                     // 冲突：会话锁空→PENDING（首轮，带 askText）；锁忙→直建 FLAGGED（不丢事实，面板可见/可批 resolve，不占锁不阻塞后续）
-                    List<Long> ids = (r.conflictingIds() == null || r.conflictingIds().isEmpty())
-                            ? members.stream().map(UserMemory::getId).collect(Collectors.toList())
-                            : r.conflictingIds();
+                    // conflictingIds 空 → 回退该 fact 的跨块同 key 记忆（最可能冲突对象），再兜底块成员
+                    List<Long> ids;
+                    if (r.conflictingIds() != null && !r.conflictingIds().isEmpty()) {
+                        ids = r.conflictingIds();
+                    } else {
+                        ids = sameKeyByFactKey.getOrDefault(f.key(), java.util.List.of()).stream()
+                                .map(UserMemory::getId).collect(Collectors.toList());
+                        if (ids.isEmpty()) ids = members.stream().map(UserMemory::getId).collect(Collectors.toList());
+                    }
                     var snap = new MemoryConflictService.ExtractedFactSnapshot(
                             f.category(), f.key(), f.value(), f.confidence().toPlainString(), fc.br.halfvec());
                     var pending = conflictService.getActivePendingOrExpire(sessionId, userId);
