@@ -11,12 +11,12 @@ import com.superprogrammer.knowledge.entity.RagRetrievalLog;
 import com.superprogrammer.knowledge.mapper.RagRetrievalLogMapper;
 import com.superprogrammer.knowledge.mapper.RagRetrievalQueryMapper;
 import com.superprogrammer.knowledge.config.AnswerCacheProperties;
+import com.superprogrammer.knowledge.config.RagRecallProperties;
 import com.superprogrammer.knowledge.dto.CachedPayload;
 import com.superprogrammer.knowledge.service.internal.AnswerCacheService;
 import com.superprogrammer.knowledge.service.internal.CitationChecker;
 import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.service.internal.VisibleDocSet;
-import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
@@ -67,6 +67,8 @@ public class RagRetrievalService {
     private final VisibilitySetService visibilitySetService;
     private final AnswerCacheService answerCacheService;
     private final AnswerCacheProperties answerCacheProps;
+    private final QueryExpansionService queryExpansionService;
+    private final RagRecallProperties recallProps;
 
     // ============================ 内部 record ============================
 
@@ -124,13 +126,13 @@ public class RagRetrievalService {
                 return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of());
             }
 
-            // B4：query embed 仅一次（dense 召回复用）
-            float[] qVec = llmGateway.embed(req.getQuery(), embedModel);
-            if (qVec.length != HalfVecUtil.DIM) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                        "query embedding 维度不匹配 expected=" + HalfVecUtil.DIM + " actual=" + qVec.length);
+            // B4：query 多路扩展（规范 query + 释义 + HyDE），返回 halfvec 列表（规范第一个）
+            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(req.getQuery(), embedModel);
+            List<String> qHalfs = eq.qHalfs();
+            if (qHalfs.isEmpty()) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");
             }
-            String qHalf = HalfVecUtil.toHalfVec(qVec);
+            String qHalf = qHalfs.get(0);   // 规范 query → 答案缓存键（D8）
 
             // step2 答案缓存（阶段4-B）：命中则跳过 step3-8 + 生成，回放缓存 answer
             if (answerCacheProps.isEnabled()) {
@@ -162,9 +164,9 @@ public class RagRetrievalService {
             // step4 目录路由（Phase1 降级全库，hook）
             step4DirectoryRouting(req.getQuery(), req.getKbId());
 
-            // step5 dense 召回（强制 §6.1 WHERE）
+            // step5 dense 召回（多 qvec 并集，按 max 余弦去重排序；强制 §6.1 WHERE）
             int maxL0 = req.getMaxL0() != null ? req.getMaxL0() : ragConfig.getMaxL0Candidates();
-            List<RecallHit> l0 = step5DenseRecall(req.getKbId(), qHalf, scope, req.getDocTypes(), maxL0);
+            List<RecallHit> l0 = multiDenseRecallL0(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             if (l0.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of());
             }
@@ -179,9 +181,10 @@ public class RagRetrievalService {
             List<L2Candidate> topK = pickTopK(pool, ragConfig.getMaxL2Read());
             trace.setL2LexicalFallback(bm25Fallback[0]);
 
-            // step7 abstention（看 best 父L0 sim，非 rerankScore）
+            // step7 软拒答（hard/soft 双阈，替旧 0.5 单悬崖；看 best 父L0 sim，非 rerankScore）
             double bestSim = topK.stream().mapToDouble(L2Candidate::parentL0Sim).max().orElse(0);
-            if (bestSim < ragConfig.getAbstainThreshold()) {
+            boolean grayZone = bestSim < recallProps.getAbstain().getSoft();
+            if (bestSim < recallProps.getAbstain().getHard()) {
                 return finishAbstain(trace, budget, t0, "LOW_CONFIDENCE", req, l0, toEvidencePreview(topK));
             }
 
@@ -201,13 +204,15 @@ public class RagRetrievalService {
                 }
             }
 
-            trace.setCragVerdict("SUPPORTED");
+            String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
+            trace.setCragVerdict(verdict);
             budget.setPromptTokens(TokenEstimator.estimate(pack.prompt()));
             RagRetrieveVO vo = buildVo(traceId, false, null, answer, cited, evidence,
                     pack.injected(), l0, budget, t0);
-            writeTrace(trace, l0, pack.injected(), budget, "SUPPORTED", t0, req);
-            // 缓存写入（仅 SUPPORTED；A2 abstain 各分支不写）
-            if (answerCacheProps.isEnabled()) {
+            vo.setLowConfidence(grayZone);
+            writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
+            // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
+            if (!grayZone && answerCacheProps.isEnabled()) {
                 List<Long> nodeIds = pack.injected().stream().map(Evidence::nodeId).toList();
                 List<String> hashes = pack.injected().stream().map(Evidence::contentHash).toList();
                 List<AnswerCacheService.KbScope> sigScopes = List.of(
@@ -260,16 +265,16 @@ public class RagRetrievalService {
 
         RagRetrievalLog trace = newLogMerged(traceId, userId, effectiveKbs, query, DEFAULT_MODE);
         try {
-            // B4：query embed 一次（同模型，组内可比）
+            // B4：query 多路扩展（同模型，组内可比；扩展 query 级，per-KB 循环复用 qHalfs）
             KnowledgeBase kb0 = knowledgeBaseService.ensure(effectiveKbs.get(0));
             String embedModel = (kb0.getEmbeddingModel() == null || kb0.getEmbeddingModel().isBlank())
                     ? EMBED_MODEL_FALLBACK : kb0.getEmbeddingModel();
-            float[] qVec = llmGateway.embed(query, embedModel);
-            if (qVec.length != HalfVecUtil.DIM) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                        "query embedding 维度不匹配 expected=" + HalfVecUtil.DIM + " actual=" + qVec.length);
+            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(query, embedModel);
+            List<String> qHalfs = eq.qHalfs();
+            if (qHalfs.isEmpty()) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");
             }
-            String qHalf = HalfVecUtil.toHalfVec(qVec);
+            String qHalf = qHalfs.get(0);
 
             // step1 可见集上提（原在 per-kb 循环内）：canRead + step1VisibleSet 一次算清，循环复用 vs
             List<KbScopeCtx> validScopes = new ArrayList<>();
@@ -322,7 +327,7 @@ public class RagRetrievalService {
                     continue;
                 }
                 step4DirectoryRouting(query, kbId);
-                List<RecallHit> l0 = step5DenseRecall(kbId, qHalf, scope, null, maxL0);
+                List<RecallHit> l0 = multiDenseRecallL0(kbId, qHalfs, scope, null, maxL0);
                 if (l0.isEmpty()) {
                     continue;
                 }
@@ -348,9 +353,10 @@ public class RagRetrievalService {
             List<L2Candidate> ranked = rerankWithBoost(allPool, globalMaxBm);
             List<L2Candidate> topK = pickTopK(ranked, ragConfig.getMaxL2Read());
 
-            // A2 abstain（全局 best 父L0 sim）
+            // 软拒答（hard 阈；灰区 bestSim∈[hard,soft) 照注入证据，不 abstain——注入优于拒答）
             double bestSim = topK.stream().mapToDouble(L2Candidate::parentL0Sim).max().orElse(0);
-            if (bestSim < ragConfig.getAbstainThreshold()) {
+            boolean grayZone = bestSim < recallProps.getAbstain().getSoft();
+            if (bestSim < recallProps.getAbstain().getHard()) {
                 writeTraceMerged(trace, allL0, toEvidencePreview(topK), budget, "LOW_CONFIDENCE", t0, effectiveKbs, query, userId);
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "LOW_CONFIDENCE", ABSTAIN_MSG);
             }
@@ -366,14 +372,15 @@ public class RagRetrievalService {
                     + evidenceBlock(pack.injected());
             budget.setPromptTokens(TokenEstimator.estimate(systemPrompt() + ctx));
 
-            writeTraceMerged(trace, allL0, pack.injected(), budget, "SUPPORTED", t0, effectiveKbs, query, userId);
+            String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
+            writeTraceMerged(trace, allL0, pack.injected(), budget, verdict, t0, effectiveKbs, query, userId);
             List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> citations = pack.injected().stream()
                     .map(e -> com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO.builder()
                             .index(e.citationIndex()).documentId(e.documentId())
                             .title(e.title()).nodeId(e.nodeId()).build())
                     .toList();
-            // 缓存写入（仅 SUPPORTED；A2 abstain 不写）
-            if (answerCacheProps.isEnabled()) {
+            // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
+            if (!grayZone && answerCacheProps.isEnabled()) {
                 List<Long> nodeIds = pack.injected().stream().map(Evidence::nodeId).toList();
                 List<String> hashes = pack.injected().stream().map(Evidence::contentHash).toList();
                 List<AnswerCacheService.KbScope> sigScopes = validScopes.stream()
@@ -509,6 +516,27 @@ public class RagRetrievalService {
     }
 
     /**
+     * step5 多 qvec：对每个 halfvec 跑 dense L0 召回，按 nodeId 去重保留 max 余弦 sim，
+     * 再按 sim 降序输出（下游 topM/topD 依赖 sim 序）。
+     * 同模型同通道，cosine 可比 → 用 max-sim 合并（RRF 留给 Phase2/3 跨通道）。
+     */
+    private List<RecallHit> multiDenseRecallL0(Long kbId, List<String> qHalfs, FilterScope scope,
+                                               List<String> docTypes, int maxL0) {
+        if (qHalfs.size() == 1) {
+            return step5DenseRecall(kbId, qHalfs.get(0), scope, docTypes, maxL0);
+        }
+        Map<Long, RecallHit> best = new LinkedHashMap<>();
+        for (String qh : qHalfs) {
+            for (RecallHit h : step5DenseRecall(kbId, qh, scope, docTypes, maxL0)) {
+                best.merge(h.nodeId(), h, (a, b) -> b.cosineSim() > a.cosineSim() ? b : a);
+            }
+        }
+        return best.values().stream()
+                .sorted((a, b) -> Double.compare(b.cosineSim(), a.cosineSim()))
+                .toList();
+    }
+
+    /**
      * step6：单 KB — gather + 按 KB 内 maxBm 加 boost 排序（行为与重构前一致）。
      * R1：L2 不重嵌。B4：无额外 embed。BM25 仅 boost（'simple' 中文弱）。
      */
@@ -565,8 +593,9 @@ public class RagRetrievalService {
             byNode.put(r.getNodeId(), toCandidate(r, psim, null, false));
         }
 
-        // BM25 命中并集
-        List<RagQueryRow.L2Row> bm25 = queryMapper.bm25Hits(kbId, query, topDDocIds);
+        // BM25 命中并集（Phase2：jieba 分词后查 content_tokens_tsv，治"换说法召回不到"的词法兜底）
+        List<RagQueryRow.L2Row> bm25 = queryMapper.bm25HitsJieba(kbId,
+                com.superprogrammer.knowledge.util.JiebaTokenizer.tokenize(query), topDDocIds);
         for (RagQueryRow.L2Row r : bm25) {
             double psim = simOf(r.getParentId(), parentSim);
             boolean bmOnly = !byNode.containsKey(r.getNodeId());

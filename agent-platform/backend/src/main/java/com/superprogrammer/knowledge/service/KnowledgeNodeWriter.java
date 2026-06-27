@@ -116,6 +116,7 @@ public class KnowledgeNodeWriter {
         node.setLevel(level);
         node.setTitle(title);
         node.setContent(content);
+        node.setContentTokens(com.superprogrammer.knowledge.util.JiebaTokenizer.tokenize(content));
         node.setMetadata("{}");
         node.setStatus("ACTIVE");
         node.setCreatedBy(nullSafe(doc.getCreatedBy()));

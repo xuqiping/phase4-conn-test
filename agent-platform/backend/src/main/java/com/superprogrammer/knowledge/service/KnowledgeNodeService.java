@@ -8,6 +8,7 @@ import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
+import com.superprogrammer.knowledge.util.JiebaTokenizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -47,6 +48,28 @@ public class KnowledgeNodeService {
                 .toList();
     }
 
+    /**
+     * 回填 content_tokens（Phase2 V35 迁移后存量节点 content_tokens IS NULL）。
+     * 对 ACTIVE 节点逐条 jieba 分词 UPDATE。bm25HitsJieba 在未回填时空命中（优雅降级），
+     * smoke-kb 必须回填才能验词法兜底。返回更新条数。
+     */
+    public int backfillContentTokens() {
+        LambdaQueryWrapper<KnowledgeNode> w = new LambdaQueryWrapper<>();
+        w.isNull(KnowledgeNode::getContentTokens)
+                .eq(KnowledgeNode::getStatus, "ACTIVE")
+                .select(KnowledgeNode::getId, KnowledgeNode::getContent);
+        List<KnowledgeNode> nodes = nodeMapper.selectList(w);
+        int updated = 0;
+        for (KnowledgeNode n : nodes) {
+            KnowledgeNode up = new KnowledgeNode();
+            up.setId(n.getId());
+            up.setContentTokens(JiebaTokenizer.tokenize(n.getContent()));
+            nodeMapper.updateById(up);
+            updated++;
+        }
+        return updated;
+    }
+
     private KnowledgeNodeVO toVO(KnowledgeNode n) {
         return KnowledgeNodeVO.builder()
                 .id(n.getId())
@@ -55,6 +78,7 @@ public class KnowledgeNodeService {
                 .level(n.getLevel())
                 .nodeType(n.getNodeType())
                 .title(n.getTitle())
+                .content(n.getContent())
                 .tokenCount(n.getTokenCount())
                 .status(n.getStatus())
                 .build();

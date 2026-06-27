@@ -121,6 +121,13 @@
             <version>${tika.version}</version>
         </dependency>
 
+        <!-- jieba-analysis：中文分词（RAG BM25 词法兜底，Phase2）。Apache-2.0，无 native 依赖 -->
+        <dependency>
+            <groupId>com.huaban</groupId>
+            <artifactId>jieba-analysis</artifactId>
+            <version>1.0.2</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

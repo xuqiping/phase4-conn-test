@@ -103,6 +103,39 @@ public interface RagRetrievalQueryMapper {
                                      @Param("docIds") List<Long> docIds);
 
     /**
+     * step6（Phase2）：jieba-BM25 预筛。查 content_tokens_tsv（jieba 分词后空格串生成的 'simple' tsvector）。
+     * query 已由 JiebaTokenizer.tokenize 分词为空格串。
+     *
+     * <p>语义 OR（非 AND）：plainto_tsquery 整串是 AND，换说法 query 含"如何"等节点没有的词会全丢 →
+     * 拆 per-token OR（任一 token 命中即召回），bm25_rank 为命中 token 的 ts_rank 之和（多命中靠前）。
+     * 逐 token 用 plainto_tsquery（安全，无 | &amp; 操作符注入风险）。
+     *
+     * <p>存量节点 content_tokens IS NULL → content_tokens_tsv 空 → 不命中，优雅降级（回填后生效）。
+     * 空 query → string_to_array 产 [''] → @@ 不命中 → 空返回，安全。
+     */
+    @Select("""
+            <script>
+            SELECT n.id AS node_id, n.document_id AS document_id, n.parent_id AS parent_id,
+                   n.title AS title, n.content AS content, n.content_hash AS content_hash,
+                   (SELECT COALESCE(SUM(ts_rank(n.content_tokens_tsv, plainto_tsquery('simple', tok))), 0)
+                    FROM unnest(string_to_array(#{query}, ' ')) AS tok) AS bm25_rank
+            FROM knowledge_nodes n
+            WHERE n.kb_id = #{kbId}
+              AND n.level = 'L2'
+              AND n.status = 'ACTIVE'
+              AND n.deleted = 0
+              AND EXISTS (SELECT 1 FROM unnest(string_to_array(#{query}, ' ')) AS tok
+                          WHERE n.content_tokens_tsv @@ plainto_tsquery('simple', tok))
+              AND n.document_id IN
+              <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+            ORDER BY bm25_rank DESC
+            </script>
+            """)
+    List<RagQueryRow.L2Row> bm25HitsJieba(@Param("kbId") Long kbId,
+                                          @Param("query") String tokenizedQuery,
+                                          @Param("docIds") List<Long> docIds);
+
+    /**
      * step1：USER 直接可见文档集（KB/DIRECTORY/DOCUMENT 三级 can_read 并集）。admin/owner 由 service 短路跳过。
      * ROLE/DEPARTMENT/SERVICE_ACCOUNT 聚合留阶段4（DEV-visible-set）。
      */

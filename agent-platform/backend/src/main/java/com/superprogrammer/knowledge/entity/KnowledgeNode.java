@@ -31,6 +31,9 @@ public class KnowledgeNode extends BaseEntity {
     /** L0 摘要 / L2 原文（唯一真相源）。content_tsv 为 generated 列，不映射 */
     private String content;
 
+    /** jieba 分词空格拼串（Phase2 BM25 词法兜底）。content_tokens_tsv 为 generated 列，不映射 */
+    private String contentTokens;
+
     /** JSON */
     private String metadata;
 
