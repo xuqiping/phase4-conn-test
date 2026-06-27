@@ -1,6 +1,6 @@
 import { Store } from '@tauri-apps/plugin-store'
 
-export type ModuleCode = 'files' | 'processes' | 'clipboard' | 'work-report'
+export type ModuleCode = 'files' | 'processes' | 'clipboard' | 'work-report' | 'ai'
 
 export interface DeviceIdentity {
   deviceId: string

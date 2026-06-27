@@ -10,18 +10,37 @@
         @click.stop
       >
         <!-- Header -->
-      <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex items-center justify-between bg-gray-50 dark:bg-dark-hover">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex items-center justify-between bg-gray-50 dark:bg-dark-hover">
           <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100">设置</h2>
           <button
             @click="$emit('close')"
             class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors p-1 rounded-md hover:bg-gray-200 dark:hover:bg-[#3d3d3d]"
           >
-          <X :size="18" />
-        </button>
+            <X :size="18" />
+          </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover">
+          <button
+            v-for="tab in visibleTabs"
+            :key="tab.key"
+            @click="activeTab = tab.key"
+            :class="[
+              'flex-1 px-4 py-2 text-sm font-medium transition-colors',
+              activeTab === tab.key
+                ? 'text-primary border-b-2 border-primary bg-white dark:bg-dark-panel'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+            ]"
+          >
+            {{ tab.label }}
+          </button>
         </div>
 
         <!-- Content -->
-        <div class="p-6 space-y-6">
+        <div class="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+          <!-- 通用设置 -->
+          <template v-if="activeTab === 'general'">
           <!-- Global Shortcut -->
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -164,23 +183,38 @@
               跟随系统
               </button>
             </div>
-          </div>
-    </div>
+            </div>
+          </template>
+
+          <!-- AI 模型设置 -->
+          <template v-else-if="activeTab === 'ai'">
+            <AiConfigSettings />
+          </template>
+        </div>
 
         <!-- Footer -->
         <div class="px-6 py-4 border-t border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover flex justify-end space-x-3">
           <button
-        @click="$emit('close')"
+            v-if="activeTab === 'general'"
+            @click="$emit('close')"
             class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3d3d3d] rounded-md transition-colors font-medium"
-      >
+          >
             取消
-        </button>
+          </button>
           <button
+            v-if="activeTab === 'general'"
             data-test="save-settings"
             @click="handleSave"
             class="px-4 py-2 text-sm bg-primary hover:bg-[#369b6e] text-white rounded-md transition-colors font-medium shadow-sm shadow-primary/20"
           >
-      保存
+            保存
+          </button>
+          <button
+            v-if="activeTab === 'ai'"
+            @click="$emit('close')"
+            class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3d3d3d] rounded-md transition-colors font-medium"
+          >
+            关闭
           </button>
         </div>
       </div>
@@ -189,9 +223,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useCommercialAuthStore } from '../stores/commercialAuthStore'
+import AiConfigSettings from './AiConfigSettings.vue'
 
 const props = defineProps<{
   show: boolean
@@ -203,6 +239,17 @@ const emit = defineEmits<{
 }>()
 
 const settingsStore = useSettingsStore()
+const commercialAuthStore = useCommercialAuthStore()
+
+const activeTab = ref('general')
+
+const visibleTabs = computed(() => {
+  const tabs = [{ key: 'general', label: '通用' }]
+  if (commercialAuthStore.isModuleAllowed('ai')) {
+    tabs.push({ key: 'ai', label: 'AI 模型' })
+  }
+  return tabs
+})
 
 const localShortcut = ref(settingsStore.settings.globalShortcut)
 const localClipboardShortcut = ref(settingsStore.settings.clipboardShortcut)
@@ -213,6 +260,7 @@ const localTheme = ref(settingsStore.settings.theme)
 // Reset local values when dialog opens
 watch(() => props.show, (newShow) => {
   if (newShow) {
+    activeTab.value = 'general'
     localShortcut.value = settingsStore.settings.globalShortcut
     localClipboardShortcut.value = settingsStore.settings.clipboardShortcut
     localScreenshotShortcut.value = settingsStore.settings.screenshotShortcut

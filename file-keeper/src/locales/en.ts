@@ -219,6 +219,9 @@ export default {
     enabled: 'Enabled',
     disabled: 'Disabled',
     aiEnabled: 'Enable AI Summary',
+    aiConfig: 'AI Config',
+    useDefaultAiConfig: 'Use Default Config',
+    defaultAiConfigSuffix: ' (Default)',
     pushTarget: 'Push Target',
     addPushTarget: 'Add Push Target',
     targetGroup: 'Group',
@@ -272,6 +275,27 @@ export default {
       PUSHED: 'Pushed',
       FAILED: 'Failed'
     }
+  },
+  aiConfig: {
+    title: 'AI Models',
+    addConfig: 'Add Config',
+    namePlaceholder: 'Config name, e.g. "Qwen - Work Reports"',
+    providerQwen: 'Qwen',
+    providerDoubao: 'Doubao',
+    providerClaude: 'Claude',
+    modelPlaceholder: 'Model name',
+    apiKeyPlaceholder: 'API Key',
+    apiKeyUpdatePlaceholder: 'Enter new API Key (leave blank to keep unchanged)',
+    endpointPlaceholder: 'Custom Endpoint (optional)',
+    maxTokens: 'Max Tokens',
+    timeoutSeconds: 'Timeout (seconds)',
+    setAsDefault: 'Set as Default',
+    enabled: 'Enabled',
+    nameRequired: 'Please enter a config name',
+    modelRequired: 'Please enter a model name',
+    maxTokensInvalid: 'Max Tokens must be greater than 0',
+    timeoutSecondsInvalid: 'Timeout must be greater than 0',
+    confirmDelete: 'Are you sure you want to delete this AI config?'
   },
   clipboard: {
     title: 'Clipboard',

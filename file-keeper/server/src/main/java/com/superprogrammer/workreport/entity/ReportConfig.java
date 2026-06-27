@@ -25,4 +25,6 @@ public class ReportConfig extends BaseEntity {
     private Boolean enabled;
 
     private Boolean aiEnabled;
+
+    private Long aiConfigId;
 }

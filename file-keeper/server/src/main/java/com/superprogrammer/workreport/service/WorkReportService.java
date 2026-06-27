@@ -95,7 +95,8 @@ public class WorkReportService {
         List<FixedWorkItem> completedFixedWork = findCompletedFixedWork(userId, planRange.start(), planRange.end());
 
         String aiSummary = Boolean.TRUE.equals(config.getAiEnabled())
-                ? aiSummaryService.summarize(logs, completedFixedWork, config.getReportType())
+                ? aiSummaryService.summarize(logs, completedFixedWork,
+                        config.getReportType(), config.getAiConfigId(), userId)
                 : "";
 
         Map<String, Object> context = templateEngine.buildContext(aiSummary, logs, completedFixedWork, config.getReportType());

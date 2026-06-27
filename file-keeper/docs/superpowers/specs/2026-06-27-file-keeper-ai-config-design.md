@@ -58,7 +58,7 @@ work-report:
 ```sql
 CREATE TABLE ai_configs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     name VARCHAR(64) NOT NULL,
     provider VARCHAR(32) NOT NULL,
     model VARCHAR(64) NOT NULL,
@@ -72,12 +72,16 @@ CREATE TABLE ai_configs (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_by BIGINT,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted INT NOT NULL DEFAULT 0,
     CONSTRAINT uq_ai_configs_user_name UNIQUE (user_id, name)
 );
 
-CREATE INDEX idx_ai_configs_user_id ON ai_configs(user_id);
-CREATE INDEX idx_ai_configs_user_default ON ai_configs(user_id, is_default) WHERE is_default = true;
+CREATE INDEX idx_ai_configs_user_id ON ai_configs(user_id, deleted);
+CREATE INDEX idx_ai_configs_user_default ON ai_configs(user_id, is_default, deleted);
+
+ALTER TABLE report_configs ADD COLUMN ai_config_id BIGINT REFERENCES ai_configs(id);
+
+CREATE INDEX idx_report_configs_ai_config ON report_configs(ai_config_id);
 ```
 
 **字段说明**

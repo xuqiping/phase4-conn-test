@@ -56,6 +56,7 @@ class ReportConfigServiceTest {
                 "Asia/Shanghai",
                 true,
                 true,
+                null,
                 List.of(new ReportPushTargetRequest(null, "feishu", "webhook", "https://hook", "secret"))
         );
 
@@ -72,7 +73,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest createRequest = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true,
+                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null,
                 List.of(
                         new ReportPushTargetRequest(null, "feishu", "webhook", "https://hook1", "secret1"),
                         new ReportPushTargetRequest(null, "feishu", "webhook", "https://hook2", "secret2")
@@ -82,7 +83,7 @@ class ReportConfigServiceTest {
         Long firstTargetId = created.pushTargets().get(0).id();
 
         SaveReportConfigRequest updateRequest = new SaveReportConfigRequest(
-                created.id(), "日报", "DAILY", templateId, "0 10 * * *", "Asia/Shanghai", true, true,
+                created.id(), "日报", "DAILY", templateId, "0 10 * * *", "Asia/Shanghai", true, true, null,
                 List.of(new ReportPushTargetRequest(firstTargetId, "feishu", "webhook", "https://hook1", "new-secret"))
         );
         ReportConfigDto updated = reportConfigService.save(userId, updateRequest);
@@ -99,7 +100,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true,
+                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null,
                 List.of(new ReportPushTargetRequest(null, "feishu", "webhook", "https://hook", "secret"))
         );
         ReportConfigDto created = reportConfigService.save(userId, request);
@@ -120,7 +121,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "invalid-cron", "Asia/Shanghai", true, true, null
+                null, "日报", "DAILY", templateId, "invalid-cron", "Asia/Shanghai", true, true, null, null
         );
 
         BusinessException ex = assertThrows(BusinessException.class, () -> reportConfigService.save(userId, request));
@@ -134,7 +135,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null
+                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null
         );
         ReportConfigDto created = reportConfigService.save(userA, request);
 

@@ -219,6 +219,9 @@ export default {
     enabled: '启用',
     disabled: '未启用',
     aiEnabled: '启用 AI 总结',
+    aiConfig: '使用 AI 配置',
+    useDefaultAiConfig: '使用默认配置',
+    defaultAiConfigSuffix: '（默认）',
     pushTarget: '推送目标',
     addPushTarget: '添加推送目标',
     targetGroup: '群',
@@ -272,6 +275,27 @@ export default {
       PUSHED: '已推送',
       FAILED: '失败'
     }
+  },
+  aiConfig: {
+    title: 'AI 模型',
+    addConfig: '添加配置',
+    namePlaceholder: '配置名称，如「通义千问-工作汇报」',
+    providerQwen: '通义千问',
+    providerDoubao: '豆包',
+    providerClaude: 'Claude',
+    modelPlaceholder: '模型名称',
+    apiKeyPlaceholder: 'API Key',
+    apiKeyUpdatePlaceholder: '填写新的 API Key（留空则保持不变）',
+    endpointPlaceholder: '自定义 Endpoint（可选）',
+    maxTokens: 'Max Tokens',
+    timeoutSeconds: '超时时间（秒）',
+    setAsDefault: '设为默认',
+    enabled: '启用',
+    nameRequired: '请填写配置名称',
+    modelRequired: '请填写模型名称',
+    maxTokensInvalid: 'Max Tokens 必须大于 0',
+    timeoutSecondsInvalid: '超时时间必须大于 0',
+    confirmDelete: '确定删除该 AI 配置吗？'
   },
   clipboard: {
     title: '剪贴板',

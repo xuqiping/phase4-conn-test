@@ -91,6 +91,7 @@ export interface ReportConfig {
   timezone?: string
   enabled: boolean
   aiEnabled: boolean
+  aiConfigId?: number
   pushTargets: ReportPushTarget[]
 }
 

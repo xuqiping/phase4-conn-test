@@ -65,6 +65,7 @@ public class ReportConfigService {
         config.setTimezone(request.timezone() == null ? "Asia/Shanghai" : request.timezone());
         config.setEnabled(request.enabled() == null ? true : request.enabled());
         config.setAiEnabled(request.aiEnabled() == null ? true : request.aiEnabled());
+        config.setAiConfigId(request.aiConfigId());
         config.setCreatedBy(userId);
         config.setUpdatedBy(userId);
         return reportConfigRepository.insert(config);
@@ -79,6 +80,7 @@ public class ReportConfigService {
         config.setTimezone(request.timezone() == null ? config.getTimezone() : request.timezone());
         config.setEnabled(request.enabled() == null ? config.getEnabled() : request.enabled());
         config.setAiEnabled(request.aiEnabled() == null ? config.getAiEnabled() : request.aiEnabled());
+        config.setAiConfigId(request.aiConfigId() == null ? config.getAiConfigId() : request.aiConfigId());
         config.setUpdatedBy(userId);
         return reportConfigRepository.update(config);
     }
@@ -187,6 +189,7 @@ public class ReportConfigService {
                 config.getTimezone(),
                 config.getEnabled(),
                 config.getAiEnabled(),
+                config.getAiConfigId(),
                 pushTargets
         );
     }

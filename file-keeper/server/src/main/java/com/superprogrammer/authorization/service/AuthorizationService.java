@@ -32,7 +32,8 @@ public class AuthorizationService {
             AuthConstants.MODULE_FILES,
             AuthConstants.MODULE_PROCESSES,
             AuthConstants.MODULE_CLIPBOARD,
-            AuthConstants.MODULE_WORK_REPORT
+            AuthConstants.MODULE_WORK_REPORT,
+            AuthConstants.MODULE_AI
     );
 
     private final UserRepository userRepository;

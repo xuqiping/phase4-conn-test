@@ -41,6 +41,22 @@
               <span>{{ t('workReport.aiEnabled') }}</span>
             </label>
           </div>
+          <div v-if="aiModuleAllowed" class="space-y-2">
+            <label class="block text-sm text-gray-700 dark:text-gray-300">{{ t('workReport.aiConfig') }}</label>
+            <select
+              v-model="editingConfig.aiConfigId"
+              class="w-full px-2 py-1.5 bg-white dark:bg-dark-hover border border-gray-200 dark:border-dark-border rounded-md text-sm"
+            >
+              <option :value="undefined">{{ t('workReport.useDefaultAiConfig') }}</option>
+              <option
+                v-for="cfg in aiConfigStore.configs"
+                :key="cfg.id"
+                :value="cfg.id"
+              >
+                {{ cfg.name }}{{ cfg.isDefault ? t('workReport.defaultAiConfigSuffix') : '' }}
+              </option>
+            </select>
+          </div>
 
           <div class="border-t border-gray-200 dark:border-dark-border pt-3">
             <div class="flex items-center justify-between mb-2">
@@ -111,6 +127,22 @@
             <span>{{ t('workReport.aiEnabled') }}</span>
           </label>
         </div>
+        <div v-if="aiModuleAllowed" class="space-y-2">
+          <label class="block text-sm text-gray-700 dark:text-gray-300">{{ t('workReport.aiConfig') }}</label>
+          <select
+            v-model="newConfig.aiConfigId"
+            class="w-full px-2 py-1.5 bg-white dark:bg-dark-hover border border-gray-200 dark:border-dark-border rounded-md text-sm"
+          >
+            <option :value="undefined">{{ t('workReport.useDefaultAiConfig') }}</option>
+            <option
+              v-for="cfg in aiConfigStore.configs"
+              :key="cfg.id"
+              :value="cfg.id"
+            >
+              {{ cfg.name }}{{ cfg.isDefault ? t('workReport.defaultAiConfigSuffix') : '' }}
+            </option>
+          </select>
+        </div>
 
         <div class="border-t border-gray-200 dark:border-dark-border pt-3">
           <div class="flex items-center justify-between mb-2">
@@ -144,14 +176,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import { useWorkReportStore } from '@/stores/workReportStore'
 import { useI18n } from '@/composables/useI18n'
+import { useAiConfigStore } from '@/stores/aiConfigStore'
+import { useCommercialAuthStore } from '@/stores/commercialAuthStore'
 import PushTargetForm from './PushTargetForm.vue'
 import type { ReportConfig, ReportPushTarget } from '@/types/workReport'
 
 const store = useWorkReportStore()
+const aiConfigStore = useAiConfigStore()
+const commercialAuthStore = useCommercialAuthStore()
 const { t } = useI18n()
 
 const emit = defineEmits<{
@@ -175,13 +211,21 @@ function defaultConfig(): Partial<ReportConfig> {
     timezone: 'Asia/Shanghai',
     enabled: true,
     aiEnabled: true,
+    aiConfigId: undefined,
     pushTargets: [],
   }
 }
 
+const aiModuleAllowed = computed(() => commercialAuthStore.isModuleAllowed('ai'))
+
 onMounted(async () => {
   await store.loadTemplates()
   await store.loadConfigs()
+  if (aiModuleAllowed.value) {
+    aiConfigStore.loadConfigs().catch(() => {
+      // 错误已在 store 中记录
+    })
+  }
   if (store.templates.length > 0 && !newConfig.value.templateId) {
     newConfig.value.templateId = store.templates[0].id
   }

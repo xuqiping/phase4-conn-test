@@ -26,8 +26,8 @@ public class ReportConfigRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, config.getUserId());
@@ -38,8 +38,9 @@ public class ReportConfigRepository {
             ps.setString(6, config.getTimezone());
             ps.setBoolean(7, config.getEnabled() != null && config.getEnabled());
             ps.setBoolean(8, config.getAiEnabled() != null && config.getAiEnabled());
-            ps.setObject(9, config.getCreatedBy());
-            ps.setObject(10, config.getUpdatedBy());
+            ps.setObject(9, config.getAiConfigId());
+            ps.setObject(10, config.getCreatedBy());
+            ps.setObject(11, config.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -52,10 +53,11 @@ public class ReportConfigRepository {
 
     public ReportConfig update(ReportConfig config) {
         int rows = jdbcTemplate.update(
-                "update report_configs set name = ?, report_type = ?, template_id = ?, cron_expression = ?, timezone = ?, enabled = ?, ai_enabled = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
+                "update report_configs set name = ?, report_type = ?, template_id = ?, cron_expression = ?, timezone = ?, enabled = ?, ai_enabled = ?, ai_config_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
                         "where id = ? and deleted = 0",
                 config.getName(), config.getReportType(), config.getTemplateId(), config.getCronExpression(),
-                config.getTimezone(), config.getEnabled(), config.getAiEnabled(), config.getUpdatedBy(), config.getId()
+                config.getTimezone(), config.getEnabled(), config.getAiEnabled(), config.getAiConfigId(),
+                config.getUpdatedBy(), config.getId()
         );
         if (rows == 0) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "报告配置不存在");
@@ -65,7 +67,7 @@ public class ReportConfigRepository {
 
     public Optional<ReportConfig> findById(Long id) {
         List<ReportConfig> results = jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where id = ? and deleted = 0",
                 configMapper(), id
         );
@@ -74,7 +76,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where user_id = ? and deleted = 0 order by id desc",
                 configMapper(), userId
         );
@@ -82,7 +84,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findEnabledByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where user_id = ? and enabled = true and deleted = 0 order by id desc",
                 configMapper(), userId
         );
@@ -90,7 +92,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findEnabled() {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where enabled = true and deleted = 0 order by id desc",
                 configMapper()
         );
@@ -118,6 +120,7 @@ public class ReportConfigRepository {
         config.setTimezone(rs.getString("timezone"));
         config.setEnabled(rs.getBoolean("enabled"));
         config.setAiEnabled(rs.getBoolean("ai_enabled"));
+        config.setAiConfigId(rs.getObject("ai_config_id", Long.class));
         config.setCreatedBy(rs.getObject("created_by", Long.class));
         config.setCreatedAt(rs.getTimestamp("created_at").toInstant().atOffset(java.time.ZoneOffset.UTC));
         config.setUpdatedBy(rs.getObject("updated_by", Long.class));

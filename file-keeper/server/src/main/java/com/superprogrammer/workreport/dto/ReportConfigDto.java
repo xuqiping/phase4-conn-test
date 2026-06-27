@@ -12,6 +12,7 @@ public record ReportConfigDto(
         String timezone,
         Boolean enabled,
         Boolean aiEnabled,
+        Long aiConfigId,
         List<ReportPushTargetDto> pushTargets
 ) {
 }

@@ -14,6 +14,7 @@ public record SaveReportConfigRequest(
         String timezone,
         Boolean enabled,
         Boolean aiEnabled,
+        Long aiConfigId,
         List<ReportPushTargetRequest> pushTargets
 ) {
 }
