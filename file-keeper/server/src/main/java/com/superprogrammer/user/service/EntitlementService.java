@@ -25,7 +25,8 @@ public class EntitlementService {
             AuthConstants.MODULE_FILES,
             AuthConstants.MODULE_PROCESSES,
             AuthConstants.MODULE_CLIPBOARD,
-            AuthConstants.MODULE_WORK_REPORT
+            AuthConstants.MODULE_WORK_REPORT,
+            AuthConstants.MODULE_AI
     );
 
     private final EntitlementRepository entitlementRepository;
@@ -76,7 +77,7 @@ public class EntitlementService {
 
     private void validateModuleCode(String moduleCode) {
         if (!VALID_MODULES.contains(moduleCode)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes、clipboard 或 work-report");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes、clipboard、work-report 或 ai");
         }
     }
 

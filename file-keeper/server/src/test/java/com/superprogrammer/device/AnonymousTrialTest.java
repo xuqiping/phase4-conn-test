@@ -57,11 +57,12 @@ class AnonymousTrialTest {
                 .andExpect(jsonPath("$.data.deviceId").value("anon-001"))
                 .andExpect(jsonPath("$.data.inFullTrial").value(true))
                 .andExpect(jsonPath("$.data.trialExpired").value(false))
-                .andExpect(jsonPath("$.data.allowedModuleCodes.length()").value(4))
+                .andExpect(jsonPath("$.data.allowedModuleCodes.length()").value(5))
                 .andExpect(jsonPath("$.data.allowedModuleCodes[0]").value("files"))
                 .andExpect(jsonPath("$.data.allowedModuleCodes[1]").value("processes"))
                 .andExpect(jsonPath("$.data.allowedModuleCodes[2]").value("clipboard"))
-                .andExpect(jsonPath("$.data.allowedModuleCodes[3]").value("work-report"));
+                .andExpect(jsonPath("$.data.allowedModuleCodes[3]").value("work-report"))
+                .andExpect(jsonPath("$.data.allowedModuleCodes[4]").value("ai"));
 
         mockMvc.perform(post("/api/anonymous/trial/start")
                         .contentType("application/json")
