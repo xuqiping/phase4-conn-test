@@ -9,7 +9,9 @@ import com.superprogrammer.knowledge.mapper.KnowledgeIndexJobMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import com.superprogrammer.knowledge.service.internal.ExtractedDocument;
 import com.superprogrammer.knowledge.service.internal.Section;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.util.HashUtil;
+import com.superprogrammer.knowledge.util.L1EmbedText;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,7 @@ public class KnowledgeNodeWriter {
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeIndexJobMapper indexJobMapper;
+    private final ObjectMapper objectMapper;
 
     /**
      * @param doc        待解析文档（读 kbId/title/id）
@@ -57,6 +60,11 @@ public class KnowledgeNodeWriter {
                 .set(KnowledgeDocument::getParseError, null)
                 .set(KnowledgeDocument::getUpdatedBy, operatorId);
         documentMapper.update(null, docUpdate);
+
+        // Phase3：doc 级 L1 向量 job（L1 文本 embed），l1_metadata 非空即建（0 section 也建，doc 仍可经 L1 召回）
+        if (l1Json != null && !l1Json.isBlank()) {
+            indexJobMapper.insertL1JobIgnoreConflict(buildL1UpsertJob(doc, doc.getKbId(), l1Json));
+        }
 
         List<Section> sections = extracted.getSections();
         if (sections == null || sections.isEmpty()) {
@@ -132,6 +140,22 @@ public class KnowledgeNodeWriter {
         job.setJobType("UPSERT");
         job.setContentHash(l0.getContentHash());
         job.setIdempotencyKey(HashUtil.sha256(l0.getId() + ":" + l0.getContentHash() + ":UPSERT"));
+        return job;
+    }
+
+    /**
+     * UPSERT_L1 job：doc 级 L1 向量（Phase3）。
+     * idempotency_key=sha256(docId:l1hash:UPSERT_L1)（I4），l1hash=L1 文本（summary+outline+rules）sha256。
+     * content_hash=l1hash（worker embed 时算同款文本 hash，tx 内复校防中途变更）。
+     */
+    private KnowledgeIndexJob buildL1UpsertJob(KnowledgeDocument doc, Long kbId, String l1Json) {
+        String l1Hash = L1EmbedText.hashOfJson(l1Json, objectMapper);
+        KnowledgeIndexJob job = new KnowledgeIndexJob();
+        job.setDocumentId(doc.getId());
+        job.setKbId(kbId);
+        job.setJobType("UPSERT_L1");
+        job.setContentHash(l1Hash);
+        job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + l1Hash + ":UPSERT_L1"));
         return job;
     }
 

@@ -16,6 +16,7 @@ import com.superprogrammer.knowledge.dto.CachedPayload;
 import com.superprogrammer.knowledge.service.internal.AnswerCacheService;
 import com.superprogrammer.knowledge.service.internal.CitationChecker;
 import com.superprogrammer.knowledge.service.internal.L1Metadata;
+import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.service.internal.VisibleDocSet;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.LlmGateway;
@@ -79,10 +80,14 @@ public class RagRetrievalService {
                              double cosineDistance, double cosineSim) {
     }
 
+    /** L1 文档召回命中（doc 级语义锚，Phase3）。 */
+    private record L1DocHit(Long documentId, String title, double cosineDistance, double cosineSim) {
+    }
+
     private record L2Candidate(Long nodeId, Long documentId, Long parentId, String title,
                                String content, String contentHash,
                                double parentL0Sim, Double bm25Rank, double rerankScore,
-                               boolean bm25Only) {
+                               boolean bm25Only, double docL1Sim) {
     }
 
     private record Evidence(Long nodeId, Long documentId, String title, String content,
@@ -167,13 +172,14 @@ public class RagRetrievalService {
             // step5 dense 召回（多 qvec 并集，按 max 余弦去重排序；强制 §6.1 WHERE）
             int maxL0 = req.getMaxL0() != null ? req.getMaxL0() : ragConfig.getMaxL0Candidates();
             List<RecallHit> l0 = multiDenseRecallL0(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
-            if (l0.isEmpty()) {
+            List<L1DocHit> l1 = multiDenseRecallL1(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
+            if (l0.isEmpty() && l1.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of());
             }
 
-            // step6 L2 候选 + rerank 代理
+            // step6 L2 候选 + rerank 代理（Phase3：L1 doc 级语义锚跨通道融合）
             boolean[] bm25Fallback = {false};
-            List<L2Candidate> pool = step6L2Candidates(req.getQuery(), l0, req.getKbId(), bm25Fallback);
+            List<L2Candidate> pool = step6L2Candidates(req.getQuery(), l0, req.getKbId(), bm25Fallback, l1);
             if (pool.size() > ragConfig.getMaxRerankPairs()) {
                 throw new IllegalStateException("B3 违规: rerank pool=" + pool.size()
                         + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
@@ -181,8 +187,8 @@ public class RagRetrievalService {
             List<L2Candidate> topK = pickTopK(pool, ragConfig.getMaxL2Read());
             trace.setL2LexicalFallback(bm25Fallback[0]);
 
-            // step7 软拒答（hard/soft 双阈，替旧 0.5 单悬崖；看 best 父L0 sim，非 rerankScore）
-            double bestSim = topK.stream().mapToDouble(L2Candidate::parentL0Sim).max().orElse(0);
+            // step7 软拒答（hard/soft 双阈）：best sim 取 L0 父 sim 与 L1 doc sim 较大者（Phase3：L1 可救 L0 漏召回）
+            double bestSim = topK.stream().mapToDouble(c -> Math.max(c.parentL0Sim(), c.docL1Sim())).max().orElse(0);
             boolean grayZone = bestSim < recallProps.getAbstain().getSoft();
             if (bestSim < recallProps.getAbstain().getHard()) {
                 return finishAbstain(trace, budget, t0, "LOW_CONFIDENCE", req, l0, toEvidencePreview(topK));
@@ -328,11 +334,12 @@ public class RagRetrievalService {
                 }
                 step4DirectoryRouting(query, kbId);
                 List<RecallHit> l0 = multiDenseRecallL0(kbId, qHalfs, scope, null, maxL0);
-                if (l0.isEmpty()) {
+                List<L1DocHit> l1 = multiDenseRecallL1(kbId, qHalfs, scope, null, maxL0);
+                if (l0.isEmpty() && l1.isEmpty()) {
                     continue;
                 }
                 allL0.addAll(l0);
-                List<L2Candidate> poolK = gatherL2Candidates(query, l0, kbId, bm25Fallback);
+                List<L2Candidate> poolK = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1);
                 if (poolK.size() > ragConfig.getMaxRerankPairs()) {
                     throw new IllegalStateException("B3 违规(per-kb): pool=" + poolK.size()
                             + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
@@ -342,7 +349,7 @@ public class RagRetrievalService {
 
             trace.setL2LexicalFallback(bm25Fallback[0]);   // D1 trace：多 KB 合并 BM25 回退标记（NOT NULL 列）
 
-            if (allL0.isEmpty()) {
+            if (allPool.isEmpty()) {
                 writeTraceMerged(trace, allL0, List.of(), budget, "NO_DENSE_HITS", t0, effectiveKbs, query, userId);
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "NO_DENSE_HITS", ABSTAIN_MSG);
             }
@@ -354,7 +361,8 @@ public class RagRetrievalService {
             List<L2Candidate> topK = pickTopK(ranked, ragConfig.getMaxL2Read());
 
             // 软拒答（hard 阈；灰区 bestSim∈[hard,soft) 照注入证据，不 abstain——注入优于拒答）
-            double bestSim = topK.stream().mapToDouble(L2Candidate::parentL0Sim).max().orElse(0);
+            // best sim 取 L0 父 sim 与 L1 doc sim 较大者（Phase3：L1 可救 L0 漏召回）
+            double bestSim = topK.stream().mapToDouble(c -> Math.max(c.parentL0Sim(), c.docL1Sim())).max().orElse(0);
             boolean grayZone = bestSim < recallProps.getAbstain().getSoft();
             if (bestSim < recallProps.getAbstain().getHard()) {
                 writeTraceMerged(trace, allL0, toEvidencePreview(topK), budget, "LOW_CONFIDENCE", t0, effectiveKbs, query, userId);
@@ -537,40 +545,83 @@ public class RagRetrievalService {
     }
 
     /**
+     * step5（Phase3）：多 qvec dense L1 文档召回，按 documentId 去重保留 max 余弦 sim。
+     * doc 级语义锚：L0 chunk 漏召回时，L1 元数据向量仍可命中（措辞远比 chunk 稳）。
+     */
+    private List<L1DocHit> multiDenseRecallL1(Long kbId, List<String> qHalfs, FilterScope scope,
+                                               List<String> docTypes, int maxL1) {
+        Map<Long, L1DocHit> best = new LinkedHashMap<>();
+        for (String qh : qHalfs) {
+            for (RagQueryRow.L1RecallRow r : queryMapper.denseRecallL1(
+                    kbId, qh, scope.allDocs, scope.docIds, docTypes, maxL1)) {
+                double dist = r.getCosineDistance() == null ? 2.0 : r.getCosineDistance();
+                L1DocHit h = new L1DocHit(r.getDocumentId(), r.getTitle(), dist, 1.0 - dist);
+                best.merge(h.documentId(), h, (a, b) -> b.cosineSim() > a.cosineSim() ? b : a);
+            }
+        }
+        return new ArrayList<>(best.values());
+    }
+
+    /**
      * step6：单 KB — gather + 按 KB 内 maxBm 加 boost 排序（行为与重构前一致）。
      * R1：L2 不重嵌。B4：无额外 embed。BM25 仅 boost（'simple' 中文弱）。
      */
     private List<L2Candidate> step6L2Candidates(String query, List<RecallHit> l0,
-                                                Long kbId, boolean[] bm25Fallback) {
-        List<L2Candidate> gathered = gatherL2Candidates(query, l0, kbId, bm25Fallback);
+                                                Long kbId, boolean[] bm25Fallback, List<L1DocHit> l1Hits) {
+        List<L2Candidate> gathered = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1Hits);
         double maxBm = gathered.stream().map(L2Candidate::bm25Rank)
                 .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
         return rerankWithBoost(gathered, maxBm);
     }
 
     /**
-     * gather：top-M L0 → top-D 文档 → L2 子节点 ∪ BM25 命中。
-     * 返回候选（rerankScore=parentL0Sim 占位，未加 boost；bm25Rank 原值），供多 KB 合并后统一 rerank。
+     * gather：top-M L0 → RRF 融合（L0 doc 序 + L1 doc 序）top-D 文档 → L2 子节点 ∪ BM25 命中 ∪ L1 命中文档 L2。
+     * Phase3：L1 命中但 L0 父未进 topM 的文档，其 L2 经 fetchL2ChildrenByDoc 补召；候选带 docL1Sim 供 rerank boost。
+     * 返回候选（rerankScore=parentL0Sim 占位未加 boost；bm25Rank 原值；docL1Sim 原值），供多 KB 合并后统一 rerank。
      */
     private List<L2Candidate> gatherL2Candidates(String query, List<RecallHit> l0,
-                                                 Long kbId, boolean[] bm25Fallback) {
+                                                 Long kbId, boolean[] bm25Fallback,
+                                                 List<L1DocHit> l1Hits) {
         int topM = Math.min(ragConfig.getDenseTopM(), l0.size());
         List<RecallHit> topMHits = l0.subList(0, topM);
 
-        // top-D 文档（按 L0 sim 序取前 D 个不同 doc）
-        LinkedLongSet topDDocs = new LinkedLongSet();
-        for (RecallHit h : l0) {
-            topDDocs.add(h.documentId());
-            if (topDDocs.size() >= ragConfig.getDenseTopD()) {
-                break;
+        // L1 doc 语义锚：documentId → max L1 sim；L1 doc 序（按 sim 降序去重，供 RRF 融合）
+        Map<Long, Double> docL1Sim = new LinkedHashMap<>();
+        List<Long> l1DocOrder = new ArrayList<>();
+        Set<Long> l1Seen = new LinkedHashSet<>();
+        if (l1Hits != null) {
+            List<L1DocHit> l1Sorted = new ArrayList<>(l1Hits);
+            l1Sorted.sort((a, b) -> Double.compare(b.cosineSim(), a.cosineSim()));
+            for (L1DocHit h : l1Sorted) {
+                docL1Sim.merge(h.documentId(), h.cosineSim(), Math::max);
+                if (l1Seen.add(h.documentId())) {
+                    l1DocOrder.add(h.documentId());
+                }
             }
         }
-        List<Long> topDDocIds = topDDocs.list();
+
+        // L0 doc 序（按 L0 命中序去重）
+        LinkedLongSet topDDocsSet = new LinkedLongSet();
+        List<Long> l0DocOrder = new ArrayList<>();
+        for (RecallHit h : l0) {
+            if (topDDocsSet.set.add(h.documentId())) {
+                l0DocOrder.add(h.documentId());
+            }
+        }
+
+        // top-D 文档：RRF 融合 L0 doc 序 + L1 doc 序（L1 命中可把低 L0 排名的 doc 拉进 top-D）
+        List<Long> topDDocIds = fuseTopDDocs(l0DocOrder, l1DocOrder, ragConfig.getDenseTopD());
         if (topDDocIds.isEmpty()) {
             return List.of();
         }
 
-        // parentId→sim（全 L0 命中，供 BM25-only 候选回查父 sim）
+        // topM L0 命中文档集（判 L1-only doc：其 L0 父未进 topM → 需 fetchL2ChildrenByDoc 补召）
+        Set<Long> topML0Docs = new HashSet<>();
+        for (RecallHit h : topMHits) {
+            topML0Docs.add(h.documentId());
+        }
+
+        // parentId→sim（全 L0 命中，供 BM25/L1-only 候选回查父 sim）
         Map<Long, Double> parentSim = new LinkedHashMap<>();
         List<Long> topMParentIds = new ArrayList<>();
         for (RecallHit h : topMHits) {
@@ -581,16 +632,36 @@ public class RagRetrievalService {
             parentSim.putIfAbsent(h.nodeId(), h.cosineSim());
         }
 
-        // L2 子节点（parent-anchored），每文档 cap
-        Map<Long, L2Candidate> byNode = new LinkedHashMap<>();
         int perDoc = ragConfig.getPerDocL2Cap();
         Map<Long, Integer> perDocCount = new LinkedHashMap<>();
-        for (RagQueryRow.L2Row r : queryMapper.fetchL2Children(kbId, topMParentIds, topDDocIds)) {
-            if (perDocCount.merge(r.getDocumentId(), 1, Integer::sum) > perDoc) {
-                continue;
+        Map<Long, L2Candidate> byNode = new LinkedHashMap<>();
+
+        // L2 子节点（topM L0 父锚）；topMParentIds 空（l0 全空、仅 L1 命中）时跳过，交 fetchL2ChildrenByDoc
+        if (!topMParentIds.isEmpty()) {
+            for (RagQueryRow.L2Row r : queryMapper.fetchL2Children(kbId, topMParentIds, topDDocIds)) {
+                if (perDocCount.merge(r.getDocumentId(), 1, Integer::sum) > perDoc) {
+                    continue;
+                }
+                byNode.put(r.getNodeId(), toCandidate(r, simOf(r.getParentId(), parentSim), null, false,
+                        simForDoc(docL1Sim, r.getDocumentId())));
             }
-            double psim = simOf(r.getParentId(), parentSim);
-            byNode.put(r.getNodeId(), toCandidate(r, psim, null, false));
+        }
+
+        // Phase3：L1 命中但 L0 父未进 topM 的文档，其 L2 经 doc 维度补召（不限 parent∈topM）
+        List<Long> l1OnlyDocs = new ArrayList<>();
+        for (Long docId : topDDocIds) {
+            if (!topML0Docs.contains(docId)) {
+                l1OnlyDocs.add(docId);
+            }
+        }
+        if (!l1OnlyDocs.isEmpty()) {
+            for (RagQueryRow.L2Row r : queryMapper.fetchL2ChildrenByDoc(kbId, l1OnlyDocs)) {
+                if (perDocCount.merge(r.getDocumentId(), 1, Integer::sum) > perDoc) {
+                    continue;
+                }
+                byNode.put(r.getNodeId(), toCandidate(r, simOf(r.getParentId(), parentSim), null, false,
+                        simForDoc(docL1Sim, r.getDocumentId())));
+            }
         }
 
         // BM25 命中并集（Phase2：jieba 分词后查 content_tokens_tsv，治"换说法召回不到"的词法兜底）
@@ -602,26 +673,33 @@ public class RagRetrievalService {
             if (bmOnly) {
                 bm25Fallback[0] = true;   // 纯 BM25（无父锚）候选进入 pool
             }
-            byNode.merge(r.getNodeId(), toCandidate(r, psim, r.getBm25Rank(), bmOnly),
+            byNode.merge(r.getNodeId(), toCandidate(r, psim, r.getBm25Rank(), bmOnly, simForDoc(docL1Sim, r.getDocumentId())),
                     (a, b) -> b.bm25Rank() != null ? b : a);
         }
         return new ArrayList<>(byNode.values());
     }
 
     /**
-     * 加 BM25 boost + 排序。maxBm 由调用方提供（单 KB=KB 内最大；多 KB=合并集全局最大，归一可比）。
+     * 加 BM25 + L1 boost + 排序。maxBm/maxL1 由候选集归一（单 KB=KB 内最大；多 KB=合并集全局最大，可比）。
+     * Phase3：L1 命中文档的候选额外 L1 boost（doc 级语义锚命中，措辞远比 chunk 稳，治 L0 漏召回）。
+     * bm25/L1 boost 同用 bm25BoostMax 上限尺度；parentL0Sim 仍主导（boost 仅作抬升，不主导排序）。
      */
     private List<L2Candidate> rerankWithBoost(List<L2Candidate> candidates, double maxBm) {
+        double maxL1 = candidates.stream().mapToDouble(L2Candidate::docL1Sim).max().orElse(0);
         if (maxBm <= 0) {
             maxBm = 1;
+        }
+        if (maxL1 <= 0) {
+            maxL1 = 1;
         }
         double boostMax = ragConfig.getBm25BoostMax();
         List<L2Candidate> pool = new ArrayList<>(candidates.size());
         for (L2Candidate c : candidates) {
-            double boost = c.bm25Rank() == null ? 0 : boostMax * (c.bm25Rank() / maxBm);
+            double bmBoost = c.bm25Rank() == null ? 0 : boostMax * (c.bm25Rank() / maxBm);
+            double l1Boost = c.docL1Sim() <= 0 ? 0 : boostMax * (c.docL1Sim() / maxL1);
             pool.add(new L2Candidate(c.nodeId(), c.documentId(), c.parentId(), c.title(),
                     c.content(), c.contentHash(), c.parentL0Sim(), c.bm25Rank(),
-                    c.parentL0Sim() + boost, c.bm25Only()));
+                    c.parentL0Sim() + bmBoost + l1Boost, c.bm25Only(), c.docL1Sim()));
         }
         pool.sort((a, b) -> Double.compare(b.rerankScore(), a.rerankScore()));
         return pool;
@@ -857,6 +935,30 @@ public class RagRetrievalService {
                 .citationIndex(e.citationIndex()).rerankScore(e.rerankScore()).build()).toList();
     }
 
+    /** Phase3：RRF 融合 L0 doc 序 + L1 doc 序 → top-D doc（两通道分数尺度不可比，按排名归一）。 */
+    private List<Long> fuseTopDDocs(List<Long> l0DocOrder, List<Long> l1DocOrder, int topD) {
+        if (l1DocOrder.isEmpty()) {
+            return l0DocOrder.stream().limit(topD).toList();
+        }
+        if (l0DocOrder.isEmpty()) {
+            return l1DocOrder.stream().limit(topD).toList();
+        }
+        int k = recallProps.getRrf().getK();
+        List<RrfFusion.WeightedList<Long>> lists = List.of(
+                new RrfFusion.WeightedList<>(l0DocOrder, recallProps.getRrf().getWeightL0Vector()),
+                new RrfFusion.WeightedList<>(l1DocOrder, recallProps.getRrf().getWeightL1Vector()));
+        return RrfFusion.sortByScoreDesc(RrfFusion.fuseWeighted(lists, k)).stream().limit(topD).toList();
+    }
+
+    /** doc 的 L1 sim（无命中→0），供 L2 候选 docL1Sim 字段。 */
+    private double simForDoc(Map<Long, Double> docL1Sim, Long docId) {
+        if (docId == null) {
+            return 0;
+        }
+        Double s = docL1Sim.get(docId);
+        return s == null ? 0 : s;
+    }
+
     private double simOf(Long parentId, Map<Long, Double> parentSim) {
         if (parentId == null) {
             return 0;
@@ -865,9 +967,9 @@ public class RagRetrievalService {
         return s == null ? 0 : s;
     }
 
-    private L2Candidate toCandidate(RagQueryRow.L2Row r, double psim, Double bm25, boolean bmOnly) {
+    private L2Candidate toCandidate(RagQueryRow.L2Row r, double psim, Double bm25, boolean bmOnly, double docL1Sim) {
         return new L2Candidate(r.getNodeId(), r.getDocumentId(), r.getParentId(), r.getTitle(),
-                r.getContent(), r.getContentHash(), psim, bm25, psim, bmOnly);
+                r.getContent(), r.getContentHash(), psim, bm25, psim, bmOnly, docL1Sim);
     }
 
     private record L1Outline(String docType, String outline, String rules) {

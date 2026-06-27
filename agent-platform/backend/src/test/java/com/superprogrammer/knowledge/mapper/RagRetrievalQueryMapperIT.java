@@ -56,6 +56,18 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
                 nodeId, kbId, docId, nodeId, title, contentTokens, contentTokens, "hash" + nodeId);
     }
 
+    /** 构造 2048 维 halfvec 文本：hotIndex 位为 1，余 0（用于 cosine 序测，dim 与 doubao/V36 一致）。 */
+    private static String halfvec(int hotIndex) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < 2048; i++) {
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append(i == hotIndex ? 1 : 0);
+        }
+        return sb.append("]").toString();
+    }
+
     @Test
     void bm25HitsJieba_matchesParaphrasedChineseQuery() {
         // L2 chunk content_tokens 含「安装/部署」（中文经参数绑定）
@@ -90,5 +102,37 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
         String q = JiebaTokenizer.tokenize("安装部署");
         List<RagQueryRow.L2Row> hits = mapper.bm25HitsJieba(kbId, q, List.of(docId));
         assertTrue(hits.isEmpty(), "未回填节点 content_tokens NULL 应优雅降级空命中");
+    }
+
+    // ============================ Phase3 denseRecallL1 / fetchL2ChildrenByDoc ============================
+
+    @Test
+    void denseRecallL1_ranksByCosineDistance() {
+        // doc A 的 L1 向量 = dim0 方向（与 query 同向）；doc B = dim1 方向（正交）。query=dim0 → A 更近排首
+        jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
+                + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
+                + "VALUES (?,1,?,'doubao',?::halfvec,'l1hashA')", docId, kbId, halfvec(0));
+        jdbc.update("INSERT INTO knowledge_documents(kb_id, title, status) VALUES (?, 'docB-L1', 'INDEXED')", kbId);
+        Long docB = jdbc.queryForObject("SELECT id FROM knowledge_documents WHERE title='docB-L1'", Long.class);
+        jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
+                + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
+                + "VALUES (?,1,?,'doubao',?::halfvec,'l1hashB')", docB, kbId, halfvec(1));
+
+        List<RagQueryRow.L1RecallRow> rows = mapper.denseRecallL1(kbId, halfvec(0), true, List.of(), null, 10);
+
+        assertEquals(2, rows.size(), "L1 向量表两 doc 均召回");
+        assertEquals(docId, rows.get(0).getDocumentId(), "与 query 同向的 doc A 余弦距离最小，排首位");
+        assertNotNull(rows.get(0).getCosineDistance());
+    }
+
+    @Test
+    void fetchL2ChildrenByDoc_returnsAllActiveL2OfDocs() {
+        // L1 命中但 L0 父未进 topM 的文档：按 doc 维度取其全部 L2 子节点（不限 parent∈topM）
+        insertL2(5001L, "docA-chunk1", "安装 步骤");
+        insertL2(5002L, "docA-chunk2", "部署 步骤");
+
+        List<RagQueryRow.L2Row> rows = mapper.fetchL2ChildrenByDoc(kbId, List.of(docId));
+
+        assertEquals(2, rows.size(), "返回该 doc 全部 ACTIVE L2 子节点");
     }
 }

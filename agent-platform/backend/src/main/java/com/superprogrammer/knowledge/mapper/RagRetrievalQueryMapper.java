@@ -60,6 +60,43 @@ public interface RagRetrievalQueryMapper {
                                                     @Param("docTypes") List<String> docTypes,
                                                     @Param("maxL0") int maxL0);
 
+    /**
+     * step5（Phase3）：dense L1 文档召回（HNSW cosine，doc 级语义锚）。
+     * FROM knowledge_doc_embeddings_doubao JOIN knowledge_documents，无 node level 过滤。
+     * 召回时不复校 content_hash（L1 无 node 可比对；drift 靠重解析触发新 UPSERT_L1 job 接管）。
+     * <code>&lt;=&gt;</code> = pgvector halfvec cosine 距离 [0,2]，sim = 1 - distance。
+     */
+    @Select("""
+            <script>
+            SELECT d.id AS document_id,
+                   d.title AS title,
+                   (e.embedding &lt;=&gt; #{qHalf}::halfvec) AS cosine_distance
+            FROM knowledge_doc_embeddings_doubao e
+            JOIN knowledge_documents d ON d.id = e.document_id
+            JOIN knowledge_bases kb    ON kb.id = d.kb_id
+            WHERE kb.id = #{kbId}
+              AND kb.deleted = 0
+              AND d.deleted = 0
+              AND e.embedding_model = kb.embedding_model
+              <if test="!allDocs">
+                AND d.id IN
+                <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+              </if>
+              <if test="docTypes != null and docTypes.size() > 0">
+                AND d.doc_type IN
+                <foreach collection="docTypes" item="dt" open="(" separator="," close=")">#{dt}</foreach>
+              </if>
+            ORDER BY e.embedding &lt;=&gt; #{qHalf}::halfvec
+            LIMIT #{maxL1}
+            </script>
+            """)
+    List<RagQueryRow.L1RecallRow> denseRecallL1(@Param("kbId") Long kbId,
+                                                  @Param("qHalf") String qHalf,
+                                                  @Param("allDocs") boolean allDocs,
+                                                  @Param("docIds") List<Long> docIds,
+                                                  @Param("docTypes") List<String> docTypes,
+                                                  @Param("maxL1") int maxL1);
+
     /** step6：取 top-M L0 的 L2 子节点（parent-anchored），限候选文档。 */
     @Select("""
             <script>
@@ -80,6 +117,28 @@ public interface RagRetrievalQueryMapper {
     List<RagQueryRow.L2Row> fetchL2Children(@Param("kbId") Long kbId,
                                              @Param("parentIds") List<Long> parentIds,
                                              @Param("docIds") List<Long> docIds);
+
+    /**
+     * step6（Phase3）：L1 命中文档的 L2 子节点（doc 级召回补全）。
+     * 与 fetchL2Children 区别：不限 parent∈topM（L1 命中但 L0 未进 topM 的文档，其 L2 仍取）。
+     * per-doc 截断由 service 层 perDocL2Cap 控制。
+     */
+    @Select("""
+            <script>
+            SELECT n.id AS node_id, n.document_id AS document_id, n.parent_id AS parent_id,
+                   n.title AS title, n.content AS content, n.content_hash AS content_hash
+            FROM knowledge_nodes n
+            WHERE n.kb_id = #{kbId}
+              AND n.level = 'L2'
+              AND n.status = 'ACTIVE'
+              AND n.deleted = 0
+              AND n.document_id IN
+              <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+            ORDER BY n.document_id, n.id
+            </script>
+            """)
+    List<RagQueryRow.L2Row> fetchL2ChildrenByDoc(@Param("kbId") Long kbId,
+                                                   @Param("docIds") List<Long> docIds);
 
     /** step6：BM25 预筛（tsvector + GIN）。'simple' 配置中文弱 → 仅作 boost，不主导排序（R1/D1）。 */
     @Select("""

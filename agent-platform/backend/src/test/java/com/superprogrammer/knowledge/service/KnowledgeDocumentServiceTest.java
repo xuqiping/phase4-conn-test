@@ -6,6 +6,7 @@ import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.event.VisibilityInvalidationEvent;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
@@ -38,6 +39,7 @@ class KnowledgeDocumentServiceTest {
     @Mock private KnowledgeDocumentMapper documentMapper;
     @Mock private KnowledgeNodeMapper nodeMapper;
     @Mock private KnowledgeEmbeddingMapper embeddingMapper;
+    @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private ApplicationEventPublisher applicationEventPublisher;
 
@@ -59,6 +61,7 @@ class KnowledgeDocumentServiceTest {
         verify(documentMapper).deleteById(3L);
         verify(nodeMapper).delete(any(Wrapper.class));
         verify(embeddingMapper).deleteByDocument(3L);
+        verify(docEmbeddingMapper).deleteByDocument(3L);   // Phase3：L1 文档向量同步清
         ArgumentCaptor<VisibilityInvalidationEvent> ev = ArgumentCaptor.forClass(VisibilityInvalidationEvent.class);
         verify(applicationEventPublisher).publishEvent(ev.capture());
         assertEquals(1L, ev.getValue().getKbId());
@@ -79,6 +82,7 @@ class KnowledgeDocumentServiceTest {
         verify(documentMapper, never()).deleteById(anyLong());
         verify(nodeMapper, never()).delete(any());
         verify(embeddingMapper, never()).deleteByDocument(any());
+        verify(docEmbeddingMapper, never()).deleteByDocument(any());
     }
 
     @Test
@@ -93,5 +97,6 @@ class KnowledgeDocumentServiceTest {
         verify(documentMapper, never()).deleteById(anyLong());
         verify(nodeMapper, never()).delete(any());
         verify(embeddingMapper, never()).deleteByDocument(any());
+        verify(docEmbeddingMapper, never()).deleteByDocument(any());
     }
 }

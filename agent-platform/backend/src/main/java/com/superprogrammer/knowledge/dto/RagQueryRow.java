@@ -18,6 +18,15 @@ public class RagQueryRow {
         private Double cosineDistance;
     }
 
+    /** dense L1 文档召回结果行（Phase3，doc 级语义锚） */
+    @Data
+    public static class L1RecallRow {
+        private Long documentId;
+        private String title;
+        /** pgvector cosine 距离 [0,2]，sim = 1 - distance */
+        private Double cosineDistance;
+    }
+
     /** L2 候选行（children 与 BM25 复用；bm25Rank 仅 BM25 命中时非空）*/
     @Data
     public static class L2Row {

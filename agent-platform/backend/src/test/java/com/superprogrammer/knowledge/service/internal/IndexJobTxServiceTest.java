@@ -3,13 +3,16 @@ package com.superprogrammer.knowledge.service.internal;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeIndexJob;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeIndexJobMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
+import com.superprogrammer.knowledge.util.L1EmbedText;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,8 +36,10 @@ class IndexJobTxServiceTest {
 
     @Mock private KnowledgeIndexJobMapper indexJobMapper;
     @Mock private KnowledgeEmbeddingMapper embeddingMapper;
+    @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
     @Mock private KnowledgeNodeMapper nodeMapper;
     @Mock private KnowledgeDocumentMapper documentMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private IndexJobTxService service;
 
@@ -49,7 +54,8 @@ class IndexJobTxServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new IndexJobTxService(indexJobMapper, embeddingMapper, nodeMapper, documentMapper);
+        service = new IndexJobTxService(indexJobMapper, embeddingMapper, docEmbeddingMapper,
+                nodeMapper, documentMapper, objectMapper);
     }
 
     // ============================ failJob 退避 ============================
@@ -202,6 +208,49 @@ class IndexJobTxServiceTest {
         LambdaUpdateWrapper<KnowledgeIndexJob> w = captureUpdateWrapper();
         assertTrue(w.getParamNameValuePairs().containsValue("FAILED"));
         assertTrue(w.getSqlSet().contains("locked_until"));  // 置 null 列
+    }
+
+    // ============================ completeUpsertL1（Phase3）============================
+
+    @Test
+    void completeL1_success_upsertsAndMarksIndexed() {
+        String l1Json = "{\"summary\":\"安装\"}";
+        String hash = L1EmbedText.hashOfJson(l1Json, objectMapper);
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setL1Metadata(l1Json);
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        when(indexJobMapper.update(isNull(), any())).thenReturn(1);
+        when(indexJobMapper.countPendingRunningByDoc(99L)).thenReturn(0L);  // 文档全完成
+        when(documentMapper.update(isNull(), any())).thenReturn(1);
+
+        service.completeUpsertL1(1L, 99L, 7L, "doubao", "[0.1]", hash);
+
+        verify(docEmbeddingMapper).upsert(eq(99L), eq(1L), eq(7L), eq("doubao"), eq("[0.1]"), eq(hash));
+        verify(documentMapper).update(isNull(), any());   // markDocIndexedIfDone → INDEXED
+    }
+
+    @Test
+    void completeL1_hashMismatch_voidsNoUpsert() {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setL1Metadata("{\"summary\":\"changed\"}");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        when(indexJobMapper.update(isNull(), any())).thenReturn(1);   // voidJob 的 update
+
+        service.completeUpsertL1(1L, 99L, 7L, "doubao", "[0.1]", "stale-hash");
+
+        verify(docEmbeddingMapper, never()).upsert(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void completeL1_docNull_voidsNoUpsert() {
+        when(documentMapper.selectById(99L)).thenReturn(null);
+        when(indexJobMapper.update(isNull(), any())).thenReturn(1);
+
+        service.completeUpsertL1(1L, 99L, 7L, "doubao", "[0.1]", "hash");
+
+        verify(docEmbeddingMapper, never()).upsert(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
 
     // ============================ helpers ============================

@@ -1,14 +1,19 @@
 package com.superprogrammer.knowledge.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.knowledge.dto.KnowledgeNodeVO;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
+import com.superprogrammer.knowledge.entity.KnowledgeIndexJob;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeIndexJobMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
+import com.superprogrammer.knowledge.util.HashUtil;
 import com.superprogrammer.knowledge.util.JiebaTokenizer;
+import com.superprogrammer.knowledge.util.L1EmbedText;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -25,7 +30,9 @@ public class KnowledgeNodeService {
 
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeIndexJobMapper indexJobMapper;
     private final KnowledgeBaseService knowledgeBaseService;
+    private final ObjectMapper objectMapper;
 
     /**
      * 文档下节点列表（目录树）。canRead 门（doc 所属 KB）。
@@ -68,6 +75,32 @@ public class KnowledgeNodeService {
             updated++;
         }
         return updated;
+    }
+
+    /**
+     * 回填 L1 文档向量（Phase3 V36）：对存量 INDEXED 且有 l1_metadata 的文档入队 UPSERT_L1 job。
+     * IndexJobWorker 异步 embed（L1 文本=summary+outline+importantRules）写入 knowledge_doc_embeddings_doubao。
+     * 幂等：同 doc+同 l1 hash 的 job ON CONFLICT DO NOTHING（l1 变→新 hash 新 job 重嵌）。
+     * smoke-kb 等 Phase3 前已解析的文档必须回填才能验 L1 通道。返回新入队条数。
+     */
+    public int backfillL1Embeddings() {
+        LambdaQueryWrapper<KnowledgeDocument> w = new LambdaQueryWrapper<>();
+        w.isNotNull(KnowledgeDocument::getL1Metadata)
+                .eq(KnowledgeDocument::getStatus, "INDEXED")
+                .select(KnowledgeDocument::getId, KnowledgeDocument::getKbId, KnowledgeDocument::getL1Metadata);
+        List<KnowledgeDocument> docs = documentMapper.selectList(w);
+        int enqueued = 0;
+        for (KnowledgeDocument doc : docs) {
+            String l1Hash = L1EmbedText.hashOfJson(doc.getL1Metadata(), objectMapper);
+            KnowledgeIndexJob job = new KnowledgeIndexJob();
+            job.setDocumentId(doc.getId());
+            job.setKbId(doc.getKbId());
+            job.setJobType("UPSERT_L1");
+            job.setContentHash(l1Hash);
+            job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + l1Hash + ":UPSERT_L1"));
+            enqueued += indexJobMapper.insertL1JobIgnoreConflict(job);
+        }
+        return enqueued;
     }
 
     private KnowledgeNodeVO toVO(KnowledgeNode n) {

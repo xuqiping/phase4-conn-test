@@ -2,13 +2,16 @@ package com.superprogrammer.knowledge.service.internal;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeIndexJob;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeIndexJobMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
+import com.superprogrammer.knowledge.util.L1EmbedText;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,8 +46,10 @@ public class IndexJobTxService {
 
     private final KnowledgeIndexJobMapper indexJobMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
+    private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeDocumentMapper documentMapper;
+    private final ObjectMapper objectMapper;
 
     /**
      * 认领一批待处理 job（FOR UPDATE SKIP LOCKED，多 worker 安全）。
@@ -58,7 +63,7 @@ public class IndexJobTxService {
         LambdaQueryWrapper<KnowledgeIndexJob> w = new LambdaQueryWrapper<>();
         w.and(q -> q.eq(KnowledgeIndexJob::getStatus, "PENDING")
                         .or().eq(KnowledgeIndexJob::getStatus, "RUNNING"))
-                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX"))
+                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1"))
                 .and(q -> q.isNull(KnowledgeIndexJob::getLockedUntil)
                         .or().lt(KnowledgeIndexJob::getLockedUntil, now))
                 .last("LIMIT " + limit + " FOR UPDATE SKIP LOCKED");
@@ -93,6 +98,37 @@ public class IndexJobTxService {
         }
         embeddingMapper.upsert(node.getId(), TENANT_ID, kbId, "L0", embeddingModel,
                 halfvec, node.getContentHash(), CONTEXT_HASH);
+
+        LambdaUpdateWrapper<KnowledgeIndexJob> ju = new LambdaUpdateWrapper<>();
+        ju.eq(KnowledgeIndexJob::getId, jobId)
+                .set(KnowledgeIndexJob::getStatus, "DONE")
+                .set(KnowledgeIndexJob::getLockedUntil, null)
+                .set(KnowledgeIndexJob::getLastError, null);
+        indexJobMapper.update(null, ju);
+
+        markDocIndexedIfDone(documentId);
+    }
+
+    /**
+     * 完成一个 UPSERT_L1 job（Phase3，doc 级 L1 向量）：tx 内复校 doc（未删 + l1 hash 一致）
+     * → upsert L1 向量 → job DONE → doc 可能 INDEXED。
+     * contentHash = worker embed 时所依据的 L1 文本 hash；tx 内重读 doc.l1_metadata 重算比对（防 embed 期间 l1 变更）。
+     * 复校发现 doc 删/l1 变 → voidJob（新版本 job 接管）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void completeUpsertL1(Long jobId, Long documentId, Long kbId,
+                                 String embeddingModel, String halfvec, String contentHash) {
+        KnowledgeDocument doc = documentMapper.selectById(documentId);
+        if (doc == null) {
+            voidJob(jobId, "完成前文档已删除，L1 job 作废");
+            return;
+        }
+        String currentHash = L1EmbedText.hashOfJson(doc.getL1Metadata(), objectMapper);
+        if (!eq(currentHash, contentHash)) {
+            voidJob(jobId, "完成前 L1 元数据已变更，L1 job 作废（新版本 job 接管）");
+            return;
+        }
+        docEmbeddingMapper.upsert(documentId, TENANT_ID, kbId, embeddingModel, halfvec, contentHash);
 
         LambdaUpdateWrapper<KnowledgeIndexJob> ju = new LambdaUpdateWrapper<>();
         ju.eq(KnowledgeIndexJob::getId, jobId)

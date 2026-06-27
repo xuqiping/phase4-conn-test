@@ -91,9 +91,31 @@
 
 ---
 
-## Phase3 ⏳ 待做（L1 向量通道，迁移 V36）
+## Phase3 ✅ 已落地验证（2026-06-27，L1 文档向量通道，迁移 V36）
 
 召回从不参与召回的 L1 文档元数据（doc 级语义锚，对措辞远比 chunk 稳）。
+
+### 落地
+- **迁移 V36**：`knowledge_doc_embeddings_doubao`（halfvec(2048) + hnsw + (tenant,kb) 索引）+ `knowledge_index_jobs` 加 `document_id` 列 + **`node_id` DROP NOT NULL**（UPSERT_L1 无 node）+ `idx_job_doc_type`。
+- **新文件**：[KnowledgeDocEmbedding](../../backend/src/main/java/com/superprogrammer/knowledge/entity/KnowledgeDocEmbedding.java)（entity）+ [KnowledgeDocEmbeddingMapper](../../backend/src/main/java/com/superprogrammer/knowledge/mapper/KnowledgeDocEmbeddingMapper.java)（`upsert` ON CONFLICT(document_id) / `deleteByDocument`）+ [L1EmbedText](../../backend/src/main/java/com/superprogrammer/knowledge/util/L1EmbedText.java)（`build` 拼 summary+outline+rules / `hashOfJson`，writer/worker/tx 三处共用防漂移）+ [L1EmbedTextTest](../../backend/src/test/java/com/superprogrammer/knowledge/util/L1EmbedTextTest.java)。
+- **建 job**：[KnowledgeIndexJob](../../backend/src/main/java/com/superprogrammer/knowledge/entity/KnowledgeIndexJob.java) 加 `documentId`；[KnowledgeNodeWriter.writeNodes](../../backend/src/main/java/com/superprogrammer/knowledge/service/KnowledgeNodeWriter.java) 末尾 `insertL1JobIgnoreConflict`（idempotency_key=`sha256(docId:l1hash:UPSERT_L1)`，ON CONFLICT DO NOTHING）；[KnowledgeIndexJobMapper](../../backend/src/main/java/com/superprogrammer/knowledge/mapper/KnowledgeIndexJobMapper.java) 加 `insertL1JobIgnoreConflict`。
+- ⚠️ **关键 bug 修复**：`countPendingRunningByDoc` 原 JOIN nodes 按 `node_id` 取 `document_id` → UPSERT_L1（node_id NULL）漏计 → **doc 提前 INDEXED**。改 `WHERE document_id=docId OR node_id IN(该 doc 节点)` 覆盖 node 锚定 + doc 锚定两类 job。
+- **IndexJobTxService**：`claimBatch.in` 加 `UPSERT_L1`；加 `completeUpsertL1`（tx 内重读 doc.l1_metadata 重算 hash 复校 → upsert doc 向量 → DONE → markDocIndexedIfDone）。
+- **IndexJobWorker.process** 按 `job_type` 分支：`UPSERT_L1` 读 doc.l1_metadata → `L1EmbedText.build` → hash 复校 → embed(2048) → `completeUpsertL1`。doc 删/l1 空/变更/文本空 → `voidJob`。
+- **RagRetrievalService**：`L1DocHit` record + `multiDenseRecallL1`（多 qvec 按 documentId 去重 max sim）；`gatherL2Candidates` 加 L1 通道——`fuseTopDDocs` 用 `RrfFusion.fuseWeighted`（weightL0Vector/weightL1Vector）融合 L0 doc 序 + L1 doc 序 选 top-D，L1 命中但 L0 父未进 topM 的 doc 经 `fetchL2ChildrenByDoc` 补召 L2；`rerankWithBoost` 加 L1 boost（docL1Sim 归一）；**`bestSim=max(parentL0Sim, docL1Sim)`**（L1 可救 L0 漏召回）；retrieve/retrieveEvidence 接入，abstain 仅 l0&&l1 全空时触发。
+- **删 doc**：[KnowledgeDocumentService.delete](../../backend/src/main/java/com/superprogrammer/knowledge/service/KnowledgeDocumentService.java) 加 `docEmbeddingMapper.deleteByDocument`。
+- **回填端点** `POST /api/knowledge/admin/backfill-l1-embeddings`（存量 INDEXED+有 l1_metadata 文档入队 UPSERT_L1，异步 embed，幂等）。
+
+### 测试
+- `mvn test`：**346/346 全绿**（+11 L1 测：L1EmbedTextTest 5、IndexJobWorkerTest +3 UPSERT_L1、IndexJobTxServiceTest +3 completeUpsertL1）。
+- `mvn test -Dsurefire.excludedGroups= -Dtest=RagRetrievalQueryMapperIT`：**5/5 绿**（+`denseRecallL1` cosine 序 + `fetchL2ChildrenByDoc`，真 PG agent_platform_it，Flyway 自动应用 V36）。
+
+### 验证（live，smoke-kb，PID 19108）
+- backfill `/api/knowledge/admin/backfill-l1-embeddings` → 入队 1 job → IndexJobWorker `UPSERT_L1` **DONE** → `knowledge_doc_embeddings_doubao` 1 行（无 last_error）。
+- retrieve `如何安装部署我的系统`：**SUPPORTED**（abstained=false、lowConfidence=false），answer 命中安装步骤，无回归（trace crag_verdict=SUPPORTED）。
+- **机制诚实记录**：smoke-kb 仅 1 L0 + 1 doc，query 本就 L0 命中（sim 0.504≥soft 0.45），L1 通道已接通+验证（IT denseRecallL1 + embedding pipeline + bestSim 含 docL1Sim），但**本 case 增益不显**——L1 价值在大库"L0 漏召回父但 L1 doc 语义锚命中"场景（同 Phase2 `l2_lexical_fallback` 的 smoke-kb 结构限制）。trace 暂无 L1 专用列（`candidates_l0` 仍只 L0），L1 贡献经 docL1Sim boost + bestSim 体现。
+
+---
 
 ### 迁移 `V36__l1_doc_embeddings.sql`
 ```sql
@@ -130,9 +152,10 @@ L1 向量含"安装部署"→ 高 L1 余弦 → RRF 抬该 doc 子节点 → 精
 
 ## 续做指引
 
-- 下次说"**继续 Phase3**"或"继续 RAG 召回升级"→ 从本文件 Phase3 起（L1 向量通道，迁移 V36）。Phase2 已 ✅ 落地验证。
-- 每阶段独立可验：playwright `/knowledge` 检索调试面板 + PG 查 `rag_retrieval_logs` 最近 trace（crag_verdict/candidates_l0/l2_lexical_fallback）。
-- backend 当前 = 自打 fat jar **PID 5500**（`java -jar targets/agent-platform-0.1.0-SNAPSHOT.jar`）。续做前 `mvn package -DskipTests` 重打 jar（须先 kill 运行中 PID 释文件锁）、kill 旧 PID、`java -jar` 重启（或用户 IDE 重启）。
+- **Phase1/2/3 全部 ✅ 落地验证**。RAG 召回升级三阶段完工（多路扩展 + 软拒答 + jieba-BM25 + L1 文档向量 + RRF 跨通道）。
+- 后续可探索：L2 向量通道（设计曾跳过）、cross-encoder rerank、L1 专用 trace 列（当前 L1 贡献经 docL1Sim boost 隐式体现，无独立可观测）。
+- 每阶段独立可验：playwright `/knowledge` 检索调试面板 + PG 查 `rag_retrieval_logs` 最近 trace（crag_verdict/candidates_l0/l2_lexical_fallback）；L1 向量查 `knowledge_doc_embeddings_doubao`。
+- backend 当前 = 自打 fat jar **PID 19108**（`java -jar target/agent-platform-0.1.0-SNAPSHOT.jar`）。续做前 `mvn package -DskipTests` 重打 jar（须先 kill 运行中 PID 释文件锁）、kill 旧 PID、`java -jar` 重启（或用户 IDE 重启）。
 - 跑法约束：H2 跑不了 halfvec/tsvector，Phase2/3 的 mapper 测走 IT profile 真 PG（`agent_platform_it` + Redis，`mvn test -Dsurefire.excludedGroups= -Dtest=...IT`）。
 - halfvec `<=>` 等裸 `<` 在 MyBatis `<script>` 内必 `&lt;` 转义，否则 SAXParseException 炸全 context（mock 单测验不出，复发多次）。
 - IT 中文坑：Maven 默认 GBK 源码编码 → SQL 字面量中文 mojibake。**所有中文走 `?` 参数绑定**，fixture 标识用 ASCII；KeyHolder 在 PG 返全行 → 改 name 查询取 id。

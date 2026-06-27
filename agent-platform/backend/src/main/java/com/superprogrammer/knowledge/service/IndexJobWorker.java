@@ -1,11 +1,17 @@
 package com.superprogrammer.knowledge.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
+import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeIndexJob;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import com.superprogrammer.knowledge.service.internal.IndexJobTxService;
+import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
+import com.superprogrammer.knowledge.util.HashUtil;
+import com.superprogrammer.knowledge.util.L1EmbedText;
 import com.superprogrammer.llm.LlmGateway;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -39,19 +45,25 @@ public class IndexJobWorker {
 
     private final IndexJobTxService txService;
     private final KnowledgeNodeMapper nodeMapper;
+    private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeBaseService knowledgeBaseService;
     private final LlmGateway llmGateway;
+    private final ObjectMapper objectMapper;
     private final Executor executor;
 
     public IndexJobWorker(IndexJobTxService txService,
                           KnowledgeNodeMapper nodeMapper,
+                          KnowledgeDocumentMapper documentMapper,
                           KnowledgeBaseService knowledgeBaseService,
                           LlmGateway llmGateway,
+                          ObjectMapper objectMapper,
                           @Qualifier("knowledgeTaskExecutor") Executor executor) {
         this.txService = txService;
         this.nodeMapper = nodeMapper;
+        this.documentMapper = documentMapper;
         this.knowledgeBaseService = knowledgeBaseService;
         this.llmGateway = llmGateway;
+        this.objectMapper = objectMapper;
         this.executor = executor;
     }
 
@@ -73,6 +85,11 @@ public class IndexJobWorker {
 
     private void process(KnowledgeIndexJob job) {
         try {
+            // Phase3：doc 级 L1 向量 job（无 node）走独立分支，避免 nodeMapper.selectById(null)
+            if ("UPSERT_L1".equals(job.getJobType())) {
+                processUpsertL1(job);
+                return;
+            }
             // I2 re-check（embed 前）：node 存在/ACTIVE/hash 一致
             KnowledgeNode node = nodeMapper.selectById(job.getNodeId());
             if (node == null
@@ -95,6 +112,55 @@ public class IndexJobWorker {
             txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
                     job.getKbId(), embeddingModel, halfvec, node.getContentHash());
             log.info("索引完成 nodeId={} kbId={} model={}", node.getId(), job.getKbId(), embeddingModel);
+        } catch (Exception e) {
+            log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
+            txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
+        }
+    }
+
+    /**
+     * UPSERT_L1（Phase3，doc 级 L1 向量）：读 doc.l1_metadata → 拼 L1 文本（summary+outline+rules）
+     * → I2 hash 复校 → embed → completeUpsertL1（tx 内二次复校 + upsert L1 向量行）。
+     * doc 删/l1 空/l1 变更/文本空 → voidJob（新版本 job 接管）。
+     */
+    private void processUpsertL1(KnowledgeIndexJob job) {
+        try {
+            KnowledgeDocument doc = documentMapper.selectById(job.getDocumentId());
+            if (doc == null || doc.getL1Metadata() == null || doc.getL1Metadata().isBlank()) {
+                txService.voidJob(job.getId(), "文档已删除或无 L1 元数据，L1 job 作废");
+                return;
+            }
+            L1Metadata l1;
+            try {
+                l1 = objectMapper.readValue(doc.getL1Metadata(), L1Metadata.class);
+            } catch (Exception e) {
+                txService.voidJob(job.getId(), "L1 元数据解析失败，L1 job 作废: " + e.getMessage());
+                return;
+            }
+            String text = L1EmbedText.build(l1);
+            String l1Hash = HashUtil.sha256(text);
+            if (!eq(l1Hash, job.getContentHash())) {
+                txService.voidJob(job.getId(), "L1 元数据已变更，L1 job 作废（新版本 job 接管）");
+                return;
+            }
+            if (text.isBlank()) {
+                txService.voidJob(job.getId(), "L1 文本为空（summary/outline/rules 全空），L1 job 作废");
+                return;
+            }
+
+            KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
+            String embeddingModel = kb.getEmbeddingModel();
+
+            float[] vector = llmGateway.embed(text, embeddingModel);
+            if (vector.length != HalfVecUtil.DIM) {
+                throw new RuntimeException("L1 embedding 维度不匹配 expected=" + HalfVecUtil.DIM
+                        + " actual=" + vector.length);
+            }
+            String halfvec = HalfVecUtil.toHalfVec(vector);
+
+            txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
+                    embeddingModel, halfvec, l1Hash);
+            log.info("L1 索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
             txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));

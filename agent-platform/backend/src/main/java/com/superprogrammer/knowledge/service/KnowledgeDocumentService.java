@@ -11,6 +11,7 @@ import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.entity.KnowledgeNode;
 import com.superprogrammer.knowledge.event.DocumentUploadedEvent;
 import com.superprogrammer.knowledge.event.VisibilityInvalidationEvent;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
@@ -31,6 +32,7 @@ public class KnowledgeDocumentService {
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
+    private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
     private final KnowledgeBaseService knowledgeBaseService;
     private final FileStorageService fileStorageService;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -99,6 +101,7 @@ public class KnowledgeDocumentService {
         nodeMapper.delete(new LambdaQueryWrapper<KnowledgeNode>()
                 .eq(KnowledgeNode::getDocumentId, id));
         embeddingMapper.deleteByDocument(id);
+        docEmbeddingMapper.deleteByDocument(id);   // Phase3：清 L1 文档向量（doc 软删→L1 向量同步硬删）
         // 文档删除 → 该 KB 可见集缓存失效（doc_id 移除）
         applicationEventPublisher.publishEvent(new VisibilityInvalidationEvent(doc.getKbId()));
     }

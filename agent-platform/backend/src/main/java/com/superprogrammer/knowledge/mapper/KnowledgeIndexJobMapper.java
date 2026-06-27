@@ -15,11 +15,16 @@ public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
      * 文档下仍未完成的 job 数（PENDING/RUNNING），用于判断整文档是否可置 INDEXED。
      * JOIN knowledge_nodes 取 document_id（job 表无 doc 维度）。
      */
+    /**
+     * 文档下仍未完成的 job 数（PENDING/RUNNING），用于判断整文档是否可置 INDEXED。
+     * 覆盖两类 job：node 锚定（UPSERT/REINDEX，node_id∈该 doc 节点）+ doc 锚定（UPSERT_L1，node_id NULL、document_id=docId）。
+     * Phase3 前 JOIN nodes 按 node_id 取 document_id → UPSERT_L1（node_id NULL）漏计 → doc 提前 INDEXED bug 已修。
+     */
     @Select("""
             SELECT COUNT(0) FROM knowledge_index_jobs j
-            JOIN knowledge_nodes n ON j.node_id = n.id
-            WHERE n.document_id = #{docId}
-              AND j.status IN ('PENDING', 'RUNNING')
+            WHERE j.status IN ('PENDING', 'RUNNING')
+              AND (j.document_id = #{docId}
+                   OR j.node_id IN (SELECT id FROM knowledge_nodes WHERE document_id = #{docId}))
             """)
     Long countPendingRunningByDoc(@Param("docId") Long docId);
 
@@ -76,4 +81,19 @@ public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
             ON CONFLICT (idempotency_key) DO NOTHING
             """)
     int insertReindexJobIgnoreConflict(@Param("j") com.superprogrammer.knowledge.entity.KnowledgeIndexJob j);
+
+    /**
+     * 入 UPSERT_L1 job（Phase3，doc 级 L1 向量），幂等：idempotency_key UNIQUE
+     * （sha256(docId:l1hash:UPSERT_L1)），ON CONFLICT DO NOTHING 保证同 doc+同 l1 不重复入队
+     * （重解析 l1 未变→跳过；l1 变→新 hash 新 job 接管）。
+     * node_id=NULL（doc 级 job），document_id 锚定文档。返回 1=新入队，0=已存在跳过。
+     */
+    @org.apache.ibatis.annotations.Insert("""
+            INSERT INTO knowledge_index_jobs
+                (node_id, document_id, kb_id, job_type, content_hash, idempotency_key, created_at, updated_at)
+            VALUES
+                (NULL, #{j.documentId}, #{j.kbId}, 'UPSERT_L1', #{j.contentHash}, #{j.idempotencyKey}, now(), now())
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """)
+    int insertL1JobIgnoreConflict(@Param("j") com.superprogrammer.knowledge.entity.KnowledgeIndexJob j);
 }
