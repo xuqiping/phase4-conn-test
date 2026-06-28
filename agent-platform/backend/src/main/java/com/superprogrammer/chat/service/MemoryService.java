@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -579,21 +580,53 @@ public class MemoryService {
         return filterRelevantKeys(readScope, query, all);
     }
 
-    /** 两阶段召回公共筛：把 allMemories 的 key=>value 灌 LLM 选相关 key，按 key 装载格式化注入。
-     *  无相关/异常 → null。供 hybrid 0命中兜底 + fullContext 超阈值两阶段共用。
-     *  注：key 匹配始终用英文 memory_key（LLM 在英文 key 列表上选，filter 按 memory_key 装载），
-     *      key 语言设置只影响最终 formatLine 的展示（中文标签/英文 key）。 */
+    /** 两阶段召回公共筛（V38 双维度 key + block_label）：三路径共用（fullContext 超阈值 / hybrid 0命中兜底 / LLM_KEY 精排）。
+     * <ol>
+     *   <li>distinct memory_key → judge.selectRelevantKeys 选相关 key（召回优先）；</li>
+     *   <li>distinct block_label（null→""）→ judge.selectRelevantBlocks 选相关 block；</li>
+     *   <li>交集装配：key∈相关 且 block∈相关。</li>
+     * </ol>
+     * 剔重在 Java 端（Stream.distinct），不新增 DB 查询。容错（召回优先，宁多勿漏）：
+     * key 筛挂/空 → 单走 block；block 筛挂/空 → 单走 key；都挂/空 → null。注入只留 key+value（丢 category/block/entities/confidence 噪声由 formatLine 控）。
+     * key 匹配始终用英文 memory_key；key 语言设置只影响 formatLine 展示。 */
     private String filterRelevantKeys(MemoryScope readScope, String query, List<UserMemory> allMemories) {
+        if (allMemories == null || allMemories.isEmpty()) return null;
+        Long userId = readScope.userId();
         try {
-            List<String> keys = judge.selectRelevantKeys(query, allMemories);
-            if (keys.isEmpty()) return null;
+            // distinct memory_key（同 key 多行去重，省 token）→ selectRelevantKeys 灌 key:value
+            List<UserMemory> distinctByKey = new ArrayList<>(allMemories.stream()
+                    .collect(Collectors.toMap(UserMemory::getMemoryKey, m -> m, (a, b) -> a, java.util.LinkedHashMap::new))
+                    .values());
+            List<String> distinctBlocks = allMemories.stream()
+                    .map(m -> m.getBlockLabel() == null ? "" : m.getBlockLabel())
+                    .distinct().collect(Collectors.toList());
+
+            // key 筛：异常或空 → 视作该维无效（单走 block）
+            Set<String> relevantKeys = selectDim(userId, "key", () -> judge.selectRelevantKeys(query, distinctByKey));
+            Set<String> relevantBlocks = selectDim(userId, "block", () -> judge.selectRelevantBlocks(query, distinctBlocks));
+            if (relevantKeys == null && relevantBlocks == null) return null;   // 两维都挂/空
+
+            final Set<String> fk = relevantKeys;
+            final Set<String> fb = relevantBlocks;
             List<UserMemory> sel = allMemories.stream()
-                    .filter(m -> keys.contains(m.getMemoryKey()))
+                    .filter(m -> (fk == null || fk.contains(m.getMemoryKey()))
+                              && (fb == null || fb.contains(m.getBlockLabel() == null ? "" : m.getBlockLabel())))
                     .collect(Collectors.toList());
             if (sel.isEmpty()) return null;
-            return formatMemories(readScope.userId(), sel);
+            return formatMemories(userId, sel);
         } catch (Exception e) {
-            log.warn("LLM-key 筛选失败 userId={}: {} → 不注入", readScope.userId(), e.getMessage(), e);
+            log.warn("filterRelevantKeys 双维度筛失败 userId={}: {} → 不注入", userId, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /** 单维度 LLM 筛封装：异常或空结果 → 返回 null（视作该维无效，交另一维兜底）。非空 → set。 */
+    private Set<String> selectDim(Long userId, String dim, java.util.function.Supplier<List<String>> selector) {
+        try {
+            List<String> r = selector.get();
+            return (r == null || r.isEmpty()) ? null : new java.util.HashSet<>(r);
+        } catch (Exception e) {
+            log.warn("filterRelevantKeys {} 维筛挂，单走另一维 userId={}: {}", dim, userId, e.getMessage());
             return null;
         }
     }
@@ -643,26 +676,34 @@ public class MemoryService {
     }
 
     /** 公共格式化：FLAGGED 行（conflictId!=null）加 [⚠️冲突] 前缀 + counterpart 值。
-     *  key 展示语言按系统设置 key-language：ZH=中文 key_zh（空回退英文）/ EN=英文 key（默认）。 */
+     *  key 展示语言按系统设置 key-language：ZH=中文 key_zh（空回退英文）/ EN=英文 key（默认）/ BOTH=中文(英文)。 */
     private String formatMemories(Long userId, List<UserMemory> memories) {
-        boolean zh = "ZH".equals(systemSettingService.getMemoryKeyLanguage());
+        String keyLang = systemSettingService.getMemoryKeyLanguage();
         StringBuilder sb = new StringBuilder();
         for (UserMemory m : memories) {
             if (m.getConflictId() != null) {
                 String counterpart = findCounterpartValue(userId, m.getConflictId(), m.getId());
-                sb.append("[⚠️冲突] ").append(formatLine(m, zh))
+                sb.append("[⚠️冲突] ").append(formatLine(m, keyLang))
                   .append(" （与\"").append(counterpart).append("\"冲突，待澄清）\n");
             } else {
-                sb.append(formatLine(m, zh)).append("\n");
+                sb.append(formatLine(m, keyLang)).append("\n");
             }
         }
         return sb.toString().trim();
     }
 
-    private String formatLine(UserMemory m, boolean zh) {
-        String key = zh && m.getMemoryKeyZh() != null && !m.getMemoryKeyZh().isBlank()
-                ? m.getMemoryKeyZh() : m.getMemoryKey();
-        return "[" + m.getCategory() + "] " + key + ": " + m.getMemoryValue();
+    private String formatLine(UserMemory m, String keyLang) {
+        String keyZh = m.getMemoryKeyZh();
+        boolean hasZh = keyZh != null && !keyZh.isBlank();
+        String keyLabel;
+        if ("ZH".equals(keyLang)) {
+            keyLabel = hasZh ? keyZh : m.getMemoryKey();           // 中文标签（空→英文兜底）
+        } else if ("BOTH".equals(keyLang)) {
+            keyLabel = hasZh ? keyZh + "(" + m.getMemoryKey() + ")" : m.getMemoryKey();  // 中英双选（空→仅英文）
+        } else {
+            keyLabel = m.getMemoryKey();                            // EN（默认）
+        }
+        return "[" + m.getCategory() + "] " + keyLabel + ": " + m.getMemoryValue();
     }
 
     private String findCounterpartValue(Long userId, Long conflictId, Long selfId) {
