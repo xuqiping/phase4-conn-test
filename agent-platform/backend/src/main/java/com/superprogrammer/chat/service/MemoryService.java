@@ -13,6 +13,7 @@ import com.superprogrammer.chat.service.internal.MemoryQueryCache;
 import com.superprogrammer.chat.service.internal.MemoryScope;
 import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
+import com.superprogrammer.knowledge.util.JiebaTokenizer;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
@@ -281,11 +282,13 @@ public class MemoryService {
     private void applyClean(MemoryScope writeScope, Long writeTargetProjectId, ExtractedFact f, MemoryBlockClassifier.BlockResult br) {
         Long userId = writeScope.userId();
         String entitiesJson = entitiesJson(f.entities());
+        // V38：anchor（block+key+key_zh+entities）与 value embed 同批落（不新增独立 LLM 调用逻辑分支）
+        AnchorEmbedding anchor = embedAnchor(br.blockLabel(), f.keyZh(), f.key(), entitiesJson);
         List<UserMemory> sames = findSameKeyClean(userId, f.key(), writeTargetProjectId);
         UserMemory existing = sames.isEmpty() ? null : sames.get(0);
         if (existing != null) {
             // 同 key 既有 clean（同值已被预去重拦，此处必为不同值=细化）→ 原地覆盖（scope 不变）
-            int n = memoryMapper.updateCleanMemory(existing.getId(), f.value(), f.confidence(), br.blockLabel(), br.halfvec(), entitiesJson, f.keyZh());
+            int n = memoryMapper.updateCleanMemory(existing.getId(), f.value(), f.confidence(), br.blockLabel(), br.halfvec(), entitiesJson, f.keyZh(), anchor.halfvec(), anchor.tokens());
             if (n > 0) {
                 queryCache.evictUser(userId);
                 log.info("applyClean 细化更新 key={} id={} value={}", f.key(), existing.getId(), f.value());
@@ -297,7 +300,7 @@ public class MemoryService {
         m.setEntities(entitiesJson);
         m.setMemoryKeyZh(f.keyZh());
         try {
-            memoryMapper.insertMemory(m, br.halfvec());
+            memoryMapper.insertMemory(m, br.halfvec(), anchor.halfvec(), anchor.tokens());
             if (!isGlobal) {
                 memoryMapper.insertMemoryProjects(m.getId(), List.of(writeTargetProjectId));
             }
@@ -307,7 +310,7 @@ public class MemoryService {
             List<UserMemory> againSames = findSameKeyClean(userId, f.key(), writeTargetProjectId);
             if (!againSames.isEmpty()) {
                 UserMemory again = againSames.get(0);
-                memoryMapper.updateCleanMemory(again.getId(), f.value(), f.confidence(), br.blockLabel(), br.halfvec(), entitiesJson, f.keyZh());
+                memoryMapper.updateCleanMemory(again.getId(), f.value(), f.confidence(), br.blockLabel(), br.halfvec(), entitiesJson, f.keyZh(), anchor.halfvec(), anchor.tokens());
                 queryCache.evictUser(userId);
                 log.info("applyClean 插入撞唯一兜底更新 key={} id={}", f.key(), again.getId());
                 return;
@@ -326,6 +329,62 @@ public class MemoryService {
         } catch (Exception e) {
             log.warn("entities 序列化失败 {}: {}", entities, e.getMessage());
             return null;
+        }
+    }
+
+    // ============================ V38 anchor 召回锚点（LLM_KEY 粗筛）============================
+
+    /** anchor 向量（halfvec）+ 词法 token（jieba 空格串）载体。null = 该维缺失（回填/重试补）。 */
+    record AnchorEmbedding(String halfvec, String tokens) {}
+
+    /** anchor 文本 = block_label + memory_key_zh + memory_key + entities(展开)，null 安全（空段跳过）。
+     *  标签+词袋语义，比 value 向量稳、比 key_zh 丰富 → embed 靠近召回意图（如"家人"）。 */
+    String buildAnchorText(UserMemory m) {
+        return buildAnchorText(m.getBlockLabel(), m.getMemoryKeyZh(), m.getMemoryKey(), m.getEntities());
+    }
+
+    /** 字段直传重载（UPDATE 路径用新字段而非既有实体，避构造临时实体）。 */
+    String buildAnchorText(String blockLabel, String keyZh, String key, String entitiesJson) {
+        List<String> parts = new ArrayList<>();
+        if (blockLabel != null && !blockLabel.isBlank()) parts.add(blockLabel);
+        if (keyZh != null && !keyZh.isBlank()) parts.add(keyZh);
+        if (key != null && !key.isBlank()) parts.add(key);
+        String ent = expandEntities(entitiesJson);
+        if (ent != null && !ent.isBlank()) parts.add(ent);
+        return String.join(" ", parts);
+    }
+
+    /** entities JSONB 串 ["a","b"] → "a b"（展开进 anchor 文本）；空/null/解析失败 → null。 */
+    String expandEntities(String entitiesJson) {
+        if (entitiesJson == null || entitiesJson.isBlank()) return null;
+        try {
+            List<String> list = objectMapper.readValue(entitiesJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+            if (list == null || list.isEmpty()) return null;
+            String joined = list.stream().filter(s -> s != null && !s.isBlank()).collect(Collectors.joining(" "));
+            return joined.isBlank() ? null : joined;
+        } catch (Exception e) {
+            log.warn("expandEntities 解析失败 {}: {}", entitiesJson, e.getMessage());
+            return null;
+        }
+    }
+
+    /** embed anchor 文本 → (halfvec, tokens)。embed 失败 → halfvec=null（tokens 仍落，向量待回填），不抛（同 value embed 韧性）。
+     *  与 value embed 同模型（MEMORY_EMBED_MODEL）第二次调用；anchor 不替代 value 向量。 */
+    AnchorEmbedding embedAnchor(UserMemory m) {
+        return embedAnchor(m.getBlockLabel(), m.getMemoryKeyZh(), m.getMemoryKey(), m.getEntities());
+    }
+
+    AnchorEmbedding embedAnchor(String blockLabel, String keyZh, String key, String entitiesJson) {
+        String text = buildAnchorText(blockLabel, keyZh, key, entitiesJson);
+        if (text.isBlank()) return new AnchorEmbedding(null, null);
+        String tokens = JiebaTokenizer.tokenize(text);
+        try {
+            float[] vec = llmGateway.embed(text, RagConfig.MEMORY_EMBED_MODEL);
+            return new AnchorEmbedding(HalfVecUtil.toHalfVec(vec), tokens);
+        } catch (Exception e) {
+            log.warn("anchor embed 失败 text={}: {}", text, e.getMessage());
+            return new AnchorEmbedding(null, tokens);
         }
     }
 

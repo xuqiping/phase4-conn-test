@@ -34,13 +34,16 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
      *  V34：home_project_id 落实体字段（NULL=global home）。 */
     @Insert("""
             INSERT INTO user_memories
-                (user_id, category, memory_key, memory_key_zh, memory_value, source, confidence, block_label, embedding, conflict_id, entities, is_global, home_project_id, created_at, updated_at)
+                (user_id, category, memory_key, memory_key_zh, memory_value, source, confidence, block_label,
+                 embedding, anchor_embedding, anchor_tokens, conflict_id, entities, is_global, home_project_id, created_at, updated_at)
             VALUES
                 (#{m.userId}, #{m.category}, #{m.memoryKey}, #{m.memoryKeyZh}, #{m.memoryValue}, #{m.source}, #{m.confidence},
-                 #{m.blockLabel}, #{halfvec}::halfvec, #{m.conflictId}, #{m.entities}::jsonb, COALESCE(#{m.isGlobal}, true), #{m.homeProjectId}, now(), now())
+                 #{m.blockLabel}, #{halfvec}::halfvec, #{anchorHalfvec}::halfvec, #{anchorTokens},
+                 #{m.conflictId}, #{m.entities}::jsonb, COALESCE(#{m.isGlobal}, true), #{m.homeProjectId}, now(), now())
             """)
     @Options(useGeneratedKeys = true, keyProperty = "m.id")
-    void insertMemory(@Param("m") UserMemory m, @Param("halfvec") String halfvec);
+    void insertMemory(@Param("m") UserMemory m, @Param("halfvec") String halfvec,
+                      @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
 
     /** V34 home-aware dedup：同 user 同 key 同 home 的 clean 行（COALESCE 解 NULL 多值）。
      *  取代旧 scope-filtered findSameKeyClean——home 与唯一索引对齐，避免写目标看不到的老行撞墙。
@@ -49,17 +52,22 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
             + "AND conflict_id IS NULL AND COALESCE(home_project_id,-1)=COALESCE(#{homeId},-1)")
     List<UserMemory> findCleanByHomeKey(@Param("userId") Long userId, @Param("key") String key, @Param("homeId") Long homeId);
 
-    /** 更新 embedding + block（重抽/改块时）。 */
-    @Update("UPDATE user_memories SET embedding=#{halfvec}::halfvec, block_label=#{blockLabel}, updated_at=now() WHERE id=#{id}")
-    void updateEmbeddingBlock(@Param("id") Long id, @Param("halfvec") String halfvec, @Param("blockLabel") String blockLabel);
+    /** 更新 embedding + block（重抽/改块时）+ anchor 两列（COALESCE 保留旧值，null 安全）。 */
+    @Update("UPDATE user_memories SET embedding=#{halfvec}::halfvec, block_label=#{blockLabel}, "
+            + "anchor_embedding=COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding), "
+            + "anchor_tokens=COALESCE(#{anchorTokens}, anchor_tokens), updated_at=now() WHERE id=#{id}")
+    void updateEmbeddingBlock(@Param("id") Long id, @Param("halfvec") String halfvec, @Param("blockLabel") String blockLabel,
+                              @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
 
-    /** 细化更新：同 key 既有 clean 行，覆盖 value+key_zh+confidence+embedding+block+entities（refinement，绕唯一约束）。 */
+    /** 细化更新：同 key 既有 clean 行，覆盖 value+key_zh+confidence+embedding+block+entities+anchor（refinement，绕唯一约束）。 */
     @Update("UPDATE user_memories SET memory_value=#{value}, memory_key_zh=#{memoryKeyZh}, confidence=#{confidence}, "
-            + "embedding=#{halfvec}::halfvec, block_label=#{blockLabel}, entities=#{entities}::jsonb, updated_at=now() WHERE id=#{id}")
+            + "embedding=#{halfvec}::halfvec, block_label=#{blockLabel}, entities=#{entities}::jsonb, "
+            + "anchor_embedding=#{anchorHalfvec}::halfvec, anchor_tokens=#{anchorTokens}, updated_at=now() WHERE id=#{id}")
     int updateCleanMemory(@Param("id") Long id, @Param("value") String value,
                           @Param("confidence") BigDecimal confidence,
                           @Param("blockLabel") String blockLabel, @Param("halfvec") String halfvec,
-                          @Param("entities") String entities, @Param("memoryKeyZh") String memoryKeyZh);
+                          @Param("entities") String entities, @Param("memoryKeyZh") String memoryKeyZh,
+                          @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
 
     /** 设置 is_global（scope 编辑用）。 */
     @Update("UPDATE user_memories SET is_global=#{isGlobal}, updated_at=now() WHERE id=#{id}")
@@ -89,6 +97,40 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
                                       @Param("k") int k,
                                       @Param("includeGlobal") boolean includeGlobal,
                                       @Param("projectIds") List<Long> projectIds);
+
+    /** V38 anchor 向量 top-K 检索（限 scope）：粗筛主通道，仿 findTopKByVector 换 anchor_embedding {@code <=>}。
+     *  anchor_embedding = embed(block_label + key_zh + key + entities)，标签+词袋语义，召回率优于 value 向量。
+     *  与 findTopKByVector 并列（anchor 不替代 value 向量），LLM_KEY 模式粗筛用。 */
+    @Select("<script>" +
+            "SELECT * FROM user_memories m WHERE user_id=#{userId} AND anchor_embedding IS NOT NULL " +
+            "AND (1 - (anchor_embedding &lt;=> #{anchorHalfvec}::halfvec)) >= #{threshold} " +
+            SCOPE_FILTER + " " +
+            "ORDER BY anchor_embedding &lt;=> #{anchorHalfvec}::halfvec LIMIT #{k}" +
+            "</script>")
+    List<UserMemory> findTopKByAnchor(@Param("userId") Long userId,
+                                      @Param("anchorHalfvec") String anchorHalfvec,
+                                      @Param("threshold") double threshold,
+                                      @Param("k") int k,
+                                      @Param("includeGlobal") boolean includeGlobal,
+                                      @Param("projectIds") List<Long> projectIds);
+
+    /** V38 anchor BM25 召回（限 scope）：粗筛词法通道，仿知识库 bm25HitsJieba。
+     *  query 已 jieba 分词为空格串；per-token OR（任一 token 命中 anchor_tokens_tsv 即召回），
+     *  rank = 命中 token 的 ts_rank 之和。存量行 anchor_tokens IS NULL → tsv 空 → 不命中（回填后生效）。 */
+    @Select("<script>" +
+            "SELECT m.* FROM user_memories m WHERE m.user_id=#{userId} " +
+            "AND EXISTS (SELECT 1 FROM unnest(string_to_array(#{q}, ' ')) AS tok " +
+            "WHERE m.anchor_tokens_tsv @@ plainto_tsquery('simple', tok)) " +
+            SCOPE_FILTER + " " +
+            "ORDER BY (SELECT COALESCE(SUM(ts_rank(m.anchor_tokens_tsv, plainto_tsquery('simple', tok))), 0) " +
+            "FROM unnest(string_to_array(#{q}, ' ')) AS tok) DESC " +
+            "LIMIT #{k}" +
+            "</script>")
+    List<UserMemory> findAnchorBm25(@Param("userId") Long userId,
+                                    @Param("q") String tokenizedQuery,
+                                    @Param("k") int k,
+                                    @Param("includeGlobal") boolean includeGlobal,
+                                    @Param("projectIds") List<Long> projectIds);
 
     /** 关键词召回（限 scope）：任一关键词命中 entities(JSONB::text) / memory_key / memory_value / memory_key_zh / block_label → 返回（五列并查）。
      *  仅 clean 行（conflict_id IS NULL）。per-block_label 阈值筛选取代旧全局 LIMIT 10（见 MemoryService.applyKeywordPerBlockThreshold）。
@@ -173,10 +215,14 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
     int updateEntitiesAndKeyZh(@Param("id") Long id, @Param("entities") String entities, @Param("memoryKeyZh") String memoryKeyZh);
 
     /** KEEP_BOTH 合并：survivor 行 memory_value 改合并值 + 清 conflict_id（变 clean 单行）+ 重 embed。
-     *  halfvec 传 null 时 COALESCE 保留旧向量（re-embed 失败不致向量丢失）。 */
+     *  halfvec 传 null 时 COALESCE 保留旧向量（re-embed 失败不致向量丢失）。
+     *  V38：anchor（block+key+entities）合并不变 → COALESCE 保留旧 anchor（null 安全）。 */
     @Update("UPDATE user_memories SET memory_value=#{value}, conflict_id=NULL, "
-            + "embedding=COALESCE(#{halfvec}::halfvec, embedding), updated_at=now() WHERE id=#{id}")
-    int mergeIntoRow(@Param("id") Long id, @Param("value") String value, @Param("halfvec") String halfvec);
+            + "embedding=COALESCE(#{halfvec}::halfvec, embedding), "
+            + "anchor_embedding=COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding), "
+            + "anchor_tokens=COALESCE(#{anchorTokens}, anchor_tokens), updated_at=now() WHERE id=#{id}")
+    int mergeIntoRow(@Param("id") Long id, @Param("value") String value, @Param("halfvec") String halfvec,
+                     @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
 
     /** 历史 KEEP_BOTH 脏数据清理：找出 conflict_id 非空但其冲突已 RESOLVED 的残留行
      *  （旧"双行共存"语义遗留：resolve 后未清 conflict_id → 永久带标 + 抽取去重隐身）。

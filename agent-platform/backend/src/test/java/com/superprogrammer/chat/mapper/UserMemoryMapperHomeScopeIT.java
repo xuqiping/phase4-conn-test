@@ -123,13 +123,13 @@ class UserMemoryMapperHomeScopeIT extends AbstractIntegrationTest {
     @Test
     void insertMemory_setsHomeColumn() {
         UserMemory m = baseFact("k1", p1);
-        mapper.insertMemory(m, halfAxis(0));
+        mapper.insertMemory(m, halfAxis(0), null, null);
         Long home = jdbc.queryForObject(
                 "SELECT home_project_id FROM user_memories WHERE id=?", Long.class, m.getId());
         assertEquals(p1, home, "insertMemory 落 home_project_id = P1");
 
         UserMemory mGlobal = baseFact("k2", null);
-        mapper.insertMemory(mGlobal, halfAxis(0));
+        mapper.insertMemory(mGlobal, halfAxis(0), null, null);
         Long homeGlobal = jdbc.queryForObject(
                 "SELECT home_project_id FROM user_memories WHERE id=?", Long.class, mGlobal.getId());
         assertNull(homeGlobal, "global 写目标 home_project_id = NULL");

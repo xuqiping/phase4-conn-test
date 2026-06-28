@@ -103,7 +103,7 @@ public class MemoryConflictService {
             m.setIsGlobal(writeTargetProjectId == null);
             // V34：冲突行也记 home（与写目标对齐）；resolve 后 survivor 清 conflict_id 变 clean 时 home 已正确，不撞唯一约束
             m.setHomeProjectId(writeTargetProjectId);
-            memoryMapper.insertMemory(m, snap.halfvec());
+            memoryMapper.insertMemory(m, snap.halfvec(), null, null);
             if (writeTargetProjectId != null) {
                 memoryMapper.insertMemoryProjects(m.getId(), List.of(writeTargetProjectId));
             }
@@ -144,7 +144,7 @@ public class MemoryConflictService {
             Boolean isGlobal = ref == null ? null : ref.getIsGlobal();
             List<Long> pids = ref == null ? List.of() : memoryMapper.findProjectIdsByMemory(ref.getId());
             UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, home, isGlobal);
-            memoryMapper.insertMemory(m, halfvec);
+            memoryMapper.insertMemory(m, halfvec, null, null);
             if (!Boolean.TRUE.equals(m.getIsGlobal()) && !pids.isEmpty()) {
                 memoryMapper.insertMemoryProjects(m.getId(), pids);
             }
@@ -201,7 +201,7 @@ public class MemoryConflictService {
             hardDelete(restIds);
             if (restIds.isEmpty()) {
                 // 单行残留：仅清 conflict_id（值不变，COALESCE 保旧向量）
-                memoryMapper.mergeIntoRow(survivor.getId(), survivor.getMemoryValue(), null);
+                memoryMapper.mergeIntoRow(survivor.getId(), survivor.getMemoryValue(), null, null, null);
             } else {
                 List<String> values = new ArrayList<>();
                 g.forEach(m -> values.add(m.getMemoryValue()));
@@ -275,7 +275,7 @@ public class MemoryConflictService {
     private void insertSnapScoped(MemoryConflict c, Map<String, Object> snap, String halfvec,
                                   Long homeProjectId, Boolean isGlobal, List<Long> projectIds) {
         UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, homeProjectId, isGlobal);
-        memoryMapper.insertMemory(m, halfvec);
+        memoryMapper.insertMemory(m, halfvec, null, null);
         if (!Boolean.TRUE.equals(m.getIsGlobal()) && projectIds != null && !projectIds.isEmpty()) {
             memoryMapper.insertMemoryProjects(m.getId(), projectIds);
         }
@@ -324,7 +324,7 @@ public class MemoryConflictService {
     /** 合并值去重 join + re-embed（失败保留旧向量）+ mergeIntoRow + 失效缓存。 */
     private void mergeValuesInto(Long userId, Long survivorId, List<String> values) {
         String merged = joinDistinct(values, "，");
-        memoryMapper.mergeIntoRow(survivorId, merged, reembed(merged));
+        memoryMapper.mergeIntoRow(survivorId, merged, reembed(merged), null, null);
         queryCache.evictUser(userId);
         log.info("KEEP_BOTH 合并 userId={} survivor={} merged={}", userId, survivorId, merged);
     }
