@@ -44,13 +44,34 @@ public class MemoryConflictJudge {
 
             输出契约（必须严格遵守）：
             - 只输出一个 JSON 数组，不要任何 markdown 围栏、注释或解释文字。
-            - 每个元素: {"category":"PREFERENCE|FACT|FEEDBACK","key":"英文短键","value":"值","confidence":0.0-1.0,"block":"中文短块名"}
+            - 每个元素: {"category":"PREFERENCE|FACT|FEEDBACK","key":"英文短键","key_zh":"中文标签","value":"值","confidence":0.0-1.0,"block":"中文短块名","entities":["召回词",...]}
             - 没有可提取信息时输出 []
 
+            key_zh（重要，决定中文召回 + 前端显示）：
+            - key 的中文主标签，1-6 个中文字，用用户视角的自然称呼。
+            - 例：key=child_name → key_zh="女儿"；key=home_city → key_zh="住址"（或"居住地"）；
+              key=favorite_language → key_zh="编程语言"；key=occupation → key_zh="职业"。
+            - 纯英文 key 必须给中文标签；抽不出 → null。
+
+            entities（重要，决定关键词召回准确率）= 召回词袋，三类词都要：
+            1. key_zh 中文标签（必含，如"女儿"）；
+            2. 同义变体 1-3 个（角色/称谓/类别词的近义说法，如 女儿→孩子/小孩/闺女；公司→单位/企业；老婆→妻子/爱人）；
+            3. value 里的专有名词（人名/地名/品牌，原文字面词，如"啊闪""北京""Java"）。
+            - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体
+              （child_name → 补"女儿"+"孩子"，否则 query「带女儿去玩」召回不到这条）。
+            - 每词 ≤8 字符，共 ≤10 个，去重。
+            - 例：value="啊闪" key=child_name key_zh="女儿" → entities:["女儿","孩子","小孩","啊闪"]；
+              value="住在北京" key=home_city key_zh="住址" → entities:["住址","北京","居住地"]；
+              value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java"]。
+            - 抽不出 → []。
+
             key 命名（重要，决定去重/冲突识别准确率）：
-            - 用稳定通用的英文蛇形短键，复用常见命名：favorite_language / name / age / occupation / spouse_name / child_name / child_age / child_gender / home_city / phone / dietary_preference 等。
-            - 同一概念只用一个 key（编程语言偏好统一 favorite_language，不要 favorite_programming_language / default_fav_lang 等变体）。
-            - key 只含小写字母/数字/下划线，≤40 字符。
+            - 用稳定通用的英文蛇形短键，只含小写字母/数字/下划线，≤40 字符。
+            - 同一概念只用一个 key；以【语义】为准，不因字面不同就另造变体。
+            - 【复用优先，严格遵守】该用户已存在的 key 列表：%s
+              抽取的属性若与列表中任一 key 语义相同（同一属性/同一件事，如 favorite_sport 与 hobby、child_grade 与 child_education_stage 视为同一属性），必须直接复用列表里的那个 key，不得另造新 key。
+              仅当确属列表之外的全新属性时，才用一个通用规范新 key。
+            - 列表为空（新用户）时，按通用常识给规范短键（如 favorite_language / name / age / occupation / spouse_name / child_name / home_city / dietary_preference）。
 
             block（事实归属的信息块，用于聚类归块）：
             - 用中文短名，固定优先复用：家庭信息 / 职业 / 教育 / 偏好 / 联系方式 / 健康 / 财务 / 基本信息；都不贴再自造短名。
@@ -102,9 +123,77 @@ public class MemoryConflictJudge {
             - 用户回复意图不清（没明确选）→ isAnswer=false, keep="UNCLEAR"。
             JSON:""";
 
-    /** 抽取事实（含 block 候选）。失败/空返 empty。 */
-    public List<ExtractedFact> extract(String userMessage, String assistantResponse) {
-        String json = chat(String.format(EXTRACT_PROMPT, userMessage, assistantResponse));
+    /** 兜底 key 筛选：向量+关键词都漏召时，把全部记忆 key=>value 灌 LLM 挑相关的 key。 */
+    private static final String SELECT_KEYS_PROMPT = """
+            你是用户记忆检索助手。从下列【用户已有记忆】中，挑出与用户当前问题相关、可能对回答有帮助的记忆 key。
+
+            判定要点（宁多选，召回优先）：
+            - 相关 = 能帮回答/影响建议/提供该用户专属上下文。
+            - 例：问"带女儿去哪玩" → 孩子年龄/孩子喜好/居住地 都算相关（年龄影响适合的场所，居住地影响推荐）。
+            - 例：问"今晚吃什么" → 饮食偏好/忌口/过敏 算相关。
+            - 仅明显无关的才不选。不确定时倾向选择。
+
+            用户问题: %s
+            用户已有记忆(key: value 列表):
+            %s
+
+            输出契约（必须严格遵守）：
+            - 只输出一个 JSON 字符串数组，元素为相关的 memory_key，原样复制上面列表里的 key（不要改写）。
+            - 无相关 → 输出 []。不要 markdown 围栏或解释。
+            JSON:""";
+
+    /** V38 LLM_KEY 双维度筛 block 维度：从候选 block_label 列表挑与问题相关的块（宁多选，召回优先）。 */
+    private static final String SELECT_BLOCKS_PROMPT = """
+            你是用户记忆检索助手。从下列【信息块名称】中，挑出与用户当前问题相关的块。
+            信息块是记忆的分类标签（如「家庭信息」「职业」「偏好」「健康」「居住地」）。挑出其下可能含相关记忆的块。
+
+            判定要点（宁多选，召回优先）：
+            - 相关 = 该块下可能有帮回答/影响建议/提供该用户专属上下文的记忆。
+            - 例：问「带女儿去哪玩」→ 「家庭信息」相关（孩子属家庭）。
+            - 例：问「今晚吃什么」→ 「偏好」「健康」相关（忌口/过敏）。
+            - 例：问「家人出去玩」→ 「家庭信息」相关（配偶/孩子/宠物都是家人）。
+            - 仅明显无关的才不选。不确定时倾向选择。
+
+            用户问题: %s
+            信息块列表:
+            %s
+
+            输出契约（必须严格遵守）：
+            - 只输出一个 JSON 字符串数组，元素为相关的 block_label，原样复制上面列表里的名称（不要改写）。
+            - 无相关 → 输出 []。不要 markdown 围栏或解释。
+            JSON:""";
+
+    /** 老数据回填：一批记忆批量抽中文标签 key_zh + 召回词袋 entities（≤20条/次）。idx = 记忆 id。 */
+    private static final String BATCH_ENTITIES_PROMPT = """
+            你是记忆实体抽取器。为下列每条【用户记忆】抽取中文标签 key_zh + 召回词袋 entities，
+            用于检索时把"提到同一实体/角色"的不同问题关联起来。
+
+            规则：
+            - key_zh = key 的中文主标签（1-6 中文字），据英文 key 语义推断。
+              例：key=child_name → key_zh="女儿"；key=home_city → key_zh="住址"；key=favorite_language → key_zh="编程语言"。抽不出 → null。
+            - entities = 召回词袋，三类都要：① key_zh 标签（必含）；② 同义变体 1-3（女儿→孩子/小孩/闺女；公司→单位/企业）；
+              ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）。
+            - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体。
+            - 每词 ≤8 字符，共 ≤10 个，去重。抽不出 entities → []。
+            - 例：value="啊闪" key=child_name → key_zh="女儿", entities:["女儿","孩子","小孩","啊闪"]；
+              value="住在北京" key=home_city → key_zh="住址", entities:["住址","北京","居住地"]。
+
+            记忆列表（格式 idx|key|value）:
+            %s
+
+            输出契约（必须严格遵守）：
+            - 只输出一个 JSON 数组，每个元素 {"idx":记忆id,"key_zh":"中文标签或null","entities":["词",...]}，顺序与输入一致。
+            - 不要 markdown 围栏或解释文字。
+            JSON:""";
+
+    /** 抽取事实（含 block 候选）。
+     * @param existingKeys 该用户已存在的 memory_key 列表，注入 prompt 做 key 复用白名单（通用语义归一，取代手写 alias 表）。null/empty 视为新用户。 */
+    public List<ExtractedFact> extract(String userMessage, String assistantResponse, List<String> existingKeys) {
+        String keysDisplay = (existingKeys == null || existingKeys.isEmpty())
+                ? "（无，新用户）"
+                : String.join(" / ", existingKeys);
+        String json = chat(String.format(EXTRACT_PROMPT, keysDisplay, userMessage, assistantResponse));
+        log.info("extract raw返回={}", truncate(json));
         if (json == null || json.isBlank()) return List.of();
         JsonNode root = parseJson(stripFence(json));
         if (root == null || !root.isArray()) {
@@ -164,6 +253,104 @@ public class MemoryConflictJudge {
         return new RouteResult(isAnswer, isAnswer ? keep : "UNCLEAR");
     }
 
+    /** 批量回填（V31/V32 老数据迁移）：为一批老记忆补抽中文标签 key_zh + 召回词袋 entities。
+     *  batch LLM 调用（≤20条/次），返回 memoryId → BackfillRow 映射；失败 → 空 map。
+     *  一次性 admin 触发，幂等可重跑（空 entities/key_zh 由调用方落 "[]"/"" 标记已处理）。 */
+    public java.util.Map<Long, BackfillRow> batchExtractEntities(List<UserMemory> rows) {
+        if (rows == null || rows.isEmpty()) return java.util.Map.of();
+        try {
+            String body = rows.stream()
+                    .map(m -> m.getId() + "|" + m.getMemoryKey() + "|" + m.getMemoryValue())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            String raw = chat(String.format(BATCH_ENTITIES_PROMPT, body));
+            JsonNode root = parseJson(stripFence(raw));
+            java.util.Map<Long, BackfillRow> out = new java.util.HashMap<>();
+            if (root == null || !root.isArray()) {
+                log.warn("batchExtractEntities 返回非 JSON 数组, fail-safe 空: {}", raw == null ? "(null)" : truncate(raw));
+                return out;
+            }
+            for (JsonNode el : root) {
+                long id = el.path("idx").asLong(-1L);
+                if (id < 0) continue;
+                String keyZh = textOrDefault(el, "key_zh", null);
+                if (keyZh != null) keyZh = keyZh.isBlank() ? null : keyZh.trim();
+                out.put(id, new BackfillRow(readEntities(el.get("entities")), keyZh));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("batchExtractEntities 失败 fail-safe 空: {}", e.getMessage());
+            return java.util.Map.of();
+        }
+    }
+
+    /** 回填单条结果：召回词袋 entities + 中文标签 keyZh。 */
+    public record BackfillRow(List<String> entities, String keyZh) {}
+
+    /** VECTOR_KEYWORD 兜底：向量+关键词均 0 命中时，把用户全部 clean 记忆的 key=>value 列表灌 LLM，
+     *  让它挑出与当前问题相关的 key（宁多选）。返回相关 key 列表（原样复制）；失败/无关 → 空。
+     *  这就是"先加载标签(key)让 LLM 判断再加载 value"的正确落地——仅在漏召时触发，非常驻路径。 */
+    public List<String> selectRelevantKeys(String query, List<UserMemory> allMemories) {
+        if (query == null || query.isBlank() || allMemories == null || allMemories.isEmpty()) return List.of();
+        try {
+            String list = allMemories.stream()
+                    .map(m -> "- " + m.getMemoryKey() + ": " + m.getMemoryValue())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            String raw = chat(String.format(SELECT_KEYS_PROMPT, query, list));
+            JsonNode root = parseJson(stripFence(raw));
+            if (root == null || !root.isArray()) {
+                log.warn("selectRelevantKeys 返回非 JSON 数组, fail-safe 空: {}", raw == null ? "(null)" : truncate(raw));
+                return List.of();
+            }
+            java.util.Set<String> valid = allMemories.stream()
+                    .map(UserMemory::getMemoryKey).collect(java.util.stream.Collectors.toSet());
+            List<String> out = new ArrayList<>();
+            for (JsonNode k : root) {
+                if (k == null) continue;
+                String s = k.asText();
+                if (s != null && valid.contains(s) && !out.contains(s)) out.add(s);
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("selectRelevantKeys 失败 fail-safe 空: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** V38 LLM_KEY 精排：候选超 maxCandidates 时截断（防 token 爆，LLM 只碰 top-N 不碰全量）。
+     *  2 参重载保留（兜底路径传全量，无截断）。 */
+    public List<String> selectRelevantKeys(String query, List<UserMemory> candidates, int maxCandidates) {
+        if (candidates == null) return List.of();
+        List<UserMemory> capped = (maxCandidates > 0 && candidates.size() > maxCandidates)
+                ? new ArrayList<>(candidates.subList(0, maxCandidates)) : candidates;
+        return selectRelevantKeys(query, capped);
+    }
+
+    /** V38 LLM_KEY 双维度筛 block 维度：从候选 block_label 列表挑与问题相关的块（原样复制，宁多选）。
+     *  范式照 selectRelevantKeys；失败/无关 → 空。null 视作 ""（与 filterRelevantKeys 归一对齐）。 */
+    public List<String> selectRelevantBlocks(String query, List<String> distinctBlocks) {
+        if (query == null || query.isBlank() || distinctBlocks == null || distinctBlocks.isEmpty()) return List.of();
+        try {
+            String list = distinctBlocks.stream().map(b -> "- " + b).collect(java.util.stream.Collectors.joining("\n"));
+            String raw = chat(String.format(SELECT_BLOCKS_PROMPT, query, list));
+            JsonNode root = parseJson(stripFence(raw));
+            if (root == null || !root.isArray()) {
+                log.warn("selectRelevantBlocks 返回非 JSON 数组, fail-safe 空: {}", raw == null ? "(null)" : truncate(raw));
+                return List.of();
+            }
+            java.util.Set<String> valid = new java.util.HashSet<>(distinctBlocks);
+            List<String> out = new ArrayList<>();
+            for (JsonNode b : root) {
+                if (b == null) continue;
+                String s = b.asText();
+                if (s != null && valid.contains(s) && !out.contains(s)) out.add(s);
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("selectRelevantBlocks 失败 fail-safe 空: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     // ---- Jackson 解析 helpers ----
 
     private ExtractedFact readFact(JsonNode el) {
@@ -175,7 +362,27 @@ public class MemoryConflictJudge {
         String value = textOrDefault(el, "value", "");
         BigDecimal confidence = parseConfidence(el.get("confidence"));
         String block = textOrDefault(el, "block", null);
-        return new ExtractedFact(category, key.trim(), value, confidence, block);
+        String keyZh = textOrDefault(el, "key_zh", null);
+        if (keyZh != null) keyZh = keyZh.isBlank() ? null : keyZh.trim();
+        List<String> entities = readEntities(el.get("entities"));
+        return new ExtractedFact(category, key.trim(), keyZh, value, confidence, block, entities);
+    }
+
+    /** 解析 entities 数组（容忍缺字段/非数组/空）。去空白去重，上限 10 个（标签+变体+专名）。 */
+    private List<String> readEntities(JsonNode node) {
+        if (node == null || !node.isArray()) return List.of();
+        List<String> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (JsonNode e : node) {
+            if (e == null) continue;
+            String s = e.asText();
+            if (s == null) continue;
+            s = s.trim();
+            if (s.isBlank() || s.length() > 8) continue;
+            if (seen.add(s)) out.add(s);
+            if (out.size() >= 10) break;
+        }
+        return out;
     }
 
     private JudgeResult readJudge(JsonNode el) {
@@ -224,16 +431,23 @@ public class MemoryConflictJudge {
     }
 
     private String chat(String prompt) {
-        try {
-            LlmResponse resp = llmGateway.chat(LlmRequest.builder()
-                    .model(RagConfig.MEMORY_JUDGE_MODEL)
-                    .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
-                    .temperature(JUDGE_TEMPERATURE).maxTokens(800).build());
-            return resp.getContent();
-        } catch (Exception e) {
-            log.warn("LLM 调用失败: {}", e.getMessage());
-            return null;
+        Exception last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                LlmResponse resp = llmGateway.chat(LlmRequest.builder()
+                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
+                        .temperature(JUDGE_TEMPERATURE).maxTokens(800).build());
+                String content = resp.getContent();
+                if (content != null && !content.isBlank()) return content;
+                log.warn("LLM 返回空(第{}/3次) prompt.len={}", attempt, prompt.length());
+            } catch (Exception e) {
+                last = e;
+                log.warn("LLM 调用异常(第{}/3次): {}", attempt, e.getMessage());
+            }
         }
+        if (last != null) log.warn("LLM 调用 3 次均失败: {}", last.getMessage());
+        return null;
     }
 
     private static String stripFence(String json) {

@@ -11,7 +11,9 @@ import com.superprogrammer.chat.service.internal.MemoryBlockClassifier;
 import com.superprogrammer.chat.service.internal.MemoryConflictJudge;
 import com.superprogrammer.chat.service.internal.MemoryQueryCache;
 import com.superprogrammer.chat.service.internal.MemoryScope;
+import com.superprogrammer.knowledge.service.QueryExpansionService;
 import com.superprogrammer.knowledge.service.RagConfig;
+import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.JiebaTokenizer;
 import com.superprogrammer.llm.LlmGateway;
@@ -60,6 +62,8 @@ public class MemoryService {
     private final MemoryQueryCache queryCache;
     /** embedding 调用（EMBEDDING_VECTOR 召回时把 query embed 成 halfvec）。 */
     private final LlmGateway llmGateway;
+    /** query 多路扩展（LLM_KEY 模式粗筛多 qHalf 提 recall；canonical embed 作 qHalfs[0]）。 */
+    private final QueryExpansionService queryExpansion;
     /** 读记忆检索模式设置（LLM_FULL_CONTEXT / EMBEDDING_VECTOR / VECTOR_KEYWORD）。 */
     private final SystemSettingService systemSettingService;
     /** entities JSON 序列化（写时 List<String> → JSONB 字符串）。 */
@@ -76,8 +80,13 @@ public class MemoryService {
     private static final int VECTOR_TOP_K = 5;
     /** VECTOR_KEYWORD 模式：向量 + 关键词并集后注入上限。 */
     private static final int HYBRID_MAX = 8;
-    /** 关键词召回分词上限（避免 SQL OR 列表过长）。 */
-    private static final int KEYWORD_MAX = 8;
+    /** LLM_KEY 模式：anchor 向量 top-K 余弦门槛（同 EMBEDDING_VECTOR）。 */
+    private static final double ANCHOR_SIM_THRESHOLD = 0.35;
+    /** LLM_KEY 模式 RRF 通道权重（向量权 > 词法权，主信号靠语义）。 */
+    private static final double LLMKEY_VECTOR_WEIGHT = 1.0;
+    private static final double LLMKEY_BM25_WEIGHT = 0.5;
+    /** LLM_KEY 模式 RRF k 常数（同知识库默认 60，排名归一）。 */
+    private static final int LLMKEY_RRF_K = 60;
     /** 注入/统计的 confidence 下限。 */
     private static final BigDecimal CONF_THRESHOLD = new BigDecimal("0.5");
 
@@ -433,6 +442,8 @@ public class MemoryService {
             context = buildVectorContext(readScope, query);
         } else if ("VECTOR_KEYWORD".equals(mode)) {
             context = buildHybridContext(readScope, query);
+        } else if ("LLM_KEY".equals(mode)) {
+            context = buildLlmKeyContext(readScope, query);
         } else {
             context = buildFullContext(readScope, query);
         }
@@ -590,6 +601,13 @@ public class MemoryService {
      * key 筛挂/空 → 单走 block；block 筛挂/空 → 单走 key；都挂/空 → null。注入只留 key+value（丢 category/block/entities/confidence 噪声由 formatLine 控）。
      * key 匹配始终用英文 memory_key；key 语言设置只影响 formatLine 展示。 */
     private String filterRelevantKeys(MemoryScope readScope, String query, List<UserMemory> allMemories) {
+        List<UserMemory> sel = selectRelevantMemories(readScope, query, allMemories);
+        return sel == null ? null : formatMemories(readScope.userId(), sel);
+    }
+
+    /** 双维度精排核心（key∩block），返回选中记忆（未格式化）。null = 输入空 / 两维都挂空 / 异常。
+     *  供 filterRelevantKeys（格式化注入）与 LLM_KEY 缓存 loader（取选中 key 列表）共用。 */
+    private List<UserMemory> selectRelevantMemories(MemoryScope readScope, String query, List<UserMemory> allMemories) {
         if (allMemories == null || allMemories.isEmpty()) return null;
         Long userId = readScope.userId();
         try {
@@ -612,10 +630,9 @@ public class MemoryService {
                     .filter(m -> (fk == null || fk.contains(m.getMemoryKey()))
                               && (fb == null || fb.contains(m.getBlockLabel() == null ? "" : m.getBlockLabel())))
                     .collect(Collectors.toList());
-            if (sel.isEmpty()) return null;
-            return formatMemories(userId, sel);
+            return sel.isEmpty() ? null : sel;
         } catch (Exception e) {
-            log.warn("filterRelevantKeys 双维度筛失败 userId={}: {} → 不注入", userId, e.getMessage(), e);
+            log.warn("selectRelevantMemories 双维度筛失败 userId={}: {} → 不注入", userId, e.getMessage(), e);
             return null;
         }
     }
@@ -634,10 +651,12 @@ public class MemoryService {
     /**
      * query 分词（VECTOR_KEYWORD 关键词召回用）：CJK 连续段切 2-gram，字母数字段整段保留。
      * 噪声 gram（如"去玩"）天然自滤——它们不是任何实体的子串，ILIKE 撞不上 entities 列。
-     * 去重 + 截断 KEYWORD_MAX，避免 SQL OR 列表过长。
+     * 去重 + 截断 keyword-max 设置（默认 8，0=不限），避免 SQL OR 列表过长。
      */
-    private static List<String> tokenize(String query) {
+    private List<String> tokenize(String query) {
         if (query == null || query.isBlank()) return List.of();
+        int max = systemSettingService.getKeywordMax();
+        long cap = max <= 0 ? Long.MAX_VALUE : max;
         List<String> out = new ArrayList<>();
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("[\\u4e00-\\u9fa5]{2,}|[A-Za-z0-9]{2,}").matcher(query);
         while (m.find()) {
@@ -648,7 +667,7 @@ public class MemoryService {
                 for (int i = 0; i + 2 <= seg.length(); i++) out.add(seg.substring(i, i + 2));
             }
         }
-        return out.stream().distinct().limit(KEYWORD_MAX).collect(Collectors.toList());
+        return out.stream().distinct().limit(cap).collect(Collectors.toList());
     }
 
     private static boolean isAscii(String s) {
@@ -656,6 +675,108 @@ public class MemoryService {
             if (s.charAt(i) > 127) return false;
         }
         return true;
+    }
+
+    /**
+     * LLM_KEY 召回（V38 anchor 语义两阶段，限 scope）：百万 key 场景治本路径。
+     * <ol>
+     *   <li>query 多路扩展（{@code QueryExpansionService.expand} → canonical + qHalfs[]，多 qHalf 提 recall）；扩展挂 → 单 qHalf（canonical embed 兜底）</li>
+     *   <li>粗筛：每 qHalf 跑 {@code findTopKByAnchor}（anchor 向量 top-K）+ {@code findAnchorBm25}（jieba BM25）→ RRF 融合（向量权 > 词法权）→ top-N</li>
+     *   <li>rerank=true：{@code selectRelevantMemories} 双维度精排（key + block_label 交集）；false：直接注 top-N</li>
+     *   <li>选中 key 列表经 {@code MemoryQueryCache.getRerankKeys} 缓存（TTL 60s，同 query 命中跳精排 LLM）</li>
+     * </ol>
+     * 异常降级（宁少勿滥，不回退全量，同 EMBEDDING_VECTOR）：向量挂→仅 BM25；BM25 挂→仅向量；都空→null。 */
+    private String buildLlmKeyContext(MemoryScope readScope, String query) {
+        if (query == null || query.isBlank()) return null;
+        Long userId = readScope.userId();
+        boolean includeGlobal = readScope.includeGlobal();
+        List<Long> projectIds = readScope.safeProjectIds();
+        int topN = systemSettingService.getLlmKeyCoarseTopN();
+        boolean rerank = systemSettingService.getLlmKeyRerank();
+
+        // ① query 多路扩展（canonical embed 作 qHalfs[0]）；扩展挂 → 单 qHalf 兜底
+        List<String> qHalfs = null;
+        try {
+            QueryExpansionService.ExpandedQuery eq = queryExpansion.expand(query, RagConfig.MEMORY_EMBED_MODEL);
+            if (eq != null && eq.qHalfs() != null && !eq.qHalfs().isEmpty()) qHalfs = eq.qHalfs();
+        } catch (Exception e) {
+            log.warn("LLM_KEY query 扩展失败 userId={}: {} → 单 qHalf 兜底", userId, e.getMessage());
+        }
+        if (qHalfs == null) {
+            try {
+                float[] vec = llmGateway.embed(query, RagConfig.MEMORY_EMBED_MODEL);
+                qHalfs = new ArrayList<>(List.of(HalfVecUtil.toHalfVec(vec)));
+            } catch (Exception e) {
+                log.warn("LLM_KEY canonical embed 失败 userId={}: {}", userId, e.getMessage());
+                qHalfs = List.of();
+            }
+        }
+
+        // ② 粗筛：anchor 向量（每 qHalf 一条 ranked list）+ BM25，收集 id→UserMemory 去重表
+        Map<Long, UserMemory> byId = new java.util.LinkedHashMap<>();
+        List<RrfFusion.WeightedList<Long>> channelLists = new ArrayList<>();
+        int vecChannels = 0;
+        for (String qh : qHalfs) {
+            try {
+                List<UserMemory> v = memoryMapper.findTopKByAnchor(userId, qh, ANCHOR_SIM_THRESHOLD, topN, includeGlobal, projectIds);
+                if (v != null && !v.isEmpty()) {
+                    List<Long> order = new ArrayList<>();
+                    for (UserMemory m : v) {
+                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); order.add(m.getId()); }
+                    }
+                    if (!order.isEmpty()) { channelLists.add(new RrfFusion.WeightedList<>(order, LLMKEY_VECTOR_WEIGHT)); vecChannels++; }
+                }
+            } catch (Exception e) {
+                log.warn("LLM_KEY anchor 向量检索失败 userId={}: {}", userId, e.getMessage());
+            }
+        }
+        int bm25Channels = 0;
+        String bm25Query = null;
+        try { bm25Query = JiebaTokenizer.tokenize(query); } catch (Exception ignored) {}
+        if (bm25Query != null && !bm25Query.isBlank()) {
+            try {
+                List<UserMemory> b = memoryMapper.findAnchorBm25(userId, bm25Query, topN, includeGlobal, projectIds);
+                if (b != null && !b.isEmpty()) {
+                    List<Long> order = new ArrayList<>();
+                    for (UserMemory m : b) {
+                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); order.add(m.getId()); }
+                    }
+                    if (!order.isEmpty()) { channelLists.add(new RrfFusion.WeightedList<>(order, LLMKEY_BM25_WEIGHT)); bm25Channels = 1; }
+                }
+            } catch (Exception e) {
+                log.warn("LLM_KEY anchor BM25 检索失败 userId={}: {}", userId, e.getMessage());
+            }
+        }
+        if (byId.isEmpty()) return null;   // 两通道都空 → 不注入
+
+        // ③ RRF 融合（向量权 > 词法权）→ top-N 候选
+        List<UserMemory> candidates = RrfFusion.sortByScoreDesc(RrfFusion.fuseWeighted(channelLists, LLMKEY_RRF_K)).stream()
+                .limit(topN)
+                .map(byId::get)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toList());
+        if (candidates.isEmpty()) return null;
+        log.info("LLM_KEY 粗筛 userId={} qHalfs={} 向量通道={} bm25={} → top-{} 候选 首key[{}]",
+                userId, qHalfs.size(), vecChannels, bm25Channels, candidates.size(), candidates.get(0).getMemoryKey());
+
+        // ④ rerank=false：直接注 top-N（跳 LLM 精排）
+        if (!rerank) return formatMemories(userId, candidates);
+
+        // ⑤ rerank=true：双维度精排，选中 key 列表缓存（TTL 60s，同 query 命中跳 LLM 精排）
+        final List<UserMemory> candFinal = candidates;
+        String queryHash = Integer.toHexString(query.hashCode());
+        List<String> selectedKeys = queryCache.getRerankKeys(readScope, queryHash, () -> {
+            List<UserMemory> sel = selectRelevantMemories(readScope, query, candFinal);
+            return sel == null ? List.of()
+                    : sel.stream().map(UserMemory::getMemoryKey).filter(java.util.Objects::nonNull).distinct().collect(Collectors.toList());
+        });
+        if (selectedKeys == null || selectedKeys.isEmpty()) return null;
+        // 缓存命中或刚算：用选中 key 过滤当前候选装配注入（key 维；block 维已在 selectRelevantMemories 内筛）
+        Set<String> keySet = new java.util.HashSet<>(selectedKeys);
+        List<UserMemory> sel = candidates.stream()
+                .filter(m -> keySet.contains(m.getMemoryKey()))
+                .collect(Collectors.toList());
+        return sel.isEmpty() ? null : formatMemories(userId, sel);
     }
 
     /** 全量召回（LLM_FULL_CONTEXT 模式，限 scope）。
@@ -814,17 +935,17 @@ public class MemoryService {
     // ============================ 老数据回填（V31/V32 迁移）============================
 
     /**
-     * 回填老记忆（entities IS NULL 或 memory_key_zh IS NULL）的召回词袋 + 中文标签：
-     * batch LLM 抽 entities（召回词袋：标签+变体+专名）+ key_zh（≤20条/批）→ 落 entities + memory_key_zh。
-     * 幂等：无实体的行落 entities='[]'、无 key_zh 落 ''（标记已处理），重跑跳过；不 bump updated_at（不扰动记忆列表）。
-     * 同步实现（可单测），admin 端点经 {@link #backfillEntitiesAsync()} 异步触发避免 HTTP 超时。
+     * 回填老记忆（entities / memory_key_zh / anchor_embedding 任一为空）的召回词袋 + 中文标签 + anchor 锚点：
+     * <ul>
+     *   <li>entities 或 key_zh 缺失：batch LLM 抽 entities（召回词袋：标签+变体+专名）+ key_zh → 落 entities + memory_key_zh</li>
+     *   <li>anchor 缺失：embedAnchor（block+key_zh+key+entities）落 anchor 两列（向量+词法 token）</li>
+     * </ul>
+     * 幂等：无实体的行落 entities='[]'、无 key_zh 落 ''（标记已处理）；anchor embed 失败落空→下次重试，成功后 anchor_embedding 非空跳过。
+     * 不 bump updated_at（不扰动记忆列表排序）。同步实现（可单测），admin 端点经 {@link #backfillEntitiesAsync()} 异步触发避免 HTTP 超时。
      * @return 实际更新行数。
      */
     public int backfillEntities() {
-        List<UserMemory> rows = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>()
-                .isNull(UserMemory::getEntities)
-                .or()
-                .isNull(UserMemory::getMemoryKeyZh));
+        List<UserMemory> rows = memoryMapper.findBackfillCandidates();
         if (rows.isEmpty()) {
             log.info("memoryBackfill 无待回填行（全部已处理）");
             return 0;
@@ -836,19 +957,34 @@ public class MemoryService {
         for (int i = 0; i < rows.size(); i += batchSize) {
             List<UserMemory> chunk = rows.subList(i, Math.min(i + batchSize, rows.size()));
             try {
-                java.util.Map<Long, MemoryConflictJudge.BackfillRow> res = judge.batchExtractEntities(chunk);
+                // 仅 entities/key_zh 缺失的行灌 LLM 抽取（anchor-only 行省 LLM，用既有 entities/key_zh）
+                List<UserMemory> toExtract = chunk.stream()
+                        .filter(m -> m.getEntities() == null || m.getMemoryKeyZh() == null)
+                        .collect(Collectors.toList());
+                java.util.Map<Long, MemoryConflictJudge.BackfillRow> res =
+                        toExtract.isEmpty() ? java.util.Collections.emptyMap() : judge.batchExtractEntities(toExtract);
                 for (UserMemory m : chunk) {
                     MemoryConflictJudge.BackfillRow r = res.get(m.getId());
-                    List<String> e = (r == null) ? List.of() : r.entities();
-                    String json = (e.isEmpty()) ? "[]" : entitiesJson(e);
-                    if (json == null) json = "[]"; // entitiesJson 失败兜底
-                    // key_zh 抽不出落 ""（非 null，幂等标记，重跑跳过）
-                    String keyZh = (r == null || r.keyZh() == null) ? "" : r.keyZh();
-                    memoryMapper.updateEntitiesAndKeyZh(m.getId(), json, keyZh);
+                    final String entitiesJson;
+                    final String keyZh;
+                    if (r != null) {
+                        List<String> e = r.entities() == null ? List.of() : r.entities();
+                        String json = (e.isEmpty()) ? "[]" : entitiesJson(e);
+                        if (json == null) json = "[]"; // entitiesJson 失败兜底
+                        entitiesJson = json;
+                        keyZh = (r.keyZh() == null) ? "" : r.keyZh();   // 抽不出落 ""（幂等标记，重跑跳过）
+                        memoryMapper.updateEntitiesAndKeyZh(m.getId(), entitiesJson, keyZh);
+                    } else {
+                        entitiesJson = m.getEntities();
+                        keyZh = m.getMemoryKeyZh();
+                    }
+                    // anchor 两列：用最终 entities/key_zh 落（向量+词法 token）；embed 失败 COALESCE 保留旧值→下次重试
+                    AnchorEmbedding ae = embedAnchor(m.getBlockLabel(), keyZh, m.getMemoryKey(), entitiesJson);
+                    memoryMapper.updateAnchor(m.getId(), ae.halfvec(), ae.tokens());
                     touchedUsers.add(m.getUserId());
                     updated++;
                 }
-                log.info("memoryBackfill chunk {}-{} 完成", i, i + chunk.size());
+                log.info("memoryBackfill chunk {}-{} 完成（抽取 {} 行）", i, i + chunk.size(), toExtract.size());
             } catch (Exception ex) {
                 log.warn("memoryBackfill chunk 失败 i={} {}: {}", i, chunk.size(), ex.getMessage());
             }

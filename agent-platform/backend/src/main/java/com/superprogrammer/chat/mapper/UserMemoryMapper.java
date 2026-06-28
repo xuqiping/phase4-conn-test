@@ -214,6 +214,15 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
     @Update("UPDATE user_memories SET entities=#{entities}::jsonb, memory_key_zh=#{memoryKeyZh} WHERE id=#{id}")
     int updateEntitiesAndKeyZh(@Param("id") Long id, @Param("entities") String entities, @Param("memoryKeyZh") String memoryKeyZh);
 
+    /** V38 回填候选：entities / memory_key_zh / anchor_embedding 任一为空的行（anchor 老数据补填 + entities/key_zh 回填）。 */
+    @Select("SELECT * FROM user_memories WHERE entities IS NULL OR memory_key_zh IS NULL OR anchor_embedding IS NULL")
+    List<UserMemory> findBackfillCandidates();
+
+    /** V38 回填 anchor 两列：halfvec null→COALESCE 保留旧值（embed 失败不丢、下次重试）；不 bump updated_at（不扰动列表排序）。 */
+    @Update("UPDATE user_memories SET anchor_embedding=COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding), "
+            + "anchor_tokens=COALESCE(#{anchorTokens}, anchor_tokens) WHERE id=#{id}")
+    int updateAnchor(@Param("id") Long id, @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
+
     /** KEEP_BOTH 合并：survivor 行 memory_value 改合并值 + 清 conflict_id（变 clean 单行）+ 重 embed。
      *  halfvec 传 null 时 COALESCE 保留旧向量（re-embed 失败不致向量丢失）。
      *  V38：anchor（block+key+entities）合并不变 → COALESCE 保留旧 anchor（null 安全）。 */
