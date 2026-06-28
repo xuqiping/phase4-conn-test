@@ -53,14 +53,19 @@ public class MemoryConflictJudge {
               key=favorite_language → key_zh="编程语言"；key=occupation → key_zh="职业"。
             - 纯英文 key 必须给中文标签；抽不出 → null。
 
-            entities（重要，决定关键词召回准确率）= 召回词袋，三类词都要：
+            entities（重要，决定关键词召回准确率）= 召回词袋，四类词都要：
             1. key_zh 中文标签（必含，如"女儿"）；
             2. 同义变体 1-3 个（角色/称谓/类别词的近义说法，如 女儿→孩子/小孩/闺女；公司→单位/企业；老婆→妻子/爱人）；
-            3. value 里的专有名词（人名/地名/品牌，原文字面词，如"啊闪""北京""Java"）。
+            3. value 里的专有名词（人名/地名/品牌，原文字面词，如"啊闪""北京""Java"）；
+            4. **所属类别泛称/上位词 1-2 个**（决定泛问召回，如 query「带家人出去玩」能召回配偶/孩子/宠物）：
+               - 配偶/妻子/老公/孩子/儿子/女儿/父母/宠物 → 家人；
+               - 公司/职位/职级/单位/行业 → 工作；
+               - 过敏/病史/用药/身高体重 → 健康；
+               - 住址/城市/小区/籍贯 → 居住地。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体
               （child_name → 补"女儿"+"孩子"，否则 query「带女儿去玩」召回不到这条）。
             - 每词 ≤8 字符，共 ≤10 个，去重。
-            - 例：value="啊闪" key=child_name key_zh="女儿" → entities:["女儿","孩子","小孩","啊闪"]；
+            - 例：value="啊闪" key=child_name key_zh="女儿" → entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city key_zh="住址" → entities:["住址","北京","居住地"]；
               value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java"]。
             - 抽不出 → []。
@@ -171,11 +176,11 @@ public class MemoryConflictJudge {
             规则：
             - key_zh = key 的中文主标签（1-6 中文字），据英文 key 语义推断。
               例：key=child_name → key_zh="女儿"；key=home_city → key_zh="住址"；key=favorite_language → key_zh="编程语言"。抽不出 → null。
-            - entities = 召回词袋，三类都要：① key_zh 标签（必含）；② 同义变体 1-3（女儿→孩子/小孩/闺女；公司→单位/企业）；
-              ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）。
+            - entities = 召回词袋，四类都要：① key_zh 标签（必含）；② 同义变体 1-3（女儿→孩子/小孩/闺女；公司→单位/企业）；
+              ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）；④ **所属类别泛称/上位词 1-2 个**（配偶/孩子/宠物→家人；公司/职位→工作；过敏/病史→健康；住址/城市→居住地）。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体。
             - 每词 ≤8 字符，共 ≤10 个，去重。抽不出 entities → []。
-            - 例：value="啊闪" key=child_name → key_zh="女儿", entities:["女儿","孩子","小孩","啊闪"]；
+            - 例：value="啊闪" key=child_name → key_zh="女儿", entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city → key_zh="住址", entities:["住址","北京","居住地"]。
 
             记忆列表（格式 idx|key|value）:
