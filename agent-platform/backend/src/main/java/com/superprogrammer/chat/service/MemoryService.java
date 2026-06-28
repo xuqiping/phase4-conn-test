@@ -434,6 +434,11 @@ public class MemoryService {
      *  VECTOR_KEYWORD：向量 top-K ∪ 关键词(实体列)召回（限 scope）；并集 0 命中 → LLM-key 兜底。
      */
     public String buildMemoryContext(MemoryScope readScope, String query) {
+        return buildMemoryContext(readScope, query, null);
+    }
+
+    /** 带召回过程收集器的重载（trace!=null 仅预览路径，收集粗筛候选/选中/通道计数；真实注入传 null 零开销）。 */
+    public String buildMemoryContext(MemoryScope readScope, String query, RecallTrace trace) {
         String mode = systemSettingService.getMemoryRetrievalMode();
         String keyLang = systemSettingService.getMemoryKeyLanguage();
         int threshold = systemSettingService.getMemoryFullContextThreshold();
@@ -443,7 +448,7 @@ public class MemoryService {
         } else if ("VECTOR_KEYWORD".equals(mode)) {
             context = buildHybridContext(readScope, query);
         } else if ("LLM_KEY".equals(mode)) {
-            context = buildLlmKeyContext(readScope, query);
+            context = buildLlmKeyContext(readScope, query, trace);
         } else {
             context = buildFullContext(readScope, query);
         }
@@ -470,13 +475,53 @@ public class MemoryService {
         int threshold = systemSettingService.getMemoryFullContextThreshold();
         Long total = memoryMapper.countByScope(readScope.userId(), CONF_THRESHOLD,
                 readScope.includeGlobal(), readScope.safeProjectIds());
-        String context = buildMemoryContext(readScope, query);
+        // 预览专用召回过程收集器（仅本路径构造，真实注入路径不传 → 零开销）
+        RecallTrace trace = new RecallTrace();
+        String context = buildMemoryContext(readScope, query, trace);
         boolean twoStage = "LLM_FULL_CONTEXT".equals(mode) && threshold > 0
                 && total != null && total > threshold
                 && query != null && !query.isBlank();
         return com.superprogrammer.chat.dto.MemoryContextPreviewVO.builder()
                 .mode(mode).keyLanguage(keyLang).threshold(threshold)
-                .totalMemories(total).twoStage(twoStage).context(context).build();
+                .totalMemories(total).twoStage(twoStage).context(context)
+                .candidates(toCandidateVOs(trace))
+                .selectedKeys(trace.selectedKeys)
+                .channels(com.superprogrammer.chat.dto.MemoryContextPreviewVO.ChannelHitVO.builder()
+                        .vector(trace.vectorCount).bm25(trace.bm25Count).build())
+                .build();
+    }
+
+    /** trace.candidates → CandidateVO 列表（key_zh + value 预览 + block + scope + 命中通道）。空 → null。 */
+    private List<com.superprogrammer.chat.dto.MemoryContextPreviewVO.CandidateVO> toCandidateVOs(RecallTrace trace) {
+        if (trace == null || trace.candidates == null || trace.candidates.isEmpty()) return null;
+        List<com.superprogrammer.chat.dto.MemoryContextPreviewVO.CandidateVO> out = new ArrayList<>();
+        for (UserMemory m : trace.candidates) {
+            String val = m.getMemoryValue() == null ? "" : m.getMemoryValue();
+            if (val.length() > 60) val = val.substring(0, 60);
+            out.add(com.superprogrammer.chat.dto.MemoryContextPreviewVO.CandidateVO.builder()
+                    .memoryKeyZh(m.getMemoryKeyZh())
+                    .memoryKey(m.getMemoryKey())
+                    .valuePreview(val)
+                    .blockLabel(m.getBlockLabel() == null ? "" : m.getBlockLabel())
+                    .scope(Boolean.TRUE.equals(m.getIsGlobal()) ? "global" : "project")
+                    .channel(trace.channelById.get(m.getId()))
+                    .build());
+        }
+        return out;
+    }
+
+    /** 预览路径召回过程收集器（buildMemoryContext(scope,query,trace) 仅预览构造，真实注入传 null）。
+     *  记录粗筛候选 + 通道归属 + 选中 key + 通道命中数，供前端「召回过程」折叠区展示。 */
+    public static final class RecallTrace {
+        /** 粗筛 top-N 候选（RRF 降序）。 */
+        List<UserMemory> candidates;
+        /** id → 命中通道（vector/bm25/both）。 */
+        final Map<Long, String> channelById = new java.util.LinkedHashMap<>();
+        /** LLM 精排选中 memory_key 列表（rerank=false 时留 null）。 */
+        List<String> selectedKeys;
+        int vectorCount;
+        int bm25Count;
+        void populateChannels(int vec, int bm25) { this.vectorCount = vec; this.bm25Count = bm25; }
     }
 
     /** 向量 top-K 召回（EMBEDDING_VECTOR 模式，限 scope）。无命中/异常 → null。 */
@@ -686,7 +731,7 @@ public class MemoryService {
      *   <li>选中 key 列表经 {@code MemoryQueryCache.getRerankKeys} 缓存（TTL 60s，同 query 命中跳精排 LLM）</li>
      * </ol>
      * 异常降级（宁少勿滥，不回退全量，同 EMBEDDING_VECTOR）：向量挂→仅 BM25；BM25 挂→仅向量；都空→null。 */
-    private String buildLlmKeyContext(MemoryScope readScope, String query) {
+    private String buildLlmKeyContext(MemoryScope readScope, String query, RecallTrace trace) {
         if (query == null || query.isBlank()) return null;
         Long userId = readScope.userId();
         boolean includeGlobal = readScope.includeGlobal();
@@ -712,8 +757,10 @@ public class MemoryService {
             }
         }
 
-        // ② 粗筛：anchor 向量（每 qHalf 一条 ranked list）+ BM25，收集 id→UserMemory 去重表
+        // ② 粗筛：anchor 向量（每 qHalf 一条 ranked list）+ BM25，收集 id→UserMemory 去重表 + 通道归属
         Map<Long, UserMemory> byId = new java.util.LinkedHashMap<>();
+        java.util.Set<Long> vecIds = new java.util.LinkedHashSet<>();
+        java.util.Set<Long> bm25Ids = new java.util.LinkedHashSet<>();
         List<RrfFusion.WeightedList<Long>> channelLists = new ArrayList<>();
         int vecChannels = 0;
         for (String qh : qHalfs) {
@@ -722,7 +769,7 @@ public class MemoryService {
                 if (v != null && !v.isEmpty()) {
                     List<Long> order = new ArrayList<>();
                     for (UserMemory m : v) {
-                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); order.add(m.getId()); }
+                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); vecIds.add(m.getId()); order.add(m.getId()); }
                     }
                     if (!order.isEmpty()) { channelLists.add(new RrfFusion.WeightedList<>(order, LLMKEY_VECTOR_WEIGHT)); vecChannels++; }
                 }
@@ -739,7 +786,7 @@ public class MemoryService {
                 if (b != null && !b.isEmpty()) {
                     List<Long> order = new ArrayList<>();
                     for (UserMemory m : b) {
-                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); order.add(m.getId()); }
+                        if (m != null && m.getId() != null) { byId.putIfAbsent(m.getId(), m); bm25Ids.add(m.getId()); order.add(m.getId()); }
                     }
                     if (!order.isEmpty()) { channelLists.add(new RrfFusion.WeightedList<>(order, LLMKEY_BM25_WEIGHT)); bm25Channels = 1; }
                 }
@@ -747,7 +794,10 @@ public class MemoryService {
                 log.warn("LLM_KEY anchor BM25 检索失败 userId={}: {}", userId, e.getMessage());
             }
         }
-        if (byId.isEmpty()) return null;   // 两通道都空 → 不注入
+        if (byId.isEmpty()) {
+            if (trace != null) trace.populateChannels(0, 0);  // 两通道都空，仅记通道计数
+            return null;
+        }
 
         // ③ RRF 融合（向量权 > 词法权）→ top-N 候选
         List<UserMemory> candidates = RrfFusion.sortByScoreDesc(RrfFusion.fuseWeighted(channelLists, LLMKEY_RRF_K)).stream()
@@ -755,9 +805,21 @@ public class MemoryService {
                 .map(byId::get)
                 .filter(java.util.Objects::nonNull)
                 .collect(Collectors.toList());
-        if (candidates.isEmpty()) return null;
+        if (candidates.isEmpty()) {
+            if (trace != null) trace.populateChannels(vecIds.size(), bm25Ids.size());
+            return null;
+        }
         log.info("LLM_KEY 粗筛 userId={} qHalfs={} 向量通道={} bm25={} → top-{} 候选 首key[{}]",
                 userId, qHalfs.size(), vecChannels, bm25Channels, candidates.size(), candidates.get(0).getMemoryKey());
+        if (trace != null) {
+            for (UserMemory m : candidates) {
+                boolean inVec = vecIds.contains(m.getId());
+                boolean inBm = bm25Ids.contains(m.getId());
+                trace.channelById.put(m.getId(), (inVec && inBm) ? "both" : inVec ? "vector" : "bm25");
+            }
+            trace.candidates = candidates;
+            trace.populateChannels(vecIds.size(), bm25Ids.size());
+        }
 
         // ④ rerank=false：直接注 top-N（跳 LLM 精排）
         if (!rerank) return formatMemories(userId, candidates);
@@ -770,6 +832,7 @@ public class MemoryService {
             return sel == null ? List.of()
                     : sel.stream().map(UserMemory::getMemoryKey).filter(java.util.Objects::nonNull).distinct().collect(Collectors.toList());
         });
+        if (trace != null) trace.selectedKeys = selectedKeys;   // null/空也记（前端区分"精排判无关"vs"未精排"）
         if (selectedKeys == null || selectedKeys.isEmpty()) return null;
         // 缓存命中或刚算：用选中 key 过滤当前候选装配注入（key 维；block 维已在 selectRelevantMemories 内筛）
         Set<String> keySet = new java.util.HashSet<>(selectedKeys);

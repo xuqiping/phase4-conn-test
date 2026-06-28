@@ -470,4 +470,35 @@ class MemoryServiceTest {
         verify(memoryMapper, never()).updateEntitiesAndKeyZh(any(), any(), any());
         verify(memoryMapper).updateAnchor(eq(9L), any(), any());
     }
+
+    // ============================ 预览召回过程透出（V38 D1/D2）============================
+
+    @Test
+    void previewContext_llmKeyMode_exposesCandidatesSelectedKeysChannels() {
+        when(systemSettingService.getMemoryRetrievalMode()).thenReturn("LLM_KEY");
+        when(systemSettingService.getLlmKeyCoarseTopN()).thenReturn(40);
+        when(systemSettingService.getLlmKeyRerank()).thenReturn(true);
+        when(memoryMapper.countByScope(eq(100L), any(), anyBoolean(), any())).thenReturn(5L);
+        when(queryExpansion.expand(any(), eq(RagConfig.MEMORY_EMBED_MODEL)))
+                .thenReturn(new QueryExpansionService.ExpandedQuery("带家人出去玩", List.of("half1")));
+        when(memoryMapper.findTopKByAnchor(eq(100L), any(), anyDouble(), anyInt(), anyBoolean(), any()))
+                .thenReturn(List.of(testMemory));
+        when(memoryMapper.findAnchorBm25(eq(100L), any(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
+        when(queryCache.getRerankKeys(any(), any(), any())).thenAnswer(i -> passthroughLoader(i).get());
+        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of("language"));
+        when(judge.selectRelevantBlocks(any(), any())).thenReturn(List.of(""));
+
+        com.superprogrammer.chat.dto.MemoryContextPreviewVO vo = memoryService.previewContext(GLOBAL, "带家人出去玩");
+
+        assertNotNull(vo);
+        assertEquals("LLM_KEY", vo.getMode());
+        assertNotNull(vo.getCandidates());
+        assertEquals(1, vo.getCandidates().size());
+        assertEquals("language", vo.getCandidates().get(0).getMemoryKey());
+        assertEquals("vector", vo.getCandidates().get(0).getChannel());
+        assertEquals(List.of("language"), vo.getSelectedKeys());
+        assertNotNull(vo.getChannels());
+        assertEquals(1, vo.getChannels().getVector());
+        assertEquals(0, vo.getChannels().getBm25());
+    }
 }
