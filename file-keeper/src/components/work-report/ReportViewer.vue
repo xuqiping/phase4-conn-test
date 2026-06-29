@@ -25,6 +25,16 @@
         </div>
       </div>
       <pre class="flex-1 overflow-auto p-3 rounded-lg bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-border text-xs whitespace-pre-wrap">{{ report.content }}</pre>
+      <div v-if="report?.completionRate !== undefined" class="mt-3 p-3 rounded-lg bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-border">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('workReport.completionRate') }}</span>
+          <span class="text-[var(--accent-subtle-text)]">{{ Math.round(report.completionRate * 100) }}%</span>
+        </div>
+        <div v-if="(report.consecutiveMissDays ?? 0) > 0" class="flex items-center justify-between text-xs mt-2">
+          <span class="font-medium text-red-600 dark:text-red-400">{{ t('workReport.consecutiveMissDays') }}</span>
+          <span class="text-red-600 dark:text-red-400">{{ report.consecutiveMissDays }} {{ t('workReport.days') }}</span>
+        </div>
+      </div>
     </div>
     <div v-else class="h-full flex items-center justify-center text-gray-400">
       {{ t('workReport.emptyReport') }}
