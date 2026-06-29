@@ -70,7 +70,9 @@ public class RuntimeNodeCallbackService {
         }
         Map<String, Object> config = nodeConfig(request);
         List<Long> kbIds = extractKbIds(config, request.getSourceId());
-        String query = stringValue(config.get("query"));
+        // 查询词支持 {{上游别名.输出键}} / {{平铺键}} 模板渲染（与 SKILL/AGENT_REF 一致）：
+        // sidecar 的 callback_input 已把上游节点输出按「别名.输出键」与平铺输出键合并进 request.input。
+        String query = renderQuery(stringValue(config.get("query")), request.getInput());
         if (query == null || query.isBlank()) {
             query = inputMessage(request);   // 回退到上游输入（input/message/prompt/text）
         }
@@ -223,6 +225,23 @@ public class RuntimeNodeCallbackService {
             }
         }
         return context;
+    }
+
+    /**
+     * 渲染检索查询模板 {@code {{上游别名.输出键}} } / {@code {{平铺键}} }。sidecar 的 callback_input 已把
+     * 上游节点输出按「别名.输出键」与平铺输出键合并进 request.input，故直接基于 input 建 VariableStore
+     * 即可（与 SKILL/AGENT_REF 的 effectiveInput 渲染一致）。无 {@code {{}} } 的纯文本原样返回；
+     * 引用了不存在的变量时保留原 token（与 VariableStore.renderTemplate 语义一致）。
+     */
+    private String renderQuery(String template, Map<String, Object> input) {
+        if (template == null || template.isBlank() || input == null || input.isEmpty()) {
+            return template;
+        }
+        com.superprogrammer.engine.context.VariableStore variableStore =
+                new com.superprogrammer.engine.context.VariableStore();
+        input.forEach((key, value) ->
+                variableStore.set(key, value == null ? "" : String.valueOf(value)));
+        return variableStore.renderTemplate(template);
     }
 
     private String inputMessage(RuntimeNodeCallbackRequest request) {

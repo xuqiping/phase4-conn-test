@@ -6,6 +6,8 @@ import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.service.internal.BatchLlmResult;
+import com.superprogrammer.knowledge.service.internal.ExcelExtractResult;
+import com.superprogrammer.knowledge.service.internal.ExcelSheetExtractor;
 import com.superprogrammer.knowledge.service.internal.ExtractedDocument;
 import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.service.internal.Section;
@@ -14,6 +16,7 @@ import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tika.Tika;
@@ -25,8 +28,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -90,6 +95,8 @@ public class DocumentParserService {
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
     private final KnowledgeNodeWriter knowledgeNodeWriter;
+    private final ExcelSheetExtractor excelExtractor;
+    private final SystemSettingService systemSettingService;
 
     /** 监听器入口。宽 catch 有意：LlmGateway 抛裸 RuntimeException、Tika 抛 IOException/TikaException，均汇入 markFailed。 */
     public void parse(Long documentId, Long operatorId) {
@@ -103,6 +110,7 @@ public class DocumentParserService {
         try {
             updateStatus(documentId, "PARSING", operatorId);
             ExtractedDocument extracted = extract(doc);
+            persistParseWarning(documentId, doc.getParseWarning(), operatorId);
             updateStatus(documentId, "SUMMARIZING", operatorId);
             SummaryResult result = switch (strategy) {
                 case "BATCH" -> summarizeBatch(doc, extracted);
@@ -121,12 +129,69 @@ public class DocumentParserService {
 
     // -------------------- 抽取 + 切分 --------------------
 
+    /** 分流：Excel(.xlsx/.xls) 走 POI sheet 维度；其余走 Tika（现状不变）。 */
     private ExtractedDocument extract(KnowledgeDocument doc) {
+        doc.setParseWarning(null);   // 每次解析重置；Excel 路径按需回填降级告警
+        return isExcel(doc) ? extractExcel(doc) : extractTika(doc);
+    }
+
+    private static boolean isExcel(KnowledgeDocument doc) {
+        String ref = doc.getFileRef() == null ? "" : doc.getFileRef().toLowerCase();
+        return ref.endsWith(".xlsx") || ref.endsWith(".xls");
+    }
+
+    /** Excel：POI sheet 级抽取。selectedSheets 从 parse_options 解析；降级告警写回 doc.parseWarning。 */
+    private ExtractedDocument extractExcel(KnowledgeDocument doc) {
         String fileId = stripFileRef(doc.getFileRef());
         if (fileId == null || fileId.isBlank()) {
             throw new RuntimeException("文档无 file_ref，无法读取原文 docId=" + doc.getId());
         }
-        Resource res = fileStorageService.load(fileId);
+        Set<String> selected = readSelectedSheets(doc.getParseOptions());
+        Resource res = fileStorageService.load(fileId, doc.getCreatedBy(), false);
+        ExcelExtractResult result;
+        try (InputStream in = res.getInputStream()) {
+            result = excelExtractor.extract(in, selected,
+                    systemSettingService.getExcelColThreshold(),
+                    systemSettingService.getExcelRowChunkSize(),
+                    systemSettingService.getExcelCellMaxChars(),
+                    systemSettingService.getExcelMaxRowsPerSheet());
+        } catch (Exception e) {
+            throw new RuntimeException("Excel 抽取失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
+        }
+        if (!result.warnings().isEmpty()) {
+            doc.setParseWarning(String.join("；", result.warnings()));
+        }
+        return result.document();
+    }
+
+    /** parse_options.selectedSheets 解析；null/空/格式错 → 空集（= 导全部 sheet）。 */
+    private Set<String> readSelectedSheets(String parseOptions) {
+        if (parseOptions == null || parseOptions.isBlank()) {
+            return Set.of();
+        }
+        try {
+            Map<?, ?> json = objectMapper.readValue(parseOptions, Map.class);
+            Object sel = json.get("selectedSheets");
+            if (sel instanceof List<?> list) {
+                Set<String> set = new HashSet<>();
+                for (Object o : list) {
+                    if (o != null) set.add(String.valueOf(o));
+                }
+                return set;
+            }
+        } catch (Exception ignored) {
+            // 容错：格式错当未选（导全部）
+        }
+        return Set.of();
+    }
+
+    private ExtractedDocument extractTika(KnowledgeDocument doc) {
+        String fileId = stripFileRef(doc.getFileRef());
+        if (fileId == null || fileId.isBlank()) {
+            throw new RuntimeException("文档无 file_ref，无法读取原文 docId=" + doc.getId());
+        }
+        // 走 load 咽喉点：文档 owner（createdBy）即文件 owner，非 admin 解析场景
+        Resource res = fileStorageService.load(fileId, doc.getCreatedBy(), false);
         String text;
         try (InputStream in = res.getInputStream()) {
             Tika tika = new Tika();   // 非线程安全，每次新建
@@ -414,6 +479,22 @@ public class DocumentParserService {
             documentMapper.update(null, uw);
         } catch (Exception e) {
             log.error("标记 FAILED 失败 docId={}: {}", docId, e.getMessage());
+        }
+    }
+
+    /** 持久化非致命解析告警（Excel 截断/降级）；null 则清空（V39 parse_warning）。 */
+    private void persistParseWarning(Long docId, String warning, Long operatorId) {
+        if (warning == null) {
+            warning = "";
+        }
+        try {
+            LambdaUpdateWrapper<KnowledgeDocument> uw = new LambdaUpdateWrapper<>();
+            uw.eq(KnowledgeDocument::getId, docId)
+                    .set(KnowledgeDocument::getParseWarning, warning.isEmpty() ? null : warning)
+                    .set(KnowledgeDocument::getUpdatedBy, operatorId);
+            documentMapper.update(null, uw);
+        } catch (Exception e) {
+            log.error("持久化 parse_warning 失败 docId={}: {}", docId, e.getMessage());
         }
     }
 

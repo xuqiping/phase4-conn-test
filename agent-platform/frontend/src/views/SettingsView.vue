@@ -16,6 +16,9 @@
       <n-tab-pane v-if="authStore.isAdmin" name="rag-memory" tab="RAG/记忆">
         <RagMemorySettingsTab />
       </n-tab-pane>
+      <n-tab-pane v-if="authStore.isAdmin" name="rag-recall" tab="RAG/召回">
+        <RagRecallSettingsTab />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -27,6 +30,7 @@ import UserProviderTab from '@/components/settings/UserProviderTab.vue'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
 import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
 import RagMemorySettingsTab from '@/components/settings/RagMemorySettingsTab.vue'
+import RagRecallSettingsTab from '@/components/settings/RagRecallSettingsTab.vue'
 
 const authStore = useAuthStore()
 </script>

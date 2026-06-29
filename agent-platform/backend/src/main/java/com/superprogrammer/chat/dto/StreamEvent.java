@@ -12,6 +12,8 @@ import lombok.NoArgsConstructor;
 public class StreamEvent {
     private String type;    // CHUNK | THINKING | CITATION | DONE | ERROR
     private String content;
+    /** 当前会话 ID（修 #3：流式建新会话后回读，避免每条消息新建会话）。前端在收到任意事件时读取并回填 currentSessionId。 */
+    private Long sessionId;
 
     public static StreamEvent chunk(String content) {
         return StreamEvent.builder().type("CHUNK").content(content).build();

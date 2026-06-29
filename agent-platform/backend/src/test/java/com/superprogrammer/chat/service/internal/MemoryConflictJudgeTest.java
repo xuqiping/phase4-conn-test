@@ -1,6 +1,7 @@
 package com.superprogrammer.chat.service.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.chat.service.internal.ExtractedFact;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmResponse;
@@ -10,11 +11,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * MemoryConflictJudge 抽取/解析单测（真 judge + mock LlmGateway，验 prompt→parse 链路）。
@@ -60,5 +63,49 @@ class MemoryConflictJudgeTest {
 
         assertEquals(1, facts.size());
         assertTrue(facts.get(0).entities() == null || facts.get(0).entities().isEmpty());
+    }
+
+    @Test
+    void selectRelevantKeysBlocks_oneCallThreeDims() {
+        // 三维合并：一次 chat 调用产出 keys/keys_zh/blocks 三个数组
+        String json = """
+                {"keys":["spouse_name","child_name"],"keys_zh":["妻子","女儿"],"blocks":["家庭信息"]}""";
+        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content(json).build());
+
+        UserMemory spouse = um(193L, "spouse_name", "妻子", "阿斐", "家庭信息");
+        UserMemory child = um(1L, "child_name", "女儿", "小红", "家庭信息");
+        UserMemory work = um(2L, "occupation", "职业", "工程师", "职业");
+
+        MemoryConflictJudge.RelevantDims d = judge.selectRelevantKeysBlocks(
+                "我想带我家人在附近逛逛",
+                List.of(spouse, child, work),
+                List.of("家庭信息", "职业"));
+
+        assertNotNull(d);
+        assertEquals(Set.of("spouse_name", "child_name"), d.keys());
+        assertEquals(Set.of("妻子", "女儿"), d.keysZh());
+        assertEquals(Set.of("家庭信息"), d.blocks());
+        verify(llmGateway, times(1)).chat(any());   // 三维合并仅一次 LLM 调用（砍第二次）
+    }
+
+    @Test
+    void selectRelevantKeysBlocks_llmEmpty_failSafeNull() {
+        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content("").build());
+
+        MemoryConflictJudge.RelevantDims d = judge.selectRelevantKeysBlocks(
+                "q", List.of(um(1L, "k", "标签", "v", "块")), List.of("块"));
+
+        assertNull(d);   // LLM 失败/空 → null（上层不注入）
+    }
+
+    private UserMemory um(long id, String key, String zh, String val, String block) {
+        UserMemory m = new UserMemory();
+        m.setId(id);
+        m.setMemoryKey(key);
+        m.setMemoryKeyZh(zh);
+        m.setMemoryValue(val);
+        m.setBlockLabel(block);
+        m.setConfidence(new BigDecimal("0.9"));
+        return m;
     }
 }

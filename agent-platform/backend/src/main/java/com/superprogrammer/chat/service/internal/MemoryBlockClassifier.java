@@ -26,13 +26,16 @@ public class MemoryBlockClassifier {
     public record BlockResult(String blockLabel, String halfvec) {}
 
     /**
-     * 给一条事实文本（调用方拼 key:value）定块。
+     * 给一条事实文本（调用方拼 key:value）定块。限 writeScope（同 scope 内聚类，不跨 scope 归块）。
+     * @param writeScope 写目标 scope（块聚类限此可见集）
      * @param candidateBlock 抽取 LLM 给的候选块名（仅 sim<阈值 开新块时采用）
      */
-    public BlockResult classify(Long userId, String factText, String candidateBlock) {
+    public BlockResult classify(MemoryScope writeScope, String factText, String candidateBlock) {
         float[] vec = llmGateway.embed(factText, RagConfig.MEMORY_EMBED_MODEL);
+        log.info("classify factText=[{}] vecLen={}", factText, vec == null ? -1 : vec.length);
         String halfvec = HalfVecUtil.toHalfVec(vec);
-        MemoryBlockHit hit = memoryMapper.findNearestBlock(userId, halfvec);
+        MemoryBlockHit hit = memoryMapper.findNearestBlock(writeScope.userId(), halfvec,
+                writeScope.includeGlobal(), writeScope.safeProjectIds());
         if (hit != null && hit.similarity() >= RagConfig.MEMORY_BLOCK_SIM_THRESHOLD) {
             return new BlockResult(hit.blockLabel(), halfvec);
         }

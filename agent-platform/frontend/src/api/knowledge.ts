@@ -50,8 +50,32 @@ export interface KnowledgeDocument {
   fileRef: string | null
   fileHash: string | null
   parseError: string | null
+  /** 解析选项 JSON（Excel selectedSheets 等），前端展示已选 sheet（V39） */
+  parseOptions: string | null
+  /** 非致命解析告警（Excel 截断/降级），前端黄色徽章（V39） */
+  parseWarning: string | null
   createdAt: string
   updatedAt: string | null
+}
+
+/** Excel sheet 预读结果（阶段1 picker）。tempFileRef 阶段2 upload 复用，零重传。 */
+export interface SheetPreview {
+  tempFileRef: string
+  fileName: string
+  sheetNames: string[]
+}
+
+/** 知识节点（对应后端 KnowledgeNodeVO，文档目录树/原文查看用，flat 列表按 parentId 建树） */
+export interface KnowledgeNode {
+  id: number
+  parentId: number | null
+  documentId: number
+  level: string                   // L0 摘要 / L2 原文（L1 在 documents 表）
+  nodeType: string                // DIRECTORY / SECTION / TABLE / FAQ
+  title: string | null
+  content: string | null          // L0 摘要 / L2 原文片段
+  tokenCount: number | null
+  status: string                  // ACTIVE / STALE / ARCHIVED
 }
 
 /** 权限授权记录（对应后端 KnowledgePermissionVO） */
@@ -87,6 +111,7 @@ export interface RagRetrieveRequest {
   docTypes?: string[]
   maxL0?: number
   mode?: string                   // Phase1 仅 BALANCED
+  generateAnswer?: boolean        // false（默认）= 纯检索不调 LLM；true = 生成答案（慢）
 }
 
 export interface RagCitation {
@@ -102,6 +127,26 @@ export interface RagRecallHit {
   title: string
   cosineDistance: number
   cosineSimilarity: number
+}
+
+/** L1 文档向量召回命中（doc 级语义锚，无 nodeId） */
+export interface RagL1RecallHit {
+  documentId: number
+  title: string
+  cosineDistance: number
+  cosineSimilarity: number
+  /** L1 元数据（向量化文本来源）：摘要/大纲/要点，可能为 null */
+  summary: string | null
+  outline: string | null
+  importantRules: string | null
+}
+
+/** 纯 BM25 词法兜底候选（无向量父锚） */
+export interface RagBm25Hit {
+  nodeId: number
+  documentId: number
+  title: string
+  bm25Rank: number | null
 }
 
 export interface RagEvidence {
@@ -131,6 +176,12 @@ export interface RagRetrieveVO {
   answer: string
   citations: RagCitation[]
   candidatesL0: RagRecallHit[]
+  /** L1 文档向量召回命中（空=短路路径未算 L1） */
+  candidatesL1: RagL1RecallHit[]
+  /** 词法兜底是否触发：true=有纯 BM25 候选进入 pool */
+  bm25Fallback: boolean
+  /** 进入 topK 的纯 BM25 候选（bm25Fallback=false 时为空） */
+  candidatesBm25: RagBm25Hit[]
   evidenceL2: RagEvidence[]
   tokenBudget: RagTokenBudget
   latencyMs: number
@@ -204,8 +255,31 @@ export const knowledgeApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
+  /** POST /api/knowledge/documents/sheets/preview — 阶段1 预读 Excel sheet 名（picker）。 */
+  previewSheets(kbId: number, file: File) {
+    const fd = new FormData()
+    fd.append('kbId', String(kbId))
+    fd.append('file', file)
+    return request.post<ApiResponse<SheetPreview>>('/knowledge/documents/sheets/preview', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+  /** POST /api/knowledge/documents/upload — 阶段2 Excel picker 上传（复用 tempFileRef + 选定 sheet）。 */
+  uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[]) {
+    const fd = new FormData()
+    fd.append('kbId', String(kbId))
+    fd.append('tempFileRef', tempFileRef)
+    selectedSheets.forEach(s => fd.append('selectedSheets', s))
+    return request.post<ApiResponse<KnowledgeDocument>>('/knowledge/documents/upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
   deleteDocument(id: number) {
     return request.delete<ApiResponse<void>>(`/knowledge/documents/${id}`)
+  },
+  /** GET /api/knowledge/documents/{docId}/nodes — 文档目录树/原文节点（knowledge:read） */
+  listDocumentNodes(docId: number) {
+    return request.get<ApiResponse<KnowledgeNode[]>>(`/knowledge/documents/${docId}/nodes`)
   },
 
   // ---- 权限 ----
@@ -223,9 +297,10 @@ export const knowledgeApi = {
   },
 
   // ---- 检索调试 ----
-  /** POST /api/knowledge/retrieve — 检索调试，返回完整候选/证据/引用/预算（knowledge:read） */
+  /** POST /api/knowledge/retrieve — 检索调试，返回完整候选/证据/引用/预算（knowledge:read）
+   *  同步生成完整答案（含 LLM 调用），单次可达 15s+，需高于全局 15s timeout，否则 axios 中断 → ERR_ABORTED → 页面空白 */
   retrieve(data: RagRetrieveRequest) {
-    return request.post<ApiResponse<RagRetrieveVO>>('/knowledge/retrieve', data)
+    return request.post<ApiResponse<RagRetrieveVO>>('/knowledge/retrieve', data, { timeout: 60000 })
   },
 
   // ---- 检索审计（knowledge:manage，管理员）----

@@ -47,6 +47,10 @@ class ChatSessionServiceTest {
     @Mock private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
     @Mock private MemoryConflictService conflictService;
     @Mock private com.superprogrammer.chat.service.internal.MemoryConflictJudge conflictJudge;
+    // V33 项目记忆 scope 解析（mock 返回 globalOnly，避免碰 projectService）
+    @Mock private MemoryScopeResolver memoryScopeResolver;
+    // streaming concatWith 体必调 getMemoryProcessMode()（在 ragOn 门控外），未 mock → NPE 被 onErrorResume 吞 → ASSISTANT 不落库
+    @Mock private com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
@@ -58,6 +62,12 @@ class ChatSessionServiceTest {
         testSession = new ChatSession();
         testSession.setId(1L);
         testSession.setUserId(100L);
+        // V33：scope resolver 默认返 globalOnly（ragOn=false 也会解析 scope，须非 null）
+        com.superprogrammer.chat.service.internal.MemoryScope global =
+                com.superprogrammer.chat.service.internal.MemoryScope.globalOnly(100L);
+        org.mockito.Mockito.lenient().when(memoryScopeResolver.resolveReadScope(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(global);
+        org.mockito.Mockito.lenient().when(memoryScopeResolver.resolveWriteScope(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(global);
+        org.mockito.Mockito.lenient().when(memoryScopeResolver.resolveWriteTarget(any())).thenReturn(null);
         testSession.setMode("CHAT");
         testSession.setStatus("ACTIVE");
         testSession.setDeleted(0);

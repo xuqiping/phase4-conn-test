@@ -636,27 +636,28 @@ public class MemoryService {
         return filterRelevantKeys(readScope, query, all);
     }
 
-    /** 两阶段召回公共筛（V38 双维度 key + block_label）：三路径共用（fullContext 超阈值 / hybrid 0命中兜底 / LLM_KEY 精排）。
+    /** 两阶段召回公共筛（V38 三维 key × key_zh × block_label，一次 LLM）：三路径共用
+     * （fullContext 超阈值 / hybrid 0命中兜底 / LLM_KEY 精排）。
      * <ol>
-     *   <li>distinct memory_key → judge.selectRelevantKeys 选相关 key（召回优先）；</li>
-     *   <li>distinct block_label（null→""）→ judge.selectRelevantBlocks 选相关 block；</li>
-     *   <li>交集装配：key∈相关 且 block∈相关。</li>
+     *   <li>distinct memory_key（带 key_zh/value）+ distinct block_label（null→""）→ judge.selectRelevantKeysBlocks
+     *       一次 LLM 同时选 keys / keys_zh / blocks（召回优先）；</li>
+     *   <li>三维 AND 交集装配：key∈keys 且 key_zh∈keys_zh 且 block∈blocks。</li>
      * </ol>
-     * 剔重在 Java 端（Stream.distinct），不新增 DB 查询。容错（召回优先，宁多勿漏）：
-     * key 筛挂/空 → 单走 block；block 筛挂/空 → 单走 key；都挂/空 → null。注入只留 key+value（丢 category/block/entities/confidence 噪声由 formatLine 控）。
+     * 剔重在 Java 端（Stream），不新增 DB 查询。容错：单次 LLM 失败/解析失败 → null（不注入，宁缺毋滥）。
+     * key_zh 空白行（老数据无中文标签）通配通过该维，不被误杀。注入只留 key+value（噪声由 formatLine 控）。
      * key 匹配始终用英文 memory_key；key 语言设置只影响 formatLine 展示。 */
     private String filterRelevantKeys(MemoryScope readScope, String query, List<UserMemory> allMemories) {
         List<UserMemory> sel = selectRelevantMemories(readScope, query, allMemories);
         return sel == null ? null : formatMemories(readScope.userId(), sel);
     }
 
-    /** 双维度精排核心（key∩block），返回选中记忆（未格式化）。null = 输入空 / 两维都挂空 / 异常。
+    /** 三维精排核心（key ∩ key_zh ∩ block），返回选中记忆（未格式化）。null = 输入空 / LLM 失败 / 三维交集空 / 异常。
      *  供 filterRelevantKeys（格式化注入）与 LLM_KEY 缓存 loader（取选中 key 列表）共用。 */
     private List<UserMemory> selectRelevantMemories(MemoryScope readScope, String query, List<UserMemory> allMemories) {
         if (allMemories == null || allMemories.isEmpty()) return null;
         Long userId = readScope.userId();
         try {
-            // distinct memory_key（同 key 多行去重，省 token）→ selectRelevantKeys 灌 key:value
+            // distinct memory_key（同 key 多行去重，省 token；每行带 key_zh/value 供 LLM 展示+校验）
             List<UserMemory> distinctByKey = new ArrayList<>(allMemories.stream()
                     .collect(Collectors.toMap(UserMemory::getMemoryKey, m -> m, (a, b) -> a, java.util.LinkedHashMap::new))
                     .values());
@@ -664,33 +665,29 @@ public class MemoryService {
                     .map(m -> m.getBlockLabel() == null ? "" : m.getBlockLabel())
                     .distinct().collect(Collectors.toList());
 
-            // key 筛：异常或空 → 视作该维无效（单走 block）
-            Set<String> relevantKeys = selectDim(userId, "key", () -> judge.selectRelevantKeys(query, distinctByKey));
-            Set<String> relevantBlocks = selectDim(userId, "block", () -> judge.selectRelevantBlocks(query, distinctBlocks));
-            if (relevantKeys == null && relevantBlocks == null) return null;   // 两维都挂/空
+            // 三维合并一次 LLM（keys + keys_zh + blocks）；失败/解析失败 → null（不注入，fail-safe）
+            MemoryConflictJudge.RelevantDims dims = judge.selectRelevantKeysBlocks(query, distinctByKey, distinctBlocks);
+            if (dims == null) return null;
 
-            final Set<String> fk = relevantKeys;
-            final Set<String> fb = relevantBlocks;
+            final Set<String> fk = dims.keys();
+            final Set<String> fkz = dims.keysZh();
+            final Set<String> fb = dims.blocks();
+            // 三维 AND 交集；key_zh 空白行（老数据无标签）通配通过该维，避免被误杀
             List<UserMemory> sel = allMemories.stream()
-                    .filter(m -> (fk == null || fk.contains(m.getMemoryKey()))
-                              && (fb == null || fb.contains(m.getBlockLabel() == null ? "" : m.getBlockLabel())))
+                    .filter(m -> fk.contains(m.getMemoryKey())
+                              && keyZhPassesDim(m.getMemoryKeyZh(), fkz)
+                              && fb.contains(m.getBlockLabel() == null ? "" : m.getBlockLabel()))
                     .collect(Collectors.toList());
             return sel.isEmpty() ? null : sel;
         } catch (Exception e) {
-            log.warn("selectRelevantMemories 双维度筛失败 userId={}: {} → 不注入", userId, e.getMessage(), e);
+            log.warn("selectRelevantMemories 三维筛失败 userId={}: {} → 不注入", userId, e.getMessage(), e);
             return null;
         }
     }
 
-    /** 单维度 LLM 筛封装：异常或空结果 → 返回 null（视作该维无效，交另一维兜底）。非空 → set。 */
-    private Set<String> selectDim(Long userId, String dim, java.util.function.Supplier<List<String>> selector) {
-        try {
-            List<String> r = selector.get();
-            return (r == null || r.isEmpty()) ? null : new java.util.HashSet<>(r);
-        } catch (Exception e) {
-            log.warn("filterRelevantKeys {} 维筛挂，单走另一维 userId={}: {}", dim, userId, e.getMessage());
-            return null;
-        }
+    /** key_zh 维判定：行 key_zh 空白（老数据无中文标签）→ 通配通过；否则需 ∈ 选中集合 keysZh。 */
+    private static boolean keyZhPassesDim(String keyZh, Set<String> keysZh) {
+        return keyZh == null || keyZh.isBlank() || (keysZh != null && keysZh.contains(keyZh));
     }
 
     /**
@@ -1064,6 +1061,64 @@ public class MemoryService {
                 backfillEntities();
             } catch (Exception e) {
                 log.error("memoryBackfill 异步任务失败", e);
+            }
+        });
+    }
+
+    /** 全量重抽老记忆 entities 词袋（维护用，与 {@link #backfillEntities()} 互补）：
+     *  无视 NULL 过滤，按当前 extract prompt 为所有老记忆重抽 entities（含上位词），保留 key_zh 不动，
+     *  重 embed anchor（block + 老 key_zh + key + 新 entities）。用途：entities 抽取 prompt 改动后让老数据吃新规则
+     *  （回填只补 NULL，已填行 '[]'/'' 非空 → 跳过，改 prompt 后老数据无法刷新）。
+     *  <p>fail-safe：LLM 抽空的行保留旧 entities（防回归），与回填的 '[]' 幂等标记不同——重抽是手动触发，护数据优先于幂等。
+     *  <p>不 bump updated_at（不扰动记忆列表排序）。admin 端点经 {@link #reextractEntitiesAsync()} 异步触发避免 HTTP 超时。
+     * @return 实际重抽行数（抽空跳过的不计）。 */
+    public int reextractEntities() {
+        List<UserMemory> rows = memoryMapper.findAllMemories();
+        if (rows.isEmpty()) {
+            log.info("memoryReextract 无记忆行");
+            return 0;
+        }
+        log.info("memoryReextract 待重抽 {} 行（按当前 prompt 刷 entities，保留 key_zh）", rows.size());
+        int updated = 0, skipped = 0;
+        java.util.Set<Long> touchedUsers = new java.util.HashSet<>();
+        int batchSize = 20;
+        for (int i = 0; i < rows.size(); i += batchSize) {
+            List<UserMemory> chunk = rows.subList(i, Math.min(i + batchSize, rows.size()));
+            try {
+                java.util.Map<Long, MemoryConflictJudge.BackfillRow> res = judge.batchExtractEntities(chunk);
+                for (UserMemory m : chunk) {
+                    MemoryConflictJudge.BackfillRow r = res.get(m.getId());
+                    if (r == null || r.entities() == null || r.entities().isEmpty()) {
+                        skipped++;   // LLM 抽空 → 保留旧 entities（防回归），不覆写
+                        continue;
+                    }
+                    String json = entitiesJson(r.entities());
+                    if (json == null) { skipped++; continue; }
+                    String oldKeyZh = m.getMemoryKeyZh();   // 保留老 key_zh（重抽只刷 entities 词袋）
+                    memoryMapper.updateEntitiesAndKeyZh(m.getId(), json, oldKeyZh);
+                    // entities 变 → anchor 文本变 → 重 embed（用老 key_zh + 新 entities）
+                    AnchorEmbedding ae = embedAnchor(m.getBlockLabel(), oldKeyZh, m.getMemoryKey(), json);
+                    memoryMapper.updateAnchor(m.getId(), ae.halfvec(), ae.tokens());
+                    touchedUsers.add(m.getUserId());
+                    updated++;
+                }
+                log.info("memoryReextract chunk {}-{} 完成", i, i + chunk.size());
+            } catch (Exception ex) {
+                log.warn("memoryReextract chunk 失败 i={} {}: {}", i, chunk.size(), ex.getMessage());
+            }
+        }
+        touchedUsers.forEach(queryCache::evictUser);
+        log.info("memoryReextract 完成，重抽 {} 行，跳过 {} 行（LLM 抽空保留旧值）", updated, skipped);
+        return updated;
+    }
+
+    /** 异步触发全量重抽（admin 端点用，fire-and-forget 到 memoryTaskExecutor，避免 HTTP 超时）。 */
+    public void reextractEntitiesAsync() {
+        memoryTaskExecutor.execute(() -> {
+            try {
+                reextractEntities();
+            } catch (Exception e) {
+                log.error("memoryReextract 异步任务失败", e);
             }
         });
     }

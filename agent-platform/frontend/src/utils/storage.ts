@@ -12,7 +12,8 @@ export const STORAGE_KEYS = {
   THEME: 'app_theme',
   SIDEBAR_COLLAPSED: 'sidebar_collapsed',
   CHAT_SELECTED_MODEL: 'chat_selected_model',
-  CHAT_SELECTED_TARGET: 'chat_selected_target'
+  CHAT_SELECTED_TARGET: 'chat_selected_target',
+  CHAT_RAG_ENABLED: 'chat_rag_enabled'
 } as const
 
 /**

@@ -128,7 +128,8 @@ public class RagRetrievalService {
             // step1 可见集
             VisibleSet vs = step1VisibleSet(kb, userId, admin);
             if (!vs.allDocs && vs.docIds.isEmpty()) {
-                return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of());
+                return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of(),
+                        false, List.of(), List.of());
             }
 
             // B4：query 多路扩展（规范 query + 释义 + HyDE），返回 halfvec 列表（规范第一个）
@@ -152,7 +153,9 @@ public class RagRetrievalService {
                             .traceId(traceId).abstained(false).abstainReason(null)
                             .answer(p.getAnswer())
                             .citations(toCitationVOs(p.getCitations()))
-                            .candidatesL0(List.of()).evidenceL2(List.of())
+                            .candidatesL0(List.of()).candidatesL1(List.of())
+                            .bm25Fallback(false).candidatesBm25(List.of())
+                            .evidenceL2(List.of())
                             .tokenBudget(budget).latencyMs(System.currentTimeMillis() - t0).build();
                     trace.setL2LexicalFallback(false);   // CACHE_HIT 在 step6 前 short-circuit，补 NOT NULL 默认值防 trace 写失败
                     writeTrace(trace, List.of(), List.of(), budget, "CACHE_HIT", t0, req);
@@ -163,7 +166,8 @@ public class RagRetrievalService {
             // step3 硬过滤（可见集 ∩ docTypes）
             FilterScope scope = step3FilterScope(vs, req.getDocTypes(), req.getKbId());
             if (!scope.allDocs && scope.docIds.isEmpty()) {
-                return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of());
+                return finishAbstain(trace, budget, t0, "NO_VISIBLE_DOCS", req, List.of(), List.of(),
+                        false, List.of(), List.of());
             }
 
             // step4 目录路由（Phase1 降级全库，hook）
@@ -173,8 +177,10 @@ public class RagRetrievalService {
             int maxL0 = req.getMaxL0() != null ? req.getMaxL0() : ragConfig.getMaxL0Candidates();
             List<RecallHit> l0 = multiDenseRecallL0(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             List<L1DocHit> l1 = multiDenseRecallL1(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
+            trace.setCandidatesL1(l1HitsToJson(l1));   // Phase3 L1 trace 列（短路前未算的路径留 null）
             if (l0.isEmpty() && l1.isEmpty()) {
-                return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of());
+                return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of(),
+                        false, List.of(), List.of());
             }
 
             // step6 L2 候选 + rerank 代理（Phase3：L1 doc 级语义锚跨通道融合）
@@ -185,36 +191,52 @@ public class RagRetrievalService {
                         + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
             }
             List<L2Candidate> topK = pickTopK(pool, ragConfig.getMaxL2Read());
+            List<L2Candidate> bm25OnlyCands = topK.stream().filter(L2Candidate::bm25Only).toList();
             trace.setL2LexicalFallback(bm25Fallback[0]);
 
             // step7 软拒答（hard/soft 双阈）：best sim 取 L0 父 sim 与 L1 doc sim 较大者（Phase3：L1 可救 L0 漏召回）
             double bestSim = topK.stream().mapToDouble(c -> Math.max(c.parentL0Sim(), c.docL1Sim())).max().orElse(0);
             boolean grayZone = bestSim < recallProps.getAbstain().getSoft();
             if (bestSim < recallProps.getAbstain().getHard()) {
-                return finishAbstain(trace, budget, t0, "LOW_CONFIDENCE", req, l0, toEvidencePreview(topK));
+                return finishAbstain(trace, budget, t0, "LOW_CONFIDENCE", req, l0, l1,
+                        bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
             }
 
-            // step8 evidence + 生成 + Citation
+            // step8 evidence 装载（检索产物到此齐备；生成按需）
             List<Evidence> evidence = step8LoadEvidence(topK);
             if (evidence.isEmpty()) {
-                return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, l0, List.of());
+                return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, l0, l1,
+                        bm25Fallback[0], bm25OnlyCands, List.of());
             }
             EvidencePack pack = fitToBudget(evidence, cap);
+            budget.setPromptTokens(TokenEstimator.estimate(pack.prompt()));
+
+            String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
+            trace.setCragVerdict(verdict);
+
+            // 纯检索调试（默认）：不调 LLM 生成，直接返回候选/证据/预算。要答案去 /ask（SSE 流式）。
+            if (!req.isGenerateAnswer()) {
+                RagRetrieveVO retrieveOnlyVo = buildVo(traceId, false, null, "", List.of(), evidence,
+                        pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
+                retrieveOnlyVo.setLowConfidence(grayZone);
+                writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
+                return retrieveOnlyVo;
+            }
+
+            // 生成答案 + Citation 校验（generateAnswer=true 才走）
             String answer = generate(req.getQuery(), pack, userId, false);
             List<Integer> cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
             if (cited == null) {
                 answer = generate(req.getQuery(), pack, userId, true);   // A1 重试一次
                 cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
                 if (cited == null) {
-                    return finishAbstain(trace, budget, t0, "CITATION_CHECK_FAIL", req, l0, toEvidencePreview(topK));
+                    return finishAbstain(trace, budget, t0, "CITATION_CHECK_FAIL", req, l0, l1,
+                            bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
                 }
             }
 
-            String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
-            trace.setCragVerdict(verdict);
-            budget.setPromptTokens(TokenEstimator.estimate(pack.prompt()));
             RagRetrieveVO vo = buildVo(traceId, false, null, answer, cited, evidence,
-                    pack.injected(), l0, budget, t0);
+                    pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
             vo.setLowConfidence(grayZone);
             writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
             // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
@@ -321,6 +343,7 @@ public class RagRetrievalService {
 
             int maxL0 = ragConfig.getMaxL0Candidates();
             List<RecallHit> allL0 = new ArrayList<>();
+            List<L1DocHit> allL1 = new ArrayList<>();
             List<L2Candidate> allPool = new ArrayList<>();
             boolean[] bm25Fallback = {false};
 
@@ -339,6 +362,7 @@ public class RagRetrievalService {
                     continue;
                 }
                 allL0.addAll(l0);
+                allL1.addAll(l1);
                 List<L2Candidate> poolK = gatherL2Candidates(query, l0, kbId, bm25Fallback, l1);
                 if (poolK.size() > ragConfig.getMaxRerankPairs()) {
                     throw new IllegalStateException("B3 违规(per-kb): pool=" + poolK.size()
@@ -348,6 +372,7 @@ public class RagRetrievalService {
             }
 
             trace.setL2LexicalFallback(bm25Fallback[0]);   // D1 trace：多 KB 合并 BM25 回退标记（NOT NULL 列）
+            trace.setCandidatesL1(l1HitsToJson(allL1));    // Phase3 L1 trace 列（多 KB 合并 doc 级命中）
 
             if (allPool.isEmpty()) {
                 writeTraceMerged(trace, allL0, List.of(), budget, "NO_DENSE_HITS", t0, effectiveKbs, query, userId);
@@ -445,6 +470,7 @@ public class RagRetrievalService {
         l.setQuery(query);
         l.setRewrittenQuery(query);
         l.setMode(mode);
+        l.setL2LexicalFallback(false);   // NOT NULL 兜底（同 newLog），防 step6 前早退路径漏登记
         return l;
     }
 
@@ -467,7 +493,9 @@ public class RagRetrievalService {
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
-            log.warn("写 rag_retrieval_logs 失败（不影响结果）: {}", e.getMessage());
+            // 审计写失败不致命（不影响主流程），但升 ERROR + trace_id 便于捞漏登记根因
+            log.error("写 rag_retrieval_logs 失败 traceId={}（不影响主流程结果）: {}",
+                    trace.getTraceId(), e.getMessage(), e);
         }
     }
 
@@ -830,7 +858,9 @@ public class RagRetrievalService {
 
     private RagRetrieveVO finishAbstain(RagRetrievalLog trace, RagRetrieveVO.TokenBudgetVO budget,
                                         long t0, String verdict, RagRetrieveRequest req,
-                                        List<RecallHit> l0, List<Evidence> evidencePreview) {
+                                        List<RecallHit> l0, List<L1DocHit> l1,
+                                        boolean bm25Fallback, List<L2Candidate> bm25OnlyCands,
+                                        List<Evidence> evidencePreview) {
         trace.setCragVerdict(verdict);
         RagRetrieveVO vo = RagRetrieveVO.builder()
                 .traceId(trace.getTraceId())
@@ -839,6 +869,9 @@ public class RagRetrievalService {
                 .answer(ABSTAIN_MSG)
                 .citations(List.of())
                 .candidatesL0(toRecallVOs(l0))
+                .candidatesL1(toL1RecallVOs(l1))
+                .bm25Fallback(bm25Fallback)
+                .candidatesBm25(toBm25VOs(bm25OnlyCands))
                 .evidenceL2(toEvidenceVOs(evidencePreview))
                 .tokenBudget(budget)
                 .latencyMs(System.currentTimeMillis() - t0)
@@ -850,6 +883,7 @@ public class RagRetrievalService {
     private RagRetrieveVO buildVo(String traceId, boolean abstained, String reason, String answer,
                                  List<Integer> cited, List<Evidence> allEvidence,
                                  List<Evidence> injected, List<RecallHit> l0,
+                                 List<L1DocHit> l1, boolean bm25Fallback, List<L2Candidate> bm25OnlyCands,
                                  RagRetrieveVO.TokenBudgetVO budget, long t0) {
         Map<Integer, Evidence> byIdx = new LinkedHashMap<>();
         for (Evidence e : injected) {
@@ -867,6 +901,9 @@ public class RagRetrievalService {
                 .traceId(traceId).abstained(abstained).abstainReason(reason).answer(answer)
                 .citations(citations)
                 .candidatesL0(toRecallVOs(l0))
+                .candidatesL1(toL1RecallVOs(l1))
+                .bm25Fallback(bm25Fallback)
+                .candidatesBm25(toBm25VOs(bm25OnlyCands))
                 .evidenceL2(toEvidenceVOs(allEvidence))
                 .tokenBudget(budget)
                 .latencyMs(System.currentTimeMillis() - t0)
@@ -892,8 +929,23 @@ public class RagRetrievalService {
             trace.setTokenBudget(toJson(budget));
             logMapper.insertTrace(trace);
         } catch (Exception e) {
-            log.warn("写 rag_retrieval_logs 失败（不影响结果）: {}", e.getMessage());
+            // 审计写失败不致命（不影响主流程），但升 ERROR + trace_id 便于捞漏登记根因
+            log.error("写 rag_retrieval_logs 失败 traceId={}（不影响主流程结果）: {}",
+                    trace.getTraceId(), e.getMessage(), e);
         }
+    }
+
+    /** L1 doc 级命中 → trace JSON（documentId/title/cosine 距离与相似度）。短路前未算 → null（不写）。 */
+    private String l1HitsToJson(List<L1DocHit> l1) {
+        if (l1 == null || l1.isEmpty()) {
+            return null;
+        }
+        return toJson(l1.stream().map(h -> Map.of(
+                "documentId", h.documentId(),
+                "title", String.valueOf(h.title()),
+                "cosineDistance", h.cosineDistance(),
+                "cosineSimilarity", h.cosineSim()))
+                .toList());
     }
 
     private RagRetrievalLog newLog(String traceId, Long userId, RagRetrieveRequest req, String mode) {
@@ -906,6 +958,9 @@ public class RagRetrievalService {
         l.setQuery(req.getQuery());
         l.setRewrittenQuery(req.getQuery());
         l.setMode(mode);
+        // NOT NULL 兜底：l2_lexical_fallback 装箱 Boolean 默认 null，step6 前早退路径（NO_VISIBLE_DOCS/
+        // 早期 NO_DENSE_HITS）不会设它 → insertTrace 撞 NOT NULL → writeTrace catch 静默丢。这里统一 false。
+        l.setL2LexicalFallback(false);
         return l;
     }
 
@@ -926,6 +981,50 @@ public class RagRetrievalService {
         return l0.stream().map(h -> RagRetrieveVO.RecallHitVO.builder()
                 .nodeId(h.nodeId()).documentId(h.documentId()).title(h.title())
                 .cosineDistance(h.cosineDistance()).cosineSimilarity(h.cosineSim()).build()).toList();
+    }
+
+    private List<RagRetrieveVO.L1RecallHitVO> toL1RecallVOs(List<L1DocHit> l1) {
+        if (l1 == null || l1.isEmpty()) {
+            return List.of();
+        }
+        // 仅 /retrieve 调试链路调用：每命中 doc 取 l1_metadata（summary/outline/rules）展示。
+        // hot path（retrieveEvidence）不经此方法，无 per-doc 查询开销。
+        return l1.stream().map(h -> {
+            L1Display d = loadL1Display(h.documentId());
+            return RagRetrieveVO.L1RecallHitVO.builder()
+                    .documentId(h.documentId()).title(h.title())
+                    .cosineDistance(h.cosineDistance()).cosineSimilarity(h.cosineSim())
+                    .summary(d.summary()).outline(d.outline()).importantRules(d.rules()).build();
+        }).toList();
+    }
+
+    /** L1 doc 显示元数据（summary/outline/rules 拼接），调试展示用。无 l1_metadata → 三 null。 */
+    private L1Display loadL1Display(Long docId) {
+        RagQueryRow.L1Row row = queryMapper.fetchL1Metadata(docId);
+        if (row == null || row.getL1Metadata() == null || row.getL1Metadata().isBlank()) {
+            return new L1Display(null, null, null);
+        }
+        try {
+            L1Metadata l1 = objectMapper.readValue(row.getL1Metadata(), L1Metadata.class);
+            String outline = (l1.getOutline() == null || l1.getOutline().isEmpty())
+                    ? null : String.join("；", l1.getOutline());
+            String rules = (l1.getImportantRules() == null || l1.getImportantRules().isEmpty())
+                    ? null : String.join("；", l1.getImportantRules());
+            return new L1Display(l1.getSummary(), outline, rules);
+        } catch (Exception e) {
+            log.warn("L1 显示元数据解析失败 docId={}: {}", docId, e.getMessage());
+            return new L1Display(null, null, null);
+        }
+    }
+
+    /** topK 中纯 BM25 候选（bm25Only=true）→ Bm25HitVO（调试展示词法兜底通道贡献）。 */
+    private List<RagRetrieveVO.Bm25HitVO> toBm25VOs(List<L2Candidate> bm25OnlyCands) {
+        if (bm25OnlyCands == null || bm25OnlyCands.isEmpty()) {
+            return List.of();
+        }
+        return bm25OnlyCands.stream().map(c -> RagRetrieveVO.Bm25HitVO.builder()
+                .nodeId(c.nodeId()).documentId(c.documentId()).title(c.title())
+                .bm25Rank(c.bm25Rank()).build()).toList();
     }
 
     private List<RagRetrieveVO.EvidenceVO> toEvidenceVOs(List<Evidence> ev) {
@@ -973,6 +1072,10 @@ public class RagRetrievalService {
     }
 
     private record L1Outline(String docType, String outline, String rules) {
+    }
+
+    /** L1 显示元数据（summary + outline/rules 拼接串），调试展示用。 */
+    private record L1Display(String summary, String outline, String rules) {
     }
 
     private L1Outline loadL1(Long docId) {

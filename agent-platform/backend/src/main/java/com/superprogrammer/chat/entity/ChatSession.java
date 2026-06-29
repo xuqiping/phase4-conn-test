@@ -28,4 +28,14 @@ public class ChatSession extends BaseEntity {
 
     /** 记忆模式开关（V26，null=继承 agent/workflow/global）。 */
     private Boolean ragEnabled;
+
+    /** 项目记忆写目标（V33，新事实落这，null=总记忆会话）。 */
+    private Long projectId;
+
+    /** 读开关：是否注入总记忆（V33，默认 true）。 */
+    private Boolean memIncludeGlobal;
+
+    /** 读开关：开启读取的项目 id 集合（V33，扁平对称开关集，经权限过滤后用）。 */
+    @TableField(typeHandler = LongArrayTypeHandler.class)
+    private List<Long> memReadProjectIds;
 }

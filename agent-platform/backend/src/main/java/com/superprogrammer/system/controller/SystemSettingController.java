@@ -124,6 +124,19 @@ public class SystemSettingController {
     }
 
     /**
+     * 老记忆关键词重抽（维护用，与 backfill 互补）：无视 NULL 过滤，按当前 extract prompt 为全部老记忆
+     * 重抽 entities 词袋（含上位词），保留 key_zh 不动、重 embed anchor。用于 entities 抽取 prompt 改动后
+     * 让老数据吃新规则（backfill 只补 NULL，已填行跳过）。异步、admin only；LLM 抽空的行保留旧 entities（防回归）。
+     * 进度见后端日志 memoryReextract。
+     */
+    @PostMapping("/rag-memory/reextract-entities")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<String>> reextractMemoryEntities() {
+        memoryService.reextractEntitiesAsync();
+        return ResponseEntity.ok(R.ok("已启动老记忆关键词重抽（异步），进度见后端日志 memoryReextract", "STARTED"));
+    }
+
+    /**
      * 历史记忆冲突脏数据清理：把 conflict 已 RESOLVED 但记忆行仍带 conflict_id 的残留（旧 KEEP_BOTH
      * "双行共存"遗留）按 (user, key) 合并成一条 clean。异步、幂等可重跑。进度见后端日志 memoryCleanup。
      */

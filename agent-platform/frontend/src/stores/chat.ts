@@ -22,6 +22,17 @@ export const useChatStore = defineStore('chat', () => {
   const selectedTarget = ref<string>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_TARGET) || DEFAULT_CHAT_TARGET
   )
+  // 项目记忆 scope（V33）：写目标 + 读开关（扁平对称）。store 持态，sendMessage 直接读。
+  const memProjectId = ref<number | null>(null)        // 写目标（null=总记忆会话）
+  const memIncludeGlobal = ref<boolean>(true)          // 读开关：总记忆 on/off
+  const memReadProjectIds = ref<number[]>([])          // 读开关：开启读取的项目集合
+
+  /** 请求体用的 scope 字段（memIncludeGlobal 始终带 = scope 更新标记，后端据此持久化三列）。 */
+  const memoryScopePayload = computed(() => ({
+    projectId: memProjectId.value,
+    memIncludeGlobal: memIncludeGlobal.value,
+    memReadProjectIds: memReadProjectIds.value
+  }))
 
   let ws: WebSocket | null = null
 
@@ -94,6 +105,19 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 批量删除会话（ownership 过滤，后端返实删条数）。删后本地过滤；当前会话在内则清空。
+  async function batchDeleteSessions(ids: number[]) {
+    const res = await chatApi.batchDeleteSessions(ids)
+    const deleted = res.data.data
+    const idSet = new Set(ids)
+    sessions.value = sessions.value.filter(s => !idSet.has(s.id))
+    if (currentSessionId.value && idSet.has(currentSessionId.value)) {
+      currentSessionId.value = null
+      messages.value = []
+    }
+    return deleted
+  }
+
   // REST send (non-streaming fallback)
   async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean) {
     sending.value = true
@@ -110,7 +134,7 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, ...memoryScopePayload.value })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -119,7 +143,8 @@ export const useChatStore = defineStore('chat', () => {
           message: content,
           ...targetPayload,
           model: selectedModel.value ?? undefined,
-          ragEnabled
+          ragEnabled,
+          ...memoryScopePayload.value
         })
       }
 
@@ -165,20 +190,22 @@ export const useChatStore = defineStore('chat', () => {
         ? chatApi.streamMessage(currentSessionId.value, {
             message: content,
             model: selectedModel.value ?? undefined,
-            ragEnabled
+            ragEnabled,
+            ...memoryScopePayload.value
           })
         : chatApi.streamNewMessage({
             message: content,
             ...resolveSelectedTargetPayload(),
             model: selectedModel.value ?? undefined,
-            ragEnabled
+            ragEnabled,
+            ...memoryScopePayload.value
           })
 
-      // 10s timeout for initial response
+      // 60s timeout for initial response（修 #1：原 10s 对 AGENT/工作流等非真流式首字节太短，频繁误超时→REST 回退双跑更慢）
       const response = await Promise.race([
         fetchPromise,
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('SSE timeout')), 10000)
+          setTimeout(() => reject(new Error('SSE timeout')), 60000)
         )
       ])
 
@@ -209,6 +236,10 @@ export const useChatStore = defineStore('chat', () => {
             try {
               const evt = JSON.parse(jsonStr)
               gotData = true
+              // 修 #3：流式建新会话后回读 sessionId，避免每条消息新建会话（后端每个事件都带 sessionId）
+              if (evt.sessionId) {
+                currentSessionId.value = evt.sessionId
+              }
               switch (evt.type) {
                 case 'CHUNK':
                   streamingContent.value += evt.content || ''
@@ -384,6 +415,45 @@ export const useChatStore = defineStore('chat', () => {
     setSelectedTarget(nextTarget)
   }
 
+  // ---- 记忆冲突轮询（ASYNC 模式下冲突靠此浮现：chat view 常驻 3s 轮询，memory 按钮角标 + 顶部状态条）----
+  const activeConflictCount = ref(0)
+  const memoryProcessing = ref(0)
+  const memoryIncident = ref<string | null>(null)
+  let conflictPollTimer: ReturnType<typeof setInterval> | null = null
+
+  async function loadActiveConflicts() {
+    // 一次拉 status（冲突计数 + 抽取进行中计数），省去每 3s 拉全量 list
+    try {
+      const res = await chatApi.getMemoryStatus()
+      const s = (res as any)?.data?.data
+      activeConflictCount.value = s ? Number(s.conflictCount) || 0 : 0
+      memoryProcessing.value = s ? Number(s.processingCount) || 0 : 0
+    } catch {
+      // 静默：未登录/网络异常不计数
+    }
+    // 记忆写入异常（不静默吞）：有则暴露给 UI 弹一次（后端取即清）
+    try {
+      const ir = await chatApi.getMemoryIncident()
+      const msg = (ir as any)?.data?.data
+      if (msg) memoryIncident.value = msg
+    } catch {
+      // 静默
+    }
+  }
+
+  function startConflictPoll() {
+    void loadActiveConflicts()
+    if (conflictPollTimer) return
+    conflictPollTimer = setInterval(() => { void loadActiveConflicts() }, 3000)
+  }
+
+  function stopConflictPoll() {
+    if (conflictPollTimer) {
+      clearInterval(conflictPollTimer)
+      conflictPollTimer = null
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -397,6 +467,9 @@ export const useChatStore = defineStore('chat', () => {
     selectedModel,
     selectedTarget,
     visibleTargetValue,
+    activeConflictCount,
+    memoryProcessing,
+    memoryIncident,
     setSelectedModel,
     setSelectedTarget,
     updateCurrentSessionTarget,
@@ -404,10 +477,18 @@ export const useChatStore = defineStore('chat', () => {
     fetchSessions,
     selectSession,
     deleteSession,
+    batchDeleteSessions,
     sendMessage,
     sendWSMessage,
     sendStreamingMessage,
     connectWS,
-    disconnectWS
+    disconnectWS,
+    startConflictPoll,
+    stopConflictPoll,
+    loadActiveConflicts,
+    // 项目记忆 scope（V33）
+    memProjectId,
+    memIncludeGlobal,
+    memReadProjectIds
   }
 })

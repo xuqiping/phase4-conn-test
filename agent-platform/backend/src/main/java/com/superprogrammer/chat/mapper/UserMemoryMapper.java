@@ -218,6 +218,11 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
     @Select("SELECT * FROM user_memories WHERE entities IS NULL OR memory_key_zh IS NULL OR anchor_embedding IS NULL")
     List<UserMemory> findBackfillCandidates();
 
+    /** 全量重抽候选（维护用，与 {@link #findBackfillCandidates} 的 NULL 过滤无关）：所有行，
+     *  供「重抽关键词」按当前 extract prompt 重新抽 entities 词袋。user_memories 无 deleted 列，不过滤软删。 */
+    @Select("SELECT * FROM user_memories")
+    List<UserMemory> findAllMemories();
+
     /** V38 回填 anchor 两列：halfvec null→COALESCE 保留旧值（embed 失败不丢、下次重试）；不 bump updated_at（不扰动列表排序）。 */
     @Update("UPDATE user_memories SET anchor_embedding=COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding), "
             + "anchor_tokens=COALESCE(#{anchorTokens}, anchor_tokens) WHERE id=#{id}")

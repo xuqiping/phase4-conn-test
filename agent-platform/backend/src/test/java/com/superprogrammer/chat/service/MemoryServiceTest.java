@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -122,7 +123,7 @@ class MemoryServiceTest {
         }
         when(memoryMapper.findFullContext(eq(100L), any(), anyBoolean(), any())).thenReturn(many);
         when(systemSettingService.getMemoryFullContextThreshold()).thenReturn(20);
-        when(judge.selectRelevantKeys(eq("我用什么编程"), any())).thenReturn(List.of("language"));
+        when(judge.selectRelevantKeysBlocks(eq("我用什么编程"), any(), any())).thenReturn(dims("language"));
 
         String context = memoryService.buildFullContext(GLOBAL, "我用什么编程");
 
@@ -145,7 +146,7 @@ class MemoryServiceTest {
         }
         when(memoryMapper.findFullContext(eq(100L), any(), anyBoolean(), any())).thenReturn(many);
         when(systemSettingService.getMemoryFullContextThreshold()).thenReturn(20);
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of());
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(dimsEmpty());
 
         String context = memoryService.buildFullContext(GLOBAL, "无关问题");
 
@@ -285,7 +286,7 @@ class MemoryServiceTest {
         when(memoryMapper.findTopKByVector(any(), any(), anyDouble(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
         when(memoryMapper.findByKeyword(any(), any(), anyBoolean(), any())).thenReturn(List.of());
         when(memoryMapper.findAllClean(eq(100L), anyBoolean(), any())).thenReturn(List.of(testMemory));
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of("language"));
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(dims("language"));
 
         String context = memoryService.buildMemoryContext(GLOBAL, "推荐点啥");
 
@@ -300,7 +301,7 @@ class MemoryServiceTest {
         when(memoryMapper.findTopKByVector(any(), any(), anyDouble(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
         when(memoryMapper.findByKeyword(any(), any(), anyBoolean(), any())).thenReturn(List.of());
         when(memoryMapper.findAllClean(eq(100L), anyBoolean(), any())).thenReturn(List.of(testMemory));
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of());
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(dimsEmpty());
 
         String context = memoryService.buildMemoryContext(GLOBAL, "推荐点啥");
 
@@ -337,8 +338,7 @@ class MemoryServiceTest {
                 .thenReturn(List.of(testMemory));
         when(memoryMapper.findAnchorBm25(eq(100L), any(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
         when(queryCache.getRerankKeys(any(), any(), any())).thenAnswer(i -> passthroughLoader(i).get());
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of("language"));
-        when(judge.selectRelevantBlocks(any(), any())).thenReturn(List.of(""));
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(dims("language"));
 
         String context = memoryService.buildMemoryContext(GLOBAL, "带家人出去玩");
 
@@ -361,7 +361,7 @@ class MemoryServiceTest {
 
         assertNotNull(context);
         assertTrue(context.contains("Java"));
-        verify(judge, never()).selectRelevantKeys(any(), any());
+        verify(judge, never()).selectRelevantKeysBlocks(any(), any(), any());
     }
 
     @Test
@@ -377,7 +377,7 @@ class MemoryServiceTest {
         String context = memoryService.buildMemoryContext(GLOBAL, "带家人出去玩");
 
         assertNull(context);
-        verify(judge, never()).selectRelevantKeys(any(), any());
+        verify(judge, never()).selectRelevantKeysBlocks(any(), any(), any());
     }
 
     @Test
@@ -485,8 +485,7 @@ class MemoryServiceTest {
                 .thenReturn(List.of(testMemory));
         when(memoryMapper.findAnchorBm25(eq(100L), any(), anyInt(), anyBoolean(), any())).thenReturn(List.of());
         when(queryCache.getRerankKeys(any(), any(), any())).thenAnswer(i -> passthroughLoader(i).get());
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of("language"));
-        when(judge.selectRelevantBlocks(any(), any())).thenReturn(List.of(""));
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(dims("language"));
 
         com.superprogrammer.chat.dto.MemoryContextPreviewVO vo = memoryService.previewContext(GLOBAL, "带家人出去玩");
 
@@ -500,5 +499,15 @@ class MemoryServiceTest {
         assertNotNull(vo.getChannels());
         assertEquals(1, vo.getChannels().getVector());
         assertEquals(0, vo.getChannels().getBm25());
+    }
+
+    /** RelevantDims 构造：keys={key}、blocks={""}（testMemory blockLabel=null→""）、keysZh 空（testMemory keyZh=null 通配）。 */
+    private static MemoryConflictJudge.RelevantDims dims(String key) {
+        return new MemoryConflictJudge.RelevantDims(Set.of(key), Set.of(), Set.of(""));
+    }
+
+    /** RelevantDims 全空：模拟 LLM 判三维均无相关 → AND 空 → 不注入。 */
+    private static MemoryConflictJudge.RelevantDims dimsEmpty() {
+        return new MemoryConflictJudge.RelevantDims(Set.of(), Set.of(), Set.of());
     }
 }

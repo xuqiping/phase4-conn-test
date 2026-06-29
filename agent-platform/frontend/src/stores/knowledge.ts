@@ -46,6 +46,18 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     await loadDocuments(kbId)
   }
 
+  /** 阶段1：预读 Excel sheet 名（picker 交互）。 */
+  async function previewSheets(kbId: number, file: File) {
+    const res = await knowledgeApi.previewSheets(kbId, file)
+    return res.data.data
+  }
+
+  /** 阶段2：Excel picker 上传（复用 tempFileRef + 选定 sheet）。 */
+  async function uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[]) {
+    await knowledgeApi.uploadDocumentSheets(kbId, tempFileRef, selectedSheets)
+    await loadDocuments(kbId)
+  }
+
   async function deleteDocument(id: number, kbId: number) {
     await knowledgeApi.deleteDocument(id)
     await loadDocuments(kbId)
@@ -66,6 +78,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     loadBases,
     loadDocuments,
     uploadDocument,
+    previewSheets,
+    uploadDocumentSheets,
     deleteDocument,
     selectKb
   }

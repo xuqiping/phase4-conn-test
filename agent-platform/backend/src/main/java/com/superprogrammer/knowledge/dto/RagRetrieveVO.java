@@ -18,6 +18,12 @@ public class RagRetrieveVO {
     private String answer;
     private List<CitationVO> citations;
     private List<RecallHitVO> candidatesL0;
+    /** L1 文档向量召回命中（Phase3；空=短路路径未算 L1）。调试用，让 doc 级语义锚通道可见。 */
+    private List<L1RecallHitVO> candidatesL1;
+    /** 词法兜底是否触发（rag_retrieval_logs.l2_lexical_fallback 同源）：true=有纯 BM25（无向量父锚）候选进入 pool。 */
+    private boolean bm25Fallback;
+    /** 进入 rerank topK 的纯 BM25 候选（bm25Only=true，无 L0/L1 父锚，纯词法兜底命中）。空=bm25Fallback=false。 */
+    private List<Bm25HitVO> candidatesBm25;
     private List<EvidenceVO> evidenceL2;
     private TokenBudgetVO tokenBudget;
     private long latencyMs;
@@ -39,6 +45,32 @@ public class RagRetrieveVO {
         private String title;
         private double cosineDistance;
         private double cosineSimilarity;
+    }
+
+    /** L1 文档向量召回命中（doc 级语义锚，无 nodeId，按 documentId 去重）。 */
+    @Data
+    @Builder
+    public static class L1RecallHitVO {
+        private Long documentId;
+        private String title;
+        private double cosineDistance;
+        private double cosineSimilarity;
+        /** L1 元数据（向量化文本来源，调试展示用）：摘要。空=该文档无 l1_metadata。 */
+        private String summary;
+        /** 大纲各项"；"拼接。 */
+        private String outline;
+        /** 要点各项"；"拼接。 */
+        private String importantRules;
+    }
+
+    /** 纯 BM25 词法兜底候选（无 L0/L1 父锚，仅词法命中）。bm25Rank 可空（未算/非词法来源）。 */
+    @Data
+    @Builder
+    public static class Bm25HitVO {
+        private Long nodeId;
+        private Long documentId;
+        private String title;
+        private Double bm25Rank;
     }
 
     @Data

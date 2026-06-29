@@ -57,17 +57,22 @@ public class MemoryConflictJudge {
             1. key_zh 中文标签（必含，如"女儿"）；
             2. 同义变体 1-3 个（角色/称谓/类别词的近义说法，如 女儿→孩子/小孩/闺女；公司→单位/企业；老婆→妻子/爱人）；
             3. value 里的专有名词（人名/地名/品牌，原文字面词，如"啊闪""北京""Java"）；
-            4. **所属类别泛称/上位词 1-2 个**（决定泛问召回，如 query「带家人出去玩」能召回配偶/孩子/宠物）：
-               - 配偶/妻子/老公/孩子/儿子/女儿/父母/宠物 → 家人；
-               - 公司/职位/职级/单位/行业 → 工作；
-               - 过敏/病史/用药/身高体重 → 健康；
-               - 住址/城市/小区/籍贯 → 居住地。
+            4. **所属类别泛称/上位词**（决定泛问召回，如 query「带家人出去玩」能召回配偶/孩子/宠物。**至少 5 个，能多则多——概念越宽泛（家庭/工作/居住等高频类别）越往 8-10 靠，上限 10**；只有该类别真实存在的上位词确实不足 5 个时才减少，勿无故压到 1-2 个。下面每类列了多个候选，挑贴切的都补，**不止于下列——可自行补充该类别其他常见 2+ 字上位词**；事实横跨多类别时叠加。全用 2 字以上词，**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
+               - 配偶/妻子/老公/孩子/儿子/女儿/父母/亲属/宠物 → 家人 / 家庭 / 亲属 / 家属 / 亲人 / 眷属 / 家眷 / 族亲 / 至亲；
+               - 公司/职位/职级/单位/行业/薪水/上班 → 工作 / 职业 / 职场 / 事业 / 岗位 / 职务 / 就业 / 差事 / 营生；
+               - 过敏/病史/用药/身高/体重/体检/疾病 → 健康 / 身体 / 体质 / 医疗 / 病史 / 体能 / 体征 / 体格 / 状况；
+               - 住址/城市/小区/籍贯/搬家/租住/老家 → 居住地 / 住址 / 居住 / 住所 / 住处 / 定居 / 落户 / 居所 / 寓所；
+               - 学校/专业/学历/院校/考研/学位/老师 → 教育 / 学历 / 学业 / 学习 / 求学 / 深造 / 在校 / 读书 / 进修；
+               - 爱好/喜好/口味/音乐/运动/电影/书籍/游戏 → 偏好 / 爱好 / 喜好 / 兴趣 / 口味 / 品味 / 消遣 / 嗜好 / 偏爱；
+               - 电话/邮箱/微信/QQ/地址/联系方式 → 联系方式 / 联系 / 通讯 / 联络 / 通联 / 账号 / 渠道 / 通讯录 / 社交；
+               - 收入/工资/存款/理财/资产/房贷/股票 → 财务 / 收入 / 资产 / 财富 / 经济 / 薪金 / 钱财 / 收支 / 进项；
+               - 名字/姓名/年龄/生日/性别/属相/星座 → 基本信息 / 个人 / 档案 / 资料 / 身份 / 简介 / 概况 / 履历 / 本人。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体
               （child_name → 补"女儿"+"孩子"，否则 query「带女儿去玩」召回不到这条）。
-            - 每词 ≤8 字符，共 ≤10 个，去重。
+            - 每词 ≤8 字符，共 ≤20 个，去重。
             - 例：value="啊闪" key=child_name key_zh="女儿" → entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city key_zh="住址" → entities:["住址","北京","居住地"]；
-              value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java"]。
+              value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java","偏好","爱好"]。
             - 抽不出 → []。
 
             key 命名（重要，决定去重/冲突识别准确率）：
@@ -128,44 +133,32 @@ public class MemoryConflictJudge {
             - 用户回复意图不清（没明确选）→ isAnswer=false, keep="UNCLEAR"。
             JSON:""";
 
-    /** 兜底 key 筛选：向量+关键词都漏召时，把全部记忆 key=>value 灌 LLM 挑相关的 key。 */
-    private static final String SELECT_KEYS_PROMPT = """
-            你是用户记忆检索助手。从下列【用户已有记忆】中，挑出与用户当前问题相关、可能对回答有帮助的记忆 key。
+    /** 三维合并 key 筛（V38 优化）：keys + keys_zh + blocks 一次 LLM 出，砍掉原先 key/block 两次调用。
+     *  召回优先（宁多选）。三路径共用（fullContext 超阈值 / hybrid 0命中兜底 / LLM_KEY 精排）。 */
+    private static final String SELECT_KEYS_BLOCKS_PROMPT = """
+            你是用户记忆检索助手。一次性完成三维度筛选：
+            ① 从【用户已有记忆】挑与问题相关的英文 memory_key；
+            ② 从中挑相关的中文标签 key_zh；
+            ③ 从【信息块列表】挑相关的 block_label。
+            三维独立判断，召回优先（宁多选，仅明显无关才不选，不确定倾向选择）。
 
-            判定要点（宁多选，召回优先）：
+            判定要点：
             - 相关 = 能帮回答/影响建议/提供该用户专属上下文。
-            - 例：问"带女儿去哪玩" → 孩子年龄/孩子喜好/居住地 都算相关（年龄影响适合的场所，居住地影响推荐）。
-            - 例：问"今晚吃什么" → 饮食偏好/忌口/过敏 算相关。
-            - 仅明显无关的才不选。不确定时倾向选择。
+            - 例：问"带家人出去玩" → keys 含 spouse_name/child_name/pet_dog_name；keys_zh 含 妻子/女儿/宠物；blocks 含 家庭信息。
+            - 例：问"今晚吃什么" → keys 含 dietary_preference；keys_zh 含 饮食偏好/忌口；blocks 含 偏好/健康。
+            - key_zh 是 key 的中文标签（妻子/女儿/住址…），跟 key 配对出现；同一行相关时 keys 和 keys_zh 里对应项都要选。
 
             用户问题: %s
-            用户已有记忆(key: value 列表):
+            用户已有记忆（中文标签(英文键): 值）:
             %s
-
-            输出契约（必须严格遵守）：
-            - 只输出一个 JSON 字符串数组，元素为相关的 memory_key，原样复制上面列表里的 key（不要改写）。
-            - 无相关 → 输出 []。不要 markdown 围栏或解释。
-            JSON:""";
-
-    /** V38 LLM_KEY 双维度筛 block 维度：从候选 block_label 列表挑与问题相关的块（宁多选，召回优先）。 */
-    private static final String SELECT_BLOCKS_PROMPT = """
-            你是用户记忆检索助手。从下列【信息块名称】中，挑出与用户当前问题相关的块。
-            信息块是记忆的分类标签（如「家庭信息」「职业」「偏好」「健康」「居住地」）。挑出其下可能含相关记忆的块。
-
-            判定要点（宁多选，召回优先）：
-            - 相关 = 该块下可能有帮回答/影响建议/提供该用户专属上下文的记忆。
-            - 例：问「带女儿去哪玩」→ 「家庭信息」相关（孩子属家庭）。
-            - 例：问「今晚吃什么」→ 「偏好」「健康」相关（忌口/过敏）。
-            - 例：问「家人出去玩」→ 「家庭信息」相关（配偶/孩子/宠物都是家人）。
-            - 仅明显无关的才不选。不确定时倾向选择。
-
-            用户问题: %s
             信息块列表:
             %s
 
             输出契约（必须严格遵守）：
-            - 只输出一个 JSON 字符串数组，元素为相关的 block_label，原样复制上面列表里的名称（不要改写）。
-            - 无相关 → 输出 []。不要 markdown 围栏或解释。
+            - 只输出一个 JSON 对象，不要 markdown 围栏或解释：
+              {"keys":["相关英文键",...], "keys_zh":["相关中文标签",...], "blocks":["相关信息块",...]}
+            - 三字段都原样复制上面列表里的值（keys 取英文键、keys_zh 取中文标签、blocks 取信息块名），不要改写。
+            - 某维无相关 → 该字段输出 []。
             JSON:""";
 
     /** 老数据回填：一批记忆批量抽中文标签 key_zh + 召回词袋 entities（≤20条/次）。idx = 记忆 id。 */
@@ -177,9 +170,13 @@ public class MemoryConflictJudge {
             - key_zh = key 的中文主标签（1-6 中文字），据英文 key 语义推断。
               例：key=child_name → key_zh="女儿"；key=home_city → key_zh="住址"；key=favorite_language → key_zh="编程语言"。抽不出 → null。
             - entities = 召回词袋，四类都要：① key_zh 标签（必含）；② 同义变体 1-3（女儿→孩子/小孩/闺女；公司→单位/企业）；
-              ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）；④ **所属类别泛称/上位词 1-2 个**（配偶/孩子/宠物→家人；公司/职位→工作；过敏/病史→健康；住址/城市→居住地）。
+              ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）；
+              ④ **所属类别泛称/上位词**（决定泛问召回。**至少 5 个，能多则多——概念越宽泛越往 8-10 靠，上限 10**；只有该类别真实上位词确实不足 5 个时才减少，勿无故压到 1-2 个；**不止于下列候选，可自行补该类别其他常见 2+ 字上位词**；全用 2 字以上词**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
+              配偶/孩子/父母/宠物→家人/家庭/亲属/家属/亲人/眷属/家眷/族亲/至亲；公司/职位/单位→工作/职业/职场/事业/岗位/职务/就业/差事/营生；过敏/病史/身高体重→健康/身体/体质/医疗/病史/体能/体征/体格/状况；
+              住址/城市/搬家→居住地/住址/居住/住所/住处/定居/落户/居所/寓所；学校/专业/学历→教育/学历/学业/学习/求学/深造/在校/读书/进修；爱好/口味/运动→偏好/爱好/喜好/兴趣/口味/品味/消遣/嗜好/偏爱；
+              电话/邮箱/微信→联系方式/联系/通讯/联络/通联/账号/渠道/通讯录/社交；收入/工资/房贷→财务/收入/资产/财富/经济/薪金/钱财/收支/进项；名字/年龄/生日→基本信息/个人/档案/资料/身份/简介/概况/履历/本人。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体。
-            - 每词 ≤8 字符，共 ≤10 个，去重。抽不出 entities → []。
+            - 每词 ≤8 字符，共 ≤20 个，去重。抽不出 entities → []。
             - 例：value="啊闪" key=child_name → key_zh="女儿", entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city → key_zh="住址", entities:["住址","北京","居住地"]。
 
@@ -291,69 +288,62 @@ public class MemoryConflictJudge {
     /** 回填单条结果：召回词袋 entities + 中文标签 keyZh。 */
     public record BackfillRow(List<String> entities, String keyZh) {}
 
-    /** VECTOR_KEYWORD 兜底：向量+关键词均 0 命中时，把用户全部 clean 记忆的 key=>value 列表灌 LLM，
-     *  让它挑出与当前问题相关的 key（宁多选）。返回相关 key 列表（原样复制）；失败/无关 → 空。
-     *  这就是"先加载标签(key)让 LLM 判断再加载 value"的正确落地——仅在漏召时触发，非常驻路径。 */
-    public List<String> selectRelevantKeys(String query, List<UserMemory> allMemories) {
-        if (query == null || query.isBlank() || allMemories == null || allMemories.isEmpty()) return List.of();
+    /** 三维筛结果（V38 合并）：相关英文 key 集合 + 相关中文 key_zh 集合 + 相关 block 集合。
+     *  调用方做三维 AND 交集装配。空集合 = LLM 判该维无相关（参与 AND，可能致结果空）。 */
+    public record RelevantDims(Set<String> keys, Set<String> keysZh, Set<String> blocks) {}
+
+    /** 三维合并一次 LLM（V38 优化）：keys + keys_zh + blocks 一次出，取代原 key/block 两次调用。
+     *  召回优先（宁多选）。distinctByKey 已按 memory_key 去重（每行带 key_zh/value 供展示+校验）。
+     *  返回三维集合（均原样复制、过白名单校验）；query 空 / 入参空 / LLM 失败 / 解析失败 → null（上层降级不注入）。 */
+    public RelevantDims selectRelevantKeysBlocks(String query, List<UserMemory> distinctByKey, List<String> distinctBlocks) {
+        if (query == null || query.isBlank() || distinctByKey == null || distinctByKey.isEmpty()) return null;
         try {
-            String list = allMemories.stream()
-                    .map(m -> "- " + m.getMemoryKey() + ": " + m.getMemoryValue())
+            String memList = distinctByKey.stream()
+                    .map(m -> "- " + zhKeyDisplay(m) + ": " + m.getMemoryValue())
                     .collect(java.util.stream.Collectors.joining("\n"));
-            String raw = chat(String.format(SELECT_KEYS_PROMPT, query, list));
+            String blockList = (distinctBlocks == null || distinctBlocks.isEmpty()) ? "- "
+                    : distinctBlocks.stream().map(b -> "- " + b).collect(java.util.stream.Collectors.joining("\n"));
+            String raw = chat(String.format(SELECT_KEYS_BLOCKS_PROMPT, query, memList, blockList));
             JsonNode root = parseJson(stripFence(raw));
-            if (root == null || !root.isArray()) {
-                log.warn("selectRelevantKeys 返回非 JSON 数组, fail-safe 空: {}", raw == null ? "(null)" : truncate(raw));
-                return List.of();
+            if (root == null || !root.isObject()) {
+                log.warn("selectRelevantKeysBlocks 返回非 JSON 对象, fail-safe null: {}", raw == null ? "(null)" : truncate(raw));
+                return null;
             }
-            java.util.Set<String> valid = allMemories.stream()
+            java.util.Set<String> validKeys = distinctByKey.stream()
                     .map(UserMemory::getMemoryKey).collect(java.util.stream.Collectors.toSet());
-            List<String> out = new ArrayList<>();
-            for (JsonNode k : root) {
-                if (k == null) continue;
-                String s = k.asText();
-                if (s != null && valid.contains(s) && !out.contains(s)) out.add(s);
-            }
-            return out;
+            java.util.Set<String> validZh = distinctByKey.stream()
+                    .map(UserMemory::getMemoryKeyZh)
+                    .filter(s -> s != null && !s.isBlank())
+                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> validBlocks = distinctBlocks == null ? java.util.Collections.emptySet()
+                    : new java.util.HashSet<>(distinctBlocks);
+            return new RelevantDims(
+                    pickValidStrs(root.get("keys"), validKeys),
+                    pickValidStrs(root.get("keys_zh"), validZh),
+                    pickValidStrs(root.get("blocks"), validBlocks));
         } catch (Exception e) {
-            log.warn("selectRelevantKeys 失败 fail-safe 空: {}", e.getMessage());
-            return List.of();
+            log.warn("selectRelevantKeysBlocks 失败 fail-safe null: {}", e.getMessage());
+            return null;
         }
     }
 
-    /** V38 LLM_KEY 精排：候选超 maxCandidates 时截断（防 token 爆，LLM 只碰 top-N 不碰全量）。
-     *  2 参重载保留（兜底路径传全量，无截断）。 */
-    public List<String> selectRelevantKeys(String query, List<UserMemory> candidates, int maxCandidates) {
-        if (candidates == null) return List.of();
-        List<UserMemory> capped = (maxCandidates > 0 && candidates.size() > maxCandidates)
-                ? new ArrayList<>(candidates.subList(0, maxCandidates)) : candidates;
-        return selectRelevantKeys(query, capped);
+    /** key_zh(key) 展示串：有中文标签 → 妻子(spouse_name)；无 → 仅英文键。供 prompt 列表展示。 */
+    private static String zhKeyDisplay(UserMemory m) {
+        String zh = m.getMemoryKeyZh();
+        String key = m.getMemoryKey();
+        return (zh == null || zh.isBlank()) ? key : zh + "(" + key + ")";
     }
 
-    /** V38 LLM_KEY 双维度筛 block 维度：从候选 block_label 列表挑与问题相关的块（原样复制，宁多选）。
-     *  范式照 selectRelevantKeys；失败/无关 → 空。null 视作 ""（与 filterRelevantKeys 归一对齐）。 */
-    public List<String> selectRelevantBlocks(String query, List<String> distinctBlocks) {
-        if (query == null || query.isBlank() || distinctBlocks == null || distinctBlocks.isEmpty()) return List.of();
-        try {
-            String list = distinctBlocks.stream().map(b -> "- " + b).collect(java.util.stream.Collectors.joining("\n"));
-            String raw = chat(String.format(SELECT_BLOCKS_PROMPT, query, list));
-            JsonNode root = parseJson(stripFence(raw));
-            if (root == null || !root.isArray()) {
-                log.warn("selectRelevantBlocks 返回非 JSON 数组, fail-safe 空: {}", raw == null ? "(null)" : truncate(raw));
-                return List.of();
-            }
-            java.util.Set<String> valid = new java.util.HashSet<>(distinctBlocks);
-            List<String> out = new ArrayList<>();
-            for (JsonNode b : root) {
-                if (b == null) continue;
-                String s = b.asText();
-                if (s != null && valid.contains(s) && !out.contains(s)) out.add(s);
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("selectRelevantBlocks 失败 fail-safe 空: {}", e.getMessage());
-            return List.of();
+    /** JSON 数组节点 → 过白名单的字符串集合（原样复制 + 去重 + 保序）。null/非数组/空白名单 → 空集。 */
+    private static Set<String> pickValidStrs(JsonNode arr, java.util.Set<String> valid) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (arr == null || !arr.isArray() || valid == null || valid.isEmpty()) return out;
+        for (JsonNode n : arr) {
+            if (n == null) continue;
+            String s = n.asText();
+            if (s != null && valid.contains(s)) out.add(s);
         }
+        return out;
     }
 
     // ---- Jackson 解析 helpers ----
@@ -385,7 +375,7 @@ public class MemoryConflictJudge {
             s = s.trim();
             if (s.isBlank() || s.length() > 8) continue;
             if (seen.add(s)) out.add(s);
-            if (out.size() >= 10) break;
+            if (out.size() >= 20) break;
         }
         return out;
     }

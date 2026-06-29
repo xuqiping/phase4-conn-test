@@ -3,6 +3,7 @@ package com.superprogrammer.knowledge.controller;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
+import com.superprogrammer.knowledge.dto.SheetPreviewVO;
 import com.superprogrammer.knowledge.service.KnowledgeDocumentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,12 +28,26 @@ public class KnowledgeDocumentController {
 
     private final KnowledgeDocumentService knowledgeDocumentService;
 
+    /** 阶段1：预读 Excel sheet 名（picker）。存文件 + POI 只读名，不建文档行。 */
+    @PostMapping("/sheets/preview")
+    @RequirePermission("knowledge:write")
+    public ResponseEntity<R<SheetPreviewVO>> previewSheets(@RequestParam("kbId") Long kbId,
+                                                           @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(R.ok(knowledgeDocumentService.previewSheets(
+                kbId, file, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。 */
     @PostMapping("/upload")
     @RequirePermission("knowledge:write")
-    public ResponseEntity<R<KnowledgeDocumentVO>> upload(@RequestParam("kbId") Long kbId,
-                                                         @RequestParam("file") MultipartFile file) {
+    public ResponseEntity<R<KnowledgeDocumentVO>> upload(
+            @RequestParam("kbId") Long kbId,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "tempFileRef", required = false) String tempFileRef,
+            @RequestParam(value = "selectedSheets", required = false) List<String> selectedSheets) {
         return ResponseEntity.ok(R.ok("上传成功",
-                knowledgeDocumentService.upload(kbId, file, getCurrentUserId(), isAdmin())));
+                knowledgeDocumentService.upload(kbId, file, tempFileRef, selectedSheets,
+                        getCurrentUserId(), isAdmin())));
     }
 
     @GetMapping

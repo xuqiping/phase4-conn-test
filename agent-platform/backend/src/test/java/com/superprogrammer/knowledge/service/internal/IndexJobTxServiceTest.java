@@ -146,6 +146,9 @@ class IndexJobTxServiceTest {
         when(nodeMapper.selectById(10L)).thenReturn(n);
         when(indexJobMapper.update(isNull(), any())).thenReturn(1);
         when(indexJobMapper.countPendingRunningByDoc(99L)).thenReturn(0L);  // 文档全完成
+        KnowledgeDocument doc = new KnowledgeDocument();   // markDocIndexedIfDone 转换时读 doc 取 fileRef
+        doc.setId(99L);
+        when(documentMapper.selectById(99L)).thenReturn(doc);
         when(documentMapper.update(isNull(), any())).thenReturn(1);
 
         service.completeUpsert(1L, 10L, 99L, 7L, "doubao-embedding-vision", "[0.1]", "hash");

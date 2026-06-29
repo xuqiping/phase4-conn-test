@@ -16,6 +16,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -58,8 +59,8 @@ class MemoryPreviewDebugIT extends AbstractIntegrationTest {
         when(queryExpansion.expand(any(), any()))
                 .thenReturn(new QueryExpansionService.ExpandedQuery("带家人出去玩", List.of(halfAxis(0))));
         when(llmGateway.embed(any(), any())).thenReturn(halfAxisFloats(0));
-        when(judge.selectRelevantKeys(any(), any())).thenReturn(List.of("spouse"));
-        when(judge.selectRelevantBlocks(any(), any())).thenReturn(List.of("family"));
+        when(judge.selectRelevantKeysBlocks(any(), any(), any())).thenReturn(
+                new MemoryConflictJudge.RelevantDims(Set.of("spouse"), Set.of("配偶"), Set.of("family")));
     }
 
     @AfterEach

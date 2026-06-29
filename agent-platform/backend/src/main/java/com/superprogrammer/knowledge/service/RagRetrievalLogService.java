@@ -82,6 +82,7 @@ public class RagRetrievalLogService {
         vo.setLatencyMs(l.getLatencyMs());
         vo.setCreatedAt(l.getCreatedAt());
         vo.setCandidatesL0(l.getCandidatesL0());
+        vo.setCandidatesL1(l.getCandidatesL1());
         vo.setEvidenceL2(l.getEvidenceL2());
         vo.setTokenBudget(l.getTokenBudget());
         return vo;

@@ -42,8 +42,11 @@ public class AgentRoutingStrategy implements ExecutionStrategy {
         // 阶段5 RAG：AGENT scope = agent_kb_bindings ∩ 用户权限（P4），同模型约束；受记忆模式门控
         EvidenceResult evidence = context.isRagEnabled()
                 ? resolveAgentEvidence(agentId, context.getUserId(), userMessage) : null;
+        // 修 #2：abstain 不再短路吐死句子。丢弃证据，照常路由到 skill/LLM 生成（不带知识库引用），
+        // 让 AI 基于自身能力回答，而不是直接返回"未找到可访问的相关知识"。
         if (evidence != null && evidence.isAbstained()) {
-            return evidence.getAnswer();   // abstain 短路，不调 LLM
+            log.info("Agent[{}] 检索 abstain({}), 丢弃证据照常执行技能", agent.getName(), evidence.getAbstainReason());
+            evidence = null;
         }
 
         RoutingResult routing = agentRouter.route(agent, userMessage);

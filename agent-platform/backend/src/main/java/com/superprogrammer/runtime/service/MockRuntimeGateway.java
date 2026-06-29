@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Queue;
 
 @Service
-@ConditionalOnProperty(prefix = "runtime.gateway", name = "mode", havingValue = "mock", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "runtime.gateway", name = "mode", havingValue = "mock", matchIfMissing = false)
 public class MockRuntimeGateway implements RuntimeGateway {
 
     @Override

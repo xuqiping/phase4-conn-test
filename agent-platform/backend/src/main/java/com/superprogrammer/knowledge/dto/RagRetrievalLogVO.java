@@ -30,6 +30,8 @@ public class RagRetrievalLogVO {
 
     /** JSON：候选 L0（可选透传，体量大） */
     private String candidatesL0;
+    /** JSON：候选 L1（Phase3 doc 级语义锚命中，可选透传） */
+    private String candidatesL1;
     /** JSON：注入证据 L2（可选透传，体量大） */
     private String evidenceL2;
     /** JSON：token 预算 */
