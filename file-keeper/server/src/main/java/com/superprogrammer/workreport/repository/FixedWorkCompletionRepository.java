@@ -32,6 +32,7 @@ public class FixedWorkCompletionRepository {
             FixedWorkCompletion updated = existing.get();
             updated.setCompleted(completion.getCompleted());
             updated.setCompletedAt(completion.getCompletedAt());
+            updated.setCompletionSource(completion.getCompletionSource());
             updated.setUpdatedBy(completion.getUpdatedBy());
             return update(updated);
         }
@@ -42,8 +43,8 @@ public class FixedWorkCompletionRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into fixed_work_completions (item_id, user_id, completion_date, completed, completed_at, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into fixed_work_completions (item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, completion.getItemId());
@@ -51,8 +52,9 @@ public class FixedWorkCompletionRepository {
             ps.setDate(3, Date.valueOf(completion.getCompletionDate()));
             ps.setBoolean(4, completion.getCompleted() != null && completion.getCompleted());
             ps.setTimestamp(5, completion.getCompletedAt() == null ? null : Timestamp.from(completion.getCompletedAt().toInstant()));
-            ps.setObject(6, completion.getCreatedBy());
-            ps.setObject(7, completion.getUpdatedBy());
+            ps.setString(6, completion.getCompletionSource());
+            ps.setObject(7, completion.getCreatedBy());
+            ps.setObject(8, completion.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -65,10 +67,11 @@ public class FixedWorkCompletionRepository {
 
     public FixedWorkCompletion update(FixedWorkCompletion completion) {
         jdbcTemplate.update(
-                "update fixed_work_completions set completed = ?, completed_at = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
+                "update fixed_work_completions set completed = ?, completed_at = ?, completion_source = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
                         "where id = ? and deleted = 0",
                 completion.getCompleted(),
                 completion.getCompletedAt() == null ? null : Timestamp.from(completion.getCompletedAt().toInstant()),
+                completion.getCompletionSource(),
                 completion.getUpdatedBy(),
                 completion.getId()
         );
@@ -77,7 +80,7 @@ public class FixedWorkCompletionRepository {
 
     public Optional<FixedWorkCompletion> findById(Long id) {
         List<FixedWorkCompletion> results = jdbcTemplate.query(
-                "select id, item_id, user_id, completion_date, completed, completed_at, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted " +
                         "from fixed_work_completions where id = ? and deleted = 0",
                 completionMapper(), id
         );
@@ -86,7 +89,7 @@ public class FixedWorkCompletionRepository {
 
     public Optional<FixedWorkCompletion> findByItemIdAndDate(Long itemId, LocalDate date) {
         List<FixedWorkCompletion> results = jdbcTemplate.query(
-                "select id, item_id, user_id, completion_date, completed, completed_at, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted " +
                         "from fixed_work_completions where item_id = ? and completion_date = ? and deleted = 0",
                 completionMapper(), itemId, Date.valueOf(date)
         );
@@ -95,7 +98,7 @@ public class FixedWorkCompletionRepository {
 
     public List<FixedWorkCompletion> findByUserIdAndDate(Long userId, LocalDate date) {
         return jdbcTemplate.query(
-                "select id, item_id, user_id, completion_date, completed, completed_at, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted " +
                         "from fixed_work_completions where user_id = ? and completion_date = ? and deleted = 0",
                 completionMapper(), userId, Date.valueOf(date)
         );
@@ -103,8 +106,16 @@ public class FixedWorkCompletionRepository {
 
     public List<FixedWorkCompletion> findByUserIdAndDateRange(Long userId, LocalDate startDate, LocalDate endDate) {
         return jdbcTemplate.query(
-                "select id, item_id, user_id, completion_date, completed, completed_at, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted " +
                         "from fixed_work_completions where user_id = ? and completion_date between ? and ? and deleted = 0 and completed = true",
+                completionMapper(), userId, Date.valueOf(startDate), Date.valueOf(endDate)
+        );
+    }
+
+    public List<FixedWorkCompletion> findByUserIdAndDateRangeAllStatuses(Long userId, LocalDate startDate, LocalDate endDate) {
+        return jdbcTemplate.query(
+                "select id, item_id, user_id, completion_date, completed, completed_at, completion_source, created_by, created_at, updated_by, updated_at, deleted " +
+                        "from fixed_work_completions where user_id = ? and completion_date between ? and ? and deleted = 0",
                 completionMapper(), userId, Date.valueOf(startDate), Date.valueOf(endDate)
         );
     }
@@ -129,6 +140,7 @@ public class FixedWorkCompletionRepository {
         completion.setCompleted(rs.getBoolean("completed"));
         Timestamp completedAt = rs.getTimestamp("completed_at");
         completion.setCompletedAt(completedAt == null ? null : completedAt.toInstant().atOffset(java.time.ZoneOffset.UTC));
+        completion.setCompletionSource(rs.getString("completion_source"));
         completion.setCreatedBy(rs.getObject("created_by", Long.class));
         completion.setCreatedAt(rs.getTimestamp("created_at").toInstant().atOffset(java.time.ZoneOffset.UTC));
         completion.setUpdatedBy(rs.getObject("updated_by", Long.class));
