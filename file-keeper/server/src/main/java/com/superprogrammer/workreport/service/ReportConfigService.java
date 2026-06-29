@@ -3,14 +3,12 @@ package com.superprogrammer.workreport.service;
 import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.PageResult;
+import com.superprogrammer.workreport.dto.PushTargetDto;
 import com.superprogrammer.workreport.dto.ReportConfigDto;
-import com.superprogrammer.workreport.dto.ReportPushTargetDto;
-import com.superprogrammer.workreport.dto.ReportPushTargetRequest;
 import com.superprogrammer.workreport.dto.SaveReportConfigRequest;
 import com.superprogrammer.workreport.entity.ReportConfig;
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.repository.ReportConfigPushTargetRefRepository;
 import com.superprogrammer.workreport.repository.ReportConfigRepository;
-import com.superprogrammer.workreport.repository.ReportPushTargetRepository;
 import com.superprogrammer.workreport.repository.ReportTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.support.CronExpression;
@@ -24,9 +22,9 @@ import java.util.List;
 public class ReportConfigService {
 
     private final ReportConfigRepository reportConfigRepository;
-    private final ReportPushTargetRepository reportPushTargetRepository;
+    private final ReportConfigPushTargetRefRepository reportConfigPushTargetRefRepository;
     private final ReportTemplateRepository reportTemplateRepository;
-    private final CredentialEncryptor credentialEncryptor;
+    private final PushTargetService pushTargetService;
 
     public List<ReportConfigDto> listByUser(Long userId) {
         return reportConfigRepository.findByUserId(userId).stream()
@@ -51,7 +49,7 @@ public class ReportConfigService {
             config = update(userId, request);
         }
 
-        syncPushTargets(userId, config.getId(), request.pushTargets());
+        syncPushTargetRefs(userId, config.getId(), request.pushTargetIds());
         return toDto(config);
     }
 
@@ -66,6 +64,7 @@ public class ReportConfigService {
         config.setEnabled(request.enabled() == null ? true : request.enabled());
         config.setAiEnabled(request.aiEnabled() == null ? true : request.aiEnabled());
         config.setAiConfigId(request.aiConfigId());
+        config.setIncludeInspirationDigest(request.includeInspirationDigest() == null ? true : request.includeInspirationDigest());
         config.setCreatedBy(userId);
         config.setUpdatedBy(userId);
         return reportConfigRepository.insert(config);
@@ -81,64 +80,30 @@ public class ReportConfigService {
         config.setEnabled(request.enabled() == null ? config.getEnabled() : request.enabled());
         config.setAiEnabled(request.aiEnabled() == null ? config.getAiEnabled() : request.aiEnabled());
         config.setAiConfigId(request.aiConfigId() == null ? config.getAiConfigId() : request.aiConfigId());
+        config.setIncludeInspirationDigest(request.includeInspirationDigest() == null ? config.getIncludeInspirationDigest() : request.includeInspirationDigest());
         config.setUpdatedBy(userId);
         return reportConfigRepository.update(config);
-    }
-
-    public List<ReportPushTarget> getPushTargets(Long configId) {
-        return reportPushTargetRepository.findByConfigId(configId);
     }
 
     @Transactional
     public void delete(Long userId, Long id) {
         requireOwnedByUser(id, userId);
         reportConfigRepository.softDeleteById(id, userId);
-        reportPushTargetRepository.softDeleteByConfigId(id, userId);
+        reportConfigPushTargetRefRepository.softDeleteByConfigId(id, userId);
     }
 
-    private void syncPushTargets(Long userId, Long configId, List<ReportPushTargetRequest> targets) {
-        if (targets == null) {
+    private void syncPushTargetRefs(Long userId, Long configId, List<Long> targetIds) {
+        if (targetIds == null) {
+            reportConfigPushTargetRefRepository.softDeleteByConfigId(configId, userId);
             return;
         }
-
-        List<ReportPushTarget> existing = reportPushTargetRepository.findByConfigId(configId);
-
-        for (ReportPushTargetRequest targetRequest : targets) {
-            if (targetRequest.id() == null) {
-                ReportPushTarget target = new ReportPushTarget();
-                target.setConfigId(configId);
-                target.setPlatform(targetRequest.platform());
-                target.setTargetType(targetRequest.targetType());
-                target.setTargetId(targetRequest.targetId());
-                target.setCredential(credentialEncryptor.encrypt(targetRequest.credential()));
-                target.setCreatedBy(userId);
-                target.setUpdatedBy(userId);
-                reportPushTargetRepository.insert(target);
-            } else {
-                ReportPushTarget target = existing.stream()
-                        .filter(t -> t.getId().equals(targetRequest.id()))
-                        .findFirst()
-                        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "推送目标不存在"));
-                target.setPlatform(targetRequest.platform());
-                target.setTargetType(targetRequest.targetType());
-                target.setTargetId(targetRequest.targetId());
-                if (targetRequest.credential() != null) {
-                    target.setCredential(credentialEncryptor.encrypt(targetRequest.credential()));
-                }
-                target.setUpdatedBy(userId);
-                reportPushTargetRepository.update(target);
-            }
-        }
-
-        List<Long> keptIds = targets.stream()
-                .map(ReportPushTargetRequest::id)
-                .filter(id -> id != null)
+        List<Long> ownedTargetIds = pushTargetService.listByIds(userId, targetIds).stream()
+                .map(t -> t.getId())
                 .toList();
-        for (ReportPushTarget existingTarget : existing) {
-            if (!keptIds.contains(existingTarget.getId())) {
-                reportPushTargetRepository.softDeleteById(existingTarget.getId(), userId);
-            }
+        for (Long targetId : ownedTargetIds) {
+            reportConfigPushTargetRefRepository.restoreOrInsert(configId, targetId, userId);
         }
+        reportConfigPushTargetRefRepository.softDeleteByConfigIdAndTargetIdNotIn(configId, ownedTargetIds, userId);
     }
 
     private void validateCronExpression(String cronExpression) {
@@ -176,8 +141,13 @@ public class ReportConfigService {
         String templateName = reportTemplateRepository.findById(config.getTemplateId())
                 .map(t -> t.getName())
                 .orElse("未知模板");
-        List<ReportPushTargetDto> pushTargets = reportPushTargetRepository.findByConfigId(config.getId()).stream()
-                .map(this::toTargetDto)
+        List<PushTargetDto> pushTargets = pushTargetService.listByIds(
+                config.getUserId(),
+                reportConfigPushTargetRefRepository.findByConfigId(config.getId()).stream()
+                        .map(ref -> ref.getTargetId())
+                        .toList()
+        ).stream()
+                .map(t -> new PushTargetDto(t.getId(), t.getName(), t.getPlatform(), t.getTargetType(), t.getTargetId(), t.getCredentialId(), null))
                 .toList();
         return new ReportConfigDto(
                 config.getId(),
@@ -190,17 +160,8 @@ public class ReportConfigService {
                 config.getEnabled(),
                 config.getAiEnabled(),
                 config.getAiConfigId(),
+                config.getIncludeInspirationDigest(),
                 pushTargets
-        );
-    }
-
-    private ReportPushTargetDto toTargetDto(ReportPushTarget target) {
-        return new ReportPushTargetDto(
-                target.getId(),
-                target.getPlatform(),
-                target.getTargetType(),
-                target.getTargetId(),
-                target.getCredential() != null && !target.getCredential().isBlank()
         );
     }
 }

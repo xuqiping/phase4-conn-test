@@ -27,4 +27,6 @@ public class ReportConfig extends BaseEntity {
     private Boolean aiEnabled;
 
     private Long aiConfigId;
+
+    private Boolean includeInspirationDigest;
 }

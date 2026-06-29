@@ -1,14 +1,16 @@
 package com.superprogrammer.workreport;
 
 import com.superprogrammer.support.TestStoreConfig;
+import com.superprogrammer.workreport.dto.PushCredentialCreateRequest;
+import com.superprogrammer.workreport.dto.PushTargetCreateRequest;
 import com.superprogrammer.workreport.dto.SaveReportConfigRequest;
 import com.superprogrammer.workreport.dto.WorkReportDto;
 import com.superprogrammer.workreport.entity.PushDelivery;
-import com.superprogrammer.workreport.entity.ReportPushTarget;
 import com.superprogrammer.workreport.entity.WorkReport;
 import com.superprogrammer.workreport.repository.PushDeliveryRepository;
-import com.superprogrammer.workreport.repository.ReportPushTargetRepository;
 import com.superprogrammer.workreport.repository.WorkReportRepository;
+import com.superprogrammer.workreport.service.PushCredentialService;
+import com.superprogrammer.workreport.service.PushTargetService;
 import com.superprogrammer.workreport.service.ReportConfigService;
 import com.superprogrammer.workreport.service.ReportPushService;
 import com.superprogrammer.workreport.service.WorkLogService;
@@ -35,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest
@@ -60,10 +63,13 @@ class ReportPushServiceImplTest {
     private ReportConfigService reportConfigService;
 
     @Autowired
-    private PushDeliveryRepository pushDeliveryRepository;
+    private PushCredentialService pushCredentialService;
 
     @Autowired
-    private ReportPushTargetRepository reportPushTargetRepository;
+    private PushTargetService pushTargetService;
+
+    @Autowired
+    private PushDeliveryRepository pushDeliveryRepository;
 
     @Autowired
     private WorkReportRepository workReportRepository;
@@ -77,6 +83,9 @@ class ReportPushServiceImplTest {
     @BeforeEach
     void cleanUp() {
         jdbcTemplate.update("delete from push_deliveries");
+        jdbcTemplate.update("delete from report_config_push_targets");
+        jdbcTemplate.update("delete from push_targets");
+        jdbcTemplate.update("delete from push_credentials");
         jdbcTemplate.update("delete from report_push_targets");
         jdbcTemplate.update("delete from work_reports");
         jdbcTemplate.update("delete from work_logs");
@@ -89,12 +98,12 @@ class ReportPushServiceImplTest {
     @Test
     void pushReportRecordsSuccessAndUpdatesStatus() {
         when(feishuPusher.supports(Platform.FEISHU)).thenReturn(true);
-        when(feishuPusher.push(any(), any())).thenReturn(new PushResult(true, "ok", "response"));
+        when(feishuPusher.push(any(), any(), any())).thenReturn(new PushResult(true, "ok", "response"));
 
         Long userId = insertUser("push-user@example.com");
         Long templateId = insertTemplate();
-        Long configId = insertConfig(userId, templateId);
-        Long targetId = insertTarget(configId);
+        Long targetId = insertPushTarget(userId);
+        Long configId = insertConfig(userId, templateId, targetId);
 
         workLogService.create(userId, new com.superprogrammer.workreport.dto.CreateWorkLogRequest(
                 LocalDate.now(), "log content", null, "MANUAL", 0));
@@ -117,12 +126,12 @@ class ReportPushServiceImplTest {
     @Test
     void pushReportRecordsFailureAndUpdatesStatus() {
         when(feishuPusher.supports(Platform.FEISHU)).thenReturn(true);
-        when(feishuPusher.push(any(), any())).thenReturn(new PushResult(false, "failed", "error"));
+        when(feishuPusher.push(any(), any(), any())).thenReturn(new PushResult(false, "failed", "error"));
 
         Long userId = insertUser("push-fail@example.com");
         Long templateId = insertTemplate();
-        Long configId = insertConfig(userId, templateId);
-        Long targetId = insertTarget(configId);
+        Long targetId = insertPushTarget(userId);
+        Long configId = insertConfig(userId, templateId, targetId);
 
         workLogService.create(userId, new com.superprogrammer.workreport.dto.CreateWorkLogRequest(
                 LocalDate.now(), "log content", null, "MANUAL", 0));
@@ -159,25 +168,22 @@ class ReportPushServiceImplTest {
         return jdbcTemplate.queryForObject("select id from report_templates where name = '测试模板' order by id desc limit 1", Long.class);
     }
 
-    private Long insertConfig(Long userId, Long templateId) {
-        jdbcTemplate.update(
-                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, '日报配置', 'DAILY', ?, '0 0 9 * * ?', 'Asia/Shanghai', true, false, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
-                userId, templateId, userId, userId
+    private Long insertPushTarget(Long userId) {
+        PushCredentialCreateRequest credentialRequest = new PushCredentialCreateRequest(
+                "测试凭据", "FEISHU", "{\"appId\":\"app\",\"appSecret\":\"secret\"}"
         );
-        return jdbcTemplate.queryForObject("select id from report_configs where user_id = ? order by id desc limit 1", Long.class, userId);
+        Long credentialId = pushCredentialService.create(userId, credentialRequest).id();
+
+        PushTargetCreateRequest targetRequest = new PushTargetCreateRequest(
+                "测试目标", "FEISHU", "GROUP", "chat123", credentialId
+        );
+        return pushTargetService.create(userId, targetRequest).id();
     }
 
-    private Long insertTarget(Long configId) {
-        ReportPushTarget target = new ReportPushTarget();
-        target.setConfigId(configId);
-        target.setPlatform("FEISHU");
-        target.setTargetType("GROUP");
-        target.setTargetId("chat123");
-        target.setCredential("{\"appId\":\"app\",\"appSecret\":\"secret\"}");
-        target.setCreatedBy(0L);
-        target.setUpdatedBy(0L);
-        ReportPushTarget saved = reportPushTargetRepository.insert(target);
-        return saved.getId();
+    private Long insertConfig(Long userId, Long templateId, Long targetId) {
+        SaveReportConfigRequest request = new SaveReportConfigRequest(
+                null, "日报配置", "DAILY", templateId, "0 0 9 * * ?", "Asia/Shanghai", true, false, null, null, List.of(targetId)
+        );
+        return reportConfigService.save(userId, request).id();
     }
 }

@@ -13,6 +13,7 @@ public record ReportConfigDto(
         Boolean enabled,
         Boolean aiEnabled,
         Long aiConfigId,
-        List<ReportPushTargetDto> pushTargets
+        Boolean includeInspirationDigest,
+        List<PushTargetDto> pushTargets
 ) {
 }

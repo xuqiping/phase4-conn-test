@@ -15,6 +15,7 @@ public record SaveReportConfigRequest(
         Boolean enabled,
         Boolean aiEnabled,
         Long aiConfigId,
-        List<ReportPushTargetRequest> pushTargets
+        Boolean includeInspirationDigest,
+        List<Long> pushTargetIds
 ) {
 }

@@ -26,8 +26,8 @@ public class ReportConfigRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, config.getUserId());
@@ -39,8 +39,9 @@ public class ReportConfigRepository {
             ps.setBoolean(7, config.getEnabled() != null && config.getEnabled());
             ps.setBoolean(8, config.getAiEnabled() != null && config.getAiEnabled());
             ps.setObject(9, config.getAiConfigId());
-            ps.setObject(10, config.getCreatedBy());
-            ps.setObject(11, config.getUpdatedBy());
+            ps.setBoolean(10, config.getIncludeInspirationDigest() != null && config.getIncludeInspirationDigest());
+            ps.setObject(11, config.getCreatedBy());
+            ps.setObject(12, config.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -53,10 +54,11 @@ public class ReportConfigRepository {
 
     public ReportConfig update(ReportConfig config) {
         int rows = jdbcTemplate.update(
-                "update report_configs set name = ?, report_type = ?, template_id = ?, cron_expression = ?, timezone = ?, enabled = ?, ai_enabled = ?, ai_config_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
+                "update report_configs set name = ?, report_type = ?, template_id = ?, cron_expression = ?, timezone = ?, enabled = ?, ai_enabled = ?, ai_config_id = ?, include_inspiration_digest = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
                         "where id = ? and deleted = 0",
                 config.getName(), config.getReportType(), config.getTemplateId(), config.getCronExpression(),
                 config.getTimezone(), config.getEnabled(), config.getAiEnabled(), config.getAiConfigId(),
+                config.getIncludeInspirationDigest(),
                 config.getUpdatedBy(), config.getId()
         );
         if (rows == 0) {
@@ -67,7 +69,7 @@ public class ReportConfigRepository {
 
     public Optional<ReportConfig> findById(Long id) {
         List<ReportConfig> results = jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where id = ? and deleted = 0",
                 configMapper(), id
         );
@@ -76,7 +78,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where user_id = ? and deleted = 0 order by id desc",
                 configMapper(), userId
         );
@@ -84,7 +86,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findEnabledByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where user_id = ? and enabled = true and deleted = 0 order by id desc",
                 configMapper(), userId
         );
@@ -92,7 +94,7 @@ public class ReportConfigRepository {
 
     public List<ReportConfig> findEnabled() {
         return jdbcTemplate.query(
-                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, ai_config_id, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted " +
                         "from report_configs where enabled = true and deleted = 0 order by id desc",
                 configMapper()
         );
@@ -121,6 +123,7 @@ public class ReportConfigRepository {
         config.setEnabled(rs.getBoolean("enabled"));
         config.setAiEnabled(rs.getBoolean("ai_enabled"));
         config.setAiConfigId(rs.getObject("ai_config_id", Long.class));
+        config.setIncludeInspirationDigest(rs.getBoolean("include_inspiration_digest"));
         config.setCreatedBy(rs.getObject("created_by", Long.class));
         config.setCreatedAt(rs.getTimestamp("created_at").toInstant().atOffset(java.time.ZoneOffset.UTC));
         config.setUpdatedBy(rs.getObject("updated_by", Long.class));
