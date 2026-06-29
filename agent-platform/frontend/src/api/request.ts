@@ -9,6 +9,7 @@ import axios from 'axios'
 import type { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import { createDiscreteApi } from 'naive-ui'
 import { getStorage, clearAuthStorage, STORAGE_KEYS } from '@/utils/storage'
+import { isDingTalkClient, isDingTalkEnabled, redirectToDingTalkAuth } from '@/utils/dingtalk'
 
 declare module 'axios' {
   interface InternalAxiosRequestConfig {
@@ -87,6 +88,11 @@ function redirectToLogin() {
   clearAuthStorage()
   if (isRedirectingToLogin) return
   isRedirectingToLogin = true
+  // 钉钉容器内 → 重新免登；否则回账密登录页
+  if (isDingTalkClient() && isDingTalkEnabled()) {
+    redirectToDingTalkAuth('dt')
+    return
+  }
   const current = window.location.pathname + window.location.search
   const redirect = current && current !== '/login' ? `?redirect=${encodeURIComponent(current)}` : ''
   window.location.href = `/login${redirect}`

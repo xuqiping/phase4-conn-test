@@ -72,6 +72,19 @@
         </n-button>
       </n-form>
 
+      <!-- 钉钉免登入口（仅当后端配置 AppKey/RedirectURI 时显示） -->
+      <n-button
+        v-if="dtEnabled"
+        block
+        secondary
+        type="primary"
+        size="large"
+        class="login-card__dingtalk"
+        @click="onDingTalkLogin"
+      >
+        钉钉登录
+      </n-button>
+
       <!-- 注册链接 -->
       <div class="login-card__footer">
         <span class="login-card__hint">还没有账号？</span>
@@ -195,12 +208,20 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore, THEME_LIST } from '@/stores/theme'
 import AuthLayout from '@/layouts/AuthLayout.vue'
+import { isDingTalkEnabled, redirectToDingTalkAuth } from '@/utils/dingtalk'
 
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
+
+// 钉钉免登入口（仅当配置了 AppKey/RedirectURI 时显示）
+const dtEnabled = isDingTalkEnabled()
+
+function onDingTalkLogin() {
+  redirectToDingTalkAuth('dt')
+}
 
 // 初始化主题
 themeStore.initTheme()
