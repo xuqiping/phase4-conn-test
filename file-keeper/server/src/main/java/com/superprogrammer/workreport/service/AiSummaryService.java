@@ -4,7 +4,10 @@ import com.superprogrammer.ai.dto.AiConfigVO;
 import com.superprogrammer.ai.service.AiConfigService;
 import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
+import com.superprogrammer.workreport.dto.FixedWorkCompletionStats;
 import com.superprogrammer.workreport.entity.FixedWorkItem;
+import com.superprogrammer.workreport.entity.InboundMessage;
+import com.superprogrammer.workreport.entity.InspirationNote;
 import com.superprogrammer.workreport.entity.WorkLog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,51 +31,117 @@ public class AiSummaryService {
     private final RestTemplateBuilder restTemplateBuilder;
     private final AiConfigService aiConfigService;
 
+    public record AiSummaryContext(
+            List<WorkLog> logs,
+            List<FixedWorkItem> fixedWorkItems,
+            String reportType,
+            FixedWorkCompletionStats completionStats,
+            List<InboundMessage> inboxWorkLogs,
+            List<InspirationNote> inspirationNotes
+    ) {
+    }
+
     public String summarize(List<WorkLog> logs, List<FixedWorkItem> fixedWorkItems,
                             String reportType, Long aiConfigId, Long userId) {
-        if (logs.isEmpty() && fixedWorkItems.isEmpty()) {
+        return summarize(new AiSummaryContext(logs, fixedWorkItems, reportType, null, List.of(), List.of()), aiConfigId, userId);
+    }
+
+    public String summarize(AiSummaryContext context, Long aiConfigId, Long userId) {
+        if (isEmptyContext(context)) {
             return "";
         }
 
         AiConfigVO config = aiConfigService.getEffectiveConfig(userId, aiConfigId);
         if (config == null || !Boolean.TRUE.equals(config.enabled())) {
             log.warn("未找到有效 AI 配置，使用降级策略");
-            return fallbackSummary(logs, fixedWorkItems);
+            return fallbackSummary(context);
         }
 
         String apiKey = aiConfigService.getDecryptedApiKey(userId, aiConfigId);
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("AI 配置未设置 API Key，使用降级策略");
-            return fallbackSummary(logs, fixedWorkItems);
+            return fallbackSummary(context);
         }
 
-        String prompt = buildPrompt(logs, fixedWorkItems, reportType);
+        String prompt = buildPrompt(context);
 
         try {
             return callAiApi(prompt, config, apiKey);
         } catch (Exception e) {
             log.error("AI 总结失败，降级为简单拼接", e);
-            return fallbackSummary(logs, fixedWorkItems);
+            return fallbackSummary(context);
         }
     }
 
-    private String buildPrompt(List<WorkLog> logs, List<FixedWorkItem> fixedWorkItems, String reportType) {
-        String reportName = "DAILY".equals(reportType) ? "日报" : "周报";
-        String todayLabel = "DAILY".equals(reportType) ? "今日" : "本周";
+    private boolean isEmptyContext(AiSummaryContext context) {
+        return context.logs().isEmpty()
+                && context.fixedWorkItems().isEmpty()
+                && (context.inboxWorkLogs() == null || context.inboxWorkLogs().isEmpty())
+                && (context.inspirationNotes() == null || context.inspirationNotes().isEmpty());
+    }
+
+    public String testConnection(AiConfigVO config, String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "API Key 不能为空");
+        }
+        return callAiApi("你好，请回复一条简单的测试消息。", config, apiKey);
+    }
+
+    private String buildPrompt(AiSummaryContext context) {
+        String reportName = "DAILY".equals(context.reportType()) ? "日报" : "周报";
+        String periodLabel = "DAILY".equals(context.reportType()) ? "今日" : "本周";
+        String nextLabel = "DAILY".equals(context.reportType()) ? "明日" : "下周";
 
         StringBuilder sb = new StringBuilder();
-        sb.append("请根据以下工作记录和固定工作完成情况，生成一份简洁规范的").append(reportName).append("：\n\n");
+        sb.append("请根据以下信息生成一份简洁规范的").append(reportName).append("：\n\n");
+
         sb.append("【工作记录】\n");
-        for (WorkLog log : logs) {
+        for (WorkLog log : context.logs()) {
             sb.append("- ").append(log.getContent()).append("\n");
         }
+        if (context.logs().isEmpty()) {
+            sb.append("无\n");
+        }
+
         sb.append("\n【固定工作完成情况】\n");
-        for (FixedWorkItem item : fixedWorkItems) {
+        for (FixedWorkItem item : context.fixedWorkItems()) {
             sb.append("- ").append(item.getContent()).append("（已完成）\n");
         }
+        if (context.fixedWorkItems().isEmpty()) {
+            sb.append("无\n");
+        }
+
+        FixedWorkCompletionStats stats = context.completionStats();
+        if (stats != null) {
+            sb.append("\n【固定工作完成率】\n");
+            int percentage = (int) Math.round(stats.overallCompletionRate() * 100);
+            sb.append(percentage).append("%\n");
+
+            if (!stats.missLog().isEmpty()) {
+                sb.append("\n【逾期/未完成记录】\n");
+                for (var entry : stats.missLog()) {
+                    sb.append("- ").append(entry.date()).append(": ").append(entry.itemContent()).append("\n");
+                }
+            }
+        }
+
+        if (context.inboxWorkLogs() != null && !context.inboxWorkLogs().isEmpty()) {
+            sb.append("\n【IM 录入工作记录】\n");
+            for (InboundMessage message : context.inboxWorkLogs()) {
+                sb.append("- ").append(message.getRawText()).append("\n");
+            }
+        }
+
+        if (context.inspirationNotes() != null && !context.inspirationNotes().isEmpty()) {
+            sb.append("\n【灵感随记】\n");
+            for (InspirationNote note : context.inspirationNotes()) {
+                sb.append("- ").append(note.getContent()).append("\n");
+            }
+        }
+
         sb.append("\n要求：\n");
         sb.append("1. 用第一人称\n");
-        sb.append("2. 分").append(todayLabel).append("工作、遇到的问题、下一步计划三部分\n");
+        sb.append("2. 分四部分：").append(periodLabel).append("已完成、").append(periodLabel).append("未完成/逾期、").append(nextLabel).append("计划、灵感速览\n");
         sb.append("3. 语言简洁专业\n");
         return sb.toString();
     }
@@ -89,6 +158,7 @@ public class AiSummaryService {
             case "qwen" -> callQwen(prompt, config, apiKey, timeoutSeconds, maxTokens);
             case "doubao" -> callDoubao(prompt, config, apiKey, timeoutSeconds, maxTokens);
             case "claude" -> callClaude(prompt, config, apiKey, timeoutSeconds, maxTokens);
+            case "custom" -> callCustomOpenAiCompatible(prompt, config, apiKey, timeoutSeconds, maxTokens);
             default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的 AI 提供商: " + config.provider());
         };
     }
@@ -113,9 +183,34 @@ public class AiSummaryService {
         return callOpenAiCompatibleApi(url, requestModel, prompt, apiKey, timeoutSeconds, maxTokens);
     }
 
+    private String callCustomOpenAiCompatible(String prompt, AiConfigVO config, String apiKey, int timeoutSeconds, int maxTokens) {
+        if (config.endpoint() == null || config.endpoint().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "自定义 Provider 必须填写 Endpoint");
+        }
+        if (config.model() == null || config.model().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "自定义 Provider 必须填写模型名称");
+        }
+        return callOpenAiCompatibleApi(config.endpoint(), config.model(), prompt, apiKey, timeoutSeconds, maxTokens);
+    }
+
+    public String normalizeOpenAiEndpoint(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return endpoint;
+        }
+        String url = endpoint.replaceAll("/+$", "");
+        if (url.endsWith("/chat/completions")) {
+            return url;
+        }
+        if (url.endsWith("/api/coding")) {
+            return url + "/v3/chat/completions";
+        }
+        return url + "/chat/completions";
+    }
+
     @SuppressWarnings("unchecked")
     private String callOpenAiCompatibleApi(String url, String requestModel, String prompt, String apiKey,
                                            int timeoutSeconds, int maxTokens) {
+        String normalizedUrl = normalizeOpenAiEndpoint(url);
         RestTemplate restTemplate = buildRestTemplate(timeoutSeconds);
 
         HttpHeaders headers = new HttpHeaders();
@@ -130,12 +225,21 @@ public class AiSummaryService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
         ResponseEntity<Map> response = restTemplate.exchange(
-                url, HttpMethod.POST, entity, Map.class
+                normalizedUrl, HttpMethod.POST, entity, Map.class
         );
 
         Map<String, Object> body = response.getBody();
-        if (body == null || body.get("choices") == null) {
-            throw new RuntimeException("AI 响应为空或格式错误");
+        if (body == null) {
+            throw new RuntimeException("AI 响应为空");
+        }
+
+        String errorMessage = extractErrorMessage(body);
+        if (errorMessage != null) {
+            throw new RuntimeException(errorMessage);
+        }
+
+        if (body.get("choices") == null) {
+            throw new RuntimeException("AI 响应格式错误：缺少 choices");
         }
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
@@ -179,8 +283,17 @@ public class AiSummaryService {
         );
 
         Map<String, Object> body = response.getBody();
-        if (body == null || body.get("content") == null) {
-            throw new RuntimeException("AI 响应为空或格式错误");
+        if (body == null) {
+            throw new RuntimeException("AI 响应为空");
+        }
+
+        String errorMessage = extractErrorMessage(body);
+        if (errorMessage != null) {
+            throw new RuntimeException(errorMessage);
+        }
+
+        if (body.get("content") == null) {
+            throw new RuntimeException("AI 响应格式错误：缺少 content");
         }
 
         List<Map<String, Object>> contents = (List<Map<String, Object>>) body.get("content");
@@ -198,12 +311,40 @@ public class AiSummaryService {
                 .build();
     }
 
-    private String fallbackSummary(List<WorkLog> logs, List<FixedWorkItem> fixedWorkItems) {
+    private String fallbackSummary(AiSummaryContext context) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 工作记录\n");
-        logs.forEach(log -> sb.append("- ").append(log.getContent()).append("\n"));
+        context.logs().forEach(log -> sb.append("- ").append(log.getContent()).append("\n"));
         sb.append("\n## 固定工作完成情况\n");
-        fixedWorkItems.forEach(item -> sb.append("- ").append(item.getContent()).append("\n"));
+        context.fixedWorkItems().forEach(item -> sb.append("- ").append(item.getContent()).append("\n"));
+        if (context.completionStats() != null && !context.completionStats().missLog().isEmpty()) {
+            sb.append("\n## 逾期/未完成记录\n");
+            context.completionStats().missLog().forEach(entry ->
+                    sb.append("- ").append(entry.date()).append(": ").append(entry.itemContent()).append("\n"));
+        }
+        if (context.inspirationNotes() != null && !context.inspirationNotes().isEmpty()) {
+            sb.append("\n## 灵感速览\n");
+            context.inspirationNotes().forEach(note -> sb.append("- ").append(note.getContent()).append("\n"));
+        }
         return sb.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractErrorMessage(Map<String, Object> body) {
+        Object error = body.get("error");
+        if (error instanceof String errorString) {
+            return errorString;
+        }
+        if (error instanceof Map<?, ?> errorMap) {
+            Object message = errorMap.get("message");
+            if (message != null) {
+                return message.toString();
+            }
+        }
+        Object message = body.get("message");
+        if (message != null) {
+            return message.toString();
+        }
+        return null;
     }
 }
