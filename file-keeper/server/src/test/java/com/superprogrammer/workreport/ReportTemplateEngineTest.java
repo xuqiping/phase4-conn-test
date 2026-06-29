@@ -1,6 +1,9 @@
 package com.superprogrammer.workreport;
 
+import com.superprogrammer.workreport.dto.FixedWorkCompletionStats;
 import com.superprogrammer.workreport.entity.FixedWorkItem;
+import com.superprogrammer.workreport.entity.InboundMessage;
+import com.superprogrammer.workreport.entity.InspirationNote;
 import com.superprogrammer.workreport.entity.WorkLog;
 import com.superprogrammer.workreport.service.ReportTemplateEngine;
 import org.junit.jupiter.api.Test;
@@ -67,5 +70,34 @@ class ReportTemplateEngineTest {
         String result = engine.render(template, context);
 
         assertEquals("", result);
+    }
+
+    @Test
+    void newContextVariablesAreRendered() {
+        String template = "{{fixed_work_completion_rate}}\n{{fixed_work_miss_log}}\n{{fixed_work_consecutive_miss_days}}\n{{inbox_work_logs}}\n{{inspiration_digest}}";
+
+        FixedWorkCompletionStats stats = new FixedWorkCompletionStats(
+                0.5,
+                List.of(new FixedWorkCompletionStats.ItemCompletionRate(1L, "晨会", 0.5, 2, 1)),
+                List.of(new FixedWorkCompletionStats.MissLogEntry(LocalDate.of(2026, 6, 23), "晨会")),
+                1
+        );
+
+        InboundMessage message = new InboundMessage();
+        message.setRawText("完成接口");
+
+        InspirationNote note = new InspirationNote();
+        note.setContent("AI 接入想法");
+
+        Map<String, Object> context = engine.buildContext(
+                "AI总结", List.of(), List.of(), stats, List.of(message), List.of(note), "DAILY"
+        );
+        String result = engine.render(template, context);
+
+        assertTrue(result.contains("50%"));
+        assertTrue(result.contains("2026-06-23: 晨会"));
+        assertTrue(result.contains("1 天"));
+        assertTrue(result.contains("完成接口"));
+        assertTrue(result.contains("AI 接入想法"));
     }
 }

@@ -1,7 +1,7 @@
 package com.superprogrammer.workreport.service.push;
 
 import com.superprogrammer.common.JsonUtils;
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.entity.PushTarget;
 import com.superprogrammer.workreport.service.CredentialEncryptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,10 +32,10 @@ public class FeishuPusher implements PushService {
     }
 
     @Override
-    public PushResult push(PushPayload payload, ReportPushTarget target) {
+    public PushResult push(PushPayload payload, PushTarget target, String decryptedCredential) {
         try {
             log.info("[FeishuPusher] 开始推送 targetId={} targetType={}", target.getTargetId(), target.getTargetType());
-            FeishuCredential credential = parseCredential(target.getCredential());
+            FeishuCredential credential = parseCredential(decryptedCredential);
             log.info("[FeishuPusher] credential 解析成功 appId={}", credential.getAppId());
             log.info("[FeishuPusher] 正在获取 tenant_access_token...");
             String tenantAccessToken = getTenantAccessToken(credential);
@@ -105,8 +105,7 @@ public class FeishuPusher implements PushService {
         return payload.title() + "\n\n" + payload.content();
     }
 
-    private FeishuCredential parseCredential(String encryptedCredential) {
-        String json = credentialEncryptor.decrypt(encryptedCredential);
-        return JsonUtils.parse(json, FeishuCredential.class);
+    private FeishuCredential parseCredential(String decryptedCredential) {
+        return JsonUtils.parse(decryptedCredential, FeishuCredential.class);
     }
 }

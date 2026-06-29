@@ -10,6 +10,12 @@ import com.superprogrammer.security.AuthConstants;
 import com.superprogrammer.security.AuthPrincipal;
 import com.superprogrammer.workreport.dto.CreateWorkLogRequest;
 import com.superprogrammer.workreport.dto.GenerateReportRequest;
+import com.superprogrammer.workreport.dto.PushCredentialCreateRequest;
+import com.superprogrammer.workreport.dto.PushCredentialDto;
+import com.superprogrammer.workreport.dto.PushCredentialUpdateRequest;
+import com.superprogrammer.workreport.dto.PushTargetCreateRequest;
+import com.superprogrammer.workreport.dto.PushTargetDto;
+import com.superprogrammer.workreport.dto.PushTargetUpdateRequest;
 import com.superprogrammer.workreport.dto.ReportConfigDto;
 import com.superprogrammer.workreport.dto.ReportTemplateDto;
 import com.superprogrammer.workreport.dto.SaveReportConfigRequest;
@@ -21,9 +27,11 @@ import com.superprogrammer.workreport.service.ReportPushService;
 import com.superprogrammer.workreport.service.ReportTemplateService;
 import com.superprogrammer.workreport.service.WorkLogService;
 import com.superprogrammer.workreport.service.WorkReportService;
+import com.superprogrammer.workreport.service.PushCredentialService;
+import com.superprogrammer.workreport.service.PushTargetService;
 import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -43,6 +51,8 @@ public class WorkReportClientController {
     private final ReportConfigService reportConfigService;
     private final WorkReportService workReportService;
     private final ReportPushService reportPushService;
+    private final PushCredentialService pushCredentialService;
+    private final PushTargetService pushTargetService;
 
     private ModuleAccess checkModuleAuth(Authentication auth, String deviceId) {
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
@@ -188,6 +198,113 @@ public class WorkReportClientController {
         }
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
         reportConfigService.delete(principal.userId(), id);
+        return R.ok();
+    }
+
+    // ==================== 推送配置（凭据 + 目标） ====================
+    @GetMapping("/push-credentials")
+    public R<List<PushCredentialDto>> listPushCredentials(
+            Authentication auth,
+            @RequestParam String deviceId) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushCredentialService.listByUser(principal.userId()));
+    }
+
+    @PostMapping("/push-credentials")
+    public R<PushCredentialDto> createPushCredential(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @RequestBody @Valid PushCredentialCreateRequest request) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushCredentialService.create(principal.userId(), request));
+    }
+
+    @PutMapping("/push-credentials/{id}")
+    public R<PushCredentialDto> updatePushCredential(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @PathVariable Long id,
+            @RequestBody @Valid PushCredentialUpdateRequest request) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushCredentialService.update(principal.userId(), id, request));
+    }
+
+    @DeleteMapping("/push-credentials/{id}")
+    public R<Void> deletePushCredential(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @PathVariable Long id) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        pushCredentialService.delete(principal.userId(), id);
+        return R.ok();
+    }
+
+    @GetMapping("/push-targets")
+    public R<List<PushTargetDto>> listPushTargets(
+            Authentication auth,
+            @RequestParam String deviceId) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushTargetService.listByUser(principal.userId()));
+    }
+
+    @PostMapping("/push-targets")
+    public R<PushTargetDto> createPushTarget(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @RequestBody @Valid PushTargetCreateRequest request) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushTargetService.create(principal.userId(), request));
+    }
+
+    @PutMapping("/push-targets/{id}")
+    public R<PushTargetDto> updatePushTarget(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @PathVariable Long id,
+            @RequestBody @Valid PushTargetUpdateRequest request) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(pushTargetService.update(principal.userId(), id, request));
+    }
+
+    @DeleteMapping("/push-targets/{id}")
+    public R<Void> deletePushTarget(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @PathVariable Long id) {
+        ModuleAccess access = checkModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        pushTargetService.delete(principal.userId(), id);
         return R.ok();
     }
 

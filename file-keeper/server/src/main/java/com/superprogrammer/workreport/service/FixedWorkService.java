@@ -5,6 +5,7 @@ import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.workreport.dto.CreateFixedWorkItemRequest;
 import com.superprogrammer.workreport.dto.FixedWorkItemDto;
 import com.superprogrammer.workreport.dto.UpdateFixedWorkItemRequest;
+import com.superprogrammer.workreport.entity.CompletionSource;
 import com.superprogrammer.workreport.entity.FixedWorkCompletion;
 import com.superprogrammer.workreport.entity.FixedWorkItem;
 import com.superprogrammer.workreport.repository.FixedWorkCompletionRepository;
@@ -27,7 +28,6 @@ public class FixedWorkService {
 
     private final FixedWorkItemRepository itemRepository;
     private final FixedWorkCompletionRepository completionRepository;
-    private final CredentialEncryptor credentialEncryptor;
 
     public List<FixedWorkItemDto> listByUserAndType(Long userId, String recurrenceType) {
         List<FixedWorkItem> items = itemRepository.findByUserIdAndType(userId, recurrenceType);
@@ -41,6 +41,12 @@ public class FixedWorkService {
         return enrichCompletions(items, userId, today);
     }
 
+    public List<FixedWorkItemDto> listByUserAndDate(Long userId, LocalDate date) {
+        List<FixedWorkItem> items = itemRepository.findByUserId(userId);
+        LocalDate targetDate = date == null ? LocalDate.now() : date;
+        return enrichCompletions(items, userId, targetDate);
+    }
+
     public FixedWorkItemDto create(Long userId, CreateFixedWorkItemRequest request) {
         FixedWorkItem item = new FixedWorkItem();
         item.setUserId(userId);
@@ -51,9 +57,7 @@ public class FixedWorkService {
         item.setReminderDays(request.reminderDays());
         item.setTimezone(request.timezone() == null ? "Asia/Shanghai" : request.timezone());
         item.setReminderEnabled(request.reminderEnabled() != null && request.reminderEnabled());
-        item.setPushPlatform(request.pushPlatform());
         item.setPushTargetId(request.pushTargetId());
-        item.setPushCredential(credentialEncryptor.encrypt(request.pushCredential()));
         item.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
         item.setCreatedBy(userId);
         item.setUpdatedBy(userId);
@@ -70,9 +74,7 @@ public class FixedWorkService {
         item.setReminderDays(request.reminderDays());
         item.setTimezone(request.timezone() == null ? item.getTimezone() : request.timezone());
         item.setReminderEnabled(request.reminderEnabled() != null ? request.reminderEnabled() : item.getReminderEnabled());
-        item.setPushPlatform(request.pushPlatform());
         item.setPushTargetId(request.pushTargetId());
-        item.setPushCredential(credentialEncryptor.encrypt(request.pushCredential()));
         item.setSortOrder(request.sortOrder() == null ? item.getSortOrder() : request.sortOrder());
         item.setUpdatedBy(userId);
         FixedWorkItem saved = itemRepository.update(item);
@@ -84,23 +86,62 @@ public class FixedWorkService {
 
     @Transactional
     public FixedWorkItemDto toggleComplete(Long userId, Long id) {
+        return toggleComplete(userId, id, null);
+    }
+
+    @Transactional
+    public FixedWorkItemDto toggleComplete(Long userId, Long id, LocalDate date) {
         FixedWorkItem item = requireOwnedByUser(id, userId);
-        LocalDate today = LocalDate.now(ZoneId.of(item.getTimezone()));
-        FixedWorkCompletion existing = completionRepository.findByItemIdAndDate(id, today)
+        LocalDate targetDate = date == null ? LocalDate.now(ZoneId.of(item.getTimezone())) : date;
+        FixedWorkCompletion existing = completionRepository.findByItemIdAndDate(id, targetDate)
                 .orElse(null);
 
         boolean newCompleted = existing == null || !Boolean.TRUE.equals(existing.getCompleted());
         FixedWorkCompletion completion = new FixedWorkCompletion();
         completion.setItemId(id);
         completion.setUserId(userId);
-        completion.setCompletionDate(today);
+        completion.setCompletionDate(targetDate);
         completion.setCompleted(newCompleted);
         completion.setCompletedAt(newCompleted ? OffsetDateTime.now() : null);
+        completion.setCompletionSource(CompletionSource.DESKTOP.name());
         completion.setCreatedBy(userId);
         completion.setUpdatedBy(userId);
         completionRepository.upsert(completion);
 
         return toDto(item, newCompleted);
+    }
+
+    @Transactional
+    public FixedWorkItemDto completeByName(Long userId, String taskName, LocalDate date, String source) {
+        if (taskName == null || taskName.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务名称不能为空");
+        }
+        LocalDate targetDate = date == null ? LocalDate.now() : date;
+
+        List<FixedWorkItem> candidates = itemRepository.findByUserId(userId).stream()
+                .filter(item -> item.getContent() != null && item.getContent().contains(taskName.trim()))
+                .toList();
+
+        if (candidates.isEmpty()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "未找到匹配的固定工作：" + taskName);
+        }
+        if (candidates.size() > 1) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "匹配到多个固定工作，请提供更精确的名称：" + taskName);
+        }
+
+        FixedWorkItem item = candidates.get(0);
+        FixedWorkCompletion completion = new FixedWorkCompletion();
+        completion.setItemId(item.getId());
+        completion.setUserId(userId);
+        completion.setCompletionDate(targetDate);
+        completion.setCompleted(true);
+        completion.setCompletedAt(OffsetDateTime.now());
+        completion.setCompletionSource(source == null ? CompletionSource.IM.name() : source);
+        completion.setCreatedBy(userId);
+        completion.setUpdatedBy(userId);
+        completionRepository.upsert(completion);
+
+        return toDto(item, true);
     }
 
     @Transactional
@@ -158,9 +199,10 @@ public class FixedWorkService {
                 item.getReminderDays(),
                 item.getTimezone(),
                 item.getReminderEnabled(),
-                item.getPushPlatform(),
                 item.getPushTargetId(),
-                item.getPushCredential() != null && !item.getPushCredential().isBlank(),
+                item.getLegacyPushPlatform(),
+                item.getLegacyPushTargetId(),
+                item.getLegacyPushCredential() != null && !item.getLegacyPushCredential().isBlank(),
                 item.getSortOrder(),
                 completedToday,
                 item.getCreatedAt(),

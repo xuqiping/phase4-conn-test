@@ -1,6 +1,6 @@
 package com.superprogrammer.workreport.service.push;
 
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.entity.PushTarget;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -25,7 +25,7 @@ public class SlackPusher implements PushService {
     }
 
     @Override
-    public PushResult push(PushPayload payload, ReportPushTarget target) {
+    public PushResult push(PushPayload payload, PushTarget target, String decryptedCredential) {
         try {
             String webhookUrl = target.getTargetId();
 

@@ -29,8 +29,8 @@ public class WorkReportRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into work_reports (user_id, config_id, report_type, title, content, generated_at, status, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into work_reports (user_id, config_id, report_type, title, content, generated_at, status, completion_rate, consecutive_miss_days, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, report.getUserId());
@@ -40,8 +40,10 @@ public class WorkReportRepository {
             ps.setString(5, report.getContent());
             ps.setTimestamp(6, generatedAt);
             ps.setString(7, report.getStatus());
-            ps.setObject(8, report.getCreatedBy());
-            ps.setObject(9, report.getUpdatedBy());
+            ps.setObject(8, report.getCompletionRate());
+            ps.setObject(9, report.getConsecutiveMissDays());
+            ps.setObject(10, report.getCreatedBy());
+            ps.setObject(11, report.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -67,7 +69,7 @@ public class WorkReportRepository {
 
     public Optional<WorkReport> findById(Long id) {
         List<WorkReport> results = jdbcTemplate.query(
-                "select id, user_id, config_id, report_type, title, content, generated_at, status, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, config_id, report_type, title, content, generated_at, status, completion_rate, consecutive_miss_days, created_by, created_at, updated_by, updated_at, deleted " +
                         "from work_reports where id = ? and deleted = 0",
                 reportMapper(), id
         );
@@ -79,7 +81,7 @@ public class WorkReportRepository {
         long safeSize = Math.min(Math.max(size, 1), 100);
         long offset = (safePage - 1) * safeSize;
         return jdbcTemplate.query(
-                "select id, user_id, config_id, report_type, title, content, generated_at, status, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, config_id, report_type, title, content, generated_at, status, completion_rate, consecutive_miss_days, created_by, created_at, updated_by, updated_at, deleted " +
                         "from work_reports where user_id = ? and deleted = 0 order by generated_at desc limit ? offset ?",
                 reportMapper(), userId, safeSize, offset
         );
@@ -117,6 +119,8 @@ public class WorkReportRepository {
             report.setGeneratedAt(generatedAt.toInstant().atOffset(java.time.ZoneOffset.UTC));
         }
         report.setStatus(rs.getString("status"));
+        report.setCompletionRate(rs.getObject("completion_rate", Double.class));
+        report.setConsecutiveMissDays(rs.getObject("consecutive_miss_days", Integer.class));
         report.setCreatedBy(rs.getObject("created_by", Long.class));
         report.setCreatedAt(rs.getTimestamp("created_at").toInstant().atOffset(java.time.ZoneOffset.UTC));
         report.setUpdatedBy(rs.getObject("updated_by", Long.class));

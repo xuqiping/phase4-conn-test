@@ -8,6 +8,8 @@ public record WorkReportDto(
         String title,
         String content,
         LocalDateTime generatedAt,
-        String status
+        String status,
+        Double completionRate,
+        Integer consecutiveMissDays
 ) {
 }

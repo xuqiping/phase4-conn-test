@@ -27,8 +27,8 @@ public class ReminderDeliveryRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into reminder_deliveries (source_type, source_id, user_id, platform, target_id, credential, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into reminder_deliveries (source_type, source_id, user_id, platform, target_id, credential, push_target_id, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setString(1, delivery.getSourceType());
@@ -37,11 +37,12 @@ public class ReminderDeliveryRepository {
             ps.setString(4, delivery.getPlatform());
             ps.setString(5, delivery.getTargetId());
             ps.setString(6, delivery.getCredential());
-            ps.setString(7, delivery.getStatus());
-            ps.setString(8, delivery.getResponse());
-            ps.setInt(9, delivery.getTriedCount() == null ? 0 : delivery.getTriedCount());
-            ps.setObject(10, delivery.getCreatedBy());
-            ps.setObject(11, delivery.getUpdatedBy());
+            ps.setObject(7, delivery.getPushTargetId());
+            ps.setString(8, delivery.getStatus());
+            ps.setString(9, delivery.getResponse());
+            ps.setInt(10, delivery.getTriedCount() == null ? 0 : delivery.getTriedCount());
+            ps.setObject(11, delivery.getCreatedBy());
+            ps.setObject(12, delivery.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -64,7 +65,7 @@ public class ReminderDeliveryRepository {
 
     public Optional<ReminderDelivery> findById(Long id) {
         List<ReminderDelivery> results = jdbcTemplate.query(
-                "select id, source_type, source_id, user_id, platform, target_id, credential, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, source_type, source_id, user_id, platform, target_id, credential, push_target_id, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted " +
                         "from reminder_deliveries where id = ? and deleted = 0",
                 deliveryMapper(), id
         );
@@ -73,7 +74,7 @@ public class ReminderDeliveryRepository {
 
     public List<ReminderDelivery> findFailedWithin(LocalDateTime since) {
         return jdbcTemplate.query(
-                "select id, source_type, source_id, user_id, platform, target_id, credential, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, source_type, source_id, user_id, platform, target_id, credential, push_target_id, status, response, tried_count, created_by, created_at, updated_by, updated_at, deleted " +
                         "from reminder_deliveries where status != 'SUCCESS' and created_at >= ? and tried_count < 3 and deleted = 0",
                 deliveryMapper(), since
         );
@@ -92,6 +93,7 @@ public class ReminderDeliveryRepository {
         delivery.setPlatform(rs.getString("platform"));
         delivery.setTargetId(rs.getString("target_id"));
         delivery.setCredential(rs.getString("credential"));
+        delivery.setPushTargetId(rs.getObject("push_target_id", Long.class));
         delivery.setStatus(rs.getString("status"));
         delivery.setResponse(rs.getString("response"));
         delivery.setTriedCount(rs.getInt("tried_count"));

@@ -92,7 +92,8 @@ const moduleOptions = [
   { label: '文件管理 (files)', value: 'files' },
   { label: '进程管理 (processes)', value: 'processes' },
   { label: '剪贴板 (clipboard)', value: 'clipboard' },
-  { label: '工作汇报 (work-report)', value: 'work-report' }
+  { label: '工作汇报 (work-report)', value: 'work-report' },
+  { label: 'AI 能力 (ai)', value: 'ai' }
 ]
 
 const entitlementColumns: DataTableColumns<ModuleEntitlement> = [

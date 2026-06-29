@@ -28,8 +28,8 @@ public class FuturePlanRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into future_plans (user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, push_platform, push_target_id, push_credential, status, sort_order, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into future_plans (user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, legacy_push_platform, legacy_push_target_id, legacy_push_credential, push_target_id, status, sort_order, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, plan.getUserId());
@@ -39,13 +39,14 @@ public class FuturePlanRepository {
             ps.setString(5, plan.getTimezone());
             ps.setBoolean(6, plan.getReminderEnabled() != null && plan.getReminderEnabled());
             ps.setInt(7, plan.getReminderMinutesBefore() == null ? 0 : plan.getReminderMinutesBefore());
-            ps.setString(8, plan.getPushPlatform());
-            ps.setString(9, plan.getPushTargetId());
-            ps.setString(10, plan.getPushCredential());
-            ps.setString(11, plan.getStatus() == null ? "PENDING" : plan.getStatus());
-            ps.setInt(12, plan.getSortOrder() == null ? 0 : plan.getSortOrder());
-            ps.setObject(13, plan.getCreatedBy());
-            ps.setObject(14, plan.getUpdatedBy());
+            ps.setString(8, plan.getLegacyPushPlatform());
+            ps.setString(9, plan.getLegacyPushTargetId());
+            ps.setString(10, plan.getLegacyPushCredential());
+            ps.setObject(11, plan.getPushTargetId());
+            ps.setString(12, plan.getStatus() == null ? "PENDING" : plan.getStatus());
+            ps.setInt(13, plan.getSortOrder() == null ? 0 : plan.getSortOrder());
+            ps.setObject(14, plan.getCreatedBy());
+            ps.setObject(15, plan.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -58,13 +59,13 @@ public class FuturePlanRepository {
 
     public FuturePlan update(FuturePlan plan) {
         int rows = jdbcTemplate.update(
-                "update future_plans set content = ?, description = ?, scheduled_at = ?, timezone = ?, reminder_enabled = ?, reminder_minutes_before = ?, push_platform = ?, push_target_id = ?, push_credential = ?, status = ?, sort_order = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
+                "update future_plans set content = ?, description = ?, scheduled_at = ?, timezone = ?, reminder_enabled = ?, reminder_minutes_before = ?, legacy_push_platform = ?, legacy_push_target_id = ?, legacy_push_credential = ?, push_target_id = ?, status = ?, sort_order = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
                         "where id = ? and deleted = 0",
                 plan.getContent(), plan.getDescription(),
                 Timestamp.from(plan.getScheduledAt().toInstant()), plan.getTimezone(),
                 plan.getReminderEnabled(), plan.getReminderMinutesBefore(),
-                plan.getPushPlatform(), plan.getPushTargetId(), plan.getPushCredential(),
-                plan.getStatus(), plan.getSortOrder(), plan.getUpdatedBy(), plan.getId()
+                plan.getLegacyPushPlatform(), plan.getLegacyPushTargetId(), plan.getLegacyPushCredential(),
+                plan.getPushTargetId(), plan.getStatus(), plan.getSortOrder(), plan.getUpdatedBy(), plan.getId()
         );
         if (rows == 0) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "未来计划不存在");
@@ -74,7 +75,7 @@ public class FuturePlanRepository {
 
     public Optional<FuturePlan> findById(Long id) {
         List<FuturePlan> results = jdbcTemplate.query(
-                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, push_platform, push_target_id, push_credential, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, legacy_push_platform, legacy_push_target_id, legacy_push_credential, push_target_id, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
                         "from future_plans where id = ? and deleted = 0",
                 planMapper(), id
         );
@@ -83,7 +84,7 @@ public class FuturePlanRepository {
 
     public List<FuturePlan> findByUserId(Long userId) {
         return jdbcTemplate.query(
-                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, push_platform, push_target_id, push_credential, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, legacy_push_platform, legacy_push_target_id, legacy_push_credential, push_target_id, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
                         "from future_plans where user_id = ? and deleted = 0 order by scheduled_at asc, sort_order asc",
                 planMapper(), userId
         );
@@ -91,7 +92,7 @@ public class FuturePlanRepository {
 
     public List<FuturePlan> findByUserIdAndStatus(Long userId, String status) {
         return jdbcTemplate.query(
-                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, push_platform, push_target_id, push_credential, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, legacy_push_platform, legacy_push_target_id, legacy_push_credential, push_target_id, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
                         "from future_plans where user_id = ? and status = ? and deleted = 0 order by scheduled_at asc",
                 planMapper(), userId, status
         );
@@ -99,7 +100,7 @@ public class FuturePlanRepository {
 
     public List<FuturePlan> findPendingReminders(OffsetDateTime before) {
         return jdbcTemplate.query(
-                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, push_platform, push_target_id, push_credential, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, content, description, scheduled_at, timezone, reminder_enabled, reminder_minutes_before, legacy_push_platform, legacy_push_target_id, legacy_push_credential, push_target_id, status, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
                         "from future_plans where status = 'PENDING' and reminder_enabled = true and scheduled_at - make_interval(mins => reminder_minutes_before) <= ? " +
                         "and deleted = 0 order by scheduled_at asc",
                 planMapper(), Timestamp.from(before.toInstant())
@@ -135,9 +136,10 @@ public class FuturePlanRepository {
         plan.setTimezone(rs.getString("timezone"));
         plan.setReminderEnabled(rs.getBoolean("reminder_enabled"));
         plan.setReminderMinutesBefore(rs.getInt("reminder_minutes_before"));
-        plan.setPushPlatform(rs.getString("push_platform"));
-        plan.setPushTargetId(rs.getString("push_target_id"));
-        plan.setPushCredential(rs.getString("push_credential"));
+        plan.setLegacyPushPlatform(rs.getString("legacy_push_platform"));
+        plan.setLegacyPushTargetId(rs.getString("legacy_push_target_id"));
+        plan.setLegacyPushCredential(rs.getString("legacy_push_credential"));
+        plan.setPushTargetId(rs.getObject("push_target_id", Long.class));
         plan.setStatus(rs.getString("status"));
         plan.setSortOrder(rs.getInt("sort_order"));
         plan.setCreatedBy(rs.getObject("created_by", Long.class));

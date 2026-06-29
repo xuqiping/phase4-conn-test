@@ -14,26 +14,33 @@ interface AuthSession {
   accessToken: string
   refreshToken: string
   user: UserSummary
+  expiresAt: number
 }
 
 const AUTH_STORE_PATH = 'file-keeper-auth.json'
 const AUTH_SESSION_KEY = 'authSession'
+// 提前 1 分钟刷新，避免边界时间导致的 401
+const TOKEN_REFRESH_MARGIN_MS = 60 * 1000
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null)
   const refreshToken = ref<string | null>(null)
   const user = ref<UserSummary | null>(null)
+  const expiresAt = ref<number | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
   const isAuthenticated = computed(() => Boolean(accessToken.value && refreshToken.value && user.value))
+
+  // 防止多个并发请求同时触发 refresh
+  let refreshPromise: Promise<void> | null = null
 
   async function login(baseUrl: string, identifier: string, password: string): Promise<void> {
     loading.value = true
     error.value = null
     try {
       const response = await authApi.login(baseUrl, identifier, password)
-      const session = toSession(response.accessToken, response.refreshToken, response.user)
+      const session = toSession(response.accessToken, response.refreshToken, response.user, response.expiresInSeconds)
       try {
         setSession(session)
         await persistSession(session)
@@ -89,11 +96,19 @@ export const useAuthStore = defineStore('auth', () => {
         return
       }
 
-      const response = await authApi.refresh(baseUrl, storedSession.refreshToken)
-      const session = toSession(response.accessToken, response.refreshToken, response.user)
+      // 兼容旧版持久化：旧 session 没有 expiresAt，按已过期处理并刷新
+      const session: AuthSession = {
+        ...storedSession,
+        expiresAt: storedSession.expiresAt || 0
+      }
       setSession(session)
-      await persistSession(session)
-      await useCommercialAuthStore().initializeAuthenticated(baseUrl, response.accessToken)
+
+      if (Date.now() >= session.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+        await refreshAccessToken(baseUrl)
+      } else {
+        await persistSession(session)
+      }
+      await useCommercialAuthStore().initializeAuthenticated(baseUrl, accessToken.value!)
     } catch (err) {
       error.value = errorMessage(err)
       if (restoringAnonymous) {
@@ -150,12 +165,55 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken.value = session.accessToken
     refreshToken.value = session.refreshToken
     user.value = session.user
+    expiresAt.value = session.expiresAt
   }
 
   function clearSession() {
     accessToken.value = null
     refreshToken.value = null
     user.value = null
+    expiresAt.value = null
+  }
+
+  async function refreshAccessToken(baseUrl: string): Promise<void> {
+    if (refreshPromise) {
+      await refreshPromise
+      return
+    }
+    refreshPromise = (async () => {
+      try {
+        const currentRefreshToken = refreshToken.value
+        if (!currentRefreshToken) {
+          throw new Error('未登录')
+        }
+        const response = await authApi.refresh(baseUrl, currentRefreshToken)
+        const session = toSession(response.accessToken, response.refreshToken, response.user, response.expiresInSeconds)
+        setSession(session)
+        await persistSession(session)
+      } catch (err) {
+        error.value = errorMessage(err)
+        clearSession()
+        await persistSession(null)
+        await useCommercialAuthStore().initializeAnonymous(baseUrl)
+        throw err
+      } finally {
+        refreshPromise = null
+      }
+    })()
+    await refreshPromise
+  }
+
+  async function ensureValidToken(baseUrl: string): Promise<string> {
+    if (!accessToken.value) {
+      throw new Error('未登录')
+    }
+    if (!expiresAt.value || Date.now() >= expiresAt.value - TOKEN_REFRESH_MARGIN_MS) {
+      await refreshAccessToken(baseUrl)
+    }
+    if (!accessToken.value) {
+      throw new Error('未登录')
+    }
+    return accessToken.value
   }
 
   return {
@@ -168,14 +226,21 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     logout,
     restoreSession,
+    refreshAccessToken,
+    ensureValidToken,
     register,
     sendVerificationCode,
     checkVerificationCode
   }
 })
 
-function toSession(accessToken: string, refreshToken: string, user: UserSummary): AuthSession {
-  return { accessToken, refreshToken, user }
+function toSession(accessToken: string, refreshToken: string, user: UserSummary, expiresInSeconds: number): AuthSession {
+  return {
+    accessToken,
+    refreshToken,
+    user,
+    expiresAt: Date.now() + expiresInSeconds * 1000
+  }
 }
 
 async function loadSession(): Promise<AuthSession | null> {

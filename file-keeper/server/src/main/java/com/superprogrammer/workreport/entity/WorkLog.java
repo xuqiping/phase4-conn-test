@@ -23,4 +23,6 @@ public class WorkLog extends BaseEntity {
     private String source;
 
     private Integer sortOrder;
+
+    private String platformMessageId;
 }

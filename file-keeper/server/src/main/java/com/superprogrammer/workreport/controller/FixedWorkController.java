@@ -15,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.format.annotation.DateTimeFormat;
+
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -38,12 +41,29 @@ public class FixedWorkController {
     public R<List<FixedWorkItemDto>> list(
             Authentication auth,
             @RequestParam String deviceId,
-            @RequestParam String type) {
+            @RequestParam String type,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         if (!checkModuleAuth(auth, deviceId)) {
             return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
         }
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        if (date != null) {
+            return R.ok(fixedWorkService.listByUserAndDate(principal.userId(), date));
+        }
         return R.ok(fixedWorkService.listByUserAndType(principal.userId(), type));
+    }
+
+    @PostMapping("/{id}/toggle-complete")
+    public R<FixedWorkItemDto> toggleComplete(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @PathVariable Long id,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        if (!checkModuleAuth(auth, deviceId)) {
+            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        return R.ok(fixedWorkService.toggleComplete(principal.userId(), id, date));
     }
 
     @PostMapping
@@ -69,18 +89,6 @@ public class FixedWorkController {
         }
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
         return R.ok(fixedWorkService.update(principal.userId(), id, request));
-    }
-
-    @PostMapping("/{id}/toggle-complete")
-    public R<FixedWorkItemDto> toggleComplete(
-            Authentication auth,
-            @RequestParam String deviceId,
-            @PathVariable Long id) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
-        return R.ok(fixedWorkService.toggleComplete(principal.userId(), id));
     }
 
     @DeleteMapping("/{id}")

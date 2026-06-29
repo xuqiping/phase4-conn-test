@@ -49,7 +49,7 @@ export interface AuthResponse {
   user: UserSummary
 }
 
-export type ModuleCode = 'files' | 'processes' | 'clipboard' | 'work-report'
+export type ModuleCode = 'files' | 'processes' | 'clipboard' | 'work-report' | 'ai'
 
 export const USER_STATUS_MAP: Record<string, { label: string; type: 'default' | 'info' | 'success' | 'warning' | 'error' }> = {
   pending_verification: { label: '待验证', type: 'warning' },
@@ -62,7 +62,8 @@ export const MODULE_LABEL_MAP: Record<string, string> = {
   files: '文件管理',
   processes: '进程管理',
   clipboard: '剪贴板',
-  'work-report': '工作汇报'
+  'work-report': '工作汇报',
+  ai: 'AI 能力'
 }
 
 export interface DashboardStats {

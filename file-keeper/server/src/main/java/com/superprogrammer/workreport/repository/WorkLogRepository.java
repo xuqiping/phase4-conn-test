@@ -28,8 +28,8 @@ public class WorkLogRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                "insert into work_logs (user_id, log_date, content, tags, source, sort_order, created_by, created_at, updated_by, updated_at, deleted) " +
-                    "values (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into work_logs (user_id, log_date, content, tags, source, sort_order, platform_message_id, created_by, created_at, updated_by, updated_at, deleted) " +
+                    "values (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 new String[] { "id" }
             );
             ps.setLong(1, log.getUserId());
@@ -38,8 +38,9 @@ public class WorkLogRepository {
             ps.setString(4, log.getTags());
             ps.setString(5, log.getSource());
             ps.setInt(6, log.getSortOrder() == null ? 0 : log.getSortOrder());
-            ps.setObject(7, log.getCreatedBy());
-            ps.setObject(8, log.getUpdatedBy());
+            ps.setString(7, log.getPlatformMessageId());
+            ps.setObject(8, log.getCreatedBy());
+            ps.setObject(9, log.getUpdatedBy());
             return ps;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -52,9 +53,9 @@ public class WorkLogRepository {
 
     public WorkLog update(WorkLog log) {
         int rows = jdbcTemplate.update(
-                "update work_logs set content = ?, tags = ?, source = ?, sort_order = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
+                "update work_logs set content = ?, tags = ?, source = ?, sort_order = ?, platform_message_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP " +
                         "where id = ? and deleted = 0",
-                log.getContent(), log.getTags(), log.getSource(), log.getSortOrder(),
+                log.getContent(), log.getTags(), log.getSource(), log.getSortOrder(), log.getPlatformMessageId(),
                 log.getUpdatedBy(), log.getId()
         );
         if (rows == 0) {
@@ -65,7 +66,7 @@ public class WorkLogRepository {
 
     public Optional<WorkLog> findById(Long id) {
         List<WorkLog> results = jdbcTemplate.query(
-                "select id, user_id, log_date, content, tags, source, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, log_date, content, tags, source, sort_order, platform_message_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from work_logs where id = ? and deleted = 0",
                 workLogMapper(), id
         );
@@ -74,7 +75,7 @@ public class WorkLogRepository {
 
     public List<WorkLog> findByUserIdAndDateRange(Long userId, LocalDate startDate, LocalDate endDate) {
         return jdbcTemplate.query(
-                "select id, user_id, log_date, content, tags, source, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, log_date, content, tags, source, sort_order, platform_message_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from work_logs where user_id = ? and log_date between ? and ? and deleted = 0 order by log_date desc, sort_order asc, id desc",
                 workLogMapper(), userId, Date.valueOf(startDate), Date.valueOf(endDate)
         );
@@ -82,7 +83,7 @@ public class WorkLogRepository {
 
     public List<WorkLog> findByUserIdAndDate(Long userId, LocalDate logDate) {
         return jdbcTemplate.query(
-                "select id, user_id, log_date, content, tags, source, sort_order, created_by, created_at, updated_by, updated_at, deleted " +
+                "select id, user_id, log_date, content, tags, source, sort_order, platform_message_id, created_by, created_at, updated_by, updated_at, deleted " +
                         "from work_logs where user_id = ? and log_date = ? and deleted = 0 order by sort_order asc, id desc",
                 workLogMapper(), userId, Date.valueOf(logDate)
         );
@@ -108,6 +109,7 @@ public class WorkLogRepository {
         log.setTags(rs.getString("tags"));
         log.setSource(rs.getString("source"));
         log.setSortOrder(rs.getInt("sort_order"));
+        log.setPlatformMessageId(rs.getString("platform_message_id"));
         log.setCreatedBy(rs.getObject("created_by", Long.class));
         log.setCreatedAt(rs.getTimestamp("created_at").toInstant().atOffset(java.time.ZoneOffset.UTC));
         log.setUpdatedBy(rs.getObject("updated_by", Long.class));

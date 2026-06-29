@@ -25,4 +25,8 @@ public class WorkReport extends BaseEntity {
     private OffsetDateTime generatedAt;
 
     private String status;
+
+    private Double completionRate;
+
+    private Integer consecutiveMissDays;
 }

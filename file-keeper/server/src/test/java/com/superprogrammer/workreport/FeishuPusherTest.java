@@ -1,6 +1,6 @@
 package com.superprogrammer.workreport;
 
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.entity.PushTarget;
 import com.superprogrammer.workreport.service.CredentialEncryptor;
 import com.superprogrammer.workreport.service.push.FeishuPusher;
 import com.superprogrammer.workreport.service.push.Platform;
@@ -43,12 +43,12 @@ class FeishuPusherTest {
 
     @Test
     void pushToGroupSuccessfully() {
-        ReportPushTarget target = new ReportPushTarget();
+        PushTarget target = new PushTarget();
         target.setPlatform("FEISHU");
         target.setTargetType("GROUP");
         target.setTargetId("chat123");
-        target.setCredential("{\"appId\":\"app123\",\"appSecret\":\"secret\"}");
 
+        String credential = "{\"appId\":\"app123\",\"appSecret\":\"secret\"}";
         PushPayload payload = new PushPayload("日报", "今日工作");
 
         when(restTemplate.postForEntity(eq("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"),
@@ -59,7 +59,7 @@ class FeishuPusherTest {
                 any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("ok"));
 
-        PushResult result = feishuPusher.push(payload, target);
+        PushResult result = feishuPusher.push(payload, target, credential);
 
         assertTrue(result.success());
         assertEquals("推送成功", result.message());
@@ -72,18 +72,18 @@ class FeishuPusherTest {
 
     @Test
     void pushFailureWhenTokenRequestFails() {
-        ReportPushTarget target = new ReportPushTarget();
+        PushTarget target = new PushTarget();
         target.setPlatform("FEISHU");
         target.setTargetType("USER");
         target.setTargetId("open123");
-        target.setCredential("{\"appId\":\"app123\",\"appSecret\":\"secret\"}");
 
+        String credential = "{\"appId\":\"app123\",\"appSecret\":\"secret\"}";
         PushPayload payload = new PushPayload("日报", "今日工作");
 
         when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
                 .thenReturn(ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("msg", "invalid app")));
 
-        PushResult result = feishuPusher.push(payload, target);
+        PushResult result = feishuPusher.push(payload, target, credential);
 
         assertFalse(result.success());
         assertTrue(result.message().contains("推送异常"));

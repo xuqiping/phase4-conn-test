@@ -24,8 +24,8 @@
         <button
           v-for="tab in mainTabs"
           :key="tab.key"
-          @click="store.activeMainTab = tab.key"
-          :class="['w-full text-left px-3 py-2 rounded-md text-sm transition-colors border', store.activeMainTab === tab.key ? 'bg-[var(--accent-subtle-bg)] text-[var(--accent-subtle-text)] border-[var(--accent-subtle-border)]' : 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-color)] hover:bg-[var(--bg-hover)]']"
+          @click="setMainTab(tab.key)"
+          :class="['w-full text-left px-3 py-2 rounded-md text-sm transition-colors border', store.activeMainTab === tab.key && activePanel === 'main' ? 'bg-[var(--accent-subtle-bg)] text-[var(--accent-subtle-text)] border-[var(--accent-subtle-border)]' : 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-color)] hover:bg-[var(--bg-hover)]']"
         >
           {{ tab.label }}
         </button>
@@ -36,6 +36,12 @@
             :class="['w-full text-left px-3 py-2 rounded-md text-sm transition-colors border', activePanel === 'config' ? 'bg-[var(--accent-subtle-bg)] text-[var(--accent-subtle-text)] border-[var(--accent-subtle-border)]' : 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-color)] hover:bg-[var(--bg-hover)]']"
           >
             {{ t('workReport.reportConfig') }}
+          </button>
+          <button
+            @click="activePanel = 'push-config'"
+            :class="['w-full text-left px-3 py-2 rounded-md text-sm transition-colors border', activePanel === 'push-config' ? 'bg-[var(--accent-subtle-bg)] text-[var(--accent-subtle-text)] border-[var(--accent-subtle-border)]' : 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-color)] hover:bg-[var(--bg-hover)]']"
+          >
+            {{ t('workReport.pushConfig') }}
           </button>
           <button
             @click="activePanel = 'history'"
@@ -55,7 +61,7 @@
           <button
             v-for="tab in mainTabs"
             :key="tab.key"
-            @click="store.activeMainTab = tab.key"
+            @click="setMainTab(tab.key)"
             :class="['px-4 py-1.5 text-sm rounded-md transition-colors', store.activeMainTab === tab.key ? 'bg-white dark:bg-dark-panel text-primary shadow-sm' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100']"
           >
             {{ tab.label }}
@@ -79,13 +85,21 @@
 
       <!-- 内容面板 -->
       <div v-if="activePanel === 'main'" class="flex-1 overflow-hidden">
+        <InboxPanel v-if="store.activeMainTab === 'inbox'" />
         <WorkLogEditor v-if="store.activeMainTab === 'logs'" />
-        <FuturePlanPanel v-else-if="store.activeMainTab === 'future'" />
-        <FixedWorkPanel v-else-if="store.activeMainTab === 'fixed'" :key="store.activeFixedSubTab" :type="store.activeFixedSubTab" />
+        <FuturePlanPanel v-if="store.activeMainTab === 'future'" />
+        <FixedWorkPanel v-if="store.activeMainTab === 'fixed'" :key="store.activeFixedSubTab" :type="store.activeFixedSubTab" />
+        <FixedWorkCompletionCalendar v-if="store.activeMainTab === 'calendar'" />
+        <InspirationPanel v-if="store.activeMainTab === 'inspirations'" />
+        <PushConfigPanel v-if="store.activeMainTab === 'push-config'" />
       </div>
 
       <div v-else-if="activePanel === 'config'" class="flex-1 overflow-auto p-4">
         <ReportConfigForm @generate="handleGenerate" />
+      </div>
+
+      <div v-else-if="activePanel === 'push-config'" class="flex-1 overflow-auto p-4">
+        <PushConfigPanel />
       </div>
 
       <div v-else-if="activePanel === 'history'" class="flex-1 overflow-hidden flex flex-col">
@@ -102,22 +116,30 @@ import { useWorkReportStore } from '@/stores/workReportStore'
 import { useI18n } from '@/composables/useI18n'
 import WorkLogEditor from './WorkLogEditor.vue'
 import FixedWorkPanel from './FixedWorkPanel.vue'
+import FixedWorkCompletionCalendar from './FixedWorkCompletionCalendar.vue'
 import FuturePlanPanel from './FuturePlanPanel.vue'
 import ReportConfigForm from './ReportConfigForm.vue'
+import PushConfigPanel from './PushConfigPanel.vue'
 import ReportViewer from './ReportViewer.vue'
 import ReportHistoryList from './ReportHistoryList.vue'
+import InboxPanel from './InboxPanel.vue'
+import InspirationPanel from './InspirationPanel.vue'
 
 import type { MainTab } from '@/stores/workReportStore'
 import type { RecurrenceType } from '@/types/workReport'
 
 const store = useWorkReportStore()
 const { t } = useI18n()
-const activePanel = ref<'main' | 'config' | 'history'>('main')
+const activePanel = ref<'main' | 'config' | 'push-config' | 'history'>('main')
 
 const mainTabs = computed(() => [
+  { key: 'inbox' as MainTab, label: t('workReport.inbox') },
   { key: 'logs' as MainTab, label: t('workReport.workLogs') },
   { key: 'future' as MainTab, label: t('workReport.futurePlans') },
   { key: 'fixed' as MainTab, label: t('workReport.fixedWork') },
+  { key: 'calendar' as MainTab, label: t('workReport.fixedWorkCalendar') },
+  { key: 'inspirations' as MainTab, label: t('workReport.inspirations') },
+  { key: 'push-config' as MainTab, label: t('workReport.pushConfig') },
 ])
 
 const fixedSubTabs = computed(() => [
@@ -125,6 +147,11 @@ const fixedSubTabs = computed(() => [
   { key: 'WEEKLY' as RecurrenceType, label: t('workReport.fixedWorkWeek') },
   { key: 'MONTHLY' as RecurrenceType, label: t('workReport.fixedWorkMonth') },
 ])
+
+function setMainTab(key: MainTab) {
+  store.activeMainTab = key
+  activePanel.value = 'main'
+}
 
 watch(() => store.activeMainTab, () => {
   activePanel.value = 'main'

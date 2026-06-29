@@ -28,11 +28,13 @@ public class FixedWorkItem extends BaseEntity {
 
     private Boolean reminderEnabled;
 
-    private String pushPlatform;
+    private String legacyPushPlatform;
 
-    private String pushTargetId;
+    private String legacyPushTargetId;
 
-    private String pushCredential;
+    private String legacyPushCredential;
+
+    private Long pushTargetId;
 
     private Integer sortOrder;
 }

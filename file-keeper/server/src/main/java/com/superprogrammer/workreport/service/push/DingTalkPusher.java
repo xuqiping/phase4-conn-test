@@ -1,6 +1,6 @@
 package com.superprogrammer.workreport.service.push;
 
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.entity.PushTarget;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -30,10 +30,10 @@ public class DingTalkPusher implements PushService {
     }
 
     @Override
-    public PushResult push(PushPayload payload, ReportPushTarget target) {
+    public PushResult push(PushPayload payload, PushTarget target, String decryptedCredential) {
         try {
             String accessToken = target.getTargetId();
-            String secret = target.getCredential();
+            String secret = decryptedCredential;
 
             long timestamp = System.currentTimeMillis();
             String sign = secret != null && !secret.isBlank() ? sign(timestamp, secret) : null;

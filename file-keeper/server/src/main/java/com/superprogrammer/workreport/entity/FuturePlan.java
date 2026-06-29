@@ -26,11 +26,13 @@ public class FuturePlan extends BaseEntity {
 
     private Integer reminderMinutesBefore;
 
-    private String pushPlatform;
+    private String legacyPushPlatform;
 
-    private String pushTargetId;
+    private String legacyPushTargetId;
 
-    private String pushCredential;
+    private String legacyPushCredential;
+
+    private Long pushTargetId;
 
     private String status;
 

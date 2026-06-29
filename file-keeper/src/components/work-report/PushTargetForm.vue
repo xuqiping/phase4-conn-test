@@ -56,18 +56,21 @@
 import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import PushTargetGuide from './PushTargetGuide.vue'
-import type { ReportPushTarget } from '@/types/workReport'
+import type { PushTargetForm } from '@/types/workReport'
+
+// 旧版内联目标表单（当前未使用，保留备用）。为兼容旧模板中的字段访问，使用宽松类型。
+type LegacyPushTarget = PushTargetForm & { credential?: string; hasCredential?: boolean }
 
 const { t } = useI18n()
 
 const showGuide = ref(false)
 
 const props = defineProps<{
-  modelValue?: ReportPushTarget[]
+  modelValue?: LegacyPushTarget[]
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: ReportPushTarget[]): void
+  (e: 'update:modelValue', value: LegacyPushTarget[]): void
 }>()
 
 const targets = computed(() => props.modelValue || [])
@@ -78,7 +81,7 @@ function remove(index: number) {
   emit('update:modelValue', next)
 }
 
-function credentialPlaceholder(target: ReportPushTarget): string {
+function credentialPlaceholder(target: LegacyPushTarget): string {
   if (target.hasCredential && !target.credential) {
     return '已保存，凭据不会回显以保障安全'
   }

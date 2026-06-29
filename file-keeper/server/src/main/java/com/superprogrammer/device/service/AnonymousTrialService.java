@@ -28,7 +28,8 @@ public class AnonymousTrialService {
             AuthConstants.MODULE_FILES,
             AuthConstants.MODULE_PROCESSES,
             AuthConstants.MODULE_CLIPBOARD,
-            AuthConstants.MODULE_WORK_REPORT
+            AuthConstants.MODULE_WORK_REPORT,
+            AuthConstants.MODULE_AI
     );
     private static final Set<String> VALID_MODULES = Set.copyOf(ALL_MODULES);
     private static final int IP_DEVICE_COUNT_WARNING_THRESHOLD = 5;
@@ -158,7 +159,7 @@ public class AnonymousTrialService {
 
     private void validateModuleCode(String moduleCode) {
         if (!VALID_MODULES.contains(moduleCode)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes、clipboard 或 work-report");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模块代码必须是 files、processes、clipboard、work-report 或 ai");
         }
     }
 
