@@ -36,6 +36,12 @@ public class KnowledgeDocument extends BaseEntity {
     /** 解析失败原因，status=FAILED 时写入（V21） */
     private String parseError;
 
+    /** 解析选项 JSON（Excel sheet 选择等）。空=默认行为。{ "selectedSheets": [...] }（V39） */
+    private String parseOptions;
+
+    /** 非致命解析告警（截断/降级），前端黄色徽章；与 parseError（致命 FAILED）并列（V39） */
+    private String parseWarning;
+
     private OffsetDateTime effectiveAt;
 
     private OffsetDateTime deadline;

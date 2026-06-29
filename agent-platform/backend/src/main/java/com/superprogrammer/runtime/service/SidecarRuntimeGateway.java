@@ -20,7 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
-@ConditionalOnProperty(prefix = "runtime.gateway", name = "mode", havingValue = "sidecar")
+@ConditionalOnProperty(prefix = "runtime.gateway", name = "mode", havingValue = "sidecar", matchIfMissing = true)
 public class SidecarRuntimeGateway implements RuntimeGateway {
 
     private final RuntimeGatewayProperties properties;

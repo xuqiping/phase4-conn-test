@@ -17,6 +17,10 @@ public class KnowledgeDocumentVO {
     private String fileRef;
     private String fileHash;
     private String parseError;
+    /** 解析选项 JSON（Excel selectedSheets 等），前端展示已选 sheet（V39）。 */
+    private String parseOptions;
+    /** 非致命解析告警（Excel 截断/降级），前端黄色徽章；与 parseError（致命 FAILED）并列（V39）。 */
+    private String parseWarning;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

@@ -22,6 +22,8 @@
         <mybatis-plus.version>3.5.5</mybatis-plus.version>
         <jjwt.version>0.12.5</jjwt.version>
         <tika.version>2.9.2</tika.version>
+        <!-- POI：Excel sheet 级解析（Tika 2.9.2 已传递引入 5.2.x，显式 pin 防漂移） -->
+        <poi.version>5.2.5</poi.version>
         <!-- mvn test 默认排除 integration 组；跑集成测：mvn test -Dsurefire.excludedGroups= -Dtest=XxxIT -->
         <surefire.excludedGroups>integration</surefire.excludedGroups>
     </properties>
@@ -119,6 +121,14 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers-standard-package</artifactId>
             <version>${tika.version}</version>
+        </dependency>
+
+        <!-- Apache POI：Excel sheet 级解析（xlsx=XSSF / xls=HSSF）。pin 5.2.5，与 Tika 2.9.2 传递的 5.2.x 同主线。 -->
+        <!-- 不移除 Tika —— pdf/docx/pptx/html 仍走 Tika。 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
         </dependency>
 
         <!-- jieba-analysis：中文分词（RAG BM25 词法兜底，Phase2）。Apache-2.0，无 native 依赖 -->

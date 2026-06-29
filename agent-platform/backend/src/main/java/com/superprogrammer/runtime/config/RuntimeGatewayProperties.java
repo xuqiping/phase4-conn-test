@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "runtime.gateway")
 public class RuntimeGatewayProperties {
 
-    private String mode = "mock";
+    private String mode = "sidecar";
     private String sidecarBaseUrl = "http://localhost:8090";
     private String javaCallbackBaseUrl = "http://localhost:8080";
 }

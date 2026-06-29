@@ -88,13 +88,13 @@ public class IndexJobTxService {
      * 若 tx 内复校发现 node 已变更/失活 → 转作 voidJob（新版本 job 接管，本 job 作废）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
+    public String completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
                                String embeddingModel, String halfvec, String contentHash) {
         KnowledgeNode node = nodeMapper.selectById(nodeId);
         if (node == null || !"ACTIVE".equals(node.getStatus())
                 || !eq(node.getContentHash(), contentHash)) {
             voidJob(jobId, "完成前节点已变更/失活/删除，job 作废（新版本 job 接管）");
-            return;
+            return null;
         }
         embeddingMapper.upsert(node.getId(), TENANT_ID, kbId, "L0", embeddingModel,
                 halfvec, node.getContentHash(), CONTEXT_HASH);
@@ -106,7 +106,7 @@ public class IndexJobTxService {
                 .set(KnowledgeIndexJob::getLastError, null);
         indexJobMapper.update(null, ju);
 
-        markDocIndexedIfDone(documentId);
+        return markDocIndexedIfDone(documentId);
     }
 
     /**
@@ -116,17 +116,17 @@ public class IndexJobTxService {
      * 复校发现 doc 删/l1 变 → voidJob（新版本 job 接管）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void completeUpsertL1(Long jobId, Long documentId, Long kbId,
+    public String completeUpsertL1(Long jobId, Long documentId, Long kbId,
                                  String embeddingModel, String halfvec, String contentHash) {
         KnowledgeDocument doc = documentMapper.selectById(documentId);
         if (doc == null) {
             voidJob(jobId, "完成前文档已删除，L1 job 作废");
-            return;
+            return null;
         }
         String currentHash = L1EmbedText.hashOfJson(doc.getL1Metadata(), objectMapper);
         if (!eq(currentHash, contentHash)) {
             voidJob(jobId, "完成前 L1 元数据已变更，L1 job 作废（新版本 job 接管）");
-            return;
+            return null;
         }
         docEmbeddingMapper.upsert(documentId, TENANT_ID, kbId, embeddingModel, halfvec, contentHash);
 
@@ -137,7 +137,7 @@ public class IndexJobTxService {
                 .set(KnowledgeIndexJob::getLastError, null);
         indexJobMapper.update(null, ju);
 
-        markDocIndexedIfDone(documentId);
+        return markDocIndexedIfDone(documentId);
     }
 
     /** I2 作废：节点变更/失活 → job FAILED 终态（新版本 job 接管，不可重跑本 job）。 */
@@ -180,18 +180,29 @@ public class IndexJobTxService {
         indexJobMapper.update(null, u);
     }
 
-    /** 文档下无 PENDING/RUNNING job → 置 INDEXED（DEAD 容忍：有缺口但其余已索引）。 */
-    private void markDocIndexedIfDone(Long docId) {
+    /**
+     * 文档下无 PENDING/RUNNING job → 置 INDEXED（DEAD 容忍：有缺口但其余已索引）。
+     *
+     * <p>返回值 = 本次完成使文档转为 INDEXED 时该文档的 fileRef（供 worker 在事务外做 D5 原件清理）；
+     * 未转换 / 无 fileRef → 返回 null。仅转换瞬间返回非空，多 worker 并发下仅最后完成者触发（计数读到 0）。
+     */
+    private String markDocIndexedIfDone(Long docId) {
         if (docId == null) {
-            return;
+            return null;
         }
         Long remaining = indexJobMapper.countPendingRunningByDoc(docId);
-        if (remaining != null && remaining == 0) {
-            LambdaUpdateWrapper<KnowledgeDocument> du = new LambdaUpdateWrapper<>();
-            du.eq(KnowledgeDocument::getId, docId).set(KnowledgeDocument::getStatus, "INDEXED");
-            documentMapper.update(null, du);
-            log.info("文档全部 job 完成 → INDEXED docId={}", docId);
+        if (remaining == null || remaining != 0) {
+            return null;
         }
+        KnowledgeDocument doc = documentMapper.selectById(docId);
+        if (doc == null) {
+            return null;
+        }
+        LambdaUpdateWrapper<KnowledgeDocument> du = new LambdaUpdateWrapper<>();
+        du.eq(KnowledgeDocument::getId, docId).set(KnowledgeDocument::getStatus, "INDEXED");
+        documentMapper.update(null, du);
+        log.info("文档全部 job 完成 → INDEXED docId={}", docId);
+        return doc.getFileRef();
     }
 
     private static boolean eq(String a, String b) {

@@ -24,6 +24,14 @@ public class RagRetrieveRequest {
     /** ECONOMY / BALANCED / PRECISION（Phase1 仅 BALANCED）*/
     private String mode;
 
+    /**
+     * 是否生成答案（调 LLM）。
+     * false（默认）= 纯检索调试：只返回候选 L0 / 证据 L2 / token 预算，不调 generate，秒级返回。
+     * true = 完整 RAG：调 LLM 生成带 [n] 引用的答案（慢，10s+）。
+     * 检索调试默认 false；要答案去 /ask（SSE 流式）。
+     */
+    private boolean generateAnswer;
+
     /** controller 注入（非请求字段）：当前用户是否 admin */
     private boolean adminHint;
 }

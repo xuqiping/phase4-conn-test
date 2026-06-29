@@ -39,6 +39,9 @@ public class RagRetrievalLog {
     /** JSON：候选 L0 */
     private String candidatesL0;
 
+    /** JSON：候选 L1（Phase3 doc 级语义锚命中；CACHE_HIT/NO_VISIBLE_DOCS/ERROR 等短路前未算 → null） */
+    private String candidatesL1;
+
     /** BM25-only 候选是否进入 pool（D1 兜底标记）*/
     private Boolean l2LexicalFallback;
 

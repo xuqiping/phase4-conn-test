@@ -15,11 +15,11 @@ public interface RagRetrievalLogMapper extends BaseMapper<RagRetrievalLog> {
     @Insert("""
             INSERT INTO rag_retrieval_logs
                 (trace_id, tenant_id, user_id, identity_type, kb_ids, query, rewritten_query, mode,
-                 candidates_l0, l2_lexical_fallback, evidence_l2, memory_hits, crag_verdict,
+                 candidates_l0, candidates_l1, l2_lexical_fallback, evidence_l2, memory_hits, crag_verdict,
                  token_budget, latency_ms, created_at)
             VALUES
                 (#{traceId}, #{tenantId}, #{userId}, #{identityType}, #{kbIds}, #{query}, #{rewrittenQuery}, #{mode},
-                 #{candidatesL0}, #{l2LexicalFallback}, #{evidenceL2}, #{memoryHits}, #{cragVerdict},
+                 #{candidatesL0}, #{candidatesL1}, #{l2LexicalFallback}, #{evidenceL2}, #{memoryHits}, #{cragVerdict},
                  #{tokenBudget}, #{latencyMs}, now())
             """)
     void insertTrace(RagRetrievalLog log);

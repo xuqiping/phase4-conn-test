@@ -24,6 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
@@ -33,6 +34,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.superprogrammer.chat.dto.StreamEvent;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+import com.superprogrammer.chat.service.internal.ExtractedFact;
 
 @Slf4j
 @Service
@@ -53,9 +57,16 @@ public class ChatSessionService {
     private final com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     // 记忆模式开关解析（V26，session>agent/workflow>global，门控 RAG+记忆）
     private final com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
+    // 记忆项目 scope 解析（V33，读/写 scope 从 session 三列解析）
+    private final MemoryScopeResolver memoryScopeResolver;
     // 记忆冲突解决（V27）
     private final MemoryConflictService conflictService;
     private final com.superprogrammer.chat.service.internal.MemoryConflictJudge conflictJudge;
+    // 记忆处理模式开关（ASYNC=全异步/HYBRID=同步），全局 system_settings
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    // 记忆专用线程池（独立于 KB 索引）：ASYNC 记忆处理 orchestrator 在此跑，不 gate 回复
+    @org.springframework.beans.factory.annotation.Qualifier("memoryTaskExecutor")
+    private final java.util.concurrent.Executor memoryTaskExecutor;
 
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
@@ -78,6 +89,10 @@ public class ChatSessionService {
         if (request.getKbIds() != null && !request.getKbIds().isEmpty()) {
             session.setKbIds(request.getKbIds());   // CHAT 模式检索 scope（阶段5 RAG 绑定）
         }
+        // 项目记忆 scope（V33）：建会话时带上写目标 + 读开关
+        session.setProjectId(request.getProjectId());
+        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
+        session.setMemReadProjectIds(request.getMemReadProjectIds());
         sessionMapper.insert(session);
         return toSessionVO(session);
     }
@@ -105,7 +120,27 @@ public class ChatSessionService {
         session.setAgentId(request.getAgentId());
         session.setWorkflowId(request.getWorkflowId());
         sessionMapper.updateById(session);
+        // 项目记忆 scope（V33）：切 target 时若前端带 scope 标记则一并持久化
+        if (request.getMemIncludeGlobal() != null) {
+            persistMemoryScope(session, request);
+        }
         return toSessionVO(session);
+    }
+
+    /** 显式写 project scope 三列（projectId null=回总记忆，须显式 set 才能清，updateById 会跳过 null）。 */
+    private void persistMemoryScope(ChatSession session, ChatRequest request) {
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ChatSession> uw =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        uw.eq(ChatSession::getId, session.getId())
+                .set(ChatSession::getProjectId, request.getProjectId())
+                .set(ChatSession::getMemIncludeGlobal, request.getMemIncludeGlobal())
+                // BIGINT[] 列须显式带 typeHandler：LambdaUpdateWrapper.set 不读实体 @TableField，裸 List 进 PG cast 失败
+                .set(ChatSession::getMemReadProjectIds, request.getMemReadProjectIds(),
+                        "typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler");
+        sessionMapper.update(null, uw);
+        session.setProjectId(request.getProjectId());
+        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
+        session.setMemReadProjectIds(request.getMemReadProjectIds());
     }
 
     public List<ChatMessage> getSessionMessages(Long userId, Long sessionId) {
@@ -120,6 +155,24 @@ public class ChatSessionService {
     public void deleteSession(Long userId, Long sessionId) {
         ChatSession session = getSessionOrFail(userId, sessionId);
         sessionMapper.deleteById(sessionId);
+    }
+
+    /**
+     * 批量删除会话（ownership 过滤：只删本人 id，非本人/不存在静默跳过）。
+     * 用 inQuery 二次校验归属（同 MemoryService.deleteMemories 范式），避免直接信任前端 id 越权删。
+     * 软删走 @TableLogic。返回实删条数。
+     */
+    @Transactional
+    public int deleteSessions(Long userId, Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        List<Long> owned = sessionMapper.selectObjs(new LambdaQueryWrapper<ChatSession>()
+                        .select(ChatSession::getId)
+                        .eq(ChatSession::getUserId, userId)
+                        .eq(ChatSession::getDeleted, 0)
+                        .in(ChatSession::getId, ids))
+                .stream().map(o -> (Long) o).toList();
+        if (owned.isEmpty()) return 0;
+        return sessionMapper.deleteBatchIds(owned);
     }
 
     @Transactional
@@ -154,6 +207,16 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
+        // 项目记忆 scope（V33）：前端发 memIncludeGlobal（scope 更新标记）→ 显式写三列（projectId null=回总记忆，须显式 set 才能清）
+        if (request.getMemIncludeGlobal() != null) {
+            persistMemoryScope(session, request);
+        }
+        // 读/写 scope 解析（admin=false：记忆 scope 是用户私有，admin 覆盖无需）
+        com.superprogrammer.chat.service.internal.MemoryScope readScope =
+                memoryScopeResolver.resolveReadScope(session, userId, false);
+        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
+                memoryScopeResolver.resolveWriteScope(session, userId, false);
+        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
         boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -179,7 +242,7 @@ public class ChatSessionService {
 
         // Load long-term memories（仅记忆模式开启）
         if (ragOn) {
-            String memoryContext = memoryService.buildMemoryContext(userId);
+            String memoryContext = memoryService.buildMemoryContext(readScope, request.getMessage());
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("SYSTEM", "用户记忆:\n" + memoryContext);
             }
@@ -187,24 +250,11 @@ public class ChatSessionService {
 
         // 阶段5 RAG（仅 CHAT 模式证据注入；AGENT=AgentRoutingStrategy，WORKFLOW=检索节点）— 受记忆模式门控
         RagInjection rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        // 修 #2：abstain 不再短路当答案。无证据也照常调 LLM 生成，仅以系统提示告知"无知识库命中"，
+        // 让 AI 基于用户记忆/自身能力回答，而不是吐死句子"未找到可访问的相关知识"。
         if (rag.abstained()) {
-            // abstain 短路：不调 LLM，直接落 ABSTAIN_MSG
-            String abstain = rag.answer();
-            String askText = ragOn ? memoryService.processMemory(userId, session.getId(), request.getMessage(), abstain) : null;
-            String content = askText != null ? abstain + "\n\n" + askText : abstain;
-            ChatMessage assistantMsg = new ChatMessage();
-            assistantMsg.setSessionId(session.getId());
-            assistantMsg.setRole("ASSISTANT");
-            assistantMsg.setContent(content);
-            messageMapper.insert(assistantMsg);
-            return ChatResponse.builder()
-                    .sessionId(session.getId())
-                    .messageId(assistantMsg.getId())
-                    .content(content)
-                    .mode(session.getMode())
-                    .build();
-        }
-        if (rag.evidenceContext() != null) {
+            context.addMessage("SYSTEM", "（知识库未检索到相关内容，请基于自身能力与用户记忆作答，不要编造引用编号。）");
+        } else if (rag.evidenceContext() != null) {
             context.addMessage("SYSTEM", rag.evidenceContext());
         }
 
@@ -217,10 +267,15 @@ public class ChatSessionService {
             response = response + "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
         }
 
-        // 记忆冲突解决（V27）：同步抽取+判定，有冲突则 askText 追加进回复（插库前，保证同一轮投递）
+        // 记忆冲突解决：HYBRID=同步(即时 askText 追问，gate 回复) / ASYNC=异步(不卡回复，冲突进面板，前端轮询)
         if (ragOn) {
-            String askText = memoryService.processMemory(userId, session.getId(), request.getMessage(), response);
-            if (askText != null) response = response + "\n\n" + askText;
+            if ("HYBRID".equals(systemSettingService.getMemoryProcessMode())) {
+                String askText = memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), response);
+                if (askText != null) response = response + "\n\n" + askText;
+            } else {
+                final String resp = response;
+                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp));
+            }
         }
 
         // Save assistant message
@@ -297,7 +352,15 @@ public class ChatSessionService {
         } catch (Exception e) {
             return Flux.just(StreamEvent.error(e.getMessage()), StreamEvent.done());
         }
+        // 修 #3：每个流事件都带上 sessionId，前端流式路径据此回读当前会话，避免每条消息新建会话
+        final Long sid = session.getId();
+        return doSendMessageStream(userId, request, session).map(e -> {
+            e.setSessionId(sid);
+            return e;
+        });
+    }
 
+    private Flux<StreamEvent> doSendMessageStream(Long userId, ChatRequest request, ChatSession session) {
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
@@ -318,6 +381,15 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
+        if (request.getMemIncludeGlobal() != null) {
+            persistMemoryScope(session, request);
+        }
+        // 读/写 scope 在 lambda 外解析（reactor 闭包安全；scope 是纯数据对象，无线程态）
+        com.superprogrammer.chat.service.internal.MemoryScope readScope =
+                memoryScopeResolver.resolveReadScope(session, userId, false);
+        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
+                memoryScopeResolver.resolveWriteScope(session, userId, false);
+        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
         final boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -341,7 +413,7 @@ public class ChatSessionService {
         }
 
         if (ragOn) {
-            String memoryContext = memoryService.buildMemoryContext(userId);
+            String memoryContext = memoryService.buildMemoryContext(readScope, request.getMessage());
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("system", "用户记忆:\n" + memoryContext);
             }
@@ -349,21 +421,10 @@ public class ChatSessionService {
 
         // 阶段5 RAG（CHAT 模式证据注入；WORKFLOW 走检索节点回调，此处不注入）— 受记忆模式门控
         final RagInjection rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        // 修 #2：abstain 不再短路当答案。无证据也照常走 executeStream 生成，仅以系统提示告知"无知识库命中"。
         if (rag.abstained()) {
-            // abstain 短路：发 ABSTAIN_MSG chunk + done，不调 LLM
-            String abstain = rag.answer();
-            String askText = ragOn ? memoryService.processMemory(userId, session.getId(), request.getMessage(), abstain) : null;
-            String content = askText != null ? abstain + "\n\n" + askText : abstain;
-            return Flux.defer(() -> {
-                ChatMessage assistantMsg = new ChatMessage();
-                assistantMsg.setSessionId(session.getId());
-                assistantMsg.setRole("ASSISTANT");
-                assistantMsg.setContent(content);
-                messageMapper.insert(assistantMsg);
-                return Flux.just(StreamEvent.chunk(content), StreamEvent.done());
-            });
-        }
-        if (rag.evidenceContext() != null) {
+            context.addMessage("system", "（知识库未检索到相关内容，请基于自身能力与用户记忆作答，不要编造引用编号。）");
+        } else if (rag.evidenceContext() != null) {
             context.addMessage("system", rag.evidenceContext());
         }
 
@@ -399,10 +460,17 @@ public class ChatSessionService {
                         disclaimer = "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
                         responseText = responseText + disclaimer;
                     }
-                    // 记忆冲突解决（V27）：同步抽取+判定，有冲突则 askText 追加进回复 + 发 chunk
-                    String askText = ragOn ? memoryService.processMemory(userId, sessionId, request.getMessage(), responseText) : null;
-                    if (askText != null) {
-                        responseText = responseText + "\n\n" + askText;
+                    // 记忆处理：ASYNC=全异步(不卡,冲突走面板) / HYBRID=同步(即时 askText 追问)
+                    boolean hybrid = "HYBRID".equals(systemSettingService.getMemoryProcessMode());
+                    String askText = null;
+                    if (ragOn) {
+                        if (hybrid) {
+                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText);
+                            if (askText != null) responseText = responseText + "\n\n" + askText;
+                        } else {
+                            final String rtMem = responseText;
+                            memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                        }
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -424,7 +492,7 @@ public class ChatSessionService {
                         return Flux.just(StreamEvent.chunk(disclaimer), StreamEvent.done());
                     }
                     return Flux.just(StreamEvent.done());
-                }))
+                }).subscribeOn(Schedulers.boundedElastic()))
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
 
@@ -433,6 +501,10 @@ public class ChatSessionService {
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
         AtomicBoolean hasError = new AtomicBoolean(false);
+        // 记忆 scope（V33）：streamWorkflow 不经 doSendMessageStream 的解析，在此独立解析（lambda 外）
+        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
+                memoryScopeResolver.resolveWriteScope(session, userId, false);
+        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
 
         return runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, request.getMessage())
                 .flatMapIterable(event -> workflowStreamEvents(event, fullThinking, finalResponse, hasError))
@@ -442,12 +514,19 @@ public class ChatSessionService {
                     }
 
                     String responseText = finalResponse.get();
-                    // 记忆冲突解决（V27）：WORKFLOW 也走记忆模式门控 + 同步 processMemory
+                    // 记忆处理：WORKFLOW 也走门控；ASYNC=全异步 / HYBRID=同步即时追问
                     boolean wfRagOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                             session.getAgentId(), session.getWorkflowId());
-                    String askText = wfRagOn ? memoryService.processMemory(userId, sessionId, request.getMessage(), responseText) : null;
-                    if (askText != null) {
-                        responseText = responseText + "\n\n" + askText;
+                    boolean hybrid = "HYBRID".equals(systemSettingService.getMemoryProcessMode());
+                    String askText = null;
+                    if (wfRagOn) {
+                        if (hybrid) {
+                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText);
+                            if (askText != null) responseText = responseText + "\n\n" + askText;
+                        } else {
+                            final String rtMem = responseText;
+                            memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                        }
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -464,7 +543,7 @@ public class ChatSessionService {
                         return Flux.just(StreamEvent.chunk("\n\n" + askText), StreamEvent.done());
                     }
                     return Flux.just(StreamEvent.done());
-                }))
+                }).subscribeOn(Schedulers.boundedElastic()))
                 .onErrorResume(error -> Flux.just(StreamEvent.error(error.getMessage()), StreamEvent.done()))
                 .doOnError(e -> log.error("Workflow streaming failed: {}", e.getMessage()));
     }

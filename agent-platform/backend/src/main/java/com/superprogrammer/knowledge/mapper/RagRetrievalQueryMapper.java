@@ -140,27 +140,6 @@ public interface RagRetrievalQueryMapper {
     List<RagQueryRow.L2Row> fetchL2ChildrenByDoc(@Param("kbId") Long kbId,
                                                    @Param("docIds") List<Long> docIds);
 
-    /** step6：BM25 预筛（tsvector + GIN）。'simple' 配置中文弱 → 仅作 boost，不主导排序（R1/D1）。 */
-    @Select("""
-            <script>
-            SELECT n.id AS node_id, n.document_id AS document_id, n.parent_id AS parent_id,
-                   n.title AS title, n.content AS content, n.content_hash AS content_hash,
-                   ts_rank(n.content_tsv, plainto_tsquery('simple', #{query})) AS bm25_rank
-            FROM knowledge_nodes n
-            WHERE n.kb_id = #{kbId}
-              AND n.level = 'L2'
-              AND n.status = 'ACTIVE'
-              AND n.deleted = 0
-              AND n.content_tsv @@ plainto_tsquery('simple', #{query})
-              AND n.document_id IN
-              <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
-            ORDER BY bm25_rank DESC
-            </script>
-            """)
-    List<RagQueryRow.L2Row> bm25Hits(@Param("kbId") Long kbId,
-                                     @Param("query") String query,
-                                     @Param("docIds") List<Long> docIds);
-
     /**
      * step6（Phase2）：jieba-BM25 预筛。查 content_tokens_tsv（jieba 分词后空格串生成的 'simple' tsvector）。
      * query 已由 JiebaTokenizer.tokenize 分词为空格串。

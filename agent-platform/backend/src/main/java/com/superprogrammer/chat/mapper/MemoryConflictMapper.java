@@ -40,6 +40,15 @@ public interface MemoryConflictMapper extends BaseMapper<MemoryConflict> {
             "FROM memory_conflicts WHERE user_id=#{userId} AND status='FLAGGED' ORDER BY created_at DESC")
     List<MemoryConflict> findFlaggedByUser(@Param("userId") Long userId);
 
+    /** 用户全部 PENDING+FLAGGED（待处理，面板可见）。 */
+    @Select("SELECT id, user_id, session_id, block_label, ask_text, status, expires_at, created_at " +
+            "FROM memory_conflicts WHERE user_id=#{userId} AND status IN ('PENDING','FLAGGED') ORDER BY created_at DESC")
+    List<MemoryConflict> findActiveByUser(@Param("userId") Long userId);
+
+    /** 用户待处理冲突计数（PENDING+FLAGGED），状态条/角标轮询用（省去拉全量 list）。 */
+    @Select("SELECT COUNT(*) FROM memory_conflicts WHERE user_id=#{userId} AND status IN ('PENDING','FLAGGED')")
+    int countActiveByUser(@Param("userId") Long userId);
+
     /** 按 id 读标量列（避免 selectById 碰 bigint[]/jsonb/halfvec 特型列）。 */
     @Select("SELECT id, user_id, session_id, block_label, ask_text, status, expires_at, created_at " +
             "FROM memory_conflicts WHERE id=#{id}")

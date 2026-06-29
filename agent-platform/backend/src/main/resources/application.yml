@@ -102,3 +102,10 @@ rag:
     decay-batch: 500
     kb-batch: 20
     auto-repair: false      # drift → REINDEX：claimBatch 已消费 REINDEX，翻 true 即修复（承担 re-embed 计费）
+
+# 钉钉 H5 微应用免登（默认关，配齐 AppKey/AppSecret 再开）
+dingtalk:
+  enabled: ${DINGTALK_ENABLED:false}
+  app-key: ${DINGTALK_APP_KEY:}
+  app-secret: ${DINGTALK_APP_SECRET:}
+  agent-id: ${DINGTALK_AGENT_ID:}

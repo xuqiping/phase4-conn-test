@@ -56,6 +56,14 @@ public class ChatController {
         return ResponseEntity.ok(R.ok(session));
     }
 
+    /** 批量删除会话（ownership 过滤，只删本人）。返实删条数。 */
+    @DeleteMapping("/sessions/batch")
+    public ResponseEntity<R<Integer>> deleteSessionsBatch(@RequestBody List<Long> ids) {
+        Long userId = getCurrentUserId();
+        int deleted = chatSessionService.deleteSessions(userId, ids);
+        return ResponseEntity.ok(R.ok("已删除 " + deleted + " 个会话", deleted));
+    }
+
     @PutMapping("/sessions/{id}/target")
     public ResponseEntity<R<SessionVO>> updateSessionTarget(
             @PathVariable Long id,

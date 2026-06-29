@@ -41,6 +41,16 @@ public class SystemSettingService {
     /** RAG 召回扩展切块触发阈值（字数）。输入 > 阈值 → 切块多路召回（多主题不丢内容）；≤ 阈值 → 改写+HyDE。
      *  仅 expansion.enabled=true 时生效。默认 200。 */
     public static final String RAG_RECALL_EXPANSION_THRESHOLD = "rag.recall.expansion.threshold";
+    /** Excel 多Sheet导入解析阈值（设计 §4.6）。列数 > 此值 → 宽表行流兜底。默认 10。 */
+    public static final String KNOWLEDGE_EXCEL_COL_THRESHOLD = "knowledge.excel.col-threshold";
+    /** 每 Section 最大行数（防超大 section）。默认 200。 */
+    public static final String KNOWLEDGE_EXCEL_ROW_CHUNK_SIZE = "knowledge.excel.row-chunk-size";
+    /** 单 cell 文本截断长度。默认 200。 */
+    public static final String KNOWLEDGE_EXCEL_CELL_MAX_CHARS = "knowledge.excel.cell-max-chars";
+    /** 单 sheet 行数硬上限（截断防 OOM）。默认 5000。 */
+    public static final String KNOWLEDGE_EXCEL_MAX_ROWS_PER_SHEET = "knowledge.excel.max-rows-per-sheet";
+    /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
+    public static final String KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS = "knowledge.excel.preview-max-sheets";
 
     private final SystemSettingMapper mapper;
 
@@ -225,6 +235,44 @@ public class SystemSettingService {
         if (max < 0) max = 0;
         upsert(RAG_MEMORY_KEYWORD_MAX, String.valueOf(max),
                 "关键词召回分词上限（0=不限，避免SQL OR列表过长；默认8）");
+    }
+
+    // ============================ Excel 多Sheet导入解析阈值（设计 §4.6） ============================
+
+    private int getExcelInt(String key, int def, int min) {
+        String v = getValue(key);
+        if (v == null || v.isBlank()) return def;
+        try {
+            int n = Integer.parseInt(v.trim());
+            return n < min ? def : n;
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
+    }
+
+    /** 列数 > 此值 → 宽表行流兜底。默认 10。 */
+    public int getExcelColThreshold() {
+        return getExcelInt(KNOWLEDGE_EXCEL_COL_THRESHOLD, 10, 1);
+    }
+
+    /** 每 Section 最大行数（防超大 section）。默认 200。 */
+    public int getExcelRowChunkSize() {
+        return getExcelInt(KNOWLEDGE_EXCEL_ROW_CHUNK_SIZE, 200, 1);
+    }
+
+    /** 单 cell 文本截断长度。默认 200。 */
+    public int getExcelCellMaxChars() {
+        return getExcelInt(KNOWLEDGE_EXCEL_CELL_MAX_CHARS, 200, 1);
+    }
+
+    /** 单 sheet 行数硬上限（截断防 OOM）。默认 5000。 */
+    public int getExcelMaxRowsPerSheet() {
+        return getExcelInt(KNOWLEDGE_EXCEL_MAX_ROWS_PER_SHEET, 5000, 1);
+    }
+
+    /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
+    public int getExcelPreviewMaxSheets() {
+        return getExcelInt(KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS, 50, 1);
     }
 
     // ============================ RAG 召回 query 扩展 ============================

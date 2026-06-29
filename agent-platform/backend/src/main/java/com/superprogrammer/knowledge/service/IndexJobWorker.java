@@ -12,9 +12,11 @@ import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.HashUtil;
 import com.superprogrammer.knowledge.util.L1EmbedText;
+import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -50,6 +52,8 @@ public class IndexJobWorker {
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
     private final Executor executor;
+    private final FileStorageService fileStorageService;
+    private final boolean retainAfterIndex;
 
     public IndexJobWorker(IndexJobTxService txService,
                           KnowledgeNodeMapper nodeMapper,
@@ -57,7 +61,9 @@ public class IndexJobWorker {
                           KnowledgeBaseService knowledgeBaseService,
                           LlmGateway llmGateway,
                           ObjectMapper objectMapper,
-                          @Qualifier("knowledgeTaskExecutor") Executor executor) {
+                          @Qualifier("knowledgeTaskExecutor") Executor executor,
+                          FileStorageService fileStorageService,
+                          @Value("${app.files.retain-after-index:false}") boolean retainAfterIndex) {
         this.txService = txService;
         this.nodeMapper = nodeMapper;
         this.documentMapper = documentMapper;
@@ -65,6 +71,8 @@ public class IndexJobWorker {
         this.llmGateway = llmGateway;
         this.objectMapper = objectMapper;
         this.executor = executor;
+        this.fileStorageService = fileStorageService;
+        this.retainAfterIndex = retainAfterIndex;
     }
 
     @Scheduled(fixedDelayString = "${knowledge.index.poll-ms:5000}")
@@ -109,8 +117,9 @@ public class IndexJobWorker {
             }
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
-            txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
+            String indexedFileRef = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
                     job.getKbId(), embeddingModel, halfvec, node.getContentHash());
+            cleanOriginalFileAfterIndex(indexedFileRef);
             log.info("索引完成 nodeId={} kbId={} model={}", node.getId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
@@ -158,13 +167,46 @@ public class IndexJobWorker {
             }
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
-            txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
+            String indexedFileRef = txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
                     embeddingModel, halfvec, l1Hash);
+            cleanOriginalFileAfterIndex(indexedFileRef);
             log.info("L1 索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
             txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
         }
+    }
+
+    /**
+     * D5 文件生命周期：文档转 INDEXED 时（completeUpsert/L1 返回非空 fileRef）在事务外清原件字节。
+     * 受 {@code app.files.retain-after-index} 控制（默认 false=清；调试可设 true 保留原件）。
+     * fileRef 为 null（未转换 / 无原件）→ 跳过。文件 IO 刻意在 DB 事务外：不阻塞 INDEXED 标记，删失败不回滚。
+     */
+    void cleanOriginalFileAfterIndex(String fileRef) {
+        if (fileRef == null || fileRef.isBlank() || retainAfterIndex) {
+            return;
+        }
+        String fileId = stripFileRef(fileRef);
+        if (fileId == null || fileId.isBlank()) {
+            return;
+        }
+        try {
+            fileStorageService.cleanAfterIndex(fileId);
+            log.info("文档 INDEXED 后清原件字节 fileId={}", fileId);
+        } catch (Exception e) {
+            // 清原件失败不阻断：知识完整性靠 nodes + 向量，不依赖原件；文档删除时 delete() 兜底
+            log.warn("清原件字节失败 fileId={}: {}", fileId, e.getMessage());
+        }
+    }
+
+    /** fileRef（/api/files/{fileId}）→ fileId。与 DocumentParserService/KnowledgeDocumentService 同款。 */
+    private static String stripFileRef(String fileRef) {
+        if (fileRef == null) {
+            return null;
+        }
+        String prefix = "/api/files/";
+        int idx = fileRef.indexOf(prefix);
+        return idx >= 0 ? fileRef.substring(idx + prefix.length()) : fileRef;
     }
 
     private static boolean eq(String a, String b) {

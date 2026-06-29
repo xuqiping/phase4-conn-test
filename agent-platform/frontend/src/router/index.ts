@@ -20,6 +20,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/dingtalk/callback',
+    name: 'DingTalkCallback',
+    component: () => import('@/views/DingTalkCallbackView.vue'),
+    meta: { requiresAuth: false, title: '钉钉登录' }
+  },
+  {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
     meta: { requiresAuth: true },

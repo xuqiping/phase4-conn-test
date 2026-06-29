@@ -12,6 +12,7 @@ import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.HashUtil;
 import com.superprogrammer.knowledge.util.L1EmbedText;
+import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ class IndexJobWorkerTest {
     @Mock private KnowledgeDocumentMapper documentMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private LlmGateway llmGateway;
+    @Mock private FileStorageService fileStorageService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 同步 executor：poll 提交的 process 立即在同线程跑。 */
@@ -46,8 +48,9 @@ class IndexJobWorkerTest {
 
     @BeforeEach
     void setUp() {
+        // retainAfterIndex=false：completeUpsert 返回 fileRef 时触发清原件（此处 mock 返 null，不触发）
         worker = new IndexJobWorker(txService, nodeMapper, documentMapper, knowledgeBaseService,
-                llmGateway, objectMapper, directExecutor);
+                llmGateway, objectMapper, directExecutor, fileStorageService, false);
     }
 
     @Test

@@ -4,16 +4,109 @@
   ============================================================ -->
 <template>
   <div class="memory-manager">
+    <!-- 记忆注入预览（调试用：输入测试问题，看三个检索设置的实际效果 + LLM 实际收到的记忆上下文）-->
+    <n-card size="small" class="memory-manager__card">
+      <template #header>
+        <span>记忆注入预览</span>
+        <n-tag size="small" type="info" round :bordered="false">调试</n-tag>
+      </template>
+      <n-space :size="8" align="center" style="margin-bottom: 8px">
+        <n-input
+          v-model:value="previewQuery"
+          placeholder="输入测试问题"
+          clearable
+          size="small"
+          style="max-width: 320px"
+          @keyup.enter="runPreview"
+        />
+        <n-button size="small" type="primary" :loading="previewing" @click="runPreview">预览注入</n-button>
+      </n-space>
+      <div class="memory-manager__preview-scope">
+        <span class="memory-manager__preview-scope-label">预览范围</span>
+        <n-select
+          v-model:value="previewScopeMode"
+          :options="previewScopeOptions"
+          size="small"
+          style="width: 200px"
+        />
+        <n-select
+          v-if="previewScopeMode === 'custom'"
+          v-model:value="previewScopeProjects"
+          multiple
+          :options="projectOptions"
+          placeholder="选择项目"
+          size="small"
+          style="width: 280px"
+          :consistent-menu-width="false"
+        />
+      </div>
+      <div v-if="previewResult" class="memory-manager__preview">
+        <n-space :size="6">
+          <n-tag size="small" :bordered="false">模式：{{ retrievalModeLabel(previewResult.mode) }}</n-tag>
+          <n-tag size="small" :bordered="false">标签：{{ previewResult.keyLanguage === 'ZH' ? '中文 key_zh' : '英文 key' }}</n-tag>
+          <n-tag size="small" :bordered="false">阈值：{{ previewResult.threshold }}</n-tag>
+          <n-tag size="small" :bordered="false">记忆总数：{{ previewResult.totalMemories }}</n-tag>
+          <n-tag v-if="previewResult.twoStage" size="small" type="warning" :bordered="false">超阈值→两阶段筛 key</n-tag>
+        </n-space>
+        <div class="memory-manager__preview-context">
+          <template v-if="previewResult.context">
+            <div class="memory-manager__preview-label">↑ 实际注入 LLM 的「用户记忆:」上下文：</div>
+            <pre>{{ previewResult.context }}</pre>
+          </template>
+          <n-empty v-else size="small" description="不注入（无命中 / LLM 判无关 / 记忆为空）" style="padding: 12px 0" />
+        </div>
+        <n-collapse v-if="hasRecallTrace" :default-expanded-names="['recall']" arrow-placement="left" class="memory-manager__recall">
+          <n-collapse-item title="召回过程（粗筛候选 / 通道命中 / LLM 精排）" name="recall">
+            <div class="memory-manager__recall-channels">
+              <n-tag v-if="previewResult.channels?.vector != null" size="small" type="info" :bordered="false">向量命中 {{ previewResult.channels.vector }}</n-tag>
+              <n-tag v-if="previewResult.channels?.bm25 != null" size="small" type="success" :bordered="false">BM25 命中 {{ previewResult.channels.bm25 }}</n-tag>
+              <n-tag v-if="previewResult.channels?.keyword != null" size="small" type="warning" :bordered="false">关键词命中 {{ previewResult.channels.keyword }}</n-tag>
+              <n-tag v-if="previewResult.channels?.llmFallback" size="small" type="error" round :bordered="false">LLM 兜底救场</n-tag>
+            </div>
+            <div v-if="previewResult.candidates?.length" class="memory-manager__recall-candidates">
+              <div class="memory-manager__recall-subhead">粗筛候选 top-{{ previewResult.candidates.length }}（✓ = LLM 精排选中）</div>
+              <div
+                v-for="(c, idx) in previewResult.candidates"
+                :key="idx"
+                class="memory-manager__recall-cand"
+                :class="{ 'is-selected': previewResult.selectedKeys && previewResult.selectedKeys.includes(c.memoryKey || '') }"
+              >
+                <n-tag size="tiny" :type="CHANNEL_TAG_TYPE[c.channel || ''] || 'default'" :bordered="false">
+                  {{ CHANNEL_LABEL[c.channel || ''] || c.channel || '-' }}
+                </n-tag>
+                <span v-if="previewResult.selectedKeys && previewResult.selectedKeys.includes(c.memoryKey || '')" class="memory-manager__recall-sel">✓</span>
+                <span class="memory-manager__recall-key">{{ c.memoryKeyZh || c.memoryKey || '-' }}</span>
+                <span v-if="c.memoryKeyZh && c.memoryKey" class="memory-manager__recall-keyen">({{ c.memoryKey }})</span>
+                <span class="memory-manager__recall-val">{{ c.valuePreview || '-' }}</span>
+                <span v-if="c.blockLabel" class="memory-manager__recall-block">{{ c.blockLabel }}</span>
+              </div>
+            </div>
+            <div v-else class="memory-manager__recall-empty">无粗筛候选（非 LLM_KEY/两阶段模式）</div>
+          </n-collapse-item>
+        </n-collapse>
+      </div>
+    </n-card>
+
     <!-- 记忆冲突区（有冲突才显）-->
     <n-card v-if="conflicts.length" size="small" class="memory-manager__card" title="待解决的记忆冲突">
+      <div v-if="conflicts.length > 1" class="memory-manager__batch">
+        <span class="memory-manager__batch-label">共 {{ conflicts.length }} 条，统一处理：</span>
+        <n-button size="small" type="primary" :loading="batchResolving === 'KEEP_NEW'" @click="batchResolve('KEEP_NEW')">全部保留新</n-button>
+        <n-button size="small" :loading="batchResolving === 'KEEP_OLD'" @click="batchResolve('KEEP_OLD')">全部保留旧</n-button>
+        <n-button size="small" :loading="batchResolving === 'KEEP_BOTH'" @click="batchResolve('KEEP_BOTH')">全部合并保留</n-button>
+      </div>
       <div v-for="c in conflicts" :key="c.conflictId" class="memory-manager__conflict">
         <div class="memory-manager__conflict-head">
-          <n-tag size="small" type="warning" bordered>{{ c.block || '同组' }}</n-tag>
+          <n-tag size="small" :type="c.status === 'PENDING' ? 'warning' : 'error'" bordered>{{ c.block || '同组' }}</n-tag>
+          <n-tag size="small" :type="c.status === 'PENDING' ? 'warning' : 'error'" :bordered="false" round>
+            {{ c.status === 'PENDING' ? '待你确认' : '已标记冲突' }}
+          </n-tag>
           <span class="memory-manager__conflict-time">{{ formatTime(c.createdAt) }}</span>
         </div>
         <div v-if="c.askText" class="memory-manager__conflict-ask">{{ c.askText }}</div>
         <div class="memory-manager__candidates">
           <div v-for="(cand, idx) in c.candidates" :key="idx" class="memory-manager__candidate">
+            <n-tag v-if="cand.id === null" size="tiny" type="success" round :bordered="false">新</n-tag>
             <n-tag size="tiny" :bordered="false">{{ cand.category || '-' }}</n-tag>
             <span class="memory-manager__candidate-key">{{ cand.memoryKey }}</span>
             <span class="memory-manager__candidate-val">{{ cand.memoryValue }}</span>
@@ -22,7 +115,7 @@
         <n-space size="small">
           <n-button size="small" type="primary" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_NEW')">保留新</n-button>
           <n-button size="small" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_OLD')">保留旧</n-button>
-          <n-button size="small" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_BOTH')">都保留</n-button>
+          <n-button size="small" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_BOTH')">合并保留</n-button>
           <n-button size="small" quaternary type="error" :loading="resolving === c.conflictId" @click="resolve(c, 'DISCARD')">全删</n-button>
         </n-space>
       </div>
@@ -35,28 +128,69 @@
         <n-tag size="small" round :bordered="false">{{ memories.length }} 条</n-tag>
       </template>
       <template #header-extra>
-        <n-button size="small" quaternary type="error" :disabled="!memories.length" @click="confirmClear">清空全部</n-button>
+        <n-space :size="8" align="center">
+          <n-button
+            v-if="checkedKeys.length"
+            size="small"
+            type="error"
+            :loading="batchDeleting"
+            @click="confirmBatchDelete"
+          >删除选中 ({{ checkedKeys.length }})</n-button>
+          <n-button size="small" quaternary type="error" :disabled="!memories.length" @click="confirmClear">清空全部</n-button>
+        </n-space>
       </template>
       <n-data-table
         v-if="memories.length"
         :columns="columns"
         :data="memories"
+        :row-key="row => row.id"
+        :checked-row-keys="checkedKeys"
         :pagination="{ pageSize: 10 }"
+        :scroll-x="1500"
         size="small"
         striped
+        @update:checked-row-keys="onCheckedChange"
       />
       <n-empty v-else description="暂无记忆。开启记忆模式对话后，AI 会自动抽取长期记忆。" />
     </n-card>
+
+    <!-- scope 编辑（V33）：勾选总记忆 + 多选项目 -->
+    <n-modal v-model:show="scopeEditing" preset="card" title="编辑记忆归属" style="width: 460px">
+      <n-space vertical :size="16">
+        <n-space align="center" :size="8">
+          <n-switch v-model:value="scopeIsGlobal" />
+          <span>总记忆（全局可见）</span>
+        </n-space>
+        <div>
+          <div style="margin-bottom: 6px; font-size: 13px; opacity: 0.8">归属项目（可多选）</div>
+          <n-select
+            v-model:value="scopeProjectIds"
+            multiple
+            :options="projectOptions"
+            placeholder="选择项目"
+            :consistent-menu-width="false"
+          />
+        </div>
+        <n-space justify="end">
+          <n-button @click="scopeEditing = false">取消</n-button>
+          <n-button type="primary" @click="saveScope">保存</n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import {
-  NButton, NCard, NDataTable, NEmpty, NSpace, NTag, useDialog, useMessage
+  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { chatApi, type UserMemory, type MemoryConflict } from '@/api/chat'
+import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPreview } from '@/api/chat'
+import { projectApi } from '@/api/project'
+import { useChatStore } from '@/stores/chat'
+
+const chatStore = useChatStore()
 
 const message = useMessage()
 const dialog = useDialog()
@@ -65,15 +199,124 @@ const memories = ref<UserMemory[]>([])
 const conflicts = ref<MemoryConflict[]>([])
 const loading = ref(false)
 const resolving = ref<number | null>(null)
+const batchResolving = ref<string | null>(null)
+const checkedKeys = ref<number[]>([])
+const batchDeleting = ref(false)
+
+// 记忆注入预览
+const previewQuery = ref('')
+const previewing = ref(false)
+const previewResult = ref<MemoryContextPreview | null>(null)
+
+// 预览范围 scope（V38）：默认当前会话 scope，可切 global-only / 全部可读项目 / 指定项目
+const previewScopeMode = ref<'session' | 'global' | 'all' | 'custom'>('session')
+const previewScopeProjects = ref<number[]>([])   // 'custom' 模式手选项目集
+const previewScopeOptions = [
+  { label: '默认（当前会话 scope）', value: 'session' },
+  { label: '仅总记忆（global-only）', value: 'global' },
+  { label: '全部可读项目', value: 'all' },
+  { label: '指定项目', value: 'custom' }
+]
+function effectivePreviewScope(): { includeGlobal?: boolean; projectIds?: number[] } {
+  switch (previewScopeMode.value) {
+    case 'global': return { includeGlobal: true, projectIds: [] }
+    case 'all': return { includeGlobal: true, projectIds: [...chatStore.memReadProjectIds] }
+    case 'custom': return { includeGlobal: true, projectIds: [...previewScopeProjects.value] }
+    case 'session':
+    default: return { includeGlobal: chatStore.memIncludeGlobal, projectIds: [...chatStore.memReadProjectIds] }
+  }
+}
+
+// 召回过程是否值得展开（有候选 / 有通道命中）
+const hasRecallTrace = computed(() => {
+  const r = previewResult.value
+  if (!r) return false
+  const c = r.channels
+  const channelHits = c && (c.vector || c.keyword || c.bm25 || c.llmFallback)
+  return !!(r.candidates?.length || r.selectedKeys?.length || channelHits)
+})
+
+// 通道标签颜色映射（向量=蓝 / BM25=绿 / 关键词=橙 / both=紫 / 其他=默认）
+const CHANNEL_TAG_TYPE: Record<string, 'info' | 'success' | 'warning' | 'error'> = {
+  vector: 'info', bm25: 'success', keyword: 'warning', both: 'error'
+}
+const CHANNEL_LABEL: Record<string, string> = {
+  vector: '向量', bm25: 'BM25', keyword: '关键词', both: '向量+BM25'
+}
+
+// 项目记忆 scope（V33）
+const projectOptions = ref<Array<{ label: string; value: number }>>([])
+const projectIdMap = ref<Map<number, string>>(new Map())
+async function loadProjects() {
+  try {
+    const res = await projectApi.list()
+    const list = res.data.data || []
+    projectOptions.value = list.map(p => ({ label: p.name, value: p.id }))
+    projectIdMap.value = new Map(list.map(p => [p.id, p.name]))
+  } catch { projectOptions.value = [] }
+}
+
+// scope 编辑
+const scopeEditing = ref(false)
+const scopeTarget = ref<UserMemory | null>(null)
+const scopeIsGlobal = ref(true)
+const scopeProjectIds = ref<number[]>([])
+async function openScopeEdit(m: UserMemory) {
+  scopeTarget.value = m
+  scopeIsGlobal.value = m.isGlobal !== false
+  scopeProjectIds.value = Array.isArray(m.projectIds) ? [...m.projectIds] : []
+  scopeEditing.value = true
+  if (projectOptions.value.length === 0) await loadProjects()
+}
+async function saveScope() {
+  if (!scopeTarget.value) return
+  try {
+    await chatApi.updateMemoryScopes(scopeTarget.value.id, {
+      isGlobal: scopeIsGlobal.value,
+      projectIds: scopeProjectIds.value
+    })
+    message.success('记忆归属已更新')
+    scopeEditing.value = false
+    await loadMemories()
+  } catch { message.error('更新归属失败') }
+}
+
+const RETRIEVAL_MODE_LABELS: Record<string, string> = {
+  LLM_FULL_CONTEXT: '全量',
+  EMBEDDING_VECTOR: '向量 top-K',
+  VECTOR_KEYWORD: '混合(向量+关键词)'
+}
+function retrievalModeLabel(mode: string): string {
+  return RETRIEVAL_MODE_LABELS[mode] || mode
+}
+
+async function runPreview() {
+  if (!previewQuery.value.trim()) {
+    message.warning('请输入测试问题')
+    return
+  }
+  previewing.value = true
+  try {
+    const res = await chatApi.previewMemoryContext(previewQuery.value.trim(), effectivePreviewScope())
+    previewResult.value = res.data.data
+  } catch {
+    message.error('预览失败')
+  } finally {
+    previewing.value = false
+  }
+}
 
 const categoryType: Record<string, 'success' | 'info' | 'warning'> = {
   PREFERENCE: 'success', FACT: 'info', FEEDBACK: 'warning'
 }
 
 const columns: DataTableColumns<UserMemory> = [
+  { type: 'selection', width: 45 },
   { title: '分类', key: 'category', width: 100, render: r => h(NTag, { size: 'small', type: categoryType[r.category || ''] || 'default', bordered: false }, () => r.category || '-') },
   { title: '键', key: 'memoryKey', width: 160, ellipsis: { tooltip: true }, render: r => r.memoryKey || '-' },
-  { title: '值', key: 'memoryValue', ellipsis: { tooltip: true }, render: r => r.memoryValue || '-' },
+  { title: '名称', key: 'memoryKeyZh', width: 120, ellipsis: { tooltip: true }, render: r => r.memoryKeyZh || '-' },
+  { title: '值', key: 'memoryValue', width: 200, ellipsis: { tooltip: true }, render: r => r.memoryValue || '-' },
+  { title: '信息块', key: 'blockLabel', width: 110, ellipsis: { tooltip: true }, render: r => r.blockLabel || '-' },
   { title: '置信度', key: 'confidence', width: 90, render: r => r.confidence != null ? Number(r.confidence).toFixed(2) : '-' },
   { title: '来源', key: 'source', width: 90, render: r => r.source || '-' },
   {
@@ -82,10 +325,27 @@ const columns: DataTableColumns<UserMemory> = [
       ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => `⚠ ${r.conflictWith || '冲突'}`)
       : '-'
   },
+  { title: '创建', key: 'createdAt', width: 150, render: r => formatTime(r.createdAt) },
   { title: '更新', key: 'updatedAt', width: 150, render: r => formatTime(r.updatedAt) },
   {
-    title: '操作', key: 'actions', width: 80, fixed: 'right',
-    render: r => h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => confirmDelete(r) }, () => '删除')
+    title: '归属', key: 'scope', width: 160, ellipsis: { tooltip: true },
+    render: r => {
+      const tags: any[] = []
+      if (r.isGlobal !== false) tags.push(h(NTag, { size: 'small', type: 'success', bordered: false }, () => '总记忆'))
+      if (Array.isArray(r.projectIds)) {
+        for (const pid of r.projectIds) {
+          tags.push(h(NTag, { size: 'small', bordered: false }, () => projectIdMap.value.get(pid) || `项目${pid}`))
+        }
+      }
+      return tags.length ? h(NSpace, { size: 4 }, () => tags) : '-'
+    }
+  },
+  {
+    title: '操作', key: 'actions', width: 120, fixed: 'right',
+    render: r => h(NSpace, { size: 4 }, () => [
+      h(NButton, { size: 'small', quaternary: true, onClick: () => openScopeEdit(r) }, () => '归属'),
+      h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => confirmDelete(r) }, () => '删除')
+    ])
   }
 ]
 
@@ -131,17 +391,54 @@ function confirmClear() {
   })
 }
 
+function onCheckedChange(keys: Array<string | number>) {
+  checkedKeys.value = keys.map(k => Number(k))
+}
+
+function confirmBatchDelete() {
+  const ids = [...checkedKeys.value]
+  dialog.warning({
+    title: '批量删除记忆',
+    content: `删除选中的 ${ids.length} 条记忆？不可恢复。`,
+    positiveText: '删除', negativeText: '取消',
+    onPositiveClick: async () => {
+      batchDeleting.value = true
+      try {
+        const res = await chatApi.batchDeleteMemories(ids)
+        message.success(`已删除 ${res.data.data} 条`)
+        checkedKeys.value = []
+        await loadMemories()
+      } catch { message.error('批量删除失败') }
+      finally { batchDeleting.value = false }
+    }
+  })
+}
+
 async function resolve(c: MemoryConflict, decision: string) {
   resolving.value = c.conflictId
   try {
-    await chatApi.resolveMemoryConflict(c.conflictId, decision)
-    message.success('已解决冲突')
-    await Promise.all([loadConflicts(), loadMemories()])
+    const res = await chatApi.resolveMemoryConflict(c.conflictId, decision)
+    if (res.data.data) {
+      message.success('已解决冲突')
+      await Promise.all([loadConflicts(), loadMemories()])
+    } else {
+      message.error(res.data.message || '解决失败')
+    }
   } catch { message.error('解决失败') }
   finally { resolving.value = null }
 }
 
-onMounted(() => { void loadMemories(); void loadConflicts() })
+async function batchResolve(decision: string) {
+  batchResolving.value = decision
+  try {
+    const res = await chatApi.batchResolveMemoryConflicts(decision)
+    message.success(`已批量解决 ${res.data.data} 条`)
+    await Promise.all([loadConflicts(), loadMemories()])
+  } catch { message.error('批量解决失败') }
+  finally { batchResolving.value = null }
+}
+
+onMounted(() => { void loadMemories(); void loadConflicts(); void loadProjects() })
 </script>
 
 <style lang="scss" scoped>
@@ -153,6 +450,114 @@ onMounted(() => { void loadMemories(); void loadConflicts() })
 .memory-manager__card {
   :deep(.n-card-header) { padding: 12px 16px; }
   :deep(.n-card-header__main) { display: flex; align-items: center; gap: 8px; }
+  // 记忆表横向滚动条加粗常驻可见（naive 默认 thumb 仅 hover 显，全局又压 5px 透明 → 看不见）
+  :deep(.n-data-table .n-scrollbar-rail--horizontal) {
+    height: 10px !important;
+    background: var(--color-bg-secondary, rgba(255,255,255,0.06)) !important;
+    .n-scrollbar-rail__scrollbar {
+      height: 10px !important;
+      background: var(--color-text-tertiary, #888) !important;
+      opacity: 0.85 !important;
+    }
+  }
+}
+.memory-manager__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+.memory-manager__preview-context {
+  margin-top: 4px;
+}
+.memory-manager__preview-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+  margin-bottom: 4px;
+}
+.memory-manager__preview-context pre {
+  margin: 0;
+  padding: var(--spacing-2);
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+}
+.memory-manager__preview-scope {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.memory-manager__preview-scope-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+}
+.memory-manager__recall {
+  margin-top: 4px;
+}
+.memory-manager__recall-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.memory-manager__recall-subhead {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+  margin-bottom: 4px;
+}
+.memory-manager__recall-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.memory-manager__recall-cand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-secondary, rgba(255, 255, 255, 0.03));
+}
+.memory-manager__recall-cand.is-selected {
+  background: rgba(24, 160, 88, 0.12);
+}
+.memory-manager__recall-sel {
+  color: #18a058;
+  font-weight: 600;
+}
+.memory-manager__recall-key {
+  color: var(--color-text-primary, #eee);
+  font-weight: 500;
+}
+.memory-manager__recall-keyen {
+  color: var(--color-text-tertiary, #888);
+  font-size: 11px;
+}
+.memory-manager__recall-val {
+  color: var(--color-text-secondary, #aaa);
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+.memory-manager__recall-block {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #888);
+  padding: 1px 5px;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.memory-manager__recall-empty {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
 }
 .memory-manager__conflict {
   display: flex;

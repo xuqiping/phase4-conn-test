@@ -112,16 +112,33 @@
             @update:value="(val: number[]) => updateNodeData('kbIds', val)"
           />
         </div>
-        <div class="property-panel__field">
+        <div class="property-panel__field property-panel__field--prompt">
           <label class="property-panel__label">查询</label>
           <n-input
             :value="selectedNode.data.query || ''"
             type="textarea"
             size="small"
             :rows="3"
-            placeholder="输入检索查询（支持 {{上游别名.输出变量}} 模板）"
-            @update:value="(val: string) => updateNodeData('query', val)"
+            placeholder="输入检索查询，按 / 插入上游变量（支持 {{上游别名.输出变量}} 模板）"
+            @input="onQueryInput"
+            @keyup="onQueryKeyup"
           />
+          <div v-if="queryMenuVisible" class="property-panel__variables">
+            <button
+              v-for="variable in availableVariables"
+              :key="`${variable.sourceNodeId}-${variable.reference}`"
+              class="property-panel__variable"
+              type="button"
+              @click="insertQueryVariable(variable.reference)"
+            >
+              <span class="property-panel__variable-key">{{ variable.reference }}</span>
+              <span class="property-panel__variable-source">{{ variable.sourceLabel }}</span>
+            </button>
+            <span v-if="availableVariables.length === 0" class="property-panel__variable-empty">
+              暂无可用上游变量
+            </span>
+          </div>
+          <span class="property-panel__hint">检索词会被模板渲染：引用上游节点的输出（如 {{ aliasExampleForQuery }}），渲染失败或留空则回退到上游输入。</span>
         </div>
         <div class="property-panel__notice">
           运行时按节点绑定知识库 ∩ 当前用户可见集检索证据，证据文本注入下游节点（v6 §2.4 检索节点回调）。需工作流开启记忆/RAG 模式。
@@ -360,6 +377,8 @@ const showVariableMenu = ref(false)
 const promptSlashIndex = ref<number | null>(null)
 const mappingMenuIndex = ref<number | null>(null)
 const mappingSlashIndex = ref<number | null>(null)
+const queryMenuVisible = ref(false)
+const querySlashIndex = ref<number | null>(null)
 
 const typeName = computed(() => {
   const typeMap: Record<string, string> = {
@@ -417,6 +436,7 @@ const exampleOutputKey = computed(() => props.selectedNode?.type === 'input' || 
   ? (props.selectedNode?.data.inputKey || 'message')
   : (props.selectedNode?.data.outputKey || 'summary'))
 const aliasExample = computed(() => `{{${selectedAlias.value}.${exampleOutputKey.value}}}`)
+const aliasExampleForQuery = computed(() => availableVariables.value[0] ? `{{${availableVariables.value[0].reference}}}` : '{{start.message}}')
 const mappingExample = computed(() => availableVariables.value[0] ? `{{${availableVariables.value[0].reference}}}` : '{{上游别名.输出变量}}')
 
 const promptConfigVisible = computed(() => props.selectedNode?.data.promptConfigVisible === true)
@@ -493,6 +513,30 @@ function insertPromptVariable(reference: string) {
   updateNodeData('promptTemplate', next)
   showVariableMenu.value = false
   promptSlashIndex.value = null
+}
+
+function onQueryInput(value: string) {
+  updateNodeData('query', value)
+}
+
+function onQueryKeyup(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    queryMenuVisible.value = false
+    querySlashIndex.value = null
+    return
+  }
+  if (event.key !== '/') return
+  querySlashIndex.value = slashIndexFromEvent(event)
+  queryMenuVisible.value = true
+}
+
+function insertQueryVariable(reference: string) {
+  if (!props.selectedNode) return
+  const current = props.selectedNode.data.query || ''
+  const next = insertVariableAtSlash(current, reference, querySlashIndex.value)
+  updateNodeData('query', next)
+  queryMenuVisible.value = false
+  querySlashIndex.value = null
 }
 
 function mappingValue(key: string) {
@@ -599,6 +643,8 @@ watch(() => props.selectedNode?.id, () => {
   promptSlashIndex.value = null
   mappingMenuIndex.value = null
   mappingSlashIndex.value = null
+  queryMenuVisible.value = false
+  querySlashIndex.value = null
 })
 
 onMounted(() => {

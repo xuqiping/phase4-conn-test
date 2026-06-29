@@ -140,6 +140,27 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * 钉钉免登：用 authCode 换 token
+   */
+  async function loginByDingTalk(authCode: string) {
+    loading.value = true
+    try {
+      const res = await authApi.dingTalkLogin(authCode)
+      const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
+
+      accessToken.value = at
+      refreshToken.value = rt
+      userInfo.value = info
+
+      setStorage(STORAGE_KEYS.ACCESS_TOKEN, at)
+      setStorage(STORAGE_KEYS.REFRESH_TOKEN, rt)
+      setStorage(STORAGE_KEYS.USER_INFO, info)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
    * 检查用户是否拥有指定权限
    * @param permission 权限代码，如 'agent:create'
    */
@@ -162,6 +183,7 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     fetchUserInfo,
     refreshAccessToken,
+    loginByDingTalk,
     hasPermission
   }
 })

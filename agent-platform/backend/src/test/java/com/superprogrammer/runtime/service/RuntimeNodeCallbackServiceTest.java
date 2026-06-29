@@ -17,9 +17,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -311,5 +313,60 @@ class RuntimeNodeCallbackServiceTest {
                         .build()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Agent is not executable");
+    }
+
+    @Test
+    void executeNode_rendersRetrievalQueryTemplateFromUpstreamAliasOutput() {
+        // 脱离点 1：检索节点 query 支持 {{上游别名.输出键}}，sidecar 已把上游输出按 alias.key 合并进 input
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        when(ragModeResolver.resolveForWorkflowCallback(1001L)).thenReturn(true);
+        when(ragScopeResolver.resolveNodeKbs(anyList(), eq(7L))).thenReturn(List.of(5L));
+        when(ragRetrievalService.retrieveEvidence(eq(List.of(5L)), eq("怎么退款"), eq(7L), eq(false)))
+                .thenReturn(com.superprogrammer.knowledge.dto.EvidenceResult.builder()
+                        .abstained(false)
+                        .systemPrompt("[1] 退款证据")
+                        .build());
+
+        RuntimeNodeCallbackResponse response = service.executeNode(RuntimeNodeCallbackRequest.builder()
+                .executionId("1001")
+                .nodeId("retrieval-1")
+                .sourceType("RETRIEVAL")
+                .userId(7L)
+                .input(Map.of("start.message", "怎么退款"))
+                .metadata(Map.of("nodeConfig", Map.of(
+                        "query", "{{start.message}}",
+                        "kbIds", List.of(5))))
+                .build());
+
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getOutput()).containsEntry("text", "[1] 退款证据");
+        assertThat(response.getOutput()).containsEntry("abstained", false);
+        verify(ragRetrievalService).retrieveEvidence(eq(List.of(5L)), eq("怎么退款"), eq(7L), eq(false));
+    }
+
+    @Test
+    void executeNode_fallsBackToUpstreamMessageWhenRetrievalQueryBlank() {
+        // 回归保护：query 留空时回退到上游 input/message（既有兜底行为不变）
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        when(ragModeResolver.resolveForWorkflowCallback(1001L)).thenReturn(true);
+        when(ragScopeResolver.resolveNodeKbs(anyList(), eq(7L))).thenReturn(List.of(5L));
+        when(ragRetrievalService.retrieveEvidence(eq(List.of(5L)), eq("fallback question"), eq(7L), eq(false)))
+                .thenReturn(com.superprogrammer.knowledge.dto.EvidenceResult.builder()
+                        .abstained(false)
+                        .systemPrompt("[1] 证据")
+                        .build());
+
+        service.executeNode(RuntimeNodeCallbackRequest.builder()
+                .executionId("1001")
+                .nodeId("retrieval-1")
+                .sourceType("RETRIEVAL")
+                .userId(7L)
+                .input(Map.of("message", "fallback question"))
+                .metadata(Map.of("nodeConfig", Map.of(
+                        "query", "",
+                        "kbIds", List.of(5))))
+                .build());
+
+        verify(ragRetrievalService).retrieveEvidence(eq(List.of(5L)), eq("fallback question"), eq(7L), eq(false));
     }
 }

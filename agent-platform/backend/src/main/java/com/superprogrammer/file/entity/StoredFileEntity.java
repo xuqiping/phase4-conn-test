@@ -1,0 +1,56 @@
+package com.superprogrammer.file.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.OffsetDateTime;
+
+/**
+ * 文件归属与生命周期登记（stored_files，V40）。
+ *
+ * <p>file_id（UUID+ext）作自然主键，故不继承 {@code BaseEntity}（无自增 Long id）。
+ * 不用 {@code @TableLogic}：文件删除即硬删行（status 已表达生命周期，软删冗余）。
+ *
+ * <p>load 咽喉点 {@code FileStorageService.load(fileId, userId, admin)} 据此强校验 owner，
+ * 根治 {@code GET /api/files/{id}} authenticated IDOR（Excel多Sheet导入设计 §10）。
+ */
+@Data
+@TableName("stored_files")
+public class StoredFileEntity {
+
+    /** 来源：KB / WORKFLOW / CHAT / PREVIEW */
+    public static final String SOURCE_KB = "KB";
+    public static final String SOURCE_WORKFLOW = "WORKFLOW";
+    public static final String SOURCE_CHAT = "CHAT";
+    public static final String SOURCE_PREVIEW = "PREVIEW";
+
+    /** 生命周期：ACTIVE（落盘在用）/ CLEANED（已删字节）/ EXPIRED（PREVIEW 过期） */
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_CLEANED = "CLEANED";
+    public static final String STATUS_EXPIRED = "EXPIRED";
+
+    @TableId(type = IdType.INPUT)
+    private String fileId;
+
+    private Long tenantId;
+
+    private Long ownerUserId;
+
+    private Long kbId;
+
+    private String source;
+
+    private String status;
+
+    private String originalName;
+
+    private String mime;
+
+    private Long size;
+
+    private OffsetDateTime expiresAt;
+
+    private OffsetDateTime createdAt;
+}
