@@ -24,4 +24,13 @@ public class User extends BaseEntity {
     private String status;
 
     private OffsetDateTime lastLoginAt;
+
+    /** 登录方式：password=账密，dingtalk=钉钉免登 */
+    private String bindType;
+
+    /** 钉钉 unionId（跨应用稳定标识，账密用户为 null） */
+    private String dingtalkUnionId;
+
+    /** 钉钉 openId（应用内标识） */
+    private String dingtalkOpenId;
 }
