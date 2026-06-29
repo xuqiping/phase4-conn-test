@@ -58,12 +58,38 @@
             </select>
           </div>
 
+          <div class="flex items-center space-x-4 pt-2">
+            <label class="flex items-center space-x-2 text-sm">
+              <input v-model="editingConfig.includeInspirationDigest" type="checkbox" />
+              <span>{{ t('workReport.includeInspirationDigest') }}</span>
+            </label>
+          </div>
+
           <div class="border-t border-gray-200 dark:border-dark-border pt-3">
             <div class="flex items-center justify-between mb-2">
               <span class="text-sm font-medium">{{ t('workReport.pushTarget') }}</span>
-              <button @click="addPushTarget" class="px-2 py-1 text-xs rounded-md border border-[var(--accent-subtle-border)] bg-[var(--bg-primary)] text-[var(--accent-subtle-text)] hover:bg-[var(--accent-subtle-bg)]">{{ t('workReport.addPushTarget') }}</button>
+              <button v-if="store.pushTargets.length === 0" @click="goToPushConfig" class="text-xs text-blue-600 dark:text-blue-400 hover:underline">
+                {{ t('workReport.goToPushConfig') }}
+              </button>
             </div>
-            <PushTargetForm v-model="editingConfig.pushTargets" />
+            <div v-if="store.pushTargets.length === 0" class="text-xs text-gray-500 py-2">
+              {{ t('workReport.noPushTargetsHint') }}
+            </div>
+            <div v-else class="space-y-2">
+              <label
+                v-for="target in store.pushTargets"
+                :key="target.id"
+                class="flex items-center space-x-2 p-2 rounded border border-gray-200 dark:border-dark-border bg-white dark:bg-dark-hover cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  :value="target.id"
+                  v-model="editingPushTargetIds"
+                  class="rounded border-gray-300"
+                />
+                <span class="text-xs">{{ target.name }} · {{ platformLabel(target.platform) }} · {{ target.targetType }}</span>
+              </label>
+            </div>
           </div>
 
           <div v-if="editError" class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
@@ -86,6 +112,9 @@
             <p class="text-sm font-medium">{{ config.name }}</p>
             <p class="text-xs text-gray-500">{{ config.reportType === 'DAILY' ? t('workReport.daily') : t('workReport.weekly') }} · {{ config.templateName || t('workReport.unknownTemplate') }} · {{ config.cronExpression }}</p>
             <p class="text-xs text-gray-500">AI: {{ config.aiEnabled ? t('common.on') : t('common.off') }} · {{ config.enabled ? t('workReport.enabled') : t('workReport.disabled') }}</p>
+            <p v-if="config.pushTargets && config.pushTargets.length > 0" class="text-xs text-gray-500">
+              {{ t('workReport.pushTargets') }}: {{ config.pushTargets.map(t => t.name).join(', ') }}
+            </p>
           </div>
           <div class="flex items-center space-x-2">
             <button @click="generate(config.id!)" class="px-3 py-1.5 text-xs rounded-md border border-[var(--accent-subtle-border)] bg-[var(--bg-primary)] text-[var(--accent-subtle-text)] hover:bg-[var(--accent-subtle-bg)]">{{ t('workReport.generateReport') }}</button>
@@ -144,12 +173,38 @@
           </select>
         </div>
 
+        <div class="flex items-center space-x-4 pt-2">
+          <label class="flex items-center space-x-2 text-sm">
+            <input v-model="newConfig.includeInspirationDigest" type="checkbox" />
+            <span>{{ t('workReport.includeInspirationDigest') }}</span>
+          </label>
+        </div>
+
         <div class="border-t border-gray-200 dark:border-dark-border pt-3">
           <div class="flex items-center justify-between mb-2">
             <span class="text-sm font-medium">{{ t('workReport.pushTarget') }}</span>
-            <button @click="addNewPushTarget" class="px-2 py-1 text-xs rounded-md border border-[var(--accent-subtle-border)] bg-[var(--bg-primary)] text-[var(--accent-subtle-text)] hover:bg-[var(--accent-subtle-bg)]">{{ t('workReport.addPushTarget') }}</button>
+            <button v-if="store.pushTargets.length === 0" @click="goToPushConfig" class="text-xs text-blue-600 dark:text-blue-400 hover:underline">
+              {{ t('workReport.goToPushConfig') }}
+            </button>
           </div>
-          <PushTargetForm v-model="newConfig.pushTargets" />
+          <div v-if="store.pushTargets.length === 0" class="text-xs text-gray-500 py-2">
+            {{ t('workReport.noPushTargetsHint') }}
+          </div>
+          <div v-else class="space-y-2">
+            <label
+              v-for="target in store.pushTargets"
+              :key="target.id"
+              class="flex items-center space-x-2 p-2 rounded border border-gray-200 dark:border-dark-border bg-white dark:bg-dark-hover cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                :value="target.id"
+                v-model="newPushTargetIds"
+                class="rounded border-gray-300"
+              />
+              <span class="text-xs">{{ target.name }} · {{ platformLabel(target.platform) }} · {{ target.targetType }}</span>
+            </label>
+          </div>
         </div>
 
         <div v-if="addError" class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
@@ -182,8 +237,7 @@ import { useWorkReportStore } from '@/stores/workReportStore'
 import { useI18n } from '@/composables/useI18n'
 import { useAiConfigStore } from '@/stores/aiConfigStore'
 import { useCommercialAuthStore } from '@/stores/commercialAuthStore'
-import PushTargetForm from './PushTargetForm.vue'
-import type { ReportConfig, ReportPushTarget } from '@/types/workReport'
+import type { ReportConfig, PushTarget } from '@/types/workReport'
 
 const store = useWorkReportStore()
 const aiConfigStore = useAiConfigStore()
@@ -197,7 +251,9 @@ const emit = defineEmits<{
 const isAdding = ref(false)
 const editingId = ref<number | null>(null)
 const editingConfig = ref<Partial<ReportConfig>>(defaultConfig())
+const editingPushTargetIds = ref<number[]>([])
 const newConfig = ref<Partial<ReportConfig>>(defaultConfig())
+const newPushTargetIds = ref<number[]>([])
 const saving = ref(false)
 const addError = ref<string | null>(null)
 const editError = ref<string | null>(null)
@@ -212,7 +268,8 @@ function defaultConfig(): Partial<ReportConfig> {
     enabled: true,
     aiEnabled: true,
     aiConfigId: undefined,
-    pushTargets: [],
+    includeInspirationDigest: true,
+    pushTargetIds: [],
   }
 }
 
@@ -221,6 +278,7 @@ const aiModuleAllowed = computed(() => commercialAuthStore.isModuleAllowed('ai')
 onMounted(async () => {
   await store.loadTemplates()
   await store.loadConfigs()
+  await store.loadPushTargets()
   if (aiModuleAllowed.value) {
     aiConfigStore.loadConfigs().catch(() => {
       // 错误已在 store 中记录
@@ -235,6 +293,7 @@ function startAdd() {
   isAdding.value = true
   addError.value = null
   newConfig.value = defaultConfig()
+  newPushTargetIds.value = []
   if (store.templates.length > 0) {
     newConfig.value.templateId = store.templates[0].id
   }
@@ -246,12 +305,6 @@ function validateConfig(config: Partial<ReportConfig>): string | null {
   }
   if (!config.templateId) {
     return t('workReport.configTemplateRequired')
-  }
-  const targets = config.pushTargets || []
-  for (const target of targets) {
-    if (!target.platform || !target.targetType || !target.targetId?.trim()) {
-      return t('workReport.configTargetRequired')
-    }
   }
   return null
 }
@@ -265,9 +318,13 @@ async function submitAdd() {
   }
   saving.value = true
   try {
-    await store.saveConfig({ ...newConfig.value })
+    await store.saveConfig({
+      ...newConfig.value,
+      pushTargetIds: newPushTargetIds.value,
+    })
     isAdding.value = false
     newConfig.value = defaultConfig()
+    newPushTargetIds.value = []
   } catch (e) {
     addError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -278,10 +335,8 @@ async function submitAdd() {
 function startEdit(config: ReportConfig) {
   editingId.value = config.id ?? null
   editError.value = null
-  editingConfig.value = {
-    ...config,
-    pushTargets: config.pushTargets ? [...config.pushTargets] : [],
-  }
+  editingConfig.value = { ...config }
+  editingPushTargetIds.value = config.pushTargets?.map((t: PushTarget) => t.id) || []
 }
 
 function cancelEdit() {
@@ -298,7 +353,10 @@ async function saveEdit() {
   }
   saving.value = true
   try {
-    await store.saveConfig({ ...editingConfig.value })
+    await store.saveConfig({
+      ...editingConfig.value,
+      pushTargetIds: editingPushTargetIds.value,
+    })
     editingId.value = null
   } catch (e) {
     editError.value = e instanceof Error ? e.message : String(e)
@@ -307,21 +365,18 @@ async function saveEdit() {
   }
 }
 
-function addPushTarget() {
-  editingConfig.value.pushTargets = [...(editingConfig.value.pushTargets || []), defaultPushTarget()]
-}
-
-function addNewPushTarget() {
-  newConfig.value.pushTargets = [...(newConfig.value.pushTargets || []), defaultPushTarget()]
-}
-
-function defaultPushTarget(): ReportPushTarget {
-  return {
-    platform: 'FEISHU',
-    targetType: 'GROUP',
-    targetId: '',
-    credential: '',
+function platformLabel(platform: string): string {
+  switch (platform) {
+    case 'FEISHU': return t('workReport.platformFeishu')
+    case 'DINGTALK': return t('workReport.platformDingtalk')
+    case 'WECHAT_WORK': return t('workReport.platformWechatWork')
+    case 'SLACK': return t('workReport.platformSlack')
+    default: return platform
   }
+}
+
+function goToPushConfig() {
+  store.activeMainTab = 'push-config'
 }
 
 async function generate(configId: number) {
