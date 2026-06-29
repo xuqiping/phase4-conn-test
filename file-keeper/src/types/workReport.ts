@@ -36,8 +36,9 @@ export interface FixedWorkItem {
   reminderDays?: string
   timezone?: string
   reminderEnabled: boolean
+  pushTargetId?: number
   pushPlatform?: PushPlatform
-  pushTargetId?: string
+  pushTargetIdText?: string
   pushCredential?: string
   hasCredential?: boolean
   sortOrder?: number
@@ -54,8 +55,9 @@ export interface FuturePlan {
   timezone?: string
   reminderEnabled: boolean
   reminderMinutesBefore?: number
+  pushTargetId?: number
   pushPlatform?: PushPlatform
-  pushTargetId?: string
+  pushTargetIdText?: string
   pushCredential?: string
   hasCredential?: boolean
   status: FuturePlanStatus
@@ -72,13 +74,35 @@ export interface ReportTemplate {
   isDefault: boolean
 }
 
-export interface ReportPushTarget {
-  id?: number
-  platform: 'FEISHU' | 'DINGTALK' | 'WECHAT_WORK' | 'SLACK'
+export interface PushCredential {
+  id: number
+  name: string
+  platform: PushPlatform
+  hasCredential: boolean
+}
+
+export interface PushCredentialForm {
+  name: string
+  platform: PushPlatform
+  credential: string
+}
+
+export interface PushTarget {
+  id: number
+  name: string
+  platform: PushPlatform
   targetType: 'GROUP' | 'USER'
   targetId: string
-  credential?: string
-  hasCredential?: boolean
+  credentialId: number
+  credentialName?: string
+}
+
+export interface PushTargetForm {
+  name: string
+  platform: PushPlatform
+  targetType: 'GROUP' | 'USER'
+  targetId: string
+  credentialId?: number
 }
 
 export interface ReportConfig {
@@ -92,7 +116,9 @@ export interface ReportConfig {
   enabled: boolean
   aiEnabled: boolean
   aiConfigId?: number
-  pushTargets: ReportPushTarget[]
+  includeInspirationDigest: boolean
+  pushTargetIds: number[]
+  pushTargets?: PushTarget[]
 }
 
 export interface WorkReport {
@@ -102,6 +128,8 @@ export interface WorkReport {
   content: string
   generatedAt: string
   status: string
+  completionRate?: number
+  consecutiveMissDays?: number
 }
 
 export interface PageResult<T> {

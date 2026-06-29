@@ -6,7 +6,13 @@ import type {
   FuturePlan,
   WorkReport,
   PageResult,
+  PushCredential,
+  PushCredentialForm,
+  PushTarget,
+  PushTargetForm,
 } from '@/types/workReport'
+
+import { useAuthStore } from '@/stores/authStore'
 
 const BASE_PATH = '/api/client/work-report'
 
@@ -15,6 +21,8 @@ interface ApiResponse<T> {
   msg: string
   data: T
 }
+
+export { BASE_PATH, type ApiResponse }
 
 export class WorkReportApiError extends Error {
   constructor(
@@ -37,16 +45,16 @@ export function isWorkReportApiError(error: unknown): error is WorkReportApiErro
   )
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
+export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
 }
 
-function buildUrl(baseUrl: string, path: string, deviceId: string): string {
+export function buildUrl(baseUrl: string, path: string, deviceId: string, basePath: string = BASE_PATH): string {
   const separator = path.includes('?') ? '&' : '?'
-  return `${normalizeBaseUrl(baseUrl)}${BASE_PATH}${path}${separator}deviceId=${encodeURIComponent(deviceId)}`
+  return `${normalizeBaseUrl(baseUrl)}${basePath}${path}${separator}deviceId=${encodeURIComponent(deviceId)}`
 }
 
-async function readApiResponse<T>(response: Response): Promise<T> {
+export async function readApiResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as ApiResponse<T>
   if (!response.ok || payload.code !== 200) {
     throw new WorkReportApiError(
@@ -58,14 +66,16 @@ async function readApiResponse<T>(response: Response): Promise<T> {
   return payload.data
 }
 
-async function request<T>(
+export async function request<T>(
   baseUrl: string,
   token: string,
   deviceId: string,
   path: string,
   options: RequestInit = {},
+  retryCount = 1,
+  basePath: string = BASE_PATH,
 ): Promise<T> {
-  const response = await fetch(buildUrl(baseUrl, path, deviceId), {
+  const response = await fetch(buildUrl(baseUrl, path, deviceId, basePath), {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -73,6 +83,18 @@ async function request<T>(
       ...(options.headers || {}),
     },
   })
+
+  // 401 时尝试刷新 token 并重试一次，避免并发竞争导致的偶发过期
+  if (response.status === 401 && retryCount > 0) {
+    const authStore = useAuthStore()
+    await authStore.refreshAccessToken(baseUrl)
+    const newToken = authStore.accessToken
+    if (!newToken) {
+      throw new WorkReportApiError('未登录', 401, 401)
+    }
+    return request(baseUrl, newToken, deviceId, path, options, retryCount - 1, basePath)
+  }
+
   return readApiResponse<T>(response)
 }
 
@@ -133,8 +155,10 @@ export async function listFixedWork(
   token: string,
   deviceId: string,
   type: 'DAILY' | 'WEEKLY' | 'MONTHLY',
+  date?: string,
 ): Promise<FixedWorkItem[]> {
-  return request<FixedWorkItem[]>(baseUrl, token, deviceId, `/fixed-work?type=${type}`)
+  const dateParam = date ? `&date=${date}` : ''
+  return request<FixedWorkItem[]>(baseUrl, token, deviceId, `/fixed-work?type=${type}${dateParam}`)
 }
 
 export async function createFixedWork(
@@ -178,8 +202,10 @@ export async function toggleFixedWorkComplete(
   token: string,
   deviceId: string,
   id: number,
+  date?: string,
 ): Promise<FixedWorkItem> {
-  return request<FixedWorkItem>(baseUrl, token, deviceId, `/fixed-work/${id}/toggle-complete`, {
+  const dateParam = date ? `?date=${date}` : ''
+  return request<FixedWorkItem>(baseUrl, token, deviceId, `/fixed-work/${id}/toggle-complete${dateParam}`, {
     method: 'POST',
   })
 }
@@ -272,9 +298,15 @@ export async function saveReportConfig(
   deviceId: string,
   config: Partial<ReportConfig>,
 ): Promise<ReportConfig> {
+  const payload = {
+    ...config,
+    pushTargets: undefined,
+    pushTargetIds: config.pushTargetIds || [],
+    includeInspirationDigest: config.includeInspirationDigest ?? true,
+  }
   return request<ReportConfig>(baseUrl, token, deviceId, '/configs', {
     method: 'POST',
-    body: JSON.stringify(config),
+    body: JSON.stringify(payload),
   })
 }
 
@@ -285,6 +317,94 @@ export async function deleteReportConfig(
   id: number,
 ): Promise<void> {
   return request<void>(baseUrl, token, deviceId, `/configs/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listPushCredentials(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+): Promise<PushCredential[]> {
+  return request<PushCredential[]>(baseUrl, token, deviceId, '/push-credentials')
+}
+
+export async function createPushCredential(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  credential: PushCredentialForm,
+): Promise<PushCredential> {
+  return request<PushCredential>(baseUrl, token, deviceId, '/push-credentials', {
+    method: 'POST',
+    body: JSON.stringify(credential),
+  })
+}
+
+export async function updatePushCredential(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  id: number,
+  credential: PushCredentialForm,
+): Promise<PushCredential> {
+  return request<PushCredential>(baseUrl, token, deviceId, `/push-credentials/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(credential),
+  })
+}
+
+export async function deletePushCredential(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  id: number,
+): Promise<void> {
+  return request<void>(baseUrl, token, deviceId, `/push-credentials/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listPushTargets(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+): Promise<PushTarget[]> {
+  return request<PushTarget[]>(baseUrl, token, deviceId, '/push-targets')
+}
+
+export async function createPushTarget(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  target: PushTargetForm,
+): Promise<PushTarget> {
+  return request<PushTarget>(baseUrl, token, deviceId, '/push-targets', {
+    method: 'POST',
+    body: JSON.stringify(target),
+  })
+}
+
+export async function updatePushTarget(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  id: number,
+  target: PushTargetForm,
+): Promise<PushTarget> {
+  return request<PushTarget>(baseUrl, token, deviceId, `/push-targets/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(target),
+  })
+}
+
+export async function deletePushTarget(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  id: number,
+): Promise<void> {
+  return request<void>(baseUrl, token, deviceId, `/push-targets/${id}`, {
     method: 'DELETE',
   })
 }

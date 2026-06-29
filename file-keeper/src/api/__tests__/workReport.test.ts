@@ -261,7 +261,32 @@ describe('work report API', () => {
           'Content-Type': 'application/json',
           Authorization: 'Bearer token',
         },
-        body: JSON.stringify({ name: '配置' }),
+        body: JSON.stringify({ name: '配置', pushTargetIds: [], includeInspirationDigest: true }),
+      },
+    )
+  })
+
+  it('saves report config with includeInspirationDigest', async () => {
+    mocks.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ code: 200, msg: 'success', data: { id: 1, name: '配置' } }),
+    })
+
+    await saveReportConfig('http://localhost:8088', 'token', 'device-1', {
+      name: '配置',
+      includeInspirationDigest: false,
+    })
+
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      'http://localhost:8088/api/client/work-report/configs?deviceId=device-1',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer token',
+        },
+        body: JSON.stringify({ name: '配置', includeInspirationDigest: false, pushTargetIds: [] }),
       },
     )
   })
