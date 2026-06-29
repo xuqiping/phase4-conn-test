@@ -170,7 +170,9 @@ public class WorkReportService {
                 report.getTitle(),
                 report.getContent(),
                 toLocalDateTime(report.getGeneratedAt()),
-                report.getStatus()
+                report.getStatus(),
+                report.getCompletionRate(),
+                report.getConsecutiveMissDays()
         );
     }
 
