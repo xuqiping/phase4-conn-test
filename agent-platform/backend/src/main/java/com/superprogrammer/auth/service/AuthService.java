@@ -2,6 +2,7 @@
 package com.superprogrammer.auth.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.auth.dingtalk.service.DingTalkService;
 import com.superprogrammer.auth.dto.*;
 import com.superprogrammer.auth.entity.Role;
 import com.superprogrammer.auth.entity.User;
@@ -95,7 +96,15 @@ public class AuthService {
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
         List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
 
-        // 生成JWT Token
+        // 生成JWT Token（走公共方法）
+        log.info("用户登录成功: {}", user.getUsername());
+        return issueTokens(user, roleCodes, permissionCodes);
+    }
+
+    /**
+     * 公共发 token：根据已认证的 User 签发 access+refresh，返回 TokenResponse。
+     */
+    private TokenResponse issueTokens(User user, List<String> roleCodes, List<String> permissionCodes) {
         long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
         String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getUsername(), roleCodes, accessExpirationMs);
         String refreshToken = jwtUtil.generateRefreshToken(user.getId());
@@ -103,8 +112,6 @@ public class AuthService {
         // 更新最后登录时间
         user.setLastLoginAt(OffsetDateTime.now());
         userMapper.updateById(user);
-
-        log.info("用户登录成功: {}", user.getUsername());
 
         return TokenResponse.builder()
                 .accessToken(accessToken)
@@ -120,6 +127,58 @@ public class AuthService {
                         .permissions(permissionCodes)
                         .build())
                 .build();
+    }
+
+    /**
+     * 钉钉免登登录：按 unionId 查找或自动建号，签发本平台 JWT。
+     */
+    @Transactional
+    public TokenResponse loginByDingTalk(DingTalkService.DingTalkUserInfo info) {
+        if (info == null || info.unionId() == null || info.unionId().isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "钉钉 unionId 为空");
+        }
+
+        // 1) 按 unionId 查既有用户
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getDingtalkUnionId, info.unionId());
+        User user = userMapper.selectOne(wrapper);
+
+        if (user == null) {
+            // 2) 首次免登 → 自动建号
+            user = new User();
+            user.setUsername("dt_" + info.unionId());
+            user.setBindType("dingtalk");
+            user.setDingtalkUnionId(info.unionId());
+            user.setDingtalkOpenId(info.openId());
+            user.setAvatar(info.avatar());
+            user.setStatus("ACTIVE");
+            userMapper.insert(user);
+
+            // 分配默认角色 user
+            LambdaQueryWrapper<Role> roleWrapper = new LambdaQueryWrapper<>();
+            roleWrapper.eq(Role::getCode, "user");
+            Role defaultRole = roleMapper.selectOne(roleWrapper);
+            if (defaultRole != null) {
+                UserRole userRole = new UserRole(user.getId(), defaultRole.getId());
+                userRoleMapper.insert(userRole);
+            }
+            log.info("钉钉用户首次登录自动建号: unionId={}, userId={}", info.unionId(), user.getId());
+        } else {
+            // 已绑定 → 刷新 openId/avatar（防钉钉头像变更）
+            if (info.openId() != null && !info.openId().equals(user.getDingtalkOpenId())) {
+                user.setDingtalkOpenId(info.openId());
+            }
+            if (info.avatar() != null && !info.avatar().equals(user.getAvatar())) {
+                user.setAvatar(info.avatar());
+            }
+            if (!"ACTIVE".equals(user.getStatus())) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
+            }
+        }
+
+        List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
+        List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
+        return issueTokens(user, roleCodes, permissionCodes);
     }
 
     public TokenResponse refreshToken(RefreshTokenRequest request) {
