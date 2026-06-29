@@ -3,14 +3,19 @@ package com.superprogrammer.workreport.service;
 import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.PageResult;
+import com.superprogrammer.workreport.dto.FixedWorkCompletionStats;
 import com.superprogrammer.workreport.dto.WorkReportDto;
 import com.superprogrammer.workreport.entity.FixedWorkItem;
+import com.superprogrammer.workreport.entity.InboundMessage;
+import com.superprogrammer.workreport.entity.InspirationNote;
 import com.superprogrammer.workreport.entity.ReportConfig;
 import com.superprogrammer.workreport.entity.ReportTemplate;
 import com.superprogrammer.workreport.entity.WorkLog;
 import com.superprogrammer.workreport.entity.WorkReport;
 import com.superprogrammer.workreport.repository.FixedWorkCompletionRepository;
 import com.superprogrammer.workreport.repository.FixedWorkItemRepository;
+import com.superprogrammer.workreport.repository.InboundMessageRepository;
+import com.superprogrammer.workreport.repository.InspirationNoteRepository;
 import com.superprogrammer.workreport.repository.ReportConfigRepository;
 import com.superprogrammer.workreport.repository.ReportTemplateRepository;
 import com.superprogrammer.workreport.repository.WorkLogRepository;
@@ -38,6 +43,9 @@ public class WorkReportService {
     private final WorkLogRepository workLogRepository;
     private final FixedWorkItemRepository fixedWorkItemRepository;
     private final FixedWorkCompletionRepository fixedWorkCompletionRepository;
+    private final FixedWorkCompletionService fixedWorkCompletionService;
+    private final InboundMessageRepository inboundMessageRepository;
+    private final InspirationNoteRepository inspirationNoteRepository;
     private final AiSummaryService aiSummaryService;
     private final ReportTemplateEngine templateEngine;
 
@@ -93,13 +101,22 @@ public class WorkReportService {
 
         List<WorkLog> logs = workLogRepository.findByUserIdAndDateRange(userId, logRange.start(), logRange.end());
         List<FixedWorkItem> completedFixedWork = findCompletedFixedWork(userId, planRange.start(), planRange.end());
+        FixedWorkCompletionStats completionStats = fixedWorkCompletionService.calculateStats(userId, planRange.start(), planRange.end());
+        List<InboundMessage> inboxWorkLogs = inboundMessageRepository.findConfirmedWorkLogsByUserIdAndDateRange(userId, logRange.start(), logRange.end());
+        List<InspirationNote> inspirationNotes = Boolean.TRUE.equals(config.getIncludeInspirationDigest())
+                ? inspirationNoteRepository.findByUserIdAndDateRange(userId, logRange.start(), logRange.end())
+                : List.of();
 
+        AiSummaryService.AiSummaryContext aiContext = new AiSummaryService.AiSummaryContext(
+                logs, completedFixedWork, config.getReportType(), completionStats, inboxWorkLogs, inspirationNotes
+        );
         String aiSummary = Boolean.TRUE.equals(config.getAiEnabled())
-                ? aiSummaryService.summarize(logs, completedFixedWork,
-                        config.getReportType(), config.getAiConfigId(), userId)
+                ? aiSummaryService.summarize(aiContext, config.getAiConfigId(), userId)
                 : "";
 
-        Map<String, Object> context = templateEngine.buildContext(aiSummary, logs, completedFixedWork, config.getReportType());
+        Map<String, Object> context = templateEngine.buildContext(
+                aiSummary, logs, completedFixedWork, completionStats, inboxWorkLogs, inspirationNotes, config.getReportType()
+        );
         String content = templateEngine.render(template.getContent(), context);
 
         String title = generateTitle(config.getReportType(), logRange);
@@ -112,6 +129,8 @@ public class WorkReportService {
         report.setContent(content);
         report.setGeneratedAt(OffsetDateTime.now());
         report.setStatus("GENERATED");
+        report.setCompletionRate(completionStats.overallCompletionRate());
+        report.setConsecutiveMissDays(completionStats.maxConsecutiveMissDays());
         report.setCreatedBy(userId);
         report.setUpdatedBy(userId);
 
@@ -129,7 +148,6 @@ public class WorkReportService {
     }
 
     private DateRange calculatePlanDateRange(String reportType) {
-        // 固定工作的「计划」维度不再指未来计划，而是报告周期内已完成的固定工作
         return calculateDateRange(reportType);
     }
 

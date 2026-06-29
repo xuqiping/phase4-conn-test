@@ -62,7 +62,7 @@ class WorkReportServiceTest {
                 LocalDate.now(), "Finished AI summary service", "backend", "MANUAL", 1));
 
         fixedWorkService.create(userId, new com.superprogrammer.workreport.dto.CreateFixedWorkItemRequest(
-                "Write tests", null, "DAILY", java.time.LocalTime.of(9, 0), null, "Asia/Shanghai", false, null, null, null, 1));
+                "Write tests", null, "DAILY", java.time.LocalTime.of(9, 0), null, "Asia/Shanghai", false, null, 1));
         var fixedWorkItems = fixedWorkService.listByUserAndType(userId, "DAILY");
         Long itemId = fixedWorkItems.get(0).id();
         fixedWorkService.toggleComplete(userId, itemId);
@@ -129,8 +129,8 @@ class WorkReportServiceTest {
 
     private Long insertConfig(Long userId, Long templateId, String reportType, boolean aiEnabled) {
         jdbcTemplate.update(
-                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, ?, ?, '0 9 * * *', 'Asia/Shanghai', true, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
+                "insert into report_configs (user_id, name, report_type, template_id, cron_expression, timezone, enabled, ai_enabled, include_inspiration_digest, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values (?, ?, ?, ?, '0 9 * * *', 'Asia/Shanghai', true, ?, true, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 0)",
                 userId, reportType + "配置", reportType, templateId, aiEnabled, userId, userId
         );
         return jdbcTemplate.queryForObject("select id from report_configs where user_id = ? order by id desc limit 1", Long.class, userId);
