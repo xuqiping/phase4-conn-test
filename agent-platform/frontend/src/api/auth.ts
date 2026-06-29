@@ -57,6 +57,14 @@ export const authApi = {
   },
 
   /**
+   * 钉钉免登登录
+   * POST /api/auth/login/dingtalk
+   */
+  dingTalkLogin(authCode: string) {
+    return request.post<ApiResponse<LoginResponse>>('/auth/login/dingtalk', { authCode })
+  },
+
+  /**
    * 获取当前用户信息
    * GET /api/auth/me
    */
