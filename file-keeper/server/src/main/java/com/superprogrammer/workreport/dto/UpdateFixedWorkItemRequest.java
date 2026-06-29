@@ -13,9 +13,7 @@ public record UpdateFixedWorkItemRequest(
         String reminderDays,
         String timezone,
         Boolean reminderEnabled,
-        String pushPlatform,
-        String pushTargetId,
-        String pushCredential,
+        Long pushTargetId,
         Integer sortOrder
 ) {
 }

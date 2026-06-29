@@ -44,7 +44,9 @@ class WorkReportClientControllerTest {
     void cleanUp() {
         jdbcTemplate.update("delete from push_deliveries");
         jdbcTemplate.update("delete from work_reports");
-        jdbcTemplate.update("delete from report_push_targets");
+        jdbcTemplate.update("delete from report_config_push_targets");
+        jdbcTemplate.update("delete from push_targets");
+        jdbcTemplate.update("delete from push_credentials");
         jdbcTemplate.update("delete from report_configs");
         jdbcTemplate.update("delete from report_templates");
         jdbcTemplate.update("delete from fixed_work_completions");
@@ -159,10 +161,9 @@ class WorkReportClientControllerTest {
         mockMvc.perform(post("/api/client/work-report/configs?deviceId=device-001")
                         .header("Authorization", "Bearer " + token)
                         .contentType("application/json")
-                        .content("{\"name\":\"我的日报\",\"reportType\":\"DAILY\",\"templateId\":" + templateId + ",\"cronExpression\":\"0 9 * * *\",\"timezone\":\"Asia/Shanghai\",\"enabled\":true,\"aiEnabled\":true,\"pushTargets\":[{\"platform\":\"feishu\",\"targetType\":\"webhook\",\"targetId\":\"https://hook\",\"credential\":\"secret\"}]" + "}"))
+                        .content("{\"name\":\"我的日报\",\"reportType\":\"DAILY\",\"templateId\":" + templateId + ",\"cronExpression\":\"0 9 * * *\",\"timezone\":\"Asia/Shanghai\",\"enabled\":true,\"aiEnabled\":true}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.name").value("我的日报"))
-                .andExpect(jsonPath("$.data.pushTargets[0].hasCredential").value(true));
+                .andExpect(jsonPath("$.data.name").value("我的日报"));
 
         mockMvc.perform(get("/api/client/work-report/configs?deviceId=device-001")
                         .header("Authorization", "Bearer " + token))

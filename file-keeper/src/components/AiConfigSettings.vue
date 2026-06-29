@@ -49,7 +49,7 @@
     </div>
 
     <!-- 新增/编辑表单 -->
-    <div v-if="isEditing" class="p-4 rounded-lg border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-bg space-y-3">
+    <div v-if="isEditing" data-test="ai-config-form" class="p-4 rounded-lg border border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-bg space-y-3">
       <input
         v-model="form.name"
         :placeholder="t('aiConfig.namePlaceholder')"
@@ -64,6 +64,7 @@
           <option value="qwen">{{ t('aiConfig.providerQwen') }}</option>
           <option value="doubao">{{ t('aiConfig.providerDoubao') }}</option>
           <option value="claude">{{ t('aiConfig.providerClaude') }}</option>
+          <option value="custom">{{ t('aiConfig.providerCustom') }}</option>
         </select>
         <input
           v-model="form.model"
@@ -79,7 +80,7 @@
       />
       <input
         v-model="form.endpoint"
-        :placeholder="t('aiConfig.endpointPlaceholder')"
+        :placeholder="form.provider === 'custom' ? t('aiConfig.endpointRequiredPlaceholder') : t('aiConfig.endpointPlaceholder')"
         class="w-full px-3 py-2 bg-white dark:bg-dark-hover border border-gray-200 dark:border-dark-border rounded-md text-sm outline-none focus:border-primary"
       />
       <div class="grid grid-cols-2 gap-3">
@@ -115,25 +116,42 @@
       <div v-if="formError" class="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
         {{ formError }}
       </div>
-      <div class="flex justify-end space-x-2">
+      <div v-if="testResult" class="text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 p-2 rounded max-h-32 overflow-auto">
+        <div class="font-medium mb-0.5">{{ t('aiConfig.testSuccess') }}</div>
+        {{ testResult }}
+      </div>
+      <div class="flex justify-between items-center">
         <button
-          @click="cancelEdit"
-          class="px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-dark-border bg-white dark:bg-dark-hover text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover transition-colors"
+          data-test="test-connection"
+          @click="test"
+          :disabled="testing || !canTest"
+          class="px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-dark-border bg-white dark:bg-dark-hover text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {{ t('common.cancel') }}
+          {{ testing ? t('aiConfig.testing') : t('aiConfig.testConnection') }}
         </button>
-        <button
-          @click="save"
-          :disabled="saving"
-          class="px-3 py-1.5 text-xs rounded-md bg-primary hover:bg-[#369b6e] text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {{ saving ? t('common.saving') : t('common.save') }}
-        </button>
+        <div class="flex space-x-2">
+          <button
+            data-test="cancel-ai-config"
+            @click="cancelEdit"
+            class="px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-dark-border bg-white dark:bg-dark-hover text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-hover transition-colors"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            data-test="save-ai-config"
+            @click="save"
+            :disabled="saving"
+            class="px-3 py-1.5 text-xs rounded-md bg-primary hover:bg-[#369b6e] text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {{ saving ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
       </div>
     </div>
 
     <button
       v-else
+      data-test="add-ai-config"
       @click="startAdd"
       class="w-full px-3 py-2 text-sm rounded-md border border-dashed border-gray-300 dark:border-dark-border text-gray-600 dark:text-gray-400 hover:border-primary hover:text-primary transition-colors flex items-center justify-center space-x-1"
     >
@@ -144,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Plus, Pencil, Trash2, Star } from 'lucide-vue-next'
 import { useAiConfigStore } from '@/stores/aiConfigStore'
 import { useI18n } from '@/composables/useI18n'
@@ -156,21 +174,24 @@ const { t } = useI18n()
 const isEditing = ref(false)
 const editingId = ref<number | undefined>(undefined)
 const saving = ref(false)
+const testing = ref(false)
+const testResult = ref<string | null>(null)
 const formError = ref<string | null>(null)
 
-const form = ref<AiConfigForm>(defaultForm())
-
-const providerDefaults: Record<string, { model: string; endpoint: string }> = {
+const providerDefaults: Record<string, { model: string; endpoint: string } | undefined> = {
   qwen: { model: 'qwen-turbo', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' },
   doubao: { model: 'doubao-lite-4k', endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions' },
   claude: { model: 'claude-3-haiku-20240307', endpoint: 'https://api.anthropic.com/v1/messages' },
+  custom: undefined,
 }
+
+const defaultProvider = providerDefaults.qwen!
 
 function defaultForm(): AiConfigForm {
   return {
     name: '',
     provider: 'qwen',
-    model: providerDefaults.qwen.model,
+    model: defaultProvider.model,
     apiKey: '',
     endpoint: '',
     maxTokens: 2048,
@@ -179,6 +200,8 @@ function defaultForm(): AiConfigForm {
     enabled: true,
   }
 }
+
+const form = ref<AiConfigForm>(defaultForm())
 
 onMounted(() => {
   store.loadConfigs().catch(() => {
@@ -190,6 +213,10 @@ function onProviderChange() {
   const defaults = providerDefaults[form.value.provider]
   if (defaults) {
     form.value.model = defaults.model
+    form.value.endpoint = defaults.endpoint
+  } else if (form.value.provider === 'custom') {
+    form.value.model = ''
+    form.value.endpoint = ''
   }
 }
 
@@ -201,6 +228,7 @@ function startAdd() {
   editingId.value = undefined
   form.value = defaultForm()
   formError.value = null
+  testResult.value = null
   isEditing.value = true
 }
 
@@ -218,6 +246,7 @@ function edit(config: AiConfig) {
     enabled: config.enabled,
   }
   formError.value = null
+  testResult.value = null
   isEditing.value = true
 }
 
@@ -225,6 +254,32 @@ function cancelEdit() {
   isEditing.value = false
   editingId.value = undefined
   formError.value = null
+  testResult.value = null
+}
+
+const canTest = computed(() => {
+  return form.value.model.trim().length > 0 && Boolean(form.value.apiKey?.trim())
+})
+
+async function test() {
+  formError.value = validate()
+  if (formError.value) {
+    return
+  }
+  if (!canTest.value) {
+    formError.value = editingId.value ? t('aiConfig.testNeedApiKeyWhenEdit') : t('aiConfig.testNeedApiKey')
+    return
+  }
+  testing.value = true
+  testResult.value = null
+  try {
+    const reply = await store.testConfig({ ...form.value, name: form.value.name.trim() })
+    testResult.value = reply
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    testing.value = false
+  }
 }
 
 function validate(): string | null {
@@ -233,6 +288,9 @@ function validate(): string | null {
   }
   if (!form.value.model.trim()) {
     return t('aiConfig.modelRequired')
+  }
+  if (form.value.provider === 'custom' && !form.value.endpoint?.trim()) {
+    return t('aiConfig.endpointRequired')
   }
   if (form.value.maxTokens <= 0) {
     return t('aiConfig.maxTokensInvalid')

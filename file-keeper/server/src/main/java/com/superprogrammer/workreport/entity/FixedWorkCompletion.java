@@ -22,4 +22,6 @@ public class FixedWorkCompletion extends BaseEntity {
     private Boolean completed;
 
     private OffsetDateTime completedAt;
+
+    private String completionSource;
 }

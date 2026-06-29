@@ -1,7 +1,7 @@
 export interface AiConfig {
   id: number
   name: string
-  provider: 'qwen' | 'doubao' | 'claude'
+  provider: 'qwen' | 'doubao' | 'claude' | 'custom'
   model: string
   endpoint?: string
   maxTokens: number
@@ -12,7 +12,7 @@ export interface AiConfig {
 
 export interface AiConfigForm {
   name: string
-  provider: 'qwen' | 'doubao' | 'claude'
+  provider: 'qwen' | 'doubao' | 'claude' | 'custom'
   model: string
   apiKey?: string
   endpoint?: string

@@ -1594,6 +1594,8 @@ async function updateScreenshotShortcut(desired: string) {
   }
 }
 
+let tokenRefreshInterval: number | null = null
+
 onMounted(async () => {
   // Performance monitoring: record app startup time
   const startupTime = performance.now()
@@ -1676,6 +1678,15 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to register drag-drop listener:', error)
   }
+
+  // 启动后每 5 分钟检查一次 access token 是否临近过期，提前刷新，防止长驻桌面端 401
+  tokenRefreshInterval = window.setInterval(() => {
+    if (authStore.isAuthenticated) {
+      authStore.ensureValidToken(commercialServerUrl).catch((error) => {
+        console.warn('[App] Token refresh check failed:', error)
+      })
+    }
+  }, 5 * 60 * 1000)
 
   // Performance monitoring: log startup time
   const endTime = performance.now()
@@ -1769,6 +1780,10 @@ onUnmounted(async () => {
   if (screenshotCancelUnlisten) {
     screenshotCancelUnlisten()
     screenshotCancelUnlisten = null
+  }
+  if (tokenRefreshInterval !== null) {
+    clearInterval(tokenRefreshInterval)
+    tokenRefreshInterval = null
   }
 })
 

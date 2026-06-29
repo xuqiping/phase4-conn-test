@@ -1,12 +1,16 @@
 package com.superprogrammer.workreport.service;
 
+import com.superprogrammer.workreport.entity.PushCredential;
 import com.superprogrammer.workreport.entity.PushDelivery;
+import com.superprogrammer.workreport.entity.PushTarget;
 import com.superprogrammer.workreport.entity.ReportConfig;
-import com.superprogrammer.workreport.entity.ReportPushTarget;
+import com.superprogrammer.workreport.entity.ReportConfigPushTargetRef;
 import com.superprogrammer.workreport.entity.WorkReport;
+import com.superprogrammer.workreport.repository.PushCredentialRepository;
 import com.superprogrammer.workreport.repository.PushDeliveryRepository;
+import com.superprogrammer.workreport.repository.PushTargetRepository;
+import com.superprogrammer.workreport.repository.ReportConfigPushTargetRefRepository;
 import com.superprogrammer.workreport.repository.ReportConfigRepository;
-import com.superprogrammer.workreport.repository.ReportPushTargetRepository;
 import com.superprogrammer.workreport.service.push.Platform;
 import com.superprogrammer.workreport.service.push.PushPayload;
 import com.superprogrammer.workreport.service.push.PushResult;
@@ -18,6 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,7 +33,10 @@ public class ReportPushServiceImpl implements ReportPushService {
 
     private final WorkReportService workReportService;
     private final ReportConfigRepository reportConfigRepository;
-    private final ReportPushTargetRepository reportPushTargetRepository;
+    private final ReportConfigPushTargetRefRepository reportConfigPushTargetRefRepository;
+    private final PushTargetRepository pushTargetRepository;
+    private final PushCredentialRepository pushCredentialRepository;
+    private final CredentialEncryptor credentialEncryptor;
     private final PushDeliveryService pushDeliveryService;
     private final PushDeliveryRepository pushDeliveryRepository;
     private final List<PushService> pushServices;
@@ -43,7 +53,7 @@ public class ReportPushServiceImpl implements ReportPushService {
             return;
         }
 
-        List<ReportPushTarget> targets = reportPushTargetRepository.findByConfigId(config.getId());
+        List<PushTarget> targets = loadTargetsByConfigId(config.getId());
         log.info("[pushReport] reportId={} 找到 {} 个推送目标", reportId, targets.size());
         if (targets.isEmpty()) {
             log.info("报告无推送目标，跳过推送 reportId={}", reportId);
@@ -53,7 +63,7 @@ public class ReportPushServiceImpl implements ReportPushService {
         updateReportStatus(report, "PUSHING");
 
         boolean allSuccess = true;
-        for (ReportPushTarget target : targets) {
+        for (PushTarget target : targets) {
             log.info("[pushReport] 正在推送 reportId={} platform={} targetType={}", reportId, target.getPlatform(), target.getTargetType());
             PushResult result = pushToTarget(report, target);
             pushDeliveryService.record(reportId, target.getId(), result.success(), result.response(), 1);
@@ -81,7 +91,7 @@ public class ReportPushServiceImpl implements ReportPushService {
         }
 
         WorkReport report = workReportService.getEntityById(delivery.getReportId());
-        ReportPushTarget target = reportPushTargetRepository.findById(delivery.getTargetId()).orElse(null);
+        PushTarget target = pushTargetRepository.findById(delivery.getTargetId()).orElse(null);
         if (target == null) {
             log.warn("推送目标不存在，跳过重试 deliveryId={}", deliveryId);
             return;
@@ -94,7 +104,17 @@ public class ReportPushServiceImpl implements ReportPushService {
         refreshReportStatus(report);
     }
 
-    private PushResult pushToTarget(WorkReport report, ReportPushTarget target) {
+    private List<PushTarget> loadTargetsByConfigId(Long configId) {
+        List<Long> targetIds = reportConfigPushTargetRefRepository.findByConfigId(configId).stream()
+                .map(ReportConfigPushTargetRef::getTargetId)
+                .toList();
+        if (targetIds.isEmpty()) {
+            return List.of();
+        }
+        return pushTargetRepository.findByIds(targetIds);
+    }
+
+    private PushResult pushToTarget(WorkReport report, PushTarget target) {
         Platform platform;
         try {
             platform = Platform.valueOf(target.getPlatform().toUpperCase());
@@ -111,8 +131,20 @@ public class ReportPushServiceImpl implements ReportPushService {
             return new PushResult(false, "未找到平台实现: " + platform, null);
         }
 
+        String decryptedCredential = decryptCredential(target.getCredentialId());
         PushPayload payload = new PushPayload(report.getTitle(), report.getContent());
-        return pusher.push(payload, target);
+        return pusher.push(payload, target, decryptedCredential);
+    }
+
+    private String decryptCredential(Long credentialId) {
+        if (credentialId == null) {
+            return null;
+        }
+        PushCredential credential = pushCredentialRepository.findById(credentialId).orElse(null);
+        if (credential == null || credential.getCredentialEnc() == null) {
+            return null;
+        }
+        return credentialEncryptor.decrypt(credential.getCredentialEnc());
     }
 
     private void updateReportStatus(WorkReport report, String status) {

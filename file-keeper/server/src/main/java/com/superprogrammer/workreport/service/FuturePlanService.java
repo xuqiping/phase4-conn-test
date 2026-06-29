@@ -18,7 +18,6 @@ import java.util.List;
 public class FuturePlanService {
 
     private final FuturePlanRepository futurePlanRepository;
-    private final CredentialEncryptor credentialEncryptor;
 
     public List<FuturePlanDto> listByUser(Long userId) {
         return futurePlanRepository.findByUserId(userId).stream()
@@ -35,9 +34,7 @@ public class FuturePlanService {
         plan.setTimezone(request.timezone() == null ? "Asia/Shanghai" : request.timezone());
         plan.setReminderEnabled(request.reminderEnabled() != null && request.reminderEnabled());
         plan.setReminderMinutesBefore(request.reminderMinutesBefore() == null ? 0 : request.reminderMinutesBefore());
-        plan.setPushPlatform(request.pushPlatform());
         plan.setPushTargetId(request.pushTargetId());
-        plan.setPushCredential(credentialEncryptor.encrypt(request.pushCredential()));
         plan.setStatus("PENDING");
         plan.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
         plan.setCreatedBy(userId);
@@ -54,9 +51,7 @@ public class FuturePlanService {
         plan.setTimezone(request.timezone() == null ? plan.getTimezone() : request.timezone());
         plan.setReminderEnabled(request.reminderEnabled() != null ? request.reminderEnabled() : plan.getReminderEnabled());
         plan.setReminderMinutesBefore(request.reminderMinutesBefore() == null ? plan.getReminderMinutesBefore() : request.reminderMinutesBefore());
-        plan.setPushPlatform(request.pushPlatform());
         plan.setPushTargetId(request.pushTargetId());
-        plan.setPushCredential(credentialEncryptor.encrypt(request.pushCredential()));
         plan.setSortOrder(request.sortOrder() == null ? plan.getSortOrder() : request.sortOrder());
         plan.setUpdatedBy(userId);
         FuturePlan saved = futurePlanRepository.update(plan);
@@ -102,9 +97,10 @@ public class FuturePlanService {
                 plan.getTimezone(),
                 plan.getReminderEnabled(),
                 plan.getReminderMinutesBefore(),
-                plan.getPushPlatform(),
                 plan.getPushTargetId(),
-                plan.getPushCredential() != null && !plan.getPushCredential().isBlank(),
+                plan.getLegacyPushPlatform(),
+                plan.getLegacyPushTargetId(),
+                plan.getLegacyPushCredential() != null && !plan.getLegacyPushCredential().isBlank(),
                 plan.getStatus(),
                 plan.getSortOrder(),
                 plan.getCreatedAt(),

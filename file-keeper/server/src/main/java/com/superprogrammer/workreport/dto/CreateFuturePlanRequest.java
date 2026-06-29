@@ -12,9 +12,7 @@ public record CreateFuturePlanRequest(
         String timezone,
         Boolean reminderEnabled,
         Integer reminderMinutesBefore,
-        String pushPlatform,
-        String pushTargetId,
-        String pushCredential,
+        Long pushTargetId,
         Integer sortOrder
 ) {
 }

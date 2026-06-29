@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import { useAuthStore } from './authStore'
 import { useCommercialAuthStore } from './commercialAuthStore'
 import * as api from '@/api/workReport'
+import * as inboxApi from '@/api/inbox'
+import * as inspirationApi from '@/api/inspiration'
 import * as rustApi from '@/api/rustWorkReport'
 import type {
   WorkLog,
@@ -13,16 +15,23 @@ import type {
   WorkReport,
   PageResult,
   RecurrenceType,
+  PushCredential,
+  PushCredentialForm,
+  PushTarget,
+  PushTargetForm,
 } from '@/types/workReport'
+import type { InboxMessage } from '@/types/inbox'
+import type { InspirationNote } from '@/types/inspiration'
 
 const COMMERCIAL_SERVER_URL = import.meta.env.VITE_FILE_KEEPER_SERVER_URL || 'http://localhost:8088'
 
-export type MainTab = 'logs' | 'future' | 'fixed'
+export type MainTab = 'inbox' | 'logs' | 'future' | 'fixed' | 'calendar' | 'inspirations' | 'push-config'
 
 export const useWorkReportStore = defineStore('work-report', () => {
   const logs = ref<WorkLog[]>([])
   const fixedWorkItems = ref<FixedWorkItem[]>([])
   const futurePlans = ref<FuturePlan[]>([])
+  const inspirationNotes = ref<InspirationNote[]>([])
   const templates = ref<ReportTemplate[]>([])
   const configs = ref<ReportConfig[]>([])
   const reports = ref<WorkReport[]>([])
@@ -35,6 +44,13 @@ export const useWorkReportStore = defineStore('work-report', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  const pushCredentials = ref<PushCredential[]>([])
+  const pushTargets = ref<PushTarget[]>([])
+
+  const inboxMessages = ref<InboxMessage[]>([])
+  const inboxLoading = ref(false)
+  const pendingInboxCount = computed(() => inboxMessages.value.filter(m => m.status === 'PENDING').length)
+
   const todayLogs = computed(() =>
     [...logs.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
   )
@@ -43,6 +59,9 @@ export const useWorkReportStore = defineStore('work-report', () => {
   )
   const sortedFuturePlans = computed(() =>
     [...futurePlans.value].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()),
+  )
+  const sortedInspirationNotes = computed(() =>
+    [...inspirationNotes.value].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
   )
 
   function getAuthContext() {
@@ -146,9 +165,7 @@ export const useWorkReportStore = defineStore('work-report', () => {
         reminderDays: item.reminderDays,
         timezone: item.timezone ?? 'Asia/Shanghai',
         reminderEnabled: item.reminderEnabled ?? false,
-        pushPlatform: item.pushPlatform,
         pushTargetId: item.pushTargetId,
-        pushCredential: item.pushCredential,
         sortOrder: item.sortOrder,
       }
       if (item.id) {
@@ -205,9 +222,7 @@ export const useWorkReportStore = defineStore('work-report', () => {
         timezone: plan.timezone ?? 'Asia/Shanghai',
         reminderEnabled: plan.reminderEnabled ?? false,
         reminderMinutesBefore: plan.reminderMinutesBefore ?? 0,
-        pushPlatform: plan.pushPlatform,
         pushTargetId: plan.pushTargetId,
-        pushCredential: plan.pushCredential,
         sortOrder: plan.sortOrder,
       }
       if (plan.id) {
@@ -332,10 +347,167 @@ export const useWorkReportStore = defineStore('work-report', () => {
     }
   }
 
+  async function loadPushCredentials() {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    pushCredentials.value = await api.listPushCredentials(baseUrl, token, deviceId)
+  }
+
+  async function savePushCredential(id: number | undefined, credential: PushCredentialForm): Promise<PushCredential> {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    const saved = id
+      ? await api.updatePushCredential(baseUrl, token, deviceId, id, credential)
+      : await api.createPushCredential(baseUrl, token, deviceId, credential)
+    await loadPushCredentials()
+    return saved
+  }
+
+  async function deletePushCredential(id: number) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    await api.deletePushCredential(baseUrl, token, deviceId, id)
+    await loadPushCredentials()
+  }
+
+  async function loadPushTargets() {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    pushTargets.value = await api.listPushTargets(baseUrl, token, deviceId)
+  }
+
+  async function savePushTarget(id: number | undefined, target: PushTargetForm): Promise<PushTarget> {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    const saved = id
+      ? await api.updatePushTarget(baseUrl, token, deviceId, id, target)
+      : await api.createPushTarget(baseUrl, token, deviceId, target)
+    await loadPushTargets()
+    return saved
+  }
+
+  async function deletePushTarget(id: number) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    await api.deletePushTarget(baseUrl, token, deviceId, id)
+    await loadPushTargets()
+  }
+
+  async function loadInspirations(tags?: string[], startDate?: string, endDate?: string) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    loading.value = true
+    error.value = null
+    try {
+      inspirationNotes.value = await inspirationApi.listInspirations(baseUrl, token, deviceId, tags, startDate, endDate)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function saveInspiration(note: Partial<InspirationNote>) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    try {
+      const payload = {
+        content: note.content ?? '',
+        tags: note.tags,
+        source: note.source,
+        platformMessageId: note.platformMessageId,
+        reportConfigIds: note.reportConfigIds,
+      }
+      if (note.id) {
+        await inspirationApi.updateInspiration(baseUrl, token, deviceId, note.id, payload)
+      } else {
+        await inspirationApi.createInspiration(baseUrl, token, deviceId, payload)
+      }
+      await loadInspirations()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function reviewInspiration(id: number) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    try {
+      await inspirationApi.reviewInspiration(baseUrl, token, deviceId, id)
+      await loadInspirations()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function removeInspiration(id: number) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    try {
+      await inspirationApi.deleteInspiration(baseUrl, token, deviceId, id)
+      await loadInspirations()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function loadFixedWorkCalendar(startDate: string, endDate: string): Promise<Record<string, { total: number; completed: number; items: (FixedWorkItem & { completed?: boolean })[] }>> {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    const states: Record<string, { total: number; completed: number; items: (FixedWorkItem & { completed?: boolean })[] }> = {}
+    try {
+      // 按天查询固定工作完成状态
+      const start = new Date(startDate)
+      const end = new Date(endDate)
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0]
+        const items = await api.listFixedWork(baseUrl, token, deviceId, 'DAILY', dateStr)
+        states[dateStr] = {
+          total: items.length,
+          completed: items.filter(i => i.completedToday).length,
+          items: items.map(i => ({ ...i, completed: i.completedToday })),
+        }
+      }
+      return states
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function toggleFixedWorkForDate(id: number, date: string) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    try {
+      await api.toggleFixedWorkComplete(baseUrl, token, deviceId, id, date)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function loadInbox(limit = 50) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    inboxLoading.value = true
+    error.value = null
+    try {
+      inboxMessages.value = await inboxApi.listPendingInbox(baseUrl, token, deviceId, limit)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      inboxLoading.value = false
+    }
+  }
+
+  async function confirmInboxMessage(id: number, action: 'CONFIRM' | 'IGNORE', correctedPayload?: Record<string, unknown>) {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    try {
+      await inboxApi.confirmInboxMessage(baseUrl, token, deviceId, id, action, correctedPayload)
+      await loadInbox()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
   return {
     logs,
     fixedWorkItems,
     futurePlans,
+    inspirationNotes,
     templates,
     configs,
     reports,
@@ -347,9 +519,15 @@ export const useWorkReportStore = defineStore('work-report', () => {
     activeFixedSubTab,
     loading,
     error,
+    pushCredentials,
+    pushTargets,
+    inboxMessages,
+    inboxLoading,
+    pendingInboxCount,
     todayLogs,
     sortedFixedWorkItems,
     sortedFuturePlans,
+    sortedInspirationNotes,
     loadToday,
     loadLogs,
     saveLog,
@@ -363,6 +541,12 @@ export const useWorkReportStore = defineStore('work-report', () => {
     completeFuturePlan,
     cancelFuturePlan,
     removeFuturePlan,
+    loadInspirations,
+    saveInspiration,
+    reviewInspiration,
+    removeInspiration,
+    loadFixedWorkCalendar,
+    toggleFixedWorkForDate,
     loadTemplates,
     loadConfigs,
     saveConfig,
@@ -372,5 +556,13 @@ export const useWorkReportStore = defineStore('work-report', () => {
     pushReport,
     removeReport,
     importGitLogs,
+    loadPushCredentials,
+    savePushCredential,
+    deletePushCredential,
+    loadPushTargets,
+    savePushTarget,
+    deletePushTarget,
+    loadInbox,
+    confirmInboxMessage,
   }
 })

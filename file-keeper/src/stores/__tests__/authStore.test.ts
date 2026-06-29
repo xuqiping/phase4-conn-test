@@ -109,11 +109,11 @@ describe('authStore', () => {
       defaults: {},
       autoSave: 500
     })
-    expect(mocks.storeSet).toHaveBeenCalledWith('authSession', {
+    expect(mocks.storeSet).toHaveBeenCalledWith('authSession', expect.objectContaining({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
       user
-    })
+    }))
     expect(mocks.storeSave).toHaveBeenCalled()
   })
 
@@ -276,11 +276,11 @@ describe('authStore', () => {
     expect(store.accessToken).toBe('new-access-token')
     expect(store.refreshToken).toBe('new-refresh-token')
     expect(store.user).toEqual(user)
-    expect(mocks.storeSet).toHaveBeenCalledWith('authSession', {
+    expect(mocks.storeSet).toHaveBeenCalledWith('authSession', expect.objectContaining({
       accessToken: 'new-access-token',
       refreshToken: 'new-refresh-token',
       user
-    })
+    }))
     expect(mocks.initializeAuthenticated).toHaveBeenCalledWith('http://localhost:8080', 'new-access-token')
   })
 

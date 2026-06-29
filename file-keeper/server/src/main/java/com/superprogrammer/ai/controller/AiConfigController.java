@@ -1,16 +1,19 @@
 package com.superprogrammer.ai.controller;
 
 import com.superprogrammer.ai.dto.AiConfigCreateRequest;
+import com.superprogrammer.ai.dto.AiConfigTestRequest;
 import com.superprogrammer.ai.dto.AiConfigUpdateRequest;
 import com.superprogrammer.ai.dto.AiConfigVO;
 import com.superprogrammer.ai.service.AiConfigService;
 import com.superprogrammer.authorization.dto.AuthorizationSnapshot;
 import com.superprogrammer.authorization.dto.ModuleAccess;
 import com.superprogrammer.authorization.service.AuthorizationService;
+import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.R;
 import com.superprogrammer.security.AuthConstants;
 import com.superprogrammer.security.AuthPrincipal;
+import com.superprogrammer.workreport.service.AiSummaryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +30,7 @@ public class AiConfigController {
 
     private final AuthorizationService authorizationService;
     private final AiConfigService aiConfigService;
+    private final AiSummaryService aiSummaryService;
 
     private ModuleAccess checkAiModuleAuth(Authentication auth, String deviceId) {
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
@@ -110,5 +114,37 @@ public class AiConfigController {
         }
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
         return R.ok(aiConfigService.setDefault(principal.userId(), id));
+    }
+
+    @PostMapping("/test")
+    public R<String> test(
+            Authentication auth,
+            @RequestParam String deviceId,
+            @RequestBody @Valid AiConfigTestRequest request) {
+        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
+        if (access == null || !access.allowed()) {
+            return forbidden(access);
+        }
+        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AiConfigVO testConfig = new AiConfigVO(
+                null,
+                null,
+                request.provider(),
+                request.model(),
+                request.endpoint(),
+                request.maxTokens(),
+                request.timeoutSeconds(),
+                false,
+                true
+        );
+        try {
+            String reply = aiSummaryService.testConnection(testConfig, request.apiKey());
+            return R.ok(reply);
+        } catch (BusinessException e) {
+            return R.fail(e.getCode(), e.getMessage());
+        } catch (Exception e) {
+            log.error("AI 配置测试连接失败, userId={}, provider={}", principal.userId(), request.provider(), e);
+            return R.fail(ErrorCode.INTERNAL_ERROR.getCode(), "AI 连接测试失败: " + e.getMessage());
+        }
     }
 }

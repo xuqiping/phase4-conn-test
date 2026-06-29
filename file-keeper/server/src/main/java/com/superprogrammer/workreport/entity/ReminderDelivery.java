@@ -22,6 +22,8 @@ public class ReminderDelivery extends BaseEntity {
 
     private String credential;
 
+    private Long pushTargetId;
+
     private String status;
 
     private String response;

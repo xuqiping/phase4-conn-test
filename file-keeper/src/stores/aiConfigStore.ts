@@ -90,6 +90,21 @@ export const useAiConfigStore = defineStore('ai-config', () => {
     }
   }
 
+  async function testConfig(config: AiConfigForm): Promise<string> {
+    const { baseUrl, token, deviceId } = getAuthContext()
+    loading.value = true
+    error.value = null
+    try {
+      const reply = await api.testAiConfig(baseUrl, token, deviceId, config)
+      return reply
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     configs,
     loading,
@@ -99,5 +114,6 @@ export const useAiConfigStore = defineStore('ai-config', () => {
     saveConfig,
     deleteConfig,
     setDefault,
+    testConfig,
   }
 })

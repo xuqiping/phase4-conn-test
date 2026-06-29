@@ -131,3 +131,23 @@ export async function setDefaultAiConfig(
     method: 'PUT',
   })
 }
+
+export async function testAiConfig(
+  baseUrl: string,
+  token: string,
+  deviceId: string,
+  config: AiConfigForm,
+): Promise<string> {
+  const payload = {
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey || '',
+    endpoint: config.endpoint,
+    maxTokens: config.maxTokens,
+    timeoutSeconds: config.timeoutSeconds,
+  }
+  return request<string>(baseUrl, token, deviceId, '/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

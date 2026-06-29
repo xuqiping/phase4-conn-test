@@ -60,7 +60,22 @@
         <label for="futureReminderEnabled" class="text-sm">{{ t('workReport.reminderEnabled') }}</label>
       </div>
 
-      <PushConfigFields v-model="pushConfig" />
+      <div class="space-y-1">
+        <label class="text-[10px] text-gray-500 dark:text-gray-400">{{ t('workReport.pushTarget') }}</label>
+        <select
+          v-model="editingPlan.pushTargetId"
+          class="w-full px-2 py-1.5 bg-white dark:bg-dark-hover border border-gray-200 dark:border-dark-border rounded-md text-sm outline-none focus:border-primary"
+        >
+          <option :value="undefined">{{ t('workReport.noPushTarget') }}</option>
+          <option
+            v-for="target in store.pushTargets"
+            :key="target.id"
+            :value="target.id"
+          >
+            {{ target.name }} · {{ platformLabel(target.platform) }}
+          </option>
+        </select>
+      </div>
 
       <div class="flex justify-end space-x-2">
         <button @click="cancelEdit" class="px-3 py-1 text-xs rounded-md border border-[var(--border-color)] bg-[var(--bg-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">{{ t('common.cancel') }}</button>
@@ -95,6 +110,9 @@
             </span>
             <span v-if="plan.reminderEnabled" class="bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
               {{ t('workReport.reminderOn') }} {{ plan.reminderMinutesBefore }}{{ t('workReport.minutesBefore') }}
+            </span>
+            <span v-if="plan.pushTargetId" class="bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded">
+              {{ pushTargetName(plan.pushTargetId) }}
             </span>
           </div>
         </div>
@@ -138,11 +156,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Plus, Check, X, Trash2, Pencil } from 'lucide-vue-next'
 import { useWorkReportStore } from '@/stores/workReportStore'
 import { useI18n } from '@/composables/useI18n'
-import PushConfigFields from './PushConfigFields.vue'
 import type { FuturePlan, FuturePlanStatus } from '@/types/workReport'
 
 const store = useWorkReportStore()
@@ -156,25 +173,9 @@ const editingPlan = ref<Partial<FuturePlan>>({
 })
 const scheduledAtLocal = ref('')
 
-const pushConfig = computed({
-  get: () => ({
-    pushPlatform: editingPlan.value.pushPlatform,
-    pushTargetId: editingPlan.value.pushTargetId,
-    pushCredential: editingPlan.value.pushCredential,
-    hasCredential: editingPlan.value.hasCredential,
-  }),
-  set: (val) => {
-    editingPlan.value.pushPlatform = val.pushPlatform
-    editingPlan.value.pushTargetId = val.pushTargetId
-    if (val.pushCredential !== undefined && val.pushCredential !== '') {
-      editingPlan.value.pushCredential = val.pushCredential
-      editingPlan.value.hasCredential = true
-    }
-  },
-})
-
 onMounted(() => {
   store.loadFuturePlans()
+  store.loadPushTargets()
 })
 
 function startAdd() {
@@ -224,6 +225,21 @@ function formatDateTime(isoString?: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function platformLabel(platform: string): string {
+  switch (platform) {
+    case 'FEISHU': return t('workReport.platformFeishu')
+    case 'DINGTALK': return t('workReport.platformDingtalk')
+    case 'WECHAT_WORK': return t('workReport.platformWechatWork')
+    case 'SLACK': return t('workReport.platformSlack')
+    default: return platform
+  }
+}
+
+function pushTargetName(targetId?: number): string {
+  if (!targetId) return ''
+  return store.pushTargets.find(t => t.id === targetId)?.name || String(targetId)
 }
 
 function statusClass(status: FuturePlanStatus): string {
