@@ -159,6 +159,18 @@ class ReportConfigServiceTest {
         assertThrows(BusinessException.class, () -> reportConfigService.delete(userB, created.id()));
     }
 
+    @Test
+    void saveConfigDefaultsIncludeInspirationDigestToTrue() {
+        Long userId = insertUser("inspiration-default@example.com");
+        Long templateId = insertTemplate();
+
+        ReportConfigDto saved = reportConfigService.save(userId, new SaveReportConfigRequest(
+                null, "默认配置", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null, List.of()
+        ));
+
+        assertTrue(Boolean.TRUE.equals(saved.includeInspirationDigest()));
+    }
+
     private Long insertUser(String email) {
         jdbcTemplate.update(
                 "insert into users (email, password_hash, role, status, email_verified, phone_verified, device_limit, offline_cache_minutes, created_by, created_at, updated_by, updated_at, deleted) " +

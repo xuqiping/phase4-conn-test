@@ -75,6 +75,8 @@ class WorkReportServiceTest {
         assertTrue(report.title().contains("日报"));
         assertTrue(report.content().contains("Finished AI summary service"));
         assertTrue(report.content().contains("Write tests"));
+        assertNotNull(report.completionRate());
+        assertTrue(report.consecutiveMissDays() != null && report.consecutiveMissDays() >= 0);
     }
 
     @Test
