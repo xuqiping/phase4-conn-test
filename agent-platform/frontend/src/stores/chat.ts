@@ -15,6 +15,8 @@ export const useChatStore = defineStore('chat', () => {
   const sending = ref(false)
   const streamingContent = ref('')
   const streamingThinking = ref('')
+  /** 工作流 HUMAN_INPUT 待答问题规格（INPUT_REQUIRED 帧捕获；select 型可渲染选项按钮）。text 型直接用普通输入框作答即可。 */
+  const pendingInput = ref<Record<string, any> | null>(null)
   const wsConnected = ref(false)
   const selectedModel = ref<string | null>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_MODEL) || DEFAULT_CHAT_MODEL
@@ -253,15 +255,19 @@ export const useChatStore = defineStore('chat', () => {
                     sessionId: currentSessionId.value ?? 0,
                     role: 'ASSISTANT',
                     content: streamingContent.value,
-                    metadata: streamingThinking.value
-                      ? JSON.stringify({ thinking: streamingThinking.value })
-                      : null,
+                    metadata: JSON.stringify({
+                      ...(streamingThinking.value ? { thinking: streamingThinking.value } : {}),
+                      ...(pendingInput.value ? { pendingInput: pendingInput.value } : {})
+                    }),
                     createdAt: new Date().toISOString()
                   })
                   streamingContent.value = ''
                   streamingThinking.value = ''
                   sending.value = false
                   await fetchSessions()
+                  break
+                case 'INPUT_REQUIRED':
+                  pendingInput.value = evt
                   break
                 case 'ERROR':
                   streamingContent.value = ''
@@ -332,13 +338,17 @@ export const useChatStore = defineStore('chat', () => {
               sessionId: currentSessionId.value ?? 0,
               role: 'ASSISTANT',
               content: streamingContent.value,
-              metadata: null,
+              metadata: pendingInput.value ? JSON.stringify({ pendingInput: pendingInput.value }) : null,
               createdAt: new Date().toISOString()
             })
           }
           streamingContent.value = ''
           sending.value = false
           fetchSessions()
+          break
+        case 'INPUT_REQUIRED':
+          // 工作流命中 HUMAN_INPUT：捕获待答规格（问题已随 CHUNK 流出显示）。text 型直接正常回复即可被后端拦截恢复。
+          pendingInput.value = data
           break
         case 'ERROR':
           streamingContent.value = ''
@@ -357,6 +367,8 @@ export const useChatStore = defineStore('chat', () => {
 
     sending.value = true
     streamingContent.value = ''
+    // 用户作答（或发新消息）：清掉上一轮 HUMAN_INPUT 待答状态
+    pendingInput.value = null
 
     // Add user message immediately
     messages.value.push({
@@ -463,6 +475,7 @@ export const useChatStore = defineStore('chat', () => {
     sending,
     streamingContent,
     streamingThinking,
+    pendingInput,
     wsConnected,
     selectedModel,
     selectedTarget,

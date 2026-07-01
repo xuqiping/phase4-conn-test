@@ -34,13 +34,13 @@ public class RuntimeExecutionService {
     public Flux<ExecutionEvent> runWorkflow(Long workflowId, Long userId, Map<String, Object> input) {
         WorkflowDetailVO workflow = workflowService.getWorkflowDetail(workflowId);
         WorkflowDefinition definition = workflowDefinitionAssembler.assemble(workflow);
-        return runWorkflowDefinition(workflow, definition, userId, input, Map.of());
+        return runWorkflowDefinition(workflow, definition, userId, null, input, Map.of());
     }
 
-    public Flux<ExecutionEvent> runWorkflowFromChat(Long workflowId, Long userId, String message) {
+    public Flux<ExecutionEvent> runWorkflowFromChat(Long workflowId, Long userId, Long sessionId, String message) {
         WorkflowDetailVO workflow = workflowService.getWorkflowDetail(workflowId);
         WorkflowDefinition definition = workflowDefinitionAssembler.assemble(workflow);
-        return runWorkflowDefinition(workflow, definition, userId, chatInput(workflow, message), Map.of());
+        return runWorkflowDefinition(workflow, definition, userId, sessionId, chatInput(workflow, message), Map.of());
     }
 
     public Flux<ExecutionEvent> retryWorkflowExecution(Long executionId, Long userId) {
@@ -54,6 +54,7 @@ public class RuntimeExecutionService {
                 workflow,
                 definition,
                 userId,
+                previous.getSessionId(),
                 Map.of(),
                 Map.of("retryOfExecutionId", String.valueOf(executionId)));
     }
@@ -69,6 +70,7 @@ public class RuntimeExecutionService {
                 workflow,
                 definition,
                 userId,
+                previous.getSessionId(),
                 Map.of(),
                 Map.of(
                         "resumeFromCheckpointRef", checkpointRef,
@@ -89,6 +91,7 @@ public class RuntimeExecutionService {
                 workflow,
                 definition,
                 userId,
+                previous.getSessionId(),
                 Map.of(),
                 Map.of(
                         "resumeFromCheckpointRef", previous.getCheckpointRef(),
@@ -96,11 +99,57 @@ public class RuntimeExecutionService {
                         "approvalOfExecutionId", String.valueOf(previous.getId())));
     }
 
+    /**
+     * 用户对 HUMAN_INPUT 节点作答后恢复执行：携带 userInput 续跑。
+     * 原 WAITING_INPUT 执行标记为 RESUMED，新建恢复执行（沿用同一 session 以便后续拦截）。
+     */
+    public Flux<ExecutionEvent> resumeWorkflowWithInput(Long executionId, Map<String, Object> userInput, Long userId) {
+        ExecutionLog previous = executionLogService.getExecutionLog(executionId);
+        if (previous.getWorkflowId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "输入恢复执行记录缺少workflowId，无法继续");
+        }
+        if (previous.getCheckpointRef() == null || previous.getCheckpointRef().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "输入恢复执行记录缺少checkpointRef，无法继续");
+        }
+        if (!"WAITING_INPUT".equals(previous.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该执行不在等待用户输入状态");
+        }
+        WorkflowDetailVO workflow = workflowService.getWorkflowDetail(previous.getWorkflowId());
+        WorkflowDefinition definition = workflowDefinitionAssembler.assemble(workflow);
+        executionLogService.markInputResumed(executionId);
+        Map<String, Object> runtimeOverrides = new LinkedHashMap<>();
+        runtimeOverrides.put("resumeFromCheckpointRef", previous.getCheckpointRef());
+        runtimeOverrides.put("userInput", userInput);
+        runtimeOverrides.put("inputResumeOfExecutionId", String.valueOf(previous.getId()));
+        return runWorkflowDefinition(workflow, definition, userId, previous.getSessionId(), Map.of(), runtimeOverrides);
+    }
+
+    /**
+     * 对话流入口：若该会话有 WAITING_INPUT 挂起，把用户消息当答案恢复执行；否则返回 null（走正常工作流分发）。
+     */
+    public Flux<ExecutionEvent> resumeWorkflowFromChatAnswer(Long sessionId, String answer, Long userId) {
+        if (sessionId == null || answer == null) {
+            return null;
+        }
+        ExecutionLog pending = executionLogService.findPendingInputBySession(sessionId);
+        if (pending == null) {
+            return null;
+        }
+        Map<String, Object> spec = executionLogService.readPendingInput(pending);
+        if (spec == null || spec.get("inputKey") == null) {
+            return null;
+        }
+        Map<String, Object> userInput = new LinkedHashMap<>();
+        userInput.put(String.valueOf(spec.get("inputKey")), answer);
+        return resumeWorkflowWithInput(pending.getId(), userInput, userId);
+    }
+
 
     private Flux<ExecutionEvent> runWorkflowDefinition(
             WorkflowDetailVO workflow,
             WorkflowDefinition definition,
             Long userId,
+            Long sessionId,
             Map<String, Object> input,
             Map<String, Object> runtimeOverrides) {
         String traceId = "trace-" + UUID.randomUUID();
@@ -111,6 +160,7 @@ public class RuntimeExecutionService {
                 userId,
                 "WORKFLOW",
                 workflow.getId(),
+                sessionId,
                 null,
                 null,
                 traceId);
@@ -148,7 +198,23 @@ public class RuntimeExecutionService {
             executionLogService.failExecution(executionId, failureMessage(event));
         } else if ("WAITING_APPROVAL".equals(event.getType())) {
             executionLogService.waitForApproval(executionId, event.getNodeId(), approvalKey(event));
+        } else if ("WAITING_INPUT".equals(event.getType())) {
+            executionLogService.waitForInput(executionId, buildPendingInput(event));
         }
+    }
+
+    private Map<String, Object> buildPendingInput(ExecutionEvent event) {
+        Map<String, Object> metadata = event.getMetadata() == null ? Map.of() : event.getMetadata();
+        Map<String, Object> pending = new LinkedHashMap<>();
+        pending.put("nodeId", event.getNodeId());
+        pending.put("inputKey", metadata.get("inputKey"));
+        pending.put("question", metadata.get("question"));
+        pending.put("inputType", metadata.getOrDefault("inputType", "text"));
+        pending.put("options", metadata.get("options"));
+        pending.put("required", metadata.getOrDefault("required", Boolean.TRUE));
+        pending.put("placeholder", metadata.get("placeholder"));
+        pending.put("checkpointRef", metadata.get("inputCheckpointRef"));
+        return pending;
     }
 
     private Map<String, Object> eventSnapshot(ExecutionEvent event) {
@@ -179,6 +245,9 @@ public class RuntimeExecutionService {
         }
         if (checkpointRef == null && "WAITING_APPROVAL".equals(event.getType())) {
             checkpointRef = event.getMetadata().get("approvalCheckpointRef");
+        }
+        if (checkpointRef == null && "WAITING_INPUT".equals(event.getType())) {
+            checkpointRef = event.getMetadata().get("inputCheckpointRef");
         }
         if (externalThreadId != null || checkpointRef != null) {
             executionLogService.updateRuntimeRefs(

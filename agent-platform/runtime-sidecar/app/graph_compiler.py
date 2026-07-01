@@ -91,6 +91,26 @@ def node_runner(node: RuntimeNode, workflow: WorkflowDefinition):
                 for node_id in joined_node_ids
                 if node_id in state.get("outputs", {})
             }
+        if node.type.upper() == "HUMAN_INPUT":
+            input_key = node.config.get("inputKey") or node.id
+            input_data = state.get("input", {})
+            output = {
+                "nodeId": node.id,
+                "nodeType": "HUMAN_INPUT",
+                "nodeAlias": node_alias(node),
+                "status": "SUCCESS",
+                "inputKey": input_key,
+                "inputType": node.config.get("inputType") or "text",
+                "value": input_data.get(input_key),
+                "options": node.config.get("options"),
+                "required": node.config.get("required", True),
+                "question": node.config.get("questionTemplate") or "",
+                "message": f"{node.label or node.id} awaiting human input",
+            }
+            return {
+                "visited": [node.id],
+                "outputs": {node.id: output},
+            }
         if is_input_value_node(node):
             input_key = node.config.get("inputKey") or node.id
             input_data = state.get("input", {})

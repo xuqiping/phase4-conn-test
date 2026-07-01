@@ -112,6 +112,9 @@ public class WorkflowDefinitionAssembler {
                 && !config.containsKey("kbId") && !config.containsKey("kbIds")) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "RETRIEVAL 节点必须配置 kbId 或 kbIds");
         }
+        if (type == RuntimeNodeType.HUMAN_INPUT && !config.containsKey("inputKey")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "HUMAN_INPUT 节点必须配置 inputKey");
+        }
     }
 
     private Long asLong(Object value) {

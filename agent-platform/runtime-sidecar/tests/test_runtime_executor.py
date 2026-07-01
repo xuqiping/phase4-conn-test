@@ -364,3 +364,141 @@ def test_build_events_converts_java_callback_failure_to_execution_failed():
     assert events[-1].metadata["failedNodeId"] == "skill-1"
     assert events[-1].metadata["errorMessage"] == "java callback 500"
     assert events[-1].metadata["recoveryCheckpointRef"] == "checkpoint-1001"
+
+
+def _human_input_workflow() -> WorkflowDefinition:
+    return WorkflowDefinition(
+        workflowId=42,
+        name="human input workflow",
+        nodes=[
+            RuntimeNode(id="start-1", type="START", label="Start", config={}),
+            RuntimeNode(
+                id="human-1",
+                type="HUMAN_INPUT",
+                label="Ask Budget",
+                config={
+                    "inputKey": "budget",
+                    "questionTemplate": "请告诉我你的预算范围",
+                    "inputType": "text",
+                    "nodeAlias": "askBudget",
+                },
+            ),
+            RuntimeNode(id="skill-1", type="SKILL", label="Skill", config={"skillId": 12}),
+        ],
+        edges=[
+            RuntimeEdge(source="start-1", target="human-1"),
+            RuntimeEdge(source="human-1", target="skill-1"),
+        ],
+    )
+
+
+def test_build_events_pauses_at_human_input_node_and_emits_waiting_input(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+
+    def callback(java_base_url, callback_request):
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": "ignored on first pass"},
+            metadata={},
+        )
+
+    events = build_events(
+        ExecutionRequest(
+            executionId="1001",
+            rootExecutionId="1001",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={"javaCallbackBaseUrl": "http://java:8080", "checkpoint": True},
+        ),
+        checkpoint_store=store,
+        callback_executor=callback,
+    )
+
+    completed_node_ids = [event.nodeId for event in events if event.type == "NODE_COMPLETED"]
+    assert "human-1" not in completed_node_ids
+    assert "skill-1" not in completed_node_ids
+    waiting = [event for event in events if event.type == "WAITING_INPUT"]
+    assert len(waiting) == 1
+    assert waiting[0].nodeId == "human-1"
+    assert waiting[0].status == "WAITING_INPUT"
+    assert waiting[0].metadata["inputKey"] == "budget"
+    assert waiting[0].metadata["question"] == "请告诉我你的预算范围"
+    assert waiting[0].metadata["inputType"] == "text"
+    assert waiting[0].metadata["inputCheckpointRef"] == "checkpoint-1001"
+
+    saved = store.load("checkpoint-1001")
+    assert saved["pausedAtNodeId"] == "human-1"
+
+
+def test_build_events_resumes_human_input_with_user_input_and_emits_downstream(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+
+    # first run primes the paused checkpoint
+    def first_callback(java_base_url, callback_request):
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": "first pass"},
+            metadata={},
+        )
+
+    build_events(
+        ExecutionRequest(
+            executionId="1001",
+            rootExecutionId="1001",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={"javaCallbackBaseUrl": "http://java:8080", "checkpoint": True},
+        ),
+        checkpoint_store=store,
+        callback_executor=first_callback,
+    )
+
+    callback_requests = []
+
+    def resume_callback(java_base_url, callback_request):
+        callback_requests.append(callback_request)
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": f"budget={callback_request.input.get('budget')}"},
+            metadata={},
+        )
+
+    events = build_events(
+        ExecutionRequest(
+            executionId="1002",
+            rootExecutionId="1002",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={
+                "javaCallbackBaseUrl": "http://java:8080",
+                "checkpoint": True,
+                "resumeFromCheckpointRef": "checkpoint-1001",
+                "userInput": {"budget": "5000"},
+            },
+        ),
+        checkpoint_store=store,
+        callback_executor=resume_callback,
+    )
+
+    completed_node_ids = [event.nodeId for event in events if event.type == "NODE_COMPLETED"]
+    assert completed_node_ids == ["human-1", "skill-1"]
+
+    human_completed = [event for event in events if event.type == "NODE_COMPLETED" and event.nodeId == "human-1"][0]
+    assert human_completed.output["value"] == "5000"
+
+    assert callback_requests[0].input["budget"] == "5000"
+    assert callback_requests[0].input["askBudget.budget"] == "5000"
+
+    skill_completed = [event for event in events if event.type == "NODE_COMPLETED" and event.nodeId == "skill-1"][0]
+    assert skill_completed.output["text"] == "budget=5000"
+
+    assert events[-1].type == "EXECUTION_COMPLETED"

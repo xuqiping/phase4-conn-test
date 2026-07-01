@@ -131,3 +131,23 @@
 - sidecar：扩 `tests/test_runtime_executor.py`，HUMAN_INPUT 切片 + userInput 恢复 + 模板渲染用例。
 - Java：`mvn compile`；`ExecutionLogService`/`RuntimeExecutionService` 单测覆盖 WAITING_INPUT 落库与恢复。
 - e2e：text 型一次问答、select 型一次问答、固定两连问。
+
+---
+
+## 11. 实现备注（Phase 1 落地与设计的差异）
+
+已落地，`mvn compile` 绿、sidecar `pytest` 29 绿、前端 `vue-tsc` 绿。实现中细化的点：
+
+1. **恢复发射修正（关键）**：approval 伪暂停在恢复时用 `restored_visited` 过滤"已访问"节点 → 对 HUMAN_INPUT 是 bug（下游依赖答案的节点永不被发射）。改为：恢复时发射"暂停节点 + 其后代"（`descendants()` BFS），并去重（`unique_ordered`，因 `operator.add` 会让 visited 累加重复）。首次运行仍切片到 HUMAN_INPUT 之前（同 approval）。
+2. **暂停点持久化**：checkpoint 存 `pausedAtNodeId`（augmented graph_result），恢复时据此判 `is_input_resume` 并定位后代集。
+3. **会话定位**：`execution_logs` 加 `session_id` 列（V42），对话流触发工作流时填充。拦截 `findPendingInputBySession(session_id, status=WAITING_INPUT)` 精确定位，避免按 workflowId+userId 的多会话歧义。
+4. **RESUMED 状态**：用户作答后原 WAITING_INPUT 执行标 `RESUMED`（V42 CHECK 已加），防拦截重复命中；新建恢复执行沿用同一 session_id。
+5. **拦截不限 inputType**：text/textarea/select 都走"下条消息当答案"拦截。select 按钮仅前端 UI 便利（store 已捕获 `pendingInput`，组件按钮 UI 待补）。
+6. **模板渲染**：sidecar 新增 `render_template`（`{{alias}}`/`{{alias.field}}` 对 `state.outputs` 解析），`questionTemplate` 可引用前置 LLM 节点输出。
+7. **重跑副作用**：恢复时 sidecar 重跑全图（继承 approval 现状），前置 LLM 节点会再调用一次（非确定性，但仅后代集被发射，前置不重发）。
+
+### 改动文件清单
+- sidecar：`runtime_executor.py`、`graph_compiler.py`、`tests/test_runtime_executor.py`
+- Java：`RuntimeNodeType.java`、`ExecutionLog.java`、`ExecutionLogService.java`、`RuntimeExecutionService.java`、`WorkflowDefinitionAssembler.java`、`ExecutionController.java`、`StreamEvent.java`、`ChatWebSocketHandler.java`、`ChatSessionService.java`
+- DB：`V42__workflow_human_input.sql`
+- 前端：`stores/chat.ts`（text 路径零组件改动即可用；select 按钮组件待补）

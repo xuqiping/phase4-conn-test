@@ -50,6 +50,7 @@ public class ExecutionLogService {
             Long triggeredBy,
             String sourceType,
             Long sourceId,
+            Long sessionId,
             Long parentExecutionId,
             Long rootExecutionId,
             String traceId) {
@@ -60,6 +61,7 @@ public class ExecutionLogService {
         executionLog.setStatus("RUNNING");
         executionLog.setSourceType(sourceType);
         executionLog.setSourceId(sourceId);
+        executionLog.setSessionId(sessionId);
         executionLog.setParentExecutionId(parentExecutionId);
         executionLog.setRootExecutionId(rootExecutionId);
         executionLog.setTraceId(traceId);
@@ -157,6 +159,75 @@ public class ExecutionLogService {
     }
 
     /**
+     * 工作流命中 HUMAN_INPUT 节点：挂起执行，缓存待答问题规格。
+     * pendingInput JSON 形如：{nodeId,inputKey,question,inputType,options,required,placeholder,checkpointRef}
+     */
+    public void waitForInput(Long executionId, Map<String, Object> pendingInput) {
+        ExecutionLog executionLog = executionLogMapper.selectById(executionId);
+        if (executionLog == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "执行记录不存在");
+        }
+        executionLog.setStatus("WAITING_INPUT");
+        executionLog.setNodeId((String) pendingInput.get("nodeId"));
+        try {
+            executionLog.setPendingInput(objectMapper.writeValueAsString(pendingInput));
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "待答问题规格序列化失败");
+        }
+        Object checkpointRef = pendingInput.get("checkpointRef");
+        if (checkpointRef != null) {
+            executionLog.setCheckpointRef(String.valueOf(checkpointRef));
+        }
+        executionLog.setErrorMessage("等待用户输入: " + pendingInput.get("inputKey"));
+        executionLogMapper.updateById(executionLog);
+
+        log.info("执行等待用户输入: id={}, nodeId={}, inputKey={}",
+                executionId, pendingInput.get("nodeId"), pendingInput.get("inputKey"));
+    }
+
+    /**
+     * 对话流拦截：按聊天会话定位最近一条 WAITING_INPUT 执行。
+     */
+    public ExecutionLog findPendingInputBySession(Long sessionId) {
+        if (sessionId == null) {
+            return null;
+        }
+        LambdaQueryWrapper<ExecutionLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ExecutionLog::getSessionId, sessionId)
+                .eq(ExecutionLog::getStatus, "WAITING_INPUT")
+                .orderByDesc(ExecutionLog::getStartedAt)
+                .last("LIMIT 1");
+        List<ExecutionLog> logs = executionLogMapper.selectList(wrapper);
+        return (logs == null || logs.isEmpty()) ? null : logs.get(0);
+    }
+
+    public Map<String, Object> readPendingInput(ExecutionLog executionLog) {
+        if (executionLog == null || executionLog.getPendingInput() == null
+                || executionLog.getPendingInput().isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(executionLog.getPendingInput(),
+                    new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 用户作答后，原 WAITING_INPUT 执行被新的恢复执行取代，标记为 RESUMED 防止拦截重复命中。
+     */
+    public void markInputResumed(Long executionId) {
+        ExecutionLog executionLog = executionLogMapper.selectById(executionId);
+        if (executionLog == null) {
+            return;
+        }
+        executionLog.setStatus("RESUMED");
+        executionLog.setPendingInput(null);
+        executionLogMapper.updateById(executionLog);
+    }
+
+    /**
      * 查询执行日志
      */
     public ExecutionLog getExecutionLog(Long id) {
@@ -182,6 +253,21 @@ public class ExecutionLogService {
         LambdaQueryWrapper<ExecutionLog> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ExecutionLog::getWorkflowId, workflowId)
                 .orderByDesc(ExecutionLog::getStartedAt);
+        return executionLogMapper.selectList(wrapper);
+    }
+
+    /**
+     * 按工作流ID查询执行日志列表（带归属 scope）。
+     * <p>安全审计 #4：{@code listByWorkflowId} 仅按 workflowId 过滤，登录用户拿别人的 workflowId 即可越权读全部执行日志。
+     * 本方法 triggeredBy=null（admin）不过滤；非 admin 仅返回自己触发的执行。
+     */
+    public List<ExecutionLog> listByWorkflowIdScoped(Long workflowId, Long triggeredBy) {
+        LambdaQueryWrapper<ExecutionLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ExecutionLog::getWorkflowId, workflowId);
+        if (triggeredBy != null) {
+            wrapper.eq(ExecutionLog::getTriggeredBy, triggeredBy);
+        }
+        wrapper.orderByDesc(ExecutionLog::getStartedAt);
         return executionLogMapper.selectList(wrapper);
     }
 

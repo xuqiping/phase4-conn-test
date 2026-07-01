@@ -59,6 +59,15 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                         sendMessage(session, toJson("CHUNK", Map.of("content", evt.getContent())));
                                     } else if ("THINKING".equals(type)) {
                                         sendMessage(session, toJson("THINKING", Map.of("content", evt.getContent())));
+                                    } else if ("INPUT_REQUIRED".equals(type)) {
+                                        Map<String, Object> payload = new LinkedHashMap<>();
+                                        if (evt.getData() != null) {
+                                            payload.putAll(evt.getData());
+                                        }
+                                        if (evt.getSessionId() != null) {
+                                            payload.put("sessionId", evt.getSessionId());
+                                        }
+                                        sendMessage(session, toJson("INPUT_REQUIRED", payload));
                                     }
                                 } catch (IOException e) {
                                     log.error("发送流式事件失败: {}", e.getMessage());
@@ -67,7 +76,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                             error -> {
                                 log.error("流式执行失败: {}", error.getMessage(), error);
                                 try {
-                                    sendError(session, "执行失败: " + error.getMessage());
+                                    // 安全审计 #7：error.getMessage() 可能含内部细节，客户端回固定话术。
+                                    sendError(session, "执行失败，请稍后重试");
                                 } catch (Exception e) {
                                     log.error("发送错误失败: {}", e.getMessage());
                                 }
@@ -83,7 +93,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
         } catch (Exception e) {
             log.error("WebSocket消息处理失败: {}", e.getMessage(), e);
-            sendError(session, "消息处理失败: " + e.getMessage());
+            // 安全审计 #7：e.getMessage() 可能含内部细节，客户端回固定话术。
+            sendError(session, "消息处理失败，请稍后重试");
         }
     }
 
