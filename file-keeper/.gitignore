@@ -25,3 +25,17 @@ dist-ssr
 
 # Tauri
 src-tauri/target
+
+# Maven / 后端构建产物
+server/target
+
+# 备份文件
+*.bak
+*.backup*
+*.orig
+
+# 敏感信息(绝不提交,本地 .secrets/ 保管)
+.secrets/
+
+# 工作流 brainstorm 缓存
+.superpowers/
