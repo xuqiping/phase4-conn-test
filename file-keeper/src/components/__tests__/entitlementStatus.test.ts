@@ -195,15 +195,15 @@ describe('EntitlementStatus', () => {
     expect(wrapper.text()).not.toContain('匿名 7 天全功能试用中')
   })
 
-  it('does not show expired offline client authorization as active commercial authorization', async () => {
+  it('does not apply frontend offlineUsableUntil expiration check', async () => {
     const { wrapper } = mountStatus()
 
     signIn()
     authenticatedAuthorization({ offlineUsableUntil: '2020-01-01T00:00:00Z' })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.get('[data-test="entitlement-status-title"]').text()).toContain('授权状态初始化中')
-    expect(wrapper.find('[data-test="entitlement-module-files"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('离线缓存至')
+    // 过期判定已下沉到 Rust 侧，前端 UI 不再根据 offlineUsableUntil 隐藏授权状态
+    expect(wrapper.get('[data-test="entitlement-status-title"]').text()).toContain('商业授权')
+    expect(wrapper.find('[data-test="entitlement-module-files"]').exists()).toBe(true)
   })
 })

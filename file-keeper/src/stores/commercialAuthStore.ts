@@ -12,20 +12,21 @@ import type {
   ModuleCode
 } from '@/api/commercialAuth'
 
+const MODULE_CODES: ModuleCode[] = ['files', 'processes', 'clipboard', 'work-report', 'ai']
+
 export const useCommercialAuthStore = defineStore('commercialAuth', () => {
   const deviceIdentity = ref<DeviceIdentity | null>(null)
   const trialStatus = ref<AnonymousTrialStatus | null>(null)
   const anonymousAuthorization = ref<AnonymousAuthorizationSnapshot | null>(null)
   const clientDevice = ref<ClientDevice | null>(null)
   const clientAuthorization = ref<ClientAuthorizationSnapshot | null>(null)
-  const usingOfflineClientAuthorization = ref(false)
-  const offlineAccessCache = ref(new Map<ModuleCode, boolean>())
+  const entitlementAccessCache = ref(new Map<ModuleCode, boolean>())
   const loading = ref(false)
   const error = ref<string | null>(null)
 
   const moduleAccess = computed(() => {
     const access = new Map<ModuleCode, { allowed: boolean; reason: string | null }>()
-    const authenticatedModules = getUsableClientAuthorization()?.modules ?? []
+    const authenticatedModules = clientAuthorization.value?.modules ?? []
     const anonymousModules = anonymousAuthorization.value?.modules ?? []
     const moduleCodes = new Set<ModuleCode>([
       ...anonymousModules.map(module => module.moduleCode),
@@ -63,8 +64,7 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
       deviceIdentity.value = identity
       clientDevice.value = await commercialAuthApi.registerClientDevice(baseUrl, accessToken, identity)
       clientAuthorization.value = await commercialAuthApi.getClientAuthorization(baseUrl, accessToken, identity, Date.now())
-      usingOfflineClientAuthorization.value = false
-      await syncOfflineTokenToRust()
+      await syncEntitlementToRust()
     } catch (err) {
       handleAuthenticatedAuthorizationError(err)
       throw err
@@ -124,8 +124,7 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
     try {
       const identity = await ensureDeviceIdentity()
       clientAuthorization.value = await commercialAuthApi.getClientAuthorization(baseUrl, accessToken, identity, Date.now())
-      usingOfflineClientAuthorization.value = false
-      await syncOfflineTokenToRust()
+      await syncEntitlementToRust()
     } catch (err) {
       handleAuthenticatedAuthorizationError(err)
       throw err
@@ -146,81 +145,60 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
   function handleAuthenticatedAuthorizationError(err: unknown) {
     error.value = err instanceof Error ? err.message : String(err)
     if (commercialAuthApi.isCommercialAuthApiError(err)) {
+      // 服务端明确拒绝（账号禁用、设备解绑等）：清空客户端授权与 Rust 凭据
       clientAuthorization.value = null
       clientDevice.value = null
-      usingOfflineClientAuthorization.value = false
-      offlineAccessCache.value.clear()
-      void clearOfflineTokenInRust()
-    } else if (hasValidOfflineClientAuthorization()) {
-      usingOfflineClientAuthorization.value = true
-    } else {
-      clientAuthorization.value = null
-      usingOfflineClientAuthorization.value = false
-      offlineAccessCache.value.clear()
-      void clearOfflineTokenInRust()
+      entitlementAccessCache.value.clear()
+      void clearEntitlementInRust()
     }
+    // 网络抖动等瞬时错误保留已有 Rust 凭据，用户可在 token 有效期内继续离线使用
   }
 
-  async function syncOfflineTokenToRust() {
-    offlineAccessCache.value.clear()
-    const auth = clientAuthorization.value
-    if (!auth || auth.onlineRequired || !auth.offlineUsableUntil || !auth.offlineToken) {
-      await clearOfflineTokenInRust()
+  /**
+   * 将服务端签名的授权凭据同步给 Rust 侧。
+   * 在线/离线统一处理：只要快照包含 signed entitlement 就同步，
+   * 有效期与模块权限由 Rust 通过 Ed25519 公钥验签和 notAfter 强校验决定。
+   */
+  async function syncEntitlementToRust() {
+    entitlementAccessCache.value.clear()
+    const token = clientAuthorization.value?.offlineToken
+    if (!token) {
+      await clearEntitlementInRust()
       return
     }
-    const until = new Date(auth.offlineUsableUntil).getTime()
-    const now = Date.now()
-    const offlineSeconds = Math.max(0, Math.floor((until - now) / 1000))
     try {
-      await invoke('set_offline_token', { token: auth.offlineToken, offlineSeconds })
-      const cache = new Map<ModuleCode, boolean>()
-      for (const moduleCode of ['files', 'processes', 'clipboard', 'work-report'] as ModuleCode[]) {
-        try {
-          const result = await invoke<{ allowed: boolean; reason: string }>('check_offline_access', { moduleCode })
-          cache.set(moduleCode, result.allowed)
-        } catch {
-          cache.set(moduleCode, false)
-        }
-      }
-      offlineAccessCache.value = cache
+      await invoke('set_signed_entitlement', { token })
+      await refreshEntitlementAccessCache()
     } catch (e) {
-      console.error('[commercialAuthStore] set_offline_token failed:', e)
+      console.error('[commercialAuthStore] set_signed_entitlement failed:', e)
+      await clearEntitlementInRust()
     }
   }
 
-  async function clearOfflineTokenInRust() {
-    offlineAccessCache.value.clear()
+  async function refreshEntitlementAccessCache() {
+    const cache = new Map<ModuleCode, boolean>()
+    for (const moduleCode of MODULE_CODES) {
+      try {
+        const result = await invoke<{ allowed: boolean; reason: string }>('check_signed_entitlement_access', { moduleCode })
+        cache.set(moduleCode, result.allowed)
+      } catch {
+        cache.set(moduleCode, false)
+      }
+    }
+    entitlementAccessCache.value = cache
+  }
+
+  async function clearEntitlementInRust() {
+    entitlementAccessCache.value.clear()
     try {
-      await invoke('clear_offline_token')
+      await invoke('clear_signed_entitlement')
     } catch (e) {
-      console.error('[commercialAuthStore] clear_offline_token failed:', e)
+      console.error('[commercialAuthStore] clear_signed_entitlement failed:', e)
     }
   }
 
   function getUsableClientAuthorization(): ClientAuthorizationSnapshot | null {
-    const authorization = clientAuthorization.value
-    if (!authorization) {
-      return null
-    }
-    // When operating on cached (offline) authorization, verify the cache hasn't expired
-    if (usingOfflineClientAuthorization.value && !hasValidOfflineClientAuthorization()) {
-      return null
-    }
-    // Even for fresh authorizations with offlineCacheMinutes > 0,
-    // if the offlineUsableUntil has passed, treat as expired
-    if (!authorization.onlineRequired && authorization.offlineUsableUntil
-      && new Date(authorization.offlineUsableUntil).getTime() <= Date.now()) {
-      return null
-    }
-    return authorization
-  }
-
-  function hasValidOfflineClientAuthorization(): boolean {
-    const authorization = clientAuthorization.value
-    if (!authorization || authorization.onlineRequired || !authorization.offlineUsableUntil) {
-      return false
-    }
-    return new Date(authorization.offlineUsableUntil).getTime() > Date.now()
+    return clientAuthorization.value
   }
 
   function resolveModuleAccess(
@@ -242,10 +220,14 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
     return { allowed: anonymous?.allowed ?? false, reason: anonymous?.reason ?? null }
   }
 
+  /**
+   * 判断模块是否可用。
+   * 优先使用 Rust 侧对签名凭据的校验结果（在线/离线一致）；
+   * 无凭据时回退到内存中的模块授权快照（匿名/在线只读态）。
+   */
   function isModuleAllowed(moduleCode: ModuleCode): boolean {
-    if (usingOfflineClientAuthorization.value) {
-      // 离线模式下优先使用 Rust 层签名校验结果；若 Rust 调用失败或缓存未设置，回退到内存权限
-      return offlineAccessCache.value.get(moduleCode) ?? moduleAccess.value.get(moduleCode)?.allowed ?? false
+    if (entitlementAccessCache.value.has(moduleCode)) {
+      return entitlementAccessCache.value.get(moduleCode)!
     }
     return moduleAccess.value.get(moduleCode)?.allowed ?? false
   }
@@ -260,8 +242,7 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
     anonymousAuthorization,
     clientDevice,
     clientAuthorization,
-    usingOfflineClientAuthorization,
-    offlineAccessCache,
+    entitlementAccessCache,
     loading,
     error,
     initializeAnonymous,

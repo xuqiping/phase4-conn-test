@@ -53,10 +53,6 @@ const usableClientAuthorization = computed(() => {
   if (!authStore.isAuthenticated || !authorization) {
     return null
   }
-  if (!authorization.onlineRequired && authorization.offlineUsableUntil
-    && new Date(authorization.offlineUsableUntil).getTime() <= Date.now()) {
-    return null
-  }
   return authorization
 })
 

@@ -5,10 +5,24 @@ import { useCommercialAuthStore } from '../commercialAuthStore'
 
 const mockedApi = vi.mocked(commercialAuthApi)
 
+const mockInvoke = vi.fn().mockImplementation((command: string) => {
+  if (command === 'set_signed_entitlement') return Promise.resolve()
+  if (command === 'clear_signed_entitlement') return Promise.resolve()
+  if (command === 'check_signed_entitlement_access') {
+    return Promise.resolve({ allowed: false, reason: '无凭据' })
+  }
+  return Promise.reject(new Error(`Unexpected invoke: ${command}`))
+})
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args)
+}))
+
 describe('commercialAuthStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    mockInvoke.mockClear()
     vi.spyOn(commercialAuthApi, 'getOrCreateDeviceIdentity')
     vi.spyOn(commercialAuthApi, 'startAnonymousTrial')
     vi.spyOn(commercialAuthApi, 'getAnonymousAuthorization')
@@ -302,7 +316,7 @@ describe('commercialAuthStore', () => {
     expect(store.isModuleAllowed('files')).toBe(true)
   })
 
-  it('keeps cached authenticated authorization on network failure while offline cache is valid', async () => {
+  it('keeps Rust-side entitlement on network failure so offline access continues', async () => {
     const identity = {
       deviceId: 'device-001',
       fingerprintHash: 'fingerprint-001',
@@ -316,6 +330,7 @@ describe('commercialAuthStore', () => {
       status: 'active',
       lastSeenAt: null
     })
+    const offlineToken = 'signed-entitlement-token'
     mockedApi.getClientAuthorization
       .mockResolvedValueOnce({
         mode: 'authenticated',
@@ -324,6 +339,7 @@ describe('commercialAuthStore', () => {
         deviceLimit: 2,
         onlineRequired: false,
         offlineUsableUntil: '2099-01-01T00:00:00Z',
+        offlineToken,
         deviceBinding: { deviceId: 'device-001', bound: true, active: true },
         modules: [
           { moduleCode: 'files', allowed: true, reason: null, expiresAt: null },
@@ -332,6 +348,17 @@ describe('commercialAuthStore', () => {
         ]
       })
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    mockInvoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === 'set_signed_entitlement') return Promise.resolve()
+      if (command === 'clear_signed_entitlement') return Promise.resolve()
+      if (command === 'check_signed_entitlement_access') {
+        const moduleCode = args?.moduleCode as string
+        return Promise.resolve({ allowed: ['files', 'processes'].includes(moduleCode), reason: '' })
+      }
+      return Promise.reject(new Error(`Unexpected invoke: ${command}`))
+    })
+
     const store = useCommercialAuthStore()
 
     await store.initializeAuthenticated('http://localhost:8080', 'access-token')
@@ -339,6 +366,8 @@ describe('commercialAuthStore', () => {
 
     expect(store.error).toBe('Failed to fetch')
     expect(store.clientAuthorization?.offlineUsableUntil).toBe('2099-01-01T00:00:00Z')
+    expect(store.entitlementAccessCache.get('files')).toBe(true)
+    expect(store.entitlementAccessCache.get('processes')).toBe(true)
     expect(store.isModuleAllowed('files')).toBe(true)
     expect(store.isModuleAllowed('processes')).toBe(true)
     expect(store.isModuleAllowed('clipboard')).toBe(false)
@@ -393,13 +422,14 @@ describe('commercialAuthStore', () => {
     expect(store.error).toBe('账号已禁用')
     expect(store.clientAuthorization).toBeNull()
     expect(store.clientDevice).toBeNull()
+    expect(store.entitlementAccessCache.size).toBe(0)
     expect(store.isModuleAllowed('files')).toBe(true)
     expect(store.isModuleAllowed('processes')).toBe(false)
     expect(store.denialReason('processes')).toBe('匿名未授权')
     expect(store.isModuleAllowed('clipboard')).toBe(true)
   })
 
-  it('ignores expired offline authenticated snapshots and falls back to anonymous authorization', () => {
+  it('does not apply frontend offlineUsableUntil expiration check', () => {
     const store = useCommercialAuthStore()
     store.clientAuthorization = {
       mode: 'authenticated',
@@ -420,15 +450,66 @@ describe('commercialAuthStore', () => {
       onlineRequired: true,
       deviceId: 'device-001',
       modules: [
-        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null },
+        { moduleCode: 'files', allowed: false, reason: '匿名未授权', expiresAt: null },
         { moduleCode: 'processes', allowed: false, reason: '非当前免费模块', expiresAt: null },
         { moduleCode: 'clipboard', allowed: false, reason: '非当前免费模块', expiresAt: null }
       ]
     }
 
     expect(store.isModuleAllowed('files')).toBe(true)
-    expect(store.isModuleAllowed('processes')).toBe(false)
-    expect(store.denialReason('processes')).toBe('非当前免费模块')
-    expect(store.isModuleAllowed('clipboard')).toBe(false)
+    expect(store.isModuleAllowed('processes')).toBe(true)
+    expect(store.isModuleAllowed('clipboard')).toBe(true)
+  })
+
+  it('prioritizes Rust entitlement cache over memory moduleAccess', () => {
+    const store = useCommercialAuthStore()
+    store.entitlementAccessCache = new Map([['files', false]])
+    store.clientAuthorization = {
+      mode: 'authenticated',
+      userId: 10,
+      accountStatus: 'active',
+      deviceLimit: 2,
+      onlineRequired: true,
+      deviceBinding: { deviceId: 'device-001', bound: true, active: true },
+      modules: [
+        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null }
+      ]
+    }
+
+    expect(store.isModuleAllowed('files')).toBe(false)
+  })
+
+  it('syncs signed entitlement to Rust for both online and offline authorizations', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    const offlineToken = 'signed-entitlement-token'
+    mockedApi.getOrCreateDeviceIdentity.mockResolvedValue(identity)
+    mockedApi.registerClientDevice.mockResolvedValue({
+      id: 1,
+      userId: 10,
+      ...identity,
+      status: 'active',
+      lastSeenAt: null
+    })
+    mockedApi.getClientAuthorization.mockResolvedValueOnce({
+      mode: 'authenticated',
+      userId: 10,
+      accountStatus: 'active',
+      deviceLimit: 2,
+      onlineRequired: true,
+      offlineToken,
+      deviceBinding: { deviceId: 'device-001', bound: true, active: true },
+      modules: [
+        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null }
+      ]
+    })
+    const store = useCommercialAuthStore()
+
+    await store.initializeAuthenticated('http://localhost:8080', 'access-token')
+
+    expect(mockInvoke).toHaveBeenCalledWith('set_signed_entitlement', { token: offlineToken })
   })
 })
