@@ -70,4 +70,15 @@ async function handleSave() {
   color: var(--color-text-secondary);
   font-size: 12px;
 }
+
+@media (max-width: 768px) {
+  .rag-recall-settings__form {
+    max-width: 100%;
+  }
+  .rag-recall-settings__hint {
+    display: block;
+    margin-left: 0;
+    margin-top: 4px;
+  }
+}
 </style>

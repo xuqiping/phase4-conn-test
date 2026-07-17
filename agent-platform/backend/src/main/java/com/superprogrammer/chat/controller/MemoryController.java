@@ -1,6 +1,7 @@
 package com.superprogrammer.chat.controller;
 
 import com.superprogrammer.chat.dto.ChatRagModeVO;
+import com.superprogrammer.chat.dto.MemoryEditRequest;
 import com.superprogrammer.chat.dto.MemoryConflictBatchResolveRequest;
 import com.superprogrammer.chat.dto.MemoryConflictResolveRequest;
 import com.superprogrammer.chat.dto.MemoryConflictVO;
@@ -54,6 +55,12 @@ public class MemoryController {
     @GetMapping
     public ResponseEntity<R<List<UserMemoryVO>>> list() {
         return ResponseEntity.ok(R.ok(memoryService.listMemories(getCurrentUserId())));
+    }
+
+    /** 行内编辑记忆（M1）：改 key/key_zh/value/block_label，后端按需重 embed + home-aware 重复检查。 */
+    @PutMapping("/{id}")
+    public ResponseEntity<R<UserMemoryVO>> update(@PathVariable Long id, @RequestBody MemoryEditRequest req) {
+        return ResponseEntity.ok(R.ok("记忆已更新", memoryService.updateMemory(getCurrentUserId(), id, req)));
     }
 
     /** 删除单条记忆（非本人返回 404 语义：false → NOT_FOUND）。 */

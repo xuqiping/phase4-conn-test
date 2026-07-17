@@ -37,17 +37,30 @@ public class KnowledgeDocumentController {
                 kbId, file, getCurrentUserId(), isAdmin())));
     }
 
-    /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。 */
+    /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。
+     *  docType/indexMode/manualIndexText/visionModel 为图片/文件知识库扩展（空=后端按后缀推断 + AUTO 默认）。 */
     @PostMapping("/upload")
     @RequirePermission("knowledge:write")
     public ResponseEntity<R<KnowledgeDocumentVO>> upload(
             @RequestParam("kbId") Long kbId,
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "tempFileRef", required = false) String tempFileRef,
-            @RequestParam(value = "selectedSheets", required = false) List<String> selectedSheets) {
+            @RequestParam(value = "selectedSheets", required = false) List<String> selectedSheets,
+            @RequestParam(value = "docType", required = false) String docType,
+            @RequestParam(value = "indexMode", required = false) String indexMode,
+            @RequestParam(value = "manualIndexText", required = false) String manualIndexText,
+            @RequestParam(value = "visionModel", required = false) String visionModel) {
         return ResponseEntity.ok(R.ok("上传成功",
                 knowledgeDocumentService.upload(kbId, file, tempFileRef, selectedSheets,
+                        docType, indexMode, manualIndexText, visionModel,
                         getCurrentUserId(), isAdmin())));
+    }
+
+    /** 取图片/文件原件（KB 成员可读，跨用户）。docType=IMAGE → inline；FILE → attachment 下载。 */
+    @GetMapping("/{id}/asset")
+    @RequirePermission("knowledge:read")
+    public ResponseEntity<org.springframework.core.io.Resource> asset(@PathVariable Long id) {
+        return knowledgeDocumentService.streamAsset(id, getCurrentUserId(), isAdmin());
     }
 
     @GetMapping

@@ -14,6 +14,9 @@ class RuntimeState(TypedDict):
     input: Annotated[dict[str, Any], merge_input]
     visited: Annotated[list[str], operator.add]
     outputs: Annotated[dict[str, dict[str, Any]], merge_outputs]
+    # Phase 2 环支持：HUMAN_INPUT 按轮计访问次数（key=inputKey → 已消费次数）。
+    # reducer 取大，避免并行分支覆盖；每轮 node_runner 返回 {inputKey: visits+1}。
+    inputVisits: Annotated[dict[str, int], merge_max]
 
 
 def merge_input(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -24,10 +27,22 @@ def merge_outputs(left: dict[str, dict[str, Any]], right: dict[str, dict[str, An
     return {**(left or {}), **(right or {})}
 
 
+def merge_max(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    result = dict(left or {})
+    for key, value in (right or {}).items():
+        if key not in result or value > result[key]:
+            result[key] = value
+    return result
+
+
 def compile_workflow_graph(workflow: WorkflowDefinition):
     ordered_ids = topological_node_ids(workflow)
     nodes_by_id = {node.id: node for node in workflow.nodes}
-    conditional_node_ids = {node.id for node in workflow.nodes if is_branching_node(node)}
+    branching_ids = {node.id for node in workflow.nodes if is_branching_node(node)}
+    # Phase 2：HUMAN_INPUT 改条件路由节点（consume 走正常后继 / wait 路由 END），
+    # 与 CONDITION/ROUTER 一样走 add_conditional_edges，并跳过普通 add_edge / exit 自动连 END。
+    human_input_ids = {node.id for node in workflow.nodes if node.type.upper() == "HUMAN_INPUT"}
+    conditional_node_ids = branching_ids | human_input_ids
     join_node_ids = {node.id for node in workflow.nodes if node.type.upper() == "JOIN"}
 
     graph = StateGraph(RuntimeState)
@@ -42,9 +57,12 @@ def compile_workflow_graph(workflow: WorkflowDefinition):
         if edge.source in nodes_by_id and edge.target in nodes_by_id:
             if edge.source not in conditional_node_ids and edge.target not in join_node_ids:
                 graph.add_edge(edge.source, edge.target)
-    for node_id in conditional_node_ids:
+    for node_id in branching_ids:
         route_map = branch_route_map(workflow, nodes_by_id[node_id])
         graph.add_conditional_edges(node_id, branch_router(nodes_by_id[node_id], route_map), route_map)
+    for node_id in human_input_ids:
+        route_map = human_input_route_map(workflow, nodes_by_id[node_id])
+        graph.add_conditional_edges(node_id, human_input_router(nodes_by_id[node_id], route_map), route_map)
     for node_id in join_node_ids:
         sources = join_source_node_ids(workflow, node_id)
         if len(sources) > 1:
@@ -52,6 +70,10 @@ def compile_workflow_graph(workflow: WorkflowDefinition):
         elif len(sources) == 1:
             graph.add_edge(sources[0], node_id)
     for node_id in exit_ids:
+        if node_id in conditional_node_ids:
+            # 条件路由节点已含 END 路由（HUMAN_INPUT 的 wait 分支 / 分支节点的 default），
+            # 再 add_edge(node,END) 会与 conditional_edges 冲突。
+            continue
         graph.add_edge(node_id, END)
 
     return graph.compile()
@@ -92,24 +114,40 @@ def node_runner(node: RuntimeNode, workflow: WorkflowDefinition):
                 if node_id in state.get("outputs", {})
             }
         if node.type.upper() == "HUMAN_INPUT":
-            input_key = node.config.get("inputKey") or node.id
+            input_key = str(node.config.get("inputKey") or node.id)
             input_data = state.get("input", {})
+            input_visits = state.get("inputVisits", {})
+            visits = int(input_visits.get(input_key, 0))
+            # 本 invoke 提供的答案数（userInput 注入到 state.input）。单答案/轮模型：在则 1 否则 0。
+            provided_count = 1 if input_key in input_data else 0
+            # Phase 2 路线 B：本轮仍有未消费答案 → 消费、走正常后继；否则 → WAITING_INPUT、route END 终止 invoke。
+            if visits < provided_count:
+                value = input_data.get(input_key)
+                status = "SUCCESS"
+                new_visits = visits + 1
+                message = f"{node.label or node.id} input resolved"
+            else:
+                value = None
+                status = "WAITING_INPUT"
+                new_visits = visits
+                message = f"{node.label or node.id} awaiting human input"
             output = {
                 "nodeId": node.id,
                 "nodeType": "HUMAN_INPUT",
                 "nodeAlias": node_alias(node),
-                "status": "SUCCESS",
+                "status": status,
                 "inputKey": input_key,
                 "inputType": node.config.get("inputType") or "text",
-                "value": input_data.get(input_key),
+                "value": value,
                 "options": node.config.get("options"),
                 "required": node.config.get("required", True),
                 "question": node.config.get("questionTemplate") or "",
-                "message": f"{node.label or node.id} awaiting human input",
+                "message": message,
             }
             return {
                 "visited": [node.id],
                 "outputs": {node.id: output},
+                "inputVisits": {input_key: new_visits},
             }
         if is_input_value_node(node):
             input_key = node.config.get("inputKey") or node.id
@@ -177,6 +215,27 @@ def has_continue_failure_policy(workflow: WorkflowDefinition, node_id: str) -> b
 def branch_router(node: RuntimeNode, route_map: dict[str, str]):
     def route(state: RuntimeState) -> str:
         return select_branch_key(node, route_map, state)
+
+    return route
+
+
+def human_input_route_map(workflow: WorkflowDefinition, node: RuntimeNode) -> dict[str, str]:
+    # HUMAN_INPUT 两条路由：consume=正常后继（首个出边 target），wait=END（终止 invoke 等答案）。
+    valid_ids = {n.id for n in workflow.nodes}
+    targets = [
+        edge.target
+        for edge in workflow.edges
+        if edge.source == node.id and edge.target in valid_ids
+    ]
+    normal = targets[0] if targets else END
+    return {"consume": normal, "wait": END}
+
+
+def human_input_router(node: RuntimeNode, route_map: dict[str, str]):
+    def route(state: RuntimeState) -> str:
+        # node_runner 刚把本次输出写入 state.outputs；WAITING_INPUT→wait(END)，否则 consume。
+        output = state.get("outputs", {}).get(node.id, {})
+        return "wait" if output.get("status") == "WAITING_INPUT" else "consume"
 
     return route
 
@@ -413,7 +472,13 @@ def topological_node_ids(workflow: WorkflowDefinition) -> list[str]:
                 queue.append(target)
 
     if len(ordered) != len(workflow.nodes):
-        raise ValueError("workflow graph contains a cycle")
+        # Phase 2 环支持：Kahn 不会释放环内节点（incoming_count 永不为 0）。
+        # 追加它们以便 add_node 不漏（LangGraph 原生支持环；编译只看 add_node + add_edge，与顺序无关）。
+        # 按节点声明顺序追加，保持稳定。环内真正的"逐轮暂停/恢复"由 runtime_executor + HUMAN_INPUT 条件路由处理。
+        ordered_set = set(ordered)
+        for node in workflow.nodes:
+            if node.id not in ordered_set:
+                ordered.append(node.id)
     return ordered
 
 

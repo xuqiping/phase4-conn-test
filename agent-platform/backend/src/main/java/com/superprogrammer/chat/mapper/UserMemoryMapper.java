@@ -73,6 +73,20 @@ public interface UserMemoryMapper extends BaseMapper<UserMemory> {
     @Update("UPDATE user_memories SET is_global=#{isGlobal}, updated_at=now() WHERE id=#{id}")
     int updateIsGlobal(@Param("id") Long id, @Param("isGlobal") boolean isGlobal);
 
+    /** M1 行内编辑：覆盖 memory_key/key_zh/value/block_label，按需重算 value embedding + anchor 两列
+     *  （COALESCE 保旧向量：调用方未重 embed 时传 null → 保留旧值，null 安全）。
+     *  home/scope/visible 标签/conflict 不动（编辑不改归属）。updated_at 刷新。 */
+    @Update("UPDATE user_memories SET memory_key=#{memoryKey}, memory_key_zh=#{memoryKeyZh}, "
+            + "memory_value=#{memoryValue}, block_label=#{blockLabel}, "
+            + "embedding=COALESCE(#{halfvec}::halfvec, embedding), "
+            + "anchor_embedding=COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding), "
+            + "anchor_tokens=COALESCE(#{anchorTokens}, anchor_tokens), updated_at=now() WHERE id=#{id}")
+    int updateMemoryEdit(@Param("id") Long id,
+                         @Param("memoryKey") String memoryKey, @Param("memoryKeyZh") String memoryKeyZh,
+                         @Param("memoryValue") String memoryValue, @Param("blockLabel") String blockLabel,
+                         @Param("halfvec") String halfvec,
+                         @Param("anchorHalfvec") String anchorHalfvec, @Param("anchorTokens") String anchorTokens);
+
     /** 最近邻块匹配（限 scope）：返回最近一行的 block_label + 余弦距离（embedding <=>）。 */
     @Select("<script>" +
             "SELECT block_label, embedding &lt;=> #{halfvec}::halfvec AS distance " +

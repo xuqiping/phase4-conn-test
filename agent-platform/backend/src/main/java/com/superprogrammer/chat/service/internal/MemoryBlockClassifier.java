@@ -32,7 +32,8 @@ public class MemoryBlockClassifier {
      */
     public BlockResult classify(MemoryScope writeScope, String factText, String candidateBlock) {
         float[] vec = llmGateway.embed(factText, RagConfig.MEMORY_EMBED_MODEL);
-        log.info("classify factText=[{}] vecLen={}", factText, vec == null ? -1 : vec.length);
+        // 安全审计 #6：记忆 fact 原文属 PII，降 DEBUG（生产 INFO 不打）。
+        log.debug("classify factText.len={} vecLen={}", factText == null ? 0 : factText.length(), vec == null ? -1 : vec.length);
         String halfvec = HalfVecUtil.toHalfVec(vec);
         MemoryBlockHit hit = memoryMapper.findNearestBlock(writeScope.userId(), halfvec,
                 writeScope.includeGlobal(), writeScope.safeProjectIds());

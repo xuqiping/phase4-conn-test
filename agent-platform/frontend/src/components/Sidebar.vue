@@ -1,5 +1,12 @@
 <template>
-  <aside class="sidebar" :class="{ 'sidebar--collapsed': collapsed }">
+  <aside
+    class="sidebar"
+    :class="{
+      'sidebar--collapsed': collapsed && !isMobile,
+      'sidebar--mobile': isMobile,
+      'sidebar--mobile-open': isMobile && mobileOpen
+    }"
+  >
     <!-- Logo区域 -->
     <div class="sidebar__logo" @click="$router.push('/agents')">
       <div class="sidebar__logo-icon">
@@ -63,6 +70,8 @@ import { useAuthStore } from '@/stores/auth'
 
 defineProps<{
   collapsed: boolean
+  mobileOpen?: boolean
+  isMobile?: boolean
 }>()
 
 defineEmits<{
@@ -203,5 +212,22 @@ function isNavItemActive(path: string): boolean {
     color: var(--color-text-primary);
     background: var(--color-primary-light);
   }
+}
+
+// === 移动端：抽屉模式 ===
+.sidebar--mobile {
+  transform: translateX(-100%);
+  box-shadow: var(--shadow-lg);
+  // 移动端永远展开宽度（无折叠态）
+  width: var(--sidebar-width);
+
+  // 桌面端折叠按钮在移动端无意义，隐藏
+  .sidebar__footer {
+    display: none;
+  }
+}
+
+.sidebar--mobile-open {
+  transform: translateX(0);
 }
 </style>

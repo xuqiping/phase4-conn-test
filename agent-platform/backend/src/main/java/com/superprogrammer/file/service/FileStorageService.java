@@ -163,6 +163,14 @@ public class FileStorageService {
         }
     }
 
+    /** 读 stored_files 登记行（mime/originalName/size 等），不做归属校验。内部回显/元数据注入用。null=行不存在。 */
+    public StoredFileEntity findMeta(String fileId) {
+        if (fileId == null || fileId.isBlank()) {
+            return null;
+        }
+        return storedFileMapper.selectById(fileId);
+    }
+
     private Path resolveSafe(String fileId) {
         if (fileId == null || fileId.isBlank() || fileId.contains("/") || fileId.contains("\\")) {
             throw new IllegalArgumentException("Invalid file id");

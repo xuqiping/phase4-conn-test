@@ -1,5 +1,3 @@
-import pytest
-
 from app.graph_compiler import compile_workflow_graph
 from app.models import RuntimeEdge, RuntimeNode, WorkflowDefinition
 
@@ -58,14 +56,18 @@ def test_compiled_langgraph_supports_workflow_ref_nodes():
     assert result["outputs"]["workflow-1"]["sourceId"] == 9
 
 
-def test_rejects_cycles_before_compiling_langgraph():
+def test_accepts_cycles_and_compiles_langgraph():
+    # Phase 2 环支持：不再拒绝环。环内节点照常 add_node，LangGraph 原生支持环，
+    # 由 runtime_executor 的 recursion_limit 守卫防死循环（见 test_runtime_executor）。
     definition = workflow(
         nodes=[node("a"), node("b")],
         edges=[edge("a", "b"), edge("b", "a")],
     )
 
-    with pytest.raises(ValueError, match="workflow graph contains a cycle"):
-        compile_workflow_graph(definition)
+    graph = compile_workflow_graph(definition)
+
+    assert graph is not None
+    assert set(graph.nodes) >= {"a", "b"}
 
 
 def test_condition_node_routes_by_input_path_and_edge_condition():

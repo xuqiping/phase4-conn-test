@@ -75,6 +75,12 @@ function handleSend() {
   background: var(--color-bg);
 }
 
+@media (max-width: 768px) {
+  .chat-input {
+    padding: 8px 12px;
+  }
+}
+
 .chat-input__mode-badge {
   display: inline-flex;
   align-items: center;
@@ -111,5 +117,12 @@ function handleSend() {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  // 工具行换行：目标/模型/记忆范围等在窄屏堆叠
+  .chat-input__tools {
+    flex-wrap: wrap;
+  }
 }
 </style>

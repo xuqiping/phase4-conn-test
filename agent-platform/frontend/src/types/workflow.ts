@@ -22,6 +22,7 @@ export type WorkflowNodeType =
   | 'parallel'
   | 'join'
   | 'human_approval'
+  | 'human_input'
   | 'tool_call'
   | 'retrieval'
   | (string & {})
@@ -89,6 +90,9 @@ export interface NodeData {
   kbId?: number
   kbIds?: number[]
   query?: string
+  /** 人机交互节点（human_input）：运行时暂停向用户提问收答案续跑 */
+  questionTemplate?: string
+  options?: string[]
   /** 运行态状态 */
   runtimeStatus?: 'running' | 'success' | 'failed' | 'waiting'
   /** 运行态元数据 */

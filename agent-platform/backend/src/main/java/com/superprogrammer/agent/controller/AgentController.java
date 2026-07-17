@@ -34,6 +34,7 @@ public class AgentController {
     private final com.superprogrammer.agent.service.AgentKbBindingService agentKbBindingService;
 
     @GetMapping("/agents")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<List<AgentVO>>> listAgents(
             @RequestParam(required = false) Long groupId,
             @RequestParam(required = false) String keyword) {
@@ -42,30 +43,35 @@ public class AgentController {
     }
 
     @GetMapping("/agents/{id}")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<AgentDetailVO>> getAgentDetail(@PathVariable Long id) {
         AgentDetailVO detail = agentService.getAgentDetail(id, getOperatorId(), isAdmin());
         return ResponseEntity.ok(R.ok(detail));
     }
 
     @GetMapping("/agents/{id}/skills")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<List<SkillVO>>> listAgentSkills(@PathVariable Long id) {
         List<SkillVO> skills = agentService.getAgentDetail(id, getOperatorId(), isAdmin()).getSkills();
         return ResponseEntity.ok(R.ok(skills));
     }
 
     @GetMapping("/skills/{id}")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<SkillDetailVO>> getSkillDetail(@PathVariable Long id) {
         SkillDetailVO detail = agentService.getSkillDetail(id, getOperatorId(), isAdmin());
         return ResponseEntity.ok(R.ok(detail));
     }
 
     @GetMapping("/agents/{id}/access")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<com.superprogrammer.agent.dto.AgentAccessVO>> getAgentAccess(@PathVariable Long id) {
         Long userId = getOperatorId();
         return ResponseEntity.ok(R.ok(agentPermissionService.resolveAccess(id, userId, isAdmin())));
     }
 
     @GetMapping("/agents/{id}/permissions")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<List<com.superprogrammer.agent.dto.AgentPermissionVO>>> listAgentPermissions(@PathVariable Long id) {
         Long userId = getOperatorId();
         return ResponseEntity.ok(R.ok(agentPermissionService.listPermissions(id, userId, isAdmin())));
@@ -83,6 +89,7 @@ public class AgentController {
     // ---- KB 检索范围绑定（阶段5 RAG scope）----
 
     @GetMapping("/agents/{id}/kb-bindings")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<List<com.superprogrammer.agent.dto.AgentKbBindingVO>>> listAgentKbBindings(@PathVariable Long id) {
         Long userId = getOperatorId();
         return ResponseEntity.ok(R.ok(agentKbBindingService.listBindings(id, userId, isAdmin())));
@@ -111,6 +118,7 @@ public class AgentController {
     }
 
     @PostMapping("/agents/{id}/copy")
+    @RequirePermission("agent:read")
     public ResponseEntity<R<AgentDetailVO>> copyAgent(
             @PathVariable Long id,
             @RequestBody(required = false) com.superprogrammer.agent.dto.AgentCopyRequest body) {

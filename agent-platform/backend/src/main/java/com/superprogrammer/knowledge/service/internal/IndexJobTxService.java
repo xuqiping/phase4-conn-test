@@ -88,7 +88,7 @@ public class IndexJobTxService {
      * 若 tx 内复校发现 node 已变更/失活 → 转作 voidJob（新版本 job 接管，本 job 作废）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public String completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
+    public IndexedDoc completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
                                String embeddingModel, String halfvec, String contentHash) {
         KnowledgeNode node = nodeMapper.selectById(nodeId);
         if (node == null || !"ACTIVE".equals(node.getStatus())
@@ -116,7 +116,7 @@ public class IndexJobTxService {
      * 复校发现 doc 删/l1 变 → voidJob（新版本 job 接管）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public String completeUpsertL1(Long jobId, Long documentId, Long kbId,
+    public IndexedDoc completeUpsertL1(Long jobId, Long documentId, Long kbId,
                                  String embeddingModel, String halfvec, String contentHash) {
         KnowledgeDocument doc = documentMapper.selectById(documentId);
         if (doc == null) {
@@ -183,10 +183,11 @@ public class IndexJobTxService {
     /**
      * 文档下无 PENDING/RUNNING job → 置 INDEXED（DEAD 容忍：有缺口但其余已索引）。
      *
-     * <p>返回值 = 本次完成使文档转为 INDEXED 时该文档的 fileRef（供 worker 在事务外做 D5 原件清理）；
-     * 未转换 / 无 fileRef → 返回 null。仅转换瞬间返回非空，多 worker 并发下仅最后完成者触发（计数读到 0）。
+     * <p>返回值 = 本次完成使文档转为 INDEXED 时该文档的 {docId,fileRef,docType}（供 worker 在事务外做 D5 原件清理，
+     * 并按 docType 决定是否保留 IMAGE/FILE 原件）；未转换 → 返回 null。
+     * 仅转换瞬间返回非空，多 worker 并发下仅最后完成者触发（计数读到 0）。
      */
-    private String markDocIndexedIfDone(Long docId) {
+    private IndexedDoc markDocIndexedIfDone(Long docId) {
         if (docId == null) {
             return null;
         }
@@ -202,7 +203,11 @@ public class IndexJobTxService {
         du.eq(KnowledgeDocument::getId, docId).set(KnowledgeDocument::getStatus, "INDEXED");
         documentMapper.update(null, du);
         log.info("文档全部 job 完成 → INDEXED docId={}", docId);
-        return doc.getFileRef();
+        return new IndexedDoc(docId, doc.getFileRef(), doc.getDocType());
+    }
+
+    /** INDEXED 转换产物：worker 据此决定 D5 原件清理（IMAGE/FILE 保留）。 */
+    public record IndexedDoc(Long docId, String fileRef, String docType) {
     }
 
     private static boolean eq(String a, String b) {

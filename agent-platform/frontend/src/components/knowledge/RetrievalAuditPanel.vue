@@ -49,13 +49,14 @@
       :data="records"
       :loading="loading"
       :pagination="pagination"
+      :scroll-x="1000"
       remote
       striped
       @update:page="onPage"
     />
 
     <!-- 详情抽屉 -->
-    <n-drawer v-model:show="showDetail" :width="640" placement="right">
+    <n-drawer v-model:show="showDetail" :width="detailDrawerWidth" placement="right">
       <n-drawer-content :title="`检索记录 #${detail?.id || ''}`" closable>
         <div v-if="detail" class="retrieval-audit__detail">
           <n-descriptions :column="1" label-placement="left" bordered size="small">
@@ -88,16 +89,20 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, reactive, ref } from 'vue'
+import { h, onMounted, reactive, ref, computed } from 'vue'
 import {
   NButton, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent,
   NInputNumber, NSelect, NDatePicker, NSpace, NTag, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { knowledgeApi, type RagRetrievalLog } from '@/api/knowledge'
+import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const message = useMessage()
 const dialog = useDialog()
+const { isMobile } = useBreakpoints()
+
+const detailDrawerWidth = computed(() => (isMobile.value ? '100%' : 640))
 
 const loading = ref(false)
 const records = ref<RagRetrievalLog[]>([])

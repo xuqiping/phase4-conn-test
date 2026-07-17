@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.llm.dto.*;
+import io.netty.channel.ChannelOption;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import reactor.netty.http.client.HttpClient;
 
+import java.time.Duration;
 import java.util.*;
 
 @Slf4j
@@ -21,6 +25,11 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     /** 原始 baseUrl（未剥离 /v1），供 embedding 绝对 URL 拼接，兼容 Ark /api/v3 与 OpenAI /v1 */
     private final String originalBaseUrl;
 
+    /** 连接建立超时（ms）。云上 DNS/路由抖动时避免线程长期挂起。 */
+    private static final int CONNECT_TIMEOUT_MS = 10_000;
+    /** 单次响应超时。兜底 .block(Duration)，杜绝无超时 .block() 钉死线程。 */
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
+
     public OpenAICompatibleProvider(String name, String baseUrl, String apiKey, List<String> models, ObjectMapper objectMapper) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
@@ -28,8 +37,14 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         this.originalBaseUrl = baseUrl == null ? "" : baseUrl;
         // Normalize: strip trailing /v1 to avoid /v1/v1/ duplication
         String normalized = baseUrl.replaceAll("/v1/?$", "");
+        // 底层 HttpClient 显式设 connect/response 超时，否则 WebClient 默认无超时，
+        // 云上 LLM 端点 stall 会让 .block() 永久挂起、拖垮 Tomcat 线程池。
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
+                .responseTimeout(RESPONSE_TIMEOUT);
         this.webClient = WebClient.builder()
                 .baseUrl(normalized)
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
                 .build();
@@ -51,7 +66,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(RESPONSE_TIMEOUT);
             return parseResponse(responseJson, System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("LLM调用失败 [provider={}]", name, e);
@@ -101,11 +116,16 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(RESPONSE_TIMEOUT);
             JsonNode root = objectMapper.readTree(responseJson);
             JsonNode arr = root.at("/data/0/embedding");
             if (arr == null || !arr.isArray() || arr.isEmpty()) {
-                throw new RuntimeException("embedding 响应为空: " + responseJson);
+                // 安全审计 #3：响应体可能含 SSRF 取回的内网/云元数据内容，禁止回显进异常消息（防泄露）。
+                // 仅服务端日志记录（截断），抛固定话术。
+                log.warn("embedding 响应格式非预期 provider={} bodyLen={} bodyHead={}",
+                        name, responseJson.length(),
+                        responseJson.length() > 200 ? responseJson.substring(0, 200) : responseJson);
+                throw new RuntimeException("embedding 响应格式非预期（provider=" + name + "）");
             }
             float[] vec = new float[arr.size()];
             for (int i = 0; i < arr.size(); i++) {
@@ -113,7 +133,9 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             }
             return vec;
         } catch (Exception e) {
-            throw new RuntimeException("embedding 调用失败 [provider=" + name + "]: " + e.getMessage(), e);
+            // 安全审计 #3：不把 e.getMessage()（可能含响应片段/内部细节）拼进对外异常，仅服务端日志。
+            log.warn("embedding 调用失败 provider={}: {}", name, e.getMessage());
+            throw new RuntimeException("embedding 调用失败（provider=" + name + "）", e);
         }
     }
 
@@ -130,14 +152,47 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             body.put("stream", request.getStream());
         }
 
-        List<Map<String, String>> messages = new ArrayList<>();
+        List<Map<String, Object>> messages = new ArrayList<>();
         for (LlmMessage msg : request.getMessages()) {
-            messages.add(Map.of("role", msg.getRole().toLowerCase(), "content", msg.getContent()));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("role", msg.getRole().toLowerCase());
+            m.put("content", buildOpenAiContent(msg));
+            messages.add(m);
         }
         body.put("messages", messages);
 
         log.debug("LLM请求体 [provider={}]: {}", name, body);
         return body;
+    }
+
+    /**
+     * OpenAI content 序列化：parts 非空 → content 数组
+     * （text={type:text,text} / image={type:image_url,image_url:{url:"data:<mime>;base64,<b64>"}}）；
+     * 否则回退老字符串 content（零行为变化）。
+     */
+    private Object buildOpenAiContent(LlmMessage msg) {
+        if (msg.getParts() == null || msg.getParts().isEmpty()) {
+            return msg.getContent() == null ? "" : msg.getContent();
+        }
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        for (ContentPart p : msg.getParts()) {
+            if ("image".equalsIgnoreCase(p.getType())) {
+                String mime = p.getMediaType() == null ? "image/png" : p.getMediaType();
+                String dataUrl = "data:" + mime + ";base64," + p.getData();
+                Map<String, Object> imageUrl = new LinkedHashMap<>();
+                imageUrl.put("url", dataUrl);
+                Map<String, Object> block = new LinkedHashMap<>();
+                block.put("type", "image_url");
+                block.put("image_url", imageUrl);
+                blocks.add(block);
+            } else {
+                Map<String, Object> block = new LinkedHashMap<>();
+                block.put("type", "text");
+                block.put("text", p.getText() == null ? "" : p.getText());
+                blocks.add(block);
+            }
+        }
+        return blocks;
     }
 
     private LlmResponse parseResponse(String json, long duration) throws Exception {

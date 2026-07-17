@@ -43,15 +43,17 @@ public class KnowledgeNodeWriter {
     private final ObjectMapper objectMapper;
 
     /**
-     * @param doc        待解析文档（读 kbId/title/id）
-     * @param operatorId 写入审计字段
-     * @param extracted  Tika 抽取 + 切分
-     * @param l1Json     L1 元数据 JSON（写 knowledge_documents.l1_metadata）
-     * @param abstracts  与 extracted.sections 对齐的 L0 摘要列表；空/blank 走兜底
+     * @param doc          待解析文档（读 kbId/title/id）
+     * @param operatorId   写入审计字段
+     * @param extracted    Tika 抽取 + 切分
+     * @param l1Json       L1 元数据 JSON（写 knowledge_documents.l1_metadata）
+     * @param abstracts    与 extracted.sections 对齐的 L0 摘要列表；空/blank 走兜底
+     * @param metadataJson 节点 metadata JSON（IMAGE/FILE 注入 fileRef/mime/originalName；普通文档传 "{}"）
      */
     @Transactional(rollbackFor = Exception.class)
     public void writeNodes(KnowledgeDocument doc, Long operatorId,
-                           ExtractedDocument extracted, String l1Json, List<String> abstracts) {
+                           ExtractedDocument extracted, String l1Json, List<String> abstracts,
+                           String metadataJson) {
         // 1. doc → EMBEDDING + l1_metadata，清 parse_error
         LambdaUpdateWrapper<KnowledgeDocument> docUpdate = new LambdaUpdateWrapper<>();
         docUpdate.eq(KnowledgeDocument::getId, doc.getId())
@@ -79,7 +81,7 @@ public class KnowledgeNodeWriter {
             String abstract0 = pickAbstract(section, abstracts, i);
 
             KnowledgeNode l0 = buildNode(doc, null, "L0", section.getTitle(), abstract0,
-                    "/L0-" + i);
+                    "/L0-" + i, metadataJson);
             l0.setContentHash(HashUtil.sha256(abstract0));
             l0.setTokenCount(TokenEstimator.estimate(abstract0));
             nodeMapper.insert(l0);                  // id 回填
@@ -89,7 +91,7 @@ public class KnowledgeNodeWriter {
             int j = 0;
             for (String chunk : splitL2(section.getContent())) {
                 KnowledgeNode l2 = buildNode(doc, l0.getId(), "L2", section.getTitle(), chunk,
-                        "/L0-" + i + "/L2-" + j);
+                        "/L0-" + i + "/L2-" + j, metadataJson);
                 l2.setContentHash(HashUtil.sha256(chunk));
                 l2.setTokenCount(TokenEstimator.estimate(chunk));
                 nodeMapper.insert(l2);              // L2 不向量化、无 job
@@ -113,7 +115,7 @@ public class KnowledgeNodeWriter {
     }
 
     private KnowledgeNode buildNode(KnowledgeDocument doc, Long parentId, String level,
-                                    String title, String content, String path) {
+                                    String title, String content, String path, String metadataJson) {
         KnowledgeNode node = new KnowledgeNode();
         node.setTenantId(TENANT_ID);
         node.setKbId(doc.getKbId());
@@ -125,7 +127,7 @@ public class KnowledgeNodeWriter {
         node.setTitle(title);
         node.setContent(content);
         node.setContentTokens(com.superprogrammer.knowledge.util.JiebaTokenizer.tokenize(content));
-        node.setMetadata("{}");
+        node.setMetadata(metadataJson == null || metadataJson.isBlank() ? "{}" : metadataJson);
         node.setStatus("ACTIVE");
         node.setCreatedBy(nullSafe(doc.getCreatedBy()));
         node.setUpdatedBy(nullSafe(doc.getCreatedBy()));

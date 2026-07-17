@@ -14,12 +14,15 @@ import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.system.service.SystemSettingService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.OffsetDateTime;
 import java.util.Collections;
@@ -41,8 +44,18 @@ public class AuthService {
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
+    // 安全审计 #9：开放注册限流（防单 IP 1 分钟批量注册万号烧 LLM 配额 + 放大 SSRF 攻击面）
+    private static final String RATE_LIMIT_IP_PREFIX = "ratelimit:register:ip:";
+    private static final String RATE_LIMIT_USER_PREFIX = "ratelimit:register:user:";
+    private static final long REGISTER_WINDOW_SECONDS = 60;
+    private static final long REGISTER_MAX_PER_IP = 5;
+    private static final long REGISTER_MAX_PER_USERNAME = 5;
+
     @Transactional
     public void register(RegisterRequest request) {
+        // 限流（安全审计 #9）：IP + 用户名双维度，超阈值 → 429
+        checkRegisterRateLimit(currentClientIp(), request.getUsername());
+
         // 检查用户名唯一
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(User::getUsername, request.getUsername());
@@ -69,6 +82,53 @@ public class AuthService {
         }
 
         log.info("用户注册成功: {}", user.getUsername());
+    }
+
+    /**
+     * 注册限流（安全审计 #9）：IP + 用户名双维度，固定窗口 60s。
+     * <p>Redis 故障 → 降级放行（不阻断注册主链），仅记日志。
+     */
+    private void checkRegisterRateLimit(String ip, String username) {
+        if (ip != null && !ip.isBlank()) {
+            checkRateWindow(RATE_LIMIT_IP_PREFIX + ip, REGISTER_MAX_PER_IP);
+        }
+        if (username != null && !username.isBlank()) {
+            checkRateWindow(RATE_LIMIT_USER_PREFIX + username.toLowerCase(), REGISTER_MAX_PER_USERNAME);
+        }
+    }
+
+    private void checkRateWindow(String key, long max) {
+        try {
+            Long n = redisTemplate.opsForValue().increment(key);
+            if (n != null && n == 1L) {
+                redisTemplate.expire(key, REGISTER_WINDOW_SECONDS, TimeUnit.SECONDS);
+            }
+            if (n != null && n > max) {
+                throw new BusinessException(ErrorCode.RATE_LIMIT,
+                        "注册过于频繁，请稍后再试（限流窗口 " + REGISTER_WINDOW_SECONDS + "s）");
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("注册限流 Redis 检查失败，降级放行: {}", e.getMessage());
+        }
+    }
+
+    /** 取真实客户端 IP（经 Nginx 反代时取 X-Forwarded-For 首段）。无请求上下文 → null。 */
+    private String currentClientIp() {
+        try {
+            Object attrsObj = RequestContextHolder.currentRequestAttributes();
+            if (!(attrsObj instanceof ServletRequestAttributes attrs)) return null;
+            HttpServletRequest req = attrs.getRequest();
+            String xff = req.getHeader("X-Forwarded-For");
+            if (xff != null && !xff.isBlank()) {
+                int comma = xff.indexOf(',');
+                return (comma > 0 ? xff.substring(0, comma) : xff).trim();
+            }
+            return req.getRemoteAddr();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Transactional

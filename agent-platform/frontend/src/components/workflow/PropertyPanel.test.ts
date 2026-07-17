@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { NInput } from 'naive-ui'
+import { NInput, NSelect, NSwitch, NDynamicTags } from 'naive-ui'
 import { describe, expect, it, vi } from 'vitest'
 import PropertyPanel from './PropertyPanel.vue'
 import type { WorkflowNode } from '@/types/workflow'
@@ -13,6 +13,12 @@ vi.mock('@/api/agent', () => ({
 vi.mock('@/api/workflow', () => ({
   workflowApi: {
     list: vi.fn().mockResolvedValue({ data: { data: [] } })
+  }
+}))
+
+vi.mock('@/api/knowledge', () => ({
+  knowledgeApi: {
+    listBases: vi.fn().mockResolvedValue({ data: { data: [] } })
   }
 }))
 
@@ -121,5 +127,105 @@ describe('PropertyPanel node description permissions', () => {
 
     expect(descriptionInput?.exists()).toBe(true)
     expect(descriptionInput?.props('disabled')).toBe(true)
+  })
+})
+
+describe('PropertyPanel human_input node', () => {
+  function humanInputNode(data: Partial<WorkflowNode['data']> = {}): WorkflowNode {
+    return {
+      id: 'human-1',
+      type: 'human_input',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '收集姓名',
+        inputKey: 'user_name',
+        inputType: 'text',
+        questionTemplate: '你叫什么名字？',
+        required: true,
+        ...data
+      }
+    }
+  }
+
+  it('renders human_input config fields', () => {
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        selectedNode: humanInputNode(),
+        nodes: [],
+        edges: [],
+        editable: true
+      }
+    })
+
+    expect(wrapper.text()).toContain('人机交互')
+    expect(wrapper.text()).toContain('答案变量名')
+    expect(wrapper.text()).toContain('问题模板')
+
+    const questionInput = wrapper.findAllComponents(NInput)
+      .find(input => input.props('value') === '你叫什么名字？')
+    expect(questionInput?.exists()).toBe(true)
+  })
+
+  it('shows the inputType select with text/textarea/select options', () => {
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        selectedNode: humanInputNode({ inputType: 'select', options: ['低', '中', '高'] }),
+        nodes: [],
+        edges: [],
+        editable: true
+      }
+    })
+
+    const typeSelect = wrapper.findAllComponents(NSelect)
+      .find(select => select.props('value') === 'select')
+
+    expect(typeSelect?.exists()).toBe(true)
+    const options = (typeSelect?.props('options') as Array<{ value: string }>) || []
+    expect(options.some(o => o.value === 'select')).toBe(true)
+  })
+
+  it('shows the options tag editor only for select type', () => {
+    const selectWrapper = mount(PropertyPanel, {
+      props: {
+        selectedNode: humanInputNode({ inputType: 'select', options: ['低', '中', '高'] }),
+        nodes: [],
+        edges: [],
+        editable: true
+      }
+    })
+    expect(selectWrapper.findComponent(NDynamicTags).exists()).toBe(true)
+    expect(selectWrapper.findComponent(NDynamicTags).props('value')).toEqual(['低', '中', '高'])
+
+    const textWrapper = mount(PropertyPanel, {
+      props: {
+        selectedNode: humanInputNode({ inputType: 'text' }),
+        nodes: [],
+        edges: [],
+        editable: true
+      }
+    })
+    expect(textWrapper.findComponent(NDynamicTags).exists()).toBe(false)
+  })
+
+  it('emits update-node-data when required switch toggles', async () => {
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        selectedNode: humanInputNode({ required: true }),
+        nodes: [],
+        edges: [],
+        editable: true
+      }
+    })
+
+    const sw = wrapper.findComponent(NSwitch)
+    expect(sw.exists()).toBe(true)
+    await sw.vm.$emit('update:value', false)
+
+    const updateEvents = wrapper.emitted('update-node-data')
+    expect(updateEvents).toBeTruthy()
+    const last = updateEvents![updateEvents!.length - 1]
+    expect(last![0]).toBe('human-1')
+    expect(last![1]).toBe('required')
+    expect(last![2]).toBe(false)
   })
 })

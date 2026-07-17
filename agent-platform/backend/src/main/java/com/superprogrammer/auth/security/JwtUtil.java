@@ -3,6 +3,7 @@ package com.superprogrammer.auth.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -12,6 +13,7 @@ import javax.crypto.SecretKey;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Component
@@ -23,6 +25,31 @@ public class JwtUtil {
     private String secret;
     private Long accessExpiration;
     private Long refreshExpiration;
+
+    /**
+     * 已泄露进 git 历史的弱默认密钥（base64 原文 + 解码明文）。
+     * <p>安全审计 #2：命中即拒绝启动——旧默认值随代码提交进仓库，任何能看到代码的人都拿到了它，
+     * 可伪造任意身份令牌。必须轮换后经环境变量 JWT_SECRET 注入新密钥。
+     */
+    private static final Set<String> KNOWN_WEAK_SECRETS = Set.of(
+            "bXlTdXBlclNlY3JldEtleUZvckFnZW50UGxhdGZvcm1Qcm9qZWN0MjAyNg==",
+            "mySuperSecretKeyForAgentPlatformProject2026"
+    );
+
+    /**
+     * 启动校验：密钥缺失或命中已知弱默认值 → 抛异常拒绝启动（fail-fast > 静默用弱密钥运行）。
+     */
+    @PostConstruct
+    void validateSecret() {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "JWT_SECRET 未配置：请通过环境变量 JWT_SECRET 注入（生成: openssl rand -base64 64 | tr -d '\\n'）。禁止使用空密钥启动。");
+        }
+        if (KNOWN_WEAK_SECRETS.contains(secret.trim())) {
+            throw new IllegalStateException(
+                    "JWT_SECRET 命中已泄露的弱默认值（见安全审计 #2）。请轮换并经环境变量注入新密钥后重启。");
+        }
+    }
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = Base64.getDecoder().decode(secret);

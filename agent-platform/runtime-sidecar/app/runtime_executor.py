@@ -5,11 +5,23 @@ import re
 from collections import defaultdict, deque
 from typing import Any
 
+from langgraph.errors import GraphRecursionError
+
 from app.checkpoint_store import CheckpointStore
 from app.models import ExecutionEvent, ExecutionRequest, RuntimeNode, WorkflowDefinition
 from app.graph_compiler import compile_workflow_graph
 from app.callback_client import RuntimeNodeCallbackRequest, RuntimeNodeCallbackResponse, execute_runtime_callback
 from app.node_runtime import resolve_source
+
+
+def resolve_recursion_limit(runtime: dict[str, Any]) -> int:
+    """Phase 2 环守卫：单次 invoke 最大迭代数。默认 25（与 LangGraph 默认一致）；runtime.recursionLimit 可覆盖。"""
+    raw = (runtime or {}).get("recursionLimit")
+    try:
+        value = int(raw) if raw is not None else 25
+    except (TypeError, ValueError):
+        return 25
+    return value if value > 0 else 25
 
 
 def build_events(
@@ -44,14 +56,37 @@ def iter_events(
     yield event(request, "EXECUTION_STARTED", "RUNNING", metadata=metadata)
 
     graph = compile_workflow_graph(request.workflow)
+    nodes_by_id = {node.id: node for node in request.workflow.nodes}
     initial_state = restored_state or {"input": request.input, "visited": [], "outputs": {}}
     if restored_state is not None:
         initial_state = inject_user_input(initial_state, user_input)
+        # Phase 2：inputVisits 是「本 invoke 内」的答案消费计数，每次 invoke 从 0 重新计
+        #（每轮 resume 各自带一份 userInput，消费一份即 waiting）。跨 invoke 不累加。
+        initial_state["inputVisits"] = {}
     restored_visited = set(restored_state.get("visited", [])) if restored_state else set()
     restored_pause_id = restored_state.get("pausedAtNodeId") if restored_state else None
-    is_input_resume = bool(restored_pause_id and restored_pause_id in restored_visited)
+    restored_pause_node = nodes_by_id.get(restored_pause_id) if restored_pause_id else None
+    is_input_resume = bool(
+        restored_pause_node and restored_pause_node.type.upper() == "HUMAN_INPUT"
+    )
     try:
-        graph_result = graph.invoke(initial_state)
+        graph_result = graph.invoke(
+            initial_state,
+            config={"recursion_limit": resolve_recursion_limit(request.runtime)},
+        )
+    except GraphRecursionError:
+        # Phase 2 环守卫：迭代超限（疑似无法收敛的环路或条件永不终止）→ 清晰报错替代裸崩。
+        limit = resolve_recursion_limit(request.runtime)
+        failure_metadata = dict(metadata)
+        failure_metadata["errorMessage"] = (
+            f"超出工作流最大迭代次数({limit})，疑似存在无法收敛的环路或条件分支永不终止"
+        )
+        if request.runtime.get("checkpoint") is True:
+            if checkpoint_store:
+                checkpoint_store.save(f"checkpoint-{request.executionId}", initial_state)
+            failure_metadata["recoveryCheckpointRef"] = f"checkpoint-{request.executionId}"
+        yield event(request, "EXECUTION_FAILED", "FAILED", metadata=failure_metadata)
+        return
     except Exception as exc:
         failed_node_id = failed_node_id_from_error(exc)
         if checkpoint_store and request.runtime.get("checkpoint") is True:
@@ -65,20 +100,27 @@ def iter_events(
         return
     if checkpoint_store and request.runtime.get("checkpoint") is True:
         checkpoint_store.save(f"checkpoint-{request.executionId}", graph_result)
-    nodes_by_id = {node.id: node for node in request.workflow.nodes}
+    visited = graph_result.get("visited", [])
+    outputs = graph_result.get("outputs", {})
     approval_node = None
     pending_input = None
     if is_input_resume:
-        descendant_set = descendants(request.workflow, restored_pause_id)
-        emitted_node_ids = unique_ordered(
-            node_id for node_id in graph_result["visited"] if node_id in descendant_set
-        )
-        next_input = first_waiting_input_node(request, emitted_node_ids, nodes_by_id, user_input)
-        if next_input:
-            emitted_node_ids = emitted_node_ids[: emitted_node_ids.index(next_input.id)]
-            pending_input = next_input
+        # Phase 2 环 resume：re-invoke 会把本轮节点访问 append 到 checkpoint 的旧 visited 之后
+        #（operator.add），先切掉前缀只看本轮新增。
+        restored_visited_list = restored_state.get("visited", []) if restored_state else []
+        new_visited = visited[len(restored_visited_list):]
+        # 从「暂停节点首次出现处」（= 本轮消费答案处）发射到「下一个 waiting HUMAN」之前。
+        # waiting HUMAN 必路由 END → 必为 new_visited 末元素；故 pending = 末元素若是 HUMAN_INPUT。
+        # 每 resume 是新 executionId，环内 LLM/COND 重发落到不同 execution_logs，免跨 invoke 去重。
+        start_index = new_visited.index(restored_pause_id) if restored_pause_id in new_visited else 0
+        if new_visited:
+            last_node = nodes_by_id.get(new_visited[-1])
+            if last_node and last_node.type.upper() == "HUMAN_INPUT":
+                pending_input = last_node
+        end_index = (len(new_visited) - 1) if pending_input else len(new_visited)
+        emitted_node_ids = list(new_visited[start_index:end_index])
     else:
-        emitted_node_ids = [node_id for node_id in graph_result["visited"] if node_id not in restored_visited]
+        emitted_node_ids = [node_id for node_id in visited if node_id not in restored_visited]
         approval_node = first_waiting_approval_node(request, emitted_node_ids, nodes_by_id)
         if approval_node:
             emitted_node_ids = emitted_node_ids[:emitted_node_ids.index(approval_node.id)]
@@ -90,7 +132,16 @@ def iter_events(
         node = nodes_by_id[node_id]
         source_type, source_id = resolve_source(node)
         node_input = node_event_input(request, node, graph_result)
-        output = graph_result["outputs"][node.id]
+        output = outputs[node.id]
+        if node.type.upper() == "HUMAN_INPUT":
+            # 本 invoke 消费答案的那次（waiting 的那次已排除在 emitted_node_ids 外）。
+            # 环内 HUMAN 多次出现时 outputs[node.id] 被 merge 到末次 WAITING/value=None，
+            # 故从 state.input 重建本次消费值。
+            input_key = node.config.get("inputKey") or node.id
+            output = dict(output)
+            output["status"] = "SUCCESS"
+            output["inputKey"] = input_key
+            output["value"] = graph_result.get("input", {}).get(input_key)
         yield event(
             request,
             "NODE_STARTED",

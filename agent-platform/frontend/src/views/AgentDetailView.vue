@@ -570,6 +570,23 @@ onMounted(async () => {
 
 // 响应式
 @media (max-width: 768px) {
+  .agent-detail {
+    padding: var(--spacing-3);
+  }
+
+  .agent-detail__hero-content {
+    flex-direction: column;
+    padding: var(--spacing-4);
+  }
+
+  .agent-detail__hero-name-row {
+    flex-wrap: wrap;
+  }
+
+  .agent-detail__hero-meta {
+    flex-wrap: wrap;
+  }
+
   .agent-detail__body {
     flex-direction: column;
   }

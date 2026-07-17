@@ -1,5 +1,5 @@
 <template>
-  <n-modal :show="show" preset="card" title="项目管理" style="width: 560px" @update:show="v => emit('update:show', v)">
+  <n-modal :show="show" preset="card" title="项目管理" :style="{ maxWidth: '560px', width: '90vw' }" @update:show="v => emit('update:show', v)">
     <n-space vertical :size="16">
       <!-- 新建 -->
       <n-space align="center" :size="8">

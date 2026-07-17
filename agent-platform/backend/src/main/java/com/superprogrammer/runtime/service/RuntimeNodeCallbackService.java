@@ -11,12 +11,15 @@ import com.superprogrammer.engine.context.ExecutionContext;
 import com.superprogrammer.engine.executor.SkillExecutor;
 import com.superprogrammer.engine.router.AgentRouter;
 import com.superprogrammer.engine.router.RoutingResult;
+import com.superprogrammer.execution.entity.ExecutionLog;
+import com.superprogrammer.execution.service.ExecutionLogService;
 import com.superprogrammer.knowledge.dto.EvidenceResult;
 import com.superprogrammer.knowledge.service.RagRetrievalService;
 import com.superprogrammer.knowledge.service.RagScopeResolver;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackRequest;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class RuntimeNodeCallbackService {
@@ -37,8 +41,23 @@ public class RuntimeNodeCallbackService {
     private final RagScopeResolver ragScopeResolver;
     private final RagRetrievalService ragRetrievalService;
     private final com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
+    /** 安全审计 #1：executionId → triggeredBy 反查（Java 自己写的 execution_logs，可信）。 */
+    private final ExecutionLogService executionLogService;
 
     public RuntimeNodeCallbackResponse executeNode(RuntimeNodeCallbackRequest request) {
+        // 安全审计 #1：userId 禁止信任请求体（此前调用方可填受害者 ID 越权检索他人 KB / 触发他人 Agent）。
+        // 改由 executionId → execution_logs.triggeredBy 反查；与 body.userId 不一致 → 采用反查值，丢弃 body 值。
+        Long trustedUserId = resolveTrustedUserId(request);
+        if (trustedUserId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "回调缺少有效 executionId，无法解析执行归属（拒绝越权回调）");
+        }
+        if (request.getUserId() != null && !request.getUserId().equals(trustedUserId)) {
+            log.warn("回调 userId 与 executionId 归属不一致：body={} triggeredBy={} → 采用反查值",
+                    request.getUserId(), trustedUserId);
+        }
+        request.setUserId(trustedUserId);
+
         if ("SKILL".equalsIgnoreCase(request.getSourceType())) {
             return executeSkill(request);
         }
@@ -331,5 +350,24 @@ public class RuntimeNodeCallbackService {
             return null;
         }
         return Long.parseLong(value);
+    }
+
+    /**
+     * 安全审计 #1：由 executionId 反查 execution_logs.triggeredBy 作为可信 userId。
+     * <p>execution_logs 由 Java 在工作流启动时写入（{@code startExecution(triggeredBy)}），可信；
+     * 反查不到（executionId 缺失/非数字/无记录）→ 返回 null，由调用方拒绝。
+     */
+    private Long resolveTrustedUserId(RuntimeNodeCallbackRequest request) {
+        Long executionId;
+        try {
+            executionId = parseLong(request.getExecutionId());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (executionId == null) {
+            return null;
+        }
+        ExecutionLog executionLog = executionLogService.getExecutionLog(executionId);
+        return executionLog == null ? null : executionLog.getTriggeredBy();
     }
 }

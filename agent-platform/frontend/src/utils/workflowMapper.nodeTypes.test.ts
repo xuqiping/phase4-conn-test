@@ -81,6 +81,67 @@ describe('workflowMapper node type mapping', () => {
     expect(flowNode.data.required).toBe(true)
   })
 
+  it('serializes human_input nodes with question config', () => {
+    const request = toWorkflowNodeRequest({
+      id: 'human-1',
+      type: 'human_input',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '收集姓名',
+        inputKey: 'user_name',
+        inputType: 'text',
+        questionTemplate: '你叫什么名字？',
+        required: true
+      }
+    })
+
+    expect(request.type).toBe('HUMAN_INPUT')
+    expect(JSON.parse(request.config || '{}')).toMatchObject({
+      inputKey: 'user_name',
+      inputType: 'text',
+      questionTemplate: '你叫什么名字？',
+      required: true
+    })
+  })
+
+  it('serializes human_input select options as string array', () => {
+    const request = toWorkflowNodeRequest({
+      id: 'human-2',
+      type: 'human_input',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '优先级',
+        inputKey: 'priority',
+        inputType: 'select',
+        questionTemplate: '优先级？',
+        options: ['低', '中', '高']
+      }
+    })
+
+    const config = JSON.parse(request.config || '{}')
+    expect(config.options).toEqual(['低', '中', '高'])
+  })
+
+  it('hydrates backend HUMAN_INPUT nodes to human_input with config', () => {
+    const backendNode: WorkflowNode = {
+      id: 'human-1',
+      type: 'HUMAN_INPUT',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '收集姓名',
+        config: '{"inputKey":"user_name","inputType":"select","questionTemplate":"优先级？","options":["低","中","高"]}'
+      }
+    }
+
+    const flowNode = toFlowNode(backendNode)
+
+    expect(flowNode.type).toBe('human_input')
+    expect(flowNode.data.inputKey).toBe('user_name')
+    expect(flowNode.data.inputType).toBe('select')
+    expect(flowNode.data.questionTemplate).toBe('优先级？')
+    expect(flowNode.data.options).toEqual(['低', '中', '高'])
+  })
+
   it('normalizes legacy start aliases to start', () => {
     const backendNode: WorkflowNode = {
       id: 'start-1',

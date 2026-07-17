@@ -27,7 +27,7 @@
     </div>
     <n-empty v-else description="暂未配置个人API Key，将使用全局供应商" />
 
-    <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑API Key' : '添加API Key'" style="width: 480px">
+    <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑API Key' : '添加API Key'" :style="{ maxWidth: '480px', width: '90vw' }">
       <n-form label-placement="left" label-width="100">
         <n-form-item label="供应商">
           <n-select v-model:value="form.providerName" :options="globalProviderOptions" placeholder="选择供应商" :disabled="!!editingId" />

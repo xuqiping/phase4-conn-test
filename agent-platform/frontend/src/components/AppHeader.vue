@@ -208,4 +208,29 @@ async function handleUserMenu(key: string) {
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
+
+// === 移动端 ===
+@media (max-width: 768px) {
+  .app-header {
+    padding: 0 var(--spacing-3);
+  }
+
+  // 搜索框固定 200px，移动端隐藏
+  .app-header__search {
+    display: none;
+  }
+
+  // 用户名隐藏，仅留头像
+  .app-header__username {
+    display: none;
+  }
+
+  // 页面标题过长省略
+  .app-header__page-title {
+    max-width: 45vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
 </style>

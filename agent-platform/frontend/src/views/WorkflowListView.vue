@@ -313,4 +313,22 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--spacing-4);
 }
+
+@media (max-width: 768px) {
+  .workflow-list__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-3);
+    margin-bottom: var(--spacing-4);
+  }
+  .workflow-list__header-right {
+    flex-wrap: wrap;
+  }
+  .workflow-list__search {
+    width: 100%;
+  }
+  .workflow-list__grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

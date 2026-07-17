@@ -1,9 +1,17 @@
 ﻿from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
+
+# 安全审计 #1：sidecar→Java 回调共享密钥，与后端 runtime.callback.token (env RUNTIME_CALLBACK_TOKEN) 同值。
+TOKEN_HEADER = "X-Runtime-Token"
+
+
+def _callback_token() -> str | None:
+    return os.environ.get("RUNTIME_CALLBACK_TOKEN")
 
 
 class RuntimeNodeCallbackRequest(BaseModel):
@@ -42,12 +50,15 @@ def execute_runtime_callback(
     timeout: float = 120.0,
 ) -> RuntimeNodeCallbackResponse:
     url = f"{java_base_url.rstrip('/')}/api/runtime/callbacks/nodes/execute"
+    headers: dict[str, str] = {}
+    token = _callback_token()
+    if token:
+        headers[TOKEN_HEADER] = token
     try:
-        response = httpx.post(
-            url,
-            json=request.model_dump(mode="json"),
-            timeout=timeout,
-        )
+        # trust_env=False：回调永远直连 Java，不读系统/环境代理（HTTP_PROXY/HTTPS_PROXY）。
+        # 否则本机开了代理（如 Clash 127.0.0.1:7892）时，localhost 回调被代理拦截 → 502。
+        with httpx.Client(timeout=timeout, trust_env=False, headers=headers) as client:
+            response = client.post(url, json=request.model_dump(mode="json"))
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         body = exc.response.text.strip()

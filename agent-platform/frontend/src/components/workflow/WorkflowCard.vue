@@ -244,4 +244,11 @@ function handleDelete() {
     opacity: 1;
   }
 }
+
+// 触屏设备无 hover，操作按钮常驻可见
+@media (hover: none) {
+  .workflow-card__actions {
+    opacity: 1;
+  }
+}
 </style>

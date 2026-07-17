@@ -71,6 +71,15 @@ export interface UserMemory {
   // 项目记忆 scope（V33）
   isGlobal: boolean | null        // true=总记忆，false=仅项目
   projectIds: number[] | null     // 挂载的项目 id
+  homeProjectId: number | null    // 写归属 home（V34，null=总记忆 home）；M1 归属列区分归属/共享
+}
+
+/** 记忆行内编辑请求（M1，PUT /memories/{id}）。 */
+export interface MemoryEditRequest {
+  memoryKey?: string
+  memoryKeyZh?: string
+  memoryValue?: string
+  blockLabel?: string
 }
 
 /** 冲突候选单条（MemoryCandidateVO）。 */
@@ -205,6 +214,10 @@ export const chatApi = {
   /** GET /api/chat/memories — 当前用户全部记忆（updatedAt 倒序） */
   listMemories() {
     return request.get<ApiResponse<UserMemory[]>>('/chat/memories')
+  },
+  /** PUT /api/chat/memories/{id} — 行内编辑（M1）：改 key/key_zh/value/block_label，后端按需重 embed + home 重复检查 */
+  updateMemory(id: number, data: MemoryEditRequest) {
+    return request.put<ApiResponse<UserMemory>>(`/chat/memories/${id}`, data)
   },
   /** DELETE /api/chat/memories/{id} — 删单条 */
   deleteMemory(id: number) {

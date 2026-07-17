@@ -284,7 +284,7 @@ class ChatSessionServiceTest {
             return 1;
         });
         when(messageMapper.selectList(any())).thenReturn(List.of());
-        when(runtimeExecutionService.runWorkflowFromChat(8L, 100L, "你好啊"))
+        when(runtimeExecutionService.runWorkflowFromChat(8L, 100L, 2L, "你好啊"))
                 .thenReturn(reactor.core.publisher.Flux.just(
                         ExecutionEvent.builder()
                                 .type("NODE_STARTED")
@@ -315,7 +315,7 @@ class ChatSessionServiceTest {
                 "THINKING".equals(event.getType()) && event.getContent().contains("start-1")));
         assertTrue(events.stream().anyMatch(event ->
                 "CHUNK".equals(event.getType()) && event.getContent().equals("最终回答")));
-        verify(runtimeExecutionService).runWorkflowFromChat(8L, 100L, "你好啊");
+        verify(runtimeExecutionService).runWorkflowFromChat(8L, 100L, 2L, "你好啊");
         verify(orchestrationEngine, never()).executeStream(any(), any());
         verify(messageMapper, atLeastOnce()).insert(argThat(message ->
                 "ASSISTANT".equals(message.getRole()) && "最终回答".equals(message.getContent())));

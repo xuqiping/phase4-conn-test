@@ -22,6 +22,7 @@ import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -78,10 +79,16 @@ public class KnowledgeDocumentService {
      * 阶段2：上传。
      * <p>Excel picker 路径传 tempFileRef（复用阶段1 存的文件，零重传）+ selectedSheets；
      * 非 Excel 或直传走 file。tempFileRef 经 load 咽喉点强校验归属（非 owner → FORBIDDEN）。
+     *
+     * <p>图片/文件知识库扩展：docType（IMAGE/FILE，空=按后缀推断）+ indexMode（MANUAL/AUTO，空=AUTO）
+     * + manualIndexText（MANUAL 必填，索引文本）+ visionModel（IMAGE+AUTO 必填，P2 视觉模型）。
+     * 全部并入 parse_options JSON；doc.setDocType 始终写入（补历史 NULL gap）。
      */
     @Transactional
     public KnowledgeDocumentVO upload(Long kbId, MultipartFile file, String tempFileRef,
-                                      List<String> selectedSheets, Long operatorId, boolean admin) {
+                                      List<String> selectedSheets,
+                                      String docType, String indexMode, String manualIndexText,
+                                      String visionModel, Long operatorId, boolean admin) {
         KnowledgeBase kb = knowledgeBaseService.ensure(kbId);
         if (!knowledgeBaseService.canWrite(kb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权向该知识库上传文档");
@@ -113,25 +120,125 @@ public class KnowledgeDocumentService {
             }
         }
 
+        // docType：用户覆盖优先，否则按标题后缀推断（IMAGE/FILE/EXCEL/PDF/...）；始终写入（补 NULL gap）
+        String resolvedDocType = resolveDocType(docType, title);
+        String resolvedIndexMode = normalizeIndexMode(indexMode);
+        if ("MANUAL".equals(resolvedIndexMode)) {
+            if (manualIndexText == null || manualIndexText.isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "MANUAL 索引方式必须提供索引文本（manualIndexText）");
+            }
+            if (manualIndexText.length() > 4000) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "索引文本过长（>4000 字）");
+            }
+        }
+        if ("IMAGE".equals(resolvedDocType) && "AUTO".equals(resolvedIndexMode)
+                && (visionModel == null || visionModel.isBlank())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "图片 AUTO 索引必须选择视觉模型（visionModel）");
+        }
+
         KnowledgeDocument doc = new KnowledgeDocument();
         doc.setKbId(kbId);
         doc.setTitle(title);
         doc.setStatus("PENDING");
+        doc.setDocType(resolvedDocType);
         doc.setFileRef(fileRef);
         doc.setFileHash(fileHash);
         doc.setCreatedBy(operatorId);
-        if (selectedSheets != null && !selectedSheets.isEmpty()) {
-            try {
-                doc.setParseOptions(objectMapper.writeValueAsString(
-                        Map.of("selectedSheets", selectedSheets)));
-            } catch (Exception ignored) {
-                // 序列化失败则不记 parse_options（= 导全部 sheet），不阻断上传
-            }
-        }
+        doc.setParseOptions(buildParseOptions(selectedSheets, resolvedIndexMode, manualIndexText, visionModel));
         documentMapper.insert(doc);
         // 解析异步触发：仅在上传事务提交后（AFTER_COMMIT）才跑，确保异步线程读得到 PENDING 行
         applicationEventPublisher.publishEvent(new DocumentUploadedEvent(doc.getId(), operatorId));
         return toVO(doc);
+    }
+
+    /** docType 解析：显式传入非空 → 归一化校验；否则按标题后缀推断。 */
+    private static String resolveDocType(String docType, String title) {
+        if (docType != null && !docType.isBlank()) {
+            String t = docType.trim().toUpperCase();
+            return switch (t) {
+                case "IMAGE", "FILE", "EXCEL", "PDF", "DOCX", "HTML", "TEXT" -> t;
+                default -> docType.trim();   // 自由字符串，不强限
+            };
+        }
+        String name = title == null ? "" : title.toLowerCase();
+        if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")
+                || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp")) {
+            return "IMAGE";
+        }
+        if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+            return "EXCEL";
+        }
+        if (name.endsWith(".pdf")) {
+            return "PDF";
+        }
+        if (name.endsWith(".docx") || name.endsWith(".doc")) {
+            return "DOCX";
+        }
+        if (name.endsWith(".html") || name.endsWith(".htm")) {
+            return "HTML";
+        }
+        if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".markdown")) {
+            return "TEXT";
+        }
+        return "FILE";
+    }
+
+    private static String normalizeIndexMode(String indexMode) {
+        if (indexMode == null || indexMode.isBlank()) {
+            return "AUTO";
+        }
+        String m = indexMode.trim().toUpperCase();
+        return "MANUAL".equals(m) ? "MANUAL" : "AUTO";
+    }
+
+    /** 合并 parse_options：selectedSheets（Excel）+ indexMode/manualIndexText/visionModel（图片/文件）。null 字段省略。 */
+    private String buildParseOptions(List<String> selectedSheets, String indexMode,
+                                     String manualIndexText, String visionModel) {
+        try {
+            Map<String, Object> opts = new java.util.LinkedHashMap<>();
+            if (selectedSheets != null && !selectedSheets.isEmpty()) {
+                opts.put("selectedSheets", selectedSheets);
+            }
+            opts.put("indexMode", indexMode);
+            if (manualIndexText != null && !manualIndexText.isBlank()) {
+                opts.put("manualIndexText", manualIndexText.trim());
+            }
+            if (visionModel != null && !visionModel.isBlank()) {
+                opts.put("visionModel", visionModel.trim());
+            }
+            return objectMapper.writeValueAsString(opts);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 流式返回图片/文件原件（KB 成员可读，跨用户）。
+     * canRead 校验通过后，按 admin 通道取字节（owner 咽喉点由 KB 读权限替代）。
+     * IMAGE → Content-Disposition inline（浏览器内联显图）；FILE → attachment 下载（带原名）。
+     */
+    public ResponseEntity<org.springframework.core.io.Resource> streamAsset(Long id, Long operatorId, boolean admin) {
+        KnowledgeDocument doc = ensure(id);
+        if (!knowledgeBaseService.canRead(knowledgeBaseService.ensure(doc.getKbId()), operatorId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该文档");
+        }
+        String fileId = stripFileRef(doc.getFileRef());
+        if (fileId == null || fileId.isBlank()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文档无原件");
+        }
+        Resource res = fileStorageService.load(fileId, operatorId, admin);
+        com.superprogrammer.file.entity.StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        String mime = meta != null && meta.getMime() != null && !meta.getMime().isBlank()
+                ? meta.getMime() : fileStorageService.detectMimeType(fileId);
+        String originalName = meta != null && meta.getOriginalName() != null ? meta.getOriginalName() : fileId;
+        boolean isImage = "IMAGE".equals(doc.getDocType()) || (mime != null && mime.startsWith("image/"));
+        String disposition = (isImage ? "inline" : "attachment; filename=\"" + originalName + "\"");
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType(mime))
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, disposition)
+                .body(res);
     }
 
     /** fileRef（/api/files/{fileId}）→ fileId。 */
@@ -204,6 +311,9 @@ public class KnowledgeDocumentService {
     }
 
     private KnowledgeDocumentVO toVO(KnowledgeDocument doc) {
+        String fileId = stripFileRef(doc.getFileRef());
+        com.superprogrammer.file.entity.StoredFileEntity meta =
+                fileId == null ? null : fileStorageService.findMeta(fileId);
         return KnowledgeDocumentVO.builder()
                 .id(doc.getId())
                 .kbId(doc.getKbId())
@@ -212,12 +322,29 @@ public class KnowledgeDocumentService {
                 .status(doc.getStatus())
                 .fileRef(doc.getFileRef())
                 .fileHash(doc.getFileHash())
+                .mime(meta == null ? null : meta.getMime())
+                .originalName(meta == null ? null : meta.getOriginalName())
+                .indexMode(readIndexMode(doc.getParseOptions()))
                 .parseError(doc.getParseError())
                 .parseOptions(doc.getParseOptions())
                 .parseWarning(doc.getParseWarning())
                 .createdAt(doc.getCreatedAt())
                 .updatedAt(doc.getUpdatedAt())
                 .build();
+    }
+
+    /** parse_options.indexMode 解析（VO 展示用）；null/格式错 → null。 */
+    private String readIndexMode(String parseOptions) {
+        if (parseOptions == null || parseOptions.isBlank()) {
+            return null;
+        }
+        try {
+            Map<?, ?> json = objectMapper.readValue(parseOptions, Map.class);
+            Object m = json.get("indexMode");
+            return m == null ? null : String.valueOf(m);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static String sha256(MultipartFile file) throws NoSuchAlgorithmException {

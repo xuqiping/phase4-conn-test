@@ -139,23 +139,37 @@
           <n-button size="small" quaternary type="error" :disabled="!memories.length" @click="confirmClear">清空全部</n-button>
         </n-space>
       </template>
+      <div v-if="memories.length" class="memory-manager__filter">
+        <n-input v-model:value="filterKeyword" placeholder="筛选 key / 名称 / 值" clearable size="small" style="max-width: 240px" />
+        <n-select
+          v-model:value="filterBlock"
+          :options="blockOptions"
+          placeholder="信息块"
+          clearable
+          size="small"
+          style="width: 160px"
+          :consistent-menu-width="false"
+        />
+        <span class="memory-manager__filter-count">{{ filteredMemories.length }} / {{ memories.length }} 条</span>
+      </div>
       <n-data-table
-        v-if="memories.length"
+        v-if="memories.length && filteredMemories.length"
         :columns="columns"
-        :data="memories"
+        :data="filteredMemories"
         :row-key="row => row.id"
         :checked-row-keys="checkedKeys"
         :pagination="{ pageSize: 10 }"
-        :scroll-x="1500"
+        :scroll-x="1600"
         size="small"
         striped
         @update:checked-row-keys="onCheckedChange"
       />
+      <n-empty v-else-if="memories.length" description="无匹配筛选条件的记忆" />
       <n-empty v-else description="暂无记忆。开启记忆模式对话后，AI 会自动抽取长期记忆。" />
     </n-card>
 
     <!-- scope 编辑（V33）：勾选总记忆 + 多选项目 -->
-    <n-modal v-model:show="scopeEditing" preset="card" title="编辑记忆归属" style="width: 460px">
+    <n-modal v-model:show="scopeEditing" preset="card" title="编辑记忆归属" :style="{ maxWidth: '460px', width: '90vw' }">
       <n-space vertical :size="16">
         <n-space align="center" :size="8">
           <n-switch v-model:value="scopeIsGlobal" />
@@ -177,18 +191,53 @@
         </n-space>
       </n-space>
     </n-modal>
+
+    <!-- M1 行内编辑：key / key_zh / value / block_label -->
+    <n-modal v-model:show="editEditing" preset="card" title="编辑记忆" :style="{ maxWidth: '480px', width: '90vw' }">
+      <n-space vertical :size="14">
+        <div>
+          <div class="memory-manager__field-label">英文 key（dedup / 召回锚点）</div>
+          <n-input v-model:value="editForm.memoryKey" placeholder="如 child_name" />
+        </div>
+        <div>
+          <div class="memory-manager__field-label">中文标签（名称列）</div>
+          <n-input v-model:value="editForm.memoryKeyZh" placeholder="如 女儿" />
+        </div>
+        <div>
+          <div class="memory-manager__field-label">记忆值</div>
+          <n-input v-model:value="editForm.memoryValue" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" />
+        </div>
+        <div>
+          <div class="memory-manager__field-label">信息块</div>
+          <n-select
+            v-model:value="editForm.blockLabel"
+            :options="blockOptions"
+            filterable
+            tag
+            placeholder="选择或输入信息块"
+            :consistent-menu-width="false"
+          />
+        </div>
+        <div class="memory-manager__field-hint">改 key / 块 / 名称 → 重算召回锚点；改值 → 重算向量。改 key 同归属已存在会报错。</div>
+        <n-space justify="end">
+          <n-button @click="editEditing = false">取消</n-button>
+          <n-button type="primary" :loading="editSaving" @click="saveEdit">保存</n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import {
-  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, useDialog, useMessage
+  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, NTooltip, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPreview } from '@/api/chat'
+import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPreview, type MemoryEditRequest } from '@/api/chat'
 import { projectApi } from '@/api/project'
 import { useChatStore } from '@/stores/chat'
+import { formatRelativeTime, formatAbsoluteTime } from '@/utils/time'
 
 const chatStore = useChatStore()
 
@@ -202,6 +251,64 @@ const resolving = ref<number | null>(null)
 const batchResolving = ref<string | null>(null)
 const checkedKeys = ref<number[]>([])
 const batchDeleting = ref(false)
+
+// M1 字段筛选（前端筛，数据量小）：关键词命中 key/key_zh/value + 块下拉
+const filterKeyword = ref('')
+const filterBlock = ref<string | null>(null)
+const distinctBlocks = computed(() => {
+  const s = new Set<string>()
+  for (const m of memories.value) if (m.blockLabel) s.add(m.blockLabel)
+  return [...s].sort()
+})
+const blockOptions = computed(() => distinctBlocks.value.map(b => ({ label: b, value: b })))
+const filteredMemories = computed<UserMemory[]>(() => {
+  const kw = filterKeyword.value.trim().toLowerCase()
+  const blk = filterBlock.value
+  return memories.value.filter(m => {
+    if (blk && m.blockLabel !== blk) return false
+    if (kw) {
+      const hay = `${m.memoryKey || ''} ${m.memoryKeyZh || ''} ${m.memoryValue || ''}`.toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+// M1 行内编辑态
+const editEditing = ref(false)
+const editSaving = ref(false)
+const editTarget = ref<UserMemory | null>(null)
+const editForm = ref<MemoryEditRequest>({ memoryKey: '', memoryKeyZh: '', memoryValue: '', blockLabel: '' })
+function openEdit(m: UserMemory) {
+  editTarget.value = m
+  editForm.value = {
+    memoryKey: m.memoryKey || '',
+    memoryKeyZh: m.memoryKeyZh || '',
+    memoryValue: m.memoryValue || '',
+    blockLabel: m.blockLabel || ''
+  }
+  editEditing.value = true
+}
+async function saveEdit() {
+  if (!editTarget.value) return
+  const key = (editForm.value.memoryKey || '').trim()
+  const value = (editForm.value.memoryValue || '').trim()
+  if (!key) { message.warning('记忆 key 不能为空'); return }
+  if (!value) { message.warning('记忆值不能为空'); return }
+  editSaving.value = true
+  try {
+    await chatApi.updateMemory(editTarget.value.id, {
+      memoryKey: key,
+      memoryKeyZh: (editForm.value.memoryKeyZh || '').trim() || undefined,
+      memoryValue: value,
+      blockLabel: (editForm.value.blockLabel || '').trim() || undefined
+    })
+    message.success('记忆已更新')
+    editEditing.value = false
+    await loadMemories()
+  } catch { message.error('更新失败（key 可能同归属已存在）') }
+  finally { editSaving.value = false }
+}
 
 // 记忆注入预览
 const previewQuery = ref('')
@@ -325,24 +432,33 @@ const columns: DataTableColumns<UserMemory> = [
       ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => `⚠ ${r.conflictWith || '冲突'}`)
       : '-'
   },
-  { title: '创建', key: 'createdAt', width: 150, render: r => formatTime(r.createdAt) },
-  { title: '更新', key: 'updatedAt', width: 150, render: r => formatTime(r.updatedAt) },
+  { title: '创建', key: 'createdAt', width: 110, render: r => timeCell(r.createdAt) },
+  { title: '更新', key: 'updatedAt', width: 110, render: r => timeCell(r.updatedAt) },
   {
-    title: '归属', key: 'scope', width: 160, ellipsis: { tooltip: true },
+    title: '归属', key: 'scope', width: 180,
     render: r => {
       const tags: any[] = []
-      if (r.isGlobal !== false) tags.push(h(NTag, { size: 'small', type: 'success', bordered: false }, () => '总记忆'))
+      const homeName = r.homeProjectId == null
+        ? '总记忆(归属)'
+        : `${projectIdMap.value.get(r.homeProjectId) || '项目' + r.homeProjectId}(归属)`
+      tags.push(h(NTag, { size: 'small', type: 'info', bordered: false }, () => homeName))
+      if (r.isGlobal !== false) tags.push(h(NTag, { size: 'small', type: 'success', bordered: false }, () => '全局可见'))
       if (Array.isArray(r.projectIds)) {
         for (const pid of r.projectIds) {
-          tags.push(h(NTag, { size: 'small', bordered: false }, () => projectIdMap.value.get(pid) || `项目${pid}`))
+          if (pid === r.homeProjectId) continue      // home 已显，跳过
+          tags.push(h(NTag, { size: 'small', bordered: false }, () => `${projectIdMap.value.get(pid) || '项目' + pid}(共享)`))
         }
       }
-      return tags.length ? h(NSpace, { size: 4 }, () => tags) : '-'
+      return h(NTooltip, { placement: 'top' }, {
+        trigger: () => h(NSpace, { size: 4 }, () => tags),
+        default: () => '归属 = 记忆存于哪个 scope（决定 key 唯一性）；共享 = 可被哪些项目读取'
+      })
     }
   },
   {
-    title: '操作', key: 'actions', width: 120, fixed: 'right',
+    title: '操作', key: 'actions', width: 170, fixed: 'right',
     render: r => h(NSpace, { size: 4 }, () => [
+      h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(r) }, () => '编辑'),
       h(NButton, { size: 'small', quaternary: true, onClick: () => openScopeEdit(r) }, () => '归属'),
       h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => confirmDelete(r) }, () => '删除')
     ])
@@ -351,6 +467,15 @@ const columns: DataTableColumns<UserMemory> = [
 
 function formatTime(iso: string): string {
   try { return new Date(iso).toLocaleString('zh-CN') } catch { return iso }
+}
+
+// M1 相对时间单元格：文本相对（刚刚/N分钟前/昨天…），hover tooltip 显绝对时间
+function timeCell(iso: string | null | undefined): any {
+  if (!iso) return '-'
+  return h(NTooltip, { placement: 'top' }, {
+    trigger: () => h('span', { style: 'cursor: default' }, formatRelativeTime(iso)),
+    default: () => formatAbsoluteTime(iso)
+  })
 }
 
 async function loadMemories() {
@@ -585,4 +710,25 @@ onMounted(() => { void loadMemories(); void loadConflicts(); void loadProjects()
 }
 .memory-manager__candidate-key { color: var(--color-text-secondary, #aaa); min-width: 100px; }
 .memory-manager__candidate-val { color: var(--color-text-primary, #eee); word-break: break-all; }
+.memory-manager__filter {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.memory-manager__filter-count {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+}
+.memory-manager__field-label {
+  margin-bottom: 6px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.memory-manager__field-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #888);
+  line-height: 1.5;
+}
 </style>

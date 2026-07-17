@@ -56,7 +56,7 @@ class RuntimeExecutionServiceTest {
 
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("组合流程"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("组合流程"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(executionLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -132,7 +132,7 @@ class RuntimeExecutionServiceTest {
 
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("chat-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("chat-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(executionLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -152,7 +152,7 @@ class RuntimeExecutionServiceTest {
                 new ObjectMapper(),
                 runtimeGatewayProperties());
 
-        service.runWorkflowFromChat(10L, 7L, "你好啊").collectList().block();
+        service.runWorkflowFromChat(10L, 7L, null, "你好啊").collectList().block();
 
         ArgumentCaptor<com.superprogrammer.runtime.dto.ExecutionRequest> requestCaptor =
                 ArgumentCaptor.forClass(com.superprogrammer.runtime.dto.ExecutionRequest.class);
@@ -186,7 +186,7 @@ class RuntimeExecutionServiceTest {
         when(executionLogService.getExecutionLog(99L)).thenReturn(previous);
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("retry-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("retry-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(retryLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -242,7 +242,7 @@ class RuntimeExecutionServiceTest {
         when(executionLogService.findByCheckpointRef("checkpoint-99")).thenReturn(previous);
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("resume-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("resume-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(resumeLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -295,7 +295,7 @@ class RuntimeExecutionServiceTest {
 
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("failure-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("failure-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(executionLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -346,7 +346,7 @@ class RuntimeExecutionServiceTest {
 
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("approval-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("approval-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(executionLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -396,7 +396,7 @@ class RuntimeExecutionServiceTest {
 
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("agent-output-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("agent-output-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(executionLog);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);
@@ -460,7 +460,7 @@ class RuntimeExecutionServiceTest {
         when(executionLogService.getExecutionLog(104L)).thenReturn(waiting);
         when(workflowService.getWorkflowDetail(10L)).thenReturn(workflow);
         when(executionLogService.startRuntimeExecution(
-                eq(10L), eq("approval-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), any()))
+                eq(10L), eq("approval-flow"), eq(7L), eq("WORKFLOW"), eq(10L), eq(null), eq(null), eq(null), any()))
                 .thenReturn(resumed);
         when(runtimeGateway.run(any())).thenAnswer(invocation -> {
             com.superprogrammer.runtime.dto.ExecutionRequest request = invocation.getArgument(0);

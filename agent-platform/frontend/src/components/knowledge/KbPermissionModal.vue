@@ -50,6 +50,7 @@
         :data="rows"
         :loading="loadingPerms"
         :pagination="false"
+        :scroll-x="600"
         size="small"
       />
       <n-empty v-if="!loadingPerms && rows.length === 0" description="暂无授权" />

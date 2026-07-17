@@ -503,13 +503,26 @@ public class ChatSessionService {
                     }
                     messageMapper.insert(assistantMsg);
 
+                    // P3：CITATION 事件（DONE 前发，前端聊天 [n] 引用回显；仅 RAG 命中且非空时）
+                    java.util.List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> cites = rag.citations();
+                    StreamEvent citationEvt = null;
+                    if (cites != null && !cites.isEmpty()) {
+                        try {
+                            citationEvt = StreamEvent.citation(new ObjectMapper().writeValueAsString(cites));
+                        } catch (Exception ignored) {}
+                    }
+
+                    java.util.List<StreamEvent> tail = new java.util.ArrayList<>();
                     if (askText != null) {
-                        return Flux.just(StreamEvent.chunk("\n\n" + askText), StreamEvent.done());
+                        tail.add(StreamEvent.chunk("\n\n" + askText));
+                    } else if (disclaimer != null) {
+                        tail.add(StreamEvent.chunk(disclaimer));
                     }
-                    if (disclaimer != null) {
-                        return Flux.just(StreamEvent.chunk(disclaimer), StreamEvent.done());
+                    if (citationEvt != null) {
+                        tail.add(citationEvt);
                     }
-                    return Flux.just(StreamEvent.done());
+                    tail.add(StreamEvent.done());
+                    return Flux.fromIterable(tail);
                 }).subscribeOn(Schedulers.boundedElastic()))
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
@@ -672,11 +685,13 @@ public class ChatSessionService {
 
     // ============================ 阶段5 RAG（CHAT 模式）============================
 
-    /** RAG 注入结果：abstained→短路 ABSTAIN_MSG；否则 evidenceContext 注入 SYSTEM + injectedIndexes 供 post-gen 校验。 */
+    /** RAG 注入结果：abstained→短路 ABSTAIN_MSG；否则 evidenceContext 注入 SYSTEM + injectedIndexes 供 post-gen 校验。
+     *  P3：citations 透传给流式 CITATION 事件，前端聊天回显 [n] 引用（IMAGE 缩略图 / FILE 下载链）。 */
     private record RagInjection(boolean abstained, String answer, String evidenceContext,
-                                java.util.Set<Integer> injectedIndexes) {
+                                java.util.Set<Integer> injectedIndexes,
+                                java.util.List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> citations) {
         static RagInjection none() {
-            return new RagInjection(false, null, null, null);
+            return new RagInjection(false, null, null, null, null);
         }
     }
 
@@ -698,9 +713,9 @@ public class ChatSessionService {
         com.superprogrammer.knowledge.dto.EvidenceResult ev =
                 ragRetrievalService.retrieveEvidence(effective, query, userId, admin);
         if (ev.isAbstained()) {
-            return new RagInjection(true, ev.getAnswer(), null, null);
+            return new RagInjection(true, ev.getAnswer(), null, null, null);
         }
-        return new RagInjection(false, null, ev.getSystemPrompt(), ev.getInjectedIndexes());
+        return new RagInjection(false, null, ev.getSystemPrompt(), ev.getInjectedIndexes(), ev.getCitations());
     }
 
     private boolean isAdmin() {

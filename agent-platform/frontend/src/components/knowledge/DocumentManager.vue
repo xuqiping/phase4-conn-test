@@ -6,12 +6,13 @@
       :custom-request="customUpload"
       :show-file-list="false"
       multiple
-      accept=".md,.txt,.markdown,.pdf,.docx,.doc,.html,.xlsx,.xls"
+      accept=".md,.txt,.markdown,.pdf,.docx,.doc,.html,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     >
       <n-upload-dragger>
         <div class="doc-manager__dragger">
           <n-icon size="32" :component="CloudUploadOutline" color="var(--color-text-tertiary)" />
-          <p class="doc-manager__hint">点击或拖拽文件到此处上传（md / txt / pdf / docx / html / xlsx）</p>
+          <p class="doc-manager__hint">点击或拖拽文件到此处上传（md / txt / pdf / docx / html / xlsx / 图片）</p>
+          <p class="doc-manager__hint doc-manager__hint--sub">上传时可选「图片/文件知识库」+ 索引方式（手动给文本 / 自动抽取）</p>
           <p v-if="uploading" class="doc-manager__uploading">上传中…</p>
         </div>
       </n-upload-dragger>
@@ -30,14 +31,14 @@
     />
     <n-empty v-if="!loading && docs.length === 0" description="暂无文档，上传一个开始解析与索引" />
 
-    <!-- Excel sheet 选择（picker）-->
-    <SheetPickerModal
-      v-model:show="sheetPickerShow"
-      :file-name="sheetPickerFile"
-      :sheet-names="sheetPickerNames"
+    <!-- 上传选项（docType / 索引方式 / 手动文本 / Excel sheet） -->
+    <DocumentOptionsModal
+      v-model:show="optionsModalShow"
+      :file-name="optionsModalFile"
+      :sheet-names="optionsModalNames"
       :loading="uploading"
-      @confirm="onSheetConfirm"
-      @cancel="onSheetCancel"
+      @confirm="onOptionsConfirm"
+      @cancel="onOptionsCancel"
     />
   </div>
 </template>
@@ -51,8 +52,8 @@ import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
 import { CloudUploadOutline } from '@vicons/ionicons5'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { knowledgeApi } from '@/api/knowledge'
-import type { KnowledgeDocument, KnowledgeNode, SheetPreview } from '@/api/knowledge'
-import SheetPickerModal from './SheetPickerModal.vue'
+import type { KnowledgeDocument, KnowledgeNode, SheetPreview, UploadOptions } from '@/api/knowledge'
+import DocumentOptionsModal from './DocumentOptionsModal.vue'
 
 const props = defineProps<{
   kbId: number
@@ -97,18 +98,25 @@ function onExpandedChange(keys: Array<string | number>) {
 }
 
 function renderDocNodes(doc: KnowledgeDocument) {
+  const children: ReturnType<typeof h>[] = []
+  // IMAGE/FILE 文档：节点列表顶部渲染原件（缩略图 / 下载）
+  if (doc.docType === 'IMAGE' || doc.docType === 'FILE') {
+    children.push(renderAsset(doc))
+  }
   if (loadingNodes.value[doc.id]) {
-    return h('p', { class: 'doc-manager__node-loading' }, '加载节点中…')
+    children.push(h('p', { class: 'doc-manager__node-loading' }, '加载节点中…'))
+    return h('div', { class: 'doc-manager__nodes' }, children)
   }
   const nodes = docNodes.value[doc.id]
   if (!nodes || nodes.length === 0) {
-    return h('p', { class: 'doc-manager__node-empty' }, '暂无节点（文档未索引或未解析出结构）')
+    children.push(h('p', { class: 'doc-manager__node-empty' }, '暂无节点（文档未索引或未解析出结构）'))
+    return h('div', { class: 'doc-manager__nodes' }, children)
   }
   // 按 parentId 建一层：根节点（parentId 为空或指向文档级 L0）直排，L2 缩进。
   return h(
     'div',
     { class: 'doc-manager__nodes' },
-    nodes.map(node => {
+    children.concat(nodes.map(node => {
       const isL0 = node.level === 'L0'
       return h('div', { class: ['doc-manager__node', isL0 ? '' : 'doc-manager__node--child'] }, [
         h('div', { class: 'doc-manager__node-head' }, [
@@ -124,8 +132,28 @@ function renderDocNodes(doc: KnowledgeDocument) {
           ? h('pre', { class: 'doc-manager__node-content' }, node.content)
           : h('span', { class: 'doc-manager__node-empty' }, '（无内容）')
       ])
-    })
+    }))
   )
+}
+
+/** IMAGE/FILE 原件回显：图片显缩略图，文件显下载按钮（asset URL 经 KB 读权限，跨用户可取）。 */
+function renderAsset(doc: KnowledgeDocument) {
+  const url = knowledgeApi.documentAssetUrl(doc.id)
+  const name = doc.originalName || doc.title || String(doc.id)
+  if (doc.docType === 'IMAGE') {
+    return h('div', { class: 'doc-manager__asset' }, [
+      h('img', {
+        class: 'doc-manager__asset-img',
+        src: url,
+        alt: name,
+        loading: 'lazy'
+      })
+    ])
+  }
+  return h('div', { class: 'doc-manager__asset' }, [
+    h(NButton, { size: 'small', tag: 'a', href: url, target: '_blank', type: 'primary' },
+      () => `下载原件：${name}`)
+  ])
 }
 
 const PROCESSING = new Set(['PENDING', 'PARSING', 'SUMMARIZING', 'EMBEDDING'])
@@ -189,11 +217,12 @@ watch(() => props.kbId, async (id) => {
   if (id) await store.loadDocuments(id)
 })
 
-// Excel sheet picker 状态
-const sheetPickerShow = ref(false)
-const sheetPickerFile = ref('')
-const sheetPickerNames = ref<string[]>([])
+// 上传选项 modal 状态（统一入口：所有文件先开 modal 选 docType/索引方式；Excel 额外预读 sheet）
+const optionsModalShow = ref(false)
+const optionsModalFile = ref('')
+const optionsModalNames = ref<string[]>([])
 let pendingPreview: SheetPreview | null = null
+let pendingFile: File | null = null
 
 function isExcel(name: string) {
   const n = name.toLowerCase()
@@ -202,52 +231,54 @@ function isExcel(name: string) {
 
 async function customUpload({ file, onFinish, onError }: UploadCustomRequestOptions) {
   if (!file.file) return
-  uploading.value = true
   try {
+    pendingFile = file.file
     if (isExcel(file.name)) {
-      // Excel：阶段1 preview → 弹 picker → 阶段2 复用 tempFileRef 上传（零重传）
+      // Excel：阶段1 预读 sheet 名（供 modal 勾选）
       const preview = await store.previewSheets(props.kbId, file.file)
-      if (!preview || preview.sheetNames.length === 0) {
-        message.warning('该 Excel 未读到任何 sheet（空文件或格式不支持）')
-        onError()
-        return
-      }
       pendingPreview = preview
-      sheetPickerFile.value = preview.fileName
-      sheetPickerNames.value = preview.sheetNames
-      sheetPickerShow.value = true
-      onFinish()   // n-upload 请求结束（实际上传在 confirm）
+      optionsModalFile.value = (preview && preview.fileName) || file.name
+      optionsModalNames.value = (preview && preview.sheetNames) || []
     } else {
-      await store.uploadDocument(props.kbId, file.file)
-      message.success(`已上传：${file.name}`)
-      onFinish()
+      pendingPreview = null
+      optionsModalFile.value = file.name
+      optionsModalNames.value = []
     }
+    optionsModalShow.value = true
+    onFinish()   // n-upload 请求结束（实际上传在 confirm）
   } catch {
     message.error(`上传失败：${file.name}`)
     onError()
-  } finally {
-    uploading.value = false
   }
 }
 
-async function onSheetConfirm(sheets: string[]) {
-  if (!pendingPreview) return
+async function onOptionsConfirm(payload: UploadOptions & { selectedSheets: string[] }) {
   uploading.value = true
   try {
-    await store.uploadDocumentSheets(props.kbId, pendingPreview.tempFileRef, sheets)
-    message.success(`已上传：${pendingPreview.fileName}`)
-    sheetPickerShow.value = false
+    if (pendingPreview) {
+      // Excel：复用 tempFileRef + 选定 sheet（空=导全部）+ 选项
+      await store.uploadDocumentSheets(props.kbId, pendingPreview.tempFileRef,
+        payload.selectedSheets, payload)
+    } else if (pendingFile) {
+      await store.uploadDocument(props.kbId, pendingFile, payload)
+    } else {
+      return
+    }
+    message.success(`已上传：${optionsModalFile.value}`)
+    optionsModalShow.value = false
     pendingPreview = null
+    pendingFile = null
   } catch {
-    message.error('Excel 上传失败')
+    message.error('上传失败')
   } finally {
     uploading.value = false
   }
 }
 
-function onSheetCancel() {
-  sheetPickerShow.value = false
+function onOptionsCancel() {
+  optionsModalShow.value = false
   pendingPreview = null
+  pendingFile = null
 }
 
 async function remove(doc: KnowledgeDocument) {
@@ -345,5 +376,23 @@ onUnmounted(() => {
   padding: var(--spacing-2) var(--spacing-3);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+}
+
+.doc-manager__hint--sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.doc-manager__asset {
+  padding: var(--spacing-2) var(--spacing-3);
+  margin-bottom: var(--spacing-2);
+}
+
+.doc-manager__asset-img {
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-border);
+  object-fit: contain;
 }
 </style>

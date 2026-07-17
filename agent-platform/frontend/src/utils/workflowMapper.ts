@@ -27,7 +27,9 @@ const CONFIG_KEYS: Array<keyof NodeData> = [
   'descriptionEditable',
   'kbId',
   'kbIds',
-  'query'
+  'query',
+  'questionTemplate',
+  'options'
 ]
 
 const FLOW_TO_BACKEND_TYPE: Record<string, string> = {
@@ -42,6 +44,7 @@ const FLOW_TO_BACKEND_TYPE: Record<string, string> = {
   parallel: 'PARALLEL',
   join: 'JOIN',
   human_approval: 'HUMAN_APPROVAL',
+  human_input: 'HUMAN_INPUT',
   tool_call: 'TOOL_CALL',
   retrieval: 'RETRIEVAL'
 }

@@ -283,4 +283,15 @@ async function handleCleanup() {
   color: var(--color-text-secondary);
   font-size: 12px;
 }
+
+@media (max-width: 768px) {
+  .rag-memory-settings__form {
+    max-width: 100%;
+  }
+  .rag-memory-settings__hint {
+    display: block;
+    margin-left: 0;
+    margin-top: 4px;
+  }
+}
 </style>
