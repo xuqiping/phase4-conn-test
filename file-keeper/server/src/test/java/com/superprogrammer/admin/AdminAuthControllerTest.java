@@ -46,6 +46,7 @@ class AdminAuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accessToken").isString())
                 .andExpect(jsonPath("$.data.refreshToken").isString())
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(900))
                 .andExpect(jsonPath("$.data.user.role").value("super_admin"))
                 .andReturn();
 

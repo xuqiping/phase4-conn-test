@@ -2,6 +2,7 @@ package com.superprogrammer.user.service;
 
 import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
+import com.superprogrammer.config.AuthProperties;
 import com.superprogrammer.security.AuthConstants;
 import com.superprogrammer.security.JwtService;
 import com.superprogrammer.security.RefreshTokenService;
@@ -24,6 +25,7 @@ public class UserAuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final SystemSettingService systemSettingService;
+    private final AuthProperties authProperties;
 
     public UserSummary register(RegisterRequest request) {
         String email = StringUtils.hasText(request.email())
@@ -105,7 +107,9 @@ public class UserAuthService {
 
     private AuthResponse createAuthResponse(User user, String refreshToken) {
         String accessToken = jwtService.createAccessToken(user.getId(), user.getRole(), user.getStatus());
-        long expiresInSeconds = 15 * 60;
+        long expiresInSeconds = AuthConstants.ROLE_SUPER_ADMIN.equals(user.getRole())
+                ? authProperties.getJwt().getAccessTokenMinutes() * 60
+                : authProperties.getJwt().getClientAccessTokenHours() * 60 * 60;
         return new AuthResponse(accessToken, refreshToken, expiresInSeconds, userRepository.toSummary(user));
     }
 }

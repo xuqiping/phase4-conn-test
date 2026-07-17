@@ -47,6 +47,17 @@ class ClientAuthorizationTest {
     }
 
     @Test
+    void clientLoginReturns24HourAccessTokenExpiration() throws Exception {
+        insertUser("user@example.com", "active", 1, 60);
+
+        mockMvc.perform(post("/api/client/auth/login")
+                        .contentType("application/json")
+                        .content("{\"identifier\":\"user@example.com\",\"password\":\"Password123!\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(86400));
+    }
+
+    @Test
     void activeUserWithEntitlementAndBoundDeviceGetsAuthorizationSnapshot() throws Exception {
         Long userId = insertUser("user@example.com", "active", 2, 60);
         insertDevice(userId, "device-001", "active");
