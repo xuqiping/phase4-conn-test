@@ -28,7 +28,8 @@ file-keeper:
   auth:
     jwt:
       secret: test-file-keeper-jwt-secret-at-least-32-bytes
-      access-token-minutes: 15
+      access-token-minutes: 1
+      client-access-token-hours: 24
     refresh-token:
       days: 7
     verification:
