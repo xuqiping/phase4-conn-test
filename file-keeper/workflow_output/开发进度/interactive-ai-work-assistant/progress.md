@@ -18,6 +18,21 @@
 
 ## 最近更新
 
+- 2026-07-18：Phase 4 运行验证 — 认证与 token 刷新修复
+  - 验证内容：
+    1. 超管 access token 改为 1 分钟后，登录 + refresh 机制正确，不需要重新登录；
+    2. 后端 `expiresInSeconds` 按角色返回正确值（普通用户 86400 秒、超管 900 秒）；
+    3. 未登录时 `work-report` 模块不再周期性调用认证接口。
+  - 验证方式：后端集成测试 `AdminTokenRefreshVerificationTest` + `ClientAuthorizationTest` + `AdminAuthControllerTest`；前端 Vitest 相关测试。
+  - 测试结果：
+    - `AdminTokenRefreshVerificationTest`：2/2 通过（含 61 秒等待后 refresh 场景）
+    - `ClientAuthorizationTest` + `AdminAuthControllerTest`：7/7 通过
+    - 前端相关测试：50/50 通过
+  - 环境限制：当前机器未安装 PostgreSQL/Redis/Docker/WSL，未能启动真实后端 + 桌面客户端做端到端验证和性能评测。
+  - 产出文档：
+    - `workflow_output/docs/run-guide/快速启动速查表.md`
+    - `workflow_output/docs/run-guide/Phase4-认证与token刷新修复-验证记录.md`
+  - Commit：`5091ca9`
 - 2026-07-18：修复登录账号 15 分钟后被提示「未登录」的隐患
   - 问题根因：后端 `UserAuthService.createAuthResponse` 把 `expiresInSeconds` 硬编码为 `15 * 60`，但 `JwtService` 实际给普通用户签发的 access token 是 24 小时。前端据此每 15 分钟做一次 token 刷新，一旦某次刷新因网络/Redis 等原因失败，用户就会被踢到未登录状态。
   - 修复文件：`server/src/main/java/com/superprogrammer/user/service/UserAuthService.java`
