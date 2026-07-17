@@ -250,8 +250,12 @@ public class MemoryService {
                                 .map(UserMemory::getId).collect(Collectors.toList());
                         if (ids.isEmpty()) ids = members.stream().map(UserMemory::getId).collect(Collectors.toList());
                     }
+                    // V38 bug 修：快照带 keyZh + entities + anchor，否则 resolve/flag 物化新行这俩字段（+ 召回词袋）丢
+                    String snapEntities = entitiesJson(f.entities());
+                    AnchorEmbedding snapAnchor = embedAnchor(fc.br.blockLabel(), f.keyZh(), f.key(), snapEntities);
                     var snap = new MemoryConflictService.ExtractedFactSnapshot(
-                            f.category(), f.key(), f.value(), f.confidence().toPlainString(), fc.br.halfvec());
+                            f.category(), f.key(), f.keyZh(), f.value(), f.confidence().toPlainString(), fc.br.halfvec(),
+                            snapEntities, snapAnchor.halfvec(), snapAnchor.tokens());
                     var pending = conflictService.getActivePendingOrExpire(sessionId, userId);
                     if (pending == null) {
                         conflictService.createPending(userId, sessionId, fc.br.blockLabel(), snap, ids, r.askText());

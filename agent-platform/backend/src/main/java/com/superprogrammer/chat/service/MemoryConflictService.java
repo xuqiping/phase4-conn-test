@@ -53,9 +53,7 @@ public class MemoryConflictService {
         c.setStatus("PENDING");
         c.setExpiresAt(OffsetDateTime.now().plusMinutes(RagConfig.MEMORY_CONFLICT_EXPIRE_MIN));
         try {
-            c.setNewMemory(objectMapper.writeValueAsString(Map.of(
-                    "category", snap.category(), "key", snap.key(),
-                    "value", snap.value(), "confidence", snap.confidence())));
+            c.setNewMemory(objectMapper.writeValueAsString(snapToMap(snap)));
             c.setNewEmbedding(snap.halfvec());
             c.setExistingMemoryIds(existingIds);
             // PG bigint[] 字面量须 {id1,id2}（花括无空格），非 List.toString() 的 [a, b]
@@ -82,9 +80,7 @@ public class MemoryConflictService {
         c.setStatus("FLAGGED");
         c.setExpiresAt(null);
         try {
-            c.setNewMemory(objectMapper.writeValueAsString(Map.of(
-                    "category", snap.category(), "key", snap.key(),
-                    "value", snap.value(), "confidence", snap.confidence())));
+            c.setNewMemory(objectMapper.writeValueAsString(snapToMap(snap)));
             c.setNewEmbedding(snap.halfvec());
             c.setExistingMemoryIds(existingIds);
             String arrLiteral = "{" + String.join(",", existingIds.stream().map(String::valueOf).toList()) + "}";
@@ -95,6 +91,7 @@ public class MemoryConflictService {
             m.setUserId(userId);
             m.setCategory(snap.category());
             m.setMemoryKey(snap.key());
+            m.setMemoryKeyZh(snap.keyZh());
             m.setMemoryValue(snap.value());
             m.setSource("INFERRED");
             m.setConfidence(new BigDecimal(snap.confidence()));
@@ -103,7 +100,9 @@ public class MemoryConflictService {
             m.setIsGlobal(writeTargetProjectId == null);
             // V34：冲突行也记 home（与写目标对齐）；resolve 后 survivor 清 conflict_id 变 clean 时 home 已正确，不撞唯一约束
             m.setHomeProjectId(writeTargetProjectId);
-            memoryMapper.insertMemory(m, snap.halfvec(), null, null);
+            m.setEntities(snap.entitiesJson());
+            // V38 bug 修：冲突新行同 applyClean 落 key_zh/entities + anchor 两列（否则 KEEP_NEW survivor 召回词袋/中文标签丢）
+            memoryMapper.insertMemory(m, snap.halfvec(), snap.anchorHalfvec(), snap.anchorTokens());
             if (writeTargetProjectId != null) {
                 memoryMapper.insertMemoryProjects(m.getId(), List.of(writeTargetProjectId));
             }
@@ -144,7 +143,7 @@ public class MemoryConflictService {
             Boolean isGlobal = ref == null ? null : ref.getIsGlobal();
             List<Long> pids = ref == null ? List.of() : memoryMapper.findProjectIdsByMemory(ref.getId());
             UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, home, isGlobal);
-            memoryMapper.insertMemory(m, halfvec, null, null);
+            memoryMapper.insertMemory(m, halfvec, (String) snap.get("anchorHalfvec"), (String) snap.get("anchorTokens"));
             if (!Boolean.TRUE.equals(m.getIsGlobal()) && !pids.isEmpty()) {
                 memoryMapper.insertMemoryProjects(m.getId(), pids);
             }
@@ -275,7 +274,8 @@ public class MemoryConflictService {
     private void insertSnapScoped(MemoryConflict c, Map<String, Object> snap, String halfvec,
                                   Long homeProjectId, Boolean isGlobal, List<Long> projectIds) {
         UserMemory m = buildFromSnap(c.getUserId(), c.getBlockLabel(), snap, homeProjectId, isGlobal);
-        memoryMapper.insertMemory(m, halfvec, null, null);
+        // V38 bug 修：anchor 从快照透传（建快照时已 embed），不再传 null 丢召回词袋
+        memoryMapper.insertMemory(m, halfvec, (String) snap.get("anchorHalfvec"), (String) snap.get("anchorTokens"));
         if (!Boolean.TRUE.equals(m.getIsGlobal()) && projectIds != null && !projectIds.isEmpty()) {
             memoryMapper.insertMemoryProjects(m.getId(), projectIds);
         }
@@ -394,6 +394,21 @@ public class MemoryConflictService {
         return snap;
     }
 
+    /** 快照 → JSON map（LinkedHashMap 容 null 值：keyZh/entities/anchor 老快照或空事实可能为 null，Map.of 拒 null 会抛）。
+     *  V38：补 keyZh/entities/anchorHalfvec/anchorTokens，下游 buildFromSnap/insertSnapScoped 透传不丢字段。 */
+    private Map<String, Object> snapToMap(ExtractedFactSnapshot snap) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("category", snap.category());
+        map.put("key", snap.key());
+        map.put("keyZh", snap.keyZh());
+        map.put("value", snap.value());
+        map.put("confidence", snap.confidence());
+        map.put("entities", snap.entitiesJson());
+        map.put("anchorHalfvec", snap.anchorHalfvec());
+        map.put("anchorTokens", snap.anchorTokens());
+        return map;
+    }
+
     private void hardDelete(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
         memoryMapper.deleteBatchIds(ids);
@@ -405,10 +420,12 @@ public class MemoryConflictService {
         m.setUserId(userId);
         m.setCategory((String) snap.get("category"));
         m.setMemoryKey((String) snap.get("key"));
+        m.setMemoryKeyZh((String) snap.get("keyZh"));
         m.setMemoryValue((String) snap.get("value"));
         m.setSource("INFERRED");
         m.setConfidence(new BigDecimal(String.valueOf(snap.get("confidence"))));
         m.setBlockLabel(block);
+        m.setEntities((String) snap.get("entities"));
         // V35：落 home + 可见性，否则默认 global 撞既有 global 同 key 唯一约束
         m.setHomeProjectId(homeProjectId);
         m.setIsGlobal(isGlobal == null ? Boolean.TRUE : isGlobal);
@@ -436,7 +453,10 @@ public class MemoryConflictService {
         return ids;
     }
 
-    /** 快照值对象（从 ExtractedFact + halfvec 组装）。 */
-    public record ExtractedFactSnapshot(String category, String key, String value,
-                                        String confidence, String halfvec) {}
+    /** 快照值对象（从 ExtractedFact + halfvec + anchor 组装）。
+     *  V38 bug 修：补 keyZh + entitiesJson + anchor 两列——否则 KEEP_NEW/flag/createFlagged
+     *  物化新行时这俩字段（+ anchor 召回词袋）全丢，survivor 行 entities/memory_key_zh 变空。 */
+    public record ExtractedFactSnapshot(String category, String key, String keyZh, String value,
+                                        String confidence, String halfvec,
+                                        String entitiesJson, String anchorHalfvec, String anchorTokens) {}
 }
