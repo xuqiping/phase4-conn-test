@@ -59,15 +59,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useWorkReportStore } from '@/stores/workReportStore'
+import { useAuthStore } from '@/stores/authStore'
 import { useI18n } from '@/composables/useI18n'
 import type { InboxIntent } from '@/types/inbox'
 
 const store = useWorkReportStore()
+const authStore = useAuthStore()
 const { t } = useI18n()
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
+  if (!authStore.isAuthenticated) {
+    return
+  }
   store.loadInbox()
   // MVP 使用轮询；后端 SSE 已就绪，后续可替换为 EventSource
   pollTimer = setInterval(() => store.loadInbox(), 30000)

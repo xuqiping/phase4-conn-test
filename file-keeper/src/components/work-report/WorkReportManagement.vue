@@ -113,6 +113,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useWorkReportStore } from '@/stores/workReportStore'
+import { useAuthStore } from '@/stores/authStore'
 import { useI18n } from '@/composables/useI18n'
 import WorkLogEditor from './WorkLogEditor.vue'
 import FixedWorkPanel from './FixedWorkPanel.vue'
@@ -129,6 +130,7 @@ import type { MainTab } from '@/stores/workReportStore'
 import type { RecurrenceType } from '@/types/workReport'
 
 const store = useWorkReportStore()
+const authStore = useAuthStore()
 const { t } = useI18n()
 const activePanel = ref<'main' | 'config' | 'push-config' | 'history'>('main')
 
@@ -158,6 +160,9 @@ watch(() => store.activeMainTab, () => {
 })
 
 onMounted(() => {
+  if (!authStore.isAuthenticated) {
+    return
+  }
   store.loadToday()
 })
 
