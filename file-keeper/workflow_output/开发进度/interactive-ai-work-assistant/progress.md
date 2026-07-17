@@ -18,6 +18,18 @@
 
 ## 最近更新
 
+- 2026-07-18：Phase 4 真实端到端验证完成
+  - 按 `workflow_output/docs/run-guide/0_项目启动命令.md` 启动完整环境：Memurai（Redis）、PostgreSQL 17.4 便携版、Java 后端（端口 8088）、Tauri 桌面端 dev server（端口 1420）。
+  - 超管账号 `adm@example.com` / `adm123` 已自动创建并登录成功。
+  - 临时将 `application-dev.yml` 中 `access-token-minutes` 覆盖为 1，验证：
+    - 登录返回 `expiresInSeconds = 60`；
+    - 立即 refresh 成功；
+    - **等待 61 秒**让 access token 真正过期后 refresh 仍然成功；
+    - 用新 access token 访问 `/api/admin/users` 返回 HTTP 200。
+  - 匿名授权接口 `/api/anonymous/authorization` 返回 200，未登录场景不再报「未登录」。
+  - Tauri 桌面窗口因后台无 GUI 未截图，但 dev server 与后端均跑通。
+  - 验证完成后已将 `application-dev.yml` 改回默认（不覆盖 `access-token-minutes`）。
+  - Commit：`ffeb7bc`
 - 2026-07-18：Phase 4 运行验证 — 认证与 token 刷新修复
   - 验证内容：
     1. 超管 access token 改为 1 分钟后，登录 + refresh 机制正确，不需要重新登录；
