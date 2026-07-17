@@ -18,6 +18,13 @@
 
 ## 最近更新
 
+- 2026-07-18：修复登录账号 15 分钟后被提示「未登录」的隐患
+  - 问题根因：后端 `UserAuthService.createAuthResponse` 把 `expiresInSeconds` 硬编码为 `15 * 60`，但 `JwtService` 实际给普通用户签发的 access token 是 24 小时。前端据此每 15 分钟做一次 token 刷新，一旦某次刷新因网络/Redis 等原因失败，用户就会被踢到未登录状态。
+  - 修复文件：`server/src/main/java/com/superprogrammer/user/service/UserAuthService.java`
+  - 修复方式：根据用户角色从 `AuthProperties` 读取对应过期时间返回：普通用户 24 小时（`clientAccessTokenHours * 3600`），超管 15 分钟（`accessTokenMinutes * 60`）。
+  - 测试覆盖：`ClientAuthorizationTest` 验证普通用户登录返回 86400 秒；`AdminAuthControllerTest` 验证超管登录返回 900 秒。
+  - 测试结果：`ClientAuthorizationTest`（4 通过）、`AdminAuthControllerTest`（3 通过）。
+  - Commit：`dc61625`
 - 2026-07-18：修复未登录时工作助手模块周期性报「未登录」bug
   - 问题根因：`InboxPanel.vue` 挂载后每 30 秒轮询 `loadInbox()`，且 `WorkReportManagement.vue` 挂载即调用 `loadToday()`；两者均通过 `workReportStore.getAuthContext()` 强依赖 `accessToken`，未登录时直接抛错并在 UI 顶部红色提示。
   - 修复文件：`src/components/work-report/InboxPanel.vue`、`src/components/work-report/WorkReportManagement.vue`
