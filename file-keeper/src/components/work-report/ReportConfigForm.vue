@@ -63,6 +63,10 @@
               <input v-model="editingConfig.includeInspirationDigest" type="checkbox" />
               <span>{{ t('workReport.includeInspirationDigest') }}</span>
             </label>
+            <label class="flex items-center space-x-2 text-sm">
+              <input v-model="editingConfig.inspirationReviewEnabled" type="checkbox" />
+              <span>{{ t('workReport.inspirationReviewEnabled') }}</span>
+            </label>
           </div>
 
           <div class="border-t border-gray-200 dark:border-dark-border pt-3">
@@ -178,6 +182,10 @@
             <input v-model="newConfig.includeInspirationDigest" type="checkbox" />
             <span>{{ t('workReport.includeInspirationDigest') }}</span>
           </label>
+          <label class="flex items-center space-x-2 text-sm">
+            <input v-model="newConfig.inspirationReviewEnabled" type="checkbox" />
+            <span>{{ t('workReport.inspirationReviewEnabled') }}</span>
+          </label>
         </div>
 
         <div class="border-t border-gray-200 dark:border-dark-border pt-3">
@@ -269,6 +277,7 @@ function defaultConfig(): Partial<ReportConfig> {
     aiEnabled: true,
     aiConfigId: undefined,
     includeInspirationDigest: true,
+    inspirationReviewEnabled: false,
     pushTargetIds: [],
   }
 }

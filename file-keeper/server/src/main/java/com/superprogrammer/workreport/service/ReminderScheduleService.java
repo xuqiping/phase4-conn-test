@@ -26,12 +26,15 @@ public class ReminderScheduleService {
     private final FixedWorkItemRepository fixedWorkItemRepository;
     private final FuturePlanRepository futurePlanRepository;
     private final ReminderPushService reminderPushService;
+    private final InspirationReviewService inspirationReviewService;
 
     @Scheduled(cron = "0 * * * * ?")
     @Transactional
     public void scanReminders() {
+        OffsetDateTime now = OffsetDateTime.now();
         scanFuturePlans();
         scanFixedWork();
+        inspirationReviewService.scanAndPush(now);
     }
 
     private void scanFuturePlans() {

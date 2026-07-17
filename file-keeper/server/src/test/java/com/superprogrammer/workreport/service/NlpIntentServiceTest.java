@@ -17,10 +17,33 @@ class NlpIntentServiceTest {
 
     @Test
     void shouldParseCompleteFixedWork() {
-        NlpIntentService.IntentResult result = service().parse(1L, "完成日报设计");
-        assertThat(result.intent()).isEqualTo("complete_fixed_work");
-        assertThat(result.confidence()).isGreaterThanOrEqualTo(0.85);
-        assertThat(result.entities().get("task_name")).isEqualTo("日报设计");
+        assertComplete("完成日报设计", "日报设计");
+        assertComplete("做完了日报设计", "日报设计");
+        assertComplete("搞定日报设计", "日报设计");
+        assertComplete("标记完成日报设计", "日报设计");
+        assertComplete("标记日报设计为完成", "日报设计");
+        assertComplete("把日报设计标记为完成", "日报设计");
+        assertComplete("将日报设计标记完成", "日报设计");
+        assertComplete("日报设计标记为完成", "日报设计");
+        assertComplete("日报设计完成了", "日报设计");
+        assertComplete("done with daily report design", "daily report design");
+        assertComplete("finish daily report design", "daily report design");
+        assertComplete("finished daily report design", "daily report design");
+        assertComplete("completed daily report design", "daily report design");
+    }
+
+    private void assertComplete(String text, String expectedTask) {
+        NlpIntentService.IntentResult result = service().parse(1L, text);
+        assertThat(result.intent()).as("intent for: " + text).isEqualTo("complete_fixed_work");
+        assertThat(result.confidence()).as("confidence for: " + text).isGreaterThanOrEqualTo(0.85);
+        assertThat(result.entities().get("task_name")).as("task_name for: " + text).isEqualTo(expectedTask);
+    }
+
+    @Test
+    void shouldReturnUnknownWhenOnlySayDoneWithoutTaskName() {
+        assertThat(service().parse(1L, "我完成了").intent()).isEqualTo("unknown");
+        assertThat(service().parse(1L, "我搞定了").intent()).isEqualTo("unknown");
+        assertThat(service().parse(1L, "我标记为完成").intent()).isEqualTo("unknown");
     }
 
     @Test
@@ -42,6 +65,21 @@ class NlpIntentServiceTest {
     void shouldReturnUnknownForUnrecognized() {
         NlpIntentService.IntentResult result = service().parse(1L, "你好");
         assertThat(result.intent()).isEqualTo("unknown");
+    }
+
+    @Test
+    void shouldParseHelpCommand() {
+        assertThat(service().parse(1L, "/help").intent()).isEqualTo("help");
+        assertThat(service().parse(1L, "help").intent()).isEqualTo("help");
+        assertThat(service().parse(1L, "帮助").intent()).isEqualTo("help");
+        assertThat(service().parse(1L, "怎么用").intent()).isEqualTo("help");
+        assertThat(service().parse(1L, "?").intent()).isEqualTo("help");
+    }
+
+    @Test
+    void helpIntentShouldHaveHighConfidence() {
+        NlpIntentService.IntentResult result = service().parse(1L, "/help");
+        assertThat(result.confidence()).isGreaterThanOrEqualTo(0.85);
     }
 
     static class NoOpLlmIntentClient extends LlmIntentClient {

@@ -65,6 +65,7 @@ public class ReportConfigService {
         config.setAiEnabled(request.aiEnabled() == null ? true : request.aiEnabled());
         config.setAiConfigId(request.aiConfigId());
         config.setIncludeInspirationDigest(request.includeInspirationDigest() == null ? true : request.includeInspirationDigest());
+        config.setInspirationReviewEnabled(request.inspirationReviewEnabled() != null && request.inspirationReviewEnabled());
         config.setCreatedBy(userId);
         config.setUpdatedBy(userId);
         return reportConfigRepository.insert(config);
@@ -81,6 +82,7 @@ public class ReportConfigService {
         config.setAiEnabled(request.aiEnabled() == null ? config.getAiEnabled() : request.aiEnabled());
         config.setAiConfigId(request.aiConfigId() == null ? config.getAiConfigId() : request.aiConfigId());
         config.setIncludeInspirationDigest(request.includeInspirationDigest() == null ? config.getIncludeInspirationDigest() : request.includeInspirationDigest());
+        config.setInspirationReviewEnabled(request.inspirationReviewEnabled() == null ? config.getInspirationReviewEnabled() : request.inspirationReviewEnabled());
         config.setUpdatedBy(userId);
         return reportConfigRepository.update(config);
     }
@@ -161,6 +163,7 @@ public class ReportConfigService {
                 config.getAiEnabled(),
                 config.getAiConfigId(),
                 config.getIncludeInspirationDigest(),
+                config.getInspirationReviewEnabled(),
                 pushTargets
         );
     }

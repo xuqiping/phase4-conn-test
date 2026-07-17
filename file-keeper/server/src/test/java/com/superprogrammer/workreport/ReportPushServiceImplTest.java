@@ -182,7 +182,7 @@ class ReportPushServiceImplTest {
 
     private Long insertConfig(Long userId, Long templateId, Long targetId) {
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报配置", "DAILY", templateId, "0 0 9 * * ?", "Asia/Shanghai", true, false, null, null, List.of(targetId)
+                null, "日报配置", "DAILY", templateId, "0 0 9 * * ?", "Asia/Shanghai", true, false, null, null, null, List.of(targetId)
         );
         return reportConfigService.save(userId, request).id();
     }

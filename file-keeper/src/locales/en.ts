@@ -310,6 +310,7 @@ export default {
     intentUnknown: 'Unknown',
     emptyInbox: 'No pending messages',
     includeInspirationDigest: 'Include Inspiration Digest',
+    inspirationReviewEnabled: 'Daily Inspiration Review',
     completionRate: 'Fixed Work Completion Rate',
     consecutiveMissDays: 'Consecutive Miss Days',
     days: 'days'

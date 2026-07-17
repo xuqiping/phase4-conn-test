@@ -28,12 +28,15 @@ class ReminderScheduleServiceTest {
     @Mock
     private ReminderPushService reminderPushService;
 
+    @Mock
+    private InspirationReviewService inspirationReviewService;
+
     private ReminderScheduleService service;
     private Method shouldTriggerFixedWork;
 
     @BeforeEach
     void setUp() throws NoSuchMethodException {
-        service = new ReminderScheduleService(fixedWorkItemRepository, futurePlanRepository, reminderPushService);
+        service = new ReminderScheduleService(fixedWorkItemRepository, futurePlanRepository, reminderPushService, inspirationReviewService);
         shouldTriggerFixedWork = ReminderScheduleService.class.getDeclaredMethod("shouldTriggerFixedWork", FixedWorkItem.class, OffsetDateTime.class);
         shouldTriggerFixedWork.setAccessible(true);
     }

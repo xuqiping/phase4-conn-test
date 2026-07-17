@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,10 +21,25 @@ public class NlpIntentService {
     private static final double RULE_CONFIDENCE_THRESHOLD = 0.6;
     private static final double AUTO_CONFIRM_THRESHOLD = 0.85;
 
-    private static final Pattern COMPLETE_PATTERN = Pattern.compile("(?:完成|做完|搞定|标记完成|done|finish)(?:了|掉|\\s+)?[：:\\s]*(.+?)(?:\\s+|$)");
+    private static final List<Pattern> COMPLETE_PATTERNS = List.of(
+            // 完成日报设计 / finish daily report / completed daily report
+            Pattern.compile("(?:完成|做完|搞定|标记完成|completed\\b|finished\\b|finish\\b)(?:了|掉|\\s+)?[：:\\s]*(.+)"),
+            // 把日报设计标记为完成 / 将日报设计标记完成
+            Pattern.compile("(?:把|将)\\s*(.+?)\\s*标记(?:为)?完成"),
+            // 标记日报设计为完成
+            Pattern.compile("标记\\s*(.+?)\\s*为完成"),
+            // 日报设计标记为完成 / 日报设计标记完成
+            Pattern.compile("(.+?)\\s*标记(?:为)?完成"),
+            // 日报设计完成了 / 日报设计做完了 / 日报设计搞定了
+            Pattern.compile("(.+?)(?:完成了|做完了|搞定了)"),
+            // done with daily report
+            Pattern.compile("done\\s+with\\s+(.+)")
+    );
     private static final Pattern WORK_LOG_PATTERN = Pattern.compile("(?:今天做了|记录了|工作记录|log)(?:：|\\s+)?(.+?)(?:\\s+|$)");
     private static final Pattern INSPIRATION_PATTERN = Pattern.compile("(?:灵感|想法|idea|随记)(?:：|\\s+)?(.+)$");
-    private static final Pattern HELP_PATTERN = Pattern.compile("(?:帮助|help|指令|怎么用)");
+    private static final Pattern HELP_PATTERN = Pattern.compile("^\\s*/?\\s*(?:帮助|help|指令|怎么用|菜单|menu|\\?)\\s*$", Pattern.CASE_INSENSITIVE);
+
+    private static final Set<String> INVALID_TASK_NAMES = Set.of("我", "你", "他", "她", "它", "我们", "你们", "他们", "她们", "它们", "了", "掉", "过");
 
     private final DateParseService dateParseService;
     private final LlmIntentClient llmIntentClient;
@@ -53,14 +69,16 @@ public class NlpIntentService {
     }
 
     private IntentResult parseByRule(String normalized) {
-        Matcher completeMatcher = COMPLETE_PATTERN.matcher(normalized);
-        if (completeMatcher.find()) {
-            String taskName = completeMatcher.group(1).trim();
-            if (!taskName.isEmpty()) {
-                Map<String, Object> entities = new HashMap<>();
-                entities.put("task_name", taskName);
-                entities.put("date", "today");
-                return new IntentResult("complete_fixed_work", 0.9, entities);
+        for (Pattern pattern : COMPLETE_PATTERNS) {
+            Matcher matcher = pattern.matcher(normalized);
+            if (matcher.find()) {
+                String taskName = matcher.group(1).trim();
+                if (!taskName.isEmpty() && !INVALID_TASK_NAMES.contains(taskName)) {
+                    Map<String, Object> entities = new HashMap<>();
+                    entities.put("task_name", taskName);
+                    entities.put("date", "today");
+                    return new IntentResult("complete_fixed_work", 0.9, entities);
+                }
             }
         }
 

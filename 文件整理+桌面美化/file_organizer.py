@@ -1,5 +1,18 @@
-import sys
 import os
+import sys
+from pathlib import Path
+
+# 修复中文路径下 Qt 找不到 platform plugin 的问题
+if sys.platform == "win32":
+    try:
+        from PyQt5 import QtCore
+
+        _qt_plugin_base = Path(QtCore.__file__).parent / "Qt5" / "plugins"
+        os.environ["QT_PLUGIN_PATH"] = str(_qt_plugin_base)
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(_qt_plugin_base / "platforms")
+    except Exception:
+        pass
+
 import shutil
 import re
 import json

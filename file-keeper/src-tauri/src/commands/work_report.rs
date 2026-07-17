@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use tauri::State;
 use serde::{Deserialize, Serialize};
-use crate::commands::auth::OfflineTokenState;
+use crate::commands::auth::SignedEntitlementState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitLogEntry {
@@ -23,14 +23,12 @@ const MODULE_CODE: &str = "work-report";
 /// 敏感操作：访问本地文件系统，必须校验模块授权
 #[tauri::command]
 pub fn fetch_git_logs(
-    offline_token_state: State<OfflineTokenState>,
+    entitlement_state: State<SignedEntitlementState>,
     repo_path: String,
     since: String,
     until: Option<String>,
 ) -> Result<Vec<GitLogEntry>, String> {
-    if !offline_token_state.is_module_allowed(MODULE_CODE) {
-        return Err("未授权访问工作汇报模块".into());
-    }
+    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
 
     let path = PathBuf::from(&repo_path);
     if !path.exists() {
@@ -87,13 +85,11 @@ fn parse_git_log(output: &str) -> Vec<GitLogEntry> {
 /// 显示本地系统通知
 #[tauri::command]
 pub fn show_work_report_notification(
-    offline_token_state: State<OfflineTokenState>,
+    entitlement_state: State<SignedEntitlementState>,
     title: String,
     body: String,
 ) -> Result<(), String> {
-    if !offline_token_state.is_module_allowed(MODULE_CODE) {
-        return Err("未授权访问工作汇报模块".into());
-    }
+    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
 
     #[cfg(target_os = "macos")]
     {
@@ -129,13 +125,11 @@ pub fn show_work_report_notification(
 /// 导出报告为本地 Markdown 文件
 #[tauri::command]
 pub fn export_report_markdown(
-    offline_token_state: State<OfflineTokenState>,
+    entitlement_state: State<SignedEntitlementState>,
     title: String,
     content: String,
 ) -> Result<ExportReportResult, String> {
-    if !offline_token_state.is_module_allowed(MODULE_CODE) {
-        return Err("未授权访问工作汇报模块".into());
-    }
+    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
 
     let downloads_dir = dirs::download_dir()
         .ok_or("无法获取下载目录")?;

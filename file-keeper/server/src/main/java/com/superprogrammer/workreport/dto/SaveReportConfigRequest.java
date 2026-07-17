@@ -16,6 +16,7 @@ public record SaveReportConfigRequest(
         Boolean aiEnabled,
         Long aiConfigId,
         Boolean includeInspirationDigest,
+        Boolean inspirationReviewEnabled,
         List<Long> pushTargetIds
 ) {
 }

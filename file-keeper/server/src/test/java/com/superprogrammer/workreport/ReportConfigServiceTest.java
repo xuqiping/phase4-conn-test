@@ -71,6 +71,7 @@ class ReportConfigServiceTest {
                 true,
                 null,
                 null,
+                null,
                 List.of(targetId)
         );
 
@@ -91,12 +92,14 @@ class ReportConfigServiceTest {
         SaveReportConfigRequest createRequest = new SaveReportConfigRequest(
                 null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null,
                 null,
+                null,
                 List.of(targetA, targetB)
         );
         ReportConfigDto created = reportConfigService.save(userId, createRequest);
 
         SaveReportConfigRequest updateRequest = new SaveReportConfigRequest(
                 created.id(), "日报", "DAILY", templateId, "0 10 * * *", "Asia/Shanghai", true, true, null,
+                null,
                 null,
                 List.of(targetA)
         );
@@ -116,6 +119,7 @@ class ReportConfigServiceTest {
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
                 null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null,
+                null,
                 null,
                 List.of(targetId)
         );
@@ -137,7 +141,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "invalid-cron", "Asia/Shanghai", true, true, null, null, null
+                null, "日报", "DAILY", templateId, "invalid-cron", "Asia/Shanghai", true, true, null, null, null, null
         );
 
         BusinessException ex = assertThrows(BusinessException.class, () -> reportConfigService.save(userId, request));
@@ -151,7 +155,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         SaveReportConfigRequest request = new SaveReportConfigRequest(
-                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null, null
+                null, "日报", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null, null, null
         );
         ReportConfigDto created = reportConfigService.save(userA, request);
 
@@ -165,7 +169,7 @@ class ReportConfigServiceTest {
         Long templateId = insertTemplate();
 
         ReportConfigDto saved = reportConfigService.save(userId, new SaveReportConfigRequest(
-                null, "默认配置", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null, List.of()
+                null, "默认配置", "DAILY", templateId, "0 9 * * *", "Asia/Shanghai", true, true, null, null, null, List.of()
         ));
 
         assertTrue(Boolean.TRUE.equals(saved.includeInspirationDigest()));

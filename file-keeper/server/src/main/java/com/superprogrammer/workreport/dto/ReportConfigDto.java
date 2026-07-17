@@ -14,6 +14,7 @@ public record ReportConfigDto(
         Boolean aiEnabled,
         Long aiConfigId,
         Boolean includeInspirationDigest,
+        Boolean inspirationReviewEnabled,
         List<PushTargetDto> pushTargets
 ) {
 }

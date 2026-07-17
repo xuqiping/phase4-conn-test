@@ -1,17 +1,27 @@
+use crate::commands::auth::SignedEntitlementState;
 use crate::platform::windows::process_monitor::{ProcessMonitor, CloseResult};
 use crate::types::process::ProcessInfo;
 use crate::utils::process_matcher;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::time::Instant;
+use tauri::State;
+
+const MODULE_CODE: &str = "processes";
 
 lazy_static! {
     static ref PROCESS_MONITOR: Mutex<ProcessMonitor> = Mutex::new(ProcessMonitor::new());
 }
 
 #[tauri::command]
-pub fn get_running_processes() -> Result<Vec<ProcessInfo>, String> {
-  let start = Instant::now();
+pub fn get_running_processes(
+    entitlement_state: State<'_, SignedEntitlementState>,
+) -> Result<Vec<ProcessInfo>, String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
+    let start = Instant::now();
 
     let mut monitor = PROCESS_MONITOR
         .lock()
@@ -26,16 +36,30 @@ pub fn get_running_processes() -> Result<Vec<ProcessInfo>, String> {
 }
 
 #[tauri::command]
-pub fn close_app_process(window_handle: usize) -> Result<(), String> {
+pub fn close_app_process(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    window_handle: usize,
+) -> Result<(), String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
     let monitor = PROCESS_MONITOR
         .lock()
-      .map_err(|e| format!("Failed to lock process monitor: {}", e))?;
+        .map_err(|e| format!("Failed to lock process monitor: {}", e))?;
 
-  monitor.close_process(window_handle)
+    monitor.close_process(window_handle)
 }
 
 #[tauri::command]
-pub fn close_app_processes(window_handles: Vec<usize>) -> Result<CloseResult, String> {
+pub fn close_app_processes(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    window_handles: Vec<usize>,
+) -> Result<CloseResult, String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
     let monitor = PROCESS_MONITOR
         .lock()
         .map_err(|e| format!("Failed to lock process monitor: {}", e))?;
@@ -44,12 +68,24 @@ pub fn close_app_processes(window_handles: Vec<usize>) -> Result<CloseResult, St
 }
 
 #[tauri::command]
-pub fn kill_app_process(pid: u32) -> Result<(), String> {
+pub fn kill_app_process(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    pid: u32,
+) -> Result<(), String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
     process_matcher::kill_process(pid)
 }
 
 #[tauri::command]
-pub fn kill_app_processes(pids: Vec<u32>) -> Result<CloseResult, String> {
+pub fn kill_app_processes(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    pids: Vec<u32>,
+) -> Result<CloseResult, String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
     Ok(kill_processes_by_pid(pids, process_matcher::kill_process))
 }
 
@@ -71,7 +107,14 @@ where
 }
 
 #[tauri::command]
-pub fn activate_app_window(window_handle: usize) -> Result<(), String> {
+pub fn activate_app_window(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    window_handle: usize,
+) -> Result<(), String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
     let monitor = PROCESS_MONITOR
         .lock()
         .map_err(|e| format!("Failed to lock process monitor: {}", e))?;

@@ -117,6 +117,7 @@ export interface ReportConfig {
   aiEnabled: boolean
   aiConfigId?: number
   includeInspirationDigest: boolean
+  inspirationReviewEnabled: boolean
   pushTargetIds: number[]
   pushTargets?: PushTarget[]
 }

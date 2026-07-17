@@ -310,6 +310,7 @@ export default {
     intentUnknown: '未知',
     emptyInbox: '暂无待确认消息',
     includeInspirationDigest: '包含灵感摘要',
+    inspirationReviewEnabled: '每日灵感回顾',
     completionRate: '固定工作完成率',
     consecutiveMissDays: '连续未完成天数',
     days: '天'

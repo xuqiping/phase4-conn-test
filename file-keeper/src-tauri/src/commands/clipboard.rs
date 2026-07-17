@@ -1,3 +1,4 @@
+use crate::commands::auth::SignedEntitlementState;
 use crate::clipboard::{
     ClipboardItemSummary, ClipboardQuery, ClipboardService, ClipboardSettings,
     ClipboardStorageTypeUsage, ClipboardStorageUsage,
@@ -5,11 +6,18 @@ use crate::clipboard::{
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+const MODULE_CODE: &str = "clipboard";
+
 #[tauri::command]
 pub fn start_clipboard_monitor(
+    entitlement_state: State<'_, SignedEntitlementState>,
     app: AppHandle,
     service: State<'_, ClipboardService>,
 ) -> Result<(), String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
     let running = service.monitor_flag();
     if running.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
@@ -65,7 +73,14 @@ pub fn start_clipboard_monitor(
 }
 
 #[tauri::command]
-pub fn stop_clipboard_monitor(service: State<'_, ClipboardService>) -> Result<(), String> {
+pub fn stop_clipboard_monitor(
+    entitlement_state: State<'_, SignedEntitlementState>,
+    service: State<'_, ClipboardService>,
+) -> Result<(), String> {
+    entitlement_state
+        .require_module(MODULE_CODE)
+        .map_err(|e| e.user_message())?;
+
     service
         .monitor_flag()
         .store(false, std::sync::atomic::Ordering::SeqCst);

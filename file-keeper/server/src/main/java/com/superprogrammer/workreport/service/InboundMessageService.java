@@ -38,7 +38,15 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class InboundMessageService {
 
-    private static final double AUTO_CONFIRM_THRESHOLD = 0.85;
+    private static final double DEFAULT_AUTO_CONFIRM_THRESHOLD = 0.85;
+    private static final double HIGH_FREQUENCY_AUTO_CONFIRM_THRESHOLD = 0.80;
+
+    private static double autoConfirmThresholdFor(String intent) {
+        return switch (intent) {
+            case "complete_fixed_work", "add_work_log", "add_inspiration" -> HIGH_FREQUENCY_AUTO_CONFIRM_THRESHOLD;
+            default -> DEFAULT_AUTO_CONFIRM_THRESHOLD;
+        };
+    }
 
     private final InboundMessageRepository inboundMessageRepository;
     private final PushTargetRepository pushTargetRepository;
@@ -74,7 +82,7 @@ public class InboundMessageService {
 
         InboundMessage saved = inboundMessageRepository.insert(message);
 
-        if (intent.confidence() >= AUTO_CONFIRM_THRESHOLD) {
+        if (intent.confidence() >= autoConfirmThresholdFor(intent.intent())) {
             try {
                 executeIntent(saved, intent);
                 CompletableFuture.runAsync(() -> sendConfirmation(platform, parseResult.chatId(), saved.getUserId(), intent));
@@ -159,6 +167,10 @@ public class InboundMessageService {
                 message.setTargetId(created.id());
                 message.setStatus(InboundMessageStatus.CONFIRMED.name());
             }
+            case "help" -> {
+                message.setTargetModule("help");
+                message.setStatus(InboundMessageStatus.CONFIRMED.name());
+            }
             default -> throw new BusinessException(ErrorCode.UNPROCESSABLE, "暂不支持的意图: " + intent.intent());
         }
         message.setUpdatedBy(message.getUserId());
@@ -204,8 +216,19 @@ public class InboundMessageService {
                     "📝 已记录工作日志：" + intent.entities().get("content");
             case "add_inspiration" ->
                     "💡 已保存灵感：" + intent.entities().get("content");
+            case "help" -> buildHelpMenuText();
             default -> "✅ 已处理";
         };
+    }
+
+    private String buildHelpMenuText() {
+        return """
+                可用指令：
+                - 完成 [任务名]
+                - 今天做了 [工作内容]
+                - 灵感：[内容] #标签
+                - /help
+                """;
     }
 
     private String toJson(Map<String, Object> map) {

@@ -107,6 +107,15 @@ public class InspirationNoteRepository {
         );
     }
 
+    public List<InspirationNote> findUnreviewedByUserId(Long userId, int limit) {
+        return jdbcTemplate.query(
+                "select id, user_id, content, tags, source, platform_message_id, report_config_ids, reviewed_at, created_by, created_at, updated_by, updated_at, deleted " +
+                        "from inspiration_notes where user_id = ? and deleted = 0 and reviewed_at is null " +
+                        "order by created_at asc, id asc limit ?",
+                noteMapper(), userId, limit
+        );
+    }
+
     public void softDeleteById(Long id, Long updatedBy) {
         jdbcTemplate.update(
                 "update inspiration_notes set deleted = 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP where id = ? and deleted = 0",
