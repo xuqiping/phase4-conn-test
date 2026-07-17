@@ -18,6 +18,12 @@
 
 ## 最近更新
 
+- 2026-07-18：修复未登录时工作助手模块周期性报「未登录」bug
+  - 问题根因：`InboxPanel.vue` 挂载后每 30 秒轮询 `loadInbox()`，且 `WorkReportManagement.vue` 挂载即调用 `loadToday()`；两者均通过 `workReportStore.getAuthContext()` 强依赖 `accessToken`，未登录时直接抛错并在 UI 顶部红色提示。
+  - 修复文件：`src/components/work-report/InboxPanel.vue`、`src/components/work-report/WorkReportManagement.vue`
+  - 修复方式：在 `onMounted` 中先判断 `authStore.isAuthenticated`，未登录时直接返回，不触发需要认证的 API 调用与轮询。
+  - 测试结果：`workReportStore.test.ts`（12 通过）、`workReport.test.ts`（18 通过）、`authStore.test.ts`（14 通过）、`authDialog.test.ts`（6 通过）。
+  - Commit：`74b241b`
 - 2026-06-30：Phase 4 全部任务完成，后端 131 个测试、前端 247 个测试全部通过
 - 2026-06-29：Phase 3 全部任务完成，后端 114 个测试、前端 247 个测试全部通过
 - 2026-06-29：Phase 2 全部任务完成，后端 108 个测试、前端 244 个测试全部通过
