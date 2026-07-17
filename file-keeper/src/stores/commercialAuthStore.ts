@@ -158,6 +158,9 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
    * 将服务端签名的授权凭据同步给 Rust 侧。
    * 在线/离线统一处理：只要快照包含 signed entitlement 就同步，
    * 有效期与模块权限由 Rust 通过 Ed25519 公钥验签和 notAfter 强校验决定。
+   *
+   * 兼容旧版 HMAC 离线 token：若检测到旧格式（无 payload/signature 分隔符 `.`），
+   * 直接清空 Rust 凭据并抛错，触发调用方在线刷新一次新的 Ed25519 signed entitlement。
    */
   async function syncEntitlementToRust() {
     entitlementAccessCache.value.clear()
@@ -166,6 +169,12 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
       await clearEntitlementInRust()
       return
     }
+    if (isLegacyHmacToken(token)) {
+      console.warn('[commercialAuthStore] 检测到旧版 HMAC 离线 token，清空 Rust 凭据并需要在线刷新')
+      await clearEntitlementInRust()
+      clientAuthorization.value = null
+      throw new Error('授权凭据已升级，请联网刷新一次')
+    }
     try {
       await invoke('set_signed_entitlement', { token })
       await refreshEntitlementAccessCache()
@@ -173,6 +182,15 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
       console.error('[commercialAuthStore] set_signed_entitlement failed:', e)
       await clearEntitlementInRust()
     }
+  }
+
+  /**
+   * 判断 token 是否为旧版 HMAC 离线 token。
+   * 旧版格式：base64url(userId|deviceId|offlineUsableUntil|modules|hmac)，无 `.` 分隔符；
+   * 新版 signed entitlement：base64url(payload).base64url(signature)，有且仅有一个 `.`。
+   */
+  function isLegacyHmacToken(token: string): boolean {
+    return !token.includes('.')
   }
 
   async function refreshEntitlementAccessCache() {

@@ -330,7 +330,7 @@ describe('commercialAuthStore', () => {
       status: 'active',
       lastSeenAt: null
     })
-    const offlineToken = 'signed-entitlement-token'
+    const offlineToken = 'signed.entitlement-token'
     mockedApi.getClientAuthorization
       .mockResolvedValueOnce({
         mode: 'authenticated',
@@ -485,7 +485,7 @@ describe('commercialAuthStore', () => {
       fingerprintHash: 'fingerprint-001',
       deviceName: 'Laptop'
     }
-    const offlineToken = 'signed-entitlement-token'
+    const offlineToken = 'signed.entitlement-token'
     mockedApi.getOrCreateDeviceIdentity.mockResolvedValue(identity)
     mockedApi.registerClientDevice.mockResolvedValue({
       id: 1,
@@ -511,5 +511,44 @@ describe('commercialAuthStore', () => {
     await store.initializeAuthenticated('http://localhost:8080', 'access-token')
 
     expect(mockInvoke).toHaveBeenCalledWith('set_signed_entitlement', { token: offlineToken })
+  })
+
+  it('clears Rust entitlement and forces online refresh when legacy HMAC token is detected', async () => {
+    const identity = {
+      deviceId: 'device-001',
+      fingerprintHash: 'fingerprint-001',
+      deviceName: 'Laptop'
+    }
+    const legacyHmacToken = 'base64url-without-dot-legacy-token'
+    mockedApi.getOrCreateDeviceIdentity.mockResolvedValue(identity)
+    mockedApi.registerClientDevice.mockResolvedValue({
+      id: 1,
+      userId: 10,
+      ...identity,
+      status: 'active',
+      lastSeenAt: null
+    })
+    mockedApi.getClientAuthorization.mockResolvedValueOnce({
+      mode: 'authenticated',
+      userId: 10,
+      accountStatus: 'active',
+      deviceLimit: 2,
+      onlineRequired: false,
+      offlineUsableUntil: '2099-01-01T00:00:00Z',
+      offlineToken: legacyHmacToken,
+      deviceBinding: { deviceId: 'device-001', bound: true, active: true },
+      modules: [
+        { moduleCode: 'files', allowed: true, reason: null, expiresAt: null }
+      ]
+    })
+    const store = useCommercialAuthStore()
+
+    await expect(store.initializeAuthenticated('http://localhost:8080', 'access-token'))
+      .rejects.toThrow('授权凭据已升级，请联网刷新一次')
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('set_signed_entitlement', expect.any(Object))
+    expect(mockInvoke).toHaveBeenCalledWith('clear_signed_entitlement')
+    expect(store.clientAuthorization).toBeNull()
+    expect(store.error).toBe('授权凭据已升级，请联网刷新一次')
   })
 })

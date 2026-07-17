@@ -118,14 +118,19 @@ fn load_embedded_public_key() -> Result<VerifyingKey, EntitlementError> {
         }
     }
 
-    let raw = decode_public_key_pem(EMBEDDED_PUBLIC_KEY_PEM)?;
-    let key = VerifyingKey::from_bytes(&raw)
-        .map_err(|e| EntitlementError::Internal(format!("invalid Ed25519 public key: {:?}", e)))?;
+    let key = load_public_key_from_pem(EMBEDDED_PUBLIC_KEY_PEM)?;
 
     if let Ok(mut guard) = CACHED.lock() {
         *guard = Some(key);
     }
     Ok(key)
+}
+
+/// 从 PEM 字符串加载 Ed25519 公钥（用于测试或未来多公钥版本号扩展）。
+fn load_public_key_from_pem(pem: &str) -> Result<VerifyingKey, EntitlementError> {
+    let raw = decode_public_key_pem(pem)?;
+    VerifyingKey::from_bytes(&raw)
+        .map_err(|e| EntitlementError::Internal(format!("invalid Ed25519 public key: {:?}", e)))
 }
 
 /// 解析 X.509 SubjectPublicKeyInfo PEM，提取 32 字节 Ed25519 公钥。
@@ -419,5 +424,88 @@ mod tests {
     fn verify_malformed_token_rejected() {
         let public_key = load_embedded_public_key().unwrap();
         assert!(verify_signed_entitlement(&public_key, "not-a-token").is_err());
+    }
+
+    /// 跨语言一致性固定向量：本 token 由 Java 侧 `SignedEntitlementSigner.sign()`
+    /// 使用对应公钥签发，Rust 侧必须能仅凭公钥验签通过。
+    #[test]
+    fn verify_java_signed_fixed_vector_succeeds() {
+        // 对应私钥（仅用于测试，已做 base64url 编码避免泄露风险）：
+        // MC4CAQAwBQYDK2VwBCIEIIJT/U8BmHmHcJetEnLkgOuMaeGxsPx7EBn4R7a/sDoC
+        const CROSS_LANG_PUBLIC_KEY_PEM: &str = r#"-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAXEY2Guy0IM7dTHOo++0cNVBGYXL/7mb7S6LXWOJQdhQ=
+-----END PUBLIC KEY-----"#;
+        // userId=42 | deviceId=cross-lang-device | issuedAt=1700000000000 | notAfter=1800000000000 | modules=work-report,clipboard
+        const CROSS_LANG_TOKEN: &str = "NDJ8Y3Jvc3MtbGFuZy1kZXZpY2V8MTcwMDAwMDAwMDAwMHwxODAwMDAwMDAwMDAwfHdvcmstcmVwb3J0LGNsaXBib2FyZA.VkYFgBuYQ08W61dkq9S-UvC-JbcTI4_TvK4cKCHXxendezDd5uceodGOeIQec_oxeJde8o50krWtU0k1BgCGBw";
+
+        let public_key = load_public_key_from_pem(CROSS_LANG_PUBLIC_KEY_PEM).unwrap();
+        let payload = verify_signed_entitlement(&public_key, CROSS_LANG_TOKEN).expect("Java-signed token should verify in Rust");
+
+        assert_eq!(payload.user_id, 42);
+        assert_eq!(payload.device_id, "cross-lang-device");
+        assert_eq!(payload.issued_at_epoch_milli, 1_700_000_000_000);
+        assert_eq!(payload.not_after_epoch_milli, 1_800_000_000_000);
+        assert_eq!(payload.allowed_modules, vec!["work-report", "clipboard"]);
+    }
+
+    /// 跨语言一致性：篡改固定向量的 payload 或 signature 任意一字节都应被拒。
+    #[test]
+    fn verify_java_signed_fixed_vector_tampered_rejected() {
+        const CROSS_LANG_PUBLIC_KEY_PEM: &str = r#"-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAXEY2Guy0IM7dTHOo++0cNVBGYXL/7mb7S6LXWOJQdhQ=
+-----END PUBLIC KEY-----"#;
+        const CROSS_LANG_TOKEN: &str = "NDJ8Y3Jvc3MtbGFuZy1kZXZpY2V8MTcwMDAwMDAwMDAwMHwxODAwMDAwMDAwMDAwfHdvcmstcmVwb3J0LGNsaXBib2FyZA.VkYFgBuYQ08W61dkq9S-UvC-JbcTI4_TvK4cKCHXxendezDd5uceodGOeIQec_oxeJde8o50krWtU0k1BgCGBw";
+
+        let public_key = load_public_key_from_pem(CROSS_LANG_PUBLIC_KEY_PEM).unwrap();
+
+        // 篡改 payload 最后一个字符（只要最终解码出的 payload 与原 payload 不同，签名即不匹配）
+        let mut tampered = CROSS_LANG_TOKEN.to_string();
+        let last_payload_char_index = tampered.find('.').unwrap() - 1;
+        tampered.replace_range(last_payload_char_index..=last_payload_char_index, "B");
+        assert!(
+            verify_signed_entitlement(&public_key, &tampered).is_err(),
+            "tampered payload should be rejected"
+        );
+
+        // 篡改 signature 最后一个字符
+        let mut tampered = CROSS_LANG_TOKEN.to_string();
+        let last_index = tampered.len() - 1;
+        tampered.replace_range(last_index..=last_index, "x");
+        assert!(
+            verify_signed_entitlement(&public_key, &tampered).is_err(),
+            "tampered signature should be rejected"
+        );
+    }
+
+    #[test]
+    fn require_module_rejects_empty_allowed_modules() {
+        let token = build_token(2, "test-device", 1_700_000_000_000, 1_800_000_000_000, &[]);
+        let state = SignedEntitlementState::new();
+        state.token.lock().unwrap().replace(token);
+        assert!(matches!(
+            state.require_module("work-report"),
+            Err(EntitlementError::ModuleNotAllowed(_))
+        ));
+    }
+
+    #[test]
+    fn verify_rejects_not_after_before_issued_at() {
+        let token = build_token(2, "test-device", 1_800_000_000_000, 1_700_000_000_000, &["work-report"]);
+        let public_key = load_embedded_public_key().unwrap();
+        assert!(matches!(
+            verify_signed_entitlement(&public_key, &token),
+            Err(EntitlementError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn verify_rejects_expired_token_by_not_after() {
+        // notAfter 在 2001 年，系统当前时间必然已过，应判定过期。
+        let token = build_token(2, "test-device", 1_000_000_000_000, 1_000_000_001_000, &["work-report"]);
+        let public_key = load_embedded_public_key().unwrap();
+        assert!(matches!(
+            verify_signed_entitlement(&public_key, &token),
+            Err(EntitlementError::Expired)
+        ));
     }
 }
