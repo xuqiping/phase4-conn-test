@@ -1,14 +1,18 @@
 package com.superprogrammer.config;
 
+import com.superprogrammer.authorization.service.SignedEntitlementSigner;
 import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.Getter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
 
 @Data
 @Component
@@ -22,6 +26,10 @@ public class AuthProperties {
     private Jwt jwt = new Jwt();
     private RefreshToken refreshToken = new RefreshToken();
     private Verification verification = new Verification();
+    private Entitlement entitlement = new Entitlement();
+
+    @Getter(AccessLevel.NONE)
+    private transient PrivateKey entitlementPrivateKey;
 
     @PostConstruct
     void validateJwtSecret() {
@@ -35,6 +43,25 @@ public class AuthProperties {
         if (secret.getBytes(StandardCharsets.UTF_8).length < 32) {
             throw new IllegalStateException("JWT secret must be at least 32 UTF-8 bytes");
         }
+    }
+
+    @PostConstruct
+    void validateEntitlementPrivateKey() {
+        String pem = entitlement == null ? null : entitlement.getPrivateKeyPem();
+        if (pem == null || pem.isBlank()) {
+            throw new IllegalStateException("Entitlement signing private key must not be blank (FILE_KEEPER_AUTH_PRIVATE_KEY)");
+        }
+        entitlementPrivateKey = SignedEntitlementSigner.decodePrivateKeyPem(pem);
+        if (entitlementPrivateKey == null) {
+            throw new IllegalStateException("Entitlement signing private key PEM is invalid");
+        }
+    }
+
+    public PrivateKey getEntitlementPrivateKey() {
+        if (entitlementPrivateKey == null) {
+            entitlementPrivateKey = SignedEntitlementSigner.decodePrivateKeyPem(entitlement.getPrivateKeyPem());
+        }
+        return entitlementPrivateKey;
     }
 
     @Data
@@ -55,5 +82,14 @@ public class AuthProperties {
         private long codeMinutes = 10;
         private long verifiedMinutes = 30;
         private String devFixedCode;
+    }
+
+    @Data
+    public static class Entitlement {
+        /**
+         * Ed25519 私钥（PKCS#8 PEM），用于签发授权凭据。
+         * 生产环境必须配置，缺失则服务拒绝启动。
+         */
+        private String privateKeyPem;
     }
 }

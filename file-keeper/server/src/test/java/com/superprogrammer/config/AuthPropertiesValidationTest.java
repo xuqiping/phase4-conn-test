@@ -1,5 +1,6 @@
 package com.superprogrammer.config;
 
+import com.superprogrammer.authorization.service.SignedEntitlementSigner;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
@@ -7,16 +8,22 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
+import java.security.KeyPair;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AuthPropertiesValidationTest {
+
+    private static final String TEST_ENTITLEMENT_PRIVATE_KEY_PEM =
+            SignedEntitlementSigner.encodePrivateKeyPem(SignedEntitlementSigner.generateKeyPair().getPrivate());
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ConfigurationPropertiesAutoConfiguration.class))
             .withUserConfiguration(AuthPropertiesConfig.class)
             .withPropertyValues(
                     "file-keeper.auth.jwt.access-token-minutes=15",
-                    "file-keeper.auth.refresh-token.days=7"
+                    "file-keeper.auth.refresh-token.days=7",
+                    "file-keeper.auth.entitlement.private-key-pem=" + TEST_ENTITLEMENT_PRIVATE_KEY_PEM
             );
 
     @Test

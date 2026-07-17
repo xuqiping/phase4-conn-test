@@ -12,12 +12,14 @@ import com.superprogrammer.user.dto.ModuleEntitlementDto;
 import com.superprogrammer.user.entity.User;
 import com.superprogrammer.user.repository.EntitlementRepository;
 import com.superprogrammer.user.repository.UserRepository;
+import com.superprogrammer.config.AuthProperties;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,9 +42,7 @@ public class AuthorizationService {
     private final EntitlementRepository entitlementRepository;
     private final DeviceRepository deviceRepository;
     private final AnonymousTrialRepository anonymousTrialRepository;
-
-    @Value("${file-keeper.auth.jwt.secret}")
-    private String jwtSecret;
+    private final AuthProperties authProperties;
 
     private static final long TIME_SYNC_ANOMALY_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -57,9 +57,13 @@ public class AuthorizationService {
         List<ModuleAccess> modules = MODULE_CODES.stream()
                 .map(moduleCode -> authenticatedModuleAccess(moduleCode, entitlements.get(moduleCode), accountActive, deviceBound, deviceActive))
                 .toList();
-        boolean onlineRequired = user.getOfflineCacheMinutes() == 0 || !StringUtils.hasText(jwtSecret);
-        OffsetDateTime offlineUsableUntil = onlineRequired ? null : OffsetDateTime.now().plusMinutes(user.getOfflineCacheMinutes());
-        String offlineToken = onlineRequired ? null : buildOfflineToken(user.getId(), deviceId, offlineUsableUntil, modules);
+        boolean onlineRequired = user.getOfflineCacheMinutes() == 0;
+        Instant issuedAt = Instant.now();
+        Instant notAfter = onlineRequired
+                ? issuedAt.plus(Duration.ofHours(authProperties.getJwt().getClientAccessTokenHours()))
+                : issuedAt.plus(Duration.ofMinutes(user.getOfflineCacheMinutes()));
+        OffsetDateTime offlineUsableUntil = onlineRequired ? null : OffsetDateTime.ofInstant(notAfter, ZoneOffset.UTC);
+        String signedEntitlement = buildSignedEntitlement(user.getId(), deviceId, issuedAt, notAfter, modules);
 
         if (clientTimestamp != null && deviceBound && device.isPresent()) {
             checkTimeSyncAnomaly(device.get().id(), clientTimestamp);
@@ -72,7 +76,7 @@ public class AuthorizationService {
                 user.getDeviceLimit(),
                 onlineRequired,
                 offlineUsableUntil,
-                offlineToken,
+                signedEntitlement,
                 new AuthorizationSnapshot.DeviceBinding(deviceId, deviceBound, deviceActive),
                 modules
         );
@@ -86,12 +90,15 @@ public class AuthorizationService {
         }
     }
 
-    private String buildOfflineToken(Long userId, String deviceId, OffsetDateTime offlineUsableUntil, List<ModuleAccess> modules) {
+    private String buildSignedEntitlement(Long userId, String deviceId, Instant issuedAt,
+                                          Instant notAfter, List<ModuleAccess> modules) {
         List<String> allowedModules = modules.stream()
                 .filter(ModuleAccess::allowed)
                 .map(ModuleAccess::moduleCode)
                 .toList();
-        return OfflineTokenSigner.sign(jwtSecret, userId, deviceId, offlineUsableUntil, allowedModules);
+        return SignedEntitlementSigner.sign(
+                authProperties.getEntitlementPrivateKey(),
+                userId, deviceId, issuedAt, notAfter, allowedModules);
     }
 
     public AnonymousAuthorizationSnapshot anonymousSnapshot(String deviceId, String fingerprintHash) {
