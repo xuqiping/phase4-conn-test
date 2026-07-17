@@ -73,7 +73,7 @@
 |---|---|---|
 | 工作汇报总入口/Tab 切换 | [`WorkReportManagement.vue`](../../../src/components/work-report/WorkReportManagement.vue) | 桌面端工作汇报主界面 |
 | 工作记录编辑 | [`WorkLogEditor.vue`](../../../src/components/work-report/WorkLogEditor.vue) | 新增/编辑工作记录 |
-| 每日安排面板 | [`DailyPlanPanel.vue`](../../../src/components/work-report/DailyPlanPanel.vue) | 展示/完成每日计划 |
+| 固定工作 / 未来计划面板 | [`FixedWorkPanel.vue`](../../../src/components/work-report/FixedWorkPanel.vue) / [`FuturePlanPanel.vue`](../../../src/components/work-report/FuturePlanPanel.vue) | 展示/完成每日计划 |
 | 报告预览 | [`ReportViewer.vue`](../../../src/components/work-report/ReportViewer.vue) | 查看生成的报告内容 |
 | 历史报告列表 | [`ReportHistoryList.vue`](../../../src/components/work-report/ReportHistoryList.vue) | 已生成报告的管理 |
 | 报告规则配置 | [`ReportConfigForm.vue`](../../../src/components/work-report/ReportConfigForm.vue) | 配置日报/周报生成规则 |
@@ -121,11 +121,11 @@
 
 | 用途 | 文件/工具 | 说明 |
 |---|---|---|
-| 后台接口请求文档 | [`../../项目相关文档/0_请求相关.md`](../../项目相关文档/0_请求相关.md) | Postman / 自建 HTTP 工具可用的接口清单 |
-| 自建 HTTP 调试工具 | [`../../../http-tool/`](../../../http-tool/) | 本地 Node.js 代理工具，用于调试后台接口 |
-| 模块设计说明 | [`工作汇报模块设计说明书.md`](工作汇报模块设计说明书.md) | 模块架构、表设计、接口设计 |
-| 开发进度规划 | [`开发总进度规划.md`](开发总进度规划.md) | 模块整体进度、里程碑、验收标准 |
-| 推送应用配置指南 | [`推送应用配置指南.md`](推送应用配置指南.md) | 飞书/钉钉傻瓜式配置文档（含对话、文件、已读） |
+| 后台接口请求文档 | [`../../项目相关文档/0_请求相关.md`](../api/0_请求相关.md) | Postman / 自建 HTTP 工具可用的接口清单 |
+| 自建 HTTP 调试工具 | `http-tool`（历史工具，已移除） | 本地 Node.js 代理工具，用于调试后台接口 |
+| 模块设计说明 | [`工作汇报模块设计说明书.md`](../../../docs/archive/work-report历史进度/工作汇报模块设计说明书.md) | 模块架构、表设计、接口设计 |
+| 开发进度规划 | [`开发总进度规划.md`](../../../docs/archive/work-report历史进度/开发总进度规划.md) | 模块整体进度、里程碑、验收标准 |
+| 推送应用配置指南 | [`推送应用配置指南.md`](../user-ops/推送应用配置.用户操作手册.md) | 飞书/钉钉傻瓜式配置文档（含对话、文件、已读） |
 
 ---
 

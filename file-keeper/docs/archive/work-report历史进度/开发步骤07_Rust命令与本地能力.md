@@ -37,7 +37,7 @@
 
 ### 4.1 创建 Rust 命令文件
 
-新增 [`src-tauri/src/commands/work_report.rs`](../../src-tauri/src/commands/work_report.rs)：
+新增 [`src-tauri/src/commands/work_report.rs`](../../../src-tauri/src/commands/work_report.rs)：
 
 ```rust
 use std::path::PathBuf;
@@ -198,7 +198,7 @@ fn sanitize_filename(name: &str) -> String {
 
 ### 4.2 注册模块
 
-修改 [`src-tauri/src/commands/mod.rs`](../../src-tauri/src/commands/mod.rs)：
+修改 [`src-tauri/src/commands/mod.rs`](../../../src-tauri/src/commands/mod.rs)：
 
 ```rust
 pub mod work_report;
@@ -206,7 +206,7 @@ pub mod work_report;
 
 ### 4.3 注册 invoke handler
 
-修改 [`src-tauri/src/main.rs`](../../src-tauri/src/main.rs)：
+修改 [`src-tauri/src/main.rs`](../../../src-tauri/src/main.rs)：
 
 ```rust
 use commands::work_report::{fetch_git_logs, show_work_report_notification, export_report_markdown};
@@ -221,7 +221,7 @@ use commands::work_report::{fetch_git_logs, show_work_report_notification, expor
 
 ### 4.4 前端调用 Rust 命令
 
-在桌面端前端新增 [`src/api/rustWorkReport.ts`](../../src/api/rustWorkReport.ts)：
+在桌面端前端新增 [`src/api/rustWorkReport.ts`](../../../src/api/rustWorkReport.ts)：
 
 ```ts
 import { invoke } from '@tauri-apps/api/tauri'
@@ -265,7 +265,7 @@ async function importGitLogs(repoPath: string, since: string, until?: string) {
 
 ### 4.6 单元测试
 
-新增 [`src-tauri/src/commands/work_report_tests.rs`](../../src-tauri/src/commands/work_report_tests.rs) 或在 `work_report.rs` 底部加 `#[cfg(test)]`：
+新增 [`src-tauri/src/commands/work_report.rs`](../../../src-tauri/src/commands/work_report.rs) 中的 `#[cfg(test)]` 测试模块（原 `work_report_tests.rs` 已合并到主文件）：
 
 ```rust
 #[cfg(test)]

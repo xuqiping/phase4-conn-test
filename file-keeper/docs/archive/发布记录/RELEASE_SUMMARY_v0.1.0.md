@@ -93,10 +93,10 @@ cp src-tauri/target/release/file-keeper.exe ~/Desktop/
 
 ### 📚 相关文档
 
-- [CHANGELOG.md](CHANGELOG.md) - 完整更新日志
-- [README.md](README.md) - 使用说明
+- CHANGELOG（未归档） - 完整更新日志
+- <a href="../项目README(历史).md">项目README(历史).md</a> - 使用说明
 - [RELEASE_NOTES_v0.1.0.md](RELEASE_NOTES_v0.1.0.md) - 发布说明
-- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - 发布检查清单
+- RELEASE_CHECKLIST（未归档） - 发布检查清单
 
 ---
 

@@ -3,7 +3,7 @@
 **状态：** 🟢 已完成  
 **总任务数：** 21（已完成 21）  
 **详细计划：** [plan.md](plan.md)  
-**手动验证清单：** [phase1-manual-test.md](phase1-manual-test.md)
+**手动验证清单：** [phase1-manual-test.md](../phase1-manual-test.md)
 
 ## 后端
 
@@ -33,7 +33,7 @@
 - [x] Task 18: 新增接口授权测试（`InboundMessageControllerAuthTest`、`WorkReportEventControllerAuthTest`）
 - [x] Task 19: 后端编译与测试（`mvn test` 108 个测试全部通过）
 - [x] Task 20: 前端编译与类型检查（`vue-tsc --noEmit` 通过，`npm test` 244 个测试全部通过）
-- [x] Task 21: 端到端手动验证准备（已输出 [phase1-manual-test.md](phase1-manual-test.md)）
+- [x] Task 21: 端到端手动验证准备（已输出 [phase1-manual-test.md](../phase1-manual-test.md)）
 
 ## 里程碑
 

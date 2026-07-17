@@ -100,7 +100,7 @@ File Keeper v0.1.0 是第一个公开发布的版本，提供了完整的文件�
 
 ## 📝 更新日志
 
-完整的更新日志请查看 [CHANGELOG.md](CHANGELOG.md)
+完整的更新日志请查看 CHANGELOG（未归档）
 
 ## 🙏 致谢
 
