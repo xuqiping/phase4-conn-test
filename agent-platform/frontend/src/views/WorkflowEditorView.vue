@@ -3,7 +3,17 @@
   左: 组件面板 | 中: Vue Flow画布 | 右: 属性面板
   ============================================================ -->
 <template>
-  <div class="workflow-editor">
+  <!-- 移动端：节点画布不适合触屏，提示用电脑端 -->
+  <div v-if="isMobile" class="workflow-editor__mobile-notice">
+    <n-icon size="56" :component="DesktopOutline" color="var(--color-text-tertiary)" />
+    <h2 class="workflow-editor__mobile-notice-title">请在电脑端使用</h2>
+    <p class="workflow-editor__mobile-notice-desc">
+      工作流画布编辑（拖拽节点/连线）需要较大屏幕，移动端暂不支持。
+    </p>
+    <n-button type="primary" @click="goBack">返回工作流列表</n-button>
+  </div>
+
+  <div v-else class="workflow-editor">
     <!-- 顶部操作栏 -->
     <div class="workflow-editor__topbar">
       <div class="workflow-editor__topbar-left">
@@ -161,7 +171,8 @@ import {
   ArrowBackOutline,
   SaveOutline,
   PlayOutline,
-  CloseOutline
+  CloseOutline,
+  DesktopOutline
 } from '@vicons/ionicons5'
 import ComponentPalette from '@/components/workflow/ComponentPalette.vue'
 import FlowCanvas from '@/components/workflow/FlowCanvas.vue'
@@ -173,13 +184,15 @@ import type { Workflow, WorkflowStatus } from '@/types/workflow'
 import { toFlowEdge, toFlowNode, toWorkflowEdgeRequest, toWorkflowNodeRequest } from '@/utils/workflowMapper'
 import { summarizeWorkflowRun } from '@/utils/workflowRunSummary'
 import { collectWorkflowRunInput } from '@/utils/workflowRuntime'
-import type { WorkflowNode } from '@/types/workflow'
+import type { WorkflowNode, SkillInputParam } from '@/types/workflow'
 import { useAuthStore } from '@/stores/auth'
+import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const authStore = useAuthStore()
+const { isMobile } = useBreakpoints()
 
 const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null)
 const selectedNode = ref<WorkflowNode | null>(null)
@@ -243,7 +256,7 @@ function onNodesChange() {
 }
 
 /** 更新节点数据 */
-function onUpdateNodeData(nodeId: string, key: string, value: string | number | boolean | number[] | Record<string, string>) {
+function onUpdateNodeData(nodeId: string, key: string, value: string | number | boolean | number[] | string[] | Record<string, string> | SkillInputParam[]) {
   if (!flowCanvasRef.value) return
   const nodes = flowCanvasRef.value.nodes
   const node = nodes.find((n: WorkflowNode) => n.id === nodeId)
@@ -712,6 +725,32 @@ onMounted(() => {
     bottom: calc(var(--spacing-4) + 48px);
     width: auto;
   }
+}
+
+// 移动端占位提示
+.workflow-editor__mobile-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-4);
+  text-align: center;
+  height: 100%;
+  padding: var(--spacing-6);
+}
+
+.workflow-editor__mobile-notice-title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  color: var(--color-text-primary);
+}
+
+.workflow-editor__mobile-notice-desc {
+  margin: 0;
+  max-width: 320px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-base);
 }
 </style>
 

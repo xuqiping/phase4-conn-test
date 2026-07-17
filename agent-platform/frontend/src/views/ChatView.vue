@@ -1,7 +1,7 @@
 <template>
-  <div class="chat-view">
-    <!-- Left: Session List -->
-    <div class="chat-view__sidebar">
+  <div class="chat-view" :class="{ 'chat-view--mobile': isMobile, 'chat-view--drawer-open': isMobile && sessionDrawerOpen }">
+    <!-- Left: Session List（桌面：固定侧栏；移动：抽屉） -->
+    <div class="chat-view__sidebar" :class="{ 'chat-view__sidebar--open': sessionDrawerOpen }">
       <div class="chat-view__sidebar-header">
         <n-button type="primary" block @click="newSession">
           <template #icon>
@@ -18,6 +18,13 @@
       />
     </div>
 
+    <!-- 移动端会话抽屉遮罩 -->
+    <div
+      v-if="isMobile && sessionDrawerOpen"
+      class="chat-view__overlay"
+      @click="sessionDrawerOpen = false"
+    ></div>
+
     <!-- Right: Chat Area -->
     <div class="chat-view__main">
       <template v-if="chatStore.currentSession || isComposing || hasStarted">
@@ -27,6 +34,11 @@
             {{ chatStore.currentSession?.title || '新会话' }}
           </h3>
           <div class="chat-view__header-actions">
+            <n-button v-if="isMobile" size="small" quaternary title="会话列表" @click="sessionDrawerOpen = true">
+              <template #icon>
+                <n-icon :component="MenuOutline" />
+              </template>
+            </n-button>
             <span v-if="chatStore.wsConnected" class="chat-view__ws-status chat-view__ws-status--on">WS</span>
             <span v-else class="chat-view__ws-status">REST</span>
             <n-button size="small" quaternary @click="handleDelete">
@@ -86,6 +98,21 @@
           <div v-if="chatStore.sending && !chatStore.streamingContent" class="chat-view__typing">
             <n-spin size="small" />
             <span>思考中...</span>
+          </div>
+          <!-- HUMAN_INPUT select 型：内联选项按钮（点选=当答案发送，后端拦截恢复执行）-->
+          <div v-if="pendingSelect" class="chat-view__input-options">
+            <div class="chat-view__input-options-label">👆 请选择一项作答</div>
+            <div class="chat-view__input-options-list">
+              <n-button
+                v-for="opt in pendingSelect.options"
+                :key="String(opt)"
+                :disabled="chatStore.sending"
+                size="small"
+                secondary
+                class="chat-view__input-option"
+                @click="handleSend(String(opt))"
+              >{{ opt }}</n-button>
+            </div>
           </div>
         </div>
 
@@ -157,7 +184,7 @@
     </div>
 
     <!-- 记忆管理抽屉 -->
-    <n-drawer v-model:show="showMemory" :width="720" placement="right">
+    <n-drawer v-model:show="showMemory" :width="memoryDrawerWidth" placement="right">
       <n-drawer-content title="我的记忆" closable>
         <MemoryManagerPanel />
       </n-drawer-content>
@@ -176,7 +203,8 @@ import {
   AddOutline,
   TrashOutline,
   ChatbubbleEllipsesOutline,
-  SparklesOutline
+  SparklesOutline,
+  MenuOutline
 } from '@vicons/ionicons5'
 import { useChatStore } from '@/stores/chat'
 import { chatApi } from '@/api/chat'
@@ -190,11 +218,17 @@ import ProjectSelector from '@/components/chat/ProjectSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import { projectApi } from '@/api/project'
+import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const route = useRoute()
 const chatStore = useChatStore()
 const message = useMessage()
 const messagesRef = ref<HTMLElement | null>(null)
+const { isMobile } = useBreakpoints()
+
+// 移动端会话抽屉开关
+const sessionDrawerOpen = ref(false)
+const memoryDrawerWidth = computed(() => (isMobile.value ? '100%' : 720))
 
 // 记忆写入异常（后端不再静默吞）：轮询拿到即弹一次
 watch(() => chatStore.memoryIncident, (msg) => {
@@ -253,6 +287,21 @@ function resetRagToGlobal() {
 
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 
+/**
+ * HUMAN_INPUT select 型待答选项（INPUT_REQUIRED 帧捕获）。
+ * SSE 帧字段嵌在 evt.data、WS 帧扁平，兼容两者。text/textarea 返回 null（走普通输入框）。
+ * 点选 → handleSend(选项) 当答案发送，后端 interceptWorkflowInput 拦截恢复执行。
+ */
+const pendingSelect = computed<{ options: string[] } | null>(() => {
+  const p = chatStore.pendingInput
+  if (!p) return null
+  const spec: any = (p && typeof p === 'object' && p.data) ? p.data : p
+  if (!spec || spec.inputType !== 'select') return null
+  const raw = Array.isArray(spec.options) ? spec.options : []
+  const options = raw.map((o: any) => (o == null ? '' : String(o))).filter(Boolean)
+  return options.length ? { options } : null
+})
+
 onMounted(async () => {
   await chatStore.fetchSessions()
   chatStore.connectWS()
@@ -297,6 +346,8 @@ function newSession() {
 async function handleSelectSession(sessionId: number) {
   isComposing.value = false
   await chatStore.selectSession(sessionId)
+  // 移动端选会话后收起抽屉
+  if (isMobile.value) sessionDrawerOpen.value = false
 }
 
 function handleSend(message: string) {
@@ -423,6 +474,24 @@ async function handleBatchDeleteSessions(ids: number[]) {
   overflow-y: auto;
 }
 
+/* HUMAN_INPUT select 型内联选项按钮：低调（小字标签 + secondary 按钮），暗色主题适配 */
+.chat-view__input-options {
+  padding: 4px 20px 12px;
+}
+.chat-view__input-options-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+.chat-view__input-options-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chat-view__input-option {
+  cursor: pointer;
+}
+
 /* 记忆状态条：低调（小字 + 三级文字色 + 薄 padding，无强背景），满足"不是很明显"。
    processing=进行中（muted），conflict=冲突待处理（warn 色 + 可点开抽屉）。 */
 .chat-view__memory-status {
@@ -504,5 +573,56 @@ async function handleBatchDeleteSessions(ids: number[]) {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+// === 移动端：会话侧栏抽屉化 ===
+.chat-view__overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  z-index: 40;
+  backdrop-filter: blur(2px);
+  animation: fade-in var(--duration-fast) var(--ease-out);
+}
+
+@media (max-width: 768px) {
+  .chat-view__sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 80%;
+    max-width: 300px;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform var(--duration-normal) var(--ease-in-out);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .chat-view__sidebar--open {
+    transform: translateX(0);
+  }
+
+  .chat-view__header {
+    padding: 10px 12px;
+  }
+
+  .chat-view__memory-status {
+    padding: 4px 12px;
+    gap: 12px;
+  }
+
+  .chat-view__input-options {
+    padding: 4px 12px 12px;
+  }
+
+  .chat-view__typing {
+    padding: 12px;
+  }
+
+  .chat-view__streaming-thinking {
+    margin: 12px;
+    padding: 10px 12px;
+  }
 }
 </style>

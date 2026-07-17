@@ -117,9 +117,9 @@ public class IndexJobWorker {
             }
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
-            String indexedFileRef = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
+            IndexJobTxService.IndexedDoc indexed = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
                     job.getKbId(), embeddingModel, halfvec, node.getContentHash());
-            cleanOriginalFileAfterIndex(indexedFileRef);
+            cleanOriginalFileAfterIndex(indexed);
             log.info("索引完成 nodeId={} kbId={} model={}", node.getId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
@@ -167,9 +167,9 @@ public class IndexJobWorker {
             }
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
-            String indexedFileRef = txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
+            IndexJobTxService.IndexedDoc indexed = txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
                     embeddingModel, halfvec, l1Hash);
-            cleanOriginalFileAfterIndex(indexedFileRef);
+            cleanOriginalFileAfterIndex(indexed);
             log.info("L1 索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
@@ -178,12 +178,22 @@ public class IndexJobWorker {
     }
 
     /**
-     * D5 文件生命周期：文档转 INDEXED 时（completeUpsert/L1 返回非空 fileRef）在事务外清原件字节。
+     * D5 文件生命周期：文档转 INDEXED 时（completeUpsert/L1 返回非空 IndexedDoc）在事务外清原件字节。
      * 受 {@code app.files.retain-after-index} 控制（默认 false=清；调试可设 true 保留原件）。
+     * IMAGE/FILE 文档**跳过清理**（原件是回显资产，必须保留）；其余 docType 照常清。
      * fileRef 为 null（未转换 / 无原件）→ 跳过。文件 IO 刻意在 DB 事务外：不阻塞 INDEXED 标记，删失败不回滚。
      */
-    void cleanOriginalFileAfterIndex(String fileRef) {
-        if (fileRef == null || fileRef.isBlank() || retainAfterIndex) {
+    void cleanOriginalFileAfterIndex(IndexJobTxService.IndexedDoc indexed) {
+        if (indexed == null || retainAfterIndex) {
+            return;
+        }
+        String fileRef = indexed.fileRef();
+        if (fileRef == null || fileRef.isBlank()) {
+            return;
+        }
+        String dt = indexed.docType();
+        if ("IMAGE".equals(dt) || "FILE".equals(dt)) {
+            log.info("IMAGE/FILE 文档保留原件字节供回显 docId={} fileId={}", indexed.docId(), stripFileRef(fileRef));
             return;
         }
         String fileId = stripFileRef(fileRef);

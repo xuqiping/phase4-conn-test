@@ -14,6 +14,7 @@ import com.superprogrammer.knowledge.service.internal.Section;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.llm.dto.ContentPart;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.system.service.SystemSettingService;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -53,6 +55,12 @@ public class DocumentParserService {
 
     private static final String CHAT_MODEL = "doubao-seed-2.0-code";
     private static final String DEFAULT_STRATEGY = "PER_SECTION";
+
+    /** 图片 AUTO 索引：视觉模型识图提示词。要求提取可见文字+图表结构，输出简洁中文供检索向量化。 */
+    private static final String VISION_USER_PROMPT = """
+            请识别并详细描述这张图片的内容，用于知识库检索索引。
+            提取所有可见文字（OCR）、图表/流程图结构、关键信息与主题。
+            用简洁中文输出一段可被检索的描述文本，不要输出 markdown 代码块或多余解释。""";
 
     private static final int SEC_MIN_TOKENS = 200;
     private static final int SEC_MAX_TOKENS = 800;
@@ -118,7 +126,8 @@ public class DocumentParserService {
                 default -> summarizePerSection(doc, extracted);
             };
             String l1Json = serializeL1(result.l1());
-            knowledgeNodeWriter.writeNodes(doc, operatorId, extracted, l1Json, result.abstracts());
+            knowledgeNodeWriter.writeNodes(doc, operatorId, extracted, l1Json, result.abstracts(),
+                    buildNodeMetadata(doc));
             log.info("文档解析完成 docId={} strategy={} sections={}",
                     documentId, strategy, extracted.getSections().size());
         } catch (Exception e) {
@@ -129,10 +138,144 @@ public class DocumentParserService {
 
     // -------------------- 抽取 + 切分 --------------------
 
-    /** 分流：Excel(.xlsx/.xls) 走 POI sheet 维度；其余走 Tika（现状不变）。 */
+    /** 分流：IMAGE/FILE 走专用分支；Excel(.xlsx/.xls) 走 POI；其余走 Tika。 */
     private ExtractedDocument extract(KnowledgeDocument doc) {
         doc.setParseWarning(null);   // 每次解析重置；Excel 路径按需回填降级告警
+        String dt = doc.getDocType();
+        if ("IMAGE".equals(dt)) {
+            return extractImage(doc);
+        }
+        if ("FILE".equals(dt)) {
+            return extractFile(doc);
+        }
         return isExcel(doc) ? extractExcel(doc) : extractTika(doc);
+    }
+
+    /**
+     * 图片抽取：MANUAL → 单 section 用用户手填索引文本；AUTO → 视觉模型识图生成文本。
+     * 原件字节由 IndexJobWorker 跳过 D5 清理保留，回显经 /asset 端点。
+     */
+    private ExtractedDocument extractImage(KnowledgeDocument doc) {
+        String mode = readIndexOption(doc.getParseOptions(), "indexMode");
+        if ("MANUAL".equalsIgnoreCase(mode)) {
+            return manualExtracted(doc, readIndexOption(doc.getParseOptions(), "manualIndexText"));
+        }
+        return extractImageByVision(doc);
+    }
+
+    /**
+     * 图片 AUTO 索引（v6 阶段2）：读原件字节 base64 → 视觉 LlmRequest（image+text parts）→
+     * 模型识图生成文本 → 单 section（复用 manualExtracted）。visionModel 从 parse_options 读。
+     */
+    private ExtractedDocument extractImageByVision(KnowledgeDocument doc) {
+        String visionModel = readIndexOption(doc.getParseOptions(), "visionModel");
+        if (visionModel == null || visionModel.isBlank()) {
+            throw new RuntimeException("图片 AUTO 索引需指定 visionModel docId=" + doc.getId());
+        }
+        String fileId = stripFileRef(doc.getFileRef());
+        if (fileId == null || fileId.isBlank()) {
+            throw new RuntimeException("文档无 file_ref，无法读取图片 docId=" + doc.getId());
+        }
+        com.superprogrammer.file.entity.StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        String mime = meta != null && meta.getMime() != null ? meta.getMime() : "image/png";
+
+        byte[] bytes;
+        Resource res = fileStorageService.load(fileId, doc.getCreatedBy(), false);
+        try (InputStream in = res.getInputStream()) {
+            bytes = in.readAllBytes();
+        } catch (Exception e) {
+            throw new RuntimeException("读取图片字节失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
+        }
+        String base64 = Base64.getEncoder().encodeToString(bytes);
+
+        List<ContentPart> parts = List.of(
+                ContentPart.builder().type("image").data(base64).mediaType(mime).build(),
+                ContentPart.builder().type("text").text(VISION_USER_PROMPT).build());
+        LlmMessage userMsg = LlmMessage.builder().role("user").content("").parts(parts).build();
+        LlmRequest req = LlmRequest.builder()
+                .model(visionModel)
+                .messages(List.of(userMsg))
+                .temperature(0.3)
+                .maxTokens(1024)
+                .build();
+        String text;
+        try {
+            text = llmGateway.chat(req).getContent();
+        } catch (Exception e) {
+            throw new RuntimeException("视觉模型识图失败 docId=" + doc.getId()
+                    + " model=" + visionModel + ": " + e.getMessage(), e);
+        }
+        if (text == null || text.isBlank()) {
+            throw new RuntimeException("视觉模型返回空内容 docId=" + doc.getId());
+        }
+        log.info("视觉模型识图完成 docId={} model={} chars={}", doc.getId(), visionModel, text.length());
+        return manualExtracted(doc, text);
+    }
+
+    /**
+     * 文件抽取：MANUAL → 单 section 用用户手填索引文本；AUTO → Tika 自动抽文本（pdf/docx/html/txt 等）。
+     * 原件字节保留供下载（IndexJobWorker 跳过 D5 清理）。
+     */
+    private ExtractedDocument extractFile(KnowledgeDocument doc) {
+        String mode = readIndexOption(doc.getParseOptions(), "indexMode");
+        if ("MANUAL".equalsIgnoreCase(mode)) {
+            return manualExtracted(doc, readIndexOption(doc.getParseOptions(), "manualIndexText"));
+        }
+        return extractTika(doc);
+    }
+
+    /** MANUAL 索引：用户手填文本 → 单 section（title=文档标题，content=手填文本）。 */
+    private ExtractedDocument manualExtracted(KnowledgeDocument doc, String manualText) {
+        if (manualText == null || manualText.isBlank()) {
+            throw new RuntimeException("MANUAL 索引文本为空 docId=" + doc.getId());
+        }
+        String title = (doc.getTitle() == null || doc.getTitle().isBlank()) ? "手动索引文档" : doc.getTitle();
+        Section s = Section.builder()
+                .title(title).content(manualText).tokenCount(TokenEstimator.estimate(manualText)).build();
+        return ExtractedDocument.builder().plainText(manualText).sections(List.of(s)).build();
+    }
+
+    /** parse_options 单 key 读取（indexMode/manualIndexText/visionModel）；null/格式错 → null。 */
+    private String readIndexOption(String parseOptions, String key) {
+        if (parseOptions == null || parseOptions.isBlank()) {
+            return null;
+        }
+        try {
+            Map<?, ?> json = objectMapper.readValue(parseOptions, Map.class);
+            Object v = json.get(key);
+            return v == null ? null : String.valueOf(v);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 节点 metadata JSON：IMAGE/FILE 注入 {fileRef,mime,originalName} 供检索回显；
+     * 其余 docType 返回 "{}"（原行为）。mime/originalName 从 stored_files 登记行读。
+     */
+    private String buildNodeMetadata(KnowledgeDocument doc) {
+        String dt = doc.getDocType();
+        if (!"IMAGE".equals(dt) && !"FILE".equals(dt)) {
+            return "{}";
+        }
+        String fileId = stripFileRef(doc.getFileRef());
+        com.superprogrammer.file.entity.StoredFileEntity meta =
+                fileId == null ? null : fileStorageService.findMeta(fileId);
+        try {
+            Map<String, Object> m = new HashMap<>();
+            m.put("fileRef", doc.getFileRef());
+            if (meta != null) {
+                if (meta.getMime() != null) {
+                    m.put("mime", meta.getMime());
+                }
+                if (meta.getOriginalName() != null) {
+                    m.put("originalName", meta.getOriginalName());
+                }
+            }
+            return objectMapper.writeValueAsString(m);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     private static boolean isExcel(KnowledgeDocument doc) {

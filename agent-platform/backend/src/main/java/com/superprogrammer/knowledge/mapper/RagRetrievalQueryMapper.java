@@ -28,6 +28,7 @@ public interface RagRetrievalQueryMapper {
             SELECT n.id AS node_id,
                    n.document_id AS document_id,
                    n.title AS title,
+                   n.content AS content,
                    (e.embedding &lt;=&gt; #{qHalf}::halfvec) AS cosine_distance
             FROM knowledge_embeddings_doubao e
             JOIN knowledge_nodes n      ON n.id = e.node_id
@@ -219,11 +220,15 @@ public interface RagRetrievalQueryMapper {
             """)
     RagQueryRow.HashVerifyRow reverifyNode(@Param("nodeId") Long nodeId);
 
-    /** step8：L1 文档元数据（outline/importantRules 注入用）。 */
+    /** step8：L1 文档元数据（outline/importantRules 注入用）+ IMAGE/FILE 原件回显字段（JOIN stored_files）。 */
     @Select("""
-            SELECT id, title, doc_type, l1_metadata
-            FROM knowledge_documents
-            WHERE id = #{docId} AND deleted = 0
+            SELECT d.id, d.title, d.doc_type, d.l1_metadata,
+                   d.file_ref AS file_ref,
+                   sf.mime AS mime,
+                   sf.original_name AS original_name
+            FROM knowledge_documents d
+            LEFT JOIN stored_files sf ON sf.file_id = REPLACE(d.file_ref, '/api/files/', '')
+            WHERE d.id = #{docId} AND d.deleted = 0
             """)
     RagQueryRow.L1Row fetchL1Metadata(@Param("docId") Long docId);
 

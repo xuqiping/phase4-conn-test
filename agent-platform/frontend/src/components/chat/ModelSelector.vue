@@ -4,7 +4,7 @@
     :options="options"
     placeholder="选择模型"
     size="small"
-    style="width: 200px"
+    class="model-selector"
     @update:value="handleChange"
   />
 </template>
@@ -79,3 +79,15 @@ function handleChange(value: string) {
   emit('change', value)
 }
 </script>
+
+<style lang="scss" scoped>
+.model-selector {
+  width: 200px;
+}
+
+@media (max-width: 768px) {
+  .model-selector {
+    width: 100%;
+  }
+}
+</style>

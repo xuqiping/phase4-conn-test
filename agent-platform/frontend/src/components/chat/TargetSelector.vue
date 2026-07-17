@@ -6,7 +6,7 @@
     :disabled="disabled"
     placeholder="选择目标"
     size="small"
-    style="width: 220px"
+    class="target-selector"
     @update:value="handleChange"
   />
 </template>
@@ -107,3 +107,15 @@ function handleChange(value: string) {
   emit('change', value)
 }
 </script>
+
+<style lang="scss" scoped>
+.target-selector {
+  width: 220px;
+}
+
+@media (max-width: 768px) {
+  .target-selector {
+    width: 100%;
+  }
+}
+</style>

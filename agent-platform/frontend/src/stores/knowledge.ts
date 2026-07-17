@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { knowledgeApi } from '@/api/knowledge'
-import type { KnowledgeBase, KnowledgeDocument } from '@/api/knowledge'
+import type { KnowledgeBase, KnowledgeDocument, UploadOptions } from '@/api/knowledge'
 
 export const useKnowledgeStore = defineStore('knowledge', () => {
   // === 状态 ===
@@ -41,8 +41,8 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     }
   }
 
-  async function uploadDocument(kbId: number, file: File) {
-    await knowledgeApi.uploadDocument(kbId, file)
+  async function uploadDocument(kbId: number, file: File, opts?: UploadOptions) {
+    await knowledgeApi.uploadDocument(kbId, file, opts)
     await loadDocuments(kbId)
   }
 
@@ -53,8 +53,9 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
   }
 
   /** 阶段2：Excel picker 上传（复用 tempFileRef + 选定 sheet）。 */
-  async function uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[]) {
-    await knowledgeApi.uploadDocumentSheets(kbId, tempFileRef, selectedSheets)
+  async function uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[],
+                                      opts?: UploadOptions) {
+    await knowledgeApi.uploadDocumentSheets(kbId, tempFileRef, selectedSheets, opts)
     await loadDocuments(kbId)
   }
 

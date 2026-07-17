@@ -195,7 +195,8 @@ public class MemoryConflictJudge {
                 ? "（无，新用户）"
                 : String.join(" / ", existingKeys);
         String json = chat(String.format(EXTRACT_PROMPT, keysDisplay, userMessage, assistantResponse));
-        log.info("extract raw返回={}", truncate(json));
+        // 安全审计 #6：LLM 抽取结果含记忆 fact 原文（PII），降 DEBUG（生产 INFO 不打）。
+        log.debug("extract raw返回.len={}", json == null ? 0 : json.length());
         if (json == null || json.isBlank()) return List.of();
         JsonNode root = parseJson(stripFence(json));
         if (root == null || !root.isArray()) {

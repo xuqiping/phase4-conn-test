@@ -41,6 +41,17 @@ credentials.json
 secrets.json
 config.local.*
 *.secret
+agent-platform/local-dev-env.ps1
+
+# 本地调试产物 / 截图 / 临时查询
+agent-platform/*.png
+agent-platform/width-probe.json
+agent-platform/请求工具/
+agent-platform/.tmp_*.sql
+agent-platform/backend/runtime.err
+agent-platform/backend/runtime.out
+docs/
+项目部署需要文件/
 
 # 日志和临时文件
 *.log

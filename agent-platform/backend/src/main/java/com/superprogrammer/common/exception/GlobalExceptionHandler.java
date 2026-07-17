@@ -63,14 +63,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<R<Void>> handleException(Exception e) {
+        // 安全审计 #7：兜底异常 message 可能含 SQL/表名/类名/文件路径/堆栈——直接回客户端等于递情报。
+        // 客户端固定话术；完整 root message 仅写后端 ERROR 日志供排查。
+        // 注：BusinessException 走专用 handler，其 message 是受控业务话术，可回显。
         String detail = extractRootMessage(e);
-        // 只截断超长消息，保留关键信息
-        if (detail.length() > 300) {
-            detail = detail.substring(0, 300) + "...";
-        }
         log.error("未预期异常: {}", detail, e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(R.fail(500, detail));
+                .body(R.fail(500, "服务器内部错误，请稍后重试"));
     }
 
     /**

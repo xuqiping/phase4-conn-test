@@ -76,7 +76,7 @@ public class RagRetrievalService {
     private record VisibleSet(boolean allDocs, List<Long> docIds) {
     }
 
-    private record RecallHit(Long nodeId, Long documentId, String title,
+    private record RecallHit(Long nodeId, Long documentId, String title, String content,
                              double cosineDistance, double cosineSim) {
     }
 
@@ -92,6 +92,7 @@ public class RagRetrievalService {
 
     private record Evidence(Long nodeId, Long documentId, String title, String content,
                             String contentHash, String docType,
+                            String fileRef, String mime, String originalName,
                             String l1Outline, String l1Rules,
                             int citationIndex, double rerankScore) {
     }
@@ -410,7 +411,9 @@ public class RagRetrievalService {
             List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> citations = pack.injected().stream()
                     .map(e -> com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO.builder()
                             .index(e.citationIndex()).documentId(e.documentId())
-                            .title(e.title()).nodeId(e.nodeId()).build())
+                            .title(e.title()).nodeId(e.nodeId())
+                            .docType(e.docType()).fileRef(e.fileRef())
+                            .mime(e.mime()).originalName(e.originalName()).build())
                     .toList();
             // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
             if (!grayZone && answerCacheProps.isEnabled()) {
@@ -546,7 +549,7 @@ public class RagRetrievalService {
         List<RecallHit> hits = new ArrayList<>(rows.size());
         for (RagQueryRow.DenseRecallRow r : rows) {
             double dist = r.getCosineDistance() == null ? 2.0 : r.getCosineDistance();
-            hits.add(new RecallHit(r.getNodeId(), r.getDocumentId(), r.getTitle(), dist, 1.0 - dist));
+            hits.add(new RecallHit(r.getNodeId(), r.getDocumentId(), r.getTitle(), r.getContent(), dist, 1.0 - dist));
         }
         return hits;
     }
@@ -750,7 +753,8 @@ public class RagRetrievalService {
             }
             L1Outline l1 = loadL1(c.documentId());
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
-                    c.contentHash(), l1.docType, l1.outline, l1.rules, idx, c.rerankScore()));
+                    c.contentHash(), l1.docType, l1.fileRef, l1.mime, l1.originalName,
+                    l1.outline, l1.rules, idx, c.rerankScore()));
             idx++;
         }
         return out;
@@ -894,7 +898,9 @@ public class RagRetrievalService {
             Evidence e = byIdx.get(i);
             if (e != null) {
                 citations.add(RagRetrieveVO.CitationVO.builder()
-                        .index(i).documentId(e.documentId()).title(e.title()).nodeId(e.nodeId()).build());
+                        .index(i).documentId(e.documentId()).title(e.title()).nodeId(e.nodeId())
+                        .docType(e.docType()).fileRef(e.fileRef()).mime(e.mime()).originalName(e.originalName())
+                        .build());
             }
         }
         return RagRetrieveVO.builder()
@@ -971,7 +977,7 @@ public class RagRetrievalService {
         int idx = 1;
         for (L2Candidate c : topK) {
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
-                    c.contentHash(), null, null, null, idx, c.rerankScore()));
+                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore()));
             idx++;
         }
         return out;
@@ -979,7 +985,7 @@ public class RagRetrievalService {
 
     private List<RagRetrieveVO.RecallHitVO> toRecallVOs(List<RecallHit> l0) {
         return l0.stream().map(h -> RagRetrieveVO.RecallHitVO.builder()
-                .nodeId(h.nodeId()).documentId(h.documentId()).title(h.title())
+                .nodeId(h.nodeId()).documentId(h.documentId()).title(h.title()).content(h.content())
                 .cosineDistance(h.cosineDistance()).cosineSimilarity(h.cosineSim()).build()).toList();
     }
 
@@ -1031,6 +1037,7 @@ public class RagRetrievalService {
         return ev.stream().map(e -> RagRetrieveVO.EvidenceVO.builder()
                 .nodeId(e.nodeId()).documentId(e.documentId()).title(e.title())
                 .content(e.content()).contentHash(e.contentHash()).docType(e.docType())
+                .fileRef(e.fileRef()).mime(e.mime()).originalName(e.originalName())
                 .citationIndex(e.citationIndex()).rerankScore(e.rerankScore()).build()).toList();
     }
 
@@ -1071,7 +1078,8 @@ public class RagRetrievalService {
                 r.getContent(), r.getContentHash(), psim, bm25, psim, bmOnly, docL1Sim);
     }
 
-    private record L1Outline(String docType, String outline, String rules) {
+    private record L1Outline(String docType, String outline, String rules,
+                             String fileRef, String mime, String originalName) {
     }
 
     /** L1 显示元数据（summary + outline/rules 拼接串），调试展示用。 */
@@ -1081,16 +1089,20 @@ public class RagRetrievalService {
     private L1Outline loadL1(Long docId) {
         RagQueryRow.L1Row row = queryMapper.fetchL1Metadata(docId);
         if (row == null || row.getL1Metadata() == null || row.getL1Metadata().isBlank()) {
-            return new L1Outline(row == null ? null : row.getDocType(), null, null);
+            return new L1Outline(row == null ? null : row.getDocType(), null, null,
+                    row == null ? null : row.getFileRef(), row == null ? null : row.getMime(),
+                    row == null ? null : row.getOriginalName());
         }
         try {
             L1Metadata l1 = objectMapper.readValue(row.getL1Metadata(), L1Metadata.class);
             String outline = l1.getOutline() == null ? null : String.join("；", l1.getOutline());
             String rules = l1.getImportantRules() == null ? null : String.join("；", l1.getImportantRules());
-            return new L1Outline(row.getDocType(), outline, rules);
+            return new L1Outline(row.getDocType(), outline, rules,
+                    row.getFileRef(), row.getMime(), row.getOriginalName());
         } catch (Exception e) {
             log.warn("L1 元数据解析失败 docId={}: {}", docId, e.getMessage());
-            return new L1Outline(row.getDocType(), null, null);
+            return new L1Outline(row.getDocType(), null, null,
+                    row.getFileRef(), row.getMime(), row.getOriginalName());
         }
     }
 
@@ -1131,7 +1143,9 @@ public class RagRetrievalService {
         }
         return refs.stream().map(r -> RagRetrieveVO.CitationVO.builder()
                 .index(r.getIndex()).documentId(r.getDocumentId())
-                .title(r.getTitle()).nodeId(r.getNodeId()).build()).toList();
+                .title(r.getTitle()).nodeId(r.getNodeId())
+                .docType(r.getDocType()).fileRef(r.getFileRef()).mime(r.getMime()).originalName(r.getOriginalName())
+                .build()).toList();
     }
 
     /** RagRetrieveVO.CitationVO → CachedPayload.CitationRef（写入缓存）。 */
@@ -1141,6 +1155,8 @@ public class RagRetrievalService {
         }
         return citations.stream().map(c -> CachedPayload.CitationRef.builder()
                 .index(c.getIndex()).documentId(c.getDocumentId())
-                .title(c.getTitle()).nodeId(c.getNodeId()).build()).toList();
+                .title(c.getTitle()).nodeId(c.getNodeId())
+                .docType(c.getDocType()).fileRef(c.getFileRef()).mime(c.getMime()).originalName(c.getOriginalName())
+                .build()).toList();
     }
 }

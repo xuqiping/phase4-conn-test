@@ -274,7 +274,13 @@ public class ChatSessionService {
                 if (askText != null) response = response + "\n\n" + askText;
             } else {
                 final String resp = response;
-                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp));
+                try {
+                    memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp));
+                } catch (java.util.concurrent.RejectedExecutionException ree) {
+                    // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
+                    log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
+                    memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
+                }
             }
         }
 
@@ -429,6 +435,12 @@ public class ChatSessionService {
         }
 
         if ("WORKFLOW".equals(session.getMode())) {
+            // 人机输入拦截（HUMAN_INPUT）：若该会话有 WAITING_INPUT 挂起，把本条消息当答案恢复执行
+            Flux<ExecutionEvent> resumeFlux = runtimeExecutionService.resumeWorkflowFromChatAnswer(
+                    session.getId(), request.getMessage(), userId);
+            if (resumeFlux != null) {
+                return streamWorkflowFlux(userId, session, request, resumeFlux);
+            }
             return streamWorkflow(userId, session, request);
         }
 
@@ -469,7 +481,13 @@ public class ChatSessionService {
                             if (askText != null) responseText = responseText + "\n\n" + askText;
                         } else {
                             final String rtMem = responseText;
-                            memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                            try {
+                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                            } catch (java.util.concurrent.RejectedExecutionException ree) {
+                                // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
+                                log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
+                                memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
+                            }
                         }
                     }
                     ChatMessage assistantMsg = new ChatMessage();
@@ -485,18 +503,38 @@ public class ChatSessionService {
                     }
                     messageMapper.insert(assistantMsg);
 
+                    // P3：CITATION 事件（DONE 前发，前端聊天 [n] 引用回显；仅 RAG 命中且非空时）
+                    java.util.List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> cites = rag.citations();
+                    StreamEvent citationEvt = null;
+                    if (cites != null && !cites.isEmpty()) {
+                        try {
+                            citationEvt = StreamEvent.citation(new ObjectMapper().writeValueAsString(cites));
+                        } catch (Exception ignored) {}
+                    }
+
+                    java.util.List<StreamEvent> tail = new java.util.ArrayList<>();
                     if (askText != null) {
-                        return Flux.just(StreamEvent.chunk("\n\n" + askText), StreamEvent.done());
+                        tail.add(StreamEvent.chunk("\n\n" + askText));
+                    } else if (disclaimer != null) {
+                        tail.add(StreamEvent.chunk(disclaimer));
                     }
-                    if (disclaimer != null) {
-                        return Flux.just(StreamEvent.chunk(disclaimer), StreamEvent.done());
+                    if (citationEvt != null) {
+                        tail.add(citationEvt);
                     }
-                    return Flux.just(StreamEvent.done());
+                    tail.add(StreamEvent.done());
+                    return Flux.fromIterable(tail);
                 }).subscribeOn(Schedulers.boundedElastic()))
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
 
     private Flux<StreamEvent> streamWorkflow(Long userId, ChatSession session, ChatRequest request) {
+        return streamWorkflowFlux(userId, session, request,
+                runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, session.getId(), request.getMessage()));
+    }
+
+    /** 工作流事件流 → 对话流式事件的统一映射（首次执行与人机输入恢复复用）。 */
+    private Flux<StreamEvent> streamWorkflowFlux(Long userId, ChatSession session, ChatRequest request,
+                                                 Flux<ExecutionEvent> source) {
         Long sessionId = session.getId();
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
@@ -506,7 +544,7 @@ public class ChatSessionService {
                 memoryScopeResolver.resolveWriteScope(session, userId, false);
         Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
 
-        return runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, request.getMessage())
+        return source
                 .flatMapIterable(event -> workflowStreamEvents(event, fullThinking, finalResponse, hasError))
                 .concatWith(Flux.defer(() -> {
                     if (hasError.get()) {
@@ -525,7 +563,13 @@ public class ChatSessionService {
                             if (askText != null) responseText = responseText + "\n\n" + askText;
                         } else {
                             final String rtMem = responseText;
-                            memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                            try {
+                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                            } catch (java.util.concurrent.RejectedExecutionException ree) {
+                                // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
+                                log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
+                                memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
+                            }
                         }
                     }
                     ChatMessage assistantMsg = new ChatMessage();
@@ -575,6 +619,24 @@ public class ChatSessionService {
                 finalResponse.set(text);
             }
             events.add(StreamEvent.chunk(text));
+        } else if ("WAITING_INPUT".equals(event.getType())) {
+            // 工作流命中 HUMAN_INPUT：把问题作为本轮 assistant 文本流出 + 透出 INPUT_REQUIRED 结构化事件
+            Map<String, Object> meta = event.getMetadata() == null ? Map.of() : event.getMetadata();
+            String question = meta.get("question") == null ? "" : String.valueOf(meta.get("question"));
+            finalResponse.set(question);
+            if (!question.isBlank()) {
+                events.add(StreamEvent.chunk(question));
+            }
+            java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("executionId", event.getExecutionId());
+            payload.put("nodeId", event.getNodeId());
+            payload.put("inputKey", meta.get("inputKey"));
+            payload.put("question", question);
+            payload.put("inputType", meta.getOrDefault("inputType", "text"));
+            payload.put("options", meta.get("options"));
+            payload.put("required", meta.getOrDefault("required", Boolean.TRUE));
+            payload.put("placeholder", meta.get("placeholder"));
+            events.add(StreamEvent.inputRequired(null, payload));
         }
         return events;
     }
@@ -623,11 +685,13 @@ public class ChatSessionService {
 
     // ============================ 阶段5 RAG（CHAT 模式）============================
 
-    /** RAG 注入结果：abstained→短路 ABSTAIN_MSG；否则 evidenceContext 注入 SYSTEM + injectedIndexes 供 post-gen 校验。 */
+    /** RAG 注入结果：abstained→短路 ABSTAIN_MSG；否则 evidenceContext 注入 SYSTEM + injectedIndexes 供 post-gen 校验。
+     *  P3：citations 透传给流式 CITATION 事件，前端聊天回显 [n] 引用（IMAGE 缩略图 / FILE 下载链）。 */
     private record RagInjection(boolean abstained, String answer, String evidenceContext,
-                                java.util.Set<Integer> injectedIndexes) {
+                                java.util.Set<Integer> injectedIndexes,
+                                java.util.List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> citations) {
         static RagInjection none() {
-            return new RagInjection(false, null, null, null);
+            return new RagInjection(false, null, null, null, null);
         }
     }
 
@@ -649,9 +713,9 @@ public class ChatSessionService {
         com.superprogrammer.knowledge.dto.EvidenceResult ev =
                 ragRetrievalService.retrieveEvidence(effective, query, userId, admin);
         if (ev.isAbstained()) {
-            return new RagInjection(true, ev.getAnswer(), null, null);
+            return new RagInjection(true, ev.getAnswer(), null, null, null);
         }
-        return new RagInjection(false, null, ev.getSystemPrompt(), ev.getInjectedIndexes());
+        return new RagInjection(false, null, ev.getSystemPrompt(), ev.getInjectedIndexes(), ev.getCitations());
     }
 
     private boolean isAdmin() {

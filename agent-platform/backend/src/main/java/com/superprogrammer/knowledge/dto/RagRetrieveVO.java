@@ -35,6 +35,11 @@ public class RagRetrieveVO {
         private Long documentId;
         private String title;
         private Long nodeId;
+        /** IMAGE/FILE 文档回显用：docType 决定渲染缩略图还是下载链；fileRef/mime/originalName 指向原件。 */
+        private String docType;
+        private String fileRef;
+        private String mime;
+        private String originalName;
     }
 
     @Data
@@ -43,6 +48,8 @@ public class RagRetrieveVO {
         private Long nodeId;
         private Long documentId;
         private String title;
+        /** L0 摘要原文（node.content）。调试面板展示，让 Sheet:行N 占位 title 背后真实摘要可见。 */
+        private String content;
         private double cosineDistance;
         private double cosineSimilarity;
     }
@@ -82,6 +89,10 @@ public class RagRetrieveVO {
         private String content;
         private String contentHash;
         private String docType;
+        /** IMAGE/FILE 回显用（docType=IMAGE 渲染缩略图，FILE 渲染下载链）。null=普通文本证据。 */
+        private String fileRef;
+        private String mime;
+        private String originalName;
         private int citationIndex;
         private double rerankScore;
     }

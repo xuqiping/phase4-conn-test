@@ -4,8 +4,10 @@ package com.superprogrammer.auth.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -26,6 +28,10 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final ObjectMapper objectMapper;
+
+    /** Sidecar 回调共享密钥（安全审计 #1）。env RUNTIME_CALLBACK_TOKEN。空 → fail-closed。 */
+    @Value("${runtime.callback.token:}")
+    private String runtimeCallbackToken;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -67,7 +73,9 @@ public class SecurityConfig {
                         })
                 )
                 // 添加JWT过滤器
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                // 安全审计 #1：sidecar 回调端点共享密钥校验（permitAll 路径上的独立咽喉点）
+                .addFilterBefore(new RuntimeCallbackSecurityFilter(runtimeCallbackToken), JwtAuthenticationFilter.class);
 
         return http.build();
     }

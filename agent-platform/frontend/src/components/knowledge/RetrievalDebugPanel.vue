@@ -157,13 +157,27 @@ const citationCols: DataTableColumns<RagCitation> = [
   { title: '[n]', key: 'index', width: 60 },
   { title: '文档ID', key: 'documentId', width: 80 },
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
-  { title: '节点ID', key: 'nodeId', width: 90 }
+  { title: '节点ID', key: 'nodeId', width: 90 },
+  { title: '来源', key: 'fileRef', width: 110, render: r => renderAssetCell(r) }
 ]
+
+/** IMAGE/FILE 原件回显 cell：IMAGE→缩略图，FILE→下载链，其余→'-'。URL 走 KB 读权限端点（跨用户）。 */
+function renderAssetCell(row: { docType?: string | null; documentId: number; originalName?: string | null }) {
+  const dt = row.docType
+  if (dt !== 'IMAGE' && dt !== 'FILE') return '-'
+  const url = `/api/knowledge/documents/${row.documentId}/asset`
+  if (dt === 'IMAGE') {
+    return h('img', { src: url, alt: 'image', style: 'max-width:90px;max-height:90px;border-radius:4px;object-fit:contain' })
+  }
+  const name = row.originalName || ''
+  return h('a', { href: url, target: '_blank', download: name }, '下载')
+}
 
 const l0Cols: DataTableColumns<RagRecallHit> = [
   { title: '节点ID', key: 'nodeId', width: 90 },
   { title: '文档ID', key: 'documentId', width: 80 },
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
+  { title: '摘要', key: 'content', ellipsis: { tooltip: true }, render: r => r.content ?? '-' },
   {
     title: 'cosSim', key: 'cosineSimilarity', width: 100,
     sorter: (a, b) => a.cosineSimilarity - b.cosineSimilarity,
@@ -205,7 +219,8 @@ const l2Cols: DataTableColumns<RagEvidence> = [
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
   { title: '类型', key: 'docType', width: 80 },
   { title: 'rerank', key: 'rerankScore', width: 90, render: r => r.rerankScore.toFixed(4) },
-  { title: '内容', key: 'content', ellipsis: { tooltip: true }, render: r => r.content }
+  { title: '内容', key: 'content', ellipsis: { tooltip: true }, render: r => r.content },
+  { title: '来源', key: 'fileRef', width: 110, render: r => renderAssetCell(r) }
 ]
 
 async function run() {
@@ -312,5 +327,16 @@ async function run() {
   color: var(--color-text-secondary);
   font-size: 13px;
   b { color: var(--color-text-primary); }
+}
+
+@media (max-width: 768px) {
+  .rag-debug__row {
+    flex-wrap: wrap;
+  }
+  // 覆盖内联 style="width:260px/160px" 的输入/选择器，移动端撑满
+  .rag-debug__row :deep(.n-input),
+  .rag-debug__row :deep(.n-base-selection) {
+    width: 100% !important;
+  }
 }
 </style>

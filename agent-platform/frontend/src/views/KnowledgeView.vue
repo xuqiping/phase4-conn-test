@@ -16,11 +16,12 @@
           :data="store.bases"
           :loading="store.loadingBases"
           :pagination="{ pageSize: 10 }"
+          :scroll-x="900"
           striped
         />
 
         <!-- 文档抽屉 -->
-        <n-drawer v-model:show="showDocDrawer" :width="640" placement="right">
+        <n-drawer v-model:show="showDocDrawer" :width="docDrawerWidth" placement="right">
           <n-drawer-content :title="`文档管理 · ${docKb?.name || ''}`" closable>
             <DocumentManager v-if="docKb" :kb-id="docKb.id" :can-write="docKb.canManage || canWrite" />
           </n-drawer-content>
@@ -57,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, onMounted, ref, computed } from 'vue'
 import {
   NButton, NDataTable, NDrawer, NDrawerContent, NIcon, NSpace, NTabPane, NTabs, NTag,
   useDialog, useMessage
@@ -73,11 +74,15 @@ import DocumentManager from '@/components/knowledge/DocumentManager.vue'
 import RetrievalDebugPanel from '@/components/knowledge/RetrievalDebugPanel.vue'
 import RetrievalAuditPanel from '@/components/knowledge/RetrievalAuditPanel.vue'
 import RagAskPanel from '@/components/knowledge/RagAskPanel.vue'
+import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const authStore = useAuthStore()
 const store = useKnowledgeStore()
 const message = useMessage()
 const dialog = useDialog()
+const { isMobile } = useBreakpoints()
+
+const docDrawerWidth = computed(() => (isMobile.value ? '100%' : 640))
 
 const canWrite = authStore.hasPermission('knowledge:write')
 const canManage = authStore.hasPermission('knowledge:manage')
@@ -179,6 +184,16 @@ onMounted(() => {
     margin: 0;
     font-size: 20px;
     color: var(--color-text-primary);
+  }
+}
+
+@media (max-width: 768px) {
+  .knowledge-view {
+    padding: var(--spacing-3);
+  }
+  .knowledge-view__header {
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
   }
 }
 </style>

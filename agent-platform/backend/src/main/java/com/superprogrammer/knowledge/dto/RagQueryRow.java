@@ -14,6 +14,8 @@ public class RagQueryRow {
         private Long nodeId;
         private Long documentId;
         private String title;
+        /** L0 摘要原文（node.content），调试面板「候选 L0」展示用，区分 Sheet:行N 占位 title */
+        private String content;
         /** pgvector cosine 距离 [0,2]，sim = 1 - distance */
         private Double cosineDistance;
     }
@@ -47,12 +49,16 @@ public class RagQueryRow {
         private String embedHash;
     }
 
-    /** L1 文档元数据行 */
+    /** L1 文档元数据行（含 IMAGE/FILE 原件回显字段 file_ref/mime/original_name，LEFT JOIN stored_files）。 */
     @Data
     public static class L1Row {
         private Long id;
         private String title;
         private String docType;
         private String l1Metadata;
+        /** IMAGE/FILE 原件引用（/api/files/{fileId}），回显用；普通文档也可能有但回显时按 docType 判断。 */
+        private String fileRef;
+        private String mime;
+        private String originalName;
     }
 }

@@ -10,6 +10,7 @@
       :data="users"
       :loading="loading"
       :pagination="pagination"
+      :scroll-x="1000"
       @update:page="loadUsers"
       striped
     />
@@ -157,6 +158,12 @@ onMounted(() => {
       margin: 0;
       color: var(--color-text-primary);
     }
+  }
+}
+
+@media (max-width: 768px) {
+  .user-manage {
+    padding: var(--spacing-3);
   }
 }
 </style>

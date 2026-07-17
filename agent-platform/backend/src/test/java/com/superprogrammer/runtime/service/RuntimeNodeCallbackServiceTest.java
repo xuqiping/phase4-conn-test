@@ -11,6 +11,7 @@ import com.superprogrammer.engine.router.AgentRouter;
 import com.superprogrammer.engine.router.RoutingResult;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackRequest;
 import com.superprogrammer.runtime.dto.RuntimeNodeCallbackResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -53,9 +54,21 @@ class RuntimeNodeCallbackServiceTest {
     @Mock
     private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
 
+    // 安全审计 #1：executeNode 现经 executionId → execution_logs.triggeredBy 反查可信 userId，
+    // RuntimeNodeCallbackService 新增 ExecutionLogService 依赖。所有回调先命中此 stub。
+    @Mock
+    private com.superprogrammer.execution.service.ExecutionLogService executionLogService;
+
+    @BeforeEach
+    void stubTrustedUser() {
+        com.superprogrammer.execution.entity.ExecutionLog trusted = new com.superprogrammer.execution.entity.ExecutionLog();
+        trusted.setTriggeredBy(7L);
+        when(executionLogService.getExecutionLog(1001L)).thenReturn(trusted);
+    }
+
     @Test
     void executeNode_runsSkillExecutorForSkillNode() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -97,7 +110,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_mapsPromptInputToTemplateInputWhenMessageIsAbsent() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -129,7 +142,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_passesNodePromptConfigAsFirstStepOverride() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -166,7 +179,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_appliesNodeInputMappingsWithScopedReferences() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -201,7 +214,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_routesAgentRefAndRunsSelectedSkills() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");
@@ -242,7 +255,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_rejectsSkillWhenOwningAgentIsNotPublishedAndUserIsNotOwner() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Skill skill = new Skill();
         skill.setId(12L);
         skill.setAgentId(3L);
@@ -267,7 +280,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_allowsDraftAgentForOwner() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");
@@ -294,7 +307,7 @@ class RuntimeNodeCallbackServiceTest {
 
     @Test
     void executeNode_rejectsPublishedAgentWhenUserLacksObjectUsePermission() {
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         Agent agent = new Agent();
         agent.setId(3L);
         agent.setName("writer");
@@ -318,7 +331,7 @@ class RuntimeNodeCallbackServiceTest {
     @Test
     void executeNode_rendersRetrievalQueryTemplateFromUpstreamAliasOutput() {
         // 脱离点 1：检索节点 query 支持 {{上游别名.输出键}}，sidecar 已把上游输出按 alias.key 合并进 input
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         when(ragModeResolver.resolveForWorkflowCallback(1001L)).thenReturn(true);
         when(ragScopeResolver.resolveNodeKbs(anyList(), eq(7L))).thenReturn(List.of(5L));
         when(ragRetrievalService.retrieveEvidence(eq(List.of(5L)), eq("怎么退款"), eq(7L), eq(false)))
@@ -347,7 +360,7 @@ class RuntimeNodeCallbackServiceTest {
     @Test
     void executeNode_fallsBackToUpstreamMessageWhenRetrievalQueryBlank() {
         // 回归保护：query 留空时回退到上游 input/message（既有兜底行为不变）
-        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver);
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
         when(ragModeResolver.resolveForWorkflowCallback(1001L)).thenReturn(true);
         when(ragScopeResolver.resolveNodeKbs(anyList(), eq(7L))).thenReturn(List.of(5L));
         when(ragRetrievalService.retrieveEvidence(eq(List.of(5L)), eq("fallback question"), eq(7L), eq(false)))

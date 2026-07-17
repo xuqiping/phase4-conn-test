@@ -131,6 +131,8 @@ public class LlmGateway {
 
     private LlmProviderInterface createProviderInstance(String name, String protocol, String baseUrl, String apiKey, List<String> models) {
         if (baseUrl == null || baseUrl.isBlank()) return null;
+        // 安全审计 #3：用户自填 endpoint SSRF 防护。单一咽喉点——所有用户级 provider 实例化必经此处。
+        com.superprogrammer.common.security.SsrfGuard.validate(baseUrl);
         return switch (resolveProtocol(name, protocol)) {
             case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
             default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);

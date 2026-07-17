@@ -73,11 +73,12 @@ public class ExecutionController {
     @RequirePermission("execution:read")
     public ResponseEntity<R<List<ExecutionLog>>> listByWorkflow(
             @RequestParam(required = false) Long workflowId) {
+        Long userScope = isCurrentUserAdmin() ? null : getCurrentUserId();
         List<ExecutionLog> logs;
         if (workflowId != null) {
-            logs = executionLogService.listByWorkflowId(workflowId);
+            // 安全审计 #4：按 workflowId 查询也必须带归属 scope，否则登录用户拿别人 workflowId 即可越权读全部执行日志。
+            logs = executionLogService.listByWorkflowIdScoped(workflowId, userScope);
         } else {
-            Long userScope = isCurrentUserAdmin() ? null : getCurrentUserId();
             logs = executionLogService.listVisibleExecutions(userScope);
         }
         logs.forEach(this::fillTriggeredByUsername);
@@ -114,11 +115,34 @@ public class ExecutionController {
         return ResponseEntity.ok(R.ok("审批通过，执行已继续", events));
     }
 
+    /**
+     * 用户对 HUMAN_INPUT 节点作答（结构化通道，如 select 选项）后恢复执行。
+     */
+    @PostMapping("/{id}/input")
+    @RequirePermission("execution:run")
+    public ResponseEntity<R<List<ExecutionEvent>>> submitInput(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, Object> body) {
+        Long userScope = isCurrentUserAdmin() ? null : getCurrentUserId();
+        executionLogService.getVisibleExecutionLog(id, userScope);
+        Long userId = getCurrentUserId();
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> userInput = body == null ? java.util.Map.of() : body;
+        List<ExecutionEvent> events = runtimeExecutionService.resumeWorkflowWithInput(id, userInput, userId)
+                .collectList()
+                .block();
+        return ResponseEntity.ok(R.ok("用户输入已提交，执行已继续", events));
+    }
+
     @PostMapping("/{id}/reject")
     @RequirePermission("execution:run")
     public ResponseEntity<R<Void>> rejectExecution(
             @PathVariable Long id,
             @RequestParam(defaultValue = "rejected") String reason) {
+        // 安全审计 #4：reject 此前直调 failExecution 无归属校验，登录用户可强行打断他人执行。
+        // 先 getVisibleExecutionLog 校验归属（非 owner 且非 admin → FORBIDDEN），再 failExecution。
+        Long userScope = isCurrentUserAdmin() ? null : getCurrentUserId();
+        executionLogService.getVisibleExecutionLog(id, userScope);
         executionLogService.failExecution(id, "人工审批拒绝: " + reason);
         return ResponseEntity.ok(R.ok("审批已拒绝", null));
     }

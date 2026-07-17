@@ -49,6 +49,11 @@ export interface KnowledgeDocument {
   status: string                  // PENDING/PARSING/SUMMARIZING/EMBEDDING/INDEXED/FAILED
   fileRef: string | null
   fileHash: string | null
+  /** IMAGE/FILE 原件回显（mime 决定缩略图/下载；originalName 展示文件名） */
+  mime: string | null
+  originalName: string | null
+  /** 索引方式 MANUAL/AUTO（parse_options 解出，列表显徽章） */
+  indexMode: string | null
   parseError: string | null
   /** 解析选项 JSON（Excel selectedSheets 等），前端展示已选 sheet（V39） */
   parseOptions: string | null
@@ -56,6 +61,14 @@ export interface KnowledgeDocument {
   parseWarning: string | null
   createdAt: string
   updatedAt: string | null
+}
+
+/** 图片/文件知识库上传选项（空=后端按后缀推断 docType + AUTO 默认）。 */
+export interface UploadOptions {
+  docType?: string
+  indexMode?: 'MANUAL' | 'AUTO'
+  manualIndexText?: string
+  visionModel?: string
 }
 
 /** Excel sheet 预读结果（阶段1 picker）。tempFileRef 阶段2 upload 复用，零重传。 */
@@ -119,12 +132,19 @@ export interface RagCitation {
   documentId: number
   title: string
   nodeId: number
+  /** IMAGE/FILE 回显（docType=IMAGE 渲染缩略图，FILE 渲染下载链）。null=普通文本引用。 */
+  docType?: string | null
+  fileRef?: string | null
+  mime?: string | null
+  originalName?: string | null
 }
 
 export interface RagRecallHit {
   nodeId: number
   documentId: number
   title: string
+  /** L0 摘要原文（node.content），调试面板展示用 */
+  content: string
   cosineDistance: number
   cosineSimilarity: number
 }
@@ -156,6 +176,10 @@ export interface RagEvidence {
   content: string
   contentHash: string
   docType: string | null
+  /** IMAGE/FILE 回显（docType=IMAGE 渲染缩略图，FILE 渲染下载链）。null=普通文本证据。 */
+  fileRef: string | null
+  mime: string | null
+  originalName: string | null
   citationIndex: number
   rerankScore: number
 }
@@ -219,6 +243,15 @@ export interface RetrievalLogPageQuery {
 
 // === API 函数 ===
 
+/** FormData 追加图片/文件上传选项（非空字段才追加，空=后端按后缀推断 + AUTO 默认）。 */
+function appendUploadOptions(fd: FormData, opts?: UploadOptions) {
+  if (!opts) return
+  if (opts.docType) fd.append('docType', opts.docType)
+  if (opts.indexMode) fd.append('indexMode', opts.indexMode)
+  if (opts.manualIndexText && opts.manualIndexText.trim()) fd.append('manualIndexText', opts.manualIndexText.trim())
+  if (opts.visionModel) fd.append('visionModel', opts.visionModel)
+}
+
 export const knowledgeApi = {
   // ---- 知识库 ----
   /** GET /api/knowledge/bases — 当前用户可见的 KB 列表（knowledge:read） */
@@ -246,11 +279,13 @@ export const knowledgeApi = {
   getDocument(id: number) {
     return request.get<ApiResponse<KnowledgeDocument>>(`/knowledge/documents/${id}`)
   },
-  /** POST /api/knowledge/documents/upload — multipart 上传（knowledge:write） */
-  uploadDocument(kbId: number, file: File) {
+  /** POST /api/knowledge/documents/upload — multipart 上传（knowledge:write）。
+   *  opts 为图片/文件知识库扩展（docType/indexMode/manualIndexText/visionModel）；空=后端推断。 */
+  uploadDocument(kbId: number, file: File, opts?: UploadOptions) {
     const fd = new FormData()
     fd.append('kbId', String(kbId))
     fd.append('file', file)
+    appendUploadOptions(fd, opts)
     return request.post<ApiResponse<KnowledgeDocument>>('/knowledge/documents/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
@@ -265,14 +300,19 @@ export const knowledgeApi = {
     })
   },
   /** POST /api/knowledge/documents/upload — 阶段2 Excel picker 上传（复用 tempFileRef + 选定 sheet）。 */
-  uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[]) {
+  uploadDocumentSheets(kbId: number, tempFileRef: string, selectedSheets: string[], opts?: UploadOptions) {
     const fd = new FormData()
     fd.append('kbId', String(kbId))
     fd.append('tempFileRef', tempFileRef)
     selectedSheets.forEach(s => fd.append('selectedSheets', s))
+    appendUploadOptions(fd, opts)
     return request.post<ApiResponse<KnowledgeDocument>>('/knowledge/documents/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+  },
+  /** GET /api/knowledge/documents/{docId}/asset — 取图片/文件原件（KB 成员可读）。 */
+  documentAssetUrl(docId: number) {
+    return `/api/knowledge/documents/${docId}/asset`
   },
   deleteDocument(id: number) {
     return request.delete<ApiResponse<void>>(`/knowledge/documents/${id}`)

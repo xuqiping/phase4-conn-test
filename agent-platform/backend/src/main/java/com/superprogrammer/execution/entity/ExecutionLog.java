@@ -27,6 +27,9 @@ public class ExecutionLog extends BaseEntity {
 
     private Long sourceId;
 
+    /** 触发该执行的聊天会话（从对话流触发工作流时填充，用于人机输入拦截定位）。 */
+    private Long sessionId;
+
     private String nodeId;
 
     private String externalThreadId;
@@ -47,6 +50,10 @@ public class ExecutionLog extends BaseEntity {
 
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String nodeLogs;
+
+    /** WAITING_INPUT 期间缓存的待答问题规格（inputKey/question/inputType/options 等），恢复后清空。 */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String pendingInput;
 
     private OffsetDateTime startedAt;
 

@@ -22,6 +22,31 @@
       </div>
       <!-- Content -->
       <div class="message-bubble__text">{{ message.content }}</div>
+      <!-- P3：RAG 引用回显（文本中 [n] 对应底部第 n 条；IMAGE 缩略图 / FILE 下载链） -->
+      <div v-if="citations.length" class="message-bubble__citations">
+        <div class="message-bubble__citations-title">📎 引用来源</div>
+        <div v-for="c in citations" :key="c.index" class="message-bubble__citation">
+          <span class="message-bubble__citation-index">[{{ c.index }}]</span>
+          <span class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
+          <!-- IMAGE：内联缩略图 -->
+          <img
+            v-if="c.docType === 'IMAGE' && c.fileRef"
+            class="message-bubble__citation-thumb"
+            :src="knowledgeApi.documentAssetUrl(c.documentId)"
+            :alt="c.originalName || '图片引用'"
+            loading="lazy"
+          />
+          <!-- FILE：下载 chip -->
+          <a
+            v-else-if="c.docType === 'FILE' && c.fileRef"
+            class="message-bubble__citation-download"
+            :href="knowledgeApi.documentAssetUrl(c.documentId)"
+            :download="c.originalName || ''"
+          >
+            ⬇ 下载原件
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -31,6 +56,7 @@ import { ref, computed } from 'vue'
 import { NIcon } from 'naive-ui'
 import { PersonOutline, SparklesOutline } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/api/chat'
+import { knowledgeApi } from '@/api/knowledge'
 
 const props = defineProps<{
   message: ChatMessage
@@ -47,6 +73,27 @@ const thinkingText = computed(() => {
     return null
   }
 })
+
+/** P3：从 metadata.citations 解析引用列表（后端 CITATION 帧存入）。 */
+interface Citation {
+  index: number
+  documentId: number
+  title?: string
+  docType?: string
+  fileRef?: string
+  mime?: string
+  originalName?: string
+}
+const citations = computed<Citation[]>(() => {
+  if (!props.message.metadata) return []
+  try {
+    const meta = JSON.parse(props.message.metadata)
+    const list = Array.isArray(meta.citations) ? meta.citations : []
+    return list.filter((c: any) => c && typeof c.index === 'number')
+  } catch {
+    return []
+  }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -57,6 +104,13 @@ const thinkingText = computed(() => {
 
   &--assistant {
     background: var(--color-surface);
+  }
+}
+
+@media (max-width: 768px) {
+  .message-bubble {
+    padding: 12px;
+    gap: 8px;
   }
 }
 
@@ -139,5 +193,66 @@ const thinkingText = computed(() => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-bubble__citations {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.message-bubble__citations-title {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 6px;
+}
+
+.message-bubble__citation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.message-bubble__citation-index {
+  color: var(--color-primary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.message-bubble__citation-title {
+  word-break: break-word;
+}
+
+.message-bubble__citation-thumb {
+  display: block;
+  max-width: 180px;
+  max-height: 140px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-light);
+  object-fit: contain;
+  margin-top: 4px;
+}
+
+.message-bubble__citation-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    opacity: 0.85;
+  }
 }
 </style>

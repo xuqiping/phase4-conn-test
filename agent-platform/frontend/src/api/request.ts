@@ -35,6 +35,13 @@ const request: AxiosInstance = axios.create({
 
 let isRedirectingToLogin = false
 
+/** 连续网络层错误（无 response：超时/断网/后端不可达）计数。任一成功响应归零。 */
+let consecutiveNetErrors = 0
+/** 上次「网络异常」toast 时间戳，用于节流，避免轮询风暴刷屏。 */
+let lastNetToastAt = 0
+/** 连续网络错误达此阈值 → 视同会话/服务失效，跳登录（卸载页面即停止轮询，打破死亡螺旋）。 */
+const NET_ERROR_CIRCUIT_THRESHOLD = 5
+
 /**
  * 请求拦截器 — 自动添加Authorization头
  */
@@ -58,6 +65,9 @@ request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
     const res = response.data
 
+    // 任一成功响应 → 清零连续网络错误计数
+    consecutiveNetErrors = 0
+
     // 业务错误码处理
     if (res.code !== 200 && res.code !== 201 && res.code !== 202) {
       showErrorMessage(res.message || '请求失败')
@@ -71,6 +81,23 @@ request.interceptors.response.use(
 
     if (error.response?.status === 401 && originalRequest?.url !== '/auth/login') {
       redirectToLogin()
+      return Promise.reject(error)
+    }
+
+    // 网络层错误（无 response：超时 / 断网 / 后端不可达）。
+    // RB-001 死亡螺旋：此前轮询接口超时不触发 401 跳转，每 3s 刷屏且不停止。
+    // 现累计连续网络错误：节流提示（5s 内不重复弹）+ 达阈值视同会话失效跳登录（卸载页面即停轮询）。
+    if (!error.response) {
+      consecutiveNetErrors++
+      const now = Date.now()
+      if (now - lastNetToastAt > 5000) {
+        lastNetToastAt = now
+        showErrorMessage('网络异常：服务暂不可达，请检查网络或稍后重试')
+      }
+      if (consecutiveNetErrors >= NET_ERROR_CIRCUIT_THRESHOLD) {
+        consecutiveNetErrors = 0
+        redirectToLogin()
+      }
       return Promise.reject(error)
     }
 

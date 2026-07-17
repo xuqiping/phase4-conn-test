@@ -26,6 +26,7 @@
         :data="rows"
         :loading="loadingPermissions"
         :pagination="false"
+        :scroll-x="600"
         size="small"
       />
 
@@ -267,5 +268,11 @@ defineExpose({
 
 .agent-permission-modal__user-select {
   flex: 1;
+}
+
+@media (max-width: 768px) {
+  .agent-permission-modal__toolbar {
+    flex-wrap: wrap;
+  }
 }
 </style>

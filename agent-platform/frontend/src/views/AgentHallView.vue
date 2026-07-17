@@ -289,4 +289,31 @@ onMounted(loadData)
     opacity: 1;
   }
 }
+
+// 触屏设备无 hover，操作按钮常驻可见
+@media (hover: none) {
+  .agent-card-wrap__actions {
+    opacity: 1;
+  }
+}
+
+// === 移动端 ===
+@media (max-width: 768px) {
+  .agent-hall {
+    padding: var(--spacing-3);
+  }
+
+  .agent-hall__title-row {
+    flex-wrap: wrap;
+  }
+
+  .agent-hall__filters {
+    flex-direction: column;
+  }
+
+  .agent-hall__group-select,
+  .agent-hall__search {
+    width: 100%;
+  }
+}
 </style>

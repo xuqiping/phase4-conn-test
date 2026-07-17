@@ -37,4 +37,6 @@ public class UserMemoryVO {
     // 项目记忆 scope（V33）
     private Boolean isGlobal;        // 是否总记忆可见，true=总记忆，false=仅项目
     private List<Long> projectIds;   // 挂载的项目 id（空=is_global 记忆）
+    /** 写归属 home（V34，NULL=总记忆 home）。M1 归属列区分「归属」(home) vs「共享」(可见性 projectIds)。 */
+    private Long homeProjectId;
 }

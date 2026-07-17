@@ -34,7 +34,7 @@ class ExecutionLogServiceTest {
         });
 
         ExecutionLog result = executionLogService.startRuntimeExecution(
-                10L, "组合流程", 7L, "WORKFLOW", 10L, null, null, "trace-1");
+                10L, "组合流程", 7L, "WORKFLOW", 10L, null, null, null, "trace-1");
 
         assertThat(result.getId()).isEqualTo(100L);
         assertThat(result.getRootExecutionId()).isEqualTo(100L);
@@ -55,7 +55,7 @@ class ExecutionLogServiceTest {
         });
 
         ExecutionLog result = executionLogService.startRuntimeExecution(
-                10L, "子 Agent", 7L, "AGENT", 3L, 100L, 100L, "trace-1");
+                10L, "子 Agent", 7L, "AGENT", 3L, null, 100L, 100L, "trace-1");
 
         assertThat(result.getId()).isEqualTo(101L);
         assertThat(result.getRootExecutionId()).isEqualTo(100L);

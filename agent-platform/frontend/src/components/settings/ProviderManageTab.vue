@@ -8,9 +8,9 @@
       <n-button @click="handleReload">刷新配置</n-button>
     </div>
 
-    <n-data-table :columns="columns" :data="providers" :loading="loading" :bordered="false" />
+    <n-data-table :columns="columns" :data="providers" :loading="loading" :scroll-x="1000" :bordered="false" />
 
-    <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑供应商' : '添加供应商'" style="width: 520px">
+    <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑供应商' : '添加供应商'" :style="{ maxWidth: '520px', width: '90vw' }">
       <n-form label-placement="left" label-width="100">
         <n-form-item label="名称">
           <n-input v-model:value="form.name" placeholder="如 openai, deepseek, claude" />
@@ -244,5 +244,11 @@ async function handleReload() {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+@media (max-width: 768px) {
+  .provider-manage__actions {
+    flex-wrap: wrap;
+  }
 }
 </style>

@@ -47,6 +47,12 @@ defineProps<{
   padding: var(--spacing-6);
 }
 
+@media (max-width: 768px) {
+  .skill-detail {
+    padding: var(--spacing-4);
+  }
+}
+
 .skill-detail__header {
   display: flex;
   align-items: center;

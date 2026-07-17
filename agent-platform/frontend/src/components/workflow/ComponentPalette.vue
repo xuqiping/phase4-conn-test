@@ -55,6 +55,35 @@
 
       <section class="component-palette__section">
         <div class="component-palette__section-title">
+          <n-icon size="14" :component="ChatbubbleEllipsesOutline" />
+          <span>人机交互</span>
+        </div>
+        <div class="component-palette__items">
+          <div
+            class="palette-item"
+            draggable="true"
+            @dragstart="onDragStart($event, 'human_input', '人机交互提问', {
+              inputKey: '',
+              inputType: 'text',
+              questionTemplate: '',
+              options: [],
+              required: true,
+              placeholder: ''
+            })"
+          >
+            <div class="palette-item__icon palette-item__icon--human-input">
+              <n-icon size="12" color="#fff"><ChatbubbleEllipsesOutline /></n-icon>
+            </div>
+            <div class="palette-item__info">
+              <span class="palette-item__name">人机交互提问</span>
+              <span class="palette-item__desc">运行时暂停向用户提问，收答案后续跑</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="component-palette__section">
+        <div class="component-palette__section-title">
           <n-icon size="14" :component="CloudUploadOutline" />
           <span>输入组件</span>
         </div>
@@ -185,7 +214,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { NInput, NIcon, NSpin } from 'naive-ui'
-import { SearchOutline, PlayOutline, StopOutline, FlashOutline, PeopleOutline, GitBranchOutline, CloudUploadOutline, DocumentTextOutline } from '@vicons/ionicons5'
+import { SearchOutline, PlayOutline, StopOutline, FlashOutline, PeopleOutline, GitBranchOutline, CloudUploadOutline, DocumentTextOutline, ChatbubbleEllipsesOutline } from '@vicons/ionicons5'
 import { agentApi, type Agent, type AgentDetail } from '@/api/agent'
 import { workflowApi } from '@/api/workflow'
 import type { WorkflowListItem } from '@/types/workflow'
@@ -437,6 +466,10 @@ onMounted(() => {
 
 .palette-item__icon--retrieval {
   background: #8b5cf6;
+}
+
+.palette-item__icon--human-input {
+  background: #f59e0b;
 }
 
 .palette-item__info {

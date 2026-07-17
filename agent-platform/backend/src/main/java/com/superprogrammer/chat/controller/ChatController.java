@@ -9,6 +9,7 @@ import com.superprogrammer.chat.service.ChatSessionService;
 import com.superprogrammer.chat.service.ChatTargetService;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -20,6 +21,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/chat")
 @RequiredArgsConstructor
@@ -154,9 +156,11 @@ public class ChatController {
                             com.superprogrammer.chat.dto.StreamEvent.done()));
                     emitter.complete();
                 } catch (Exception ex) {
+                    // 安全审计 #7：ex.getMessage() 可能含内部细节，客户端回固定话术；完整异常写后端日志。
+                    log.error("SSE 流式发送失败", ex);
                     try {
                         emitter.send(SseEmitter.event().data(
-                                com.superprogrammer.chat.dto.StreamEvent.error(ex.getMessage())));
+                                com.superprogrammer.chat.dto.StreamEvent.error("服务器内部错误，请稍后重试")));
                         emitter.send(SseEmitter.event().data(
                                 com.superprogrammer.chat.dto.StreamEvent.done()));
                         emitter.complete();

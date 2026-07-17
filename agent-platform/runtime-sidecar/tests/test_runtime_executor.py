@@ -364,3 +364,356 @@ def test_build_events_converts_java_callback_failure_to_execution_failed():
     assert events[-1].metadata["failedNodeId"] == "skill-1"
     assert events[-1].metadata["errorMessage"] == "java callback 500"
     assert events[-1].metadata["recoveryCheckpointRef"] == "checkpoint-1001"
+
+
+def _human_input_workflow() -> WorkflowDefinition:
+    return WorkflowDefinition(
+        workflowId=42,
+        name="human input workflow",
+        nodes=[
+            RuntimeNode(id="start-1", type="START", label="Start", config={}),
+            RuntimeNode(
+                id="human-1",
+                type="HUMAN_INPUT",
+                label="Ask Budget",
+                config={
+                    "inputKey": "budget",
+                    "questionTemplate": "请告诉我你的预算范围",
+                    "inputType": "text",
+                    "nodeAlias": "askBudget",
+                },
+            ),
+            RuntimeNode(id="skill-1", type="SKILL", label="Skill", config={"skillId": 12}),
+        ],
+        edges=[
+            RuntimeEdge(source="start-1", target="human-1"),
+            RuntimeEdge(source="human-1", target="skill-1"),
+        ],
+    )
+
+
+def test_build_events_pauses_at_human_input_node_and_emits_waiting_input(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+
+    def callback(java_base_url, callback_request):
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": "ignored on first pass"},
+            metadata={},
+        )
+
+    events = build_events(
+        ExecutionRequest(
+            executionId="1001",
+            rootExecutionId="1001",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={"javaCallbackBaseUrl": "http://java:8080", "checkpoint": True},
+        ),
+        checkpoint_store=store,
+        callback_executor=callback,
+    )
+
+    completed_node_ids = [event.nodeId for event in events if event.type == "NODE_COMPLETED"]
+    assert "human-1" not in completed_node_ids
+    assert "skill-1" not in completed_node_ids
+    waiting = [event for event in events if event.type == "WAITING_INPUT"]
+    assert len(waiting) == 1
+    assert waiting[0].nodeId == "human-1"
+    assert waiting[0].status == "WAITING_INPUT"
+    assert waiting[0].metadata["inputKey"] == "budget"
+    assert waiting[0].metadata["question"] == "请告诉我你的预算范围"
+    assert waiting[0].metadata["inputType"] == "text"
+    assert waiting[0].metadata["inputCheckpointRef"] == "checkpoint-1001"
+
+    saved = store.load("checkpoint-1001")
+    assert saved["pausedAtNodeId"] == "human-1"
+
+
+def test_build_events_resumes_human_input_with_user_input_and_emits_downstream(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+
+    # first run primes the paused checkpoint
+    def first_callback(java_base_url, callback_request):
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": "first pass"},
+            metadata={},
+        )
+
+    build_events(
+        ExecutionRequest(
+            executionId="1001",
+            rootExecutionId="1001",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={"javaCallbackBaseUrl": "http://java:8080", "checkpoint": True},
+        ),
+        checkpoint_store=store,
+        callback_executor=first_callback,
+    )
+
+    callback_requests = []
+
+    def resume_callback(java_base_url, callback_request):
+        callback_requests.append(callback_request)
+        return RuntimeNodeCallbackResponse(
+            success=True,
+            selectedSkillIds=[12],
+            stepOutputs=[],
+            output={"text": f"budget={callback_request.input.get('budget')}"},
+            metadata={},
+        )
+
+    events = build_events(
+        ExecutionRequest(
+            executionId="1002",
+            rootExecutionId="1002",
+            userId=7,
+            workflow=_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={
+                "javaCallbackBaseUrl": "http://java:8080",
+                "checkpoint": True,
+                "resumeFromCheckpointRef": "checkpoint-1001",
+                "userInput": {"budget": "5000"},
+            },
+        ),
+        checkpoint_store=store,
+        callback_executor=resume_callback,
+    )
+
+    completed_node_ids = [event.nodeId for event in events if event.type == "NODE_COMPLETED"]
+    assert completed_node_ids == ["human-1", "skill-1"]
+
+    human_completed = [event for event in events if event.type == "NODE_COMPLETED" and event.nodeId == "human-1"][0]
+    assert human_completed.output["value"] == "5000"
+
+    assert callback_requests[0].input["budget"] == "5000"
+    assert callback_requests[0].input["askBudget.budget"] == "5000"
+
+    skill_completed = [event for event in events if event.type == "NODE_COMPLETED" and event.nodeId == "skill-1"][0]
+    assert skill_completed.output["text"] == "budget=5000"
+
+    assert events[-1].type == "EXECUTION_COMPLETED"
+
+
+def _cyclic_workflow() -> WorkflowDefinition:
+    """Phase 2 环支持：A↔B 互指成环（无 HUMAN_INPUT 的纯环，用于验证环可编译 + 递归守卫）。"""
+    return WorkflowDefinition(
+        workflowId=42,
+        name="cyclic workflow",
+        nodes=[
+            RuntimeNode(id="loop-a", type="TASK", label="A", config={}),
+            RuntimeNode(id="loop-b", type="TASK", label="B", config={}),
+        ],
+        edges=[
+            RuntimeEdge(source="loop-a", target="loop-b"),
+            RuntimeEdge(source="loop-b", target="loop-a"),
+        ],
+    )
+
+
+def test_build_events_cyclic_workflow_hits_recursion_guard(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+
+    events = build_events(
+        ExecutionRequest(
+            executionId="2001",
+            rootExecutionId="2001",
+            userId=7,
+            workflow=_cyclic_workflow(),
+            input={"message": "hello"},
+            runtime={"checkpoint": True, "recursionLimit": 6},
+        ),
+        checkpoint_store=store,
+    )
+
+    # 纯环无停止条件 → 触 recursion_limit → GraphRecursionError 捕获 → EXECUTION_FAILED（清晰报错，非裸崩）
+    assert events[-1].type == "EXECUTION_FAILED"
+    assert events[-1].status == "FAILED"
+    assert "最大迭代" in events[-1].metadata["errorMessage"]
+    assert "6" in events[-1].metadata["errorMessage"]
+    assert events[-1].metadata["recoveryCheckpointRef"] == "checkpoint-2001"
+
+
+def test_build_events_recursion_limit_default_when_unspecified():
+    # 不显式指定时回退默认 25（与 LangGraph 默认一致），非法值也回退默认
+    from app.runtime_executor import resolve_recursion_limit
+
+    assert resolve_recursion_limit({}) == 25
+    assert resolve_recursion_limit({"recursionLimit": None}) == 25
+    assert resolve_recursion_limit({"recursionLimit": 50}) == 50
+    assert resolve_recursion_limit({"recursionLimit": "40"}) == 40
+    assert resolve_recursion_limit({"recursionLimit": "garbage"}) == 25
+    assert resolve_recursion_limit({"recursionLimit": 0}) == 25
+    assert resolve_recursion_limit({"recursionLimit": -3}) == 25
+
+
+def _cyclic_human_input_workflow() -> WorkflowDefinition:
+    """Phase 2 动态多轮：task-a → human-1 → task-a（回边成环）。
+    human-1 每轮无答案→路由 END 暂停；resume 带一份答案→消费一次→绕回→再次 waiting。"""
+    return WorkflowDefinition(
+        workflowId=42,
+        name="cyclic human input workflow",
+        nodes=[
+            RuntimeNode(id="task-a", type="TASK", label="Judge", config={}),
+            RuntimeNode(
+                id="human-1",
+                type="HUMAN_INPUT",
+                label="Ask",
+                config={
+                    "inputKey": "budget",
+                    "questionTemplate": "第{{human.round}}轮：请补充信息",
+                    "inputType": "text",
+                    "nodeAlias": "askRound",
+                },
+            ),
+        ],
+        edges=[
+            RuntimeEdge(source="task-a", target="human-1"),
+            RuntimeEdge(source="human-1", target="task-a"),
+        ],
+    )
+
+
+def test_build_events_cyclic_human_input_multi_round_pause_resume(tmp_path):
+    """Phase 2 e2e：环内 HUMAN_INPUT 每轮重新暂停/续跑。三轮（首次问 + 答1再问 + 答2再问）。"""
+    store = FileCheckpointStore(tmp_path)
+
+    # 第一轮：首次执行，无答案 → 到 human-1 即 waiting
+    events_r1 = build_events(
+        ExecutionRequest(
+            executionId="3001",
+            rootExecutionId="3001",
+            userId=7,
+            workflow=_cyclic_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={"checkpoint": True},
+        ),
+        checkpoint_store=store,
+    )
+    completed_r1 = [e.nodeId for e in events_r1 if e.type == "NODE_COMPLETED"]
+    assert completed_r1 == ["task-a"]  # human-1 未消费，不发射
+    waiting_r1 = [e for e in events_r1 if e.type == "WAITING_INPUT"]
+    assert len(waiting_r1) == 1 and waiting_r1[0].nodeId == "human-1"
+    assert store.load("checkpoint-3001")["pausedAtNodeId"] == "human-1"
+
+    # 第二轮：resume 带 budget=ans1 → 消费 → 绕回 task-a → 再次 waiting（第 2 次问）
+    events_r2 = build_events(
+        ExecutionRequest(
+            executionId="3002",
+            rootExecutionId="3002",
+            userId=7,
+            workflow=_cyclic_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={
+                "checkpoint": True,
+                "resumeFromCheckpointRef": "checkpoint-3001",
+                "userInput": {"budget": "ans1"},
+            },
+        ),
+        checkpoint_store=store,
+    )
+    completed_r2 = [e.nodeId for e in events_r2 if e.type == "NODE_COMPLETED"]
+    # 从 human-1 消费处发射到下一个 waiting 之前：human-1(消费 ans1) + task-a(再判)
+    assert completed_r2 == ["human-1", "task-a"]
+    human_r2 = [e for e in events_r2 if e.type == "NODE_COMPLETED" and e.nodeId == "human-1"][0]
+    assert human_r2.output["value"] == "ans1"
+    assert human_r2.output["status"] == "SUCCESS"
+    waiting_r2 = [e for e in events_r2 if e.type == "WAITING_INPUT"]
+    assert len(waiting_r2) == 1 and waiting_r2[0].nodeId == "human-1"
+    assert store.load("checkpoint-3002")["pausedAtNodeId"] == "human-1"
+
+    # 第三轮：resume 带 budget=ans2 → 同形（证明 inputVisits 每轮 reset，不会因上一轮累加而卡死）
+    events_r3 = build_events(
+        ExecutionRequest(
+            executionId="3003",
+            rootExecutionId="3003",
+            userId=7,
+            workflow=_cyclic_human_input_workflow(),
+            input={"message": "hello"},
+            runtime={
+                "checkpoint": True,
+                "resumeFromCheckpointRef": "checkpoint-3002",
+                "userInput": {"budget": "ans2"},
+            },
+        ),
+        checkpoint_store=store,
+    )
+    completed_r3 = [e.nodeId for e in events_r3 if e.type == "NODE_COMPLETED"]
+    assert completed_r3 == ["human-1", "task-a"]
+    human_r3 = [e for e in events_r3 if e.type == "NODE_COMPLETED" and e.nodeId == "human-1"][0]
+    assert human_r3.output["value"] == "ans2"
+    assert [e for e in events_r3 if e.type == "WAITING_INPUT"][0].nodeId == "human-1"
+
+
+def test_build_events_cyclic_human_input_exits_when_branch_skips_it(tmp_path):
+    """Phase 2：环 resume 时若本轮走的分支不再经过暂停的 HUMAN_INPUT（信息够了→出口），
+    应正常发射到结束、EXECUTION_COMPLETED，不误发 WAITING_INPUT。"""
+    store = FileCheckpointStore(tmp_path)
+
+    # 用条件分支：有 budget → end；无 budget → human-1（回 task-a 成环）
+    workflow = WorkflowDefinition(
+        workflowId=42,
+        name="cyclic with exit branch",
+        nodes=[
+            RuntimeNode(
+                id="cond-1",
+                type="CONDITION",
+                label="Enough?",
+                config={
+                    "defaultTarget": "human-1",
+                    "conditions": [
+                        {"name": "yes", "target": "end-1", "field": "budget", "operator": "exists"}
+                    ],
+                },
+            ),
+            RuntimeNode(id="human-1", type="HUMAN_INPUT", label="Ask", config={"inputKey": "budget"}),
+            RuntimeNode(id="end-1", type="END", label="End", config={}),
+        ],
+        edges=[
+            RuntimeEdge(source="cond-1", target="human-1"),
+            RuntimeEdge(source="cond-1", target="end-1"),
+            RuntimeEdge(source="human-1", target="cond-1"),
+        ],
+    )
+
+    # 首轮：无 budget → cond-1 default→human-1 → waiting
+    build_events(
+        ExecutionRequest(
+            executionId="4001",
+            rootExecutionId="4001",
+            userId=7,
+            workflow=workflow,
+            input={"message": "hello"},
+            runtime={"checkpoint": True},
+        ),
+        checkpoint_store=store,
+    )
+    assert store.load("checkpoint-4001")["pausedAtNodeId"] == "human-1"
+
+    # resume 带 budget：cond-1 命中 yes→end-1，不再经过 human-1 → EXECUTION_COMPLETED
+    events = build_events(
+        ExecutionRequest(
+            executionId="4002",
+            rootExecutionId="4002",
+            userId=7,
+            workflow=workflow,
+            input={"message": "hello"},
+            runtime={
+                "checkpoint": True,
+                "resumeFromCheckpointRef": "checkpoint-4001",
+                "userInput": {"budget": "ans-final"},
+            },
+        ),
+        checkpoint_store=store,
+    )
+    assert [e for e in events if e.type == "WAITING_INPUT"] == []
+    assert events[-1].type == "EXECUTION_COMPLETED"

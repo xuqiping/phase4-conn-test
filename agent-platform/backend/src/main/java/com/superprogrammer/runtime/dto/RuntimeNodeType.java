@@ -12,6 +12,7 @@ public enum RuntimeNodeType {
     PARALLEL,
     JOIN,
     HUMAN_APPROVAL,
+    HUMAN_INPUT,
     TOOL_CALL,
     RETRIEVAL
 }

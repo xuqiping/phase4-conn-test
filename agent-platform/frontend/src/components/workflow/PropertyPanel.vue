@@ -178,6 +178,63 @@
         </div>
       </section>
 
+      <section v-if="selectedNode.type === 'human_input'" class="property-panel__section">
+        <div class="property-panel__section-title">人机交互</div>
+        <div class="property-panel__notice">
+          运行至此节点会暂停并向用户提问；用户回复后答案绑定到下方变量，工作流继续。
+        </div>
+        <div class="property-panel__field">
+          <label class="property-panel__label">答案变量名 (inputKey)</label>
+          <n-input
+            :value="selectedNode.data.inputKey || ''"
+            size="small"
+            placeholder="如 user_name"
+            @update:value="(val: string) => updateNodeData('inputKey', val)"
+          />
+          <span class="property-panel__hint">后端必填。答案绑定为该变量，下游节点可用模板 {{ aliasExampleForInput }} 引用。</span>
+        </div>
+        <div class="property-panel__field property-panel__field--prompt">
+          <label class="property-panel__label">问题模板</label>
+          <n-input
+            :value="selectedNode.data.questionTemplate || ''"
+            type="textarea"
+            size="small"
+            :rows="3"
+            placeholder="向用户提的问题，支持 {{别名.字段}} 模板变量"
+            @update:value="(val: string) => updateNodeData('questionTemplate', val)"
+          />
+          <span class="property-panel__hint">运行时渲染后作为助手消息流出；留空则暂停但用户看不到问题。</span>
+        </div>
+        <div class="property-panel__field">
+          <label class="property-panel__label">输入类型</label>
+          <n-select
+            :value="selectedNode.data.inputType || 'text'"
+            :options="humanInputTypeOptions"
+            size="small"
+            @update:value="(val: string) => updateNodeData('inputType', val)"
+          />
+        </div>
+        <div v-if="(selectedNode.data.inputType || 'text') === 'select'" class="property-panel__field">
+          <label class="property-panel__label">选项</label>
+          <n-dynamic-tags
+            :value="Array.isArray(selectedNode.data.options) ? selectedNode.data.options : []"
+            size="small"
+            :max="20"
+            @update:value="(val: Array<string | number>) => updateNodeData('options', val.map(String))"
+          />
+          <span class="property-panel__hint">仅 select 型生效；逐项添加回车确认。对话 UI 会把这些选项渲染为可点按钮。</span>
+        </div>
+        <div class="property-panel__field">
+          <label class="property-panel__label">必填</label>
+          <n-switch
+            :value="selectedNode.data.required !== false"
+            size="small"
+            @update:value="(val: boolean) => updateNodeData('required', val)"
+          />
+          <span class="property-panel__hint">透传到对话侧；当前运行时不强制校验，仅作提示。</span>
+        </div>
+      </section>
+
       <section v-if="selectedNode.type === 'skill'" class="property-panel__section">
         <div class="property-panel__section-title">能力信息</div>
         <div class="property-panel__field">
@@ -341,7 +398,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NInput, NDivider, NIcon, NSelect, NInputNumber } from 'naive-ui'
+import { NInput, NDivider, NIcon, NSelect, NInputNumber, NSwitch, NDynamicTags } from 'naive-ui'
 import {
   InformationCircleOutline,
   PlayOutline,
@@ -350,7 +407,8 @@ import {
   PeopleOutline,
   GitBranchOutline,
   CloudUploadOutline,
-  SearchOutline
+  SearchOutline,
+  ChatbubbleEllipsesOutline
 } from '@vicons/ionicons5'
 import type { Component } from 'vue'
 import { agentApi, type Agent } from '@/api/agent'
@@ -358,6 +416,7 @@ import { workflowApi } from '@/api/workflow'
 import { knowledgeApi, type KnowledgeBase } from '@/api/knowledge'
 import type { SkillInputParam, WorkflowEdge, WorkflowListItem, WorkflowNode } from '@/types/workflow'
 import { collectAvailableVariables } from '@/utils/workflowRuntime'
+import { parseLlmStepConfig, parseSkillInputParams } from '@/utils/skillConfigForm'
 
 const props = defineProps<{
   selectedNode: WorkflowNode | null
@@ -367,7 +426,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update-node-data', nodeId: string, key: string, value: string | number | boolean | number[] | Record<string, string>): void
+  (e: 'update-node-data', nodeId: string, key: string, value: string | number | boolean | number[] | string[] | Record<string, string> | SkillInputParam[]): void
 }>()
 
 const agents = ref<Agent[]>([])
@@ -388,7 +447,8 @@ const typeName = computed(() => {
     skill: '能力',
     agent_ref: 'Agent 引用',
     workflow_ref: '工作流引用',
-    retrieval: '知识检索'
+    retrieval: '知识检索',
+    human_input: '人机交互提问'
   }
   return typeMap[props.selectedNode?.type || ''] || '节点'
 })
@@ -401,7 +461,8 @@ const typeIcon = computed(() => {
     skill: FlashOutline,
     agent_ref: PeopleOutline,
     workflow_ref: GitBranchOutline,
-    retrieval: SearchOutline
+    retrieval: SearchOutline,
+    human_input: ChatbubbleEllipsesOutline
   }
   return iconMap[props.selectedNode?.type || ''] || FlashOutline
 })
@@ -476,7 +537,21 @@ const inputTypeOptions = [
   { label: '多行文本', value: 'textarea' }
 ]
 
-function updateNodeData(key: string, value: string | number | boolean | number[] | Record<string, string>) {
+const humanInputTypeOptions = [
+  { label: '文本', value: 'text' },
+  { label: '多行文本', value: 'textarea' },
+  { label: '选项', value: 'select' }
+]
+
+const aliasExampleForInput = computed(() => {
+  const node = props.selectedNode
+  if (!node) return '{{别名.变量}}'
+  const alias = node.data.nodeAlias || '别名'
+  const key = node.data.inputKey || '变量'
+  return `{{${alias}.${key}}}`
+})
+
+function updateNodeData(key: string, value: string | number | boolean | number[] | string[] | Record<string, string>) {
   const promptKeys = ['systemPrompt', 'promptTemplate', 'outputKey', 'model', 'temperature']
   if (promptKeys.includes(key) && !promptConfigEditable.value) {
     return
@@ -645,7 +720,57 @@ watch(() => props.selectedNode?.id, () => {
   mappingSlashIndex.value = null
   queryMenuVisible.value = false
   querySlashIndex.value = null
+  void hydrateSelectedNode()
 })
+
+/**
+ * 选中技能节点时，从后端补齐节点缺失的能力元数据：
+ * - 技能顶层 config.inputParams（能力公开入参规范）
+ * - 技能 LLM_CALL step 的 systemPrompt/promptTemplate/model/temperature/outputKey
+ * - AgentAccess 决定的 promptConfigVisible/promptConfigEditable/descriptionEditable 权限标志
+ * 拖拽落点与加载已存工作流两条路径都不会带这些字段，统一在此回填并写回 node.data（随保存持久化）。
+ * 用 promptConfigVisible !== undefined 作为已回填标记，避免重复请求。
+ */
+async function hydrateSelectedNode() {
+  const node = props.selectedNode
+  if (!node || node.type !== 'skill') return
+  if (node.data.skillId == null) return
+  if (node.data.promptConfigVisible !== undefined) return
+
+  const skillId = node.data.skillId
+  const agentId = node.data.agentId
+  try {
+    const [skillRes, accessRes] = await Promise.all([
+      agentApi.getSkillDetail(skillId),
+      agentId != null
+        ? agentApi.getAgentAccess(agentId)
+        : Promise.resolve(null)
+    ])
+    const skill = skillRes.data.data
+    const inputParams = parseSkillInputParams(skill.config)
+    const llmStep = (skill.steps || []).find(step => step.action === 'LLM_CALL') || (skill.steps || [])[0]
+    const llm = parseLlmStepConfig(llmStep?.config)
+    const access = accessRes?.data?.data
+    const canReadPrompt = Boolean(access?.canReadPrompt)
+    const canManage = Boolean(access?.canManage)
+
+    emit('update-node-data', node.id, 'inputParams', inputParams)
+    emit('update-node-data', node.id, 'systemPrompt', llm.systemPrompt)
+    emit('update-node-data', node.id, 'promptTemplate', llm.promptTemplate)
+    emit('update-node-data', node.id, 'model', llm.model)
+    emit('update-node-data', node.id, 'temperature', llm.temperature)
+    emit('update-node-data', node.id, 'outputKey', llm.outputKey)
+    emit('update-node-data', node.id, 'promptConfigVisible', canReadPrompt)
+    emit('update-node-data', node.id, 'promptConfigEditable', canManage)
+    emit('update-node-data', node.id, 'descriptionVisible', true)
+    emit('update-node-data', node.id, 'descriptionEditable', canManage)
+    if (skill.description) {
+      emit('update-node-data', node.id, 'description', skill.description)
+    }
+  } catch {
+    // 能力元数据加载失败时保持默认渲染，不阻塞属性面板使用。
+  }
+}
 
 onMounted(() => {
   loadReferenceOptions()
@@ -729,6 +854,10 @@ onMounted(() => {
 
 .property-panel__type-icon--retrieval {
   background: #8b5cf6;
+}
+
+.property-panel__type-icon--human_input {
+  background: #f59e0b;
 }
 
 .property-panel__type-name {

@@ -45,5 +45,10 @@ public class CachedPayload {
         private Long documentId;
         private String title;
         private Long nodeId;
+        /** IMAGE/FILE 回显（缓存命中回放时保留，P3 聊天 [n] 渲染用）。 */
+        private String docType;
+        private String fileRef;
+        private String mime;
+        private String originalName;
     }
 }

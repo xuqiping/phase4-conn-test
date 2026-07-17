@@ -1,6 +1,7 @@
 package com.superprogrammer.chat.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.chat.dto.MemoryEditRequest;
 import com.superprogrammer.chat.dto.MemoryProjectRow;
 import com.superprogrammer.chat.dto.UserMemoryVO;
 import com.superprogrammer.chat.entity.UserMemory;
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -102,7 +104,7 @@ public class MemoryService {
         inflightMemoryTasks.computeIfAbsent(userId, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
         try {
             List<ExtractedFact> facts = extractFacts(writeScope, userMessage, assistantResponse);
-            log.info("processMemory userId={} sessionId={} writeTarget={} 抽取facts={}", userId, sessionId, writeTargetProjectId, facts);
+            log.debug("processMemory userId={} sessionId={} writeTarget={} 抽取facts={}", userId, sessionId, writeTargetProjectId, facts);
             return processFacts(writeScope, writeTargetProjectId, sessionId, userMessage, facts);
         } finally {
             java.util.concurrent.atomic.AtomicInteger a = inflightMemoryTasks.get(userId);
@@ -127,7 +129,11 @@ public class MemoryService {
                     () -> memoryMapper.findDistinctKeys(writeScope.userId(), writeScope.includeGlobal(), writeScope.safeProjectIds()));
             return judge.extract(userMessage, assistantResponse, existingKeys);
         } catch (Exception e) {
-            log.warn("记忆抽取失败: {}", e.getMessage(), e);
+            // RB-001 根因③：此前 catch 静默返回空 list → processMemory 写 0 条 → 状态条停转但记忆面板空，
+            // 真错误仅 warn 不可见。现记 incident（固定话术，不透传内部 e.getMessage()，避免情报泄露），
+            // 前端轮询 /memories/incident 弹窗可见。
+            log.warn("记忆抽取失败 userId={}: {}", writeScope.userId(), e.getMessage(), e);
+            recordIncident(writeScope.userId(), "记忆抽取失败：服务繁忙或网络超时，本次对话未记录记忆，请稍后重试。");
             return List.of();
         }
     }
@@ -156,7 +162,7 @@ public class MemoryService {
                                String userMessage, List<ExtractedFact> facts) {
         if (facts == null || facts.isEmpty()) return null;
         Long userId = writeScope.userId();
-        log.info("processFacts userId={} sessionId={} writeTarget={} facts={}", userId, sessionId, writeTargetProjectId, facts);
+        log.debug("processFacts userId={} sessionId={} writeTarget={} facts={}", userId, sessionId, writeTargetProjectId, facts);
         String askText = null;
 
         // ① 预去重（同 key 同 value clean 已存→跳过，省 embed）+ classify（embed 归块）。并行 embed（互相独立）。
@@ -194,7 +200,7 @@ public class MemoryService {
             boolean dup = members.stream().anyMatch(m -> fk.equals(m.getMemoryKey()) && fv.equals(m.getMemoryValue()))
                     || sameKey.stream().anyMatch(m -> fk.equals(m.getMemoryKey()) && fv.equals(m.getMemoryValue()));
             if (dup) {
-                log.info("processFacts 重复跳过 key={} value={}", fk, fv);
+                log.debug("processFacts 重复跳过 key={} value={}", fk, fv);
                 continue;
             }
             if (members.isEmpty() && sameKey.isEmpty()) {
@@ -215,7 +221,7 @@ public class MemoryService {
             for (FactClassed fc : bucket)
                 for (UserMemory m : sameKeyByFactKey.getOrDefault(fc.f.key(), java.util.List.of())) cmpMap.put(m.getId(), m);
             List<UserMemory> cmpSet = new ArrayList<>(cmpMap.values());
-            log.info("processFacts batch judge block={} facts={} cmpSet={}", block, bucket.size(), cmpSet.size());
+            log.debug("processFacts batch judge block={} facts={} cmpSet={}", block, bucket.size(), cmpSet.size());
             List<ExtractedFact> bucketFacts = bucket.stream().map(FactClassed::f).collect(Collectors.toList());
             List<JudgeResult> jrs;
             try {
@@ -271,7 +277,7 @@ public class MemoryService {
         try {
             List<UserMemory> sameKey = findSameKeyClean(writeScope.userId(), f.key(), writeTargetProjectId);
             if (sameKey.stream().anyMatch(m -> f.value().equals(m.getMemoryValue()))) {
-                log.info("processFacts 预去重跳过 key={} value={}", f.key(), f.value());
+                log.debug("processFacts 预去重跳过 key={} value={}", f.key(), f.value());
                 return null;
             }
             String factText = f.key() + ":" + f.value();
@@ -301,7 +307,7 @@ public class MemoryService {
             int n = memoryMapper.updateCleanMemory(existing.getId(), f.value(), f.confidence(), br.blockLabel(), br.halfvec(), entitiesJson, f.keyZh(), anchor.halfvec(), anchor.tokens());
             if (n > 0) {
                 queryCache.evictUser(userId);
-                log.info("applyClean 细化更新 key={} id={} value={}", f.key(), existing.getId(), f.value());
+                log.debug("applyClean 细化更新 key={} id={} value={}", f.key(), existing.getId(), f.value());
                 return;
             }
         }
@@ -425,6 +431,15 @@ public class MemoryService {
         return memoryIncidents.remove(userId);
     }
 
+    /**
+     * 记录一条记忆处理异常，供前端轮询弹窗（与 applyClean 写库失败同通道）。
+     * <p>用于异步任务被线程池拒绝（AbortPolicy）或抽取阶段失败时可见化——绝不静默吞。
+     */
+    public void recordIncident(Long userId, String msg) {
+        if (userId == null) return;
+        memoryIncidents.put(userId, msg);
+    }
+
     // ============================ 注入（下游 LLM system msg）============================
 
     /**
@@ -459,7 +474,7 @@ public class MemoryService {
         } else {
             String sample = context.contains("\n") ? context.substring(0, context.indexOf('\n')) : context;
             if (sample.length() > 80) sample = sample.substring(0, 80);
-            log.info("记忆注入 userId={} scope={} mode={} keyLang={} threshold={} query.len={} → 注入{}字符 首条[{}]",
+            log.debug("记忆注入 userId={} scope={} mode={} keyLang={} threshold={} query.len={} → 注入{}字符 首条[{}]",
                     readScope.userId(), MemoryQueryCache.scopeSig(readScope), mode, keyLang, threshold, query == null ? 0 : query.length(), context.length(), sample);
         }
         return context;
@@ -981,6 +996,78 @@ public class MemoryService {
         return new MemoryScopeVO(isGlobal, pids);
     }
 
+    // ============================ 行内编辑（M1）============================
+
+    /** 行内编辑记忆：改 memory_key / key_zh / value / block_label，按需重算 value embedding + anchor。
+     *  home-aware 重复检查：改 key 须确保同 user 同 home 内无其它同 key clean 行（排除自身），撞约束返 CONFLICT 业务错误不静默。
+     *  重 embed 条件：value 变 → 重算 value 向量；key/key_zh/block 变 → 重算 anchor（entities 不动，旧词袋沿用）。
+     *  embed 失败 COALESCE 保旧向量（韧性，同 applyClean）。home/scope/可见性标签/conflict 不动（编辑不改归属）。 */
+    @org.springframework.transaction.annotation.Transactional
+    public UserMemoryVO updateMemory(Long userId, Long memoryId, MemoryEditRequest req) {
+        UserMemory m = ensureOwned(userId, memoryId);
+        if (req == null) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "请求体为空");
+        }
+        String newKey = req.getMemoryKey() == null ? null : req.getMemoryKey().trim();
+        String newKeyZh = req.getMemoryKeyZh();
+        String newValue = req.getMemoryValue();
+        String newBlock = req.getBlockLabel();
+        if (newKey == null || newKey.isBlank()) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "记忆 key 不能为空");
+        }
+        if (newValue == null || newValue.isBlank()) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "记忆值不能为空");
+        }
+
+        // home-aware 重复检查（排除自身；同 user 同 home 同 key 的 clean 行）
+        List<UserMemory> sames = memoryMapper.findCleanByHomeKey(userId, newKey, m.getHomeProjectId());
+        for (UserMemory s : sames) {
+            if (!s.getId().equals(memoryId)) {
+                throw new com.superprogrammer.common.exception.BusinessException(
+                        com.superprogrammer.common.exception.ErrorCode.CONFLICT,
+                        "同归属下已存在记忆 key：" + newKey);
+            }
+        }
+
+        boolean keyChanged = !newKey.equals(m.getMemoryKey());
+        boolean keyZhChanged = !Objects.equals(newKeyZh, m.getMemoryKeyZh());
+        boolean blockChanged = !Objects.equals(newBlock, m.getBlockLabel());
+        boolean valueChanged = !Objects.equals(newValue, m.getMemoryValue());
+
+        // 条件重 embed（未变 → null → COALESCE 保留旧向量）
+        String valueHalfvec = null;
+        if (valueChanged) {
+            try {
+                float[] vec = llmGateway.embed(newValue, RagConfig.MEMORY_EMBED_MODEL);
+                valueHalfvec = HalfVecUtil.toHalfVec(vec);
+            } catch (Exception e) {
+                log.warn("edit value embed 失败 id={}: {}", memoryId, e.getMessage());
+            }
+        }
+        String anchorHalfvec = null;
+        String anchorTokens = null;
+        if (keyChanged || keyZhChanged || blockChanged) {
+            AnchorEmbedding anchor = embedAnchor(newBlock, newKeyZh, newKey, m.getEntities());
+            anchorHalfvec = anchor.halfvec();
+            anchorTokens = anchor.tokens();
+        }
+
+        int n = memoryMapper.updateMemoryEdit(memoryId, newKey, newKeyZh, newValue, newBlock,
+                valueHalfvec, anchorHalfvec, anchorTokens);
+        if (n <= 0) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.NOT_FOUND, "记忆不存在或无权操作");
+        }
+        queryCache.evictUser(userId);
+        log.info("updateMemory id={} keyChanged={} valueChanged={} blockChanged={} keyZhChanged={}",
+                memoryId, keyChanged, valueChanged, blockChanged, keyZhChanged);
+        UserMemory updated = memoryMapper.selectById(memoryId);
+        return toVO(userId, updated, memoryMapper.findProjectIdsByMemory(memoryId));
+    }
+
     private UserMemory ensureOwned(Long userId, Long memoryId) {
         UserMemory m = memoryMapper.selectById(memoryId);
         if (m == null || !userId.equals(m.getUserId())) {
@@ -1054,15 +1141,28 @@ public class MemoryService {
         return updated;
     }
 
+    /**
+     * 提交记忆异步任务到 memoryTaskExecutor。
+     * <p>池+队列满（AbortPolicy）→ 捕获 RejectedExecutionException 记 WARN，绝不抛回调用线程
+     * （admin 端点 fire-and-forget，回退会钉死 admin 请求线程，见 RB-001 根因②）。
+     */
+    private void submitMemoryTask(Runnable task, String taskName) {
+        try {
+            memoryTaskExecutor.execute(task);
+        } catch (java.util.concurrent.RejectedExecutionException ree) {
+            log.warn("{} 异步任务被拒（memoryTaskExecutor 池满），本次跳过: {}", taskName, ree.getMessage());
+        }
+    }
+
     /** 异步触发回填（admin 端点用，fire-and-forget 到 memoryTaskExecutor，避免 HTTP 超时）。 */
     public void backfillEntitiesAsync() {
-        memoryTaskExecutor.execute(() -> {
+        submitMemoryTask(() -> {
             try {
                 backfillEntities();
             } catch (Exception e) {
                 log.error("memoryBackfill 异步任务失败", e);
             }
-        });
+        }, "memoryBackfill");
     }
 
     /** 全量重抽老记忆 entities 词袋（维护用，与 {@link #backfillEntities()} 互补）：
@@ -1114,25 +1214,25 @@ public class MemoryService {
 
     /** 异步触发全量重抽（admin 端点用，fire-and-forget 到 memoryTaskExecutor，避免 HTTP 超时）。 */
     public void reextractEntitiesAsync() {
-        memoryTaskExecutor.execute(() -> {
+        submitMemoryTask(() -> {
             try {
                 reextractEntities();
             } catch (Exception e) {
                 log.error("memoryReextract 异步任务失败", e);
             }
-        });
+        }, "memoryReextract");
     }
 
     /** 异步清理历史 KEEP_BOTH 脏数据（conflict 已 RESOLVED 但行仍带 conflict_id 的残留）。
      *  admin 端点用，fire-and-forget 到 memoryTaskExecutor。进度见后端日志 memoryCleanup。 */
     public void cleanupResolvedResidueAsync() {
-        memoryTaskExecutor.execute(() -> {
+        submitMemoryTask(() -> {
             try {
                 conflictService.cleanupResolvedResidue();
             } catch (Exception e) {
                 log.error("memoryCleanup 异步任务失败", e);
             }
-        });
+        }, "memoryCleanup");
     }
 
     private UserMemoryVO toVO(Long userId, UserMemory m, List<Long> projectIds) {
@@ -1152,6 +1252,7 @@ public class MemoryService {
         vo.setConflictWith(m.getConflictId() != null ? findCounterpartValue(userId, m.getConflictId(), m.getId()) : null);
         vo.setIsGlobal(m.getIsGlobal());
         vo.setProjectIds(projectIds);
+        vo.setHomeProjectId(m.getHomeProjectId());
         return vo;
     }
 }

@@ -32,7 +32,8 @@ public class AgentRoutingStrategy implements ExecutionStrategy {
     @Override
     public String execute(ExecutionContext context, String userMessage) {
         Long agentId = context.getAgentId();
-        log.info("Agent路由模式, agentId={}, message={}", agentId, userMessage);
+        // 安全审计 #6：chat 原文属高敏 PII，降 DEBUG（生产 INFO 不打）；排查需单降 logger 级别。
+        log.debug("Agent路由模式, agentId={}, message.len={}", agentId, userMessage == null ? 0 : userMessage.length());
 
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null) {
