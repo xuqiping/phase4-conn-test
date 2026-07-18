@@ -113,7 +113,7 @@ class ExcelDocumentParseIT extends AbstractIntegrationTest {
 
         // 阶段2：复用 tempFileRef + 勾选 2 个 sheet
         KnowledgeDocumentVO vo = documentService.upload(KB, null, preview.getTempFileRef(),
-                List.of("销售", "库存"), U1, true);
+                List.of("销售", "库存"), null, null, null, null, U1, true);
 
         assertThat(vo.getParseOptions()).contains("销售", "库存", "selectedSheets");
         // 文件复用（零重传）：fileRef 即阶段1 的 tempFileRef

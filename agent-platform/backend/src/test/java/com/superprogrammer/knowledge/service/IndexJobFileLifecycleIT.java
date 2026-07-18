@@ -69,7 +69,8 @@ class IndexJobFileLifecycleIT extends AbstractIntegrationTest {
                         + "VALUES (?,?,?, 'UPSERT', ?, 'idem-d5', 'PENDING')",
                 JOB, NODE, KB, CONTENT_HASH);
 
-        String fileRef = txService.completeUpsert(JOB, NODE, docId, KB, "doubao", halfvec(), CONTENT_HASH);
+        IndexJobTxService.IndexedDoc doc = txService.completeUpsert(JOB, NODE, docId, KB, "doubao", halfvec(), CONTENT_HASH);
+        String fileRef = doc.fileRef();
 
         assertThat(fileRef).isEqualTo("/api/files/fake.xlsx");
         assertThat(status(docId)).isEqualTo("INDEXED");
@@ -86,7 +87,7 @@ class IndexJobFileLifecycleIT extends AbstractIntegrationTest {
         assertThat(fileStorageService.load(f.fileId(), U1, false).exists()).isTrue();
 
         // worker 事务外清理 glue（retain 默认 false → 清）
-        worker.cleanOriginalFileAfterIndex(f.url());
+        worker.cleanOriginalFileAfterIndex(new IndexJobTxService.IndexedDoc(null, f.url(), null));
 
         // 字节已删：load 再取 → NOT_FOUND（文件不存在）
         assertThatThrownBy(() -> fileStorageService.load(f.fileId(), U1, false))
