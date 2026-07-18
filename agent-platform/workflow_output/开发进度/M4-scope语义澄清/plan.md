@@ -37,3 +37,28 @@
 
 ## 受众
 B/C 类(用户直接操作 UI)→ 产 README + UserOps + FeatureMap + 测试方案。
+
+---
+
+## 迭代 2:底栏全下拉化(2026-07-18,用户反馈"混杂看不明白")
+
+> 选定方案 B:switch 全转下拉,动作按钮转无文字小图标。
+
+### Chunk
+- **chunk-A**:记忆模式 switch + 跟随 button → 单个 3 态下拉(`跟随全局` / `本会话开` / `本会话关`),跟随 button 并入消失。
+- **chunk-B**:总记忆 switch → 开/关 小下拉(读范围内)。
+- **chunk-C**:项目 button、记忆 button → 无文字 n-button + NIcon(FolderOpenOutline / BookmarksOutline),记忆保留 badge。
+- **chunk-D**:vue-tsc + 99/99 + commit + playwright 冒烟。
+
+### 联动点(增量)
+| 触发 | 联动 | 预期 |
+|---|---|---|
+| 记忆模式下拉切「跟随全局」 | ragPref | null(继承) |
+| 切「本会话开/关」 | ragPref | true/false,发消息带 ragEnabled |
+| 总记忆下拉切开/关 | memIncludeGlobal | 变,独立于写目标 |
+| 点项目图标 | showProjectManager | true,弹项目管理 |
+| 点记忆图标 | showMemory | true,弹记忆抽屉 |
+
+### 安全/运维
+无新端点/权限/迁移,纯模板+脚本。图标走既有 @vicons 包。
+

@@ -132,18 +132,18 @@
               @change="handleModelChange"
             />
             <div class="chat-view__rag-toggle" :title="ragPref === null
-              ? `记忆模式：跟随全局（当前 ${globalRag ? '开' : '关'}），点击覆盖`
-              : `记忆模式：本会话 ${ragPref ? '开' : '关'}（覆盖全局），点击「跟随」恢复继承`">
+              ? `记忆模式：跟随全局（当前 ${globalRag ? '开' : '关'}）`
+              : `记忆模式：本会话 ${ragPref ? '开' : '关'}（覆盖全局）`">
               <span class="chat-view__rag-label">记忆模式</span>
-              <n-switch :value="ragEffective" :disabled="chatStore.sending" size="small" @update:value="onRagToggle" />
-              <n-button
-                v-if="ragPref !== null"
-                size="tiny"
-                quaternary
+              <n-select
+                :value="ragModeValue"
+                :options="ragModeOptions"
                 :disabled="chatStore.sending"
-                title="清除本会话覆盖，恢复跟随全局"
-                @click="resetRagToGlobal"
-              >跟随</n-button>
+                size="small"
+                style="width: 140px"
+                :consistent-menu-width="false"
+                @update:value="onSelectRagMode"
+              />
             </div>
             <!-- M4:写目标 vs 读范围显式分组,避免语义混淆 -->
             <div
@@ -163,8 +163,15 @@
               title="读范围：召回注入 LLM 时读取哪些记忆（与写目标互相独立）。总记忆开关 + 项目多选均为「读」"
             >
               <span class="chat-view__rag-label chat-view__rag-label--group">读取记忆范围</span>
-              <n-switch v-model:value="chatStore.memIncludeGlobal" :disabled="chatStore.sending" size="small" />
-              <span class="chat-view__scope-label">总记忆</span>
+              <n-select
+                :value="chatStore.memIncludeGlobal ? 'on' : 'off'"
+                :options="globalToggleOptions"
+                :disabled="chatStore.sending"
+                size="small"
+                style="width: 96px"
+                :consistent-menu-width="false"
+                @update:value="(v: string) => (chatStore.memIncludeGlobal = v === 'on')"
+              />
               <n-select
                 v-model:value="chatStore.memReadProjectIds"
                 multiple
@@ -175,11 +182,13 @@
                 style="width: 160px"
                 :consistent-menu-width="false"
               />
-              <n-button size="small" quaternary title="管理项目（新建/删除/共享）" @click="showProjectManager = true">项目</n-button>
+              <n-button size="small" quaternary circle title="管理项目（新建/删除/共享）" @click="showProjectManager = true">
+                <template #icon><n-icon :component="FolderOpenOutline" /></template>
+              </n-button>
             </div>
             <n-badge :value="chatStore.activeConflictCount" :max="99" :show="chatStore.activeConflictCount > 0" type="error">
-              <n-button size="small" quaternary @click="showMemory = true" title="查看/管理长期记忆与冲突">
-                记忆
+              <n-button size="small" quaternary circle @click="showMemory = true" title="查看/管理长期记忆与冲突">
+                <template #icon><n-icon :component="BookmarksOutline" /></template>
               </n-button>
             </n-badge>
           </template>
@@ -209,13 +218,15 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NSpin, NSwitch, NDrawer, NDrawerContent, NBadge, NSelect, useMessage } from 'naive-ui'
+import { NButton, NIcon, NSpin, NDrawer, NDrawerContent, NBadge, NSelect, useMessage } from 'naive-ui'
 import {
   AddOutline,
   TrashOutline,
   ChatbubbleEllipsesOutline,
   SparklesOutline,
-  MenuOutline
+  MenuOutline,
+  FolderOpenOutline,
+  BookmarksOutline
 } from '@vicons/ionicons5'
 import { useChatStore } from '@/stores/chat'
 import { chatApi } from '@/api/chat'
@@ -258,7 +269,6 @@ const isComposing = ref(false)
  */
 const ragPref = ref<boolean | null>(getStorage<boolean>(STORAGE_KEYS.CHAT_RAG_ENABLED))
 const globalRag = ref(false)
-const ragEffective = computed(() => ragPref.value ?? globalRag.value)
 const showMemory = ref(false)
 
 // 项目记忆 scope（V33）：读开关多选用的项目选项
@@ -295,6 +305,27 @@ function resetRagToGlobal() {
   ragPref.value = null
   removeStorage(STORAGE_KEYS.CHAT_RAG_ENABLED)
 }
+
+// 记忆模式 3 态下拉(迭代2):跟随全局 / 本会话开 / 本会话关
+const ragModeOptions = [
+  { label: '跟随全局', value: 'inherit' },
+  { label: '本会话：开', value: 'on' },
+  { label: '本会话：关', value: 'off' }
+]
+const ragModeValue = computed<'inherit' | 'on' | 'off'>(() => {
+  if (ragPref.value === null) return 'inherit'
+  return ragPref.value ? 'on' : 'off'
+})
+function onSelectRagMode(v: 'inherit' | 'on' | 'off') {
+  if (v === 'inherit') resetRagToGlobal()
+  else onRagToggle(v === 'on')
+}
+
+// 总记忆开/关下拉(迭代2)
+const globalToggleOptions = [
+  { label: '总记忆：开', value: 'on' },
+  { label: '总记忆：关', value: 'off' }
+]
 
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 
