@@ -6,6 +6,7 @@
     :disabled="disabled"
     placeholder="总记忆"
     size="small"
+    style="width: 160px"
     :consistent-menu-width="false"
     @update:value="handleChange"
     @update:show="onToggleShow"
