@@ -161,11 +161,12 @@ public class MemoryConflictService {
 
     /** 批量解决当前用户全部待处理冲突（PENDING+FLAGGED），统一 decision。返回成功条数。 */
     public int resolveAll(Long userId, String decision) {
+        // 批量不含 KEEP_CUSTOM(需逐条 customValue,无统一值);customValue 传 null
         if (!List.of("KEEP_NEW", "KEEP_OLD", "KEEP_BOTH", "DISCARD").contains(decision)) return 0;
         List<MemoryConflict> list = conflictMapper.findActiveByUser(userId);
         int n = 0;
         for (MemoryConflict c : list) {
-            if (resolve(userId, c.getId(), decision)) n++;
+            if (resolve(userId, c.getId(), decision, null)) n++;
         }
         return n;
     }
@@ -217,13 +218,17 @@ public class MemoryConflictService {
         return touched;
     }
 
-    /** 执行用户决定。PENDING（new 未入库）与 FLAGGED（new 已入库，旧行共存）分别处理。 */
+    /** 执行用户决定。PENDING（new 未入库）与 FLAGGED（new 已入库，旧行共存）分别处理。
+     *  M2:KEEP_CUSTOM(自定义合并)——survivor=old 首行,value 改 customValue + 重 embed,丢 new/多余 old。
+     *  customValue 仅 KEEP_CUSTOM 用;其它 decision 传 null。 */
     @Transactional
-    public boolean resolve(Long userId, Long conflictId, String decision) {
+    public boolean resolve(Long userId, Long conflictId, String decision, String customValue) {
         MemoryConflict c = conflictMapper.findByIdScalars(conflictId);
         if (c == null || !c.getUserId().equals(userId)) return false;
         if (!"PENDING".equals(c.getStatus()) && !"FLAGGED".equals(c.getStatus())) return false;
-        if (!List.of("KEEP_NEW", "KEEP_OLD", "KEEP_BOTH", "DISCARD").contains(decision)) return false;
+        if (!List.of("KEEP_NEW", "KEEP_OLD", "KEEP_BOTH", "DISCARD", "KEEP_CUSTOM").contains(decision)) return false;
+        // KEEP_CUSTOM 须有非空 customValue + 至少一行 old 作 survivor
+        if ("KEEP_CUSTOM".equals(decision) && (customValue == null || customValue.isBlank())) return false;
         try {
             List<Long> oldIds = parseCsv(conflictMapper.getExistingIdsCsv(c.getId()));
             if ("PENDING".equals(c.getStatus())) {
@@ -246,6 +251,8 @@ public class MemoryConflictService {
                     case "KEEP_BOTH" -> mergePendingKeepBoth(c, snap, oldIds);
                     case "KEEP_OLD" -> { /* 丢新，旧留 clean */ }
                     case "DISCARD" -> hardDelete(oldIds);
+                    // M2 自定义合并:survivor=old 首行,value 改 customValue + 重 embed,删多余 old,丢 snap new
+                    case "KEEP_CUSTOM" -> applyCustom(userId, oldIds, customValue);
                 }
             } else {
                 // FLAGGED：new 已入库，新旧行都带 conflict_id
@@ -259,6 +266,15 @@ public class MemoryConflictService {
                     case "DISCARD" -> {
                         List<Long> all = new ArrayList<>(oldIds); all.addAll(newIds);
                         hardDelete(all);
+                    }
+                    // M2 自定义合并:survivor=old 首行(兜底 rows 首),value 改 customValue + 重 embed,删 new+多余 old
+                    case "KEEP_CUSTOM" -> {
+                        Long survivorId = (oldIds == null || oldIds.isEmpty()) ? rows.get(0).getId() : oldIds.get(0);
+                        final Long sf = survivorId;
+                        List<Long> del = rows.stream().map(UserMemory::getId).filter(id -> !id.equals(sf)).toList();
+                        hardDelete(del);
+                        memoryMapper.mergeIntoRow(sf, customValue, reembed(customValue), null, null);
+                        queryCache.evictUser(userId);
                     }
                 }
             }
@@ -326,13 +342,32 @@ public class MemoryConflictService {
         mergeValuesInto(userId, key, survivor, values, OffsetDateTime.now());
     }
 
+    /** M2 自定义合并(PENDING 路径):survivor=oldIds 首行,value 改 customValue + 重 embed,
+     *  清 conflict_id(mergeIntoRow 内置),删多余 old,丢 snap new(不入库)。 */
+    private void applyCustom(Long userId, List<Long> oldIds, String customValue) {
+        if (oldIds == null || oldIds.isEmpty()) return;
+        Long survivorId = oldIds.get(0);
+        List<Long> rest = oldIds.stream().filter(id -> !id.equals(survivorId)).toList();
+        hardDelete(rest);
+        memoryMapper.mergeIntoRow(survivorId, customValue, reembed(customValue), null, null);
+        queryCache.evictUser(userId);
+        log.info("KEEP_CUSTOM 自定义合并 userId={} survivor={} value={}", userId, survivorId, customValue);
+    }
+
+    /** M2:daily_log/日记类 key 天然时序(每日记账),无 key_meta 标也按时间线 merge。 */
+    private static boolean isDailyLogKey(String key) {
+        if (key == null) return false;
+        String k = key.toLowerCase();
+        return k.contains("daily_log") || k.contains("diary") || k.contains("journal") || k.endsWith("_log");
+    }
+
     /** 合并值 + re-embed（失败保留旧向量）+ mergeIntoRow（含 updated_at=now()）+ 失效缓存。
      *  M2:按 per-key 时序标分两分支——
      *   - temporal=true:走 {@link MemoryValueTimeline} 时间线(values 末项=new 带 newTs 日期前缀,其余 old 按序拼 ;)。
      *   - temporal=false:维持中文逗号 {@link #joinDistinct}(现状)。
      *  values 顺序约定:[old..., new]——PENDING/FLAGGED 两路径都在末尾 append new。 */
     private void mergeValuesInto(Long userId, String key, Long survivorId, List<String> values, OffsetDateTime newTs) {
-        boolean temporal = keyMetaService.isTemporal(userId, key);
+        boolean temporal = keyMetaService.isTemporal(userId, key) || isDailyLogKey(key);
         String merged;
         if (temporal) {
             List<String> nonNull = new ArrayList<>();

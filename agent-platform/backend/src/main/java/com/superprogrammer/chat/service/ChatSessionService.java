@@ -321,7 +321,7 @@ public class ChatSessionService {
         com.superprogrammer.chat.service.internal.RouteResult routed = conflictJudge.route(pending.getAskText(), userMessage);
         String decision = routed.toDecision();
         if (routed.isAnswer() && !"UNCLEAR".equals(decision)) {
-            conflictService.resolve(userId, pending.getId(), decision);
+            conflictService.resolve(userId, pending.getId(), decision, null);
             String confirm = switch (decision) {
                 case "KEEP_NEW" -> "好的，已保留新信息，删除旧记录。";
                 case "KEEP_OLD" -> "好的，保留旧记录，忽略新信息。";

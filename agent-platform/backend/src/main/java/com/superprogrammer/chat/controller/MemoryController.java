@@ -142,11 +142,11 @@ public class MemoryController {
         return ResponseEntity.ok(R.ok(memoryService.getMemoryStatus(getCurrentUserId())));
     }
 
-    /** 手动解决一条冲突（KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD）。返 data=是否成功。 */
+    /** 手动解决一条冲突（KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD/KEEP_CUSTOM）。返 data=是否成功。 */
     @PutMapping("/conflicts/{id}/resolve")
     public ResponseEntity<R<Boolean>> resolveConflict(@PathVariable Long id,
                                                      @Valid @RequestBody MemoryConflictResolveRequest req) {
-        boolean ok = conflictService.resolve(getCurrentUserId(), id, req.getDecision());
+        boolean ok = conflictService.resolve(getCurrentUserId(), id, req.getDecision(), req.getCustomValue());
         return ResponseEntity.ok(R.ok(ok ? "已解决" : "冲突不存在或无权操作", ok));
     }
 
