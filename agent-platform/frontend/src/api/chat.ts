@@ -144,6 +144,13 @@ export interface MemoryScopeVO {
   projectIds: number[] | null
 }
 
+/** M2:per-key 时序事实标(GET/PUT /memories/key-meta/{key})。isTemporal=null=首次待询问。 */
+export interface MemoryKeyMeta {
+  memoryKey: string
+  isTemporal: boolean | null
+  source: string | null   // LLM_ASK / USER_OVERRIDE
+}
+
 export const chatApi = {
   createSession(data: ChatSendRequest) {
     return request.post<ApiResponse<ChatSession>>('/chat/sessions', data)
@@ -243,13 +250,23 @@ export const chatApi = {
   getMemoryStatus() {
     return request.get<ApiResponse<MemoryStatus>>('/chat/memories/status')
   },
-  /** PUT /api/chat/memories/conflicts/{id}/resolve — KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD。data=是否成功 */
-  resolveMemoryConflict(id: number, decision: string) {
-    return request.put<ApiResponse<boolean>>(`/chat/memories/conflicts/${id}/resolve`, { decision })
+  /** PUT /api/chat/memories/conflicts/{id}/resolve — KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD/KEEP_CUSTOM。data=是否成功。
+   *  M2:KEEP_CUSTOM 须传 customValue(用户手改后的值)。 */
+  resolveMemoryConflict(id: number, decision: string, customValue?: string) {
+    return request.put<ApiResponse<boolean>>(`/chat/memories/conflicts/${id}/resolve`,
+      { decision, customValue })
   },
   /** POST /chat/memories/conflicts/batch-resolve — 批量统一解决全部 PENDING+FLAGGED，返解决条数 */
   batchResolveMemoryConflicts(decision: string) {
     return request.post<ApiResponse<number>>('/chat/memories/conflicts/batch-resolve', { decision })
+  },
+  /** M2:GET /chat/memories/key-meta/{key} — 读 per-key 时序标。data=null=首次待询问。 */
+  getMemoryKeyMeta(key: string) {
+    return request.get<ApiResponse<MemoryKeyMeta | null>>(`/chat/memories/key-meta/${encodeURIComponent(key)}`)
+  },
+  /** M2:PUT /chat/memories/key-meta/{key} — 手改 per-key 时序标(source=USER_OVERRIDE)。 */
+  updateMemoryKeyMeta(key: string, isTemporal: boolean) {
+    return request.put<ApiResponse<MemoryKeyMeta>>(`/chat/memories/key-meta/${encodeURIComponent(key)}`, { isTemporal })
   },
   /** POST /chat/memories/preview — 记忆注入预览（调试用）：传 query + 可选 scope，看实际注入 LLM 的上下文。
    *  LLM_KEY 两阶段（expand+anchor embed+key/block 双维度 rerank）最多 4 次 LLM 调用，慢网关下 >15s 全局 timeout，

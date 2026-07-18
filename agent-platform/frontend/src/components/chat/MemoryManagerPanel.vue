@@ -121,8 +121,27 @@
           <n-button size="small" type="primary" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_NEW')">保留新</n-button>
           <n-button size="small" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_OLD')">保留旧</n-button>
           <n-button size="small" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_BOTH')">合并保留</n-button>
+          <n-button size="small" :loading="resolving === c.conflictId" @click="openCustom(c)">自定义</n-button>
           <n-button size="small" quaternary type="error" :loading="resolving === c.conflictId" @click="resolve(c, 'DISCARD')">全删</n-button>
         </n-space>
+        <!-- M2 时间线标:该 key 是否按时间线记(住址=是,孩子数量=否)。首次可设,后续 merge 按此标 -->
+        <div class="memory-manager__conflict-temporal">
+          <n-tooltip placement="top">
+            <template #trigger><span class="memory-manager__temporal-label">时间线:</span></template>
+            该类记忆是否按时间线记? 时序(住址/工作/日记)合并后各段带日期保留历史;非时序(名字/数量)合并去重。首次设定后该 key 复用此标。
+          </n-tooltip>
+          <n-button size="tiny" :type="temporalOf(c) === true ? 'success' : 'default'" @click="setTemporal(c, true)">是</n-button>
+          <n-button size="tiny" :type="temporalOf(c) === false ? 'success' : 'default'" @click="setTemporal(c, false)">否</n-button>
+          <span v-if="temporalOf(c) === null" class="memory-manager__temporal-unknown">未设(默认非时序)</span>
+        </div>
+        <!-- M2 自定义合并:input 默认填旧 value,手改后落库(KEEP_CUSTOM) -->
+        <div v-if="customEditing === c.conflictId" class="memory-manager__custom-merge">
+          <n-input v-model:value="customValueInput" type="textarea" :rows="2" size="small" placeholder="手改最终记忆值" />
+          <n-space size="small">
+            <n-button size="small" type="primary" :loading="resolving === c.conflictId" @click="resolve(c, 'KEEP_CUSTOM', customValueInput)">确认自定义</n-button>
+            <n-button size="small" @click="cancelCustom">取消</n-button>
+          </n-space>
+        </div>
       </div>
     </n-card>
 
@@ -245,6 +264,7 @@ import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPrevie
 import { projectApi } from '@/api/project'
 import { useChatStore } from '@/stores/chat'
 import { formatRelativeTime, formatAbsoluteTime } from '@/utils/time'
+import { isTimelineValue, parseMemoryValue } from '@/utils/memoryTimeline'
 
 const chatStore = useChatStore()
 
@@ -431,7 +451,18 @@ const columns: DataTableColumns<UserMemory> = [
   { title: '分类', key: 'category', width: 100, render: r => h(NTag, { size: 'small', type: categoryType[r.category || ''] || 'default', bordered: false }, () => r.category || '-') },
   { title: '键', key: 'memoryKey', width: 160, ellipsis: { tooltip: true }, render: r => r.memoryKey || '-' },
   { title: '名称', key: 'memoryKeyZh', width: 120, ellipsis: { tooltip: true }, render: r => r.memoryKeyZh || '-' },
-  { title: '值', key: 'memoryValue', width: 200, ellipsis: { tooltip: true }, render: r => r.memoryValue || '-' },
+  { title: '值', key: 'memoryValue', width: 240, ellipsis: { tooltip: true },
+    render: r => {
+      if (!r.memoryValue) return '-'
+      if (!isTimelineValue(r.memoryValue)) return r.memoryValue
+      // M2 时间线 value:多段日期行渲染(dated 段升序在前,undated 附后)
+      const segs = parseMemoryValue(r.memoryValue)
+      return h('div', { style: 'display:flex;flex-direction:column;gap:2px' },
+        segs.map(s => h('div', { style: 'font-size:12px;line-height:1.4' }, [
+          s.date ? h('span', { style: 'color:var(--text-color-3);margin-right:4px' }, s.date) : null,
+          s.content
+        ])))
+    } },
   { title: '信息块', key: 'blockLabel', width: 110, ellipsis: { tooltip: true }, render: r => r.blockLabel || '-' },
   { title: '置信度', key: 'confidence', width: 90, render: r => r.confidence != null ? Number(r.confidence).toFixed(2) : '-' },
   { title: '来源', key: 'source', width: 90, render: r => r.source || '-' },
@@ -500,6 +531,16 @@ async function loadConflicts() {
   try {
     const res = await chatApi.listMemoryConflicts()
     conflicts.value = res.data.data
+    // M2:拉每条冲突所属 key 的时序标(null=首次待询问)。已标后续 merge 按此走。
+    temporalMap.value = new Map()
+    for (const c of conflicts.value) {
+      const key = conflictKey(c)
+      if (!key) continue
+      try {
+        const r = await chatApi.getMemoryKeyMeta(key)
+        temporalMap.value.set(c.conflictId, r.data.data?.isTemporal ?? null)
+      } catch { temporalMap.value.set(c.conflictId, null) }
+    }
   } catch { message.error('加载冲突失败') }
 }
 
@@ -548,18 +589,56 @@ function confirmBatchDelete() {
   })
 }
 
-async function resolve(c: MemoryConflict, decision: string) {
+async function resolve(c: MemoryConflict, decision: string, customValue?: string) {
   resolving.value = c.conflictId
   try {
-    const res = await chatApi.resolveMemoryConflict(c.conflictId, decision)
+    const res = await chatApi.resolveMemoryConflict(c.conflictId, decision, customValue)
     if (res.data.data) {
       message.success('已解决冲突')
+      customEditing.value = null
+      customValueInput.value = ''
       await Promise.all([loadConflicts(), loadMemories()])
     } else {
       message.error(res.data.message || '解决失败')
     }
   } catch { message.error('解决失败') }
   finally { resolving.value = null }
+}
+
+// ---- M2:自定义合并 + per-key 时序标 ----
+const customEditing = ref<number | null>(null)
+const customValueInput = ref('')
+// conflictId → 该 key 的时序标(null=未设/首次待询问,true=时序,false=非时序)
+const temporalMap = ref(new Map<number, boolean | null>())
+
+function temporalOf(c: MemoryConflict): boolean | null {
+  return temporalMap.value.get(c.conflictId) ?? null
+}
+
+function conflictKey(c: MemoryConflict): string | undefined {
+  return c.candidates?.[0]?.memoryKey ?? undefined
+}
+
+/** 打开自定义合并:input 默认填旧 value(candidates 里非"新"的那条,无则首条)。 */
+function openCustom(c: MemoryConflict) {
+  const oldCand = c.candidates?.find(x => x.id !== null && x.memoryValue)
+  customValueInput.value = oldCand?.memoryValue ?? c.candidates?.[0]?.memoryValue ?? ''
+  customEditing.value = c.conflictId
+}
+
+function cancelCustom() {
+  customEditing.value = null
+  customValueInput.value = ''
+}
+
+async function setTemporal(c: MemoryConflict, isTemporal: boolean) {
+  const key = conflictKey(c)
+  if (!key) { message.warning('无 memory key,无法设时间线标'); return }
+  try {
+    await chatApi.updateMemoryKeyMeta(key, isTemporal)
+    temporalMap.value.set(c.conflictId, isTemporal)
+    message.success(`已设该类记忆为${isTemporal ? '时间线(带日期段)' : '非时间线'}`)
+  } catch { message.error('设置时间线标失败') }
 }
 
 async function batchResolve(decision: string) {
@@ -719,6 +798,10 @@ onMounted(() => { void loadMemories(); void loadConflicts(); void loadProjects()
 }
 .memory-manager__candidate-key { color: var(--color-text-secondary, #aaa); min-width: 100px; }
 .memory-manager__candidate-val { color: var(--color-text-primary, #eee); word-break: break-all; }
+.memory-manager__conflict-temporal { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.memory-manager__temporal-label { font-size: 12px; color: var(--color-text-tertiary, #888); cursor: help; }
+.memory-manager__temporal-unknown { font-size: 11px; color: var(--color-text-tertiary, #888); }
+.memory-manager__custom-merge { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
 .memory-manager__filter {
   display: flex;
   align-items: center;
