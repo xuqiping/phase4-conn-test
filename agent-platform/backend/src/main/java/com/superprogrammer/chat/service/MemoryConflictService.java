@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.MemoryCandidateVO;
 import com.superprogrammer.chat.dto.MemoryConflictVO;
 import com.superprogrammer.chat.entity.MemoryConflict;
+import com.superprogrammer.chat.entity.MemoryKeyMeta;
 import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.chat.mapper.MemoryConflictMapper;
 import com.superprogrammer.chat.mapper.UserMemoryMapper;
@@ -367,7 +368,10 @@ public class MemoryConflictService {
      *   - temporal=false:维持中文逗号 {@link #joinDistinct}(现状)。
      *  values 顺序约定:[old..., new]——PENDING/FLAGGED 两路径都在末尾 append new。 */
     private void mergeValuesInto(Long userId, String key, Long survivorId, List<String> values, OffsetDateTime newTs) {
-        boolean temporal = keyMetaService.isTemporal(userId, key) || isDailyLogKey(key);
+        // 时序标:已设(USER_OVERRIDE 或 LLM_ASK)按标走;未设才用 daily_log 启发式。
+        // 注意:不能 || isDailyLogKey——否则用户显式 USER_OVERRIDE=false 的 daily_log key 被覆盖。
+        MemoryKeyMeta meta = keyMetaService.findByUserKey(userId, key);
+        boolean temporal = meta != null ? Boolean.TRUE.equals(meta.getIsTemporal()) : isDailyLogKey(key);
         String merged;
         if (temporal) {
             List<String> nonNull = new ArrayList<>();
@@ -375,8 +379,10 @@ public class MemoryConflictService {
             if (nonNull.isEmpty()) {
                 merged = "";
             } else if (nonNull.size() == 1) {
-                // 仅 new(无 old):时序单值也带日期前缀
-                merged = MemoryValueTimeline.withDatePrefix(nonNull.get(0), newTs);
+                // dedup 可能 [old,new] 塌成 1 段;若该段已带日期前缀(老时序值)不再二次前缀,避免
+                // "2026-07-18 2026-06-01 住萧山" 破坏原日期。无日期才补 newTs 前缀。
+                String only = nonNull.get(0);
+                merged = MemoryValueTimeline.isTimelineValue(only) ? only : MemoryValueTimeline.withDatePrefix(only, newTs);
             } else {
                 String oldConcat = String.join(";", nonNull.subList(0, nonNull.size() - 1));
                 String newVal = nonNull.get(nonNull.size() - 1);

@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * M2 时间线记忆:value schema 解析/拼接 helper。
  * <p>
  * schema = 标量字符串 + 分号分段 + 行首 ISO 日期前缀。时序事实(住址/工作/状态)value 存
- * {@code 2026-06-25 住萧山;2027-01-01 住拱墅};非时序事实(名字/偏好)维持单值(无日期前缀)。
+ * {@code 2026-06-25 住萧山;2027-01-01 住拱墅}(段间裸分号,parse 时 trim);非时序事实(名字/偏好)维持单值(无日期前缀)。
  * <p>
  * 仅处理「时序分支」——非时序分支(中文逗号 join)仍由 MemoryConflictService.joinDistinct 负责,
  * 本类不动它。存量兼容:老 value 无日期前缀 → parse 当 undated 单段,不破坏。
@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * <h3>设计要点</h3>
  * <ul>
  *   <li>日期前缀仅认 {@code YYYY-MM-DD}(严格 ISO_LOCAL_DATE),完整时间戳(含 T)不当日期剥离。</li>
- *   <li>joinSorted:dated 段按日期升序,undated 段保原序附后,段间 {@code "; "} 分隔。</li>
+ *   <li>joinSorted:dated 段按日期升序,undated 段保原序附后,段间裸 {@code ";"} 分隔(parse 时 trim)。</li>
  *   <li>mergeTemporal:old 各段 + new(newTs 日期)合并去重(同 date+同 content 去重)后排序拼。</li>
  * </ul>
  */
