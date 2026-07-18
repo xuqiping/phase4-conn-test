@@ -7,6 +7,7 @@ import com.superprogrammer.chat.entity.MemoryConflict;
 import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.chat.mapper.MemoryConflictMapper;
 import com.superprogrammer.chat.mapper.UserMemoryMapper;
+import com.superprogrammer.chat.service.internal.MemoryValueTimeline;
 import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
@@ -40,6 +41,8 @@ public class MemoryConflictService {
     private final com.superprogrammer.chat.service.internal.MemoryQueryCache queryCache;
     /** KEEP_BOTH 合并后对 merged value 重 embed（失败兜底保留旧向量）。 */
     private final LlmGateway llmGateway;
+    /** M2:per-key 时序标——KEEP_BOTH merge 据此分时间线(带日期段)/非时序(中文逗号 join)两分支。 */
+    private final MemoryKeyMetaService keyMetaService;
 
     /** 建 PENDING（锁会话）。newFact 暂存快照，不入 user_memories。 */
     @Transactional
@@ -204,7 +207,7 @@ public class MemoryConflictService {
             } else {
                 List<String> values = new ArrayList<>();
                 g.forEach(m -> values.add(m.getMemoryValue()));
-                mergeValuesInto(survivor.getUserId(), survivor.getId(), values);
+                mergeValuesInto(survivor.getUserId(), survivor.getMemoryKey(), survivor.getId(), values, OffsetDateTime.now());
             }
             touched += g.size();
             touchedUsers.add(survivor.getUserId());
@@ -305,7 +308,7 @@ public class MemoryConflictService {
         sameKey.forEach(m -> values.add(m.getMemoryValue()));
         values.add(newValue);
         hardDelete(sameKey.stream().map(UserMemory::getId).filter(id -> !id.equals(survivor)).toList());
-        mergeValuesInto(c.getUserId(), survivor, values);
+        mergeValuesInto(c.getUserId(), key, survivor, values, OffsetDateTime.now());
     }
 
     /** KEEP_BOTH 合并（FLAGGED 路径）：new+old 均带 conflict_id 入库。
@@ -314,19 +317,42 @@ public class MemoryConflictService {
         List<UserMemory> rows = memoryMapper.findByConflictId(conflictId);
         if (rows.isEmpty()) return;
         Long survivor = (oldIds == null || oldIds.isEmpty()) ? rows.get(0).getId() : oldIds.get(0);
+        String key = rows.stream().filter(r -> r.getId().equals(survivor))
+                .map(UserMemory::getMemoryKey).findFirst().orElse(null);
         List<String> values = new ArrayList<>();
         rows.stream().filter(m -> oldIds.contains(m.getId())).forEach(m -> values.add(m.getMemoryValue()));
         rows.stream().filter(m -> !oldIds.contains(m.getId())).forEach(m -> values.add(m.getMemoryValue()));
         hardDelete(rows.stream().map(UserMemory::getId).filter(id -> !id.equals(survivor)).toList());
-        mergeValuesInto(userId, survivor, values);
+        mergeValuesInto(userId, key, survivor, values, OffsetDateTime.now());
     }
 
-    /** 合并值去重 join + re-embed（失败保留旧向量）+ mergeIntoRow + 失效缓存。 */
-    private void mergeValuesInto(Long userId, Long survivorId, List<String> values) {
-        String merged = joinDistinct(values, "，");
+    /** 合并值 + re-embed（失败保留旧向量）+ mergeIntoRow（含 updated_at=now()）+ 失效缓存。
+     *  M2:按 per-key 时序标分两分支——
+     *   - temporal=true:走 {@link MemoryValueTimeline} 时间线(values 末项=new 带 newTs 日期前缀,其余 old 按序拼 ;)。
+     *   - temporal=false:维持中文逗号 {@link #joinDistinct}(现状)。
+     *  values 顺序约定:[old..., new]——PENDING/FLAGGED 两路径都在末尾 append new。 */
+    private void mergeValuesInto(Long userId, String key, Long survivorId, List<String> values, OffsetDateTime newTs) {
+        boolean temporal = keyMetaService.isTemporal(userId, key);
+        String merged;
+        if (temporal) {
+            List<String> nonNull = new ArrayList<>();
+            for (String v : values) if (v != null && !v.isBlank() && !nonNull.contains(v)) nonNull.add(v);
+            if (nonNull.isEmpty()) {
+                merged = "";
+            } else if (nonNull.size() == 1) {
+                // 仅 new(无 old):时序单值也带日期前缀
+                merged = MemoryValueTimeline.withDatePrefix(nonNull.get(0), newTs);
+            } else {
+                String oldConcat = String.join(";", nonNull.subList(0, nonNull.size() - 1));
+                String newVal = nonNull.get(nonNull.size() - 1);
+                merged = MemoryValueTimeline.mergeTemporal(oldConcat, newVal, newTs);
+            }
+        } else {
+            merged = joinDistinct(values, "，");
+        }
         memoryMapper.mergeIntoRow(survivorId, merged, reembed(merged), null, null);
         queryCache.evictUser(userId);
-        log.info("KEEP_BOTH 合并 userId={} survivor={} merged={}", userId, survivorId, merged);
+        log.info("KEEP_BOTH 合并 userId={} key={} temporal={} survivor={} merged={}", userId, key, temporal, survivorId, merged);
     }
 
     private String reembed(String text) {
