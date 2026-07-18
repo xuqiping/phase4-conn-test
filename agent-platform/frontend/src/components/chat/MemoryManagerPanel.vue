@@ -39,6 +39,11 @@
           style="width: 280px"
           :consistent-menu-width="false"
         />
+        <!-- M4:指定项目时显式「包含总记忆」开关,默认关,避免总记忆被静默注入 -->
+        <template v-if="previewScopeMode === 'custom'">
+          <n-switch v-model:value="previewCustomIncludeGlobal" size="small" />
+          <span class="memory-manager__preview-scope-label">包含总记忆</span>
+        </template>
       </div>
       <div v-if="previewResult" class="memory-manager__preview">
         <n-space :size="6">
@@ -318,6 +323,8 @@ const previewResult = ref<MemoryContextPreview | null>(null)
 // 预览范围 scope（V38）：默认当前会话 scope，可切 global-only / 全部可读项目 / 指定项目
 const previewScopeMode = ref<'session' | 'global' | 'all' | 'custom'>('session')
 const previewScopeProjects = ref<number[]>([])   // 'custom' 模式手选项目集
+// M4:custom 模式显式总记忆开关,默认 OFF(指定项目时不再静默注入总记忆)
+const previewCustomIncludeGlobal = ref<boolean>(false)
 const previewScopeOptions = [
   { label: '默认（当前会话 scope）', value: 'session' },
   { label: '仅总记忆（global-only）', value: 'global' },
@@ -328,7 +335,7 @@ function effectivePreviewScope(): { includeGlobal?: boolean; projectIds?: number
   switch (previewScopeMode.value) {
     case 'global': return { includeGlobal: true, projectIds: [] }
     case 'all': return { includeGlobal: true, projectIds: [...chatStore.memReadProjectIds] }
-    case 'custom': return { includeGlobal: true, projectIds: [...previewScopeProjects.value] }
+    case 'custom': return { includeGlobal: previewCustomIncludeGlobal.value, projectIds: [...previewScopeProjects.value] }
     case 'session':
     default: return { includeGlobal: chatStore.memIncludeGlobal, projectIds: [...chatStore.memReadProjectIds] }
   }

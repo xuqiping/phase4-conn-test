@@ -145,13 +145,24 @@
                 @click="resetRagToGlobal"
               >跟随</n-button>
             </div>
-            <div class="chat-view__mem-scope" title="项目记忆 scope：写目标（新事实落点）+ 读开关（总记忆/项目）">
-              <span class="chat-view__rag-label">记忆范围</span>
+            <!-- M4:写目标 vs 读范围显式分组,避免语义混淆 -->
+            <div
+              class="chat-view__mem-scope chat-view__mem-scope--write"
+              title="写目标：新抽取的事实落入库的位置（选「总记忆」= 不挂任何项目；选某项目 = 归属该项目 home）"
+            >
+              <span class="chat-view__rag-label chat-view__rag-label--group">记忆落库于</span>
               <ProjectSelector
                 :model-value="chatStore.memProjectId"
                 :disabled="chatStore.sending"
                 @update:model-value="chatStore.memProjectId = $event"
               />
+            </div>
+            <div class="chat-view__mem-divider" aria-hidden="true" />
+            <div
+              class="chat-view__mem-scope chat-view__mem-scope--read"
+              title="读范围：召回注入 LLM 时读取哪些记忆（与写目标互相独立）。总记忆开关 + 项目多选均为「读」"
+            >
+              <span class="chat-view__rag-label chat-view__rag-label--group">读取记忆范围</span>
               <n-switch v-model:value="chatStore.memIncludeGlobal" :disabled="chatStore.sending" size="small" />
               <span class="chat-view__scope-label">总记忆</span>
               <n-select
@@ -423,6 +434,29 @@ async function handleBatchDeleteSessions(ids: number[]) {
 
 .chat-view__scope-label {
   white-space: nowrap;
+}
+
+/* M4:写/读分组视觉区分 */
+.chat-view__rag-label--group {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.chat-view__mem-scope--write {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+.chat-view__mem-scope--read {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-success, #18a058) 8%, transparent);
+}
+.chat-view__mem-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--color-border, rgba(255, 255, 255, 0.12));
+  opacity: 0.6;
 }
 
 .chat-view__main {
