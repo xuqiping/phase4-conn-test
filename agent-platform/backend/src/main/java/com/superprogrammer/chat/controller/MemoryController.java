@@ -5,9 +5,13 @@ import com.superprogrammer.chat.dto.MemoryEditRequest;
 import com.superprogrammer.chat.dto.MemoryConflictBatchResolveRequest;
 import com.superprogrammer.chat.dto.MemoryConflictResolveRequest;
 import com.superprogrammer.chat.dto.MemoryConflictVO;
+import com.superprogrammer.chat.dto.MemoryKeyMetaUpdateRequest;
+import com.superprogrammer.chat.dto.MemoryKeyMetaVO;
 import com.superprogrammer.chat.dto.MemoryScopeUpdateRequest;
 import com.superprogrammer.chat.dto.UserMemoryVO;
+import com.superprogrammer.chat.entity.MemoryKeyMeta;
 import com.superprogrammer.chat.service.MemoryConflictService;
+import com.superprogrammer.chat.service.MemoryKeyMetaService;
 import com.superprogrammer.chat.service.MemoryService;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.system.service.SystemSettingService;
@@ -39,6 +43,7 @@ public class MemoryController {
 
     private final MemoryService memoryService;
     private final MemoryConflictService conflictService;
+    private final MemoryKeyMetaService keyMetaService;
     private final SystemSettingService systemSettingService;
 
     /**
@@ -150,6 +155,32 @@ public class MemoryController {
     public ResponseEntity<R<Integer>> batchResolve(@Valid @RequestBody MemoryConflictBatchResolveRequest req) {
         int n = conflictService.resolveAll(getCurrentUserId(), req.getDecision());
         return ResponseEntity.ok(R.ok("批量解决 " + n + " 条冲突", n));
+    }
+
+    // ============================ M2:per-key 时序事实标记 ============================
+
+    /** 读该 key 的时序标。无行 → data=null(前端 null=首次待询问)。 */
+    @GetMapping("/key-meta/{key}")
+    public ResponseEntity<R<MemoryKeyMetaVO>> getKeyMeta(@PathVariable String key) {
+        MemoryKeyMeta m = keyMetaService.findByUserKey(getCurrentUserId(), key);
+        MemoryKeyMetaVO vo = m == null ? null : MemoryKeyMetaVO.builder()
+                .memoryKey(m.getMemoryKey())
+                .isTemporal(m.getIsTemporal())
+                .source(m.getSource())
+                .build();
+        return ResponseEntity.ok(R.ok(vo));
+    }
+
+    /** panel 手改该 key 时序标(source=USER_OVERRIDE)。无则新建。 */
+    @PutMapping("/key-meta/{key}")
+    public ResponseEntity<R<MemoryKeyMetaVO>> updateKeyMeta(@PathVariable String key,
+                                                            @Valid @RequestBody MemoryKeyMetaUpdateRequest req) {
+        MemoryKeyMeta m = keyMetaService.override(getCurrentUserId(), key, req.getIsTemporal());
+        return ResponseEntity.ok(R.ok(MemoryKeyMetaVO.builder()
+                .memoryKey(m.getMemoryKey())
+                .isTemporal(m.getIsTemporal())
+                .source(m.getSource())
+                .build()));
     }
 
     private Long getCurrentUserId() {
