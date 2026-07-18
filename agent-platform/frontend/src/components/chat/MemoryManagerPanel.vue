@@ -148,12 +148,14 @@
         <n-input v-model:value="filterKeyword" placeholder="筛选 key / 名称 / 值" clearable size="small" style="max-width: 240px" />
         <n-select
           v-model:value="filterBlock"
+          multiple
           :options="blockOptions"
           placeholder="信息块"
           clearable
           size="small"
-          style="width: 160px"
+          style="width: 200px"
           :consistent-menu-width="false"
+          max-tag-count="responsive"
         />
         <span class="memory-manager__filter-count">{{ filteredMemories.length }} / {{ memories.length }} 条</span>
       </div>
@@ -259,7 +261,7 @@ const batchDeleting = ref(false)
 
 // M1 字段筛选（前端筛，数据量小）：关键词命中 key/key_zh/value + 块下拉
 const filterKeyword = ref('')
-const filterBlock = ref<string | null>(null)
+const filterBlock = ref<string[]>([])
 const distinctBlocks = computed(() => {
   const s = new Set<string>()
   for (const m of memories.value) if (m.blockLabel) s.add(m.blockLabel)
@@ -268,9 +270,9 @@ const distinctBlocks = computed(() => {
 const blockOptions = computed(() => distinctBlocks.value.map(b => ({ label: b, value: b })))
 const filteredMemories = computed<UserMemory[]>(() => {
   const kw = filterKeyword.value.trim().toLowerCase()
-  const blk = filterBlock.value
+  const blks = filterBlock.value
   return memories.value.filter(m => {
-    if (blk && m.blockLabel !== blk) return false
+    if (blks.length && !blks.includes(m.blockLabel as string)) return false
     if (kw) {
       const hay = `${m.memoryKey || ''} ${m.memoryKeyZh || ''} ${m.memoryValue || ''}`.toLowerCase()
       if (!hay.includes(kw)) return false
