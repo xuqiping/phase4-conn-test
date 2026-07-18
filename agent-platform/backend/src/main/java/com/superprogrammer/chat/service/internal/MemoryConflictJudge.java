@@ -75,6 +75,11 @@ public class MemoryConflictJudge {
               value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java","偏好","爱好"]。
             - 抽不出 → []。
 
+            日期/时间词进 entities（重要，决定时间线召回，M2）：
+            - 事实含日期或相对时间（如 2026-07-18、今天、昨天、前天、本周、上周、上个月、最近、刚）时，把日期原词 + 相对时间词都抽进 entities。
+              例：value="2026-07-18 入职" → entities 含 "2026-07-18"、"近期"；value="昨天去了杭州" → 含 "昨天"、"杭州"；value="本周完成季度报告" → 含 "本周"。
+            - 便于问「昨天/今日/本周总结」时按日期 entities 命中对应时间线段。无日期事实不强制。
+
             key 命名（重要，决定去重/冲突识别准确率）：
             - 用稳定通用的英文蛇形短键，只含小写字母/数字/下划线，≤40 字符。
             - 同一概念只用一个 key；以【语义】为准，不因字面不同就另造变体。
@@ -194,7 +199,9 @@ public class MemoryConflictJudge {
         String keysDisplay = (existingKeys == null || existingKeys.isEmpty())
                 ? "（无，新用户）"
                 : String.join(" / ", existingKeys);
-        String json = chat(String.format(EXTRACT_PROMPT, keysDisplay, userMessage, assistantResponse));
+        // M2 写侧 gate（冲突决策1）：只抽用户提交内容，不抽 assistant 回答。assistantResponse 留参为签名兼容，
+        // 入 prompt 一律喂空——AI 回答不入记忆（用户要记答案走 M5 主动要求通道「记一下…」）。
+        String json = chat(String.format(EXTRACT_PROMPT, keysDisplay, userMessage == null ? "" : userMessage, ""));
         // 安全审计 #6：LLM 抽取结果含记忆 fact 原文（PII），降 DEBUG（生产 INFO 不打）。
         log.debug("extract raw返回.len={}", json == null ? 0 : json.length());
         if (json == null || json.isBlank()) return List.of();
