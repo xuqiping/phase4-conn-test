@@ -22,11 +22,14 @@ class SystemSettingServiceTest {
     @Mock
     private SystemSettingMapper mapper;
 
+    @Mock
+    private com.superprogrammer.llm.service.AesEncryptService aesEncryptService;
+
     private SystemSettingService service;
 
     @BeforeEach
     void setUp() {
-        service = new SystemSettingService(mapper);
+        service = new SystemSettingService(mapper, aesEncryptService);
         ReflectionTestUtils.setField(service, "defaultAccessExpirationMs", 900000L);
     }
 

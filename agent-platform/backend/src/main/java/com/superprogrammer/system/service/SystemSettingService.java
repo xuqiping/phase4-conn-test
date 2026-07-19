@@ -1,6 +1,7 @@
 package com.superprogrammer.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.llm.service.AesEncryptService;
 import com.superprogrammer.system.dto.AuthSettingsVO;
 import com.superprogrammer.system.entity.SystemSetting;
 import com.superprogrammer.system.mapper.SystemSettingMapper;
@@ -9,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -52,7 +54,24 @@ public class SystemSettingService {
     /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
     public static final String KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS = "knowledge.excel.preview-max-sheets";
 
+    // ============================ 联网搜索 search.* ============================
+    /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
+    public static final String SEARCH_ENABLED = "search.enabled";
+    /** 当前生效 provider：tavily/serper/bing/builtin。非法值 → builtin（兜底）。 */
+    public static final String SEARCH_ACTIVE_PROVIDER = "search.active-provider";
+    /** 默认返回结果数 top-N。默认 5。 */
+    public static final String SEARCH_MAX_RESULTS = "search.max-results";
+    /** 单次搜索整体超时 ms。默认 10000。 */
+    public static final String SEARCH_TIMEOUT_MS = "search.timeout-ms";
+    /** 外部供应商 API key（AES 加密存，不回显明文，仿 LLM provider key 范式）。 */
+    public static final String SEARCH_TAVILY_KEY = "search.tavily.api-key";
+    public static final String SEARCH_SERPER_KEY = "search.serper.api-key";
+    public static final String SEARCH_BING_KEY = "search.bing.api-key";
+    /** provider 名白名单（写 active_provider 时校验，防注入非法值）。 */
+    public static final Set<String> SEARCH_PROVIDER_WHITELIST = Set.of("tavily", "serper", "bing", "builtin");
+
     private final SystemSettingMapper mapper;
+    private final AesEncryptService aesEncryptService;
 
     @Value("${jwt.access-expiration:900000}")
     private Long defaultAccessExpirationMs;
@@ -305,6 +324,94 @@ public class SystemSettingService {
         if (threshold < 1) threshold = 200;
         upsert(RAG_RECALL_EXPANSION_THRESHOLD, String.valueOf(threshold),
                 "扩展切块触发阈值字数（输入>此值切块多路召回；≤此值改写+HyDE；默认200）");
+    }
+
+    // ============================ 联网搜索 search.* ============================
+
+    /** 联网搜索总开关，默认 false（opt-in）。 */
+    public boolean getSearchEnabled() {
+        return getBoolean(SEARCH_ENABLED, false);
+    }
+
+    public void updateSearchEnabled(boolean enabled) {
+        setBoolean(SEARCH_ENABLED, enabled, "联网搜索总开关（false=禁用）");
+    }
+
+    /** 当前生效 provider，默认 builtin（无外部 key 兜底）。非法值 → builtin。 */
+    public String getActiveSearchProvider() {
+        String v = getValue(SEARCH_ACTIVE_PROVIDER);
+        return SEARCH_PROVIDER_WHITELIST.contains(v) ? v : "builtin";
+    }
+
+    public void updateActiveSearchProvider(String provider) {
+        if (!SEARCH_PROVIDER_WHITELIST.contains(provider)) {
+            provider = "builtin";
+        }
+        upsert(SEARCH_ACTIVE_PROVIDER, provider, "当前联网搜索 provider（tavily/serper/bing/builtin）");
+    }
+
+    /** 默认 top-N，默认 5。非法/缺失 → 5。 */
+    public int getSearchMaxResults() {
+        String v = getValue(SEARCH_MAX_RESULTS);
+        if (v == null || v.isBlank()) return 5;
+        try {
+            int n = Integer.parseInt(v.trim());
+            return n < 1 || n > 10 ? 5 : n;
+        } catch (NumberFormatException ignored) {
+            return 5;
+        }
+    }
+
+    public void updateSearchMaxResults(int max) {
+        if (max < 1 || max > 10) max = 5;
+        upsert(SEARCH_MAX_RESULTS, String.valueOf(max), "联网搜索默认 top-N（1~10，默认5）");
+    }
+
+    /** 单次搜索整体超时 ms，默认 10000。非法/缺失 → 10000。 */
+    public int getSearchTimeoutMs() {
+        String v = getValue(SEARCH_TIMEOUT_MS);
+        if (v == null || v.isBlank()) return 10000;
+        try {
+            int n = Integer.parseInt(v.trim());
+            return n < 1000 ? 10000 : n;
+        } catch (NumberFormatException ignored) {
+            return 10000;
+        }
+    }
+
+    public void updateSearchTimeoutMs(int ms) {
+        if (ms < 1000) ms = 10000;
+        upsert(SEARCH_TIMEOUT_MS, String.valueOf(ms), "联网搜索单次整体超时ms（默认10000）");
+    }
+
+    // ---------- AES 加密 key 读写（通用，仿 LlmProviderService.getDecryptedApiKey） ----------
+
+    /** 读加密 key 并解密。无值/解密失败 → 返回 null（provider available() 判 false 走降级）。 */
+    public String getDecryptedValue(String key) {
+        String cipher = getValue(key);
+        if (cipher == null || cipher.isBlank()) {
+            return null;
+        }
+        try {
+            return aesEncryptService.decrypt(cipher);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 加密写 key（明文 → AES → upsert）。 */
+    public void upsertEncrypted(String key, String plaintext, String description) {
+        upsert(key, aesEncryptService.encrypt(plaintext), description);
+    }
+
+    /** 取指定 provider 的 API key 明文（tavily/serper/bing）。 */
+    public String getSearchApiKey(String provider) {
+        return switch (provider) {
+            case "tavily" -> getDecryptedValue(SEARCH_TAVILY_KEY);
+            case "serper" -> getDecryptedValue(SEARCH_SERPER_KEY);
+            case "bing" -> getDecryptedValue(SEARCH_BING_KEY);
+            default -> null;
+        };
     }
 
     private String getValue(String key) {
