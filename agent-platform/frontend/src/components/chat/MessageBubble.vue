@@ -22,15 +22,24 @@
       </div>
       <!-- Content -->
       <div class="message-bubble__text">{{ message.content }}</div>
-      <!-- P3：RAG 引用回显（文本中 [n] 对应底部第 n 条；IMAGE 缩略图 / FILE 下载链） -->
+      <!-- P3：RAG 引用回显（文本中 [n] 对应底部第 n 条；IMAGE 缩略图 / FILE 下载链 / 联网外链） -->
       <div v-if="citations.length" class="message-bubble__citations">
         <div class="message-bubble__citations-title">📎 引用来源</div>
         <div v-for="c in citations" :key="c.index" class="message-bubble__citation">
           <span class="message-bubble__citation-index">[{{ c.index }}]</span>
-          <span class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
+          <!-- 联网搜索 web citation：有 url 无 documentId → 可点击外链 -->
+          <a
+            v-if="c.url"
+            class="message-bubble__citation-link"
+            :href="c.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="c.url"
+          >🌐 {{ c.title || c.url }}</a>
+          <span v-else class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
           <!-- IMAGE：内联缩略图 -->
           <img
-            v-if="c.docType === 'IMAGE' && c.fileRef"
+            v-if="!c.url && c.docType === 'IMAGE' && c.fileRef && c.documentId"
             class="message-bubble__citation-thumb"
             :src="knowledgeApi.documentAssetUrl(c.documentId)"
             :alt="c.originalName || '图片引用'"
@@ -38,13 +47,15 @@
           />
           <!-- FILE：下载 chip -->
           <a
-            v-else-if="c.docType === 'FILE' && c.fileRef"
+            v-else-if="!c.url && c.docType === 'FILE' && c.fileRef && c.documentId"
             class="message-bubble__citation-download"
             :href="knowledgeApi.documentAssetUrl(c.documentId)"
             :download="c.originalName || ''"
           >
             ⬇ 下载原件
           </a>
+          <!-- 联网搜索 snippet 副标题 -->
+          <span v-if="c.url && c.snippet" class="message-bubble__citation-snippet">{{ c.snippet }}</span>
         </div>
       </div>
     </div>
@@ -74,15 +85,19 @@ const thinkingText = computed(() => {
   }
 })
 
-/** P3：从 metadata.citations 解析引用列表（后端 CITATION 帧存入）。 */
+/** P3：从 metadata.citations 解析引用列表（后端 CITATION 帧存入；KB 引用 + 联网 web 引用合并）。 */
 interface Citation {
   index: number
-  documentId: number
+  documentId?: number
   title?: string
   docType?: string
   fileRef?: string
   mime?: string
   originalName?: string
+  /** 联网搜索来源 URL（web citation 专有；非空 → 渲染为外链）。 */
+  url?: string
+  /** 联网搜索摘要副标题。 */
+  snippet?: string
 }
 const citations = computed<Citation[]>(() => {
   if (!props.message.metadata) return []
@@ -226,6 +241,27 @@ const citations = computed<Citation[]>(() => {
 }
 
 .message-bubble__citation-title {
+  word-break: break-word;
+}
+
+.message-bubble__citation-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  word-break: break-all;
+
+  &:hover {
+    text-decoration: underline;
+    opacity: 0.85;
+  }
+}
+
+.message-bubble__citation-snippet {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
   word-break: break-word;
 }
 

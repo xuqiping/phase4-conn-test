@@ -145,6 +145,20 @@
                 @update:value="onSelectRagMode"
               />
             </div>
+            <!-- 联网搜索开关（CHAT 模式）：开 → LLM 生成前联网检索注入 + web CITATION 外链回显 -->
+            <div class="chat-view__rag-toggle" :title="webSearchPref
+              ? '联网搜索：开（生成前联网检索，结果作参考引用）'
+              : '联网搜索：关（纯模型作答）'">
+              <n-select
+                :value="webSearchPref ? 'on' : 'off'"
+                :options="webSearchOptions"
+                :disabled="chatStore.sending"
+                size="small"
+                style="width: 120px"
+                :consistent-menu-width="false"
+                @update:value="onSelectWebSearch"
+              />
+            </div>
             <!-- M4:写目标 vs 读范围显式分组,避免语义混淆 -->
             <div
               class="chat-view__mem-scope chat-view__mem-scope--write"
@@ -271,6 +285,13 @@ const ragPref = ref<boolean | null>(getStorage<boolean>(STORAGE_KEYS.CHAT_RAG_EN
 const globalRag = ref(false)
 const showMemory = ref(false)
 
+/**
+ * 联网搜索开关（CHAT 模式会话级，localStorage 持久化）：
+ *   默认关（null/false）；ON → 后端 LLM 生成前联网检索注入 + 发 web CITATION。
+ *   非 CHAT 模式由后端 ignore（前端仍展示，仅 CHAT 生效；Agent/Workflow 留扩展点）。
+ */
+const webSearchPref = ref<boolean>(!!getStorage<boolean>(STORAGE_KEYS.CHAT_WEB_SEARCH_ENABLED))
+
 // 项目记忆 scope（V33）：读开关多选用的项目选项
 const projectOptions = ref<Array<{ label: string; value: number }>>([])
 async function loadProjectOptions() {
@@ -319,6 +340,17 @@ const ragModeValue = computed<'inherit' | 'on' | 'off'>(() => {
 function onSelectRagMode(v: 'inherit' | 'on' | 'off') {
   if (v === 'inherit') resetRagToGlobal()
   else onRagToggle(v === 'on')
+}
+
+// 联网搜索开/关下拉
+const webSearchOptions = [
+  { label: '🌐 联网：关', value: 'off' },
+  { label: '🌐 联网：开', value: 'on' }
+]
+function onSelectWebSearch(v: 'on' | 'off') {
+  const on = v === 'on'
+  webSearchPref.value = on
+  setStorage(STORAGE_KEYS.CHAT_WEB_SEARCH_ENABLED, on)
 }
 
 // 总记忆开/关下拉(迭代2)
@@ -394,7 +426,8 @@ async function handleSelectSession(sessionId: number) {
 
 function handleSend(message: string) {
   // ragPref=null → 省略 ragEnabled 字段，后端继承全局；非 null → 覆盖（写 session.rag_enabled）。
-  chatStore.sendStreamingMessage(message, ragPref.value ?? undefined)
+  // webSearchPref：显式传 true/false（null=false 默认关），写 session.web_search_enabled。
+  chatStore.sendStreamingMessage(message, ragPref.value ?? undefined, webSearchPref.value)
 }
 
 function handleModelChange(model: string) {

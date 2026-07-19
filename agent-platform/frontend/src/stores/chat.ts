@@ -123,7 +123,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // REST send (non-streaming fallback)
-  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean) {
+  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean) {
     sending.value = true
     try {
       messages.value.push({
@@ -138,7 +138,7 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, ...memoryScopePayload.value })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, ...memoryScopePayload.value })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -148,6 +148,7 @@ export const useChatStore = defineStore('chat', () => {
           ...targetPayload,
           model: selectedModel.value ?? undefined,
           ragEnabled,
+          webSearchEnabled,
           ...memoryScopePayload.value
         })
       }
@@ -175,7 +176,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // SSE streaming
-  async function sendStreamingMessage(content: string, ragEnabled?: boolean) {
+  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean) {
     sending.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
@@ -197,6 +198,7 @@ export const useChatStore = defineStore('chat', () => {
             message: content,
             model: selectedModel.value ?? undefined,
             ragEnabled,
+            webSearchEnabled,
             ...memoryScopePayload.value
           })
         : chatApi.streamNewMessage({
@@ -204,6 +206,7 @@ export const useChatStore = defineStore('chat', () => {
             ...resolveSelectedTargetPayload(),
             model: selectedModel.value ?? undefined,
             ragEnabled,
+            webSearchEnabled,
             ...memoryScopePayload.value
           })
 
@@ -218,7 +221,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!response.ok || !response.body) {
         sending.value = false
         messages.value.pop()
-        return sendMessage(content, undefined, undefined, ragEnabled)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled)
       }
 
       const reader = response.body.getReader()
@@ -254,11 +257,15 @@ export const useChatStore = defineStore('chat', () => {
                   streamingThinking.value += evt.content || ''
                   break
                 case 'CITATION':
-                  // P3：content 为 citations JSON 串（DONE 前到达），暂存待 DONE 并入 metadata
+                  // P3：content 为 citations JSON 串（DONE 前到达，KB 与 web 各发一次）。
+                  // 累积合并：多帧 CITATION（KB 引用 + 联网 web 引用）拼成一个数组，避免后者覆盖前者。
                   try {
-                    streamingCitations.value = evt.content ? JSON.parse(evt.content) : null
+                    const arr = evt.content ? JSON.parse(evt.content) : null
+                    if (Array.isArray(arr) && arr.length) {
+                      streamingCitations.value = [...(streamingCitations.value || []), ...arr]
+                    }
                   } catch {
-                    streamingCitations.value = null
+                    // 单帧解析失败不丢已有引用
                   }
                   break
                 case 'DONE':
@@ -345,11 +352,14 @@ export const useChatStore = defineStore('chat', () => {
           streamingContent.value += data.content || ''
           break
         case 'CITATION':
-          // P3：content 为 citations JSON 串（MESSAGE_COMPLETE 前到达），暂存待并入 metadata
+          // P3：content 为 citations JSON 串（MESSAGE_COMPLETE 前到达，KB 与 web 各发一次），累积合并
           try {
-            streamingCitations.value = data.content ? JSON.parse(data.content) : null
+            const arr = data.content ? JSON.parse(data.content) : null
+            if (Array.isArray(arr) && arr.length) {
+              streamingCitations.value = [...(streamingCitations.value || []), ...arr]
+            }
           } catch {
-            streamingCitations.value = null
+            // 单帧解析失败不丢已有引用
           }
           break
         case 'MESSAGE_COMPLETE':

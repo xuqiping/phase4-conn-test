@@ -39,6 +39,8 @@ export interface ChatSendRequest {
   model?: string
   /** 记忆模式开关（V26，非 null 持久化到会话）。 */
   ragEnabled?: boolean
+  /** 联网搜索开关（CHAT 模式，非 null 持久化到会话；ON→生成前联网检索注入）。 */
+  webSearchEnabled?: boolean
   /** 项目记忆写目标（V33，null=总记忆会话）。 */
   projectId?: number | null
   /** 读开关：是否注入总记忆（V33，非 null 时持久化 = scope 更新标记）。 */
@@ -180,7 +182,7 @@ export const chatApi = {
     return request.get<ApiResponse<ChatMessage[]>>(`/chat/sessions/${sessionId}/messages`)
   },
 
-  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean }) {
+  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean }) {
     return request.post<ApiResponse<ChatResponse>>(`/chat/sessions/${sessionId}/messages`, data)
   },
 
@@ -189,7 +191,7 @@ export const chatApi = {
   },
 
   // Streaming (SSE)
-  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean }) {
+  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean }) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',
