@@ -40,6 +40,11 @@ public class RagRetrieveVO {
         private String fileRef;
         private String mime;
         private String originalName;
+        /** 联网搜索来源 URL（web citation）：非空 → 前端渲染为可点击外链（区别于 KB 的 documentId 引用）。
+         *  编号空间与 KB 隔离：web citation 的 index 由注入层独立编排（KB 之后顺延，避免 [n] 撞号）。 */
+        private String url;
+        /** 联网搜索来源摘要（snippet），web citation 卡片副标题用。KB 引用为 null。 */
+        private String snippet;
     }
 
     @Data

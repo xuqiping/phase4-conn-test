@@ -38,4 +38,7 @@ public class ChatSession extends BaseEntity {
     /** 读开关：开启读取的项目 id 集合（V33，扁平对称开关集，经权限过滤后用）。 */
     @TableField(typeHandler = LongArrayTypeHandler.class)
     private List<Long> memReadProjectIds;
+
+    /** 联网搜索开关（V44，CHAT 模式会话级持久化；null=继承默认关）。ON→生成前联网检索注入。 */
+    private Boolean webSearchEnabled;
 }

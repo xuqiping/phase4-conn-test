@@ -23,4 +23,7 @@ public class ChatRequest {
     private Boolean memIncludeGlobal;
     /** 读开关：开启读取的项目集合（V33，非 null/非空时持久化）。 */
     private List<Long> memReadProjectIds;
+
+    /** 联网搜索开关（CHAT 模式，非 null 时持久化到会话；null=不改继承）。ON→LLM 生成前联网检索注入。 */
+    private Boolean webSearchEnabled;
 }
