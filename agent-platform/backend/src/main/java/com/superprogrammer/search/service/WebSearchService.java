@@ -163,4 +163,17 @@ public class WebSearchService {
     private static String maskQuery(String query) {
         return query.length() <= LOG_QUERY_LEN ? query : query.substring(0, LOG_QUERY_LEN) + "...";
     }
+
+    /** 各 provider available() 实时自检（运维配置页展示当前实际可用项；测试连通按钮也读此）。 */
+    public Map<String, Boolean> providerAvailability() {
+        Map<String, Boolean> map = new HashMap<>();
+        for (Map.Entry<String, WebSearchProvider> e : providers.entrySet()) {
+            try {
+                map.put(e.getKey(), e.getValue().available());
+            } catch (Exception ex) {
+                map.put(e.getKey(), false);
+            }
+        }
+        return map;
+    }
 }
