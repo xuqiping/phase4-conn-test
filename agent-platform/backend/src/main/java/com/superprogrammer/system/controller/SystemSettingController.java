@@ -3,12 +3,15 @@ package com.superprogrammer.system.controller;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.chat.service.MemoryService;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.search.service.WebSearchService;
 import com.superprogrammer.system.dto.AuthSettingsUpdateRequest;
 import com.superprogrammer.system.dto.AuthSettingsVO;
 import com.superprogrammer.system.dto.RagMemorySettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagMemorySettingsVO;
 import com.superprogrammer.system.dto.RagRecallSettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagRecallSettingsVO;
+import com.superprogrammer.system.dto.WebSearchSettingsUpdateRequest;
+import com.superprogrammer.system.dto.WebSearchSettingsVO;
 import com.superprogrammer.system.service.SystemSettingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class SystemSettingController {
     private final SystemSettingService service;
     private final MemoryService memoryService;
+    private final WebSearchService webSearchService;
 
     @GetMapping("/auth")
     @RequirePermission("role:manage")
@@ -145,5 +149,73 @@ public class SystemSettingController {
     public ResponseEntity<R<String>> cleanupMemoryResidue() {
         memoryService.cleanupResolvedResidueAsync();
         return ResponseEntity.ok(R.ok("已启动记忆冲突残留清理（异步），进度见后端日志 memoryCleanup", "STARTED"));
+    }
+
+    // ---- 联网搜索运维配置（provider 下拉 + 各 key 输入 + max/timeout + 总开关 + 测试连通）----
+
+    @GetMapping("/web-search")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<WebSearchSettingsVO>> getWebSearchSettings() {
+        return ResponseEntity.ok(R.ok(buildWebSearchVO()));
+    }
+
+    @PutMapping("/web-search")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<WebSearchSettingsVO>> updateWebSearchSettings(
+            @Valid @RequestBody WebSearchSettingsUpdateRequest req) {
+        if (req.getEnabled() != null) {
+            service.updateSearchEnabled(req.getEnabled());
+        }
+        if (req.getActiveProvider() != null) {
+            service.updateActiveSearchProvider(req.getActiveProvider());
+        }
+        if (req.getMaxResults() != null) {
+            service.updateSearchMaxResults(req.getMaxResults());
+        }
+        if (req.getTimeoutMs() != null) {
+            service.updateSearchTimeoutMs(req.getTimeoutMs());
+        }
+        // key：null=不改；空串=清除；非空=AES 加密 upsert（不回显明文）
+        if (req.getTavilyKey() != null) {
+            if (req.getTavilyKey().isBlank()) service.clearSearchApiKey("tavily");
+            else service.upsertSearchApiKey("tavily", req.getTavilyKey());
+        }
+        if (req.getSerperKey() != null) {
+            if (req.getSerperKey().isBlank()) service.clearSearchApiKey("serper");
+            else service.upsertSearchApiKey("serper", req.getSerperKey());
+        }
+        if (req.getBingKey() != null) {
+            if (req.getBingKey().isBlank()) service.clearSearchApiKey("bing");
+            else service.upsertSearchApiKey("bing", req.getBingKey());
+        }
+        return ResponseEntity.ok(R.ok("联网搜索配置已更新", buildWebSearchVO()));
+    }
+
+    /** 测试连通：调 active provider 搜 "test"，返回结果数 + 实际命中 provider（验证降级链）。 */
+    @PostMapping("/web-search/test")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<java.util.Map<String, Object>>> testWebSearch() {
+        java.util.List<com.superprogrammer.search.dto.SearchResult> results = webSearchService.search("test");
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("results", results.size());
+        out.put("providerAvailability", webSearchService.providerAvailability());
+        out.put("activeProvider", service.getActiveSearchProvider());
+        out.put("enabled", service.getSearchEnabled());
+        return ResponseEntity.ok(R.ok("测试完成（results=命中数，0=零结果或全降级失败）", out));
+    }
+
+    private WebSearchSettingsVO buildWebSearchVO() {
+        java.util.Map<String, Boolean> avail = webSearchService.providerAvailability();
+        return WebSearchSettingsVO.builder()
+                .enabled(service.getSearchEnabled())
+                .activeProvider(service.getActiveSearchProvider())
+                .maxResults(service.getSearchMaxResults())
+                .timeoutMs(service.getSearchTimeoutMs())
+                .hasTavilyKey(service.getSearchApiKey("tavily") != null)
+                .hasSerperKey(service.getSearchApiKey("serper") != null)
+                .hasBingKey(service.getSearchApiKey("bing") != null)
+                .builtinConfigured(Boolean.TRUE.equals(avail.get("builtin")))
+                .providerAvailability(avail)
+                .build();
     }
 }

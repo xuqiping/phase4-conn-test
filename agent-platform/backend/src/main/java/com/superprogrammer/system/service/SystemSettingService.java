@@ -414,6 +414,35 @@ public class SystemSettingService {
         };
     }
 
+    /** 加密写 provider key（明文 → AES → upsert；后台配置页用，不回显明文）。 */
+    public void upsertSearchApiKey(String provider, String plaintext) {
+        switch (provider) {
+            case "tavily" -> upsertEncrypted(SEARCH_TAVILY_KEY, plaintext, "Tavily API key（AES 加密）");
+            case "serper" -> upsertEncrypted(SEARCH_SERPER_KEY, plaintext, "Serper API key（AES 加密）");
+            case "bing" -> upsertEncrypted(SEARCH_BING_KEY, plaintext, "Bing API key（AES 加密）");
+            default -> { /* 白名单外忽略 */ }
+        }
+    }
+
+    /** 清除 provider key（空串写入后台 = 清除；置 null 让 selectOne 返 null）。 */
+    public void clearSearchApiKey(String provider) {
+        switch (provider) {
+            case "tavily" -> removeKey(SEARCH_TAVILY_KEY);
+            case "serper" -> removeKey(SEARCH_SERPER_KEY);
+            case "bing" -> removeKey(SEARCH_BING_KEY);
+            default -> { /* 白名单外忽略 */ }
+        }
+    }
+
+    /** 物理删 key 行（AES 加密 key 清除用；与逻辑删体系独立，system_settings 无 deleted 列）。 */
+    private void removeKey(String key) {
+        SystemSetting setting = mapper.selectOne(new LambdaQueryWrapper<SystemSetting>()
+                .eq(SystemSetting::getSettingKey, key));
+        if (setting != null) {
+            mapper.deleteById(setting.getId());
+        }
+    }
+
     private String getValue(String key) {
         SystemSetting setting = mapper.selectOne(new LambdaQueryWrapper<SystemSetting>()
                 .eq(SystemSetting::getSettingKey, key));

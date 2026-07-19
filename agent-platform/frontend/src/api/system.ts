@@ -73,5 +73,49 @@ export const systemApi = {
 
   updateRagRecallSettings(data: RagRecallSettings) {
     return request.put<ApiResponse<RagRecallSettings>>('/system/settings/rag-recall', data)
+  },
+
+  // ---- 联网搜索运维配置 ----
+  getWebSearchSettings() {
+    return request.get<ApiResponse<WebSearchSettings>>('/system/settings/web-search')
+  },
+
+  updateWebSearchSettings(data: Partial<WebSearchSettingsUpdate>) {
+    return request.put<ApiResponse<WebSearchSettings>>('/system/settings/web-search', data)
+  },
+
+  testWebSearch() {
+    return request.post<ApiResponse<WebSearchTestResult>>('/system/settings/web-search/test')
   }
+}
+
+/** 联网搜索配置回显（key 不回显明文，仅 hasXxxKey 布尔）。 */
+export interface WebSearchSettings {
+  enabled: boolean
+  activeProvider: string
+  maxResults: number
+  timeoutMs: number
+  hasTavilyKey: boolean
+  hasSerperKey: boolean
+  hasBingKey: boolean
+  builtinConfigured: boolean
+  providerAvailability: Record<string, boolean>
+}
+
+/** 写入：所有字段可选（null/undefined=不改）；key 空串=清除。 */
+export interface WebSearchSettingsUpdate {
+  enabled?: boolean
+  activeProvider?: string
+  maxResults?: number
+  timeoutMs?: number
+  tavilyKey?: string
+  serperKey?: string
+  bingKey?: string
+}
+
+export interface WebSearchTestResult {
+  results: number
+  providerAvailability: Record<string, boolean>
+  activeProvider: string
+  enabled: boolean
 }

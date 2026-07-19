@@ -19,6 +19,9 @@
       <n-tab-pane v-if="authStore.isAdmin" name="rag-recall" tab="RAG/召回">
         <RagRecallSettingsTab />
       </n-tab-pane>
+      <n-tab-pane v-if="authStore.isAdmin" name="web-search" tab="联网搜索">
+        <WebSearchSettingsTab />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -31,6 +34,7 @@ import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
 import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
 import RagMemorySettingsTab from '@/components/settings/RagMemorySettingsTab.vue'
 import RagRecallSettingsTab from '@/components/settings/RagRecallSettingsTab.vue'
+import WebSearchSettingsTab from '@/components/settings/WebSearchSettingsTab.vue'
 
 const authStore = useAuthStore()
 </script>
