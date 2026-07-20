@@ -23,6 +23,20 @@ export interface RagMemorySettings {
   llmKeyRerank?: boolean
   /** 关键词通道最大召回块数（0=不限，默认8）。替 MemoryService KEYWORD_MAX 硬编码。 */
   keywordMax?: number
+  /** M3 entities 词袋计数配置（LLM_KEY/VECTOR_KEYWORD 生效）。null 子字段 normalized 兜底默认。 */
+  entitiesConfig?: MemoryEntitiesConfig
+}
+
+/** M3 entities 词袋计数配置（控制抽取 prompt 数量指引 + Java 截断阈值）。
+ *  默认值 = V38 硬上限（totalMax=20, variant 1~3, properNoun 1~5, hypernym 5~10）。 */
+export interface MemoryEntitiesConfig {
+  totalMax?: number
+  variantMin?: number
+  variantMax?: number
+  properNounMin?: number
+  properNounMax?: number
+  hypernymMin?: number
+  hypernymMax?: number
 }
 
 /** RAG 召回 query 扩展全局设置（4 路同读：/retrieve、/ask、Chat、Agent/工作流 → 调试=真实） */

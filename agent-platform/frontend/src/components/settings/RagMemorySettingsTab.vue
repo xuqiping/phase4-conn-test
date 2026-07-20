@@ -33,7 +33,7 @@
           全量 = LLM 读全部记忆（易联想泄漏）；向量 = 仅注入语义相关 top-K；混合 = 向量+关键词(实体)并集，0命中走LLM兜底（治向量漏"女儿3岁"类实体桥接）；LLM_KEY = 锚点语义两阶段（粗筛 top-N→LLM 双维度精排，百万 key 召回优先，推荐）
         </span>
       </n-form-item>
-      <n-form-item label="记忆标签语言">
+      <n-form-item label="记忆标签语言" v-if="retrievalMode === 'LLM_FULL_CONTEXT'">
         <n-select
           v-model:value="keyLanguage"
           :options="keyLanguageOptions"
@@ -46,13 +46,13 @@
           注入上下文里记忆 key 的展示语言：英文 = memory_key（child_name）；中文 = memory_key_zh（女儿，空回退英文）
         </span>
       </n-form-item>
-      <n-form-item label="全量记忆阈值">
+      <n-form-item label="全量记忆阈值" v-if="retrievalMode === 'LLM_FULL_CONTEXT'">
         <n-input-number
           v-model:value="fullContextThreshold"
           :min="0"
           :max="1000"
           :loading="saving"
-          :disabled="!enabled || retrievalMode !== 'LLM_FULL_CONTEXT'"
+          :disabled="!enabled"
           style="width: 220px"
           @update:value="handleSave"
         />
@@ -60,13 +60,13 @@
           仅「全量」模式生效。记忆条数 &gt; 此值时改两阶段：先加载全部 key→LLM 选相关→只装相关 value（省 token + 治联想泄漏）；0 = 禁用始终全量。默认 20
         </span>
       </n-form-item>
-      <n-form-item label="关键词召回块阈值">
+      <n-form-item label="关键词召回块阈值" v-if="retrievalMode === 'VECTOR_KEYWORD'">
         <n-input-number
           v-model:value="keywordPerBlockThreshold"
           :min="0"
           :max="200"
           :loading="saving"
-          :disabled="!enabled || retrievalMode !== 'VECTOR_KEYWORD'"
+          :disabled="!enabled"
           style="width: 220px"
           @update:value="handleSave"
         />
@@ -74,13 +74,13 @@
           仅「混合」模式生效。同一信息块（如偏好/职业）关键词命中 &gt; 此值时，优先留命中 entities/key/key_zh（高优）的记忆（不卡阈值），低优补到此值；块内 ≤ 此值全留。0 = 禁用（不分组筛）。默认 10
         </span>
       </n-form-item>
-      <n-form-item label="LLM_KEY 粗筛候选数">
+      <n-form-item label="LLM_KEY 粗筛候选数" v-if="retrievalMode === 'LLM_KEY'">
         <n-input-number
           v-model:value="llmKeyCoarseTopN"
           :min="5"
           :max="200"
           :loading="saving"
-          :disabled="!enabled || retrievalMode !== 'LLM_KEY'"
+          :disabled="!enabled"
           style="width: 220px"
           @update:value="handleSave"
         />
@@ -88,18 +88,18 @@
           仅「LLM_KEY」生效。向量 + BM25 RRF 融合后保留的粗筛候选数（下一步 LLM 精排的输入）。默认 40
         </span>
       </n-form-item>
-      <n-form-item label="LLM_KEY 精排开关">
+      <n-form-item label="LLM_KEY 精排开关" v-if="retrievalMode === 'LLM_KEY'">
         <n-switch
           v-model:value="llmKeyRerank"
           :loading="saving"
-          :disabled="!enabled || retrievalMode !== 'LLM_KEY'"
+          :disabled="!enabled"
           @update:value="handleSave"
         />
         <span class="rag-memory-settings__hint">
           仅「LLM_KEY」生效。开 = 粗筛 top-N → LLM 双维度（key × block）精排筛相关；关 = 跳精排直接注 top-N。默认开
         </span>
       </n-form-item>
-      <n-form-item label="关键词通道上限">
+      <n-form-item label="关键词通道上限" v-if="retrievalMode === 'VECTOR_KEYWORD'">
         <n-input-number
           v-model:value="keywordMax"
           :min="0"
@@ -113,6 +113,90 @@
           关键词（实体）通道单次最大召回块数。0 = 不限。默认 8（替后端 KEYWORD_MAX 硬编码）
         </span>
       </n-form-item>
+      <div
+        v-if="retrievalMode === 'LLM_KEY' || retrievalMode === 'VECTOR_KEYWORD'"
+        class="rag-memory-settings__group"
+      >
+        <div class="rag-memory-settings__group-title">entities 词袋计数（抽取数量上限，{{ retrievalMode === 'LLM_KEY' ? 'LLM_KEY' : '混合' }}模式生效）</div>
+        <n-form-item label="总数上限">
+          <n-input-number
+            v-model:value="entitiesCfg.totalMax"
+            :min="1"
+            :max="50"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 160px"
+            @update:value="handleSave"
+          />
+          <span class="rag-memory-settings__hint">单条记忆 entities 总词数硬上限（Java 截断 + prompt 指引）。默认 20</span>
+        </n-form-item>
+        <n-form-item label="同义变体">
+          <n-input-number
+            v-model:value="entitiesCfg.variantMin"
+            :min="0"
+            :max="entitiesCfg.variantMax || 20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span style="margin: 0 6px">~</span>
+          <n-input-number
+            v-model:value="entitiesCfg.variantMax"
+            :min="entitiesCfg.variantMin || 0"
+            :max="20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span class="rag-memory-settings__hint">角色/称谓近义说法数量区间（女儿→孩子/小孩）。默认 1~3</span>
+        </n-form-item>
+        <n-form-item label="专名数量">
+          <n-input-number
+            v-model:value="entitiesCfg.properNounMin"
+            :min="0"
+            :max="entitiesCfg.properNounMax || 20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span style="margin: 0 6px">~</span>
+          <n-input-number
+            v-model:value="entitiesCfg.properNounMax"
+            :min="entitiesCfg.properNounMin || 0"
+            :max="20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span class="rag-memory-settings__hint">value 里的专有名词（人名/地名/品牌原文字面词）数量区间。默认 1~5</span>
+        </n-form-item>
+        <n-form-item label="上位词数量">
+          <n-input-number
+            v-model:value="entitiesCfg.hypernymMin"
+            :min="0"
+            :max="entitiesCfg.hypernymMax || 20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span style="margin: 0 6px">~</span>
+          <n-input-number
+            v-model:value="entitiesCfg.hypernymMax"
+            :min="entitiesCfg.hypernymMin || 0"
+            :max="20"
+            :loading="saving"
+            :disabled="!enabled"
+            style="width: 110px"
+            @update:value="handleSave"
+          />
+          <span class="rag-memory-settings__hint">所属类别上位词数量区间（决定泛问召回，如「带家人」召回配偶/孩子）。默认 5~10</span>
+        </n-form-item>
+      </div>
       <n-form-item label="老记忆实体回填">
         <n-button :loading="backfilling" :disabled="!enabled" size="small" @click="handleBackfill">
           回填实体标签
@@ -142,9 +226,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInputNumber, NSelect, NSwitch, useMessage } from 'naive-ui'
-import { systemApi, type RagMemorySettings } from '@/api/system'
+import { systemApi, type MemoryEntitiesConfig, type RagMemorySettings } from '@/api/system'
 
 const message = useMessage()
 const saving = ref(false)
@@ -160,6 +244,15 @@ const keywordPerBlockThreshold = ref<number>(10)
 const llmKeyCoarseTopN = ref<number>(40)
 const llmKeyRerank = ref<boolean>(true)
 const keywordMax = ref<number>(8)
+const entitiesCfg = reactive<MemoryEntitiesConfig>({
+  totalMax: 20,
+  variantMin: 1,
+  variantMax: 3,
+  properNounMin: 1,
+  properNounMax: 5,
+  hypernymMin: 5,
+  hypernymMax: 10
+})
 
 const processModeOptions = [
   { label: '全异步（不卡顿）', value: 'ASYNC' },
@@ -200,6 +293,16 @@ async function load() {
   llmKeyRerank.value = res.data.data.llmKeyRerank !== false
   keywordMax.value =
     typeof res.data.data.keywordMax === 'number' ? res.data.data.keywordMax : 8
+  const ec = res.data.data.entitiesConfig
+  if (ec) {
+    entitiesCfg.totalMax = typeof ec.totalMax === 'number' ? ec.totalMax : 20
+    entitiesCfg.variantMin = typeof ec.variantMin === 'number' ? ec.variantMin : 1
+    entitiesCfg.variantMax = typeof ec.variantMax === 'number' ? ec.variantMax : 3
+    entitiesCfg.properNounMin = typeof ec.properNounMin === 'number' ? ec.properNounMin : 1
+    entitiesCfg.properNounMax = typeof ec.properNounMax === 'number' ? ec.properNounMax : 5
+    entitiesCfg.hypernymMin = typeof ec.hypernymMin === 'number' ? ec.hypernymMin : 5
+    entitiesCfg.hypernymMax = typeof ec.hypernymMax === 'number' ? ec.hypernymMax : 10
+  }
 }
 
 async function handleSave() {
@@ -216,7 +319,12 @@ async function handleSave() {
       keywordPerBlockThreshold: keywordPerBlockThreshold.value,
       llmKeyCoarseTopN: llmKeyCoarseTopN.value,
       llmKeyRerank: llmKeyRerank.value,
-      keywordMax: keywordMax.value
+      keywordMax: keywordMax.value,
+      // 联动反向：切回非召回模式不提交 entitiesConfig（卡片隐，本地 ref 保留不丢，切回再显已填值）。
+      entitiesConfig:
+        retrievalMode.value === 'LLM_KEY' || retrievalMode.value === 'VECTOR_KEYWORD'
+          ? { ...entitiesCfg }
+          : undefined
     })
     message.success(
       `记忆处理模式：${processMode.value === 'HYBRID' ? '同步（即时追问）' : '全异步（不卡顿）'}｜检索模式：${
@@ -282,6 +390,21 @@ async function handleCleanup() {
   margin-left: 12px;
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.rag-memory-settings__group {
+  margin: 8px 0 12px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--color-primary, #18a058);
+  background: var(--card-color, rgba(255, 255, 255, 0.03));
+  border-radius: 4px;
+}
+
+.rag-memory-settings__group-title {
+  margin-bottom: 8px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
