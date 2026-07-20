@@ -49,34 +49,29 @@
 
 ## 四、步骤拆分(chunk 级)
 
-### Step1 — 后端:entities-config KV + 读取 + seed
+### Step1 — 后端:entities-config KV + 读取 + seed ✅
 - SystemSettingService 加常量 `RAG_MEMORY_ENTITIES_CONFIG = "rag.memory.entities-config"`。
-- 新方法 `getMemoryEntitiesConfig()` → JSON 反序列化为 record `MemoryEntitiesConfig(totalMax,variantMin,variantMax,properNounMin,properNounMax,hypernymMin,hypernymMax)`,默认值见上。
+- 新 record `MemoryEntitiesConfig`(7 字段 + defaults() + normalized() 兜底归一)。
+- 新方法 `getMemoryEntitiesConfig()`/`updateMemoryEntitiesConfig()`(Jackson 反序列化,损坏回退默认 + 告警)。
 - Flyway **V45__seed_memory_entities_config.sql** seed 默认 JSON。
-- 单测:`getMemoryEntitiesConfig` 读默认/读自定义/非法 JSON 兜底默认。
+- (单测留 Step5/收尾,先 compile 验证)
 
-### Step2 — 后端:Judge 读配置 + prompt 动态注入
-- MemoryConflictJudge 注入 SystemSettingService(已是 Spring bean),extract/batchExtractEntities 入口读 config。
-- EXTRACT_PROMPT + BATCH_ENTITIES_PROMPT 占位符注入(totalMax/hypernymMin/hypernymMax/variantMin/variantMax)。
-- readEntities `:386` 改读 config.totalMax。
-- 单测:extract 输出 prompt 含配置数值(可 mock chat 验证 prompt 文本);readEntities 超 totalMax 截断。
+### Step2 — 后端:Judge 读配置 + prompt 动态注入 ✅
+- MemoryConflictJudge 注入 SystemSettingService。
+- EXTRACT_PROMPT + BATCH_ENTITIES_PROMPT 硬编码数字改**命名 token**(`{TOTAL_MAX}`/`{VARIANT_MIN-MAX}`/`{HYPERNYM_MIN-MAX}`),`applyEntitiesConfig` helper 替换(避免与既有 %s 的 String.format 顺序耦合)。
+- `readEntities(JsonNode, int totalMax)` 截断读 config.totalMax;readFact 透传 cfg。
 
-### Step3 — 后端:写回端点 + DTO
-- SystemSettingController 加 `PUT /api/system/settings/rag-memory/entities-config`(admin)→ upsert。
-- DTO `MemoryEntitiesConfigRequest` + 校验(totalMax 1-50,各 min≤max,均≥1)。
-- handleSave 路径打通。
-- 单测:校验非法值返业务错误。
+### Step3 — 后端:并入 RagMemorySettings(决策修订,非新端点)✅
+- **修订**:不新建 `PUT /entities-config` 端点,直接并入既有 `RagMemorySettings` VO/Update/Controller(与其他 8 旋钮一致,少一个端点)。
+- DTO 校验靠 `MemoryEntitiesConfig.normalized()`(clamp/min>max 互换/totalMax 上调到合计),Controller update 时 null 跳过。
 
-### Step4 — 前端:API + tab 动态显隐 + entities 旋钮组
-- [api/system.ts](../../../frontend/src/api/system.ts) 加 `getMemoryEntitiesConfig`/`updateMemoryEntitiesConfig` + 接口 MemoryEntitiesConfig。
-- RagMemorySettingsTab.vue:
-  - retrievalMode `@update:value` 驱动 `v-if` 分组显隐(见映射表)。
-  - entities-config 卡片(NCard)7 旋钮(NInputNumber min/max),仅 LLM_KEY/VECTOR_KEYWORD 显。
-  - onMounted 读 entities-config;handleSave 含 entities-config upsert。
+### Step4 — 前端:API + tab 动态显隐 + entities 旋钮组 ✅
+- [api/system.ts](../../../frontend/src/api/system.ts) 加 `MemoryEntitiesConfig` 接口 + `RagMemorySettings.entitiesConfig`。
+- RagMemorySettingsTab.vue:4 模式旋钮 `:disabled` → `v-if`;entities 卡片仅 LLM_KEY/VECTOR_KEYWORD 显(7 NInputNumber,min/max 联动约束);切回非召回模式不提交 entitiesConfig(本地 ref 保留)。
 - vue-tsc 绿。
 
-### Step5 — 收尾产出 + 进度记录 + 总览更新
-- README / Feature Map / User-Ops / 测试方案。
+### Step5 — 收尾产出 + 进度记录 + 总览更新 ✅
+- README / Feature Map / User-Ops / 测试方案 全产。
 - 开发进度.md + 总览表加 M3 行 + 沉淀规范。
 
 ## 五、安全检查清单
@@ -110,10 +105,10 @@ UI 显隐属主观体验 + 联动半选 → 按 Phase3.1 §三需产测试方案
 - 联动:见上 §七 逐条。
 
 ## 九、出口条件(对齐 Phase3.1 §七)
-- [ ] plan 全步骤勾选。
-- [ ] 安全 + 运维清单逐条落实。
-- [ ] 测试方案产出(联动点全覆盖含反向/半选)。
-- [ ] README + Feature Map + User-Ops(B 类)产出。
-- [ ] 单测全绿,vue-tsc 绿,全 commit。
-- [ ] 进度文档 ≤5000 tokens。
-- [ ] 规范沉淀(若产出通用能力)。
+- [x] plan 全步骤勾选。
+- [x] 安全 + 运维清单逐条落实(DTO 校验 normalized / JSON 兜底 / 权限 role:manage 既有)。
+- [x] 测试方案产出(联动点全覆盖含反向/半选/兜底)。
+- [x] README + Feature Map + User-Ops(B 类)产出。
+- [x] mvn compile 绿 + vue-tsc 绿,全 commit(0cd4888d / 470bfedf)。
+- [x] 进度文档 ≤5000 tokens。
+- [x] 规范沉淀(prompt 命名 token 范式)。
