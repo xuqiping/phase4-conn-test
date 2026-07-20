@@ -24,4 +24,6 @@ public class RagMemorySettingsUpdateRequest {
     private Boolean llmKeyRerank;
     /** 可选：关键词召回分词上限（0=不限；缺省 → 不改）。 */
     private Integer keywordMax;
+    /** 可选：M3 entities 词袋计数配置（缺省 → 不改）。null 子字段 normalized 兜底默认。 */
+    private MemoryEntitiesConfig entitiesConfig;
 }

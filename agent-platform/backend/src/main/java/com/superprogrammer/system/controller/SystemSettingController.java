@@ -53,7 +53,8 @@ public class SystemSettingController {
                 .keywordPerBlockThreshold(service.getMemoryKeywordPerBlockThreshold())
                 .llmKeyCoarseTopN(service.getLlmKeyCoarseTopN())
                 .llmKeyRerank(service.getLlmKeyRerank())
-                .keywordMax(service.getKeywordMax()).build()));
+                .keywordMax(service.getKeywordMax())
+                .entitiesConfig(service.getMemoryEntitiesConfig()).build()));
     }
 
     @PutMapping("/rag-memory")
@@ -79,6 +80,9 @@ public class SystemSettingController {
         if (request.getKeywordMax() != null) {
             service.updateKeywordMax(request.getKeywordMax());
         }
+        if (request.getEntitiesConfig() != null) {
+            service.updateMemoryEntitiesConfig(request.getEntitiesConfig());
+        }
         return ResponseEntity.ok(R.ok("RAG/记忆模式开关已更新",
                 RagMemorySettingsVO.builder()
                         .enabled(service.getRagMemoryEnabled())
@@ -89,7 +93,8 @@ public class SystemSettingController {
                         .keywordPerBlockThreshold(service.getMemoryKeywordPerBlockThreshold())
                         .llmKeyCoarseTopN(service.getLlmKeyCoarseTopN())
                         .llmKeyRerank(service.getLlmKeyRerank())
-                        .keywordMax(service.getKeywordMax()).build()));
+                        .keywordMax(service.getKeywordMax())
+                        .entitiesConfig(service.getMemoryEntitiesConfig()).build()));
     }
 
     // ---- RAG 召回 query 扩展全局开关（4 路同读：/retrieve、/ask、Chat、Agent/工作流）----

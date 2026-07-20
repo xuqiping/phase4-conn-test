@@ -1,17 +1,21 @@
 package com.superprogrammer.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.service.AesEncryptService;
 import com.superprogrammer.system.dto.AuthSettingsVO;
+import com.superprogrammer.system.dto.MemoryEntitiesConfig;
 import com.superprogrammer.system.entity.SystemSetting;
 import com.superprogrammer.system.mapper.SystemSettingMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SystemSettingService {
@@ -37,6 +41,9 @@ public class SystemSettingService {
     public static final String RAG_MEMORY_LLM_KEY_RERANK = "rag.memory.llm-key.rerank";
     /** 关键词召回分词上限（替 MemoryService 硬编码 KEYWORD_MAX）：避免 SQL OR 列表过长。默认 8；0=不限。 */
     public static final String RAG_MEMORY_KEYWORD_MAX = "rag.memory.keyword-max";
+    /** M3 entities 词袋计数配置（JSON：totalMax/variantMin-Max/properNounMin-Max/hypernymMin-Max）。
+     *  控制 MemoryConflictJudge 抽取 prompt 数量指引 + Java readEntities 兜底截断。默认值 = V38 硬上限。 */
+    public static final String RAG_MEMORY_ENTITIES_CONFIG = "rag.memory.entities-config";
     /** RAG 召回 query 多路扩展开关（true=改写+HyDE/切块多路；false=单 query 直接 embed）。
      *  4 条检索路径（/retrieve、/ask、Chat 注入、Agent/工作流）全读此键 → 调试与真实一致。默认 true。 */
     public static final String RAG_RECALL_EXPANSION_ENABLED = "rag.recall.expansion.enabled";
@@ -72,6 +79,7 @@ public class SystemSettingService {
 
     private final SystemSettingMapper mapper;
     private final AesEncryptService aesEncryptService;
+    private final ObjectMapper objectMapper;
 
     @Value("${jwt.access-expiration:900000}")
     private Long defaultAccessExpirationMs;
@@ -254,6 +262,36 @@ public class SystemSettingService {
         if (max < 0) max = 0;
         upsert(RAG_MEMORY_KEYWORD_MAX, String.valueOf(max),
                 "关键词召回分词上限（0=不限，避免SQL OR列表过长；默认8）");
+    }
+
+    // ============================ M3 entities 词袋计数配置 ============================
+
+    /** entities 词袋计数配置，默认 = V38 硬上限（零行为变更）。JSON 损坏/缺失 → 默认 + 告警 log。 */
+    public MemoryEntitiesConfig getMemoryEntitiesConfig() {
+        String json = getValue(RAG_MEMORY_ENTITIES_CONFIG);
+        if (json == null || json.isBlank()) {
+            return MemoryEntitiesConfig.defaults();
+        }
+        try {
+            MemoryEntitiesConfig parsed = objectMapper.readValue(json, MemoryEntitiesConfig.class);
+            return parsed.normalized();
+        } catch (Exception e) {
+            log.warn("memoryEntitiesConfig 读取失败，回退默认值（json={}）traceId见请求上下文：{}", json, e.getMessage());
+            return MemoryEntitiesConfig.defaults();
+        }
+    }
+
+    /** 写 entities 词袋计数配置（已 normalized，存 JSON 串）。 */
+    public MemoryEntitiesConfig updateMemoryEntitiesConfig(MemoryEntitiesConfig config) {
+        MemoryEntitiesConfig normalized = config.normalized();
+        try {
+            String json = objectMapper.writeValueAsString(normalized);
+            upsert(RAG_MEMORY_ENTITIES_CONFIG, json,
+                    "entities词袋计数配置（totalMax/variantMin-Max/properNounMin-Max/hypernymMin-Max，默认V38硬上限）");
+        } catch (Exception e) {
+            log.error("memoryEntitiesConfig 写入失败：{}", e.getMessage(), e);
+        }
+        return normalized;
     }
 
     // ============================ Excel 多Sheet导入解析阈值（设计 §4.6） ============================

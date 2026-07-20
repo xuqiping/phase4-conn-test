@@ -8,6 +8,8 @@ import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.system.dto.MemoryEntitiesConfig;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -33,6 +35,7 @@ public class MemoryConflictJudge {
 
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final SystemSettingService systemSettingService;
 
     private static final Set<String> VALID_CATEGORIES = Set.of("PREFERENCE", "FACT", "FEEDBACK");
 
@@ -55,9 +58,9 @@ public class MemoryConflictJudge {
 
             entities（重要，决定关键词召回准确率）= 召回词袋，四类词都要：
             1. key_zh 中文标签（必含，如"女儿"）；
-            2. 同义变体 1-3 个（角色/称谓/类别词的近义说法，如 女儿→孩子/小孩/闺女；公司→单位/企业；老婆→妻子/爱人）；
+            2. 同义变体 {VARIANT_MIN}-{VARIANT_MAX} 个（角色/称谓/类别词的近义说法，如 女儿→孩子/小孩/闺女；公司→单位/企业；老婆→妻子/爱人）；
             3. value 里的专有名词（人名/地名/品牌，原文字面词，如"啊闪""北京""Java"）；
-            4. **所属类别泛称/上位词**（决定泛问召回，如 query「带家人出去玩」能召回配偶/孩子/宠物。**至少 5 个，能多则多——概念越宽泛（家庭/工作/居住等高频类别）越往 8-10 靠，上限 10**；只有该类别真实存在的上位词确实不足 5 个时才减少，勿无故压到 1-2 个。下面每类列了多个候选，挑贴切的都补，**不止于下列——可自行补充该类别其他常见 2+ 字上位词**；事实横跨多类别时叠加。全用 2 字以上词，**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
+            4. **所属类别泛称/上位词**（决定泛问召回，如 query「带家人出去玩」能召回配偶/孩子/宠物。**至少 {HYPERNYM_MIN} 个，能多则多——概念越宽泛（家庭/工作/居住等高频类别）越往 {HYPERNYM_MIN}-{HYPERNYM_MAX} 靠，上限 {HYPERNYM_MAX}**；只有该类别真实存在的上位词确实不足 {HYPERNYM_MIN} 个时才减少，勿无故压到 1-2 个。下面每类列了多个候选，挑贴切的都补，**不止于下列——可自行补充该类别其他常见 2+ 字上位词**；事实横跨多类别时叠加。全用 2 字以上词，**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
                - 配偶/妻子/老公/孩子/儿子/女儿/父母/亲属/宠物 → 家人 / 家庭 / 亲属 / 家属 / 亲人 / 眷属 / 家眷 / 族亲 / 至亲；
                - 公司/职位/职级/单位/行业/薪水/上班 → 工作 / 职业 / 职场 / 事业 / 岗位 / 职务 / 就业 / 差事 / 营生；
                - 过敏/病史/用药/身高/体重/体检/疾病 → 健康 / 身体 / 体质 / 医疗 / 病史 / 体能 / 体征 / 体格 / 状况；
@@ -69,7 +72,7 @@ public class MemoryConflictJudge {
                - 名字/姓名/年龄/生日/性别/属相/星座 → 基本信息 / 个人 / 档案 / 资料 / 身份 / 简介 / 概况 / 履历 / 本人。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体
               （child_name → 补"女儿"+"孩子"，否则 query「带女儿去玩」召回不到这条）。
-            - 每词 ≤8 字符，共 ≤20 个，去重。
+            - 每词 ≤8 字符，共 ≤{TOTAL_MAX} 个，去重。
             - 例：value="啊闪" key=child_name key_zh="女儿" → entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city key_zh="住址" → entities:["住址","北京","居住地"]；
               value="用Java" key=favorite_language key_zh="编程语言" → entities:["编程语言","Java","偏好","爱好"]。
@@ -174,14 +177,14 @@ public class MemoryConflictJudge {
             规则：
             - key_zh = key 的中文主标签（1-6 中文字），据英文 key 语义推断。
               例：key=child_name → key_zh="女儿"；key=home_city → key_zh="住址"；key=favorite_language → key_zh="编程语言"。抽不出 → null。
-            - entities = 召回词袋，四类都要：① key_zh 标签（必含）；② 同义变体 1-3（女儿→孩子/小孩/闺女；公司→单位/企业）；
+            - entities = 召回词袋，四类都要：① key_zh 标签（必含）；② 同义变体 {VARIANT_MIN}-{VARIANT_MAX}（女儿→孩子/小孩/闺女；公司→单位/企业）；
               ③ value 里的专有名词（原文字面词，如"啊闪""北京""Java"）；
-              ④ **所属类别泛称/上位词**（决定泛问召回。**至少 5 个，能多则多——概念越宽泛越往 8-10 靠，上限 10**；只有该类别真实上位词确实不足 5 个时才减少，勿无故压到 1-2 个；**不止于下列候选，可自行补该类别其他常见 2+ 字上位词**；全用 2 字以上词**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
+              ④ **所属类别泛称/上位词**（决定泛问召回。**至少 {HYPERNYM_MIN} 个，能多则多——概念越宽泛越往 {HYPERNYM_MIN}-{HYPERNYM_MAX} 靠，上限 {HYPERNYM_MAX}**；只有该类别真实上位词确实不足 {HYPERNYM_MIN} 个时才减少，勿无故压到 1-2 个；**不止于下列候选，可自行补该类别其他常见 2+ 字上位词**；全用 2 字以上词**严禁单字**——单字不进 2-gram 分词召不回、且高频命中过宽成噪声）：
               配偶/孩子/父母/宠物→家人/家庭/亲属/家属/亲人/眷属/家眷/族亲/至亲；公司/职位/单位→工作/职业/职场/事业/岗位/职务/就业/差事/营生；过敏/病史/身高体重→健康/身体/体质/医疗/病史/体能/体征/体格/状况；
               住址/城市/搬家→居住地/住址/居住/住所/住处/定居/落户/居所/寓所；学校/专业/学历→教育/学历/学业/学习/求学/深造/在校/读书/进修；爱好/口味/运动→偏好/爱好/喜好/兴趣/口味/品味/消遣/嗜好/偏爱；
               电话/邮箱/微信→联系方式/联系/通讯/联络/通联/账号/渠道/通讯录/社交；收入/工资/房贷→财务/收入/资产/财富/经济/薪金/钱财/收支/进项；名字/年龄/生日→基本信息/个人/档案/资料/身份/简介/概况/履历/本人。
             - **角色词必含**：value 只有专有名（如 value="啊闪"）时，必须从 key 语义补角色词 + 变体。
-            - 每词 ≤8 字符，共 ≤20 个，去重。抽不出 entities → []。
+            - 每词 ≤8 字符，共 ≤{TOTAL_MAX} 个，去重。抽不出 entities → []。
             - 例：value="啊闪" key=child_name → key_zh="女儿", entities:["女儿","孩子","小孩","家人","啊闪"]；
               value="住在北京" key=home_city → key_zh="住址", entities:["住址","北京","居住地"]。
 
@@ -196,12 +199,14 @@ public class MemoryConflictJudge {
     /** 抽取事实（含 block 候选）。
      * @param existingKeys 该用户已存在的 memory_key 列表，注入 prompt 做 key 复用白名单（通用语义归一，取代手写 alias 表）。null/empty 视为新用户。 */
     public List<ExtractedFact> extract(String userMessage, String assistantResponse, List<String> existingKeys) {
+        MemoryEntitiesConfig cfg = systemSettingService.getMemoryEntitiesConfig();
         String keysDisplay = (existingKeys == null || existingKeys.isEmpty())
                 ? "（无，新用户）"
                 : String.join(" / ", existingKeys);
         // M2 写侧 gate（冲突决策1）：只抽用户提交内容，不抽 assistant 回答。assistantResponse 留参为签名兼容，
         // 入 prompt 一律喂空——AI 回答不入记忆（用户要记答案走 M5 主动要求通道「记一下…」）。
-        String json = chat(String.format(EXTRACT_PROMPT, keysDisplay, userMessage == null ? "" : userMessage, ""));
+        String json = chat(String.format(applyEntitiesConfig(EXTRACT_PROMPT, cfg),
+                keysDisplay, userMessage == null ? "" : userMessage, ""));
         // 安全审计 #6：LLM 抽取结果含记忆 fact 原文（PII），降 DEBUG（生产 INFO 不打）。
         log.debug("extract raw返回.len={}", json == null ? 0 : json.length());
         if (json == null || json.isBlank()) return List.of();
@@ -212,10 +217,21 @@ public class MemoryConflictJudge {
         }
         List<ExtractedFact> out = new ArrayList<>();
         for (JsonNode el : root) {
-            ExtractedFact f = readFact(el);
+            ExtractedFact f = readFact(el, cfg);
             if (f != null) out.add(f);
         }
         return out;
+    }
+
+    /** M3：把 prompt 里 {TOTAL_MAX}/{VARIANT_MIN-MAX}/{HYPERNYM_MIN-MAX} 命名 token 替换为配置数值。
+     *  用命名 token 而非 %d，避免与既有 %s（keysDisplay/userMessage/...）的 String.format 顺序耦合。 */
+    private static String applyEntitiesConfig(String prompt, MemoryEntitiesConfig cfg) {
+        return prompt
+                .replace("{TOTAL_MAX}", String.valueOf(cfg.getTotalMax()))
+                .replace("{VARIANT_MIN}", String.valueOf(cfg.getVariantMin()))
+                .replace("{VARIANT_MAX}", String.valueOf(cfg.getVariantMax()))
+                .replace("{HYPERNYM_MIN}", String.valueOf(cfg.getHypernymMin()))
+                .replace("{HYPERNYM_MAX}", String.valueOf(cfg.getHypernymMax()));
     }
 
     /** batch 冲突判定（传 userMessage 保留"更正"等修改信号）。失败/解析失败返全 false（fail-safe）。 */
@@ -269,10 +285,11 @@ public class MemoryConflictJudge {
     public java.util.Map<Long, BackfillRow> batchExtractEntities(List<UserMemory> rows) {
         if (rows == null || rows.isEmpty()) return java.util.Map.of();
         try {
+            MemoryEntitiesConfig cfg = systemSettingService.getMemoryEntitiesConfig();
             String body = rows.stream()
                     .map(m -> m.getId() + "|" + m.getMemoryKey() + "|" + m.getMemoryValue())
                     .collect(java.util.stream.Collectors.joining("\n"));
-            String raw = chat(String.format(BATCH_ENTITIES_PROMPT, body));
+            String raw = chat(String.format(applyEntitiesConfig(BATCH_ENTITIES_PROMPT, cfg), body));
             JsonNode root = parseJson(stripFence(raw));
             java.util.Map<Long, BackfillRow> out = new java.util.HashMap<>();
             if (root == null || !root.isArray()) {
@@ -284,7 +301,7 @@ public class MemoryConflictJudge {
                 if (id < 0) continue;
                 String keyZh = textOrDefault(el, "key_zh", null);
                 if (keyZh != null) keyZh = keyZh.isBlank() ? null : keyZh.trim();
-                out.put(id, new BackfillRow(readEntities(el.get("entities")), keyZh));
+                out.put(id, new BackfillRow(readEntities(el.get("entities"), cfg.getTotalMax()), keyZh));
             }
             return out;
         } catch (Exception e) {
@@ -356,7 +373,7 @@ public class MemoryConflictJudge {
 
     // ---- Jackson 解析 helpers ----
 
-    private ExtractedFact readFact(JsonNode el) {
+    private ExtractedFact readFact(JsonNode el, MemoryEntitiesConfig cfg) {
         if (el == null || !el.isObject()) return null;
         String category = textOrDefault(el, "category", "FACT");
         if (!VALID_CATEGORIES.contains(category)) category = "FACT";
@@ -367,13 +384,14 @@ public class MemoryConflictJudge {
         String block = textOrDefault(el, "block", null);
         String keyZh = textOrDefault(el, "key_zh", null);
         if (keyZh != null) keyZh = keyZh.isBlank() ? null : keyZh.trim();
-        List<String> entities = readEntities(el.get("entities"));
+        List<String> entities = readEntities(el.get("entities"), cfg.getTotalMax());
         return new ExtractedFact(category, key.trim(), keyZh, value, confidence, block, entities);
     }
 
-    /** 解析 entities 数组（容忍缺字段/非数组/空）。去空白去重，上限 10 个（标签+变体+专名）。 */
-    private List<String> readEntities(JsonNode node) {
+    /** 解析 entities 数组（容忍缺字段/非数组/空）。去空白去重，上限 = M3 配置 totalMax（默认 20）。 */
+    private List<String> readEntities(JsonNode node, int totalMax) {
         if (node == null || !node.isArray()) return List.of();
+        int cap = totalMax > 0 ? totalMax : MemoryEntitiesConfig.DEFAULT_TOTAL_MAX;
         List<String> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (JsonNode e : node) {
@@ -383,7 +401,7 @@ public class MemoryConflictJudge {
             s = s.trim();
             if (s.isBlank() || s.length() > 8) continue;
             if (seen.add(s)) out.add(s);
-            if (out.size() >= 20) break;
+            if (out.size() >= cap) break;
         }
         return out;
     }

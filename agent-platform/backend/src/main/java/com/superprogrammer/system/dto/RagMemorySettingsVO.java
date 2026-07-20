@@ -24,4 +24,6 @@ public class RagMemorySettingsVO {
     private Boolean llmKeyRerank;
     /** 关键词召回分词上限（0=不限，避免 SQL OR 列表过长；默认8）。VECTOR_KEYWORD 关键词通道用。 */
     private Integer keywordMax;
+    /** M3 entities 词袋计数配置（totalMax/variantMin-Max/properNounMin-Max/hypernymMin-Max）。LLM_KEY/VECTOR_KEYWORD 用。 */
+    private MemoryEntitiesConfig entitiesConfig;
 }
