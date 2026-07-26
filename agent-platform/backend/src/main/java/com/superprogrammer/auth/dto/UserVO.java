@@ -17,6 +17,8 @@ public class UserVO {
 
     private Long id;
     private String username;
+    private String name;
+    private String primaryDepartmentName;
     private String email;
     private String avatar;
     private String status;

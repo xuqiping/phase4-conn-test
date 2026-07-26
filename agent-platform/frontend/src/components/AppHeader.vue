@@ -43,7 +43,7 @@
           >
             {{ userInitial }}
           </n-avatar>
-          <span class="app-header__username">{{ authStore.userInfo?.username }}</span>
+          <span class="app-header__username">{{ userDisplay }}</span>
         </div>
       </n-dropdown>
     </div>
@@ -80,11 +80,17 @@ const showThemeSwitcher = ref(false)
 /** 页面标题（从路由meta获取） */
 const pageTitle = computed(() => (route.meta.title as string) || '多Agent智能体平台')
 
-/** 用户名首字母 */
-const userInitial = computed(() => {
-  const name = authStore.userInfo?.username || 'U'
-  return name.charAt(0).toUpperCase()
+/** 显示名：优先 name，空则回退 username */
+const displayName = computed(() => authStore.userInfo?.name || authStore.userInfo?.username || 'U')
+
+/** 右上角展示文案：有主部门则「部门 - 姓名」，否则只姓名 */
+const userDisplay = computed(() => {
+  const dept = authStore.userInfo?.primaryDepartmentName
+  return dept ? `${dept} - ${displayName.value}` : displayName.value
 })
+
+/** 显示名首字母（头像占位） */
+const userInitial = computed(() => displayName.value.charAt(0).toUpperCase())
 
 /** 用户下拉菜单选项 */
 const userMenuOptions = [

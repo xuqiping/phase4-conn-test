@@ -20,10 +20,13 @@ public class DingTalkAuthController {
 
     /**
      * 钉钉免登登录：前端把 authCode POST 上来，换本平台 JWT。
+     * <p>source=jsapi → 容器内免登码走 oapi 老链路；否则 OAuth2 网页码走 userAccessToken。
      */
     @PostMapping("/dingtalk")
     public ResponseEntity<R<TokenResponse>> loginByDingTalk(@Valid @RequestBody DingTalkLoginRequest request) {
-        DingTalkService.DingTalkUserInfo info = dingTalkService.exchangeUser(request.getAuthCode());
+        DingTalkService.DingTalkUserInfo info = "jsapi".equalsIgnoreCase(request.getSource())
+                ? dingTalkService.exchangeUserByOapi(request.getAuthCode())
+                : dingTalkService.exchangeUser(request.getAuthCode());
         TokenResponse response = authService.loginByDingTalk(info);
         return ResponseEntity.ok(R.ok(response));
     }

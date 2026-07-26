@@ -5,6 +5,7 @@ import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.chat.service.internal.ExtractedFact;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,13 +28,14 @@ import static org.mockito.Mockito.*;
 class MemoryConflictJudgeTest {
 
     @Mock private LlmGateway llmGateway;
+    @Mock private SystemSettingService systemSettingService;
 
     private MemoryConflictJudge judge;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        judge = new MemoryConflictJudge(llmGateway, objectMapper);
+        judge = new MemoryConflictJudge(llmGateway, objectMapper, systemSettingService);
     }
 
     @Test

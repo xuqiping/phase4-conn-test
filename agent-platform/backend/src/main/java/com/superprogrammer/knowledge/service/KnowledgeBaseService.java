@@ -76,6 +76,13 @@ public class KnowledgeBaseService {
 
     @Transactional
     public KnowledgeBaseVO create(KnowledgeBaseRequest request, Long userId) {
+        // 主动查重名，给精准友好提示（而非让唯一约束抛 500/409 通用话术）
+        LambdaQueryWrapper<KnowledgeBase> dup = new LambdaQueryWrapper<>();
+        dup.eq(KnowledgeBase::getTenantId, TENANT_ID)
+           .eq(KnowledgeBase::getName, request.getName());
+        if (baseMapper.selectCount(dup) > 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "同名知识库已存在，请更换名称");
+        }
         KnowledgeBase kb = new KnowledgeBase();
         kb.setTenantId(TENANT_ID);
         kb.setName(request.getName());

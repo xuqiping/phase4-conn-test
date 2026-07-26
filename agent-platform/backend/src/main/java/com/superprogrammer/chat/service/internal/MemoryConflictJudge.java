@@ -199,6 +199,13 @@ public class MemoryConflictJudge {
     /** 抽取事实（含 block 候选）。
      * @param existingKeys 该用户已存在的 memory_key 列表，注入 prompt 做 key 复用白名单（通用语义归一，取代手写 alias 表）。null/empty 视为新用户。 */
     public List<ExtractedFact> extract(String userMessage, String assistantResponse, List<String> existingKeys) {
+        return extract(userMessage, assistantResponse, existingKeys, null);
+    }
+
+    /** 抽取事实（含 block 候选），对话流跟随用户所选 model。
+     * @param existingKeys 该用户已存在的 memory_key 列表，注入 prompt 做 key 复用白名单（通用语义归一，取代手写 alias 表）。null/empty 视为新用户。
+     * @param model 对话主模型；null/空回退固定 MEMORY_JUDGE_MODEL（route/回填等非对话流路径用） */
+    public List<ExtractedFact> extract(String userMessage, String assistantResponse, List<String> existingKeys, String model) {
         MemoryEntitiesConfig cfg = systemSettingService.getMemoryEntitiesConfig();
         String keysDisplay = (existingKeys == null || existingKeys.isEmpty())
                 ? "（无，新用户）"
@@ -206,7 +213,7 @@ public class MemoryConflictJudge {
         // M2 写侧 gate（冲突决策1）：只抽用户提交内容，不抽 assistant 回答。assistantResponse 留参为签名兼容，
         // 入 prompt 一律喂空——AI 回答不入记忆（用户要记答案走 M5 主动要求通道「记一下…」）。
         String json = chat(String.format(applyEntitiesConfig(EXTRACT_PROMPT, cfg),
-                keysDisplay, userMessage == null ? "" : userMessage, ""));
+                keysDisplay, userMessage == null ? "" : userMessage, ""), model);
         // 安全审计 #6：LLM 抽取结果含记忆 fact 原文（PII），降 DEBUG（生产 INFO 不打）。
         log.debug("extract raw返回.len={}", json == null ? 0 : json.length());
         if (json == null || json.isBlank()) return List.of();
@@ -236,6 +243,11 @@ public class MemoryConflictJudge {
 
     /** batch 冲突判定（传 userMessage 保留"更正"等修改信号）。失败/解析失败返全 false（fail-safe）。 */
     public List<JudgeResult> judge(List<ExtractedFact> facts, List<UserMemory> blockMembers, String userMessage) {
+        return judge(facts, blockMembers, userMessage, null);
+    }
+
+    /** batch 冲突判定（传 userMessage 保留"更正"等修改信号）。失败/解析失败返全 false（fail-safe）。 */
+    public List<JudgeResult> judge(List<ExtractedFact> facts, List<UserMemory> blockMembers, String userMessage, String model) {
         if (facts == null || facts.isEmpty()) return List.of();
         try {
             String newJson = objectMapper.writeValueAsString(facts.stream()
@@ -243,7 +255,7 @@ public class MemoryConflictJudge {
             String memJson = objectMapper.writeValueAsString(blockMembers == null ? List.of() : blockMembers.stream()
                     .map(m -> java.util.Map.of("id", m.getId(), "key", m.getMemoryKey(), "value", m.getMemoryValue())).toList());
             JsonNode root = parseJson(stripFence(chat(String.format(JUDGE_PROMPT,
-                    userMessage == null ? "" : userMessage, newJson, memJson))));
+                    userMessage == null ? "" : userMessage, newJson, memJson), model)));
             // 按 factIdx 收集；缺失的事实默认无冲突（fail-safe，但不再静默全丢）。
             java.util.Map<Integer, JudgeResult> byIdx = new java.util.HashMap<>();
             if (root != null && root.isArray()) {
@@ -452,11 +464,17 @@ public class MemoryConflictJudge {
     }
 
     private String chat(String prompt) {
+        return chat(prompt, null);
+    }
+
+    /** @param model 对话流跟随用户所选模型（null/空 → 回退固定 RagConfig.MEMORY_JUDGE_MODEL） */
+    private String chat(String prompt, String model) {
+        String useModel = (model != null && !model.isBlank()) ? model : RagConfig.MEMORY_JUDGE_MODEL;
         Exception last = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 LlmResponse resp = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(useModel)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(JUDGE_TEMPERATURE).maxTokens(800).build());
                 String content = resp.getContent();

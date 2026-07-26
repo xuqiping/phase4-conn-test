@@ -27,6 +27,8 @@ public class TokenResponse {
     public static class UserInfo {
         private Long id;
         private String username;
+        private String name;
+        private String primaryDepartmentName;
         private String email;
         private String avatar;
         private List<String> roles;

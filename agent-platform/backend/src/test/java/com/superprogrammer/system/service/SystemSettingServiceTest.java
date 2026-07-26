@@ -25,11 +25,13 @@ class SystemSettingServiceTest {
     @Mock
     private com.superprogrammer.llm.service.AesEncryptService aesEncryptService;
 
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
     private SystemSettingService service;
 
     @BeforeEach
     void setUp() {
-        service = new SystemSettingService(mapper, aesEncryptService);
+        service = new SystemSettingService(mapper, aesEncryptService, objectMapper);
         ReflectionTestUtils.setField(service, "defaultAccessExpirationMs", 900000L);
     }
 

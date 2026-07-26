@@ -33,7 +33,7 @@ class DingTalkAuthControllerTest {
     @Test
     void loginByDingTalk_ok() throws Exception {
         DingTalkService.DingTalkUserInfo info =
-                new DingTalkService.DingTalkUserInfo("uid-1", "oid-1", "nick", null);
+                new DingTalkService.DingTalkUserInfo("uid-1", "oid-1", "nick", null, java.util.List.of());
         when(dingTalkService.exchangeUser("code-1")).thenReturn(info);
         when(authService.loginByDingTalk(info)).thenReturn(
                 TokenResponse.builder().accessToken("at").refreshToken("rt").tokenType("Bearer").expiresIn(900000L).build());

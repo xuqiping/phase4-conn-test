@@ -61,6 +61,12 @@ const statusMap: Record<string, { type: 'success' | 'warning' | 'error'; label: 
 const columns: DataTableColumns<UserVO> = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '用户名', key: 'username', width: 120 },
+  {
+    title: '姓名', key: 'name', width: 120, ellipsis: { tooltip: true },
+    render: (row) => row.name || '-'
+  },
+  { title: '部门', key: 'primaryDepartmentName', width: 140, ellipsis: { tooltip: true },
+    render: (row) => row.primaryDepartmentName || '-' },
   { title: '邮箱', key: 'email', width: 180, ellipsis: { tooltip: true } },
   {
     title: '状态', key: 'status', width: 80,

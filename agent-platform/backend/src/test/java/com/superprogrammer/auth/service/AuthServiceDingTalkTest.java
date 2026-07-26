@@ -34,6 +34,7 @@ class AuthServiceDingTalkTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock StringRedisTemplate redisTemplate;
     @Mock SystemSettingService systemSettingService;
+    @Mock DepartmentService departmentService;
 
     @InjectMocks AuthService authService;
 
@@ -46,7 +47,7 @@ class AuthServiceDingTalkTest {
     @DisplayName("unionId 已存在 → 直接登录，不重复建号，签 JWT")
     void loginByDingTalk_existingUser() {
         DingTalkService.DingTalkUserInfo info =
-                new DingTalkService.DingTalkUserInfo("uid-1", "oid-1", "张三", "https://x/a.png");
+                new DingTalkService.DingTalkUserInfo("uid-1", "oid-1", "张三", "https://x/a.png", java.util.List.of());
         User exist = new User();
         exist.setId(7L);
         exist.setUsername("dt_uid-1");
@@ -68,7 +69,7 @@ class AuthServiceDingTalkTest {
     @DisplayName("unionId 不存在 → 自动建号(bind_type=dingtalk)，分配 user 角色，签 JWT")
     void loginByDingTalk_newUser() {
         DingTalkService.DingTalkUserInfo info =
-                new DingTalkService.DingTalkUserInfo("uid-2", "oid-2", "李四", null);
+                new DingTalkService.DingTalkUserInfo("uid-2", "oid-2", "李四", null, java.util.List.of());
         when(userMapper.selectOne(any())).thenReturn(null);
         doAnswer(inv -> { ((User) inv.getArgument(0)).setId(9L); return 1; })
                 .when(userMapper).insert(any(User.class));
@@ -92,7 +93,7 @@ class AuthServiceDingTalkTest {
     @DisplayName("unionId 为空 → 抛 BusinessException")
     void loginByDingTalk_emptyUnionId() {
         DingTalkService.DingTalkUserInfo info =
-                new DingTalkService.DingTalkUserInfo("", "oid", "nick", null);
+                new DingTalkService.DingTalkUserInfo("", "oid", "nick", null, java.util.List.of());
         assertThatThrownBy(() -> authService.loginByDingTalk(info))
                 .isInstanceOf(com.superprogrammer.common.exception.BusinessException.class);
     }

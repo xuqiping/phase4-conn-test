@@ -100,12 +100,18 @@ public class MemoryService {
      */
     public String processMemory(MemoryScope writeScope, Long writeTargetProjectId, Long sessionId,
                                 String userMessage, String assistantResponse) {
+        return processMemory(writeScope, writeTargetProjectId, sessionId, userMessage, assistantResponse, null);
+    }
+
+    /** @param chatModel 对话主模型；非空则记忆抽取/冲突判定跟随它（embedding 不跟随，用固定 embedding 模型） */
+    public String processMemory(MemoryScope writeScope, Long writeTargetProjectId, Long sessionId,
+                                String userMessage, String assistantResponse, String chatModel) {
         Long userId = writeScope.userId();
         inflightMemoryTasks.computeIfAbsent(userId, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
         try {
-            List<ExtractedFact> facts = extractFacts(writeScope, userMessage, assistantResponse);
-            log.debug("processMemory userId={} sessionId={} writeTarget={} 抽取facts={}", userId, sessionId, writeTargetProjectId, facts);
-            return processFacts(writeScope, writeTargetProjectId, sessionId, userMessage, facts);
+            List<ExtractedFact> facts = extractFacts(writeScope, userMessage, assistantResponse, chatModel);
+            log.debug("processMemory userId={} sessionId={} writeTarget={} chatModel={} 抽取facts={}", userId, sessionId, writeTargetProjectId, chatModel, facts);
+            return processFacts(writeScope, writeTargetProjectId, sessionId, userMessage, facts, chatModel);
         } finally {
             java.util.concurrent.atomic.AtomicInteger a = inflightMemoryTasks.get(userId);
             if (a != null && a.decrementAndGet() <= 0) inflightMemoryTasks.remove(userId);
@@ -124,10 +130,14 @@ public class MemoryService {
     /** 同步 extract（含 catch）。streamChat 混合模式先调它预判，避免无冲突时白等 embed+judge。
      *  传 writeScope 以拉取写目标 scope 内既有 key 列表注入 LLM，做通用语义归一（取代手写 alias 表）。 */
     public List<ExtractedFact> extractFacts(MemoryScope writeScope, String userMessage, String assistantResponse) {
+        return extractFacts(writeScope, userMessage, assistantResponse, null);
+    }
+
+    public List<ExtractedFact> extractFacts(MemoryScope writeScope, String userMessage, String assistantResponse, String chatModel) {
         try {
             List<String> existingKeys = queryCache.getDistinctKeys(writeScope,
                     () -> memoryMapper.findDistinctKeys(writeScope.userId(), writeScope.includeGlobal(), writeScope.safeProjectIds()));
-            return judge.extract(userMessage, assistantResponse, existingKeys);
+            return judge.extract(userMessage, assistantResponse, existingKeys, chatModel);
         } catch (Exception e) {
             // RB-001 根因③：此前 catch 静默返回空 list → processMemory 写 0 条 → 状态条停转但记忆面板空，
             // 真错误仅 warn 不可见。现记 incident（固定话术，不透传内部 e.getMessage()，避免情报泄露），
@@ -160,9 +170,15 @@ public class MemoryService {
      *  三段式（批 judge 优化）：①预去重+classify 全量 ②按块聚合成员、分流（新块直插/重复跳过/待判定入桶）③每块一次 batch judge。 */
     public String processFacts(MemoryScope writeScope, Long writeTargetProjectId, Long sessionId,
                                String userMessage, List<ExtractedFact> facts) {
+        return processFacts(writeScope, writeTargetProjectId, sessionId, userMessage, facts, null);
+    }
+
+    /** @param chatModel 对话主模型；非空则 batch judge 跟随它 */
+    public String processFacts(MemoryScope writeScope, Long writeTargetProjectId, Long sessionId,
+                               String userMessage, List<ExtractedFact> facts, String chatModel) {
         if (facts == null || facts.isEmpty()) return null;
         Long userId = writeScope.userId();
-        log.debug("processFacts userId={} sessionId={} writeTarget={} facts={}", userId, sessionId, writeTargetProjectId, facts);
+        log.debug("processFacts userId={} sessionId={} writeTarget={} chatModel={} facts={}", userId, sessionId, writeTargetProjectId, chatModel, facts);
         String askText = null;
 
         // ① 预去重（同 key 同 value clean 已存→跳过，省 embed）+ classify（embed 归块）。并行 embed（互相独立）。
@@ -225,7 +241,7 @@ public class MemoryService {
             List<ExtractedFact> bucketFacts = bucket.stream().map(FactClassed::f).collect(Collectors.toList());
             List<JudgeResult> jrs;
             try {
-                jrs = judge.judge(bucketFacts, cmpSet, userMessage);
+                jrs = judge.judge(bucketFacts, cmpSet, userMessage, chatModel);
             } catch (Exception e) {
                 log.warn("processFacts batch judge 失败 block={}: {} → 全部 fail-safe applyClean", block, e.getMessage());
                 bucket.forEach(fc -> applyClean(writeScope, writeTargetProjectId, fc.f, fc.br));

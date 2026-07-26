@@ -281,12 +281,12 @@ public class ChatSessionService {
         // 记忆冲突解决：HYBRID=同步(即时 askText 追问，gate 回复) / ASYNC=异步(不卡回复，冲突进面板，前端轮询)
         if (ragOn) {
             if ("HYBRID".equals(systemSettingService.getMemoryProcessMode())) {
-                String askText = memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), response);
+                String askText = memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), response, request.getModel());
                 if (askText != null) response = response + "\n\n" + askText;
             } else {
                 final String resp = response;
                 try {
-                    memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp));
+                    memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp, request.getModel()));
                 } catch (java.util.concurrent.RejectedExecutionException ree) {
                     // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
                     log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
@@ -496,12 +496,12 @@ public class ChatSessionService {
                     String askText = null;
                     if (ragOn) {
                         if (hybrid) {
-                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText);
+                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText, request.getModel());
                             if (askText != null) responseText = responseText + "\n\n" + askText;
                         } else {
                             final String rtMem = responseText;
                             try {
-                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem, request.getModel()));
                             } catch (java.util.concurrent.RejectedExecutionException ree) {
                                 // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
                                 log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
@@ -589,12 +589,12 @@ public class ChatSessionService {
                     String askText = null;
                     if (wfRagOn) {
                         if (hybrid) {
-                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText);
+                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText, request.getModel());
                             if (askText != null) responseText = responseText + "\n\n" + askText;
                         } else {
                             final String rtMem = responseText;
                             try {
-                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem));
+                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem, request.getModel()));
                             } catch (java.util.concurrent.RejectedExecutionException ree) {
                                 // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
                                 log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());

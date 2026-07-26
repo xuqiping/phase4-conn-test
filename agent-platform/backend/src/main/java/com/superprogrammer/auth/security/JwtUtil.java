@@ -52,7 +52,15 @@ public class JwtUtil {
     }
 
     private SecretKey getSigningKey() {
-        byte[] keyBytes = Base64.getDecoder().decode(secret);
+        // trim 防御：env 注入可能带尾部 \r/空格（Windows CRLF），导致 base64 解码 "incorrect ending byte"
+        String s = secret == null ? "" : secret.trim();
+        byte[] keyBytes;
+        try {
+            keyBytes = Base64.getDecoder().decode(s);
+        } catch (IllegalArgumentException base64Ex) {
+            // 非 base64（纯文本 secret）→ 直接取 UTF-8 字节，保证可用
+            keyBytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        }
         return Keys.hmacShaKeyFor(keyBytes);
     }
 

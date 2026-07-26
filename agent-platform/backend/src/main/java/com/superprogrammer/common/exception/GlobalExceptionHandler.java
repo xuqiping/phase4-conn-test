@@ -4,6 +4,8 @@ package com.superprogrammer.common.exception;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -15,6 +17,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @RestControllerAdvice
@@ -59,6 +63,38 @@ public class GlobalExceptionHandler {
         log.warn("权限不足: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(R.fail(ErrorCode.FORBIDDEN));
+    }
+
+    /**
+     * 唯一约束冲突（重名/重复提交）→ 409 友好提示，而非 500「未预期异常」。
+     * 解析 PG 原始错误信息，提取约束名 + 冲突键值，给用户/开发者可读的提示。
+     */
+    @ExceptionHandler({DuplicateKeyException.class, DataIntegrityViolationException.class})
+    public ResponseEntity<R<Void>> handleDuplicateKey(DataIntegrityViolationException e) {
+        String root = extractRootMessage(e);
+        String constraint = extractConstraintName(root);
+        String friendly = buildDuplicateFriendlyMessage(constraint);
+        log.warn("唯一约束冲突: constraint={}, root={}", constraint, root);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(R.fail(ErrorCode.CONFLICT.getCode(), friendly));
+    }
+
+    /** 从 PG 错误信息提取约束名，如 "uk_kb_tenant_name" */
+    private String extractConstraintName(String msg) {
+        if (msg == null) return null;
+        Matcher m = Pattern.compile("\"([^\"]+)\"").matcher(msg);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 约束名 → 中文友好提示；未命中给通用话术（含约束名便于排查） */
+    private String buildDuplicateFriendlyMessage(String constraint) {
+        if (constraint == null) return "数据已存在，请勿重复创建";
+        return switch (constraint) {
+            case "uk_kb_tenant_name" -> "同名知识库已存在，请更换名称";
+            case "uk_user_memories_user_key_home" -> "该记忆已存在，请勿重复添加";
+            case "uk_users_username" -> "用户名已存在，请更换";
+            default -> "数据已存在（唯一约束：" + constraint + "），请勿重复创建";
+        };
     }
 
     @ExceptionHandler(Exception.class)

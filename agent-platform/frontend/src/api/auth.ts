@@ -59,9 +59,10 @@ export const authApi = {
   /**
    * 钉钉免登登录
    * POST /api/auth/login/dingtalk
+   * @param source 'jsapi'(容器内免登码,走 oapi) | 'oauth2'(网页授权码,默认)
    */
-  dingTalkLogin(authCode: string) {
-    return request.post<ApiResponse<LoginResponse>>('/auth/login/dingtalk', { authCode })
+  dingTalkLogin(authCode: string, source: 'jsapi' | 'oauth2' = 'oauth2') {
+    return request.post<ApiResponse<LoginResponse>>('/auth/login/dingtalk', { authCode, source })
   },
 
   /**

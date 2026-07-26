@@ -23,4 +23,7 @@ public class Department extends BaseEntity {
     private Integer sortOrder;
 
     private String status;
+
+    /** 钉钉部门 ID（自动同步钉钉部门时映射用）；手动建的部门为 null */
+    private Long dingtalkDeptId;
 }

@@ -23,6 +23,12 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true
+      },
+      // WebSocket 代理（chat 实时推送用），ws:true 升级协议
+      '/ws': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true
       }
     }
   },

@@ -27,6 +27,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -41,6 +42,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
     private final SystemSettingService systemSettingService;
+    private final DepartmentService departmentService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -181,6 +183,8 @@ public class AuthService {
                 .userInfo(TokenResponse.UserInfo.builder()
                         .id(user.getId())
                         .username(user.getUsername())
+                        .name(user.getName())
+                        .primaryDepartmentName(departmentService.getPrimaryDepartmentName(user.getId()))
                         .email(user.getEmail())
                         .avatar(user.getAvatar())
                         .roles(roleCodes)
@@ -207,11 +211,14 @@ public class AuthService {
             // 2) 首次免登 → 自动建号
             user = new User();
             user.setUsername("dt_" + info.unionId());
+            user.setName(info.nick());
             user.setBindType("dingtalk");
             user.setDingtalkUnionId(info.unionId());
             user.setDingtalkOpenId(info.openId());
             user.setAvatar(info.avatar());
             user.setStatus("ACTIVE");
+            // 钉钉用户不走密码登录；password 列 NOT NULL，填随机占位 hash（不可用于密码登录）
+            user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
             userMapper.insert(user);
 
             // 分配默认角色 user
@@ -222,14 +229,18 @@ public class AuthService {
                 UserRole userRole = new UserRole(user.getId(), defaultRole.getId());
                 userRoleMapper.insert(userRole);
             }
-            log.info("钉钉用户首次登录自动建号: unionId={}, userId={}", info.unionId(), user.getId());
+            log.info("钉钉用户首次登录自动建号: unionId={}, userId={}, name={}", info.unionId(), user.getId(), info.nick());
         } else {
-            // 已绑定 → 刷新 openId/avatar（防钉钉头像变更）
+            // 已绑定 → 刷新 openId/avatar/name（防钉钉变更）
             if (info.openId() != null && !info.openId().equals(user.getDingtalkOpenId())) {
                 user.setDingtalkOpenId(info.openId());
             }
             if (info.avatar() != null && !info.avatar().equals(user.getAvatar())) {
                 user.setAvatar(info.avatar());
+            }
+            if (info.nick() != null && !info.nick().equals(user.getName())) {
+                user.setName(info.nick());
+                userMapper.updateById(user);
             }
             if (!"ACTIVE".equals(user.getStatus())) {
                 throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
@@ -238,6 +249,8 @@ public class AuthService {
 
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
         List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
+        // 同步钉钉部门到本地（按 dingtalkDeptId 建/匹配 + 关联用户，幂等）
+        departmentService.syncUserDepartmentsFromDingtalk(user.getId(), info.depts(), user.getId());
         return issueTokens(user, roleCodes, permissionCodes);
     }
 
@@ -316,6 +329,8 @@ public class AuthService {
         return UserVO.builder()
                 .id(user.getId())
                 .username(user.getUsername())
+                .name(user.getName())
+                .primaryDepartmentName(departmentService.getPrimaryDepartmentName(userId))
                 .email(user.getEmail())
                 .avatar(user.getAvatar())
                 .status(user.getStatus())

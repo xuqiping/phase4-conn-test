@@ -208,7 +208,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore, THEME_LIST } from '@/stores/theme'
 import AuthLayout from '@/layouts/AuthLayout.vue'
-import { isDingTalkEnabled, redirectToDingTalkAuth } from '@/utils/dingtalk'
+import { isDingTalkEnabled, isDingTalkClient, requestDingTalkAuthCode, redirectToDingTalkAuth } from '@/utils/dingtalk'
 
 const router = useRouter()
 const route = useRoute()
@@ -219,8 +219,39 @@ const themeStore = useThemeStore()
 // 钉钉免登入口（仅当配置了 AppKey/RedirectURI 时显示）
 const dtEnabled = isDingTalkEnabled()
 
-function onDingTalkLogin() {
-  redirectToDingTalkAuth('dt')
+async function onDingTalkLogin() {
+  const inClient = isDingTalkClient()
+  console.log('[DingTalk] onDingTalkLogin 触发', {
+    dtEnabled,
+    inDingTalkClient: inClient,
+    appKey: import.meta.env.VITE_DINGTALK_APP_KEY ? '(已配置)' : '(未配置)',
+    corpId: import.meta.env.VITE_DINGTALK_CORP_ID ? '(已配置)' : '(未配置)',
+    userAgent: navigator.userAgent
+  })
+
+  // 容器内：JSAPI 静默拿 authCode → 直传后端换 JWT
+  if (inClient) {
+    try {
+      const authCode = await requestDingTalkAuthCode()
+      console.log('[DingTalk] 容器内 JSAPI 拿到 authCode，调后端换 token (source=jsapi)')
+      await authStore.loginByDingTalk(authCode, 'jsapi')
+      message.success('钉钉登录成功')
+      const redirect = (route.query.redirect as string) || '/agents'
+      router.push(redirect)
+    } catch (e) {
+      console.error('[DingTalk] 容器内免登失败:', e)
+      message.error((e as Error).message || '钉钉免登失败')
+    }
+    return
+  }
+
+  // 外部浏览器：降级 OAuth2 重定向（需公网回调域名）
+  try {
+    redirectToDingTalkAuth('dt')
+  } catch (e) {
+    console.error('[DingTalk] OAuth2 跳转失败:', e)
+    message.error((e as Error).message)
+  }
 }
 
 // 初始化主题

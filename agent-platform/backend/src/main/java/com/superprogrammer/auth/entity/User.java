@@ -15,6 +15,9 @@ public class User extends BaseEntity {
 
     private String username;
 
+    /** 显示名/真实姓名（钉钉 nick 或手动填写），可空；为空时前端回退 username */
+    private String name;
+
     private String password;
 
     private String email;

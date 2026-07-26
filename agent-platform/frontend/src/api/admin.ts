@@ -6,6 +6,8 @@ import type { ApiResponse } from './request'
 export interface UserVO {
   id: number
   username: string
+  name?: string | null
+  primaryDepartmentName?: string | null
   email: string | null
   avatar: string | null
   status: string

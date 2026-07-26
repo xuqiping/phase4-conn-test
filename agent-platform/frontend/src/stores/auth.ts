@@ -17,6 +17,10 @@ import {
 export interface UserInfo {
   id: number
   username: string
+  /** 显示名/真实姓名（钉钉 nick），为空时回退 username */
+  name?: string | null
+  /** 主部门名（右上角/用户列表显示「部门 - 姓名」用），为空时不显示部门 */
+  primaryDepartmentName?: string | null
   email: string | null
   avatar: string | null
   roles: string[]
@@ -141,11 +145,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 钉钉免登：用 authCode 换 token
+   * @param source 'jsapi'(容器内免登码,走 oapi 老链路) | 'oauth2'(网页授权码)
    */
-  async function loginByDingTalk(authCode: string) {
+  async function loginByDingTalk(authCode: string, source: 'jsapi' | 'oauth2' = 'oauth2') {
     loading.value = true
     try {
-      const res = await authApi.dingTalkLogin(authCode)
+      const res = await authApi.dingTalkLogin(authCode, source)
       const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
 
       accessToken.value = at
