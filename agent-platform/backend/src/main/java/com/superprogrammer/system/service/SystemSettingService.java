@@ -66,6 +66,9 @@ public class SystemSettingService {
      *  &lt;= 阈值的候选才送二次 LLM 批判判同义。默认 0.25（距离语义：0=完全相同，2=相反）。
      *  免发版可调：调小=更保守少并、调大=更激进易并（误并不可逆，倾向保守）。 */
     public static final String MEMORY_TAG_ANCHOR_THRESHOLD = "memory.tag.anchor-threshold";
+    /** 前置过滤用户加项敏感黑名单（逗号分隔；用户只能加项，核心项由 Prefilter 内置不可清空）。
+     *  命中即跳该侧生成（不写 raw 也不调 LLM）。默认空（核心项已预置开箱即用）。 */
+    public static final String MEMORY_PREFILTER_BLACKLIST_EXTRA = "memory.prefilter.blacklist-extra";
 
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
@@ -358,6 +361,26 @@ public class SystemSettingService {
         if (threshold < 0.0 || threshold > 2.0) threshold = 0.25;
         upsert(MEMORY_TAG_ANCHOR_THRESHOLD, String.valueOf(threshold),
                 "标签归一anchor余弦距离阈值（路径③粗筛门槛，0=完全相同2=相反，默认0.25保守）");
+    }
+
+    /** 前置过滤用户加项敏感黑名单（逗号分隔解析为 List，trim + 去空）。
+     *  <b>核心项不可清空</b>：核心 6 类（密码/支付/验证码/身份证/银行卡/token）由 Prefilter 内置，
+     *  本配置仅能在其之上加项。默认空 List。 */
+    public java.util.List<String> getMemoryPrefilterBlacklistExtra() {
+        String v = getValue(MEMORY_PREFILTER_BLACKLIST_EXTRA);
+        if (v == null || v.isBlank()) return java.util.Collections.emptyList();
+        return java.util.Arrays.stream(v.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    /** 写用户加项敏感黑名单（逗号拼接；核心项仍由 Prefilter 内置不受此影响）。 */
+    public void updateMemoryPrefilterBlacklistExtra(java.util.List<String> terms) {
+        java.util.List<String> clean = terms == null ? java.util.Collections.emptyList()
+                : terms.stream().filter(s -> s != null && !s.isBlank()).map(String::trim).distinct().toList();
+        upsert(MEMORY_PREFILTER_BLACKLIST_EXTRA, String.join(",", clean),
+                "前置过滤用户加项敏感黑名单（逗号分隔；核心项不可清空，仅在其上加项）");
     }
 
     // ============================ RAG 召回 query 扩展 ============================
