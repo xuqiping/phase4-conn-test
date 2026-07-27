@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryTurnMapper">
+
+    <!-- 流水账可见范围过滤（向量 1/2）：
+         自己的（user_id=self，含个人出身 + 后共享给项目的）OR 挂在 accessible 项目集内的（经 ACL，accessible 由 service 按 readableAuthors 算）。
+         accessibleProjectIds 空集 → project_ids && '{}' = false → 只剩自己的。
+         ⚠️ 数组重叠算子 && 在 XML 须转义为 &amp;&amp;，否则 mapper 解析崩。 -->
+    <sql id="SCOPE_FILTER">
+        AND (t.user_id = #{userId}
+             OR t.project_ids &amp;&amp; #{accessibleProjectIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler})
+    </sql>
+
+    <resultMap id="MemoryTurnMap" type="com.superprogrammer.chat.entity.MemoryTurn" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="tagIds"             column="tag_ids"              typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="projectIds"         column="project_ids"          typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="departedProjectIds" column="departed_project_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="deletedProjectIds"  column="deleted_project_ids"  typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 当前用户可见的流水账。 -->
+    <select id="findVisibleTurns" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0
+        <include refid="SCOPE_FILTER"/>
+        ORDER BY t.created_at DESC
+    </select>
+
+    <!-- 挂载项目（L11 多挂/卸用）。显式 typeHandler 绕开 LambdaUpdateWrapper 不读 typeHandler 的坑（V33 教训）。 -->
+    <update id="updateProjectIds">
+        UPDATE memory_turns
+        SET project_ids = #{projectIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler},
+            updated_at  = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>

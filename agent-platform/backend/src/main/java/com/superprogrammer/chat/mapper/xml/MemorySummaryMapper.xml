@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemorySummaryMapper">
+
+    <resultMap id="MemorySummaryMap" type="com.superprogrammer.chat.entity.MemorySummary" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="sourceTurnIds" column="source_turn_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 总结恒只读自己（user_id=self，他人总结不可见防污染）；project_id 单值 scope（NULL=个人）。 -->
+    <select id="findByUserAndScope" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0
+        <choose>
+            <when test="projectId != null">AND project_id = #{projectId}</when>
+            <otherwise>AND project_id IS NULL</otherwise>
+        </choose>
+        ORDER BY summarized_at DESC
+    </select>
+</mapper>

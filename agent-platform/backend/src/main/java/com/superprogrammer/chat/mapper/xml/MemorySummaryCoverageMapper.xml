@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper">
+
+    <!-- 覆盖恒只认 user_id=召回者自己（向量 1）。无数组列 → resultType 自动映射。
+         批量 IN 防召回 N+1。 -->
+    <select id="findByUserAndTurns" resultType="com.superprogrammer.chat.entity.MemorySummaryCoverage">
+        SELECT * FROM memory_summary_coverage
+        WHERE user_id = #{userId}
+        <if test="turnIds != null and turnIds.size() > 0">
+            AND turn_id IN
+            <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        </if>
+    </select>
+</mapper>

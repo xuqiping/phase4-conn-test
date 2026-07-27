@@ -38,6 +38,9 @@ public interface MemoryConflictMapper extends BaseMapper<MemoryConflict> {
     /** 用户全部 FLAGGED（只选标量列）。 */
     @Select("SELECT id, user_id, session_id, block_label, ask_text, status, expires_at, created_at " +
             "FROM memory_conflicts WHERE user_id=#{userId} AND status='FLAGGED' ORDER BY created_at DESC")
+
+    /** V47 计划12：新模型冲突（带 tag_id + summary_id），强制 user_id scope（向量 6）。XML 实现。 */
+    List<MemoryConflict> findByUser(@Param("userId") Long userId);
     List<MemoryConflict> findFlaggedByUser(@Param("userId") Long userId);
 
     /** 用户全部 PENDING+FLAGGED（待处理，面板可见）。 */
