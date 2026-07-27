@@ -22,6 +22,8 @@ public class SystemSettingService {
     public static final String ACCESS_TOKEN_EXPIRATION_MS = "auth.access_token_expiration_ms";
     /** RAG/记忆模式总开关（false=opt-in）。4 层优先级：session>agent/workflow>global。 */
     public static final String RAG_MEMORY_ENABLED = "rag.memory.enabled";
+    /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */
+    public static final String RAG_MEMORY_GEN_PERSONAL_ENABLED = "rag.memory.gen.personal.enabled";
     /** 记忆处理模式：ASYNC=全异步(不卡顿,冲突走面板) / HYBRID=同步(即时冲突追问 askText)。 */
     public static final String RAG_MEMORY_PROCESS_MODE = "rag.memory.process-mode";
     /** 记忆检索模式：LLM_FULL_CONTEXT=全量灌入(默认) / EMBEDDING_VECTOR=向量 top-K 真检索。 */
@@ -141,6 +143,18 @@ public class SystemSettingService {
 
     public void updateRagMemoryEnabled(boolean enabled) {
         setBoolean(RAG_MEMORY_ENABLED, enabled, "RAG/记忆模式总开关（false=opt-in）");
+    }
+
+    /** 计划12 · C：非项目会话个人记忆 gen 兜底开关，默认 true（开生成）。
+     *  项目会话走 memory_project_settings（owner）AND memory_project_user_settings（会员覆写）表，
+     *  非项目会话（无 projectId）读此全局兜底。 */
+    public boolean getMemoryGenPersonalEnabled() {
+        return getBoolean(RAG_MEMORY_GEN_PERSONAL_ENABLED, true);
+    }
+
+    public void updateMemoryGenPersonalEnabled(boolean enabled) {
+        setBoolean(RAG_MEMORY_GEN_PERSONAL_ENABLED, enabled,
+                "非项目会话个人记忆gen兜底开关（项目会话走ownerAND会员覆写表；默认true开生成）");
     }
 
     /** 记忆处理模式，默认 ASYNC（全异步不卡顿）。HYBRID=同步即时冲突追问。 */

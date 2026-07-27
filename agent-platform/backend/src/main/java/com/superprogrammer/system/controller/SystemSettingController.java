@@ -54,7 +54,8 @@ public class SystemSettingController {
                 .llmKeyCoarseTopN(service.getLlmKeyCoarseTopN())
                 .llmKeyRerank(service.getLlmKeyRerank())
                 .keywordMax(service.getKeywordMax())
-                .entitiesConfig(service.getMemoryEntitiesConfig()).build()));
+                .entitiesConfig(service.getMemoryEntitiesConfig())
+                .genPersonalEnabled(service.getMemoryGenPersonalEnabled()).build()));
     }
 
     @PutMapping("/rag-memory")
@@ -83,6 +84,9 @@ public class SystemSettingController {
         if (request.getEntitiesConfig() != null) {
             service.updateMemoryEntitiesConfig(request.getEntitiesConfig());
         }
+        if (request.getGenPersonalEnabled() != null) {
+            service.updateMemoryGenPersonalEnabled(request.getGenPersonalEnabled());
+        }
         return ResponseEntity.ok(R.ok("RAG/记忆模式开关已更新",
                 RagMemorySettingsVO.builder()
                         .enabled(service.getRagMemoryEnabled())
@@ -94,7 +98,8 @@ public class SystemSettingController {
                         .llmKeyCoarseTopN(service.getLlmKeyCoarseTopN())
                         .llmKeyRerank(service.getLlmKeyRerank())
                         .keywordMax(service.getKeywordMax())
-                        .entitiesConfig(service.getMemoryEntitiesConfig()).build()));
+                        .entitiesConfig(service.getMemoryEntitiesConfig())
+                .genPersonalEnabled(service.getMemoryGenPersonalEnabled()).build()));
     }
 
     // ---- RAG 召回 query 扩展全局开关（4 路同读：/retrieve、/ask、Chat、Agent/工作流）----

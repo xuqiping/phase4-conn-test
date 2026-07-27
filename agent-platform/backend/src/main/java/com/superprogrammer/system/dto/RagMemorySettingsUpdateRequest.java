@@ -26,4 +26,6 @@ public class RagMemorySettingsUpdateRequest {
     private Integer keywordMax;
     /** 可选：M3 entities 词袋计数配置（缺省 → 不改）。null 子字段 normalized 兜底默认。 */
     private MemoryEntitiesConfig entitiesConfig;
+    /** 可选：计划12 · C 非项目会话个人记忆 gen 兜底开关（缺省 → 不改）。 */
+    private Boolean genPersonalEnabled;
 }
