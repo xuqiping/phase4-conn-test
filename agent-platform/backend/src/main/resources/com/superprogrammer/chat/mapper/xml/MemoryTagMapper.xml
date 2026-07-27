@@ -13,7 +13,16 @@
         WHERE user_id = #{userId} AND subject = #{subject} AND topic = #{topic} AND deleted = 0
     </select>
 
-    <!-- anchor 半向量近邻（粗筛主通道，D 迭代召回用；此处提前建好证 XML halfvec 转义启动期无异常——向量 1）。
+    <!-- 路径②：label ∈ 某标签 aliases（同义别名命中，向量 4 不外露但内部可查）。
+         返 usage 最高的一条（同义集内最可能的目标规范标签）。 -->
+    <select id="findByLabelInAliases" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND deleted = 0 AND #{label} = ANY(aliases)
+        ORDER BY usage_count DESC
+        LIMIT 1
+    </select>
+
+    <!-- anchor 半向量近邻（路径③粗筛 + D 迭代召回；证 XML halfvec 转义启动期无异常——向量 1）。
          ⚠️ halfvec 算子 &lt;=&gt; 须转义，裸 &lt; 致 Spring 启动 mapper 解析崩（V33 教训）。 -->
     <select id="findNearestByAnchor" resultMap="MemoryTagMap">
         SELECT * FROM memory_tags
@@ -21,4 +30,52 @@
         ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
         LIMIT #{limit}
     </select>
+
+    <!-- 路径③归一专用：anchor 距离 ≤ 阈值候选（distance：0=同 2=反）。
+         阈值内才送二次 LLM 批判判同义，防误并（误并不可逆）。
+         ⚠️ &lt;=&gt; 与 &lt;= 均须转义。 -->
+    <select id="findWithinAnchorThreshold" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND deleted = 0 AND anchor_embedding IS NOT NULL
+          AND (anchor_embedding &lt;=&gt; #{queryVec}::halfvec) &lt;= #{threshold}
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 路径④ 全 miss 新建（anchor 两列 + aliases 走自定义 SQL）。
+         aliases TEXT[] 走 StringArrayTypeHandler；anchor_embedding nullable；anchor_tokens 写入后由 DB 生成 anchor_tokens_tsv。
+         ⚠️ UNIQUE(user_id,subject,topic) 兜底并发——并发同义插入撞 UNIQUE → resolver 捕获改查复用。 -->
+    <insert id="insertWithAnchor" useGeneratedKeys="true" keyProperty="m.id">
+        INSERT INTO memory_tags
+            (user_id, subject, topic, label, usage_count, aliases, anchor_embedding, anchor_tokens,
+             deleted, created_by, created_at, updated_by, updated_at)
+        VALUES
+            (#{m.userId}, #{m.subject}, #{m.topic}, #{m.label}, COALESCE(#{m.usageCount}, 0),
+             COALESCE(#{m.aliases,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             #{anchorHalfvec}::halfvec, #{anchorTokens},
+             0, #{m.createdBy}, now(), #{m.updatedBy}, now())
+    </insert>
+
+    <!-- 复用时 usage_count++（L12）。 -->
+    <update id="incrementUsage">
+        UPDATE memory_tags SET usage_count = usage_count + 1, updated_at = now() WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 同义别名滚进 aliases（去重：alias 已在集内则不动，防累积脏）。 -->
+    <update id="appendAlias">
+        UPDATE memory_tags
+        SET aliases = CASE WHEN #{alias} = ANY(aliases) THEN aliases ELSE aliases || ARRAY[#{alias}] END,
+            updated_at = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- owner 改 label（anchor 重生属预期纠错）；anchor 两列 null 时 COALESCE 保留旧值。 -->
+    <update id="updateLabelAndAnchor">
+        UPDATE memory_tags
+        SET label = #{label},
+            anchor_embedding = COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding),
+            anchor_tokens    = COALESCE(#{anchorTokens}, anchor_tokens),
+            updated_at = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
 </mapper>

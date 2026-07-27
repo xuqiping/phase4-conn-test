@@ -61,6 +61,12 @@ public class SystemSettingService {
     /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
     public static final String KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS = "knowledge.excel.preview-max-sheets";
 
+    // ============================ 计划12 个人记忆 memory.* ============================
+    /** 标签归一 anchor 余弦距离阈值（写时归一路径③粗筛门槛）。
+     *  &lt;= 阈值的候选才送二次 LLM 批判判同义。默认 0.25（距离语义：0=完全相同，2=相反）。
+     *  免发版可调：调小=更保守少并、调大=更激进易并（误并不可逆，倾向保守）。 */
+    public static final String MEMORY_TAG_ANCHOR_THRESHOLD = "memory.tag.anchor-threshold";
+
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
     public static final String SEARCH_ENABLED = "search.enabled";
@@ -330,6 +336,28 @@ public class SystemSettingService {
     /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
     public int getExcelPreviewMaxSheets() {
         return getExcelInt(KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS, 50, 1);
+    }
+
+    // ============================ 计划12 标签归一 ============================
+
+    /** 标签归一 anchor 余弦距离阈值（路径③粗筛门槛），默认 0.25。距离语义：0=完全相同，2=相反。
+     *  &lt;= 阈值的候选才送二次 LLM 批判。非法/缺失 → 0.25；越界 [0,2] → 0.25。 */
+    public double getMemoryTagAnchorThreshold() {
+        String v = getValue(MEMORY_TAG_ANCHOR_THRESHOLD);
+        if (v == null || v.isBlank()) return 0.25;
+        try {
+            double d = Double.parseDouble(v.trim());
+            return (d < 0.0 || d > 2.0) ? 0.25 : d;
+        } catch (NumberFormatException ignored) {
+            return 0.25;
+        }
+    }
+
+    /** 写标签归一 anchor 阈值（免发版调）。 */
+    public void updateMemoryTagAnchorThreshold(double threshold) {
+        if (threshold < 0.0 || threshold > 2.0) threshold = 0.25;
+        upsert(MEMORY_TAG_ANCHOR_THRESHOLD, String.valueOf(threshold),
+                "标签归一anchor余弦距离阈值（路径③粗筛门槛，0=完全相同2=相反，默认0.25保守）");
     }
 
     // ============================ RAG 召回 query 扩展 ============================
