@@ -10,7 +10,7 @@
     @update:show="$emit('update:show', $event)"
     preset="card"
     title="立即总结"
-    style="max-width: 560px"
+    :style="{ maxWidth: '560px', width: '90vw' }"
     :bordered="false"
   >
     <n-spin :show="loading">
@@ -21,16 +21,24 @@
           :key="t.scopeKind + (t.projectId ?? '')"
           class="consolidation-dialog__row"
         >
-          <n-checkbox
-            :checked="selected.has(keyOf(t))"
-            :disabled="!t.hasChange"
-            @update:checked="toggle(t, $event)"
-          >
-            <span class="consolidation-dialog__name">{{ t.displayName }}</span>
-          </n-checkbox>
-          <n-tag v-if="!t.hasChange" size="tiny" :bordered="false">无变化</n-tag>
-          <n-tag v-else size="tiny" type="warning" :bordered="false">未总结 {{ t.uncoveredCount }}</n-tag>
-          <n-tag v-if="t.autoEnabled" size="tiny" type="info" :bordered="false">自动</n-tag>
+          <div class="consolidation-dialog__row-head">
+            <n-checkbox
+              :checked="selected.has(keyOf(t))"
+              :disabled="!t.hasChange"
+              @update:checked="toggle(t, $event)"
+            >
+              <span class="consolidation-dialog__name">{{ t.displayName }}</span>
+            </n-checkbox>
+            <n-tag v-if="!t.hasChange" size="tiny" :bordered="false">无变化</n-tag>
+            <n-tag v-else size="tiny" type="warning" :bordered="false">未总结 {{ t.uncoveredCount }}</n-tag>
+            <n-tag v-if="t.autoEnabled" size="tiny" type="info" :bordered="false">自动</n-tag>
+          </div>
+          <!-- I4-3 项目 scope 勾选后展开取数选人（人员范围/方向/离职开关） -->
+          <MemoryConsolidationPeoplePicker
+            v-if="t.scopeKind === 'PROJECT' && t.projectId != null && selected.has(keyOf(t))"
+            :project-id="t.projectId"
+            v-model="peopleCfgMap[keyOf(t)]"
+          />
         </div>
       </n-space>
     </n-spin>
@@ -59,6 +67,7 @@ import {
   type MemoryConsolidationTargetView,
   type MemoryConsolidationScopeRequest
 } from '@/api/memory'
+import MemoryConsolidationPeoplePicker from './MemoryConsolidationPeoplePicker.vue'
 
 interface Props { show: boolean }
 const props = defineProps<Props>()
@@ -73,11 +82,24 @@ const targets = ref<MemoryConsolidationTargetView[]>([])
 const loading = ref(false)
 const triggering = ref(false)
 const selected = ref(new Set<string>())
+// I4-3：项目 scope 的取数配置（keyOf → { authorFilter, authorIds, direction, includeDeparted }）
+const peopleCfgMap = ref<Record<string, any>>({})
 
 const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
   targets.value
     .filter(t => selected.value.has(keyOf(t)))
-    .map(t => ({ scopeKind: t.scopeKind, projectId: t.projectId ?? undefined }))
+    .map(t => {
+      const base: MemoryConsolidationScopeRequest = { scopeKind: t.scopeKind, projectId: t.projectId ?? undefined }
+      const k = keyOf(t)
+      const cfg = peopleCfgMap.value[k]
+      if (t.scopeKind === 'PROJECT' && cfg) {
+        base.authorFilter = cfg.authorFilter
+        base.authorIds = cfg.authorIds
+        base.direction = cfg.direction
+        base.includeDeparted = cfg.includeDeparted
+      }
+      return base
+    })
 )
 
 function keyOf(t: MemoryConsolidationTargetView): string {
@@ -102,6 +124,7 @@ async function loadTargets() {
       if (t.hasChange && t.autoEnabled) s.add(keyOf(t))
     }
     selected.value = s
+    peopleCfgMap.value = {}
   } catch (e: any) {
     message.error(e?.message || '加载 scope 失败')
   } finally {
@@ -134,9 +157,14 @@ watch(() => props.show, (s) => {
 .consolidation-dialog {
   &__row {
     display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 4px;
+  }
+  &__row-head {
+    display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 4px;
   }
   &__name {
     font-size: 13px;

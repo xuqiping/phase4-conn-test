@@ -10,7 +10,7 @@
     @update:show="$emit('update:show', $event)"
     preset="card"
     title="记忆冲突裁决"
-    style="max-width: 560px"
+    :style="{ maxWidth: '560px', width: '90vw' }"
     :bordered="false"
   >
     <n-space vertical :size="12">

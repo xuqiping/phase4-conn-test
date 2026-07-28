@@ -29,7 +29,7 @@
     />
 
     <!-- 编辑 modal：改 label + 追加 aliases -->
-    <n-modal v-model:show="editing" preset="card" title="编辑标签" style="max-width: 480px">
+    <n-modal v-model:show="editing" preset="card" title="编辑标签" :style="{ maxWidth: '480px', width: '90vw' }">
       <n-space vertical :size="12">
         <div class="memory-tag-library__edit-row">
           <span class="memory-tag-library__edit-label">主体 / 主题</span>

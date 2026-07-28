@@ -17,7 +17,7 @@
         :options="projectOptions"
         placeholder="选择项目"
         size="small"
-        style="width: 240px"
+        :style="{ width: 'min(240px, 60vw)' }"
         :consistent-menu-width="false"
         @update:value="load"
       />

@@ -139,6 +139,13 @@ export interface MemoryConsolidationScopeRequest {
   scopeKind: 'PERSONAL' | 'PROJECT'
   projectId?: number | null
   autoEnabled?: boolean
+  /** I4-3 项目总结取数范围：SELF（仅自己，默认）/ SPECIFIC（authorIds）/ ALL（全部可召回人员）。 */
+  authorFilter?: 'SELF' | 'SPECIFIC' | 'ALL'
+  /** SPECIFIC 时的人员集；后端 ∩ readableAuthors 校验（向量 14 防越权读他人）。 */
+  authorIds?: number[]
+  /** 方向 INPUT/OUTPUT/BOTH，后端 null/非法 → BOTH。 */
+  direction?: 'INPUT' | 'OUTPUT' | 'BOTH'
+  /** L10「同步已离开人员」开关；false → 候选剔 DEPARTED（优先级高于人员多选）。 */
   includeDeparted?: boolean
 }
 

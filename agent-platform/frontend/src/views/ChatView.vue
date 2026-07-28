@@ -199,6 +199,8 @@
               <n-button size="small" quaternary circle title="管理项目（新建/删除/共享）" @click="showProjectManager = true">
                 <template #icon><n-icon :component="FolderOpenOutline" /></template>
               </n-button>
+              <!-- F-6 新栈召回 scope（个人/项目/方向/时间窗/离职），双栈期与上 legacy 读控件并存到 H 收尾 -->
+              <MemoryRecallScopePopover />
             </div>
             <n-badge :value="chatStore.activeConflictCount" :max="99" :show="chatStore.activeConflictCount > 0" type="error">
               <n-button size="small" quaternary circle @click="showMemory = true" title="查看/管理长期记忆与冲突">
@@ -255,6 +257,7 @@ import ProjectSelector from '@/components/chat/ProjectSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
+import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
 import { projectApi } from '@/api/project'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
