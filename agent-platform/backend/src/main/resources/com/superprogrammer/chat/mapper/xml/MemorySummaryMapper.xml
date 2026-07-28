@@ -17,4 +17,44 @@
         </choose>
         ORDER BY summarized_at DESC
     </select>
+
+    <!-- 计划12 · D-4 · 召回读总结：user_id=self 恒只读自己（向量14）；tag_id IN T；scope 动态(personalOn 个人 OR 项目)；
+         status≠STALE；timeWindow summarized_at 维度。
+         ⚠️ personalOn=false+projectIds 空 → 1=0 兜底（空召回 scope，D-6 保证不调，此处防御）。 -->
+    <select id="findSummariesForRecall" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0 AND status != 'STALE'
+          AND tag_id IN
+          <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+          </foreach>
+          AND (
+          <choose>
+              <when test="personalOn and projectIds != null and !projectIds.isEmpty()">
+                  project_id IS NULL OR project_id IN
+                  <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                      #{pid}
+                  </foreach>
+              </when>
+              <when test="personalOn">
+                  project_id IS NULL
+              </when>
+              <otherwise>
+                  <choose>
+                      <when test="projectIds != null and !projectIds.isEmpty()">
+                          project_id IN
+                          <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                              #{pid}
+                          </foreach>
+                      </when>
+                      <otherwise>1 = 0</otherwise>
+                  </choose>
+              </otherwise>
+          </choose>
+          )
+          <if test="relativeDays != null">AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
+          <if test="twStart != null">AND summarized_at &gt;= #{twStart}</if>
+          <if test="twEnd != null">AND summarized_at &lt;= #{twEnd}</if>
+        ORDER BY summarized_at DESC
+    </select>
 </mapper>
