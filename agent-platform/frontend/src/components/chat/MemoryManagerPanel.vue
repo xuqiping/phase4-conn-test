@@ -266,6 +266,9 @@
       <n-tab-pane name="conflicts" tab="冲突裁决" display-directive="show">
         <MemoryConflictSection />
       </n-tab-pane>
+      <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
+        <MemoryGenMatrixPanel />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -285,11 +288,12 @@ import MemoryTagLibrary from '@/components/memory/MemoryTagLibrary.vue'
 import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue'
 import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
+import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
 
 const chatStore = useChatStore()
 
-// F-1..F-3 五页签壳：旧栈卡入「记忆（旧栈）」pane，新栈标签库/流水账/总结/冲突裁决已接
-const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts'>('legacy')
+// F-1..F-5 六页签壳：旧栈 + 标签库/流水账/总结/冲突裁决/gen 矩阵
+const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts' | 'gen'>('legacy')
 
 const message = useMessage()
 const dialog = useDialog()
