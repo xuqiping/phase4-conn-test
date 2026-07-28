@@ -121,4 +121,11 @@
         </if>
         <if test="summaryIds == null or summaryIds.size() == 0">AND 1 = 0</if>
     </update>
+
+    <!-- E-6 worker STALE 重生：更新文本 + status。 -->
+    <update id="updateTextAndStatus">
+        UPDATE memory_summaries
+        SET l1_summary = #{l1}, l2_detail = #{l2}, status = #{status}, summarized_at = NOW(), updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
 </mapper>

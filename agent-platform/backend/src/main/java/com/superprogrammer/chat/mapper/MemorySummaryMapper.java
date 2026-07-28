@@ -60,4 +60,10 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
 
     /** E-4 KEEP_NEW/OLD/DISCARD 软删总结（按 id 集，显式 deleted=1 供批量，返实删条数）。 */
     int softDeleteByIds(@Param("summaryIds") List<Long> summaryIds);
+
+    /** E-6 worker STALE 重生：更新 L1/L2 文本 + 置 status（CLEAN 重生完/STALE 保留）。 */
+    int updateTextAndStatus(@Param("id") Long id,
+                            @Param("l1") String l1,
+                            @Param("l2") String l2,
+                            @Param("status") String status);
 }

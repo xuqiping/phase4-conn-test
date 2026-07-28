@@ -1,10 +1,12 @@
 package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.entity.MemoryConflict;
+import com.superprogrammer.chat.entity.MemoryConsolidationScope;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryConflictMapper;
+import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.service.internal.MemoryConflictJudge.SummaryConflictResult;
@@ -35,6 +37,25 @@ public class MemoryConsolidationTxService {
     private final MemorySummaryCoverageMapper coverageMapper;
     private final MemoryConflictMapper conflictMapper;
     private final MemoryConflictJudge conflictJudge;
+    private final MemoryConsolidationScopeMapper scopeMapper;
+
+    /**
+     * E-6 worker 定时认领（@Transactional：FOR UPDATE SKIP LOCKED 须在事务内，
+     * 紧接 markClaimed 置锁同 tx，双节点互斥；事务提交后行锁释放但 locked_until 持久化挡他节点）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public List<MemoryConsolidationScope> claimAutoScopes(int limit, OffsetDateTime now, OffsetDateTime periodStart,
+                                                          int lockMinutes) {
+        List<MemoryConsolidationScope> claimed = scopeMapper.claimAutoScopes(limit, now, periodStart);
+        if (claimed.isEmpty()) {
+            return List.of();
+        }
+        OffsetDateTime lockUntil = now.plusMinutes(lockMinutes);
+        for (MemoryConsolidationScope s : claimed) {
+            scopeMapper.markClaimed(s.getId(), lockUntil);
+        }
+        return claimed;
+    }
 
     /**
      * 写 summary + coverage + 冲突检测（事务化原子）。
