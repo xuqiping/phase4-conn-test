@@ -269,6 +269,9 @@
       <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
         <MemoryGenMatrixPanel />
       </n-tab-pane>
+      <n-tab-pane name="acl" tab="项目 ACL" display-directive="show">
+        <MemoryProjectAclPanel />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -289,11 +292,12 @@ import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue
 import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
+import MemoryProjectAclPanel from '@/components/memory/MemoryProjectAclPanel.vue'
 
 const chatStore = useChatStore()
 
-// F-1..F-5 六页签壳：旧栈 + 标签库/流水账/总结/冲突裁决/gen 矩阵
-const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts' | 'gen'>('legacy')
+// F-1..F-5 + I4-1/2 七页签壳：旧栈 + 标签库/流水账/总结/冲突裁决/gen 矩阵/项目 ACL
+const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts' | 'gen' | 'acl'>('legacy')
 
 const message = useMessage()
 const dialog = useDialog()
