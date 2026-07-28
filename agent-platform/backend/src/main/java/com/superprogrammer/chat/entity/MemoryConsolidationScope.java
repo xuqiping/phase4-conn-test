@@ -24,6 +24,10 @@ public class MemoryConsolidationScope {
     private String scopeKind;        // PERSONAL / PROJECT
     private Long projectId;          // PERSONAL=NULL
     private Boolean autoEnabled;     // 是否加入自动定时总结
+    /** V51 worker 任务锁（认领置 now+LOCK_MINUTES，完成清 NULL）。 */
+    private OffsetDateTime lockedUntil;
+    /** V51 上次成功总结时刻（周期内 last_run_at>=periodStart 则跳过，幂等防重复压缩）。 */
+    private OffsetDateTime lastRunAt;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

@@ -66,4 +66,91 @@
           <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
         ORDER BY t.created_at DESC
     </select>
+
+    <!-- ============================ 计划12 · E 总结取数 + backfill + DISCARD 级联 ============================ -->
+
+    <!-- E-3 个人总结取数：born_personal=true AND gen_done=true AND tag_ids 含任一 tagId。
+         tag_ids && 是数组重叠（须 &amp;&amp; 转义）；direction/timeWindow 过滤 created_at。 -->
+    <select id="findPersonalTurnsForConsolidation" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = true
+          AND t.user_id = #{userId} AND t.born_personal = true
+          AND t.tag_ids &amp;&amp;
+              <foreach collection="tagIds" item="tid" open="ARRAY[" separator="," close="]::bigint[]">
+                  #{tid}
+              </foreach>
+          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
+          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
+          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
+          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
+        ORDER BY t.created_at ASC
+    </select>
+
+    <!-- E-3 项目总结取数：project_ids 含 X AND user_id ∈ authorIds AND gen_done=true AND tag_ids 含任一 tagId。 -->
+    <select id="findProjectTurnsForConsolidation" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = true
+          AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
+          AND t.user_id IN
+          <foreach collection="authorIds" item="aid" open="(" separator="," close=")">
+              #{aid}
+          </foreach>
+          AND t.tag_ids &amp;&amp;
+              <foreach collection="tagIds" item="tid" open="ARRAY[" separator="," close="]::bigint[]">
+                  #{tid}
+              </foreach>
+          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
+          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
+          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
+          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
+        ORDER BY t.created_at ASC
+    </select>
+
+    <!-- E-3 STALE 重生取数：按 id 集回读未软删 turn（created_at 升序喂 LLM 保时序）。 -->
+    <select id="findTurnsByIds" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0
+        <if test="turnIds != null and turnIds.size() > 0">
+            AND t.id IN
+            <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        </if>
+        <if test="turnIds == null or turnIds.size() == 0">AND 1 = 0</if>
+        ORDER BY t.created_at ASC
+    </select>
+
+    <!-- E-2 backfill 取数：scope 内 gen_done=false 的 raw turn，LIMIT ≤20/批。
+         bornPersonal=true → 个人 raw（born_personal=true）；否则项目 raw（project_ids 含 X）。 -->
+    <select id="findRawTurnsForBackfill" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = false AND t.user_id = #{userId}
+        <choose>
+            <when test="bornPersonal">AND t.born_personal = true</when>
+            <otherwise>AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]</otherwise>
+        </choose>
+        ORDER BY t.created_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- E-2 backfill 写回：补 tag_ids + L1/L2 + gen_done=true（显式 typeHandler 绕 LambdaUpdateWrapper 坑，V33 教训）。 -->
+    <update id="applyBackfill">
+        UPDATE memory_turns
+        SET tag_ids    = #{tagIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler},
+            l1_summary = #{l1Summary},
+            l2_detail  = #{l2Detail},
+            gen_done   = true,
+            updated_by = #{updatedBy},
+            updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- E-4 DISCARD 连带软删 source turns（显式 deleted=1，供级联批量；返实删条数）。 -->
+    <update id="softDeleteByIds">
+        UPDATE memory_turns SET deleted = 1, updated_at = NOW()
+        WHERE deleted = 0
+        <if test="turnIds != null and turnIds.size() > 0">
+            AND id IN
+            <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        </if>
+        <if test="turnIds == null or turnIds.size() == 0">AND 1 = 0</if>
+    </update>
 </mapper>

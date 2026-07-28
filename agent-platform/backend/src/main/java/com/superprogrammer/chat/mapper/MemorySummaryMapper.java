@@ -28,4 +28,30 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
                                                @Param("twStart") OffsetDateTime twStart,
                                                @Param("twEnd") OffsetDateTime twEnd,
                                                @Param("relativeDays") Integer relativeDays);
+
+    // ============================ 计划12 · E 总结层 + DISCARD 级联 ============================
+
+    /** E-3/E-4 同 (user, tag, scope) 的 CLEAN 总结（时序互斥冲突判定用， projectId=null→个人）。
+     *  返全部 CLEAN（service 喂 judge 判并存/互斥）；PENDING_CONFLICT 不再触发新冲突（已挂起待裁）。 */
+    List<MemorySummary> findCleanByUserTagScope(@Param("userId") Long userId,
+                                                @Param("tagId") Long tagId,
+                                                @Param("projectId") Long projectId);
+
+    /** E-3 防膨胀：同 (user, tag, scope) 已存总结条数（>阈值 N 再压缩一次，链缩短）。 */
+    int countByUserTagScope(@Param("userId") Long userId,
+                            @Param("tagId") Long tagId,
+                            @Param("projectId") Long projectId);
+
+    /** E-3/E-4 定向改 status（PENDING_CONFLICT / STALE / CLEAN），防 updateById 覆盖 source_turn_ids。 */
+    int markStatus(@Param("id") Long id, @Param("status") String status);
+
+    /** E-6 worker STALE 重生取数：本人 status=STALE 总结（重压缩后清 STALE）。 */
+    List<MemorySummary> findStaleByUser(@Param("userId") Long userId);
+
+    /** E-4 §3.8 级联 / 12h 查：source_turn_ids @> [turnId] 的全部总结（含他人引用方）。
+     *  service 层按 user_id 分自己/他人（12h 拒判仅看他人引用方 summarized_at）。 */
+    List<MemorySummary> findSummariesReferencingTurn(@Param("turnId") Long turnId);
+
+    /** E-4 KEEP_NEW/OLD/DISCARD 软删总结（按 id 集，显式 deleted=1 供批量，返实删条数）。 */
+    int softDeleteByIds(@Param("summaryIds") List<Long> summaryIds);
 }

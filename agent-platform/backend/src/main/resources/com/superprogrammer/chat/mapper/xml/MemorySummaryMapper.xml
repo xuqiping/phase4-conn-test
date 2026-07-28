@@ -57,4 +57,57 @@
           <if test="twEnd != null">AND summarized_at &lt;= #{twEnd}</if>
         ORDER BY summarized_at DESC
     </select>
+
+    <!-- ============================ 计划12 · E 总结层 + DISCARD 级联 ============================ -->
+
+    <!-- E-3/E-4 同 (user, tag, scope) CLEAN 总结（冲突判定用）。project_id=null→个人(IS NULL)。 -->
+    <select id="findCleanByUserTagScope" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0 AND status = 'CLEAN' AND tag_id = #{tagId}
+        <choose>
+            <when test="projectId != null">AND project_id = #{projectId}</when>
+            <otherwise>AND project_id IS NULL</otherwise>
+        </choose>
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- E-3 防膨胀：同 (user, tag, scope) 已存总结条数。 -->
+    <select id="countByUserTagScope" resultType="int">
+        SELECT COUNT(*) FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0 AND tag_id = #{tagId}
+        <choose>
+            <when test="projectId != null">AND project_id = #{projectId}</when>
+            <otherwise>AND project_id IS NULL</otherwise>
+        </choose>
+    </select>
+
+    <!-- E-3/E-4 定向改 status（防 updateById 覆盖 source_turn_ids 大列）。 -->
+    <update id="markStatus">
+        UPDATE memory_summaries SET status = #{status}, updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- E-6 worker STALE 重生取数。 -->
+    <select id="findStaleByUser" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0 AND status = 'STALE'
+        ORDER BY summarized_at ASC
+    </select>
+
+    <!-- E-4 §3.8 级联 / 12h 查：source_turn_ids @> [turnId]（@> 包含算子查 flat provenance 命中，含他人引用方）。 -->
+    <select id="findSummariesReferencingTurn" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND source_turn_ids @> ARRAY[#{turnId}]::bigint[]
+    </select>
+
+    <!-- E-4 软删总结（KEEP_NEW/OLD/DISCARD 批量，返实删条数）。 -->
+    <update id="softDeleteByIds">
+        UPDATE memory_summaries SET deleted = 1, updated_at = NOW()
+        WHERE deleted = 0
+        <if test="summaryIds != null and summaryIds.size() > 0">
+            AND id IN
+            <foreach collection="summaryIds" item="sid" open="(" separator="," close=")">#{sid}</foreach>
+        </if>
+        <if test="summaryIds == null or summaryIds.size() == 0">AND 1 = 0</if>
+    </update>
 </mapper>

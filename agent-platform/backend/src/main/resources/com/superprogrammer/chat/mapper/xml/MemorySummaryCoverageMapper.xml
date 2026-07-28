@@ -12,4 +12,31 @@
             <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
         </if>
     </select>
+
+    <!-- ============================ 计划12 · E 总结写入 + 级联清 ============================ -->
+
+    <!-- E-3 批量写 coverage。UNIQUE(turn_id,tag_id,project_id,user_id) NULLS NOT DISTINCT 冲突 → DO NOTHING（幂等）。 -->
+    <insert id="batchInsert">
+        INSERT INTO memory_summary_coverage (turn_id, tag_id, summary_id, project_id, user_id, created_at)
+        VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.turnId}, #{r.tagId}, #{r.summaryId}, #{r.projectId}, #{r.userId}, NOW())
+        </foreach>
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <!-- E-4 级联清：删某 summary 的 coverage 行。 -->
+    <delete id="deleteBySummaryId">
+        DELETE FROM memory_summary_coverage WHERE summary_id = #{summaryId}
+    </delete>
+
+    <!-- E-4 §3.8 级联：按 (turn_id IN, user_id=作者) 清 coverage（仅清作者侧，他人对该 turn 的 coverage 不动）。 -->
+    <delete id="deleteByTurnIdsAndUser">
+        DELETE FROM memory_summary_coverage WHERE user_id = #{userId}
+        <if test="turnIds != null and turnIds.size() > 0">
+            AND turn_id IN
+            <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        </if>
+        <if test="turnIds == null or turnIds.size() == 0">AND 1 = 0</if>
+    </delete>
 </mapper>

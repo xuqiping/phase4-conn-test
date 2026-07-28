@@ -42,4 +42,45 @@ public interface MemoryTurnMapper extends BaseMapper<MemoryTurn> {
                                                 @Param("twStart") OffsetDateTime twStart,
                                                 @Param("twEnd") OffsetDateTime twEnd,
                                                 @Param("relativeDays") Integer relativeDays);
+
+    // ============================ 计划12 · E 总结取数 + backfill + DISCARD 级联 ============================
+
+    /** E-3 个人总结取数：本人 born_personal=true AND gen_done=true AND tag_ids 含任一 tagId。
+     *  取全量（service 查 coverage 判未覆盖，决定压缩范围）；direction/timeWindow 过滤 created_at。 */
+    List<MemoryTurn> findPersonalTurnsForConsolidation(@Param("userId") Long userId,
+                                                       @Param("tagIds") List<Long> tagIds,
+                                                       @Param("direction") String direction,
+                                                       @Param("twStart") OffsetDateTime twStart,
+                                                       @Param("twEnd") OffsetDateTime twEnd,
+                                                       @Param("relativeDays") Integer relativeDays);
+
+    /** E-3 项目总结取数：project_ids 含 X AND user_id ∈ authorIds AND gen_done=true AND tag_ids 含任一 tagId。
+     *  authorIds 须非空（service 层 ∩ readableAuthors 后空集 skip，向量 14）。 */
+    List<MemoryTurn> findProjectTurnsForConsolidation(@Param("projectId") Long projectId,
+                                                      @Param("authorIds") List<Long> authorIds,
+                                                      @Param("tagIds") List<Long> tagIds,
+                                                      @Param("direction") String direction,
+                                                      @Param("twStart") OffsetDateTime twStart,
+                                                      @Param("twEnd") OffsetDateTime twEnd,
+                                                      @Param("relativeDays") Integer relativeDays);
+
+    /** E-3 STALE 重生取数：按 id 集回读未软删 turn（source_turn_ids - 已删 → 剩余 turns 重压缩）。 */
+    List<MemoryTurn> findTurnsByIds(@Param("turnIds") List<Long> turnIds);
+
+    /** E-2 backfill 取数：scope 内 gen_done=false 的 raw turn，分批（LIMIT ≤20/批）。
+     *  projectId=null+bornPersonal=true → 个人 raw；否则项目 raw（project_ids 含 X）。 */
+    List<MemoryTurn> findRawTurnsForBackfill(@Param("userId") Long userId,
+                                             @Param("projectId") Long projectId,
+                                             @Param("bornPersonal") boolean bornPersonal,
+                                             @Param("limit") int limit);
+
+    /** E-2 backfill 写回：补 tag + L1/L2 + gen_done=true（单条，显式 typeHandler 绕 LambdaUpdateWrapper 坑）。 */
+    int applyBackfill(@Param("id") Long id,
+                      @Param("tagIds") List<Long> tagIds,
+                      @Param("l1Summary") String l1Summary,
+                      @Param("l2Detail") String l2Detail,
+                      @Param("updatedBy") Long updatedBy);
+
+    /** E-4 DISCARD 连带软删 source turns（按 id 集软删 deleted=1，显式版供级联批量用，返实删条数）。 */
+    int softDeleteByIds(@Param("turnIds") List<Long> turnIds);
 }

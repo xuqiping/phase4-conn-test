@@ -10,4 +10,28 @@
         WHERE user_id = #{userId}
         ORDER BY created_at DESC
     </select>
+
+    <!-- ============================ 计划12 · E 总结时序冲突 ============================ -->
+
+    <!-- E-4 用户待裁决 V47 PENDING（tag_id IS NOT NULL 区分新模型；旧模型 tag_id=NULL 不返）。 -->
+    <select id="findV47PendingByUser" resultType="com.superprogrammer.chat.entity.MemoryConflict">
+        SELECT id, user_id, session_id, tag_id, summary_id, status, resolution, ask_text, created_at, resolved_at
+        FROM memory_conflicts
+        WHERE user_id = #{userId} AND status = 'PENDING' AND tag_id IS NOT NULL
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- E-4 同 (user, tag) 已有 PENDING（防重复建）。 -->
+    <select id="findV47PendingByUserAndTag" resultType="com.superprogrammer.chat.entity.MemoryConflict">
+        SELECT id, user_id, session_id, tag_id, summary_id, status, resolution, ask_text, created_at, resolved_at
+        FROM memory_conflicts
+        WHERE user_id = #{userId} AND status = 'PENDING' AND tag_id = #{tagId}
+        LIMIT 1
+    </select>
+
+    <!-- E-4 裁决落库。 -->
+    <update id="markV47Resolved">
+        UPDATE memory_conflicts SET status = 'RESOLVED', resolution = #{resolution}, resolved_at = NOW()
+        WHERE id = #{id}
+    </update>
 </mapper>

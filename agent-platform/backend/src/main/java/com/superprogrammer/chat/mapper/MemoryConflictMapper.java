@@ -43,6 +43,18 @@ public interface MemoryConflictMapper extends BaseMapper<MemoryConflict> {
     List<MemoryConflict> findByUser(@Param("userId") Long userId);
     List<MemoryConflict> findFlaggedByUser(@Param("userId") Long userId);
 
+    // ============================ 计划12 · E 总结时序冲突 ============================
+
+    /** E-4 用户待裁决的 V47 PENDING 冲突（tag_id IS NOT NULL 区分新模型；含 tag+summary 字段）。 */
+    List<MemoryConflict> findV47PendingByUser(@Param("userId") Long userId);
+
+    /** E-4 同 (user, tag) 是否已有 PENDING（防重复建冲突行；时序互斥在同 tag 下）。 */
+    MemoryConflict findV47PendingByUserAndTag(@Param("userId") Long userId,
+                                              @Param("tagId") Long tagId);
+
+    /** E-4 裁决落库：置 RESOLVED + resolution。 */
+    int markV47Resolved(@Param("id") Long id, @Param("resolution") String resolution);
+
     /** 用户全部 PENDING+FLAGGED（待处理，面板可见）。 */
     @Select("SELECT id, user_id, session_id, block_label, ask_text, status, expires_at, created_at " +
             "FROM memory_conflicts WHERE user_id=#{userId} AND status IN ('PENDING','FLAGGED') ORDER BY created_at DESC")

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper">
+
+    <!-- E-6 worker 定时认领：auto_enabled=true + 锁空闲 + 周期内未跑（last_run_at < periodStart 或 NULL）。
+         FOR UPDATE SKIP LOCKED 双节点互斥（两 worker 同时跑只一方认领）。 -->
+    <select id="claimAutoScopes" resultType="com.superprogrammer.chat.entity.MemoryConsolidationScope">
+        SELECT id, user_id, scope_kind, project_id, auto_enabled, locked_until, last_run_at, created_at, updated_at
+        FROM memory_consolidation_scopes
+        WHERE auto_enabled = true
+          AND (locked_until IS NULL OR locked_until &lt; #{now})
+          AND (last_run_at IS NULL OR last_run_at &lt; #{periodStart})
+        ORDER BY last_run_at ASC NULLS FIRST
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <!-- E-6 认领置锁。 -->
+    <update id="markClaimed">
+        UPDATE memory_consolidation_scopes SET locked_until = #{lockedUntil}, updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- E-7 手动 CAS 置锁：仅锁空闲/过期时抢（affected=1=抢到，0=他人持锁）。 -->
+    <update id="acquireManualLock">
+        UPDATE memory_consolidation_scopes
+        SET locked_until = #{lockedUntil}, updated_at = NOW()
+        WHERE id = #{id} AND (locked_until IS NULL OR locked_until &lt; #{now})
+    </update>
+
+    <!-- E-6/E-7 成功释放 + last_run_at 幂等锚点。 -->
+    <update id="releaseLockSuccess">
+        UPDATE memory_consolidation_scopes SET locked_until = NULL, last_run_at = #{now}, updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- E-6/E-7 失败释放（不更 last_run_at，允许重试）。 -->
+    <update id="releaseLockFailure">
+        UPDATE memory_consolidation_scopes SET locked_until = NULL, updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- E-7 upsert：UNIQUE(user_id, scope_kind, project_id) NULLS NOT DISTINCT 冲突 → 更 auto_enabled。
+         project_id=NULL（PERSONAL）走 NULLS NOT DISTINCT 匹配。 -->
+    <insert id="upsertScope">
+        INSERT INTO memory_consolidation_scopes (user_id, scope_kind, project_id, auto_enabled, created_at, updated_at)
+        VALUES (#{userId}, #{scopeKind}, #{projectId}, #{autoEnabled}, #{now}, #{now})
+        ON CONFLICT (user_id, scope_kind, project_id) DO UPDATE
+            SET auto_enabled = EXCLUDED.auto_enabled, updated_at = EXCLUDED.updated_at
+    </insert>
+
+    <!-- E-7 取单行。 -->
+    <select id="findByUserAndScope" resultType="com.superprogrammer.chat.entity.MemoryConsolidationScope">
+        SELECT id, user_id, scope_kind, project_id, auto_enabled, locked_until, last_run_at, created_at, updated_at
+        FROM memory_consolidation_scopes
+        WHERE user_id = #{userId} AND scope_kind = #{scopeKind}
+        <choose>
+            <when test="projectId != null">AND project_id = #{projectId}</when>
+            <otherwise>AND project_id IS NULL</otherwise>
+        </choose>
+    </select>
+</mapper>
