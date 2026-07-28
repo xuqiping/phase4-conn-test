@@ -110,4 +110,68 @@ class MemoryConflictJudgeTest {
         m.setConfidence(new BigDecimal("0.9"));
         return m;
     }
+
+    // ============================ 计划12 · E-5 总结时序冲突判定 ============================
+
+    private com.superprogrammer.chat.entity.MemorySummary summary(Long id, String l1) {
+        com.superprogrammer.chat.entity.MemorySummary s = new com.superprogrammer.chat.entity.MemorySummary();
+        s.setId(id);
+        s.setL1Summary(l1);
+        return s;
+    }
+
+    @Test
+    void judgeSummaryConflict_emptyExisting_noLlmCall() {
+        var r = judge.judgeSummaryConflict(List.of(), "新总结");
+        assertFalse(r.conflict(), "无已有总结 → 不冲突");
+        verifyNoInteractions(llmGateway);
+    }
+
+    @Test
+    void judgeSummaryConflict_blankNew_failSafe() {
+        var r = judge.judgeSummaryConflict(List.of(summary(1L, "旧")), "  ");
+        assertFalse(r.conflict(), "新总结空 → fail-safe 不冲突");
+        verifyNoInteractions(llmGateway);
+    }
+
+    @Test
+    void judgeSummaryConflict_conflictTrueParsed() {
+        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content(
+                "{\"conflict\":true,\"askText\":\"旧「住北京」与新「住上海」冲突，保留哪条？\"}").build());
+
+        var r = judge.judgeSummaryConflict(List.of(summary(1L, "2024 住北京")), "2026 住上海");
+
+        assertTrue(r.conflict(), "时序互斥 → 冲突");
+        assertNotNull(r.askText());
+        assertTrue(r.askText().contains("住北京"));
+    }
+
+    @Test
+    void judgeSummaryConflict_coexistFalseParsed() {
+        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content(
+                "{\"conflict\":false,\"askText\":\"\"}").build());
+
+        var r = judge.judgeSummaryConflict(List.of(summary(1L, "会 Java")), "也会 Python");
+
+        assertFalse(r.conflict(), "并存互补 → 不冲突");
+        assertNull(r.askText(), "无冲突 askText 规范为 null");
+    }
+
+    @Test
+    void judgeSummaryConflict_nonJsonFailSafe() {
+        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content("not a json").build());
+
+        var r = judge.judgeSummaryConflict(List.of(summary(1L, "旧")), "新");
+
+        assertFalse(r.conflict(), "非 JSON → fail-safe 不冲突");
+    }
+
+    @Test
+    void judgeSummaryConflict_llmThrowsFailSafe() {
+        when(llmGateway.chat(any())).thenThrow(new RuntimeException("LLM 宕机"));
+
+        var r = judge.judgeSummaryConflict(List.of(summary(1L, "旧")), "新");
+
+        assertFalse(r.conflict(), "LLM 异常 → fail-safe 不冲突");
+    }
 }

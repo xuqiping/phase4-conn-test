@@ -2,6 +2,7 @@ package com.superprogrammer.chat.service.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.UserMemory;
 import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.llm.LlmGateway;
@@ -324,6 +325,82 @@ public class MemoryConflictJudge {
 
     /** 回填单条结果：召回词袋 entities + 中文标签 keyZh。 */
     public record BackfillRow(List<String> entities, String keyZh) {}
+
+    /** 计划12 · E-5 · 总结时序冲突判定结果（设计 §3.5）。
+     *  conflict=true（互斥时序）→ PENDING；false（并存互补 / fail-safe）→ 共存 CLEAN。 */
+    public record SummaryConflictResult(boolean conflict, String askText) {}
+
+    /** 计划12 · E-5 · 总结层时序互斥判定 prompt（设计 §3.4 line132 + §3.5）。
+     *  同 (user, tag, scope) 下【新总结】与【已有 CLEAN 总结】是否互斥时序（冲突），还是并存互补。
+     *  典型：旧「住北京」vs 新「住上海」= 互斥（需用户裁决哪条当前态）；旧「会Java」vs 新「也会Python」= 并存。
+     *  日期/年份不同 + 同属性 = 时序互斥；日期相同或互补 = 并存。 */
+    private static final String SUMMARY_CONFLICT_PROMPT = """
+            你是记忆总结冲突判定器。判断【新总结】与【同标签同 scope 已有总结】是否【时序互斥冲突】。
+
+            冲突定义（设计 §3.5）：
+            - 互斥时序 = 描述【同一属性/同一件事】在【不同时间给出互相矛盾】的状态，必须由用户裁决保留哪条。
+              例：旧「2024 住北京」vs 新「2026 住上海」（同属性=居住地，时序矛盾）= 冲突；
+              旧「职级 P6」vs 新「职级 P7」（同属性=职级，时序变迁）= 冲突；
+              旧「未婚」vs 新「已婚」= 冲突。
+            - 并存互补 = 描述不同属性，或同属性但不矛盾（补充/扩展），可共存。
+              例：旧「会 Java」vs 新「也会 Python」= 并存；旧「住北京」vs 新「2025 在杭州出差」= 并存（不同事件）。
+
+            输出契约（必须严格遵守）：
+            - 只输出一个 JSON 对象，不要 markdown 围栏或解释文字。
+            - {"conflict":true或false,"askText":"若冲突,给用户的中文裁决提问(列新旧两条供选择);无冲突为空串"}
+            - askText 里不要双引号、不要换行；用「」代替内嵌引号。
+            - 判定以【语义+时序】为准，不确定倾向【不冲突】（并存，fail-safe 不误拦截总结）。
+
+            新总结: %s
+            已有总结（同标签同 scope，按时间倒序）:
+            %s
+            JSON:""";
+
+    /**
+     * 计划12 · E-5 · 判定新总结与已有 CLEAN 总结是否时序互斥（设计 §3.5）。
+     * <p>
+     * 调用方（MemoryConsolidationService）：同 (user, tag, scope) 已有 CLEAN 总结时调本方法；
+     * <ul>
+     *   <li>{@code conflict=true} → 新总结写入后置 PENDING_CONFLICT + 已有也置 PENDING_CONFLICT +
+     *       插 memory_conflicts(tag_id+summary_id=新)，等用户裁决（四选项 E-4）；</li>
+     *   <li>{@code conflict=false} → 新总结写 CLEAN，与已有共存（自然按 summarized_at 排序，防膨胀 worker 后续再压）。</li>
+     * </ul>
+     * <p>
+     * <b>fail-safe</b>：existing 空 / LLM 失败 / 解析失败 → {@code conflict=false}（不误拦截总结写入）。
+     *
+     * @param existing 同 (user, tag, scope) 已有 CLEAN 总结（summarized_at 倒序）
+     * @param newText  新总结的 L1/L2 文本（喂 prompt 做语义+时序判定）
+     */
+    public SummaryConflictResult judgeSummaryConflict(List<MemorySummary> existing, String newText) {
+        if (existing == null || existing.isEmpty() || newText == null || newText.isBlank()) {
+            return new SummaryConflictResult(false, null);
+        }
+        try {
+            String existingDisplay = existing.stream()
+                    .map(s -> "- " + summaryText(s))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            String raw = chat(String.format(SUMMARY_CONFLICT_PROMPT, newText, existingDisplay));
+            JsonNode root = parseJson(stripFence(raw));
+            if (root == null || !root.isObject()) {
+                log.warn("judgeSummaryConflict 返回非 JSON 对象, fail-safe 不冲突: {}",
+                        raw == null ? "(null)" : truncate(raw));
+                return new SummaryConflictResult(false, null);
+            }
+            boolean conflict = root.path("conflict").asBoolean(false);
+            String askText = textOrDefault(root, "askText", null);
+            if (askText != null) askText = askText.isBlank() ? null : askText.trim();
+            return new SummaryConflictResult(conflict, askText);
+        } catch (Exception e) {
+            log.warn("judgeSummaryConflict 失败 fail-safe 不冲突: {}", e.getMessage());
+            return new SummaryConflictResult(false, null);
+        }
+    }
+
+    /** 拼总结文本（L1 优先，空则 L2）。 */
+    private static String summaryText(MemorySummary s) {
+        if (s.getL1Summary() != null && !s.getL1Summary().isBlank()) return s.getL1Summary();
+        return s.getL2Detail() == null ? "" : s.getL2Detail();
+    }
 
     /** 三维筛结果（V38 合并）：相关英文 key 集合 + 相关中文 key_zh 集合 + 相关 block 集合。
      *  调用方做三维 AND 交集装配。空集合 = LLM 判该维无相关（参与 AND，可能致结果空）。 */
