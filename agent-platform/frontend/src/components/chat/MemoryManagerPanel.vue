@@ -4,6 +4,8 @@
   ============================================================ -->
 <template>
   <div class="memory-manager">
+    <n-tabs v-model:value="activeTab" type="line" size="small" class="memory-manager__tabs" :tabs-padding="0">
+      <n-tab-pane name="legacy" tab="记忆（旧栈）">
     <!-- 记忆注入预览（调试用：输入测试问题，看三个检索设置的实际效果 + LLM 实际收到的记忆上下文）-->
     <n-card size="small" class="memory-manager__card">
       <template #header>
@@ -251,13 +253,18 @@
         </n-space>
       </n-space>
     </n-modal>
+      </n-tab-pane>
+      <n-tab-pane name="tags" tab="标签库" display-directive="show">
+        <MemoryTagLibrary />
+      </n-tab-pane>
+    </n-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import {
-  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, NTooltip, useDialog, useMessage
+  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, NTabs, NTabPane, NTooltip, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPreview, type MemoryEditRequest } from '@/api/chat'
@@ -265,8 +272,12 @@ import { projectApi } from '@/api/project'
 import { useChatStore } from '@/stores/chat'
 import { formatRelativeTime, formatAbsoluteTime } from '@/utils/time'
 import { isTimelineValue, parseMemoryValue } from '@/utils/memoryTimeline'
+import MemoryTagLibrary from '@/components/memory/MemoryTagLibrary.vue'
 
 const chatStore = useChatStore()
+
+// F-1 三页签壳：旧栈卡入「记忆（旧栈）」pane，新栈逐 chunk 加 pane（标签库已接）
+const activeTab = ref<'legacy' | 'tags'>('legacy')
 
 const message = useMessage()
 const dialog = useDialog()

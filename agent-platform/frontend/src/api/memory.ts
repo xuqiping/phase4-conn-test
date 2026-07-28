@@ -238,7 +238,7 @@ export const memoryApi = {
     return request.get<ApiResponse<MemoryTagVO[]>>('/chat/memory/tags')
   },
   editTag(id: number, data: { label?: string; addAliases?: string[] }) {
-    return request.put<ApiResponse<void>>(`/chat/memory/tags/${id}`, data)
+    return request.put<ApiResponse<MemoryTagVO>>(`/chat/memory/tags/${id}`, data)
   },
 
   // ---- 召回 scope（底栏持久化 + 预览）----
