@@ -38,4 +38,8 @@ public class MemoryConsolidationScopeRequest {
 
     /** 方向 INPUT/OUTPUT/BOTH，null/非法 → BOTH。 */
     private String direction;
+
+    /** L10「同步已离开人员」开关（§3.7 line158，同时控总结取数），null → 默认 true（不过滤）。
+     *  false → 项目候选剔 DEPARTED（优先级高于人员多选，即便 SPECIFIC 勾了离职人员也剔）。 */
+    private Boolean includeDeparted;
 }

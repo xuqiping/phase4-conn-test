@@ -63,6 +63,7 @@ public class MemoryConsolidationService {
     private final MemoryConsolidationCompressor compressor;
     private final MemoryConsolidationTxService txService;
     private final MemoryRecallAclResolver aclResolver;
+    private final MemoryDepartedResolver departedResolver;
     private final MemoryQueryCache queryCache;
 
     /** 防膨胀阈值（同 user+tag+scope CLEAN 条数 > 此值 → 再压一次）。走 system_settings 可配，v1 走默认。 */
@@ -198,11 +199,23 @@ public class MemoryConsolidationService {
         return kind == null || "PERSONAL".equalsIgnoreCase(kind);
     }
 
-    /** 项目 scope 取数作者集：SELF（仅自己）/ SPECIFIC（∩ readableAuthors）/ ALL（readableAuthors 全集）。 */
+    /** 项目 scope 取数作者集：SELF（仅自己）/ SPECIFIC（∩ readableAuthors）/ ALL（readableAuthors 全集）。
+     *  I3 L10 离职开关（§3.7 line158）：{@code includeDeparted=false} → 剔 readable ∩ DEPARTED
+     *  （优先级高于人员多选，即便 SPECIFIC 勾了离职人员也剔）。 */
     private List<Long> resolveAuthorIds(Long userId, Long projectId, MemoryConsolidationScopeRequest req) {
         Set<Long> readable = aclResolver.readableAuthors(projectId, userId);
         if (readable == null || readable.isEmpty()) {
             return List.of();  // 无读权限 → 空（上层 skip，防越权向量 14）
+        }
+        // I3 离职开关关 → 剔 DEPARTED（null/true 不过滤）
+        if (req.getIncludeDeparted() != null && !req.getIncludeDeparted()) {
+            Set<Long> departed = departedResolver.resolveDeparted(projectId).intersectDeparted(readable);
+            if (!departed.isEmpty()) {
+                readable = new HashSet<>(readable);
+                readable.removeAll(departed);
+                log.debug("总结取数 projectId={} reader={} includeDeparted=false 剔 DEPARTED {} 人 → 剩 {} 作者",
+                        projectId, userId, departed.size(), readable.size());
+            }
         }
         String filter = req.getAuthorFilter();
         if ("SPECIFIC".equalsIgnoreCase(filter) && req.getAuthorIds() != null) {
