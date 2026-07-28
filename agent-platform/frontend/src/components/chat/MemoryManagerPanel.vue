@@ -257,6 +257,12 @@
       <n-tab-pane name="tags" tab="标签库" display-directive="show">
         <MemoryTagLibrary />
       </n-tab-pane>
+      <n-tab-pane name="turns" tab="流水账" display-directive="show">
+        <MemoryTurnSection />
+      </n-tab-pane>
+      <n-tab-pane name="summaries" tab="总结" display-directive="show">
+        <MemorySummarySection />
+      </n-tab-pane>
       <n-tab-pane name="conflicts" tab="冲突裁决" display-directive="show">
         <MemoryConflictSection />
       </n-tab-pane>
@@ -277,11 +283,13 @@ import { formatRelativeTime, formatAbsoluteTime } from '@/utils/time'
 import { isTimelineValue, parseMemoryValue } from '@/utils/memoryTimeline'
 import MemoryTagLibrary from '@/components/memory/MemoryTagLibrary.vue'
 import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue'
+import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
+import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 
 const chatStore = useChatStore()
 
-// F-1 三页签壳：旧栈卡入「记忆（旧栈）」pane，新栈逐 chunk 加 pane（标签库/冲突裁决已接）
-const activeTab = ref<'legacy' | 'tags' | 'conflicts'>('legacy')
+// F-1..F-3 五页签壳：旧栈卡入「记忆（旧栈）」pane，新栈标签库/流水账/总结/冲突裁决已接
+const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts'>('legacy')
 
 const message = useMessage()
 const dialog = useDialog()
