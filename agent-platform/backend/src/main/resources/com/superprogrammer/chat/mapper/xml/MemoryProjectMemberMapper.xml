@@ -18,4 +18,23 @@
         ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END,
                  m.status ASC, m.user_id ASC
     </select>
+
+    <!-- F gen 矩阵：当前用户 ACTIVE 项目 + 项目名 + owner 开关 + 本人会员覆写。
+         null = 无行 = 默认开；effective 由 service 解析（owner AND member，null→true）。 -->
+    <select id="findMyGenMatrix" resultType="com.superprogrammer.chat.dto.MemoryGenMatrixItemVO">
+        SELECT m.project_id     AS projectId,
+               p.name           AS projectName,
+               m.role           AS role,
+               ps.gen_enabled   AS ownerEnabled,
+               us.gen_enabled   AS memberEnabled
+        FROM memory_project_members m
+        JOIN projects p ON p.id = m.project_id
+        LEFT JOIN memory_project_settings ps ON ps.project_id = m.project_id
+        LEFT JOIN memory_project_user_settings us
+                  ON us.project_id = m.project_id AND us.user_id = m.user_id
+        WHERE m.user_id = #{userId}
+          AND m.status = 'ACTIVE'
+        ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END,
+                 m.project_id ASC
+    </select>
 </mapper>

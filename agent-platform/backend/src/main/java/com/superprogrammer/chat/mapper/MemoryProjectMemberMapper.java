@@ -23,4 +23,10 @@ public interface MemoryProjectMemberMapper extends BaseMapper<MemoryProjectMembe
      * ACL 配权/召回人员多选的源数据。{@code users.name} 可空（前端回退 username）。
      */
     List<MemoryRosterVO> findRoster(@Param("projectId") Long projectId);
+
+    /**
+     * 计划12 · F · gen 矩阵：当前用户所在的 ACTIVE 项目，join 项目名 + owner 项目级开关 +
+     * 本人会员覆写开关（null = 无行 = 默认开，由 service 解析）。DEPARTED 不列（无可配权）。
+     */
+    List<com.superprogrammer.chat.dto.MemoryGenMatrixItemVO> findMyGenMatrix(@Param("userId") Long userId);
 }
