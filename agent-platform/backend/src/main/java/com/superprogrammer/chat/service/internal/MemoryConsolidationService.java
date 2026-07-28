@@ -1,9 +1,13 @@
 package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.dto.MemoryConsolidationScopeRequest;
+import com.superprogrammer.chat.dto.MemoryConsolidationTargetView;
+import com.superprogrammer.chat.dto.MemoryConsolidationTriggerRequest;
 import com.superprogrammer.chat.dto.RecallTagMeta;
+import com.superprogrammer.chat.entity.MemoryConsolidationScope;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.entity.MemoryTurn;
+import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
@@ -15,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -53,6 +58,7 @@ public class MemoryConsolidationService {
     private final MemorySummaryMapper summaryMapper;
     private final MemorySummaryCoverageMapper coverageMapper;
     private final MemoryTagMapper tagMapper;
+    private final MemoryConsolidationScopeMapper scopeMapper;
     private final MemoryBackfillService backfillService;
     private final MemoryConsolidationCompressor compressor;
     private final MemoryConsolidationTxService txService;
@@ -239,4 +245,104 @@ public class MemoryConsolidationService {
 
         void addNote(String n) { notes.add(n); }
     }
+
+    // ============================ E-7 手动触发 + 入口枚举 ============================
+
+    /**
+     * 手动总结触发（设计 §3.4 统一入口）：多 scope 串行，每 scope 先 acquireManualLock（CAS 与定时 worker
+     * 互斥）→ summarizeScope(manual=true，含 backfill raw）→ 释放锁。
+     */
+    public SummarizeResult triggerManual(Long userId, MemoryConsolidationTriggerRequest req) {
+        SummarizeResult aggregate = new SummarizeResult();
+        if (req == null || req.getScopes() == null || req.getScopes().isEmpty()) {
+            aggregate.addNote("无 scope");
+            return aggregate;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime lockUntil = now.plusMinutes(LOCK_MINUTES);
+        for (MemoryConsolidationScopeRequest sr : req.getScopes()) {
+            try {
+                Long scopeId = ensureScopeRow(userId, sr);
+                if (scopeId == null) {
+                    aggregate.addNote("scope 行无法建立/项目越权 → 跳过");
+                    continue;
+                }
+                if (scopeMapper.acquireManualLock(scopeId, now, lockUntil) == 0) {
+                    aggregate.addNote("scope " + scopeId + " 正在跑（锁占用）→ 跳过");
+                    continue;
+                }
+                try {
+                    SummarizeResult r = summarizeScope(userId, sr, true);
+                    aggregate.summariesWritten += r.summariesWritten;
+                    aggregate.conflictsCreated += r.conflictsCreated;
+                    aggregate.notes.addAll(r.notes);
+                    scopeMapper.releaseLockSuccess(scopeId, OffsetDateTime.now());
+                } catch (Exception e) {
+                    scopeMapper.releaseLockFailure(scopeId);
+                    aggregate.addNote("scope " + scopeId + " 失败: " + e.getMessage());
+                    log.warn("手动总结 scope 失败 userId={} scopeId={}: {}", userId, scopeId, e.getMessage());
+                }
+            } catch (Exception e) {
+                aggregate.addNote("scope 异常: " + e.getMessage());
+            }
+        }
+        return aggregate;
+    }
+
+    /** 取/建 scope 行（PERSONAL 由 trigger 默认建；PROJECT upsert auto=false 占位行作锁目标 + 越权校验）。 */
+    private Long ensureScopeRow(Long userId, MemoryConsolidationScopeRequest sr) {
+        boolean personal = isPersonalScope(sr);
+        String kind = personal ? "PERSONAL" : "PROJECT";
+        Long projectId = personal ? null : sr.getProjectId();
+        if (!personal) {
+            // 项目 scope 须本人可访问（向量 2）
+            Set<Long> readable = aclResolver.readableAuthors(projectId, userId);
+            if (!readable.contains(userId)) {
+                return null;
+            }
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        scopeMapper.upsertScope(userId, kind, projectId, false, now);  // 手动触发不自动改 auto_enabled
+        MemoryConsolidationScope row = scopeMapper.findByUserAndScope(userId, kind, projectId);
+        return row == null ? null : row.getId();
+    }
+
+    /**
+     * 列总结入口（设计 §3.4 line119）：{个人} ∪ {本人已加入的 PROJECT scope 行}，标 hasChange/uncoveredCount/autoEnabled。
+     * 个人 uncoveredCount = gen_done=true 且无 coverage 的 turn（§3.9 告警阈值用）。
+     */
+    public List<MemoryConsolidationTargetView> listTargets(Long userId) {
+        List<MemoryConsolidationTargetView> out = new ArrayList<>();
+        // 个人（恒在）
+        int uncovered = turnMapper.countUncoveredPersonalTurns(userId);
+        int raw = turnMapper.countRawPersonalTurns(userId);
+        MemoryConsolidationScope personal = scopeMapper.findByUserAndScope(userId, "PERSONAL", null);
+        out.add(MemoryConsolidationTargetView.builder()
+                .scopeKind("PERSONAL")
+                .projectId(null)
+                .displayName("个人")
+                .hasChange(uncovered > 0 || raw > 0)
+                .uncoveredCount(uncovered)
+                .autoEnabled(personal != null && Boolean.TRUE.equals(personal.getAutoEnabled()))
+                .build());
+        // 已加入的 PROJECT scope 行（用户主动加的自动总结项目；全 ACTIVE 项目枚举走项目成员表，v1 露已配置项）
+        List<MemoryConsolidationScope> rows = scopeMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MemoryConsolidationScope>()
+                        .eq(MemoryConsolidationScope::getUserId, userId)
+                        .eq(MemoryConsolidationScope::getScopeKind, "PROJECT"));
+        for (MemoryConsolidationScope r : rows) {
+            out.add(MemoryConsolidationTargetView.builder()
+                    .scopeKind("PROJECT")
+                    .projectId(r.getProjectId())
+                    .displayName("项目#" + r.getProjectId())
+                    .hasChange(true)
+                    .uncoveredCount(0)
+                    .autoEnabled(Boolean.TRUE.equals(r.getAutoEnabled()))
+                    .build());
+        }
+        return out;
+    }
+
+    /** 锁时长（与 worker 一致）。 */
+    private static final int LOCK_MINUTES = 5;
 }

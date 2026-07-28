@@ -153,4 +153,22 @@
         </if>
         <if test="turnIds == null or turnIds.size() == 0">AND 1 = 0</if>
     </update>
+
+    <!-- ============================ 计划12 · E-7 总结入口未覆盖计数（§3.9 告警）============================ -->
+
+    <!-- 个人 scope 未总结 turn 计数：gen_done=true born_personal=true AND 无 coverage(user_id=self) 行。 -->
+    <select id="countUncoveredPersonalTurns" resultType="int">
+        SELECT COUNT(*) FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = true AND t.born_personal = true AND t.user_id = #{userId}
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_summary_coverage c
+              WHERE c.user_id = #{userId} AND c.turn_id = t.id
+          )
+    </select>
+
+    <!-- 个人 scope raw turn 计数（gen_done=false，hasChange 判据）。 -->
+    <select id="countRawPersonalTurns" resultType="int">
+        SELECT COUNT(*) FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = false AND t.born_personal = true AND t.user_id = #{userId}
+    </select>
 </mapper>

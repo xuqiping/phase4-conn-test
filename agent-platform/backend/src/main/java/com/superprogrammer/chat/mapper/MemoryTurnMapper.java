@@ -83,4 +83,13 @@ public interface MemoryTurnMapper extends BaseMapper<MemoryTurn> {
 
     /** E-4 DISCARD 连带软删 source turns（按 id 集软删 deleted=1，显式版供级联批量用，返实删条数）。 */
     int softDeleteByIds(@Param("turnIds") List<Long> turnIds);
+
+    // ============================ 计划12 · E-7 总结入口（未覆盖计数 §3.9 告警）============================
+
+    /** E-7 个人 scope 未总结 turn 计数：gen_done=true AND born_personal=true AND 无 coverage(user_id=self) 行。
+     *  设计 §3.9 line178：未总结 = gen_done=true 且无 coverage；raw(gen_done=false) 不计告警阈值。 */
+    int countUncoveredPersonalTurns(@Param("userId") Long userId);
+
+    /** E-7 个人 scope raw turn 计数（gen_done=false，hasChange 判据 + 遗忘权面板）。 */
+    int countRawPersonalTurns(@Param("userId") Long userId);
 }
