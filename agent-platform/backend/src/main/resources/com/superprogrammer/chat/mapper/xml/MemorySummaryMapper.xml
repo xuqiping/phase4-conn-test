@@ -71,6 +71,17 @@
         ORDER BY summarized_at DESC
     </select>
 
+    <!-- E-4 同 (user, tag, scope) 指定 status 的总结（裁决找 PENDING_CONFLICT 另一方）。 -->
+    <select id="findByUserTagScopeStatus" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE user_id = #{userId} AND deleted = 0 AND status = #{status} AND tag_id = #{tagId}
+        <choose>
+            <when test="projectId != null">AND project_id = #{projectId}</when>
+            <otherwise>AND project_id IS NULL</otherwise>
+        </choose>
+        ORDER BY summarized_at DESC
+    </select>
+
     <!-- E-3 防膨胀：同 (user, tag, scope) 已存总结条数。 -->
     <select id="countByUserTagScope" resultType="int">
         SELECT COUNT(*) FROM memory_summaries

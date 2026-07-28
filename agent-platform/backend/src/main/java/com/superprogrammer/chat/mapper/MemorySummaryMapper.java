@@ -37,6 +37,12 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
                                                 @Param("tagId") Long tagId,
                                                 @Param("projectId") Long projectId);
 
+    /** E-4 同 (user, tag, scope) 指定 status 的总结（裁决时找 PENDING_CONFLICT 的「另一方」）。 */
+    List<MemorySummary> findByUserTagScopeStatus(@Param("userId") Long userId,
+                                                 @Param("tagId") Long tagId,
+                                                 @Param("projectId") Long projectId,
+                                                 @Param("status") String status);
+
     /** E-3 防膨胀：同 (user, tag, scope) 已存总结条数（>阈值 N 再压缩一次，链缩短）。 */
     int countByUserTagScope(@Param("userId") Long userId,
                             @Param("tagId") Long tagId,
