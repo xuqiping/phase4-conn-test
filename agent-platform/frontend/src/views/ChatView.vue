@@ -205,6 +205,7 @@
                 <template #icon><n-icon :component="BookmarksOutline" /></template>
               </n-button>
             </n-badge>
+            <MemoryNotificationBadge />
           </template>
         </ChatInput>
       </template>
@@ -253,6 +254,7 @@ import TargetSelector from '@/components/chat/TargetSelector.vue'
 import ProjectSelector from '@/components/chat/ProjectSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
+import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import { projectApi } from '@/api/project'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
