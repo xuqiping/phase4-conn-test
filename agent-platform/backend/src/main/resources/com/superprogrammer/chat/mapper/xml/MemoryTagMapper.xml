@@ -145,4 +145,33 @@
           )
         ORDER BY t.usage_count DESC
     </select>
+
+    <!-- ============================ 计划12 · D-3 LLM 选标签 ③ RRF 粗筛 ============================ -->
+
+    <!-- 路 A：anchor halfvec 距离升序（限定聚合 tagIds 集内，防 scope 外标签混入向量3）。
+         ⚠️ &lt;=&gt; 转义；queryVec 为 halfvec 文本 '[..]'::halfvec 强转。 -->
+    <select id="rankByAnchorHalfvec" resultType="long">
+        SELECT id FROM memory_tags
+        WHERE deleted = 0 AND anchor_embedding IS NOT NULL
+          AND id IN
+          <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+          </foreach>
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 路 B：anchor BM25 tsv 相关度降序（限定聚合 tagIds 集内）。@@ 匹配算子 + ts_rank 排序。
+         queryTokens = jieba 分词空格串；plainto_tsquery('simple') 按空格切词与/或。 -->
+    <select id="rankByAnchorTsv" resultType="long">
+        SELECT id FROM memory_tags
+        WHERE deleted = 0
+          AND id IN
+          <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+          </foreach>
+          AND anchor_tokens_tsv @@ plainto_tsquery('simple', #{queryTokens})
+        ORDER BY ts_rank(anchor_tokens_tsv, plainto_tsquery('simple', #{queryTokens})) DESC
+        LIMIT #{limit}
+    </select>
 </mapper>

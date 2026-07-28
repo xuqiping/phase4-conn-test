@@ -88,4 +88,18 @@ public interface MemoryTagMapper extends BaseMapper<MemoryTag> {
                                               @Param("twStart") OffsetDateTime twStart,
                                               @Param("twEnd") OffsetDateTime twEnd,
                                               @Param("relativeDays") Integer relativeDays);
+
+    // ============================ 计划12 · D-3 LLM 选标签 ③ RRF 粗筛 ============================
+
+    /** anchor halfvec 距离排序（路 A）：限定 tagIds 集内防 scope 外标签混入（向量 3），按 anchor_embedding &lt;=&gt; queryVec 升序。
+     *  queryVec 为 halfvec 文本 '[..]'。返 id 有序列表（rank 1 = 最近）。 */
+    List<Long> rankByAnchorHalfvec(@Param("tagIds") List<Long> tagIds,
+                                   @Param("queryVec") String queryVec,
+                                   @Param("limit") int limit);
+
+    /** anchor BM25 tsv 排序（路 B）：限定 tagIds 集内，按 ts_rank(anchor_tokens_tsv, plainto_tsquery) 降序。
+     *  queryTokens 为 jieba 分词后空格串。返 id 有序列表。 */
+    List<Long> rankByAnchorTsv(@Param("tagIds") List<Long> tagIds,
+                               @Param("queryTokens") String queryTokens,
+                               @Param("limit") int limit);
 }
