@@ -34,4 +34,36 @@
             updated_at  = NOW()
         WHERE id = #{id} AND deleted = 0
     </update>
+
+    <!-- ============================ 计划12 · D-5 拼流水账 ⑥ ============================ -->
+
+    <!-- 个人 scope 可召回 turns：本人 born_personal=true AND gen_done=true（项目出身/ raw 不进）。
+         ⚠️ born_personal=true 限定（设计§3.3 line114）；direction/timeWindow 过滤 created_at。 -->
+    <select id="findPersonalRecallableTurns" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = true
+          AND t.user_id = #{userId} AND t.born_personal = true
+          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
+          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
+          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
+          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
+        ORDER BY t.created_at DESC
+    </select>
+
+    <!-- 项目 scope 可召回 turns：project_ids 含 X 且 user_id ∈ readableAuthors AND gen_done=true。
+         readableAuthorIds 须非空（Patcher 空集 skip）；&& 转义 &amp;&amp;。 -->
+    <select id="findProjectRecallableTurns" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.gen_done = true
+          AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
+          AND t.user_id IN
+          <foreach collection="readableAuthorIds" item="aid" open="(" separator="," close=")">
+              #{aid}
+          </foreach>
+          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
+          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
+          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
+          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
+        ORDER BY t.created_at DESC
+    </select>
 </mapper>
