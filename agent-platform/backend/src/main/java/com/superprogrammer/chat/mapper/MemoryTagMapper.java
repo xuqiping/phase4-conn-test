@@ -1,10 +1,12 @@
 package com.superprogrammer.chat.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.entity.MemoryTag;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -64,4 +66,26 @@ public interface MemoryTagMapper extends BaseMapper<MemoryTag> {
                              @Param("label") String label,
                              @Param("anchorHalfvec") String anchorHalfvec,
                              @Param("anchorTokens") String anchorTokens);
+
+    // ============================ 计划12 · D-2 召回聚合 ② ============================
+
+    /** 个人 scope 召回标签聚合：本人 {@code born_personal=true} 的 turns 的 tag_ids ∪ 本人个人总结（project_id IS NULL）的 tag_id
+     *  → join memory_tags 去重 by tag_id，按 usage_count 倒序。{@code gen_done=false} 的 raw 不参与（向量 1）。
+     *  <p>timeWindow：{@code relativeDays} 优先（近 N 天），否则 {@code twStart/twEnd} 绝对时段；全 null = 不限。 */
+    List<RecallTagMeta> findPersonalRecallTags(@Param("userId") Long userId,
+                                               @Param("direction") String direction,
+                                               @Param("twStart") OffsetDateTime twStart,
+                                               @Param("twEnd") OffsetDateTime twEnd,
+                                               @Param("relativeDays") Integer relativeDays);
+
+    /** 项目 scope 召回标签聚合：项目 turns（project_ids 含 X 且 user_id ∈ readableAuthors）tag_ids ∪ 本人项目总结（project_id=X）tag_id
+     *  → join memory_tags 去重 by tag_id。<b>readableAuthorIds 须非空</b>（Aggregator 层空集 skip，防越权向量 14）。
+     *  summaries 恒只读自己（user_id=readerId，向量 14 不受 ACL 影响）。 */
+    List<RecallTagMeta> findProjectRecallTags(@Param("projectId") Long projectId,
+                                              @Param("readerId") Long readerId,
+                                              @Param("readableAuthorIds") List<Long> readableAuthorIds,
+                                              @Param("direction") String direction,
+                                              @Param("twStart") OffsetDateTime twStart,
+                                              @Param("twEnd") OffsetDateTime twEnd,
+                                              @Param("relativeDays") Integer relativeDays);
 }
