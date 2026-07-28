@@ -3,8 +3,10 @@ package com.superprogrammer.chat.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.chat.dto.MemoryRawBatchDeleteRequest;
 import com.superprogrammer.chat.dto.MemoryRawView;
+import com.superprogrammer.chat.dto.MemoryTurnVO;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
+import com.superprogrammer.chat.service.internal.MemoryTurnViewService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
@@ -51,6 +53,20 @@ public class MemoryTurnController {
     private static final int RAW_LIST_CAP = 500;
 
     private final MemoryTurnMapper turnMapper;
+    private final MemoryTurnViewService turnViewService;
+
+    /**
+     * 列本人流水账（含 raw + 已生成，向量 7 ownership），tag label + 项目名 batch 回填。
+     * <p>前端「流水账」页签用。与 {@code GET /raw} 区别：本端点返全量（含 gen_done=true），raw 端点只返 raw。
+     */
+    @GetMapping
+    public ResponseEntity<R<List<MemoryTurnVO>>> list() {
+        Long uid = getCurrentUserId();
+        if (uid == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "未登录");
+        }
+        return ResponseEntity.ok(R.ok(turnViewService.listMyTurns(uid)));
+    }
 
     /** 列本人 raw 流水账（gen_done=false，按时间倒序）。无导出/下载（向量 13）。 */
     @GetMapping("/raw")
