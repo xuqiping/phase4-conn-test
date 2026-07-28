@@ -7,11 +7,13 @@ import com.superprogrammer.chat.mapper.MemoryTurnMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -44,11 +46,14 @@ class MemoryTurnPatcherTest {
     @Mock
     MemoryRecallAclResolver aclResolver;
 
+    @Mock
+    MemoryDepartedResolver departedResolver;
+
     private MemoryTurnPatcher patcher;
 
     @BeforeEach
     void setUp() {
-        patcher = new MemoryTurnPatcher(turnMapper, coverageMapper, aclResolver);
+        patcher = new MemoryTurnPatcher(turnMapper, coverageMapper, aclResolver, departedResolver);
     }
 
     private static MemoryTurn turn(long id, Long... tagIds) {
@@ -161,5 +166,48 @@ class MemoryTurnPatcherTest {
         assertTrue(patcher.collectUncovered(
                 new RecallScope(true, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true), 1L).isEmpty());
         verify(coverageMapper).findByUserAndTurns(eq(1L), eq(List.of(1L)));  // 去重后只 1 个 turnId
+    }
+
+    // ===== I3 离职开关（L10，§3.7 line158）=====
+
+    @Test
+    void project_includeDepartedFalse_剔DEPARTED作者() {
+        // scope.includeDeparted=false，readableAuthors={2,3}，DEPARTED={3} → 传 turnMapper 的 authors={2}
+        when(aclResolver.readableAuthors(10L, 1L)).thenReturn(Set.of(2L, 3L));
+        when(departedResolver.resolveDeparted(10L)).thenReturn(
+                new MemoryDepartedResolver.DepartedInfo(Set.of(3L), Map.of(3L, "已离开人员·u3·2026-01-01")));
+        when(turnMapper.findProjectRecallableTurns(eq(10L), eq(1L), anyList(), anyString(), any(), any(), any()))
+                .thenReturn(List.of());
+        RecallScope scope = new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), false);
+
+        patcher.collectUncovered(scope, 1L);
+
+        ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
+        verify(turnMapper).findProjectRecallableTurns(eq(10L), eq(1L), captor.capture(), anyString(), any(), any(), any());
+        assertEquals(List.of(2L), captor.getValue(), "剔 DEPARTED 3 → 只传 2 给 mapper（优先级高于人员多选）");
+    }
+
+    @Test
+    void project_includeDepartedFalse_全DEPARTED_skip() {
+        // readableAuthors 全是 DEPARTED → 剔完空 → skip（不查 turnMapper）
+        when(aclResolver.readableAuthors(10L, 1L)).thenReturn(Set.of(3L));
+        when(departedResolver.resolveDeparted(10L)).thenReturn(
+                new MemoryDepartedResolver.DepartedInfo(Set.of(3L), Map.of(3L, "x")));
+        RecallScope scope = new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), false);
+
+        assertTrue(patcher.collectUncovered(scope, 1L).isEmpty());
+        verify(turnMapper, never()).findProjectRecallableTurns(anyLong(), anyLong(), anyList(), anyString(), any(), any(), any());
+    }
+
+    @Test
+    void project_includeDepartedTrue_不过滤不调DepartedResolver() {
+        // includeDeparted=true → 保留 DEPARTED，不调 departedResolver（标注由 Pipeline 装配）
+        when(aclResolver.readableAuthors(10L, 1L)).thenReturn(Set.of(2L, 3L));
+        when(turnMapper.findProjectRecallableTurns(eq(10L), eq(1L), anyList(), anyString(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        patcher.collectUncovered(projectOnly(10L), 1L);  // includeDeparted=true
+
+        verify(departedResolver, never()).resolveDeparted(any());
     }
 }

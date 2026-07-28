@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -27,7 +28,8 @@ import java.util.stream.Collectors;
  * <p>
  * <b>防 N+1</b>（性能预案）：批量 {@code WHERE turn_id IN (...)} 一次取全部 coverage（{@link MemorySummaryCoverageMapper#findByUserAndTurns}）。
  * <p>
- * <b>I3 预留</b>：{@code scope.includeDeparted} 离职开关本迭代不过滤（readableAuthors 含 DEPARTED，I3 接入按开关滤）。
+ * <b>I3 离职开关</b>（L10，§3.7 line 158）：{@code scope.includeDeparted=false} 时剔 readableAuthors ∩ DEPARTED
+ * （<b>优先级高于人员多选</b>——即便 ACL 授权了离职 target 也不召回）；{@code true} 时保留（标注由 Pipeline 装配）。
  */
 @Slf4j
 @Service
@@ -37,6 +39,7 @@ public class MemoryTurnPatcher {
     private final MemoryTurnMapper turnMapper;
     private final MemorySummaryCoverageMapper coverageMapper;
     private final MemoryRecallAclResolver aclResolver;
+    private final MemoryDepartedResolver departedResolver;
 
     /**
      * 收集 scope 内「未全覆盖、需拼原文」的流水账。
@@ -63,6 +66,19 @@ public class MemoryTurnPatcher {
             if (authors.isEmpty()) {
                 log.debug("patcher projectId={} reader={} 无可读作者（向量14），skip", projectId, userId);
                 continue;
+            }
+            // I3 L10 离职开关（§3.7 line158）：关 → 剔 DEPARTED authors（优先级高于人员多选）
+            if (!scope.includeDeparted()) {
+                Set<Long> departed = departedResolver.resolveDeparted(projectId).intersectDeparted(authors);
+                if (!departed.isEmpty()) {
+                    authors = new HashSet<>(authors);
+                    authors.removeAll(departed);
+                    log.debug("patcher projectId={} reader={} includeDeparted=false 剔 DEPARTED {} 人 → 剩 {} 作者",
+                            projectId, userId, departed.size(), authors.size());
+                }
+            }
+            if (authors.isEmpty()) {
+                continue;  // 剔完空（全 DEPARTED + 开关关）
             }
             List<MemoryTurn> projectTurns = turnMapper.findProjectRecallableTurns(
                     projectId, userId, List.copyOf(authors), direction, tw.start(), tw.end(), tw.relativeDays());

@@ -52,6 +52,8 @@ class MemoryRecallPipelineTest {
     MemorySummaryReader reader;
     @Mock
     MemoryTurnPatcher patcher;
+    @Mock
+    MemoryDepartedResolver departedResolver;
 
     private MemoryRecallPipeline pipeline;
 
@@ -61,7 +63,7 @@ class MemoryRecallPipelineTest {
 
     @BeforeEach
     void setUp() {
-        pipeline = new MemoryRecallPipeline(resolver, aggregator, selector, reader, patcher);
+        pipeline = new MemoryRecallPipeline(resolver, aggregator, selector, reader, patcher, departedResolver);
     }
 
     // ---------- helpers ----------

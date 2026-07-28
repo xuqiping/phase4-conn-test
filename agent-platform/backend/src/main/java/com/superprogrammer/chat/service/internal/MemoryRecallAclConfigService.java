@@ -38,7 +38,7 @@ public class MemoryRecallAclConfigService {
 
     private static final String ROLE_OWNER = "OWNER";
     private static final String ROLE_ADMIN = "ADMIN";
-    private static final String STATUS_DEPARTED = "DEPARTED";
+    private static final String STATUS_ACTIVE = "ACTIVE";
 
     private final MemoryRecallAclMapper recallAclMapper;
     private final MemoryProjectMemberMapper memberMapper;
@@ -46,6 +46,7 @@ public class MemoryRecallAclConfigService {
     /**
      * 是否有 ACL 配置权（向量 14 边界）。
      * <p>
+     * 须 ACTIVE 在职（DEPARTED 已离开 → 无配权，同 {@link MemoryRosterService#isMember} 读权判定）；
      * owner 兜底 true；admin 须 {@code recall_admin=true}；member / 非成员 false。
      *
      * @return true=可配（GET/PUT 矩阵）；false=无权（controller 抛 403）
@@ -57,8 +58,8 @@ public class MemoryRecallAclConfigService {
         MemoryProjectMember m = memberMapper.selectOne(new LambdaQueryWrapper<MemoryProjectMember>()
                 .eq(MemoryProjectMember::getProjectId, projectId)
                 .eq(MemoryProjectMember::getUserId, userId));
-        if (m == null) {
-            return false;
+        if (m == null || !STATUS_ACTIVE.equals(m.getStatus())) {
+            return false;  // 非成员 / DEPARTED → 无配权
         }
         if (ROLE_OWNER.equals(m.getRole())) {
             return true;
@@ -139,10 +140,5 @@ public class MemoryRecallAclConfigService {
             }
         }
         return ids;
-    }
-
-    /** 仅供单测注入用（DEPARTED 常量）。 */
-    static String departedConstant() {
-        return STATUS_DEPARTED;
     }
 }
