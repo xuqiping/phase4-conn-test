@@ -11,6 +11,7 @@
 --
 -- ⚠️ 编号：原计划留 V50 给 H DROP（旧 user_memories/user_memory_projects），
 --    H 迭代未做 → D-7 先占 V50；H 收尾 DROP 顺延 V51。
+--    IT 实跑：MemoryRecallScopePrefIT 5 测 PG16 验 V50 建表/upsert/bigint[]/隔离/null 落库全绿。
 --
 -- 软删 UNIQUE：user_id WHERE deleted=0（软删后同用户可重建偏好）。
 CREATE TABLE memory_recall_scope_prefs (
@@ -32,7 +33,7 @@ CREATE TABLE memory_recall_scope_prefs (
 );
 
 -- 部分唯一索引：user_id WHERE deleted=0（软删后同用户可重建偏好）。
--- ⚠️ PG 表级 CONSTRAINT 不支持 WHERE（42601），部分唯一只能走 CREATE UNIQUE INDEX。
+-- ⚠️ PG 表级 CONSTRAINT 不支持 WHERE（42601），部分唯一只能走 CREATE UNIQUE INDEX（IT 跑通已验）。
 CREATE UNIQUE INDEX uk_memory_recall_scope_prefs_user
     ON memory_recall_scope_prefs(user_id) WHERE deleted = 0;
 
