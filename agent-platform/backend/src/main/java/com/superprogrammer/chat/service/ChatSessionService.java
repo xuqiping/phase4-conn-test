@@ -32,11 +32,15 @@ import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.superprogrammer.chat.dto.MemoryRecallResult;
+import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
 import com.superprogrammer.chat.dto.StreamEvent;
+import com.superprogrammer.chat.service.internal.MemoryGenerationService;
+import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
+import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import com.superprogrammer.chat.service.internal.ExtractedFact;
 
 @Slf4j
 @Service
@@ -48,7 +52,10 @@ public class ChatSessionService {
     private final AgentMapper agentMapper;
     private final WorkflowMapper workflowMapper;
     private final OrchestrationEngine orchestrationEngine;
-    private final MemoryService memoryService;
+    // H' 切流：记忆召回/写入改接新栈（MemoryRecallPipeline / MemoryGenerationService），legacy MemoryService 待 H'-3 整块废
+    private final MemoryRecallPipeline memoryRecallPipeline;
+    private final MemoryGenerationService memoryGenerationService;
+    private final MemoryRecallScopePreferenceService memoryRecallPrefService;
     private final ChatTargetService chatTargetService;
     private final RuntimeExecutionService runtimeExecutionService;
     // 阶段5 RAG（CHAT 模式证据注入；AGENT=AgentRoutingStrategy firstStepConfigOverride；WORKFLOW=检索节点回调）
@@ -57,16 +64,10 @@ public class ChatSessionService {
     private final com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     // 记忆模式开关解析（V26，session>agent/workflow>global，门控 RAG+记忆）
     private final com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
-    // 记忆项目 scope 解析（V33，读/写 scope 从 session 三列解析）
+    // 记忆项目 scope 解析（V33，写 scope 从 session 解析 + canAccess 守卫；召回 scope 走持久化偏好）
     private final MemoryScopeResolver memoryScopeResolver;
-    // 记忆冲突解决（V27）
-    private final MemoryConflictService conflictService;
-    private final com.superprogrammer.chat.service.internal.MemoryConflictJudge conflictJudge;
-    // 记忆处理模式开关（ASYNC=全异步/HYBRID=同步），全局 system_settings
+    // 系统设置（联网搜索总开关等；记忆写入 HYBRID/ASYNC 模式随 H' 切流废弃）
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
-    // 记忆专用线程池（独立于 KB 索引）：ASYNC 记忆处理 orchestrator 在此跑，不 gate 回复
-    @org.springframework.beans.factory.annotation.Qualifier("memoryTaskExecutor")
-    private final java.util.concurrent.Executor memoryTaskExecutor;
     // 联网搜索（CHAT 模式生成前检索注入；开关门控由 session.webSearchEnabled + 全局 search.enabled）
     private final com.superprogrammer.search.service.WebSearchService webSearchService;
 
@@ -215,28 +216,12 @@ public class ChatSessionService {
         if (request.getMemIncludeGlobal() != null) {
             persistMemoryScope(session, request);
         }
-        // 读/写 scope 解析（admin=false：记忆 scope 是用户私有，admin 覆盖无需）
-        com.superprogrammer.chat.service.internal.MemoryScope readScope =
-                memoryScopeResolver.resolveReadScope(session, userId, false);
+        // 写 scope 解析（admin=false；召回 scope 走用户持久化偏好，见 recallMemoryContext）
         com.superprogrammer.chat.service.internal.MemoryScope writeScope =
                 memoryScopeResolver.resolveWriteScope(session, userId, false);
-        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
         boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
-
-        // 记忆冲突答复拦截（V27，仅记忆模式 ON）：有活跃 PENDING 时，本条消息先当冲突答复处理
-        ConflictIntercept ci = interceptConflict(userId, session, request.getMessage(), ragOn);
-        if (ci.handled()) {
-            ChatMessage am = new ChatMessage();
-            am.setSessionId(session.getId());
-            am.setRole("ASSISTANT");
-            am.setContent(ci.reply());
-            messageMapper.insert(am);
-            return ChatResponse.builder()
-                    .sessionId(session.getId()).messageId(am.getId())
-                    .content(ci.reply()).mode(session.getMode()).build();
-        }
 
         // Load context window
         List<ChatMessage> history = loadContextWindow(session.getId());
@@ -244,9 +229,9 @@ public class ChatSessionService {
             context.addMessage(msg.getRole(), msg.getContent());
         }
 
-        // Load long-term memories（仅记忆模式开启）
+        // Load long-term memories（仅记忆模式开启；新栈召回 pipeline，scope 走用户持久化偏好）
         if (ragOn) {
-            String memoryContext = memoryService.buildMemoryContext(readScope, request.getMessage());
+            String memoryContext = recallMemoryContext(userId, request.getMessage());
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("SYSTEM", "用户记忆:\n" + memoryContext);
             }
@@ -278,21 +263,9 @@ public class ChatSessionService {
             response = response + "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
         }
 
-        // 记忆冲突解决：HYBRID=同步(即时 askText 追问，gate 回复) / ASYNC=异步(不卡回复，冲突进面板，前端轮询)
+        // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident 随旧栈废弃，冲突走总结 worker→面板）
         if (ragOn) {
-            if ("HYBRID".equals(systemSettingService.getMemoryProcessMode())) {
-                String askText = memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), response, request.getModel());
-                if (askText != null) response = response + "\n\n" + askText;
-            } else {
-                final String resp = response;
-                try {
-                    memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, session.getId(), request.getMessage(), resp, request.getModel()));
-                } catch (java.util.concurrent.RejectedExecutionException ree) {
-                    // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
-                    log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
-                    memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
-                }
-            }
+            dispatchMemoryWrite(userId, session.getId(), session, writeScope, request.getMessage(), response);
         }
 
         // Save assistant message
@@ -301,8 +274,6 @@ public class ChatSessionService {
         assistantMsg.setRole("ASSISTANT");
         assistantMsg.setContent(response);
         messageMapper.insert(assistantMsg);
-
-        // 记忆冲突解决（V27）已在上方 processMemory 同步处理（生成回复后、插库前），此处无 async
 
         // Update session title on first exchange
         if (session.getTitle() == null && request.getMessage() != null) {
@@ -320,31 +291,42 @@ public class ChatSessionService {
                 .build();
     }
 
-    // ---- 记忆冲突答复拦截（V27）----
+    // ============================ 记忆（H' 切流：新栈召回/写入）============================
 
-    private record ConflictIntercept(boolean handled, String reply) {}
-
-    /** 有活跃 PENDING 时把本条用户消息当冲突答复处理；答了→handled+确认；无关→flag 共存后放行。 */
-    private ConflictIntercept interceptConflict(Long userId, ChatSession session, String userMessage, boolean ragOn) {
-        if (!ragOn || userMessage == null) return new ConflictIntercept(false, null);
-        com.superprogrammer.chat.entity.MemoryConflict pending = conflictService.getActivePendingOrExpire(session.getId(), userId);
-        if (pending == null) return new ConflictIntercept(false, null);
-        com.superprogrammer.chat.service.internal.RouteResult routed = conflictJudge.route(pending.getAskText(), userMessage);
-        String decision = routed.toDecision();
-        if (routed.isAnswer() && !"UNCLEAR".equals(decision)) {
-            conflictService.resolve(userId, pending.getId(), decision, null);
-            String confirm = switch (decision) {
-                case "KEEP_NEW" -> "好的，已保留新信息，删除旧记录。";
-                case "KEEP_OLD" -> "好的，保留旧记录，忽略新信息。";
-                case "KEEP_BOTH" -> "好的，两条都保留。";
-                case "DISCARD" -> "好的，已删除该信息。";
-                default -> "好的。";
-            };
-            return new ConflictIntercept(true, confirm);
+    /**
+     * 召回长期记忆装配文本（注入对话 SYSTEM）。scope 走用户持久化偏好（F-6 底栏 popover），
+     * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返空串不崩聊天。
+     */
+    private String recallMemoryContext(Long userId, String query) {
+        if (userId == null || query == null || query.isBlank()) return "";
+        try {
+            MemoryRecallScopeRequest scopeReq = memoryRecallPrefService.getScope(userId);
+            if (scopeReq == null) {
+                scopeReq = new MemoryRecallScopeRequest();
+                scopeReq.setPersonalOn(true);
+            }
+            MemoryRecallResult result = memoryRecallPipeline.recall(query, scopeReq, userId);
+            return result == null ? "" : result.getAssembledText();
+        } catch (Exception e) {
+            log.warn("记忆召回失败 userId={} query.len={}: {}", userId, query.length(), e.getMessage());
+            return "";
         }
-        // 无关 / UNCLEAR：flag 共存，继续正常处理本条
-        conflictService.flag(pending);
-        return new ConflictIntercept(false, null);
+    }
+
+    /**
+     * 异步写入一轮记忆（新栈 fire-and-forget）。sessionProjectId 来自会话；
+     * writeScope.includeGlobal/safeProjectIds 由 MemoryScopeResolver 经 canAccess 守卫（防越权写他人项目）。
+     * RejectedExecution 已在 processTurnAsync 内兜底，此处仅兜意外异常不崩主流程。
+     */
+    private void dispatchMemoryWrite(Long userId, Long sessionId, ChatSession session,
+                                     com.superprogrammer.chat.service.internal.MemoryScope writeScope,
+                                     String userInput, String assistantOutput) {
+        try {
+            memoryGenerationService.processTurnAsync(userId, sessionId, session.getProjectId(),
+                    writeScope.includeGlobal(), writeScope.safeProjectIds(), userInput, assistantOutput);
+        } catch (Exception e) {
+            log.warn("记忆写入提交失败 userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
+        }
     }
 
     private List<ChatMessage> loadContextWindow(Long sessionId) {
@@ -401,28 +383,12 @@ public class ChatSessionService {
         if (request.getMemIncludeGlobal() != null) {
             persistMemoryScope(session, request);
         }
-        // 读/写 scope 在 lambda 外解析（reactor 闭包安全；scope 是纯数据对象，无线程态）
-        com.superprogrammer.chat.service.internal.MemoryScope readScope =
-                memoryScopeResolver.resolveReadScope(session, userId, false);
+        // 写 scope 在 lambda 外解析（reactor 闭包安全；召回 scope 走用户持久化偏好）
         com.superprogrammer.chat.service.internal.MemoryScope writeScope =
                 memoryScopeResolver.resolveWriteScope(session, userId, false);
-        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
         final boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
-
-        // 记忆冲突答复拦截（V27，仅记忆模式 ON）
-        ConflictIntercept ci = interceptConflict(userId, session, request.getMessage(), ragOn);
-        if (ci.handled()) {
-            return Flux.defer(() -> {
-                ChatMessage am = new ChatMessage();
-                am.setSessionId(session.getId());
-                am.setRole("ASSISTANT");
-                am.setContent(ci.reply());
-                messageMapper.insert(am);
-                return Flux.just(StreamEvent.chunk(ci.reply()), StreamEvent.done());
-            });
-        }
 
         List<ChatMessage> history = loadContextWindow(session.getId());
         for (ChatMessage msg : history) {
@@ -430,7 +396,7 @@ public class ChatSessionService {
         }
 
         if (ragOn) {
-            String memoryContext = memoryService.buildMemoryContext(readScope, request.getMessage());
+            String memoryContext = recallMemoryContext(userId, request.getMessage());
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("system", "用户记忆:\n" + memoryContext);
             }
@@ -491,23 +457,9 @@ public class ChatSessionService {
                         disclaimer = "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
                         responseText = responseText + disclaimer;
                     }
-                    // 记忆处理：ASYNC=全异步(不卡,冲突走面板) / HYBRID=同步(即时 askText 追问)
-                    boolean hybrid = "HYBRID".equals(systemSettingService.getMemoryProcessMode());
-                    String askText = null;
+                    // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident/askText 随旧栈废弃）
                     if (ragOn) {
-                        if (hybrid) {
-                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText, request.getModel());
-                            if (askText != null) responseText = responseText + "\n\n" + askText;
-                        } else {
-                            final String rtMem = responseText;
-                            try {
-                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem, request.getModel()));
-                            } catch (java.util.concurrent.RejectedExecutionException ree) {
-                                // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
-                                log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
-                                memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
-                            }
-                        }
+                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -540,9 +492,7 @@ public class ChatSessionService {
                     }
 
                     java.util.List<StreamEvent> tail = new java.util.ArrayList<>();
-                    if (askText != null) {
-                        tail.add(StreamEvent.chunk("\n\n" + askText));
-                    } else if (disclaimer != null) {
+                    if (disclaimer != null) {
                         tail.add(StreamEvent.chunk(disclaimer));
                     }
                     if (citationEvt != null) {
@@ -569,10 +519,9 @@ public class ChatSessionService {
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
         AtomicBoolean hasError = new AtomicBoolean(false);
-        // 记忆 scope（V33）：streamWorkflow 不经 doSendMessageStream 的解析，在此独立解析（lambda 外）
+        // 写 scope（streamWorkflow 不经 doSendMessageStream，独立解析；召回在 WORKFLOW 模式不注入）
         com.superprogrammer.chat.service.internal.MemoryScope writeScope =
                 memoryScopeResolver.resolveWriteScope(session, userId, false);
-        Long writeTargetProjectId = memoryScopeResolver.resolveWriteTarget(session);
 
         return source
                 .flatMapIterable(event -> workflowStreamEvents(event, fullThinking, finalResponse, hasError))
@@ -582,25 +531,11 @@ public class ChatSessionService {
                     }
 
                     String responseText = finalResponse.get();
-                    // 记忆处理：WORKFLOW 也走门控；ASYNC=全异步 / HYBRID=同步即时追问
+                    // 记忆写入（H' 切流：WORKFLOW 模式也走新栈 fire-and-forget）
                     boolean wfRagOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                             session.getAgentId(), session.getWorkflowId());
-                    boolean hybrid = "HYBRID".equals(systemSettingService.getMemoryProcessMode());
-                    String askText = null;
                     if (wfRagOn) {
-                        if (hybrid) {
-                            askText = memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), responseText, request.getModel());
-                            if (askText != null) responseText = responseText + "\n\n" + askText;
-                        } else {
-                            final String rtMem = responseText;
-                            try {
-                                memoryTaskExecutor.execute(() -> memoryService.processMemory(writeScope, writeTargetProjectId, sessionId, request.getMessage(), rtMem, request.getModel()));
-                            } catch (java.util.concurrent.RejectedExecutionException ree) {
-                                // AbortPolicy：池+队列满 → 拒绝。绝不回退 servlet 线程（RB-001 根因②），降级为 incident 提示。
-                                log.warn("记忆异步任务被拒（池满），本次跳过 userId={}: {}", userId, ree.getMessage());
-                                memoryService.recordIncident(userId, "系统繁忙，本次对话记忆未记录，请稍后重试。");
-                            }
-                        }
+                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -613,9 +548,6 @@ public class ChatSessionService {
                         } catch (Exception ignored) {}
                     }
                     messageMapper.insert(assistantMsg);
-                    if (askText != null) {
-                        return Flux.just(StreamEvent.chunk("\n\n" + askText), StreamEvent.done());
-                    }
                     return Flux.just(StreamEvent.done());
                 }).subscribeOn(Schedulers.boundedElastic()))
                 .onErrorResume(error -> Flux.just(StreamEvent.error(error.getMessage()), StreamEvent.done()))
