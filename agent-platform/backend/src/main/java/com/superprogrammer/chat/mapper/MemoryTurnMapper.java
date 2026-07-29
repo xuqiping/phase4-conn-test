@@ -113,4 +113,16 @@ public interface MemoryTurnMapper extends BaseMapper<MemoryTurn> {
 
     /** 项目名查询（绕 projects @TableLogic 软删过滤——已删项目也要取名做默认命名）。 */
     String findProjectNameAnyState(@Param("projectId") Long projectId);
+
+    // ============================ 计划12 · 生命周期写侧 hook（§3.7）============================
+
+    /** 写侧 hook · 成员离职：本人挂在该项目的 turns 追加 departed_project_ids（不卸载不删数据）。幂等。 */
+    int appendDepartedProjectToMyTurns(@Param("userId") Long userId,
+                                       @Param("projectId") Long projectId);
+
+    /** 写侧 hook · 项目删除：全部作者挂在该项目的 turns 追加 deleted_project_ids（不移除 project_ids）。幂等。 */
+    int markProjectDeletedForAllTurns(@Param("projectId") Long projectId);
+
+    /** 写侧 hook · 项目删除：曾写记忆的成员 + 各自 turn 数（PROJECT_DELETED_AFFECTED 通知接收者，§3.7 M1）。 */
+    List<com.superprogrammer.chat.dto.MemoryProjectAffectedAuthorVO> findAuthorsWithTurnsInProject(@Param("projectId") Long projectId);
 }

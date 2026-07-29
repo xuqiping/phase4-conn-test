@@ -39,7 +39,8 @@ import java.util.List;
  * <p>
  * <b>偏离 plan</b>：独立新 service（非改 legacy MemoryService，承 C/D/E/I2 隔离裁决）；
  * 新项目创建复用 {@link ProjectService#create}（项目 CRUD 单一出口，自动落旧 project_members
- * owner 行），再补 {@code memory_project_members} OWNER 行供新栈召回 ACL 判定。
+ * owner 行）；新栈 {@code memory_project_members} OWNER 行由
+ * {@link MemoryLifecycleHookService#onProjectCreated} 随 create 同步落（本类不再自插，防 uk 重复）。
  */
 @Slf4j
 @Service
@@ -47,8 +48,6 @@ import java.util.List;
 public class MemoryLifecycleService {
 
     private static final String STATUS_DEPARTED = "DEPARTED";
-    private static final String STATUS_ACTIVE = "ACTIVE";
-    private static final String ROLE_OWNER = "OWNER";
     private static final String TYPE_PROJECT_DELETED_AFFECTED = "PROJECT_DELETED_AFFECTED";
     /** projects.name VARCHAR(100) 上限。 */
     private static final int PROJECT_NAME_CAP = 100;
@@ -90,7 +89,6 @@ public class MemoryLifecycleService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "原项目不存在");
         }
         ProjectVO newProject = createPullProject(userId, oldName, projectName);
-        insertMemoryOwnerRow(newProject.getId(), userId);
         int affected = turnMapper.appendProjectToMyTurns(userId, projectId, newProject.getId());
         log.info("copy-to 完成 userId={} fromProject={} newProject={} affectedTurns={}",
                 userId, projectId, newProject.getId(), affected);
@@ -118,7 +116,6 @@ public class MemoryLifecycleService {
         }
         String oldName = turnMapper.findProjectNameAnyState(projectId);
         ProjectVO newProject = createPullProject(userId, oldName, projectName);
-        insertMemoryOwnerRow(newProject.getId(), userId);
         int affected = turnMapper.restoreMyTurnsFromDeletedProject(userId, projectId, newProject.getId());
         int resolved = notificationMapper.update(null,
                 new LambdaUpdateWrapper<MemoryNotification>()
@@ -147,18 +144,5 @@ public class MemoryLifecycleService {
         ProjectCreateRequest req = new ProjectCreateRequest();
         req.setName(name);
         return projectService.create(req, userId);
-    }
-
-    /** 新栈成员行：拉取者为新项目 OWNER（recall ACL 判定/花名册源数据）。无 MetaObjectHandler，时间戳手填。 */
-    private void insertMemoryOwnerRow(Long projectId, Long userId) {
-        MemoryProjectMember owner = new MemoryProjectMember();
-        owner.setProjectId(projectId);
-        owner.setUserId(userId);
-        owner.setRole(ROLE_OWNER);
-        owner.setRecallAdmin(false);
-        owner.setStatus(STATUS_ACTIVE);
-        owner.setCreatedAt(OffsetDateTime.now());
-        owner.setUpdatedAt(owner.getCreatedAt());
-        memberMapper.insert(owner);
     }
 }

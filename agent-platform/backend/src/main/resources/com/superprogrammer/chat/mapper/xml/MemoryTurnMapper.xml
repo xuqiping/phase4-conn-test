@@ -226,4 +226,36 @@
     <select id="findProjectNameAnyState" resultType="string">
         SELECT name FROM projects WHERE id = #{projectId}
     </select>
+
+    <!-- 写侧 hook · 成员离职：本人挂在该项目的 turns 追加 departed_project_ids（不卸载不删数据，§3.7）。
+         NOT 已标防重复追加（幂等）。数组写入必须走 XML（LambdaUpdateWrapper 不读 typeHandler，V33 教训）。 -->
+    <update id="appendDepartedProjectToMyTurns">
+        UPDATE memory_turns
+        SET departed_project_ids = array_append(departed_project_ids, #{projectId}),
+            updated_at           = NOW()
+        WHERE user_id = #{userId} AND deleted = 0
+          AND project_ids @> ARRAY[#{projectId}]::bigint[]
+          AND NOT (departed_project_ids @> ARRAY[#{projectId}]::bigint[])
+    </update>
+
+    <!-- 写侧 hook · 项目删除：全部作者挂在该项目的 turns 追加 deleted_project_ids
+         （不从 project_ids 移除——保留挂载，scope 召回自然排除；个人 scope 按 born_personal 不受影响，§3.7）。幂等。 -->
+    <update id="markProjectDeletedForAllTurns">
+        UPDATE memory_turns
+        SET deleted_project_ids = array_append(deleted_project_ids, #{projectId}),
+            updated_at          = NOW()
+        WHERE deleted = 0
+          AND project_ids @> ARRAY[#{projectId}]::bigint[]
+          AND NOT (deleted_project_ids @> ARRAY[#{projectId}]::bigint[])
+    </update>
+
+    <!-- 写侧 hook · 项目删除：曾写记忆的成员 + 各自未软删 turn 数（§3.7 M1 通知接收者 + 文案计数）。 -->
+    <select id="findAuthorsWithTurnsInProject" resultType="com.superprogrammer.chat.dto.MemoryProjectAffectedAuthorVO">
+        SELECT user_id AS userId, COUNT(*) AS turnCount
+        FROM memory_turns
+        WHERE deleted = 0
+          AND project_ids @> ARRAY[#{projectId}]::bigint[]
+        GROUP BY user_id
+        ORDER BY user_id ASC
+    </select>
 </mapper>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.project.mapper.ProjectMemberMapper">
+
+    <!-- 查成员行（含软删，XML 不走 MP @TableLogic 过滤）——addMember 复活软删行用，
+         否则 re-add 撞 uk_project_members_project_user（唯一约束含软删行）。 -->
+    <select id="findAnyState" resultType="com.superprogrammer.project.entity.ProjectMember">
+        SELECT * FROM project_members
+        WHERE project_id = #{projectId} AND user_id = #{userId}
+        LIMIT 1
+    </select>
+</mapper>

@@ -33,7 +33,7 @@ import static org.mockito.Mockito.*;
  *   <li>copy-to：DEPARTED 本人放行（copy 非 move）/ 非成员 403 / ACTIVE 成员 403 / 原项目不存在 404。</li>
  *   <li>restore：有待拉取放行 + 波及通知置 resolved / 无待拉取 404（防存在性探测）。</li>
  *   <li>命名：空名走默认「「原项目名」记忆拉取」/ 指定名透传 / 超 100 字符截断。</li>
- *   <li>新项目落 memory_project_members OWNER 行（新栈 ACL 判定源）。</li>
+ *   <li>新栈 OWNER 成员行不再由本类自插（改由 ProjectService → MemoryLifecycleHookService 落）。</li>
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
@@ -89,9 +89,8 @@ class MemoryLifecycleServiceTest {
         // copy 非 move：只调追加，不调 restore（原挂载/departed 标记不动）
         verify(turnMapper).appendProjectToMyTurns(1L, 100L, 200L);
         verify(turnMapper, never()).restoreMyTurnsFromDeletedProject(anyLong(), anyLong(), anyLong());
-        // 新项目落新栈 OWNER 成员行
-        verify(memberMapper).insert(argThat(m ->
-                m.getProjectId().equals(200L) && "OWNER".equals(m.getRole()) && "ACTIVE".equals(m.getStatus())));
+        // 新栈 OWNER 成员行由 ProjectService.create → MemoryLifecycleHookService 落（本类不再自插）
+        verify(memberMapper, never()).insert(any(MemoryProjectMember.class));
     }
 
     @Test
