@@ -171,4 +171,59 @@
         SELECT COUNT(*) FROM memory_turns t
         WHERE t.deleted = 0 AND t.gen_done = false AND t.born_personal = true AND t.user_id = #{userId}
     </select>
+
+    <!-- ============================ 计划12 · F-4b 前置 · 生命周期折叠板（§3.7）============================ -->
+
+    <!-- 本人已删项目折叠板列表：unnest deleted_project_ids 去重，join projects 取名
+         （XML 不走 MP @TableLogic 软删过滤——项目已软删仍要显示名）；turnCount = 引用该项目的本人未软删 turn 数。
+         @> 包含算子 XML 无需转义（E 迭代实跑验证）。 -->
+    <select id="findMyDeletedProjects" resultType="com.superprogrammer.chat.dto.MemoryLifecycleProjectVO">
+        SELECT d.pid  AS projectId,
+               p.name AS projectName,
+               (SELECT COUNT(*) FROM memory_turns t
+                 WHERE t.user_id = #{userId} AND t.deleted = 0
+                   AND t.deleted_project_ids @> ARRAY[d.pid]::bigint[]) AS turnCount
+        FROM (SELECT DISTINCT unnest(t.deleted_project_ids) AS pid
+              FROM memory_turns t
+              WHERE t.user_id = #{userId} AND t.deleted = 0) d
+        LEFT JOIN projects p ON p.id = d.pid
+        ORDER BY d.pid ASC
+    </select>
+
+    <!-- restore 前置校验：本人 deleted_project_ids 含该项目的未软删 turn 计数（0 = 无待拉取 → 404）。 -->
+    <select id="countMyTurnsInDeletedProject" resultType="int">
+        SELECT COUNT(*) FROM memory_turns t
+        WHERE t.user_id = #{userId} AND t.deleted = 0
+          AND t.deleted_project_ids @> ARRAY[#{projectId}]::bigint[]
+    </select>
+
+    <!-- copy-to：本人在 fromProjectId 的 turns 追加挂 newProjectId（copy 非 move：
+         原 fromProjectId 挂载保留、departed_project_ids 不动、原项目数据零改动，§3.7）。
+         NOT 已挂防重复追加（幂等）。 -->
+    <update id="appendProjectToMyTurns">
+        UPDATE memory_turns
+        SET project_ids = array_append(project_ids, #{newProjectId}),
+            updated_at  = NOW()
+        WHERE user_id = #{userId} AND deleted = 0
+          AND project_ids @> ARRAY[#{fromProjectId}]::bigint[]
+          AND NOT (project_ids @> ARRAY[#{newProjectId}]::bigint[])
+    </update>
+
+    <!-- restore：移出 deleted_project_ids 的该项目 + 重挂 newProjectId（仅拉 turn 不拉 summary，§3.7）。
+         project_ids 已含 newProjectId 时不重复追加（幂等）。 -->
+    <update id="restoreMyTurnsFromDeletedProject">
+        UPDATE memory_turns
+        SET project_ids         = CASE WHEN project_ids @> ARRAY[#{newProjectId}]::bigint[]
+                                       THEN project_ids
+                                       ELSE array_append(project_ids, #{newProjectId}) END,
+            deleted_project_ids = array_remove(deleted_project_ids, #{deletedProjectId}),
+            updated_at          = NOW()
+        WHERE user_id = #{userId} AND deleted = 0
+          AND deleted_project_ids @> ARRAY[#{deletedProjectId}]::bigint[]
+    </update>
+
+    <!-- 项目名查询（XML 不走 MP @TableLogic 软删过滤——已删项目也要取名做默认命名）。 -->
+    <select id="findProjectNameAnyState" resultType="string">
+        SELECT name FROM projects WHERE id = #{projectId}
+    </select>
 </mapper>

@@ -92,4 +92,25 @@ public interface MemoryTurnMapper extends BaseMapper<MemoryTurn> {
 
     /** E-7 个人 scope raw turn 计数（gen_done=false，hasChange 判据 + 遗忘权面板）。 */
     int countRawPersonalTurns(@Param("userId") Long userId);
+
+    // ============================ 计划12 · F-4b 前置 · 生命周期折叠板（§3.7）============================
+
+    /** F-4b 前置：本人 turns deleted_project_ids 引用的已删项目列表（去重 + join 项目名绕软删 + turn 计数）。 */
+    List<com.superprogrammer.chat.dto.MemoryLifecycleProjectVO> findMyDeletedProjects(@Param("userId") Long userId);
+
+    /** F-4b restore 前置校验：本人 deleted_project_ids 含该项目的未软删 turn 计数（0 = 无待拉取）。 */
+    int countMyTurnsInDeletedProject(@Param("userId") Long userId, @Param("projectId") Long projectId);
+
+    /** F-4b copy-to：本人在 fromProjectId 的 turns 追加挂 newProjectId（copy 非 move，原挂载 + departed 标记不动）。 */
+    int appendProjectToMyTurns(@Param("userId") Long userId,
+                               @Param("fromProjectId") Long fromProjectId,
+                               @Param("newProjectId") Long newProjectId);
+
+    /** F-4b restore：本人 turns 移出 deleted_project_ids 的该项目 + 重挂 newProjectId（仅拉 turn 不拉 summary）。 */
+    int restoreMyTurnsFromDeletedProject(@Param("userId") Long userId,
+                                         @Param("deletedProjectId") Long deletedProjectId,
+                                         @Param("newProjectId") Long newProjectId);
+
+    /** 项目名查询（绕 projects @TableLogic 软删过滤——已删项目也要取名做默认命名）。 */
+    String findProjectNameAnyState(@Param("projectId") Long projectId);
 }

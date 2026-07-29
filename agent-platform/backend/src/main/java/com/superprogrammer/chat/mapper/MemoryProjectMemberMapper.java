@@ -29,4 +29,10 @@ public interface MemoryProjectMemberMapper extends BaseMapper<MemoryProjectMembe
      * 本人会员覆写开关（null = 无行 = 默认开，由 service 解析）。DEPARTED 不列（无可配权）。
      */
     List<com.superprogrammer.chat.dto.MemoryGenMatrixItemVO> findMyGenMatrix(@Param("userId") Long userId);
+
+    /**
+     * 计划12 · F-4b 前置：本人 DEPARTED 项目折叠板列表（§3.7），join 项目名 +
+     * 本人可拉取 turn 计数（project_ids 含该项目）。copy-to 自建新项目的源数据。
+     */
+    List<com.superprogrammer.chat.dto.MemoryLifecycleProjectVO> findMyDepartedProjects(@Param("userId") Long userId);
 }
