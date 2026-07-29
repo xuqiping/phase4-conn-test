@@ -246,7 +246,6 @@ import {
   BookmarksOutline
 } from '@vicons/ionicons5'
 import { useChatStore } from '@/stores/chat'
-import { chatApi } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 import SessionList from '@/components/chat/SessionList.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
@@ -313,14 +312,7 @@ function onProjectsChanged() {
   void loadProjectOptions()
 }
 
-async function loadGlobalRag() {
-  try {
-    const res = await chatApi.getChatRagMode()
-    globalRag.value = !!res.data.data.globalEnabled
-  } catch {
-    // 非 admin 或失败：保持 opt-in false，不阻塞聊天
-  }
-}
+// 计划12 H'-4：旧 getChatRagMode（/chat/memories/rag-mode）端点已删；globalRag 留 false（仅影响「跟随全局」显示文案）。
 
 function onRagToggle(v: boolean) {
   ragPref.value = v
@@ -385,7 +377,6 @@ onMounted(async () => {
   await chatStore.fetchSessions()
   chatStore.connectWS()
   chatStore.startConflictPoll()
-  void loadGlobalRag()
   void loadProjectOptions()
   const sessionId = route.params.sessionId
   if (sessionId) {

@@ -463,44 +463,17 @@ export const useChatStore = defineStore('chat', () => {
     setSelectedTarget(nextTarget)
   }
 
-  // ---- 记忆冲突轮询（ASYNC 模式下冲突靠此浮现：chat view 常驻 3s 轮询，memory 按钮角标 + 顶部状态条）----
+  // ---- 计划12 H'-4：legacy 记忆冲突/状态轮询已废 ----
+  // 旧 /chat/memories/status|incident 端点随 MemoryController 删除（404）。新栈冲突走总结 worker →
+  // MemoryConsolidationController 面板解决（MemoryNotificationBadge 3s 轮询 count 自带 UI），不在聊天栏轮询。
+  // 保留这三个 ref + 三个函数签名（ChatView 模板/watcher 仍引用），恒为 0/null/空，无网络请求、无 404 刷屏。
   const activeConflictCount = ref(0)
   const memoryProcessing = ref(0)
   const memoryIncident = ref<string | null>(null)
-  let conflictPollTimer: ReturnType<typeof setInterval> | null = null
 
-  async function loadActiveConflicts() {
-    // 一次拉 status（冲突计数 + 抽取进行中计数），省去每 3s 拉全量 list
-    try {
-      const res = await chatApi.getMemoryStatus()
-      const s = (res as any)?.data?.data
-      activeConflictCount.value = s ? Number(s.conflictCount) || 0 : 0
-      memoryProcessing.value = s ? Number(s.processingCount) || 0 : 0
-    } catch {
-      // 静默：未登录/网络异常不计数
-    }
-    // 记忆写入异常（不静默吞）：有则暴露给 UI 弹一次（后端取即清）
-    try {
-      const ir = await chatApi.getMemoryIncident()
-      const msg = (ir as any)?.data?.data
-      if (msg) memoryIncident.value = msg
-    } catch {
-      // 静默
-    }
-  }
-
-  function startConflictPoll() {
-    void loadActiveConflicts()
-    if (conflictPollTimer) return
-    conflictPollTimer = setInterval(() => { void loadActiveConflicts() }, 3000)
-  }
-
-  function stopConflictPoll() {
-    if (conflictPollTimer) {
-      clearInterval(conflictPollTimer)
-      conflictPollTimer = null
-    }
-  }
+  async function loadActiveConflicts() { /* no-op：旧端点已删 */ }
+  function startConflictPoll() { /* no-op：旧端点已删 */ }
+  function stopConflictPoll() { /* no-op：旧端点已删 */ }
 
   return {
     sessions,
