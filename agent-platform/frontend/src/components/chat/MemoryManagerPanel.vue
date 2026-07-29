@@ -272,6 +272,14 @@
       <n-tab-pane name="acl" tab="项目 ACL" display-directive="show">
         <MemoryProjectAclPanel />
       </n-tab-pane>
+      <n-tab-pane name="lifecycle" display-directive="show">
+        <template #tab>
+          <n-badge :value="deletedPendingTurns" :max="99" :show="deletedPendingTurns > 0" type="error" :offset="[10, 0]">
+            生命周期
+          </n-badge>
+        </template>
+        <MemoryLifecyclePanel @update:deleted-pending-turns="(n: number) => (deletedPendingTurns = n)" />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -279,7 +287,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import {
-  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NModal, NTabs, NTabPane, NTooltip, useDialog, useMessage
+  NButton, NCard, NCollapse, NCollapseItem, NDataTable, NEmpty, NInput, NSpace, NTag, NSwitch, NSelect, NBadge, NModal, NTabs, NTabPane, NTooltip, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { chatApi, type UserMemory, type MemoryConflict, type MemoryContextPreview, type MemoryEditRequest } from '@/api/chat'
@@ -293,11 +301,15 @@ import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
 import MemoryProjectAclPanel from '@/components/memory/MemoryProjectAclPanel.vue'
+import MemoryLifecyclePanel from '@/components/memory/MemoryLifecyclePanel.vue'
 
 const chatStore = useChatStore()
 
-// F-1..F-5 + I4-1/2 七页签壳：旧栈 + 标签库/流水账/总结/冲突裁决/gen 矩阵/项目 ACL
-const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts' | 'gen' | 'acl'>('legacy')
+// F-1..F-5 + I4-1/2 + F-4b 八页签壳：旧栈 + 标签库/流水账/总结/冲突裁决/gen 矩阵/项目 ACL/生命周期
+const activeTab = ref<'legacy' | 'tags' | 'turns' | 'summaries' | 'conflicts' | 'gen' | 'acl' | 'lifecycle'>('legacy')
+
+// F-4b 生命周期页签徽标：已删除项目未处理流水账总数（面板内 emit 联动）
+const deletedPendingTurns = ref(0)
 
 const message = useMessage()
 const dialog = useDialog()

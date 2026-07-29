@@ -13,6 +13,7 @@
  * - MemoryRecallController        召回（preview / scope GET·PUT）
  * - MemoryConsolidationController 总结触发 / 自动勾选 / 冲突裁决
  * - MemoryRosterController        花名册 + ACL 配置（/projects/{pid}）
+ * - MemoryLifecycleController     生命周期折叠板（departed/deleted list + copy-to/restore）
  */
 import request from './request'
 import type { ApiResponse } from './request'
@@ -194,6 +195,22 @@ export interface MemoryRecallAclRequest {
   targetUserIds: number[]
 }
 
+/** 生命周期折叠板行（已离开/已删除项目 + 本人可拉取流水账数，§3.7）。 */
+export interface MemoryLifecycleProjectVO {
+  projectId: number
+  projectName: string
+  /** 仅 departed 列表有值。 */
+  departedAt: string | null
+  turnCount: number
+}
+
+/** copy-to / restore 结果（自建新项目 id/名 + 实际拉取条数）。 */
+export interface MemoryLifecycleActionVO {
+  newProjectId: number
+  newProjectName: string
+  affectedTurns: number
+}
+
 // ============================ 客户端 ============================
 
 export const memoryApi = {
@@ -293,5 +310,25 @@ export const memoryApi = {
   },
   putRecallAcl(projectId: number, data: MemoryRecallAclRequest) {
     return request.put<ApiResponse<number>>(`/chat/memory/projects/${projectId}/recall-acl`, data)
+  },
+
+  // ---- 生命周期折叠板（F-4b：已离开 copy-to / 已删除 restore）----
+  listDepartedProjects() {
+    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/departed-projects')
+  },
+  copyDepartedProjectTo(projectId: number, projectName?: string) {
+    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
+      `/chat/memory/departed-projects/${projectId}/copy-to`,
+      projectName ? { projectName } : {}
+    )
+  },
+  listDeletedProjects() {
+    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/deleted-projects')
+  },
+  restoreDeletedProject(projectId: number, projectName?: string) {
+    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
+      `/chat/memory/deleted-projects/${projectId}/restore`,
+      projectName ? { projectName } : {}
+    )
   }
 }
