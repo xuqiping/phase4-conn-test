@@ -60,4 +60,27 @@ const deletedPendingTurns = ref(0)
   flex-direction: column;
   gap: var(--spacing-3);
 }
+
+// E8 移动适配：390px 等窄屏下 Naive n-tabs 单行时末 3 个 tab（gen矩阵/项目ACL/生命周期）
+// 会越出视口且无法滚动到达。强制 tab 行折成多行，保证 7 页签全部可见/可点。
+@media (max-width: 640px) {
+  .memory-manager__tabs :deep(.n-tabs-nav-scroll-content) {
+    width: 100% !important;
+    min-width: auto !important;
+  }
+
+  .memory-manager__tabs :deep(.n-tabs-wrapper) {
+    flex-wrap: wrap !important;
+    width: 100% !important;
+  }
+
+  .memory-manager__tabs :deep(.n-tabs-tab) {
+    flex: 0 0 auto;
+  }
+
+  // 折行后禁用 Naive 内部的水平滚动容器，避免截断第二行
+  .memory-manager__tabs :deep(.v-x-scroll) {
+    overflow: visible !important;
+  }
+}
 </style>
