@@ -1,0 +1,107 @@
+// src/stores/__tests__/fileStore.test.ts
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
+import { useFileStore } from '../fileStore'
+
+// Mock the icons API
+vi.mock('../../api/icons', () => ({
+  getFileIcon: vi.fn().mockResolvedValue(null)
+}))
+
+describe('fileStore', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+  describe('addFile', () => {
+    it('should add a new file to the store', async () => {
+      const store = useFileStore()
+
+      const newFile = await store.addFile({
+        name: 'test.txt',
+        path: '/path/to/test.txt',
+        type: 'file',
+        tags: [],
+      groupId: 'all'
+      })
+
+      expect(newFile).toBeDefined()
+      expect(newFile!.id).toBeDefined()
+      expect(newFile!.name).toBe('test.txt')
+      expect(newFile!.openCount).toBe(0)
+    expect(newFile!.createdAt).toBeDefined()
+      expect(store.files).toHaveLength(7) // 6 mock + 1 new
+    })
+
+    it('should not add duplicate files with same path', async () => {
+      const store = useFileStore()
+
+      await store.addFile({
+        name: 'test.txt',
+        path: '/path/to/test.txt',
+        type: 'file',
+        tags: [],
+        groupId: 'all'
+      })
+
+      const result = await store.addFile({
+        name: 'test.txt',
+     path: '/path/to/test.txt',
+        type: 'file',
+        tags: [],
+        groupId: 'all'
+      })
+
+        expect(result).toBeNull()
+    expect(store.files).toHaveLength(7) // 6 mock + 1 new (not 8)
+    })
+  })
+
+  describe('removeFile', () => {
+    it('should remove a file by id', () => {
+      const store = useFileStore()
+      const initialCount = store.files.length
+      const fileToRemove = store.files[0]
+
+      const result = store.removeFile(fileToRemove.id)
+
+      expect(result).toBe(true)
+      expect(store.files).toHaveLength(initialCount - 1)
+      expect(store.files.find(f => f.id === fileToRemove.id)).toBeUndefined()
+  })
+
+    it('should return false when file not found', () => {
+      const store = useFileStore()
+      const initialCount = store.files.length
+
+      const result = store.removeFile('non-existent-id')
+
+      expect(result).toBe(false)
+      expect(store.files).toHaveLength(initialCount)
+    })
+  })
+
+  describe('recordOpen', () => {
+    it('should increment openCount and update lastOpened', () => {
+      const store = useFileStore()
+      const file = store.files[0]
+      const initialCount = file.openCount
+      const beforeTime = Date.now()
+
+      store.recordOpen(file.id)
+
+    const updatedFile = store.files.find(f => f.id === file.id)
+      expect(updatedFile?.openCount).toBe(initialCount + 1)
+      expect(updatedFile?.lastOpened).toBeGreaterThanOrEqual(beforeTime)
+      expect(updatedFile?.lastOpened).toBeLessThanOrEqual(Date.now())
+  })
+
+    it('should do nothing when file not found', () => {
+      const store = useFileStore()
+      const initialFiles = [...store.files]
+
+      store.recordOpen('non-existent-id')
+
+      expect(store.files).toEqual(initialFiles)
+    })
+  })
+})

@@ -13,7 +13,7 @@ use windows::Win32::System::Com::{StructuredStorage, STGM_READ};
 use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 
-pub type AudioFrame = Vec<f32>;
+use super::capture::AudioFrame;
 
 pub fn list_output_devices() -> Vec<String> {
     unsafe {
@@ -132,22 +132,19 @@ impl LoopbackCapture {
             let format = &*format_ptr;
             let channels = format.nChannels;
             let bits_per_sample = format.wBitsPerSample;
+            let sample_rate = format.nSamplesPerSec;
 
             let (stop_tx, stop_rx) = mpsc::channel();
 
             // Convert COM interfaces to usize for thread safety.
-            // SAFETY: We use mem::forget on the original interfaces to avoid double-release,
-            // and reconstruct them from raw pointers inside the thread.
             let client_addr: usize = std::mem::transmute_copy(&client);
             let capture_addr: usize = std::mem::transmute_copy(&capture_client);
             std::mem::forget(client);
             std::mem::forget(capture_client);
 
-            // Cast pointer to usize so it can be sent across threads
             let format_addr = format_ptr as usize;
 
             let thread = thread::spawn(move || {
-                // SAFETY: usize values came from valid COM interfaces above.
                 let client: Audio::IAudioClient = std::mem::transmute(client_addr);
                 let capture_client: Audio::IAudioCaptureClient = std::mem::transmute(capture_addr);
 
@@ -167,18 +164,18 @@ impl LoopbackCapture {
                             .is_ok()
                         {
                             let total_samples = frames as usize * channels as usize;
-                            let frame = if bits_per_sample == 32 {
-                                let samples = std::slice::from_raw_parts(
+                            let samples = if bits_per_sample == 32 {
+                                let slice = std::slice::from_raw_parts(
                                     data as *const f32,
                                     total_samples,
                                 );
-                                samples.to_vec()
+                                slice.to_vec()
                             } else if bits_per_sample == 16 {
-                                let samples = std::slice::from_raw_parts(
+                                let slice = std::slice::from_raw_parts(
                                     data as *const i16,
                                     total_samples,
                                 );
-                                samples
+                                slice
                                     .iter()
                                     .map(|s| *s as f32 / i16::MAX as f32)
                                     .collect()
@@ -186,6 +183,11 @@ impl LoopbackCapture {
                                 Vec::new()
                             };
 
+                            let frame = AudioFrame {
+                                samples,
+                                sample_rate,
+                                channels,
+                            };
                             let _ = sender.send(frame);
                             capture_client.ReleaseBuffer(frames).ok();
                         }

@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+@source "../../index.html";
+@source "../**/*.{vue,ts,tsx,js,jsx}";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary: #42b883;
+  --color-dark-bg: #1e1e1e;
+  --color-dark-panel: #252525;
+  --color-dark-border: #3d3d3d;
+  --color-dark-hover: #2d2d2d;
+}
+
+:root {
+  color-scheme: light;
+  --primary-color: #42b883;
+  --primary-hover: #369b6e;
+  --danger-color: #ef4444;
+  --danger-hover: #dc2626;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-hover: #f1f5f9;
+  --border-color: #e2e8f0;
+  --border-hover: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --accent-subtle-bg: #f0fdf4;
+  --accent-subtle-hover: #dcfce7;
+  --accent-subtle-border: #bbf7d0;
+  --accent-subtle-text: #15803d;
+  --primary-bg: #f0fdf4;
+  --danger-bg: #fef2f2;
+  --danger-subtle-bg: #fef2f2;
+  --danger-subtle-hover: #fee2e2;
+  --danger-subtle-border: #fecaca;
+  --danger-subtle-text: #dc2626;
+}
+
+.dark {
+  color-scheme: dark;
+  --primary-color: #42b883;
+  --primary-hover: #369b6e;
+  --danger-color: #f87171;
+  --danger-hover: #ef4444;
+  --bg-primary: #252525;
+  --bg-secondary: #1e1e1e;
+  --bg-hover: #2d2d2d;
+  --border-color: #3d3d3d;
+  --border-hover: #4b5563;
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --accent-subtle-bg: rgba(66, 184, 131, 0.14);
+  --accent-subtle-hover: rgba(66, 184, 131, 0.22);
+  --accent-subtle-border: rgba(110, 231, 183, 0.28);
+  --accent-subtle-text: #86efac;
+  --primary-bg: rgba(66, 184, 131, 0.14);
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --danger-subtle-bg: rgba(248, 113, 113, 0.12);
+  --danger-subtle-hover: rgba(248, 113, 113, 0.2);
+  --danger-subtle-border: rgba(248, 113, 113, 0.26);
+  --danger-subtle-text: #fca5a5;
+}
+
+/* Global Styles */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Scrollbar Styles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+/* Animations */
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+
+.zoom-enter-active {
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.zoom-leave-active {
+  transition: all 0.15s ease-in;
+}
+
+.zoom-enter-from, .zoom-leave-to {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+/* Button Active States */
+button:active {
+  transform: scale(0.98);
+}
+
+/* Smooth Transitions */
+button, a, input, select, textarea {
+  transition: all 0.2s ease;
+}
+
+/* Focus Visible */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

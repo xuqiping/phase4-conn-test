@@ -2,6 +2,8 @@ use serde::{Serialize, Deserialize};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
+use crate::audio::capture::AudioFrame;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecognitionResult {
     pub text: String,
@@ -33,16 +35,16 @@ impl SpeechRecognizer {
 
     pub fn process_stream(
         &self,
-        receiver: Arc<Mutex<Receiver<Vec<f32>>>>,
+        receiver: Arc<Mutex<Receiver<AudioFrame>>>,
         mut send_result: impl FnMut(RecognitionResult) + Send + 'static,
     ) {
         let model_dir = self.config.model_dir.clone();
-        let sample_rate = self.config.sample_rate;
+        let target_sample_rate = self.config.sample_rate;
 
         std::thread::spawn(move || {
-            let mut recognizer = match create_offline_recognizer(&model_dir, sample_rate) {
+            let recognizer = match create_online_recognizer(&model_dir, target_sample_rate) {
                 Ok(r) => {
-                    log::info!("Offline recognizer loaded successfully");
+                    log::info!("Online recognizer loaded successfully");
                     Some(r)
                 }
                 Err(e) => {
@@ -51,109 +53,113 @@ impl SpeechRecognizer {
                 }
             };
 
-            const CHUNK_SECONDS: usize = 2;
-            let chunk_samples = (sample_rate as usize) * CHUNK_SECONDS;
-            let mut buffer: Vec<f32> = Vec::with_capacity(chunk_samples * 2);
-            let mut partial_count = 0;
-
-            loop {
-                let Ok(frame) = receiver.lock().unwrap().recv() else { break };
-                buffer.extend_from_slice(&frame);
-
-                partial_count += frame.len();
-                if partial_count >= (sample_rate as usize) / 2 {
-                    partial_count = 0;
-                    send_result(RecognitionResult {
-                        text: String::new(),
-                        is_final: false,
-                        partial: "正在识别…".to_string(),
-                    });
-                }
-
-                if buffer.len() >= chunk_samples {
-                    if let Some(ref mut rec) = recognizer {
-                        let text = rec.transcribe(sample_rate, &buffer);
-                        if !text.is_empty() {
-                            send_result(RecognitionResult {
-                                text: text.trim().to_string(),
-                                is_final: true,
-                                partial: String::new(),
-                            });
-                        }
-                    } else {
-                        send_result(RecognitionResult {
-                            text: "[mock] 你好".to_string(),
-                            is_final: true,
-                            partial: String::new(),
-                        });
+            let mut stream: Option<*const sherpa_rs_sys::SherpaOnnxOnlineStream> = None;
+            if let Some(ref rec) = recognizer {
+                unsafe {
+                    let s = sherpa_rs_sys::SherpaOnnxCreateOnlineStream(rec.recognizer);
+                    if !s.is_null() {
+                        stream = Some(s);
                     }
-                    buffer.clear();
                 }
             }
 
-            if !buffer.is_empty() {
-                if let Some(ref mut rec) = recognizer {
-                    let text = rec.transcribe(sample_rate, &buffer);
-                    if !text.is_empty() {
-                        send_result(RecognitionResult {
-                            text: text.trim().to_string(),
-                            is_final: true,
-                            partial: String::new(),
-                        });
+            let mut last_text = String::new();
+            let mut accumulated_final_text = String::new();
+
+            loop {
+                let Ok(frame) = receiver.lock().unwrap().recv() else { break };
+                let samples = resample_to_mono_16khz(&frame.samples, frame.sample_rate, frame.channels);
+                if samples.is_empty() {
+                    continue;
+                }
+
+                if let (Some(ref rec), Some(s)) = (&recognizer, stream) {
+                    unsafe {
+                        sherpa_rs_sys::SherpaOnnxOnlineStreamAcceptWaveform(
+                            s,
+                            target_sample_rate as i32,
+                            samples.as_ptr(),
+                            samples.len() as i32,
+                        );
+
+                        // Decode while ready
+                        while sherpa_rs_sys::SherpaOnnxIsOnlineStreamReady(rec.recognizer, s) == 1 {
+                            sherpa_rs_sys::SherpaOnnxDecodeOnlineStream(rec.recognizer, s);
+                        }
+
+                        // Get result
+                        let result_ptr = sherpa_rs_sys::SherpaOnnxGetOnlineStreamResult(rec.recognizer, s);
+                        let current_text = if result_ptr.is_null() {
+                            String::new()
+                        } else {
+                            let raw = result_ptr.read();
+                            let text = cstr_to_string(raw.text);
+                            sherpa_rs_sys::SherpaOnnxDestroyOnlineRecognizerResult(result_ptr);
+                            text
+                        };
+
+                        // Send partial update if text changed
+                        if current_text != last_text {
+                            last_text = current_text.clone();
+                            send_result(RecognitionResult {
+                                text: String::new(),
+                                is_final: false,
+                                partial: current_text.clone(),
+                            });
+                        }
+
+                        // Check endpoint
+                        if sherpa_rs_sys::SherpaOnnxOnlineStreamIsEndpoint(rec.recognizer, s) == 1 {
+                            if !current_text.is_empty() {
+                                accumulated_final_text.push_str(&current_text);
+                                send_result(RecognitionResult {
+                                    text: current_text,
+                                    is_final: true,
+                                    partial: String::new(),
+                                });
+                            }
+                            // Reset stream for next utterance
+                            sherpa_rs_sys::SherpaOnnxOnlineStreamReset(rec.recognizer, s);
+                            last_text.clear();
+                        }
                     }
+                } else {
+                    // Mock fallback
+                    send_result(RecognitionResult {
+                        text: "[mock] 你好".to_string(),
+                        is_final: true,
+                        partial: String::new(),
+                    });
+                }
+            }
+
+            // Cleanup
+            if let Some(s) = stream {
+                unsafe {
+                    sherpa_rs_sys::SherpaOnnxDestroyOnlineStream(s);
+                    // Note: recognizer is dropped automatically
                 }
             }
         });
     }
 }
 
-struct OfflineRecognizer {
-    recognizer: *const sherpa_rs_sys::SherpaOnnxOfflineRecognizer,
+struct OnlineRecognizer {
+    recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer,
 }
 
-impl OfflineRecognizer {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> String {
-        unsafe {
-            let stream = sherpa_rs_sys::SherpaOnnxCreateOfflineStream(self.recognizer);
-            if stream.is_null() {
-                return String::new();
-            }
-            sherpa_rs_sys::SherpaOnnxAcceptWaveformOffline(
-                stream,
-                sample_rate as i32,
-                samples.as_ptr(),
-                samples.len() as i32,
-            );
-            sherpa_rs_sys::SherpaOnnxDecodeOfflineStream(self.recognizer, stream);
-            let result_ptr = sherpa_rs_sys::SherpaOnnxGetOfflineStreamResult(stream);
-            let text = if result_ptr.is_null() {
-                String::new()
-            } else {
-                let raw_result = result_ptr.read();
-                cstr_to_string(raw_result.text)
-            };
+unsafe impl Send for OnlineRecognizer {}
+unsafe impl Sync for OnlineRecognizer {}
 
-            if !result_ptr.is_null() {
-                sherpa_rs_sys::SherpaOnnxDestroyOfflineRecognizerResult(result_ptr);
-            }
-            sherpa_rs_sys::SherpaOnnxDestroyOfflineStream(stream);
-            text
-        }
-    }
-}
-
-unsafe impl Send for OfflineRecognizer {}
-unsafe impl Sync for OfflineRecognizer {}
-
-impl Drop for OfflineRecognizer {
+impl Drop for OnlineRecognizer {
     fn drop(&mut self) {
         unsafe {
-            sherpa_rs_sys::SherpaOnnxDestroyOfflineRecognizer(self.recognizer);
+            sherpa_rs_sys::SherpaOnnxDestroyOnlineRecognizer(self.recognizer);
         }
     }
 }
 
-fn create_offline_recognizer(model_dir: &str, sample_rate: u32) -> Result<OfflineRecognizer, Box<dyn std::error::Error>> {
+fn create_online_recognizer(model_dir: &str, sample_rate: u32) -> Result<OnlineRecognizer, Box<dyn std::error::Error>> {
     use std::ffi::CString;
 
     let encoder = CString::new(format!("{}/encoder-epoch-99-avg-1.onnx", model_dir))?;
@@ -164,57 +170,95 @@ fn create_offline_recognizer(model_dir: &str, sample_rate: u32) -> Result<Offlin
     let decoding_method = CString::new("greedy_search")?;
 
     unsafe {
-        let transducer_config = sherpa_rs_sys::SherpaOnnxOfflineTransducerModelConfig {
+        let transducer_config = sherpa_rs_sys::SherpaOnnxOnlineTransducerModelConfig {
             encoder: encoder.as_ptr(),
             decoder: decoder.as_ptr(),
             joiner: joiner.as_ptr(),
         };
 
-        let model_config = sherpa_rs_sys::SherpaOnnxOfflineModelConfig {
+        let model_config = sherpa_rs_sys::SherpaOnnxOnlineModelConfig {
             transducer: transducer_config,
             paraformer: std::mem::zeroed(),
-            nemo_ctc: std::mem::zeroed(),
-            whisper: std::mem::zeroed(),
-            tdnn: std::mem::zeroed(),
+            zipformer2_ctc: std::mem::zeroed(),
             tokens: tokens.as_ptr(),
             num_threads: 4,
-            debug: 0,
             provider: provider.as_ptr(),
+            debug: 0,
             model_type: std::ptr::null(),
             modeling_unit: std::ptr::null(),
             bpe_vocab: std::ptr::null(),
-            telespeech_ctc: std::ptr::null(),
-            sense_voice: std::mem::zeroed(),
-            moonshine: std::mem::zeroed(),
-            fire_red_asr: std::mem::zeroed(),
-            dolphin: std::mem::zeroed(),
-            zipformer_ctc: std::mem::zeroed(),
-            canary: std::mem::zeroed(),
+            tokens_buf: std::ptr::null(),
+            tokens_buf_size: 0,
+            nemo_ctc: std::mem::zeroed(),
         };
 
-        let recognizer_config = sherpa_rs_sys::SherpaOnnxOfflineRecognizerConfig {
+        let recognizer_config = sherpa_rs_sys::SherpaOnnxOnlineRecognizerConfig {
             feat_config: sherpa_rs_sys::SherpaOnnxFeatureConfig {
                 sample_rate: sample_rate as i32,
                 feature_dim: 80,
             },
             model_config,
-            lm_config: std::mem::zeroed(),
             decoding_method: decoding_method.as_ptr(),
             max_active_paths: 4,
+            enable_endpoint: 1,
+            rule1_min_trailing_silence: 2.4,
+            rule2_min_trailing_silence: 1.2,
+            rule3_min_utterance_length: 20.0,
             hotwords_file: std::ptr::null(),
             hotwords_score: 0.0,
+            ctc_fst_decoder_config: std::mem::zeroed(),
             rule_fsts: std::ptr::null(),
             rule_fars: std::ptr::null(),
             blank_penalty: 0.0,
+            hotwords_buf: std::ptr::null(),
+            hotwords_buf_size: 0,
             hr: std::mem::zeroed(),
         };
 
-        let recognizer = sherpa_rs_sys::SherpaOnnxCreateOfflineRecognizer(&recognizer_config);
+        let recognizer = sherpa_rs_sys::SherpaOnnxCreateOnlineRecognizer(&recognizer_config);
         if recognizer.is_null() {
-            return Err("Failed to create offline recognizer".into());
+            return Err("Failed to create online recognizer".into());
         }
-        Ok(OfflineRecognizer { recognizer })
+        Ok(OnlineRecognizer { recognizer })
     }
+}
+
+fn resample_to_mono_16khz(input: &[f32], input_rate: u32, channels: u16) -> Vec<f32> {
+    if channels == 0 || input.is_empty() {
+        return Vec::new();
+    }
+
+    // Downmix to mono
+    let mono: Vec<f32> = if channels == 1 {
+        input.to_vec()
+    } else {
+        let ch = channels as usize;
+        input.chunks_exact(ch)
+            .map(|chunk| chunk.iter().sum::<f32>() / ch as f32)
+            .collect()
+    };
+
+    if input_rate == 16000 {
+        return mono;
+    }
+
+    // Linear interpolation resampling to 16kHz
+    let ratio = 16000.0 / input_rate as f64;
+    let output_len = (mono.len() as f64 * ratio) as usize;
+    if output_len == 0 {
+        return Vec::new();
+    }
+
+    let mut output = Vec::with_capacity(output_len);
+    for i in 0..output_len {
+        let src_idx = i as f64 / ratio;
+        let src_floor = src_idx.floor() as usize;
+        let src_ceil = (src_floor + 1).min(mono.len() - 1);
+        let frac = src_idx - src_floor as f64;
+        let sample = mono[src_floor] * (1.0 - frac as f32) + mono[src_ceil] * frac as f32;
+        output.push(sample);
+    }
+    output
 }
 
 unsafe fn cstr_to_string(ptr: *const std::os::raw::c_char) -> String {

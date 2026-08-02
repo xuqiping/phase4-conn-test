@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri
+src-tauri/target
+
+# Maven / 后端构建产物
+server/target
+
+# 备份文件
+*.bak
+*.backup*
+*.orig
+
+# 敏感信息(绝不提交,本地 .secrets/ 保管)
+.secrets/
+
+# 工作流 brainstorm 缓存
+.superpowers/

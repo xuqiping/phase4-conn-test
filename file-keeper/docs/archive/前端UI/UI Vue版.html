@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Keeper - Vue 3</title>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#42b883',
+                        dark: {
+                            bg: '#1e1e1e',
+                            panel: '#252525',
+                            border: '#3d3d3d',
+                            hover: '#2d2d2d'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* 简单动画 */
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        .zoom-enter-active { transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .zoom-leave-active { transition: all 0.15s ease-in; }
+        .zoom-enter-from, .zoom-leave-to { opacity: 0; transform: scale(0.95); }
+        
+        /* 隐藏滚动条 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+    </style>
+</head>
+<body class="overflow-hidden">
+    <div id="app"></div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, watch } = Vue;
+
+        // --- Mock Data ---
+        const mockGroups = ['全部', '最近打开', '工作', '学习', '项目'];
+
+        const mockFiles = [
+            { id: 1, name: '2026年度产品规划.docx', type: 'word', path: 'C:/Users/Documents/Work', group: '工作', tags: ['重要', '规划'], openCount: 24, lastOpen: '10分钟前', icon: 'file-text', color: 'text-blue-500' },
+            { id: 2, name: 'File Keeper UI设计稿.fig', type: 'design', path: 'D:/Projects/FileKeeper/Design', group: '项目', tags: ['设计'], openCount: 56, lastOpen: '2小时前', icon: 'box', color: 'text-purple-500' },
+            { id: 3, name: 'Q3 财务报表.xlsx', type: 'excel', path: 'C:/Users/Documents/Finance', group: '工作', tags: ['机密'], openCount: 12, lastOpen: '昨天', icon: 'file-text', color: 'text-green-600' },
+            { id: 4, name: '前端架构梳理', type: 'folder', path: 'D:/Projects/Frontend', group: '项目', tags: [], openCount: 128, lastOpen: '3天前', icon: 'folder', color: 'text-yellow-500' },
+            { id: 5, name: 'App Logo 原型.png', type: 'image', path: 'D:/Assets/Images', group: '项目', tags: ['素材'], openCount: 5, lastOpen: '1周前', icon: 'image', color: 'text-orange-500' },
+            { id: 6, name: '核心算法.js', type: 'code', path: 'D:/Projects/FileKeeper/Src', group: '工作', tags: ['代码'], openCount: 42, lastOpen: '刚刚', icon: 'code', color: 'text-yellow-600' },
+        ];
+
+        const mockProcesses = [
+            { pid: 14235, name: 'Microsoft Word', window: '2026年度产品规划.docx - Word', cpu: '2.4%' },
+            { pid: 8492, name: 'WPS Office', window: '2026年度产品规划.docx - WPS', cpu: '0.1%' }
+        ];
+
+        // --- Icon Component (Fixed Version) ---
+        // 修复了使用 'class' 关键字作为 Props 导致的 SyntaxError 编译错误，
+        // 同时改为直接渲染 SVG 以防止 Lucide 替换真实 DOM 导致 Vue 丢失节点引用。
+        const LucideIcon = {
+            props: ['name', 'size'],
+            template: `<span class="inline-flex items-center justify-center" v-html="svgContent"></span>`,
+            computed: {
+                svgContent() {
+                    if (!window.lucide || !window.lucide.icons || !this.name) return '';
+                    
+                    // Convert kebab-case (e.g. file-text) to PascalCase (e.g. FileText) for Lucide dict
+                    const iconName = this.name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+                    const icon = window.lucide.icons[iconName];
+                    if (!icon) return '';
+                    
+                    const size = this.size || 24;
+                    const stroke = this.$attrs['stroke-width'] || 2;
+                    
+                    // Create raw SVG element via Lucide
+                    const svgNode = window.lucide.createElement(icon);
+                    svgNode.setAttribute('width', size);
+                    svgNode.setAttribute('height', size);
+                    svgNode.setAttribute('stroke-width', stroke);
+                    
+                    return svgNode.outerHTML;
+                }
+            }
+        };
+
+        const App = {
+            components: { LucideIcon },
+            template: `
+            <div :class="['min-h-screen w-full flex flex-col font-sans transition-colors duration-300', theme === 'dark' ? 'dark bg-dark-bg text-gray-200' : 'bg-gray-50 text-gray-800']" @click="closeContextMenu">
+                
+                <!-- 1. 顶部标题栏 -->
+                <div class="h-10 flex items-center justify-between px-4 select-none border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-5 h-5 rounded bg-primary flex items-center justify-center">
+                            <lucide-icon name="box" size="12" class="text-white"></lucide-icon>
+                        </div>
+                        <span class="text-xs font-semibold tracking-wide">File Keeper</span>
+                    </div>
+                    <div class="flex items-center space-x-3 text-gray-400">
+                        <lucide-icon name="minus" size="14" class="hover:text-gray-600 dark:hover:text-white cursor-pointer"></lucide-icon>
+                        <lucide-icon name="maximize-2" size="12" class="hover:text-gray-600 dark:hover:text-white cursor-pointer"></lucide-icon>
+                        <lucide-icon name="x" size="16" class="hover:text-red-500 cursor-pointer"></lucide-icon>
+                    </div>
+                </div>
+
+                <!-- 2. 工具栏 -->
+                <div class="px-6 py-4 flex items-center justify-between bg-white dark:bg-dark-bg">
+                    <div class="relative w-96 group">
+                        <lucide-icon name="search" size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors"></lucide-icon>
+                        <input 
+                            type="text" 
+                            placeholder="搜索文件、路径或标签..." 
+                            v-model="searchQuery"
+                            class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-dark-hover border border-transparent focus:border-primary focus:bg-white dark:focus:bg-dark-bg rounded-md outline-none text-sm transition-all duration-200 shadow-sm"
+                        />
+                    </div>
+                    
+                    <div class="flex items-center space-x-3">
+                        <button class="flex items-center space-x-1 bg-primary hover:bg-[#369b6e] text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm shadow-primary/20">
+                            <lucide-icon name="plus" size="16"></lucide-icon>
+                            <span>添加文件</span>
+                        </button>
+                        
+                        <button 
+                            @click="toggleTheme"
+                            class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors"
+                            title="切换主题"
+                        >
+                            <lucide-icon :name="theme === 'dark' ? 'sun' : 'moon'" size="18"></lucide-icon>
+                        </button>
+
+                        <button class="p-2 rounded-md bg-gray-100 dark:bg-dark-hover hover:bg-gray-200 dark:hover:bg-[#383838] transition-colors">
+                            <lucide-icon name="settings" size="18"></lucide-icon>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. 分组标签栏 -->
+                <div class="px-6 flex items-center space-x-6 border-b border-gray-200 dark:border-dark-border bg-white dark:bg-dark-bg">
+                    <button
+                        v-for="group in groups"
+                        :key="group"
+                        @click="activeGroup = group"
+                        :class="['py-3 text-sm font-medium relative transition-colors', activeGroup === group ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+                    >
+                        {{ group }}
+                        <div v-if="activeGroup === group" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+                    </button>
+                    <button class="py-3 text-sm font-medium text-gray-400 hover:text-primary transition-colors flex items-center">
+                        <lucide-icon name="plus" size="14" class="mr-1"></lucide-icon> 新建分组
+                    </button>
+                </div>
+
+                <!-- 4. 主内容区 -->
+                <div class="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-dark-bg">
+                    
+                    <div v-if="filteredFiles.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400">
+                        <lucide-icon name="search" size="48" class="mb-4 opacity-20"></lucide-icon>
+                        <p>未找到匹配的文件</p>
+                    </div>
+
+                    <template v-else>
+                        <!-- 网格视图 -->
+                        <div v-if="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                            <div 
+                                v-for="file in filteredFiles" 
+                                :key="file.id"
+                                @contextmenu.prevent="handleContextMenu($event, file)"
+                                class="group relative bg-white dark:bg-dark-panel border border-gray-200 dark:border-dark-border rounded-lg p-4 hover:shadow-lg dark:hover:shadow-black/40 hover:border-primary/50 transition-all duration-200 cursor-pointer flex flex-col hover:-translate-y-1"
+                            >
+                                <button 
+                                    @click.stop="handleContextMenu($event, file)"
+                                    class="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-100 dark:hover:bg-[#383838] transition-all text-gray-500"
+                                >
+                                    <lucide-icon name="more-vertical" size="16"></lucide-icon>
+                                </button>
+                                
+                                <div class="flex-1 flex flex-col items-center justify-center py-4">
+                                    <lucide-icon :name="file.icon" size="48" :class="['mb-3 opacity-90 group-hover:opacity-100 group-hover:scale-110 transition-transform duration-300', file.color]" stroke-width="1.5"></lucide-icon>
+                                    <h3 class="text-sm font-medium text-center line-clamp-2 leading-snug w-full px-2" :title="file.name">
+                                        {{ file.name }}
+                                    </h3>
+                                </div>
+                                
+                                <div class="mt-2 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 w-full pt-3 border-t border-gray-100 dark:border-[#333]">
+                                    <span class="truncate max-w-[80px]" :title="file.group">{{ file.group }}</span>
+                                    <span>打开 {{ file.openCount }} 次</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 列表视图 -->
+                        <div v-else class="flex flex-col bg-white dark:bg-dark-panel rounded-lg border border-gray-200 dark:border-dark-border overflow-hidden">
+                            <div class="flex items-center px-4 py-3 bg-gray-50 dark:bg-dark-hover border-b border-gray-200 dark:border-dark-border text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                <div class="w-1/2">名称</div>
+                                <div class="w-1/6">分组</div>
+                                <div class="w-1/6">标签</div>
+                                <div class="w-1/6 text-right">最后打开</div>
+                            </div>
+                            <div 
+                                v-for="file in filteredFiles" 
+                                :key="file.id" 
+                                @contextmenu.prevent="handleContextMenu($event, file)"
+                                class="flex items-center px-4 py-3 border-b border-gray-100 dark:border-[#333] hover:bg-gray-50 dark:hover:bg-dark-hover transition-colors group cursor-pointer"
+                            >
+                                <div class="w-1/2 flex items-center pr-4">
+                                    <lucide-icon :name="file.icon" size="18" :class="[file.color, 'mr-3 flex-shrink-0']"></lucide-icon>
+                                    <div class="flex flex-col truncate">
+                                        <span class="text-sm font-medium truncate">{{ file.name }}</span>
+                                        <span class="text-[11px] text-gray-400 truncate mt-0.5">{{ file.path }}</span>
+                                    </div>
+                                </div>
+                                <div class="w-1/6 text-sm text-gray-500">{{ file.group }}</div>
+                                <div class="w-1/6 flex flex-wrap gap-1">
+                                    <span v-for="tag in file.tags.slice(0,2)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-[#383838] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-[#444]">
+                                        {{ tag }}
+                                    </span>
+                                </div>
+                                <div class="w-1/6 text-right text-sm text-gray-400 flex items-center justify-end space-x-4">
+                                    <span>{{ file.lastOpen }}</span>
+                                    <button 
+                                        @click.stop="handleContextMenu($event, file)"
+                                        class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition-all text-gray-500"
+                                    >
+                                        <lucide-icon name="more-vertical" size="16"></lucide-icon>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- 5. 状态栏 -->
+                <div class="h-10 px-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-200 dark:border-dark-border bg-white dark:bg-dark-panel">
+                    <div>共 {{ filteredFiles.length }} 个项目</div>
+                    <div class="flex items-center space-x-2 bg-gray-100 dark:bg-dark-bg p-1 rounded-md">
+                        <button 
+                            @click="viewMode = 'grid'"
+                            :class="['p-1 rounded transition-colors', viewMode === 'grid' ? 'bg-white dark:bg-[#383838] shadow-sm text-primary' : 'hover:text-gray-800 dark:hover:text-gray-200']"
+                        >
+                            <lucide-icon name="grid" size="14"></lucide-icon>
+                        </button>
+                        <button 
+                            @click="viewMode = 'list'"
+                            :class="['p-1 rounded transition-colors', viewMode === 'list' ? 'bg-white dark:bg-[#383838] shadow-sm text-primary' : 'hover:text-gray-800 dark:hover:text-gray-200']"
+                        >
+                            <lucide-icon name="list" size="14"></lucide-icon>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- --- Context Menu (右键菜单) --- -->
+                <transition name="fade">
+                    <div 
+                        v-if="contextMenu"
+                        class="fixed z-50 w-56 bg-white dark:bg-[#2d2d2d] rounded-lg shadow-xl border border-gray-200 dark:border-[#444] py-1 text-sm overflow-hidden"
+                        :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+                        @click.stop="() => {}"
+                    >
+                        <div class="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-100 dark:border-[#444] truncate">
+                            {{ contextMenu.file.name }}
+                        </div>
+                        
+                        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors">
+                            <lucide-icon name="play-circle" size="14" class="mr-2"></lucide-icon> 打开
+                        </button>
+                        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors">
+                            <lucide-icon name="folder-input" size="14" class="mr-2"></lucide-icon> 在文件夹中显示
+                        </button>
+                        
+                        <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
+                        
+                        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors">
+                            <lucide-icon name="edit-3" size="14" class="mr-2"></lucide-icon> 编辑信息
+                        </button>
+                        <button class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-[#383838] flex items-center text-gray-700 dark:text-gray-200 transition-colors">
+                            <lucide-icon name="tag" size="14" class="mr-2"></lucide-icon> 添加标签
+                        </button>
+                        
+                        <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
+                        
+                        <!-- 核心特色功能：高亮展示 -->
+                        <button 
+                            @click="openProcessManager(contextMenu.file)"
+                            class="w-full text-left px-4 py-2 bg-green-50/50 hover:bg-green-100 dark:bg-[#2d4a3e]/30 dark:hover:bg-[#2d4a3e] flex items-center text-primary font-medium transition-colors"
+                        >
+                            <lucide-icon name="activity" size="14" class="mr-2"></lucide-icon> 查看已打开的进程
+                        </button>
+                        
+                        <div class="h-px bg-gray-100 dark:bg-[#444] my-1"></div>
+                        
+                        <button class="w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-500 transition-colors">
+                            <lucide-icon name="trash-2" size="14" class="mr-2"></lucide-icon> 移除收藏
+                        </button>
+                    </div>
+                </transition>
+
+                <!-- --- Process Management Modal (进程管理对话框) --- -->
+                <transition name="fade">
+                    <div v-if="processModalFile" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+                        <div class="bg-white dark:bg-dark-panel w-full max-w-lg rounded-xl shadow-2xl border border-gray-200 dark:border-dark-border overflow-hidden flex flex-col transform transition-all">
+                            
+                            <!-- Header -->
+                            <div class="px-6 py-4 border-b border-gray-200 dark:border-dark-border flex items-center justify-between bg-gray-50 dark:bg-dark-hover">
+                                <div class="flex items-center text-primary">
+                                    <lucide-icon name="activity" size="20" class="mr-2"></lucide-icon>
+                                    <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100">进程管理器</h2>
+                                </div>
+                                <button 
+                                    @click="processModalFile = null"
+                                    class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors p-1 rounded-md hover:bg-gray-200 dark:hover:bg-[#3d3d3d]"
+                                >
+                                    <lucide-icon name="x" size="18"></lucide-icon>
+                                </button>
+                            </div>
+
+                            <!-- Content -->
+                            <div class="p-6">
+                                <div class="mb-4">
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">正在检查被占用的文件：</p>
+                                    <div class="flex items-center font-medium text-sm text-gray-800 dark:text-gray-200 bg-gray-100 dark:bg-dark-bg p-3 rounded-md border border-gray-200 dark:border-[#333]">
+                                        <lucide-icon :name="processModalFile.icon" size="16" :class="[processModalFile.color, 'mr-2']"></lucide-icon>
+                                        <span class="truncate">{{ processModalFile.name }}</span>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-3">
+                                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">相关的系统进程 ({{ mockProcesses.length }})</h3>
+                                    
+                                    <div v-for="process in mockProcesses" :key="process.pid" class="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-dark-border hover:border-gray-300 dark:hover:border-[#555] bg-white dark:bg-dark-panel group transition-colors">
+                                        <div class="flex-1 min-w-0 mr-4">
+                                            <div class="flex items-center text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">
+                                                <lucide-icon name="box" size="14" class="mr-1.5 text-blue-500"></lucide-icon>
+                                                {{ process.name }}
+                                                <span class="ml-2 text-xs font-normal text-gray-400 bg-gray-100 dark:bg-[#333] px-1.5 py-0.5 rounded">PID: {{ process.pid }}</span>
+                                            </div>
+                                            <div class="text-xs text-gray-500 truncate" :title="process.window">
+                                                窗口: {{ process.window }}
+                                            </div>
+                                        </div>
+                                        
+                                        <div v-if="confirmClosePID === process.pid" class="flex items-center space-x-2">
+                                            <span class="text-xs text-red-500 font-medium">确认结束?</span>
+                                            <button 
+                                                @click="confirmClosePID = null"
+                                                class="px-2 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-[#333] dark:hover:bg-[#444] rounded text-gray-600 dark:text-gray-300"
+                                            >取消</button>
+                                            <button class="px-2 py-1.5 text-xs bg-red-500 hover:bg-red-600 text-white rounded font-medium shadow-sm shadow-red-500/20">结束</button>
+                                        </div>
+                                        <button 
+                                            v-else
+                                            @click="confirmClosePID = process.pid"
+                                            class="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-xs font-medium text-red-500 border border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-all"
+                                        >
+                                            关闭进程
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Footer -->
+                            <div class="px-6 py-4 border-t border-gray-200 dark:border-dark-border bg-gray-50 dark:bg-dark-hover flex justify-end space-x-3">
+                                <button 
+                                    @click="processModalFile = null"
+                                    class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#3d3d3d] rounded-md transition-colors font-medium"
+                                >
+                                    关闭
+                                </button>
+                                <button class="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors font-medium shadow-sm shadow-red-500/20">
+                                    一键关闭所有
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </transition>
+
+                <!-- Global Click Handler -->
+                <div v-if="contextMenu" class="fixed inset-0 z-40" @click="closeContextMenu"></div>
+            </div>
+            `,
+            setup() {
+                const theme = ref('dark');
+                const viewMode = ref('grid');
+                const activeGroup = ref('全部');
+                const searchQuery = ref('');
+                
+                const contextMenu = ref(null);
+                const processModalFile = ref(null);
+                const confirmClosePID = ref(null);
+
+                const groups = ref(mockGroups);
+                const files = ref(mockFiles);
+
+                // Handle theme change
+                watch(theme, (newTheme) => {
+                    if (newTheme === 'dark') {
+                        document.documentElement.classList.add('dark');
+                    } else {
+                        document.documentElement.classList.remove('dark');
+                    }
+                }, { immediate: true });
+
+                const toggleTheme = () => {
+                    theme.value = theme.value === 'dark' ? 'light' : 'dark';
+                };
+
+                const filteredFiles = computed(() => {
+                    return files.value.filter(f => {
+                        const matchGroup = activeGroup.value === '全部' || f.group === activeGroup.value || (activeGroup.value === '最近打开' && f.openCount > 20);
+                        const matchSearch = f.name.toLowerCase().includes(searchQuery.value.toLowerCase()) || f.tags.some(t => t.includes(searchQuery.value));
+                        return matchGroup && matchSearch;
+                    });
+                });
+
+                const handleContextMenu = (e, file) => {
+                    // Prevent context menu from going off-screen
+                    let x = e.clientX;
+                    let y = e.clientY;
+                    
+                    // Simple bounds checking (assuming menu is roughly 224x280)
+                    if (window.innerWidth - x < 224) x = window.innerWidth - 224;
+                    if (window.innerHeight - y < 280) y = window.innerHeight - 280;
+
+                    contextMenu.value = { x, y, file };
+                };
+
+                const closeContextMenu = () => {
+                    contextMenu.value = null;
+                };
+
+                const openProcessManager = (file) => {
+                    processModalFile.value = file;
+                    closeContextMenu();
+                };
+
+                return {
+                    theme,
+                    viewMode,
+                    activeGroup,
+                    searchQuery,
+                    contextMenu,
+                    processModalFile,
+                    confirmClosePID,
+                    groups,
+                    mockProcesses,
+                    filteredFiles,
+                    toggleTheme,
+                    handleContextMenu,
+                    closeContextMenu,
+                    openProcessManager
+                };
+            }
+        };
+
+        const app = createApp(App);
+        app.mount('#app');
+    </script>
+</body>
+</html>

@@ -18,6 +18,7 @@ venv.bak/
 .coverage
 htmlcov/
 *.egg-info/
+.runtime-checkpoints/
 build/
 dist/
 
@@ -40,6 +41,17 @@ credentials.json
 secrets.json
 config.local.*
 *.secret
+agent-platform/local-dev-env.ps1
+
+# 本地调试产物 / 截图 / 临时查询
+agent-platform/*.png
+agent-platform/width-probe.json
+agent-platform/请求工具/
+agent-platform/.tmp_*.sql
+agent-platform/backend/runtime.err
+agent-platform/backend/runtime.out
+docs/
+项目部署需要文件/
 
 # 日志和临时文件
 *.log
@@ -52,11 +64,22 @@ downloads/
 tmp/
 temp/
 
-# 用户自定义 - 含 application 的文件
-*application*.*
+# Java / Spring Boot
+target/
+*.class
+*.jar
+*.war
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
 
 # Node.js
 node_modules/
+.vite/
+
+# Local tool artifacts
+.playwright-mcp/
+.superpowers/
 
 # Rust / Cargo
 target/
@@ -66,3 +89,10 @@ models/
 
 # Git 同步脚本日志
 .git-sync.log
+
+# Claude Code 本地配置(机器专属，不入库)
+.claude/settings.local.json
+
+# agent-platform 运行时上传 / 散落截图（不入库）
+agent-platform/backend/uploads/
+agent-platform/login-page.png

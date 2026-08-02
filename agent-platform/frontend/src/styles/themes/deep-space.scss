@@ -1,0 +1,45 @@
+// ============================================================
+// Deep Space 主题 — 深邃宇宙空间感
+// 深蓝底 + 冷蓝强调 + 玻璃拟态
+// ============================================================
+
+[data-theme="deep-space"] {
+  // === 主色 ===
+  --color-primary:         #4F7CFF;
+  --color-primary-hover:   #6B91FF;
+  --color-primary-active:  #3A66E8;
+  --color-primary-light:   rgba(79, 124, 255, 0.12);
+  --color-primary-rgb:     79, 124, 255;
+
+  // === 语义色 ===
+  --color-secondary:       #8B8FA3;
+  --color-success:         #4ADE80;
+  --color-warning:         #FBBF24;
+  --color-danger:          #F87171;
+  --color-info:            #60A5FA;
+
+  // === 背景层级 ===
+  --color-bg:              #060A13;
+  --color-surface:         #0C1220;
+  --color-card:            #131B2E;
+  --color-elevated:        #1A2440;
+  --color-overlay:         rgba(6, 10, 19, 0.8);
+
+  // === 文字 ===
+  --color-text-primary:    #E8ECF4;
+  --color-text-secondary:  #8B8FA3;
+  --color-text-tertiary:   #4A5068;
+  --color-text-inverse:    #060A13;
+  --color-text-link:       #4F7CFF;
+
+  // === 边框 ===
+  --color-border:          #1E2A45;
+  --color-border-light:    #151D32;
+  --color-border-focus:    #4F7CFF;
+
+  // === 特殊 ===
+  --color-gradient-start:  #4F7CFF;
+  --color-gradient-end:    #9333EA;
+  --shadow-primary:        0 4px 16px rgba(79, 124, 255, 0.25);
+  --shadow-glow:           0 0 30px rgba(79, 124, 255, 0.1);
+}

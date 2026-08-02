@@ -132,7 +132,7 @@ impl AudioCapture {
                 let config = device.default_input_config()?;
                 let sender = self.sender.clone();
                 let all_samples = self.all_samples.clone();
-                let sample_rate = config.sample_rate().0;
+                let sample_rate = config.sample_rate();
                 let channels = config.channels();
 
                 let err_fn = move |err| {

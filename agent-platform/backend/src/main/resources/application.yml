@@ -1,0 +1,139 @@
+# agent-platform/backend/src/main/resources/application.yml
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: agent-platform
+
+  # @Scheduled 默认单线程池；IndexJobWorker + ReconciliationWorker 两轮询共存时须 ≥2，防慢对账饿死 embed 轮询
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:agent_platform}
+    username: ${DB_USER:postgres}
+    # !! 安全审计 #2 !! 禁止把真实密码当默认值提交进仓库（旧默认值 aa64221886 已泄露进 git 历史，必须轮换）。
+    # 空默认值：未注入 DB_PASSWORD 时 Hikari 启动即连接失败（显式失败 > 静默用弱默认）。
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 30000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+mybatis-plus:
+  mapper-locations: classpath*:/com/superprogrammer/**/mapper/xml/*.xml
+  type-aliases-package: com.superprogrammer.**.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    # SQL 走 slf4j（按 mapper 包名分级），不再 StdOutImpl 裸打 stdout 刷屏。
+    # 调试单 mapper SQL：把 logging.level 下对应 mapper 包降到 DEBUG。
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+jwt:
+  # !! 安全审计 #2 !! 旧默认密钥 bXlT...2026== 已泄露进 git 历史，必须轮换（base64 解开 = mySuperSecretKeyForAgentPlatformProject2026）。
+  # 无默认值：未注入 JWT_SECRET 时 JwtUtil @PostConstruct 直接拒绝启动。
+  # 生成方式: openssl rand -base64 64 | tr -d '\n'
+  secret: ${JWT_SECRET}
+  access-expiration: 900000
+  refresh-expiration: 604800000
+
+logging:
+  # 日志输出文件（控制台照常输出，文件供后续审查）。路径相对工作目录，云上即 jar 同级 logs/。
+  # 可用环境变量 LOG_FILE 覆盖（如 Docker 挂卷 /var/log/agent-platform/agent-platform.log）。
+  file:
+    name: ${LOG_FILE:logs/agent-platform.log}
+  logback:
+    rollingpolicy:
+      max-size: 50MB
+      max-history: 30
+      total-size-cap: 2GB
+  level:
+    # 业务 INFO：保留记忆管线关键日志（processMemory / 记忆注入 / LLM调用 / applyClean 等），
+    # 砍掉 DEBUG 噪声（JwtAuthenticationFilter 逐请求认证、内部细节）。
+    com.superprogrammer: INFO
+    # mapper 全 WARN：SQL（DEBUG）不再刷屏。需调试某 mapper SQL 时单降该包到 DEBUG。
+    com.superprogrammer.knowledge.mapper: WARN
+    com.superprogrammer.chat.mapper: WARN
+    com.superprogrammer.auth.mapper: WARN
+    com.superprogrammer.system.mapper: WARN
+    com.superprogrammer.project.mapper: WARN
+    org.apache.ibatis: WARN
+    # security 降 INFO：砍掉「Securing GET ...」「Set SecurityContextHolder」每请求一行。
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+
+# Agent Markdown数据目录（可选，配置后启用Markdown同步功能）
+agent:
+  data-path: ${AGENT_DATA_PATH:}
+
+runtime:
+  gateway:
+    mode: sidecar
+    sidecar-base-url: http://localhost:8090
+    java-callback-base-url: http://localhost:8080
+  # 安全审计 #1：sidecar 回调共享密钥。sidecar 出站请求须带 Header X-Runtime-Token: <此值>。
+  # env RUNTIME_CALLBACK_TOKEN；空 → fail-closed（拒绝所有回调），防忘配后裸奔。生成：openssl rand -hex 32
+  callback:
+    token: ${RUNTIME_CALLBACK_TOKEN:}
+
+rag:
+  visibility-cache:
+    enabled: true
+    ttl-ms: 1800000
+    scan-count: 100
+  answer-cache:
+    enabled: false
+    sim-threshold: 0.90
+    top-n: 5
+    ttl-days: 7
+  reconciliation:
+    enabled: false          # 阶段7 对账 + decay 清理 worker（opt-in）
+    poll-ms: 600000         # 10 分钟
+    decay-batch: 500
+    kb-batch: 20
+    auto-repair: false      # drift → REINDEX：claimBatch 已消费 REINDEX，翻 true 即修复（承担 re-embed 计费）
+
+# 钉钉 H5 微应用免登（默认关，配齐 AppKey/AppSecret 再开）
+dingtalk:
+  enabled: ${DINGTALK_ENABLED:false}
+  app-key: ${DINGTALK_APP_KEY:}
+  app-secret: ${DINGTALK_APP_SECRET:}
+  agent-id: ${DINGTALK_AGENT_ID:}

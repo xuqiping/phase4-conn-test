@@ -1,0 +1,62 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: file-keeper-server
+  profiles:
+    active: dev
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${FILE_KEEPER_DB_URL:jdbc:postgresql://localhost:5432/file_keeper}
+    username: ${FILE_KEEPER_DB_USERNAME:postgres}
+    password: ${FILE_KEEPER_DB_PASSWORD:postgres}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: ${FILE_KEEPER_REDIS_HOST:localhost}
+      port: ${FILE_KEEPER_REDIS_PORT:6379}
+      password: ${FILE_KEEPER_REDIS_PASSWORD:}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+file-keeper:
+  bootstrap:
+    super-admin:
+      email: ${FILE_KEEPER_SUPER_ADMIN_EMAIL:}
+      phone: ${FILE_KEEPER_SUPER_ADMIN_PHONE:}
+      password: ${FILE_KEEPER_SUPER_ADMIN_PASSWORD:}
+  auth:
+    jwt:
+      secret: ${FILE_KEEPER_JWT_SECRET:}
+      access-token-minutes: 15
+      client-access-token-hours: 24
+    refresh-token:
+      days: 7
+    verification:
+      code-minutes: 10
+      verified-minutes: 30
+      dev-fixed-code: ${FILE_KEEPER_VERIFICATION_DEV_FIXED_CODE:}
+    entitlement:
+      private-key-pem: ${FILE_KEEPER_AUTH_PRIVATE_KEY:}
+
+work-report:
+  ai:
+    provider: ${WORK_REPORT_AI_PROVIDER:qwen}      # qwen / doubao / claude
+    api-key: ${WORK_REPORT_AI_API_KEY:}
+    endpoint: ${WORK_REPORT_AI_ENDPOINT:}
+    timeout-seconds: 30
+    max-tokens: 2048
+    model: ${WORK_REPORT_AI_MODEL:}
+  credential-key: ${WORK_REPORT_CREDENTIAL_KEY:}
+  feishu:
+    api-base: ${WORK_REPORT_FEISHU_API_BASE:https://open.feishu.cn/open-apis}

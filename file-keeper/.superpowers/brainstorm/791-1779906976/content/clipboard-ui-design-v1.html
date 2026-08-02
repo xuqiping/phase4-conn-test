@@ -1,0 +1,64 @@
+<h2>剪贴板强化：界面草图</h2>
+<p class="subtitle">这是第一稿结构草图，不是最终视觉稿。请看信息层级是否合理：左侧分类、中间历史、右侧预览/操作，以及快捷面板的高频粘贴体验。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">主窗口：剪贴板管理页</div>
+    <div class="mockup-body">
+      <div class="mock-nav">文件管理　进程管理　<span style="color:#22c55e;font-weight:700">剪贴板</span></div>
+      <div style="display:flex;gap:12px;margin-top:12px;min-height:330px">
+        <div style="width:130px;border-right:1px solid #e5e7eb;padding-right:10px;font-size:13px;line-height:2">
+          <div style="font-weight:700;color:#22c55e">全部</div>
+          <div>文本</div>
+          <div>图片</div>
+          <div>文件</div>
+          <div>富文本</div>
+          <div>链接</div>
+          <div>颜色</div>
+          <div>已收藏</div>
+          <div>安全事件</div>
+          <div style="margin-top:12px;color:#6b7280">缓存 1.2GB / 2GB</div>
+        </div>
+        <div style="width:330px">
+          <input class="mock-input" placeholder="搜索内容、来源应用、OCR 文本..." />
+          <div class="placeholder" style="margin-top:10px;height:56px;text-align:left;padding:10px">文本：会议纪要片段<br><span style="font-size:12px;color:#6b7280">来自 Word · 2分钟前</span></div>
+          <div class="placeholder" style="margin-top:8px;height:56px;text-align:left;padding:10px">图片：截图 1280×720<br><span style="font-size:12px;color:#6b7280">OCR：报错日志...</span></div>
+          <div class="placeholder" style="margin-top:8px;height:56px;text-align:left;padding:10px">文件集合：3个文件 · 42MB<br><span style="font-size:12px;color:#6b7280">已保存副本</span></div>
+          <div class="placeholder" style="margin-top:8px;height:56px;text-align:left;padding:10px">链接：https://example.com<br><span style="font-size:12px;color:#6b7280">预览未联网抓取</span></div>
+        </div>
+        <div style="flex:1;border-left:1px solid #e5e7eb;padding-left:12px">
+          <div class="label">预览与操作</div>
+          <div class="placeholder" style="height:120px;margin-top:8px">内容预览 / 图片缩略图 / 文件列表</div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="mock-button">复制</button>
+            <button class="mock-button">粘贴</button>
+            <button class="mock-button">纯文本</button>
+            <button class="mock-button">Markdown</button>
+            <button class="mock-button">收藏</button>
+            <button class="mock-button">删除</button>
+          </div>
+          <div class="placeholder" style="height:74px;margin-top:12px;text-align:left;padding:10px">规则提示：文件副本受 2GB 总空间和后缀规则限制。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">快捷面板：快搜快粘贴</div>
+    <div class="mockup-body" style="display:flex;justify-content:center;align-items:center;min-height:390px;background:#f8fafc">
+      <div style="width:420px;border:1px solid #d1d5db;border-radius:16px;padding:14px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.22)">
+        <input class="mock-input" placeholder="直接输入搜索，↑↓ 选择，Enter 粘贴" />
+        <div style="display:flex;gap:6px;margin:10px 0;font-size:12px;color:#6b7280">
+          <span>全部</span><span>文本</span><span>图片</span><span>文件</span><span>链接</span>
+        </div>
+        <div class="placeholder" style="height:44px;text-align:left;padding:9px;border-color:#22c55e">① 文本：刚复制的内容摘要</div>
+        <div class="placeholder" style="height:44px;margin-top:7px;text-align:left;padding:9px">② 图片：截图 · OCR 命中“错误”</div>
+        <div class="placeholder" style="height:44px;margin-top:7px;text-align:left;padding:9px">③ 文件：报价单.xlsx · 已保存副本</div>
+        <div style="border-top:1px solid #e5e7eb;margin-top:10px;padding-top:8px;font-size:12px;color:#6b7280;display:flex;justify-content:space-between">
+          <span>Enter 复制/粘贴 · Shift+Enter 纯文本</span>
+          <span>设置</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
