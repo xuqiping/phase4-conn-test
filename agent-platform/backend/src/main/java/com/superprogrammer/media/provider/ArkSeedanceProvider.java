@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
+import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
 import io.netty.channel.ChannelOption;
@@ -29,13 +30,14 @@ import java.util.Map;
  *   <li>{@code GET  {base}/contents/generations/tasks/{id}} 查态，{@code status} ∈ queued/running/succeeded/failed。</li>
  * </ul>
  *
- * <p><b>base URL 可配</b>：直接取 doubao provider 的 {@code apiEndpoint} 作 baseUrl（含版本段），
+ * <p><b>base URL 可配</b>：直接取视频 provider 的 {@code apiEndpoint} 作 baseUrl（含版本段），
  * 不再硬编 {@code /api/v3}。官方 Ark 填 {@code https://ark.cn-beijing.volces.com/api/v3}，
  * 第三方网关（如 ctaigw）填 {@code https://ai.ctaigw.cn/v1}——两者只是 base 不同，路径统一
  * {@code /contents/generations/tasks}，其余参数与官方完全一致。
  *
- * <p>Ark key 复用 doubao provider（同账号一把 key 通吃 Ark 所有端点）：每次调用前解析
- * {@code llm_providers.name='doubao'} 的 endpoint + AES 解密 key；WebClient 按
+ * <p><b>provider 独立</b>：视频用专门 provider（默认 name={@code seedance}，由 {@code media.provider-name} 配），
+ * 与 chat 的 doubao 解耦——各自 endpoint/key/model，互不影响。每次调用前解析
+ * {@code llm_providers.name=<provider-name>} 的 endpoint + AES 解密 key；WebClient 按
  * (endpoint, apiKeyEnc) 指纹缓存，key 轮换后自动重建（照抄 OpenAICompatibleProvider 超时设置）。
  *
  * <p>安全：密钥只进 Authorization header，不落日志；失败原因走固定脱敏话术（errorMsg 截断）。
@@ -47,8 +49,6 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     public static final String ID = "ark-seedance";
 
-    /** doubao provider name（Ark 统一 key 复用入口）。 */
-    private static final String DOUBAO_PROVIDER_NAME = "doubao";
     /** 任务端点相对路径（拼在可配 base 之后；不再硬编 /api/v3，兼容 ctaigw /v1 等网关）。 */
     private static final String TASKS_PATH = "/contents/generations/tasks";
 
@@ -58,6 +58,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     private final LlmProviderService llmProviderService;
     private final ObjectMapper objectMapper;
+    private final MediaGenProperties properties;
 
     /** 缓存的 WebClient + 其指纹（endpoint + 密文），key 轮换后下次调用重建。 */
     private volatile WebClient cachedClient;
@@ -196,25 +197,28 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         }
     }
 
-    // ---------- doubao provider 解析 + WebClient 缓存 ----------
+    // ---------- 视频 provider 解析 + WebClient 缓存 ----------
 
-    /** 解析 doubao provider（endpoint + 解密 key），按指纹复用/重建 WebClient。 */
+    /** 解析视频 provider（endpoint + 解密 key），按指纹复用/重建 WebClient。 */
     private ResolvedArk resolveArk() {
-        LlmProviderEntity doubao = llmProviderService.getByName(DOUBAO_PROVIDER_NAME);
-        if (doubao == null) {
-            throw new IllegalStateException("未找到 doubao provider，无法生成视频（请先在 LLM 供应商配置 doubao）");
+        String providerName = properties.getProviderName();
+        LlmProviderEntity provider = llmProviderService.getByName(providerName);
+        if (provider == null) {
+            throw new IllegalStateException("未找到视频 provider(name=" + providerName
+                    + ")，无法生成视频（请先在「全局模型供应商」建一条 name=" + providerName
+                    + " 的 provider，配 endpoint/key/视频模型）");
         }
-        if (doubao.getApiEndpoint() == null || doubao.getApiEndpoint().isBlank()) {
-            throw new IllegalStateException("doubao provider 未配置 API 端点");
+        if (provider.getApiEndpoint() == null || provider.getApiEndpoint().isBlank()) {
+            throw new IllegalStateException("视频 provider(name=" + providerName + ") 未配置 API 端点");
         }
-        String apiKey = llmProviderService.getDecryptedApiKey(doubao.getId());
+        String apiKey = llmProviderService.getDecryptedApiKey(provider.getId());
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("doubao provider 未配置 API Key");
+            throw new IllegalStateException("视频 provider(name=" + providerName + ") 未配置 API Key");
         }
-        String fingerprint = doubao.getApiEndpoint() + "|" + doubao.getApiKeyEnc();
+        String fingerprint = provider.getApiEndpoint() + "|" + provider.getApiKeyEnc();
         WebClient client = cachedClient;
         if (client == null || !fingerprint.equals(cachedFingerprint)) {
-            client = buildClient(doubao.getApiEndpoint(), apiKey);
+            client = buildClient(provider.getApiEndpoint(), apiKey);
             cachedClient = client;
             cachedFingerprint = fingerprint;
         }
@@ -222,7 +226,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
     }
 
     private WebClient buildClient(String rawEndpoint, String apiKey) {
-        // baseUrl 直接用 doubao 配的 endpoint（含版本段，如 /api/v3 或 /v1），
+        // baseUrl 直接用视频 provider 配的 endpoint（含版本段，如 /api/v3 或 /v1），
         // 只剥尾随斜杠。调用处拼相对路径 /contents/generations/tasks，兼容官方/网关。
         String base = rawEndpoint.replaceAll("/+$", "");
         HttpClient httpClient = HttpClient.create()

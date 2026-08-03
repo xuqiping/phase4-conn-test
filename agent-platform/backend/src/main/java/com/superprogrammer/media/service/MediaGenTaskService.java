@@ -21,7 +21,7 @@ import java.util.Set;
 /**
  * 媒体生成任务提交入口。
  *
- * <p>职责：参数校验（运维上限）+ 解析 doubao provider + 建 PENDING 任务行 + 返回 taskId。
+ * <p>职责：参数校验（运维上限）+ 解析视频 provider（默认 name=seedance，与 chat 的 doubao 解耦）+ 建 PENDING 任务行 + 返回 taskId。
  * 不在此派发执行——交由 {@link com.superprogrammer.media.service.MediaGenTaskWorker} 定时轮询认领
  * （纯 poll 模式，照抄 IndexJob：天然崩溃恢复，重启后下次 poll 自动续跑 RUNNING 行）。
  */
@@ -29,9 +29,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class MediaGenTaskService {
-
-    /** doubao provider name（Ark 视频 key 复用入口，与 ArkSeedanceProvider 一致）。 */
-    private static final String DOUBAO_PROVIDER_NAME = "doubao";
 
     /** 分辨率白名单（含上限校验：≤ maxRes）。4K 仅 SeedDance 2.0 全版支持。 */
     private static final Set<String> RES_WHITELIST = Set.of("480p", "720p", "1080p", "4K");
@@ -59,7 +56,7 @@ public class MediaGenTaskService {
      * @param generateAudio 生成原生音频开关（null 默认 false）
      * @param taskType      TEXT2VIDEO / IMAGE2VIDEO
      * @param refFileId     图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填）
-     * @param model         Ark 模型 id（null 则取 doubao 首个模型）
+     * @param model         Ark 模型 id（null 则取视频 provider 首个模型）
      * @param userId        提交用户（nullable：系统调用）
      * @return 任务 id
      */
@@ -71,13 +68,15 @@ public class MediaGenTaskService {
         }
         validate(prompt, ratio, duration, resolution, taskType, refFileId);
 
-        LlmProviderEntity doubao = llmProviderService.getByName(DOUBAO_PROVIDER_NAME);
-        if (doubao == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "未找到 doubao provider，请先在 LLM 供应商配置");
+        String providerName = properties.getProviderName();
+        LlmProviderEntity provider = llmProviderService.getByName(providerName);
+        if (provider == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "未找到视频 provider(name=" + providerName
+                    + ")，请先在「全局模型供应商」建一条 name=" + providerName + " 的 provider");
         }
-        String resolvedModel = (model == null || model.isBlank()) ? firstModel(doubao) : model;
+        String resolvedModel = (model == null || model.isBlank()) ? firstModel(provider) : model;
         if (resolvedModel == null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "doubao provider 未配置模型列表");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "视频 provider 未配置模型列表（models）");
         }
 
         Map<String, Object> config = new HashMap<>();
@@ -91,7 +90,7 @@ public class MediaGenTaskService {
 
         MediaGenTask task = new MediaGenTask();
         task.setUserId(userId);
-        task.setProviderId(doubao.getId());
+        task.setProviderId(provider.getId());
         task.setModel(resolvedModel);
         task.setTaskType(taskType);
         task.setStatus(MediaGenTask.STATUS_PENDING);
@@ -137,10 +136,10 @@ public class MediaGenTaskService {
         }
     }
 
-    private String firstModel(LlmProviderEntity doubao) {
-        if (doubao.getModels() == null || doubao.getModels().isBlank()) return null;
+    private String firstModel(LlmProviderEntity provider) {
+        if (provider.getModels() == null || provider.getModels().isBlank()) return null;
         try {
-            List<?> models = objectMapper.readValue(doubao.getModels(), List.class);
+            List<?> models = objectMapper.readValue(provider.getModels(), List.class);
             return models.isEmpty() ? null : String.valueOf(models.get(0));
         } catch (Exception e) {
             return null;

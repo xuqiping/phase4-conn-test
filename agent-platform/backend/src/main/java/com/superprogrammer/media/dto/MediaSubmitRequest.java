@@ -49,6 +49,6 @@ public class MediaSubmitRequest {
     /** 图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填）。 */
     private String refFileId;
 
-    /** Ark 模型 id（可选，默认取 doubao 首个模型）。 */
+    /** Ark 模型 id（可选，默认取视频 provider 首个模型）。 */
     private String model;
 }

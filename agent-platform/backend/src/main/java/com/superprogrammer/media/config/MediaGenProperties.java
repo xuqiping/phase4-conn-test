@@ -19,6 +19,12 @@ public class MediaGenProperties {
     /** 总开关。false 时 submit 直接拒绝（功能降级）。 */
     private boolean genEnabled = true;
 
+    /**
+     * 视频 provider 名称（在「全局模型供应商」里以此 name 建一条专门给视频用的 provider）。
+     * 与 chat 的 doubao 解耦：chat 走 doubao，视频走 seedance（各自独立 endpoint/key/model）。
+     */
+    private String providerName = "seedance";
+
     /** 时长上限（秒）。官方 SeedDance 2.0 区间 4–15，默认 15。 */
     private int maxDuration = 15;
 
