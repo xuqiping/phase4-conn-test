@@ -11,7 +11,7 @@
 | **场景** | ① 文生视频：输入提示词生成；② 图生视频：上传参考图作首帧 + 提示词生成。用于营销素材、分镜预览、创意辅助。 |
 | **效益** | 平台首次具备媒体生成能力；抽象出「媒体生成 provider」骨架，后续 SeedDream 生图/无限画布/对话内生成/工作流节点复用同一套任务/存储/记账。 |
 | **入口** | 侧边栏「视频生成」菜单（`/video-gen`，无权限不显示）。 |
-| **限制** | 时长 1-10 秒；分辨率 480p/720p/1080p；单任务最长等待 10 分钟（超时 FAILED）；参考图 ≤8MB。视频走 Ark SeedDance 2.0。 |
+| **限制** | 时长 4-15 秒（官方区间）；画面比例 16:9 等 7 选 + adaptive；分辨率 480p/720p/1080p/4K；单任务最长等待 10 分钟（超时 FAILED）；参考图 ≤8MB。视频走 SeedDance 2.0。 |
 
 ## 界面与流程（概览）
 
@@ -29,8 +29,8 @@
 ## 部署/配置必做
 
 - Flyway 启动自动跑 V54；确认 `media:gen` 仅 admin 有（普通 user 按需授）。
-- doubao provider 须已在 LLM 供应商配置（Ark key + endpoint + models 含 seedance 模型）。
-- `application.yml` `media:` 段均可省（用默认：gen-enabled=true / max-duration=10 / max-res=720p / poll-ms=5000 / lock-minutes=5 / task-timeout-seconds=600）。
+- doubao provider 须已在 LLM 供应商配置：**API 端点填 base URL**（官方 `https://ark.cn-beijing.volces.com/api/v3` / 第三方网关如 ctaigw `https://ai.ctaigw.cn/v1`，代码不再硬编 /api/v3）+ Ark key + models 含 seedance 模型（如 `Cdance2.0`）。
+- `application.yml` `media:` 段均可省（用默认：gen-enabled=true / max-duration=15 / max-res=720p / poll-ms=5000 / lock-minutes=5 / task-timeout-seconds=600）。
 
 ## 留项（Phase4，人工依赖）
 
