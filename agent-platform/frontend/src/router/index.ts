@@ -83,6 +83,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '知识库' }
       },
       {
+        path: 'video-gen',
+        name: 'VideoGen',
+        component: () => import('@/views/VideoGenView.vue'),
+        // 路由 meta 仅 requiresAuth（平台惯例不按权限卡路由，靠菜单隐藏+页内 canGen+API 403 三重兜底）
+        meta: { title: '视频生成' }
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),
