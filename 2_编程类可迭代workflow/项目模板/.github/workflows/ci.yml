@@ -1,0 +1,108 @@
+# ============================================================================
+# ci.yml —— 最小 CI（线上质量门）
+#
+# 设计原则（铁律 #9）：CI 不是从零建，而是把本地 `scripts/check_all` 搬到服务器上跑，
+# 检查标准本地与线上完全一致；CI 只追加两件本地不做的事——Flyway 迁移校验 + 构建产物。
+#
+# 触发：push / PR 到 main、develop
+# 全绿才允许部署；任一步骤失败 → 阻断。
+#
+# 维护：本项目技术栈不同时调整 setup / working-directory；`PROJECT/` 是与 check_all
+# 一致的项目根占位，按实际目录改（如 `backend/`、`frontend/`）。
+# ============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+
+    # ---- 若后端测试连库，取消下面注释挂一个 CI 数据库（示例 PostgreSQL）----
+    # services:
+    #   postgres:
+    #     image: postgres:16
+    #     env:
+    #       POSTGRES_PASSWORD: ci
+    #       POSTGRES_DB: ci
+    #     ports: ['5432:5432']
+    #     options: >-
+    #       --health-cmd "pg_isready -U postgres" --health-interval 5s
+    #       --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: 配置 Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: npm
+          cache-dependency-path: PROJECT/frontend/package-lock.json
+
+      - name: 安装前端依赖
+        working-directory: PROJECT/frontend
+        run: npm ci
+
+      # 1) 本地最小质量门 —— 与本地 `scripts/check_all.sh` 完全同一份（compile + test + lint + typecheck + 文档校验）
+      - name: 跑 check_all（本地同一份质量门）
+        run: bash scripts/check_all.sh
+
+      # 1.5) 供应链安全扫描（security_strategy §5）
+      #   - secret 扫描：gitleaks 拦截误提交的密钥（pre-commit 已拦一次，CI 兜底防绕过）
+      #   - 依赖扫描：前端 npm audit + 后端 OWASP Dependency-Check，查已知 CVE
+      - name: Secret 扫描（gitleaks）
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: false   # 发现泄漏 = 阻断；想先跑非阻断可改 true 并看告警
+
+      - name: 前端依赖扫描（npm audit，高危阻断）
+        working-directory: PROJECT/frontend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: 后端依赖扫描（OWASP Dependency-Check）
+        working-directory: PROJECT/backend
+        run: mvn -q -DskipTests org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=9
+        # 首次会下载 NVD 漏洞库较慢；可在 CI 缓存 ~/.m2/repository/org/owasp
+
+      # 2) CI 额外：Flyway 迁移校验（只 validate，不改库）—— 检测脚本与已应用版本是否漂移
+      #    需要连一个 CI 数据库（见上方 services 注释），并在环境配 Flyway 连接信息。
+      - name: Flyway 迁移校验（validate）
+        working-directory: PROJECT/backend
+        env:
+          FLYWAY_URL: ${{ secrets.CI_DB_URL }}
+          FLYWAY_USER: ${{ secrets.CI_DB_USER }}
+          FLYWAY_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: mvn -q -DskipTests flyway:validate
+        # 若用 Spring Boot 自动迁移（无 flyway-maven-plugin），改为：
+        #   用 testcontainers 起一次性 DB 跑一遍 `mvn spring-boot:run` 验证迁移可应用
+
+      # 3) CI 额外：构建产物（部署要用）
+      - name: 构建后端 jar
+        working-directory: PROJECT/backend
+        run: mvn -q clean package -DskipTests
+
+      - name: 构建前端 dist
+        working-directory: PROJECT/frontend
+        run: npm run build
+
+      - name: 上传构建产物（可选，供下游部署 / 下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            PROJECT/backend/target/*.jar
+            PROJECT/frontend/dist
+          retention-days: 7

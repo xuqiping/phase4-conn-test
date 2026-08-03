@@ -13,6 +13,7 @@ description: "生成实现计划（Plan 步）。让 AI 深度思考后产出逐
 - 每步包含：目标、动作、涉及文件（≤20个，尽量更少）、必要伪代码、依赖、需人工介入的点、验证步骤。
 - **把无障碍性（accessibility）融入每一步**，不单列一步。
 - 参照 [file_structure.md](/workflow_output/docs/file_structure.md) 和 [AGENTS.md](/workflow_output/项目规范约束/AGENTS.md) 的规范。
+- **画依赖与并行化地图**：每个 Step 标注 `依赖: Step n`（有先后）或 `[P] 可并行`（同批无文件交集）；再产出①并行批次表（B1/B2…，同批 `[P]` 跨批串行）②mermaid 依赖图（步骤多按模块拆 subgraph）。**标 `[P]` 前必须确认同批步骤文件不重叠**——重叠就降级为 `依赖 Step n` 串行。这是多 agent / 多 worktree 并行时安全分工的唯一依据。
 
 ## 执行步骤
 ### 1. 首先

@@ -1,6 +1,7 @@
 # File Structure · 文件与目录结构说明
 
 > 这是 Context Engineering 的核心产物：让 AI agent（和新加入的人）一眼看懂每个文件/目录干什么。
+> **last_updated: YYYY-MM-DD**（每次改动更新此日期）。
 > 维护：每次新增/删除目录，**同步更新本文件**。它和 AGENTS.md 是 AI 的「入职手册」。
 > **文档规模**：本文件不得超过 5000 tokens。目录结构复杂时，按子系统/模块拆分子文件（如 `file_structure.后端.md`），本文件保留总览索引。
 
@@ -21,6 +22,7 @@
 │   │   ├── run-guide/      # Phase 4：快速启动速查表（项目怎么跑起来）
 │   │   ├── deploy/         # Phase 5：部署手册
 │   │   ├── changes/        # Phase 6：变更记录 + 影响评估
+│   │   ├── adr/            # 架构决策记录（ADR）：关键决策的背景/备选/决定/代价
 │   │   └── file_structure.md  # 本文件
 │   ├── 项目规范约束/        # 项目级规范，AI 指令 + 文档写作规范（AGENTS.md + 通用约束 + XX约束）
 │   └── 开发进度/            # Phase 3：进度跟踪（总览 + 每功能逐步骤）+ 功能 README
@@ -28,6 +30,7 @@
 │   ├── backend/           # TODO: 说明（语言/框架/职责）
 │   ├── frontend/          # TODO: 说明
 │   └── desktop/           # TODO: 说明（若有桌面客户端）
+├── scripts/               # 最小质量门：check_all（commit 前必跑）+ 可选 pre-commit 钩子
 └── .github/prompts/       # 可复用 AI 提示（1-plan / 2-implement / 3-run / 4-review）
 ```
 
@@ -44,6 +47,7 @@
 | workflow_output/docs/run-guide/ | 快速启动速查表：项目组成/启动命令/端口 | 开发、运维、新成员 | Phase 4 |
 | workflow_output/docs/deploy/ | 部署手册：环境/软件/部署步骤/回滚 | 运维、DevOps | Phase 5 |
 | workflow_output/docs/changes/ | 变更记录 + 影响评估 | 开发、维护 | Phase 6 |
+| workflow_output/docs/adr/ | 架构决策记录（ADR），推翻常规做法的决定必写 | 开发、AI、维护 | Phase 1/3/6 按需 |
 | workflow_output/项目规范约束/ | 代码规范、AI 指令、文档写作规范 | 全员、AI（每次必读） | Phase 0 起，Phase 3 持续 |
 | workflow_output/开发进度/ | 进度跟踪 + 功能 README（按受众写用户地图/技术说明） | 开发、决策者 | Phase 3 |
 | PROJECT/ | 实际代码 | 开发、AI | Phase 3 |

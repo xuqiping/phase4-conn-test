@@ -13,7 +13,12 @@
 │   │   ├── 项目分析/                 ← Phase 0 产物
 │   │   │   └── 项目分析报告.md
 │   │   ├── specs/                    ← Phase 1 产物（specs before code，底部含术语表）
-│   │   │   └── PRD.md
+│   │   │   ├── PRD.md                ← 需求文档（含验收标准 FR/AC）
+│   │   │   ├── architecture.md       ← 架构规格
+│   │   │   ├── db_schema.md          ← 全局数据库设计文档（ER图+数据字典+Flyway清单）
+│   │   │   ├── testing_strategy.md   ← 测试策略
+│   │   │   ├── security_strategy.md  ← 安全策略
+│   │   │   └── performance_goals.md  ← 性能目标
 │   │   ├── plans/                    ← Phase 2 产物（实现计划，底部含术语表）
 │   │   │   └── _模板.plan.md
 │   │   ├── 测试方案/                 ← Phase 3 产物（仅需人工测试的功能才产）
@@ -29,6 +34,9 @@
 │   │   ├── changes/                  ← Phase 6 产物：变更记录 + 影响评估
 │   │   │   ├── _模板.变更记录.md
 │   │   │   └── _模板.影响评估.md
+│   │   ├── adr/                      ← 架构决策记录（为什么选 A 不选 B，推翻常规做法必写）
+│   │   │   ├── README.md             ← ADR 索引总表
+│   │   │   └── _模板.ADR.md
 │   │   └── file_structure.md         ← Context Engineering 核心：告诉 AI 每个目录干嘛
 │   ├── 项目规范约束/                  ← Context Engineering 核心（持续织入）
 │   │   ├── AGENTS.md                 ← 项目级 AI 指令 + 文档写作规范
@@ -45,6 +53,14 @@
 │   ├── backend/
 │   ├── frontend/
 │   └── desktop/                      ← 桌面客户端（若有）
+├── scripts/                          ← 最小质量门与自动化脚本
+│   ├── check_all.bat                 ← Windows：commit 前必跑（lint+类型检查+测试一条命令）
+│   ├── check_all.sh                  ← Linux/Mac：同上
+│   ├── check_docs.py                 ← 文档规则校验（tokens 上限/失效链接/孤立文档，已并入 check_all）
+│   └── pre-commit.sample             ← 可选：git pre-commit 钩子骨架（自动跑 check_all）
+├── .claude/                          ← Claude Code 配置骨架（hooks：改文档后自动跑 check_docs）
+│   ├── settings.json
+│   └── README.md
 └── .github/
     └── prompts/                      ← 可复用 AI 提示（Plan-Implement-Run）
         ├── 1-plan.prompt.md
@@ -66,16 +82,18 @@
 | workflow_output/docs/run-guide/ | Phase 4 | 快速启动速查表：项目组成 / 启动命令 / 端口 |
 | workflow_output/docs/deploy/ | Phase 5 | 部署手册：环境 / 软件 / 部署步骤 / 回滚 |
 | workflow_output/docs/changes/ | Phase 6 | 变更记录 + 影响评估 |
+| workflow_output/docs/adr/ | Phase 1/3/6（按需） | 架构决策记录：关键决策的背景/备选/决定/代价，防「AI 新会话好心改回去」 |
 | workflow_output/docs/file_structure.md | Phase 1 | 目录结构说明，AI 导航用 |
 | workflow_output/项目规范约束/AGENTS.md | Phase 0 起，Phase 3 持续更新 | 项目级 AI 指令 + 文档写作规范 |
 | workflow_output/开发进度/ | Phase 3 | 进度跟踪（总览 + 逐步骤）+ **功能 README**（按受众写用户地图/技术说明） |
 | PROJECT/ | Phase 3 | 实际代码 |
+| scripts/ | Phase 0 自带 | 最小质量门 check_all（commit 前必跑）+ 可选 pre-commit 钩子 |
 | .github/prompts/ | Phase 2/3/4 调用 | plan/implement/run/review 提示词 |
 
 ## 快速开始
 
 1. 拷贝本目录 → 改名为项目名。
 2. 改写本 README 为项目说明。
-3. 走 **Phase 0**：填 `workflow_output/docs/项目分析/项目分析报告.md`，建 `workflow_output/项目规范约束/AGENTS.md` 初版。
+3. 走 **Phase 0**：填 `workflow_output/docs/项目分析/项目分析报告.md`，建 `workflow_output/项目规范约束/AGENTS.md` 初版；按技术栈改好 `scripts/check_all` 里的检查命令。
 4. 走 **Phase 1**：填 `workflow_output/docs/specs/PRD.md`（含底部术语表），写 `workflow_output/docs/file_structure.md`。
 5. 之后按 Phase 2→5 推进。
