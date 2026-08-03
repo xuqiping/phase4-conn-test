@@ -1,8 +1,10 @@
 package com.superprogrammer.media.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.superprogrammer.common.typehandler.JsonbStringTypeHandler;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -18,7 +20,7 @@ import java.time.OffsetDateTime;
  * <p>状态机：PENDING → RUNNING → SUCCEEDED / FAILED / DOWNLOAD_FAILED。
  */
 @Data
-@TableName("media_gen_tasks")
+@TableName(value = "media_gen_tasks", autoResultMap = true)
 public class MediaGenTask {
 
     public static final String TYPE_TEXT2VIDEO = "TEXT2VIDEO";
@@ -47,7 +49,8 @@ public class MediaGenTask {
     private String taskType;
     private String status;
     private String arkTaskId;
-    /** JSONB：{prompt, duration, resolution, refFileId?}。MyBatis-Plus 当字符串读写。 */
+    /** JSONB：{prompt, ratio, duration, resolution, watermark, generateAudio, refFileId?}。用 JsonbStringTypeHandler 做 String↔jsonb 转换（同 ChatMessage.metadata）。 */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String requestConfig;
     /** → stored_files.file_id。 */
     private String resultFileId;
