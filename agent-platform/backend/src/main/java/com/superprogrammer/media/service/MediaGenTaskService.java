@@ -33,9 +33,14 @@ public class MediaGenTaskService {
     /** doubao provider name（Ark 视频 key 复用入口，与 ArkSeedanceProvider 一致）。 */
     private static final String DOUBAO_PROVIDER_NAME = "doubao";
 
-    /** 分辨率白名单（含上限校验：≤ maxRes）。 */
-    private static final Set<String> RES_WHITELIST = Set.of("480p", "720p", "1080p");
-    private static final Map<String, Integer> RES_RANK = Map.of("480p", 1, "720p", 2, "1080p", 3);
+    /** 分辨率白名单（含上限校验：≤ maxRes）。4K 仅 SeedDance 2.0 全版支持。 */
+    private static final Set<String> RES_WHITELIST = Set.of("480p", "720p", "1080p", "4K");
+    private static final Map<String, Integer> RES_RANK = Map.of("480p", 1, "720p", 2, "1080p", 3, "4K", 4);
+    /** 画面比例白名单（官方 ratio 取值，adaptive 用于图生视频沿用参考图比例）。 */
+    private static final Set<String> RATIO_WHITELIST =
+            Set.of("21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive");
+    /** 时长下限（官方 SeedDance 2.0 区间 4–15 秒）。 */
+    private static final int MIN_DURATION = 4;
     private static final int PROMPT_MAX_LEN = 2000;
 
     private final MediaGenTaskMapper taskMapper;
@@ -46,21 +51,25 @@ public class MediaGenTaskService {
     /**
      * 提交生成任务。
      *
-     * @param prompt    提示词（必填）
-     * @param duration  时长秒
-     * @param resolution 分辨率
-     * @param taskType  TEXT2VIDEO / IMAGE2VIDEO
-     * @param refFileId 图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填）
-     * @param model     Ark 模型 id（null 则取 doubao 首个模型）
-     * @param userId    提交用户（nullable：系统调用）
+     * @param prompt        提示词（必填）
+     * @param ratio         画面比例（官方 ratio，null 默认 16:9）
+     * @param duration      时长秒（4–15）
+     * @param resolution    分辨率（null 默认 720p）
+     * @param watermark     水印开关（null 默认 false）
+     * @param generateAudio 生成原生音频开关（null 默认 false）
+     * @param taskType      TEXT2VIDEO / IMAGE2VIDEO
+     * @param refFileId     图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填）
+     * @param model         Ark 模型 id（null 则取 doubao 首个模型）
+     * @param userId        提交用户（nullable：系统调用）
      * @return 任务 id
      */
-    public Long submit(String prompt, Integer duration, String resolution, String taskType,
+    public Long submit(String prompt, String ratio, Integer duration, String resolution,
+                       Boolean watermark, Boolean generateAudio, String taskType,
                        String refFileId, String model, Long userId) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
-        validate(prompt, duration, resolution, taskType, refFileId);
+        validate(prompt, ratio, duration, resolution, taskType, refFileId);
 
         LlmProviderEntity doubao = llmProviderService.getByName(DOUBAO_PROVIDER_NAME);
         if (doubao == null) {
@@ -73,8 +82,11 @@ public class MediaGenTaskService {
 
         Map<String, Object> config = new HashMap<>();
         config.put("prompt", prompt);
+        config.put("ratio", ratio);
         config.put("duration", duration);
         config.put("resolution", resolution);
+        config.put("watermark", Boolean.TRUE.equals(watermark));
+        config.put("generateAudio", Boolean.TRUE.equals(generateAudio));
         if (refFileId != null) config.put("refFileId", refFileId);
 
         MediaGenTask task = new MediaGenTask();
@@ -88,26 +100,32 @@ public class MediaGenTaskService {
         task.setAttempt(0);
         taskMapper.insert(task);
 
-        log.info("提交视频生成任务 taskId={} userId={} type={} model={}", task.getId(), userId, taskType, resolvedModel);
+        log.info("提交视频生成任务 taskId={} userId={} type={} model={} ratio={} res={} audio={}",
+                task.getId(), userId, taskType, resolvedModel, ratio, resolution, generateAudio);
         return task.getId();
     }
 
-    private void validate(String prompt, Integer duration, String resolution, String taskType, String refFileId) {
+    private void validate(String prompt, String ratio, Integer duration, String resolution,
+                          String taskType, String refFileId) {
         if (prompt == null || prompt.isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词不能为空");
         }
         if (prompt.length() > PROMPT_MAX_LEN) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词长度超限（≤" + PROMPT_MAX_LEN + "）");
         }
-        if (duration == null || duration < 1 || duration > properties.getMaxDuration()) {
+        if (duration == null || duration < MIN_DURATION || duration > properties.getMaxDuration()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "时长须 ∈ [1, " + properties.getMaxDuration() + "]");
+                    "时长须 ∈ [" + MIN_DURATION + ", " + properties.getMaxDuration() + "]");
         }
-        if (resolution == null || !RES_WHITELIST.contains(resolution)) {
+        if (ratio != null && !ratio.isBlank() && !RATIO_WHITELIST.contains(ratio)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "画面比例非法: " + ratio);
+        }
+        if (resolution != null && !resolution.isBlank() && !RES_WHITELIST.contains(resolution)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "分辨率非法: " + resolution);
         }
         Integer maxRank = RES_RANK.get(properties.getMaxRes());
-        if (maxRank == null || RES_RANK.get(resolution) > maxRank) {
+        if (maxRank == null) maxRank = RES_RANK.get("720p");
+        if (resolution != null && RES_RANK.getOrDefault(resolution, 0) > maxRank) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "分辨率超上限（≤" + properties.getMaxRes() + "）");
         }

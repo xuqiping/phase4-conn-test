@@ -25,9 +25,14 @@ import java.util.Map;
  *
  * <p>协议：异步任务型（建任务→轮询→取 video_url），与 chat/embed 同步协议完全不同。
  * <ul>
- *   <li>{@code POST /api/v3/contents/generations/tasks} 建任务，返 {@code id}（{@code cct-xxx}）。</li>
- *   <li>{@code GET  /api/v3/contents/generations/tasks/{id}} 查态，{@code status} ∈ queued/running/succeeded/failed。</li>
+ *   <li>{@code POST {base}/contents/generations/tasks} 建任务，返 {@code id}（{@code cct-xxx}）。</li>
+ *   <li>{@code GET  {base}/contents/generations/tasks/{id}} 查态，{@code status} ∈ queued/running/succeeded/failed。</li>
  * </ul>
+ *
+ * <p><b>base URL 可配</b>：直接取 doubao provider 的 {@code apiEndpoint} 作 baseUrl（含版本段），
+ * 不再硬编 {@code /api/v3}。官方 Ark 填 {@code https://ark.cn-beijing.volces.com/api/v3}，
+ * 第三方网关（如 ctaigw）填 {@code https://ai.ctaigw.cn/v1}——两者只是 base 不同，路径统一
+ * {@code /contents/generations/tasks}，其余参数与官方完全一致。
  *
  * <p>Ark key 复用 doubao provider（同账号一把 key 通吃 Ark 所有端点）：每次调用前解析
  * {@code llm_providers.name='doubao'} 的 endpoint + AES 解密 key；WebClient 按
@@ -44,7 +49,8 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     /** doubao provider name（Ark 统一 key 复用入口）。 */
     private static final String DOUBAO_PROVIDER_NAME = "doubao";
-    private static final String TASKS_PATH = "/api/v3/contents/generations/tasks";
+    /** 任务端点相对路径（拼在可配 base 之后；不再硬编 /api/v3，兼容 ctaigw /v1 等网关）。 */
+    private static final String TASKS_PATH = "/contents/generations/tasks";
 
     /** 连接/响应超时（与 OpenAICompatibleProvider 一致，杜绝无超时 .block() 钉死线程）。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -111,16 +117,21 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             // 首帧参考图（图生视频）
             content.add(Map.of("type", "image_url", "image_url", Map.of("url", request.getRefImageUrl())));
         }
-        // parameters：watermark=false（平台生成不加水印）；duration/resolution/fps 受校验后传入
-        Map<String, Object> parameters = new java.util.HashMap<>();
-        parameters.put("watermark", false);
-        if (request.getDuration() != null) parameters.put("duration", request.getDuration());
-        if (request.getResolution() != null) parameters.put("resolution", request.getResolution());
-        if (request.getFps() != null) parameters.put("fps", request.getFps());
-        return Map.of(
-                "model", request.getModel(),
-                "content", content,
-                "parameters", parameters);
+        // 官方契约：顶层平铺（无 parameters 包裹）。ratio/duration/watermark 必传，
+        // resolution/generate_audio 可选（官方默认 720p / false）。无 fps（统一 24）。
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", request.getModel());
+        body.put("content", content);
+        body.put("ratio", request.getRatio() == null ? "16:9" : request.getRatio());
+        body.put("watermark", Boolean.TRUE.equals(request.getWatermark()));
+        if (request.getDuration() != null) body.put("duration", request.getDuration());
+        if (request.getResolution() != null && !request.getResolution().isBlank()) {
+            body.put("resolution", request.getResolution());
+        }
+        if (Boolean.TRUE.equals(request.getGenerateAudio())) {
+            body.put("generate_audio", true);
+        }
+        return body;
     }
 
     // ---------- 响应解析 ----------
@@ -144,9 +155,14 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             if ("succeeded".equals(rawStatus) || "success".equals(rawStatus)) {
                 String videoUrl = root.path("content").path("video_url").asText(null);
                 b.resultUrl(videoUrl);
-                JsonNode usage = root.path("usage").path("total_tokens");
-                if (usage.isNumber()) {
-                    b.usageTokens(usage.asLong());
+                // usage 字段兼容：byteplus/网关返 completion_tokens，火山方舟返 total_tokens，取到即用。
+                JsonNode usage = root.path("usage");
+                JsonNode tokens = usage.path("completion_tokens");
+                if (!tokens.isNumber()) {
+                    tokens = usage.path("total_tokens");
+                }
+                if (tokens.isNumber()) {
+                    b.usageTokens(tokens.asLong());
                 }
             } else if ("failed".equals(rawStatus)) {
                 JsonNode err = root.path("error");
@@ -206,8 +222,9 @@ public class ArkSeedanceProvider implements MediaGenProvider {
     }
 
     private WebClient buildClient(String rawEndpoint, String apiKey) {
-        // 归一化：剥离尾随 /api/v3 /v1，统一在调用处拼 /api/v3/...
-        String base = rawEndpoint.replaceAll("/(api/v3|v1)/?$", "");
+        // baseUrl 直接用 doubao 配的 endpoint（含版本段，如 /api/v3 或 /v1），
+        // 只剥尾随斜杠。调用处拼相对路径 /contents/generations/tasks，兼容官方/网关。
+        String base = rawEndpoint.replaceAll("/+$", "");
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
                 .responseTimeout(RESPONSE_TIMEOUT);

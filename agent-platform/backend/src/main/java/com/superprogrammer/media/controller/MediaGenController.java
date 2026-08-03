@@ -53,11 +53,14 @@ public class MediaGenController {
     public ResponseEntity<R<Map<String, Object>>> submit(@Valid @RequestBody MediaSubmitRequest request) {
         String taskType = request.getTaskType() == null || request.getTaskType().isBlank()
                 ? MediaGenTask.TYPE_TEXT2VIDEO : request.getTaskType();
+        String ratio = request.getRatio() == null || request.getRatio().isBlank()
+                ? "16:9" : request.getRatio();
         Integer duration = request.getDuration() == null ? 5 : request.getDuration();
         String resolution = request.getResolution() == null || request.getResolution().isBlank()
                 ? "720p" : request.getResolution();
         Long taskId = taskService.submit(
-                request.getPrompt(), duration, resolution, taskType,
+                request.getPrompt(), ratio, duration, resolution,
+                request.getWatermark(), request.getGenerateAudio(), taskType,
                 request.getRefFileId(), request.getModel(), getCurrentUserId());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }

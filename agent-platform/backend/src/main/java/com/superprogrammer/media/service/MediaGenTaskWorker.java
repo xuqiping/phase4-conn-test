@@ -175,12 +175,13 @@ public class MediaGenTaskWorker {
         return duration * ratePerSec;
     }
 
-    /** Ark 官方 token/秒 费率（视频生成），与像素公式 720p 等价（5s/720p≈30.88万 token）。 */
+    /** Ark 官方 token/秒 费率（视频生成），与像素公式 720p 等价（5s/720p≈30.88万 token）。4K≈4×1080p 像素面积。 */
     private int estimateRatePerSec(String resolution) {
         if (resolution == null) return 61760;
         switch (resolution) {
             case "480p": return 15440;
             case "1080p": return 138960;
+            case "4K": return 555840;
             case "720p":
             default: return 61760;
         }
@@ -188,14 +189,20 @@ public class MediaGenTaskWorker {
 
     private MediaGenRequest buildRequest(MediaGenTask task) {
         String prompt = null;
+        String ratio = null;
         Integer duration = null;
         String resolution = null;
+        boolean watermark = false;
+        boolean generateAudio = false;
         String refFileId = null;
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
             prompt = cfg.path("prompt").asText(null);
+            ratio = cfg.path("ratio").asText(null);
             if (cfg.path("duration").isNumber()) duration = cfg.path("duration").asInt();
             resolution = cfg.path("resolution").asText(null);
+            watermark = cfg.path("watermark").asBoolean(false);
+            generateAudio = cfg.path("generateAudio").asBoolean(false);
             refFileId = cfg.path("refFileId").asText(null);
         } catch (Exception e) {
             log.warn("解析 requestConfig 失败 taskId={}: {}", task.getId(), e.getMessage());
@@ -203,10 +210,12 @@ public class MediaGenTaskWorker {
         MediaGenRequest.MediaGenRequestBuilder b = MediaGenRequest.builder()
                 .model(task.getModel())
                 .prompt(prompt)
+                .ratio(ratio)
                 .duration(duration)
                 .resolution(resolution)
-                .taskType(task.getTaskType())
-                .fps(24);
+                .watermark(watermark)
+                .generateAudio(generateAudio)
+                .taskType(task.getTaskType());
         // IMAGE2VIDEO：参考图 file_id → data URI（Ark image_url 入参）；TEXT2VIDEO 无需。
         if (refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
             try {
