@@ -99,8 +99,11 @@ public class UserLlmController {
         Long userId = getCurrentUserId();
         List<AvailableModelVO> models = new ArrayList<>();
 
-        // Global providers
+        // Global providers（MEDIA 任务型 provider 不进 chat 模型列表）
         for (LlmProviderEntity p : llmProviderService.listActive()) {
+            if (LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(p.getCategory())) {
+                continue;
+            }
             if (p.getModels() != null && !p.getModels().isBlank()) {
                 try {
                     List<String> modelList = objectMapper.readValue(p.getModels(), List.class);

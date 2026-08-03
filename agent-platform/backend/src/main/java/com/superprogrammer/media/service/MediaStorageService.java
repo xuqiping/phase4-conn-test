@@ -13,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.io.InputStream;
+import java.net.URI;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Locale;
@@ -46,8 +47,11 @@ public class MediaStorageService {
     public String downloadAndStore(String videoUrl, Long userId, String nameHint) {
         Resource resource;
         try {
+            // 用 URI 对象传，跳过 WebClient 的 UriBuilderFactory 二次编码——
+            // Ark/ctaigw 返回的 video_url 是预签名 TOS 链接，query 里含 %2F 等已编码字符，
+            // 若用 .uri(String) 会被当 URI 模板再次编码（% → %25），破坏签名 → TOS 返 400 AccessDenied。
             resource = downloadClient.get()
-                    .uri(videoUrl)
+                    .uri(URI.create(videoUrl))
                     .retrieve()
                     .bodyToMono(Resource.class)
                     .block(RESPONSE_TIMEOUT);

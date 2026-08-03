@@ -81,14 +81,16 @@ const protocolOptions = [
 const categoryOptions = [
   { label: '对话 (CHAT)', value: 'CHAT' },
   { label: '向量 (EMBEDDING)', value: 'EMBEDDING' },
-  { label: '对话+向量 (CHAT_EMBEDDING)', value: 'CHAT_EMBEDDING' }
+  { label: '对话+向量 (CHAT_EMBEDDING)', value: 'CHAT_EMBEDDING' },
+  { label: '视频/生图 (MEDIA)', value: 'MEDIA' }
 ]
 
-/** category badge 配色：向量=绿，双用=橙，对话=蓝（默认）。 */
-const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' }> = {
+/** category badge 配色：向量=绿，双用=橙，对话=蓝，媒体=紫（默认）。 */
+const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'error' }> = {
   EMBEDDING: { label: '向量', type: 'success' },
   CHAT_EMBEDDING: { label: '对话+向量', type: 'warning' },
-  CHAT: { label: '对话', type: 'info' }
+  CHAT: { label: '对话', type: 'info' },
+  MEDIA: { label: '媒体', type: 'error' }
 }
 
 const columns = [
