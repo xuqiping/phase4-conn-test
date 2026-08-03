@@ -97,6 +97,52 @@ public class FileStorageService {
     }
 
     /**
+     * 从 InputStream 落盘 + 登记 owner（媒体生成产物下载用，非 MultipartFile 来源）。
+     *
+     * <p>SeedDance 任务 SUCCEEDED 后，Ark 返回的 video_url 是 OSS 临时链接（有时效），
+     * 须即时流式下载到本地 + 登记 {@code stored_files}(source=MEDIA)，后续只依赖本地 fileId。
+     * 复用同一存储咽喉点（resolveSafe 防路径穿越 + 登记 owner），与 MultipartFile 上传一致安全口径。
+     *
+     * @return fileId（UUID+ext），调用方写入 media_gen_tasks.result_file_id
+     */
+    public String storeStream(InputStream input, String originalName, String mime,
+                              Long size, Long ownerUserId, String source) {
+        if (input == null) {
+            throw new IllegalArgumentException("InputStream must not be null");
+        }
+        String cleanName = StringUtils.cleanPath(
+                originalName == null || originalName.isBlank() ? "media.bin" : originalName);
+        String fileId = UUID.randomUUID() + extensionOf(cleanName);
+        Path target = resolveSafe(fileId);
+
+        long copied;
+        try {
+            Files.createDirectories(storageRoot);
+            try (InputStream in = input) {
+                copied = Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to store streamed file", e);
+        }
+
+        String mimeType = (mime == null || mime.isBlank()) ? "application/octet-stream" : mime;
+        Long rowSize = size != null ? size : copied;
+
+        StoredFileEntity row = new StoredFileEntity();
+        row.setFileId(fileId);
+        row.setTenantId(DEFAULT_TENANT_ID);
+        row.setOwnerUserId(ownerUserId);
+        row.setSource(source);
+        row.setStatus(StoredFileEntity.STATUS_ACTIVE);
+        row.setOriginalName(cleanName);
+        row.setMime(mimeType);
+        row.setSize(rowSize);
+        storedFileMapper.insert(row);
+
+        return fileId;
+    }
+
+    /**
      * 强校验归属后返回 Resource。owner 不匹配且非 admin → FORBIDDEN；登记行缺失 → NOT_FOUND。
      */
     public Resource load(String fileId, Long userId, boolean admin) {

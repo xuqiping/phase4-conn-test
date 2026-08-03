@@ -20,11 +20,13 @@ import java.time.OffsetDateTime;
 @TableName("stored_files")
 public class StoredFileEntity {
 
-    /** 来源：KB / WORKFLOW / CHAT / PREVIEW */
+    /** 来源：KB / WORKFLOW / CHAT / PREVIEW / MEDIA */
     public static final String SOURCE_KB = "KB";
     public static final String SOURCE_WORKFLOW = "WORKFLOW";
     public static final String SOURCE_CHAT = "CHAT";
     public static final String SOURCE_PREVIEW = "PREVIEW";
+    /** 媒体生成（SeedDance 视频）产物，owner=提交用户。 */
+    public static final String SOURCE_MEDIA = "MEDIA";
 
     /** 生命周期：ACTIVE（落盘在用）/ CLEANED（已删字节）/ EXPIRED（PREVIEW 过期） */
     public static final String STATUS_ACTIVE = "ACTIVE";
