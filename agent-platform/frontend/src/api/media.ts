@@ -24,8 +24,11 @@ export type MediaStatus =
 /** 任务类型 */
 export type MediaTaskType = 'TEXT2VIDEO' | 'IMAGE2VIDEO'
 
-/** 分辨率白名单（对齐后端校验） */
-export type MediaResolution = '480p' | '720p' | '1080p'
+/** 分辨率白名单（对齐后端校验；4K 仅 SeedDance 2.0 全版） */
+export type MediaResolution = '480p' | '720p' | '1080p' | '4K'
+
+/** 画面比例（官方 ratio 取值；adaptive 图生视频沿用参考图比例） */
+export type MediaRatio = '21:9' | '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | 'adaptive'
 
 /**
  * 媒体任务视图（对应后端 MediaTaskVO）。
@@ -42,6 +45,7 @@ export interface MediaTaskVO {
   model: string | null
   prompt: string | null
   duration: number | null
+  ratio: string | null
   resolution: string | null
   tokensCost: number | null
   errorMsg: string | null
@@ -51,11 +55,17 @@ export interface MediaTaskVO {
   updatedAt: string | null
 }
 
-/** 提交请求（对应后端 MediaSubmitRequest；duration 1-10，resolution 白名单） */
+/** 提交请求（对应后端 MediaSubmitRequest；duration 4-15，ratio/resolution 白名单） */
 export interface MediaSubmitRequest {
   prompt: string
+  /** 画面比例（官方 ratio），默认 16:9 */
+  ratio?: MediaRatio
   duration?: number
   resolution?: MediaResolution
+  /** 水印开关，默认 false */
+  watermark?: boolean
+  /** 同步生成原生音频（2.0 特色），默认 false */
+  generateAudio?: boolean
   taskType?: MediaTaskType
   /** 图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填） */
   refFileId?: string

@@ -45,6 +45,13 @@
             />
           </n-form-item>
 
+          <n-form-item label="画面比例">
+            <n-select
+              v-model:value="form.ratio"
+              :options="ratioOptions"
+            />
+          </n-form-item>
+
           <n-form-item label="时长（秒）">
             <n-select
               v-model:value="form.duration"
@@ -57,6 +64,20 @@
               v-model:value="form.resolution"
               :options="resolutionOptions"
             />
+          </n-form-item>
+
+          <n-form-item label="水印">
+            <n-space align="center">
+              <n-switch v-model:value="form.watermark" />
+              <span class="video-gen__hint">开启后视频带官方水印</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item label="生成音频">
+            <n-space align="center">
+              <n-switch v-model:value="form.generateAudio" />
+              <span class="video-gen__hint">同步生成原生音频（2.0 特色）</span>
+            </n-space>
           </n-form-item>
 
           <n-space>
@@ -133,7 +154,7 @@
             <div class="video-gen__prompt-preview">
               {{ activeTask.prompt }}
               <span class="video-gen__meta">
-                {{ activeTask.duration }}s · {{ activeTask.resolution }}
+                {{ activeTask.ratio || '-' }} · {{ activeTask.duration }}s · {{ activeTask.resolution }}
               </span>
             </div>
           </template>
@@ -160,7 +181,7 @@
 import { h, computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   NButton, NCard, NDataTable, NEmpty, NForm, NFormItem, NInput,
-  NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NTag, NUpload,
+  NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
@@ -169,7 +190,7 @@ import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
   mediaApi, fetchVideoBlob,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
-  type MediaTaskVO, type MediaTaskType, type MediaResolution
+  type MediaTaskVO, type MediaTaskType, type MediaResolution, type MediaRatio
 } from '@/api/media'
 
 const authStore = useAuthStore()
@@ -183,18 +204,32 @@ const canGen = authStore.hasPermission('media:gen')
 const form = reactive({
   taskType: 'TEXT2VIDEO' as MediaTaskType,
   prompt: '',
+  ratio: '16:9' as MediaRatio,
   duration: 5,
   resolution: '720p' as MediaResolution,
+  watermark: false,
+  generateAudio: false,
   refFileId: '' as string
 })
 
-const durationOptions = Array.from({ length: 10 }, (_, i) => ({
-  label: `${i + 1} 秒`, value: i + 1
+/** 官方区间 4–15 秒 */
+const durationOptions = Array.from({ length: 12 }, (_, i) => ({
+  label: `${i + 4} 秒`, value: i + 4
 }))
+const ratioOptions: { label: string; value: MediaRatio }[] = [
+  { label: '16:9 横屏（推荐）', value: '16:9' },
+  { label: '9:16 竖屏', value: '9:16' },
+  { label: '1:1 方形', value: '1:1' },
+  { label: '4:3', value: '4:3' },
+  { label: '3:4', value: '3:4' },
+  { label: '21:9 超宽', value: '21:9' },
+  { label: 'adaptive（图生沿用参考图）', value: 'adaptive' }
+]
 const resolutionOptions: { label: string; value: MediaResolution }[] = [
   { label: '480p（省额度）', value: '480p' },
   { label: '720p（推荐）', value: '720p' },
-  { label: '1080p（高质量）', value: '1080p' }
+  { label: '1080p（高清）', value: '1080p' },
+  { label: '4K（超高清，2.0 全版）', value: '4K' }
 ]
 
 const submitting = ref(false)
@@ -231,8 +266,11 @@ async function onSubmit() {
   try {
     const { data } = await mediaApi.submitVideo({
       prompt: form.prompt.trim(),
+      ratio: form.ratio,
       duration: form.duration,
       resolution: form.resolution,
+      watermark: form.watermark,
+      generateAudio: form.generateAudio,
       taskType: form.taskType,
       refFileId: form.taskType === 'IMAGE2VIDEO' ? form.refFileId : undefined
     })
