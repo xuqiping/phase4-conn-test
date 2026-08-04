@@ -27,6 +27,8 @@ public class StoredFileEntity {
     public static final String SOURCE_PREVIEW = "PREVIEW";
     /** 媒体生成（SeedDance 视频）产物，owner=提交用户。 */
     public static final String SOURCE_MEDIA = "MEDIA";
+    /** 无限画布产物（抽帧/截取/衍生/上传图等），owner=画布归属用户。 */
+    public static final String SOURCE_CANVAS = "CANVAS";
 
     /** 生命周期：ACTIVE（落盘在用）/ CLEANED（已删字节）/ EXPIRED（PREVIEW 过期） */
     public static final String STATUS_ACTIVE = "ACTIVE";

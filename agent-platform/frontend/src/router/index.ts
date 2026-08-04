@@ -90,6 +90,19 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '视频生成' }
       },
       {
+        path: 'canvas',
+        name: 'CanvasList',
+        component: () => import('@/views/CanvasView.vue'),
+        // 同 video-gen：菜单隐藏 + 页内 canEdit(canvas:write) + API 403 三重兜底
+        meta: { title: '无限画布' }
+      },
+      {
+        path: 'canvas/:id',
+        name: 'CanvasEditor',
+        component: () => import('@/views/CanvasView.vue'),
+        meta: { title: '无限画布' }
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),

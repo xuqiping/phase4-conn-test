@@ -65,7 +65,8 @@ import {
   ShieldCheckmarkOutline,
   ChatbubblesOutline,
   BookOutline,
-  VideocamOutline
+  VideocamOutline,
+  AppsOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
@@ -85,6 +86,8 @@ const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.userInfo?.roles?.includes('admin'))
 /** 4 层权限显隐①：菜单入口仅 media:gen 持有者可见（gated，admin 默认有，普通 user 须授权） */
 const canGenVideo = computed(() => authStore.hasPermission('media:gen'))
+/** 无限画布入口仅 canvas:write 持有者可见（gated，admin 默认有） */
+const canEditCanvas = computed(() => authStore.hasPermission('canvas:write'))
 
 /** 导航项配置 */
 const navItems = computed(() => {
@@ -97,6 +100,9 @@ const navItems = computed(() => {
   ]
   if (canGenVideo.value) {
     items.push({ path: '/video-gen', label: '视频生成', icon: VideocamOutline })
+  }
+  if (canEditCanvas.value) {
+    items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline })
   }
   if (isAdmin.value) {
     items.push(
