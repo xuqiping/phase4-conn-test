@@ -83,8 +83,13 @@
         <!-- 画布板 -->
         <CanvasBoard ref="boardRef" @node-selected="onNodeSelect" />
 
-        <!-- 属性面板（选中节点编辑） -->
-        <PropertyPanel :node="selectedNode" />
+        <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
+        <PropertyPanel
+          :node="selectedNode"
+          :running="runningNodeId === selectedNode?.id"
+          @run="onRunNode"
+          @upload="onUploadFile"
+        />
       </div>
     </div>
   </div>
@@ -101,7 +106,7 @@ import {
   DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { canvasApi, type CanvasVO } from '@/api/canvas'
+import { canvasApi, type CanvasNodeDTO, type CanvasVO } from '@/api/canvas'
 import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
@@ -125,9 +130,74 @@ const currentName = ref('')
 const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
 /** 当前选中节点（属性面板编辑目标；null=未选）。 */
 const selectedNode = ref<CanvasNode | null>(null)
+/** 正在运行的节点 id（属性面板按钮 loading + 防重入）。 */
+const runningNodeId = ref<string | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
+}
+
+/** 运行节点（C4）：先置 running 态 → 调后端 → 合并 dataPatch → 触发快照保存。 */
+async function onRunNode(node: CanvasNode) {
+  if (!editingId.value || !node) return
+  if (runningNodeId.value === node.id) return
+  runningNodeId.value = node.id
+  boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
+  try {
+    const payload: CanvasNodeDTO = {
+      id: node.id,
+      type: node.type as CanvasNodeDTO['type'],
+      data: node.data as Record<string, unknown>
+    }
+    const res = await canvasApi.runNode(editingId.value, payload)
+    const result = res.data.data
+    if (result?.dataPatch) {
+      boardRef.value?.updateNodeData(node.id, result.dataPatch)
+    }
+    // 同步选中节点的 data 引用（PropertyPanel 直编同源；updateNodeData 已改真实对象，selectedNode 自动反映）
+    message.success(result?.status === 'success' ? '生成完成' : '已处理')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '生成失败'
+    boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
+/** 上传产出物（C4 图片 MVP / 音频/视频参考图）：落 SOURCE_CANVAS，写回 fileId+previewUrl。 */
+async function onUploadFile(payload: { node: CanvasNode; file: File }) {
+  if (!editingId.value || !payload.node) return
+  const { node, file } = payload
+  runningNodeId.value = node.id
+  boardRef.value?.updateNodeData(node.id, { status: 'running' })
+  try {
+    const res = await canvasApi.upload(editingId.value, file)
+    const f = res.data.data
+    boardRef.value?.updateNodeData(node.id, {
+      status: 'success',
+      fileId: f.fileId,
+      previewUrl: f.url,
+      mime: f.mimeType,
+      errorMsg: ''
+    })
+    message.success('上传成功')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '上传失败'
+    boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
+/** 节点产出后自动保存快照（防丢结果）；保存节流复用 saving 标志。 */
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => { onSave() }, 800)
 }
 
 /** 节点调色板（C3 起接入各自属性面板与产出触发；MVP 先通用节点占位）。 */

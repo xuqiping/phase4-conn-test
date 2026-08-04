@@ -184,7 +184,21 @@ function getSnapshot(): CanvasSnapshot {
   }
 }
 
-defineExpose({ addNode, loadSnapshot, getSnapshot })
+/** 取节点真实引用（数组中的对象，reactive 即时反映画布）。 */
+function getNode(nodeId: string): CanvasNode | null {
+  return nodes.value.find(n => n.id === nodeId) ?? null
+}
+
+/**
+ * 合并补丁进 node.data（C4+ 节点运行结果写回用）。
+ * 直编数组中真实引用的 data，reactive 即时反映到画布渲染（同 PropertyPanel 范式）。
+ */
+function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
+  const n = nodes.value.find(x => x.id === nodeId)
+  if (n) Object.assign(n.data, patch)
+}
+
+defineExpose({ addNode, loadSnapshot, getSnapshot, getNode, updateNodeData })
 </script>
 
 <style lang="scss" scoped>

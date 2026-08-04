@@ -2,11 +2,17 @@ package com.superprogrammer.canvas.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.canvas.dto.CanvasCreateRequest;
+import com.superprogrammer.canvas.dto.CanvasNodeDTO;
 import com.superprogrammer.canvas.dto.CanvasSaveRequest;
 import com.superprogrammer.canvas.dto.CanvasVO;
+import com.superprogrammer.canvas.dto.NodeRunResult;
 import com.superprogrammer.canvas.entity.Canvas;
+import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.file.entity.StoredFileEntity;
+import com.superprogrammer.file.service.FileStorageService;
+import com.superprogrammer.file.service.StoredFile;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +28,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -41,6 +49,8 @@ import java.util.Map;
 public class CanvasController {
 
     private final CanvasService canvasService;
+    private final CanvasNodeRunnerService nodeRunnerService;
+    private final FileStorageService fileStorageService;
 
     @PostMapping
     @RequirePermission("canvas:write")
@@ -83,6 +93,39 @@ public class CanvasController {
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         canvasService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("已删除", null));
+    }
+
+    // ==================== C4：节点产出触发 + 产出物上传 ====================
+
+    /**
+     * 运行单节点（plan IC-2/IC-3 起步）。无状态：回 {@link NodeRunResult}，前端合并 dataPatch 后随快照保存。
+     * ownership：校验画布归属，节点运行天然绑用户（LLM/media 走各自权限）。
+     */
+    @PostMapping("/{id}/nodes/run")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<NodeRunResult>> runNode(@PathVariable Long id,
+                                                    @RequestBody CanvasNodeDTO node) {
+        Long userId = getCurrentUserId();
+        // 归属咽喉点：即便运行无状态，也禁止在他人画布上触发（避免用他人 canvasId 借道跑 LLM）
+        canvasService.loadOwned(id, userId, isAdmin());
+        return ResponseEntity.ok(R.ok(nodeRunnerService.run(node, userId)));
+    }
+
+    /**
+     * 画布产出物上传（plan IC-3 图片节点 MVP / IC-5 音频 / 视频参考图通用）。
+     * 落 {@code stored_files}(source={@code SOURCE_CANVAS})，返 fileId + 预览 URL。
+     * 衍生/生图不覆盖原图：每次上传产新 fileId（plan R-5 只存引用不嵌 base64）。
+     */
+    @PostMapping("/{id}/upload")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<StoredFile>> upload(@PathVariable Long id,
+                                                @RequestParam("file") MultipartFile file) {
+        Long userId = getCurrentUserId();
+        canvasService.loadOwned(id, userId, isAdmin());
+        StoredFile stored = fileStorageService.store(file, userId, StoredFileEntity.SOURCE_CANVAS);
+        log.info("canvas upload: canvasId={} userId={} fileId={} mime={} size={}",
+                id, userId, stored.fileId(), stored.mimeType(), stored.size());
+        return ResponseEntity.ok(R.ok("已上传", stored));
     }
 
     private CanvasVO toVO(Canvas c, boolean withSnapshot) {

@@ -94,8 +94,11 @@ public class CanvasService {
         log.info("canvas deleted: id={} userId={}", id, userId);
     }
 
-    /** 载入并校验 ownership（admin 旁路）。 */
-    private Canvas loadOwned(Long id, Long userId, boolean admin) {
+    /**
+     * 载入并校验 ownership（admin 旁路）。公开给节点运行/上传等写侧端点复用同一归属咽喉点。
+     * 返回实体（非 VO），供 Runner/Upload 端点拿 canvasId 做日志/绑定。
+     */
+    public Canvas loadOwned(Long id, Long userId, boolean admin) {
         Canvas c = canvasMapper.selectById(id);
         if (c == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "画布不存在");

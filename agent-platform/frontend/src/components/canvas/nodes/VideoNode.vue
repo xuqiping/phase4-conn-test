@@ -1,7 +1,14 @@
 <template>
   <CanvasNodeBase kind="video" kind-label="视频" :status="data.status" :selected="selected">
     <template #icon><VideocamOutline /></template>
-    <div class="video-node__prompt">{{ data.prompt || '视频节点（面板配置 prompt/比例/时长）' }}</div>
+    <video
+      v-if="data.previewUrl"
+      class="video-node__clip"
+      :src="data.previewUrl"
+      controls
+      muted
+    />
+    <div v-else class="video-node__prompt">{{ data.prompt || '视频节点（面板配置 prompt/比例/时长）' }}</div>
     <div v-if="data.ratio || data.duration" class="video-node__meta">
       <span v-if="data.ratio">{{ data.ratio }}</span>
       <span v-if="data.duration">{{ data.duration }}s</span>
@@ -22,6 +29,8 @@ defineProps<{
     ratio?: string
     duration?: number
     resolution?: string
+    /** 会话级视频 objectURL（不入快照，加载时按 taskId 重新 fetch blob）。 */
+    previewUrl?: string
     status?: CanvasNodeStatus
   }
   selected?: boolean
@@ -38,6 +47,12 @@ defineProps<{
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.video-node__clip {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  display: block;
+  background: #000;
 }
 .video-node__meta {
   display: flex;

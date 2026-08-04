@@ -12,6 +12,35 @@
 import request from './request'
 import type { ApiResponse } from './request'
 
+// === C4：节点运行 + 产出物上传（对齐 CanvasNodeDTO / NodeRunResult / StoredFile） ===
+
+/** 画布节点 DTO（对齐后端 CanvasNodeDTO；run 端点请求体）。 */
+export interface CanvasNodeDTO {
+  id: string
+  type: 'text' | 'image' | 'video' | 'audio' | 'script'
+  positionX?: number
+  positionY?: number
+  data: Record<string, unknown>
+}
+
+/** 节点运行结果（对齐后端 NodeRunResult；前端把 dataPatch 合并进 node.data）。 */
+export interface NodeRunResult {
+  nodeId: string
+  status: 'idle' | 'running' | 'success' | 'failed'
+  dataPatch?: Record<string, unknown>
+  outputs?: Array<{ nodeId: string; nodeType: string; fileId: string; outputKind: string }>
+  errorMsg?: string | null
+}
+
+/** 产出物上传回包（对齐后端 StoredFile record）。 */
+export interface CanvasStoredFile {
+  fileId: string
+  url: string
+  name: string
+  mimeType: string
+  size: number
+}
+
 // === 类型定义（对齐后端 CanvasVO / CanvasSaveRequest） ===
 
 /** 画布视图。列表接口 snapshot=null，详情接口才带。 */
@@ -69,5 +98,19 @@ export const canvasApi = {
   /** DELETE /api/canvas/{id} — 软删 */
   remove(id: number) {
     return request.delete<ApiResponse<void>>(`/canvas/${id}`)
+  },
+
+  /** POST /api/canvas/{id}/nodes/run — 运行单节点（无状态，回 dataPatch 前端合并） */
+  runNode(id: number, node: CanvasNodeDTO) {
+    return request.post<ApiResponse<NodeRunResult>>(`/canvas/${id}/nodes/run`, node)
+  },
+
+  /** POST /api/canvas/{id}/upload — 产出物上传（图片/音频/视频参考图通用，落 SOURCE_CANVAS） */
+  upload(id: number, file: File) {
+    const form = new FormData()
+    form.append('file', file)
+    return request.post<ApiResponse<CanvasStoredFile>>(`/canvas/${id}/upload`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
   }
 }
