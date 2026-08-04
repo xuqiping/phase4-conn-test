@@ -11,6 +11,7 @@
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
+      :node-types="nodeTypes"
       :default-edge-options="defaultEdgeOptions"
       :connection-line-style="connectionLineStyle"
       :snap-to-grid="true"
@@ -34,11 +35,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { markRaw, ref } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
-import type { Connection, EdgeMouseEvent, NodeMouseEvent } from '@vue-flow/core'
+import type { Connection, EdgeMouseEvent, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
+import TextNode from './nodes/TextNode.vue'
+import ImageNode from './nodes/ImageNode.vue'
+import VideoNode from './nodes/VideoNode.vue'
+import AudioNode from './nodes/AudioNode.vue'
+import ScriptNode from './nodes/ScriptNode.vue'
+
+/** 5 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
+const nodeTypes = {
+  text: markRaw(TextNode),
+  image: markRaw(ImageNode),
+  video: markRaw(VideoNode),
+  audio: markRaw(AudioNode),
+  script: markRaw(ScriptNode)
+} as unknown as NodeTypesObject
 
 const {
   project,
@@ -55,6 +70,10 @@ const edges = ref<CanvasEdge[]>([])
 const selectedNodeId = ref('')
 const selectedEdgeId = ref('')
 const boardRoot = ref<HTMLElement | null>(null)
+
+const emit = defineEmits<{
+  (e: 'node-selected', node: CanvasNode | null): void
+}>()
 
 const defaultEdgeOptions = {
   type: 'smoothstep',
@@ -75,7 +94,7 @@ function onDrop(event: DragEvent) {
   const { left, top } = (vueFlowRef.value as HTMLElement).getBoundingClientRect()
   const position = project({ x: event.clientX - left, y: event.clientY - top })
   addNode({
-    type: parsed.type ?? 'default',
+    type: parsed.type ?? 'text',
     position,
     data: { label: parsed.label ?? '新节点' }
   })
@@ -85,7 +104,7 @@ function onDrop(event: DragEvent) {
 function addNode(partial: { type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }) {
   const node: CanvasNode = {
     id: `node-${Date.now()}`,
-    type: partial.type ?? 'default',
+    type: partial.type ?? 'text',
     position: partial.position ?? { x: Math.random() * 200 + 80, y: Math.random() * 120 + 80 },
     data: { label: '新节点', ...(partial.data ?? {}) }
   }
@@ -110,18 +129,22 @@ function onNodeClick({ node }: NodeMouseEvent) {
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
   boardRoot.value?.focus()
+  // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
+  emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
 }
 
 function onEdgeClick({ edge }: EdgeMouseEvent) {
   selectedNodeId.value = ''
   selectedEdgeId.value = edge.id
   boardRoot.value?.focus()
+  emit('node-selected', null)
 }
 
 function onPaneClick() {
   selectedNodeId.value = ''
   selectedEdgeId.value = ''
   boardRoot.value?.focus()
+  emit('node-selected', null)
 }
 
 function deleteSelected() {

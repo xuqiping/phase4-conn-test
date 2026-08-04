@@ -1,0 +1,39 @@
+<template>
+  <CanvasNodeBase kind="script" kind-label="脚本" :status="data.status" :selected="selected">
+    <template #icon><CodeSlashOutline /></template>
+    <div class="script-node__syn">{{ data.synopsis || data.label || '剧本节点（面板输入剧本→拆分镜）' }}</div>
+    <div v-if="sceneCount" class="script-node__meta">{{ sceneCount }} 分镜</div>
+  </CanvasNodeBase>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { CodeSlashOutline } from '@vicons/ionicons5'
+import CanvasNodeBase from './CanvasNodeBase.vue'
+import type { CanvasNodeStatus } from '@/types/canvas'
+
+const props = defineProps<{
+  data: { label?: string; synopsis?: string; scenes?: unknown[]; status?: CanvasNodeStatus }
+  selected?: boolean
+}>()
+
+const sceneCount = computed(() => (Array.isArray(props.data.scenes) ? props.data.scenes.length : 0))
+</script>
+
+<style lang="scss" scoped>
+.script-node__syn {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.script-node__meta {
+  margin-top: var(--spacing-1);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+</style>

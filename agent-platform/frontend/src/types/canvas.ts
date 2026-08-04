@@ -9,12 +9,17 @@ export interface CanvasPosition {
   y: number
 }
 
+/** 节点运行态（C4+ 产出触发用；C3 骨架先展示状态） */
+export type CanvasNodeStatus = 'idle' | 'running' | 'success' | 'failed'
+
 /** 画布节点数据（C3 起按节点类型扩展各属性） */
 export interface CanvasNodeData {
   /** 节点标签 */
   label: string
   /** 节点类型（text/image/video/audio/script） */
   nodeKind?: 'text' | 'image' | 'video' | 'audio' | 'script' | string
+  /** 运行态（C4+ 产出触发用） */
+  status?: CanvasNodeStatus
   [key: string]: unknown
 }
 

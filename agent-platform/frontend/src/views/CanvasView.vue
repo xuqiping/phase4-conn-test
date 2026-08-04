@@ -81,7 +81,10 @@
         </aside>
 
         <!-- 画布板 -->
-        <CanvasBoard ref="boardRef" />
+        <CanvasBoard ref="boardRef" @node-selected="onNodeSelect" />
+
+        <!-- 属性面板（选中节点编辑） -->
+        <PropertyPanel :node="selectedNode" />
       </div>
     </div>
   </div>
@@ -99,8 +102,9 @@ import {
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, type CanvasVO } from '@/api/canvas'
-import type { CanvasSnapshot } from '@/types/canvas'
+import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
+import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -119,10 +123,16 @@ const saving = ref(false)
 const editingId = ref<number | null>(null)
 const currentName = ref('')
 const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
+/** 当前选中节点（属性面板编辑目标；null=未选）。 */
+const selectedNode = ref<CanvasNode | null>(null)
+
+function onNodeSelect(node: CanvasNode | null) {
+  selectedNode.value = node
+}
 
 /** 节点调色板（C3 起接入各自属性面板与产出触发；MVP 先通用节点占位）。 */
 const palette = [
-  { type: 'default', label: '文本', icon: DocumentTextOutline },
+  { type: 'text', label: '文本', icon: DocumentTextOutline },
   { type: 'image', label: '图片', icon: ImageOutline },
   { type: 'video', label: '视频', icon: VideocamOutline },
   { type: 'audio', label: '音频', icon: MusicalNotesOutline },
