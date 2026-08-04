@@ -97,3 +97,8 @@ models/
 # agent-platform 运行时上传 / 散落截图（不入库）
 agent-platform/backend/uploads/
 agent-platform/login-page.png
+
+# 例外：coze项目引入/docs/ 是项目正式文档（部署手册/进度/plan），纳入版本管理
+# 覆盖上面的全局 docs/ 规则
+!coze项目引入/docs/
+!coze项目引入/docs/**
