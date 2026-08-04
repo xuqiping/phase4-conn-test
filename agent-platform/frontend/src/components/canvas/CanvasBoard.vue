@@ -208,7 +208,20 @@ function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
   if (n) Object.assign(n.data, patch)
 }
 
-defineExpose({ addNode, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData })
+/** 程序化加边（焦点编辑/抽帧产新节点自动连源用）。 */
+function addEdge(source: string, target: string) {
+  if (source === target) return
+  if (edges.value.some(e => e.source === source && e.target === target)) return
+  edges.value.push({
+    id: `edge-${source}-${target}-${Date.now()}`,
+    source,
+    target,
+    type: 'smoothstep',
+    style: { stroke: 'var(--color-primary)', strokeWidth: 2 }
+  })
+}
+
+defineExpose({ addNode, addEdge, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData })
 </script>
 
 <style lang="scss" scoped>

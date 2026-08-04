@@ -12,6 +12,14 @@ export interface CanvasPosition {
 /** 节点运行态（C4+ 产出触发用；C3 骨架先展示状态） */
 export type CanvasNodeStatus = 'idle' | 'running' | 'success' | 'failed'
 
+/** 焦点编辑框选矩形（C10，相对 stage px；提取质量依赖后续生图/分割模型）。 */
+export interface CropRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /** 画布节点数据（C3 起按节点类型扩展各属性） */
 export interface CanvasNodeData {
   /** 节点标签 */

@@ -53,6 +53,16 @@
           <template #icon><n-icon :component="SparklesOutline" /></template>
           AI 生图（待接入）
         </n-button>
+        <n-button
+          size="small"
+          block
+          tertiary
+          :disabled="!node.data.fileId"
+          @click="emit('focus-edit', node)"
+        >
+          <template #icon><n-icon :component="CropOutline" /></template>
+          焦点编辑（框选提元素）
+        </n-button>
         <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
       </template>
@@ -165,7 +175,7 @@
 import { computed } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui'
 import {
-  CloudUploadOutline, PlayOutline, SparklesOutline
+  CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode } from '@/types/canvas'
 
@@ -179,6 +189,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'run', node: CanvasNode): void
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
+  (e: 'focus-edit', node: CanvasNode): void
 }>()
 
 /** n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。 */

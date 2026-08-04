@@ -92,8 +92,17 @@
           :running="runningNodeId === selectedNode?.id"
           @run="onRunNode"
           @upload="onUploadFile"
+          @focus-edit="onFocusEdit"
         />
       </div>
+
+      <!-- C10 焦点编辑沉浸 overlay（teleport to body） -->
+      <FocusEditOverlay
+        v-if="focusNode"
+        :preview-url="(focusNode.data.previewUrl as string | undefined)"
+        @confirm="onFocusConfirm"
+        @cancel="focusNode = null"
+      />
     </div>
   </div>
 </template>
@@ -115,6 +124,8 @@ import type { MediaStatus } from '@/api/media'
 import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
+import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
+import type { CropRect } from '@/types/canvas'
 
 const route = useRoute()
 const router = useRouter()
@@ -139,9 +150,45 @@ const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
 const selectedNode = ref<CanvasNode | null>(null)
 /** 正在运行的节点 id（属性面板按钮 loading + 防重入）。 */
 const runningNodeId = ref<string | null>(null)
+/** 焦点编辑中的图节点（null=关闭沉浸 overlay）。 */
+const focusNode = ref<CanvasNode | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
+}
+
+/** C10 焦点编辑：进入沉浸 overlay。 */
+function onFocusEdit(node: CanvasNode) {
+  focusNode.value = node
+}
+
+/**
+ * C10 焦点编辑确认：在原图节点右侧产新 image 节点（带 cropRect + parentFileId + 描述），
+ * 并自动连原图→新节点。提取质量依赖后续生图/分割模型（R-8 弱保底：链路通即可）。
+ */
+function onFocusConfirm(payload: { rect: CropRect; description: string }) {
+  const src = focusNode.value
+  if (!src || !boardRef.value) return
+  const offsetX = (src.position?.x ?? 0) + 260
+  const offsetY = src.position?.y ?? 0
+  boardRef.value.addNode({
+    type: 'image',
+    position: { x: offsetX, y: offsetY },
+    data: {
+      label: '衍生图',
+      parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
+      cropRect: payload.rect,
+      prompt: payload.description,
+      status: 'idle'
+    }
+  })
+  // 取最新加入的节点 id 连边（addNode 用 Date.now id，取数组末尾）
+  const nodes = boardRef.value.getNodes()
+  const created = nodes[nodes.length - 1]
+  if (created) boardRef.value.addEdge(src.id, created.id)
+  focusNode.value = null
+  message.success('已产新图节点（提取质量待生图/分割模型）')
+  scheduleSave()
 }
 
 /** 运行节点（C4 文本/图片 / C5 视频）：按类型分发。视频走 media API（media:gen gated）。 */
