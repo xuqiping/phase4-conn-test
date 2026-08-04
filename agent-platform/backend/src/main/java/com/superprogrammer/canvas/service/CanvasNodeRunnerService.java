@@ -39,6 +39,7 @@ public class CanvasNodeRunnerService {
     private static final int PROMPT_MAX_LEN = 8000;
 
     private final LlmGateway llmGateway;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** 文本节点默认模型（可被 node.data.model 覆盖；未配 provider 时走全局 doubao）。 */
     @Value("${canvas.text-model:doubao-seed-2.0-code}")
@@ -62,12 +63,16 @@ public class CanvasNodeRunnerService {
                 return runText(node, userId);
             case CanvasNodeDTO.TYPE_IMAGE:
                 return runImage(node, userId);
-            case CanvasNodeDTO.TYPE_VIDEO:
-            case CanvasNodeDTO.TYPE_AUDIO:
             case CanvasNodeDTO.TYPE_SCRIPT:
-                // C5/C6/C7 各自接入；在此之前给明确话术，避免前端误以为可跑
+                return runScript(node, userId);
+            case CanvasNodeDTO.TYPE_AUDIO:
+                // C6：上传已走 /upload 端点；TTS/音乐生成待专用 provider（doubao TTS / 音乐模型）
                 throw new BusinessException(ErrorCode.UNPROCESSABLE,
-                        type + " 节点生成尚未接入（对应 C5/C6/C7），敬请期待");
+                        "音频 TTS/音乐生成 provider 尚未接入（C6），请使用「上传」添加音频");
+            case CanvasNodeDTO.TYPE_VIDEO:
+                // C5：视频走前端直连 media API（media:gen gated），runner 不重复入口
+                throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                        "视频节点请通过属性面板「提交视频生成」按钮（走 media API）");
             default:
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "未知节点类型: " + type);
         }
@@ -124,11 +129,111 @@ public class CanvasNodeRunnerService {
 
     /**
      * 图片节点 AI 生图。平台现无生图 provider（plan R-3），MVP 引导走上传端点。
-     * 生图 provider 落地后在此接 {@code MediaGenProvider} 新 impl（Seedream/Nano-Banana/可灵图）。
+     * 生图 provider 落地后在此接 {@code MediaGenProvider} 新 impl（Seedream/Nano-Banana/可铃图）。
      */
     private NodeRunResult runImage(CanvasNodeDTO node, Long userId) {
         throw new BusinessException(ErrorCode.UNPROCESSABLE,
                 "图片 AI 生图 provider 尚未配置（R-3 子 plan），请先使用「上传」添加图片");
+    }
+
+    /**
+     * 脚本节点 → LlmGateway 拆分镜（plan IC-6 / C7）。
+     *
+     * <p>剧本 → LLM 返回 JSON 数组 {@code [{"index":1,"description":"…"}, …]}；解析失败兜底为单条原始剧本。
+     * 批量分镜图生成（R-7 限流）待生图 provider（R-3），本步只拆文本分镜。
+     */
+    private NodeRunResult runScript(CanvasNodeDTO node, Long userId) {
+        String synopsis = readString(node, "synopsis");
+        if (synopsis == null || synopsis.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本不能为空");
+        }
+        if (synopsis.length() > PROMPT_MAX_LEN) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本长度超限（≤" + PROMPT_MAX_LEN + "）");
+        }
+        String model = readString(node, "model");
+        if (model == null || model.isBlank()) {
+            model = defaultTextModel;
+        }
+
+        String instruction = """
+                你是影视分镜师。把下面剧本拆成 3-10 个分镜，严格只输出 JSON 数组，不要任何解释或 markdown 代码块：
+                [{"index":1,"description":"分镜画面描述"},{"index":2,"description":"…"}]
+                剧本：
+                """.replace("\n", " ") + synopsis;
+        long started = System.currentTimeMillis();
+        try {
+            LlmRequest req = LlmRequest.builder()
+                    .model(model)
+                    .messages(List.of(new LlmMessage("user", instruction)))
+                    .temperature(0.5)
+                    .stream(false)
+                    .build();
+            LlmResponse resp = userId == null ? llmGateway.chat(req) : llmGateway.chat(req, userId);
+            String content = resp == null ? "" : (resp.getContent() == null ? "" : resp.getContent());
+            List<Map<String, Object>> scenes = parseScenes(content);
+            long cost = System.currentTimeMillis() - started;
+            log.info("canvas script breakdown done: nodeId={} model={} costMs={} scenes={}",
+                    node.getId(), model, cost, scenes.size());
+
+            Map<String, Object> patch = new java.util.HashMap<>();
+            patch.put("status", "success");
+            patch.put("scenes", scenes);
+            patch.put("model", model);
+            patch.put("errorMsg", "");
+            return NodeRunResult.builder()
+                    .nodeId(node.getId())
+                    .status("success")
+                    .dataPatch(patch)
+                    .build();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("canvas script breakdown failed: nodeId={} err={}", node.getId(), e.getMessage());
+            Map<String, Object> patch = new java.util.HashMap<>();
+            patch.put("status", "failed");
+            patch.put("errorMsg", "分镜失败，请稍后重试");
+            return NodeRunResult.builder()
+                    .nodeId(node.getId())
+                    .status("failed")
+                    .errorMsg("分镜失败，请稍后重试")
+                    .dataPatch(patch)
+                    .build();
+        }
+    }
+
+    /**
+     * 从 LLM 输出解析分镜数组。容错：剥 ```json 代码块围栏 → 取首个 {@code [..]} 子串 → 解析；
+     * 全失败兜底单条 {@code [{index:1, description: 原文}]}（不阻断，保底可用）。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseScenes(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        String cleaned = raw.trim();
+        // 剥 markdown 代码块围栏
+        if (cleaned.startsWith("```")) {
+            int nl = cleaned.indexOf('\n');
+            if (nl > 0) cleaned = cleaned.substring(nl + 1);
+            if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+            cleaned = cleaned.trim();
+        }
+        // 取首个 JSON 数组片段
+        int lb = cleaned.indexOf('[');
+        int rb = cleaned.lastIndexOf(']');
+        if (lb >= 0 && rb > lb) {
+            try {
+                return objectMapper.readValue(cleaned.substring(lb, rb + 1),
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+            } catch (Exception e) {
+                log.warn("分镜 JSON 解析失败，走兜底: {}", e.getMessage());
+            }
+        }
+        // 兜底：原文作单分镜
+        Map<String, Object> fallback = new java.util.HashMap<>();
+        fallback.put("index", 1);
+        fallback.put("description", cleaned);
+        return List.of(fallback);
     }
 
     private String readString(CanvasNodeDTO node, String key) {

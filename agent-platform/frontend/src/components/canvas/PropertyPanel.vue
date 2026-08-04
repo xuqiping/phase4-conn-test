@@ -83,17 +83,55 @@
           <label>分辨率</label>
           <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
         </div>
+        <div class="prop-panel__field">
+          <label>参考图（图生视频；C8 连线上游图节点自动填）</label>
+          <n-input
+            :value="(node.data.refFileId as string) || ''"
+            size="small"
+            placeholder="留空 = 文生视频"
+            @update:value="(v: string) => (node.data.refFileId = v.trim() || undefined)"
+          />
+        </div>
+        <n-button
+          size="small"
+          type="primary"
+          block
+          :loading="running"
+          :disabled="!(node.data.prompt as string)?.trim()"
+          @click="emit('run', node)"
+        >
+          <template #icon><n-icon :component="PlayOutline" /></template>
+          提交视频生成
+        </n-button>
+        <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
+        <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
       </template>
 
-      <!-- 音频节点：模式 -->
+      <!-- 音频节点：上传（MVP）/ TTS / 音乐生成（待 provider） -->
       <template v-else-if="node.type === 'audio'">
         <div class="prop-panel__field">
           <label>来源</label>
           <n-select v-model:value="(node.data.audioMode as string)" size="small" :options="audioModeOpts" />
         </div>
+        <n-upload
+          v-if="(node.data.audioMode ?? 'upload') === 'upload'"
+          :show-file-list="false"
+          accept="audio/*"
+          @change="(opts: { file: { file: File | null } }) => onPickFile(opts)"
+        >
+          <n-button size="small" block :loading="running">
+            <template #icon><n-icon :component="CloudUploadOutline" /></template>
+            上传音频
+          </n-button>
+        </n-upload>
+        <n-button v-else size="small" block tertiary disabled title="TTS/音乐生成 provider 待接入">
+          <template #icon><n-icon :component="SparklesOutline" /></template>
+          {{ node.data.audioMode === 'tts' ? 'TTS 语音（待接入）' : '音乐生成（待接入）' }}
+        </n-button>
+        <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
       </template>
 
-      <!-- 脚本节点：剧本概要 -->
+      <!-- 脚本节点：剧本 → LLM 拆分镜 -->
       <template v-else-if="node.type === 'script'">
         <div class="prop-panel__field">
           <label>剧本</label>
@@ -102,15 +140,29 @@
             type="textarea"
             size="small"
             :autosize="{ minRows: 5, maxRows: 12 }"
-            placeholder="剧本输入，C7 经 LlmGateway 拆分镜"
+            placeholder="剧本输入，经 LlmGateway 拆分镜"
           />
         </div>
+        <n-button
+          size="small"
+          type="primary"
+          block
+          :loading="running"
+          :disabled="!(node.data.synopsis as string)?.trim()"
+          @click="emit('run', node)"
+        >
+          <template #icon><n-icon :component="PlayOutline" /></template>
+          拆分镜
+        </n-button>
+        <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
+        <div v-if="sceneCount" class="prop-panel__readonly">已拆 {{ sceneCount }} 分镜</div>
       </template>
     </template>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui'
 import {
   CloudUploadOutline, PlayOutline, SparklesOutline
@@ -136,6 +188,11 @@ function onPickFile(opts: { file: { file: File | null } }) {
     emit('upload', { node: props.node, file })
   }
 }
+
+/** 脚本节点已拆分镜数（属性面板回显）。 */
+const sceneCount = computed(() =>
+  Array.isArray(props.node?.data.scenes) ? (props.node!.data.scenes as unknown[]).length : 0
+)
 
 const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
 const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))

@@ -189,6 +189,16 @@ function getNode(nodeId: string): CanvasNode | null {
   return nodes.value.find(n => n.id === nodeId) ?? null
 }
 
+/** 取全部连线（C8 数据流解析 + C9 拓扑重跑用）。 */
+function getEdges(): CanvasEdge[] {
+  return edges.value
+}
+
+/** 取全部节点（C9 拓扑重跑用）。 */
+function getNodes(): CanvasNode[] {
+  return nodes.value
+}
+
 /**
  * 合并补丁进 node.data（C4+ 节点运行结果写回用）。
  * 直编数组中真实引用的 data，reactive 即时反映到画布渲染（同 PropertyPanel 范式）。
@@ -198,7 +208,7 @@ function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
   if (n) Object.assign(n.data, patch)
 }
 
-defineExpose({ addNode, loadSnapshot, getSnapshot, getNode, updateNodeData })
+defineExpose({ addNode, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData })
 </script>
 
 <style lang="scss" scoped>

@@ -35,7 +35,7 @@ class CanvasNodeRunnerServiceTest {
 
     @BeforeEach
     void setUp() {
-        runner = new CanvasNodeRunnerService(llmGateway);
+        runner = new CanvasNodeRunnerService(llmGateway, new com.fasterxml.jackson.databind.ObjectMapper());
         ReflectionTestUtils.setField(runner, "defaultTextModel", "doubao-seed-2.0-code");
     }
 
@@ -89,10 +89,42 @@ class CanvasNodeRunnerServiceTest {
     }
 
     @Test
-    void run_video_notYetImplemented_throws422() {
+    void run_video_throws422_redirectToMediaApi() {
         CanvasNodeDTO node = nodeOf("n6", CanvasNodeDTO.TYPE_VIDEO, Map.of("prompt", "x"));
         BusinessException ex = assertThrows(BusinessException.class, () -> runner.run(node, 7L));
         assertEquals(ErrorCode.UNPROCESSABLE.getCode(), ex.getCode());
+    }
+
+    @Test
+    void run_audio_throws422_providerNotReady() {
+        CanvasNodeDTO node = nodeOf("n8", CanvasNodeDTO.TYPE_AUDIO, Map.of("audioMode", "tts"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> runner.run(node, 7L));
+        assertEquals(ErrorCode.UNPROCESSABLE.getCode(), ex.getCode());
+    }
+
+    @Test
+    void run_script_breakdown_parsesScenes() {
+        CanvasNodeDTO node = nodeOf("n9", CanvasNodeDTO.TYPE_SCRIPT,
+                Map.of("synopsis", "主角走进咖啡馆", "model", "doubao-seed-2.0-code"));
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(LlmResponse.builder()
+                .content("""
+                        ```json
+                        [{"index":1,"description":"推门"},{"index":2,"description":"点单"}]
+                        ```
+                        """)
+                .build());
+        NodeRunResult r = runner.run(node, 7L);
+        assertEquals("success", r.getStatus());
+        Object scenes = r.getDataPatch().get("scenes");
+        assertEquals(2, ((java.util.List<?>) scenes).size(),
+                "应剥 ```json 围栏并解析出 2 个分镜");
+    }
+
+    @Test
+    void run_script_blankSynopsis_throws400() {
+        CanvasNodeDTO node = nodeOf("n10", CanvasNodeDTO.TYPE_SCRIPT, Map.of("synopsis", "  "));
+        BusinessException ex = assertThrows(BusinessException.class, () -> runner.run(node, 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
     @Test

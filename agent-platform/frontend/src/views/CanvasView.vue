@@ -61,6 +61,9 @@
         <n-button :loading="saving" type="primary" @click="onSave">
           <n-icon :component="SaveOutline" /> 保存
         </n-button>
+        <n-button :loading="rerunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
+          <n-icon :component="RefreshOutline" /> 重跑全链
+        </n-button>
       </div>
 
       <div class="canvas-view__main">
@@ -102,11 +105,13 @@ import {
   NButton, NCard, NEmpty, NIcon, NInput, NSpin, useMessage
 } from 'naive-ui'
 import {
-  AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline,
+  AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
   DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { canvasApi, type CanvasNodeDTO, type CanvasVO } from '@/api/canvas'
+import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO } from '@/api/canvas'
+import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
+import type { MediaStatus } from '@/api/media'
 import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
@@ -123,6 +128,8 @@ const canvases = ref<CanvasVO[]>([])
 const loadingList = ref(false)
 const creating = ref(false)
 const saving = ref(false)
+/** 一键重跑进行中（拓扑序串行跑可生成节点）。 */
+const rerunning = ref(false)
 
 /** 当前编辑画布 id（null=列表模式）。 */
 const editingId = ref<number | null>(null)
@@ -137,10 +144,15 @@ function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
 }
 
-/** 运行节点（C4）：先置 running 态 → 调后端 → 合并 dataPatch → 触发快照保存。 */
+/** 运行节点（C4 文本/图片 / C5 视频）：按类型分发。视频走 media API（media:gen gated）。 */
 async function onRunNode(node: CanvasNode) {
   if (!editingId.value || !node) return
   if (runningNodeId.value === node.id) return
+  if (node.type === 'video') {
+    await onRunVideo(node)
+    return
+  }
+  // text/image 走画布 runner（无状态）
   runningNodeId.value = node.id
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
@@ -154,7 +166,6 @@ async function onRunNode(node: CanvasNode) {
     if (result?.dataPatch) {
       boardRef.value?.updateNodeData(node.id, result.dataPatch)
     }
-    // 同步选中节点的 data 引用（PropertyPanel 直编同源；updateNodeData 已改真实对象，selectedNode 自动反映）
     message.success(result?.status === 'success' ? '生成完成' : '已处理')
     scheduleSave()
   } catch (e: unknown) {
@@ -166,7 +177,182 @@ async function onRunNode(node: CanvasNode) {
   }
 }
 
-/** 上传产出物（C4 图片 MVP / 音频/视频参考图）：落 SOURCE_CANVAS，写回 fileId+previewUrl。 */
+/**
+ * 运行视频节点（C5）：复用既有 media API。
+ * 提交（文生/图生二选一，按 node.data.refFileId）→ 轮询至终态 → 成功 fetch blob 转 objectURL 预览。
+ * 权限：media:gen gated，无权则 submit 403 → 节点 FAILED（plan 安全清单「各自权限」）。
+ */
+async function onRunVideo(node: CanvasNode) {
+  if (!editingId.value) return
+  const data = node.data as Record<string, unknown>
+  const prompt = String(data.prompt ?? '').trim()
+  if (!prompt) {
+    message.warning('请先填写视频提示词')
+    return
+  }
+  runningNodeId.value = node.id
+  boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
+  try {
+    // C8 数据流：图→视频连线时，上游图节点 fileId 自动作参考图（手动 refFileId 优先）
+    const refFileId = (data.refFileId ? String(data.refFileId) : undefined) ?? resolveUpstreamImageFileId(node.id)
+    const submit = await mediaApi.submitVideo({
+      prompt,
+      ratio: (data.ratio as MediaRatioArg) || '16:9',
+      duration: Number(data.duration ?? 5),
+      resolution: (data.resolution as MediaResArg) || '720p',
+      watermark: Boolean(data.watermark),
+      generateAudio: Boolean(data.generateAudio),
+      taskType: refFileId ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
+      refFileId
+    })
+    const taskId = submit.data.data.id
+    boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+    message.info('视频已提交，生成中…')
+    scheduleSave()
+    await pollVideoTask(node.id, taskId)
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '视频提交失败'
+    boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
+/** 轮询视频任务至终态；成功 fetch blob 预览，失败标红。 */
+async function pollVideoTask(nodeId: string, taskId: number) {
+  const maxRounds = 120 // ~10min 上限（每 5s 一次）
+  for (let i = 0; i < maxRounds; i++) {
+    await new Promise<void>(r => setTimeout(r, 5000))
+    let status: MediaStatus
+    try {
+      const res = await mediaApi.getTask(taskId)
+      status = res.data.data.status
+    } catch {
+      continue // 瞬时网络错误继续轮询
+    }
+    if (!isTerminal(status)) {
+      boardRef.value?.updateNodeData(nodeId, { status: 'running' })
+      continue
+    }
+    if (status === 'SUCCEEDED') {
+      // 拉带鉴权的视频流 → objectURL（下载端点需 auth header，<video src> 无法带）
+      const detail = await mediaApi.getTask(taskId)
+      const url = detail.data.data.videoUrl
+      const objectUrl = url ? await fetchVideoBlob(url) : ''
+      boardRef.value?.updateNodeData(nodeId, {
+        status: 'success',
+        mediaStatus: 'SUCCEEDED',
+        previewUrl: objectUrl,
+        errorMsg: ''
+      })
+      message.success('视频生成完成')
+    } else {
+      boardRef.value?.updateNodeData(nodeId, {
+        status: 'failed',
+        mediaStatus: status,
+        errorMsg: '视频生成失败'
+      })
+      message.error('视频生成失败')
+    }
+    scheduleSave()
+    return
+  }
+  boardRef.value?.updateNodeData(nodeId, { status: 'failed', errorMsg: '生成超时' })
+}
+
+type MediaRatioArg = Parameters<typeof mediaApi.submitVideo>[0]['ratio']
+type MediaResArg = Parameters<typeof mediaApi.submitVideo>[0]['resolution']
+
+/**
+ * C8 数据流：沿 target=nodeId 的入边找上游 image 节点已产出 fileId（图生视频参考图）。
+ * 取第一个命中的（多入边场景后续可细化选择器）。无则 undefined（文生视频）。
+ */
+function resolveUpstreamImageFileId(nodeId: string): string | undefined {
+  const edges = boardRef.value?.getEdges() ?? []
+  for (const e of edges) {
+    if (e.target !== nodeId) continue
+    const src = boardRef.value?.getNode(e.source)
+    if (src?.type === 'image') {
+      const fid = (src.data as Record<string, unknown>).fileId as string | undefined
+      if (fid) return fid
+    }
+  }
+  return undefined
+}
+
+/** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。 */
+async function onRerunAll() {
+  if (!boardRef.value || rerunning.value) return
+  const nodes = boardRef.value.getNodes()
+  const edges = boardRef.value.getEdges()
+  if (!nodes.length) {
+    message.warning('画布为空')
+    return
+  }
+  const { order, cycle } = topoSort(nodes, edges)
+  if (cycle) {
+    message.error('画布存在环路，无法拓扑重跑（请检查连线）')
+    return
+  }
+  rerunning.value = true
+  try {
+    let ran = 0
+    for (const id of order) {
+      const node = boardRef.value.getNode(id)
+      if (!node) continue
+      if (isRunnable(node.type)) {
+        await onRunNode(node)
+        ran++
+      }
+    }
+    message.success(`重跑完成（${ran} 个节点）`)
+  } finally {
+    rerunning.value = false
+  }
+}
+
+/** 可生成节点类型（image/audio 为上传型，跳过；image AI 生图 provider 落地后加入）。 */
+function isRunnable(type: string): boolean {
+  return type === 'text' || type === 'script' || type === 'video'
+}
+
+/**
+ * 拓扑排序 + 环检测（Kahn 算法）。
+ * 入度表 + 邻接表 → 入度为 0 的入队 → 逐出队减邻居入度。
+ * order.length < 节点数 ⇒ 存在环（plan R-6 环检测报错）。
+ */
+function topoSort(
+  nodes: CanvasNode[],
+  edges: { source: string; target: string }[]
+): { order: string[]; cycle: boolean } {
+  const inDegree = new Map<string, number>()
+  const adj = new Map<string, string[]>()
+  for (const n of nodes) {
+    inDegree.set(n.id, 0)
+    adj.set(n.id, [])
+  }
+  for (const e of edges) {
+    if (!inDegree.has(e.source) || !inDegree.has(e.target)) continue
+    adj.get(e.source)!.push(e.target)
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1)
+  }
+  const queue: string[] = []
+  for (const [id, deg] of inDegree) if (deg === 0) queue.push(id)
+  const order: string[] = []
+  while (queue.length) {
+    const cur = queue.shift()!
+    order.push(cur)
+    for (const nb of adj.get(cur) ?? []) {
+      const nd = (inDegree.get(nb) ?? 1) - 1
+      inDegree.set(nb, nd)
+      if (nd === 0) queue.push(nb)
+    }
+  }
+  return { order, cycle: order.length < nodes.length }
+}
+
+/** 上传产出物（C4 图片 / C6 音频 / 视频参考图）：落 SOURCE_CANVAS，写回 fileId + 会话级预览。 */
 async function onUploadFile(payload: { node: CanvasNode; file: File }) {
   if (!editingId.value || !payload.node) return
   const { node, file } = payload
@@ -175,10 +361,12 @@ async function onUploadFile(payload: { node: CanvasNode; file: File }) {
   try {
     const res = await canvasApi.upload(editingId.value, file)
     const f = res.data.data
+    // /api/files/{id} 需 auth header，<img>/<audio> src 无法带 → axios 拉 blob 转 objectURL（会话级）
+    const previewUrl = await fetchCanvasPreview(f.fileId)
     boardRef.value?.updateNodeData(node.id, {
       status: 'success',
       fileId: f.fileId,
-      previewUrl: f.url,
+      previewUrl,
       mime: f.mimeType,
       errorMsg: ''
     })
@@ -246,9 +434,45 @@ async function loadCanvas(id: number) {
     currentName.value = c.name
     const snap = parseSnapshot(c.snapshot)
     boardRef.value?.loadSnapshot(snap)
+    // 重取会话级预览：快照只存 fileId（previewUrl blob 上次保存已剥），image/audio 节点按 fileId 拉 blob
+    hydratePreviews(snap.nodes)
+    // 视频节点：按 taskId 重取视频预览（若有终态任务）
+    hydrateVideoPreviews(snap.nodes)
   } catch {
     message.error('画布加载失败')
     backToList()
+  }
+}
+
+/** image/audio 节点按 fileId 重取 objectURL 预览（失败静默，不阻断加载）。 */
+function hydratePreviews(nodes: CanvasNode[]) {
+  for (const n of nodes) {
+    const fileId = (n.data as Record<string, unknown>).fileId as string | undefined
+    if (fileId && !(n.data as Record<string, unknown>).previewUrl && (n.type === 'image' || n.type === 'audio')) {
+      fetchCanvasPreview(fileId)
+        .then(url => boardRef.value?.updateNodeData(n.id, { previewUrl: url }))
+        .catch(() => { /* 预览取失败不阻断 */ })
+    }
+  }
+}
+
+/** 视频节点按已终态 taskId 重取视频预览。 */
+function hydrateVideoPreviews(nodes: CanvasNode[]) {
+  for (const n of nodes) {
+    if (n.type !== 'video') continue
+    const taskId = (n.data as Record<string, unknown>).taskId as number | undefined
+    const mediaStatus = (n.data as Record<string, unknown>).mediaStatus as string | undefined
+    if (taskId && mediaStatus === 'SUCCEEDED') {
+      mediaApi.getTask(taskId)
+        .then(async r => {
+          const url = r.data.data.videoUrl
+          if (url) {
+            const obj = await fetchVideoBlob(url)
+            boardRef.value?.updateNodeData(n.id, { previewUrl: obj, status: 'success' })
+          }
+        })
+        .catch(() => { /* 静默 */ })
+    }
   }
 }
 
@@ -267,9 +491,16 @@ async function onSave() {
   saving.value = true
   try {
     const snap = boardRef.value.getSnapshot()
+    // 剥离会话级字段：视频 previewUrl 是 blob: objectURL（带鉴权 fetch 产物），跨会话失效，不入快照。
+    // taskId/status 入快照（加载时可按 taskId 重新 fetch 预览）。
+    const cleanNodes = snap.nodes.map(n => {
+      const dataCopy = { ...n.data } as Record<string, unknown>
+      delete dataCopy.previewUrl
+      return { ...n, data: dataCopy }
+    })
     await canvasApi.save(editingId.value, {
       name: currentName.value || '未命名画布',
-      snapshot: JSON.stringify(snap)
+      snapshot: JSON.stringify({ ...snap, nodes: cleanNodes })
     })
     message.success('已保存')
     await loadList()
