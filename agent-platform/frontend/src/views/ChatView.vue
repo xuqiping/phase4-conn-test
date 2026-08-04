@@ -199,12 +199,15 @@
               <n-button size="small" quaternary circle title="管理项目（新建/删除/共享）" @click="showProjectManager = true">
                 <template #icon><n-icon :component="FolderOpenOutline" /></template>
               </n-button>
+              <!-- F-6 新栈召回 scope（个人/项目/方向/时间窗/离职），双栈期与上 legacy 读控件并存到 H 收尾 -->
+              <MemoryRecallScopePopover />
             </div>
             <n-badge :value="chatStore.activeConflictCount" :max="99" :show="chatStore.activeConflictCount > 0" type="error">
               <n-button size="small" quaternary circle @click="showMemory = true" title="查看/管理长期记忆与冲突">
                 <template #icon><n-icon :component="BookmarksOutline" /></template>
               </n-button>
             </n-badge>
+            <MemoryNotificationBadge />
           </template>
         </ChatInput>
       </template>
@@ -243,7 +246,6 @@ import {
   BookmarksOutline
 } from '@vicons/ionicons5'
 import { useChatStore } from '@/stores/chat'
-import { chatApi } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 import SessionList from '@/components/chat/SessionList.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
@@ -253,6 +255,8 @@ import TargetSelector from '@/components/chat/TargetSelector.vue'
 import ProjectSelector from '@/components/chat/ProjectSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
+import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
+import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
 import { projectApi } from '@/api/project'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
@@ -308,14 +312,7 @@ function onProjectsChanged() {
   void loadProjectOptions()
 }
 
-async function loadGlobalRag() {
-  try {
-    const res = await chatApi.getChatRagMode()
-    globalRag.value = !!res.data.data.globalEnabled
-  } catch {
-    // 非 admin 或失败：保持 opt-in false，不阻塞聊天
-  }
-}
+// 计划12 H'-4：旧 getChatRagMode（/chat/memories/rag-mode）端点已删；globalRag 留 false（仅影响「跟随全局」显示文案）。
 
 function onRagToggle(v: boolean) {
   ragPref.value = v
@@ -380,7 +377,6 @@ onMounted(async () => {
   await chatStore.fetchSessions()
   chatStore.connectWS()
   chatStore.startConflictPoll()
-  void loadGlobalRag()
   void loadProjectOptions()
   const sessionId = route.params.sessionId
   if (sessionId) {

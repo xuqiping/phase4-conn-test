@@ -3,6 +3,7 @@ package com.superprogrammer.project.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.mapper.UserMapper;
+import com.superprogrammer.chat.service.internal.MemoryLifecycleHookService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.project.dto.ProjectCreateRequest;
@@ -35,6 +36,8 @@ public class ProjectService {
     private final ProjectMapper projectMapper;
     private final ProjectMemberMapper memberMapper;
     private final UserMapper userMapper;
+    /** 计划12 记忆新栈生命周期写侧 hook（§3.7）：成员/项目事件同步到 memory_* 新栈。单向依赖无环。 */
+    private final MemoryLifecycleHookService memoryLifecycleHookService;
 
     // ---------- 查询 ----------
 
@@ -95,6 +98,7 @@ public class ProjectService {
         owner.setCreatedBy(userId);
         owner.setUpdatedBy(userId);
         memberMapper.insert(owner);
+        memoryLifecycleHookService.onProjectCreated(project.getId(), userId);
 
         return toVO(project, userId);
     }
@@ -123,8 +127,11 @@ public class ProjectService {
     @Transactional
     public void delete(Long id, Long userId, boolean admin) {
         assertManage(id, userId, admin);
+        Project project = ensureProject(id); // 软删前取项目名，供记忆波及通知文案
         projectMapper.deleteById(id); // @TableLogic 软删
         // 成员行随之失效：canAccess 先查项目存在性，软删项目后即不可见，成员残留无害
+        // 计划12：记忆新栈级联（turns 标 deleted_project_ids + 波及通知 + 清总结/coverage/成员行等，§3.7）
+        memoryLifecycleHookService.onProjectDeleted(id, project.getName());
     }
 
     // ---------- 成员/共享 ----------
@@ -151,11 +158,21 @@ public class ProjectService {
         String role = (req.getRole() == null || "OWNER".equalsIgnoreCase(req.getRole()))
                 ? "VIEWER" : req.getRole().toUpperCase();
 
-        ProjectMember existing = findMember(id, req.getUserId());
+        ProjectMember existing = memberMapper.findAnyState(id, req.getUserId());
+        if (existing != null && existing.getDeleted() != null && existing.getDeleted() == 1) {
+            // 曾移除过的软删行：复活（唯一约束含软删行，直接 insert 会撞 uk_project_members_project_user）
+            existing.setDeleted(0);
+            existing.setRole(role);
+            existing.setUpdatedBy(operatorId);
+            memberMapper.updateById(existing);
+            memoryLifecycleHookService.onMemberAdded(id, req.getUserId(), role);
+            return toMemberVO(existing);
+        }
         if (existing != null) {
             existing.setRole(role);
             existing.setUpdatedBy(operatorId);
             memberMapper.updateById(existing);
+            memoryLifecycleHookService.onMemberAdded(id, req.getUserId(), role);
             return toMemberVO(existing);
         }
         ProjectMember member = new ProjectMember();
@@ -165,6 +182,7 @@ public class ProjectService {
         member.setCreatedBy(operatorId);
         member.setUpdatedBy(operatorId);
         memberMapper.insert(member);
+        memoryLifecycleHookService.onMemberAdded(id, req.getUserId(), role);
         return toMemberVO(member);
     }
 
@@ -179,6 +197,8 @@ public class ProjectService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "不能移除项目拥有者");
         }
         memberMapper.deleteById(memberId);
+        // 计划12：记忆新栈置 DEPARTED + departed_at + 本人 turns 追加 departed_project_ids（§3.7 保交接）
+        memoryLifecycleHookService.onMemberDeparted(id, member.getUserId(), member.getRole());
     }
 
     // ---------- 鉴权 ----------

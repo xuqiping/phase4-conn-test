@@ -26,4 +26,6 @@ public class RagMemorySettingsVO {
     private Integer keywordMax;
     /** M3 entities 词袋计数配置（totalMax/variantMin-Max/properNounMin-Max/hypernymMin-Max）。LLM_KEY/VECTOR_KEYWORD 用。 */
     private MemoryEntitiesConfig entitiesConfig;
+    /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */
+    private Boolean genPersonalEnabled;
 }

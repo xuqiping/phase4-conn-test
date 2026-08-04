@@ -26,7 +26,9 @@ import java.util.stream.Collectors;
 public class LlmProviderService {
 
     private static final String DEFAULT_CATEGORY = "CHAT";
-    private static final Set<String> CATEGORIES = Set.of("CHAT", "EMBEDDING", "CHAT_EMBEDDING");
+    private static final Set<String> CATEGORIES = Set.of("CHAT", "EMBEDDING", "CHAT_EMBEDDING", "MEDIA");
+    /** MEDIA = 视频/生图等任务型 provider，不参与 chat 路由/模型列表（视频代码按 name 单独取）。 */
+    public static final String CATEGORY_MEDIA = "MEDIA";
 
     /** 规范化 category：合法原样返回，null/blank/非法 → CHAT（容错 warn 不抛 400）。 */
     private String normalizeCategory(String raw) {

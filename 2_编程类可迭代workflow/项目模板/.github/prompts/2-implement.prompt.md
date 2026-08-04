@@ -12,10 +12,10 @@ description: "逐步实现计划（Implement 步）。一次一步，每步勾�
 - 参照 [file_structure.md](/workflow_output/docs/file_structure.md) 和工作区已有实现，保持风格一致。
 - **不要改动**只作为参考的文件。
 - 实现并运行计划中描述的单元测试。
-- 每完成一个 chunk（测试通过），**建议我提交一次 commit**（commit 当存档点）。
+- 每完成一个 chunk（测试通过），**建议我提交一次 commit**（commit 当存档点）。**commit 前必须先跑 `scripts/check_all`（最小质量门），全绿才提交；失败日志贴回给我修。**
 - 看不懂自己写的代码，先加注释或简化——**never commit code you can't explain**。
 - 判断本步是否产出通用能力/约定，是则提示我沉淀进 [AGENTS.md](/workflow_output/项目规范约束/AGENTS.md)。
-- **每一轮对话结束时，必须更新开发进度**：在 `workflow_output/开发进度/<功能名>/开发进度n.md` 记录本轮内容。文档/理论类写清步骤、产出文件、被谁引用；代码类写清实现功能、对应 plan/PRD 编号、涉及文件、关键代码位置、测试结果、commit SHA。
+- **每一轮对话结束时，必须更新开发进度**：在 `workflow_output/开发进度/<功能名>/开发进度n.md` 记录本轮内容。文档/理论类写清步骤、产出文件、被谁引用；代码类写清实现功能、对应 plan/PRD 编号、涉及文件、关键代码位置、测试结果、commit SHA。**更新完跑 `python scripts/check_docs.py --quiet`，把超限/失效链接修掉再收尾。**
 - **所有文档守 5000 tokens 上限**：写到 4000 tokens 左右就预警，超限时拆分为新文件或建 `总路由.md` 索引。
 
 ## 执行

@@ -22,6 +22,8 @@ public class SystemSettingService {
     public static final String ACCESS_TOKEN_EXPIRATION_MS = "auth.access_token_expiration_ms";
     /** RAG/记忆模式总开关（false=opt-in）。4 层优先级：session>agent/workflow>global。 */
     public static final String RAG_MEMORY_ENABLED = "rag.memory.enabled";
+    /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */
+    public static final String RAG_MEMORY_GEN_PERSONAL_ENABLED = "rag.memory.gen.personal.enabled";
     /** 记忆处理模式：ASYNC=全异步(不卡顿,冲突走面板) / HYBRID=同步(即时冲突追问 askText)。 */
     public static final String RAG_MEMORY_PROCESS_MODE = "rag.memory.process-mode";
     /** 记忆检索模式：LLM_FULL_CONTEXT=全量灌入(默认) / EMBEDDING_VECTOR=向量 top-K 真检索。 */
@@ -60,6 +62,15 @@ public class SystemSettingService {
     public static final String KNOWLEDGE_EXCEL_MAX_ROWS_PER_SHEET = "knowledge.excel.max-rows-per-sheet";
     /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
     public static final String KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS = "knowledge.excel.preview-max-sheets";
+
+    // ============================ 计划12 个人记忆 memory.* ============================
+    /** 标签归一 anchor 余弦距离阈值（写时归一路径③粗筛门槛）。
+     *  &lt;= 阈值的候选才送二次 LLM 批判判同义。默认 0.25（距离语义：0=完全相同，2=相反）。
+     *  免发版可调：调小=更保守少并、调大=更激进易并（误并不可逆，倾向保守）。 */
+    public static final String MEMORY_TAG_ANCHOR_THRESHOLD = "memory.tag.anchor-threshold";
+    /** 前置过滤用户加项敏感黑名单（逗号分隔；用户只能加项，核心项由 Prefilter 内置不可清空）。
+     *  命中即跳该侧生成（不写 raw 也不调 LLM）。默认空（核心项已预置开箱即用）。 */
+    public static final String MEMORY_PREFILTER_BLACKLIST_EXTRA = "memory.prefilter.blacklist-extra";
 
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
@@ -132,6 +143,18 @@ public class SystemSettingService {
 
     public void updateRagMemoryEnabled(boolean enabled) {
         setBoolean(RAG_MEMORY_ENABLED, enabled, "RAG/记忆模式总开关（false=opt-in）");
+    }
+
+    /** 计划12 · C：非项目会话个人记忆 gen 兜底开关，默认 true（开生成）。
+     *  项目会话走 memory_project_settings（owner）AND memory_project_user_settings（会员覆写）表，
+     *  非项目会话（无 projectId）读此全局兜底。 */
+    public boolean getMemoryGenPersonalEnabled() {
+        return getBoolean(RAG_MEMORY_GEN_PERSONAL_ENABLED, true);
+    }
+
+    public void updateMemoryGenPersonalEnabled(boolean enabled) {
+        setBoolean(RAG_MEMORY_GEN_PERSONAL_ENABLED, enabled,
+                "非项目会话个人记忆gen兜底开关（项目会话走ownerAND会员覆写表；默认true开生成）");
     }
 
     /** 记忆处理模式，默认 ASYNC（全异步不卡顿）。HYBRID=同步即时冲突追问。 */
@@ -330,6 +353,48 @@ public class SystemSettingService {
     /** 预读端点返回 sheet 名上限（防恶意巨多 sheet 文件）。默认 50。 */
     public int getExcelPreviewMaxSheets() {
         return getExcelInt(KNOWLEDGE_EXCEL_PREVIEW_MAX_SHEETS, 50, 1);
+    }
+
+    // ============================ 计划12 标签归一 ============================
+
+    /** 标签归一 anchor 余弦距离阈值（路径③粗筛门槛），默认 0.25。距离语义：0=完全相同，2=相反。
+     *  &lt;= 阈值的候选才送二次 LLM 批判。非法/缺失 → 0.25；越界 [0,2] → 0.25。 */
+    public double getMemoryTagAnchorThreshold() {
+        String v = getValue(MEMORY_TAG_ANCHOR_THRESHOLD);
+        if (v == null || v.isBlank()) return 0.25;
+        try {
+            double d = Double.parseDouble(v.trim());
+            return (d < 0.0 || d > 2.0) ? 0.25 : d;
+        } catch (NumberFormatException ignored) {
+            return 0.25;
+        }
+    }
+
+    /** 写标签归一 anchor 阈值（免发版调）。 */
+    public void updateMemoryTagAnchorThreshold(double threshold) {
+        if (threshold < 0.0 || threshold > 2.0) threshold = 0.25;
+        upsert(MEMORY_TAG_ANCHOR_THRESHOLD, String.valueOf(threshold),
+                "标签归一anchor余弦距离阈值（路径③粗筛门槛，0=完全相同2=相反，默认0.25保守）");
+    }
+
+    /** 前置过滤用户加项敏感黑名单（逗号分隔解析为 List，trim + 去空）。
+     *  <b>核心项不可清空</b>：核心 6 类（密码/支付/验证码/身份证/银行卡/token）由 Prefilter 内置，
+     *  本配置仅能在其之上加项。默认空 List。 */
+    public java.util.List<String> getMemoryPrefilterBlacklistExtra() {
+        String v = getValue(MEMORY_PREFILTER_BLACKLIST_EXTRA);
+        if (v == null || v.isBlank()) return java.util.Collections.emptyList();
+        return java.util.Arrays.stream(v.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    /** 写用户加项敏感黑名单（逗号拼接；核心项仍由 Prefilter 内置不受此影响）。 */
+    public void updateMemoryPrefilterBlacklistExtra(java.util.List<String> terms) {
+        java.util.List<String> clean = terms == null ? java.util.Collections.emptyList()
+                : terms.stream().filter(s -> s != null && !s.isBlank()).map(String::trim).distinct().toList();
+        upsert(MEMORY_PREFILTER_BLACKLIST_EXTRA, String.join(",", clean),
+                "前置过滤用户加项敏感黑名单（逗号分隔；核心项不可清空，仅在其上加项）");
     }
 
     // ============================ RAG 召回 query 扩展 ============================

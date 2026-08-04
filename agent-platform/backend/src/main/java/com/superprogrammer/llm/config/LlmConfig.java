@@ -31,6 +31,12 @@ public class LlmConfig {
         List<LlmProviderInterface> providers = new ArrayList<>();
         List<LlmProviderEntity> activeProviders = providerService.listActive();
         for (LlmProviderEntity entity : activeProviders) {
+            // MEDIA（视频/生图等任务型 provider）不注册为 chat provider——
+            // 它们走 ArkSeedanceProvider 等专门任务型 provider 按 name 单独取，不参与 chat/completions 路由。
+            if (LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(entity.getCategory())) {
+                log.info("跳过 MEDIA provider（不注册为 chat）: {} ({})", entity.getName(), entity.getApiEndpoint());
+                continue;
+            }
             String apiKey = providerService.getDecryptedApiKey(entity.getId());
             LlmProviderInterface provider = createProvider(entity, apiKey);
             if (provider != null) {

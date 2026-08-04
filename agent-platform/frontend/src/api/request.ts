@@ -63,6 +63,14 @@ request.interceptors.request.use(
  */
 request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
+    // 二进制下载（blob/arraybuffer）无 {code,msg,data} 包装，跳过业务码校验原样返回。
+    // 如视频下载端点返回 video/mp4，若走 code 校验会被当业务错误弹「请求失败」。
+    const rt = response.config?.responseType
+    if (rt === 'blob' || rt === 'arraybuffer') {
+      consecutiveNetErrors = 0
+      return response
+    }
+
     const res = response.data
 
     // 任一成功响应 → 清零连续网络错误计数

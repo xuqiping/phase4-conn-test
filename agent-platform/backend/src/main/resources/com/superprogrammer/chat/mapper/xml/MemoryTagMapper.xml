@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryTagMapper">
+
+    <resultMap id="MemoryTagMap" type="com.superprogrammer.chat.entity.MemoryTag" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="aliases" column="aliases" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 写时归一首查：精确 (user, subject, topic) 命中（UNIQUE 兜底）。 -->
+    <select id="findByUserSubjectTopic" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND subject = #{subject} AND topic = #{topic} AND deleted = 0
+    </select>
+
+    <!-- 路径②：label ∈ 某标签 aliases（同义别名命中，向量 4 不外露但内部可查）。
+         返 usage 最高的一条（同义集内最可能的目标规范标签）。 -->
+    <select id="findByLabelInAliases" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND deleted = 0 AND #{label} = ANY(aliases)
+        ORDER BY usage_count DESC
+        LIMIT 1
+    </select>
+
+    <!-- anchor 半向量近邻（路径③粗筛 + D 迭代召回；证 XML halfvec 转义启动期无异常——向量 1）。
+         ⚠️ halfvec 算子 &lt;=&gt; 须转义，裸 &lt; 致 Spring 启动 mapper 解析崩（V33 教训）。 -->
+    <select id="findNearestByAnchor" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND deleted = 0 AND anchor_embedding IS NOT NULL
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 路径③归一专用：anchor 距离 ≤ 阈值候选（distance：0=同 2=反）。
+         阈值内才送二次 LLM 批判判同义，防误并（误并不可逆）。
+         ⚠️ &lt;=&gt; 与 &lt;= 均须转义。 -->
+    <select id="findWithinAnchorThreshold" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags
+        WHERE user_id = #{userId} AND deleted = 0 AND anchor_embedding IS NOT NULL
+          AND (anchor_embedding &lt;=&gt; #{queryVec}::halfvec) &lt;= #{threshold}
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 路径④ 全 miss 新建（anchor 两列 + aliases 走自定义 SQL）。
+         aliases TEXT[] 走 StringArrayTypeHandler；anchor_embedding nullable；anchor_tokens 写入后由 DB 生成 anchor_tokens_tsv。
+         ⚠️ UNIQUE(user_id,subject,topic) 兜底并发——并发同义插入撞 UNIQUE → resolver 捕获改查复用。 -->
+    <insert id="insertWithAnchor" useGeneratedKeys="true" keyProperty="m.id">
+        INSERT INTO memory_tags
+            (user_id, subject, topic, label, usage_count, aliases, anchor_embedding, anchor_tokens,
+             deleted, created_by, created_at, updated_by, updated_at)
+        VALUES
+            (#{m.userId}, #{m.subject}, #{m.topic}, #{m.label}, COALESCE(#{m.usageCount}, 0),
+             COALESCE(#{m.aliases,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             #{anchorHalfvec}::halfvec, #{anchorTokens},
+             0, #{m.createdBy}, now(), #{m.updatedBy}, now())
+    </insert>
+
+    <!-- 复用时 usage_count++（L12）。 -->
+    <update id="incrementUsage">
+        UPDATE memory_tags SET usage_count = usage_count + 1, updated_at = now() WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 同义别名滚进 aliases（去重：alias 已在集内则不动，防累积脏）。 -->
+    <update id="appendAlias">
+        UPDATE memory_tags
+        SET aliases = CASE WHEN #{alias} = ANY(aliases) THEN aliases ELSE aliases || ARRAY[#{alias}] END,
+            updated_at = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- owner 改 label（anchor 重生属预期纠错）；anchor 两列 null 时 COALESCE 保留旧值。 -->
+    <update id="updateLabelAndAnchor">
+        UPDATE memory_tags
+        SET label = #{label},
+            anchor_embedding = COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding),
+            anchor_tokens    = COALESCE(#{anchorTokens}, anchor_tokens),
+            updated_at = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+    <!-- ============================ 计划12 · D-2 召回聚合 ② ============================ -->
+
+    <!-- 聚合标签元显式映射（不依赖全局 mapUnderscoreToCamelCase，owner_user_id→ownerUserId 稳）。 -->
+    <resultMap id="RecallTagMetaMap" type="com.superprogrammer.chat.dto.RecallTagMeta">
+        <id property="id" column="id"/>
+        <result property="subject" column="subject"/>
+        <result property="topic" column="topic"/>
+        <result property="label" column="label"/>
+        <result property="ownerUserId" column="owner_user_id"/>
+        <result property="usageCount" column="usage_count"/>
+    </resultMap>
+
+    <!-- 个人 scope 聚合：本人 born_personal=true 的 turns.tag_ids ∪ 本人个人总结(project_id IS NULL).tag_id。
+         gen_done=false raw 不参与（向量1）。timeWindow：relativeDays 优先（近N天），否则绝对时段。
+         ⚠️ born_personal=true 限定——项目出身(born_personal=false)不进个人召回（设计§3.3 line114）。 -->
+    <select id="findPersonalRecallTags" resultMap="RecallTagMetaMap">
+        SELECT t.id, t.subject, t.topic, t.label, t.user_id AS owner_user_id, t.usage_count
+        FROM memory_tags t
+        WHERE t.deleted = 0
+          AND t.id IN (
+              SELECT unnest(tag_ids) FROM memory_turns
+              WHERE deleted = 0 AND gen_done = true
+                AND user_id = #{userId} AND born_personal = true
+                <if test="direction != null and direction != 'BOTH'"> AND direction = #{direction} </if>
+                <if test="relativeDays != null"> AND created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
+                <if test="twStart != null"> AND created_at &gt;= #{twStart} </if>
+                <if test="twEnd != null"> AND created_at &lt;= #{twEnd} </if>
+              UNION
+              SELECT tag_id FROM memory_summaries
+              WHERE deleted = 0 AND status != 'STALE'
+                AND user_id = #{userId} AND project_id IS NULL
+                <if test="relativeDays != null"> AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
+                <if test="twStart != null"> AND summarized_at &gt;= #{twStart} </if>
+                <if test="twEnd != null"> AND summarized_at &lt;= #{twEnd} </if>
+          )
+        ORDER BY t.usage_count DESC
+    </select>
+
+    <!-- 项目 scope 聚合：项目 turns(project_ids 含 X 且 user_id ∈ readableAuthors).tag_ids ∪ 本人项目总结(project_id=X).tag_id。
+         readableAuthorIds 须非空（Aggregator 层空集 skip，防越权向量14）。summaries 恒 user_id=readerId（向量14 不受 ACL）。
+         ⚠️ && 数组重叠算子转义 &amp;&amp;；foreach IN 防 SQL 拼接。 -->
+    <select id="findProjectRecallTags" resultMap="RecallTagMetaMap">
+        SELECT t.id, t.subject, t.topic, t.label, t.user_id AS owner_user_id, t.usage_count
+        FROM memory_tags t
+        WHERE t.deleted = 0
+          AND t.id IN (
+              SELECT unnest(tag_ids) FROM memory_turns
+              WHERE deleted = 0 AND gen_done = true
+                AND project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
+                AND user_id IN
+                <foreach collection="readableAuthorIds" item="aid" open="(" separator="," close=")">
+                    #{aid}
+                </foreach>
+                <if test="direction != null and direction != 'BOTH'"> AND direction = #{direction} </if>
+                <if test="relativeDays != null"> AND created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
+                <if test="twStart != null"> AND created_at &gt;= #{twStart} </if>
+                <if test="twEnd != null"> AND created_at &lt;= #{twEnd} </if>
+              UNION
+              SELECT tag_id FROM memory_summaries
+              WHERE deleted = 0 AND status != 'STALE'
+                AND user_id = #{readerId} AND project_id = #{projectId}
+                <if test="relativeDays != null"> AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
+                <if test="twStart != null"> AND summarized_at &gt;= #{twStart} </if>
+                <if test="twEnd != null"> AND summarized_at &lt;= #{twEnd} </if>
+          )
+        ORDER BY t.usage_count DESC
+    </select>
+
+    <!-- ============================ 计划12 · D-3 LLM 选标签 ③ RRF 粗筛 ============================ -->
+
+    <!-- 路 A：anchor halfvec 距离升序（限定聚合 tagIds 集内，防 scope 外标签混入向量3）。
+         ⚠️ &lt;=&gt; 转义；queryVec 为 halfvec 文本 '[..]'::halfvec 强转。 -->
+    <select id="rankByAnchorHalfvec" resultType="long">
+        SELECT id FROM memory_tags
+        WHERE deleted = 0 AND anchor_embedding IS NOT NULL
+          AND id IN
+          <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+          </foreach>
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 路 B：anchor BM25 tsv 相关度降序（限定聚合 tagIds 集内）。@@ 匹配算子 + ts_rank 排序。
+         queryTokens = jieba 分词空格串；plainto_tsquery('simple') 按空格切词与/或。 -->
+    <select id="rankByAnchorTsv" resultType="long">
+        SELECT id FROM memory_tags
+        WHERE deleted = 0
+          AND id IN
+          <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+          </foreach>
+          AND anchor_tokens_tsv @@ plainto_tsquery('simple', #{queryTokens})
+        ORDER BY ts_rank(anchor_tokens_tsv, plainto_tsquery('simple', #{queryTokens})) DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

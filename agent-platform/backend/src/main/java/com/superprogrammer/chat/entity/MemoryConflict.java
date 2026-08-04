@@ -28,6 +28,10 @@ public class MemoryConflict {
     private List<Long> existingMemoryIds;  // BIGINT[]
     private String askText;
     private String status;                 // PENDING/FLAGGED/RESOLVED
+    // V47 计划12：新模型冲突只来自总结时序互斥（无 type 列），关联 tag + 待裁决 summary。
+    // 旧列（block_label/new_memory 等）H 收尾随旧表语义废弃。
+    private Long tagId;                    // 冲突关联标签（时序互斥在同 tag 下）
+    private Long summaryId;                // 冲突关联待裁决 summary
     private String resolution;             // KEEP_NEW/KEEP_OLD/KEEP_BOTH/DISCARD/FLAGGED
     private OffsetDateTime createdAt;
     private OffsetDateTime resolvedAt;

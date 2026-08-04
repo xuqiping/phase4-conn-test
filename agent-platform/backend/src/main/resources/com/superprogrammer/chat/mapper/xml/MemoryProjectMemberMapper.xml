@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryProjectMemberMapper">
+
+    <!-- I2 花名册：join users 取 username/name，含 DEPARTED（保交接，不滤）。
+         users.name 可空（前端回退 username）。按 role 排序 owner 在前便于前端展示。 -->
+    <select id="findRoster" resultType="com.superprogrammer.chat.dto.MemoryRosterVO">
+        SELECT m.user_id      AS userId,
+               u.username     AS username,
+               u.name         AS name,
+               m.role         AS role,
+               m.recall_admin AS recallAdmin,
+               m.status       AS status,
+               m.departed_at  AS departedAt
+        FROM memory_project_members m
+        LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.project_id = #{projectId}
+        ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END,
+                 m.status ASC, m.user_id ASC
+    </select>
+
+    <!-- F gen 矩阵：当前用户 ACTIVE 项目 + 项目名 + owner 开关 + 本人会员覆写。
+         null = 无行 = 默认开；effective 由 service 解析（owner AND member，null→true）。 -->
+    <select id="findMyGenMatrix" resultType="com.superprogrammer.chat.dto.MemoryGenMatrixItemVO">
+        SELECT m.project_id     AS projectId,
+               p.name           AS projectName,
+               m.role           AS role,
+               ps.gen_enabled   AS ownerEnabled,
+               us.gen_enabled   AS memberEnabled
+        FROM memory_project_members m
+        JOIN projects p ON p.id = m.project_id
+        LEFT JOIN memory_project_settings ps ON ps.project_id = m.project_id
+        LEFT JOIN memory_project_user_settings us
+                  ON us.project_id = m.project_id AND us.user_id = m.user_id
+        WHERE m.user_id = #{userId}
+          AND m.status = 'ACTIVE'
+        ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END,
+                 m.project_id ASC
+    </select>
+
+    <!-- F-4b 前置：本人 DEPARTED 项目折叠板列表（§3.7）。join projects 取名（XML 不走 MP 软删过滤）；
+         turnCount = 本人 project_ids 含该项目且未软删的 turn 数（copy-to 可拉取量）。@> 无需转义。 -->
+    <select id="findMyDepartedProjects" resultType="com.superprogrammer.chat.dto.MemoryLifecycleProjectVO">
+        SELECT m.project_id  AS projectId,
+               p.name        AS projectName,
+               m.departed_at AS departedAt,
+               (SELECT COUNT(*) FROM memory_turns t
+                 WHERE t.user_id = #{userId} AND t.deleted = 0
+                   AND t.project_ids @> ARRAY[m.project_id]::bigint[]) AS turnCount
+        FROM memory_project_members m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.user_id = #{userId}
+          AND m.status = 'DEPARTED'
+        ORDER BY m.departed_at DESC NULLS LAST, m.project_id ASC
+    </select>
+</mapper>
