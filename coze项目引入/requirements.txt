@@ -1,0 +1,22 @@
+# Coze 批量生图网页 —— 依赖清单（锁版本，与本机开发环境一致）
+# 用法：pip install -r requirements.txt
+# Python 版本：3.8.x
+#
+# ===== 直接依赖 =====
+Flask==3.0.3
+requests==2.32.3
+PyJWT==2.9.0           # Coze OAuth JWT 签名
+cryptography==42.0.8   # PyJWT RS256 算法所需
+Pillow==9.0.0          # 图片处理 / 水印 / 缩略图
+PyYAML==6.0            # 读 application.yaml 配置
+#
+# ===== 间接依赖（锁版本，避免云端解析出不一致版本）=====
+Werkzeug==3.0.3
+Jinja2==3.1.4
+itsdangerous==2.2.0
+MarkupSafe==2.1.5
+certifi==2022.6.15
+cffi==1.16.0
+pycparser==2.22
+idna==3.11
+urllib3==2.2.3

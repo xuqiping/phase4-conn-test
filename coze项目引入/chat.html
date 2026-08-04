@@ -222,11 +222,62 @@
     z-index: 99; cursor: zoom-out;
   }
   #viewer img { max-width: 92vw; max-height: 92vh; border-radius: 8px; }
+
+  /* ===== 顶部页签 ===== */
+  .tabs { display: inline-flex; gap: 4px; margin-left: 16px; }
+  .tab { border: none; background: transparent; padding: 4px 12px; border-radius: 8px;
+         cursor: pointer; font-size: 13px; color: var(--text-sub); font-family: inherit; }
+  .tab.active { background: #eef2ff; color: var(--primary); font-weight: 600; }
+
+  /* ===== 批量视图 ===== */
+  #batch-view { max-width: 880px; margin: 0 auto; padding: 20px 16px 48px; }
+  .bcard { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px;
+           box-shadow: 0 2px 8px rgba(30,40,80,.04); }
+  .bcard h3 { font-size: 15px; margin-bottom: 10px; color: var(--text); }
+  .bcard textarea { width: 100%; min-height: 150px; border: 1px solid var(--border); border-radius: 10px;
+                    padding: 10px; font: inherit; resize: vertical; outline: none; }
+  .bcard textarea:focus { border-color: #b9c8ff; }
+  .ref-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 22px; }
+  .ref-chip { font-size: 12px; background: #f0f2f8; padding: 3px 9px; border-radius: 8px; color: var(--text); }
+  .bbtn { border: none; border-radius: 10px; padding: 8px 18px; font-size: 14px; font-weight: 600;
+          cursor: pointer; font-family: inherit; background: var(--primary); color: #fff; }
+  .bbtn:disabled { background: #c4ccdd; cursor: not-allowed; }
+  .bbtn.ghost { background: #fff; color: var(--primary); border: 1px solid #b9c8ff; }
+  .bbtn.warn { background: #ff8a3d; }
+  .brow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+  .job-item { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: #fff; margin-bottom: 10px; }
+  .job-item.warn { border-color: #ffb84d; background: #fff8ef; }
+  .job-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .job-head b { color: var(--primary); }
+  .del-btn { border: none; background: transparent; color: #d83931; cursor: pointer; font-size: 13px; }
+  .job-refs { font-size: 12px; margin-top: 6px; color: var(--text-sub); }
+  .job-refs .ok { color: #18a058; }
+  .job-refs .bad { color: #d83931; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .gcard { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; }
+  .gcard img { width: 100%; border-radius: 8px; cursor: zoom-in; display: block; }
+  .gcard .meta { margin-top: 6px; font-size: 13px; }
+  .gcard .sub { font-size: 12px; color: var(--text-sub); margin-top: 3px; }
+  .gcard .err { font-size: 12px; color: #d83931; margin-top: 3px; word-break: break-word; }
+  .status-tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; margin-right: 4px; }
+  .st-waiting { background: #eef2ff; color: #555; }
+  .st-running { background: #fff4e6; color: #cc7a00; }
+  .st-done { background: #e8f9ee; color: #18a058; }
+  .st-fail { background: #fdeaea; color: #d83931; }
+  .summary { margin-bottom: 12px; font-size: 14px; }
 </style>
 </head>
 <body>
 
-<header><span class="logo">✨</span>AI 生图助手</header>
+<header>
+  <span class="logo">✨</span>AI 生图助手
+  <nav class="tabs">
+    <button class="tab active" data-view="single">💬 单条</button>
+    <button class="tab" data-view="batch">📂 批量</button>
+  </nav>
+</header>
 
 <div id="chat">
   <div class="msg-list" id="list">
@@ -238,7 +289,7 @@
   </div>
 </div>
 
-<div class="input-area">
+<div class="input-area" id="inputArea">
   <div class="input-box">
     <div id="previews"></div>
     <textarea id="input" rows="1" placeholder="描述你想要的画面… (Enter 发送，Shift+Enter 换行)"></textarea>
@@ -253,6 +304,35 @@
 </div>
 
 <div id="viewer"><img id="viewerImg"></div>
+
+<!-- ===== 批量生图视图 ===== -->
+<div id="batch-view" hidden>
+  <div class="bcard">
+    <h3>① 批量生图文档</h3>
+    <textarea id="bDoc" placeholder="粘贴批量生图文档（每段一个 prompt，下方独立一行写参考图文件名，逗号分隔）。例：&#10;&#10;赛博朋克猫弹吉他&#10;参考图: cat.jpg, guitar.jpg&#10;&#10;海边日落&#10;参考图: sunset.jpg"></textarea>
+    <h3 style="margin-top:14px">② 参考图（可选，文件名需与文档里写的一致）</h3>
+    <input type="file" id="bRefs" accept="image/*" multiple>
+    <div class="ref-chips" id="bRefList"><span style="color:#8f959e;font-size:12px">未选择</span></div>
+    <div class="brow">
+      <button class="bbtn" id="bParse">解析文档</button>
+      <span style="font-size:12px;color:var(--text-sub)">由大模型拆分多条 prompt，可逐条核对后再生成</span>
+    </div>
+  </div>
+
+  <div class="bcard" id="bReviewCard" hidden>
+    <h3>③ 核对任务（可改 prompt、可删除）</h3>
+    <div id="bReview"></div>
+    <div class="brow" id="bStartWrap">
+      <button class="bbtn" id="bStart">确认 · 开始并行生成</button>
+    </div>
+  </div>
+
+  <div class="bcard" id="bGridCard" hidden>
+    <h3>④ 生成进度</h3>
+    <div class="summary" id="bSummary"></div>
+    <div class="grid" id="bGrid"></div>
+  </div>
+</div>
 
 <script>
 const list = document.getElementById('list');
@@ -430,6 +510,145 @@ async function poll(taskId, aiEl) {
 
 sendBtn.onclick = doSend;
 refreshSendBtn();
+
+/* ===================== 批量生图 ===================== */
+const batchView = document.getElementById('batch-view');
+const bDoc = document.getElementById('bDoc');
+const bRefs = document.getElementById('bRefs');
+const bRefList = document.getElementById('bRefList');
+const bParse = document.getElementById('bParse');
+const reviewCard = document.getElementById('bReviewCard');
+const bReview = document.getElementById('bReview');
+const bStart = document.getElementById('bStart');
+const gridCard = document.getElementById('bGridCard');
+const bSummary = document.getElementById('bSummary');
+const bGrid = document.getElementById('bGrid');
+
+let curRefSetId = null, curJobs = [], curBatchId = null, pollTimer = null;
+
+function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function trunc(s,n){ s=s||''; return s.length>n ? s.slice(0,n)+'…' : s; }
+
+/* ---- 页签切换 ---- */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick = ()=>{
+    const v = t.dataset.view;
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x===t));
+    const single = v==='single';
+    document.getElementById('chat').style.display = single?'':'none';
+    document.getElementById('inputArea').style.display = single?'':'none';
+    batchView.hidden = single;
+    chat.scrollTop = chat.scrollHeight;
+  };
+});
+
+/* ---- 参考图选择展示 ---- */
+bRefs.onchange = ()=>{
+  const files = Array.from(bRefs.files);
+  bRefList.innerHTML = files.length
+    ? files.map(f=>`<span class="ref-chip">${esc(f.name)}</span>`).join('')
+    : '<span style="color:#8f959e;font-size:12px">未选择</span>';
+};
+
+/* ---- 解析 ---- */
+bParse.onclick = async ()=>{
+  const text = bDoc.value.trim();
+  if(!text){ alert('请先粘贴批量生图文档'); return; }
+  bParse.disabled = true; bParse.textContent = '解析中…';
+  const fd = new FormData();
+  fd.append('document', text);
+  Array.from(bRefs.files).forEach(f=>fd.append('refs', f));
+  try{
+    const r = await fetch('/api/batch/parse', {method:'POST', body:fd});
+    const d = await r.json();
+    if(!d.ok){ alert(d.error||'解析失败'); return; }
+    curRefSetId = d.ref_set_id;
+    curJobs = d.jobs;
+    reviewCard.hidden = false;
+    gridCard.hidden = true;
+    renderReview();
+  }catch(e){ alert('解析失败：'+e.message); }
+  finally{ bParse.disabled=false; bParse.textContent='解析文档'; }
+};
+
+function renderReview(){
+  if(!curJobs.length){
+    bReview.innerHTML = '<p style="color:#8f959e">没有解析出任务，请检查文档格式</p>';
+    bStart.disabled = true;
+    return;
+  }
+  bStart.disabled = false;
+  bReview.innerHTML = curJobs.map((j,i)=>{
+    const hasBad = j.refs.some(r=>!r.matched);
+    const refs = j.refs.length
+      ? '参考图：' + j.refs.map(r=>`<span class="${r.matched?'ok':'bad'}">${esc(r.name)}${r.matched?' ✓':' ✗ 未上传'}</span>`).join('、')
+      : '<span style="color:#8f959e">无参考图</span>';
+    return `<div class="job-item${hasBad?' warn':''}">
+      <div class="job-head"><b>#${i+1}</b><button class="del-btn" data-del="${i}">删除</button></div>
+      <textarea data-prompt="${i}" rows="3">${esc(j.prompt)}</textarea>
+      <div class="job-refs">${refs}</div>
+    </div>`;
+  }).join('');
+  bReview.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ curJobs.splice(+b.dataset.del,1); renderReview(); });
+  bReview.querySelectorAll('[data-prompt]').forEach(t=>t.oninput=()=>{ curJobs[+t.dataset.prompt].prompt = t.value; });
+}
+
+/* ---- 开始并行生成 ---- */
+bStart.onclick = async ()=>{
+  if(!curRefSetId || !curJobs.length) return;
+  bStart.disabled = true;
+  const fd = new FormData();
+  fd.append('ref_set_id', curRefSetId);
+  fd.append('jobs', JSON.stringify(curJobs));
+  try{
+    const r = await fetch('/api/batch/start', {method:'POST', body:fd});
+    const d = await r.json();
+    if(!d.ok){ alert(d.error||'启动失败'); bStart.disabled=false; return; }
+    curBatchId = d.batch_id;
+    gridCard.hidden = false;
+    startPolling(d.batch_id);
+  }catch(e){ alert('启动失败：'+e.message); bStart.disabled=false; }
+};
+
+function startPolling(batchId){
+  bGrid.innerHTML = '<p style="color:#8f959e">提交中…</p>';
+  bSummary.innerHTML = '';
+  if(pollTimer) clearInterval(pollTimer);
+  const tick = async ()=>{
+    try{
+      const r = await fetch(`/api/batch/${batchId}/status`);
+      const d = await r.json();
+      renderGrid(d, batchId);
+      if(d.finished >= d.total){ clearInterval(pollTimer); pollTimer=null; bStart.disabled=false; }
+    }catch(e){}
+  };
+  tick();
+  pollTimer = setInterval(tick, 2500);
+}
+
+function renderGrid(d, batchId){
+  const failed = d.jobs.filter(j=>j.status==='fail');
+  bSummary.innerHTML = `进度：<b>${d.finished}/${d.total}</b>` +
+    (failed.length ? ` · 失败 ${failed.length} <button class="bbtn warn" id="bRetry">重试全部失败项</button>` : '');
+  bGrid.innerHTML = '<div class="grid">' + d.jobs.map(j=>{
+    const tag = {waiting:'<span class="status-tag st-waiting">排队</span>',
+                 running:'<span class="status-tag st-running">生成中…</span>',
+                 done:'<span class="status-tag st-done">完成</span>',
+                 fail:'<span class="status-tag st-fail">失败</span>'}[j.status];
+    const img = j.result_url ? `<img src="${esc(j.result_url)}">` : '';
+    const label = j.label ? `<div class="sub">${esc(j.label)}</div>` : '';
+    const err = j.status==='fail' ? `<div class="err">${esc(trunc(j.error,80))}</div>` : '';
+    return `<div class="gcard">${img}<div class="meta">${tag}${esc(trunc(j.prompt,24))}</div>${label}${err}</div>`;
+  }).join('') + '</div>';
+  bGrid.querySelectorAll('img').forEach(im=>im.onclick=()=>{ viewerImg.src=im.src; viewer.style.display='flex'; });
+  const retry = document.getElementById('bRetry');
+  if(retry) retry.onclick = async ()=>{
+    retry.disabled = true;
+    const r = await fetch(`/api/batch/${batchId}/retry`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const dd = await r.json();
+    if(dd.ok) startPolling(batchId); else alert(dd.error||'重试失败');
+  };
+}
 </script>
 </body>
 </html>

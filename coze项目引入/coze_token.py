@@ -19,6 +19,7 @@ Coze OAuth（JWT 服务端应用）鉴权模块 —— 1_生图.py 和 2_对话�
 """
 
 import os
+import threading
 import time
 import uuid
 
@@ -44,6 +45,8 @@ TOKEN_TTL = 3600  # access_token 有效期（秒），Coze 上限 86399（约24�
 
 _cache = {"token": None, "expires_at": 0}
 _private_key = None
+# 并发取 token 的锁（批量并行任务多线程同时调用 auth_headers 时用）
+_token_lock = threading.Lock()
 
 
 def _load_private_key() -> str:
@@ -72,31 +75,45 @@ def _build_jwt() -> str:
 
 
 def get_access_token() -> str:
-    """获取 access_token，带缓存，临过期自动续签。"""
-    # 预留 30 秒缓冲
+    """获取 access_token，带缓存，临过期自动续签。多线程安全（双检锁）。"""
+    # 预留 30 秒缓冲；快速路径无锁
     if _cache["token"] and time.time() < _cache["expires_at"] - 30:
         return _cache["token"]
 
-    resp = requests.post(
-        TOKEN_URL,
-        headers={
-            "Authorization": f"Bearer {_build_jwt()}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "duration_seconds": TOKEN_TTL,
-        },
-        timeout=30,
-    )
-    data = resp.json()
-    if "access_token" not in data:
-        raise RuntimeError(
-            f"换取 access_token 失败: {data}\n"
-            "请检查 CLIENT_ID / KID / 私钥是否匹配，以及应用权限是否已勾选并发布")
-    _cache["token"] = data["access_token"]
-    _cache["expires_at"] = time.time() + data.get("expires_in", TOKEN_TTL)
-    return _cache["token"]
+    with _token_lock:
+        # 二次检查：可能已有别的线程刚换好 token
+        if _cache["token"] and time.time() < _cache["expires_at"] - 30:
+            return _cache["token"]
+
+        resp = requests.post(
+            TOKEN_URL,
+            headers={
+                "Authorization": f"Bearer {_build_jwt()}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "duration_seconds": TOKEN_TTL,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        if "access_token" not in data:
+            raise RuntimeError(
+                f"换取 access_token 失败: {data}\n"
+                "请检查 CLIENT_ID / KID / 私钥是否匹配，以及应用权限是否已勾选并发布")
+        _cache["token"] = data["access_token"]
+        _cache["expires_at"] = time.time() + data.get("expires_in", TOKEN_TTL)
+        return _cache["token"]
+
+
+def invalidate():
+    """作废缓存的 access_token，强制下次 get_access_token() 重新换取。
+    当 Coze 返回 4100（authentication is invalid）时调用——token 可能被平台侧
+    提前失效，而本地 expires_at 还没到，不主动 invalidate 就会一直用废 token。"""
+    with _token_lock:
+        _cache["token"] = None
+        _cache["expires_at"] = 0
 
 
 def auth_headers(json_body: bool = False) -> dict:
