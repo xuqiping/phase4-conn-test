@@ -1,0 +1,210 @@
+package com.superprogrammer.asset.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.asset.dto.ProjectCreateRequest;
+import com.superprogrammer.asset.dto.ProjectUpdateRequest;
+import com.superprogrammer.asset.dto.ProjectVO;
+import com.superprogrammer.asset.entity.Asset;
+import com.superprogrammer.asset.entity.AssetBinding;
+import com.superprogrammer.asset.entity.AssetProject;
+import com.superprogrammer.asset.entity.AssetProjectMember;
+import com.superprogrammer.asset.entity.AssetRoleLink;
+import com.superprogrammer.asset.enums.AssetRole;
+import com.superprogrammer.asset.mapper.AssetBindingMapper;
+import com.superprogrammer.asset.mapper.AssetMapper;
+import com.superprogrammer.asset.mapper.AssetProjectMapper;
+import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
+import com.superprogrammer.asset.mapper.AssetRoleLinkMapper;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * AssetProjectService 单测：CRUD + 两视图列表 + L4 级联软删 + L10 删桶资产归「通用」（plan §S2 验证）。
+ */
+@ExtendWith(MockitoExtension.class)
+class AssetProjectServiceTest {
+
+    private static final Long OWNER_ID = 10L;
+    private static final Long EDITOR_ID = 20L;
+    private static final Long PROJECT_ID = 1L;
+
+    @Mock private AssetProjectMapper projectMapper;
+    @Mock private AssetProjectMemberMapper memberMapper;
+    @Mock private AssetMapper assetMapper;
+    @Mock private AssetRoleLinkMapper roleLinkMapper;
+    @Mock private AssetBindingMapper bindingMapper;
+    @Mock private AssetAclService aclService;
+
+    private AssetProjectService service;
+
+    /** 填充 MP lambda 缓存，使 LambdaQueryWrapper 能把 SFunction 解析为列名（承 MemoryLifecycleServiceTest 范式）。 */
+    @BeforeAll
+    static void initTableInfo() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(
+                new com.baomidou.mybatisplus.core.MybatisConfiguration(), "");
+        TableInfoHelper.initTableInfo(assistant, AssetProject.class);
+        TableInfoHelper.initTableInfo(assistant, AssetProjectMember.class);
+        TableInfoHelper.initTableInfo(assistant, Asset.class);
+        TableInfoHelper.initTableInfo(assistant, AssetRoleLink.class);
+        TableInfoHelper.initTableInfo(assistant, AssetBinding.class);
+    }
+
+    @BeforeEach
+    void setUp() {
+        service = new AssetProjectService(projectMapper, memberMapper, assetMapper,
+                roleLinkMapper, bindingMapper, aclService, new ObjectMapper());
+    }
+
+    @Test
+    void create_setsOwnerAndDefaultRoles() {
+        when(projectMapper.insert(any(AssetProject.class))).thenAnswer(inv -> {
+            ((AssetProject) inv.getArgument(0)).setId(PROJECT_ID);
+            return 1;
+        });
+        ProjectCreateRequest req = new ProjectCreateRequest();
+        req.setName("武侠短片");
+        req.setDescription("测试项目");
+        ProjectVO vo = service.create(OWNER_ID, req);
+
+        assertEquals(PROJECT_ID, vo.getId());
+        assertEquals(OWNER_ID, vo.getOwnerId());
+        assertEquals(AssetRole.OWNER, vo.getRole());
+        assertEquals(AssetProjectService.DEFAULT_NARRATIVE_ROLES, vo.getNarrativeRoles());
+
+        ArgumentCaptor<AssetProject> captor = ArgumentCaptor.forClass(AssetProject.class);
+        verify(projectMapper).insert(captor.capture());
+        assertEquals(OWNER_ID, captor.getValue().getOwnerId());
+    }
+
+    @Test
+    void create_blankName_throws() {
+        ProjectCreateRequest req = new ProjectCreateRequest();
+        req.setName("   ");
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(OWNER_ID, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void list_combinesOwnedAndSharedWithRoles() {
+        AssetProject owned = project(PROJECT_ID, OWNER_ID, "[\"人物\",\"道具\",\"场景\",\"风格\",\"通用\"]");
+        AssetProject shared = project(2L, 99L, "[\"人物\",\"道具\",\"场景\",\"风格\",\"通用\"]");
+        when(projectMapper.selectList(any())).thenReturn(List.of(owned), List.of(shared));
+        AssetProjectMember mb = new AssetProjectMember();
+        mb.setProjectId(2L);
+        mb.setRole("EDITOR");
+        when(memberMapper.selectList(any())).thenReturn(List.of(mb));
+
+        List<ProjectVO> vos = service.list(OWNER_ID, false);
+
+        assertEquals(2, vos.size());
+        // owned → OWNER
+        assertTrue(vos.stream().anyMatch(v -> v.getId() == PROJECT_ID && v.getRole() == AssetRole.OWNER));
+        // shared → EDITOR
+        assertTrue(vos.stream().anyMatch(v -> v.getId() == 2L && v.getRole() == AssetRole.EDITOR));
+    }
+
+    @Test
+    void list_admin_returnsAllAsOwner() {
+        when(projectMapper.selectList(any())).thenReturn(List.of(project(PROJECT_ID, OWNER_ID, "[\"人物\"]")));
+        List<ProjectVO> vos = service.list(OWNER_ID, true);
+        assertEquals(1, vos.size());
+        assertEquals(AssetRole.OWNER, vos.get(0).getRole());
+    }
+
+    @Test
+    void update_narrativeRolesRemoval_reassignsAssetsToFallback() {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"人物\",\"道具\",\"通用\"]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        // 项目内一个资产
+        Asset a = new Asset();
+        a.setId(5L);
+        when(assetMapper.selectList(any())).thenReturn(List.of(a));
+        // 该资产挂了「道具」
+        AssetRoleLink link = new AssetRoleLink();
+        link.setId(1L);
+        link.setAssetId(5L);
+        link.setRoleKey("道具");
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of(link));
+        when(roleLinkMapper.selectCount(any())).thenReturn(0L); // 尚无「通用」link
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setNarrativeRoles(List.of("人物", "通用")); // 移除「道具」
+        service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        // 删除「道具」link
+        verify(roleLinkMapper).delete(any());
+        // 确保补「通用」link（资产 5 归通用）
+        ArgumentCaptor<AssetRoleLink> ins = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper).insert(ins.capture());
+        assertEquals(5L, ins.getValue().getAssetId());
+        assertEquals("通用", ins.getValue().getRoleKey());
+    }
+
+    @Test
+    void update_viewerDenied() {
+        when(aclService.requireWrite(PROJECT_ID, EDITOR_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "需要编辑权限"));
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setName("x");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.update(PROJECT_ID, EDITOR_ID, false, req));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
+        verify(projectMapper, never()).updateById(any());
+    }
+
+    @Test
+    void delete_cascadeSoftDeletesAssetsMembersBindings() {
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        Asset a = new Asset();
+        a.setId(7L);
+        when(assetMapper.selectList(any())).thenReturn(List.of(a));
+
+        service.delete(PROJECT_ID, OWNER_ID, false);
+
+        // 绑定 + 角色 + 资产 + 成员 + 项目 均软删
+        verify(bindingMapper).delete(any());
+        verify(roleLinkMapper).delete(any());
+        verify(assetMapper).delete(any());
+        verify(memberMapper).delete(any());
+        verify(projectMapper).deleteById((java.io.Serializable) any());
+    }
+
+    @Test
+    void delete_nonOwnerDenied() {
+        when(aclService.requireManage(PROJECT_ID, EDITOR_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "仅所有者"));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.delete(PROJECT_ID, EDITOR_ID, false));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
+        verify(projectMapper, never()).deleteById((java.io.Serializable) any());
+    }
+
+    private AssetProject project(long id, long ownerId, String rolesJson) {
+        AssetProject p = new AssetProject();
+        p.setId(id);
+        p.setOwnerId(ownerId);
+        p.setName("p" + id);
+        p.setNarrativeRoles(rolesJson);
+        return p;
+    }
+}

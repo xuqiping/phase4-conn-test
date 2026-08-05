@@ -1,0 +1,31 @@
+package com.superprogrammer.asset.dto;
+
+import com.superprogrammer.asset.enums.AssetRole;
+import lombok.Builder;
+import lombok.Data;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+
+/**
+ * 项目视图（列表/详情）。
+ *
+ * <p>{@link #role} = 当前用户在本项目的角色（OWNER/EDITOR/VIEWER），前端据此分「我的项目/共享给我」Tab +
+ * 控制操作按钮显隐（设计方案 §十/§七 7.2）。
+ */
+@Data
+@Builder
+public class ProjectVO {
+
+    private Long id;
+    private String name;
+    private String description;
+    private String coverFileId;
+    private Long ownerId;
+    /** 叙事角色受控词汇桶（解析后的数组，前端矩阵渲染）。 */
+    private List<String> narrativeRoles;
+    /** 当前用户在本项目的角色。 */
+    private AssetRole role;
+    private OffsetDateTime createdAt;
+    private OffsetDateTime updatedAt;
+}
