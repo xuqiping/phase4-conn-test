@@ -348,6 +348,16 @@ public class AssetService {
 
     // ---------- 角色挂载同步 ----------
 
+    /**
+     * 同步资产角色挂载（受控词汇校验：roleKey 须在项目 narrative_roles 内）。
+     *
+     * <p>公开给画布打通（AssetCanvasBridgeService）复用同一受控词汇校验，
+     * 避免在 Bridge 重复 vocab 逻辑（单一事实源）。
+     */
+    public void attachRoles(Long projectId, Long assetId, List<String> roleKeys) {
+        syncRoleLinks(projectId, assetId, roleKeys);
+    }
+
     /** 同步资产角色挂载（受控词汇校验：roleKey 须在项目 narrative_roles 内）。 */
     private void syncRoleLinks(Long projectId, Long assetId, List<String> roleKeys) {
         // 先清旧
@@ -472,6 +482,11 @@ public class AssetService {
             log.warn("read image dims failed: {}", e.getMessage());
         }
         return null;
+    }
+
+    /** 资产名校验（≤100），公开给画布打通复用同一口径。 */
+    public String validateAssetName(String name) {
+        return validateName(name);
     }
 
     private String validateName(String name) {

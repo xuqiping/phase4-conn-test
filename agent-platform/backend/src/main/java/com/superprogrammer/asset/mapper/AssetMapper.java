@@ -61,4 +61,15 @@ public interface AssetMapper extends BaseMapper<Asset> {
     int updateContent(@Param("assetId") Long assetId,
                       @Param("content") String content,
                       @Param("userId") Long userId);
+
+    /**
+     * 写生成谱系（画布产出入库时同步 assets.gen_meta=最新产出谱系，plan §S7）。
+     * 原生 SQL 避免与乐观锁行版本纠缠（同 {@link #updateContent}）。
+     */
+    @Update("UPDATE assets SET gen_meta = CAST(#{genMeta} AS jsonb), "
+            + "updated_at = NOW(), updated_by = #{userId} "
+            + "WHERE id = #{assetId} AND deleted = 0")
+    int updateGenMeta(@Param("assetId") Long assetId,
+                      @Param("genMeta") String genMeta,
+                      @Param("userId") Long userId);
 }
