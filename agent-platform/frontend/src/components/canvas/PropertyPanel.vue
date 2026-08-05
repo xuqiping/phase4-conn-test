@@ -153,6 +153,37 @@
             </n-button>
           </div>
         </div>
+
+        <!-- C12 视频截取：时间段 [起,止) 裁剪 → 新视频节点（需 video 已生成） -->
+        <div class="prop-panel__field">
+          <label>截取（C12，时间段裁剪）</label>
+          <div class="prop-panel__row">
+            <n-input-number
+              v-model:value="clipStart"
+              size="small"
+              :min="0"
+              placeholder="起(秒)"
+              style="flex:1"
+            />
+            <n-input-number
+              v-model:value="clipEnd"
+              size="small"
+              :min="0"
+              placeholder="止(秒)"
+              style="flex:1"
+            />
+          </div>
+          <n-button
+            size="small"
+            block
+            tertiary
+            :disabled="!node.data.fileId || clipStart == null || clipEnd == null || (clipEnd ?? 0) <= (clipStart ?? 0)"
+            @click="emit('clip-video', { node, startSec: clipStart ?? 0, endSec: clipEnd ?? 0 })"
+          >
+            <template #icon><n-icon :component="CropOutline" /></template>
+            截取片段
+          </n-button>
+        </div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
         <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
       </template>
@@ -232,10 +263,15 @@ const emit = defineEmits<{
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
   (e: 'focus-edit', node: CanvasNode): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
+  (e: 'clip-video', payload: { node: CanvasNode; startSec: number; endSec: number }): void
 }>()
 
 /** C11 抽帧「指定秒」输入值（AT 模式用）。 */
 const frameSecond = ref<number | null>(null)
+
+/** C12 截取起止秒输入值。 */
+const clipStart = ref<number | null>(null)
+const clipEnd = ref<number | null>(null)
 
 /** n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。 */
 function onPickFile(opts: { file?: { file?: File | null } } | undefined) {

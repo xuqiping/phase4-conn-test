@@ -56,6 +56,18 @@ export interface FrameExtractVO {
   sourceNodeId: string
 }
 
+// === C12：视频截取（对齐后端 VideoClipRequest / VideoClipVO） ===
+
+/** 截取响应（对齐后端 VideoClipVO）。 */
+export interface VideoClipVO {
+  fileId: string
+  url: string
+  mime: string
+  size: number
+  /** 源视频节点 id（前端建视频节点后自动连边 video→video）。 */
+  sourceNodeId: string
+}
+
 // === 类型定义（对齐后端 CanvasVO / CanvasSaveRequest） ===
 
 /** 画布视图。列表接口 snapshot=null，详情接口才带。 */
@@ -138,6 +150,18 @@ export const canvasApi = {
     return request.post<ApiResponse<FrameExtractVO>>(
       `/canvas/${id}/nodes/${nodeId}/frames`,
       { mode: payload.mode, second: payload.second ?? null }
+    )
+  },
+
+  /**
+   * POST /api/canvas/{id}/nodes/{nodeId}/clip — 视频截取（C12）。
+   * 时间段 [startSec,endSec) → 新视频文件（SOURCE_CANVAS）；前端建视频节点 + 自动连边回源视频节点。
+   * 失败不产空文件（后端抛 → 端点返错）。
+   */
+  clipVideo(id: number, nodeId: string, payload: { startSec: number; endSec: number }) {
+    return request.post<ApiResponse<VideoClipVO>>(
+      `/canvas/${id}/nodes/${nodeId}/clip`,
+      { startSec: payload.startSec, endSec: payload.endSec }
     )
   }
 }

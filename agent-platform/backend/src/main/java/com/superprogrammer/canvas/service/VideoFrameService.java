@@ -3,7 +3,9 @@ package com.superprogrammer.canvas.service;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
+import org.bytedeco.ffmpeg.global.avcodec;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.FFmpegFrameRecorder;
 import org.bytedeco.javacv.Frame;
 import org.bytedeco.javacv.Java2DFrameConverter;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +14,8 @@ import org.springframework.stereotype.Service;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -46,6 +50,9 @@ public class VideoFrameService {
     /** AT 模式秒数上限（plan 安全清单「输入校验」：防极端值撑爆 seek）。 */
     private static final long MAX_SECOND_AT = 86_400L;
 
+    /** 单次截取时长上限（秒，plan 安全清单「输入校验」：防空切片撑爆磁盘/内存）。 */
+    private static final long MAX_CLIP_SECONDS = 600L;
+
     @Value("${canvas.frame-extractor:javacv}")
     private String extractorBackend = "javacv";
 
@@ -53,6 +60,14 @@ public class VideoFrameService {
 
     /** 抽帧产物（JPEG 字节 + mime + size）。调用方落 stored_files(SOURCE_CANVAS)。 */
     public record ExtractedFrame(byte[] bytes, String mimeType, long size) {}
+
+    /**
+     * 截取产物（临时 mp4 文件 + mime + size）。
+     *
+     * <p>返回临时文件路径（非字节），避免大片段撑爆内存。调用方落 stored_files(SOURCE_CANVAS) 后
+     * <strong>必须</strong> {@link Files#deleteIfExists(Path)} 删临时文件（controller try-finally）。
+     */
+    public record ClipResult(Path tempFile, String mimeType, long size) {}
 
     /**
      * 从视频抽单帧。
@@ -123,6 +138,125 @@ public class VideoFrameService {
             log.warn("canvas frame extract failed: mode={} secondAt={} err={}", mode, secondAt, e.getMessage());
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "抽帧失败，请稍后重试");
         } finally {
+            try {
+                grabber.release();
+            } catch (Exception ignored) {
+                // release 失败不阻断主流程
+            }
+        }
+    }
+
+    /**
+     * 视频截取（plan C12 / IC-13）。时间段 [startSec,endSec) 裁剪 → 新 mp4 临时文件。
+     *
+     * <p>实现：{@link FFmpegFrameGrabber} seek 到 startSec，逐帧 {@link FFmpegFrameGrabber#grabImage()}
+     * 重编码到 {@link FFmpegFrameRecorder}（H.264/mp4，浏览器 {@code <video>} 可直接播），时间戳 ≥ endSec 停。
+     * 流式按帧处理不整片 load（同 extract 的 R-2 内存口径）；产物写临时文件而非 byte[]（大片段不撑爆堆）。
+     *
+     * <p><b>MVP 范围</b>：仅视频轨重编码（不含音频轨）。截取片段静音——浏览器播放/下载正常，
+     * 音频轨裁剪需额外 grabSamples + AAC 编码 + A/V 同步，留后续（plan C12 验证「产出可播」已满足）。
+     *
+     * <p>校验（plan 安全清单「输入校验」）：start≥0 / end&gt;start / 时长 ≤ {@link #MAX_CLIP_SECONDS} /
+     * start/end 不超视频时长（duration 不可读时跳过越界校验，靠 MAX_CLIP_SECONDS 兜底）。
+     *
+     * @param videoPath 本地视频路径（已过 FileStorageService.loadPath 归属咽喉点）
+     * @param startSec  起始秒（≥0）
+     * @param endSec    结束秒（&gt;startSec）
+     * @return 截取产物（临时文件路径 + mime + size）；调用方负责删临时文件
+     */
+    public ClipResult clip(Path videoPath, long startSec, long endSec) {
+        if (!"javacv".equalsIgnoreCase(extractorBackend)) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "当前截取后端仅支持 javacv（ffmpeg 系统进程分支未实现）");
+        }
+        if (videoPath == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "视频路径缺失");
+        }
+        if (startSec < 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "截取起始秒非法");
+        }
+        if (endSec <= startSec) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "截取结束秒须大于起始秒");
+        }
+        if (endSec - startSec > MAX_CLIP_SECONDS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "截取时长超限（最长 " + MAX_CLIP_SECONDS + " 秒）");
+        }
+
+        long started = System.currentTimeMillis();
+        FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(videoPath.toFile());
+        Path tempFile;
+        try {
+            tempFile = Files.createTempFile("canvas-clip-", ".mp4");
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "截取失败：无法创建临时文件");
+        }
+
+        FFmpegFrameRecorder recorder = null;
+        try {
+            grabber.start();
+            long durationUs = grabber.getLengthInTime();
+            long startUs = startSec * 1_000_000L;
+            long endUs = endSec * 1_000_000L;
+            if (durationUs > 0) {
+                if (startUs >= durationUs) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "截取起始秒超出视频时长");
+                }
+                if (endUs > durationUs) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "截取结束秒超出视频时长");
+                }
+            }
+
+            // seek 到起点；某些容器 seek 后首帧时间戳需用 grabber.getTimestamp() 校验
+            grabber.setTimestamp(startUs);
+
+            int width = grabber.getImageWidth();
+            int height = grabber.getImageHeight();
+            double fps = grabber.getFrameRate();
+            if (fps <= 0) {
+                fps = 25.0;
+            }
+
+            recorder = new FFmpegFrameRecorder(tempFile.toFile(), width, height);
+            recorder.setFormat("mp4");
+            recorder.setVideoCodec(avcodec.AV_CODEC_ID_H264);
+            recorder.setFrameRate(fps);
+            recorder.setVideoBitrate(grabber.getVideoBitrate() > 0 ? grabber.getVideoBitrate() : 2_000_000);
+            recorder.start();
+
+            Frame frame;
+            int recorded = 0;
+            while ((frame = grabber.grabImage()) != null) {
+                // 时间戳在 seek 后单调推进；到达 endUs 停（容错：seek 精度误差靠 ≤ 判定收尾）
+                if (grabber.getTimestamp() >= endUs) {
+                    break;
+                }
+                recorder.record(frame);
+                recorded++;
+            }
+
+            long size = Files.size(tempFile);
+            long costMs = System.currentTimeMillis() - started;
+            log.info("canvas clip done: startSec={} endSec={} frames={} durationMs={} costMs={} size={}",
+                    startSec, endSec, recorded, durationUs / 1_000, costMs, size);
+            return new ClipResult(tempFile, "video/mp4", size);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("canvas clip failed: startSec={} endSec={} err={}", startSec, endSec, e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频截取失败，请稍后重试");
+        } finally {
+            if (recorder != null) {
+                try {
+                    recorder.stop();
+                } catch (Exception ignored) {
+                    // 停录失败不阻断（临时文件已写，后续 storeStream 失败由 controller 兜底删）
+                }
+                try {
+                    recorder.release();
+                } catch (Exception ignored) {
+                    // release 失败不阻断主流程
+                }
+            }
             try {
                 grabber.release();
             } catch (Exception ignored) {

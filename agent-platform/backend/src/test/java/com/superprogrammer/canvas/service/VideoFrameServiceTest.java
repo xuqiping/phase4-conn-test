@@ -17,6 +17,8 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Files;
+
 /**
  * VideoFrameService 单测（plan C11）。无 Spring 上下文（直接 new，依赖 @Value 默认 javacv）。
  *
@@ -119,6 +121,69 @@ class VideoFrameServiceTest {
         // 至少长度大概率不同；即便相同也用首字节后内容比较——这里只断言非同一引用且均有效
         assertThat(first).isNotEmpty();
         assertThat(atMid).isNotEmpty();
+    }
+
+    // ==================== C12 视频截取（clip）====================
+
+    @Test
+    void clip_returnsMp4TempFile() throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult clip = svc.clip(sampleVideo, 0L, 1L);
+        try {
+            assertThat(clip.mimeType()).isEqualTo("video/mp4");
+            assertThat(clip.size()).isGreaterThan(0L);
+            assertThat(Files.exists(clip.tempFile())).isTrue();
+            assertThat(Files.isRegularFile(clip.tempFile())).isTrue();
+        } finally {
+            Files.deleteIfExists(clip.tempFile());
+        }
+    }
+
+    @Test
+    void clip_thenExtractFirst_roundTripsToValidVideo() throws Exception {
+        // 截取 0-1s → 再对截取产物抽首帧 → 应得有效 JPEG，证明 clip 产物是浏览器可播的有效视频
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult clip = svc.clip(sampleVideo, 0L, 1L);
+        try {
+            VideoFrameService.ExtractedFrame f = svc.extract(clip.tempFile(), VideoFrameService.FrameMode.FIRST, null);
+            assertThat(f.mimeType()).isEqualTo("image/jpeg");
+            assertThat(f.bytes()).isNotEmpty();
+            assertThat(f.bytes()[0]).isEqualTo((byte) 0xFF); // JPEG SOI 魔数
+            assertThat(f.bytes()[1]).isEqualTo((byte) 0xD8);
+        } finally {
+            Files.deleteIfExists(clip.tempFile());
+        }
+    }
+
+    @Test
+    void clip_endBeforeStart_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.clip(sampleVideo, 2L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("结束秒须大于起始秒");
+    }
+
+    @Test
+    void clip_startBeyondDuration_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.clip(sampleVideo, 999L, 1000L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("超出视频时长");
+    }
+
+    @Test
+    void clip_exceedsMaxSeconds_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.clip(sampleVideo, 0L, 10_000L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("截取时长超限");
+    }
+
+    @Test
+    void clip_negativeStart_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.clip(sampleVideo, -1L, 1L))
+                .isInstanceOf(BusinessException.class);
     }
 
     /** 生成纯色帧，颜色随 index 变化（保证首帧与中段帧画面不同）。 */

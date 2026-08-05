@@ -94,6 +94,7 @@
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
           @extract-frame="onExtractFrame"
+          @clip-video="onClipVideo"
         />
       </div>
 
@@ -473,6 +474,57 @@ async function onExtractFrame(payload: { node: CanvasNode; mode: FrameMode; seco
     scheduleSave()
   } catch (e: unknown) {
     const msg = (e as { msg?: string })?.msg || '抽帧失败'
+    boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
+/**
+ * C12 视频截取：调后端截 [startSec,endSec) → 返新视频 fileId → 产视频节点（带 fileId+预览）+ 自动连回源视频节点。
+ * 失败不产空节点（后端抛 → catch 标红源视频节点，不建视频节点，plan 边界）。
+ * 预览：clip 产物落 stored_files(SOURCE_CANVAS)，/api/files/{id} 需 auth header → fetchVideoBlob 拉 blob 转 objectURL。
+ */
+async function onClipVideo(payload: { node: CanvasNode; startSec: number; endSec: number }) {
+  if (!editingId.value || !payload.node) return
+  const src = payload.node
+  const srcFileId = (src.data as Record<string, unknown>).fileId as string | undefined
+  if (!srcFileId) {
+    message.warning('视频节点无源文件，请先生成或等待视频完成')
+    return
+  }
+  runningNodeId.value = src.id
+  try {
+    const res = await canvasApi.clipVideo(editingId.value, src.id, {
+      startSec: payload.startSec,
+      endSec: payload.endSec
+    })
+    const f = res.data.data
+    const previewUrl = await fetchVideoBlob(f.url)
+    const offsetX = (src.position?.x ?? 0) + 260
+    const offsetY = (src.position?.y ?? 0) + 140
+    boardRef.value?.addNode({
+      type: 'video',
+      position: { x: offsetX, y: offsetY },
+      data: {
+        label: `截取(${payload.startSec}-${payload.endSec}s)`,
+        fileId: f.fileId,
+        previewUrl,
+        mediaStatus: 'SUCCEEDED',
+        status: 'success',
+        parentFileId: srcFileId,
+        sourceNodeId: src.id,
+        prompt: ''
+      }
+    })
+    const nodes = boardRef.value!.getNodes()
+    const created = nodes[nodes.length - 1]
+    if (created) boardRef.value!.addEdge(src.id, created.id)
+    message.success('截取完成，已产新视频节点')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '截取失败'
     boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
     message.error(msg)
   } finally {

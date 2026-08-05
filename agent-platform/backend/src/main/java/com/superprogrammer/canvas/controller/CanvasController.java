@@ -8,6 +8,8 @@ import com.superprogrammer.canvas.dto.CanvasVO;
 import com.superprogrammer.canvas.dto.FrameExtractRequest;
 import com.superprogrammer.canvas.dto.FrameExtractVO;
 import com.superprogrammer.canvas.dto.NodeRunResult;
+import com.superprogrammer.canvas.dto.VideoClipRequest;
+import com.superprogrammer.canvas.dto.VideoClipVO;
 import com.superprogrammer.canvas.entity.Canvas;
 import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
@@ -40,6 +42,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -177,6 +181,61 @@ public class CanvasController {
                 .size(ef.size())
                 .sourceNodeId(nodeId)
                 .build()));
+    }
+
+    // ==================== C12：视频截取（IC-13，R-2 javacv）====================
+
+    /**
+     * 从视频节点截取时间段（[startSec,endSec)）→ 新视频文件（SOURCE_CANVAS）→ 前端建视频节点 + 自动连边。
+     *
+     * <p>归属咽喉点：loadOwned（画布）+ loadPath（视频源文件 ownership 复检，防借他人 fileId 截取）。
+     * 失败不产空文件（plan 边界）：service 抛 → 端点直接返错误，不落 stored_files。
+     * 临时 mp4 文件由 try-finally 兜底删（storeStream 成败都删，防磁盘泄漏）。
+     */
+    @PostMapping("/{id}/nodes/{nodeId}/clip")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<VideoClipVO>> clipVideo(@PathVariable Long id,
+                                                    @PathVariable String nodeId,
+                                                    @RequestBody VideoClipRequest req) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        Canvas c = canvasService.loadOwned(id, userId, isAdmin());
+
+        if (req == null || req.getStartSec() == null || req.getEndSec() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "截取起止秒缺失");
+        }
+        String sourceFileId = resolveVideoFileId(c.getSnapshot(), nodeId);
+
+        Path videoPath = fileStorageService.loadPath(sourceFileId, userId, admin);
+        VideoFrameService.ClipResult clip = videoFrameService.clip(videoPath, req.getStartSec(), req.getEndSec());
+        Path clipPath = clip.tempFile();
+        try {
+            String fileName = "clip_" + nodeId + "_" + req.getStartSec() + "-" + req.getEndSec() + ".mp4";
+            String newFileId;
+            try {
+                newFileId = fileStorageService.storeStream(
+                        Files.newInputStream(clipPath), fileName, clip.mimeType(),
+                        clip.size(), userId, StoredFileEntity.SOURCE_CANVAS);
+            } catch (IOException e) {
+                log.warn("canvas clip storeStream failed: canvasId={} nodeId={} err={}", id, nodeId, e.getMessage());
+                throw new BusinessException(ErrorCode.UNPROCESSABLE, "截取文件落盘失败");
+            }
+            log.info("canvas clip stored: canvasId={} sourceNodeId={} newFileId={} size={}",
+                    id, nodeId, newFileId, clip.size());
+            return ResponseEntity.ok(R.ok("已截取", VideoClipVO.builder()
+                    .fileId(newFileId)
+                    .url("/api/files/" + newFileId)
+                    .mime(clip.mimeType())
+                    .size(clip.size())
+                    .sourceNodeId(nodeId)
+                    .build()));
+        } finally {
+            try {
+                Files.deleteIfExists(clipPath);
+            } catch (IOException ignored) {
+                // 临时文件删失败不阻断（OS 临时目录定期清理兜底）
+            }
+        }
     }
 
     /** 从快照定位视频节点 + 取 data.fileId；非视频节点 / 无源文件 / 节点不存在 → 业务异常。 */
