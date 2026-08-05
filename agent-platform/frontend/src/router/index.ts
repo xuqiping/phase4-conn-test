@@ -103,6 +103,19 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '无限画布' }
       },
       {
+        path: 'assets',
+        name: 'AssetList',
+        component: () => import('@/views/AssetListView.vue'),
+        // 同 canvas：菜单隐藏（Sidebar hasPermission('asset:write')）+ 页内 canEdit + API 403 三重兜底
+        meta: { title: '资产库' }
+      },
+      {
+        path: 'assets/:id',
+        name: 'AssetProject',
+        component: () => import('@/views/AssetProjectView.vue'),
+        meta: { title: '项目资产' }
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),

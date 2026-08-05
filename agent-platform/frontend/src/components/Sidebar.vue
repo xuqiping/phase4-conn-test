@@ -66,7 +66,8 @@ import {
   ChatbubblesOutline,
   BookOutline,
   VideocamOutline,
-  AppsOutline
+  AppsOutline,
+  AlbumsOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
@@ -88,6 +89,8 @@ const isAdmin = computed(() => authStore.userInfo?.roles?.includes('admin'))
 const canGenVideo = computed(() => authStore.hasPermission('media:gen'))
 /** 无限画布入口仅 canvas:write 持有者可见（gated，admin 默认有） */
 const canEditCanvas = computed(() => authStore.hasPermission('canvas:write'))
+/** 项目资产库入口仅 asset:write 持有者可见（gated，admin 默认有，同 canvas:write 范式） */
+const canEditAssets = computed(() => authStore.hasPermission('asset:write'))
 
 /** 导航项配置 */
 const navItems = computed(() => {
@@ -103,6 +106,9 @@ const navItems = computed(() => {
   }
   if (canEditCanvas.value) {
     items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline })
+  }
+  if (canEditAssets.value) {
+    items.push({ path: '/assets', label: '资产库', icon: AlbumsOutline })
   }
   if (isAdmin.value) {
     items.push(
