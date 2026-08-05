@@ -68,6 +68,22 @@ export interface VideoClipVO {
   sourceNodeId: string
 }
 
+// === C13：故事板拼接（对齐后端 StoryboardConcatRequest / StoryboardConcatVO） ===
+
+/** 拼接响应（对齐后端 StoryboardConcatVO）。 */
+export interface StoryboardConcatVO {
+  fileId: string
+  url: string
+  mime: string
+  size: number
+  /** 拼接段数。 */
+  segmentCount: number
+  /** 成片总时长（秒）。 */
+  totalDurationSec: number
+  /** 参与拼接的源视频 fileId 列表（前端建成片节点后可批量连边，可选）。 */
+  sourceNodeIds: string[]
+}
+
 // === 类型定义（对齐后端 CanvasVO / CanvasSaveRequest） ===
 
 /** 画布视图。列表接口 snapshot=null，详情接口才带。 */
@@ -162,6 +178,18 @@ export const canvasApi = {
     return request.post<ApiResponse<VideoClipVO>>(
       `/canvas/${id}/nodes/${nodeId}/clip`,
       { startSec: payload.startSec, endSec: payload.endSec }
+    )
+  },
+
+  /**
+   * POST /api/canvas/{id}/storyboard/concat — 故事板顺序拼接（C13）。
+   * 多个视频 fileId 按序首尾相接 → 新成片视频（SOURCE_CANVAS）；前端建成片节点。
+   * 后端去重保序 + 每段 loadPath 归属校验。失败不产空文件。
+   */
+  concatStoryboard(id: number, fileIds: string[]) {
+    return request.post<ApiResponse<StoryboardConcatVO>>(
+      `/canvas/${id}/storyboard/concat`,
+      { fileIds }
     )
   }
 }

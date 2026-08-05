@@ -20,6 +20,17 @@ export interface CropRect {
   h: number
 }
 
+/** 故事板一段（C13，画布上视频产出物的投影：节点 id + fileId + 标签 + 时长 + 会话级预览流）。 */
+export interface StoryboardSegment {
+  nodeId: string
+  fileId: string
+  label: string
+  /** 段时长（秒），未知则 undefined（生成型视频取 duration，截取型可由用户后续补）。 */
+  durationSec?: number
+  /** 会话级 objectURL（带鉴权 fetch 产物），顺序预览用。 */
+  previewUrl?: string
+}
+
 /** 画布节点数据（C3 起按节点类型扩展各属性） */
 export interface CanvasNodeData {
   /** 节点标签 */

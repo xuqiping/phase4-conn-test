@@ -8,6 +8,8 @@ import com.superprogrammer.canvas.dto.CanvasVO;
 import com.superprogrammer.canvas.dto.FrameExtractRequest;
 import com.superprogrammer.canvas.dto.FrameExtractVO;
 import com.superprogrammer.canvas.dto.NodeRunResult;
+import com.superprogrammer.canvas.dto.StoryboardConcatRequest;
+import com.superprogrammer.canvas.dto.StoryboardConcatVO;
 import com.superprogrammer.canvas.dto.VideoClipRequest;
 import com.superprogrammer.canvas.dto.VideoClipVO;
 import com.superprogrammer.canvas.entity.Canvas;
@@ -45,6 +47,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -232,6 +236,70 @@ public class CanvasController {
         } finally {
             try {
                 Files.deleteIfExists(clipPath);
+            } catch (IOException ignored) {
+                // 临时文件删失败不阻断（OS 临时目录定期清理兜底）
+            }
+        }
+    }
+
+    // ==================== C13：故事板拼接（IC-11，基础剪辑成片）====================
+
+    /**
+     * 故事板顺序拼接：把多个视频产出物按 fileIds 顺序首尾相接 → 新成片视频（SOURCE_CANVAS）→ 前端建成片节点。
+     *
+     * <p>归属咽喉点：loadOwned（画布）+ 每段 fileId {@code loadPath}（ownership 复检，防借他人 fileId 拼接）。
+     * 失败不产空文件（plan 边界）；临时 mp4 try-finally 删。
+     */
+    @PostMapping("/{id}/storyboard/concat")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<StoryboardConcatVO>> concatStoryboard(@PathVariable Long id,
+                                                                  @RequestBody StoryboardConcatRequest req) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        canvasService.loadOwned(id, userId, isAdmin());
+
+        if (req == null || req.getFileIds() == null || req.getFileIds().isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "拼接 fileId 列表为空");
+        }
+        // 去重保序（同 fileId 重复入列无意义，且会让成片重复同段）
+        LinkedHashSet<String> unique = new LinkedHashSet<>(req.getFileIds());
+
+        List<Path> parts = new ArrayList<>(unique.size());
+        for (String fileId : unique) {
+            if (fileId == null || fileId.isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "拼接 fileId 缺失");
+            }
+            parts.add(fileStorageService.loadPath(fileId, userId, admin));
+        }
+
+        VideoFrameService.ConcatResult concat = videoFrameService.concat(parts);
+        Path concatPath = concat.tempFile();
+        try {
+            String fileName = "storyboard_concat_" + unique.size() + "seg.mp4";
+            String newFileId;
+            try {
+                newFileId = fileStorageService.storeStream(
+                        Files.newInputStream(concatPath), fileName, concat.mimeType(),
+                        concat.size(), userId, StoredFileEntity.SOURCE_CANVAS);
+            } catch (IOException e) {
+                log.warn("canvas concat storeStream failed: canvasId={} segments={} err={}",
+                        id, unique.size(), e.getMessage());
+                throw new BusinessException(ErrorCode.UNPROCESSABLE, "拼接成片落盘失败");
+            }
+            log.info("canvas concat stored: canvasId={} newFileId={} segments={} totalDurationSec={} size={}",
+                    id, newFileId, concat.segmentCount(), concat.totalDurationMs() / 1_000, concat.size());
+            return ResponseEntity.ok(R.ok("已拼接成片", StoryboardConcatVO.builder()
+                    .fileId(newFileId)
+                    .url("/api/files/" + newFileId)
+                    .mime(concat.mimeType())
+                    .size(concat.size())
+                    .segmentCount(concat.segmentCount())
+                    .totalDurationSec(concat.totalDurationMs() / 1_000)
+                    .sourceNodeIds(List.copyOf(unique))
+                    .build()));
+        } finally {
+            try {
+                Files.deleteIfExists(concatPath);
             } catch (IOException ignored) {
                 // 临时文件删失败不阻断（OS 临时目录定期清理兜底）
             }

@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
+import java.util.List;
 
 /**
  * VideoFrameService 单测（plan C11）。无 Spring 上下文（直接 new，依赖 @Value 默认 javacv）。
@@ -184,6 +185,88 @@ class VideoFrameServiceTest {
         VideoFrameService svc = new VideoFrameService();
         assertThatThrownBy(() -> svc.clip(sampleVideo, -1L, 1L))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    // ==================== C13 视频拼接（concat）====================
+
+    @Test
+    void concat_twoParts_returnsMergedMp4() throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult a = svc.clip(sampleVideo, 0L, 1L);
+        VideoFrameService.ClipResult b = svc.clip(sampleVideo, 1L, 2L);
+        VideoFrameService.ConcatResult r = null;
+        try {
+            r = svc.concat(List.of(a.tempFile(), b.tempFile()));
+            assertThat(r.mimeType()).isEqualTo("video/mp4");
+            assertThat(r.segmentCount()).isEqualTo(2);
+            assertThat(r.size()).isGreaterThan(0L);
+            assertThat(Files.exists(r.tempFile())).isTrue();
+            // 两段各 ~1s，合计应接近 2000ms（重编码时长可能微漂，放宽到 1500+）
+            assertThat(r.totalDurationMs()).isBetween(1_500L, 2_500L);
+        } finally {
+            if (r != null) Files.deleteIfExists(r.tempFile());
+            Files.deleteIfExists(a.tempFile());
+            Files.deleteIfExists(b.tempFile());
+        }
+    }
+
+    @Test
+    void concat_thenExtractFirst_roundTripsToValidVideo() throws Exception {
+        // 拼接 2 段 → 对成片抽首帧 → 有效 JPEG，证明 concat 产物是可播视频（非空壳）
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult a = svc.clip(sampleVideo, 0L, 1L);
+        VideoFrameService.ClipResult b = svc.clip(sampleVideo, 1L, 2L);
+        VideoFrameService.ConcatResult r = null;
+        try {
+            r = svc.concat(List.of(a.tempFile(), b.tempFile()));
+            VideoFrameService.ExtractedFrame f = svc.extract(r.tempFile(), VideoFrameService.FrameMode.FIRST, null);
+            assertThat(f.bytes()).isNotEmpty();
+            assertThat(f.bytes()[0]).isEqualTo((byte) 0xFF); // JPEG SOI 魔数
+            assertThat(f.bytes()[1]).isEqualTo((byte) 0xD8);
+        } finally {
+            if (r != null) Files.deleteIfExists(r.tempFile());
+            Files.deleteIfExists(a.tempFile());
+            Files.deleteIfExists(b.tempFile());
+        }
+    }
+
+    @Test
+    void concat_singlePart_returnsMp4() throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult a = svc.clip(sampleVideo, 0L, 1L);
+        VideoFrameService.ConcatResult r = null;
+        try {
+            r = svc.concat(List.of(a.tempFile()));
+            assertThat(r.segmentCount()).isEqualTo(1);
+            assertThat(r.size()).isGreaterThan(0L);
+        } finally {
+            if (r != null) Files.deleteIfExists(r.tempFile());
+            Files.deleteIfExists(a.tempFile());
+        }
+    }
+
+    @Test
+    void concat_emptyList_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.concat(List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("拼接段列表为空");
+    }
+
+    @Test
+    void concat_exceedsMaxParts_throwsBadRequest() throws Exception {
+        // 造 21 个段触发上限（单段复用同 clip 临时文件即可，concat 内部不查重）
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ClipResult a = svc.clip(sampleVideo, 0L, 1L);
+        try {
+            Path[] parts = new Path[21];
+            java.util.Arrays.fill(parts, a.tempFile());
+            assertThatThrownBy(() -> svc.concat(List.of(parts)))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("拼接段数超限");
+        } finally {
+            Files.deleteIfExists(a.tempFile());
+        }
     }
 
     /** 生成纯色帧，颜色随 index 变化（保证首帧与中段帧画面不同）。 */

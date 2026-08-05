@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * 视频抽帧（plan C11 / IC-12 / R-2）。javacv {@link FFmpegFrameGrabber} 流式 seek→grab 单帧→JPEG 字节。
@@ -53,6 +54,9 @@ public class VideoFrameService {
     /** 单次截取时长上限（秒，plan 安全清单「输入校验」：防空切片撑爆磁盘/内存）。 */
     private static final long MAX_CLIP_SECONDS = 600L;
 
+    /** 单次拼接段数上限（plan C13 安全清单：防空切片/防滥用）。 */
+    private static final int MAX_CONCAT_PARTS = 20;
+
     @Value("${canvas.frame-extractor:javacv}")
     private String extractorBackend = "javacv";
 
@@ -68,6 +72,9 @@ public class VideoFrameService {
      * <strong>必须</strong> {@link Files#deleteIfExists(Path)} 删临时文件（controller try-finally）。
      */
     public record ClipResult(Path tempFile, String mimeType, long size) {}
+
+    /** 拼接产物（临时 mp4 + mime + size + 总时长 ms + 段数）。调用方落库后须删临时文件。 */
+    public record ConcatResult(Path tempFile, String mimeType, long size, long totalDurationMs, int segmentCount) {}
 
     /**
      * 从视频抽单帧。
@@ -261,6 +268,120 @@ public class VideoFrameService {
                 grabber.release();
             } catch (Exception ignored) {
                 // release 失败不阻断主流程
+            }
+        }
+    }
+
+    /**
+     * 视频拼接（plan C13 / IC-11）。把多段视频按顺序首尾相接 → 单个 mp4 临时文件（基础剪辑成片）。
+     *
+     * <p>实现：以<strong>首段</strong>的 width/height/fps/bitrate 初始化一个 {@link FFmpegFrameRecorder}，
+     * 逐段 {@link FFmpegFrameGrabber#grabImage()} 把帧重编码进同一 recorder。所有段共用首段编码参数，
+     * 故 <b>要求各段同源/同尺寸</b>（典型 = 同一视频的若干 clip 截取产物）；尺寸不一致时 javacv 按原始像素塞入，
+     * 可能变形——MVP 不做缩放对齐（plan 边界：深度剪辑独立 plan）。
+     *
+     * <p>同 extract/clip：流式按帧不整片 load；产物写临时文件非 byte[]（调用方 try-finally 删）；
+     * 仅视频轨（无音频轨拼接，留后续）；失败固定话术。
+     *
+     * <p>校验：parts 非空 / 段数 ≤ {@link #MAX_CONCAT_PARTS}；首段尺寸可读。
+     *
+     * @param parts 按序拼接的源视频路径列表（已过 FileStorageService.loadPath 归属咽喉点）
+     * @return 拼接产物（临时文件 + mime + size + 总时长 ms + 段数）
+     */
+    public ConcatResult concat(List<Path> parts) {
+        if (!"javacv".equalsIgnoreCase(extractorBackend)) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "当前拼接后端仅支持 javacv（ffmpeg 系统进程分支未实现）");
+        }
+        if (parts == null || parts.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "拼接段列表为空");
+        }
+        if (parts.size() > MAX_CONCAT_PARTS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "拼接段数超限（最多 " + MAX_CONCAT_PARTS + " 段）");
+        }
+
+        long started = System.currentTimeMillis();
+        Path tempFile;
+        try {
+            tempFile = Files.createTempFile("canvas-concat-", ".mp4");
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "拼接失败：无法创建临时文件");
+        }
+
+        FFmpegFrameRecorder recorder = null;
+        FFmpegFrameGrabber grabber = null;
+        boolean recorderStarted = false;
+        long totalDurationUs = 0;
+        try {
+            for (int i = 0; i < parts.size(); i++) {
+                grabber = new FFmpegFrameGrabber(parts.get(i).toFile());
+                grabber.start();
+                long durUs = grabber.getLengthInTime();
+                if (durUs > 0) {
+                    totalDurationUs += durUs;
+                }
+
+                if (i == 0) {
+                    int width = grabber.getImageWidth();
+                    int height = grabber.getImageHeight();
+                    if (width <= 0 || height <= 0) {
+                        throw new BusinessException(ErrorCode.UNPROCESSABLE, "拼接失败：无法读取首段视频尺寸");
+                    }
+                    double fps = grabber.getFrameRate();
+                    if (fps <= 0) {
+                        fps = 25.0;
+                    }
+                    recorder = new FFmpegFrameRecorder(tempFile.toFile(), width, height);
+                    recorder.setFormat("mp4");
+                    recorder.setVideoCodec(avcodec.AV_CODEC_ID_H264);
+                    recorder.setFrameRate(fps);
+                    recorder.setVideoBitrate(grabber.getVideoBitrate() > 0 ? grabber.getVideoBitrate() : 2_000_000);
+                    recorder.start();
+                    recorderStarted = true;
+                }
+
+                Frame frame;
+                while ((frame = grabber.grabImage()) != null) {
+                    recorder.record(frame);
+                }
+
+                try {
+                    grabber.release();
+                } catch (Exception ignored) {
+                    // release 失败不阻断（继续下一段）
+                }
+                grabber = null;
+            }
+
+            long size = Files.size(tempFile);
+            long costMs = System.currentTimeMillis() - started;
+            log.info("canvas concat done: segments={} totalDurationMs={} costMs={} size={}",
+                    parts.size(), totalDurationUs / 1_000, costMs, size);
+            return new ConcatResult(tempFile, "video/mp4", size, totalDurationUs / 1_000, parts.size());
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("canvas concat failed: segments={} err={}", parts.size(), e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频拼接失败，请稍后重试");
+        } finally {
+            if (recorderStarted && recorder != null) {
+                try {
+                    recorder.stop();
+                } catch (Exception ignored) {
+                    // 停录失败不阻断
+                }
+                try {
+                    recorder.release();
+                } catch (Exception ignored) {
+                    // release 失败不阻断主流程
+                }
+            }
+            if (grabber != null) {
+                try {
+                    grabber.release();
+                } catch (Exception ignored) {
+                    // release 失败不阻断主流程
+                }
             }
         }
     }

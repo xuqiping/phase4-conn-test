@@ -64,6 +64,9 @@
         <n-button :loading="rerunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
           <n-icon :component="RefreshOutline" /> 重跑全链
         </n-button>
+        <n-button quaternary @click="showStoryboard = true" title="故事板：视频段时间线排列 + 拼接成片">
+          <n-icon :component="FilmOutline" /> 故事板
+        </n-button>
       </div>
 
       <div class="canvas-view__main">
@@ -105,6 +108,14 @@
         @confirm="onFocusConfirm"
         @cancel="focusNode = null"
       />
+
+      <!-- C13 故事板抽屉（视频段时间线排列 + 顺序预览 + 拼接成片） -->
+      <StoryboardPanel
+        v-model:show="showStoryboard"
+        :segments="storyboardSegments"
+        :concating="concating"
+        @concat="onStoryboardConcat"
+      />
     </div>
   </div>
 </template>
@@ -117,16 +128,18 @@ import {
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
-  DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline
+  DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline,
+  FilmOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
 import type { MediaStatus } from '@/api/media'
-import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
+import type { CanvasNode, CanvasSnapshot, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
+import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import type { CropRect } from '@/types/canvas'
 
 const route = useRoute()
@@ -154,6 +167,11 @@ const selectedNode = ref<CanvasNode | null>(null)
 const runningNodeId = ref<string | null>(null)
 /** 焦点编辑中的图节点（null=关闭沉浸 overlay）。 */
 const focusNode = ref<CanvasNode | null>(null)
+
+/** C13 故事板抽屉显隐。 */
+const showStoryboard = ref(false)
+/** C13 拼接进行中（按钮 loading + 防重入）。 */
+const concating = ref(false)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
@@ -529,6 +547,64 @@ async function onClipVideo(payload: { node: CanvasNode; startSec: number; endSec
     message.error(msg)
   } finally {
     runningNodeId.value = null
+  }
+}
+
+/**
+ * C13 故事板段：抽屉打开时（依赖 showStoryboard 触发重算）从画布视频节点投影。
+ * 仅取 type=video 且已产出 fileId 的节点（生成成功 / 截取 / 上传均可）。
+ */
+const storyboardSegments = computed<StoryboardSegment[]>(() => {
+  if (!showStoryboard.value) return []
+  const nodes = boardRef.value?.getNodes() ?? []
+  const segs: StoryboardSegment[] = []
+  for (const n of nodes) {
+    if (n.type !== 'video') continue
+    const d = n.data as Record<string, unknown>
+    const fileId = d.fileId as string | undefined
+    if (!fileId) continue
+    segs.push({
+      nodeId: n.id,
+      fileId,
+      label: (d.label as string) ?? '视频段',
+      durationSec: typeof d.duration === 'number' ? d.duration : undefined,
+      previewUrl: d.previewUrl as string | undefined
+    })
+  }
+  return segs
+})
+
+/**
+ * C13 拼接成片：按故事板顺序把多段视频首尾相接 → 新成片视频节点。
+ * 后端去重保序 + 逐段 loadPath 归属校验 → javacv concat（H.264/mp4）。
+ */
+async function onStoryboardConcat(fileIds: string[]) {
+  if (!editingId.value) return
+  concating.value = true
+  try {
+    const res = await canvasApi.concatStoryboard(editingId.value, fileIds)
+    const f = res.data.data
+    const previewUrl = await fetchVideoBlob(f.url)
+    boardRef.value?.addNode({
+      type: 'video',
+      position: { x: 120 + Math.random() * 120, y: 360 },
+      data: {
+        label: `成片(${f.segmentCount}段/${f.totalDurationSec}s)`,
+        fileId: f.fileId,
+        previewUrl,
+        mediaStatus: 'SUCCEEDED',
+        status: 'success',
+        duration: f.totalDurationSec || undefined,
+        prompt: ''
+      }
+    })
+    message.success(`拼接完成（${f.segmentCount} 段，约 ${f.totalDurationSec}s）`)
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '拼接失败'
+    message.error(msg)
+  } finally {
+    concating.value = false
   }
 }
 
