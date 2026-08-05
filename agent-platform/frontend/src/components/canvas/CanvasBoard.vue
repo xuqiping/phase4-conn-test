@@ -5,6 +5,7 @@
     tabindex="0"
     @dragover.prevent="onDragOver"
     @drop="onDrop"
+    @contextmenu.prevent
     @keydown.delete.prevent="deleteSelected"
     @keydown.backspace.prevent="deleteSelected"
   >
@@ -19,6 +20,7 @@
       fit-view-on-init
       @connect="onConnect"
       @node-click="onNodeClick"
+      @node-context-menu="onNodeContextMenu"
       @edge-click="onEdgeClick"
       @pane-click="onPaneClick"
     >
@@ -73,6 +75,8 @@ const boardRoot = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   (e: 'node-selected', node: CanvasNode | null): void
+  /** S12：节点右键 → 父开「存入资产库」弹窗（L5）。 */
+  (e: 'node-context-menu', node: CanvasNode): void
 }>()
 
 const defaultEdgeOptions = {
@@ -131,6 +135,17 @@ function onNodeClick({ node }: NodeMouseEvent) {
   boardRoot.value?.focus()
   // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
   emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
+}
+
+/**
+ * S12：节点右键（@node-context-menu）→ emit 真实节点引用给父开「存入资产库」弹窗。
+ * boardRoot 上的 @contextmenu.prevent 已拦掉浏览器默认菜单。
+ */
+function onNodeContextMenu({ node }: NodeMouseEvent) {
+  selectedNodeId.value = node.id
+  selectedEdgeId.value = ''
+  const real = nodes.value.find(n => n.id === node.id)
+  if (real) emit('node-context-menu', real)
 }
 
 function onEdgeClick({ edge }: EdgeMouseEvent) {

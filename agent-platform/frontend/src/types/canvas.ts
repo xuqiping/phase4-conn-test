@@ -31,6 +31,18 @@ export interface StoryboardSegment {
   previewUrl?: string
 }
 
+/**
+ * 资产绑定徽标（S12 画布↔资产库打通，L5/L6）。
+ * 节点存了资产引用后显示「来自资产·name vN」；hasUpdate=true 提示「有新版」（不自动变）。
+ * 平铺三字段存 node.data（assetId/assetName/assetVersion），hasUpdate 由属性面板选中时
+ * 拉 asset.get 比对当前版动态算出（非持久化，会话级）。
+ */
+export interface AssetBadge {
+  name: string
+  version: number
+  hasUpdate?: boolean
+}
+
 /** 画布节点数据（C3 起按节点类型扩展各属性） */
 export interface CanvasNodeData {
   /** 节点标签 */
@@ -39,6 +51,14 @@ export interface CanvasNodeData {
   nodeKind?: 'text' | 'image' | 'video' | 'audio' | 'script' | string
   /** 运行态（C4+ 产出触发用） */
   status?: CanvasNodeStatus
+  /** S12：节点已绑定的资产 id（库存→画布引用 / 画布→库入库回写）。 */
+  assetId?: number
+  /** S12：绑定时的资产名（徽标展示，不随资产改名自动变）。 */
+  assetName?: string
+  /** S12：绑定时的版本号（版本快照语义，资产升版不影响已引用方，设计 §六）。 */
+  assetVersion?: number
+  /** S12：会话级标记——资产已有更高版本（属性面板选中时比对算出，不入快照）。 */
+  assetHasUpdate?: boolean
   [key: string]: unknown
 }
 

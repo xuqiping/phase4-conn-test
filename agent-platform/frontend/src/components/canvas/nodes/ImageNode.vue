@@ -1,5 +1,5 @@
 <template>
-  <CanvasNodeBase kind="image" kind-label="图片" :status="data.status" :selected="selected">
+  <CanvasNodeBase kind="image" kind-label="图片" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><ImageOutline /></template>
     <div v-if="data.previewUrl" class="image-node__thumb">
       <img :src="data.previewUrl" alt="节点图" />
@@ -15,12 +15,15 @@
 import { NIcon } from 'naive-ui'
 import { ImageOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
-defineProps<{
-  data: { label?: string; fileId?: string; previewUrl?: string; status?: CanvasNodeStatus }
+const props = defineProps<{
+  data: { label?: string; fileId?: string; previewUrl?: string; status?: CanvasNodeStatus } & Record<string, unknown>
   selected?: boolean
 }>()
+
+const assetBadge = useNodeAssetBadge(props.data)
 </script>
 
 <style lang="scss" scoped>

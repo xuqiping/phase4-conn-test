@@ -1,5 +1,5 @@
 <template>
-  <CanvasNodeBase kind="audio" kind-label="音频" :status="data.status" :selected="selected">
+  <CanvasNodeBase kind="audio" kind-label="音频" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><MusicalNotesOutline /></template>
     <audio v-if="data.previewUrl" class="audio-node__player" :src="data.previewUrl" controls />
     <div v-else class="audio-node__desc">{{ data.label || '音频节点（上传 / TTS / 音乐生成）' }}</div>
@@ -9,9 +9,10 @@
 <script setup lang="ts">
 import { MusicalNotesOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
-defineProps<{
+const props = defineProps<{
   data: {
     label?: string
     fileId?: string
@@ -19,9 +20,11 @@ defineProps<{
     previewUrl?: string
     audioMode?: 'upload' | 'tts' | 'music'
     status?: CanvasNodeStatus
-  }
+  } & Record<string, unknown>
   selected?: boolean
 }>()
+
+const assetBadge = useNodeAssetBadge(props.data)
 </script>
 
 <style lang="scss" scoped>

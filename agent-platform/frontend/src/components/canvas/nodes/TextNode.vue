@@ -1,5 +1,5 @@
 <template>
-  <CanvasNodeBase kind="text" kind-label="文本" :status="data.status" :selected="selected">
+  <CanvasNodeBase kind="text" kind-label="文本" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><DocumentTextOutline /></template>
     <div v-if="data.outputText" class="text-node__output">{{ data.outputText }}</div>
     <div v-else class="text-node__prompt">{{ data.prompt || data.label || '双击右侧面板编辑提示词' }}</div>
@@ -9,12 +9,15 @@
 <script setup lang="ts">
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
-defineProps<{
-  data: { label?: string; prompt?: string; outputText?: string; status?: CanvasNodeStatus }
+const props = defineProps<{
+  data: { label?: string; prompt?: string; outputText?: string; status?: CanvasNodeStatus } & Record<string, unknown>
   selected?: boolean
 }>()
+
+const assetBadge = useNodeAssetBadge(props.data)
 </script>
 
 <style lang="scss" scoped>

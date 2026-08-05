@@ -8,6 +8,30 @@
         <n-input v-model:value="node.data.label" size="small" placeholder="节点名" />
       </div>
 
+      <!-- S12 资产库打通：入库 / 从库选择 / 已绑定徽标 + 检查更新（L5/L6，所有节点通用） -->
+      <div class="prop-panel__field">
+        <label>资产库</label>
+        <div v-if="assetBound" class="prop-panel__asset-badge" :data-has-update="assetHasUpdate">
+          来自资产 · {{ assetName }} v{{ assetVersion }}<template v-if="assetHasUpdate"> · 有新版</template>
+        </div>
+        <div class="prop-panel__row">
+          <n-button size="tiny" tertiary @click="emit('save-to-asset', node)">存入资产库</n-button>
+          <n-button size="tiny" tertiary @click="emit('pick-from-asset', node)">从库选择</n-button>
+        </div>
+        <div v-if="assetBound" class="prop-panel__row">
+          <n-button size="tiny" tertiary @click="emit('check-update', node)">检查更新</n-button>
+          <n-button
+            size="tiny"
+            tertiary
+            type="primary"
+            :disabled="!assetHasUpdate"
+            @click="emit('update-asset', node)"
+          >
+            更新到最新版
+          </n-button>
+        </div>
+      </div>
+
       <!-- 文本节点：提示词 -->
       <template v-if="node.type === 'text'">
         <div class="prop-panel__field">
@@ -264,7 +288,21 @@ const emit = defineEmits<{
   (e: 'focus-edit', node: CanvasNode): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
   (e: 'clip-video', payload: { node: CanvasNode; startSec: number; endSec: number }): void
+  /** S12：存入资产库（开 SaveToAssetDialog，L5）。 */
+  (e: 'save-to-asset', node: CanvasNode): void
+  /** S12：从库选择（开 AssetPicker，L6）。 */
+  (e: 'pick-from-asset', node: CanvasNode): void
+  /** S12：检查资产是否有新版（asset.get 比对版本）。 */
+  (e: 'check-update', node: CanvasNode): void
+  /** S12：更新节点引用到资产最新版（re-resolve 写回，L6「手动更新」）。 */
+  (e: 'update-asset', node: CanvasNode): void
 }>()
+
+/** S12：当前节点已绑定资产（node.data.assetId 存在）。 */
+const assetBound = computed(() => props.node?.data.assetId != null)
+const assetName = computed(() => (props.node?.data.assetName as string | undefined) ?? '资产')
+const assetVersion = computed(() => (props.node?.data.assetVersion as number | undefined) ?? 1)
+const assetHasUpdate = computed(() => Boolean(props.node?.data.assetHasUpdate))
 
 /** C11 抽帧「指定秒」输入值（AT 模式用）。 */
 const frameSecond = ref<number | null>(null)
@@ -372,6 +410,22 @@ const audioModeOpts = [
     background: rgba(239, 68, 68, 0.08);
     border-radius: var(--radius-base);
     word-break: break-all;
+  }
+
+  &__asset-badge {
+    font-size: var(--font-size-xs);
+    color: var(--color-primary);
+    padding: var(--spacing-1) var(--spacing-2);
+    background: rgba(var(--color-primary-rgb), 0.12);
+    border-radius: var(--radius-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &[data-has-update='true'] {
+      color: #facc15;
+      background: rgba(250, 204, 21, 0.14);
+    }
   }
 }
 </style>

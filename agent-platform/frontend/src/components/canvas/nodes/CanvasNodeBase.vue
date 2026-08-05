@@ -11,6 +11,9 @@
     <div class="canvas-node__header">
       <div class="canvas-node__icon"><n-icon size="14"><slot name="icon" /></n-icon></div>
       <span class="canvas-node__kind">{{ kindLabel }}</span>
+      <span v-if="assetBadge" class="canvas-node__asset" :data-has-update="assetBadge.hasUpdate">
+        {{ assetBadge.name }} v{{ assetBadge.version }}<template v-if="assetBadge.hasUpdate"> · 有新版</template>
+      </span>
       <span v-if="status" class="canvas-node__status" :data-status="status">{{ statusLabel }}</span>
     </div>
     <div class="canvas-node__body">
@@ -24,13 +27,15 @@
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { NIcon } from 'naive-ui'
-import type { CanvasNodeStatus } from '@/types/canvas'
+import type { CanvasNodeStatus, AssetBadge } from '@/types/canvas'
 
 const props = defineProps<{
   kind: 'text' | 'image' | 'video' | 'audio' | 'script'
   kindLabel: string
   status?: CanvasNodeStatus
   selected?: boolean
+  /** S12：资产绑定徽标（来自资产·name vN / 有新版）。 */
+  assetBadge?: AssetBadge
 }>()
 
 const STATUS_LABEL: Record<CanvasNodeStatus, string> = {
@@ -99,6 +104,23 @@ const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : 
   letter-spacing: 0.5px;
   color: var(--color-text-tertiary);
   flex: 1;
+}
+
+.canvas-node__asset {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(var(--color-primary-rgb), 0.14);
+  color: var(--color-primary);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &[data-has-update='true'] {
+    background: rgba(250, 204, 21, 0.16);
+    color: #facc15;
+  }
 }
 
 .canvas-node__status {

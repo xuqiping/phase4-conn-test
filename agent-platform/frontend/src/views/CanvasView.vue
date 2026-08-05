@@ -87,7 +87,7 @@
         </aside>
 
         <!-- 画布板 -->
-        <CanvasBoard ref="boardRef" @node-selected="onNodeSelect" />
+        <CanvasBoard ref="boardRef" @node-selected="onNodeSelect" @node-context-menu="onNodeContextMenu" />
 
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
         <PropertyPanel
@@ -98,6 +98,10 @@
           @focus-edit="onFocusEdit"
           @extract-frame="onExtractFrame"
           @clip-video="onClipVideo"
+          @save-to-asset="onSaveToAsset"
+          @pick-from-asset="onPickFromAsset"
+          @check-update="onCheckUpdate"
+          @update-asset="onUpdateAsset"
         />
       </div>
 
@@ -116,12 +120,27 @@
         :concating="concating"
         @concat="onStoryboardConcat"
       />
+
+      <!-- S12 存入资产库弹窗（节点入库，L5） -->
+      <SaveToAssetDialog
+        v-model:show="showSaveAsset"
+        :node="contextNode"
+        :canvas-id="editingId"
+        @imported="onAssetImported"
+      />
+
+      <!-- S12 从资产库选择（库→画布引用，L6） -->
+      <AssetPicker
+        v-model:show="showPicker"
+        :node="contextNode"
+        @picked="onAssetPicked"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NCard, NEmpty, NIcon, NInput, NSpin, useMessage
@@ -135,11 +154,15 @@ import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
 import type { MediaStatus } from '@/api/media'
+import { assetApi, assetBridgeApi } from '@/api/assets'
+import type { ResolveVO } from '@/types/asset'
 import type { CanvasNode, CanvasSnapshot, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
 import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
+import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
+import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import type { CropRect } from '@/types/canvas'
 
 const route = useRoute()
@@ -172,6 +195,13 @@ const focusNode = ref<CanvasNode | null>(null)
 const showStoryboard = ref(false)
 /** C13 拼接进行中（按钮 loading + 防重入）。 */
 const concating = ref(false)
+
+/** S12 入库弹窗显隐。 */
+const showSaveAsset = ref(false)
+/** S12 资产选择器显隐。 */
+const showPicker = ref(false)
+/** S12 当前弹窗目标节点（右键/属性面板按钮触发）。 */
+const contextNode = ref<CanvasNode | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
@@ -608,6 +638,118 @@ async function onStoryboardConcat(fileIds: string[]) {
   }
 }
 
+// ==================== S12 画布↔资产库打通（L5 入库 / L6 库→画布引用 + 徽标） ====================
+
+/** 节点右键 → 开「存入资产库」弹窗（L5）。 */
+function onNodeContextMenu(node: CanvasNode) {
+  contextNode.value = node
+  showSaveAsset.value = true
+}
+
+/** 属性面板「存入资产库」按钮 → 同上（另一入口）。 */
+function onSaveToAsset(node: CanvasNode) {
+  contextNode.value = node
+  showSaveAsset.value = true
+}
+
+/** 属性面板「从库选择」按钮 → 开 AssetPicker（L6）。 */
+function onPickFromAsset(node: CanvasNode) {
+  contextNode.value = node
+  showPicker.value = true
+}
+
+/** 入库成功回写徽标（assetId/Name/Version，L5 PRODUCED 绑定由后端落表）。 */
+function onAssetImported(payload: { node: CanvasNode; assetId: number; name: string; version: number }) {
+  boardRef.value?.updateNodeData(payload.node.id, {
+    assetId: payload.assetId,
+    assetName: payload.name,
+    assetVersion: payload.version,
+    assetHasUpdate: false
+  })
+  scheduleSave()
+}
+
+/**
+ * 把资产版本快照（resolve 结果）写回节点 data（L6 库→画布引用 / 更新到最新版共用）。
+ * - PROMPT：content.body → outputText
+ * - SCRIPT：content.synopsis/scenes → synopsis/scenes
+ * - IMAGE/AUDIO：fileId + fetchCanvasPreview → previewUrl
+ * - VIDEO：fileId + resolve.url fetchVideoBlob → previewUrl
+ * 徽标三字段同步刷新；assetHasUpdate 置 false（已对齐该版）。
+ */
+async function applyAssetResolve(node: CanvasNode, resolve: ResolveVO) {
+  const patch: Record<string, unknown> = {
+    assetId: resolve.assetId,
+    assetName: resolve.name ?? '资产',
+    assetVersion: resolve.version,
+    assetHasUpdate: false
+  }
+  if (resolve.mediaType === 'PROMPT' || resolve.mediaType === 'SCRIPT') {
+    const parsed = parseAssetContent(resolve.content)
+    if (resolve.mediaType === 'PROMPT') {
+      patch.outputText = typeof parsed.body === 'string' ? parsed.body : (resolve.content ?? '')
+    } else {
+      if (typeof parsed.synopsis === 'string') patch.synopsis = parsed.synopsis
+      if (Array.isArray(parsed.scenes)) patch.scenes = parsed.scenes
+    }
+  } else if (resolve.fileId) {
+    patch.fileId = resolve.fileId
+    // 文件类需带鉴权 fetch 转 objectURL 预览（/api/files/{id} 需 auth header）
+    if (resolve.mediaType === 'VIDEO' && resolve.url) {
+      try { patch.previewUrl = await fetchVideoBlob(resolve.url) } catch { /* 预览失败不阻断 */ }
+    } else if (resolve.mediaType === 'IMAGE' || resolve.mediaType === 'AUDIO') {
+      try { patch.previewUrl = await fetchCanvasPreview(resolve.fileId) } catch { /* 同上 */ }
+    }
+  }
+  boardRef.value?.updateNodeData(node.id, patch)
+  scheduleSave()
+}
+
+/** 解析资产正文 JSON（PROMPT/SCRIPT；容错：非 JSON 返空对象）。 */
+function parseAssetContent(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {}
+  try { return JSON.parse(raw) as Record<string, unknown> } catch { return {} }
+}
+
+/** AssetPicker 选定 → resolve 写回节点（L6 库→画布引用）。 */
+async function onAssetPicked(payload: { node: CanvasNode; resolve: ResolveVO }) {
+  await applyAssetResolve(payload.node, payload.resolve)
+  message.success(`已引用资产 ${payload.resolve.name ?? ''} v${payload.resolve.version}`)
+}
+
+/** 检查资产是否有新版：asset.get 比对 currentVersion > 节点绑定版（L6 不自动变，仅提示）。 */
+async function onCheckUpdate(node: CanvasNode) {
+  const assetId = (node.data as Record<string, unknown>).assetId as number | undefined
+  if (assetId == null) return
+  try {
+    const res = await assetApi.get(assetId)
+    const cur = res.data.data.currentVersion
+    const bound = (node.data as Record<string, unknown>).assetVersion as number | undefined
+    if (bound != null && cur > bound) {
+      boardRef.value?.updateNodeData(node.id, { assetHasUpdate: true })
+      message.info(`资产已升至 v${cur}（当前引用 v${bound}），可「更新到最新版」`)
+    } else {
+      boardRef.value?.updateNodeData(node.id, { assetHasUpdate: false })
+      message.info('已是最新版本')
+    }
+  } catch (e: unknown) {
+    message.error((e as { msg?: string })?.msg || '检查更新失败')
+  }
+}
+
+/** 更新节点引用到资产最新版：re-resolve（不带 version=当前）→ 写回（L6 手动更新）。 */
+async function onUpdateAsset(node: CanvasNode) {
+  const assetId = (node.data as Record<string, unknown>).assetId as number | undefined
+  if (assetId == null) return
+  try {
+    const res = await assetBridgeApi.resolve(assetId)
+    await applyAssetResolve(node, res.data.data)
+    message.success('已更新到最新版')
+  } catch (e: unknown) {
+    message.error((e as { msg?: string })?.msg || '更新失败')
+  }
+}
+
 /** 节点产出后自动保存快照（防丢结果）；保存节流复用 saving 标志。 */
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -660,6 +802,9 @@ async function loadCanvas(id: number) {
     editingId.value = c.id
     currentName.value = c.name
     const snap = parseSnapshot(c.snapshot)
+    // 等编辑器+CanvasBoard 挂载：editingId 触发 v-else 渲染，boardRef 下一 tick 才赋值，
+    // 否则此处 boardRef.value===null，可选链 ?. 静默吞掉 loadSnapshot → 重进画布空白（历史 bug）。
+    await nextTick()
     boardRef.value?.loadSnapshot(snap)
     // 重取会话级预览：快照只存 fileId（previewUrl blob 上次保存已剥），image/audio 节点按 fileId 拉 blob
     hydratePreviews(snap.nodes)

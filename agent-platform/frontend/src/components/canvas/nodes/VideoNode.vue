@@ -1,5 +1,5 @@
 <template>
-  <CanvasNodeBase kind="video" kind-label="视频" :status="data.status" :selected="selected">
+  <CanvasNodeBase kind="video" kind-label="视频" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><VideocamOutline /></template>
     <video
       v-if="data.previewUrl"
@@ -20,9 +20,10 @@
 <script setup lang="ts">
 import { VideocamOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
-defineProps<{
+const props = defineProps<{
   data: {
     label?: string
     prompt?: string
@@ -32,9 +33,11 @@ defineProps<{
     /** 会话级视频 objectURL（不入快照，加载时按 taskId 重新 fetch blob）。 */
     previewUrl?: string
     status?: CanvasNodeStatus
-  }
+  } & Record<string, unknown>
   selected?: boolean
 }>()
+
+const assetBadge = useNodeAssetBadge(props.data)
 </script>
 
 <style lang="scss" scoped>
