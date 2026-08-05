@@ -52,6 +52,9 @@ agent-platform/.tmp_*.sql
 agent-platform/backend/runtime.err
 agent-platform/backend/runtime.out
 docs/
+# 放开 workflow_output/docs/（SDD 功能级文档：feature-map/user-ops/plans/specs/changes 等需入库）
+!agent-platform/workflow_output/docs/
+!agent-platform/workflow_output/docs/**
 项目部署需要文件/
 
 # 日志和临时文件
