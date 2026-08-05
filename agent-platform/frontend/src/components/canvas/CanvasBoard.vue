@@ -42,6 +42,7 @@ import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
+import { uniqueLabel } from '@/utils/interpolate'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -104,13 +105,20 @@ function onDrop(event: DragEvent) {
   })
 }
 
-/** 新增节点（父组件调色板点击亦可调）。本地 CanvasNode 扁平类型，规避 vue-flow Node 泛型深递归（TS2589）。 */
+/**
+ * 新增节点（父组件调色板点击亦可调）。本地 CanvasNode 扁平类型，规避 vue-flow Node 泛型深递归（TS2589）。
+ * L9 节点命名唯一：label 撞名自动追加序号（图片 → 图片 2），覆盖新建/粘贴两入口
+ * （重命名查重在 PropertyPanel.onRenameBlur，占位符存 id 不受 label 改名影响）。
+ */
 function addNode(partial: { type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }) {
+  const baseLabel = String(partial.data?.label ?? '新节点')
+  const existing = nodes.value.map((n) => String(n.data.label ?? ''))
+  // label 放 spread 之后，确保去重值覆盖 partial.data 自带 label（L9 三入口）
   const node: CanvasNode = {
     id: `node-${Date.now()}`,
     type: partial.type ?? 'text',
     position: partial.position ?? { x: Math.random() * 200 + 80, y: Math.random() * 120 + 80 },
-    data: { label: '新节点', ...(partial.data ?? {}) }
+    data: { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) }
   }
   nodes.value.push(node)
 }

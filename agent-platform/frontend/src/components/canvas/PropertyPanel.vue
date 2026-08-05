@@ -5,7 +5,8 @@
     <template v-else>
       <div class="prop-panel__field">
         <label>名称</label>
-        <n-input v-model:value="node.data.label" size="small" placeholder="节点名" />
+        <!-- L9 重命名查重：失焦时若与同画布其他节点撞名，自动追加序号（占位符存 id 不受影响） -->
+        <n-input v-model:value="(node.data.label as string)" size="small" placeholder="节点名" @blur="onRenameBlur" />
       </div>
 
       <!-- S12 资产库打通：入库 / 从库选择 / 已绑定徽标 + 检查更新（L5/L6，所有节点通用） -->
@@ -32,17 +33,20 @@
         </div>
       </div>
 
-      <!-- 文本节点：提示词 -->
+      <!-- 文本节点：提示词（S13 支持 @引用祖先节点产出） -->
       <template v-if="node.type === 'text'">
         <div class="prop-panel__field">
           <label>提示词</label>
-          <n-input
-            v-model:value="(node.data.prompt as string)"
-            type="textarea"
-            size="small"
-            :autosize="{ minRows: 4, maxRows: 10 }"
-            placeholder="文本节点提示词，可拉线触发下游生成"
+          <MentionTextarea
+            :model-value="(node.data.prompt as string) || ''"
+            :candidates="candidates"
+            :rows="4"
+            placeholder="文本节点提示词；输入 @ 引用上游节点产出"
+            @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
           />
+          <div v-if="brokenMentions.length" class="prop-panel__warn">
+            断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
+          </div>
         </div>
         <n-button
           size="small"
@@ -91,17 +95,20 @@
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
       </template>
 
-      <!-- 视频节点：prompt/比例/时长/分辨率 -->
+      <!-- 视频节点：prompt/比例/时长/分辨率（S13 prompt 支持 @引用） -->
       <template v-else-if="node.type === 'video'">
         <div class="prop-panel__field">
           <label>提示词</label>
-          <n-input
-            v-model:value="(node.data.prompt as string)"
-            type="textarea"
-            size="small"
-            :autosize="{ minRows: 3, maxRows: 8 }"
-            placeholder="视频生成 prompt"
+          <MentionTextarea
+            :model-value="(node.data.prompt as string) || ''"
+            :candidates="candidates"
+            :rows="3"
+            placeholder="视频生成 prompt；输入 @ 引用上游节点产出"
+            @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
           />
+          <div v-if="brokenMentions.length" class="prop-panel__warn">
+            断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
+          </div>
         </div>
         <div class="prop-panel__row">
           <div class="prop-panel__field">
@@ -236,17 +243,20 @@
         <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
       </template>
 
-      <!-- 脚本节点：剧本 → LLM 拆分镜 -->
+      <!-- 脚本节点：剧本 → LLM 拆分镜（S13 剧本支持 @引用上游产出） -->
       <template v-else-if="node.type === 'script'">
         <div class="prop-panel__field">
           <label>剧本</label>
-          <n-input
-            v-model:value="(node.data.synopsis as string)"
-            type="textarea"
-            size="small"
-            :autosize="{ minRows: 5, maxRows: 12 }"
-            placeholder="剧本输入，经 LlmGateway 拆分镜"
+          <MentionTextarea
+            :model-value="(node.data.synopsis as string) || ''"
+            :candidates="candidates"
+            :rows="5"
+            placeholder="剧本输入；输入 @ 引用上游节点产出，经 LlmGateway 拆分镜"
+            @update:model-value="(v: string) => { if (node) node.data.synopsis = v }"
           />
+          <div v-if="brokenMentions.length" class="prop-panel__warn">
+            断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
+          </div>
         </div>
         <n-button
           size="small"
@@ -272,15 +282,27 @@ import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui
 import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
-import type { CanvasNode } from '@/types/canvas'
+import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode } from '@/api/canvas'
+import MentionTextarea from './MentionTextarea.vue'
+import { uniqueLabel } from '@/utils/interpolate'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 选中节点（数组中的真实引用，直编 data 即时反映到画布）。 */
   node: CanvasNode | null
   /** 该节点是否运行中（按钮 loading + 防重入）。 */
   running?: boolean
-}>()
+  /** S13：@选择器候选（当前节点的祖先节点集；无连线可达则空）。 */
+  candidates?: MentionCandidate[]
+  /** S13：当前节点文本中的断链占位符（上游被删/断连），用于灰显提示 L7/L8。 */
+  brokenMentions?: string[]
+  /** S13：同画布全部节点 label（重命名查重用，L9 三入口之一）。 */
+  allLabels?: string[]
+}>(), {
+  candidates: () => [],
+  brokenMentions: () => [],
+  allLabels: () => []
+})
 
 const emit = defineEmits<{
   (e: 'run', node: CanvasNode): void
@@ -316,6 +338,22 @@ function onPickFile(opts: { file?: { file?: File | null } } | undefined) {
   const file = opts?.file?.file
   if (file && props.node) {
     emit('upload', { node: props.node, file })
+  }
+}
+
+/**
+ * L9 重命名查重：失焦时若新 label 与同画布其他节点撞名，自动追加序号。
+ * 契约：父组件传入的 allLabels **已剔除当前节点**（按节点 id 剔除，非按值——
+ * 否则另一节点的同名也会被误剔导致查重漏判）。
+ */
+function onRenameBlur() {
+  const node = props.node
+  if (!node) return
+  const label = (node.data.label as string | undefined)?.trim()
+  if (!label) return
+  const deduped = uniqueLabel(label, props.allLabels)
+  if (deduped !== node.data.label) {
+    node.data.label = deduped
   }
 }
 
@@ -408,6 +446,15 @@ const audioModeOpts = [
     color: #f87171;
     padding: var(--spacing-2);
     background: rgba(239, 68, 68, 0.08);
+    border-radius: var(--radius-base);
+    word-break: break-all;
+  }
+
+  &__warn {
+    font-size: var(--font-size-xs);
+    color: #facc15;
+    padding: var(--spacing-1) var(--spacing-2);
+    background: rgba(250, 204, 21, 0.1);
     border-radius: var(--radius-base);
     word-break: break-all;
   }

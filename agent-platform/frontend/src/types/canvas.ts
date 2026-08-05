@@ -32,6 +32,21 @@ export interface StoryboardSegment {
 }
 
 /**
+ * @引用候选（S13 节点 @引用机制，设计 §十三）。
+ * `@` 唤起的选择器列出当前节点可达的祖先节点（反向 BFS 沿 edges）；
+ * 选定后插入占位符 `@{{node:<id>}}`（资产占位符 `@{{asset:<id>}}` 同引擎，MVP 选择器仅列节点）。
+ * label 服务于人脑消歧，占位符本体存 id（重命名不断链，L8）。
+ */
+export interface MentionCandidate {
+  /** 占位符种类：node=祖先节点 / asset=资产库资产（设计 §十三，资产不受祖先链约束）。 */
+  kind: 'node' | 'asset'
+  /** node→节点 id / asset→资产 id（占位符本体，重命名不断链）。 */
+  id: string
+  /** 显示名（节点 label / 资产名；重命名后选择器即时跟随，占位符不变）。 */
+  label: string
+}
+
+/**
  * 资产绑定徽标（S12 画布↔资产库打通，L5/L6）。
  * 节点存了资产引用后显示「来自资产·name vN」；hasUpdate=true 提示「有新版」（不自动变）。
  * 平铺三字段存 node.data（assetId/assetName/assetVersion），hasUpdate 由属性面板选中时

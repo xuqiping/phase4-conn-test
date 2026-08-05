@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { NInput } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
 import type { CanvasNode } from '@/types/canvas'
 
@@ -73,5 +74,55 @@ describe('PropertyPanel (S12-c 资产库区)', () => {
     const updateBtn = wrapper.findAll('button').find((b) => b.text().includes('更新到最新版'))!
     await updateBtn.trigger('click')
     expect(wrapper.emitted('update-asset')).toBeTruthy()
+  })
+})
+
+describe('PropertyPanel (S13 @引用 / 重命名查重)', () => {
+  it('传 candidates → 文本节点提示词渲染 MentionTextarea', () => {
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        node: mkNode({ prompt: '@{{node:n1}}' }),
+        candidates: [{ kind: 'node', id: 'n1', label: '上游' }]
+      }
+    })
+    expect(wrapper.findComponent({ name: 'MentionTextarea' }).exists()).toBe(true)
+  })
+
+  it('brokenMentions 非空 → 渲染断链提示', () => {
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        node: mkNode({ prompt: '@{{node:gone}}' }),
+        brokenMentions: ['@{{node:gone}}']
+      }
+    })
+    expect(wrapper.text()).toContain('断链引用')
+    expect(wrapper.text()).toContain('@{{node:gone}}')
+  })
+
+  it('brokenMentions 空 → 不渲染断链提示', () => {
+    const wrapper = mountPanel(mkNode({ prompt: 'x' }))
+    expect(wrapper.text()).not.toContain('断链引用')
+  })
+
+  it('重命名撞名 → 失焦自动追加序号（L9）', async () => {
+    const node = mkNode({ prompt: 'x' })
+    node.data.label = '图片'
+    const wrapper = mount(PropertyPanel, {
+      // allLabels = 其他节点 label（按 id 剔除自身，含另一「文本」节点）
+      props: { node, allLabels: ['文本'] }
+    })
+    // 改成与已有「文本」撞名
+    node.data.label = '文本'
+    // 触发名称输入框 blur（首个 NInput 即名称字段）
+    await wrapper.findComponent(NInput).vm.$emit('blur')
+    await wrapper.vm.$nextTick()
+    expect(node.data.label).toBe('文本 2')
+  })
+
+  it('视频节点 prompt 亦用 MentionTextarea', () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    expect(wrapper.findComponent({ name: 'MentionTextarea' }).exists()).toBe(true)
   })
 })

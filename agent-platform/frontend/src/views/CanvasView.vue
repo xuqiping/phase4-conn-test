@@ -93,6 +93,9 @@
         <PropertyPanel
           :node="selectedNode"
           :running="runningNodeId === selectedNode?.id"
+          :candidates="mentionCandidates"
+          :broken-mentions="brokenMentions"
+          :all-labels="otherLabels"
           @run="onRunNode"
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
@@ -156,7 +159,7 @@ import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
 import type { MediaStatus } from '@/api/media'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
-import type { CanvasNode, CanvasSnapshot, StoryboardSegment } from '@/types/canvas'
+import type { CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
@@ -164,6 +167,7 @@ import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import type { CropRect } from '@/types/canvas'
+import { ancestors, interpolate, findBrokenMentions, type MentionResolver } from '@/utils/interpolate'
 
 const route = useRoute()
 const router = useRouter()
@@ -205,6 +209,106 @@ const contextNode = ref<CanvasNode | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
+}
+
+// ==================== S13 节点 @引用（祖先链候选 + 运行前插值 + 断链检测） ====================
+
+/**
+ * 选中节点的祖先集（反向 BFS 沿 edges，visited 防环）。
+ * 读 boardRef.getEdges()——其内部 `return edges.value` 在 computed 中被响应式追踪，
+ * 故增删边/节点会自动重算（无需手动 tick）。
+ */
+const selectedAncestors = computed<Set<string>>(() => {
+  const id = selectedNode.value?.id
+  if (!id || !boardRef.value) return new Set<string>()
+  return ancestors(id, boardRef.value.getEdges())
+})
+
+/** @选择器候选：祖先节点 → {kind:'node', id, label}（设计 §十三：@沿既有连线）。 */
+const mentionCandidates = computed<MentionCandidate[]>(() => {
+  const set = selectedAncestors.value
+  const nodes = boardRef.value?.getNodes() ?? []
+  return nodes
+    .filter((n) => set.has(n.id))
+    .map((n) => ({
+      kind: 'node' as const,
+      id: n.id,
+      label: String((n.data as Record<string, unknown>).label ?? n.id)
+    }))
+})
+
+/** 同画布其他节点 label（重命名查重 L9，按节点 id 剔除自身）。 */
+const otherLabels = computed<string[]>(() => {
+  const id = selectedNode.value?.id
+  const nodes = boardRef.value?.getNodes() ?? []
+  return nodes
+    .filter((n) => n.id !== id)
+    .map((n) => String((n.data as Record<string, unknown>).label ?? ''))
+})
+
+/**
+ * 选中节点文本中的断链占位符（L7/L8）：
+ * - node 占位符指向的节点不在祖先集（连线被删 / 上游节点被删）→ 断链
+ * - asset 占位符视为非断链（资产不受祖先链约束；MVP 选择器不产生 asset 占位符）
+ */
+const brokenMentions = computed<string[]>(() => {
+  const node = selectedNode.value
+  if (!node) return []
+  const d = node.data as Record<string, unknown>
+  const text = [d.prompt, d.synopsis].filter((s): s is string => typeof s === 'string').join('\n')
+  if (!text) return []
+  const anc = selectedAncestors.value
+  return findBrokenMentions(text, (kind, id) => kind === 'asset' || anc.has(id))
+})
+
+/**
+ * 运行期 @占位符解析器（onRunNode/onRunVideo 调）：按节点类型注入上游产出文本。
+ * - text → outputText
+ * - script → scenes 序列化（无 scenes 回落 synopsis）
+ * - image/video/audio → prompt + 产物元信息（文件本体走参考图通道，不文本插值）
+ * - 找不到节点 → undefined（interpolate 降级「断链」标记）
+ * **不递归**：返回串里的 @占位符不再二次解析（防 A@B、B 含 @ 死循环）。
+ */
+function buildMentionResolver(): MentionResolver {
+  const nodes = boardRef.value?.getNodes() ?? []
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  return (kind, id) => {
+    if (kind === 'asset') return undefined // MVP：运行期不预解析 asset 占位符（选择器仅产 node 占位符）
+    const n = byId.get(id)
+    if (!n) return undefined
+    const d = n.data as Record<string, unknown>
+    if (n.type === 'text') return typeof d.outputText === 'string' ? d.outputText : undefined
+    if (n.type === 'script') return serializeScenes(d.scenes, d.synopsis)
+    const meta = [typeof d.prompt === 'string' ? d.prompt : '', d.fileId ? `fileId:${d.fileId}` : '']
+      .filter(Boolean).join(' ')
+    return meta || undefined
+  }
+}
+
+/** 脚本节点分镜序列化：scenes 数组逐条编号；无 scenes 回落 synopsis 原文。 */
+function serializeScenes(scenes: unknown, synopsis: unknown): string {
+  if (Array.isArray(scenes) && scenes.length) {
+    return scenes
+      .map((s, i) => `[分镜${i + 1}] ${typeof s === 'string' ? s : JSON.stringify(s)}`)
+      .join('\n')
+  }
+  return typeof synopsis === 'string' ? synopsis : ''
+}
+
+/**
+ * 运行前插值 + 断链预检：把节点 data 里的 @占位符替换为上游产出（不递归），
+ * 返回**拷贝**（不污染 node.data —— 占位符原文须持久化）。
+ * 有断链则 message.warning 提示（仍允许运行，断链处降级「【断链】」）。
+ */
+function interpolateForRun(node: CanvasNode): Record<string, unknown> {
+  const data = { ...(node.data as Record<string, unknown>) }
+  const resolver = buildMentionResolver()
+  if (typeof data.prompt === 'string') data.prompt = interpolate(data.prompt, resolver)
+  if (typeof data.synopsis === 'string') data.synopsis = interpolate(data.synopsis, resolver)
+  if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
+    message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
+  }
+  return data
 }
 
 /** C10 焦点编辑：进入沉浸 overlay。 */
@@ -253,10 +357,11 @@ async function onRunNode(node: CanvasNode) {
   runningNodeId.value = node.id
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
+    // S13：运行前把 @占位符插值为上游产出（不递归，不污染 node.data 原文）
     const payload: CanvasNodeDTO = {
       id: node.id,
       type: node.type as CanvasNodeDTO['type'],
-      data: node.data as Record<string, unknown>
+      data: interpolateForRun(node)
     }
     const res = await canvasApi.runNode(editingId.value, payload)
     const result = res.data.data
@@ -282,10 +387,14 @@ async function onRunNode(node: CanvasNode) {
 async function onRunVideo(node: CanvasNode) {
   if (!editingId.value) return
   const data = node.data as Record<string, unknown>
-  const prompt = String(data.prompt ?? '').trim()
+  // S13：运行前插值 @占位符（不递归；断链处降级「【断链】」）
+  const prompt = interpolate(String(data.prompt ?? ''), buildMentionResolver()).trim()
   if (!prompt) {
     message.warning('请先填写视频提示词')
     return
+  }
+  if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
+    message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
   }
   runningNodeId.value = node.id
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
