@@ -73,6 +73,18 @@
             </li>
           </ul>
         </div>
+
+        <!-- 一致性包（人物/道具/场景类额染，设计 §五） -->
+        <ConsistencyPack
+          v-if="showConsistency"
+          :asset-id="asset.id"
+          :can-edit="canEdit"
+          :initial="consistencyInitial"
+          @saved="onConsistencySaved"
+        />
+
+        <!-- 版本时间线（只读回滚查看） -->
+        <VersionTimeline :asset-id="asset.id" :asset-current-version="asset.currentVersion" />
       </div>
     </n-drawer-content>
   </n-drawer>
@@ -95,6 +107,8 @@ import {
 import { assetApi, assetBridgeApi, versionApi } from '@/api/assets'
 import { fetchCanvasPreview } from '@/api/canvas'
 import request from '@/api/request'
+import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
+import VersionTimeline from '@/components/asset/VersionTimeline.vue'
 import type { AssetStatus, AssetMediaType, AssetUsageVO, AssetVO } from '@/types/asset'
 
 const props = defineProps<{
@@ -133,6 +147,23 @@ const MEDIA_LABEL: Record<AssetMediaType, string> = {
 }
 
 const needsFile = computed(() => props.show && !!asset.value && ['IMAGE', 'VIDEO', 'AUDIO'].includes(asset.value.mediaType))
+
+/** 一致性包初始值（从 asset.content.consistency 解析；人物/道具/场景类额染） */
+const consistencyInitial = computed<ConsistencyPackData | null>(() => {
+  if (!asset.value?.content) return null
+  try {
+    const parsed = JSON.parse(asset.value.content)
+    return (parsed?.consistency ?? null) as ConsistencyPackData | null
+  } catch {
+    return null
+  }
+})
+
+/** 仅人物/道具/场景类资产渲染一致性包（设计 §五） */
+const showConsistency = computed(() => {
+  const roles = asset.value?.roleKeys ?? []
+  return ['人物', '道具', '场景'].some((r) => roles.includes(r))
+})
 
 /** 文本类预览：content 是 JSON 串，直接展示原文（剧本 scenes 深格式化在 10b） */
 const textPreview = computed(() => {
@@ -220,6 +251,12 @@ async function download() {
 }
 
 defineExpose({ asset, usages, loading, doAction, download, loadAll })
+
+/** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
+async function onConsistencySaved(assetId: number) {
+  await loadAll(assetId)
+  emit('changed', assetId)
+}
 </script>
 
 <style lang="scss" scoped>
