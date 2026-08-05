@@ -3,17 +3,24 @@ use cpal::{Device, Stream};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 
+use crate::session::SessionClock;
+
 #[derive(Debug, Clone)]
 pub struct AudioFrame {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
     pub channels: u16,
+    /// ms relative to session t0; 0 when no session clock is attached.
+    /// Keeps plain recording backward compatible (design 3.10 / AC-102).
+    pub capture_ts: i64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AudioCaptureConfig {
     pub sample_rate: u32,
     pub channels: u16,
+    /// Optional shared session clock. None = plain recording (capture_ts stays 0).
+    pub clock: Option<Arc<SessionClock>>,
 }
 
 enum CaptureBackend {
@@ -46,6 +53,11 @@ impl AudioCapture {
 
     pub fn take_samples(&self) -> Vec<f32> {
         std::mem::take(&mut self.all_samples.lock().unwrap())
+    }
+
+    /// "Now" against the attached session clock, or 0 if none.
+    fn now_ts(clock: &Option<Arc<SessionClock>>) -> i64 {
+        clock.as_ref().map_or(0, |c| c.now_ms())
     }
 
     pub fn list_devices() -> Vec<String> {
@@ -95,11 +107,14 @@ impl AudioCapture {
                 let loopback = crate::audio::LoopbackCapture::start(Some(idx), tx)?;
                 self.backend = Some(CaptureBackend::Loopback(loopback));
 
-                // Forward loopback data to our main channel
+                // Forward loopback data to our main channel, stamping capture_ts
+                // against the session clock (loopback itself has no clock).
                 let sender = self.sender.clone();
                 let all_samples = self.all_samples.clone();
+                let clock = self.config.clock.clone();
                 std::thread::spawn(move || {
-                    while let Ok(frame) = rx.recv() {
+                    while let Ok(mut frame) = rx.recv() {
+                        frame.capture_ts = AudioCapture::now_ts(&clock);
                         all_samples.lock().unwrap().extend_from_slice(&frame.samples);
                         let _ = sender.send(frame);
                     }
@@ -134,6 +149,7 @@ impl AudioCapture {
                 let all_samples = self.all_samples.clone();
                 let sample_rate = config.sample_rate();
                 let channels = config.channels();
+                let clock = self.config.clock.clone();
 
                 let err_fn = move |err| {
                     log::error!("an error occurred on audio stream: {}", err);
@@ -143,13 +159,16 @@ impl AudioCapture {
                     cpal::SampleFormat::F32 => {
                         let s = sender.clone();
                         let samples = all_samples.clone();
+                        let clock = clock.clone();
                         device.build_input_stream(
                             &config.into(),
                             move |data: &[f32], _| {
+                                let ts = AudioCapture::now_ts(&clock);
                                 let frame = AudioFrame {
                                     samples: data.iter().copied().collect(),
                                     sample_rate,
                                     channels,
+                                    capture_ts: ts,
                                 };
                                 samples.lock().unwrap().extend_from_slice(&frame.samples);
                                 let _ = s.send(frame);
@@ -161,13 +180,16 @@ impl AudioCapture {
                     cpal::SampleFormat::I16 => {
                         let s = sender.clone();
                         let samples = all_samples.clone();
+                        let clock = clock.clone();
                         device.build_input_stream(
                             &config.into(),
                             move |data: &[i16], _| {
+                                let ts = AudioCapture::now_ts(&clock);
                                 let frame = AudioFrame {
                                     samples: data.iter().map(|&x| x as f32 / i16::MAX as f32).collect(),
                                     sample_rate,
                                     channels,
+                                    capture_ts: ts,
                                 };
                                 samples.lock().unwrap().extend_from_slice(&frame.samples);
                                 let _ = s.send(frame);

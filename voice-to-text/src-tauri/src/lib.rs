@@ -1,7 +1,9 @@
 mod audio;
+mod session;
 mod stt;
 
 use crate::audio::{AudioCapture, AudioCaptureConfig};
+use crate::session::{SessionInfo, SessionManager, SessionState};
 use crate::stt::{SpeechRecognizer, SpeechRecognizerConfig};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -33,6 +35,7 @@ async fn start_recording(
     let mut capture = AudioCapture::new(AudioCaptureConfig {
         sample_rate: 16000,
         channels: 1,
+        clock: None, // Step 4 (start_capture_session) will inject the session clock
     });
 
     if let Some(name) = device_name {
@@ -118,16 +121,40 @@ fn get_recording_status(state: tauri::State<'_, AppState>) -> bool {
     guard.is_some()
 }
 
+// ---- Session management (网课录屏总结, plan Step 1 / FR-103) ----
+
+#[tauri::command]
+fn create_session(manager: tauri::State<'_, SessionManager>) -> Result<SessionInfo, String> {
+    manager.create_session().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_sessions(manager: tauri::State<'_, SessionManager>) -> Result<Vec<SessionInfo>, String> {
+    manager.list_sessions().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_session_status(
+    id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<SessionState, String> {
+    manager.get_session_status(&id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .manage::<AppState>(Arc::new(Mutex::new(None)))
+        .manage(SessionManager::new(SessionManager::default_base_dir()))
         .invoke_handler(tauri::generate_handler![
             list_audio_devices,
             start_recording,
             stop_recording,
-            get_recording_status
+            get_recording_status,
+            create_session,
+            list_sessions,
+            get_session_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

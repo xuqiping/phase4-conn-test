@@ -9,6 +9,10 @@ pub struct RecognitionResult {
     pub text: String,
     pub is_final: bool,
     pub partial: String,
+    /// ms relative to audio-stream start (≈ session t0 once Step 4 injects the
+    /// shared session clock). 0 for mock/no-clock path. AC-102: err < 300ms.
+    pub start_ms: i64,
+    pub end_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +70,17 @@ impl SpeechRecognizer {
             let mut last_text = String::new();
             let mut accumulated_final_text = String::new();
 
+            // ---- Sentence-level timestamp bookkeeping (AC-102) ----
+            // Count mono samples fed to the recognizer; convert to ms via the
+            // target sample rate. start_ms/end_ms are relative to the audio
+            // stream's start, which equals session t0 once Step 4 wires the
+            // shared clock into recording start.
+            let mut samples_processed: i64 = 0;
+            let mut sentence_start_sample: i64 = 0;
+            let to_ms = |samples: i64| -> i64 {
+                samples * 1000 / target_sample_rate as i64
+            };
+
             loop {
                 let Ok(frame) = receiver.lock().unwrap().recv() else { break };
                 let samples = resample_to_mono_16khz(&frame.samples, frame.sample_rate, frame.channels);
@@ -81,6 +96,7 @@ impl SpeechRecognizer {
                             samples.as_ptr(),
                             samples.len() as i32,
                         );
+                        samples_processed += samples.len() as i64;
 
                         // Decode while ready
                         while sherpa_rs_sys::SherpaOnnxIsOnlineStreamReady(rec.recognizer, s) == 1 {
@@ -105,6 +121,8 @@ impl SpeechRecognizer {
                                 text: String::new(),
                                 is_final: false,
                                 partial: current_text.clone(),
+                                start_ms: to_ms(sentence_start_sample),
+                                end_ms: to_ms(samples_processed),
                             });
                         }
 
@@ -116,11 +134,15 @@ impl SpeechRecognizer {
                                     text: current_text,
                                     is_final: true,
                                     partial: String::new(),
+                                    start_ms: to_ms(sentence_start_sample),
+                                    end_ms: to_ms(samples_processed),
                                 });
                             }
                             // Reset stream for next utterance
                             sherpa_rs_sys::SherpaOnnxOnlineStreamReset(rec.recognizer, s);
                             last_text.clear();
+                            // Next sentence begins at the current sample position.
+                            sentence_start_sample = samples_processed;
                         }
                     }
                 } else {
@@ -129,6 +151,8 @@ impl SpeechRecognizer {
                         text: "[mock] 你好".to_string(),
                         is_final: true,
                         partial: String::new(),
+                        start_ms: 0,
+                        end_ms: 0,
                     });
                 }
             }

@@ -187,6 +187,7 @@ impl LoopbackCapture {
                                 samples,
                                 sample_rate,
                                 channels,
+                                capture_ts: 0, // stamped by capture.rs forward thread (session clock)
                             };
                             let _ = sender.send(frame);
                             capture_client.ReleaseBuffer(frames).ok();
