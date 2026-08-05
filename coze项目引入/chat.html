@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 生图助手</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #f7f8fc;
+    --bubble-user: linear-gradient(135deg, #4c8dff, #3366ff);
+    --primary: #3366ff;
+    --text: #1f2329;
+    --text-sub: #8f959e;
+    --border: #e8eaf0;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== 顶栏 ===== */
+  header {
+    height: 56px;
+    background: rgba(255,255,255,.85);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header .logo {
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #5b8cff, #8e6bff);
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-right: 8px;
+    font-size: 14px;
+  }
+
+  /* ===== 消息区 ===== */
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 16px 16px;
+  }
+  .msg-list { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+  .msg { display: flex; gap: 12px; animation: fadeUp .3s ease; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none;} }
+
+  .avatar {
+    width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 18px;
+  }
+  .msg.ai .avatar { background: linear-gradient(135deg, #5b8cff, #8e6bff); }
+  .msg.user { flex-direction: row-reverse; }
+  .msg.user .avatar { background: #dde3ee; }
+
+  .bubble-wrap { max-width: 78%; display: flex; flex-direction: column; gap: 8px; }
+  .msg.user .bubble-wrap { align-items: flex-end; }
+
+  .bubble {
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.7;
+    font-size: 15px;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .msg.ai .bubble {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-top-left-radius: 4px;
+    box-shadow: 0 2px 8px rgba(30,40,80,.04);
+  }
+  .msg.user .bubble {
+    background: var(--bubble-user);
+    color: #fff;
+    border-top-right-radius: 4px;
+  }
+  .bubble img.gen-img, .bubble-wrap img.up-img {
+    max-width: 260px;
+    border-radius: 12px;
+    display: block;
+    cursor: zoom-in;
+    border: 1px solid var(--border);
+  }
+  .up-imgs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .up-imgs img { width: 90px; height: 90px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+
+  /* 打字中动画 */
+  .typing { display: inline-flex; gap: 5px; padding: 6px 2px; }
+  .typing i {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #b6c2e2;
+    animation: bounce 1.2s infinite;
+  }
+  .typing i:nth-child(2) { animation-delay: .15s; }
+  .typing i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 0%,60%,100% { transform: none; opacity:.5 } 30% { transform: translateY(-6px); opacity:1 } }
+
+  .err { color: #d83931; font-size: 14px; }
+
+  /* ===== 空状态 ===== */
+  #empty {
+    text-align: center;
+    margin-top: 14vh;
+    color: var(--text-sub);
+  }
+  #empty .big {
+    width: 72px; height: 72px; margin: 0 auto 18px;
+    border-radius: 22px;
+    background: linear-gradient(135deg, #5b8cff, #8e6bff);
+    display: flex; align-items: center; justify-content: center; font-size: 34px;
+    box-shadow: 0 10px 24px rgba(90,120,255,.3);
+  }
+  #empty h2 { color: var(--text); font-size: 22px; margin-bottom: 8px; font-weight: 600; }
+  #empty p { font-size: 14px; }
+
+  /* ===== 输入区 ===== */
+  .input-area {
+    padding: 12px 16px 20px;
+    background: linear-gradient(to top, var(--bg) 70%, transparent);
+  }
+  .input-box {
+    max-width: 760px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 12px 14px;
+    box-shadow: 0 6px 24px rgba(30,40,80,.08);
+    transition: border-color .2s;
+  }
+  .input-box:focus-within { border-color: #b9c8ff; }
+
+  #previews { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  #previews:empty { display: none; }
+  .pv {
+    position: relative;
+    width: 64px; height: 64px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .pv img { width: 100%; height: 100%; object-fit: cover; }
+  .pv .del {
+    position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: rgba(0,0,0,.55);
+    color: #fff; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: none;
+  }
+
+  #input {
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    font-size: 15px;
+    line-height: 1.6;
+    max-height: 140px;
+    background: transparent;
+    font-family: inherit;
+    padding: 4px 2px;
+  }
+
+  .toolbar { display: flex; align-items: center; margin-top: 6px; }
+  .tool-btn {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    font-size: 18px;
+    cursor: pointer;
+    color: #6b7280;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+  }
+  .tool-btn:hover { background: #f0f2f8; }
+  .tool-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .img-count { font-size: 12px; color: var(--text-sub); margin-left: 6px; }
+
+  #send {
+    margin-left: auto;
+    height: 36px;
+    padding: 0 18px;
+    border: none;
+    border-radius: 12px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    transition: opacity .15s, transform .1s;
+  }
+  #send:hover:not(:disabled) { opacity: .9; }
+  #send:active:not(:disabled) { transform: scale(.97); }
+  #send:disabled { background: #c4ccdd; cursor: not-allowed; }
+
+  .tips { text-align: center; font-size: 12px; color: var(--text-sub); margin-top: 8px; }
+
+  /* 图片查看 */
+  #viewer {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.8);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 99; cursor: zoom-out;
+  }
+  #viewer img { max-width: 92vw; max-height: 92vh; border-radius: 8px; }
+
+  /* ===== 顶部页签 ===== */
+  .tabs { display: inline-flex; gap: 4px; margin-left: 16px; }
+  .tab { border: none; background: transparent; padding: 4px 12px; border-radius: 8px;
+         cursor: pointer; font-size: 13px; color: var(--text-sub); font-family: inherit; }
+  .tab.active { background: #eef2ff; color: var(--primary); font-weight: 600; }
+
+  /* ===== 批量视图 ===== */
+  #batch-view { max-width: 880px; margin: 0 auto; padding: 20px 16px 48px; }
+  .bcard { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px;
+           box-shadow: 0 2px 8px rgba(30,40,80,.04); }
+  .bcard h3 { font-size: 15px; margin-bottom: 10px; color: var(--text); }
+  .bcard textarea { width: 100%; min-height: 150px; border: 1px solid var(--border); border-radius: 10px;
+                    padding: 10px; font: inherit; resize: vertical; outline: none; }
+  .bcard textarea:focus { border-color: #b9c8ff; }
+  .ref-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 22px; }
+  .ref-chip { font-size: 12px; background: #f0f2f8; padding: 3px 9px; border-radius: 8px; color: var(--text); }
+  .bbtn { border: none; border-radius: 10px; padding: 8px 18px; font-size: 14px; font-weight: 600;
+          cursor: pointer; font-family: inherit; background: var(--primary); color: #fff; }
+  .bbtn:disabled { background: #c4ccdd; cursor: not-allowed; }
+  .bbtn.ghost { background: #fff; color: var(--primary); border: 1px solid #b9c8ff; }
+  .bbtn.warn { background: #ff8a3d; }
+  .brow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+  .job-item { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: #fff; margin-bottom: 10px; }
+  .job-item.warn { border-color: #ffb84d; background: #fff8ef; }
+  .job-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .job-head b { color: var(--primary); }
+  .del-btn { border: none; background: transparent; color: #d83931; cursor: pointer; font-size: 13px; }
+  .job-refs { font-size: 12px; margin-top: 6px; color: var(--text-sub); }
+  .job-refs .ok { color: #18a058; }
+  .job-refs .bad { color: #d83931; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .gcard { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; }
+  .gcard img { width: 100%; border-radius: 8px; cursor: zoom-in; display: block; }
+  .gcard .meta { margin-top: 6px; font-size: 13px; }
+  .gcard .sub { font-size: 12px; color: var(--text-sub); margin-top: 3px; }
+  .gcard .err { font-size: 12px; color: #d83931; margin-top: 3px; word-break: break-word; }
+  .status-tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; margin-right: 4px; }
+  .st-waiting { background: #eef2ff; color: #555; }
+  .st-running { background: #fff4e6; color: #cc7a00; }
+  .st-done { background: #e8f9ee; color: #18a058; }
+  .st-fail { background: #fdeaea; color: #d83931; }
+  .summary { margin-bottom: 12px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">✨</span>AI 生图助手
+  <nav class="tabs">
+    <button class="tab active" data-view="single">💬 单条</button>
+    <button class="tab" data-view="batch">📂 批量</button>
+  </nav>
+</header>
+
+<div id="chat">
+  <div class="msg-list" id="list">
+    <div id="empty">
+      <div class="big">🎨</div>
+      <h2>有什么想画的？</h2>
+      <p>输入描述，还可以上传最多 3 张参考图</p>
+    </div>
+  </div>
+</div>
+
+<div class="input-area" id="inputArea">
+  <div class="input-box">
+    <div id="previews"></div>
+    <textarea id="input" rows="1" placeholder="描述你想要的画面… (Enter 发送，Shift+Enter 换行)"></textarea>
+    <div class="toolbar">
+      <button class="tool-btn" id="attach" title="上传图片（最多 3 张）">🖼️</button>
+      <span class="img-count" id="imgCount"></span>
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
+      <button id="send">发送 ➤</button>
+    </div>
+  </div>
+  <div class="tips">由 Coze 工作流驱动 · 生成可能需要 1~2 分钟</div>
+</div>
+
+<div id="viewer"><img id="viewerImg"></div>
+
+<!-- ===== 批量生图视图 ===== -->
+<div id="batch-view" hidden>
+  <div class="bcard">
+    <h3>① 批量生图文档</h3>
+    <textarea id="bDoc" placeholder="粘贴批量生图文档（每段一个 prompt，下方独立一行写参考图文件名，逗号分隔）。例：&#10;&#10;赛博朋克猫弹吉他&#10;参考图: cat.jpg, guitar.jpg&#10;&#10;海边日落&#10;参考图: sunset.jpg"></textarea>
+    <h3 style="margin-top:14px">② 参考图（可选，文件名需与文档里写的一致）</h3>
+    <input type="file" id="bRefs" accept="image/*" multiple>
+    <div class="ref-chips" id="bRefList"><span style="color:#8f959e;font-size:12px">未选择</span></div>
+    <div class="brow">
+      <button class="bbtn" id="bParse">解析文档</button>
+      <span style="font-size:12px;color:var(--text-sub)">由大模型拆分多条 prompt，可逐条核对后再生成</span>
+    </div>
+  </div>
+
+  <div class="bcard" id="bReviewCard" hidden>
+    <h3>③ 核对任务（可改 prompt、可删除）</h3>
+    <div id="bReview"></div>
+    <div class="brow" id="bStartWrap">
+      <button class="bbtn" id="bStart">确认 · 开始并行生成</button>
+    </div>
+  </div>
+
+  <div class="bcard" id="bGridCard" hidden>
+    <h3>④ 生成进度</h3>
+    <div class="summary" id="bSummary"></div>
+    <div class="grid" id="bGrid"></div>
+  </div>
+</div>
+
+<script>
+const list = document.getElementById('list');
+const empty = document.getElementById('empty');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const attachBtn = document.getElementById('attach');
+const fileInput = document.getElementById('fileInput');
+const previews = document.getElementById('previews');
+const imgCount = document.getElementById('imgCount');
+const chat = document.getElementById('chat');
+const viewer = document.getElementById('viewer');
+const viewerImg = document.getElementById('viewerImg');
+
+const MAX_IMGS = 3;
+let images = [];   // {file, dataUrl}
+let sending = false;
+
+/* ---------- 输入框自适应高度 ---------- */
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  refreshSendBtn();
+});
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    doSend();
+  }
+});
+
+/* ---------- 图片选择 ---------- */
+attachBtn.onclick = () => fileInput.click();
+
+fileInput.addEventListener('change', () => {
+  for (const f of fileInput.files) {
+    if (images.length >= MAX_IMGS) break;
+    if (!f.type.startsWith('image/')) continue;
+    const reader = new FileReader();
+    reader.onload = e => {
+      images.push({ file: f, dataUrl: e.target.result });
+      renderPreviews();
+    };
+    reader.readAsDataURL(f);
+  }
+  fileInput.value = '';
+});
+
+function renderPreviews() {
+  previews.innerHTML = '';
+  images.forEach((im, i) => {
+    const div = document.createElement('div');
+    div.className = 'pv';
+    div.innerHTML = `<img src="${im.dataUrl}"><button class="del">×</button>`;
+    div.querySelector('.del').onclick = () => { images.splice(i, 1); renderPreviews(); };
+    previews.appendChild(div);
+  });
+  imgCount.textContent = images.length ? `${images.length}/${MAX_IMGS} 张图` : '';
+  attachBtn.disabled = images.length >= MAX_IMGS;
+  refreshSendBtn();
+}
+
+function refreshSendBtn() {
+  sendBtn.disabled = sending || (!input.value.trim() && images.length === 0);
+}
+
+/* ---------- 消息渲染 ---------- */
+function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
+
+function addUserMsg(text, imgs) {
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  let imgHtml = imgs.length
+    ? `<div class="up-imgs">${imgs.map(u => `<img class="up-img" src="${u}">`).join('')}</div>` : '';
+  el.innerHTML = `
+    <div class="avatar">🙂</div>
+    <div class="bubble-wrap">${imgHtml}${text ? `<div class="bubble"></div>` : ''}</div>`;
+  if (text) el.querySelector('.bubble').textContent = text;
+  list.appendChild(el);
+  bindZoom(el);
+  scrollBottom();
+}
+
+function addAiPlaceholder() {
+  const el = document.createElement('div');
+  el.className = 'msg ai';
+  el.innerHTML = `
+    <div class="avatar">✨</div>
+    <div class="bubble-wrap"><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div></div>`;
+  list.appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function fillAiMsg(el, text, imgs, error) {
+  const bubble = el.querySelector('.bubble');
+  bubble.innerHTML = '';
+  if (error) {
+    bubble.innerHTML = `<span class="err">⚠️ ${error}</span>`;
+  } else {
+    if (text) {
+      const span = document.createElement('span');
+      span.textContent = text;
+      bubble.appendChild(span);
+    }
+    imgs.forEach(u => {
+      const img = document.createElement('img');
+      img.className = 'gen-img';
+      img.src = u;
+      bubble.appendChild(img);
+    });
+    if (!text && !imgs.length) bubble.textContent = '（工作流没有返回内容）';
+  }
+  bindZoom(el);
+  scrollBottom();
+}
+
+function bindZoom(scope) {
+  scope.querySelectorAll('img').forEach(img => {
+    img.onclick = () => { viewerImg.src = img.src; viewer.style.display = 'flex'; };
+  });
+}
+viewer.onclick = () => viewer.style.display = 'none';
+
+/* ---------- 发送 & 轮询 ---------- */
+async function doSend() {
+  const text = input.value.trim();
+  if (sending || (!text && !images.length)) return;
+
+  sending = true;
+  refreshSendBtn();
+  if (empty) empty.remove();
+
+  const sentImgs = images.map(i => i.dataUrl);
+  addUserMsg(text, sentImgs);
+
+  const fd = new FormData();
+  fd.append('text', text);
+  images.forEach((im, i) => fd.append(`img${i + 1}`, im.file, im.file.name));
+
+  input.value = '';
+  input.style.height = 'auto';
+  images = [];
+  renderPreviews();
+
+  const aiEl = addAiPlaceholder();
+
+  try {
+    const resp = await fetch('/api/chat', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || '启动失败');
+    await poll(data.task_id, aiEl);
+  } catch (e) {
+    fillAiMsg(aiEl, '', [], e.message);
+  } finally {
+    sending = false;
+    refreshSendBtn();
+  }
+}
+
+async function poll(taskId, aiEl) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 320000) {
+    await new Promise(r => setTimeout(r, 2500));
+    const resp = await fetch(`/api/result/${taskId}`);
+    const data = await resp.json();
+    if (data.status === 'running') continue;
+    if (!data.ok) throw new Error(data.error || '生成失败');
+    fillAiMsg(aiEl, data.text, data.images || []);
+    return;
+  }
+  throw new Error('等待超时，请稍后重试');
+}
+
+sendBtn.onclick = doSend;
+refreshSendBtn();
+
+/* ===================== 批量生图 ===================== */
+const batchView = document.getElementById('batch-view');
+const bDoc = document.getElementById('bDoc');
+const bRefs = document.getElementById('bRefs');
+const bRefList = document.getElementById('bRefList');
+const bParse = document.getElementById('bParse');
+const reviewCard = document.getElementById('bReviewCard');
+const bReview = document.getElementById('bReview');
+const bStart = document.getElementById('bStart');
+const gridCard = document.getElementById('bGridCard');
+const bSummary = document.getElementById('bSummary');
+const bGrid = document.getElementById('bGrid');
+
+let curRefSetId = null, curJobs = [], curBatchId = null, pollTimer = null;
+
+function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function trunc(s,n){ s=s||''; return s.length>n ? s.slice(0,n)+'…' : s; }
+
+/* ---- 页签切换 ---- */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick = ()=>{
+    const v = t.dataset.view;
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x===t));
+    const single = v==='single';
+    document.getElementById('chat').style.display = single?'':'none';
+    document.getElementById('inputArea').style.display = single?'':'none';
+    batchView.hidden = single;
+    chat.scrollTop = chat.scrollHeight;
+  };
+});
+
+/* ---- 参考图选择展示 ---- */
+bRefs.onchange = ()=>{
+  const files = Array.from(bRefs.files);
+  bRefList.innerHTML = files.length
+    ? files.map(f=>`<span class="ref-chip">${esc(f.name)}</span>`).join('')
+    : '<span style="color:#8f959e;font-size:12px">未选择</span>';
+};
+
+/* ---- 解析 ---- */
+bParse.onclick = async ()=>{
+  const text = bDoc.value.trim();
+  if(!text){ alert('请先粘贴批量生图文档'); return; }
+  bParse.disabled = true; bParse.textContent = '解析中…';
+  const fd = new FormData();
+  fd.append('document', text);
+  Array.from(bRefs.files).forEach(f=>fd.append('refs', f));
+  try{
+    const r = await fetch('/api/batch/parse', {method:'POST', body:fd});
+    const d = await r.json();
+    if(!d.ok){ alert(d.error||'解析失败'); return; }
+    curRefSetId = d.ref_set_id;
+    curJobs = d.jobs;
+    reviewCard.hidden = false;
+    gridCard.hidden = true;
+    renderReview();
+  }catch(e){ alert('解析失败：'+e.message); }
+  finally{ bParse.disabled=false; bParse.textContent='解析文档'; }
+};
+
+function renderReview(){
+  if(!curJobs.length){
+    bReview.innerHTML = '<p style="color:#8f959e">没有解析出任务，请检查文档格式</p>';
+    bStart.disabled = true;
+    return;
+  }
+  bStart.disabled = false;
+  bReview.innerHTML = curJobs.map((j,i)=>{
+    const hasBad = j.refs.some(r=>!r.matched);
+    const refs = j.refs.length
+      ? '参考图：' + j.refs.map(r=>`<span class="${r.matched?'ok':'bad'}">${esc(r.name)}${r.matched?' ✓':' ✗ 未上传'}</span>`).join('、')
+      : '<span style="color:#8f959e">无参考图</span>';
+    return `<div class="job-item${hasBad?' warn':''}">
+      <div class="job-head"><b>#${i+1}</b><button class="del-btn" data-del="${i}">删除</button></div>
+      <textarea data-prompt="${i}" rows="3">${esc(j.prompt)}</textarea>
+      <div class="job-refs">${refs}</div>
+    </div>`;
+  }).join('');
+  bReview.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ curJobs.splice(+b.dataset.del,1); renderReview(); });
+  bReview.querySelectorAll('[data-prompt]').forEach(t=>t.oninput=()=>{ curJobs[+t.dataset.prompt].prompt = t.value; });
+}
+
+/* ---- 开始并行生成 ---- */
+bStart.onclick = async ()=>{
+  if(!curRefSetId || !curJobs.length) return;
+  bStart.disabled = true;
+  const fd = new FormData();
+  fd.append('ref_set_id', curRefSetId);
+  fd.append('jobs', JSON.stringify(curJobs));
+  try{
+    const r = await fetch('/api/batch/start', {method:'POST', body:fd});
+    const d = await r.json();
+    if(!d.ok){ alert(d.error||'启动失败'); bStart.disabled=false; return; }
+    curBatchId = d.batch_id;
+    gridCard.hidden = false;
+    startPolling(d.batch_id);
+  }catch(e){ alert('启动失败：'+e.message); bStart.disabled=false; }
+};
+
+function startPolling(batchId){
+  bGrid.innerHTML = '<p style="color:#8f959e">提交中…</p>';
+  bSummary.innerHTML = '';
+  if(pollTimer) clearInterval(pollTimer);
+  const tick = async ()=>{
+    try{
+      const r = await fetch(`/api/batch/${batchId}/status`);
+      const d = await r.json();
+      renderGrid(d, batchId);
+      if(d.finished >= d.total){ clearInterval(pollTimer); pollTimer=null; bStart.disabled=false; }
+    }catch(e){}
+  };
+  tick();
+  pollTimer = setInterval(tick, 2500);
+}
+
+function renderGrid(d, batchId){
+  const failed = d.jobs.filter(j=>j.status==='fail');
+  bSummary.innerHTML = `进度：<b>${d.finished}/${d.total}</b>` +
+    (failed.length ? ` · 失败 ${failed.length} <button class="bbtn warn" id="bRetry">重试全部失败项</button>` : '');
+  bGrid.innerHTML = '<div class="grid">' + d.jobs.map(j=>{
+    const tag = {waiting:'<span class="status-tag st-waiting">排队</span>',
+                 running:'<span class="status-tag st-running">生成中…</span>',
+                 done:'<span class="status-tag st-done">完成</span>',
+                 fail:'<span class="status-tag st-fail">失败</span>'}[j.status];
+    const img = j.result_url ? `<img src="${esc(j.result_url)}">` : '';
+    const label = j.label ? `<div class="sub">${esc(j.label)}</div>` : '';
+    const err = j.status==='fail' ? `<div class="err">${esc(trunc(j.error,80))}</div>` : '';
+    return `<div class="gcard">${img}<div class="meta">${tag}${esc(trunc(j.prompt,24))}</div>${label}${err}</div>`;
+  }).join('') + '</div>';
+  bGrid.querySelectorAll('img').forEach(im=>im.onclick=()=>{ viewerImg.src=im.src; viewer.style.display='flex'; });
+  const retry = document.getElementById('bRetry');
+  if(retry) retry.onclick = async ()=>{
+    retry.disabled = true;
+    const r = await fetch(`/api/batch/${batchId}/retry`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const dd = await r.json();
+    if(dd.ok) startPolling(batchId); else alert(dd.error||'重试失败');
+  };
+}
+</script>
+</body>
+</html>
