@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
@@ -20,11 +21,18 @@ import com.superprogrammer.asset.mapper.AssetVersionMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.PageResult;
+import com.superprogrammer.file.entity.StoredFileEntity;
+import com.superprogrammer.file.service.FileStorageService;
+import com.superprogrammer.file.service.StoredFile;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -65,6 +73,7 @@ public class AssetService {
     private final AssetProjectMapper projectMapper;
     private final AssetAclService aclService;
     private final ObjectMapper objectMapper;
+    private final FileStorageService fileStorageService;
 
     /** 新建文本类资产（PROMPT/SCRIPT）+ 版本 1。文件类经上传端点。 */
     @Transactional
@@ -101,6 +110,54 @@ public class AssetService {
         // 角色挂载（受控词汇校验）
         syncRoleLinks(projectId, asset.getId(), req.getRoleKeys());
         log.info("asset created: id={} projectId={} mediaType={} userId={}", asset.getId(), projectId, req.getMediaType(), userId);
+        return toVO(asset, false);
+    }
+
+    /**
+     * 文件类资产上传（图片/视频/音频，FR-004）。
+     *
+     * <p>落 {@code stored_files}(source={@code SOURCE_ASSET})，复用原 file_id 不复制文件；
+     * 类型↔资产类型匹配校验（mp4 不可入图片资产，安全清单）；技术元数据提取入 gen_meta
+     * （图片宽高用 JDK ImageIO 同步读；视频时长/分辨率懒提取，plan 坑点预判：大文件不阻塞上传）。
+     */
+    @Transactional
+    public AssetVO upload(Long projectId, Long userId, boolean admin, MultipartFile file,
+                          String mediaType, String name, String description, List<String> roleKeys) {
+        aclService.requireWrite(projectId, userId, admin);
+        validateMediaType(mediaType, false);
+        if (!isFileType(mediaType)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "上传仅支持图片/视频/音频类资产");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "上传文件不能为空");
+        }
+        validateFileMime(mediaType, file.getContentType());
+        // 落盘 + 登记 owner（SOURCE_ASSET）
+        StoredFile stored = fileStorageService.store(file, userId, StoredFileEntity.SOURCE_ASSET);
+        // 名称：缺省用原始文件名
+        String safeName = validateName((name == null || name.isBlank()) ? stored.name() : name);
+        Asset asset = new Asset();
+        asset.setProjectId(projectId);
+        asset.setMediaType(mediaType);
+        asset.setName(safeName);
+        asset.setDescription(description);
+        asset.setStatus(Asset.STATUS_DRAFT);
+        asset.setTags("[]");
+        asset.setContent("{}");
+        asset.setCurrentVersion(1);
+        asset.setGenMeta(buildUploadGenMeta(mediaType, stored, file));
+        assetMapper.insert(asset);
+        // 版本 1（带 file_id）
+        AssetVersion v1 = new AssetVersion();
+        v1.setAssetId(asset.getId());
+        v1.setVersion(1);
+        v1.setFileId(stored.fileId());
+        v1.setContent("{}");
+        versionMapper.insert(v1);
+        // 角色挂载（受控词汇校验）
+        syncRoleLinks(projectId, asset.getId(), roleKeys);
+        log.info("asset uploaded: id={} projectId={} mediaType={} fileId={} userId={}",
+                asset.getId(), projectId, mediaType, stored.fileId(), userId);
         return toVO(asset, false);
     }
 
@@ -273,6 +330,61 @@ public class AssetService {
 
     private boolean isFileType(String mediaType) {
         return Asset.MEDIA_IMAGE.equals(mediaType) || Asset.MEDIA_VIDEO.equals(mediaType) || Asset.MEDIA_AUDIO.equals(mediaType);
+    }
+
+    /** 类型↔资产类型匹配校验（mp4 不可入图片资产，安全清单）。 */
+    private void validateFileMime(String mediaType, String mime) {
+        String m = mime == null ? "" : mime.toLowerCase();
+        boolean ok = switch (mediaType) {
+            case Asset.MEDIA_IMAGE -> m.startsWith("image/");
+            case Asset.MEDIA_VIDEO -> m.startsWith("video/");
+            case Asset.MEDIA_AUDIO -> m.startsWith("audio/");
+            default -> false;
+        };
+        if (!ok) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "文件类型与资产类型不匹配：" + mediaType + " 需对应 MIME 前缀");
+        }
+    }
+
+    /**
+     * 构造上传生成谱系 JSON（含技术元数据）。
+     * 图片：JDK ImageIO 同步读宽高；视频/音频：时长/分辨率懒提取（javacv，MVP 仅记基础信息，TODO 后续补）。
+     */
+    private String buildUploadGenMeta(String mediaType, StoredFile stored, MultipartFile file) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            ObjectNode upload = root.putObject("upload");
+            upload.put("originalName", stored.name());
+            upload.put("mime", stored.mimeType());
+            upload.put("size", stored.size());
+            if (Asset.MEDIA_IMAGE.equals(mediaType)) {
+                int[] dims = readImageDims(file);
+                if (dims != null) {
+                    ObjectNode img = root.putObject("image");
+                    img.put("width", dims[0]);
+                    img.put("height", dims[1]);
+                }
+            }
+            // 视频/音频技术元数据（时长/分辨率/码率）走 javacv 懒提取，MVP 暂不入库
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("build genMeta failed: {}", e.getMessage());
+            return "{}";
+        }
+    }
+
+    /** 读图片宽高（JDK ImageIO，无原生依赖）。失败返 null（容错不阻断上传）。 */
+    private int[] readImageDims(MultipartFile file) {
+        try (InputStream in = file.getInputStream()) {
+            BufferedImage img = ImageIO.read(in);
+            if (img != null) {
+                return new int[]{img.getWidth(), img.getHeight()};
+            }
+        } catch (Exception e) {
+            log.warn("read image dims failed: {}", e.getMessage());
+        }
+        return null;
     }
 
     private String validateName(String name) {
