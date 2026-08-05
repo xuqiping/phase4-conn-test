@@ -146,6 +146,14 @@ public class FileStorageService {
      * 强校验归属后返回 Resource。owner 不匹配且非 admin → FORBIDDEN；登记行缺失 → NOT_FOUND。
      */
     public Resource load(String fileId, Long userId, boolean admin) {
+        return new FileSystemResource(loadPath(fileId, userId, admin));
+    }
+
+    /**
+     * 强校验归属后返回本地 Path（C11 抽帧用：javacv FFmpegFrameGrabber 需可 seek 的文件路径，非 InputStream）。
+     * 与 {@link #load} 同一归属咽喉点（meta 校验 + 存在性校验），仅返回类型不同。
+     */
+    public Path loadPath(String fileId, Long userId, boolean admin) {
         StoredFileEntity meta = storedFileMapper.selectById(fileId);
         if (meta == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在: " + fileId);
@@ -157,7 +165,7 @@ public class FileStorageService {
         if (!Files.exists(path) || !Files.isRegularFile(path)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在: " + fileId);
         }
-        return new FileSystemResource(path);
+        return path;
     }
 
     /** 删磁盘字节 + 删登记行（D5 文件生命周期：文档 INDEXED/删除后清 orphan）。 */

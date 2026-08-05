@@ -42,7 +42,7 @@
         <n-upload
           :show-file-list="false"
           accept="image/*"
-          @change="(opts: { file: { file: File | null } }) => onPickFile(opts)"
+          @change="(opts) => onPickFile(opts)"
         >
           <n-button size="small" block :loading="running">
             <template #icon><n-icon :component="CloudUploadOutline" /></template>
@@ -99,7 +99,7 @@
             :value="(node.data.refFileId as string) || ''"
             size="small"
             placeholder="留空 = 文生视频"
-            @update:value="(v: string) => (node.data.refFileId = v.trim() || undefined)"
+            @update:value="(v: string) => { if (node) node.data.refFileId = v.trim() || undefined }"
           />
         </div>
         <n-button
@@ -113,6 +113,46 @@
           <template #icon><n-icon :component="PlayOutline" /></template>
           提交视频生成
         </n-button>
+
+        <!-- C11 视频抽帧：首/尾/指定秒 → 新图节点（需 video 已生成，即 data.fileId 存在） -->
+        <div class="prop-panel__field">
+          <label>抽帧（C11，需已生成视频）</label>
+          <div class="prop-panel__row">
+            <n-button
+              size="small"
+              tertiary
+              :disabled="!node.data.fileId"
+              @click="emit('extract-frame', { node, mode: 'FIRST' })"
+            >
+              首帧
+            </n-button>
+            <n-button
+              size="small"
+              tertiary
+              :disabled="!node.data.fileId"
+              @click="emit('extract-frame', { node, mode: 'LAST' })"
+            >
+              尾帧
+            </n-button>
+          </div>
+          <div class="prop-panel__row">
+            <n-input-number
+              v-model:value="frameSecond"
+              size="small"
+              :min="0"
+              placeholder="秒"
+              style="flex:1"
+            />
+            <n-button
+              size="small"
+              tertiary
+              :disabled="!node.data.fileId || frameSecond == null"
+              @click="emit('extract-frame', { node, mode: 'AT', second: frameSecond ?? undefined })"
+            >
+              第{{ frameSecond ?? 'N' }}秒
+            </n-button>
+          </div>
+        </div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
         <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
       </template>
@@ -127,7 +167,7 @@
           v-if="(node.data.audioMode ?? 'upload') === 'upload'"
           :show-file-list="false"
           accept="audio/*"
-          @change="(opts: { file: { file: File | null } }) => onPickFile(opts)"
+          @change="(opts) => onPickFile(opts)"
         >
           <n-button size="small" block :loading="running">
             <template #icon><n-icon :component="CloudUploadOutline" /></template>
@@ -172,12 +212,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui'
 import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode } from '@/types/canvas'
+import type { FrameMode } from '@/api/canvas'
 
 const props = defineProps<{
   /** 选中节点（数组中的真实引用，直编 data 即时反映到画布）。 */
@@ -190,10 +231,14 @@ const emit = defineEmits<{
   (e: 'run', node: CanvasNode): void
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
   (e: 'focus-edit', node: CanvasNode): void
+  (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
 }>()
 
+/** C11 抽帧「指定秒」输入值（AT 模式用）。 */
+const frameSecond = ref<number | null>(null)
+
 /** n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。 */
-function onPickFile(opts: { file: { file: File | null } }) {
+function onPickFile(opts: { file?: { file?: File | null } } | undefined) {
   const file = opts?.file?.file
   if (file && props.node) {
     emit('upload', { node: props.node, file })

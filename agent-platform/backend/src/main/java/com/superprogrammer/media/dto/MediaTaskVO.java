@@ -27,6 +27,12 @@ public class MediaTaskVO {
     private String errorMsg;
     /** 下载端点（仅 SUCCEEDED 且有归属）。 */
     private String videoUrl;
+    /**
+     * 结果文件 stored_files.file_id（仅 SUCCEEDED 且有归属）。
+     * C11 抽帧用：画布视频节点存此 fileId，VideoFrameService.loadPath 直读做 javacv seek（videoUrl 是下载端点非 fileId）。
+     * 与 videoUrl 同归属门控；/api/files/{id} load() 仍会复检 ownership。
+     */
+    private String resultFileId;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

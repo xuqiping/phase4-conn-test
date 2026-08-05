@@ -41,6 +41,21 @@ export interface CanvasStoredFile {
   size: number
 }
 
+// === C11：视频抽帧（对齐后端 FrameExtractRequest / FrameExtractVO） ===
+
+/** 抽帧模式（FIRST 首帧 / LAST 尾帧 / AT 指定秒）。 */
+export type FrameMode = 'FIRST' | 'LAST' | 'AT'
+
+/** 抽帧响应（对齐后端 FrameExtractVO）。 */
+export interface FrameExtractVO {
+  fileId: string
+  url: string
+  mime: string
+  size: number
+  /** 源视频节点 id（前端建图节点后自动连边 video→image）。 */
+  sourceNodeId: string
+}
+
 // === 类型定义（对齐后端 CanvasVO / CanvasSaveRequest） ===
 
 /** 画布视图。列表接口 snapshot=null，详情接口才带。 */
@@ -112,6 +127,18 @@ export const canvasApi = {
     return request.post<ApiResponse<CanvasStoredFile>>(`/canvas/${id}/upload`, form, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+  },
+
+  /**
+   * POST /api/canvas/{id}/nodes/{nodeId}/frames — 视频抽帧（C11）。
+   * 首/尾/指定秒 → 新图片文件（SOURCE_CANVAS）；前端建图节点 + 自动连边回视频节点。
+   * 失败不产空文件（后端抛 → 端点返错）。
+   */
+  extractFrame(id: number, nodeId: string, payload: { mode: FrameMode; second?: number }) {
+    return request.post<ApiResponse<FrameExtractVO>>(
+      `/canvas/${id}/nodes/${nodeId}/frames`,
+      { mode: payload.mode, second: payload.second ?? null }
+    )
   }
 }
 

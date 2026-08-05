@@ -88,6 +88,8 @@ public class MediaGenQueryService {
                 && task.getResultFileId() != null)
                 ? "/api/media/tasks/" + task.getId() + "/download"
                 : null;
+        String resultFileId = (mayAccessFile && MediaGenTask.STATUS_SUCCEEDED.equals(task.getStatus()))
+                ? task.getResultFileId() : null;
         return MediaTaskVO.builder()
                 .id(task.getId())
                 .status(task.getStatus())
@@ -100,6 +102,7 @@ public class MediaGenQueryService {
                 .tokensCost(task.getTokensCost())
                 .errorMsg(task.getErrorMsg())
                 .videoUrl(videoUrl)
+                .resultFileId(resultFileId)
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();

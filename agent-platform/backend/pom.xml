@@ -24,6 +24,11 @@
         <tika.version>2.9.2</tika.version>
         <!-- POI：Excel sheet 级解析（Tika 2.9.2 已传递引入 5.2.x，显式 pin 防漂移） -->
         <poi.version>5.2.5</poi.version>
+        <!-- javacv：画布视频抽帧/截取（plan C11/C12 R-2）。仅用 ffmpeg 子模块（Grabber/Recorder），
+             故引 javacv(API) + ffmpeg-platform(全平台 native)，跳 opencv 全家桶瘦身。jar 重(~150MB)但纯 Java 无系统依赖。
+             注意 bytedeco 版本号规则：javacv 本体=1.5.13；ffmpeg-platform=<ffmpegVer>-<javacvVer>=8.0.1-1.5.13。 -->
+        <javacv.version>1.5.13</javacv.version>
+        <ffmpeg-platform.version>8.0.1-1.5.13</ffmpeg-platform.version>
         <!-- mvn test 默认排除 integration 组；跑集成测：mvn test -Dsurefire.excludedGroups= -Dtest=XxxIT -->
         <surefire.excludedGroups>integration</surefire.excludedGroups>
     </properties>
@@ -144,6 +149,52 @@
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>1.18.3</version>
+        </dependency>
+
+        <!-- javacv：画布视频抽帧/截取（plan C11/C12 R-2，VideoFrameService 唯一调用方）。
+             sidecar 禁 subprocess（AGENTS），故走后端纯 Java。CVE 复核：1.5.13 为 2025 稳定线，引入前/升级时再核。
+             瘦身三招（avoid ffmpeg-platform 全平台 ~500MB 撑爆磁盘/镜像）：
+             1) javacv POM 默认传递 opencv/openblas/artoolkitplus/flycapture/libfreenect/realsense/tesseract/leptonica/videoinput
+                及 jogl/jocl/gdx（GUI/3D/OCR/深度相机）——抽帧只用 ffmpeg，全部 exclude；
+             2) 不引 ffmpeg-platform 全家桶（含 android/mac/linux/win × arm64/x86_64 全 native），按需引单平台 classifier；
+             3) dev=windows-x86_64；**部署 linux 服务器须追加 <classifier>linux-x86_64</classifier> 依赖**（见 README 部署节）。
+             bytedeco 版本号规则：javacv=1.5.13；ffmpeg=<ffmpegVer>-<javacvVer>=8.0.1-1.5.13。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacv</artifactId>
+            <version>${javacv.version}</version>
+            <exclusions>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>openblas</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>opencv</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>flycapture</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>libdc1394</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>libfreenect</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>libfreenect2</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>librealsense</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>librealsense2</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>videoinput</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>artoolkitplus</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>leptonica</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>tesseract</artifactId></exclusion>
+                <exclusion><groupId>org.bytedeco</groupId><artifactId>android</artifactId></exclusion>
+                <exclusion><groupId>org.jogamp.gluegen</groupId><artifactId>gluegen-rt-main</artifactId></exclusion>
+                <exclusion><groupId>org.jogamp.jogl</groupId><artifactId>jogl-all-main</artifactId></exclusion>
+                <exclusion><groupId>org.jogamp.jocl</groupId><artifactId>jocl-main</artifactId></exclusion>
+                <exclusion><groupId>com.badlogicgames.gdx</groupId><artifactId>gdx</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <!-- ffmpeg Java 绑定（avcodec/avformat 等 API 类）。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg-platform.version}</version>
+        </dependency>
+        <!-- ffmpeg Windows x86_64 native（dev/本机跑测试用；自含 .dll，传递拉 javacpp windows native）。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg-platform.version}</version>
+            <classifier>windows-x86_64</classifier>
         </dependency>
 
         <!-- Test -->

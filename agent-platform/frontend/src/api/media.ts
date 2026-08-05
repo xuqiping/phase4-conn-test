@@ -51,6 +51,8 @@ export interface MediaTaskVO {
   errorMsg: string | null
   /** 下载端点相对路径（仅 SUCCEEDED 且有归属） */
   videoUrl: string | null
+  /** 结果文件 stored_files.file_id（仅 SUCCEEDED 且有归属）；C11 画布抽帧用 */
+  resultFileId: string | null
   createdAt: string
   updatedAt: string | null
 }

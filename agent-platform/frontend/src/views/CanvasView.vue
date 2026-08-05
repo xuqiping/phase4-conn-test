@@ -93,6 +93,7 @@
           @run="onRunNode"
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
+          @extract-frame="onExtractFrame"
         />
       </div>
 
@@ -118,7 +119,7 @@ import {
   DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO } from '@/api/canvas'
+import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
 import type { MediaStatus } from '@/api/media'
 import type { CanvasNode, CanvasSnapshot } from '@/types/canvas'
@@ -291,6 +292,8 @@ async function pollVideoTask(nodeId: string, taskId: number) {
         status: 'success',
         mediaStatus: 'SUCCEEDED',
         previewUrl: objectUrl,
+        // C11：存结果 fileId（stored_files），抽帧 loadPath 直读做 javacv seek
+        fileId: detail.data.data.resultFileId ?? undefined,
         errorMsg: ''
       })
       message.success('视频生成完成')
@@ -428,6 +431,55 @@ async function onUploadFile(payload: { node: CanvasNode; file: File }) {
   }
 }
 
+/**
+ * C11 视频抽帧：调后端抽首/尾/指定秒 → 返新图片 fileId → 产图节点（带 fileId+预览）+ 自动连回视频节点。
+ * 失败不产空节点（后端抛 → catch 标红源视频节点，不建图节点，plan 边界）。
+ */
+async function onExtractFrame(payload: { node: CanvasNode; mode: FrameMode; second?: number }) {
+  if (!editingId.value || !payload.node) return
+  const src = payload.node
+  const srcFileId = (src.data as Record<string, unknown>).fileId as string | undefined
+  if (!srcFileId) {
+    message.warning('视频节点无源文件，请先生成或等待视频完成')
+    return
+  }
+  runningNodeId.value = src.id
+  try {
+    const res = await canvasApi.extractFrame(editingId.value, src.id, {
+      mode: payload.mode,
+      second: payload.second
+    })
+    const f = res.data.data
+    const previewUrl = await fetchCanvasPreview(f.fileId)
+    const offsetX = (src.position?.x ?? 0) + 260
+    const offsetY = (src.position?.y ?? 0)
+    const labelTail = payload.mode === 'AT' ? ` ${payload.second}s` : ''
+    boardRef.value?.addNode({
+      type: 'image',
+      position: { x: offsetX, y: offsetY },
+      data: {
+        label: `抽帧(${payload.mode}${labelTail})`,
+        fileId: f.fileId,
+        previewUrl,
+        parentFileId: srcFileId,
+        sourceNodeId: src.id,
+        status: 'success'
+      }
+    })
+    const nodes = boardRef.value!.getNodes()
+    const created = nodes[nodes.length - 1]
+    if (created) boardRef.value!.addEdge(src.id, created.id)
+    message.success('抽帧完成，已产新图节点')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '抽帧失败'
+    boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
 /** 节点产出后自动保存快照（防丢结果）；保存节流复用 saving 标志。 */
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -515,7 +567,11 @@ function hydrateVideoPreviews(nodes: CanvasNode[]) {
           const url = r.data.data.videoUrl
           if (url) {
             const obj = await fetchVideoBlob(url)
-            boardRef.value?.updateNodeData(n.id, { previewUrl: obj, status: 'success' })
+            boardRef.value?.updateNodeData(n.id, {
+              previewUrl: obj,
+              status: 'success',
+              fileId: r.data.data.resultFileId ?? undefined
+            })
           }
         })
         .catch(() => { /* 静默 */ })

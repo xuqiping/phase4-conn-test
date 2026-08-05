@@ -5,14 +5,21 @@ import com.superprogrammer.canvas.dto.CanvasCreateRequest;
 import com.superprogrammer.canvas.dto.CanvasNodeDTO;
 import com.superprogrammer.canvas.dto.CanvasSaveRequest;
 import com.superprogrammer.canvas.dto.CanvasVO;
+import com.superprogrammer.canvas.dto.FrameExtractRequest;
+import com.superprogrammer.canvas.dto.FrameExtractVO;
 import com.superprogrammer.canvas.dto.NodeRunResult;
 import com.superprogrammer.canvas.entity.Canvas;
 import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
+import com.superprogrammer.canvas.service.VideoFrameService;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.file.service.StoredFile;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +39,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -51,6 +61,8 @@ public class CanvasController {
     private final CanvasService canvasService;
     private final CanvasNodeRunnerService nodeRunnerService;
     private final FileStorageService fileStorageService;
+    private final VideoFrameService videoFrameService;
+    private final ObjectMapper objectMapper;
 
     @PostMapping
     @RequirePermission("canvas:write")
@@ -126,6 +138,89 @@ public class CanvasController {
         log.info("canvas upload: canvasId={} userId={} fileId={} mime={} size={}",
                 id, userId, stored.fileId(), stored.mimeType(), stored.size());
         return ResponseEntity.ok(R.ok("已上传", stored));
+    }
+
+    // ==================== C11：视频抽帧（IC-12，R-2 javacv）====================
+
+    /**
+     * 从视频节点抽帧（首/尾/指定秒）→ 新图片文件（SOURCE_CANVAS）→ 前端建图节点 + 自动连边。
+     *
+     * <p>归属咽喉点：loadOwned（画布）+ loadPath（视频源文件 ownership 复检，防借他人 fileId 抽帧）。
+     * 失败不产空文件（plan 边界）：service 抛 → 端点直接返错误，不落 stored_files。
+     */
+    @PostMapping("/{id}/nodes/{nodeId}/frames")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<FrameExtractVO>> extractFrame(@PathVariable Long id,
+                                                          @PathVariable String nodeId,
+                                                          @RequestBody FrameExtractRequest req) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        Canvas c = canvasService.loadOwned(id, userId, isAdmin());
+
+        String sourceFileId = resolveVideoFileId(c.getSnapshot(), nodeId);
+        VideoFrameService.FrameMode mode = parseFrameMode(req == null ? null : req.getMode());
+
+        Path videoPath = fileStorageService.loadPath(sourceFileId, userId, admin);
+        VideoFrameService.ExtractedFrame ef = videoFrameService.extract(videoPath, mode, req == null ? null : req.getSecond());
+
+        String fileName = "frame_" + nodeId + "_" + mode.name().toLowerCase(Locale.ROOT) + ".jpg";
+        String newFileId = fileStorageService.storeStream(
+                new ByteArrayInputStream(ef.bytes()), fileName, ef.mimeType(), ef.size(),
+                userId, StoredFileEntity.SOURCE_CANVAS);
+        log.info("canvas frame extracted: canvasId={} sourceNodeId={} mode={} newFileId={} bytes={}",
+                id, nodeId, mode, newFileId, ef.size());
+
+        return ResponseEntity.ok(R.ok("已抽帧", FrameExtractVO.builder()
+                .fileId(newFileId)
+                .url("/api/files/" + newFileId)
+                .mime(ef.mimeType())
+                .size(ef.size())
+                .sourceNodeId(nodeId)
+                .build()));
+    }
+
+    /** 从快照定位视频节点 + 取 data.fileId；非视频节点 / 无源文件 / 节点不存在 → 业务异常。 */
+    private String resolveVideoFileId(String snapshot, String nodeId) {
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "节点 id 缺失");
+        }
+        JsonNode target = null;
+        try {
+            JsonNode root = objectMapper.readTree(snapshot == null ? "{}" : snapshot);
+            JsonNode nodes = root.path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode n : nodes) {
+                    if (nodeId.equals(n.path("id").asText())) {
+                        target = n;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "画布快照解析失败");
+        }
+        if (target == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "节点不存在: " + nodeId);
+        }
+        if (!CanvasNodeDTO.TYPE_VIDEO.equals(target.path("type").asText())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅视频节点可抽帧");
+        }
+        String fileId = target.path("data").path("fileId").asText(null);
+        if (fileId == null || fileId.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "视频节点无源文件，无法抽帧");
+        }
+        return fileId;
+    }
+
+    private VideoFrameService.FrameMode parseFrameMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "抽帧模式缺失");
+        }
+        try {
+            return VideoFrameService.FrameMode.valueOf(mode.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "抽帧模式非法: " + mode);
+        }
     }
 
     private CanvasVO toVO(Canvas c, boolean withSnapshot) {
