@@ -71,6 +71,14 @@
         <n-button type="primary" :loading="saving" @click="submitCreate">创建</n-button>
       </template>
     </n-modal>
+
+    <!-- 分享/成员管理弹窗（S9-9b） -->
+    <ShareDialog
+      v-model:show="showShare"
+      :project-id="shareProject?.id ?? 0"
+      :project-name="shareProject?.name ?? ''"
+      @changed="loadData"
+    />
   </div>
 </template>
 
@@ -94,6 +102,7 @@ import type { FormInst, FormRules } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { projectApi } from '@/api/assets'
 import { useAuthStore } from '@/stores/auth'
+import ShareDialog from '@/components/asset/ShareDialog.vue'
 import type { AssetProjectVO, ProjectRole } from '@/types/asset'
 
 /** 卡片网格 + 空态 + 加载（内部子组件，避免外层模板膨胀） */
@@ -240,9 +249,13 @@ function openProject(p: AssetProjectVO) {
   router.push(`/assets/${p.id}`)
 }
 
-/** 分享弹窗 S9-9b 接入；占位提示防卡死 */
-function openShare(_p: AssetProjectVO) {
-  message.info('分享弹窗（S9-9b 建设中）')
+/** 分享/成员管理弹窗 */
+const showShare = ref(false)
+const shareProject = ref<AssetProjectVO | null>(null)
+
+function openShare(p: AssetProjectVO) {
+  shareProject.value = p
+  showShare.value = true
 }
 
 function confirmDelete(p: AssetProjectVO) {
