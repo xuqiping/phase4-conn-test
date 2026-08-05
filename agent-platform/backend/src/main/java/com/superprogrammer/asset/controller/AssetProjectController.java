@@ -3,6 +3,8 @@ package com.superprogrammer.asset.controller;
 import com.superprogrammer.asset.dto.ProjectCreateRequest;
 import com.superprogrammer.asset.dto.ProjectUpdateRequest;
 import com.superprogrammer.asset.dto.ProjectVO;
+import com.superprogrammer.asset.dto.TransferRequest;
+import com.superprogrammer.asset.service.AssetMemberService;
 import com.superprogrammer.asset.service.AssetProjectService;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
@@ -45,6 +47,7 @@ import java.util.List;
 public class AssetProjectController {
 
     private final AssetProjectService projectService;
+    private final AssetMemberService memberService;
 
     @PostMapping
     @RequirePermission("asset:write")
@@ -75,6 +78,14 @@ public class AssetProjectController {
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         projectService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("项目已删除", null));
+    }
+
+    /** 转让所有者（旧 owner 降 editor，仅 owner 可操作）。 */
+    @PostMapping("/{id}/transfer")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<Void>> transfer(@PathVariable Long id, @RequestBody TransferRequest req) {
+        memberService.transfer(id, getCurrentUserId(), isAdmin(), req);
+        return ResponseEntity.ok(R.ok("项目已转让", null));
     }
 
     private Long getCurrentUserId() {
