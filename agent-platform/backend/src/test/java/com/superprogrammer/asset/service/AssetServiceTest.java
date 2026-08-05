@@ -58,6 +58,7 @@ class AssetServiceTest {
     @Mock private AssetProjectMapper projectMapper;
     @Mock private AssetAclService aclService;
     @Mock private FileStorageService fileStorageService;
+    @Mock private AssetVersionService versionService;
 
     private AssetService service;
 
@@ -74,7 +75,7 @@ class AssetServiceTest {
     @BeforeEach
     void setUp() {
         service = new AssetService(assetMapper, versionMapper, roleLinkMapper, projectMapper, aclService,
-                new ObjectMapper(), fileStorageService);
+                new ObjectMapper(), fileStorageService, versionService);
     }
 
     @Test
@@ -290,6 +291,77 @@ class AssetServiceTest {
                 () -> service.upload(PROJECT_ID, VIEWER_ID, false, file, Asset.MEDIA_IMAGE, "x", null, null));
         assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
         verify(fileStorageService, never()).store(any(), any(), any());
+    }
+
+    // ---------- S5 状态机 ----------
+
+    @Test
+    void lock_draftToLocked_ok() {
+        Asset a = asset(1L, Asset.MEDIA_PROMPT);
+        a.setProjectId(PROJECT_ID);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+
+        AssetVO vo = service.lock(1L, OWNER_ID, false);
+
+        assertEquals(Asset.STATUS_LOCKED, vo.getStatus());
+        verify(assetMapper).updateById(any());
+    }
+
+    @Test
+    void lock_archived_throws400() {
+        Asset a = asset(1L, Asset.MEDIA_PROMPT);
+        a.setProjectId(PROJECT_ID);
+        a.setStatus(Asset.STATUS_ARCHIVED);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.lock(1L, OWNER_ID, false));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(assetMapper, never()).updateById(any());
+    }
+
+    @Test
+    void unlock_lockedToDraft_ok() {
+        Asset a = asset(1L, Asset.MEDIA_PROMPT);
+        a.setProjectId(PROJECT_ID);
+        a.setStatus(Asset.STATUS_LOCKED);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+
+        AssetVO vo = service.unlock(1L, OWNER_ID, false);
+
+        assertEquals(Asset.STATUS_DRAFT, vo.getStatus());
+    }
+
+    @Test
+    void archive_thenUnarchiveRestores() {
+        Asset a = asset(1L, Asset.MEDIA_IMAGE);
+        a.setProjectId(PROJECT_ID);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+
+        AssetVO archived = service.archive(1L, OWNER_ID, false);
+        assertEquals(Asset.STATUS_ARCHIVED, archived.getStatus());
+
+        // 回读为归档态后再 unarchive
+        a.setStatus(Asset.STATUS_ARCHIVED);
+        AssetVO restored = service.unarchive(1L, OWNER_ID, false);
+        assertEquals(Asset.STATUS_DRAFT, restored.getStatus());
+    }
+
+    @Test
+    void unarchive_nonArchived_throws400() {
+        Asset a = asset(1L, Asset.MEDIA_IMAGE);
+        a.setProjectId(PROJECT_ID);
+        a.setStatus(Asset.STATUS_DRAFT);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.unarchive(1L, OWNER_ID, false));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
     private AssetProject projectWithRoles() {

@@ -6,6 +6,7 @@ import com.superprogrammer.asset.entity.Asset;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
@@ -35,4 +36,29 @@ public interface AssetMapper extends BaseMapper<Asset> {
             + "FROM assets WHERE project_id = #{projectId} AND deleted = 0 AND status <> 'ARCHIVED' "
             + "GROUP BY media_type")
     List<MatrixCountVO.Cell> countByType(@Param("projectId") Long projectId);
+
+    /**
+     * 乐观锁并发建版（plan §S5 坑点预判：两人同时提交版本号撞车）。
+     * 当前版本号匹配才 +1，受影响行数=0 即并发冲突。
+     * 原生 SQL 绕过 MP 行版本锁（current_version 是域版本号，与 BaseEntity.version 不同）。
+     *
+     * @return 受影响行数（1=成功，0=版本号已被他人改过→冲突）
+     */
+    @Update("UPDATE assets SET current_version = current_version + 1, "
+            + "updated_at = NOW(), updated_by = #{userId} "
+            + "WHERE id = #{assetId} AND current_version = #{expected} AND deleted = 0")
+    int bumpVersionOptimistic(@Param("assetId") Long assetId,
+                              @Param("expected") int expected,
+                              @Param("userId") Long userId);
+
+    /**
+     * 写当前正文（文本类建版/一致性包保存时同步 assets.content=最新版本正文）。
+     * 原生 SQL 避免与乐观锁行版本纠缠。
+     */
+    @Update("UPDATE assets SET content = CAST(#{content} AS jsonb), "
+            + "updated_at = NOW(), updated_by = #{userId} "
+            + "WHERE id = #{assetId} AND deleted = 0")
+    int updateContent(@Param("assetId") Long assetId,
+                      @Param("content") String content,
+                      @Param("userId") Long userId);
 }

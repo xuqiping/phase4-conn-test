@@ -3,8 +3,15 @@ package com.superprogrammer.asset.controller;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
+import com.superprogrammer.asset.dto.ConsistencyPackRequest;
 import com.superprogrammer.asset.dto.MatrixCountVO;
+import com.superprogrammer.asset.dto.ScriptBreakdownRequest;
+import com.superprogrammer.asset.dto.ScriptBreakdownVO;
+import com.superprogrammer.asset.dto.VersionCreateRequest;
+import com.superprogrammer.asset.dto.VersionVO;
+import com.superprogrammer.asset.service.AssetScriptService;
 import com.superprogrammer.asset.service.AssetService;
+import com.superprogrammer.asset.service.AssetVersionService;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
@@ -47,6 +54,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class AssetController {
 
     private final AssetService assetService;
+    private final AssetVersionService versionService;
+    private final AssetScriptService scriptService;
 
     @PostMapping("/projects/{id}/assets")
     @RequirePermission("asset:write")
@@ -89,6 +98,73 @@ public class AssetController {
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         assetService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("资产已删除", null));
+    }
+
+    // ---------- 版本（plan §S5 / FR-006） ----------
+
+    @GetMapping("/assets/{id}/versions")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<java.util.List<VersionVO>>> listVersions(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(versionService.listVersions(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @GetMapping("/assets/{id}/versions/{ver}")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<VersionVO>> getVersion(@PathVariable Long id, @PathVariable Integer ver) {
+        return ResponseEntity.ok(R.ok(versionService.getVersion(id, ver, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/assets/{id}/versions")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<Integer>> createVersion(@PathVariable Long id, @RequestBody VersionCreateRequest req) {
+        int newVer = versionService.createVersion(id, getCurrentUserId(), isAdmin(), req);
+        return ResponseEntity.ok(R.ok("已创建版本 v" + newVer, newVer));
+    }
+
+    // ---------- 状态机（plan §S5 / FR-006，L2/L3） ----------
+
+    @PostMapping("/assets/{id}/lock")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> lock(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("已定稿", assetService.lock(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/assets/{id}/unlock")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> unlock(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("已回退草稿", assetService.unlock(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/assets/{id}/archive")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> archive(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("已归档", assetService.archive(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/assets/{id}/unarchive")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> unarchive(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok("已恢复", assetService.unarchive(id, getCurrentUserId(), isAdmin())));
+    }
+
+    // ---------- 一致性包（plan §S5 / FR-007，设计方案 §五） ----------
+
+    @PutMapping("/assets/{id}/consistency-pack")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> saveConsistencyPack(@PathVariable Long id,
+                                                          @RequestBody ConsistencyPackRequest req) {
+        return ResponseEntity.ok(R.ok("一致性包已保存",
+                assetService.saveConsistencyPack(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
+    // ---------- 剧本拆分场（plan §S6 / FR-010） ----------
+
+    @PostMapping("/assets/{id}/breakdown")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<ScriptBreakdownVO>> breakdown(@PathVariable Long id,
+                                                          @RequestBody(required = false) ScriptBreakdownRequest req) {
+        return ResponseEntity.ok(R.ok("分场完成",
+                scriptService.breakdown(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     private Long getCurrentUserId() {

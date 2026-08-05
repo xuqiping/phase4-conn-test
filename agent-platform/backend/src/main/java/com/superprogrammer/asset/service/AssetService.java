@@ -74,6 +74,7 @@ public class AssetService {
     private final AssetAclService aclService;
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
+    private final AssetVersionService versionService;
 
     /** 新建文本类资产（PROMPT/SCRIPT）+ 版本 1。文件类经上传端点。 */
     @Transactional
@@ -257,6 +258,92 @@ public class AssetService {
         assetMapper.deleteById(assetId);
         roleLinkMapper.delete(new LambdaQueryWrapper<AssetRoleLink>().eq(AssetRoleLink::getAssetId, assetId));
         log.info("asset deleted: id={} projectId={} userId={}", assetId, asset.getProjectId(), userId);
+    }
+
+    // ---------- 状态机（plan §S5 / FR-006，设计方案 §六，L2/L3） ----------
+
+    /**
+     * 定稿：DRAFT→LOCKED（L2）。已 LOCKED 幂等返回；ARCHIVED 不可定稿（400）。
+     * 定稿后被画布引用=锁版本快照（资产升级不影响已引用方，版本隔离防冲突）。
+     */
+    @Transactional
+    public AssetVO lock(Long assetId, Long userId, boolean admin) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        if (Asset.STATUS_LOCKED.equals(asset.getStatus())) {
+            return toVO(asset, false);
+        }
+        if (!Asset.STATUS_DRAFT.equals(asset.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "归档资产不可定稿");
+        }
+        asset.setStatus(Asset.STATUS_LOCKED);
+        assetMapper.updateById(asset);
+        log.info("asset locked: id={} userId={}", assetId, userId);
+        return toVO(asset, false);
+    }
+
+    /**
+     * 解锁回退草稿：LOCKED→DRAFT（L2「解锁回退草稿可再改」）。已 DRAFT 幂等；ARCHIVED 400。
+     */
+    @Transactional
+    public AssetVO unlock(Long assetId, Long userId, boolean admin) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        if (Asset.STATUS_DRAFT.equals(asset.getStatus())) {
+            return toVO(asset, false);
+        }
+        if (!Asset.STATUS_LOCKED.equals(asset.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅已定稿资产可解锁");
+        }
+        asset.setStatus(Asset.STATUS_DRAFT);
+        assetMapper.updateById(asset);
+        log.info("asset unlocked: id={} userId={}", assetId, userId);
+        return toVO(asset, false);
+    }
+
+    /**
+     * 归档（软删语义）：any→ARCHIVED（L3）。已 ARCHIVED 幂等。
+     * 归档 = 不进默认列表但可检索（list 默认隐藏 ARCHIVED，status=ARCHIVED 可显式查）。
+     * 画布引用快照不受影响（引用方 file_id 语义）。
+     */
+    @Transactional
+    public AssetVO archive(Long assetId, Long userId, boolean admin) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        if (Asset.STATUS_ARCHIVED.equals(asset.getStatus())) {
+            return toVO(asset, false);
+        }
+        asset.setStatus(Asset.STATUS_ARCHIVED);
+        assetMapper.updateById(asset);
+        log.info("asset archived: id={} userId={}", assetId, userId);
+        return toVO(asset, false);
+    }
+
+    /**
+     * 取消归档恢复：ARCHIVED→DRAFT（L3「取消归档恢复」）。非 ARCHIVED 400。
+     */
+    @Transactional
+    public AssetVO unarchive(Long assetId, Long userId, boolean admin) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        if (!Asset.STATUS_ARCHIVED.equals(asset.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅归档资产可恢复");
+        }
+        asset.setStatus(Asset.STATUS_DRAFT);
+        assetMapper.updateById(asset);
+        log.info("asset unarchived: id={} userId={}", assetId, userId);
+        return toVO(asset, false);
+    }
+
+    /** 保存一致性包（委托版本服务产新版本）。requireWrite。 */
+    @Transactional
+    public AssetVO saveConsistencyPack(Long assetId, Long userId, boolean admin,
+                                       com.superprogrammer.asset.dto.ConsistencyPackRequest req) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        versionService.saveConsistencyPack(assetId, userId, admin, req);
+        // 回读最新态（current_version/content 已被版本服务更新）
+        return toVO(loadAsset(assetId), true);
     }
 
     // ---------- 角色挂载同步 ----------
