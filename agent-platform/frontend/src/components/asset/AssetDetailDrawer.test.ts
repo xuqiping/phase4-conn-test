@@ -22,7 +22,7 @@ vi.mock('@/api/assets', () => ({
   assetApi: { get: vi.fn(), remove: vi.fn() },
   assetBridgeApi: { usages: vi.fn() },
   versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn(), create: vi.fn() },
-  scriptApi: { breakdown: vi.fn() }
+  scriptApi: { breakdown: vi.fn(), breakdownStoryboard: vi.fn() }
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -207,6 +207,59 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     vm.synopsis = '原文'
     await vm.runBreakdown()
     expect(scriptApi.breakdown).toHaveBeenCalledWith(5)
+  })
+
+  // ---------- S19 拆解规范 + 一键分镜（plan §S19） ----------
+
+  it('AC-S19-1 解析 content.template → 拆解规范草稿', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({
+        code: 200, message: 'ok',
+        data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '正文', template: '每镜含景别' }) })
+      })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { templateDraft: string }
+    expect(vm.templateDraft).toBe('每镜含景别')
+  })
+
+  it('AC-S19-2 saveTemplate → versionApi.create 写 content.template（保留 synopsis）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({
+        code: 200, message: 'ok',
+        data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '正文' }) })
+      })
+    )
+    vi.mocked(versionApi.create).mockResolvedValue(response({ code: 200, message: 'ok', data: 2 }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { templateDraft: string; saveTemplate: () => Promise<void> }
+    vm.templateDraft = '新规范'
+    await vm.saveTemplate()
+    expect(versionApi.create).toHaveBeenCalledWith(5, {
+      content: JSON.stringify({ synopsis: '正文', template: '新规范' }),
+      changeNote: '编辑拆解规范'
+    })
+    expect(messageMock.success).toHaveBeenCalled()
+  })
+
+  it('AC-S19-3 runStoryboardBreakdown：正文脏→警告不调；干净→调 scriptApi.breakdownStoryboard + 显 N 个', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '原文' }) }) })
+    )
+    vi.mocked(scriptApi.breakdownStoryboard).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { count: 3, createdAssetIds: [100, 101, 102], model: 'm', version: 2 } })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { synopsis: string; runStoryboardBreakdown: () => Promise<void> }
+    vm.synopsis = '改了'
+    await vm.runStoryboardBreakdown()
+    expect(scriptApi.breakdownStoryboard).not.toHaveBeenCalled()
+    expect(messageMock.warning).toHaveBeenCalled()
+    messageMock.warning.mockClear()
+    vm.synopsis = '原文'
+    await vm.runStoryboardBreakdown()
+    expect(scriptApi.breakdownStoryboard).toHaveBeenCalledWith(5)
+    expect(messageMock.success).toHaveBeenCalledWith('已生成 3 个分镜资产')
   })
 
   // ---------- S15 提示词/非剧本 TEXT 编辑器 + 删除（Bug①②） ----------

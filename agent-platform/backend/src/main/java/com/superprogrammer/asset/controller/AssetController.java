@@ -7,6 +7,8 @@ import com.superprogrammer.asset.dto.ConsistencyPackRequest;
 import com.superprogrammer.asset.dto.MatrixCountVO;
 import com.superprogrammer.asset.dto.ScriptBreakdownRequest;
 import com.superprogrammer.asset.dto.ScriptBreakdownVO;
+import com.superprogrammer.asset.dto.StoryboardBreakdownRequest;
+import com.superprogrammer.asset.dto.StoryboardBreakdownVO;
 import com.superprogrammer.asset.dto.VersionCreateRequest;
 import com.superprogrammer.asset.dto.VersionVO;
 import com.superprogrammer.asset.service.AssetScriptService;
@@ -175,6 +177,16 @@ public class AssetController {
                                                      @RequestBody com.superprogrammer.asset.dto.StoryboardSaveRequest req) {
         return ResponseEntity.ok(R.ok("分镜已保存",
                 assetService.saveStoryboard(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
+    // ---------- 一键分镜（S19，plan §S19 / 1_8.6计划 第 11 点） ----------
+
+    @PostMapping("/assets/{id}/breakdown-storyboard")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<StoryboardBreakdownVO>> breakdownStoryboard(@PathVariable Long id,
+                                                                        @RequestBody(required = false) StoryboardBreakdownRequest req) {
+        return ResponseEntity.ok(R.ok("分镜完成",
+                scriptService.breakdownStoryboard(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     private Long getCurrentUserId() {

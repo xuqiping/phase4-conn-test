@@ -74,6 +74,8 @@ public class AssetService {
     private static final int STORYBOARD_PROMPT_MAX = 8000;
     /** 分镜实体键上限（S18 字段2/4 key）。 */
     private static final int STORYBOARD_REF_KEY_MAX = 32;
+    /** 图片目录注入 LLM 默认上限（防 prompt token 爆，运维清单可调）。 */
+    private static final int ASSET_CATALOG_DEFAULT_LIMIT = 50;
 
     private final AssetMapper assetMapper;
     private final AssetVersionMapper versionMapper;
@@ -88,43 +90,84 @@ public class AssetService {
     @Transactional
     public AssetVO create(Long projectId, Long userId, boolean admin, AssetCreateRequest req) {
         aclService.requireWrite(projectId, userId, admin);
-        String category = resolveCategory(projectId, req.getMediaType());
+        Asset asset = internalCreateText(projectId, req.getMediaType(), req.getName(),
+                req.getDescription(), req.getContent(), req.getRoleKeys());
+        log.info("asset created: id={} projectId={} mediaType={} userId={}",
+                asset.getId(), projectId, req.getMediaType(), userId);
+        return toVO(asset, false);
+    }
+
+    /**
+     * 文本类资产建库核心（剥离 ACL 校验，供 {@code create} 与一键分镜循环复用，DRY）。
+     *
+     * <p>调用方自行 ensure {@code requireWrite}（分镜在循环外校验一次）。流程：resolveCategory→须 TEXT→
+     * 校验名/正文 JSON→insert 资产+版本 1+角色挂载。返 {@link Asset}（含自增 id）供调用方收集。
+     */
+    @Transactional
+    public Asset internalCreateText(Long projectId, String mediaType, String name,
+                                    String description, String contentJson, List<String> roleKeys) {
+        String category = resolveCategory(projectId, mediaType);
         if (!isTextCategory(category)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "新建仅支持文本类（TEXT 类别）资产，文件类请用上传");
         }
-        String name = validateName(req.getName());
+        if (contentJson == null || contentJson.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文本类资产正文不能为空");
+        }
+        validateContentJson(contentJson);
         Asset asset = new Asset();
         asset.setProjectId(projectId);
-        asset.setMediaType(req.getMediaType());
+        asset.setMediaType(mediaType);
         asset.setMediaCategory(category);
-        asset.setName(name);
-        asset.setDescription(req.getDescription());
+        asset.setName(validateName(name));
+        asset.setDescription(description);
         asset.setStatus(Asset.STATUS_DRAFT);
-        asset.setTags(serializeList(req.getTags()));
+        asset.setTags(serializeList(roleKeys == null ? List.of() : roleKeys));
         asset.setCurrentVersion(1);
-        // 文本类正文必填 + 须为合法 JSON（content 列为 JSONB，防非 JSON 客户端直传撑爆 → 500）
-        String content = req.getContent();
-        if (isTextCategory(category)) {
-            if (content == null || content.isBlank()) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "文本类资产正文不能为空");
-            }
-            validateContentJson(content);
-            asset.setContent(content);
-        } else {
-            asset.setContent("{}");
-        }
+        asset.setContent(contentJson);
         asset.setGenMeta("{}");
         assetMapper.insert(asset);
-        // 版本 1
         AssetVersion v1 = new AssetVersion();
         v1.setAssetId(asset.getId());
         v1.setVersion(1);
         v1.setContent(asset.getContent());
         versionMapper.insert(v1);
-        // 角色挂载（受控词汇校验）
-        syncRoleLinks(projectId, asset.getId(), req.getRoleKeys());
-        log.info("asset created: id={} projectId={} mediaType={} userId={}", asset.getId(), projectId, req.getMediaType(), userId);
-        return toVO(asset, false);
+        syncRoleLinks(projectId, asset.getId(), roleKeys);
+        return asset;
+    }
+
+    /**
+     * 加载项目图片资产目录（供一键分镜 LLM 注入，S19）：category=IMAGE 且 roleKeys ∩ {人物,道具,场景}，
+     * ≤{@code limit}（默认 50，防 prompt token 爆；运维清单），updated_at 倒序。紧凑字段不带 content（安全/省 token）。
+     */
+    public List<ImageCatalogItem> getImageCatalog(Long projectId, int limit) {
+        int cap = (limit <= 0 || limit > 200) ? ASSET_CATALOG_DEFAULT_LIMIT : limit;
+        List<Asset> images = assetMapper.selectList(new LambdaQueryWrapper<Asset>()
+                .eq(Asset::getProjectId, projectId)
+                .eq(Asset::getMediaCategory, Asset.CATEGORY_IMAGE)
+                .orderByDesc(Asset::getUpdatedAt));
+        if (images.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, List<String>> roleMap = rolesOf(images.stream().map(Asset::getId).collect(Collectors.toList()));
+        List<String> entityRoles = List.of(AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(0),
+                AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(1),
+                AssetProjectService.DEFAULT_NARRATIVE_ROLES.get(2));
+        List<ImageCatalogItem> out = new ArrayList<>();
+        for (Asset a : images) {
+            List<String> rks = roleMap.getOrDefault(a.getId(), Collections.emptyList());
+            if (rks.stream().noneMatch(entityRoles::contains)) {
+                continue;
+            }
+            out.add(new ImageCatalogItem(a.getId(), a.getName(), a.getMediaType(), rks));
+            if (out.size() >= cap) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    /** 图片目录条目（LLM 注入用，紧凑无 content）。 */
+    public record ImageCatalogItem(Long id, String name, String mediaType, List<String> roleKeys) {
     }
 
     /**

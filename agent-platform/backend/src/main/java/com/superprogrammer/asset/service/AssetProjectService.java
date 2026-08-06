@@ -169,6 +169,26 @@ public class AssetProjectService {
     }
 
     /**
+     * 确保项目受控词汇含指定媒体类型（缺则 append），供一键分镜自动补「分镜」type（S19 L13 边界）。
+     *
+     * <p>幂等：已存在不改动。复用 {@link #normalizeMediaTypes} 校验 + {@link #serializeMediaTypes} 持久化。
+     * V62 已 seed 存量项目，此为运行时兜底（自定义 vocab 删分镜后再一键分镜）。
+     */
+    @Transactional
+    public void ensureMediaType(Long projectId, String key, String category) {
+        AssetProject p = loadProject(projectId);
+        List<MediaTypeDef> types = new ArrayList<>(parseMediaTypes(p.getMediaTypes()));
+        boolean exists = types.stream().anyMatch(t -> key.equals(t.getKey()));
+        if (exists) {
+            return;
+        }
+        types.add(new MediaTypeDef(key, category));
+        p.setMediaTypes(serializeMediaTypes(normalizeMediaTypes(types)));
+        projectMapper.updateById(p);
+        log.info("media type auto-appended: projectId={} key={} category={}", projectId, key, category);
+    }
+
+    /**
      * 删项目（级联软删资产/成员/绑定，L4）。仅 owner（requireManage）。
      * stored_files 文件保留（历史/复用）；画布引用快照不受影响（版本快照语义属引用方）。
      */

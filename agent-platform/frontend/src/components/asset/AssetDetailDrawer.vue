@@ -54,7 +54,38 @@
                 <n-button size="small" type="primary" :loading="breaking" @click="runBreakdown">
                   AI 分场
                 </n-button>
+                <n-button
+                  size="small"
+                  type="primary"
+                  ghost
+                  :loading="breakingStoryboard"
+                  @click="runStoryboardBreakdown"
+                >
+                  一键分镜
+                </n-button>
               </div>
+              <!-- S19 拆解规范（可折叠，写 content.template，指导 LLM 拆镜） -->
+              <n-collapse v-if="canEdit" :default-expanded-names="templateDirty ? 'tpl' : []">
+                <n-collapse-item title="拆解规范（可选，指导一键分镜）" name="tpl">
+                  <n-input
+                    v-model:value="templateDraft"
+                    type="textarea"
+                    :rows="3"
+                    :maxlength="2000"
+                    placeholder="如：每镜须含景别与运镜；主角出镜优先特写；≤2000 字"
+                  />
+                  <div class="asset-detail__script-actions">
+                    <n-button
+                      size="small"
+                      :loading="savingTemplate"
+                      :disabled="!templateDirty"
+                      @click="saveTemplate"
+                    >
+                      保存规范
+                    </n-button>
+                  </div>
+                </n-collapse-item>
+              </n-collapse>
               <ScriptScenes v-if="scenes.length" :scenes="scenes" />
               <n-empty
                 v-else-if="!breaking"
@@ -254,6 +285,12 @@ const originalSynopsis = ref('')
 const savingSynopsis = ref(false)
 const breaking = ref(false)
 const synopsisDirty = computed(() => synopsis.value !== originalSynopsis.value)
+/** S19 拆解规范草稿（写 content.template）+ 一键分镜态。 */
+const templateDraft = ref('')
+const originalTemplate = ref('')
+const savingTemplate = ref(false)
+const breakingStoryboard = ref(false)
+const templateDirty = computed(() => templateDraft.value !== originalTemplate.value)
 
 /** S15 非剧本 TEXT（提示词/自定义 TEXT）正文草稿 + 保存态。 */
 const textBody = ref('')
@@ -378,6 +415,9 @@ function parseScriptContent(raw: string | null | undefined) {
   synopsis.value = syn
   originalSynopsis.value = syn
   scenes.value = Array.isArray(obj.scenes) ? (obj.scenes as SceneVO[]) : []
+  const tpl = typeof obj.template === 'string' ? obj.template : ''
+  templateDraft.value = tpl
+  originalTemplate.value = tpl
 }
 
 /** C3 保存剧本正文 → versionApi.create 写新版本（同步 asset.content，breakdown 即可读最新）。 */
@@ -417,6 +457,47 @@ async function runBreakdown() {
     message.error('分场失败（剧本过长 / LLM 异常）')
   } finally {
     breaking.value = false
+  }
+}
+
+/** S19 保存拆解规范 → versionApi.create 写 content.template（保留 synopsis/scenes/其他键）。 */
+async function saveTemplate() {
+  if (!asset.value) return
+  savingTemplate.value = true
+  try {
+    const next = { ...contentObj.value, template: templateDraft.value.trim() }
+    await versionApi.create(asset.value.id, {
+      content: JSON.stringify(next),
+      changeNote: '编辑拆解规范'
+    })
+    message.success('拆解规范已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存拆解规范失败')
+  } finally {
+    savingTemplate.value = false
+  }
+}
+
+/** S19 一键分镜 → scriptApi.breakdownStoryboard（每镜产一个分镜资产，dirty 检查同分场，L13）。 */
+async function runStoryboardBreakdown() {
+  if (!asset.value) return
+  if (synopsisDirty.value) {
+    message.warning('正文有未保存改动，请先点「保存正文」')
+    return
+  }
+  breakingStoryboard.value = true
+  try {
+    const res = await scriptApi.breakdownStoryboard(asset.value.id)
+    const count = res.data.data?.count ?? 0
+    message.success(`已生成 ${count} 个分镜资产`)
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('分镜失败（剧本过长 / LLM 异常）')
+  } finally {
+    breakingStoryboard.value = false
   }
 }
 

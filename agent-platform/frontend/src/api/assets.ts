@@ -26,6 +26,7 @@ import type {
   ResolveRequest,
   ResolveVO,
   ScriptBreakdownVO,
+  StoryboardBreakdownVO,
   StoryboardSaveRequest,
   TransferRequest,
   VersionCreateRequest,
@@ -189,6 +190,13 @@ export const scriptApi = {
   /** POST /assets/assets/{id}/breakdown — 剧本 AI 拆分场（scenes 入 content 产新版本） */
   breakdown(assetId: number, model?: string) {
     return request.post<ApiResponse<ScriptBreakdownVO>>(`/assets/assets/${assetId}/breakdown`, model ? { model } : {})
+  },
+  /** POST /assets/assets/{id}/breakdown-storyboard — 一键分镜（每镜产一个分镜资产，S19） */
+  breakdownStoryboard(assetId: number, model?: string) {
+    return request.post<ApiResponse<StoryboardBreakdownVO>>(
+      `/assets/assets/${assetId}/breakdown-storyboard`,
+      model ? { model } : {}
+    )
   }
 }
 
