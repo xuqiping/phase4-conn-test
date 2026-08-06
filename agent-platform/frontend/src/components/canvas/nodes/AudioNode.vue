@@ -1,8 +1,8 @@
 <template>
-  <CanvasNodeBase kind="audio" kind-label="音频" :status="data.status" :selected="selected" :asset-badge="assetBadge">
+  <CanvasNodeBase kind="audio" kind-label="音频" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><MusicalNotesOutline /></template>
     <audio v-if="data.previewUrl" class="audio-node__player" :src="data.previewUrl" controls />
-    <div v-else class="audio-node__desc">{{ data.label || '音频节点（上传 / TTS / 音乐生成）' }}</div>
+    <div v-else class="audio-node__desc">音频节点（上传 / TTS / 音乐生成）</div>
   </CanvasNodeBase>
 </template>
 

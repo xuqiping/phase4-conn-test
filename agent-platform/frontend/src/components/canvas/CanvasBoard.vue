@@ -5,6 +5,7 @@
     tabindex="0"
     @dragover.prevent="onDragOver"
     @drop="onDrop"
+    @dblclick="onDblClick"
     @contextmenu.prevent
     @keydown.delete.prevent="deleteSelected"
     @keydown.backspace.prevent="deleteSelected"
@@ -78,6 +79,8 @@ const emit = defineEmits<{
   (e: 'node-selected', node: CanvasNode | null): void
   /** S12：节点右键 → 父开「存入资产库」弹窗（L5）。 */
   (e: 'node-context-menu', node: CanvasNode): void
+  /** C6：双击画布空白处 → 父开「快速加节点」搜索框（坐标已转画布坐标系）。 */
+  (e: 'quick-add', position: { x: number; y: number }): void
 }>()
 
 const defaultEdgeOptions = {
@@ -103,6 +106,27 @@ function onDrop(event: DragEvent) {
     position,
     data: { label: parsed.label ?? '新节点' }
   })
+}
+
+/**
+ * C6：双击画布空白处 → emit 坐标给父开「快速加节点」搜索框（ComfyUI 式）。
+ * 仅空白处触发：点节点(.vue-flow__node)/连线(.vue-flow__edge)/句柄(.vue-flow__handle)不弹，避免误加。
+ * 坐标复用 onDrop 的 project 范式（clientXY − vueFlow 容器偏移 → 画布坐标系，兼容缩放/平移）。
+ */
+function onDblClick(event: MouseEvent) {
+  const tgt = event.target as HTMLElement | null
+  if (
+    tgt?.closest('.vue-flow__node') ||
+    tgt?.closest('.vue-flow__edge') ||
+    tgt?.closest('.vue-flow__handle')
+  ) {
+    return
+  }
+  const vf = vueFlowRef.value as HTMLElement | null
+  if (!vf) return
+  const { left, top } = vf.getBoundingClientRect()
+  const position = project({ x: event.clientX - left, y: event.clientY - top })
+  emit('quick-add', position)
 }
 
 /**

@@ -87,7 +87,12 @@
         </aside>
 
         <!-- 画布板 -->
-        <CanvasBoard ref="boardRef" @node-selected="onNodeSelect" @node-context-menu="onNodeContextMenu" />
+        <CanvasBoard
+          ref="boardRef"
+          @node-selected="onNodeSelect"
+          @node-context-menu="onNodeContextMenu"
+          @quick-add="onQuickAdd"
+        />
 
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
         <PropertyPanel
@@ -139,6 +144,36 @@
         :canvas-id="editingId"
         @picked="onAssetPicked"
       />
+
+      <!-- C6 双击画布空白处的「快速加节点」搜索框（ComfyUI 式） -->
+      <n-modal
+        v-model:show="quickAddOpen"
+        preset="card"
+        title="快速添加节点"
+        style="max-width: 360px"
+        @after-leave="resetQuickAdd"
+      >
+        <n-input
+          v-model:value="quickAddQuery"
+          placeholder="搜索节点类型（文本/图片/视频/音频/脚本）"
+          @keydown="onQuickAddKey"
+        />
+        <div class="canvas-quickadd__list">
+          <button
+            v-for="(p, i) in quickAddFiltered"
+            :key="p.type"
+            type="button"
+            class="canvas-quickadd__item"
+            :class="{ 'is-active': i === quickAddIdx }"
+            @mouseenter="quickAddIdx = i"
+            @click="confirmQuickAdd(p)"
+          >
+            <n-icon :component="p.icon" />
+            <span>{{ p.label }}</span>
+          </button>
+          <div v-if="!quickAddFiltered.length" class="canvas-quickadd__empty">无匹配节点类型</div>
+        </div>
+      </n-modal>
     </div>
   </div>
 </template>
@@ -147,7 +182,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NButton, NCard, NEmpty, NIcon, NInput, NSpin, useMessage
+  NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useMessage
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
@@ -1035,6 +1070,60 @@ function onPaletteClick(p: { type: string; label: string }) {
   boardRef.value?.addNode({ type: p.type, data: { label: p.label } })
 }
 
+// ---------- C6 双击画布空白处 → 快速加节点搜索框（ComfyUI 式） ----------
+/** 搜索框是否展开 + 记住双击坐标（选中类型后在该坐标加节点）。 */
+const quickAddOpen = ref(false)
+const quickAddPos = ref<{ x: number; y: number } | null>(null)
+const quickAddQuery = ref('')
+const quickAddIdx = ref(0)
+/** 按 query 过滤调色板（label 中文 / type 英文任一命中）。 */
+const quickAddFiltered = computed(() => {
+  const q = quickAddQuery.value.trim().toLowerCase()
+  if (!q) return palette
+  return palette.filter(p => p.label.toLowerCase().includes(q) || p.type.toLowerCase().includes(q))
+})
+/** CanvasBoard 双击空白处 → 记坐标、清查询、开弹窗。 */
+function onQuickAdd(position: { x: number; y: number }) {
+  quickAddPos.value = position
+  quickAddQuery.value = ''
+  quickAddIdx.value = 0
+  quickAddOpen.value = true
+}
+/** 弹窗关闭后清状态（防下次打开残留旧查询/坐标）。 */
+function resetQuickAdd() {
+  quickAddQuery.value = ''
+  quickAddIdx.value = 0
+  quickAddPos.value = null
+}
+/** 选定类型 → 在双击坐标加节点并关弹窗。 */
+function confirmQuickAdd(p: { type: string; label: string }) {
+  boardRef.value?.addNode({
+    type: p.type,
+    position: quickAddPos.value ?? undefined,
+    data: { label: p.label }
+  })
+  quickAddOpen.value = false
+}
+/** 搜索框键盘：↑↓ 移高亮 / Enter 选中 / Esc 关闭。 */
+function onQuickAddKey(e: KeyboardEvent) {
+  if (e.key === 'ArrowDown') {
+    quickAddIdx.value = Math.min(quickAddIdx.value + 1, quickAddFiltered.value.length - 1)
+    e.preventDefault()
+  } else if (e.key === 'ArrowUp') {
+    quickAddIdx.value = Math.max(quickAddIdx.value - 1, 0)
+    e.preventDefault()
+  } else if (e.key === 'Enter') {
+    const pick = quickAddFiltered.value[quickAddIdx.value] ?? quickAddFiltered.value[0]
+    if (pick) {
+      confirmQuickAdd(pick)
+      e.preventDefault()
+    }
+  } else if (e.key === 'Escape') {
+    quickAddOpen.value = false
+    e.preventDefault()
+  }
+}
+
 function formatTime(t: string | null): string {
   if (!t) return ''
   return t.slice(0, 16).replace('T', ' ')
@@ -1210,5 +1299,43 @@ onMounted(() => {
       color: var(--color-primary);
     }
   }
+}
+
+// C6 快速加节点搜索框（双击画布空白处弹出）
+.canvas-quickadd__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.canvas-quickadd__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+
+  &.is-active,
+  &:hover {
+    background: var(--color-primary-light);
+    border-color: rgba(var(--color-primary-rgb), 0.4);
+    color: var(--color-primary);
+  }
+}
+
+.canvas-quickadd__empty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  padding: var(--spacing-2);
+  text-align: center;
 }
 </style>

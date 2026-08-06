@@ -11,6 +11,9 @@
     <div class="canvas-node__header">
       <div class="canvas-node__icon"><n-icon size="14"><slot name="icon" /></n-icon></div>
       <span class="canvas-node__kind">{{ kindLabel }}</span>
+      <!-- C6：节点名显在头部（类型标签旁）；空=「未命名」灰字。改名走 PropertyPanel 名称框 → 头部实时更新 -->
+      <span v-if="label" class="canvas-node__label" :title="label">{{ label }}</span>
+      <span v-else class="canvas-node__label canvas-node__label--empty">未命名</span>
       <span v-if="assetBadge" class="canvas-node__asset" :data-has-update="assetBadge.hasUpdate">
         {{ assetBadge.name }} v{{ assetBadge.version }}<template v-if="assetBadge.hasUpdate"> · 有新版</template>
       </span>
@@ -32,6 +35,8 @@ import type { CanvasNodeStatus, AssetBadge } from '@/types/canvas'
 const props = defineProps<{
   kind: 'text' | 'image' | 'video' | 'audio' | 'script'
   kindLabel: string
+  /** C6：节点名（data.label）；空显「未命名」灰字。 */
+  label?: string
   status?: CanvasNodeStatus
   selected?: boolean
   /** S12：资产绑定徽标（来自资产·name vN / 有新版）。 */
@@ -103,7 +108,24 @@ const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : 
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-text-tertiary);
+}
+
+// C6 节点名（头部主显位，占中间空间把资产/状态徽标推到右）
+.canvas-node__label {
   flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &--empty {
+    color: var(--color-text-tertiary);
+    font-weight: 400;
+    font-style: italic;
+  }
 }
 
 .canvas-node__asset {
