@@ -2,7 +2,7 @@
 
 > 全栈 MVP 代码地图。表与 SQL 注解见文末（V54）。关联 [plan](../plans/SeedDance视频生成.plan.md) / [README](../../开发进度/SeedDance视频生成/README.md)。
 >
-> **v2（2026-08-06）**：① 支持按次选择视频模型（模型目录来自 `llm_providers` 表 category=MEDIA 的 provider，新模型零代码接入）；② 图生视频升级为「图+视频+音频 多模态参考生视频」（SeedDance 2.0：9图/3视频/3音频/总≤12，按模型能力动态校验）。新增 `GET /api/media/models`；提交体加 `model` + `attachments[]`；request_config JSONB 原样扩展（无新迁移）。
+> **v2（2026-08-06）**：① 支持按次选择视频模型（模型目录来自 `llm_providers` 表 category=VIDEO 的 provider，新模型零代码接入）；② 图生视频升级为「图+视频+音频 多模态参考生视频」（SeedDance 2.0：9图/3视频/3音频/总≤12，按模型能力动态校验）。新增 `GET /api/media/models`；提交体加 `model` + `attachments[]`；request_config JSONB 原样扩展（无新迁移）。
 
 ## 后端 `media/` 包（com.superprogrammer.media）
 
@@ -10,10 +10,10 @@
 |---|---|---|
 | `db/migration/V54__media_gen_tasks.sql` | 建任务表 + media:gen 权限 seed | 见文末表注解 |
 | `provider/MediaGenProvider.java` | provider 接口：createTask/queryTask/getId | 「媒体生成厂商」统一合同，视频/图共用，未来 Seedream 也实现它 |
-| `provider/ArkSeedanceProvider.java` | Ark SeedDance 实现：多模态 content 构建（image_url/video_url/audio_url + role=reference_*）+ `resolveArk(providerId)` 按任务落库的 provider 路由（多 MEDIA provider 并存各走各 endpoint/key，指纹含 providerId） | 真正打电话给火山方舟的「业务员」，照任务单上记的供应商回电；多模态素材按角色（参考图/运镜视频/音色音频）贴标签发给 Ark |
+| `provider/ArkSeedanceProvider.java` | Ark SeedDance 实现：多模态 content 构建（image_url/video_url/audio_url + role=reference_*）+ `resolveArk(providerId)` 按任务落库的 provider 路由（多 VIDEO provider 并存各走各 endpoint/key，指纹含 providerId） | 真正打电话给火山方舟的「业务员」，照任务单上记的供应商回电；多模态素材按角色（参考图/运镜视频/音色音频）贴标签发给 Ark |
 | `config/MediaModelCapability.java` | 单模型能力画像（maxImages/maxVideos/maxAudios/maxAttachments/比例/分辨率/时长/supportsGenerateAudio/videoDataUri） | 每个模型的「饭量卡」：能吃几张图、几个视频、几段音频 |
 | `config/MediaModelCapabilityService.java` | 能力解析：内置前缀默认（seedance-2*=9/3/3/12、seedance-1*=仅图、未知=保守兜底）+ provider config JSON `capabilities:{"<modelId>":{...}}` 精确覆盖 | 新模型没登记先按保守量供应，管理员在供应商 config 里写一条就放开 |
-| `service/MediaModelService.java` | 模型目录：聚合全部 ACTIVE MEDIA provider 的 models × 能力画像 → listModels；resolveProviderByModel（sortOrder 最小者优先） | 「菜单印刷机」：前端下拉和提交路由都从这里查哪个供应商供哪个模型 |
+| `service/MediaModelService.java` | 模型目录：聚合全部 ACTIVE VIDEO provider 的 models × 能力画像 → listModels；resolveProviderByModel（sortOrder 最小者优先） | 「菜单印刷机」：前端下拉和提交路由都从这里查哪个供应商供哪个模型 |
 | `dto/MediaModelVO.java` | GET /models 出参（模型 id + 能力画像全量） | 前端动态表单的「数据源」 |
 | `dto/AttachmentRef.java` | 参考附件入参（fileId + kind=image/video/audio） | 一张素材「提货单」 |
 | `dto/MediaGenRequest.java` | provider 入参（+attachments 已解析 data URI 列表 +providerId 路由上下文；refImageUrl 保留旧首帧通道） | 喂给厂商的「订单」 |
@@ -25,7 +25,7 @@
 | `config/MediaGenProperties.java` | `media.*` 配置（开关/上限/轮询/锁/超时/provider-name 默认 seedance） | 运维旋钮，都能省用默认 |
 | `config/MediaTaskExecutorConfig.java` | `mediaTaskExecutor` Bean（core2/max4/queue100/AbortPolicy） | 专门跑视频任务的「小工队」，不挤占 chat/RAG/memory 线程 |
 | `service/internal/MediaGenTaskTxService.java` | 全部 DB 写（claim/setArkTaskId/markSucceeded/markFailed/markDownloadFailed/renewLock）独立 bean | 事务边界，Ark 轮询（分钟级阻塞）必须在事务外，故拆出 |
-| `service/MediaGenTaskService.java` | submit：模型→provider 反查路由（跨全部 ACTIVE MEDIA provider，模型不在列表 400）+ 能力校验（分类/总数上限、比例/分辨率/时长、音频开关）+ 附件归属+MIME 校验（防 IDOR）+ taskType 派生（attachments 非空→IMAGE2VIDEO） | 用户提交入口 + 「检票口」：超量/错类型/拿别人的票当场拒 |
+| `service/MediaGenTaskService.java` | submit：模型→provider 反查路由（跨全部 ACTIVE VIDEO provider，模型不在列表 400）+ 能力校验（分类/总数上限、比例/分辨率/时长、音频开关）+ 附件归属+MIME 校验（防 IDOR）+ taskType 派生（attachments 非空→IMAGE2VIDEO） | 用户提交入口 + 「检票口」：超量/错类型/拿别人的票当场拒 |
 | `service/MediaGenTaskWorker.java` | @Scheduled poll 认领（SKIP LOCKED）+ process（buildRequest 附件→data URI 按类型限大小→createTask→退避轮询 queryTask(arkTaskId, providerId)→下载→usage）+ 状态机 | 真正干活的「监工」，照抄 IndexJobWorker 纯 poll 模式，崩溃恢复免费 |
 | `service/MediaStorageService.java` | downloadAndStore（Ark URL→stored_files source=MEDIA）+ readAsDataUri(fileId, userId, kind)（按类型限：图 8MB/音频 15MB/视频 50MB） | 「搬运工」：Ark 临时链接一过期就没，趁热下载到本地；参考素材转 data URI 喂 Ark |
 | `service/MediaGenQueryService.java` | 读侧：get/list/loadForDownload，ownership 硬过滤 | 用户只能查/下自己的任务，admin 旁路看全量 |
@@ -49,7 +49,7 @@
 
 ## 关键调用链
 
-**模型目录**：前端 `VideoGenView.loadModels` → `GET /api/media/models` → `MediaModelService.listModels`（遍历 ACTIVE category=MEDIA provider × models JSON × `MediaModelCapabilityService.resolve` 合并能力）→ 动态渲染表单。
+**模型目录**：前端 `VideoGenView.loadModels` → `GET /api/media/models` → `MediaModelService.listModels`（遍历 ACTIVE category=VIDEO provider × models JSON × `MediaModelCapabilityService.resolve` 合并能力）→ 动态渲染表单。
 
 **提交**：前端 `VideoGenView.onSubmit` → `mediaApi.submitVideo{prompt,...,model,attachments[]}` → `POST /api/media/video` → `MediaGenController.submit` → `MediaGenTaskService.submit`：model 非空→`resolveProviderByModel` 反查 provider（空→默认 provider 首模型）→ 能力校验 + 附件归属/MIME 校验 → attachments 非空派生 IMAGE2VIDEO → 建 PENDING 行（request_config 存 attachments JSON）。
 
@@ -82,7 +82,7 @@
 
 ## v2 附：模型与能力配置（无新表）
 
-- **模型从哪来**：`llm_providers` 表 category=`MEDIA` 的 ACTIVE provider，其 `models` JSON 数组即可选模型；加新模型/新厂商 = 「全局模型供应商」页加/改一条 MEDIA provider，零代码。
+- **模型从哪来**：`llm_providers` 表 category=`VIDEO` 的 ACTIVE provider，其 `models` JSON 数组即可选模型；加新模型/新厂商 = 「全局模型供应商」页加/改一条 VIDEO provider，零代码。
 - **能力怎么配**：内置前缀默认（`MediaModelCapabilityService`）；需微调时在 provider 的 `config` JSON 写
   `{"capabilities":{"doubao-seedance-2-0-260128":{"maxVideos":3,"maxAudios":3,"maxImages":9,"maxAttachments":12,"videoDataUri":true}}}`（只覆盖出现的字段）。
 - **videoDataUri 风险开关**：官方 Ark 对 `video_url` 的 base64 data URI 支持未确认（部分渠道仅公网 URL）。若实测被拒，把该模型 config 里 `videoDataUri` 置 false——前端自动隐藏参考视频上传区，其余不受影响。

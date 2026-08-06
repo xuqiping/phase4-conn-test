@@ -183,7 +183,7 @@ graph TD
   - **安全检查**：breakdown 端点沿用现有权限（assets 域），无新端点
   - **验证**：画布文本节点选 A 模型运行 → 日志/返回 patch 里 model=A；清空 → 走默认；资产库选 B 模型拆分 → 新版本 content 的 `breakdownModel`=B
 
-- [ ] **Step 8：单测补齐 + 文档收尾**（对应全部 FR 回归）
+- [x] **Step 8：单测补齐 + 文档收尾**（对应全部 FR 回归）✅ 2026-08-06。单测：URL 原样直发三 provider 已锁定（OpenAI/Claude 于 B2、Ark `createTask_postsToExactEndpoint`/`queryTask_getsEndpointPlusTaskId` 于前置批次）；网关按类型路由 `LlmGatewayRouteTest` 5 测（B3）；新增 `MediaModelServiceTest` 6 测（只认 VIDEO/IMAGE 排除/seedance-2 默认能力/config 覆盖/resolveProviderByModel 命中与未命中/firstModelOf 兜底）——llm+media 88 测全绿。文档：速查表 18 按全 URL+四分改写（category 路由表/V60 坑点/RB-001 保留）、19 补用户级 chat-only 说明、24 补 IMAGE 预留位+节点模型选择器、25 补剧本 AI 拆分场入口、SeedDance feature-map MEDIA→VIDEO 措辞、plans 总路由补条目。
   - **目标**：新行为有测试锁定；速查表/feature-map 同步
   - **动作**：
     - 单测：provider URL 原样直发（3 provider）、网关按类型路由、MediaModelService 只认 VIDEO、interpretProbe 保持绿
