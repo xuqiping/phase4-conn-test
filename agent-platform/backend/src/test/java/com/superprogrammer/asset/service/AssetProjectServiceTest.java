@@ -1,6 +1,7 @@
 package com.superprogrammer.asset.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.asset.dto.MediaTypeDef;
 import com.superprogrammer.asset.dto.ProjectCreateRequest;
 import com.superprogrammer.asset.dto.ProjectUpdateRequest;
 import com.superprogrammer.asset.dto.ProjectVO;
@@ -89,6 +90,8 @@ class AssetProjectServiceTest {
         assertEquals(OWNER_ID, vo.getOwnerId());
         assertEquals(AssetRole.OWNER, vo.getRole());
         assertEquals(AssetProjectService.DEFAULT_NARRATIVE_ROLES, vo.getNarrativeRoles());
+        // V60：新建项目默认媒体类型受控词汇 5 项
+        assertEquals(AssetProjectService.DEFAULT_MEDIA_TYPES, vo.getMediaTypes());
 
         ArgumentCaptor<AssetProject> captor = ArgumentCaptor.forClass(AssetProject.class);
         verify(projectMapper).insert(captor.capture());
@@ -206,5 +209,54 @@ class AssetProjectServiceTest {
         p.setName("p" + id);
         p.setNarrativeRoles(rolesJson);
         return p;
+    }
+
+    // ==================== V60 §C1b：媒体类型受控词汇 + L10' 迁移 ====================
+
+    @Test
+    void update_mediaTypesRemoval_reassignsToSameCategory() {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        // 旧受控词汇：IMAGE + 自定义 MAP(均 IMAGE 类别)
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"人物\",\"通用\"]");
+        p.setMediaTypes("[{\"key\":\"IMAGE\",\"category\":\"IMAGE\"},{\"key\":\"MAP\",\"category\":\"IMAGE\"}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(assetMapper.countByMediaType(PROJECT_ID, "MAP")).thenReturn(1L); // MAP 下有 1 资产
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setMediaTypes(List.of(new MediaTypeDef("IMAGE", "IMAGE"))); // 移除 MAP，保留 IMAGE
+        service.update(PROJECT_ID, OWNER_ID, false, req);
+
+        // MAP 下资产迁到同类别首个保留 type（IMAGE）
+        verify(assetMapper).reassignMediaType(PROJECT_ID, "MAP", "IMAGE", OWNER_ID);
+    }
+
+    @Test
+    void update_mediaTypesRemovalOrphanedCategory_blocks() {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"人物\",\"通用\"]");
+        p.setMediaTypes("[{\"key\":\"IMAGE\",\"category\":\"IMAGE\"}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(assetMapper.countByMediaType(PROJECT_ID, "IMAGE")).thenReturn(2L); // IMAGE 下仍有资产
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setMediaTypes(List.of(new MediaTypeDef("PROMPT", "TEXT"))); // 移除 IMAGE，无其他 IMAGE 类别可迁移
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.update(PROJECT_ID, OWNER_ID, false, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(assetMapper, never()).reassignMediaType(any(), any(), any(), any());
+    }
+
+    @Test
+    void update_mediaTypesInvalidCategory_throws() {
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"通用\"]");
+        p.setMediaTypes("[{\"key\":\"IMAGE\",\"category\":\"IMAGE\"}]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+
+        ProjectUpdateRequest req = new ProjectUpdateRequest();
+        req.setMediaTypes(List.of(new MediaTypeDef("X", "WEIRD"))); // 非法 category
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.update(PROJECT_ID, OWNER_ID, false, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 }

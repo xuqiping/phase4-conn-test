@@ -303,6 +303,13 @@ class AssetCanvasBridgeServiceTest {
         a.setId(id);
         a.setProjectId(PROJECT_ID);
         a.setMediaType(mediaType);
+        // V60：资产必有 mediaCategory；测试 fixture 按默认映射补齐（PROMPT/SCRIPT→TEXT，余对应）
+        a.setMediaCategory(switch (mediaType) {
+            case Asset.MEDIA_IMAGE -> Asset.CATEGORY_IMAGE;
+            case Asset.MEDIA_VIDEO -> Asset.CATEGORY_VIDEO;
+            case Asset.MEDIA_AUDIO -> Asset.CATEGORY_AUDIO;
+            default -> Asset.CATEGORY_TEXT;
+        });
         a.setCurrentVersion(curVer);
         a.setName(name);
         a.setStatus(Asset.STATUS_DRAFT);

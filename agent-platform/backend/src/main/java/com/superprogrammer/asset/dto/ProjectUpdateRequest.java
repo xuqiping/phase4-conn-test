@@ -19,4 +19,7 @@ public class ProjectUpdateRequest {
 
     /** 叙事角色受控词汇桶（传则整体覆盖，移除项触发 L10 资产归「通用」）。 */
     private List<String> narrativeRoles;
+
+    /** 媒体类型受控词汇桶（V60，传则整体覆盖；移除项触发资产归同 category 首项）。 */
+    private List<MediaTypeDef> mediaTypes;
 }

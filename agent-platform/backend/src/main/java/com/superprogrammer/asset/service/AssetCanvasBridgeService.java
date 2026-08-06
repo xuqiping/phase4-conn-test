@@ -56,6 +56,10 @@ public class AssetCanvasBridgeService {
     /** 重复入库模式：另起新资产。 */
     public static final String MODE_NEW_ASSET = "NEW_ASSET";
 
+    /** 节点类型→资产映射（V60 §C1b：type=媒体类型标签，category=处理类别）。 */
+    public record NodeTypeMapping(String type, String category) {
+    }
+
     private static final String SOURCE_CANVAS = "CANVAS";
 
     private final AssetMapper assetMapper;
@@ -89,7 +93,8 @@ public class AssetCanvasBridgeService {
         Canvas canvas = canvasService.loadOwned(canvasId, userId, admin);
         JsonNode node = extractNode(canvas.getSnapshot(), nodeId);
         String nodeType = node.path("type").asText("");
-        String mediaType = mapMediaType(nodeType);
+        NodeTypeMapping mapping = mapNodeType(nodeType);
+        String mediaType = mapping.type();
         JsonNode data = node.path("data");
 
         // 重复入库检测（plan L5）
@@ -111,7 +116,7 @@ public class AssetCanvasBridgeService {
         }
 
         // 提取产出物（文本正文 JSON / 文件 fileId）
-        boolean textType = isTextType(mediaType);
+        boolean textType = isTextCategory(mapping.category());
         String contentJson = textType ? extractTextContent(mediaType, data) : "{}";
         String fileId = !textType ? extractFileId(mediaType, data) : null;
         String genMeta = buildGenMeta(canvasId, nodeId, nodeType, data);
@@ -139,6 +144,7 @@ public class AssetCanvasBridgeService {
         Asset asset = new Asset();
         asset.setProjectId(projectId);
         asset.setMediaType(mediaType);
+        asset.setMediaCategory(mapping.category());
         asset.setName(name);
         asset.setDescription(req.getDescription());
         asset.setStatus(Asset.STATUS_DRAFT);
@@ -202,7 +208,7 @@ public class AssetCanvasBridgeService {
                 .version(ver)
                 .fileId(av.getFileId())
                 .url(url)
-                .content(isTextType(asset.getMediaType()) ? av.getContent() : null)
+                .content(isTextCategory(asset.getMediaCategory()) ? av.getContent() : null)
                 .name(asset.getName())
                 .build();
     }
@@ -236,20 +242,20 @@ public class AssetCanvasBridgeService {
         throw new BusinessException(ErrorCode.NOT_FOUND, "节点不存在: " + nodeId);
     }
 
-    /** 节点类型 → 资产内容类型映射（设计方案 §八 节点入库映射表）。 */
-    private String mapMediaType(String nodeType) {
+    /** 节点类型 → 资产媒体类型+处理类别映射（设计方案 §八 节点入库映射表，V60 两层）。 */
+    private NodeTypeMapping mapNodeType(String nodeType) {
         return switch (nodeType) {
-            case CanvasNodeDTO.TYPE_TEXT -> Asset.MEDIA_PROMPT;
-            case CanvasNodeDTO.TYPE_SCRIPT -> Asset.MEDIA_SCRIPT;
-            case CanvasNodeDTO.TYPE_IMAGE -> Asset.MEDIA_IMAGE;
-            case CanvasNodeDTO.TYPE_VIDEO -> Asset.MEDIA_VIDEO;
-            case CanvasNodeDTO.TYPE_AUDIO -> Asset.MEDIA_AUDIO;
+            case CanvasNodeDTO.TYPE_TEXT -> new NodeTypeMapping(Asset.MEDIA_PROMPT, Asset.CATEGORY_TEXT);
+            case CanvasNodeDTO.TYPE_SCRIPT -> new NodeTypeMapping(Asset.MEDIA_SCRIPT, Asset.CATEGORY_TEXT);
+            case CanvasNodeDTO.TYPE_IMAGE -> new NodeTypeMapping(Asset.MEDIA_IMAGE, Asset.CATEGORY_IMAGE);
+            case CanvasNodeDTO.TYPE_VIDEO -> new NodeTypeMapping(Asset.MEDIA_VIDEO, Asset.CATEGORY_VIDEO);
+            case CanvasNodeDTO.TYPE_AUDIO -> new NodeTypeMapping(Asset.MEDIA_AUDIO, Asset.CATEGORY_AUDIO);
             default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的节点类型: " + nodeType);
         };
     }
 
-    private boolean isTextType(String mediaType) {
-        return Asset.MEDIA_PROMPT.equals(mediaType) || Asset.MEDIA_SCRIPT.equals(mediaType);
+    private boolean isTextCategory(String category) {
+        return Asset.CATEGORY_TEXT.equals(category);
     }
 
     /**

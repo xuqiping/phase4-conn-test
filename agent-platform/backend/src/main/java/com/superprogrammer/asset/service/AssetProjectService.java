@@ -3,6 +3,7 @@ package com.superprogrammer.asset.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.asset.dto.MediaTypeDef;
 import com.superprogrammer.asset.dto.ProjectCreateRequest;
 import com.superprogrammer.asset.dto.ProjectUpdateRequest;
 import com.superprogrammer.asset.dto.ProjectVO;
@@ -55,7 +56,18 @@ public class AssetProjectService {
     public static final List<String> DEFAULT_NARRATIVE_ROLES = List.of("人物", "道具", "场景", "风格", "通用");
     /** 兜底桶（L10 删桶时资产归入此桶）。 */
     public static final String FALLBACK_ROLE = "通用";
+    /** 默认媒体类型受控词汇五项（V60 §C1b，{key,category}）。 */
+    public static final List<MediaTypeDef> DEFAULT_MEDIA_TYPES = List.of(
+            new MediaTypeDef(Asset.MEDIA_PROMPT, Asset.CATEGORY_TEXT),
+            new MediaTypeDef(Asset.MEDIA_SCRIPT, Asset.CATEGORY_TEXT),
+            new MediaTypeDef(Asset.MEDIA_IMAGE, Asset.CATEGORY_IMAGE),
+            new MediaTypeDef(Asset.MEDIA_VIDEO, Asset.CATEGORY_VIDEO),
+            new MediaTypeDef(Asset.MEDIA_AUDIO, Asset.CATEGORY_AUDIO));
+    /** 合法处理类别（系统固定四类）。 */
+    private static final Set<String> VALID_CATEGORIES = Set.of(
+            Asset.CATEGORY_TEXT, Asset.CATEGORY_IMAGE, Asset.CATEGORY_VIDEO, Asset.CATEGORY_AUDIO);
     private static final int NAME_MAX = 100;
+    private static final int MEDIA_TYPE_KEY_MAX = 32;
 
     private final AssetProjectMapper projectMapper;
     private final AssetProjectMemberMapper memberMapper;
@@ -73,6 +85,7 @@ public class AssetProjectService {
         p.setName(name);
         p.setDescription(req.getDescription());
         p.setNarrativeRoles(serializeRoles(DEFAULT_NARRATIVE_ROLES));
+        p.setMediaTypes(serializeMediaTypes(DEFAULT_MEDIA_TYPES));
         projectMapper.insert(p);
         log.info("asset project created: id={} ownerId={} name={}", p.getId(), userId, name);
         return toVO(p, AssetRole.OWNER);
@@ -143,6 +156,11 @@ public class AssetProjectService {
             List<String> newRoles = normalizeRoles(req.getNarrativeRoles());
             reassignOnRemovedRoles(projectId, parseRoles(p.getNarrativeRoles()), newRoles);
             p.setNarrativeRoles(serializeRoles(newRoles));
+        }
+        if (req.getMediaTypes() != null) {
+            List<MediaTypeDef> newTypes = normalizeMediaTypes(req.getMediaTypes());
+            reassignOnRemovedMediaTypes(projectId, parseMediaTypes(p.getMediaTypes()), newTypes, userId);
+            p.setMediaTypes(serializeMediaTypes(newTypes));
         }
         projectMapper.updateById(p);
         log.info("asset project updated: id={} userId={} role={}", projectId, userId, role);
@@ -234,6 +252,74 @@ public class AssetProjectService {
         }
     }
 
+    // ---------- L10'：删媒体类型联动（V60 §C1b） ----------
+
+    /**
+     * 移除媒体类型时，该 type 下资产改挂到同 category 的另一保留 type（L10'，对称 L10）。
+     * 同 category 无其他 type 可迁移时阻删（防资产悬挂，plan 技术坑点）。
+     */
+    private void reassignOnRemovedMediaTypes(Long projectId, List<MediaTypeDef> oldTypes,
+                                             List<MediaTypeDef> newTypes, Long userId) {
+        Set<String> newKeys = new LinkedHashSet<>();
+        for (MediaTypeDef t : newTypes) {
+            newKeys.add(t.getKey());
+        }
+        for (MediaTypeDef old : oldTypes) {
+            if (newKeys.contains(old.getKey())) {
+                continue;
+            }
+            long count = assetMapper.countByMediaType(projectId, old.getKey());
+            if (count == 0) {
+                continue;
+            }
+            // 同 category 首个保留 type（保序）
+            String fallback = newTypes.stream()
+                    .filter(t -> t.getCategory().equals(old.getCategory()))
+                    .map(MediaTypeDef::getKey)
+                    .findFirst().orElse(null);
+            if (fallback == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "媒体类型「" + old.getKey() + "」下仍有 " + count
+                                + " 个资产，且同类别（" + old.getCategory() + "）无其他类型可迁移；请先迁移资产或保留至少一个该类别类型");
+            }
+            int moved = assetMapper.reassignMediaType(projectId, old.getKey(), fallback, userId);
+            log.info("media type removed: projectId={} type={} category={} moved={} fallback={}",
+                    projectId, old.getKey(), old.getCategory(), moved, fallback);
+        }
+    }
+
+    /** 规范化媒体类型受控词汇：trim key、校验 category、去重保序、非空。 */
+    private List<MediaTypeDef> normalizeMediaTypes(List<MediaTypeDef> types) {
+        if (types == null || types.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "媒体类型受控词汇不可为空");
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        List<MediaTypeDef> out = new ArrayList<>();
+        for (MediaTypeDef t : types) {
+            if (t == null) continue;
+            String key = t.getKey() == null ? "" : t.getKey().trim();
+            String category = t.getCategory() == null ? "" : t.getCategory().trim().toUpperCase();
+            if (key.isEmpty()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "媒体类型 key 不能为空");
+            }
+            if (key.length() > MEDIA_TYPE_KEY_MAX) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "媒体类型 key 不得超过 " + MEDIA_TYPE_KEY_MAX + " 字");
+            }
+            if (!VALID_CATEGORIES.contains(category)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "媒体类型「" + key + "」的处理类别非法：" + category + "（应为 TEXT/IMAGE/VIDEO/AUDIO）");
+            }
+            if (seen.add(key)) {
+                out.add(new MediaTypeDef(key, category));
+            }
+        }
+        if (out.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "媒体类型受控词汇不可为空");
+        }
+        return out;
+    }
+
     // ---------- 校验/序列化/VO ----------
 
     private String validateName(String name) {
@@ -285,6 +371,27 @@ public class AssetProjectService {
         }
     }
 
+    private List<MediaTypeDef> parseMediaTypes(String json) {
+        if (json == null || json.isBlank()) {
+            return new ArrayList<>(DEFAULT_MEDIA_TYPES);
+        }
+        try {
+            List<MediaTypeDef> types = objectMapper.readValue(json, new TypeReference<List<MediaTypeDef>>() {});
+            return types == null || types.isEmpty() ? new ArrayList<>(DEFAULT_MEDIA_TYPES) : types;
+        } catch (Exception e) {
+            log.warn("parse mediaTypes failed, fallback default: {}", e.getMessage());
+            return new ArrayList<>(DEFAULT_MEDIA_TYPES);
+        }
+    }
+
+    private String serializeMediaTypes(List<MediaTypeDef> types) {
+        try {
+            return objectMapper.writeValueAsString(types);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
     private AssetProject loadProject(Long projectId) {
         AssetProject p = projectMapper.selectById(projectId);
         if (p == null) {
@@ -301,6 +408,7 @@ public class AssetProjectService {
                 .coverFileId(p.getCoverFileId())
                 .ownerId(p.getOwnerId())
                 .narrativeRoles(Collections.unmodifiableList(parseRoles(p.getNarrativeRoles())))
+                .mediaTypes(Collections.unmodifiableList(parseMediaTypes(p.getMediaTypes())))
                 .role(role)
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
