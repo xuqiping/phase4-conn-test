@@ -12,7 +12,8 @@ import lombok.EqualsAndHashCode;
  *
  * <p>双轴矩阵主记录：
  * <ul>
- *   <li>轴A · {@link #mediaType} 内容类型（固定五类）：PROMPT/SCRIPT/IMAGE/VIDEO/AUDIO</li>
+ *   <li>轴A · {@link #mediaType} 媒体类型标签（项目受控词汇 key，可自定义）+ {@link #mediaCategory}
+ *       处理类别（系统固定 TEXT/IMAGE/VIDEO/AUDIO，决定编辑器/mime/预览链路）——两层设计（V60/§C1b）</li>
  *   <li>轴B · 叙事角色：通过 asset_role_links 多对多挂载（一资产可挂多角色，不查 JSONB）</li>
  * </ul>
  *
@@ -27,12 +28,18 @@ import lombok.EqualsAndHashCode;
 @TableName(value = "assets", autoResultMap = true)
 public class Asset extends BaseEntity {
 
-    /** 媒介类型枚举常量（轴A 固定五类）。 */
+    /** 媒介类型枚举常量（轴A 标签，默认五类，项目可扩展自定义 key）。 */
     public static final String MEDIA_PROMPT = "PROMPT";
     public static final String MEDIA_SCRIPT = "SCRIPT";
     public static final String MEDIA_IMAGE = "IMAGE";
     public static final String MEDIA_VIDEO = "VIDEO";
     public static final String MEDIA_AUDIO = "AUDIO";
+
+    /** 处理类别常量（系统固定四类，V60，决定编辑器/mime/预览/gen_meta/画布映射链路）。 */
+    public static final String CATEGORY_TEXT = "TEXT";
+    public static final String CATEGORY_IMAGE = "IMAGE";
+    public static final String CATEGORY_VIDEO = "VIDEO";
+    public static final String CATEGORY_AUDIO = "AUDIO";
 
     /** 状态机枚举常量。 */
     public static final String STATUS_DRAFT = "DRAFT";
@@ -42,8 +49,11 @@ public class Asset extends BaseEntity {
     /** 所属项目（授权边界，FK asset_projects）。 */
     private Long projectId;
 
-    /** 轴A 内容类型：PROMPT/SCRIPT/IMAGE/VIDEO/AUDIO。 */
+    /** 轴A 媒体类型标签（项目受控词汇 key，可自定义如「地图」；仅分类）。 */
     private String mediaType;
+
+    /** 处理类别（系统固定 TEXT/IMAGE/VIDEO/AUDIO，V60；决定编辑器形态/mime 校验/预览/gen_meta 提取）。 */
+    private String mediaCategory;
 
     /** 资产名（≤100，安全清单）。 */
     private String name;

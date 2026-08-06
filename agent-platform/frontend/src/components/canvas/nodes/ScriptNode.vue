@@ -1,7 +1,7 @@
 <template>
-  <CanvasNodeBase kind="script" kind-label="脚本" :status="data.status" :selected="selected" :asset-badge="assetBadge">
+  <CanvasNodeBase kind="script" kind-label="脚本" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><CodeSlashOutline /></template>
-    <div class="script-node__syn">{{ data.synopsis || data.label || '剧本节点（面板输入剧本→拆分镜）' }}</div>
+    <div class="script-node__syn">{{ data.synopsis || '剧本节点（面板输入剧本→拆分镜）' }}</div>
     <div v-if="sceneCount" class="script-node__meta">{{ sceneCount }} 分镜</div>
   </CanvasNodeBase>
 </template>

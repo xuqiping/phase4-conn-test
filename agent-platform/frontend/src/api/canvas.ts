@@ -197,10 +197,11 @@ export const canvasApi = {
 /**
  * 带鉴权拉取产出物文件并转 objectURL（图片/音频预览用）。
  *
- * {@code /api/files/{fileId}} GET 需 Authorization header，{@code <img>/<audio> src} 无法带 header，
- * 故走 axios 拉 blob（拦截器自动注 JWT）再 {@code URL.createObjectURL}。调用方负责在卸载时 revoke。
+ * 实现已抽到 {@link fetchFilePreview}（C2，资产卡片/画布/详情抽屉共用）。此处保留别名供既有
+ * 调用方（CanvasView / AssetDetailDrawer）零改导入；新代码请直接 import {@link fetchFilePreview}。
  */
+import { fetchFilePreview } from './file'
+export { fetchFilePreview }
 export async function fetchCanvasPreview(fileId: string): Promise<string> {
-  const res = await request.get<Blob>(`/files/${fileId}`, { responseType: 'blob' })
-  return URL.createObjectURL(res.data)
+  return fetchFilePreview(fileId)
 }

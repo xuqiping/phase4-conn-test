@@ -106,3 +106,46 @@ describe('MentionTextarea (S13 @引用输入框)', () => {
     expect(wrapper.find('.mention-ta__popover').exists()).toBe(false)
   })
 })
+
+// AC-C4：@占位符蓝/黄 chip 高亮（mirror 镜像层）
+describe('MentionTextarea C4 @占位符 chip 高亮', () => {
+  it('AC-C4-1 占位符渲染为蓝色 chip（非断链，无 is-broken）', () => {
+    const wrapper = mount(MentionTextarea, {
+      props: { modelValue: '扩写 @{{node:n1}} 继续', candidates: cands, brokenMentions: [] }
+    })
+    const chips = wrapper.findAll('.mention-ta__chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].text()).toBe('@{{node:n1}}')
+    expect(chips[0].classes()).not.toContain('is-broken')
+  })
+
+  it('AC-C4-2 断链占位符 chip 加 is-broken（黄）', () => {
+    const wrapper = mount(MentionTextarea, {
+      props: { modelValue: '@{{node:n1}}', candidates: cands, brokenMentions: ['@{{node:n1}}'] }
+    })
+    const chip = wrapper.find('.mention-ta__chip')
+    expect(chip.exists()).toBe(true)
+    expect(chip.classes()).toContain('is-broken')
+  })
+
+  it('AC-C4-3 纯文本无占位符 → 不产 chip', () => {
+    const wrapper = mount(MentionTextarea, {
+      props: { modelValue: '普通文本无引用', candidates: cands }
+    })
+    expect(wrapper.findAll('.mention-ta__chip')).toHaveLength(0)
+  })
+
+  it('AC-C4-4 多占位符逐个染色（断链与非断链混排）', () => {
+    const wrapper = mount(MentionTextarea, {
+      props: {
+        modelValue: '@{{node:n1}} 和 @{{asset:a1}}',
+        candidates: cands,
+        brokenMentions: ['@{{asset:a1}}']
+      }
+    })
+    const chips = wrapper.findAll('.mention-ta__chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].classes()).not.toContain('is-broken')
+    expect(chips[1].classes()).toContain('is-broken')
+  })
+})

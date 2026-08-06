@@ -43,6 +43,7 @@ function mkProject(id: number, role: 'OWNER' | 'EDITOR' | 'VIEWER'): AssetProjec
     description: 'desc',
     ownerId: 1,
     narrativeRoles: ['人物', '道具'],
+    mediaTypes: [{ key: 'PROMPT', category: 'TEXT' }],
     role,
     createdAt: '2026-08-05'
   }

@@ -174,15 +174,28 @@ class AssetServiceTest {
         AssetRoleLink l1 = roleLink(1L, "人物");
         AssetRoleLink l2 = roleLink(2L, "场景");
         when(roleLinkMapper.selectList(any())).thenReturn(List.of(l1, l2));
+        // C2：当前版本 fileId 批查（文件类卡片缩略图）
+        AssetVersion vv1 = new AssetVersion();
+        vv1.setAssetId(1L);
+        vv1.setVersion(1);
+        vv1.setFileId("fid-1");
+        AssetVersion vv2 = new AssetVersion();
+        vv2.setAssetId(2L);
+        vv2.setVersion(1);
+        vv2.setFileId("fid-2");
+        when(versionMapper.selectList(any())).thenReturn(List.of(vv1, vv2));
 
         PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
                 Asset.MEDIA_IMAGE, null, null, null, 1, 20);
 
         assertEquals(2, result.getRecords().size());
-        // 单次 IN 批查（防 N+1）
+        // 单次 IN 批查角色 + fileId（防 N+1）
         verify(roleLinkMapper).selectList(any());
+        verify(versionMapper).selectList(any());
         assertEquals(List.of("人物"), result.getRecords().get(0).getRoleKeys());
         assertEquals(List.of("场景"), result.getRecords().get(1).getRoleKeys());
+        assertEquals("fid-1", result.getRecords().get(0).getFileId());
+        assertEquals("fid-2", result.getRecords().get(1).getFileId());
     }
 
     @Test

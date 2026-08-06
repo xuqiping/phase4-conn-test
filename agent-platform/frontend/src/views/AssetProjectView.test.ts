@@ -34,6 +34,13 @@ function mkProject(role: 'OWNER' | 'EDITOR' | 'VIEWER'): AssetProjectVO {
     description: 'desc',
     ownerId: 1,
     narrativeRoles: ['人物', '道具', '场景'],
+    mediaTypes: [
+      { key: 'PROMPT', category: 'TEXT' },
+      { key: 'SCRIPT', category: 'TEXT' },
+      { key: 'IMAGE', category: 'IMAGE' },
+      { key: 'VIDEO', category: 'VIDEO' },
+      { key: 'AUDIO', category: 'AUDIO' }
+    ],
     role,
     createdAt: '2026-08-05'
   }

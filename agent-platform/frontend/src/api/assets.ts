@@ -114,7 +114,7 @@ export const assetApi = {
   upload(
     projectId: number,
     file: File,
-    mediaType: 'IMAGE' | 'VIDEO' | 'AUDIO',
+    mediaType: string,
     extra: { name?: string; description?: string; roleKeys?: string[] } = {}
   ) {
     const form = new FormData()

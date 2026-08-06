@@ -31,6 +31,38 @@
           <template v-else-if="asset.mediaType === 'AUDIO'">
             <audio v-if="previewUrl" :src="previewUrl" controls />
           </template>
+          <!-- C3 剧本：正文编辑 + AI 分场 + 分场列表 -->
+          <template v-else-if="asset.mediaType === 'SCRIPT'">
+            <div class="asset-detail__script">
+              <n-input
+                v-model:value="synopsis"
+                type="textarea"
+                :rows="6"
+                :maxlength="8000"
+                :readonly="!canEdit"
+                placeholder="剧本正文（≤8000 字）；EDITOR 可编辑，保存后点「AI 分场」"
+              />
+              <div v-if="canEdit" class="asset-detail__script-actions">
+                <n-button
+                  size="small"
+                  :loading="savingSynopsis"
+                  :disabled="!synopsisDirty"
+                  @click="saveSynopsis"
+                >
+                  保存正文
+                </n-button>
+                <n-button size="small" type="primary" :loading="breaking" @click="runBreakdown">
+                  AI 分场
+                </n-button>
+              </div>
+              <ScriptScenes v-if="scenes.length" :scenes="scenes" />
+              <n-empty
+                v-else-if="!breaking"
+                size="small"
+                description="未分场，点「AI 分场」拆分（3-10 场）"
+              />
+            </div>
+          </template>
           <template v-else>
             <pre class="asset-detail__text">{{ textPreview }}</pre>
           </template>
@@ -99,17 +131,19 @@ import {
   NDrawer,
   NDrawerContent,
   NEmpty,
+  NInput,
   NSpace,
   NSpin,
   NTag,
   useMessage
 } from 'naive-ui'
-import { assetApi, assetBridgeApi, versionApi } from '@/api/assets'
+import { assetApi, assetBridgeApi, versionApi, scriptApi } from '@/api/assets'
 import { fetchCanvasPreview } from '@/api/canvas'
 import request from '@/api/request'
 import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
 import VersionTimeline from '@/components/asset/VersionTimeline.vue'
-import type { AssetStatus, AssetMediaType, AssetUsageVO, AssetVO } from '@/types/asset'
+import ScriptScenes from '@/components/asset/ScriptScenes.vue'
+import type { AssetStatus, AssetMediaType, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
 
 const props = defineProps<{
   show: boolean
@@ -129,6 +163,15 @@ const asset = ref<AssetVO | null>(null)
 const usages = ref<AssetUsageVO[]>([])
 const loading = ref(false)
 const previewUrl = ref<string | null>(null)
+
+/** C3 剧本：正文草稿 + content 对象 + 分场列表 + 保存/分场态。 */
+const synopsis = ref('')
+const contentObj = ref<Record<string, unknown>>({})
+const scenes = ref<SceneVO[]>([])
+const originalSynopsis = ref('')
+const savingSynopsis = ref(false)
+const breaking = ref(false)
+const synopsisDirty = computed(() => synopsis.value !== originalSynopsis.value)
 
 const drawerWidth = computed(() => (window.innerWidth < 768 ? '100%' : 520))
 
@@ -196,6 +239,10 @@ async function loadAll(id: number) {
     const [assetRes, usagesRes] = await Promise.all([assetApi.get(id), assetBridgeApi.usages(id)])
     asset.value = assetRes.data.data
     usages.value = usagesRes.data.data || []
+    // C3 剧本：解析 content → 正文草稿 + 分场列表
+    if (asset.value?.mediaType === 'SCRIPT') {
+      parseScriptContent(asset.value.content)
+    }
     // 文件类拉预览 objectURL
     if (asset.value?.fileId && ['IMAGE', 'VIDEO', 'AUDIO'].includes(asset.value.mediaType)) {
       try {
@@ -219,6 +266,63 @@ function revokePreview() {
   }
 }
 
+/** C3 解析剧本 content（{synopsis, scenes?}）→ 同步正文草稿 + 分场列表。旧态非 JSON 当 synopsis。 */
+function parseScriptContent(raw: string | null | undefined) {
+  let obj: Record<string, unknown> = {}
+  if (raw) {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      obj = { synopsis: raw }
+    }
+  }
+  contentObj.value = obj
+  const syn = typeof obj.synopsis === 'string' ? obj.synopsis : ''
+  synopsis.value = syn
+  originalSynopsis.value = syn
+  scenes.value = Array.isArray(obj.scenes) ? (obj.scenes as SceneVO[]) : []
+}
+
+/** C3 保存剧本正文 → versionApi.create 写新版本（同步 asset.content，breakdown 即可读最新）。 */
+async function saveSynopsis() {
+  if (!asset.value) return
+  savingSynopsis.value = true
+  try {
+    const next = { ...contentObj.value, synopsis: synopsis.value.trim() }
+    await versionApi.create(asset.value.id, {
+      content: JSON.stringify(next),
+      changeNote: '编辑剧本正文'
+    })
+    message.success('正文已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存正文失败')
+  } finally {
+    savingSynopsis.value = false
+  }
+}
+
+/** C3 AI 分场 → scriptApi.breakdown（读 asset.content.synopsis，产 scenes 新版本）。 */
+async function runBreakdown() {
+  if (!asset.value) return
+  if (synopsisDirty.value) {
+    message.warning('正文有未保存改动，请先点「保存正文」')
+    return
+  }
+  breaking.value = true
+  try {
+    await scriptApi.breakdown(asset.value.id)
+    message.success('分场完成')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('分场失败（剧本过长 / LLM 异常）')
+  } finally {
+    breaking.value = false
+  }
+}
+
 /** 状态机动作分发（L2 定稿/解锁；L3 归档/取消归档） */
 async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
   if (!asset.value) return
@@ -231,6 +335,10 @@ async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
       if (next.fileId == null && asset.value.fileId != null) next.fileId = asset.value.fileId
     }
     asset.value = next
+    // C3 状态机动作后 content 可能被 meta-only 响应覆盖，重解析剧本正文
+    if (asset.value?.mediaType === 'SCRIPT') {
+      parseScriptContent(asset.value.content)
+    }
     message.success('操作成功')
     emit('changed', asset.value.id)
   } catch {
@@ -256,7 +364,7 @@ async function download() {
   }
 }
 
-defineExpose({ asset, usages, loading, doAction, download, loadAll })
+defineExpose({ asset, usages, loading, synopsis, scenes, doAction, download, loadAll, saveSynopsis, runBreakdown, parseScriptContent })
 
 /** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
 async function onConsistencySaved(assetId: number) {
@@ -304,6 +412,19 @@ async function onConsistencySaved(assetId: number) {
     color: var(--color-text-secondary);
     max-height: 320px;
     overflow: auto;
+  }
+
+  &__script {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    text-align: left;
+  }
+
+  &__script-actions {
+    display: flex;
+    gap: var(--spacing-2);
   }
 
   &__actions {

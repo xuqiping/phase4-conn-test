@@ -1,12 +1,12 @@
 <template>
-  <CanvasNodeBase kind="image" kind-label="图片" :status="data.status" :selected="selected" :asset-badge="assetBadge">
+  <CanvasNodeBase kind="image" kind-label="图片" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><ImageOutline /></template>
     <div v-if="data.previewUrl" class="image-node__thumb">
       <img :src="data.previewUrl" alt="节点图" />
     </div>
     <div v-else class="image-node__empty">
       <n-icon :component="ImageOutline" size="22" />
-      <span>{{ data.label || '上传或衍生图片' }}</span>
+      <span>上传或衍生图片</span>
     </div>
   </CanvasNodeBase>
 </template>

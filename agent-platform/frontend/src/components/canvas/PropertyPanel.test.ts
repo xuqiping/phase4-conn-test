@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
 import type { CanvasNode } from '@/types/canvas'
+
+vi.mock('@/api/llm', () => ({
+  llmApi: {
+    listAvailableModels: vi.fn().mockResolvedValue({
+      data: { data: [{ modelId: 'm1', displayName: 'M1', providerName: 'ChatProvider', source: 'global' }] }
+    }),
+    listVideoModels: vi.fn().mockResolvedValue({
+      data: { data: [{ modelId: 'seedance', displayName: 'Seedance', providerName: 'Ark', source: 'global' }] }
+    })
+  }
+}))
 
 function mkNode(data: Record<string, unknown>): CanvasNode {
   return { id: 'node-1', type: 'text', position: { x: 0, y: 0 }, data: { label: 'n', ...data } }
@@ -124,5 +135,28 @@ describe('PropertyPanel (S13 @引用 / 重命名查重)', () => {
     node.type = 'video'
     const wrapper = mount(PropertyPanel, { props: { node } })
     expect(wrapper.findComponent({ name: 'MentionTextarea' }).exists()).toBe(true)
+  })
+})
+
+// AC-C5：节点选模型（text/script=chat 模型；video=MEDIA 视频模型）
+describe('PropertyPanel C5 节点选模型', () => {
+  it('AC-C5-1 文本节点渲染「模型」下拉', () => {
+    const wrapper = mount(PropertyPanel, { props: { node: mkNode({ prompt: 'p' }) } })
+    const labels = wrapper.findAll('label').map(l => l.text())
+    expect(labels).toContain('模型')
+  })
+
+  it('AC-C5-2 脚本节点渲染「模型」下拉', () => {
+    const node = mkNode({ synopsis: '剧本' })
+    node.type = 'script'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    expect(wrapper.findAll('label').map(l => l.text())).toContain('模型')
+  })
+
+  it('AC-C5-3 视频节点渲染「视频模型」下拉', () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    expect(wrapper.findAll('label').map(l => l.text())).toContain('视频模型')
   })
 })

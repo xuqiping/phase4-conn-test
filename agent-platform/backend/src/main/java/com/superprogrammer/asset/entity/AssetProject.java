@@ -11,7 +11,7 @@ import lombok.EqualsAndHashCode;
  * 项目资产库·项目（asset_projects，V56）。
  *
  * <p>项目是资产的唯一命名空间与授权边界（设计方案 §二）。双轴矩阵的容器：
- * 五类资产 × 叙事角色（{@link #narrativeRoles} 受控词汇桶）。
+ * 媒体类型（{@link #mediaTypes} 受控词汇 {key,category}）× 叙事角色（{@link #narrativeRoles} 受控词汇桶）。
  *
  * <p>授权：{@link #ownerId} = 唯一所有者；非 owner 成员走 asset_project_members（V58）。
  * 权限咽喉点 {@code AssetAclService.loadAccessible} 三判（owner/member/admin）。
@@ -41,4 +41,11 @@ public class AssetProject extends BaseEntity {
      */
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String narrativeRoles;
+
+    /**
+     * 媒体类型受控词汇桶 JSON 数组（V60，默认 5 项 {key,category}），由 owner/editor 维护。
+     * key=类型标签（可自定义），category=TEXT/IMAGE/VIDEO/AUDIO 决定处理链路。防标签腐烂（同 narrativeRoles）。
+     */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String mediaTypes;
 }

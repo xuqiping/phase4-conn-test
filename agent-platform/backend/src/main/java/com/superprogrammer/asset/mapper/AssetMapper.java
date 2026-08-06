@@ -38,6 +38,12 @@ public interface AssetMapper extends BaseMapper<Asset> {
     List<MatrixCountVO.Cell> countByType(@Param("projectId") Long projectId);
 
     /**
+     * 项目内某 media_type 的资产数（V60 §C1b：删 type 时判迁移数 / 阻删依据）。
+     */
+    @Select("SELECT COUNT(*) FROM assets WHERE project_id = #{projectId} AND media_type = #{mediaType} AND deleted = 0")
+    long countByMediaType(@Param("projectId") Long projectId, @Param("mediaType") String mediaType);
+
+    /**
      * 乐观锁并发建版（plan §S5 坑点预判：两人同时提交版本号撞车）。
      * 当前版本号匹配才 +1，受影响行数=0 即并发冲突。
      * 原生 SQL 绕过 MP 行版本锁（current_version 是域版本号，与 BaseEntity.version 不同）。
@@ -72,4 +78,15 @@ public interface AssetMapper extends BaseMapper<Asset> {
     int updateGenMeta(@Param("assetId") Long assetId,
                       @Param("genMeta") String genMeta,
                       @Param("userId") Long userId);
+
+    /**
+     * 媒体类型迁移（V60 §C1b L10'）：删某 media_type 时，该 type 下资产批量改挂到同 category 的另一 type。
+     * 原生 SQL 批量 UPDATE（避免逐行 + 触发审计列）。受影响行数=迁移资产数。
+     */
+    @Update("UPDATE assets SET media_type = #{newType}, updated_at = NOW(), updated_by = #{userId} "
+            + "WHERE project_id = #{projectId} AND media_type = #{oldType} AND deleted = 0")
+    int reassignMediaType(@Param("projectId") Long projectId,
+                          @Param("oldType") String oldType,
+                          @Param("newType") String newType,
+                          @Param("userId") Long userId);
 }

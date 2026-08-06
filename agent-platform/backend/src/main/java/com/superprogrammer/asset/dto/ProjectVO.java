@@ -24,6 +24,8 @@ public class ProjectVO {
     private Long ownerId;
     /** 叙事角色受控词汇桶（解析后的数组，前端矩阵渲染）。 */
     private List<String> narrativeRoles;
+    /** 媒体类型受控词汇桶（V60，{key,category}；前端顶栏/上传/新建下拉同源）。 */
+    private List<MediaTypeDef> mediaTypes;
     /** 当前用户在本项目的角色。 */
     private AssetRole role;
     private OffsetDateTime createdAt;

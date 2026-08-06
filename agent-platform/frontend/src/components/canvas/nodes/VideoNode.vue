@@ -1,5 +1,5 @@
 <template>
-  <CanvasNodeBase kind="video" kind-label="视频" :status="data.status" :selected="selected" :asset-badge="assetBadge">
+  <CanvasNodeBase kind="video" kind-label="视频" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><VideocamOutline /></template>
     <video
       v-if="data.previewUrl"

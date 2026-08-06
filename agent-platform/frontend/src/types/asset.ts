@@ -3,8 +3,20 @@
 // 设计方案 §二/§三/§五/§六/§七/§八；plan §S1-S13
 // ============================================================
 
-/** 轴A 内容类型（固定五类，设计 §二）。 */
-export type AssetMediaType = 'PROMPT' | 'SCRIPT' | 'IMAGE' | 'VIDEO' | 'AUDIO'
+/** 轴A 媒体类型标签（项目受控词汇 key，可自定义；V60 前固定五类，现可扩展如「地图」）。 */
+export type AssetMediaType = string
+
+/** 默认媒体类型 key（V60 受控词汇默认五项，label/图标兜底用）。 */
+export const DEFAULT_MEDIA_TYPES = ['PROMPT', 'SCRIPT', 'IMAGE', 'VIDEO', 'AUDIO'] as const
+
+/** 处理类别（系统固定四类，V60 §C1b；决定编辑器/mime/预览/gen_meta 链路）。 */
+export type MediaCategory = 'TEXT' | 'IMAGE' | 'VIDEO' | 'AUDIO'
+
+/** 媒体类型受控词汇项 {key,category}（V60 两层设计）。 */
+export interface MediaTypeDef {
+  key: string
+  category: MediaCategory
+}
 
 /** 生命周期状态机（设计 §六）：草稿→已定稿→归档。 */
 export type AssetStatus = 'DRAFT' | 'LOCKED' | 'ARCHIVED'
@@ -26,6 +38,8 @@ export interface AssetProjectVO {
   ownerId: number
   /** 叙事角色受控词汇桶（数组）。 */
   narrativeRoles: string[]
+  /** 媒体类型受控词汇桶（V60，{key,category}）。 */
+  mediaTypes: MediaTypeDef[]
   role: ProjectRole
   createdAt: string
   updatedAt?: string
@@ -42,6 +56,8 @@ export interface ProjectUpdateRequest {
   description?: string
   /** null=不改；数组=覆盖；删桶联动 L10。 */
   narrativeRoles?: string[] | null
+  /** null=不改；数组=覆盖；删 type 联动同 category 迁移（V60）。 */
+  mediaTypes?: MediaTypeDef[] | null
   coverFileId?: string | null
 }
 
@@ -76,6 +92,8 @@ export interface AssetVO {
   id: number
   projectId: number
   mediaType: AssetMediaType
+  /** 处理类别（V60 TEXT/IMAGE/VIDEO/AUDIO；前端编辑器/预览据此分流）。 */
+  mediaCategory?: MediaCategory
   name: string
   description?: string
   tags?: string[]
@@ -95,7 +113,8 @@ export interface AssetVO {
 }
 
 export interface AssetCreateRequest {
-  mediaType: 'PROMPT' | 'SCRIPT'
+  /** 文本类（TEXT 类别）媒体类型 key（默认 PROMPT/SCRIPT，可自定义 TEXT 类型）。 */
+  mediaType: AssetMediaType
   name: string
   description?: string
   tags?: string[]

@@ -1,8 +1,8 @@
 <template>
-  <CanvasNodeBase kind="text" kind-label="文本" :status="data.status" :selected="selected" :asset-badge="assetBadge">
+  <CanvasNodeBase kind="text" kind-label="文本" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><DocumentTextOutline /></template>
     <div v-if="data.outputText" class="text-node__output">{{ data.outputText }}</div>
-    <div v-else class="text-node__prompt">{{ data.prompt || data.label || '双击右侧面板编辑提示词' }}</div>
+    <div v-else class="text-node__prompt">{{ data.prompt || '双击右侧面板编辑提示词' }}</div>
   </CanvasNodeBase>
 </template>
 

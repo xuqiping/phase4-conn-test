@@ -10,6 +10,7 @@ import com.superprogrammer.asset.dto.AssetCreateRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.MatrixCountVO;
+import com.superprogrammer.asset.dto.MediaTypeDef;
 import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetRoleLink;
@@ -76,15 +77,19 @@ public class AssetService {
     private final FileStorageService fileStorageService;
     private final AssetVersionService versionService;
 
-    /** 新建文本类资产（PROMPT/SCRIPT）+ 版本 1。文件类经上传端点。 */
+    /** 新建文本类资产（TEXT 类别：PROMPT/SCRIPT 或自定义 TEXT 类型）+ 版本 1。文件类经上传端点。 */
     @Transactional
     public AssetVO create(Long projectId, Long userId, boolean admin, AssetCreateRequest req) {
         aclService.requireWrite(projectId, userId, admin);
-        validateMediaType(req.getMediaType(), true);
+        String category = resolveCategory(projectId, req.getMediaType());
+        if (!isTextCategory(category)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "新建仅支持文本类（TEXT 类别）资产，文件类请用上传");
+        }
         String name = validateName(req.getName());
         Asset asset = new Asset();
         asset.setProjectId(projectId);
         asset.setMediaType(req.getMediaType());
+        asset.setMediaCategory(category);
         asset.setName(name);
         asset.setDescription(req.getDescription());
         asset.setStatus(Asset.STATUS_DRAFT);
@@ -92,7 +97,7 @@ public class AssetService {
         asset.setCurrentVersion(1);
         // 文本类正文必填 + 须为合法 JSON（content 列为 JSONB，防非 JSON 客户端直传撑爆 → 500）
         String content = req.getContent();
-        if (isTextType(req.getMediaType())) {
+        if (isTextCategory(category)) {
             if (content == null || content.isBlank()) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "文本类资产正文不能为空");
             }
@@ -126,14 +131,14 @@ public class AssetService {
     public AssetVO upload(Long projectId, Long userId, boolean admin, MultipartFile file,
                           String mediaType, String name, String description, List<String> roleKeys) {
         aclService.requireWrite(projectId, userId, admin);
-        validateMediaType(mediaType, false);
-        if (!isFileType(mediaType)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "上传仅支持图片/视频/音频类资产");
+        String category = resolveCategory(projectId, mediaType);
+        if (!isFileCategory(category)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "上传仅支持图片/视频/音频类（IMAGE/VIDEO/AUDIO 类别）资产");
         }
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "上传文件不能为空");
         }
-        validateFileMime(mediaType, file.getContentType());
+        validateFileMime(category, file.getContentType());
         // 落盘 + 登记 owner（SOURCE_ASSET）
         StoredFile stored = fileStorageService.store(file, userId, StoredFileEntity.SOURCE_ASSET);
         // 名称：缺省用原始文件名
@@ -141,13 +146,14 @@ public class AssetService {
         Asset asset = new Asset();
         asset.setProjectId(projectId);
         asset.setMediaType(mediaType);
+        asset.setMediaCategory(category);
         asset.setName(safeName);
         asset.setDescription(description);
         asset.setStatus(Asset.STATUS_DRAFT);
         asset.setTags("[]");
         asset.setContent("{}");
         asset.setCurrentVersion(1);
-        asset.setGenMeta(buildUploadGenMeta(mediaType, stored, file));
+        asset.setGenMeta(buildUploadGenMeta(category, stored, file));
         assetMapper.insert(asset);
         // 版本 1（带 file_id）
         AssetVersion v1 = new AssetVersion();
@@ -174,7 +180,7 @@ public class AssetService {
         LambdaQueryWrapper<Asset> w = new LambdaQueryWrapper<>();
         w.eq(Asset::getProjectId, projectId);
         if (mediaType != null && !mediaType.isBlank()) {
-            validateMediaType(mediaType, false);
+            resolveCategory(projectId, mediaType);
             w.eq(Asset::getMediaType, mediaType);
         }
         if (status != null && !status.isBlank()) {
@@ -386,18 +392,49 @@ public class AssetService {
 
     // ---------- 批查组装（防 N+1） ----------
 
-    /** 列表批量组装角色（单次 IN 查询，内存分组）。 */
+    /**
+     * 列表批量组装角色 + 当前版本 fileId（单次 IN 查询，内存分组，防 N+1）。
+     *
+     * <p>fileId 供前端卡片缩略图懒加载（C2）：仅文件类资产（IMAGE/VIDEO/AUDIO）版本有值；
+     * 列表态省 content，fileId 单独返省流量。文本类版本 fileId=null，VO.fileId 留空。
+     */
     private List<AssetVO> assembleRoles(List<Asset> assets, boolean withContent) {
         if (assets.isEmpty()) {
             return Collections.emptyList();
         }
         List<Long> ids = assets.stream().map(Asset::getId).collect(Collectors.toList());
         Map<Long, List<String>> roleMap = rolesOf(ids);
+        Map<Long, String> fileIdMap = currentFileIdsOf(assets, ids);
         return assets.stream().map(a -> {
             AssetVO vo = toVO(a, withContent);
             vo.setRoleKeys(roleMap.getOrDefault(a.getId(), Collections.emptyList()));
+            vo.setFileId(fileIdMap.get(a.getId()));
             return vo;
         }).collect(Collectors.toList());
+    }
+
+    /**
+     * 批量取当前版本 fileId：单次 IN 查 asset_versions，内存按 (assetId,currentVersion) 过滤
+     * （防 N+1；列表分页 size≤20，版本历史小，全量取回后过滤可接受）。
+     */
+    private Map<Long, String> currentFileIdsOf(List<Asset> assets, List<Long> ids) {
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, Integer> curVer = assets.stream()
+                .collect(Collectors.toMap(Asset::getId, Asset::getCurrentVersion, (a, b) -> a));
+        List<AssetVersion> versions = versionMapper.selectList(new LambdaQueryWrapper<AssetVersion>()
+                .in(AssetVersion::getAssetId, ids));
+        if (versions == null) {
+            return Collections.emptyMap();
+        }
+        Map<Long, String> m = new java.util.HashMap<>();
+        for (AssetVersion v : versions) {
+            if (curVer.get(v.getAssetId()) != null && curVer.get(v.getAssetId()).equals(v.getVersion())) {
+                m.put(v.getAssetId(), v.getFileId());
+            }
+        }
+        return m;
     }
 
     /** 批量查角色：单次 IN，内存分组（防 N+1，plan 坑点预判）。 */
@@ -413,13 +450,20 @@ public class AssetService {
 
     // ---------- 校验/序列化/VO ----------
 
-    private void validateMediaType(String mediaType, boolean forCreate) {
-        if (mediaType == null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "内容类型不能为空");
+    /**
+     * 解析媒体类型→处理类别，并校验该 type 在项目受控词汇内（V60 §C1b）。
+     * 命中 vocab 返其 category；不在受控词汇 → 400（仿 syncRoleLinks 受控词汇校验，单一事实源）。
+     */
+    private String resolveCategory(Long projectId, String mediaType) {
+        if (mediaType == null || mediaType.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "媒体类型不能为空");
         }
-        if (!isTextType(mediaType) && !isFileType(mediaType)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "非法内容类型：" + mediaType);
+        Map<String, MediaTypeDef> vocab = loadMediaTypeVocab(projectId);
+        MediaTypeDef def = vocab.get(mediaType.trim());
+        if (def == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "媒体类型「" + mediaType + "」不在项目受控词汇内");
         }
+        return def.getCategory();
     }
 
     /** content 须为合法 JSON（content 列为 JSONB；防非 JSON 直传 → DB 500，前置 400）。 */
@@ -431,41 +475,43 @@ public class AssetService {
         }
     }
 
-    private boolean isTextType(String mediaType) {
-        return Asset.MEDIA_PROMPT.equals(mediaType) || Asset.MEDIA_SCRIPT.equals(mediaType);
+    private boolean isTextCategory(String category) {
+        return Asset.CATEGORY_TEXT.equals(category);
     }
 
-    private boolean isFileType(String mediaType) {
-        return Asset.MEDIA_IMAGE.equals(mediaType) || Asset.MEDIA_VIDEO.equals(mediaType) || Asset.MEDIA_AUDIO.equals(mediaType);
+    private boolean isFileCategory(String category) {
+        return Asset.CATEGORY_IMAGE.equals(category)
+                || Asset.CATEGORY_VIDEO.equals(category)
+                || Asset.CATEGORY_AUDIO.equals(category);
     }
 
-    /** 类型↔资产类型匹配校验（mp4 不可入图片资产，安全清单）。 */
-    private void validateFileMime(String mediaType, String mime) {
+    /** category↔MIME 匹配校验（mp4 不可入 IMAGE 类别，安全清单；V60 按 category 而非 type）。 */
+    private void validateFileMime(String category, String mime) {
         String m = mime == null ? "" : mime.toLowerCase();
-        boolean ok = switch (mediaType) {
-            case Asset.MEDIA_IMAGE -> m.startsWith("image/");
-            case Asset.MEDIA_VIDEO -> m.startsWith("video/");
-            case Asset.MEDIA_AUDIO -> m.startsWith("audio/");
+        boolean ok = switch (category) {
+            case Asset.CATEGORY_IMAGE -> m.startsWith("image/");
+            case Asset.CATEGORY_VIDEO -> m.startsWith("video/");
+            case Asset.CATEGORY_AUDIO -> m.startsWith("audio/");
             default -> false;
         };
         if (!ok) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "文件类型与资产类型不匹配：" + mediaType + " 需对应 MIME 前缀");
+                    "文件类型与处理类别不匹配：" + category + " 需对应 MIME 前缀");
         }
     }
 
     /**
      * 构造上传生成谱系 JSON（含技术元数据）。
-     * 图片：JDK ImageIO 同步读宽高；视频/音频：时长/分辨率懒提取（javacv，MVP 仅记基础信息，TODO 后续补）。
+     * IMAGE 类别：JDK ImageIO 同步读宽高；VIDEO/AUDIO：时长/分辨率懒提取（javacv，MVP 仅记基础信息，TODO 后续补）。
      */
-    private String buildUploadGenMeta(String mediaType, StoredFile stored, MultipartFile file) {
+    private String buildUploadGenMeta(String category, StoredFile stored, MultipartFile file) {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             ObjectNode upload = root.putObject("upload");
             upload.put("originalName", stored.name());
             upload.put("mime", stored.mimeType());
             upload.put("size", stored.size());
-            if (Asset.MEDIA_IMAGE.equals(mediaType)) {
+            if (Asset.CATEGORY_IMAGE.equals(category)) {
                 int[] dims = readImageDims(file);
                 if (dims != null) {
                     ObjectNode img = root.putObject("image");
@@ -524,6 +570,32 @@ public class AssetService {
         }
     }
 
+    /** 加载项目媒体类型受控词汇 → key→def 映射（V60 §C1b，受控校验单一事实源）。 */
+    private Map<String, MediaTypeDef> loadMediaTypeVocab(Long projectId) {
+        AssetProject p = projectMapper.selectById(projectId);
+        List<MediaTypeDef> types;
+        if (p == null || p.getMediaTypes() == null || p.getMediaTypes().isBlank()) {
+            types = new ArrayList<>(AssetProjectService.DEFAULT_MEDIA_TYPES);
+        } else {
+            try {
+                types = objectMapper.readValue(p.getMediaTypes(), new TypeReference<List<MediaTypeDef>>() {});
+                if (types == null || types.isEmpty()) {
+                    types = new ArrayList<>(AssetProjectService.DEFAULT_MEDIA_TYPES);
+                }
+            } catch (Exception e) {
+                log.warn("parse mediaTypes failed projectId={}: {}", projectId, e.getMessage());
+                types = new ArrayList<>(AssetProjectService.DEFAULT_MEDIA_TYPES);
+            }
+        }
+        Map<String, MediaTypeDef> m = new java.util.LinkedHashMap<>();
+        for (MediaTypeDef t : types) {
+            if (t != null && t.getKey() != null) {
+                m.put(t.getKey(), t);
+            }
+        }
+        return m;
+    }
+
     private String serializeList(List<String> list) {
         try {
             return objectMapper.writeValueAsString(list == null ? Collections.emptyList() : list);
@@ -553,6 +625,7 @@ public class AssetService {
                 .id(a.getId())
                 .projectId(a.getProjectId())
                 .mediaType(a.getMediaType())
+                .mediaCategory(a.getMediaCategory())
                 .name(a.getName())
                 .description(a.getDescription())
                 .tags(tags)

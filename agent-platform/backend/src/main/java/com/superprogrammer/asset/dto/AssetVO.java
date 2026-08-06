@@ -19,6 +19,8 @@ public class AssetVO {
     private Long id;
     private Long projectId;
     private String mediaType;
+    /** 处理类别（V60 TEXT/IMAGE/VIDEO/AUDIO；决定前端编辑器/预览链路）。 */
+    private String mediaCategory;
     private String name;
     private String description;
     private List<String> tags;
