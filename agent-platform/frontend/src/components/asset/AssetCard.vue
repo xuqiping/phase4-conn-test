@@ -54,6 +54,7 @@
 import { computed, ref } from 'vue'
 import { NTag } from 'naive-ui'
 import type { AssetMediaType, AssetStatus, AssetVO } from '@/types/asset'
+import { MEDIA_TYPE } from '@/types/asset'
 import { useLazyFilePreview } from '@/composables/useLazyFilePreview'
 
 const props = defineProps<{ asset: AssetVO }>()
@@ -65,32 +66,25 @@ const STATUS_TYPE: Record<AssetStatus, 'default' | 'success' | 'warning'> = {
   LOCKED: 'success',
   ARCHIVED: 'warning'
 }
-const MEDIA_LABEL: Record<AssetMediaType, string> = {
-  PROMPT: '提示词',
-  SCRIPT: '剧本',
-  IMAGE: '图片',
-  VIDEO: '视频',
-  AUDIO: '音频'
-}
 const MEDIA_ICON: Record<AssetMediaType, string> = {
-  PROMPT: '📝',
-  SCRIPT: '🎬',
-  IMAGE: '🖼️',
-  VIDEO: '🎞️',
-  AUDIO: '🎵'
+  [MEDIA_TYPE.PROMPT]: '📝',
+  [MEDIA_TYPE.SCRIPT]: '🎬',
+  [MEDIA_TYPE.IMAGE]: '🖼️',
+  [MEDIA_TYPE.VIDEO]: '🎞️',
+  [MEDIA_TYPE.AUDIO]: '🎵'
 }
 
 /** 媒体类型→处理类别 兜底推断（asset 无 mediaCategory 时按默认 key 推断；V60 两层）。 */
 function inferCategoryFromType(type: string): string {
   switch (type) {
-    case 'PROMPT':
-    case 'SCRIPT':
+    case MEDIA_TYPE.PROMPT:
+    case MEDIA_TYPE.SCRIPT:
       return 'text'
-    case 'IMAGE':
+    case MEDIA_TYPE.IMAGE:
       return 'image'
-    case 'VIDEO':
+    case MEDIA_TYPE.VIDEO:
       return 'video'
-    case 'AUDIO':
+    case MEDIA_TYPE.AUDIO:
       return 'audio'
     default:
       return 'text'
@@ -111,7 +105,7 @@ const CATEGORY_ICON: Record<string, string> = { text: '📝', image: '🖼️', 
 const icon = computed(() => MEDIA_ICON[props.asset.mediaType] ?? CATEGORY_ICON[effectiveCategory.value] ?? '📄')
 
 /** 类型标签：默认 5 类有中文，自定义 type 显原文 key。 */
-const typeLabel = computed(() => MEDIA_LABEL[props.asset.mediaType] ?? props.asset.mediaType)
+const typeLabel = computed(() => props.asset.mediaType)
 
 /** 叙事角色徽标最多展示 3 个，超出聚合计数（防溢出） */
 const MAX_ROLES = 3

@@ -28,12 +28,12 @@ import lombok.EqualsAndHashCode;
 @TableName(value = "assets", autoResultMap = true)
 public class Asset extends BaseEntity {
 
-    /** 媒介类型枚举常量（轴A 标签，默认五类，项目可扩展自定义 key）。 */
-    public static final String MEDIA_PROMPT = "PROMPT";
-    public static final String MEDIA_SCRIPT = "SCRIPT";
-    public static final String MEDIA_IMAGE = "IMAGE";
-    public static final String MEDIA_VIDEO = "VIDEO";
-    public static final String MEDIA_AUDIO = "AUDIO";
+    /** 媒介类型枚举常量（轴A 标签，默认五类中文 key，项目可扩展自定义 key）。 */
+    public static final String MEDIA_PROMPT = "提示词";
+    public static final String MEDIA_SCRIPT = "剧本";
+    public static final String MEDIA_IMAGE = "图片";
+    public static final String MEDIA_VIDEO = "视频";
+    public static final String MEDIA_AUDIO = "音频";
 
     /** 处理类别常量（系统固定四类，V60，决定编辑器/mime/预览/gen_meta/画布映射链路）。 */
     public static final String CATEGORY_TEXT = "TEXT";

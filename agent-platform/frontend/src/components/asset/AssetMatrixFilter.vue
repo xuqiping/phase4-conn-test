@@ -92,16 +92,9 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: AssetFilter): void }>()
 const activeType = computed(() => props.modelValue.type ?? '')
 const activeRole = computed(() => props.modelValue.role ?? '')
 
-/** 默认 key 中文标签兜底（自定义 key 显原文）。 */
-const DEFAULT_TYPE_LABEL: Record<string, string> = {
-  PROMPT: '提示词',
-  SCRIPT: '剧本',
-  IMAGE: '图片',
-  VIDEO: '视频',
-  AUDIO: '音频'
-}
+/** 媒体类型标签（key 本身即中文显示名，自定义 key 显原文）。 */
 function labelFor(key: string): string {
-  return DEFAULT_TYPE_LABEL[key] ?? key
+  return key
 }
 
 /** 顶栏类型分段：全部 + 项目受控词汇（V60 从 mediaTypes 派生）。 */

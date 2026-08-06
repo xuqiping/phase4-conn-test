@@ -79,13 +79,13 @@ const emit = defineEmits<{
 
 const message = useMessage()
 
-/** 节点类型 → 资产内容类型（与后端 mapMediaType 对齐，决定列表过滤）。 */
+/** 节点类型 → 资产内容类型（与后端 mapNodeType 对齐，决定列表过滤）。 */
 const NODE_TO_MEDIA: Record<string, AssetMediaType> = {
-  text: 'PROMPT',
-  script: 'SCRIPT',
-  image: 'IMAGE',
-  video: 'VIDEO',
-  audio: 'AUDIO'
+  text: '提示词',
+  script: '剧本',
+  image: '图片',
+  video: '视频',
+  audio: '音频'
 }
 const KIND_LABEL: Record<string, string> = {
   text: '提示词', script: '剧本', image: '图片', video: '视频', audio: '音频'

@@ -33,7 +33,8 @@ function mkAsset(over: Partial<AssetVO> = {}): AssetVO {
   return {
     id: 1,
     projectId: 7,
-    mediaType: 'IMAGE',
+    mediaType: '图片',
+    mediaCategory: 'IMAGE',
     name: '老板娘定妆',
     description: '主参考图',
     tags: [],
@@ -99,7 +100,7 @@ describe('AssetCard (S11)', () => {
 
   it('VIDEO 进入视口渲 <video>（C2）', async () => {
     const wrapper = mount(AssetCard, {
-      props: { asset: mkAsset({ mediaType: 'VIDEO', mediaCategory: 'VIDEO', fileId: 'vid-1' }) }
+      props: { asset: mkAsset({ mediaType: '视频', mediaCategory: 'VIDEO', fileId: 'vid-1' }) }
     })
     await flushPromises()
     intersect(true)

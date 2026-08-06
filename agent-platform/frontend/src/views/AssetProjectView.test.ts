@@ -35,11 +35,11 @@ function mkProject(role: 'OWNER' | 'EDITOR' | 'VIEWER'): AssetProjectVO {
     ownerId: 1,
     narrativeRoles: ['人物', '道具', '场景'],
     mediaTypes: [
-      { key: 'PROMPT', category: 'TEXT' },
-      { key: 'SCRIPT', category: 'TEXT' },
-      { key: 'IMAGE', category: 'IMAGE' },
-      { key: 'VIDEO', category: 'VIDEO' },
-      { key: 'AUDIO', category: 'AUDIO' }
+      { key: '提示词', category: 'TEXT' },
+      { key: '剧本', category: 'TEXT' },
+      { key: '图片', category: 'IMAGE' },
+      { key: '视频', category: 'VIDEO' },
+      { key: '音频', category: 'AUDIO' }
     ],
     role,
     createdAt: '2026-08-05'
@@ -50,7 +50,7 @@ function mkAsset(id: number, over: Partial<AssetVO> = {}): AssetVO {
   return {
     id,
     projectId: 7,
-    mediaType: 'IMAGE',
+    mediaType: '图片',
     name: `资产${id}`,
     description: '',
     tags: [],
@@ -142,19 +142,19 @@ describe('AssetProjectView (S11 项目详情页)', () => {
     const wrapper = await mountView(['asset:write'])
     const vm = wrapper.vm as unknown as {
       openCreate: () => void
-      form: { mediaType: 'PROMPT' | 'SCRIPT'; name: string; description: string; content: string; roleKeys: string[] }
+      form: { mediaType: '提示词' | '剧本'; name: string; description: string; content: string; roleKeys: string[] }
       submitCreate: () => Promise<void>
     }
     vm.openCreate()
-    vm.form.mediaType = 'PROMPT'
+    vm.form.mediaType = '提示词'
     vm.form.name = '人物提示词'
     vm.form.content = '一位老板娘'
     vm.form.roleKeys = ['人物']
     await vm.submitCreate()
-    // 正文按类型包规范 JSON（PROMPT→{body}，SCRIPT→{synopsis}），后端 content 为 JSONB
+    // 正文按类型包规范 JSON（提示词→{body}，剧本→{synopsis}），后端 content 为 JSONB
     expect(assetApi.create).toHaveBeenCalledWith(
       7,
-      expect.objectContaining({ mediaType: 'PROMPT', name: '人物提示词', content: '{"body":"一位老板娘"}', roleKeys: ['人物'] })
+      expect.objectContaining({ mediaType: '提示词', name: '人物提示词', content: '{"body":"一位老板娘"}', roleKeys: ['人物'] })
     )
   })
 
@@ -162,37 +162,37 @@ describe('AssetProjectView (S11 项目详情页)', () => {
     const wrapper = await mountView(['asset:write'])
     const vm = wrapper.vm as unknown as {
       openCreate: () => void
-      form: { mediaType: 'PROMPT' | 'SCRIPT'; name: string; description: string; content: string; roleKeys: string[] }
+      form: { mediaType: '提示词' | '剧本'; name: string; description: string; content: string; roleKeys: string[] }
       submitCreate: () => Promise<void>
     }
     vm.openCreate()
-    vm.form.mediaType = 'SCRIPT'
+    vm.form.mediaType = '剧本'
     vm.form.name = '分场剧本'
     vm.form.content = '第一场：庭院'
     await vm.submitCreate()
     expect(assetApi.create).toHaveBeenCalledWith(
       7,
-      expect.objectContaining({ mediaType: 'SCRIPT', name: '分场剧本', content: '{"synopsis":"第一场：庭院"}' })
+      expect.objectContaining({ mediaType: '剧本', name: '分场剧本', content: '{"synopsis":"第一场：庭院"}' })
     )
   })
 
-  it('inferMediaType 按 mime 映射 IMAGE/VIDEO/AUDIO/不支持=null', async () => {
+  it('inferMediaType 按 mime 映射 图片/视频/音频/不支持=null', async () => {
     const wrapper = await mountView(['asset:write'])
     const vm = wrapper.vm as unknown as { inferMediaType: (m: string) => string | null }
-    expect(vm.inferMediaType('image/png')).toBe('IMAGE')
-    expect(vm.inferMediaType('video/mp4')).toBe('VIDEO')
-    expect(vm.inferMediaType('audio/mpeg')).toBe('AUDIO')
+    expect(vm.inferMediaType('image/png')).toBe('图片')
+    expect(vm.inferMediaType('video/mp4')).toBe('视频')
+    expect(vm.inferMediaType('audio/mpeg')).toBe('音频')
     expect(vm.inferMediaType('application/pdf')).toBeNull()
   })
 
-  it('上传文件调 assetApi.upload（按 mime 推断 IMAGE）', async () => {
+  it('上传文件调 assetApi.upload（按 mime 推断 图片）', async () => {
     const wrapper = await mountView(['asset:write'])
     const vm = wrapper.vm as unknown as { onFileChange: (e: Event) => Promise<void> }
     const file = new File(['x'], 'a.png', { type: 'image/png' })
     const input = document.createElement('input')
     Object.defineProperty(input, 'files', { value: [file], configurable: true })
     await vm.onFileChange({ target: input } as unknown as Event)
-    expect(assetApi.upload).toHaveBeenCalledWith(7, file, 'IMAGE', expect.objectContaining({ name: 'a.png' }))
+    expect(assetApi.upload).toHaveBeenCalledWith(7, file, '图片', expect.objectContaining({ name: 'a.png' }))
   })
 
   it('drawer changed → 重载 list+matrix（L2/L3 联动）', async () => {

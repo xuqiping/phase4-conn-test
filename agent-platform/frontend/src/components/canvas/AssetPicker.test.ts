@@ -28,7 +28,7 @@ function mkProject(id: number): AssetProjectVO {
     name: `项目${id}`,
     ownerId: 1,
     narrativeRoles: ['人物'],
-    mediaTypes: [{ key: 'PROMPT', category: 'TEXT' }],
+    mediaTypes: [{ key: '提示词', category: 'TEXT' }],
     role: 'OWNER',
     createdAt: '2026-08-05'
   }
@@ -36,7 +36,7 @@ function mkProject(id: number): AssetProjectVO {
 
 function mkAsset(id: number, over: Partial<AssetVO> = {}): AssetVO {
   return {
-    id, projectId: 10, mediaType: 'PROMPT', name: `资产${id}`, status: 'DRAFT',
+    id, projectId: 10, mediaType: '提示词', name: `资产${id}`, status: 'DRAFT',
     currentVersion: 1, roleKeys: [], content: null, genMeta: null, createdAt: '2026-08-05', ...over
   }
 }
@@ -70,11 +70,11 @@ describe('AssetPicker (S12-b 资产选择器)', () => {
     vi.mocked(assetApi.list).mockResolvedValue(pageResp([mkAsset(1), mkAsset(2)]))
   })
 
-  it('节点类型→资产类型映射（text→PROMPT / video→VIDEO）', async () => {
+  it('节点类型→资产类型映射（text→提示词 / video→视频）', async () => {
     const w1 = await mountPicker(mkNode('text'))
-    expect((w1.vm as unknown as { mediaType: string }).mediaType).toBe('PROMPT')
+    expect((w1.vm as unknown as { mediaType: string }).mediaType).toBe('提示词')
     const w2 = await mountPicker(mkNode('video'))
-    expect((w2.vm as unknown as { mediaType: string }).mediaType).toBe('VIDEO')
+    expect((w2.vm as unknown as { mediaType: string }).mediaType).toBe('视频')
   })
 
   it('选项目 → 按 mediaType 拉资产列表', async () => {
@@ -86,7 +86,7 @@ describe('AssetPicker (S12-b 资产选择器)', () => {
     }
     vm.projectId = 10
     await vm.loadAssets()
-    expect(assetApi.list).toHaveBeenCalledWith(10, expect.objectContaining({ type: 'IMAGE', page: 1, size: 100 }))
+    expect(assetApi.list).toHaveBeenCalledWith(10, expect.objectContaining({ type: '图片', page: 1, size: 100 }))
     expect(vm.assets.length).toBe(2)
   })
 
@@ -109,12 +109,12 @@ describe('AssetPicker (S12-b 资产选择器)', () => {
   })
 
   it('onPick → resolve → emit picked + 关弹窗', async () => {
-    const resolve: ResolveVO = { assetId: 1, mediaType: 'IMAGE', version: 1, fileId: 'f-1', name: '资产1' }
+    const resolve: ResolveVO = { assetId: 1, mediaType: '图片', version: 1, fileId: 'f-1', name: '资产1' }
     vi.mocked(assetBridgeApi.resolve).mockResolvedValue(response({ code: 200, message: 'ok', data: resolve }))
     const node = mkNode('image')
     const wrapper = await mountPicker(node, 77)
     const vm = wrapper.vm as unknown as { onPick: (a: AssetVO) => Promise<void> }
-    await vm.onPick(mkAsset(1, { mediaType: 'IMAGE' }))
+    await vm.onPick(mkAsset(1, { mediaType: '图片' }))
 
     // resolve 带 canvasId+nodeId → 后端落 REFERENCE 绑定（L6 双向追溯）
     expect(assetBridgeApi.resolve).toHaveBeenCalledWith(1, { canvasId: 77, nodeId: node.id })

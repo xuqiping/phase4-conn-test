@@ -33,7 +33,8 @@ function mkAsset(over: Partial<AssetVO> = {}): AssetVO {
   return {
     id: 5,
     projectId: 7,
-    mediaType: 'PROMPT',
+    mediaType: '提示词',
+    mediaCategory: 'TEXT',
     name: '提示词A',
     description: 'desc',
     tags: ['t1'],
@@ -79,7 +80,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
 
   it('IMAGE 资产拉预览 objectURL', async () => {
     vi.mocked(assetApi.get).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'IMAGE', fileId: 'fid-1' }) })
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '图片', mediaCategory: 'IMAGE', fileId: 'fid-1' }) })
     )
     const { fetchCanvasPreview } = await import('@/api/canvas')
     const wrapper = await mountDrawer()
@@ -102,7 +103,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
   it('状态机返 meta-only（content/fileId=null）→ 保留抽屉已加载值不丢失（FIX-B）', async () => {
     // 初始加载 IMAGE 资产带 fileId + content
     vi.mocked(assetApi.get).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'IMAGE', fileId: 'fid-1', content: '{"k":"v"}' }) })
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '图片', mediaCategory: 'IMAGE', fileId: 'fid-1', content: '{"k":"v"}' }) })
     )
     // lock 返 meta-only：content=null + fileId=null（懒加载语义）
     vi.mocked(versionApi.lock).mockResolvedValue(
@@ -129,7 +130,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
 
   it('下载调 request.get blob', async () => {
     vi.mocked(assetApi.get).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'VIDEO', fileId: 'fid-2' }) })
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '视频', mediaCategory: 'VIDEO', fileId: 'fid-2' }) })
     )
     requestGet.mockResolvedValue(response(new Blob(['x'])))
     const wrapper = await mountDrawer()
@@ -157,7 +158,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
       response({
         code: 200, message: 'ok',
         data: mkAsset({
-          mediaType: 'SCRIPT',
+          mediaType: '剧本',
           content: JSON.stringify({
             synopsis: '主角登场',
             scenes: [{ index: 1, description: '开场' }, { index: 2, description: '高潮' }]
@@ -175,7 +176,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
 
   it('AC-C3-2 saveSynopsis → versionApi.create 写 {synopsis} 新版本', async () => {
     vi.mocked(assetApi.get).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'SCRIPT', content: JSON.stringify({ synopsis: '旧文' }) }) })
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '旧文' }) }) })
     )
     vi.mocked(versionApi.create).mockResolvedValue(response({ code: 200, message: 'ok', data: 2 }))
     const wrapper = await mountDrawer()
@@ -191,7 +192,7 @@ describe('AssetDetailDrawer (S10-10a)', () => {
 
   it('AC-C3-3 runBreakdown：正文脏 → 警告不调；干净 → 调 scriptApi.breakdown', async () => {
     vi.mocked(assetApi.get).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'SCRIPT', content: JSON.stringify({ synopsis: '原文' }) }) })
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '原文' }) }) })
     )
     vi.mocked(scriptApi.breakdown).mockResolvedValue(response({ code: 200, message: 'ok', data: { version: 2, scenes: [] } }))
     const wrapper = await mountDrawer()

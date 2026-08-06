@@ -16,23 +16,23 @@
         <!-- 状态 + 类型 标签 -->
         <n-space class="asset-detail__tags">
           <n-tag size="small" bordered :type="STATUS_TYPE[asset.status]">{{ STATUS_LABEL[asset.status] }}</n-tag>
-          <n-tag size="small" bordered>{{ MEDIA_LABEL[asset.mediaType] }}</n-tag>
+          <n-tag size="small" bordered>{{ asset.mediaType }}</n-tag>
           <n-tag size="small" bordered type="info">v{{ asset.currentVersion }}</n-tag>
         </n-space>
 
         <!-- 预览 -->
         <div class="asset-detail__preview">
-          <template v-if="asset.mediaType === 'IMAGE'">
+          <template v-if="effectiveCategory === 'IMAGE'">
             <img v-if="previewUrl" :src="previewUrl" class="asset-detail__media" alt="预览" />
           </template>
-          <template v-else-if="asset.mediaType === 'VIDEO'">
+          <template v-else-if="effectiveCategory === 'VIDEO'">
             <video v-if="previewUrl" :src="previewUrl" controls class="asset-detail__media" />
           </template>
-          <template v-else-if="asset.mediaType === 'AUDIO'">
+          <template v-else-if="effectiveCategory === 'AUDIO'">
             <audio v-if="previewUrl" :src="previewUrl" controls />
           </template>
           <!-- C3 剧本：正文编辑 + AI 分场 + 分场列表 -->
-          <template v-else-if="asset.mediaType === 'SCRIPT'">
+          <template v-else-if="asset.mediaType === MEDIA_TYPE.SCRIPT">
             <div class="asset-detail__script">
               <n-input
                 v-model:value="synopsis"
@@ -143,7 +143,8 @@ import request from '@/api/request'
 import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
 import VersionTimeline from '@/components/asset/VersionTimeline.vue'
 import ScriptScenes from '@/components/asset/ScriptScenes.vue'
-import type { AssetStatus, AssetMediaType, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
+import type { AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
+import { MEDIA_TYPE } from '@/types/asset'
 
 const props = defineProps<{
   show: boolean
@@ -181,15 +182,18 @@ const STATUS_TYPE: Record<AssetStatus, 'default' | 'success' | 'warning'> = {
   LOCKED: 'success',
   ARCHIVED: 'warning'
 }
-const MEDIA_LABEL: Record<AssetMediaType, string> = {
-  PROMPT: '提示词',
-  SCRIPT: '剧本',
-  IMAGE: '图片',
-  VIDEO: '视频',
-  AUDIO: '音频'
-}
+const FILE_CATEGORIES = ['IMAGE', 'VIDEO', 'AUDIO']
 
-const needsFile = computed(() => props.show && !!asset.value && ['IMAGE', 'VIDEO', 'AUDIO'].includes(asset.value.mediaType))
+/** 处理类别（优先 asset.mediaCategory，V60 后端必返；旧数据兜底按默认 key 推断）。 */
+const effectiveCategory = computed(() => {
+  const c = asset.value?.mediaCategory
+  return c && FILE_CATEGORIES.includes(c) ? c : 'TEXT'
+})
+
+/** 是否文件类（决定预览拉 objectURL；按 category 而非 type，兼容自定义 key）。 */
+const isFileAsset = computed(() => !!asset.value && FILE_CATEGORIES.includes(effectiveCategory.value))
+
+const needsFile = computed(() => props.show && !!asset.value && isFileAsset.value)
 
 /** 一致性包初始值（从 asset.content.consistency 解析；人物/道具/场景类额染） */
 const consistencyInitial = computed<ConsistencyPackData | null>(() => {
@@ -240,11 +244,11 @@ async function loadAll(id: number) {
     asset.value = assetRes.data.data
     usages.value = usagesRes.data.data || []
     // C3 剧本：解析 content → 正文草稿 + 分场列表
-    if (asset.value?.mediaType === 'SCRIPT') {
+    if (asset.value?.mediaType === MEDIA_TYPE.SCRIPT) {
       parseScriptContent(asset.value.content)
     }
     // 文件类拉预览 objectURL
-    if (asset.value?.fileId && ['IMAGE', 'VIDEO', 'AUDIO'].includes(asset.value.mediaType)) {
+    if (asset.value?.fileId && isFileAsset.value) {
       try {
         previewUrl.value = await fetchCanvasPreview(asset.value.fileId)
       } catch {
@@ -336,7 +340,7 @@ async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
     }
     asset.value = next
     // C3 状态机动作后 content 可能被 meta-only 响应覆盖，重解析剧本正文
-    if (asset.value?.mediaType === 'SCRIPT') {
+    if (asset.value?.mediaType === MEDIA_TYPE.SCRIPT) {
       parseScriptContent(asset.value.content)
     }
     message.success('操作成功')

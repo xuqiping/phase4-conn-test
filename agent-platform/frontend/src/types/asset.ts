@@ -3,11 +3,20 @@
 // 设计方案 §二/§三/§五/§六/§七/§八；plan §S1-S13
 // ============================================================
 
-/** 轴A 媒体类型标签（项目受控词汇 key，可自定义；V60 前固定五类，现可扩展如「地图」）。 */
+/** 轴A 媒体类型标签（项目受控词汇 key，可自定义；默认五类中文，可扩展如「地图」）。 */
 export type AssetMediaType = string
 
-/** 默认媒体类型 key（V60 受控词汇默认五项，label/图标兜底用）。 */
-export const DEFAULT_MEDIA_TYPES = ['PROMPT', 'SCRIPT', 'IMAGE', 'VIDEO', 'AUDIO'] as const
+/** 默认媒体类型 key 常量（与后端 Asset.MEDIA_* 对齐；中文 key，行为判断引此勿裸字符串）。 */
+export const MEDIA_TYPE = {
+  PROMPT: '提示词',
+  SCRIPT: '剧本',
+  IMAGE: '图片',
+  VIDEO: '视频',
+  AUDIO: '音频'
+} as const
+
+/** 默认媒体类型 key 列表（受控词汇默认五项，label/图标兜底用）。 */
+export const DEFAULT_MEDIA_TYPES = Object.values(MEDIA_TYPE)
 
 /** 处理类别（系统固定四类，V60 §C1b；决定编辑器/mime/预览/gen_meta 链路）。 */
 export type MediaCategory = 'TEXT' | 'IMAGE' | 'VIDEO' | 'AUDIO'

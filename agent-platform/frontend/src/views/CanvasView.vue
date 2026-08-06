@@ -195,6 +195,7 @@ import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
 import type { MediaStatus } from '@/api/media'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
+import { MEDIA_TYPE } from '@/types/asset'
 import type { CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
@@ -830,9 +831,9 @@ async function applyAssetResolve(node: CanvasNode, resolve: ResolveVO) {
     assetVersion: resolve.version,
     assetHasUpdate: false
   }
-  if (resolve.mediaType === 'PROMPT' || resolve.mediaType === 'SCRIPT') {
+  if (resolve.mediaType === MEDIA_TYPE.PROMPT || resolve.mediaType === MEDIA_TYPE.SCRIPT) {
     const parsed = parseAssetContent(resolve.content)
-    if (resolve.mediaType === 'PROMPT') {
+    if (resolve.mediaType === MEDIA_TYPE.PROMPT) {
       patch.outputText = typeof parsed.body === 'string' ? parsed.body : (resolve.content ?? '')
     } else {
       if (typeof parsed.synopsis === 'string') patch.synopsis = parsed.synopsis

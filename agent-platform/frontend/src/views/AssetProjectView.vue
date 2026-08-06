@@ -187,6 +187,7 @@ import type {
   MediaTypeDef,
   ProjectRole
 } from '@/types/asset'
+import { MEDIA_TYPE } from '@/types/asset'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -224,9 +225,7 @@ const roleOptions = computed(() =>
 /** 文本类（TEXT 类别）媒体类型下拉选项（新建文本资产用；V60 从受控词汇派生）。 */
 const textTypeOptions = computed(() => {
   const types = (project.value?.mediaTypes ?? []).filter((t) => t.category === 'TEXT')
-  const labelFor = (key: string) =>
-    ({ PROMPT: '提示词', SCRIPT: '剧本' } as Record<string, string>)[key] ?? key
-  return types.map((t) => ({ label: labelFor(t.key), value: t.key }))
+  return types.map((t) => ({ label: t.key, value: t.key }))
 })
 
 /** 每个媒体类型当前资产数（由矩阵 cells 按 mediaType 聚合；删 type 二次确认显迁移数）。 */
@@ -258,7 +257,7 @@ const showCreate = ref(false)
 const saving = ref(false)
 const formRef = ref<FormInst | null>(null)
 const form = ref({
-  mediaType: 'PROMPT' as string,
+  mediaType: MEDIA_TYPE.PROMPT as string,
   name: '',
   description: '',
   content: '',
@@ -270,10 +269,10 @@ const rules: FormRules = {
 }
 
 function openCreate() {
-  // 默认首个 TEXT 类别类型（无则回落 PROMPT）
+  // 默认首个 TEXT 类别类型（无则回落 提示词）
   const firstText = (project.value?.mediaTypes ?? []).find((t) => t.category === 'TEXT')
   form.value = {
-    mediaType: firstText?.key ?? 'PROMPT',
+    mediaType: firstText?.key ?? MEDIA_TYPE.PROMPT,
     name: '',
     description: '',
     content: '',
@@ -291,9 +290,9 @@ async function submitCreate() {
   saving.value = true
   try {
     // 正文按类型包成规范 JSON（后端 content 是 JSONB，抽屉/版本时间线 JSON.parse 同此结构；
-    // 与 AssetCanvasBridgeService.extractTextContent 契约对齐：PROMPT→{body}，SCRIPT→{synopsis}）
+    // 与 AssetCanvasBridgeService.extractTextContent 契约对齐：提示词→{body}，剧本→{synopsis}）
     const rawBody = form.value.content.trim()
-    const contentJson = form.value.mediaType === 'SCRIPT'
+    const contentJson = form.value.mediaType === MEDIA_TYPE.SCRIPT
       ? JSON.stringify({ synopsis: rawBody })
       : JSON.stringify({ body: rawBody })
     await assetApi.create(projectId.value, {
@@ -335,11 +334,11 @@ function triggerUpload() {
   fileInput.value?.click()
 }
 
-/** mime → 默认媒体类型 key（IMAGE/VIDEO/AUDIO；默认词汇快路径 + inferMediaType 测试用）。 */
-function inferMediaType(mime: string): 'IMAGE' | 'VIDEO' | 'AUDIO' | null {
-  if (mime.startsWith('image/')) return 'IMAGE'
-  if (mime.startsWith('video/')) return 'VIDEO'
-  if (mime.startsWith('audio/')) return 'AUDIO'
+/** mime → 默认媒体类型 key（图片/视频/音频；上传 mediaType 用，须与受控词汇 key 一致）。 */
+function inferMediaType(mime: string): string | null {
+  if (mime.startsWith('image/')) return MEDIA_TYPE.IMAGE
+  if (mime.startsWith('video/')) return MEDIA_TYPE.VIDEO
+  if (mime.startsWith('audio/')) return MEDIA_TYPE.AUDIO
   return null
 }
 

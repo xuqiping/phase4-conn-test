@@ -4,13 +4,13 @@ import { nextTick } from 'vue'
 import VocabEditor from './VocabEditor.vue'
 import type { MediaTypeDef } from '@/types/asset'
 
-/** 默认媒体类型受控词汇（V60，与后端 DEFAULT_MEDIA_TYPES 对齐）。 */
+/** 默认媒体类型受控词汇（中文 key，与后端 Asset.MEDIA_* 对齐）。 */
 const DEFAULT_MT: MediaTypeDef[] = [
-  { key: 'PROMPT', category: 'TEXT' },
-  { key: 'SCRIPT', category: 'TEXT' },
-  { key: 'IMAGE', category: 'IMAGE' },
-  { key: 'VIDEO', category: 'VIDEO' },
-  { key: 'AUDIO', category: 'AUDIO' }
+  { key: '提示词', category: 'TEXT' },
+  { key: '剧本', category: 'TEXT' },
+  { key: '图片', category: 'IMAGE' },
+  { key: '视频', category: 'VIDEO' },
+  { key: '音频', category: 'AUDIO' }
 ]
 
 /** n-modal teleport 到 document.body，故按 body 查元素。 */

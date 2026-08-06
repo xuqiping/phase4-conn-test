@@ -53,7 +53,7 @@
           <n-input
             v-model:value="mt.key"
             size="small"
-            placeholder="类型名（如 PROMPT）"
+            placeholder="类型名（如 提示词）"
             :maxlength="32"
             style="flex: 1.4"
             @blur="dedupeTypeKey(i)"
