@@ -182,6 +182,10 @@ public class LlmProviderService {
         if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
             return TestConnectionResult.fail("未配置API端点");
         }
+        // ANTHROPIC+EMBEDDING 组合不成立：Claude 无 embedding 接口，给明确话术而非上游 404。
+        if (isAnthropic(entity)) {
+            return TestConnectionResult.fail("Claude（ANTHROPIC 协议）不提供 embedding 接口，请改用 OPENAI_COMPATIBLE 协议的向量服务");
+        }
         try {
             LlmProviderInterface provider = llmConfig.createProvider(entity, getDecryptedApiKey(providerId));
             long start = System.currentTimeMillis();
@@ -207,6 +211,10 @@ public class LlmProviderService {
     }
 
     private TestConnectionResult doTestConnection(LlmProviderEntity entity, String apiKey) {
+        // FR-004 测试分流：IMAGE 是生图预留位，provider 未接入，点「测试」不发请求直接给话术。
+        if (CATEGORY_IMAGE.equalsIgnoreCase(entity.getCategory())) {
+            return TestConnectionResult.fail("生图（IMAGE）provider 尚未接入，配置已保存，待生图功能上线后开放测试");
+        }
         String model = pickFirstModel(entity);
         if (model == null) {
             return TestConnectionResult.fail("未配置模型列表");
@@ -230,6 +238,15 @@ public class LlmProviderService {
             log.warn("LLM连通测试失败 [provider={}]: {}", entity.getName(), e.getMessage());
             return TestConnectionResult.fail(extractRootMessage(e));
         }
+    }
+
+    /** 判定 ANTHROPIC 协议（显式 protocol 优先，缺省沿用 name=claude 推断，与 LlmConfig 口径一致）。 */
+    private boolean isAnthropic(LlmProviderEntity entity) {
+        String protocol = entity.getProtocol();
+        if (protocol != null && !protocol.isBlank()) {
+            return "ANTHROPIC".equalsIgnoreCase(protocol.trim());
+        }
+        return "claude".equals(entity.getName());
     }
 
     private String pickFirstModel(LlmProviderEntity entity) {

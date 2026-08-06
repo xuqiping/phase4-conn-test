@@ -141,4 +141,52 @@ class TestConnectionTest {
         assertTrue(result.isSuccess());
         assertEquals(200L, result.getDurationMs());
     }
+
+    @Test
+    void testConnection_imageCategory_shortCircuitsWithoutRequest() {
+        // FR-004：IMAGE 是生图预留位，点「测试」不发请求直接给「未接入」话术
+        LlmProviderEntity entity = buildEntity();
+        entity.setCategory(LlmProviderService.CATEGORY_IMAGE);
+        when(mapper.selectById(1L)).thenReturn(entity);
+
+        TestConnectionResult result = service.testConnection(1L);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("生图"), "话术须说明 IMAGE 未接入: " + result.getMessage());
+        verify(llmConfig, never()).createProvider(any(), any());
+    }
+
+    @Test
+    void testEmbedding_anthropicProtocol_returnsClearMessage() {
+        // FR-004：ANTHROPIC+EMBEDDING 组合不成立，明确话术而非上游错误
+        LlmProviderEntity entity = buildEntity();
+        entity.setName("claude-embed");
+        entity.setProtocol("ANTHROPIC");
+        entity.setCategory(LlmProviderService.CATEGORY_EMBEDDING);
+        entity.setModels("[\"some-embed-model\"]");
+        when(mapper.selectById(1L)).thenReturn(entity);
+
+        TestConnectionResult result = service.testEmbedding(1L);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("ANTHROPIC"), "话术须点名协议: " + result.getMessage());
+        verify(llmConfig, never()).createProvider(any(), any());
+    }
+
+    @Test
+    void testEmbedding_anthropicByNameInference_returnsClearMessage() {
+        // protocol 缺省时沿用 name=claude 推断（与 LlmConfig 口径一致）
+        LlmProviderEntity entity = buildEntity();
+        entity.setName("claude");
+        entity.setProtocol(null);
+        entity.setCategory(LlmProviderService.CATEGORY_EMBEDDING);
+        entity.setModels("[\"some-embed-model\"]");
+        when(mapper.selectById(1L)).thenReturn(entity);
+
+        TestConnectionResult result = service.testEmbedding(1L);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("ANTHROPIC"));
+        verify(llmConfig, never()).createProvider(any(), any());
+    }
 }
