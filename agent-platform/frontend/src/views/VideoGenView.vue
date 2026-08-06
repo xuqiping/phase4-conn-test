@@ -2,7 +2,7 @@
   <div class="video-gen">
     <div class="video-gen__header">
       <h2>视频生成</h2>
-      <span class="video-gen__sub">SeedDance 2.0 · 文生视频 / 图生视频</span>
+      <span class="video-gen__sub">文生视频 / 图+视频+音频 多模态参考生视频</span>
     </div>
 
     <!-- 无权限：gated 前端落地（菜单已隐藏入口，此处兜底直访 URL 场景） -->
@@ -12,15 +12,24 @@
       class="video-gen__forbidden"
     />
 
+    <n-empty
+      v-else-if="modelsLoaded && models.length === 0"
+      description="暂无可用视频模型，请联系管理员在「全局模型供应商」配置 MEDIA 类供应商"
+      class="video-gen__forbidden"
+    />
+
     <div v-else class="video-gen__grid" :class="{ 'video-gen__grid--mobile': isMobile }">
       <!-- 左：生成表单 -->
       <n-card class="video-gen__form" title="生成参数" size="small">
         <n-form label-placement="top">
-          <n-form-item label="生成方式">
-            <n-radio-group v-model:value="form.taskType">
-              <n-radio-button value="TEXT2VIDEO">文生视频</n-radio-button>
-              <n-radio-button value="IMAGE2VIDEO">图生视频</n-radio-button>
-            </n-radio-group>
+          <n-form-item label="视频模型">
+            <n-select
+              v-model:value="form.model"
+              :options="modelOptions"
+              :loading="!modelsLoaded"
+              placeholder="选择视频生成模型"
+              @update:value="onModelChange"
+            />
           </n-form-item>
 
           <n-form-item label="提示词">
@@ -30,20 +39,65 @@
               :rows="4"
               :maxlength="2000"
               show-count
-              placeholder="描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和"
+              :placeholder="hasAnyAttachment
+                ? '描述如何运用参考素材，如：以图1为产品参考，视频1为运镜参考，音频1作背景音乐…'
+                : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和'"
             />
           </n-form-item>
 
-          <!-- 图生视频：参考图上传（复用 /api/files/upload 单一咽喉点） -->
-          <n-form-item v-if="form.taskType === 'IMAGE2VIDEO'" label="参考图（首帧）">
-            <n-upload
-              :max="1"
-              accept="image/*"
-              list-type="image-card"
-              :custom-request="handleRefUpload"
-              @remove="onRefRemove"
-            />
-          </n-form-item>
+          <!-- 多模态参考附件（按模型能力动态渲染；不上传即文生视频） -->
+          <template v-if="capability">
+            <n-form-item v-if="capability.maxImages > 0">
+              <template #label>
+                参考图
+                <span class="video-gen__hint">（{{ images.length }}/{{ capability.maxImages }}，≤8MB/张）</span>
+              </template>
+              <n-upload
+                :max="capability.maxImages"
+                accept="image/*"
+                list-type="image-card"
+                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'image')"
+                @remove="(o) => onAttachmentRemove(o, 'image')"
+              />
+            </n-form-item>
+
+            <n-form-item v-if="capability.maxVideos > 0 && capability.videoDataUri">
+              <template #label>
+                参考视频
+                <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
+              </template>
+              <n-upload
+                :max="capability.maxVideos"
+                accept="video/*"
+                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')"
+                @remove="(o) => onAttachmentRemove(o, 'video')"
+              >
+                <n-button size="small">上传视频</n-button>
+              </n-upload>
+            </n-form-item>
+
+            <n-form-item v-if="capability.maxAudios > 0">
+              <template #label>
+                参考音频
+                <span class="video-gen__hint">（{{ audios.length }}/{{ capability.maxAudios }}，≤15MB/个，音色/BGM 参考）</span>
+              </template>
+              <n-upload
+                :max="capability.maxAudios"
+                accept="audio/*"
+                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')"
+                @remove="(o) => onAttachmentRemove(o, 'audio')"
+              >
+                <n-button size="small">上传音频</n-button>
+              </n-upload>
+            </n-form-item>
+
+            <n-form-item v-if="capability.maxAttachments > 0">
+              <span class="video-gen__hint">
+                附件总计 {{ totalAttachments }}/{{ capability.maxAttachments }}
+                （提示词里按「图1/图2…、视频1…、音频1…」顺序引用素材）
+              </span>
+            </n-form-item>
+          </template>
 
           <n-form-item label="画面比例">
             <n-select
@@ -73,7 +127,7 @@
             </n-space>
           </n-form-item>
 
-          <n-form-item label="生成音频">
+          <n-form-item v-if="capability?.supportsGenerateAudio" label="生成音频">
             <n-space align="center">
               <n-switch v-model:value="form.generateAudio" />
               <span class="video-gen__hint">同步生成原生音频（2.0 特色）</span>
@@ -89,8 +143,8 @@
             >
               提交生成
             </n-button>
-            <span v-if="form.taskType === 'IMAGE2VIDEO' && !form.refFileId" class="video-gen__hint">
-              图生视频需上传参考图
+            <span v-if="uploadingCount > 0" class="video-gen__hint">
+              附件上传中（{{ uploadingCount }}）…
             </span>
           </n-space>
         </n-form>
@@ -154,7 +208,7 @@
             <div class="video-gen__prompt-preview">
               {{ activeTask.prompt }}
               <span class="video-gen__meta">
-                {{ activeTask.ratio || '-' }} · {{ activeTask.duration }}s · {{ activeTask.resolution }}
+                {{ activeTask.model || '-' }} · {{ activeTask.ratio || '-' }} · {{ activeTask.duration }}s · {{ activeTask.resolution }}
               </span>
             </div>
           </template>
@@ -181,16 +235,17 @@
 import { h, computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   NButton, NCard, NDataTable, NEmpty, NForm, NFormItem, NInput,
-  NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
+  NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
-import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
+import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
   mediaApi, fetchVideoBlob,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
-  type MediaTaskVO, type MediaTaskType, type MediaResolution, type MediaRatio
+  type MediaTaskVO, type MediaResolution, type MediaRatio,
+  type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
 
 const authStore = useAuthStore()
@@ -200,68 +255,171 @@ const { isMobile } = useBreakpoints()
 /** 4 层权限显隐①：菜单入口；②此处页内提交（canGen）；③后端 @RequirePermission 403 兜底；④路由 meta 仅 requiresAuth。 */
 const canGen = authStore.hasPermission('media:gen')
 
-// === 表单 ===
+// === 模型目录（模型驱动动态表单：能力画像决定上传区/选项/开关） ===
+const models = ref<MediaModelVO[]>([])
+const modelsLoaded = ref(false)
+
 const form = reactive({
-  taskType: 'TEXT2VIDEO' as MediaTaskType,
+  model: '' as string,
   prompt: '',
   ratio: '16:9' as MediaRatio,
   duration: 5,
   resolution: '720p' as MediaResolution,
   watermark: false,
-  generateAudio: false,
-  refFileId: '' as string
+  generateAudio: false
 })
 
-/** 官方区间 4–15 秒 */
-const durationOptions = Array.from({ length: 12 }, (_, i) => ({
-  label: `${i + 4} 秒`, value: i + 4
-}))
-const ratioOptions: { label: string; value: MediaRatio }[] = [
-  { label: '16:9 横屏（推荐）', value: '16:9' },
-  { label: '9:16 竖屏', value: '9:16' },
-  { label: '1:1 方形', value: '1:1' },
-  { label: '4:3', value: '4:3' },
-  { label: '3:4', value: '3:4' },
-  { label: '21:9 超宽', value: '21:9' },
-  { label: 'adaptive（图生沿用参考图）', value: 'adaptive' }
-]
-const resolutionOptions: { label: string; value: MediaResolution }[] = [
-  { label: '480p（省额度）', value: '480p' },
-  { label: '720p（推荐）', value: '720p' },
-  { label: '1080p（高清）', value: '1080p' },
-  { label: '4K（超高清，2.0 全版）', value: '4K' }
-]
-
-const submitting = ref(false)
-/** 图生视频必须有参考图 + 提示词非空 */
-const canSubmit = computed(
-  () => form.prompt.trim().length > 0
-    && (form.taskType !== 'IMAGE2VIDEO' || !!form.refFileId)
+/** 当前选中模型的能力画像 */
+const capability = computed<MediaModelVO | null>(
+  () => models.value.find(m => m.modelId === form.model) ?? null
 )
 
-/** 参考图上传：复用 /api/files/upload 单一咽喉点，拿 fileId 填入 refFileId。 */
-async function handleRefUpload({ file, onFinish, onError }: UploadCustomRequestOptions) {
+/** 模型下拉（按 providerName 分组，照抄 chat ModelSelector 分组模式） */
+const modelOptions = computed<(SelectOption | SelectGroupOption)[]>(() => {
+  const groups = new Map<string, SelectOption[]>()
+  for (const m of models.value) {
+    const list = groups.get(m.providerName) ?? []
+    list.push({ label: m.displayName, value: m.modelId })
+    groups.set(m.providerName, list)
+  }
+  if (groups.size === 1) {
+    return [...groups.values()][0]
+  }
+  return [...groups.entries()].map(([provider, children]) => ({
+    type: 'group' as const, label: provider, key: provider, children
+  }))
+})
+
+async function loadModels() {
+  try {
+    const { data } = await mediaApi.listModels()
+    models.value = data.data
+    if (models.value.length > 0) {
+      form.model = models.value[0].modelId
+      applyCapabilityConstraints()
+    }
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    modelsLoaded.value = true
+  }
+}
+
+/** 切换模型：能力可能变化 → 清空附件 + 收敛参数到新能力区间。 */
+function onModelChange() {
+  images.value = []
+  videos.value = []
+  audios.value = []
+  applyCapabilityConstraints()
+}
+
+/** 把 ratio/duration/resolution 收敛到当前模型能力范围内（越界则回退默认）。 */
+function applyCapabilityConstraints() {
+  const cap = capability.value
+  if (!cap) return
+  if (!cap.supportedRatios.includes(form.ratio)) form.ratio = '16:9'
+  if (!cap.supportedResolutions.includes(form.resolution)) form.resolution = '720p'
+  if (form.duration < cap.minDuration || form.duration > cap.maxDuration) {
+    form.duration = Math.min(5, cap.maxDuration)
+  }
+  if (!cap.supportsGenerateAudio) form.generateAudio = false
+}
+
+// === 选项（按能力过滤） ===
+const RATIO_LABELS: Record<string, string> = {
+  '16:9': '16:9 横屏（推荐）', '9:16': '9:16 竖屏', '1:1': '1:1 方形',
+  '4:3': '4:3', '3:4': '3:4', '21:9': '21:9 超宽', 'adaptive': 'adaptive（沿用参考素材比例）'
+}
+const RES_LABELS: Record<string, string> = {
+  '480p': '480p（省额度）', '720p': '720p（推荐）', '1080p': '1080p（高清）', '4K': '4K（超高清，2.0 全版）'
+}
+
+const ratioOptions = computed(() =>
+  (capability.value?.supportedRatios ?? []).map(v => ({ label: RATIO_LABELS[v] ?? v, value: v }))
+)
+const resolutionOptions = computed(() =>
+  (capability.value?.supportedResolutions ?? []).map(v => ({ label: RES_LABELS[v] ?? v, value: v }))
+)
+const durationOptions = computed(() => {
+  const cap = capability.value
+  const min = cap?.minDuration ?? 4
+  const max = cap?.maxDuration ?? 15
+  return Array.from({ length: Math.max(0, max - min + 1) }, (_, i) => ({
+    label: `${min + i} 秒`, value: min + i
+  }))
+})
+
+// === 多模态参考附件（复用 /api/files/upload 单一咽喉点） ===
+interface UploadedAttachment { fileId: string; name: string }
+const images = ref<UploadedAttachment[]>([])
+const videos = ref<UploadedAttachment[]>([])
+const audios = ref<UploadedAttachment[]>([])
+const uploadingCount = ref(0)
+
+/** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
+const KIND_MAX_BYTES: Record<AttachmentKind, number> = {
+  image: 8 * 1024 * 1024,
+  video: 50 * 1024 * 1024,
+  audio: 15 * 1024 * 1024
+}
+const KIND_LABEL: Record<AttachmentKind, string> = { image: '参考图', video: '参考视频', audio: '参考音频' }
+
+const totalAttachments = computed(() => images.value.length + videos.value.length + audios.value.length)
+const hasAnyAttachment = computed(() => totalAttachments.value > 0)
+
+function kindList(kind: AttachmentKind) {
+  return kind === 'image' ? images : kind === 'video' ? videos : audios
+}
+
+/** 附件上传：类型/大小预检 → /api/files/upload 拿 fileId。 */
+async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOptions, kind: AttachmentKind) {
   const raw = file.file as File | null
   if (!raw) {
     onError()
     return
   }
+  if (raw.size > KIND_MAX_BYTES[kind]) {
+    message.error(`${KIND_LABEL[kind]}过大（>${KIND_MAX_BYTES[kind] / 1024 / 1024}MB）：${raw.name}`)
+    onError()
+    return
+  }
+  uploadingCount.value++
   try {
-    const { data } = await mediaApi.uploadRefImage(raw)
-    form.refFileId = data.data.fileId
+    const { data } = await mediaApi.uploadAttachment(raw)
+    kindList(kind).value.push({ fileId: data.data.fileId, name: raw.name })
     onFinish()
   } catch {
     onError()
-    message.error('参考图上传失败')
+    message.error(`${KIND_LABEL[kind]}上传失败`)
+  } finally {
+    uploadingCount.value--
   }
 }
-function onRefRemove() {
-  form.refFileId = ''
+
+/** n-upload remove → 同步移除 fileId（按文件名匹配，同名取第一个）。 */
+function onAttachmentRemove({ file }: { file: { name: string } }, kind: AttachmentKind) {
+  const list = kindList(kind)
+  const idx = list.value.findIndex(a => a.name === file.name)
+  if (idx >= 0) list.value.splice(idx, 1)
   return true
 }
 
 // === 提交 ===
+const submitting = ref(false)
+/** 提示词非空 + 无附件上传中 + 附件总数未超模型上限 */
+const canSubmit = computed(
+  () => form.prompt.trim().length > 0
+    && uploadingCount.value === 0
+    && !!form.model
+    && totalAttachments.value <= (capability.value?.maxAttachments ?? 0)
+)
+
 async function onSubmit() {
+  const attachments: AttachmentRef[] = [
+    ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const })),
+    ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const })),
+    ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const }))
+  ]
   submitting.value = true
   try {
     const { data } = await mediaApi.submitVideo({
@@ -271,8 +429,8 @@ async function onSubmit() {
       resolution: form.resolution,
       watermark: form.watermark,
       generateAudio: form.generateAudio,
-      taskType: form.taskType,
-      refFileId: form.taskType === 'IMAGE2VIDEO' ? form.refFileId : undefined
+      model: form.model,
+      attachments: attachments.length > 0 ? attachments : undefined
     })
     message.success('任务已提交，正在生成…')
     // 启动轮询
@@ -375,6 +533,10 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
     render: r => r.prompt || '-'
   },
   {
+    title: '模型', key: 'model', width: 150, ellipsis: { tooltip: true },
+    render: r => r.model || '-'
+  },
+  {
     title: '状态', key: 'status', width: 90,
     render: r => h(NTag, { size: 'small', type: MEDIA_STATUS_TYPE[r.status], bordered: false },
       () => MEDIA_STATUS_LABEL[r.status])
@@ -395,6 +557,7 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
 ]
 
 onMounted(() => {
+  void loadModels()
   void loadHistory()
 })
 

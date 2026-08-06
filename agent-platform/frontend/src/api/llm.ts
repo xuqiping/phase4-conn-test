@@ -1,7 +1,7 @@
 import request from './request'
 import type { ApiResponse } from './request'
 
-export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'CHAT_EMBEDDING'
+export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'CHAT_EMBEDDING' | 'MEDIA'
 
 export interface LlmProvider {
   id: number
@@ -92,6 +92,11 @@ export const llmApi = {
   // Embedding 专用测试（纯 embedding provider 不支持 chat，走 embed 取维度）
   testProviderEmbedding(id: number) {
     return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test-embed`)
+  },
+
+  // MEDIA 专用测试（任务型协议不支持 chat，走媒体包零成本探测 GET 任务端点/不存在id）
+  testProviderMedia(id: number) {
+    return request.post<ApiResponse<TestConnectionResult>>(`/media/providers/${id}/test`)
   },
 
   // User: Own providers

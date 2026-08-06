@@ -247,3 +247,21 @@ flowchart TD
   - `对话内媒体生成.plan.md`（SD-9）：media 消息类型，聊天触发。
   - `工作流MEDIA_GEN节点.plan.md`（SD-10）：编排引擎新增节点类型。
 - **usage 统一账单**：待 TokenUsage plan 落地后，账单查询层 UNION llm_usage_logs(TEXT) + media_gen_tasks(MEDIA)，按 model_type 分列，勿跨类加总 token。
+
+---
+
+## v2 变更（2026-08-06，已落地）
+
+**新增需求**：① 按次选择视频模型（后续接入更多视频模型）；② 图生视频 → 图+视频+音频多模态参考生视频（上限随模型，SeedDance 2.0 = 9图/3视频/3音频/总≤12）。
+
+- [x] 模型目录：`GET /api/media/models`，聚合 `llm_providers` 表 category=MEDIA 的 ACTIVE provider（models JSON × 能力画像），新模型/新厂商零代码接入。
+- [x] 能力注册表：`MediaModelCapability(Service)`——前缀默认（seedance-2*=9/3/3/12 等）+ provider config JSON `capabilities` 精确覆盖。
+- [x] 提交扩展：`MediaSubmitRequest +model +attachments[]`；模型→provider 反查路由 + 模型白名单校验（堵旧缺口）+ 分类/总数上限 + 附件归属/MIME 校验（防 IDOR）+ taskType 服务端派生；`refFileId` 旧通道保留互斥兼容。
+- [x] Worker/Provider：attachments→data URI 分类型限大小（图8/音15/视50MB）；content 数组带 role=reference_image/video/audio；`resolveArk(providerId)` 按任务落库 provider 路由（create/query 同路）。
+- [x] 前端：VideoGenView 模型驱动动态表单（模型下拉分组 + 三类上传区计数 + 总计数 + 选项按能力过滤 + 切模型清空附件 + 历史加模型列）；media.ts +listModels/uploadAttachment（120s）。
+- [x] 基建：application.yml multipart 60MB/65MB（破 Spring 默认 1MB/10MB）。
+- [x] 测试：media 包单测 15→44 绿（能力 8 + 提交 13 + 请求体 5 + worker +3）；前端 build 绿。
+- [ ] 人工 E2E：E10-E14（模型选择/附件上限/参考视频 dataURI 风险/多 provider 路由/旧通道回归），见测试方案。
+
+**无 DB 迁移**：attachments 落 request_config JSONB（V54 设计预留）。
+**风险**：官方 Ark 对 video_url base64 支持未确认 → `videoDataUri` 能力开关兜底（置 false 前端隐藏视频上传区）。

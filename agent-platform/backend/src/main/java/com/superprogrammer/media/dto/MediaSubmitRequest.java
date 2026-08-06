@@ -1,9 +1,13 @@
 package com.superprogrammer.media.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
+
+import java.util.List;
 
 /**
  * 视频生成提交请求。
@@ -51,4 +55,13 @@ public class MediaSubmitRequest {
 
     /** Ark 模型 id（可选，默认取视频 provider 首个模型）。 */
     private String model;
+
+    /**
+     * 多模态参考附件（图/视频/音频，先经 /api/files/upload 拿 fileId）。
+     * 上限按所选模型能力校验（如 SeedDance 2.0：9图/3视频/3音频/总≤12）。
+     * 与 {@code refFileId} 互斥（refFileId 是旧版单首帧图通道，保留兼容）。
+     */
+    @Valid
+    @Size(max = 12, message = "附件总数不能超过 12 个")
+    private List<AttachmentRef> attachments;
 }

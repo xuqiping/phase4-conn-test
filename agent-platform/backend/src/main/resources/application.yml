@@ -8,6 +8,12 @@ spring:
   application:
     name: agent-platform
 
+  # 视频生成多模态参考附件（视频 ≤50MB）走 /api/files/upload，须突破 Spring 默认 1MB/10MB 上限
+  servlet:
+    multipart:
+      max-file-size: 60MB
+      max-request-size: 65MB
+
   # @Scheduled 默认单线程池；IndexJobWorker + ReconciliationWorker 两轮询共存时须 ≥2，防慢对账饿死 embed 轮询
   task:
     scheduling:

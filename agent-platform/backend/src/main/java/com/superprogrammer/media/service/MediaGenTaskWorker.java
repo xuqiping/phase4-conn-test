@@ -103,7 +103,7 @@ public class MediaGenTaskWorker {
         long backoff = properties.getBackoffStartMs();
         int queryCount = 0;
         while (true) {
-            MediaGenResult result = arkProvider.queryTask(arkTaskId);
+            MediaGenResult result = arkProvider.queryTask(arkTaskId, request.getProviderId());
             queryCount++;
             String status = result.getStatus();
             if (MediaGenResult.STATUS_SUCCEEDED.equals(status)) {
@@ -195,6 +195,7 @@ public class MediaGenTaskWorker {
         boolean watermark = false;
         boolean generateAudio = false;
         String refFileId = null;
+        List<String[]> attachments = new java.util.ArrayList<>(); // [fileId, kind]
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
             prompt = cfg.path("prompt").asText(null);
@@ -204,11 +205,19 @@ public class MediaGenTaskWorker {
             watermark = cfg.path("watermark").asBoolean(false);
             generateAudio = cfg.path("generateAudio").asBoolean(false);
             refFileId = cfg.path("refFileId").asText(null);
+            for (JsonNode a : cfg.path("attachments")) {
+                String fileId = a.path("fileId").asText(null);
+                String kind = a.path("kind").asText(null);
+                if (fileId != null && kind != null) {
+                    attachments.add(new String[]{fileId, kind});
+                }
+            }
         } catch (Exception e) {
             log.warn("解析 requestConfig 失败 taskId={}: {}", task.getId(), e.getMessage());
         }
         MediaGenRequest.MediaGenRequestBuilder b = MediaGenRequest.builder()
                 .model(task.getModel())
+                .providerId(task.getProviderId())
                 .prompt(prompt)
                 .ratio(ratio)
                 .duration(duration)
@@ -216,7 +225,25 @@ public class MediaGenTaskWorker {
                 .watermark(watermark)
                 .generateAudio(generateAudio)
                 .taskType(task.getTaskType());
-        // IMAGE2VIDEO：参考图 file_id → data URI（Ark image_url 入参）；TEXT2VIDEO 无需。
+        // 多模态参考附件：file_id → data URI（按类型限大小，Ark image_url/video_url/audio_url 入参）
+        if (!attachments.isEmpty() && task.getUserId() != null) {
+            List<MediaGenRequest.ResolvedAttachment> resolved = new java.util.ArrayList<>(attachments.size());
+            for (String[] pair : attachments) {
+                try {
+                    resolved.add(MediaGenRequest.ResolvedAttachment.builder()
+                            .kind(pair[1])
+                            .dataUri(mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
+                            .build());
+                } catch (Exception e) {
+                    log.warn("参考附件读取失败 taskId={} fileId={} kind={}: {}",
+                            task.getId(), pair[0], pair[1], e.getMessage());
+                    throw new IllegalArgumentException("参考附件读取失败: " + rootMessage(e));
+                }
+            }
+            b.attachments(resolved);
+            return b.build();
+        }
+        // 旧版 IMAGE2VIDEO：单首帧参考图 file_id → data URI（无 role = 首帧语义）；TEXT2VIDEO 无需。
         if (refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
             try {
                 b.refImageUrl(mediaStorageService.readAsDataUri(refFileId, task.getUserId()));

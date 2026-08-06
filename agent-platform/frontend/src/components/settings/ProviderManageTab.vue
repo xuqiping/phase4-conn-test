@@ -125,11 +125,6 @@ const columns = [
   }
 ]
 
-/** 仅向量 provider（category=EMBEDDING）走 embed 测试；CHAT / CHAT_EMBEDDING 走 chat 测试（双用优先验对话链路）。 */
-function isEmbedding(row: LlmProvider): boolean {
-  return row.category === 'EMBEDDING'
-}
-
 onMounted(load)
 
 async function load() {
@@ -188,15 +183,28 @@ async function handleDelete(id: number) {
   await load()
 }
 
-/** 按行分流：embedding 走 embed 测试（成功提示带维度），其余走 chat 测试。 */
-async function runTest(id: number, embed: boolean) {
-  const res = embed
+/** 测试类型：embedding 走 embed（成功提示带维度）；media 走任务端点探测；其余走 chat。 */
+type TestKind = 'chat' | 'embed' | 'media'
+
+function testKindOf(category: string | undefined): TestKind {
+  if (category === 'EMBEDDING') return 'embed'
+  if (category === 'MEDIA') return 'media'
+  return 'chat'
+}
+
+/** 按行分流：embedding 走 embed 测试，media 走任务端点探测，其余走 chat 测试。 */
+async function runTest(id: number, kind: TestKind) {
+  const res = kind === 'embed'
     ? await llmApi.testProviderEmbedding(id)
-    : await llmApi.testProviderConnection(id)
+    : kind === 'media'
+      ? await llmApi.testProviderMedia(id)
+      : await llmApi.testProviderConnection(id)
   const r = res.data.data
   if (r.success) {
-    // embed: message 含维度；chat: 拼 model + 耗时
-    message.success(embed ? r.message : `连接成功 · ${r.model} · ${r.durationMs}ms`)
+    // embed/media: 后端 message 已含完整信息；chat: 拼 model + 耗时
+    message.success(kind === 'chat'
+      ? `连接成功 · ${r.model} · ${r.durationMs}ms`
+      : `${r.message}${r.durationMs != null ? ` · ${r.durationMs}ms` : ''}`)
   } else {
     message.error(r.message)
   }
@@ -204,10 +212,10 @@ async function runTest(id: number, embed: boolean) {
 
 async function handleTest(id: number) {
   const row = providers.value.find(p => p.id === id)
-  const embed = row ? isEmbedding(row) : false
+  const kind = testKindOf(row?.category)
   testingId.value = id
   try {
-    await runTest(id, embed)
+    await runTest(id, kind)
   } catch {
     // error handled by interceptor
   } finally {
@@ -222,9 +230,9 @@ async function handleTestInModal() {
   }
   testing.value = true
   try {
-    // If editing existing provider, test by id（按 category 分流：EMBEDDING 走 embed，其余走 chat）
+    // If editing existing provider, test by id（按 category 分流：EMBEDDING 走 embed，MEDIA 走任务端点探测，其余走 chat）
     if (editingId.value) {
-      await runTest(editingId.value, form.value.category === 'EMBEDDING')
+      await runTest(editingId.value, testKindOf(form.value.category))
     } else {
       message.info('请先保存供应商后再测试连通')
     }

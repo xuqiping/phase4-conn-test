@@ -6,6 +6,7 @@
 ## 后端 (backend) — `llm` 包
 - 控制器：[LlmController.java](../../backend/src/main/java/com/superprogrammer/llm/controller/LlmController.java)
   - `GET/POST /api/llm/providers` `PUT/DELETE /{id}` `POST /{id}/test`(chat) `POST /{id}/test-embed` `POST /providers/reload`
+  - MEDIA 类 provider 的「测试」不走 chat：[MediaGenController.java](../../backend/src/main/java/com/superprogrammer/media/controller/MediaGenController.java) `POST /api/media/providers/{id}/test` → ArkSeedanceProvider.testConnection 零成本探测（GET 任务端点/不存在id，401/403=Key 无效，2xx/400/404=鉴权通过即成功，不建任务不计费）；前端按 category 分流（EMBEDDING→test-embed / MEDIA→media test / 其余→chat test）
 - 网关：[LlmGateway.java](../../backend/src/main/java/com/superprogrammer/llm/LlmGateway.java)（按 model 路由 provider：先查用户级 override，回退全局 `llmConfig.getProviders()`，无匹配抛「没有找到支持模型 'X' 的Provider」）
 - Provider 实现：`llm/provider/`
   - LlmProviderInterface（接口）

@@ -150,6 +150,7 @@ CREATE INDEX idx_mgen_ark_task   ON media_gen_tasks(ark_task_id);
 | 日期 | 变更 | 原因 |
 |---|---|---|
 | 2026-08-03 | 特性规格建立（Phase0 分析 + 决策审定 + 前沿调研） | 新增 SeedDance 视频生成功能 |
+| 2026-08-06 | v2：① 按次选择视频模型（目录来自 llm_providers category=MEDIA，`GET /api/media/models` 下发能力画像）；② 图生视频升级为图+视频+音频多模态参考（SeedDance 2.0：9图/3视频/3音频/总≤12，attachments 落 request_config JSONB，无新迁移；refFileId 旧通道保留） | 客户迭代需求：多模型扩展 + 多模态参考 |
 
 ## 10. 术语表
 | 术语 | 大白话 | 案例 |

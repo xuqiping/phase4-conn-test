@@ -3,6 +3,8 @@ package com.superprogrammer.media.dto;
 import lombok.Builder;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 媒体生成请求（任务型，统一 video/image）。
  *
@@ -55,4 +57,22 @@ public class MediaGenRequest {
 
     /** 图生视频首帧图（URL 或 data URI）。nullable：文生视频不带。 */
     private String refImageUrl;
+
+    /**
+     * 多模态参考附件（已解析为 data URI，image/video/audio）。
+     * nullable：纯文生视频 / 旧版 refImageUrl 首帧路径不带。
+     * 与 refImageUrl 互斥（提交侧已校验）。
+     */
+    private List<ResolvedAttachment> attachments;
+
+    /** 所属 llm_providers.id（多 MEDIA provider 路由用：create/query 按任务落库时的 provider 走）。 */
+    private Long providerId;
+
+    /** 已解析的参考附件（kind=image/video/audio，dataUri 可直接喂 Ark content 项）。 */
+    @Data
+    @Builder
+    public static class ResolvedAttachment {
+        private String kind;
+        private String dataUri;
+    }
 }
