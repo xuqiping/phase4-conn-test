@@ -20,6 +20,7 @@
         <span class="asset-project__count">{{ total }} 个资产</span>
         <div class="asset-project__spacer" />
         <template v-if="canWrite">
+          <n-button quaternary @click="showVocab = true">编辑分类</n-button>
           <n-button @click="triggerUpload">上传文件</n-button>
           <n-button type="primary" @click="openCreate">+ 新建提示词/剧本</n-button>
           <input
@@ -127,6 +128,15 @@
       :can-edit="canWrite"
       @changed="onDetailChanged"
     />
+
+    <!-- C1a 分类管理（叙事角色桶增/重命名/删，删联动归通用） -->
+    <VocabEditor
+      v-model:show="showVocab"
+      :narrative-roles="project?.narrativeRoles ?? []"
+      :role-asset-counts="roleAssetCounts"
+      :saving="savingVocab"
+      @save="onSaveVocab"
+    />
   </div>
 </template>
 
@@ -154,6 +164,7 @@ import { useAuthStore } from '@/stores/auth'
 import AssetCard from '@/components/asset/AssetCard.vue'
 import AssetMatrixFilter, { type AssetFilter } from '@/components/asset/AssetMatrixFilter.vue'
 import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
+import VocabEditor from '@/components/asset/VocabEditor.vue'
 import type {
   AssetProjectVO,
   AssetVO,
@@ -349,6 +360,34 @@ async function loadProject() {
 
 async function reload() {
   await Promise.all([loadAssets(), loadMatrix()])
+}
+
+// === C1a 分类管理（叙事角色桶） ===
+const showVocab = ref(false)
+const savingVocab = ref(false)
+/** 每个叙事角色当前资产数（由矩阵 cells 按 roleKey 聚合；删桶二次确认显迁移数）。 */
+const roleAssetCounts = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {}
+  for (const c of matrix.value.cells) {
+    if (c.roleKey) m[c.roleKey] = (m[c.roleKey] ?? 0) + c.count
+  }
+  return m
+})
+/** VocabEditor 保存 → 整体覆盖 narrativeRoles（后端 normalize + reassignOnRemovedRoles 兜底）。 */
+async function onSaveVocab(roles: string[]) {
+  savingVocab.value = true
+  try {
+    await projectApi.update(projectId.value, { narrativeRoles: roles })
+    message.success('分类已更新')
+    showVocab.value = false
+    // 刷新 narrativeRoles（矩阵左栏 / 新建弹窗角色下拉同源）+ 矩阵计数（删桶迁移反映）
+    await loadProject()
+    await reload()
+  } catch {
+    message.error('更新分类失败')
+  } finally {
+    savingVocab.value = false
+  }
 }
 
 // 筛选/分页变化 → 重拉列表
