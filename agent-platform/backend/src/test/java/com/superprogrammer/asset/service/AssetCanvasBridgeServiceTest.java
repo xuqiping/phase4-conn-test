@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -205,7 +206,7 @@ class AssetCanvasBridgeServiceTest {
         // viewer：loadAccessible 通过（不要求 requireWrite）
         when(aclService.loadAccessible(PROJECT_ID, USER_ID, false)).thenReturn(null);
 
-        ResolveVO vo = service.resolve(NEW_ASSET_ID, null, USER_ID, false);
+        ResolveVO vo = service.resolve(NEW_ASSET_ID, null, null, null, USER_ID, false);
 
         assertEquals(2, vo.getVersion());
         assertEquals("{\"body\":\"hi\"}", vo.getContent());
@@ -220,7 +221,7 @@ class AssetCanvasBridgeServiceTest {
         when(versionMapper.selectOne(any())).thenReturn(version(1, "{}", "file-abc"));
         when(aclService.loadAccessible(PROJECT_ID, USER_ID, false)).thenReturn(null);
 
-        ResolveVO vo = service.resolve(NEW_ASSET_ID, null, USER_ID, false);
+        ResolveVO vo = service.resolve(NEW_ASSET_ID, null, null, null, USER_ID, false);
 
         assertEquals("file-abc", vo.getFileId());
         assertEquals("/api/files/file-abc", vo.getUrl());
@@ -234,8 +235,32 @@ class AssetCanvasBridgeServiceTest {
         when(aclService.loadAccessible(PROJECT_ID, USER_ID, false)).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.resolve(NEW_ASSET_ID, 99, USER_ID, false));
+                () -> service.resolve(NEW_ASSET_ID, 99, null, null, USER_ID, false));
         assertEquals(ErrorCode.NOT_FOUND.getCode(), ex.getCode());
+    }
+
+    @Test
+    void resolve_withCanvasContext_recordsReferenceBinding() {
+        // 库→画布引用：带 canvasId+nodeId → 落 REFERENCE 绑定（双向追溯「被引用」台账）
+        when(assetMapper.selectById(NEW_ASSET_ID)).thenReturn(asset(NEW_ASSET_ID, Asset.MEDIA_PROMPT, 2, "p"));
+        when(versionMapper.selectOne(any())).thenReturn(version(2, "{\"body\":\"hi\"}", null));
+        when(aclService.loadAccessible(PROJECT_ID, USER_ID, false)).thenReturn(null);
+
+        service.resolve(NEW_ASSET_ID, null, 77L, "node-x", USER_ID, false);
+
+        verify(bindingService).recordReference(NEW_ASSET_ID, 2, 77L, "node-x", USER_ID);
+    }
+
+    @Test
+    void resolve_withoutCanvasContext_doesNotRecordReference() {
+        // 详情页纯预览解析（无 canvasId/nodeId）→ 不落绑定
+        when(assetMapper.selectById(NEW_ASSET_ID)).thenReturn(asset(NEW_ASSET_ID, Asset.MEDIA_PROMPT, 2, "p"));
+        when(versionMapper.selectOne(any())).thenReturn(version(2, "{\"body\":\"hi\"}", null));
+        when(aclService.loadAccessible(PROJECT_ID, USER_ID, false)).thenReturn(null);
+
+        service.resolve(NEW_ASSET_ID, null, null, null, USER_ID, false);
+
+        verify(bindingService, never()).recordReference(anyLong(), anyInt(), anyLong(), anyString(), anyLong());
     }
 
     @Test

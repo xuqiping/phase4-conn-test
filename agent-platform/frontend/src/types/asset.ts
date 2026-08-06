@@ -201,6 +201,10 @@ export interface CanvasImportVO {
 export interface ResolveRequest {
   /** 指定版本号；空=当前版本（版本快照，设计 §六）。 */
   version?: number
+  /** 引用方画布 id（库→画布引用时传，落 REFERENCE 绑定；空=仅解析不记账）。 */
+  canvasId?: number
+  /** 引用方画布节点 id（同 canvasId 配对）。 */
+  nodeId?: string
 }
 
 /** 引用解析结果（库→画布）：文件类返 fileId+url，文本类返 content。viewer 可读。 */

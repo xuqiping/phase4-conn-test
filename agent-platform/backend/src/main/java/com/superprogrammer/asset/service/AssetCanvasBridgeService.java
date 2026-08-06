@@ -175,8 +175,11 @@ public class AssetCanvasBridgeService {
     /**
      * 引用解析：返当前/指定版本快照（fileId+content），viewer 可用（loadAccessible，只读引用）。
      * 引用=版本快照，资产升级不影响已引用方（设计方案 §六）。
+     *
+     * <p>canvasId+nodeId 同时给定时落 REFERENCE 绑定（双向追溯「被引用」台账，FR-011）；
+     * 缺省（详情页纯预览解析）不落绑定。
      */
-    public ResolveVO resolve(Long assetId, Integer version, Long userId, boolean admin) {
+    public ResolveVO resolve(Long assetId, Integer version, Long canvasId, String nodeId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
         aclService.loadAccessible(asset.getProjectId(), userId, admin);
         Integer ver = (version == null || version <= 0) ? asset.getCurrentVersion() : version;
@@ -186,9 +189,13 @@ public class AssetCanvasBridgeService {
         if (av == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "版本不存在: v" + ver);
         }
+        // 落 REFERENCE 绑定（库→画布引用台账，仅当带画布+节点上下文时；详情页预览不记账）
+        if (canvasId != null && nodeId != null && !nodeId.isBlank()) {
+            bindingService.recordReference(assetId, ver, canvasId, nodeId, userId);
+        }
         String url = (av.getFileId() != null && !av.getFileId().isBlank())
                 ? "/api/files/" + av.getFileId() : null;
-        log.info("asset resolved: assetId={} v={} userId={}", assetId, ver, userId);
+        log.info("asset resolved: assetId={} v={} canvasId={} nodeId={} userId={}", assetId, ver, canvasId, nodeId, userId);
         return ResolveVO.builder()
                 .assetId(assetId)
                 .mediaType(asset.getMediaType())

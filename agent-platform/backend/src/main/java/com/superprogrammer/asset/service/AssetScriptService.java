@@ -119,13 +119,17 @@ public class AssetScriptService {
                 .build();
     }
 
-    /** 读剧本正文：content.body 优先；旧态 content 为纯文本时直接取。 */
+    /** 读剧本正文：synopsis 优先（规范键，与 AssetCanvasBridgeService.extractTextContent / 前端新建剧本一致），
+     *  回退 body（旧态/历史数据），再回退纯文本（最旧态）。 */
     private String readScriptBody(String rawContent) {
         if (rawContent == null || rawContent.isBlank()) {
             return null;
         }
         try {
             ObjectNode root = (ObjectNode) objectMapper.readTree(rawContent);
+            if (root.has("synopsis") && !root.get("synopsis").asText("").isBlank()) {
+                return root.get("synopsis").asText("");
+            }
             if (root.has("body")) {
                 return root.get("body").asText("");
             }
@@ -136,7 +140,7 @@ public class AssetScriptService {
         }
     }
 
-    /** 合并分场进 content（保留 body 等既有键）。 */
+    /** 合并分场进 content（保留 synopsis/body 等既有键）。 */
     String mergeScenes(String rawContent, List<SceneVO> scenes, String model) {
         try {
             ObjectNode root = (rawContent == null || rawContent.isBlank())

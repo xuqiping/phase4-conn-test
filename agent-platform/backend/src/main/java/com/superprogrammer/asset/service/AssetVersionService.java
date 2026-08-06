@@ -91,6 +91,7 @@ public class AssetVersionService {
             if (!hasContent) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "文本类资产正文不能为空");
             }
+            validateContentJson(content);
         } else {
             // 文件类：换文件（fileId）或更新一致性包（content）至少一项；两者皆空才拒
             if (!hasFile && !hasContent) {
@@ -140,7 +141,7 @@ public class AssetVersionService {
 
     /**
      * 合并一致性包字段进 content JSON（保留既有其他键，如提示词正文/剧本分场）。
-     * 局部更新：字段 null=不改；gallery 空列表=清空；standardDescription 空串=清空。
+     * 局部更新语义：字段 null=不改；空串=清空（移除键）；非空=覆盖；gallery 空列表=清空。
      */
     String mergeConsistencyPack(String rawContent, com.superprogrammer.asset.dto.ConsistencyPackRequest req) {
         try {
@@ -150,18 +151,12 @@ public class AssetVersionService {
             ObjectNode pack = root.has(CONSISTENCY_KEY) && root.get(CONSISTENCY_KEY).isObject()
                     ? (ObjectNode) root.get(CONSISTENCY_KEY)
                     : objectMapper.createObjectNode();
-            if (req.getMainRefImageFileId() != null) {
-                pack.put("mainRefImageFileId", req.getMainRefImageFileId());
-            }
+            mergeStringField(pack, "mainRefImageFileId", req.getMainRefImageFileId());
             if (req.getGalleryFileIds() != null) {
                 pack.set("galleryFileIds", objectMapper.valueToTree(req.getGalleryFileIds()));
             }
-            if (req.getStandardDescription() != null) {
-                pack.put("standardDescription", req.getStandardDescription());
-            }
-            if (req.getParamBaseline() != null) {
-                pack.put("paramBaseline", req.getParamBaseline());
-            }
+            mergeStringField(pack, "standardDescription", req.getStandardDescription());
+            mergeStringField(pack, "paramBaseline", req.getParamBaseline());
             root.set(CONSISTENCY_KEY, pack);
             return objectMapper.writeValueAsString(root);
         } catch (Exception e) {
@@ -170,8 +165,29 @@ public class AssetVersionService {
         }
     }
 
+    /** null=不改；空串=清空（移除键）；非空=覆盖。 */
+    private void mergeStringField(ObjectNode pack, String key, String value) {
+        if (value == null) {
+            return;
+        }
+        if (value.isBlank()) {
+            pack.remove(key);
+        } else {
+            pack.put(key, value);
+        }
+    }
+
     private boolean isTextType(String mediaType) {
         return Asset.MEDIA_PROMPT.equals(mediaType) || Asset.MEDIA_SCRIPT.equals(mediaType);
+    }
+
+    /** content 须为合法 JSON（JSONB 列；防非 JSON 直传 → DB 500，前置 400）。 */
+    private void validateContentJson(String content) {
+        try {
+            objectMapper.readTree(content);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "正文不是合法的 JSON");
+        }
     }
 
     private Asset loadAsset(Long assetId) {

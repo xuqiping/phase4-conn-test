@@ -86,11 +86,11 @@ async function save() {
   saving.value = true
   try {
     await versionApi.saveConsistencyPack(props.assetId, {
-      // 空串 → null（后端 null=不改；但保存意图=清空/覆盖，故空串传 null 表示「该字段置空」由后端局部合并语义处理）
-      mainRefImageFileId: form.value.mainRefImageFileId || null,
+      // 空串原样传=清空（后端空串移除键）；undefined=不改。此处表单值恒为 string，空串即用户清空意图。
+      mainRefImageFileId: form.value.mainRefImageFileId,
       galleryFileIds: form.value.galleryFileIds,
-      standardDescription: form.value.standardDescription || null,
-      paramBaseline: form.value.paramBaseline || null
+      standardDescription: form.value.standardDescription,
+      paramBaseline: form.value.paramBaseline
     })
     message.success('一致性包已保存（产新版本）')
     emit('saved', props.assetId)

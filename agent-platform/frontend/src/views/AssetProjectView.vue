@@ -238,11 +238,17 @@ async function submitCreate() {
   }
   saving.value = true
   try {
+    // 正文按类型包成规范 JSON（后端 content 是 JSONB，抽屉/版本时间线 JSON.parse 同此结构；
+    // 与 AssetCanvasBridgeService.extractTextContent 契约对齐：PROMPT→{body}，SCRIPT→{synopsis}）
+    const rawBody = form.value.content.trim()
+    const contentJson = form.value.mediaType === 'SCRIPT'
+      ? JSON.stringify({ synopsis: rawBody })
+      : JSON.stringify({ body: rawBody })
     await assetApi.create(projectId.value, {
       mediaType: form.value.mediaType,
       name: form.value.name.trim(),
       description: form.value.description.trim() || undefined,
-      content: form.value.content,
+      content: contentJson,
       roleKeys: form.value.roleKeys.length ? form.value.roleKeys : undefined
     })
     message.success('已创建')

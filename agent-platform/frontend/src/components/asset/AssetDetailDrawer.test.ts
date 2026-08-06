@@ -98,6 +98,24 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     expect((wrapper.vm as unknown as { asset: AssetVO | null }).asset?.status).toBe('LOCKED')
   })
 
+  it('状态机返 meta-only（content/fileId=null）→ 保留抽屉已加载值不丢失（FIX-B）', async () => {
+    // 初始加载 IMAGE 资产带 fileId + content
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'IMAGE', fileId: 'fid-1', content: '{"k":"v"}' }) })
+    )
+    // lock 返 meta-only：content=null + fileId=null（懒加载语义）
+    vi.mocked(versionApi.lock).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ status: 'LOCKED', content: null as unknown as string, fileId: null as unknown as string }) })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { doAction: (a: 'lock') => Promise<void>; asset: AssetVO | null }
+    await vm.doAction('lock')
+    expect(vm.asset?.status).toBe('LOCKED')
+    // 关键：保留旧值，不显「无正文」/下载不失效
+    expect(vm.asset?.content).toBe('{"k":"v"}')
+    expect(vm.asset?.fileId).toBe('fid-1')
+  })
+
   it('归档调 versionApi.archive（L3）', async () => {
     vi.mocked(versionApi.archive).mockResolvedValue(
       response({ code: 200, message: 'ok', data: mkAsset({ status: 'ARCHIVED' }) })

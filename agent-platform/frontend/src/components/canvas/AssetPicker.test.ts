@@ -47,8 +47,8 @@ async function settle() {
   await Promise.resolve()
 }
 
-async function mountPicker(node: CanvasNode) {
-  const wrapper = mount(AssetPicker, { props: { show: true, node } })
+async function mountPicker(node: CanvasNode, canvasId?: number) {
+  const wrapper = mount(AssetPicker, { props: { show: true, node, canvasId } })
   await settle()
   return wrapper
 }
@@ -104,11 +104,12 @@ describe('AssetPicker (S12-b 资产选择器)', () => {
     const resolve: ResolveVO = { assetId: 1, mediaType: 'IMAGE', version: 1, fileId: 'f-1', name: '资产1' }
     vi.mocked(assetBridgeApi.resolve).mockResolvedValue(response({ code: 200, message: 'ok', data: resolve }))
     const node = mkNode('image')
-    const wrapper = await mountPicker(node)
+    const wrapper = await mountPicker(node, 77)
     const vm = wrapper.vm as unknown as { onPick: (a: AssetVO) => Promise<void> }
     await vm.onPick(mkAsset(1, { mediaType: 'IMAGE' }))
 
-    expect(assetBridgeApi.resolve).toHaveBeenCalledWith(1)
+    // resolve 带 canvasId+nodeId → 后端落 REFERENCE 绑定（L6 双向追溯）
+    expect(assetBridgeApi.resolve).toHaveBeenCalledWith(1, { canvasId: 77, nodeId: node.id })
     const emitted = wrapper.emitted('picked')
     expect(emitted).toBeTruthy()
     expect(emitted![0][0]).toMatchObject({ node, resolve })

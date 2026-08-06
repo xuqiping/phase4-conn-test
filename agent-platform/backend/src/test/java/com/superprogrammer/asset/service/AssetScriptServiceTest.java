@@ -51,7 +51,8 @@ class AssetScriptServiceTest {
 
     @Test
     void breakdown_normalJson_parsesAndCreatesVersion() {
-        scriptAsset("{\"body\":\"老板娘进门\"}");
+        // 规范键 synopsis（与 AssetCanvasBridgeService.extractTextContent / 前端新建剧本一致）
+        scriptAsset("{\"synopsis\":\"老板娘进门\"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(
                 LlmResponse.builder().content("[{\"index\":1,\"description\":\"开场\"},{\"index\":2,\"description\":\"进门\"}]").build());
@@ -69,8 +70,22 @@ class AssetScriptServiceTest {
     }
 
     @Test
-    void breakdown_fencedJson_stripsFence() {
+    void breakdown_legacyBodyKey_stillRead() {
+        // 旧态/历史数据用 body 键 → 回退兼容读取
         scriptAsset("{\"body\":\"剧本\"}");
+        when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
+        when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
+                .content("[{\"index\":1,\"description\":\"x\"}]").build());
+        when(versionService.createVersion(any(), eq(OWNER_ID), eq(false), any())).thenReturn(2);
+
+        ScriptBreakdownVO vo = service.breakdown(ASSET_ID, OWNER_ID, false, new ScriptBreakdownRequest());
+
+        assertEquals(1, vo.getScenes().size());
+    }
+
+    @Test
+    void breakdown_fencedJson_stripsFence() {
+        scriptAsset("{\"synopsis\":\"剧本\"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
                 .content("```json\n[{\"index\":1,\"description\":\" fenced \"}]\n```").build());
@@ -84,7 +99,7 @@ class AssetScriptServiceTest {
 
     @Test
     void breakdown_plainText_fallbackSingleScene() {
-        scriptAsset("{\"body\":\"剧本\"}");
+        scriptAsset("{\"synopsis\":\"剧本\"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
         // LLM 返回纯文本（非 JSON）→ 兜底单分场，不阻断
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
@@ -111,7 +126,7 @@ class AssetScriptServiceTest {
 
     @Test
     void breakdown_emptyBody_throws400() {
-        scriptAsset("{\"body\":\"  \"}");
+        scriptAsset("{\"synopsis\":\"  \"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -121,7 +136,7 @@ class AssetScriptServiceTest {
 
     @Test
     void breakdown_usesDefaultModelWhenAbsent() {
-        scriptAsset("{\"body\":\"剧本\"}");
+        scriptAsset("{\"synopsis\":\"剧本\"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
                 .content("[{\"index\":1,\"description\":\"x\"}]").build());

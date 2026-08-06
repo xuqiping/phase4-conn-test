@@ -46,7 +46,7 @@ describe('ConsistencyPack (S10-10b)', () => {
     expect(form.standardDescription).toBe('desc')
   })
 
-  it('保存调 saveConsistencyPack（空串→null）+ emit saved', async () => {
+  it('保存调 saveConsistencyPack（空串原样传=清空）+ emit saved', async () => {
     const wrapper = mount(ConsistencyPack, {
       props: { assetId: 5, canEdit: true, initial: { mainRefImageFileId: 'fid', galleryFileIds: ['g1'] } }
     })
@@ -55,13 +55,13 @@ describe('ConsistencyPack (S10-10b)', () => {
       form: { mainRefImageFileId: string; standardDescription: string; paramBaseline: string }
       save: () => Promise<void>
     }
-    // standardDescription / paramBaseline 留空 → 期望 null
+    // standardDescription / paramBaseline 留空 → 空串原样传（后端空串=清空，区别于 undefined=不改）
     await vm.save()
     expect(versionApi.saveConsistencyPack).toHaveBeenCalledWith(5, {
       mainRefImageFileId: 'fid',
       galleryFileIds: ['g1'],
-      standardDescription: null,
-      paramBaseline: null
+      standardDescription: '',
+      paramBaseline: ''
     })
     expect(wrapper.emitted('saved')).toBeTruthy()
     expect(wrapper.emitted('saved')?.[0]).toEqual([5])

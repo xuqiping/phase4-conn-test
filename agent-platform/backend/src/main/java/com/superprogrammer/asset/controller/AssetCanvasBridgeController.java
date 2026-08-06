@@ -57,7 +57,9 @@ public class AssetCanvasBridgeController {
     public ResponseEntity<R<ResolveVO>> resolve(@PathVariable Long id,
                                                 @RequestBody(required = false) ResolveRequest req) {
         Integer version = req == null ? null : req.getVersion();
-        return ResponseEntity.ok(R.ok(bridgeService.resolve(id, version, getCurrentUserId(), isAdmin())));
+        Long canvasId = req == null ? null : req.getCanvasId();
+        String nodeId = req == null ? null : req.getNodeId();
+        return ResponseEntity.ok(R.ok(bridgeService.resolve(id, version, canvasId, nodeId, getCurrentUserId(), isAdmin())));
     }
 
     /** 使用记录列表（双向追溯）。loadAccessible（viewer 可读）。 */

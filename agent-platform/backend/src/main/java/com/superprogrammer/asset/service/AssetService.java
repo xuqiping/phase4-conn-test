@@ -90,12 +90,13 @@ public class AssetService {
         asset.setStatus(Asset.STATUS_DRAFT);
         asset.setTags(serializeList(req.getTags()));
         asset.setCurrentVersion(1);
-        // 文本类正文必填（content JSON）
+        // 文本类正文必填 + 须为合法 JSON（content 列为 JSONB，防非 JSON 客户端直传撑爆 → 500）
         String content = req.getContent();
         if (isTextType(req.getMediaType())) {
             if (content == null || content.isBlank()) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "文本类资产正文不能为空");
             }
+            validateContentJson(content);
             asset.setContent(content);
         } else {
             asset.setContent("{}");
@@ -418,6 +419,15 @@ public class AssetService {
         }
         if (!isTextType(mediaType) && !isFileType(mediaType)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "非法内容类型：" + mediaType);
+        }
+    }
+
+    /** content 须为合法 JSON（content 列为 JSONB；防非 JSON 直传 → DB 500，前置 400）。 */
+    void validateContentJson(String content) {
+        try {
+            objectMapper.readTree(content);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "正文不是合法的 JSON（应为 {\"body\":\"...\"} / {\"synopsis\":\"...\"}）");
         }
     }
 

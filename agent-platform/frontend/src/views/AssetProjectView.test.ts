@@ -144,9 +144,28 @@ describe('AssetProjectView (S11 项目详情页)', () => {
     vm.form.content = '一位老板娘'
     vm.form.roleKeys = ['人物']
     await vm.submitCreate()
+    // 正文按类型包规范 JSON（PROMPT→{body}，SCRIPT→{synopsis}），后端 content 为 JSONB
     expect(assetApi.create).toHaveBeenCalledWith(
       7,
-      expect.objectContaining({ mediaType: 'PROMPT', name: '人物提示词', content: '一位老板娘', roleKeys: ['人物'] })
+      expect.objectContaining({ mediaType: 'PROMPT', name: '人物提示词', content: '{"body":"一位老板娘"}', roleKeys: ['人物'] })
+    )
+  })
+
+  it('新建剧本资产 content 包成 {synopsis}', async () => {
+    const wrapper = await mountView(['asset:write'])
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void
+      form: { mediaType: 'PROMPT' | 'SCRIPT'; name: string; description: string; content: string; roleKeys: string[] }
+      submitCreate: () => Promise<void>
+    }
+    vm.openCreate()
+    vm.form.mediaType = 'SCRIPT'
+    vm.form.name = '分场剧本'
+    vm.form.content = '第一场：庭院'
+    await vm.submitCreate()
+    expect(assetApi.create).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ mediaType: 'SCRIPT', name: '分场剧本', content: '{"synopsis":"第一场：庭院"}' })
     )
   })
 

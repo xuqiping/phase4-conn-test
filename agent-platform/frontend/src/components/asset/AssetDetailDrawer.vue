@@ -224,7 +224,13 @@ async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
   if (!asset.value) return
   try {
     const res = await versionApi[action](asset.value.id)
-    asset.value = res.data.data
+    // 状态机接口返 meta-only（content/fileId=null，懒加载语义）；保留抽屉已加载的正文+文件不丢失
+    const next = res.data.data
+    if (next) {
+      if (next.content == null && asset.value.content != null) next.content = asset.value.content
+      if (next.fileId == null && asset.value.fileId != null) next.fileId = asset.value.fileId
+    }
+    asset.value = next
     message.success('操作成功')
     emit('changed', asset.value.id)
   } catch {

@@ -136,6 +136,7 @@
       <AssetPicker
         v-model:show="showPicker"
         :node="contextNode"
+        :canvas-id="editingId"
         @picked="onAssetPicked"
       />
     </div>

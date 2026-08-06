@@ -67,6 +67,8 @@ const props = defineProps<{
   show: boolean
   /** 目标节点（决定可挑的资产类型）。 */
   node: CanvasNode | null
+  /** 当前画布 id（resolve 时落 REFERENCE 绑定用，L6 双向追溯）。 */
+  canvasId?: number
 }>()
 
 const emit = defineEmits<{
@@ -170,7 +172,10 @@ async function onPick(a: AssetVO) {
   if (!props.node) return
   pickingId.value = a.id
   try {
-    const res = await assetBridgeApi.resolve(a.id)
+    const res = await assetBridgeApi.resolve(a.id, {
+      canvasId: props.canvasId,
+      nodeId: props.node?.id
+    })
     const resolve: ResolveVO = res.data.data
     emit('picked', { node: props.node, resolve })
     emit('update:show', false)
