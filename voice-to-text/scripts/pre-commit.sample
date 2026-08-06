@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# ============================================================================
+# pre-commit 钩子骨架（可选启用）—— commit 前自动跑最小质量门
+#
+# 启用方式（二选一）：
+#   1. 拷贝为 .git/hooks/pre-commit（无扩展名），并 chmod +x
+#   2. 执行一次：git config core.hooksPath scripts/git-hooks
+#      并把本文件放到 scripts/git-hooks/pre-commit
+#
+# 效果：git commit 时自动执行 secret 扫描 + check_all，任一检查失败则拒绝提交。
+# 紧急绕过（不建议）：git commit --no-verify
+# ============================================================================
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# ---- secret 扫描（gitleaks）—— 拦截误提交的密钥，提交前第一道 ----
+# 需安装 gitleaks（https://github.com/gitleaks/gitleaks）。未装则跳过（CI 兜底）。
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "[pre-commit] secret 扫描（gitleaks）..."
+    gitleaks protect --staged --redact --verbose || {
+        echo "[pre-commit] ⚠️ gitleaks 发现疑似密钥！请轮换并清理后再提交（--no-verify 可绕过，不建议）"
+        exit 1
+    }
+else
+    echo "[pre-commit] 未装 gitleaks，跳过 secret 扫描（CI 会兜底；建议安装：见 security_strategy §5.2）"
+fi
+
+# ---- 最小质量门 ----
+if [ -f "$ROOT/scripts/check_all.sh" ]; then
+    bash "$ROOT/scripts/check_all.sh"
+elif [ -f "$ROOT/scripts/check_all.bat" ]; then
+    cmd //c "$ROOT\\scripts\\check_all.bat"
+else
+    echo "[pre-commit] 未找到 scripts/check_all，跳过质量门（请补齐）"
+    exit 0
+fi
