@@ -34,6 +34,8 @@ public class Asset extends BaseEntity {
     public static final String MEDIA_IMAGE = "图片";
     public static final String MEDIA_VIDEO = "视频";
     public static final String MEDIA_AUDIO = "音频";
+    /** 分镜（S17，category=TEXT；每镜头一资产，5 字段 content schema，由剧本一键分镜产出）。 */
+    public static final String MEDIA_STORYBOARD = "分镜";
 
     /** 处理类别常量（系统固定四类，V60，决定编辑器/mime/预览/gen_meta/画布映射链路）。 */
     public static final String CATEGORY_TEXT = "TEXT";

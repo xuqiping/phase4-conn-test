@@ -10,6 +10,7 @@ export type AssetMediaType = string
 export const MEDIA_TYPE = {
   PROMPT: '提示词',
   SCRIPT: '剧本',
+  STORYBOARD: '分镜',
   IMAGE: '图片',
   VIDEO: '视频',
   AUDIO: '音频'
@@ -202,6 +203,62 @@ export interface SceneVO {
 export interface ScriptBreakdownVO {
   version: number
   scenes: SceneVO[]
+}
+
+// ---------- 分镜（S17-S19，5 字段流水线） ----------
+
+/** 分镜实体→@资产引用键值对（字段 2/4 复用）。assetId 指向项目内图片/音频资产。 */
+export interface StoryboardEntityRef {
+  /** 实体键名（如「主角」「道具·剑」），≤32 字。 */
+  key: string
+  /** 被引资产 id；取不到（被删/失权）→ 渲染降级「资产已删」红标。 */
+  assetId?: number | null
+  /** 富化：被引资产的媒体类型/名（保存时后端从目录回填，防模型幻觉）。 */
+  mediaType?: string
+  name?: string
+}
+
+/**
+ * 分镜 content schema（5 字段流水线，1_8.6计划 第 11 点）。
+ * ①prompt 描述 ②entityRefs 实体→@资产（LLM 首轮匹配）③imageGen 批量生图(占位)
+ * ④videoInputs 生视频输入(audioRefs/imageRefs) ⑤videoGen 生视频(占位)。
+ * 字段 3/5 本轮占位（阻塞于图模型 R-3 接入）。
+ */
+export interface StoryboardContent {
+  /** 镜头号（一键分镜时由 LLM index 填）。 */
+  shotIndex?: number
+  /** 源剧本资产 id（一键分镜填，点击可在抽屉重开源剧本）。 */
+  parentId?: number | null
+  /** 字段1：镜头提示词描述。 */
+  prompt?: string
+  /** 字段2：实体→@资产键值对（人物/道具/场景图片资产）。 */
+  entityRefs?: StoryboardEntityRef[]
+  /** 字段3：批量生图状态（占位，待图模型接入）。 */
+  imageGen?: { status?: string }
+  /** 字段4：生视频输入键值对（音频/图片参考资产，本轮可编辑录入）。 */
+  videoInputs?: { audioRefs?: StoryboardEntityRef[]; imageRefs?: StoryboardEntityRef[] }
+  /** 字段5：生视频状态（占位，待图模型接入）。 */
+  videoGen?: { status?: string }
+}
+
+/** 分镜资产保存请求（S18，字段 1/2/4 可编辑）。 */
+export interface StoryboardSaveRequest {
+  prompt?: string
+  entityRefs?: StoryboardEntityRef[]
+  videoInputs?: { audioRefs?: StoryboardEntityRef[]; imageRefs?: StoryboardEntityRef[] }
+}
+
+/** 一键分镜请求（S19）。 */
+export interface StoryboardBreakdownRequest {
+  model?: string
+}
+
+/** 一键分镜结果（S19）。 */
+export interface StoryboardBreakdownVO {
+  count: number
+  createdAssetIds: number[]
+  model: string
+  version: number
 }
 
 // ---------- 画布双向打通（plan §S7 / FR-008/009/011） ----------

@@ -73,6 +73,7 @@ const STATUS_TYPE: Record<AssetStatus, 'default' | 'success' | 'warning'> = {
 const MEDIA_ICON: Record<AssetMediaType, string> = {
   [MEDIA_TYPE.PROMPT]: '📝',
   [MEDIA_TYPE.SCRIPT]: '🎬',
+  [MEDIA_TYPE.STORYBOARD]: '🎞',
   [MEDIA_TYPE.IMAGE]: '🖼️',
   [MEDIA_TYPE.VIDEO]: '🎞️',
   [MEDIA_TYPE.AUDIO]: '🎵'
@@ -83,6 +84,7 @@ function inferCategoryFromType(type: string): string {
   switch (type) {
     case MEDIA_TYPE.PROMPT:
     case MEDIA_TYPE.SCRIPT:
+    case MEDIA_TYPE.STORYBOARD:
       return 'text'
     case MEDIA_TYPE.IMAGE:
       return 'image'

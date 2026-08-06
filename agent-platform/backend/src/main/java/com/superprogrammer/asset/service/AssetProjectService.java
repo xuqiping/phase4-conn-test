@@ -56,10 +56,11 @@ public class AssetProjectService {
     public static final List<String> DEFAULT_NARRATIVE_ROLES = List.of("人物", "道具", "场景", "风格", "通用");
     /** 兜底桶（L10 删桶时资产归入此桶）。 */
     public static final String FALLBACK_ROLE = "通用";
-    /** 默认媒体类型受控词汇五项（V60 §C1b，{key,category}）。 */
+    /** 默认媒体类型受控词汇六项（V60 §C1b + S17 分镜，{key,category}）。 */
     public static final List<MediaTypeDef> DEFAULT_MEDIA_TYPES = List.of(
             new MediaTypeDef(Asset.MEDIA_PROMPT, Asset.CATEGORY_TEXT),
             new MediaTypeDef(Asset.MEDIA_SCRIPT, Asset.CATEGORY_TEXT),
+            new MediaTypeDef(Asset.MEDIA_STORYBOARD, Asset.CATEGORY_TEXT),
             new MediaTypeDef(Asset.MEDIA_IMAGE, Asset.CATEGORY_IMAGE),
             new MediaTypeDef(Asset.MEDIA_VIDEO, Asset.CATEGORY_VIDEO),
             new MediaTypeDef(Asset.MEDIA_AUDIO, Asset.CATEGORY_AUDIO));
