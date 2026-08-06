@@ -12,6 +12,7 @@
 //! capture session can be traced; fps is logged periodically for monitoring.
 
 mod capture;
+pub mod decode;
 pub mod encode;
 pub mod scene_detect;
 
