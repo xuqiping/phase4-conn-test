@@ -7,7 +7,7 @@
 <template>
   <div class="asset-card" @click="emit('open', asset)">
     <div class="asset-card__cover" :class="`asset-card__cover--${coverTone}`">
-      <span class="asset-card__cover-icon">{{ MEDIA_ICON[asset.mediaType] }}</span>
+      <span class="asset-card__cover-icon">{{ icon }}</span>
       <n-tag class="asset-card__status" size="tiny" bordered :type="STATUS_TYPE[asset.status]">
         {{ STATUS_LABEL[asset.status] }}
       </n-tag>
@@ -24,7 +24,7 @@
           <n-tag v-for="k in displayRoles" :key="k" size="tiny" round>{{ k }}</n-tag>
           <span v-if="extraRoles" class="asset-card__more">+{{ extraRoles }}</span>
         </div>
-        <span class="asset-card__type">{{ MEDIA_LABEL[asset.mediaType] }}</span>
+        <span class="asset-card__type">{{ typeLabel }}</span>
       </div>
     </div>
   </div>
@@ -59,8 +59,38 @@ const MEDIA_ICON: Record<AssetMediaType, string> = {
   AUDIO: '🎵'
 }
 
-/** 封面色调按类型分（暗色主题下作占位背景） */
-const coverTone = computed(() => props.asset.mediaType.toLowerCase())
+/** 媒体类型→处理类别 兜底推断（asset 无 mediaCategory 时按默认 key 推断；V60 两层）。 */
+function inferCategoryFromType(type: string): string {
+  switch (type) {
+    case 'PROMPT':
+    case 'SCRIPT':
+      return 'text'
+    case 'IMAGE':
+      return 'image'
+    case 'VIDEO':
+      return 'video'
+    case 'AUDIO':
+      return 'audio'
+    default:
+      return 'text'
+  }
+}
+
+/** 处理类别（优先 asset.mediaCategory，V60 后端必返；旧数据兜底按 type 推断）。 */
+const effectiveCategory = computed(() => {
+  const c = props.asset.mediaCategory?.toLowerCase()
+  return c && ['text', 'image', 'video', 'audio'].includes(c) ? c : inferCategoryFromType(props.asset.mediaType)
+})
+
+/** 封面色调按处理类别（暗色主题下作占位背景；自定义 type 走 category 色调） */
+const coverTone = computed(() => effectiveCategory.value)
+
+/** 图标：默认 5 类按 type 精确图标，自定义 type 走 category 图标兜底。 */
+const CATEGORY_ICON: Record<string, string> = { text: '📝', image: '🖼️', video: '🎞️', audio: '🎵' }
+const icon = computed(() => MEDIA_ICON[props.asset.mediaType] ?? CATEGORY_ICON[effectiveCategory.value] ?? '📄')
+
+/** 类型标签：默认 5 类有中文，自定义 type 显原文 key。 */
+const typeLabel = computed(() => MEDIA_LABEL[props.asset.mediaType] ?? props.asset.mediaType)
 
 /** 叙事角色徽标最多展示 3 个，超出聚合计数（防溢出） */
 const MAX_ROLES = 3

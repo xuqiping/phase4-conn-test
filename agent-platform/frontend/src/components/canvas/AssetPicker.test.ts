@@ -23,7 +23,15 @@ function response<T>(data: T): AxiosResponse<T> {
 }
 
 function mkProject(id: number): AssetProjectVO {
-  return { id, name: `项目${id}`, ownerId: 1, narrativeRoles: ['人物'], role: 'OWNER', createdAt: '2026-08-05' }
+  return {
+    id,
+    name: `项目${id}`,
+    ownerId: 1,
+    narrativeRoles: ['人物'],
+    mediaTypes: [{ key: 'PROMPT', category: 'TEXT' }],
+    role: 'OWNER',
+    createdAt: '2026-08-05'
+  }
 }
 
 function mkAsset(id: number, over: Partial<AssetVO> = {}): AssetVO {

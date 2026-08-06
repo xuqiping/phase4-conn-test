@@ -68,11 +68,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NInput } from 'naive-ui'
-import type { AssetMediaType, MatrixCountVO } from '@/types/asset'
+import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
 
 /** 筛选态：type/role 空=不限，q=搜索词 */
 export interface AssetFilter {
-  type?: AssetMediaType
+  type?: string
   role?: string
   q?: string
 }
@@ -83,6 +83,8 @@ const props = defineProps<{
   counts: MatrixCountVO
   /** 项目受控词汇桶（叙事角色） */
   roles: string[]
+  /** 媒体类型受控词汇桶（V60，顶栏类型分段从中派生，不再写死五类） */
+  mediaTypes: MediaTypeDef[]
 }>()
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: AssetFilter): void }>()
@@ -90,15 +92,23 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: AssetFilter): void }>()
 const activeType = computed(() => props.modelValue.type ?? '')
 const activeRole = computed(() => props.modelValue.role ?? '')
 
-const TYPE_OPTIONS: { key: '' | AssetMediaType; label: string }[] = [
+/** 默认 key 中文标签兜底（自定义 key 显原文）。 */
+const DEFAULT_TYPE_LABEL: Record<string, string> = {
+  PROMPT: '提示词',
+  SCRIPT: '剧本',
+  IMAGE: '图片',
+  VIDEO: '视频',
+  AUDIO: '音频'
+}
+function labelFor(key: string): string {
+  return DEFAULT_TYPE_LABEL[key] ?? key
+}
+
+/** 顶栏类型分段：全部 + 项目受控词汇（V60 从 mediaTypes 派生）。 */
+const typeOptions = computed<{ key: string; label: string }[]>(() => [
   { key: '', label: '全部' },
-  { key: 'PROMPT', label: '提示词' },
-  { key: 'SCRIPT', label: '剧本' },
-  { key: 'IMAGE', label: '图片' },
-  { key: 'VIDEO', label: '视频' },
-  { key: 'AUDIO', label: '音频' }
-]
-const typeOptions = TYPE_OPTIONS
+  ...props.mediaTypes.map((t) => ({ key: t.key, label: labelFor(t.key) }))
+])
 
 /** cells 建图：key=`${mediaType}|${roleKey ?? 'null'}` */
 const cellMap = computed(() => {
@@ -109,7 +119,7 @@ const cellMap = computed(() => {
   return m
 })
 const typeTotalMap = computed(() => {
-  const m = new Map<AssetMediaType, number>()
+  const m = new Map<string, number>()
   for (const c of props.counts.typeTotals ?? []) {
     m.set(c.mediaType, c.count)
   }
@@ -121,7 +131,7 @@ const grandTotal = computed(() =>
 )
 
 /** 类型徽标：选角色→该角色下此类型计数；未选角色→类型总数 */
-function typeBadge(key: '' | AssetMediaType): number {
+function typeBadge(key: string): number {
   if (key === '') {
     // 全部类型：选角色→该角色全类型计数；未选→总数
     if (activeRole.value) return roleAllTypesCount(activeRole.value)
@@ -150,14 +160,14 @@ const allRoleBadge = computed(() => {
 /** 某角色在所有类型下的计数之和（未选类型时角色行徽标） */
 function roleAllTypesCount(roleKey: string): number {
   let sum = 0
-  for (const t of TYPE_OPTIONS) {
+  for (const t of typeOptions.value) {
     if (t.key === '') continue
     sum += cellMap.value.get(`${t.key}|${roleKey}`) ?? 0
   }
   return sum
 }
 
-function selectType(key: '' | AssetMediaType) {
+function selectType(key: string) {
   emit('update:modelValue', {
     ...props.modelValue,
     type: key === '' ? undefined : key

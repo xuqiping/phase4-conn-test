@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AssetMatrixFilter, { type AssetFilter } from './AssetMatrixFilter.vue'
-import type { MatrixCountVO } from '@/types/asset'
+import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
 
 /** 构造矩阵计数：IMAGE×人物=3，IMAGE×(无角色)=1，SCRIPT×人物=2 */
 function mkCounts(): MatrixCountVO {
@@ -22,7 +22,17 @@ interface FilterProps {
   modelValue?: AssetFilter
   counts?: MatrixCountVO
   roles?: string[]
+  mediaTypes?: MediaTypeDef[]
 }
+
+/** 默认受控词汇五项（V60，与后端 DEFAULT_MEDIA_TYPES 对齐）。 */
+const DEFAULT_MEDIA_TYPES: MediaTypeDef[] = [
+  { key: 'PROMPT', category: 'TEXT' },
+  { key: 'SCRIPT', category: 'TEXT' },
+  { key: 'IMAGE', category: 'IMAGE' },
+  { key: 'VIDEO', category: 'VIDEO' },
+  { key: 'AUDIO', category: 'AUDIO' }
+]
 
 function mountFilter(props: FilterProps = {}) {
   return mount(AssetMatrixFilter, {
@@ -30,6 +40,7 @@ function mountFilter(props: FilterProps = {}) {
       modelValue: {},
       counts: mkCounts(),
       roles: ['人物', '道具'],
+      mediaTypes: DEFAULT_MEDIA_TYPES,
       ...props
     }
   })
@@ -86,5 +97,19 @@ describe('AssetMatrixFilter (S11)', () => {
     await wrapper.find('input').setValue('老板娘')
     const emits = wrapper.emitted('update:modelValue')!
     expect(emits[emits.length - 1][0]).toMatchObject({ q: '老板娘' })
+  })
+
+  it('C1b 顶栏从 mediaTypes 派生（自定义「地图」类型出现）', () => {
+    const wrapper = mountFilter({
+      mediaTypes: [
+        { key: 'PROMPT', category: 'TEXT' },
+        { key: 'IMAGE', category: 'IMAGE' },
+        { key: 'MAP', category: 'IMAGE' }
+      ]
+    })
+    const chips = wrapper.findAll('.matrix-filter__chip')
+    const labels = chips.map((c) => c.find('.matrix-filter__chip-label').text())
+    // 全部 + 提示词 + 图片 + MAP（自定义 key 显原文，无中文兜底）
+    expect(labels).toEqual(['全部', '提示词', '图片', 'MAP'])
   })
 })
