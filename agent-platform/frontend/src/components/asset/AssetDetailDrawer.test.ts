@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AssetDetailDrawer from './AssetDetailDrawer.vue'
-import { assetApi, assetBridgeApi, versionApi } from '@/api/assets'
+import { assetApi, assetBridgeApi, versionApi, scriptApi } from '@/api/assets'
 import type { AxiosResponse } from 'axios'
 import type { AssetVO } from '@/types/asset'
 
-const messageMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
+const messageMock = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
 vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
   return { ...actual, useMessage: () => messageMock }
@@ -21,7 +21,8 @@ vi.mock('@/api/request', () => ({ default: { get: requestGet }, request: { get: 
 vi.mock('@/api/assets', () => ({
   assetApi: { get: vi.fn() },
   assetBridgeApi: { usages: vi.fn() },
-  versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn() }
+  versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn(), create: vi.fn() },
+  scriptApi: { breakdown: vi.fn() }
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -147,5 +148,63 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     expect(requestGet).toHaveBeenCalledWith('/files/fid-2', { responseType: 'blob' })
     expect(clickSpy).toHaveBeenCalled()
     createSpy.mockRestore()
+  })
+
+  // ---------- C3 剧本 UI（正文编辑 + AI 分场 + 分场渲染） ----------
+
+  it('AC-C3-1 SCRIPT 资产 → 解析 synopsis + 渲染分场列表（不再 JSON dump）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({
+        code: 200, message: 'ok',
+        data: mkAsset({
+          mediaType: 'SCRIPT',
+          content: JSON.stringify({
+            synopsis: '主角登场',
+            scenes: [{ index: 1, description: '开场' }, { index: 2, description: '高潮' }]
+          })
+        })
+      })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { synopsis: string; scenes: { index: number }[] }
+    expect(vm.synopsis).toBe('主角登场')
+    expect(vm.scenes).toHaveLength(2)
+    // n-drawer teleport 到 body，DOM 查询走 document.body
+    expect(document.body.querySelectorAll('.script-scenes__item')).toHaveLength(2)
+  })
+
+  it('AC-C3-2 saveSynopsis → versionApi.create 写 {synopsis} 新版本', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'SCRIPT', content: JSON.stringify({ synopsis: '旧文' }) }) })
+    )
+    vi.mocked(versionApi.create).mockResolvedValue(response({ code: 200, message: 'ok', data: 2 }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { synopsis: string; saveSynopsis: () => Promise<void> }
+    vm.synopsis = '新文'
+    await vm.saveSynopsis()
+    expect(versionApi.create).toHaveBeenCalledWith(5, {
+      content: JSON.stringify({ synopsis: '新文' }),
+      changeNote: '编辑剧本正文'
+    })
+    expect(messageMock.success).toHaveBeenCalled()
+  })
+
+  it('AC-C3-3 runBreakdown：正文脏 → 警告不调；干净 → 调 scriptApi.breakdown', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'SCRIPT', content: JSON.stringify({ synopsis: '原文' }) }) })
+    )
+    vi.mocked(scriptApi.breakdown).mockResolvedValue(response({ code: 200, message: 'ok', data: { version: 2, scenes: [] } }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { synopsis: string; runBreakdown: () => Promise<void> }
+    // 正文脏（改未保存）→ 警告，不调
+    vm.synopsis = '改了'
+    await vm.runBreakdown()
+    expect(scriptApi.breakdown).not.toHaveBeenCalled()
+    expect(messageMock.warning).toHaveBeenCalled()
+    // 回到原文（干净）→ 调
+    messageMock.warning.mockClear()
+    vm.synopsis = '原文'
+    await vm.runBreakdown()
+    expect(scriptApi.breakdown).toHaveBeenCalledWith(5)
   })
 })
