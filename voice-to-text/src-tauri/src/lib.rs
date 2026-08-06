@@ -1,8 +1,10 @@
 mod audio;
+mod screen;
 mod session;
 mod stt;
 
 use crate::audio::{AudioCapture, AudioCaptureConfig};
+use crate::screen::{CaptureStatus, ScreenCapture, WindowInfo};
 use crate::session::{SessionInfo, SessionManager, SessionState};
 use crate::stt::{SpeechRecognizer, SpeechRecognizerConfig};
 use std::sync::{Arc, Mutex};
@@ -141,11 +143,62 @@ fn get_session_status(
     manager.get_session_status(&id).map_err(|e| e.to_string())
 }
 
+// ---- Screen capture (网课录屏总结, plan Step 3 / FR-101) ----
+
+type ScreenState = Arc<Mutex<Option<ScreenCapture>>>;
+
+/// List capturable windows for the picker UI (FR-101).
+#[tauri::command]
+fn list_windows() -> Result<Vec<WindowInfo>, String> {
+    ScreenCapture::list_windows()
+}
+
+/// Start capturing the selected window. Plain Step 3 usage passes no session
+/// clock (capture-local t0); Step 4's start_capture_session injects the
+/// session clock so all three pipelines share one time axis.
+#[tauri::command]
+fn start_window_capture(
+    state: tauri::State<'_, ScreenState>,
+    hwnd: isize,
+) -> Result<(), String> {
+    let mut guard = state.lock().unwrap();
+    if guard.is_some() {
+        return Err("window capture already started".to_string());
+    }
+    *guard = Some(ScreenCapture::start(hwnd, None)?);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_window_capture(state: tauri::State<'_, ScreenState>) -> Result<(), String> {
+    let mut guard = state.lock().unwrap();
+    if let Some(mut cap) = guard.take() {
+        cap.stop()?;
+    }
+    Ok(())
+}
+
+/// fps / frame count / stalled (minimized) status for the recording UI.
+#[tauri::command]
+fn get_capture_status(state: tauri::State<'_, ScreenState>) -> CaptureStatus {
+    let mut guard = state.lock().unwrap();
+    match guard.as_mut() {
+        Some(cap) => cap.status(),
+        None => CaptureStatus {
+            running: false,
+            frames_captured: 0,
+            last_frame_ts: 0,
+            stalled: false,
+        },
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .manage::<AppState>(Arc::new(Mutex::new(None)))
+        .manage::<ScreenState>(Arc::new(Mutex::new(None)))
         .manage(SessionManager::new(SessionManager::default_base_dir()))
         .invoke_handler(tauri::generate_handler![
             list_audio_devices,
@@ -154,7 +207,11 @@ pub fn run() {
             get_recording_status,
             create_session,
             list_sessions,
-            get_session_status
+            get_session_status,
+            list_windows,
+            start_window_capture,
+            stop_window_capture,
+            get_capture_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
