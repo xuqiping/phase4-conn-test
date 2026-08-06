@@ -82,7 +82,7 @@ public class AssetVersionService {
     public int createVersion(Long assetId, Long userId, boolean admin, VersionCreateRequest req) {
         Asset asset = loadAsset(assetId);
         aclService.requireWrite(asset.getProjectId(), userId, admin);
-        boolean textType = isTextType(asset.getMediaType());
+        boolean textType = isTextAsset(asset);
         String content = req.getContent();
         String fileId = req.getFileId();
         boolean hasContent = content != null && !content.isBlank();
@@ -177,8 +177,14 @@ public class AssetVersionService {
         }
     }
 
-    private boolean isTextType(String mediaType) {
-        return Asset.MEDIA_PROMPT.equals(mediaType) || Asset.MEDIA_SCRIPT.equals(mediaType);
+    /** 文本类资产判定（V60 按 category，含分镜/自定义 TEXT；旧数据无 category 兜底按默认 key 推断）。 */
+    private boolean isTextAsset(Asset asset) {
+        if (asset.getMediaCategory() != null) {
+            return Asset.CATEGORY_TEXT.equals(asset.getMediaCategory());
+        }
+        return Asset.MEDIA_PROMPT.equals(asset.getMediaType())
+                || Asset.MEDIA_SCRIPT.equals(asset.getMediaType())
+                || Asset.MEDIA_STORYBOARD.equals(asset.getMediaType());
     }
 
     /** content 须为合法 JSON（JSONB 列；防非 JSON 直传 → DB 500，前置 400）。 */

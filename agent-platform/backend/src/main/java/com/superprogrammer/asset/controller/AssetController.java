@@ -167,6 +167,16 @@ public class AssetController {
                 scriptService.breakdown(id, getCurrentUserId(), isAdmin(), req)));
     }
 
+    // ---------- 分镜字段保存（S18） ----------
+
+    @PutMapping("/assets/{id}/storyboard")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> saveStoryboard(@PathVariable Long id,
+                                                     @RequestBody com.superprogrammer.asset.dto.StoryboardSaveRequest req) {
+        return ResponseEntity.ok(R.ok("分镜已保存",
+                assetService.saveStoryboard(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth == null ? null : (Long) auth.getPrincipal();

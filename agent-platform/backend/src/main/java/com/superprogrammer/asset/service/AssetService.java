@@ -70,6 +70,10 @@ public class AssetService {
     private static final int DEFAULT_PAGE_SIZE = 20;
     /** 文本类正文片段截断上限（S16 卡片封面预览）。 */
     private static final int TEXT_PREVIEW_MAX = 120;
+    /** 分镜提示词上限（S18 字段1，同剧本 synopsis 上限）。 */
+    private static final int STORYBOARD_PROMPT_MAX = 8000;
+    /** 分镜实体键上限（S18 字段2/4 key）。 */
+    private static final int STORYBOARD_REF_KEY_MAX = 32;
 
     private final AssetMapper assetMapper;
     private final AssetVersionMapper versionMapper;
@@ -354,6 +358,48 @@ public class AssetService {
         versionService.saveConsistencyPack(assetId, userId, admin, req);
         // 回读最新态（current_version/content 已被版本服务更新）
         return toVO(loadAsset(assetId), true);
+    }
+
+    /**
+     * 保存分镜字段（S18，5 字段流水线字段 1/2/4）。requireWrite + 须分镜类型。
+     *
+     * <p>合并进 content（保留 shotIndex/parentId/imageGen/videoGen），产新版本。
+     * entityRefs/videoInputs 的 assetId 逐个校验 ∈ 同项目（query 缩圈 projectId），
+     * 非法/跨项目/已删 → 置 null（剔除防越权，保留 key 存痕迹）；富化 name/mediaType 取自目录非客户端。
+     */
+    @Transactional
+    public AssetVO saveStoryboard(Long assetId, Long userId, boolean admin,
+                                  com.superprogrammer.asset.dto.StoryboardSaveRequest req) {
+        Asset asset = loadAsset(assetId);
+        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        if (!Asset.MEDIA_STORYBOARD.equals(asset.getMediaType())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅分镜类型资产可保存分镜字段");
+        }
+        ObjectNode content = parseContentObject(asset.getContent());
+        // 字段1 prompt（≤8000）
+        if (req.getPrompt() != null) {
+            if (req.getPrompt().length() > STORYBOARD_PROMPT_MAX) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分镜提示词不得超过 " + STORYBOARD_PROMPT_MAX + " 字");
+            }
+            content.put("prompt", req.getPrompt());
+        }
+        // 字段2 entityRefs：校验同项目 + 富化
+        if (req.getEntityRefs() != null) {
+            content.set("entityRefs", enrichRefs(req.getEntityRefs(), asset.getProjectId()));
+        }
+        // 字段4 videoInputs：audioRefs/imageRefs 两组
+        if (req.getVideoInputs() != null) {
+            ObjectNode vi = objectMapper.createObjectNode();
+            vi.set("audioRefs", enrichRefs(req.getVideoInputs().getAudioRefs(), asset.getProjectId()));
+            vi.set("imageRefs", enrichRefs(req.getVideoInputs().getImageRefs(), asset.getProjectId()));
+            content.set("videoInputs", vi);
+        }
+        com.superprogrammer.asset.dto.VersionCreateRequest vr = new com.superprogrammer.asset.dto.VersionCreateRequest();
+        vr.setContent(content.toString());
+        vr.setChangeNote("编辑分镜字段");
+        versionService.createVersion(assetId, userId, admin, vr);
+        log.info("storyboard saved: assetId={} projectId={} userId={}", assetId, asset.getProjectId(), userId);
+        return get(assetId, userId, admin);
     }
 
     // ---------- 角色挂载同步 ----------
@@ -689,5 +735,66 @@ public class AssetService {
             return null;
         }
         return cleaned.length() > TEXT_PREVIEW_MAX ? cleaned.substring(0, TEXT_PREVIEW_MAX) : cleaned;
+    }
+
+    /** 解析 content 为 ObjectNode（非合法 JSON/空 → 空 ObjectNode）。S18 分镜合并用。 */
+    private ObjectNode parseContentObject(String content) {
+        try {
+            if (content == null || content.isBlank()) {
+                return objectMapper.createObjectNode();
+            }
+            return (ObjectNode) objectMapper.readTree(content);
+        } catch (Exception e) {
+            return objectMapper.createObjectNode();
+        }
+    }
+
+    /**
+     * 富化分镜实体引用列表（S18 字段2/4）：批量取项目内资产，逐条校验 + 富化。
+     *
+     * <p>assetId 经 fetchAssetsInProject 缩圈 projectId 查得 → 命中富化 name/mediaType；
+     * 非法/跨项目/已删 → 置 null（保留 key 存痕迹，剔除 assetId 防越权引他项目资产）。
+     * key 校验 ≤32；空 key 跳过。
+     */
+    private com.fasterxml.jackson.databind.node.ArrayNode enrichRefs(
+            List<com.superprogrammer.asset.dto.StoryboardSaveRequest.EntityRef> refs, Long projectId) {
+        com.fasterxml.jackson.databind.node.ArrayNode arr = objectMapper.createArrayNode();
+        if (refs == null) {
+            return arr;
+        }
+        Set<Long> ids = refs.stream()
+                .map(com.superprogrammer.asset.dto.StoryboardSaveRequest.EntityRef::getAssetId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, Asset> map = ids.isEmpty() ? Collections.emptyMap() : fetchAssetsInProject(ids, projectId);
+        for (com.superprogrammer.asset.dto.StoryboardSaveRequest.EntityRef r : refs) {
+            if (r.getKey() == null || r.getKey().isBlank()) {
+                continue;
+            }
+            String key = r.getKey().trim();
+            if (key.length() > STORYBOARD_REF_KEY_MAX) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分镜实体键不得超过 " + STORYBOARD_REF_KEY_MAX + " 字");
+            }
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("key", key);
+            Asset ref = r.getAssetId() == null ? null : map.get(r.getAssetId());
+            if (ref != null) {
+                node.put("assetId", ref.getId());
+                node.put("name", ref.getName());
+                node.put("mediaType", ref.getMediaType());
+            } else if (r.getAssetId() != null) {
+                node.putNull("assetId");
+            }
+            arr.add(node);
+        }
+        return arr;
+    }
+
+    /** 批量取项目内资产（query 缩圈 projectId，防跨项目越权引用）。S18 分镜富化用。 */
+    private Map<Long, Asset> fetchAssetsInProject(Set<Long> ids, Long projectId) {
+        List<Asset> assets = assetMapper.selectList(new LambdaQueryWrapper<Asset>()
+                .in(Asset::getId, ids)
+                .eq(Asset::getProjectId, projectId));
+        return assets.stream().collect(Collectors.toMap(Asset::getId, a -> a, (a, b) -> a));
     }
 }

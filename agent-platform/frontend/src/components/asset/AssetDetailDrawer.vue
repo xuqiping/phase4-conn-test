@@ -63,6 +63,16 @@
               />
             </div>
           </template>
+          <!-- S18 分镜：5 字段编辑（StoryboardFields 子组件） -->
+          <template v-else-if="asset.mediaType === MEDIA_TYPE.STORYBOARD">
+            <StoryboardFields
+              class="asset-detail__storyboard"
+              :asset="asset"
+              :can-edit="canEdit"
+              @changed="onStoryboardChanged"
+              @open-parent="(pid: number) => emit('open-asset', pid)"
+            />
+          </template>
           <!-- S15 非剧本 TEXT（提示词/自定义 TEXT）：正文编辑器（统一 TEXT 编辑入口） -->
           <template v-else-if="effectiveCategory === 'TEXT'">
             <div class="asset-detail__text-edit">
@@ -174,6 +184,7 @@ import request from '@/api/request'
 import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
 import VersionTimeline from '@/components/asset/VersionTimeline.vue'
 import ScriptScenes from '@/components/asset/ScriptScenes.vue'
+import StoryboardFields from '@/components/asset/StoryboardFields.vue'
 import type { AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
 
@@ -225,6 +236,8 @@ const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
   /** 状态变更 → 父重载（矩阵计数/列表态可能变，L2/L3） */
   (e: 'changed', assetId: number): void
+  /** S18 分镜「源剧本」点击 → 父切到该资产（重开源剧本抽屉） */
+  (e: 'open-asset', assetId: number): void
 }>()
 
 const message = useMessage()
@@ -486,6 +499,12 @@ defineExpose({ asset, usages, loading, synopsis, scenes, textBody, doAction, dow
 
 /** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
 async function onConsistencySaved(assetId: number) {
+  await loadAll(assetId)
+  emit('changed', assetId)
+}
+
+/** S18 分镜字段保存后 → 重载资产（content 含新分镜字段，产新版本）+ 通知父。 */
+async function onStoryboardChanged(assetId: number) {
   await loadAll(assetId)
   emit('changed', assetId)
 }

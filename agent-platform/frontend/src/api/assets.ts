@@ -26,6 +26,7 @@ import type {
   ResolveRequest,
   ResolveVO,
   ScriptBreakdownVO,
+  StoryboardSaveRequest,
   TransferRequest,
   VersionCreateRequest,
   VersionVO
@@ -138,6 +139,10 @@ export const assetApi = {
   /** DELETE /assets/assets/{id} — 软删（role_links 硬删；bindings 留存历史） */
   remove(assetId: number) {
     return request.delete<ApiResponse<void>>(`/assets/assets/${assetId}`)
+  },
+  /** PUT /assets/assets/{id}/storyboard — 保存分镜字段(字段1/2/4，S18)。requireWrite + 须分镜类型。 */
+  saveStoryboard(assetId: number, data: StoryboardSaveRequest) {
+    return request.put<ApiResponse<AssetVO>>(`/assets/assets/${assetId}/storyboard`, data)
   }
 }
 

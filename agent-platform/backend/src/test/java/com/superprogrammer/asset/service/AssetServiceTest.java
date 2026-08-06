@@ -6,6 +6,8 @@ import com.superprogrammer.asset.dto.AssetCreateRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.MatrixCountVO;
+import com.superprogrammer.asset.dto.StoryboardSaveRequest;
+import com.superprogrammer.asset.dto.VersionCreateRequest;
 import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetRoleLink;
@@ -38,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -371,6 +375,83 @@ class AssetServiceTest {
         when(versionMapper.selectOne(any())).thenReturn(null);
         AssetVO vo = service.get(1L, OWNER_ID, false);
         assertNull(vo.getTextPreview());
+    }
+
+    // ---------- S18 分镜字段保存 ----------
+
+    private StoryboardSaveRequest.EntityRef sbRef(String key, Long assetId) {
+        StoryboardSaveRequest.EntityRef r = new StoryboardSaveRequest.EntityRef();
+        r.setKey(key);
+        r.setAssetId(assetId);
+        return r;
+    }
+
+    @Test
+    void saveStoryboard_mergesFields_enrichesValidRefs_dropsIllegal() {
+        Asset a = asset(1L, Asset.MEDIA_STORYBOARD);
+        a.setMediaCategory(Asset.CATEGORY_TEXT);
+        a.setProjectId(PROJECT_ID);
+        a.setContent("{\"shotIndex\":2,\"parentId\":50,\"prompt\":\"旧提示\"}");
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        // 引用资产：id=7 同项目存在（富化），id=999 不存在（非法剔除置 null）
+        Asset ref7 = asset(7L, Asset.MEDIA_IMAGE);
+        ref7.setName("主角定妆");
+        when(assetMapper.selectList(any())).thenReturn(List.of(ref7));
+        ArgumentCaptor<VersionCreateRequest> vc = ArgumentCaptor.forClass(VersionCreateRequest.class);
+        when(versionService.createVersion(eq(1L), eq(OWNER_ID), eq(false), vc.capture())).thenReturn(3);
+        // get() 回读
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+
+        StoryboardSaveRequest req = new StoryboardSaveRequest();
+        req.setPrompt("新镜头提示词");
+        req.setEntityRefs(List.of(sbRef("主角", 7L), sbRef("已删资产", 999L)));
+        service.saveStoryboard(1L, OWNER_ID, false, req);
+
+        String merged = vc.getValue().getContent();
+        // 字段1 prompt 更新
+        assertTrue(merged.contains("\"prompt\":\"新镜头提示词\""), "prompt 须更新");
+        // shotIndex/parentId 保留（不被覆盖）
+        assertTrue(merged.contains("\"shotIndex\":2"), "shotIndex 须保留");
+        assertTrue(merged.contains("\"parentId\":50"), "parentId 须保留");
+        // 主角(7) 富化 name
+        assertTrue(merged.contains("\"name\":\"主角定妆\""), "有效引用须富化 name");
+        // 已删(999) 置 null（剔除 assetId 防越权，保留 key）
+        assertTrue(merged.contains("\"assetId\":null"), "非法引用须置 null");
+        assertTrue(merged.contains("\"key\":\"已删资产\""), "key 须保留存痕迹");
+        assertEquals("编辑分镜字段", vc.getValue().getChangeNote());
+    }
+
+    @Test
+    void saveStoryboard_nonStoryboardType_throws400() {
+        Asset a = asset(1L, Asset.MEDIA_PROMPT);
+        a.setMediaCategory(Asset.CATEGORY_TEXT);
+        a.setProjectId(PROJECT_ID);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        StoryboardSaveRequest req = new StoryboardSaveRequest();
+        req.setPrompt("x");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.saveStoryboard(1L, OWNER_ID, false, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(versionService, never()).createVersion(any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    void saveStoryboard_promptOverLimit_throws400() {
+        Asset a = asset(1L, Asset.MEDIA_STORYBOARD);
+        a.setMediaCategory(Asset.CATEGORY_TEXT);
+        a.setProjectId(PROJECT_ID);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        StoryboardSaveRequest req = new StoryboardSaveRequest();
+        StringBuilder huge = new StringBuilder();
+        for (int i = 0; i < 8001; i++) huge.append("a");
+        req.setPrompt(huge.toString());
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.saveStoryboard(1L, OWNER_ID, false, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
     // ---------- S5 状态机 ----------
