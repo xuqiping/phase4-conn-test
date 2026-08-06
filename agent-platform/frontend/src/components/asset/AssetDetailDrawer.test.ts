@@ -19,7 +19,7 @@ const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }))
 vi.mock('@/api/request', () => ({ default: { get: requestGet }, request: { get: requestGet } }))
 
 vi.mock('@/api/assets', () => ({
-  assetApi: { get: vi.fn() },
+  assetApi: { get: vi.fn(), remove: vi.fn() },
   assetBridgeApi: { usages: vi.fn() },
   versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn(), create: vi.fn() },
   scriptApi: { breakdown: vi.fn() }
@@ -207,5 +207,55 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     vm.synopsis = '原文'
     await vm.runBreakdown()
     expect(scriptApi.breakdown).toHaveBeenCalledWith(5)
+  })
+
+  // ---------- S15 提示词/非剧本 TEXT 编辑器 + 删除（Bug①②） ----------
+
+  it('AC-S15-1 PROMPT 资产 → 解析 content.body 为正文草稿（不再 JSON dump 只读）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '提示词', content: JSON.stringify({ body: '原文正文' }) }) })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { textBody: string }
+    expect(vm.textBody).toBe('原文正文')
+  })
+
+  it('AC-S15-2 saveTextBody → versionApi.create 写 {body} 新版本（保留其他键）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({
+        code: 200, message: 'ok',
+        data: mkAsset({ mediaType: '提示词', content: JSON.stringify({ body: '旧', extras: 'keep' }) })
+      })
+    )
+    vi.mocked(versionApi.create).mockResolvedValue(response({ code: 200, message: 'ok', data: 2 }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { textBody: string; saveTextBody: () => Promise<void> }
+    vm.textBody = '新正文'
+    await vm.saveTextBody()
+    expect(versionApi.create).toHaveBeenCalledWith(5, {
+      content: JSON.stringify({ body: '新正文', extras: 'keep' }),
+      changeNote: '编辑正文'
+    })
+    expect(messageMock.success).toHaveBeenCalled()
+  })
+
+  it('AC-S15-3 deleteAsset → assetApi.remove + emit changed + 关抽屉（L11）', async () => {
+    vi.mocked(assetApi.remove).mockResolvedValue(response({ code: 200, message: 'ok', data: undefined }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { deleteAsset: () => Promise<void> }
+    await vm.deleteAsset()
+    expect(assetApi.remove).toHaveBeenCalledWith(5)
+    expect(wrapper.emitted('changed')).toBeTruthy()
+    const shows = wrapper.emitted('update:show')
+    expect(shows && shows[shows.length - 1][0]).toBe(false)
+  })
+
+  it('AC-S15-4 非法 JSON 旧 content → readTextBody 兜底裸文本不崩', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '提示词', content: '裸文本内容' }) })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { textBody: string }
+    expect(vm.textBody).toBe('裸文本内容')
   })
 })

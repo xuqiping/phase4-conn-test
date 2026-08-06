@@ -63,6 +63,29 @@
               />
             </div>
           </template>
+          <!-- S15 非剧本 TEXT（提示词/自定义 TEXT）：正文编辑器（统一 TEXT 编辑入口） -->
+          <template v-else-if="effectiveCategory === 'TEXT'">
+            <div class="asset-detail__text-edit">
+              <n-input
+                v-model:value="textBody"
+                type="textarea"
+                :rows="6"
+                :maxlength="8000"
+                :readonly="!canEdit"
+                placeholder="资产正文（≤8000 字）；EDITOR 可编辑，点「保存正文」产新版本"
+              />
+              <div v-if="canEdit" class="asset-detail__script-actions">
+                <n-button
+                  size="small"
+                  :loading="savingTextBody"
+                  :disabled="!textBodyDirty"
+                  @click="saveTextBody"
+                >
+                  保存正文
+                </n-button>
+              </div>
+            </div>
+          </template>
           <template v-else>
             <pre class="asset-detail__text">{{ textPreview }}</pre>
           </template>
@@ -89,6 +112,13 @@
           <n-button v-if="asset.status !== 'ARCHIVED'" size="small" type="warning" @click="doAction('archive')">归档</n-button>
           <n-button v-if="asset.status === 'ARCHIVED'" size="small" @click="doAction('unarchive')">取消归档</n-button>
           <n-button v-if="needsFile" size="small" quaternary @click="download">下载</n-button>
+          <!-- S15 删除（软删；画布引用快照不受影响，L11） -->
+          <n-popconfirm @positive-click="deleteAsset">
+            <template #trigger>
+              <n-button size="small" type="error" ghost :loading="deleting">删除</n-button>
+            </template>
+            确认删除？画布引用快照不受影响。
+          </n-popconfirm>
         </div>
 
         <!-- 使用记录（双向追溯，viewer 可读） -->
@@ -132,6 +162,7 @@ import {
   NDrawerContent,
   NEmpty,
   NInput,
+  NPopconfirm,
   NSpace,
   NSpin,
   NTag,
@@ -145,6 +176,43 @@ import VersionTimeline from '@/components/asset/VersionTimeline.vue'
 import ScriptScenes from '@/components/asset/ScriptScenes.vue'
 import type { AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
+
+/**
+ * 读文本类正文：SCRIPT→content.synopsis；其他 TEXT→content.body；兜底首个字符串值/裸文本。
+ * 用于抽屉编辑器初始化（S15 统一文本编辑入口）。
+ */
+function readTextBody(content: string | null | undefined, mediaType: string): string {
+  if (!content) return ''
+  try {
+    const obj = JSON.parse(content) as Record<string, unknown>
+    const key = mediaType === MEDIA_TYPE.SCRIPT ? 'synopsis' : 'body'
+    if (typeof obj[key] === 'string') return obj[key] as string
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'string') return obj[k] as string
+    }
+    return ''
+  } catch {
+    return content
+  }
+}
+
+/**
+ * 写文本类正文回 content 串：按类型写对应键，保留其他键（scenes/template/consistency 不丢）。
+ * 非合法 JSON 的旧 content 当作空对象重写。
+ */
+function writeTextBody(content: string | null | undefined, mediaType: string, body: string): string {
+  let obj: Record<string, unknown> = {}
+  if (content) {
+    try {
+      obj = JSON.parse(content) as Record<string, unknown>
+    } catch {
+      obj = {}
+    }
+  }
+  const key = mediaType === MEDIA_TYPE.SCRIPT ? 'synopsis' : 'body'
+  obj[key] = body
+  return JSON.stringify(obj)
+}
 
 const props = defineProps<{
   show: boolean
@@ -173,6 +241,13 @@ const originalSynopsis = ref('')
 const savingSynopsis = ref(false)
 const breaking = ref(false)
 const synopsisDirty = computed(() => synopsis.value !== originalSynopsis.value)
+
+/** S15 非剧本 TEXT（提示词/自定义 TEXT）正文草稿 + 保存态。 */
+const textBody = ref('')
+const originalTextBody = ref('')
+const savingTextBody = ref(false)
+const textBodyDirty = computed(() => textBody.value !== originalTextBody.value)
+const deleting = ref(false)
 
 const drawerWidth = computed(() => (window.innerWidth < 768 ? '100%' : 520))
 
@@ -246,6 +321,11 @@ async function loadAll(id: number) {
     // C3 剧本：解析 content → 正文草稿 + 分场列表
     if (asset.value?.mediaType === MEDIA_TYPE.SCRIPT) {
       parseScriptContent(asset.value.content)
+    } else if (asset.value && effectiveCategory.value === 'TEXT') {
+      // S15 非剧本 TEXT（提示词/自定义 TEXT）：解析正文草稿
+      const body = readTextBody(asset.value.content, asset.value.mediaType)
+      textBody.value = body
+      originalTextBody.value = body
     }
     // 文件类拉预览 objectURL
     if (asset.value?.fileId && isFileAsset.value) {
@@ -327,6 +407,40 @@ async function runBreakdown() {
   }
 }
 
+/** S15 保存提示词/自定义 TEXT 正文 → versionApi.create 写 {body} 新版本（保留其他键）。 */
+async function saveTextBody() {
+  if (!asset.value) return
+  savingTextBody.value = true
+  try {
+    const next = writeTextBody(asset.value.content, asset.value.mediaType, textBody.value.trim())
+    await versionApi.create(asset.value.id, { content: next, changeNote: '编辑正文' })
+    message.success('正文已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存正文失败')
+  } finally {
+    savingTextBody.value = false
+  }
+}
+
+/** S15 删除资产（软删；画布引用快照不受影响，bindings 留存历史）→ 关抽屉 + 通知父重载。 */
+async function deleteAsset() {
+  if (!asset.value) return
+  deleting.value = true
+  try {
+    await assetApi.remove(asset.value.id)
+    message.success('已删除')
+    const deletedId = asset.value.id
+    emit('changed', deletedId)
+    emit('update:show', false)
+  } catch {
+    message.error('删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
 /** 状态机动作分发（L2 定稿/解锁；L3 归档/取消归档） */
 async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
   if (!asset.value) return
@@ -368,7 +482,7 @@ async function download() {
   }
 }
 
-defineExpose({ asset, usages, loading, synopsis, scenes, doAction, download, loadAll, saveSynopsis, runBreakdown, parseScriptContent })
+defineExpose({ asset, usages, loading, synopsis, scenes, textBody, doAction, download, loadAll, saveSynopsis, saveTextBody, deleteAsset, runBreakdown, parseScriptContent })
 
 /** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
 async function onConsistencySaved(assetId: number) {
@@ -416,6 +530,14 @@ async function onConsistencySaved(assetId: number) {
     color: var(--color-text-secondary);
     max-height: 320px;
     overflow: auto;
+  }
+
+  &__text-edit {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    text-align: left;
   }
 
   &__script {
