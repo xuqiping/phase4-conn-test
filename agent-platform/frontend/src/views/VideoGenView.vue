@@ -53,6 +53,7 @@
                 <span class="video-gen__hint">（{{ images.length }}/{{ capability.maxImages }}，≤8MB/张）</span>
               </template>
               <n-upload
+                v-model:file-list="imageFileList"
                 :max="capability.maxImages"
                 accept="image/*"
                 list-type="image-card"
@@ -67,6 +68,7 @@
                 <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
               </template>
               <n-upload
+                v-model:file-list="videoFileList"
                 :max="capability.maxVideos"
                 accept="video/*"
                 :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')"
@@ -82,6 +84,7 @@
                 <span class="video-gen__hint">（{{ audios.length }}/{{ capability.maxAudios }}，≤15MB/个，音色/BGM 参考）</span>
               </template>
               <n-upload
+                v-model:file-list="audioFileList"
                 :max="capability.maxAudios"
                 accept="audio/*"
                 :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')"
@@ -238,7 +241,7 @@ import {
   NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
-import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
+import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions, UploadFileInfo } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
@@ -350,10 +353,15 @@ const durationOptions = computed(() => {
 })
 
 // === 多模态参考附件（复用 /api/files/upload 单一咽喉点） ===
-interface UploadedAttachment { fileId: string; name: string }
+// F1 修复：n-upload 受控化（v-model:file-list），显示与提交载荷同源；
+// 关联键用 UploadFileInfo.id（上传期唯一），不用文件名（同名会错位）。
+interface UploadedAttachment { id: string; fileId: string; name: string }
 const images = ref<UploadedAttachment[]>([])
 const videos = ref<UploadedAttachment[]>([])
 const audios = ref<UploadedAttachment[]>([])
+const imageFileList = ref<UploadFileInfo[]>([])
+const videoFileList = ref<UploadFileInfo[]>([])
+const audioFileList = ref<UploadFileInfo[]>([])
 const uploadingCount = ref(0)
 
 /** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
@@ -386,7 +394,7 @@ async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOpti
   uploadingCount.value++
   try {
     const { data } = await mediaApi.uploadAttachment(raw)
-    kindList(kind).value.push({ fileId: data.data.fileId, name: raw.name })
+    kindList(kind).value.push({ id: file.id, fileId: data.data.fileId, name: raw.name })
     onFinish()
   } catch {
     onError()
@@ -396,10 +404,10 @@ async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOpti
   }
 }
 
-/** n-upload remove → 同步移除 fileId（按文件名匹配，同名取第一个）。 */
-function onAttachmentRemove({ file }: { file: { name: string } }, kind: AttachmentKind) {
+/** n-upload remove → 按 UploadFileInfo.id 移除对应 fileId（同名文件不错位）。 */
+function onAttachmentRemove({ file }: { file: { id: string } }, kind: AttachmentKind) {
   const list = kindList(kind)
-  const idx = list.value.findIndex(a => a.name === file.name)
+  const idx = list.value.findIndex(a => a.id === file.id)
   if (idx >= 0) list.value.splice(idx, 1)
   return true
 }

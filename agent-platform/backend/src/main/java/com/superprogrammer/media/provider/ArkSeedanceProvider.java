@@ -63,8 +63,13 @@ public class ArkSeedanceProvider implements MediaGenProvider {
     private final MediaGenProperties properties;
 
     /** 缓存的 WebClient + 其指纹（endpoint + 密文），key 轮换后下次调用重建。 */
-    private volatile WebClient cachedClient;
-    private volatile String cachedFingerprint;
+    /**
+     * WebClient 缓存（F5：单槽→小 map）。key=指纹（providerId|endpoint|密文），
+     * 多 VIDEO provider 交替任务不再每轮重建 HttpClient；key/URL 改后指纹变自动换槽。
+     * provider 行数十量级，map 无界增长风险忽略。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, WebClient> clientCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public String getId() {
@@ -217,6 +222,8 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             case "success":
                 return MediaGenResult.STATUS_SUCCEEDED;
             case "failed":
+            case "cancelled":   // F4：Ark 官方终态，原落 default→RUNNING 死轮询满超时，真实原因被吞
+            case "expired":
                 return MediaGenResult.STATUS_FAILED;
             case "queued":
                 return MediaGenResult.STATUS_PENDING;
@@ -244,6 +251,11 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         LlmProviderEntity entity = llmProviderService.getById(providerId);
         if (entity == null) {
             return com.superprogrammer.llm.dto.TestConnectionResult.fail("供应商不存在或已删除");
+        }
+        // F6：探测是 Ark 任务型协议专用，非 VIDEO provider（如 CHAT）测了会得到误导性判定
+        if (!com.superprogrammer.llm.service.LlmProviderService.CATEGORY_VIDEO.equalsIgnoreCase(entity.getCategory())) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail(
+                    "该供应商不是 VIDEO 类（当前 " + entity.getCategory() + "），请用对应类型的测试入口");
         }
         if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
             return com.superprogrammer.llm.dto.TestConnectionResult.fail("未配置API端点");
@@ -341,12 +353,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             throw new IllegalStateException("视频 provider(" + label + ") 未配置 API Key");
         }
         String fingerprint = provider.getId() + "|" + provider.getApiEndpoint() + "|" + provider.getApiKeyEnc();
-        WebClient client = cachedClient;
-        if (client == null || !fingerprint.equals(cachedFingerprint)) {
-            client = buildClient(apiKey);
-            cachedClient = client;
-            cachedFingerprint = fingerprint;
-        }
+        WebClient client = clientCache.computeIfAbsent(fingerprint, k -> buildClient(apiKey));
         // endpoint 剥尾随斜杠后原样作任务端点完整 URL（FR-001）
         return new ResolvedArk(client, provider.getApiEndpoint().replaceAll("/+$", ""));
     }

@@ -119,7 +119,8 @@ public class MediaGenTaskService {
         if (attachments != null && !attachments.isEmpty()) {
             List<Map<String, String>> list = new ArrayList<>(attachments.size());
             for (AttachmentRef a : attachments) {
-                list.add(Map.of("fileId", a.getFileId(), "kind", a.getKind()));
+                // F3：kind 归一化后落库（校验用的就是归一化值；worker/Ark 映射直接查表不再二次处理）
+                list.add(Map.of("fileId", a.getFileId(), "kind", a.getKind().trim().toLowerCase()));
             }
             config.put("attachments", list);
         }
@@ -236,8 +237,10 @@ public class MediaGenTaskService {
     }
 
     /**
-     * 附件归属 + MIME 校验。提交即拒（400/403），不拖到 worker 异步失败。
+     * 附件归属 + 大小 + MIME 校验。提交即拒（400/403），不拖到 worker 异步失败。
      * admin 与系统调用（userId=null）旁路归属校验。
+     * F2：大小按落库 meta.size 预检（与 MediaStorageService 同一上限表），
+     * 超限在提交时 400，worker 不再为超限文件全量读流入堆。
      */
     private void checkAttachmentOwnership(String fileId, String kind, Long userId, boolean admin) {
         StoredFileEntity meta = fileStorageService.findMeta(fileId);
@@ -246,6 +249,11 @@ public class MediaGenTaskService {
         }
         if (!admin && userId != null && !userId.equals(meta.getOwnerUserId())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用该附件: " + fileId);
+        }
+        long maxBytes = MediaStorageService.KIND_MAX_BYTES.getOrDefault(kind, Long.MAX_VALUE);
+        if (meta.getSize() != null && meta.getSize() > maxBytes) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "附件过大: " + meta.getOriginalName() + "（" + kind + " ≤" + (maxBytes / 1024 / 1024) + "MB）");
         }
         String mime = meta.getMime();
         if (mime != null && !mime.isBlank() && !mime.startsWith(kind + "/")) {
