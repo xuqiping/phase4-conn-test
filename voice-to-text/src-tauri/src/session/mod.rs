@@ -168,6 +168,18 @@ impl SessionManager {
         self.read_status(&dir)
     }
 
+    /// Resolve an existing session's directory (validated against path
+    /// traversal first). Used by recording start/stop to locate
+    /// video/ audio.wav transcript.jsonl (plan Step 4 / FR-103).
+    pub fn session_dir(&self, id: &str) -> std::io::Result<PathBuf> {
+        self.validate_id(id)?;
+        let dir = self.base_dir.join(id);
+        if !dir.is_dir() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "session not found"));
+        }
+        Ok(dir)
+    }
+
     /// Persist a session state. Used by later steps when entering
     /// Recording / Processing / Done (FR-109 lifecycle, 联动 L1).
     pub fn set_state(&self, id: &str, state: SessionState) -> std::io::Result<()> {
@@ -299,6 +311,18 @@ mod tests {
         }
         // a valid-looking id that simply doesn't exist yet -> NotFound (not InvalidInput)
         let err = mgr.get_session_status("20240101_120000_000").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    /// FR-103: 录制命令靠 session_dir 定位三路落盘目录。
+    #[test]
+    fn session_dir_resolves_existing_only() {
+        let mgr = SessionManager::new(unique_base("dir"));
+        let s = mgr.create_session().unwrap();
+        let dir = mgr.session_dir(&s.id).unwrap();
+        assert!(dir.join("video").is_dir(), "video/ must exist under session dir");
+        assert!(mgr.session_dir("..\\..").is_err(), "traversal rejected");
+        let err = mgr.session_dir("20240101_120000_000").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 }

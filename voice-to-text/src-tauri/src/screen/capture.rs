@@ -66,6 +66,9 @@ pub struct CaptureStatus {
 pub struct RecordConfig {
     /// Session's `video/` directory — segments + manifest.jsonl land here.
     pub video_dir: PathBuf,
+    /// Session's `frames/` directory — scene-change thumbnails land here.
+    /// None = SAD 预筛关闭（纯视频录制）。
+    pub frames_dir: Option<PathBuf>,
     /// Segment length override (tests); production uses [`crate::screen::encode::SLICE_MS`].
     pub slice_ms: i64,
     /// traceId for log lines = session id (运维 O1).
@@ -85,6 +88,7 @@ pub fn is_stalled(last_frame_ts: Option<i64>, started_ts: i64, now: i64) -> bool
 mod imp {
     use super::*;
     use crate::screen::encode::SliceEncoder;
+    use crate::screen::scene_detect::{SceneTap, SAMPLE_EVERY};
     use std::sync::mpsc;
     use std::time::Instant;
     use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
@@ -124,6 +128,8 @@ mod imp {
         record: Option<RecordConfig>,
         encoder: Option<SliceEncoder>,
         encoder_failed: bool,
+        /// Step 4 轻量抽帧：SAD 预筛，存变化帧缩略图 + ts（不阻塞录制）。
+        scene_tap: Option<SceneTap>,
     }
 
     impl GraphicsCaptureApiHandler for CaptureHandler {
@@ -133,6 +139,18 @@ mod imp {
         fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
             let f = ctx.flags;
             log::info!("[screen] capture handler up for {}", f.label);
+            // SAD 预筛 tap：初始化失败只降级自身，不挡录制（O4）。
+            let scene_tap = f.record.as_ref().and_then(|rec| {
+                rec.frames_dir.as_ref().and_then(|dir| {
+                    match SceneTap::new(dir.clone(), SAMPLE_EVERY, rec.trace.clone()) {
+                        Ok(tap) => Some(tap),
+                        Err(e) => {
+                            log::error!("[screen] {} scene tap disabled (init failed): {e}", f.label);
+                            None
+                        }
+                    }
+                })
+            });
             Ok(Self {
                 clock: f.clock,
                 sender: f.sender,
@@ -144,6 +162,7 @@ mod imp {
                 record: f.record,
                 encoder: None,
                 encoder_failed: false,
+                scene_tap,
             })
         }
 
@@ -165,7 +184,10 @@ mod imp {
             self.last_frame_ts = ts;
             self.frames += 1;
 
-            // Step 4: video track (no-op when this capture isn't recording).
+            // Step 4: SAD 预筛 (mutable borrow first) then video track.
+            if let Some(tap) = self.scene_tap.as_mut() {
+                tap.maybe_sample(frame, ts);
+            }
             self.encode_frame(frame, ts);
 
             let meta = FrameMeta {
@@ -527,6 +549,7 @@ mod tests {
             None,
             Some(RecordConfig {
                 video_dir: dir.clone(),
+                frames_dir: None,
                 slice_ms: crate::screen::encode::SLICE_MS,
                 trace: "test-real-encode".to_string(),
             }),

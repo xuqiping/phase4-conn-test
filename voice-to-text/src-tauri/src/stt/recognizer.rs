@@ -247,7 +247,7 @@ fn create_online_recognizer(model_dir: &str, sample_rate: u32) -> Result<OnlineR
     }
 }
 
-fn resample_to_mono_16khz(input: &[f32], input_rate: u32, channels: u16) -> Vec<f32> {
+pub(crate) fn resample_to_mono_16khz(input: &[f32], input_rate: u32, channels: u16) -> Vec<f32> {
     if channels == 0 || input.is_empty() {
         return Vec::new();
     }

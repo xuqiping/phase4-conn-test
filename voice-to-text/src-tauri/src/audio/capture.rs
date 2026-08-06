@@ -36,6 +36,11 @@ pub struct AudioCapture {
     receiver: Arc<Mutex<Receiver<AudioFrame>>>,
     sender: mpsc::Sender<AudioFrame>,
     all_samples: Arc<Mutex<Vec<f32>>>,
+    /// Actual negotiated stream format (rate, channels), set when capture
+    /// starts. Saving audio.wav needs this: devices rarely run at the
+    /// requested 16kHz/1ch, and writing raw samples with a wrong header
+    /// would desync the audio track from the transcript timeline (AC-102).
+    actual_format: Arc<Mutex<Option<(u32, u16)>>>,
 }
 
 impl AudioCapture {
@@ -48,11 +53,17 @@ impl AudioCapture {
             receiver: Arc::new(Mutex::new(receiver)),
             sender,
             all_samples: Arc::new(Mutex::new(Vec::new())),
+            actual_format: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn take_samples(&self) -> Vec<f32> {
         std::mem::take(&mut self.all_samples.lock().unwrap())
+    }
+
+    /// (sample_rate, channels) of the running stream, if started.
+    pub fn actual_format(&self) -> Option<(u32, u16)> {
+        *self.actual_format.lock().unwrap()
     }
 
     /// "Now" against the attached session clock, or 0 if none.
@@ -112,8 +123,14 @@ impl AudioCapture {
                 let sender = self.sender.clone();
                 let all_samples = self.all_samples.clone();
                 let clock = self.config.clock.clone();
+                let actual_format = self.actual_format.clone();
                 std::thread::spawn(move || {
                     while let Ok(mut frame) = rx.recv() {
+                        let mut fmt = actual_format.lock().unwrap();
+                        if fmt.is_none() {
+                            *fmt = Some((frame.sample_rate, frame.channels));
+                        }
+                        drop(fmt);
                         frame.capture_ts = AudioCapture::now_ts(&clock);
                         all_samples.lock().unwrap().extend_from_slice(&frame.samples);
                         let _ = sender.send(frame);
@@ -150,14 +167,14 @@ impl AudioCapture {
                 let sample_rate = config.sample_rate();
                 let channels = config.channels();
                 let clock = self.config.clock.clone();
+                *self.actual_format.lock().unwrap() = Some((sample_rate, channels));
 
                 let err_fn = move |err| {
                     log::error!("an error occurred on audio stream: {}", err);
                 };
 
                 let stream = match config.sample_format() {
-                    cpal::SampleFormat::F32 => {
-                        let s = sender.clone();
+                    cpal::SampleFormat::F32 => {                        let s = sender.clone();
                         let samples = all_samples.clone();
                         let clock = clock.clone();
                         device.build_input_stream(
