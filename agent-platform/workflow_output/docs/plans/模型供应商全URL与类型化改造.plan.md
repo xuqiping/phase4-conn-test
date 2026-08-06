@@ -47,20 +47,20 @@ created-date: 2026-08-06
 | 前端 placeholder 误导 | 全 URL 后旧占位符 `https://api.openai.com/v1` 是错误示范 | placeholder 按 category 动态切换完整 URL 示例 + 软校验（CHAT 行 URL 以 `/v1` 等 base 形态结尾时警告不拦截） | 手测四类 placeholder/警告 |
 | 性能：列表 JSON 解析 | listAvailableModels / MediaModelService 逐行 parse models JSON | provider 行数 <<100，忽略；不引缓存 | 不验（量级安全） |
 
-## 安全检查清单
-- [ ] **鉴权/授权**：新/改端点沿用 `@RequirePermission("role:manage")`（供应商管理）与 `media:gen`（生成），不新增越权面
-- [ ] **输入校验**：endpoint 校验 http(s) 前缀 + 长度 ≤512；category 白名单四分，非法回退 CHAT（沿用 normalizeCategory 容错）
-- [ ] **数据加密**：api_key AES 加密存储链路不动；迁移不动密文列
-- [ ] **审计日志**：V60 迁移逐条 WARN（name + 旧 endpoint → 新 endpoint，不含 key）
-- [ ] **错误处理**：测试/探测失败话术截断 200 字、不含 Authorization header（沿用 truncate/rootMessage）
-- [ ] **SSRF（其他）**：管理员可配任意内网 URL 作 provider —— role:manage 仅管理员，风险接受；host 白名单**后续再说**（落字备查）
-- [ ] **依赖安全**：无新增三方依赖
+## 安全检查清单（Phase4 已逐项验证：第二 AI 审查 + 冒烟，2026-08-06）
+- [x] **鉴权/授权**：新/改端点沿用 `@RequirePermission("role:manage")`（供应商管理）与 `media:gen`（生成），不新增越权面
+- [x] **输入校验**：endpoint 校验 http(s) 前缀 + 长度 ≤512；category 白名单四分，非法回退 CHAT（沿用 normalizeCategory 容错）
+- [x] **数据加密**：api_key AES 加密存储链路不动；迁移不动密文列
+- [x] **审计日志**：V60 迁移逐条 WARN（name + 旧 endpoint → 新 endpoint，不含 key）
+- [x] **错误处理**：测试/探测失败话术截断 200 字、不含 Authorization header（沿用 truncate/rootMessage）
+- [x] **SSRF（其他）**：管理员可配任意内网 URL 作 provider —— role:manage 仅管理员，风险接受；host 白名单**后续再说**（落字备查）
+- [x] **依赖安全**：无新增三方依赖
 
-## 性能考虑与验证计划
-- [ ] **查询效率**：无新表新查询；category 过滤走现有 listActive 全量内存过滤（行数小）
-- [ ] **缓存策略**：chat provider 注册表走现有 `llmConfig.reload()`；媒体 WebClient 指纹缓存（endpoint+密文+providerId）不变，key/URL 改后自动重建
-- [ ] **并发处理**：无新竞争点
-- [ ] **性能验证**：Phase 4 手测 chat 首 token、视频建任务耗时无回归即可
+## 性能考虑与验证计划（Phase4：探测 69-586ms 无回归；F5 缓存 map 已修）
+- [x] **查询效率**：无新表新查询；category 过滤走现有 listActive 全量内存过滤（行数小）
+- [x] **缓存策略**：chat provider 注册表走现有 `llmConfig.reload()`；媒体 WebClient 指纹缓存（endpoint+密文+providerId）不变，key/URL 改后自动重建
+- [x] **并发处理**：无新竞争点
+- [x] **性能验证**：Phase 4 手测 chat 首 token、视频建任务耗时无回归即可
 
 ## 功能联动点清单（独立 chunk，Phase 3 逐条对）
 - [ ] **改 category**：CHAT→VIDEO 后，该 provider 立刻从 chat 模型列表消失、出现在视频目录；反向同理。边界：正在用其模型的 Agent/会话下次调用抛「没有找到支持模型 'X' 的Provider」——属预期，验证报错话术可读
