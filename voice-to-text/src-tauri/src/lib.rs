@@ -4,6 +4,7 @@ mod session;
 mod stt;
 
 use crate::audio::{AudioCapture, AudioCaptureConfig};
+use crate::screen::scene_detect::ExtractConfig;
 use crate::screen::{encode::SLICE_MS, CaptureStatus, RecordConfig, ScreenCapture, WindowInfo};
 use crate::session::{SessionClock, SessionInfo, SessionManager, SessionState};
 use crate::stt::{SpeechRecognizer, SpeechRecognizerConfig};
@@ -375,6 +376,35 @@ fn stop_capture_session(
     Ok(())
 }
 
+// ---- Post-processing (plan Step 5 / FR-104) ----
+
+/// 录后精细抽帧：逐视频切片 500ms 采样 → SAD/直方图/pHash 判页去重 →
+/// 存 page_*/thumb_* 图 + 写 frames.json。返回检出页数。
+#[tauri::command]
+async fn process_frames(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<usize, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let trace = session_id.clone();
+    // 2h 视频解码可能跑分钟级 —— 放 blocking 线程池，不占 async runtime。
+    let work_dir = dir.clone();
+    let entries = tauri::async_runtime::spawn_blocking(move || {
+        crate::screen::scene_detect::extract_session_frames(
+            &work_dir,
+            &ExtractConfig::default(),
+            &trace,
+        )
+    })
+    .await
+    .map_err(|e| format!("extract task join: {e}"))??;
+
+    let json = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("frames.json"), json).map_err(|e| e.to_string())?;
+    log::info!("[session][{session_id}] process_frames → {} pages", entries.len());
+    Ok(entries.len())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -396,7 +426,8 @@ pub fn run() {
             stop_window_capture,
             get_capture_status,
             start_capture_session,
-            stop_capture_session
+            stop_capture_session,
+            process_frames
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

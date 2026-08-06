@@ -16,7 +16,7 @@
 //! `video/manifest.jsonl` 里每段的 `start_ms/end_ms`（session 墙钟，与音频/转写
 //! 同基准）。O7：15min 切片控制单文件体积，2h ≈ 3.6GB（4Mbps），符合 design 2–6GB。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Slice length: one segment per 15 minutes (plan Step 4 / O7).
@@ -37,7 +37,7 @@ pub fn segment_file_name(index: u32) -> String {
 /// One finished segment, appended as a JSON line to `video/manifest.jsonl`.
 /// `start_ms`/`end_ms` are on the session wall clock — the same axis as
 /// `audio.wav` and `transcript.jsonl` (AC-103 三路对齐).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SegmentRecord {
     pub index: u32,
     pub file: String,
