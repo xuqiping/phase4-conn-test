@@ -24,14 +24,18 @@ public class LlmConfig {
 
     private final LlmProviderService providerService;
     private final ObjectMapper objectMapper;
+    /** CHAT 行注册表——chat/chatStream 路由只在这里找（FR-002/FR-003）。 */
     private volatile List<LlmProviderInterface> staticProviders = Collections.emptyList();
+    /** EMBEDDING 行注册表——embed 路由只在这里找，不进 chat 路由/模型列表。 */
+    private volatile List<LlmProviderInterface> staticEmbedProviders = Collections.emptyList();
 
     @PostConstruct
     public synchronized void initProviders() {
         List<LlmProviderInterface> providers = new ArrayList<>();
+        List<LlmProviderInterface> embedProviders = new ArrayList<>();
         List<LlmProviderEntity> activeProviders = providerService.listActive();
         for (LlmProviderEntity entity : activeProviders) {
-            // VIDEO/IMAGE（任务型 provider）不注册为 chat provider——
+            // VIDEO/IMAGE（任务型 provider）不注册——
             // 视频走 ArkSeedanceProvider 等专门任务型 provider 按 category 单独取；IMAGE 为生图预留位。
             if (LlmProviderService.CATEGORY_VIDEO.equalsIgnoreCase(entity.getCategory())
                     || LlmProviderService.CATEGORY_IMAGE.equalsIgnoreCase(entity.getCategory())) {
@@ -41,13 +45,22 @@ public class LlmConfig {
             }
             String apiKey = providerService.getDecryptedApiKey(entity.getId());
             LlmProviderInterface provider = createProvider(entity, apiKey);
-            if (provider != null) {
+            if (provider == null) {
+                continue;
+            }
+            // EMBEDDING 行注册进 embed 专用表：仅 embed 路由可达，chat 路由找不到（FR-003 按类型路由）。
+            if (LlmProviderService.CATEGORY_EMBEDDING.equalsIgnoreCase(entity.getCategory())) {
+                embedProviders.add(provider);
+                log.info("注册 embedding Provider（仅 embed，不进 chat 路由）: {} ({})",
+                        entity.getName(), entity.getApiEndpoint());
+            } else {
                 providers.add(provider);
                 log.info("注册LLM Provider: {} ({})", entity.getName(), entity.getApiEndpoint());
             }
         }
         staticProviders = Collections.unmodifiableList(providers);
-        log.info("共注册 {} 个LLM Provider", providers.size());
+        staticEmbedProviders = Collections.unmodifiableList(embedProviders);
+        log.info("共注册 {} 个LLM Provider（chat）+ {} 个 embedding Provider", providers.size(), embedProviders.size());
     }
 
     public synchronized void reload() {
@@ -55,8 +68,14 @@ public class LlmConfig {
         initProviders();
     }
 
+    /** chat 路由注册表（仅 CHAT 行）。 */
     public List<LlmProviderInterface> getProviders() {
         return staticProviders;
+    }
+
+    /** embed 路由注册表（仅 EMBEDDING 行）；embed 调用只在这里找，不回落 chat 表。 */
+    public List<LlmProviderInterface> getEmbedProviders() {
+        return staticEmbedProviders;
     }
 
     public LlmProviderInterface createProvider(LlmProviderEntity entity, String apiKey) {

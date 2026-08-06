@@ -55,17 +55,33 @@ public class LlmGateway {
     }
 
     public float[] embed(String text, String model) {
-        LlmProviderInterface provider = findProvider(model, null);
+        LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={}", model, provider.getName());
         return provider.embed(text, model);
     }
 
     public float[] embed(String text, String model, Long userId) {
-        LlmProviderInterface provider = findProvider(model, userId);
+        // userId 仅用于日志/审计：用户级 provider 是 CHAT-only 覆盖（速查表19），
+        // embed 路由只在全局 EMBEDDING 行里找（FR-003），不吃用户级 override。
+        LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), userId);
         return provider.embed(text, model);
     }
 
+    /** embed 路由：只在 EMBEDDING 行注册表里按 model 找，找不到报「向量 Provider」话术（与 chat 区分）。 */
+    private LlmProviderInterface findEmbedProvider(String model) {
+        for (LlmProviderInterface provider : llmConfig.getEmbedProviders()) {
+            if (provider.supports(model)) {
+                return provider;
+            }
+        }
+        throw new RuntimeException("没有找到支持模型 '" + model + "' 的向量 Provider");
+    }
+
+    /**
+     * chat 路由：用户级 override（CHAT-only）优先，回落全局 CHAT 注册表。
+     * EMBEDDING/VIDEO/IMAGE 行不在此处注册，故 chat 永远找不到它们（FR-003）。
+     */
     private LlmProviderInterface findProvider(String model, Long userId) {
         // Step 1: Check user provider overrides
         if (userId != null) {
@@ -100,7 +116,7 @@ public class LlmGateway {
             }
         }
 
-        throw new RuntimeException("没有找到支持模型 '" + model + "' 的Provider");
+        throw new RuntimeException("没有找到支持模型 '" + model + "' 的对话 Provider");
     }
 
     private List<UserLlmProviderEntity> getUserProviders(Long userId) {
