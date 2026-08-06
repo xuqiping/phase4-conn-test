@@ -40,6 +40,7 @@
           <MentionTextarea
             :model-value="(node.data.prompt as string) || ''"
             :candidates="candidates"
+            :broken-mentions="brokenMentions"
             :rows="4"
             placeholder="文本节点提示词；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
@@ -102,6 +103,7 @@
           <MentionTextarea
             :model-value="(node.data.prompt as string) || ''"
             :candidates="candidates"
+            :broken-mentions="brokenMentions"
             :rows="3"
             placeholder="视频生成 prompt；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
@@ -250,6 +252,7 @@
           <MentionTextarea
             :model-value="(node.data.synopsis as string) || ''"
             :candidates="candidates"
+            :broken-mentions="brokenMentions"
             :rows="5"
             placeholder="剧本输入；输入 @ 引用上游节点产出，经 LlmGateway 拆分镜"
             @update:model-value="(v: string) => { if (node) node.data.synopsis = v }"
