@@ -99,9 +99,10 @@ public class UserLlmController {
         Long userId = getCurrentUserId();
         List<AvailableModelVO> models = new ArrayList<>();
 
-        // Global providers（MEDIA 任务型 provider 不进 chat 模型列表）
+        // Global providers（仅 CHAT 进 chat 模型列表；EMBEDDING/VIDEO/IMAGE 均不进——
+        // 顺带修掉 EMBEDDING 模型混进 chat 选择器的旧缺陷，FR-003）
         for (LlmProviderEntity p : llmProviderService.listActive()) {
-            if (LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(p.getCategory())) {
+            if (!LlmProviderService.CATEGORY_CHAT.equalsIgnoreCase(p.getCategory())) {
                 continue;
             }
             if (p.getModels() != null && !p.getModels().isBlank()) {

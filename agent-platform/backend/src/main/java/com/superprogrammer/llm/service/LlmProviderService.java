@@ -25,10 +25,19 @@ import java.util.stream.Collectors;
 @Service
 public class LlmProviderService {
 
-    private static final String DEFAULT_CATEGORY = "CHAT";
-    private static final Set<String> CATEGORIES = Set.of("CHAT", "EMBEDDING", "CHAT_EMBEDDING", "MEDIA");
-    /** MEDIA = 视频/生图等任务型 provider，不参与 chat 路由/模型列表（视频代码按 name 单独取）。 */
-    public static final String CATEGORY_MEDIA = "MEDIA";
+    /** CHAT = 对话 provider，进 chat 路由/模型列表。 */
+    public static final String CATEGORY_CHAT = "CHAT";
+    /** EMBEDDING = 向量 provider，只走 embed 路由，不进 chat 模型列表。 */
+    public static final String CATEGORY_EMBEDDING = "EMBEDDING";
+    /** VIDEO = 视频生成等任务型 provider，不参与 chat 路由（媒体侧按 category 单独取）。 */
+    public static final String CATEGORY_VIDEO = "VIDEO";
+    /** IMAGE = 生图 provider（预留，画布 R-3 接入），不进 chat 路由/视频目录。 */
+    public static final String CATEGORY_IMAGE = "IMAGE";
+
+    private static final String DEFAULT_CATEGORY = CATEGORY_CHAT;
+    /** category 白名单四分（FR-002）；CHAT_EMBEDDING / MEDIA 已由 V60 迁移废弃。 */
+    private static final Set<String> CATEGORIES =
+            Set.of(CATEGORY_CHAT, CATEGORY_EMBEDDING, CATEGORY_VIDEO, CATEGORY_IMAGE);
 
     /** 规范化 category：合法原样返回，null/blank/非法 → CHAT（容错 warn 不抛 400）。 */
     private String normalizeCategory(String raw) {
@@ -130,6 +139,15 @@ public class LlmProviderService {
         wrapper.eq(LlmProviderEntity::getName, name)
                .eq(LlmProviderEntity::getDeleted, 0);
         return mapper.selectOne(wrapper);
+    }
+
+    /** 按 id 取 provider（未软删）。媒体任务 worker 按任务落库的 providerId 路由用。 */
+    public LlmProviderEntity getById(Long id) {
+        if (id == null) {
+            return null;
+        }
+        LlmProviderEntity entity = mapper.selectById(id);
+        return entity != null && Integer.valueOf(0).equals(entity.getDeleted()) ? entity : null;
     }
 
     public LlmProviderEntity getDefaultProvider() {
@@ -253,7 +271,7 @@ public class LlmProviderService {
                 .status(entity.getStatus())
                 .sortOrder(entity.getSortOrder())
                 .category(entity.getCategory())
-                .dim("EMBEDDING".equals(entity.getCategory()) ? activeEmbeddingDim : null)
+                .dim(CATEGORY_EMBEDDING.equals(entity.getCategory()) ? activeEmbeddingDim : null)
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();
