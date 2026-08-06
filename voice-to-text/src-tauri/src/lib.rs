@@ -1,4 +1,6 @@
+mod align;
 mod audio;
+mod ocr;
 mod screen;
 mod session;
 mod stt;
@@ -405,6 +407,51 @@ async fn process_frames(
     Ok(entries.len())
 }
 
+// ---- Post-processing (plan Step 6 / FR-105) ----
+
+/// 课件 OCR：对 frames.json 中 ocr_text 为 null 的页跑本地 OCR（PP-OCRv5 mobile），
+/// 回填写回 frames.json。单帧失败降级 null 不阻塞（O4）。
+/// 模型首用自动下载（ModelScope → $OAR_HOME）；exe 旁 models/ocr/ 存在则优先本地。
+/// 返回 (ok, failed) 供前端提示。
+#[tauri::command]
+async fn process_ocr(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<(usize, usize), String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let trace = session_id.clone();
+    // 模型加载秒级 + 全课推理分钟级 —— blocking 线程池，不占 async runtime。
+    let stats = tauri::async_runtime::spawn_blocking(move || {
+        crate::ocr::process_session_ocr(&dir, &crate::ocr::OcrConfig::default(), &trace)
+    })
+    .await
+    .map_err(|e| format!("ocr task join: {e}"))??;
+    log::info!(
+        "[session][{session_id}] process_ocr → ok={} failed={}",
+        stats.ok, stats.failed
+    );
+    Ok((stats.ok, stats.failed))
+}
+
+// ---- Post-processing (plan Step 7 / FR-106) ----
+
+/// 音字帧对齐：转写句 × 课件帧按时间区间归并 → aligned.json（Step 8 总结的输入）。
+/// 降级：无 frames → 5min 固定窗；无转写 → 「无讲解文字」（texts 空）。
+/// 注意：要 ocr_text 进 aligned.json 需先跑 process_ocr 再跑本命令（读当下快照）。
+#[tauri::command]
+async fn align_session(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<usize, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let trace = session_id.clone();
+    let n = tauri::async_runtime::spawn_blocking(move || crate::align::align_session(&dir, &trace))
+        .await
+        .map_err(|e| format!("align task join: {e}"))??;
+    log::info!("[session][{session_id}] align_session → {n} units");
+    Ok(n)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -427,7 +474,9 @@ pub fn run() {
             get_capture_status,
             start_capture_session,
             stop_capture_session,
-            process_frames
+            process_frames,
+            process_ocr,
+            align_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

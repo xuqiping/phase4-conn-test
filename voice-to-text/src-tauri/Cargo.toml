@@ -27,6 +27,11 @@ sherpa-rs = "0.6.8"
 sherpa-rs-sys = "0.6.8"
 cpal = "0.17.1"
 chrono = "0.4"
+image = "0.25"
+# Step 6 (FR-105): 课件 OCR。oar-ocr = PP-OCRv5 ONNX 模型的纯 Rust 推理（ort 后端，
+# 默认可 download-binaries 拉 ONNX Runtime；auto-download 首用从 ModelScope 拉模型到
+# $OAR_HOME —— 国内可达，免打包 20MB 模型）。
+oar-ocr = { version = "0.9", features = ["auto-download"] }
 
 [target.'cfg(windows)'.dependencies]
 # Step 3 (FR-101): WGC window capture. Windows-only crate → lives in this section.

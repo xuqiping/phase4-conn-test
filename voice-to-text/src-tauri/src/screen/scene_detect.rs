@@ -458,7 +458,8 @@ impl PageExtractor {
 
 /// frames.json 一行（plan Step 5 产出契约）：课件页 + 原图/缩略图引用 +
 /// ocr_text 占位（Step 6 回填）。
-#[derive(Debug, Clone, Serialize)]
+/// Deserialize：Step 6 process_ocr 要读回 frames.json 回填 ocr_text。
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct FrameEntry {
     pub frame_ts: i64,
     pub orig_path: String,
