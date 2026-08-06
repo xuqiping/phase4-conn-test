@@ -42,6 +42,19 @@
                 :readonly="!canEdit"
                 placeholder="剧本正文（≤8000 字）；EDITOR 可编辑，保存后点「AI 分场」"
               />
+              <!-- 拆解模型选择（AI 分场/一键分镜共用，默认空=后端 asset.script-model） -->
+              <div v-if="canEdit" class="asset-detail__model-row">
+                <span class="asset-detail__model-label">拆解模型</span>
+                <n-select
+                  v-model:value="scriptModel"
+                  :options="modelOptions"
+                  size="small"
+                  clearable
+                  filterable
+                  placeholder="默认（asset.script-model）"
+                  style="flex: 1"
+                />
+              </div>
               <div v-if="canEdit" class="asset-detail__script-actions">
                 <n-button
                   size="small"
@@ -210,6 +223,7 @@ import {
   useMessage
 } from 'naive-ui'
 import { assetApi, assetBridgeApi, versionApi, scriptApi } from '@/api/assets'
+import { llmApi } from '@/api/llm'
 import { fetchCanvasPreview } from '@/api/canvas'
 import request from '@/api/request'
 import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
@@ -291,6 +305,21 @@ const originalTemplate = ref('')
 const savingTemplate = ref(false)
 const breakingStoryboard = ref(false)
 const templateDirty = computed(() => templateDraft.value !== originalTemplate.value)
+/** AI 分场/一键分镜 模型选择（默认空=后端 asset.script-model；列表来自可用文本模型）。 */
+const scriptModel = ref<string | null>(null)
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
+async function loadScriptModels() {
+  try {
+    const res = await llmApi.listAvailableModels()
+    modelOptions.value = (res.data.data ?? []).map((m) => ({
+      label: m.displayName || m.modelId,
+      value: m.modelId
+    }))
+  } catch {
+    modelOptions.value = []
+  }
+}
 
 /** S15 非剧本 TEXT（提示词/自定义 TEXT）正文草稿 + 保存态。 */
 const textBody = ref('')
@@ -352,6 +381,7 @@ watch(
   async ([show, id]) => {
     if (show && id) {
       await loadAll(id)
+      void loadScriptModels()
     } else if (!show) {
       // 关抽屉释放 objectURL
       revokePreview()
@@ -449,7 +479,7 @@ async function runBreakdown() {
   }
   breaking.value = true
   try {
-    await scriptApi.breakdown(asset.value.id)
+    await scriptApi.breakdown(asset.value.id, scriptModel.value ?? undefined)
     message.success('分场完成')
     await loadAll(asset.value.id)
     emit('changed', asset.value.id)
@@ -489,7 +519,7 @@ async function runStoryboardBreakdown() {
   }
   breakingStoryboard.value = true
   try {
-    const res = await scriptApi.breakdownStoryboard(asset.value.id)
+    const res = await scriptApi.breakdownStoryboard(asset.value.id, scriptModel.value ?? undefined)
     const count = res.data.data?.count ?? 0
     message.success(`已生成 ${count} 个分镜资产`)
     await loadAll(asset.value.id)
@@ -651,6 +681,19 @@ async function onStoryboardChanged(assetId: number) {
   &__script-actions {
     display: flex;
     gap: var(--spacing-2);
+  }
+
+  &__model-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+  }
+
+  &__model-label {
+    flex: 0 0 auto;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    white-space: nowrap;
   }
 
   &__actions {

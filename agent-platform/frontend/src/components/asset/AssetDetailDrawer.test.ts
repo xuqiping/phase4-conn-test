@@ -15,6 +15,14 @@ vi.mock('@/api/canvas', () => ({
   fetchCanvasPreview: vi.fn().mockResolvedValue('blob:preview')
 }))
 
+vi.mock('@/api/llm', () => ({
+  llmApi: {
+    listAvailableModels: vi.fn().mockResolvedValue({
+      data: { code: 200, message: 'ok', data: [{ modelId: 'doubao-seed-2.0-code', displayName: '豆包代码', providerName: 'p', source: 'global' }] }
+    })
+  }
+}))
+
 const { requestGet } = vi.hoisted(() => ({ requestGet: vi.fn() }))
 vi.mock('@/api/request', () => ({ default: { get: requestGet }, request: { get: requestGet } }))
 
@@ -206,7 +214,19 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     messageMock.warning.mockClear()
     vm.synopsis = '原文'
     await vm.runBreakdown()
-    expect(scriptApi.breakdown).toHaveBeenCalledWith(5)
+    expect(scriptApi.breakdown).toHaveBeenCalledWith(5, undefined)
+  })
+
+  it('AC-C3-4 选中拆解模型 → runBreakdown 透传 model', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '原文' }) }) })
+    )
+    vi.mocked(scriptApi.breakdown).mockResolvedValue(response({ code: 200, message: 'ok', data: { version: 2, scenes: [] } }))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { scriptModel: string | null; runBreakdown: () => Promise<void> }
+    vm.scriptModel = 'gpt-4o-mini'
+    await vm.runBreakdown()
+    expect(scriptApi.breakdown).toHaveBeenCalledWith(5, 'gpt-4o-mini')
   })
 
   // ---------- S19 拆解规范 + 一键分镜（plan §S19） ----------
@@ -258,8 +278,22 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     messageMock.warning.mockClear()
     vm.synopsis = '原文'
     await vm.runStoryboardBreakdown()
-    expect(scriptApi.breakdownStoryboard).toHaveBeenCalledWith(5)
+    expect(scriptApi.breakdownStoryboard).toHaveBeenCalledWith(5, undefined)
     expect(messageMock.success).toHaveBeenCalledWith('已生成 3 个分镜资产')
+  })
+
+  it('AC-S19-4 选中拆解模型 → runStoryboardBreakdown 透传 model', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: '剧本', content: JSON.stringify({ synopsis: '原文' }) }) })
+    )
+    vi.mocked(scriptApi.breakdownStoryboard).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { count: 1, createdAssetIds: [1], model: 'm', version: 2 } })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as { synopsis: string; scriptModel: string | null; runStoryboardBreakdown: () => Promise<void> }
+    vm.scriptModel = 'gpt-4o-mini'
+    await vm.runStoryboardBreakdown()
+    expect(scriptApi.breakdownStoryboard).toHaveBeenCalledWith(5, 'gpt-4o-mini')
   })
 
   // ---------- S15 提示词/非剧本 TEXT 编辑器 + 删除（Bug①②） ----------
