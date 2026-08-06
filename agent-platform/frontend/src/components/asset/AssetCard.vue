@@ -1,13 +1,33 @@
 <!--
   项目资产库·资产卡片  plan §S11
   - 纯展示：点击开 S10 抽屉（emit open）
-  - 文件类首帧占位（IMAGE 缩略留待封面通道；本轮用类型色块图标，不拉 blob——列表多卡拉 blob 会爆）
+  - C2 缩略图懒加载：文件类（IMAGE/VIDEO）进入视口拉 objectURL 显缩略/首帧；
+    AUDIO/文本类保持类型色块图标。预览失败/无 fileId → 回退色块（useLazyFilePreview 托管缓存+释放）
   - 状态/版本/叙事角色徽标（L2/L3 态可见）
 -->
 <template>
   <div class="asset-card" @click="emit('open', asset)">
-    <div class="asset-card__cover" :class="`asset-card__cover--${coverTone}`">
-      <span class="asset-card__cover-icon">{{ icon }}</span>
+    <div ref="coverRef" class="asset-card__cover" :class="`asset-card__cover--${coverTone}`">
+      <img
+        v-if="showImagePreview"
+        class="asset-card__cover-media"
+        :src="previewUrl ?? undefined"
+        alt=""
+        @error="onMediaError"
+      />
+      <video
+        v-else-if="showVideoPreview"
+        class="asset-card__cover-media"
+        :src="previewUrl ?? undefined"
+        preload="metadata"
+        muted
+        playsinline
+        @loadedmetadata="seekFirstFrame"
+        @error="onMediaError"
+      ></video>
+      <template v-else>
+        <span class="asset-card__cover-icon">{{ icon }}</span>
+      </template>
       <n-tag class="asset-card__status" size="tiny" bordered :type="STATUS_TYPE[asset.status]">
         {{ STATUS_LABEL[asset.status] }}
       </n-tag>
@@ -31,9 +51,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { NTag } from 'naive-ui'
 import type { AssetMediaType, AssetStatus, AssetVO } from '@/types/asset'
+import { useLazyFilePreview } from '@/composables/useLazyFilePreview'
 
 const props = defineProps<{ asset: AssetVO }>()
 const emit = defineEmits<{ (e: 'open', asset: AssetVO): void }>()
@@ -96,6 +117,32 @@ const typeLabel = computed(() => MEDIA_LABEL[props.asset.mediaType] ?? props.ass
 const MAX_ROLES = 3
 const displayRoles = computed(() => (props.asset.roleKeys ?? []).slice(0, MAX_ROLES))
 const extraRoles = computed(() => Math.max(0, (props.asset.roleKeys?.length ?? 0) - MAX_ROLES))
+
+// ---------- C2 缩略图懒加载 ----------
+const coverRef = ref<HTMLElement | null>(null)
+/** 仅 IMAGE/VIDEO 类启用预览（AUDIO 走图标，MVP 不做波形）。 */
+const previewEnabled = computed(() => effectiveCategory.value === 'image' || effectiveCategory.value === 'video')
+const { url: previewUrl, failed } = useLazyFilePreview(
+  coverRef,
+  () => props.asset.fileId ?? null,
+  previewEnabled
+)
+/** 媒体加载错误（onerror）→ 显式置 failed，回退色块。 */
+function onMediaError() {
+  failed.value = true
+}
+const showImagePreview = computed(() => previewEnabled.value && effectiveCategory.value === 'image' && previewUrl.value && !failed.value)
+const showVideoPreview = computed(() => previewEnabled.value && effectiveCategory.value === 'video' && previewUrl.value && !failed.value)
+
+/** VIDEO 首帧：metadata 就绪后 seek 到 0.1s 显非黑屏首帧（blob URL 不一定支持 #t 片段）。 */
+function seekFirstFrame(e: Event) {
+  const v = e.target as HTMLVideoElement
+  try {
+    v.currentTime = 0.1
+  } catch {
+    /* 忽略 seek 异常 */
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -134,6 +181,15 @@ const extraRoles = computed(() => Math.max(0, (props.asset.roleKeys?.length ?? 0
 
   &__cover-icon {
     opacity: 0.92;
+  }
+
+  &__cover-media {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
   }
 
   &__status {

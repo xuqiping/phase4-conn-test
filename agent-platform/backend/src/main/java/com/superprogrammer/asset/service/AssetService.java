@@ -392,18 +392,49 @@ public class AssetService {
 
     // ---------- 批查组装（防 N+1） ----------
 
-    /** 列表批量组装角色（单次 IN 查询，内存分组）。 */
+    /**
+     * 列表批量组装角色 + 当前版本 fileId（单次 IN 查询，内存分组，防 N+1）。
+     *
+     * <p>fileId 供前端卡片缩略图懒加载（C2）：仅文件类资产（IMAGE/VIDEO/AUDIO）版本有值；
+     * 列表态省 content，fileId 单独返省流量。文本类版本 fileId=null，VO.fileId 留空。
+     */
     private List<AssetVO> assembleRoles(List<Asset> assets, boolean withContent) {
         if (assets.isEmpty()) {
             return Collections.emptyList();
         }
         List<Long> ids = assets.stream().map(Asset::getId).collect(Collectors.toList());
         Map<Long, List<String>> roleMap = rolesOf(ids);
+        Map<Long, String> fileIdMap = currentFileIdsOf(assets, ids);
         return assets.stream().map(a -> {
             AssetVO vo = toVO(a, withContent);
             vo.setRoleKeys(roleMap.getOrDefault(a.getId(), Collections.emptyList()));
+            vo.setFileId(fileIdMap.get(a.getId()));
             return vo;
         }).collect(Collectors.toList());
+    }
+
+    /**
+     * 批量取当前版本 fileId：单次 IN 查 asset_versions，内存按 (assetId,currentVersion) 过滤
+     * （防 N+1；列表分页 size≤20，版本历史小，全量取回后过滤可接受）。
+     */
+    private Map<Long, String> currentFileIdsOf(List<Asset> assets, List<Long> ids) {
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, Integer> curVer = assets.stream()
+                .collect(Collectors.toMap(Asset::getId, Asset::getCurrentVersion, (a, b) -> a));
+        List<AssetVersion> versions = versionMapper.selectList(new LambdaQueryWrapper<AssetVersion>()
+                .in(AssetVersion::getAssetId, ids));
+        if (versions == null) {
+            return Collections.emptyMap();
+        }
+        Map<Long, String> m = new java.util.HashMap<>();
+        for (AssetVersion v : versions) {
+            if (curVer.get(v.getAssetId()) != null && curVer.get(v.getAssetId()).equals(v.getVersion())) {
+                m.put(v.getAssetId(), v.getFileId());
+            }
+        }
+        return m;
     }
 
     /** 批量查角色：单次 IN，内存分组（防 N+1，plan 坑点预判）。 */
