@@ -110,4 +110,41 @@ describe('AssetCard (S11)', () => {
     expect(video.exists()).toBe(true)
     expect(video.attributes('src')).toBe('blob:vid-1')
   })
+
+  // ---------- S16 文本正文片段封面（Bug④） ----------
+
+  it('TEXT 类有 textPreview → 封面显正文片段（引文卡，不再只显 emoji）', async () => {
+    const wrapper = mount(AssetCard, {
+      props: {
+        asset: mkAsset({
+          mediaType: '提示词',
+          mediaCategory: 'TEXT',
+          textPreview: '一只猫坐在窗台上，阳光洒下来'
+        })
+      }
+    })
+    await flushPromises()
+    const text = wrapper.find('.asset-card__cover-text')
+    expect(text.exists()).toBe(true)
+    expect(text.text()).toContain('一只猫坐在窗台上')
+    // 不显 emoji 图标
+    expect(wrapper.find('.asset-card__cover-icon').exists()).toBe(false)
+  })
+
+  it('TEXT 类无 textPreview → 回退 emoji 色块图标', async () => {
+    const wrapper = mount(AssetCard, {
+      props: { asset: mkAsset({ mediaType: '提示词', mediaCategory: 'TEXT', textPreview: null }) }
+    })
+    await flushPromises()
+    expect(wrapper.find('.asset-card__cover-text').exists()).toBe(false)
+    expect(wrapper.find('.asset-card__cover-icon').exists()).toBe(true)
+  })
+
+  it('IMAGE 类即使有 textPreview 也不显文本封面（仅 TEXT）', async () => {
+    const wrapper = mount(AssetCard, {
+      props: { asset: mkAsset({ mediaType: '图片', mediaCategory: 'IMAGE', textPreview: '不应显示' }) }
+    })
+    await flushPromises()
+    expect(wrapper.find('.asset-card__cover-text').exists()).toBe(false)
+  })
 })

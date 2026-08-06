@@ -109,6 +109,11 @@ export interface AssetVO {
   status: AssetStatus
   /** 正文 JSON（提示词正文/剧本分场/一致性包）；列表态为 null。 */
   content?: string | null
+  /**
+   * 文本类正文片段（S16 Bug④，列表态卡片封面用）。
+   * 仅 TEXT 类别填充（≤120 字去换行）；列表态独立于 content 懒加载。
+   */
+  textPreview?: string | null
   /** 生成谱系 JSON。 */
   genMeta?: string | null
   currentVersion: number

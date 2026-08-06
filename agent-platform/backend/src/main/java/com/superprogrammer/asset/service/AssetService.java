@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
@@ -67,6 +68,8 @@ public class AssetService {
     private static final int NAME_MAX = 100;
     private static final int Q_MAX = 50;
     private static final int DEFAULT_PAGE_SIZE = 20;
+    /** 文本类正文片段截断上限（S16 卡片封面预览）。 */
+    private static final int TEXT_PREVIEW_MAX = 120;
 
     private final AssetMapper assetMapper;
     private final AssetVersionMapper versionMapper;
@@ -621,6 +624,8 @@ public class AssetService {
                 tags = Collections.emptyList();
             }
         }
+        // S16：TEXT 类别资产填正文片段（列表态卡片封面用，独立于 content 懒加载）
+        String textPreview = isTextCategory(a.getMediaCategory()) ? extractTextPreview(a.getContent()) : null;
         return AssetVO.builder()
                 .id(a.getId())
                 .projectId(a.getProjectId())
@@ -631,11 +636,58 @@ public class AssetService {
                 .tags(tags)
                 .status(a.getStatus())
                 .content(withContent ? a.getContent() : null)
+                .textPreview(textPreview)
                 .genMeta(a.getGenMeta())
                 .currentVersion(a.getCurrentVersion())
                 .createdBy(a.getCreatedBy())
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .build();
+    }
+
+    /**
+     * 抽取文本类资产正文片段（S16 Bug④，列表态卡片封面）。
+     *
+     * <p>按键优先级 {@code body}/{@code synopsis}/{@code prompt} 取值（prompt 供分镜卡）；
+     * 命中不到兜底首个字符串字段；非合法 JSON 当裸文本。剥为纯文本（空白合一去换行）+ 截断 ≤120 字。
+     * 仅 TEXT 类别资产由 {@link #toVO} 门控调用；非 TEXT 返 null。
+     *
+     * <p>与 {@code AssetScriptService.readScriptBody} 各司其职：后者为 LLM 读正文（含分场 fallback，
+     * 语义不同），本方法仅做卡片预览展示。
+     */
+    private String extractTextPreview(String content) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+        String raw = null;
+        try {
+            JsonNode root = objectMapper.readTree(content);
+            for (String key : new String[]{"body", "synopsis", "prompt"}) {
+                JsonNode n = root.get(key);
+                if (n != null && n.isTextual()) {
+                    raw = n.asText();
+                    break;
+                }
+            }
+            if (raw == null) {
+                // 兜底：首个字符串字段（自定义 content schema）
+                for (JsonNode n : root) {
+                    if (n.isTextual()) {
+                        raw = n.asText();
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            raw = content; // 非合法 JSON，当裸文本截断
+        }
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String cleaned = raw.replaceAll("\\s+", " ").trim();
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        return cleaned.length() > TEXT_PREVIEW_MAX ? cleaned.substring(0, TEXT_PREVIEW_MAX) : cleaned;
     }
 }

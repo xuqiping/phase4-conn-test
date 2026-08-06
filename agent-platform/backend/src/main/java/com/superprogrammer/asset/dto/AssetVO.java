@@ -29,6 +29,12 @@ public class AssetVO {
     private String status;
     /** 正文 JSON（仅详情返回；列表省略）。 */
     private String content;
+    /**
+     * 文本类正文片段（S16 Bug④，列表态卡片封面用）。
+     * 仅 TEXT 类别资产填充（按键优先级 body/synopsis/prompt 抽取，≤120 字去换行）；
+     * 列表态独立于 {@link #content} 懒加载，列表也能拿正文片段不拉全文。
+     */
+    private String textPreview;
     /** 生成谱系 JSON（含技术元数据：宽高/时长/分辨率）。 */
     private String genMeta;
     private Integer currentVersion;

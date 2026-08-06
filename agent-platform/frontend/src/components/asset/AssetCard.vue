@@ -26,7 +26,11 @@
         @error="onMediaError"
       ></video>
       <template v-else>
-        <span class="asset-card__cover-icon">{{ icon }}</span>
+        <!-- S16：TEXT 类有正文片段 → 封面显引文片段（不再只显 emoji 色块，Bug④） -->
+        <p v-if="effectiveCategory === 'text' && asset.textPreview" class="asset-card__cover-text">
+          {{ asset.textPreview }}
+        </p>
+        <span v-else class="asset-card__cover-icon">{{ icon }}</span>
       </template>
       <n-tag class="asset-card__status" size="tiny" bordered :type="STATUS_TYPE[asset.status]">
         {{ STATUS_LABEL[asset.status] }}
@@ -175,6 +179,24 @@ function seekFirstFrame(e: Event) {
 
   &__cover-icon {
     opacity: 0.92;
+  }
+
+  &__cover-text {
+    margin: 0;
+    padding: var(--spacing-3);
+    width: 100%;
+    max-height: 96px;
+    overflow: hidden;
+    text-align: left;
+    font-family: var(--font-family-mono, monospace);
+    font-size: var(--font-size-xs);
+    line-height: 1.5;
+    color: var(--color-text-white, #fff);
+    opacity: 0.92;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    text-overflow: ellipsis;
   }
 
   &__cover-media {

@@ -34,6 +34,7 @@ import java.util.Base64;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -304,6 +305,72 @@ class AssetServiceTest {
                 () -> service.upload(PROJECT_ID, VIEWER_ID, false, file, Asset.MEDIA_IMAGE, "x", null, null));
         assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
         verify(fileStorageService, never()).store(any(), any(), any());
+    }
+
+    // ---------- S16 textPreview 文本正文片段抽取（Bug④） ----------
+
+    /** 文本资产走 get() → toVO：textPreview 按键优先级 body/synopsis/prompt 抽取。 */
+    private AssetVO getTextPreview(String content) {
+        Asset a = asset(1L, Asset.MEDIA_PROMPT);
+        a.setMediaCategory(Asset.CATEGORY_TEXT);
+        a.setContent(content);
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+        return service.get(1L, OWNER_ID, false);
+    }
+
+    @Test
+    void textPreview_fromBodyKey() {
+        AssetVO vo = getTextPreview("{\"body\":\"一只猫坐在窗台上\"}");
+        assertEquals("一只猫坐在窗台上", vo.getTextPreview());
+    }
+
+    @Test
+    void textPreview_fromSynopsisKeyWhenNoBody() {
+        AssetVO vo = getTextPreview("{\"synopsis\":\"主角登场\"}");
+        assertEquals("主角登场", vo.getTextPreview());
+    }
+
+    @Test
+    void textPreview_fromPromptKeyForStoryboard() {
+        // 分镜 content schema 字段1 prompt（无 body/synopsis）
+        AssetVO vo = getTextPreview("{\"prompt\":\"远景全景，城市天际线\"}");
+        assertEquals("远景全景，城市天际线", vo.getTextPreview());
+    }
+
+    @Test
+    void textPreview_plainTextFallbackWhenNonJson() {
+        AssetVO vo = getTextPreview("裸文本内容不合法 JSON");
+        assertEquals("裸文本内容不合法 JSON", vo.getTextPreview());
+    }
+
+    @Test
+    void textPreview_truncatesOver120() {
+        // 150 字 → 截断 120
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 150; i++) sb.append("甲");
+        AssetVO vo = getTextPreview("{\"body\":\"" + sb + "\"}");
+        assertEquals(120, vo.getTextPreview().length());
+    }
+
+    @Test
+    void textPreview_collapsesWhitespace() {
+        AssetVO vo = getTextPreview("{\"body\":\"第一行\\n第二行  多空格\"}");
+        assertEquals("第一行 第二行 多空格", vo.getTextPreview());
+    }
+
+    @Test
+    void textPreview_nullForNonTextCategory() {
+        // IMAGE 类别 → textPreview 不填（null）
+        Asset a = asset(1L, Asset.MEDIA_IMAGE);
+        a.setMediaCategory(Asset.CATEGORY_IMAGE);
+        a.setContent("{\"body\":\"不应被抽取\"}");
+        when(assetMapper.selectById(1L)).thenReturn(a);
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+        AssetVO vo = service.get(1L, OWNER_ID, false);
+        assertNull(vo.getTextPreview());
     }
 
     // ---------- S5 状态机 ----------
