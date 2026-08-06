@@ -49,6 +49,17 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
         </div>
+        <div class="prop-panel__field">
+          <label>模型</label>
+          <n-select
+            :value="(node.data.model as string) || null"
+            :options="chatModelOptions"
+            size="small"
+            clearable
+            placeholder="默认（后端回落）"
+            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+          />
+        </div>
         <n-button
           size="small"
           type="primary"
@@ -146,6 +157,17 @@
           <template #icon><n-icon :component="PlayOutline" /></template>
           提交视频生成
         </n-button>
+        <div class="prop-panel__field">
+          <label>视频模型</label>
+          <n-select
+            :value="(node.data.model as string) || null"
+            :options="videoModelOptions"
+            size="small"
+            clearable
+            placeholder="默认（provider 首个视频模型）"
+            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+          />
+        </div>
 
         <!-- C11 视频抽帧：首/尾/指定秒 → 新图节点（需 video 已生成，即 data.fileId 存在） -->
         <div class="prop-panel__field">
@@ -261,6 +283,17 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
         </div>
+        <div class="prop-panel__field">
+          <label>模型</label>
+          <n-select
+            :value="(node.data.model as string) || null"
+            :options="chatModelOptions"
+            size="small"
+            clearable
+            placeholder="默认（后端回落）"
+            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+          />
+        </div>
         <n-button
           size="small"
           type="primary"
@@ -280,13 +313,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui'
 import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode } from '@/api/canvas'
+import { llmApi } from '@/api/llm'
+import type { AvailableModel } from '@/api/llm'
 import MentionTextarea from './MentionTextarea.vue'
 import { uniqueLabel } from '@/utils/interpolate'
 
@@ -372,6 +407,32 @@ const audioModeOpts = [
   { label: 'TTS 语音', value: 'tts' },
   { label: '音乐生成', value: 'music' }
 ]
+
+// ---------- C5 节点选模型（text/script=chat 模型；video=MEDIA 视频模型） ----------
+const chatModels = ref<AvailableModel[]>([])
+const videoModels = ref<AvailableModel[]>([])
+onMounted(async () => {
+  try {
+    const [c, v] = await Promise.all([llmApi.listAvailableModels(), llmApi.listVideoModels()])
+    chatModels.value = c.data.data ?? []
+    videoModels.value = v.data.data ?? []
+  } catch {
+    // 模型列表可选，失败静默（下拉空态不崩）
+  }
+})
+/** 按 providerName 分组（与 chat ModelSelector 同范式）。 */
+function groupModels(list: AvailableModel[]) {
+  const grouped = new Map<string, { type: 'group'; label: string; key: string; children: { label: string; value: string }[] }>()
+  for (const m of list) {
+    if (!grouped.has(m.providerName)) {
+      grouped.set(m.providerName, { type: 'group', label: m.providerName, key: m.providerName, children: [] })
+    }
+    grouped.get(m.providerName)!.children.push({ label: m.displayName, value: m.modelId })
+  }
+  return Array.from(grouped.values())
+}
+const chatModelOptions = computed(() => groupModels(chatModels.value))
+const videoModelOptions = computed(() => groupModels(videoModels.value))
 </script>
 
 <style lang="scss" scoped>

@@ -139,6 +139,36 @@ public class UserLlmController {
         return ResponseEntity.ok(R.ok(models));
     }
 
+    /**
+     * C5/D2：视频模型列表（仅 CATEGORY_MEDIA 全局 provider，如 Seedance）。
+     * 与 /models/available 互补——后者排除 MEDIA（供 chat 文本/脚本节点），此处只收 MEDIA 供视频节点。
+     * 用户私有 provider 的 MEDIA 覆盖暂不纳入（MVP：视频生成走全局 MEDIA provider）。
+     */
+    @GetMapping("/models/video")
+    public ResponseEntity<R<List<AvailableModelVO>>> listVideoModels() {
+        List<AvailableModelVO> models = new ArrayList<>();
+        for (LlmProviderEntity p : llmProviderService.listActive()) {
+            if (!LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(p.getCategory())) {
+                continue;
+            }
+            if (p.getModels() != null && !p.getModels().isBlank()) {
+                try {
+                    List<String> modelList = objectMapper.readValue(p.getModels(), List.class);
+                    for (Object m : modelList) {
+                        models.add(AvailableModelVO.builder()
+                                .modelId(m.toString())
+                                .displayName(m.toString())
+                                .providerName(p.getName())
+                                .source("global")
+                                .build());
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return ResponseEntity.ok(R.ok(models));
+    }
+
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (Long) auth.getPrincipal();

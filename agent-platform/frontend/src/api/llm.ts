@@ -114,5 +114,10 @@ export const llmApi = {
   // Available models
   listAvailableModels() {
     return request.get<ApiResponse<AvailableModel[]>>('/llm/user/models/available')
+  },
+
+  // C5/D2：视频模型（仅 MEDIA 类 provider，如 Seedance）
+  listVideoModels() {
+    return request.get<ApiResponse<AvailableModel[]>>('/llm/user/models/video')
   }
 }

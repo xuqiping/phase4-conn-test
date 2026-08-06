@@ -445,7 +445,8 @@ async function onRunVideo(node: CanvasNode) {
       watermark: Boolean(data.watermark),
       generateAudio: Boolean(data.generateAudio),
       taskType: refFileId ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
-      refFileId
+      refFileId,
+      model: (data.model as string) || undefined
     })
     const taskId = submit.data.data.id
     boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
