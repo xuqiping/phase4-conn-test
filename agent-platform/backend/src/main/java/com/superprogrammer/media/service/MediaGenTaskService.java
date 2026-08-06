@@ -27,7 +27,7 @@ import java.util.Set;
  * 媒体生成任务提交入口。
  *
  * <p>职责：参数校验（运维上限 + 模型能力上限）+ 解析视频 provider/model
- * （指定 model 时跨全部 ACTIVE MEDIA provider 反查；未指定回退 media.provider-name 的 models[0]）
+ * （指定 model 时跨全部 ACTIVE VIDEO provider 反查；未指定回退 media.provider-name 的 models[0]）
  * + 建 PENDING 任务行 + 返回 taskId。
  * 不在此派发执行——交由 {@link com.superprogrammer.media.service.MediaGenTaskWorker} 定时轮询认领
  * （纯 poll 模式，照抄 IndexJob：天然崩溃恢复，重启后下次 poll 自动续跑 RUNNING 行）。
@@ -75,7 +75,7 @@ public class MediaGenTaskService {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
 
-        // 1) 解析 provider + model（指定 model 时跨 MEDIA provider 反查，未指定走旧默认路径）
+        // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;
         String resolvedModel;
         if (model == null || model.isBlank()) {
@@ -83,7 +83,7 @@ public class MediaGenTaskService {
             if (provider == null) {
                 throw new BusinessException(ErrorCode.NOT_FOUND,
                         "未找到默认视频 provider(name=" + properties.getProviderName()
-                                + ")，请先在「全局模型供应商」建一条 MEDIA 类 provider");
+                                + ")，请先在「全局模型供应商」建一条 VIDEO 类 provider");
             }
             resolvedModel = mediaModelService.firstModelOf(provider);
             if (resolvedModel == null) {

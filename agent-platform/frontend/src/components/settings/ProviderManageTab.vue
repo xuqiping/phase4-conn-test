@@ -18,11 +18,11 @@
         <n-form-item label="显示名">
           <n-input v-model:value="form.displayName" placeholder="OpenAI" />
         </n-form-item>
-        <n-form-item label="协议">
+        <n-form-item v-if="showProtocol" label="协议">
           <n-select v-model:value="form.protocol" :options="protocolOptions" />
         </n-form-item>
         <n-form-item label="API端点">
-          <n-input v-model:value="form.apiEndpoint" placeholder="https://api.openai.com/v1" />
+          <n-input v-model:value="form.apiEndpoint" :placeholder="endpointPlaceholder" />
         </n-form-item>
         <n-form-item label="API Key">
           <n-input v-model:value="form.apiKey" type="password" show-password-on="click" placeholder="sk-..." />
@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, computed, watch, onMounted, h } from 'vue'
 import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NTag, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
@@ -73,24 +73,49 @@ const form = ref<LlmProviderCreateRequest>({
   category: 'CHAT'
 })
 
-const protocolOptions = [
+/** 协议仅对 CHAT/EMBEDDING 有意义（VIDEO/IMAGE 是任务型协议，走媒体包）；EMBEDDING 禁选 ANTHROPIC（Claude 无 embed 接口）。 */
+const showProtocol = computed(() => form.value.category === 'CHAT' || form.value.category === 'EMBEDDING')
+const protocolOptions = computed(() => [
   { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
-  { label: 'Anthropic / Claude', value: 'ANTHROPIC' }
-]
+  { label: 'Anthropic / Claude', value: 'ANTHROPIC', disabled: form.value.category === 'EMBEDDING' }
+])
+watch(() => form.value.category, (cat) => {
+  if (cat === 'EMBEDDING' && form.value.protocol === 'ANTHROPIC') {
+    form.value.protocol = 'OPENAI_COMPATIBLE'
+  }
+})
+
+/** endpoint placeholder 按 category 给完整 URL 示例（FR-001 全 URL 直发，运行时零拼接）。 */
+const endpointPlaceholder = computed(() => {
+  switch (form.value.category) {
+    case 'EMBEDDING': return 'https://api.openai.com/v1/embeddings'
+    case 'VIDEO': return 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks'
+    case 'IMAGE': return '生图任务端点完整 URL（生图 provider 尚未接入，先占位）'
+    default: return 'https://api.openai.com/v1/chat/completions'
+  }
+})
+
+/** CHAT/EMBEDDING 软校验：URL 以 base 形态（/v1、/api/v3…）结尾时警告不拦截（大概率漏填 API 路径）。 */
+function warnIfBaseUrl() {
+  const url = (form.value.apiEndpoint ?? '').trim()
+  if ((form.value.category === 'CHAT' || form.value.category === 'EMBEDDING') && /\/(api\/)?v\d+\/?$/i.test(url)) {
+    message.warning('端点疑似 base URL（缺 API 路径）：全 URL 直发后运行时将原样请求该地址，建议补全如 /chat/completions')
+  }
+}
 
 const categoryOptions = [
   { label: '对话 (CHAT)', value: 'CHAT' },
   { label: '向量 (EMBEDDING)', value: 'EMBEDDING' },
-  { label: '对话+向量 (CHAT_EMBEDDING)', value: 'CHAT_EMBEDDING' },
-  { label: '视频/生图 (MEDIA)', value: 'MEDIA' }
+  { label: '视频 (VIDEO)', value: 'VIDEO' },
+  { label: '生图 (IMAGE·预留)', value: 'IMAGE' }
 ]
 
-/** category badge 配色：向量=绿，双用=橙，对话=蓝，媒体=紫（默认）。 */
+/** category badge 配色：对话=蓝，向量=绿，视频=红，生图=橙（预留）。 */
 const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'error' }> = {
-  EMBEDDING: { label: '向量', type: 'success' },
-  CHAT_EMBEDDING: { label: '对话+向量', type: 'warning' },
   CHAT: { label: '对话', type: 'info' },
-  MEDIA: { label: '媒体', type: 'error' }
+  EMBEDDING: { label: '向量', type: 'success' },
+  VIDEO: { label: '视频', type: 'error' },
+  IMAGE: { label: '生图', type: 'warning' }
 }
 
 const columns = [
@@ -168,6 +193,7 @@ async function handleSave() {
       await llmApi.createProvider(form.value)
       message.success('创建成功')
     }
+    warnIfBaseUrl()
     showModal.value = false
     await load()
   } catch {
@@ -183,25 +209,30 @@ async function handleDelete(id: number) {
   await load()
 }
 
-/** 测试类型：embedding 走 embed（成功提示带维度）；media 走任务端点探测；其余走 chat。 */
-type TestKind = 'chat' | 'embed' | 'media'
+/** 测试类型四分：EMBEDDING→embed 取维度；VIDEO→任务端点零成本探测；IMAGE→预留不发请求；CHAT→chat 短对话。 */
+type TestKind = 'chat' | 'embed' | 'video' | 'image'
 
 function testKindOf(category: string | undefined): TestKind {
   if (category === 'EMBEDDING') return 'embed'
-  if (category === 'MEDIA') return 'media'
+  if (category === 'VIDEO') return 'video'
+  if (category === 'IMAGE') return 'image'
   return 'chat'
 }
 
-/** 按行分流：embedding 走 embed 测试，media 走任务端点探测，其余走 chat 测试。 */
+/** 按行分流测试。IMAGE 尚未接入生图 provider，直接提示不发请求。 */
 async function runTest(id: number, kind: TestKind) {
+  if (kind === 'image') {
+    message.info('生图 provider 尚未接入，配置已保存（测试将在接入后开放）')
+    return
+  }
   const res = kind === 'embed'
     ? await llmApi.testProviderEmbedding(id)
-    : kind === 'media'
-      ? await llmApi.testProviderMedia(id)
+    : kind === 'video'
+      ? await llmApi.testProviderVideo(id)
       : await llmApi.testProviderConnection(id)
   const r = res.data.data
   if (r.success) {
-    // embed/media: 后端 message 已含完整信息；chat: 拼 model + 耗时
+    // embed/video: 后端 message 已含完整信息；chat: 拼 model + 耗时
     message.success(kind === 'chat'
       ? `连接成功 · ${r.model} · ${r.durationMs}ms`
       : `${r.message}${r.durationMs != null ? ` · ${r.durationMs}ms` : ''}`)
@@ -228,11 +259,17 @@ async function handleTestInModal() {
     message.warning('请先填写API端点')
     return
   }
+  const kind = testKindOf(form.value.category)
+  // IMAGE 预留：无需保存即可提示（不发请求）
+  if (kind === 'image') {
+    message.info('生图 provider 尚未接入，配置已保存（测试将在接入后开放）')
+    return
+  }
   testing.value = true
   try {
-    // If editing existing provider, test by id（按 category 分流：EMBEDDING 走 embed，MEDIA 走任务端点探测，其余走 chat）
+    // If editing existing provider, test by id（按 category 分流：EMBEDDING→embed / VIDEO→任务端点探测 / 其余→chat）
     if (editingId.value) {
-      await runTest(editingId.value, testKindOf(form.value.category))
+      await runTest(editingId.value, kind)
     } else {
       message.info('请先保存供应商后再测试连通')
     }

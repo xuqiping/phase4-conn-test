@@ -79,7 +79,7 @@ public class MediaGenController {
     }
 
     /**
-     * MEDIA provider 连通性测试（供应商管理页「测试」按钮，category=MEDIA 分流到这里）。
+     * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
      * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
      * 权限与 /api/llm/providers 管理端点一致（role:manage），非 media:gen。
      */

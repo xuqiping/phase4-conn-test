@@ -226,12 +226,12 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         }
     }
 
-    // ---------- 连通性探测（MEDIA provider 测试按钮用） ----------
+    // ---------- 连通性探测（VIDEO provider 测试按钮用） ----------
 
     /**
-     * MEDIA provider 连通性探测（零成本，不建任务不计费）。
+     * VIDEO provider 连通性探测（零成本，不建任务不计费）。
      *
-     * <p>背景：MEDIA（视频/生图）是任务型协议，{@code /chat/completions} 探测必然失败；
+     * <p>背景：VIDEO（视频）是任务型协议，{@code /chat/completions} 探测必然失败；
      * 又不能为测试真建一个视频任务（计费）。故用 {@code GET 任务端点/不存在id} 探测：
      * <ul>
      *   <li>401/403 → Key 无效或无权限；</li>
@@ -267,7 +267,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             String body = pr != null ? pr.body() : "";
             return interpretProbe(status, body, duration, firstModel(entity));
         } catch (Exception e) {
-            log.warn("MEDIA 连通探测失败 [provider={}]: {}", entity.getName(), e.getMessage());
+            log.warn("VIDEO 连通探测失败 [provider={}]: {}", entity.getName(), e.getMessage());
             return com.superprogrammer.llm.dto.TestConnectionResult.fail(rootMessage(e));
         }
     }
@@ -311,7 +311,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     /**
      * 解析视频 provider（多 provider 路由版）。
-     * providerId 非空 → 按任务落库的 provider 直连（多 MEDIA provider 并存时各走各的 endpoint/key）；
+     * providerId 非空 → 按任务落库的 provider 直连（多 VIDEO provider 并存时各走各的 endpoint/key）；
      * 为空 → 回退 media.provider-name 默认 provider（旧行为）。
      */
     private ResolvedArk resolveArk(Long providerId) {

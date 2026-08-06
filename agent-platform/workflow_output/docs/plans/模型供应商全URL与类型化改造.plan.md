@@ -119,7 +119,7 @@ graph TD
   - **安全检查**：迁移不含 key 明文；备份表含密文列，库内权限同原表
   - **验证**：本地库跑迁移 → 四类行 category 正确、endpoint 形态正确、备份表行数=原表；回滚伪 SQL 演练一遍（开发库）
 
-- [ ] **Step 2：Provider 层全 URL 直发**（对应 FR-001）🚧 上半已落 2026-08-06 commit `bbdd53f`（OpenAI/Claude 直发 + URL 原样断言，74 测绿）。**ArkSeedanceProvider 已改完挂工作区**（createTask POST endpoint 原样、query/probe 仅留 `/{taskId}` 协议路径 + 2 新测），因依赖未提交前置（MediaGenRequest.providerId/attachments）待随前置媒体批次提交后本步勾完。
+- [x] **Step 2：Provider 层全 URL 直发**（对应 FR-001）✅ 上半 `bbdd53f`（OpenAI/Claude 直发 + URL 原样断言）+ 下半 ArkSeedanceProvider 随前置媒体批次 `0add373` 落（createTask POST endpoint 原样、query/probe 仅留 `/{taskId}` 协议路径，ArkSeedanceProviderTest 12 绿）。
   - **目标**：三个 provider 删掉一切路径拼接，endpoint 原样作为请求 URL
   - **动作**：
     - `OpenAICompatibleProvider.java`：chat/chatStream `.uri(完整URL)` 绝对地址直发；embed 不再 `baseUrl+"/embeddings"`，直接 POST endpoint；删 normalizeBaseUrl 类逻辑（保留尾斜杠 trim 即可）
@@ -161,7 +161,7 @@ graph TD
   - **安全检查**：失败话术不含 key
   - **验证**：四类各点一次测试：CHAT/EMBEDDING/VIDEO 真实探测，IMAGE 话术返回
 
-- [ ] **Step 6：前端供应商管理页**（对应 FR-001、FR-002、FR-004）`[P]`
+- [x] **Step 6：前端供应商管理页**（对应 FR-001、FR-002、FR-004）`[P]` ✅ 2026-08-06（前置媒体批次 `0add373` 解锁后落地），前端 206 测绿 + vue-tsc 0 错 + 后端 media 51 绿。llm.ts ProviderCategory 四分 + testProviderMedia→testProviderVideo；ProviderManageTab：categoryOptions/CATEGORY_TAG 四分、协议仅 CHAT/EMBEDDING 显示且 EMBEDDING 禁选 ANTHROPIC（watch 强制回退）、endpoint placeholder 按 category 动态完整 URL 示例、保存后 base 形态 URL 软警告（`/v1`/`/api/v3` 结尾）、testKindOf 四分（IMAGE→info 不发请求）；VideoGenView/后端 media 包 MEDIA→VIDEO 措辞收口。
   - **目标**：类型四分可选；placeholder 引导填完整 URL；测试按类型分流
   - **动作**：
     - `llm.ts`：ProviderCategory 改 `'CHAT'|'EMBEDDING'|'VIDEO'|'IMAGE'`

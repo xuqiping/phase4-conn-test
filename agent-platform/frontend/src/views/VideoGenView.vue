@@ -14,7 +14,7 @@
 
     <n-empty
       v-else-if="modelsLoaded && models.length === 0"
-      description="暂无可用视频模型，请联系管理员在「全局模型供应商」配置 MEDIA 类供应商"
+      description="暂无可用视频模型，请联系管理员在「全局模型供应商」配置 VIDEO 类供应商"
       class="video-gen__forbidden"
     />
 

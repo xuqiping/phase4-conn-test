@@ -1,7 +1,8 @@
 import request from './request'
 import type { ApiResponse } from './request'
 
-export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'CHAT_EMBEDDING' | 'MEDIA'
+// 类型四分（V60 起，FR-002）：CHAT 对话 / EMBEDDING 向量 / VIDEO 视频 / IMAGE 生图（预留）
+export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'VIDEO' | 'IMAGE'
 
 export interface LlmProvider {
   id: number
@@ -94,8 +95,8 @@ export const llmApi = {
     return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test-embed`)
   },
 
-  // MEDIA 专用测试（任务型协议不支持 chat，走媒体包零成本探测 GET 任务端点/不存在id）
-  testProviderMedia(id: number) {
+  // VIDEO 专用测试（任务型协议不支持 chat，走媒体包零成本探测 GET 任务端点/不存在id）
+  testProviderVideo(id: number) {
     return request.post<ApiResponse<TestConnectionResult>>(`/media/providers/${id}/test`)
   },
 
