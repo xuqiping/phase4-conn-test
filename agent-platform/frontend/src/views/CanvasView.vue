@@ -105,6 +105,7 @@
           @pick-from-asset="onPickFromAsset"
           @check-update="onCheckUpdate"
           @update-asset="onUpdateAsset"
+          @data-changed="scheduleSave"
         />
       </div>
 

@@ -48,6 +48,15 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
         </div>
+        <!-- FR-006 模型覆盖：留空=canvas.text-model 默认；后端 CanvasNodeRunnerService 已读 node.data.model -->
+        <div class="prop-panel__field">
+          <label>模型（留空=默认）</label>
+          <ModelSelector
+            optional
+            :model-value="(node.data.model as string) || ''"
+            @update:model-value="onModelChange"
+          />
+        </div>
         <n-button
           size="small"
           type="primary"
@@ -258,6 +267,15 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
         </div>
+        <!-- FR-006 模型覆盖：留空=asset.script-model 默认 -->
+        <div class="prop-panel__field">
+          <label>模型（留空=默认）</label>
+          <ModelSelector
+            optional
+            :model-value="(node.data.model as string) || ''"
+            @update:model-value="onModelChange"
+          />
+        </div>
         <n-button
           size="small"
           type="primary"
@@ -285,6 +303,7 @@ import {
 import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode } from '@/api/canvas'
 import MentionTextarea from './MentionTextarea.vue'
+import ModelSelector from '@/components/chat/ModelSelector.vue'
 import { uniqueLabel } from '@/utils/interpolate'
 
 const props = withDefaults(defineProps<{
@@ -318,6 +337,8 @@ const emit = defineEmits<{
   (e: 'check-update', node: CanvasNode): void
   /** S12：更新节点引用到资产最新版（re-resolve 写回，L6「手动更新」）。 */
   (e: 'update-asset', node: CanvasNode): void
+  /** FR-006：node.data 被面板改动需落库（模型选择器等），父组件 scheduleSave。 */
+  (e: 'data-changed'): void
 }>()
 
 /** S12：当前节点已绑定资产（node.data.assetId 存在）。 */
@@ -361,6 +382,19 @@ function onRenameBlur() {
 const sceneCount = computed(() =>
   Array.isArray(props.node?.data.scenes) ? (props.node!.data.scenes as unknown[]).length : 0
 )
+
+/**
+ * FR-006 模型覆盖：ModelSelector optional 清空 emit '' → 删 node.data.model 回退默认。
+ * 改完发 data-changed 让父组件 scheduleSave 落库（提示词等输入类编辑不落库是既有行为，
+ * 模型是「离散选择」语义，选了就期望持久，故单独落库）。
+ */
+function onModelChange(v: string) {
+  const node = props.node
+  if (!node) return
+  if (v) node.data.model = v
+  else delete node.data.model
+  emit('data-changed')
+}
 
 const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
 const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))

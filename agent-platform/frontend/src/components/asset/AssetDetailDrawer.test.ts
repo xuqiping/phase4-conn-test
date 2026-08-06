@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AssetDetailDrawer from './AssetDetailDrawer.vue'
-import { assetApi, assetBridgeApi, versionApi } from '@/api/assets'
+import ModelSelector from '@/components/chat/ModelSelector.vue'
+import { assetApi, assetBridgeApi, scriptApi, versionApi } from '@/api/assets'
 import type { AxiosResponse } from 'axios'
 import type { AssetVO } from '@/types/asset'
 
@@ -21,7 +22,13 @@ vi.mock('@/api/request', () => ({ default: { get: requestGet }, request: { get: 
 vi.mock('@/api/assets', () => ({
   assetApi: { get: vi.fn() },
   assetBridgeApi: { usages: vi.fn() },
+  scriptApi: { breakdown: vi.fn() },
   versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn() }
+}))
+
+// FR-006：拆分场弹窗挂了 ModelSelector（拉可用模型列表），测试环境不打真请求
+vi.mock('@/api/llm', () => ({
+  llmApi: { listAvailableModels: vi.fn().mockResolvedValue({ data: { data: [] } }) }
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -147,5 +154,88 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     expect(requestGet).toHaveBeenCalledWith('/files/fid-2', { responseType: 'blob' })
     expect(clickSpy).toHaveBeenCalled()
     createSpy.mockRestore()
+  })
+})
+
+describe('AssetDetailDrawer (FR-006 AI 拆分场)', () => {
+  type BreakdownVm = {
+    showBreakdown: boolean
+    breakdownModel: string
+    doBreakdown: () => Promise<void>
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ mediaType: 'SCRIPT' }) })
+    )
+    vi.mocked(assetBridgeApi.usages).mockResolvedValue(response({ code: 200, message: 'ok', data: [] }))
+  })
+
+  it('SCRIPT + canEdit → 渲染「AI 拆分场」按钮；PROMPT / 无写权不渲染', async () => {
+    // NDrawer teleport 到 body，须 attachTo + document.body 查询
+    const hasBtn = () =>
+      Array.from(document.body.querySelectorAll('button')).some((b) => b.textContent?.includes('AI 拆分场'))
+    const mountAttached = (canEdit = true) =>
+      mount(AssetDetailDrawer, { props: { show: true, assetId: 5, canEdit }, attachTo: document.body })
+
+    const scriptWrapper = mountAttached() // beforeEach 已 mock SCRIPT 资产
+    await settle()
+    expect(hasBtn()).toBe(true)
+    scriptWrapper.unmount()
+
+    vi.mocked(assetApi.get).mockResolvedValue(response({ code: 200, message: 'ok', data: mkAsset() }))
+    const promptWrapper = mountAttached() // mkAsset 默认 PROMPT
+    await settle()
+    expect(hasBtn()).toBe(false)
+    promptWrapper.unmount()
+
+    const viewerWrapper = mountAttached(false)
+    await settle()
+    expect(hasBtn()).toBe(false)
+    viewerWrapper.unmount()
+  })
+
+  it('选模型拆分 → scriptApi.breakdown 带 model + 重载详情 + emit changed', async () => {
+    vi.mocked(scriptApi.breakdown).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { scenes: [{}, {}], model: 'm-x', version: 3 } as never })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as BreakdownVm
+
+    // 打开弹窗 + 通过弹窗内 ModelSelector 选模型（v-model ↔ breakdownModel）
+    vm.showBreakdown = true
+    await wrapper.vm.$nextTick()
+    wrapper.findComponent(ModelSelector).vm.$emit('update:modelValue', 'm-x')
+
+    await vm.doBreakdown()
+    expect(scriptApi.breakdown).toHaveBeenCalledWith(5, 'm-x')
+    // 重载详情（assetApi.get 二次调用）+ 通知父
+    expect(vi.mocked(assetApi.get).mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(wrapper.emitted('changed')).toBeTruthy()
+    expect(vm.showBreakdown).toBe(false)
+  })
+
+  it('留空模型 → breakdown 不传 model（走后端 asset.script-model 默认）', async () => {
+    vi.mocked(scriptApi.breakdown).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { scenes: [{}], model: 'default-model', version: 2 } as never })
+    )
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as BreakdownVm
+
+    await vm.doBreakdown()
+    expect(scriptApi.breakdown).toHaveBeenCalledWith(5, undefined)
+  })
+
+  it('拆分失败 → 错误提示且不关弹窗、不 emit changed', async () => {
+    vi.mocked(scriptApi.breakdown).mockRejectedValue(new Error('boom'))
+    const wrapper = await mountDrawer()
+    const vm = wrapper.vm as unknown as BreakdownVm
+    vm.showBreakdown = true
+
+    await vm.doBreakdown()
+    expect(messageMock.error).toHaveBeenCalledWith('拆分失败')
+    expect(vm.showBreakdown).toBe(true)
+    expect(wrapper.emitted('changed')).toBeUndefined()
   })
 })

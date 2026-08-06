@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
+import ModelSelector from '@/components/chat/ModelSelector.vue'
 import type { CanvasNode } from '@/types/canvas'
+
+// FR-006：属性面板挂了 ModelSelector（拉可用模型列表），测试环境不打真请求
+vi.mock('@/api/llm', () => ({
+  llmApi: { listAvailableModels: vi.fn().mockResolvedValue({ data: { data: [] } }) }
+}))
 
 function mkNode(data: Record<string, unknown>): CanvasNode {
   return { id: 'node-1', type: 'text', position: { x: 0, y: 0 }, data: { label: 'n', ...data } }
@@ -124,5 +130,36 @@ describe('PropertyPanel (S13 @引用 / 重命名查重)', () => {
     node.type = 'video'
     const wrapper = mount(PropertyPanel, { props: { node } })
     expect(wrapper.findComponent({ name: 'MentionTextarea' }).exists()).toBe(true)
+  })
+})
+
+describe('PropertyPanel (FR-006 模型选择器)', () => {
+  it('文本/脚本节点渲染模型选择器，视频节点不渲染', () => {
+    const textWrapper = mountPanel(mkNode({ prompt: 'x' }))
+    expect(textWrapper.findComponent(ModelSelector).exists()).toBe(true)
+
+    const scriptWrapper = mountPanel({ ...mkNode({ synopsis: 's' }), type: 'script' })
+    expect(scriptWrapper.findComponent(ModelSelector).exists()).toBe(true)
+
+    const videoWrapper = mountPanel({ ...mkNode({ prompt: 'p' }), type: 'video' })
+    expect(videoWrapper.findComponent(ModelSelector).exists()).toBe(false)
+  })
+
+  it('选模型 → node.data.model 落值 + emit data-changed（父组件 scheduleSave 落库）', async () => {
+    const node = mkNode({ prompt: 'x' })
+    const wrapper = mountPanel(node)
+    wrapper.findComponent(ModelSelector).vm.$emit('update:modelValue', 'gpt-test')
+    await wrapper.vm.$nextTick()
+    expect(node.data.model).toBe('gpt-test')
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+  })
+
+  it('清空（emit 空串）→ 删 node.data.model 回退默认', async () => {
+    const node = mkNode({ prompt: 'x', model: 'gpt-test' })
+    const wrapper = mountPanel(node)
+    wrapper.findComponent(ModelSelector).vm.$emit('update:modelValue', '')
+    await wrapper.vm.$nextTick()
+    expect('model' in node.data).toBe(false)
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
   })
 })

@@ -57,6 +57,16 @@
           <n-button v-if="asset.status !== 'ARCHIVED'" size="small" type="warning" @click="doAction('archive')">归档</n-button>
           <n-button v-if="asset.status === 'ARCHIVED'" size="small" @click="doAction('unarchive')">取消归档</n-button>
           <n-button v-if="needsFile" size="small" quaternary @click="download">下载</n-button>
+          <!-- FR-006 剧本 AI 拆分场入口（scriptApi.breakdown 此前无调用方） -->
+          <n-button
+            v-if="asset.mediaType === 'SCRIPT'"
+            size="small"
+            tertiary
+            type="primary"
+            @click="showBreakdown = true"
+          >
+            AI 拆分场
+          </n-button>
         </div>
 
         <!-- 使用记录（双向追溯，viewer 可读） -->
@@ -86,6 +96,22 @@
         <!-- 版本时间线（只读回滚查看） -->
         <VersionTimeline :asset-id="asset.id" :asset-current-version="asset.currentVersion" />
       </div>
+
+      <!-- FR-006 AI 拆分场弹窗：选模型（留空=asset.script-model 默认）→ breakdown 产新版本 -->
+      <n-modal v-model:show="showBreakdown" preset="card" title="AI 拆分场" style="max-width:420px">
+        <p class="asset-detail__breakdown-hint">
+          按剧本正文拆分场，scenes 写入 content 并产新版本。留空走默认拆分模型。
+        </p>
+        <ModelSelector
+          v-model="breakdownModel"
+          optional
+          empty-label="默认（asset.script-model 配置）"
+        />
+        <template #action>
+          <n-button @click="showBreakdown = false">取消</n-button>
+          <n-button type="primary" :loading="breaking" @click="doBreakdown">开始拆分</n-button>
+        </template>
+      </n-modal>
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -99,16 +125,18 @@ import {
   NDrawer,
   NDrawerContent,
   NEmpty,
+  NModal,
   NSpace,
   NSpin,
   NTag,
   useMessage
 } from 'naive-ui'
-import { assetApi, assetBridgeApi, versionApi } from '@/api/assets'
+import { assetApi, assetBridgeApi, scriptApi, versionApi } from '@/api/assets'
 import { fetchCanvasPreview } from '@/api/canvas'
 import request from '@/api/request'
 import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
 import VersionTimeline from '@/components/asset/VersionTimeline.vue'
+import ModelSelector from '@/components/chat/ModelSelector.vue'
 import type { AssetStatus, AssetMediaType, AssetUsageVO, AssetVO } from '@/types/asset'
 
 const props = defineProps<{
@@ -256,13 +284,40 @@ async function download() {
   }
 }
 
-defineExpose({ asset, usages, loading, doAction, download, loadAll })
-
 /** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
 async function onConsistencySaved(assetId: number) {
   await loadAll(assetId)
   emit('changed', assetId)
 }
+
+// === FR-006 AI 拆分场（剧本 → scenes 入 content 产新版本） ===
+const showBreakdown = ref(false)
+const breaking = ref(false)
+/** 空串 = 不指定模型，后端走 asset.script-model 默认 */
+const breakdownModel = ref('')
+
+async function doBreakdown() {
+  if (!asset.value) return
+  breaking.value = true
+  try {
+    const res = await scriptApi.breakdown(asset.value.id, breakdownModel.value || undefined)
+    const vo = res.data.data
+    message.success(`已拆 ${vo?.scenes?.length ?? 0} 场（模型 ${vo?.model ?? '默认'}）→ v${vo?.version ?? '?'}`)
+    showBreakdown.value = false
+    // content 已含 scenes + breakdownModel，重载详情 + 通知父（版本号/矩阵可能变）
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('拆分失败')
+  } finally {
+    breaking.value = false
+  }
+}
+
+defineExpose({
+  asset, usages, loading, doAction, download, loadAll,
+  showBreakdown, breakdownModel, doBreakdown
+})
 </script>
 
 <style lang="scss" scoped>
@@ -336,6 +391,13 @@ async function onConsistencySaved(assetId: number) {
     color: var(--color-text-tertiary);
     margin-left: var(--spacing-2);
     font-size: var(--font-size-xs);
+  }
+
+  &__breakdown-hint {
+    margin: 0 0 var(--spacing-3);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    line-height: 1.6;
   }
 }
 </style>
