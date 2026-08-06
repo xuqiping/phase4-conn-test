@@ -172,7 +172,7 @@ graph TD
   - **安全检查**：无
   - **验证**：vue-tsc 零错；手测四类保存+测试+placeholder 切换+软校验提示
 
-- [ ] **Step 7：画布 + 资产库模型选择器**（对应 FR-006）`[P]`
+- [x] **Step 7：画布 + 资产库模型选择器**（对应 FR-006）`[P]` ✅ 2026-08-06 commit `3adaa09`，前端 206 测绿 + vue-tsc 0 错。ModelSelector 加 optional 模式（不自动选中/clearable/清空 emit ''，旧调用方零适配）；PropertyPanel 文本/脚本节点挂选择器 + `data-changed` → CanvasView scheduleSave 落库；AssetDetailDrawer 加「AI 拆分场」入口（SCRIPT+canEdit，弹窗选模型 → scriptApi.breakdown，成功重载+emit changed）；`ScriptBreakdownVO` 前端类型补 `model` 字段对齐后端。+10 测。
   - **目标**：两个「后端早已支持 model 覆盖」的板块补上 UI 自选
   - **动作**：
     - 画布：`components/canvas/PropertyPanel.vue` 文本/脚本节点各加一个 ModelSelector（复用 chat 组件，v-model ↔ `node.data.model`，留「默认」空选项）；选择随 scheduleSave 落库；运行时后端已读 `node.data.model`，零后端改动
