@@ -13,6 +13,7 @@
 //! When the window is closed, `on_closed` fires and the capture ends.
 
 use serde::Serialize;
+use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::mpsc::Receiver;
 #[cfg(windows)]
@@ -59,6 +60,18 @@ pub struct CaptureStatus {
     pub stalled: bool,
 }
 
+/// Video-recording attachment for a capture (plan Step 4). When present, the
+/// capture handler encodes frames to sliced MP4 segments under `video_dir`.
+#[derive(Debug, Clone)]
+pub struct RecordConfig {
+    /// Session's `video/` directory — segments + manifest.jsonl land here.
+    pub video_dir: PathBuf,
+    /// Segment length override (tests); production uses [`crate::screen::encode::SLICE_MS`].
+    pub slice_ms: i64,
+    /// traceId for log lines = session id (运维 O1).
+    pub trace: String,
+}
+
 /// Pure stall rule, extracted for unit testing.
 pub fn is_stalled(last_frame_ts: Option<i64>, started_ts: i64, now: i64) -> bool {
     let reference = last_frame_ts.unwrap_or(started_ts);
@@ -71,6 +84,7 @@ pub fn is_stalled(last_frame_ts: Option<i64>, started_ts: i64, now: i64) -> bool
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use crate::screen::encode::SliceEncoder;
     use std::sync::mpsc;
     use std::time::Instant;
     use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
@@ -91,6 +105,8 @@ mod imp {
         /// Window title, only for log lines (traceId substitute until Step 4
         /// injects the session id).
         label: String,
+        /// Step 4: when set, frames are also encoded to sliced MP4 segments.
+        record: Option<RecordConfig>,
     }
 
     /// The per-capture callback object living on the WGC thread.
@@ -102,6 +118,12 @@ mod imp {
         last_frame_ts: i64,
         fps_window_start: Instant,
         fps_window_frames: u32,
+        /// Step 4 video track. Lazy-created on the first frame (encoder needs
+        /// real width/height). `encoder_failed` = degraded: keep capturing,
+        /// skip video (O4 降级路径 — 捕获/转写不陪葬).
+        record: Option<RecordConfig>,
+        encoder: Option<SliceEncoder>,
+        encoder_failed: bool,
     }
 
     impl GraphicsCaptureApiHandler for CaptureHandler {
@@ -119,6 +141,9 @@ mod imp {
                 last_frame_ts: 0,
                 fps_window_start: Instant::now(),
                 fps_window_frames: 0,
+                record: f.record,
+                encoder: None,
+                encoder_failed: false,
             })
         }
 
@@ -139,6 +164,9 @@ mod imp {
             }
             self.last_frame_ts = ts;
             self.frames += 1;
+
+            // Step 4: video track (no-op when this capture isn't recording).
+            self.encode_frame(frame, ts);
 
             let meta = FrameMeta {
                 frame_ts: ts,
@@ -178,6 +206,57 @@ mod imp {
         }
     }
 
+    impl CaptureHandler {
+        /// Step 4 video track: lazily create the encoder on the first frame,
+        /// then encode every frame. Any failure degrades to capture-without-
+        /// video instead of killing the capture (O4).
+        fn encode_frame(&mut self, frame: &mut Frame, ts: i64) {
+            let Some(rec) = &self.record else { return };
+            if self.encoder_failed {
+                return;
+            }
+            if self.encoder.is_none() {
+                match SliceEncoder::new(
+                    rec.video_dir.clone(),
+                    frame.width(),
+                    frame.height(),
+                    rec.slice_ms,
+                    rec.trace.clone(),
+                ) {
+                    Ok(enc) => self.encoder = Some(enc),
+                    Err(e) => {
+                        log::error!(
+                            "[screen] {} video track disabled (init failed): {e}",
+                            self.label
+                        );
+                        self.encoder_failed = true;
+                        return;
+                    }
+                }
+            }
+            if let Some(enc) = self.encoder.as_mut() {
+                if let Err(e) = enc.send_frame(frame, ts) {
+                    log::error!(
+                        "[screen] {} video track disabled (encode failed): {e}",
+                        self.label
+                    );
+                    self.encoder = None;
+                    self.encoder_failed = true;
+                }
+            }
+        }
+    }
+
+    impl Drop for CaptureHandler {
+        fn drop(&mut self) {
+            // Capture thread ends (stop / window closed / receiver gone) →
+            // flush the final video segment so every mp4 on disk is playable.
+            if let Some(enc) = self.encoder.as_mut() {
+                enc.finish(self.last_frame_ts);
+            }
+        }
+    }
+
     pub struct ScreenCapture {
         control: Option<CaptureControl<CaptureHandler, HandlerError>>,
         receiver: Receiver<FrameMeta>,
@@ -213,6 +292,17 @@ mod imp {
         /// creates a capture-local clock; Step 4 passes the session clock so
         /// screen / audio / transcript share t0 (plan Step 3 备注).
         pub fn start(hwnd: isize, clock: Option<Arc<SessionClock>>) -> Result<Self, String> {
+            Self::start_with_record(hwnd, clock, None)
+        }
+
+        /// Step 4 entry: same as [`ScreenCapture::start`], plus a video track
+        /// when `record` is set — frames are encoded to sliced MP4 segments
+        /// under `record.video_dir` (FR-101/FR-103).
+        pub fn start_with_record(
+            hwnd: isize,
+            clock: Option<Arc<SessionClock>>,
+            record: Option<RecordConfig>,
+        ) -> Result<Self, String> {
             let window = Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void);
             if !window.is_valid() {
                 return Err(format!("window {hwnd:#x} is not capturable (invisible / gone?)"));
@@ -244,7 +334,7 @@ mod imp {
                 interval,
                 DirtyRegionSettings::Default,
                 ColorFormat::Bgra8,
-                CaptureFlags { clock: clock.clone(), sender, label: label.clone() },
+                CaptureFlags { clock: clock.clone(), sender, label: label.clone(), record },
             );
 
             let control = CaptureHandler::start_free_threaded(settings)
@@ -310,6 +400,7 @@ mod imp {
 mod imp {
     use super::WindowInfo;
     use super::CaptureStatus;
+    use super::RecordConfig;
 
     pub struct ScreenCapture;
 
@@ -320,6 +411,13 @@ mod imp {
         pub fn start(
             _hwnd: isize,
             _clock: Option<std::sync::Arc<crate::session::SessionClock>>,
+        ) -> Result<Self, String> {
+            Err("screen capture is only supported on Windows".to_string())
+        }
+        pub fn start_with_record(
+            _hwnd: isize,
+            _clock: Option<std::sync::Arc<crate::session::SessionClock>>,
+            _record: Option<RecordConfig>,
         ) -> Result<Self, String> {
             Err("screen capture is only supported on Windows".to_string())
         }
@@ -404,5 +502,54 @@ mod tests {
             status.frames_captured
         );
         assert!(status.last_frame_ts >= 0);
+    }
+
+    /// Real encode smoke test (AC-101 视频轨): captures the first window for
+    /// ~4s with recording on, then asserts a playable segment + manifest line
+    /// landed in video/. Ignored by default — grabs a real on-screen window:
+    ///   cargo test -- --ignored real_encode
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "captures a real window; run manually"]
+    fn real_encode_writes_segment_and_manifest() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-sessions")
+            .join("real-encode")
+            .join("video");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let windows = ScreenCapture::list_windows().unwrap();
+        let target = windows.first().expect("no window to capture");
+        let mut cap = ScreenCapture::start_with_record(
+            target.hwnd,
+            None,
+            Some(RecordConfig {
+                video_dir: dir.clone(),
+                slice_ms: crate::screen::encode::SLICE_MS,
+                trace: "test-real-encode".to_string(),
+            }),
+        )
+        .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let status = cap.status();
+        cap.stop().unwrap();
+        // Encoder finalizes on the capture thread — give it a moment after stop.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        drop(cap);
+
+        assert!(status.frames_captured > 0, "no frames in 4s (window minimized?)");
+
+        let seg = dir.join("video_001.mp4");
+        let meta = std::fs::metadata(&seg).expect("video_001.mp4 missing");
+        assert!(meta.len() > 10_000, "segment suspiciously small: {} bytes", meta.len());
+
+        let manifest = std::fs::read_to_string(dir.join("manifest.jsonl"))
+            .expect("manifest.jsonl missing");
+        let line = manifest.lines().next().expect("manifest empty");
+        assert!(line.contains("video_001.mp4"), "bad manifest line: {line}");
+        assert!(line.contains("\"frames\":"), "manifest lacks frame count: {line}");
     }
 }

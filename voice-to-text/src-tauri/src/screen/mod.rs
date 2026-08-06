@@ -12,5 +12,6 @@
 //! capture session can be traced; fps is logged periodically for monitoring.
 
 mod capture;
+pub mod encode;
 
-pub use capture::{CaptureStatus, ScreenCapture, WindowInfo};
+pub use capture::{CaptureStatus, RecordConfig, ScreenCapture, WindowInfo};
