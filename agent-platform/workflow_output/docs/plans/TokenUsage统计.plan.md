@@ -3,6 +3,13 @@ description: "Token 消耗统计（账单） 的实现计划"
 created-date: 2026-07-22
 ---
 
+# ⚠️ 已废弃（SUPERSEDED）· Token 消耗统计（账单）Plan
+
+> **本计划已被取代**：scope 扩为「预付钱包计费系统」，见 [积分计费系统.plan.md](积分计费系统.plan.md)（2026-08-07）。
+> 本文件从未执行（步骤全未勾选），provider 透传/流式 side-channel 等设计已被新 plan 继承复用。保留作历史参考，勿据此开发。
+
+---
+
 # Implementation Plan for Token 消耗统计（账单）
 
 > Phase 2 产出。Phase 3 逐步勾选执行。只含伪代码，不含真代码。
