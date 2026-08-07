@@ -301,6 +301,7 @@ import {
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
+import { fetchFilePreview } from '@/api/file'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -359,8 +360,9 @@ async function loadModels() {
   }
 }
 
-/** 切换模型：能力可能变化 → 清空附件 + 收敛参数到新能力区间。 */
+/** 切换模型：能力可能变化 → 清空附件 + 收敛参数到新能力区间。释放资产预览 objectURL。 */
 function onModelChange() {
+  ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
   images.value = []
   videos.value = []
   audios.value = []
@@ -499,22 +501,52 @@ const assetPickerExcludeIds = computed<number[]>(() => {
   return kindList(k).value.map(a => a.assetId).filter((x): x is number => x != null)
 })
 
-/** picker 确认：逐项 push 进对应 kindList（与上传项同源，submit 透明）。 */
+/** picker 确认：逐项 push 进对应 kindList（与上传项同源，submit 透明）。
+ *  G（4.4 资产图显示修复）：resolve 返的 url 是 `/api/files/{fileId}` 鉴权相对地址，
+ *  `<img src>` 不带 JWT 拉不到 → 先无 url 占位（显文件名），异步用 fetchFilePreview
+ *  拉 token blob 转 objectURL 填回（同 fetchVideoBlob / 卡片懒加载范式）。 */
 function onAssetPicked(payload: AssetFilePicked[]) {
   const k = assetPickerKind.value
   if (!k) return
   const list = kindList(k)
   for (const p of payload) {
     if (list.value.some(a => a.assetId === p.assetId)) continue
-    list.value.push({ id: crypto.randomUUID(), fileId: p.fileId, name: p.name, assetId: p.assetId, url: p.url })
+    const id = crypto.randomUUID()
+    list.value.push({ id, fileId: p.fileId, name: p.name, assetId: p.assetId })
+    // 异步拉预览：成功填 objectURL；期间已被移除则立即释放防泄漏
+    void previewAsset(id, k, p.fileId)
   }
 }
 
-/** 资产 chip × 移除（与 n-upload 上传项状态隔离，按 id 摘 kindList）。 */
+/** 拉取资产预览 objectURL 并回填对应附件；找不到（已删/已切）则释放刚创建的 URL。 */
+async function previewAsset(id: string, kind: AttachmentKind, fileId: string) {
+  try {
+    const objectUrl = await fetchFilePreview(fileId)
+    const list = kindList(kind)
+    const idx = list.value.findIndex(a => a.id === id)
+    if (idx >= 0) {
+      list.value[idx] = { ...list.value[idx], url: objectUrl }
+    } else {
+      URL.revokeObjectURL(objectUrl)
+    }
+  } catch {
+    /* 拉取失败保留文件名占位，不报错（无权限/已删走降级） */
+  }
+}
+
+/** 释放某附件的 objectURL（资产预览项专用；上传项无 url 不受影响）。 */
+function revokeAttachmentUrl(att: UploadedAttachment) {
+  if (att.url && att.assetId != null) URL.revokeObjectURL(att.url)
+}
+
+/** 资产 chip × 移除（与 n-upload 上传项状态隔离，按 id 摘 kindList）。释放其 objectURL。 */
 function onAssetChipRemove(id: string, kind: AttachmentKind) {
   const list = kindList(kind)
   const idx = list.value.findIndex(a => a.id === id)
-  if (idx >= 0) list.value.splice(idx, 1)
+  if (idx >= 0) {
+    revokeAttachmentUrl(list.value[idx])
+    list.value.splice(idx, 1)
+  }
 }
 
 // === 提交 ===
@@ -677,6 +709,8 @@ onMounted(() => {
 onUnmounted(() => {
   clearPolling()
   revokeVideo()
+  // 释放资产预览 objectURL（防内存泄漏）
+  ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
 })
 </script>
 
