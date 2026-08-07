@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryProjectEntryMapper">
+
+    <!-- 显式 resultMap：不依赖全局 mapUnderscoreToCamelCase（承 MemoryTagMapper 范式）。 -->
+    <resultMap id="EntryVOMap" type="com.superprogrammer.chat.dto.MemoryProjectEntryVO">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="authorUserId" column="author_user_id"/>
+        <result property="authorName" column="author_name"/>
+        <result property="l1Summary" column="l1_summary"/>
+        <result property="l2Detail" column="l2_detail"/>
+        <result property="confidence" column="confidence"/>
+        <result property="status" column="status"/>
+        <result property="contentType" column="content_type"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <!-- 项目条目列表：status 过滤；authorUserId 非空时收窄（成员仅看自己产生的，FR-005）。
+         ⚠️ 永不 select raw_content（本表就没有原文字段，原文不出个人域）。 -->
+    <select id="listByProject" resultMap="EntryVOMap">
+        SELECT e.id, e.project_id, e.author_user_id,
+               COALESCE(u.name, u.username) AS author_name,
+               e.l1_summary, e.l2_detail, e.confidence, e.status, e.content_type, e.created_at
+        FROM memory_project_entries e
+        LEFT JOIN users u ON u.id = e.author_user_id
+        WHERE e.deleted = 0 AND e.project_id = #{projectId}
+        <if test="status != null and status != ''"> AND e.status = #{status} </if>
+        <if test="authorUserId != null"> AND e.author_user_id = #{authorUserId} </if>
+        ORDER BY e.created_at DESC
+        LIMIT 200
+    </select>
+</mapper>
