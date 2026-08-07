@@ -42,6 +42,7 @@ class MemoryGenerationServiceTest {
     @Mock private MemoryTagResolver tagResolver;
     @Mock private MemoryTurnMapper turnMapper;
     @Mock private MemoryQueryCache queryCache;
+    @Mock private MemoryRoutingService routingService;
     @Mock private TaskExecutor memoryTaskExecutor;
 
     @InjectMocks

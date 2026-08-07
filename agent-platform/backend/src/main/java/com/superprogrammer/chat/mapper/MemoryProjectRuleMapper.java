@@ -35,6 +35,13 @@ public interface MemoryProjectRuleMapper extends BaseMapper<MemoryProjectRule> {
                                    @Param("queryVec") String queryVec,
                                    @Param("limit") int limit);
 
+    /** 粗筛路 A 阈值版：anchor 距离 ≤ threshold 的规则（distance 语义：0=同，2=反），按距离升序。
+     *  阈值外零候选 → 零 LLM 调用（FR-002 成本护栏）。 */
+    List<Long> findWithinAnchorThreshold(@Param("ruleIds") List<Long> ruleIds,
+                                         @Param("queryVec") String queryVec,
+                                         @Param("threshold") double threshold,
+                                         @Param("limit") int limit);
+
     /** 粗筛路 B：anchor BM25 tsv 相关度降序（限定候选规则集内）。queryTokens 为 jieba 分词空格串。 */
     List<Long> rankByAnchorTsv(@Param("ruleIds") List<Long> ruleIds,
                                @Param("queryTokens") String queryTokens,

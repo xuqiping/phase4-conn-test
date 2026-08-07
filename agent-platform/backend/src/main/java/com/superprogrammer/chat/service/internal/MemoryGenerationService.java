@@ -54,6 +54,7 @@ public class MemoryGenerationService {
     private final MemoryTagResolver tagResolver;
     private final MemoryTurnMapper turnMapper;
     private final MemoryQueryCache queryCache;
+    private final MemoryRoutingService routingService;
 
     /** 按 bean 名注入（同 MemoryService / ChatSessionService 范式）。 */
     private final TaskExecutor memoryTaskExecutor;
@@ -119,25 +120,64 @@ public class MemoryGenerationService {
         }
 
         int written = 0;
+        MemoryTurn inputTurn = null;
+        MemoryTurn outputTurn = null;
         if (!filter.skipInput()) {
-            written += writeTurn(userId, sessionId, DIR_INPUT, userInput,
+            inputTurn = writeTurn(userId, sessionId, DIR_INPUT, userInput,
                     gen != null ? gen.input() : null, bornPersonal, projectIds);
+            written += inputTurn != null ? 1 : 0;
         }
         if (!filter.skipOutput()) {
-            written += writeTurn(userId, sessionId, DIR_OUTPUT, assistantOutput,
+            outputTurn = writeTurn(userId, sessionId, DIR_OUTPUT, assistantOutput,
                     gen != null ? gen.output() : null, bornPersonal, projectIds);
+            written += outputTurn != null ? 1 : 0;
         }
 
         // 写入 → 召回集变，立即 evict（向量 9）
         queryCache.evictUser(userId);
         log.info("记忆写入完成 userId={} sessionId={} genOn={} written={} bornPersonal={} projectIds={}",
                 userId, sessionId, genOn, written, bornPersonal, projectIds);
+
+        // 记忆二期 P1 · 项目收录路由（fire-and-forget 钩子，异常在 RoutingService 内自吞）：
+        // 仅 gen_done 的轮次参与（路由粗筛要 L1+tags）；双侧 L1 合并送路由，source_turn 优先 OUTPUT 侧。
+        if ((inputTurn != null && Boolean.TRUE.equals(inputTurn.getGenDone()))
+                || (outputTurn != null && Boolean.TRUE.equals(outputTurn.getGenDone()))) {
+            routingService.routeAsync(buildRoutingInput(userId, sessionId, inputTurn, outputTurn));
+        }
         return written;
     }
 
-    /** 写一条 turn：有生成层 → tag 归一 + L1/L2 + gen_done=true；无 → 仅 raw + gen_done=false。 */
-    private int writeTurn(Long userId, Long sessionId, String direction, String rawText,
-                          MemoryGenerator.SideLayers layers, boolean bornPersonal, List<Long> projectIds) {
+    /** 组装路由入参：双侧 L1/L2 合并（单侧 null 容忍），tag_ids 取并集，source_turn 优先 OUTPUT。 */
+    private MemoryRoutingService.RoutingInput buildRoutingInput(Long userId, Long sessionId,
+                                                                MemoryTurn inputTurn, MemoryTurn outputTurn) {
+        String l1 = joinNonBlank(inputTurn != null ? inputTurn.getL1Summary() : null,
+                outputTurn != null ? outputTurn.getL1Summary() : null);
+        String l2 = joinNonBlank(inputTurn != null ? inputTurn.getL2Detail() : null,
+                outputTurn != null ? outputTurn.getL2Detail() : null);
+        LinkedHashSet<Long> tagIds = new LinkedHashSet<>();
+        if (inputTurn != null && inputTurn.getTagIds() != null) {
+            tagIds.addAll(inputTurn.getTagIds());
+        }
+        if (outputTurn != null && outputTurn.getTagIds() != null) {
+            tagIds.addAll(outputTurn.getTagIds());
+        }
+        Long sourceTurnId = outputTurn != null ? outputTurn.getId() : (inputTurn != null ? inputTurn.getId() : null);
+        return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, l1, l2, new ArrayList<>(tagIds));
+    }
+
+    private static String joinNonBlank(String a, String b) {
+        if (a == null || a.isBlank()) {
+            return b;
+        }
+        if (b == null || b.isBlank()) {
+            return a;
+        }
+        return a + "\n" + b;
+    }
+
+    /** 写一条 turn：有生成层 → tag 归一 + L1/L2 + gen_done=true；无 → 仅 raw + gen_done=false。返回落库后的 turn。 */
+    private MemoryTurn writeTurn(Long userId, Long sessionId, String direction, String rawText,
+                                 MemoryGenerator.SideLayers layers, boolean bornPersonal, List<Long> projectIds) {
         MemoryTurn t = new MemoryTurn();
         t.setUserId(userId);
         t.setSessionId(sessionId);
@@ -166,7 +206,7 @@ public class MemoryGenerationService {
         log.debug("写 turn userId={} dir={} id={} genDone={} tagId={}",
                 userId, direction, t.getId(), t.getGenDone(),
                 (layers != null && t.getTagIds() != null && !t.getTagIds().isEmpty() ? t.getTagIds().get(0) : null));
-        return 1;
+        return t;
     }
 
     /** 去重 + null 安全（保留顺序）。 */

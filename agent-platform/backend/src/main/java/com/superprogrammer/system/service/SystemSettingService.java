@@ -72,6 +72,16 @@ public class SystemSettingService {
      *  命中即跳该侧生成（不写 raw 也不调 LLM）。默认空（核心项已预置开箱即用）。 */
     public static final String MEMORY_PREFILTER_BLACKLIST_EXTRA = "memory.prefilter.blacklist-extra";
 
+    // ============================ 记忆二期 P1 路由 memory.routing.* ============================
+    /** 路由总开关：false=全停自动收录（不影响个人流水账写入）。默认 true。 */
+    public static final String MEMORY_ROUTING_ENABLED = "memory.routing.enabled";
+    /** 路由粗筛 anchor 余弦距离阈值（0=完全相同，2=相反）。低于粗筛阈值 → 零 LLM 调用。默认 0.35（严于标签归一 0.25）。 */
+    public static final String MEMORY_ROUTING_COARSE_THRESHOLD = "memory.routing.coarse-threshold";
+    /** 路由置信度 ≥ 此值条目直接 ACTIVE（D1 定案默认 0.8）。 */
+    public static final String MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD = "memory.routing.auto-approve-threshold";
+    /** 路由置信度 ≥ 此值且 < auto-approve 进 PENDING_REVIEW；低于此丢弃（D1 定案默认 0.5）。 */
+    public static final String MEMORY_ROUTING_REVIEW_THRESHOLD = "memory.routing.review-threshold";
+
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
     public static final String SEARCH_ENABLED = "search.enabled";
@@ -375,6 +385,40 @@ public class SystemSettingService {
         if (threshold < 0.0 || threshold > 2.0) threshold = 0.25;
         upsert(MEMORY_TAG_ANCHOR_THRESHOLD, String.valueOf(threshold),
                 "标签归一anchor余弦距离阈值（路径③粗筛门槛，0=完全相同2=相反，默认0.25保守）");
+    }
+
+    // ============================ 记忆二期 P1 路由 ============================
+
+    /** 路由总开关（false=全停自动收录，不影响个人流水账）。默认 true。 */
+    public boolean getMemoryRoutingEnabled() {
+        return getBoolean(MEMORY_ROUTING_ENABLED, true);
+    }
+
+    /** 路由粗筛 anchor 余弦距离阈值（距离语义：0=同，2=反），默认 0.35。非法/越界 → 0.35。 */
+    public double getMemoryRoutingCoarseThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_COARSE_THRESHOLD, 0.35, 0.0, 2.0);
+    }
+
+    /** 路由置信度直接收录阈值（0~1），默认 0.8。 */
+    public double getMemoryRoutingAutoApproveThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD, 0.8, 0.0, 1.0);
+    }
+
+    /** 路由置信度待审核阈值（0~1），默认 0.5。 */
+    public double getMemoryRoutingReviewThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_REVIEW_THRESHOLD, 0.5, 0.0, 1.0);
+    }
+
+    /** 通用读 double（范围校验，非法/越界 → def）。 */
+    private double getDoubleInRange(String key, double def, double min, double max) {
+        String v = getValue(key);
+        if (v == null || v.isBlank()) return def;
+        try {
+            double d = Double.parseDouble(v.trim());
+            return (d < min || d > max) ? def : d;
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
     }
 
     /** 前置过滤用户加项敏感黑名单（逗号分隔解析为 List，trim + 去空）。
