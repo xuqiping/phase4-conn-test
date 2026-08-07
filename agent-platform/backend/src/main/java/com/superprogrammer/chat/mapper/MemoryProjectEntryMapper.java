@@ -24,5 +24,9 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
     List<MemoryProjectEntryVO> listByProject(@Param("projectId") Long projectId,
                                              @Param("status") String status,
                                              @Param("authorUserId") Long authorUserId);
+
+    /** 召回合流（FR-007 ①.5）：一批项目内全部 ACTIVE 条目（带 tag_ids + authorName），按 created_at 倒序封顶 200。
+     *  调用方须先把 projectIds 过滤为「读者是其 ACTIVE 成员」的集（读权咽喉在本类查询之外）。 */
+    List<MemoryProjectEntryVO> listActiveForRecall(@Param("projectIds") List<Long> projectIds);
 }
 

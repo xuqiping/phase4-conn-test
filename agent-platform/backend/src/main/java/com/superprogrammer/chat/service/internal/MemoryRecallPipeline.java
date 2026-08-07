@@ -1,12 +1,15 @@
 package com.superprogrammer.chat.service.internal;
 
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.MemoryRecallResult;
 import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.dto.RecalledSummary;
 import com.superprogrammer.chat.dto.RecallTraceStep;
 import com.superprogrammer.chat.entity.MemorySummary;
+import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
+import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -18,6 +21,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 计划12 · D-6 · 召回主流程编排（总体设计 §3.3 七步 ①⑦ + 运维「每步打点 + LLM 失败降级链」）。
@@ -61,6 +65,8 @@ public class MemoryRecallPipeline {
     private final MemorySummaryReader reader;
     private final MemoryTurnPatcher patcher;
     private final MemoryDepartedResolver departedResolver;
+    private final MemoryEntryRecallService entryRecallService;   // 记忆二期 P1 · ①.5 项目条目合流
+    private final MemoryTagMapper tagMapper;                     // 条目标签并入 ② 候选用
 
     /**
      * 召回主流程入口。
@@ -105,6 +111,39 @@ public class MemoryRecallPipeline {
             tags = List.of();
             steps.add(step("aggregate", t1, 0, false));
             notes.add("aggregate 失败: " + e.getMessage());
+        }
+
+        // ①.5 项目条目合流（记忆二期 P1 · FR-007）：scope 内项目 ACTIVE 条目（成员=可读，DEPARTED 失读权）。
+        // 独立 try/catch 降级跳过，绝不动主干；条目标签并入 ② 候选集（条目蒸馏产物，标签在作者个人库）。
+        long t1h = System.nanoTime();
+        List<MemoryProjectEntryVO> entries = List.of();
+        try {
+            List<MemoryProjectEntryVO> collected = entryRecallService.collectActiveEntries(scope.safeProjectIds(), userId);
+            entries = collected == null ? List.of() : collected;
+            steps.add(step("entry-merge", t1h, entries.size(), true));
+        } catch (Exception e) {
+            log.warn("recall traceId={} entry-merge 失败: {}", traceId, e.getMessage());
+            entries = List.of();
+            steps.add(step("entry-merge", t1h, 0, false));
+            notes.add("entry-merge 失败: " + e.getMessage());
+        }
+        if (!entries.isEmpty()) {
+            try {
+                Set<Long> knownTagIds = tags.stream().map(RecallTagMeta::getId).collect(Collectors.toSet());
+                List<Long> extraTagIds = entries.stream()
+                        .flatMap(e -> e.getTagIds() == null ? Stream.<Long>empty() : e.getTagIds().stream())
+                        .filter(Objects::nonNull).filter(tid -> !knownTagIds.contains(tid))
+                        .distinct().toList();
+                if (!extraTagIds.isEmpty()) {
+                    List<RecallTagMeta> extraMetas = tagMapper.selectBatchIds(extraTagIds).stream()
+                            .map(MemoryRecallPipeline::toTagMeta).toList();
+                    tags = new ArrayList<>(tags);
+                    tags.addAll(extraMetas);
+                }
+            } catch (Exception e) {
+                log.warn("recall traceId={} 条目标签并入失败(降级不并): {}", traceId, e.getMessage());
+                notes.add("条目标签并入失败: " + e.getMessage());
+            }
         }
 
         // ③ select + ④⑤ read（tags 空时跳过——无标签可选，直接走 turns 兜底）
@@ -160,10 +199,11 @@ public class MemoryRecallPipeline {
             notes.add("patch 异常: " + e.getMessage());
         }
 
-        // ⑦ assemble（按 subject 聚合打 owner 前缀）
+        // ⑦ assemble（按 subject 聚合打 owner 前缀 + 项目条目打作者前缀）
         long t5 = System.nanoTime();
-        String assembledText = assemble(summaries, turns, selected, userId);
-        steps.add(step("assemble", t5, summaries.size() + turns.size(), true));
+        List<MemoryProjectEntryVO> entriesToAssemble = selectEntriesForAssemble(entries, selected, tags);
+        String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble);
+        steps.add(step("assemble", t5, summaries.size() + turns.size() + entriesToAssemble.size(), true));
 
         // I3 已离开人员标注（L10 开 + 召回含 DEPARTED 作者时附，§3.7 line158）
         List<String> departedNotes = collectDepartedNotes(scope, turns);
@@ -198,6 +238,41 @@ public class MemoryRecallPipeline {
         return out;
     }
 
+    // ============================ 记忆二期 P1 · ①.5/⑥ 条目合流助手 ============================
+
+    /** MemoryTag → RecallTagMeta（条目标签并入候选集用）。 */
+    private static RecallTagMeta toTagMeta(MemoryTag t) {
+        RecallTagMeta m = new RecallTagMeta();
+        m.setId(t.getId());
+        m.setSubject(t.getSubject());
+        m.setTopic(t.getTopic());
+        m.setLabel(t.getLabel());
+        m.setOwnerUserId(t.getUserId());
+        m.setUsageCount(t.getUsageCount());
+        return m;
+    }
+
+    /**
+     * ⑥ 条目拼入筛选（P4 前条目无 coverage，恒拼 L1——但走标签流）：
+     * tags 全空（无标签可选，turns 兜底路径）→ 全部已收集条目都拼；
+     * 否则只拼 tag_ids ∩ selected 非空的条目（③ LLM 选标签天然过滤不相关条目）。
+     */
+    static List<MemoryProjectEntryVO> selectEntriesForAssemble(List<MemoryProjectEntryVO> entries,
+                                                               List<RecallTagMeta> selected,
+                                                               List<RecallTagMeta> tags) {
+        if (entries == null || entries.isEmpty()) {
+            return List.of();
+        }
+        if (tags == null || tags.isEmpty()) {
+            return entries;
+        }
+        Set<Long> selectedIds = (selected == null ? List.<RecallTagMeta>of() : selected).stream()
+                .map(RecallTagMeta::getId).filter(Objects::nonNull).collect(Collectors.toSet());
+        return entries.stream()
+                .filter(e -> e.getTagIds() != null && e.getTagIds().stream().anyMatch(selectedIds::contains))
+                .toList();
+    }
+
     // ============================ ⑦ 装配 ============================
 
     /**
@@ -212,9 +287,30 @@ public class MemoryRecallPipeline {
      * summary content：{@code includeL2=true} 展 L1+L2，否则只 L1；turn 无 subject/topic（多 tag 难归属），
      * 直接 {@code - {owner?}[{direction}] {rawContent}}。
      */
+    /** 旧签名兼容（无项目条目段）——委托五参版。 */
     String assemble(List<RecalledSummary> summaries, List<MemoryTurn> turns,
                     List<RecallTagMeta> selectedTags, Long userId) {
-        if ((summaries == null || summaries.isEmpty()) && (turns == null || turns.isEmpty())) {
+        return assemble(summaries, turns, selectedTags, userId, null);
+    }
+
+    /**
+     * 装配召回文本（注入 prompt）。
+     * <p>
+     * 行格式：{@code - {owner前缀}{subject前缀}{topic}：{content}}
+     * <ul>
+     *   <li><b>owner 前缀</b>：{@code owner≠self} 加 {@code user#{id}·}（D-7 前端查用户名美化）。</li>
+     *   <li><b>subject 前缀</b>：subject 非 null/空/{@code 我} 加 {@code subject·}（{@code 我} 一律省，
+     *       owner≠self 时 owner 名天然替代「我」——设计 §3.3 line 110「subject='我' owner≠当前用户省主体【张三·爱好】」）。</li>
+     * </ul>
+     * 项目条目段（记忆二期 P1 · FR-007）：{@code 【项目记忆】 - 作者名·标签：蒸馏L1}（条目已脱敏，
+     * 作者名来自 users join；标签取条目首个命中选中集的 label）。
+     * summary content：{@code includeL2=true} 展 L1+L2，否则只 L1；turn 无 subject/topic（多 tag 难归属），
+     * 直接 {@code - {owner?}[{direction}] {rawContent}}。
+     */
+    String assemble(List<RecalledSummary> summaries, List<MemoryTurn> turns,
+                    List<RecallTagMeta> selectedTags, Long userId, List<MemoryProjectEntryVO> entries) {
+        if ((summaries == null || summaries.isEmpty()) && (turns == null || turns.isEmpty())
+                && (entries == null || entries.isEmpty())) {
             return "";
         }
         Map<Long, RecallTagMeta> tagMap = (selectedTags == null ? List.<RecallTagMeta>of() : selectedTags).stream()
@@ -231,6 +327,23 @@ public class MemoryRecallPipeline {
                 String topic = tag == null || tag.getTopic() == null ? "" : tag.getTopic();
                 sb.append("- ").append(ownerSubjectPrefix(s.getUserId(), subject, userId))
                         .append(topic).append("：").append(summaryContent(rs)).append('\n');
+            }
+        }
+        if (entries != null && !entries.isEmpty()) {
+            sb.append("【项目记忆】\n");
+            for (MemoryProjectEntryVO e : entries) {
+                String author = e.getAuthorName() != null && !e.getAuthorName().isBlank()
+                        ? e.getAuthorName() : "user#" + e.getAuthorUserId();
+                String tagLabel = "";
+                if (e.getTagIds() != null) {
+                    tagLabel = e.getTagIds().stream()
+                            .map(tagMap::get).filter(Objects::nonNull)
+                            .map(RecallTagMeta::getLabel).filter(Objects::nonNull)
+                            .findFirst().orElse("");
+                }
+                sb.append("- ").append(author).append('·')
+                        .append(tagLabel.isEmpty() ? "收录" : tagLabel)
+                        .append("：").append(e.getL1Summary() == null ? "" : e.getL1Summary()).append('\n');
             }
         }
         if (turns != null && !turns.isEmpty()) {

@@ -25,5 +25,6 @@ public class MemoryProjectEntryVO {
     private String status;           // ACTIVE / PENDING_REVIEW
     private String contentType;      // TEXT / FILE
     private String ruleText;         // 命中规则文案（「为何被收录」）
+    private java.util.List<Long> tagIds;   // 标签 id 集（召回合流用；列表接口不返）
     private OffsetDateTime createdAt;
 }
