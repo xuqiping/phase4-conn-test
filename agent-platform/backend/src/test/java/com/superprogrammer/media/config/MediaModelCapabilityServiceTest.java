@@ -82,6 +82,23 @@ class MediaModelCapabilityServiceTest {
     }
 
     @Test
+    void cdanceAlias_unknownPrefix_liftedToFullByConfig() {
+        // 无前缀别名（如 ctaigw 网关的 Cdance2.0）无 config → 保守兜底 1 图。
+        // 即「参考图回退成 1」根因：模型 id 不含 seedance-2，且 provider config 为空。
+        MediaModelCapability noConfig = service.resolve("Cdance2.0", null);
+        assertEquals(1, noConfig.getMaxImages());
+        // V64 迁移注入 capabilities.Cdance2.0 全量覆盖 → 提升到 2.0 真实能力。
+        String config = "{\"capabilities\":{\"Cdance2.0\":{\"maxImages\":9,\"maxVideos\":3,\"maxAudios\":3,\"maxAttachments\":12,\"supportsGenerateAudio\":true,\"videoDataUri\":true}}}";
+        MediaModelCapability cap = service.resolve("Cdance2.0", config);
+        assertEquals(9, cap.getMaxImages());
+        assertEquals(3, cap.getMaxVideos());
+        assertEquals(3, cap.getMaxAudios());
+        assertEquals(12, cap.getMaxAttachments());
+        assertTrue(cap.isSupportsGenerateAudio());
+        assertTrue(cap.isVideoDataUri());
+    }
+
+    @Test
     void brokenConfig_fallsBackToDefaults() {
         MediaModelCapability cap = service.resolve("doubao-seedance-2-0-260128", "{not json");
         assertEquals(9, cap.getMaxImages());
