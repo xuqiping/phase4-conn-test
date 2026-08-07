@@ -32,6 +32,11 @@ image = "0.25"
 # 默认可 download-binaries 拉 ONNX Runtime；auto-download 首用从 ModelScope 拉模型到
 # $OAR_HOME —— 国内可达，免打包 20MB 模型）。
 oar-ocr = { version = "0.9", features = ["auto-download"] }
+# Step 8 (FR-107): 云端总结。reqwest blocking + rustls（不引 OpenSSL；调用方 spawn_blocking）；
+# keyring = API Key 存 Windows 凭据管理器（不落盘）；base64 = 多模态精修附图 data URI。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+keyring = "3"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 # Step 3 (FR-101): WGC window capture. Windows-only crate → lives in this section.

@@ -105,7 +105,6 @@ function onSelect(e: Event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
 }
 .row {
   display: flex;
@@ -219,7 +218,7 @@ function onSelect(e: Event) {
   text-decoration: underline;
 }
 .subtitles {
-  flex: 1;
+  height: 260px;
   overflow-y: auto;
   background: #161616;
   border: 1px solid #2a2a2a;

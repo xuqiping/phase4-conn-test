@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import Controls from './components/Controls.vue'
 import Transcription from './components/Transcription.vue'
 import Recorder from './components/Recorder.vue'
+import SummarySettings from './components/SummarySettings.vue'
 
 // Step 10: 功能入口 feature flag —— 纯录音转文字（默认）与网课录屏总结并存。
 const mode = ref<'transcribe' | 'course'>('transcribe')
@@ -42,6 +43,7 @@ const mode = ref<'transcribe' | 'course'>('transcribe')
     <template v-else>
       <main class="main main-course">
         <Recorder />
+        <SummarySettings />
       </main>
     </template>
   </div>
@@ -114,6 +116,10 @@ body {
 }
 .main-course {
   padding: 14px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 .footer {
   padding: 14px 24px;

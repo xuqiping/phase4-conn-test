@@ -4,6 +4,7 @@ mod ocr;
 mod screen;
 mod session;
 mod stt;
+mod summary;
 
 use crate::audio::{AudioCapture, AudioCaptureConfig};
 use crate::screen::scene_detect::ExtractConfig;
@@ -452,6 +453,114 @@ async fn align_session(
     Ok(n)
 }
 
+// ---- Cloud summary (plan Step 8 / FR-107/109) ----
+//
+// 隐私红线（AGENTS.md「例外·网课总结功能」已 review）：仅上传文字（多模态开关开启时
+// 才附课件帧图）；API Key 只走 Windows 凭据管理器；配置（非密）落 %APPDATA% 配置目录。
+
+use crate::summary::{SummaryConfig, SummaryDraft};
+
+fn summary_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_config_dir()
+        .map_err(|e| format!("resolve config dir: {e}"))
+}
+
+#[tauri::command]
+fn get_summary_config(app: tauri::AppHandle) -> SummaryConfig {
+    match summary_config_dir(&app) {
+        Ok(dir) => summary::load_config(&dir),
+        Err(_) => SummaryConfig::default(),
+    }
+}
+
+#[tauri::command]
+fn set_summary_config(app: tauri::AppHandle, config: SummaryConfig) -> Result<(), String> {
+    let dir = summary_config_dir(&app)?;
+    summary::save_config(&dir, &config)
+}
+
+/// 保存 API Key 到 Windows 凭据管理器（不落盘、不进日志）。
+#[tauri::command]
+fn set_summary_api_key(key: String) -> Result<(), String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("API Key 不能为空".into());
+    }
+    summary::set_api_key(trimmed)
+}
+
+/// 前端回显用：只告知「是否已设置」，永不返回 Key 本体。
+#[tauri::command]
+fn has_summary_api_key() -> Result<bool, String> {
+    summary::get_api_key().map(|k| k.is_some())
+}
+
+#[tauri::command]
+fn clear_summary_api_key() -> Result<(), String> {
+    summary::clear_api_key()
+}
+
+/// 连通性自检：发一条最小请求验证 Base URL + Key + 模型名可用。
+#[tauri::command]
+async fn test_summary_connection(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = summary_config_dir(&app)?;
+    let cfg = summary::load_config(&dir);
+    let key = summary::get_api_key()?.ok_or("尚未设置 API Key")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let messages = vec![summary::cloud_api::ChatMessage::user(
+            "回复 ok 两个字母即可。".into(),
+        )];
+        summary::cloud_api::chat_blocking(&cfg, &key, &cfg.model, &messages)
+            .map(|_| format!("连接成功（{}）", cfg.model))
+    })
+    .await
+    .map_err(|e| format!("test task join: {e}"))?
+}
+
+/// 生成/全量重生成总结草稿（map-reduce）。LLM 失败自动本地兜底（fallback=true）。
+#[tauri::command]
+async fn summarize(
+    session_id: String,
+    vlm_on: Option<bool>,
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<SummaryDraft, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let cfg_dir = summary_config_dir(&app)?;
+    let cfg = summary::load_config(&cfg_dir);
+    let key = summary::get_api_key()?.ok_or("尚未设置 API Key —— 请先在总结设置里填写")?;
+    let trace = session_id.clone();
+    // 串行 map + 段间间隔，2h 课可能分钟级 —— blocking 线程池。
+    tauri::async_runtime::spawn_blocking(move || {
+        summary::map_reduce::run_summary(&dir, &cfg, &key, vlm_on.unwrap_or(false), &trace)
+    })
+    .await
+    .map_err(|e| format!("summarize task join: {e}"))?
+}
+
+/// 可纠错：segment_id = Some 只重生成该段，None 全量重生成。
+#[tauri::command]
+async fn regenerate_summary(
+    session_id: String,
+    segment_id: Option<usize>,
+    vlm_on: Option<bool>,
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<SummaryDraft, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let cfg_dir = summary_config_dir(&app)?;
+    let cfg = summary::load_config(&cfg_dir);
+    let key = summary::get_api_key()?.ok_or("尚未设置 API Key —— 请先在总结设置里填写")?;
+    let trace = session_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        summary::map_reduce::regenerate(&dir, &cfg, &key, segment_id, vlm_on.unwrap_or(false), &trace)
+    })
+    .await
+    .map_err(|e| format!("regenerate task join: {e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -476,7 +585,15 @@ pub fn run() {
             stop_capture_session,
             process_frames,
             process_ocr,
-            align_session
+            align_session,
+            get_summary_config,
+            set_summary_config,
+            set_summary_api_key,
+            has_summary_api_key,
+            clear_summary_api_key,
+            test_summary_connection,
+            summarize,
+            regenerate_summary
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
