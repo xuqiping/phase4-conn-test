@@ -63,6 +63,13 @@ describe('MentionTextarea (S13 @引用输入框)', () => {
     expect(wrapper.find('.mention-ta__popover').exists()).toBe(false)
   })
 
+  it('中文句末无空格 @ 也唤起（修复：原要求 @ 前必须空白，中文句尾触发不了）', async () => {
+    const wrapper = mountHost()
+    await typeInto(wrapper, '主角走进房间@')
+    expect(wrapper.find('.mention-ta__popover').exists()).toBe(true)
+    expect(wrapper.findAll('.mention-ta__item')).toHaveLength(2)
+  })
+
   it('选中候选 → 插入 @{{node:id}} 占位符 + 尾随空格', async () => {
     const wrapper = mountHost()
     await typeInto(wrapper, '扩写 @')

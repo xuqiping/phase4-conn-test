@@ -205,7 +205,7 @@ import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import type { CropRect } from '@/types/canvas'
-import { ancestors, interpolate, findBrokenMentions, type MentionResolver } from '@/utils/interpolate'
+import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 
 const route = useRoute()
 const router = useRouter()
@@ -315,7 +315,12 @@ function buildMentionResolver(): MentionResolver {
     const n = byId.get(id)
     if (!n) return undefined
     const d = n.data as Record<string, unknown>
-    if (n.type === 'text') return typeof d.outputText === 'string' ? d.outputText : undefined
+    if (n.type === 'text') {
+      // 文本节点内容：优先已运行产出 outputText；未运行回落到 prompt（用户输入的文本），
+      // 修复「@文本节点不起效」——原仅取 outputText，没跑过的文本节点 @ 出来是断链。
+      if (typeof d.outputText === 'string' && d.outputText) return d.outputText
+      return typeof d.prompt === 'string' && d.prompt ? d.prompt : undefined
+    }
     if (n.type === 'script') return serializeScenes(d.scenes, d.synopsis)
     const meta = [typeof d.prompt === 'string' ? d.prompt : '', d.fileId ? `fileId:${d.fileId}` : '']
       .filter(Boolean).join(' ')
@@ -950,6 +955,17 @@ async function loadCanvas(id: number) {
     editingId.value = c.id
     currentName.value = c.name
     const snap = parseSnapshot(c.snapshot)
+    // B2：旧画布（C6 前）节点 label 可能空 → 头部显「未命名」。加载时按类型补默认名（uniqueLabel 去重），
+    // 下次保存即持久化修复存量数据。
+    const usedLabels = snap.nodes.map((n) => String(n.data.label ?? '')).filter(Boolean)
+    for (const n of snap.nodes) {
+      if (!String(n.data.label ?? '').trim()) {
+        const base = palette.find((p) => p.type === n.type)?.label ?? '节点'
+        const filled = uniqueLabel(base, usedLabels)
+        n.data.label = filled
+        usedLabels.push(filled)
+      }
+    }
     // 等编辑器+CanvasBoard 挂载：editingId 触发 v-else 渲染，boardRef 下一 tick 才赋值，
     // 否则此处 boardRef.value===null，可选链 ?. 静默吞掉 loadSnapshot → 重进画布空白（历史 bug）。
     await nextTick()

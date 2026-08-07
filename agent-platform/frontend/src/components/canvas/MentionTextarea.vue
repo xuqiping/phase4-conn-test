@@ -133,9 +133,10 @@ function detectAnchor(text: string, caret: number): { at: number; q: string } | 
   while (i >= 0) {
     const ch = text[i]
     if (ch === '@') {
-      // 前一个字符须为空白或行首（独立 @，非邮箱类 foo@bar）
+      // @ 前一字符须非字母数字（拦邮箱类 foo@bar；允许行首/空白/中文/标点后触发，
+      // 修复「输入一段话后你好@ 不弹」——原要求空白过严，中文句末无空格触发不了）
       const prev = i > 0 ? text[i - 1] : ' '
-      if (/\s/.test(prev)) return { at: i, q: text.slice(i + 1, caret) }
+      if (!/[A-Za-z0-9]/.test(prev)) return { at: i, q: text.slice(i + 1, caret) }
       return null
     }
     if (/\s/.test(ch)) return null // @ 后遇空白 → 关闭
