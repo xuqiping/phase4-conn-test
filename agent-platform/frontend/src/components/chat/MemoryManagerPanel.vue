@@ -1,7 +1,8 @@
 <!-- ============================================================
   记忆管理面板（计划12 · H'-4 瘦身版）
   旧栈「我的记忆 / 冲突 / 预览 / scope」首页签 + 全部 legacy 脚本已删（旧栈后端整体移除）。
-  现 7 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 总结 / 冲突裁决 / gen 矩阵 / 项目 ACL / 生命周期。
+  现 6 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 总结 / 冲突裁决 / gen 矩阵 / 生命周期。
+  （记忆二期 P1：「项目 ACL」页签随一期 reader×target 矩阵下线，FR-006。）
   ============================================================ -->
 <template>
   <div class="memory-manager">
@@ -20,9 +21,6 @@
       </n-tab-pane>
       <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
         <MemoryGenMatrixPanel />
-      </n-tab-pane>
-      <n-tab-pane name="acl" tab="项目 ACL" display-directive="show">
-        <MemoryProjectAclPanel />
       </n-tab-pane>
       <n-tab-pane name="lifecycle" display-directive="show">
         <template #tab>
@@ -44,11 +42,10 @@ import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue
 import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
-import MemoryProjectAclPanel from '@/components/memory/MemoryProjectAclPanel.vue'
 import MemoryLifecyclePanel from '@/components/memory/MemoryLifecyclePanel.vue'
 
 // 默认页签 = 流水账（新栈入口，最贴近日常「我记了什么」）。
-const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'acl' | 'lifecycle'>('turns')
+const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'lifecycle'>('turns')
 
 // 生命周期页签徽标：已删除项目未处理流水账总数（面板 emit 联动）
 const deletedPendingTurns = ref(0)

@@ -8,7 +8,6 @@ import com.superprogrammer.chat.entity.MemoryNotification;
 import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.entity.MemoryProjectSetting;
 import com.superprogrammer.chat.entity.MemoryProjectUserSetting;
-import com.superprogrammer.chat.entity.MemoryRecallAcl;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
@@ -16,7 +15,6 @@ import com.superprogrammer.chat.mapper.MemoryNotificationMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectSettingMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectUserSettingMapper;
-import com.superprogrammer.chat.mapper.MemoryRecallAclMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
@@ -58,7 +56,6 @@ class MemoryLifecycleHookServiceTest {
     @Mock MemorySummaryCoverageMapper coverageMapper;
     @Mock MemoryNotificationMapper notificationMapper;
     @Mock MemoryConsolidationScopeMapper consolidationScopeMapper;
-    @Mock MemoryRecallAclMapper recallAclMapper;
     @Mock MemoryProjectSettingMapper projectSettingMapper;
     @Mock MemoryProjectUserSettingMapper projectUserSettingMapper;
 
@@ -73,7 +70,6 @@ class MemoryLifecycleHookServiceTest {
         TableInfoHelper.initTableInfo(assistant, MemorySummary.class);
         TableInfoHelper.initTableInfo(assistant, MemorySummaryCoverage.class);
         TableInfoHelper.initTableInfo(assistant, MemoryConsolidationScope.class);
-        TableInfoHelper.initTableInfo(assistant, MemoryRecallAcl.class);
         TableInfoHelper.initTableInfo(assistant, MemoryProjectSetting.class);
         TableInfoHelper.initTableInfo(assistant, MemoryProjectUserSetting.class);
     }
@@ -81,7 +77,7 @@ class MemoryLifecycleHookServiceTest {
     @BeforeEach
     void setUp() {
         service = new MemoryLifecycleHookService(memberMapper, turnMapper, summaryMapper, coverageMapper,
-                notificationMapper, consolidationScopeMapper, recallAclMapper,
+                notificationMapper, consolidationScopeMapper,
                 projectSettingMapper, projectUserSettingMapper);
     }
 
@@ -213,7 +209,6 @@ class MemoryLifecycleHookServiceTest {
         verify(coverageMapper).delete(any(LambdaQueryWrapper.class));
         verify(memberMapper).delete(any(LambdaQueryWrapper.class));
         verify(consolidationScopeMapper).delete(any(LambdaQueryWrapper.class));
-        verify(recallAclMapper).delete(any(LambdaQueryWrapper.class));
         verify(projectSettingMapper).delete(any(LambdaQueryWrapper.class));
         verify(projectUserSettingMapper).delete(any(LambdaQueryWrapper.class));
     }

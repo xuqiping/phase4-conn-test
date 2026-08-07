@@ -8,7 +8,6 @@ import com.superprogrammer.chat.entity.MemoryNotification;
 import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.entity.MemoryProjectSetting;
 import com.superprogrammer.chat.entity.MemoryProjectUserSetting;
-import com.superprogrammer.chat.entity.MemoryRecallAcl;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
@@ -16,7 +15,6 @@ import com.superprogrammer.chat.mapper.MemoryNotificationMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectSettingMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectUserSettingMapper;
-import com.superprogrammer.chat.mapper.MemoryRecallAclMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
@@ -41,7 +39,7 @@ import java.util.List;
  *       本人挂在该项目的 turns 追加 {@code departed_project_ids}（不卸载不删数据）。</li>
  *   <li><b>项目删除</b> → 全部作者 turns 追加 {@code deleted_project_ids}（<b>不移除 project_ids</b>）+
  *       曾写记忆成员收 {@code PROJECT_DELETED_AFFECTED} 通知（M1）+
- *       清项目总结(软删)/coverage/成员行/总结 scope/ACL/gen 开关。</li>
+ *       清项目总结(软删)/coverage/成员行/总结 scope/gen 开关（recall_acl 二期 P1 废弃，无需再清）。</li>
  * </ul>
  * <p>
  * <b>为什么 app 层清而不是 DB CASCADE</b>：V47 建表时假设 {@code REFERENCES projects(id) ON DELETE
@@ -73,7 +71,6 @@ public class MemoryLifecycleHookService {
     private final MemorySummaryCoverageMapper coverageMapper;
     private final MemoryNotificationMapper notificationMapper;
     private final MemoryConsolidationScopeMapper consolidationScopeMapper;
-    private final MemoryRecallAclMapper recallAclMapper;
     private final MemoryProjectSettingMapper projectSettingMapper;
     private final MemoryProjectUserSettingMapper projectUserSettingMapper;
 
@@ -155,16 +152,14 @@ public class MemoryLifecycleHookService {
         // ⑤ 清自动总结 scope（否则 worker 会对已删项目复活总结）
         int scopesCleared = consolidationScopeMapper.delete(new LambdaQueryWrapper<MemoryConsolidationScope>()
                 .eq(MemoryConsolidationScope::getProjectId, projectId));
-        // ⑥ 清 ACL 授权 + gen 开关（死行顺手清）
-        int aclCleared = recallAclMapper.delete(new LambdaQueryWrapper<MemoryRecallAcl>()
-                .eq(MemoryRecallAcl::getProjectId, projectId));
+        // ⑥ 清 gen 开关（死行顺手清；recall_acl 二期 P1 废弃——代码已下线，表随 V67 DROP，无需再清）
         int settingsCleared = projectSettingMapper.delete(new LambdaQueryWrapper<MemoryProjectSetting>()
                 .eq(MemoryProjectSetting::getProjectId, projectId))
                 + projectUserSettingMapper.delete(new LambdaQueryWrapper<MemoryProjectUserSetting>()
                 .eq(MemoryProjectUserSetting::getProjectId, projectId));
-        log.info("项目删除 hook projectId={} markedTurns={} notified={} summaries={} coverage={} members={} scopes={} acl={} settings={}",
+        log.info("项目删除 hook projectId={} markedTurns={} notified={} summaries={} coverage={} members={} scopes={} settings={}",
                 projectId, markedTurns, authors.size(), summariesCleared, coverageCleared,
-                membersCleared, scopesCleared, aclCleared, settingsCleared);
+                membersCleared, scopesCleared, settingsCleared);
     }
 
     // ---- 内部 ----

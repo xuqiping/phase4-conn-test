@@ -181,20 +181,6 @@ export interface MemoryRosterVO {
   departedAt: string | null
 }
 
-/** ACL 矩阵行（reader→target 授权，带 username 回显）。 */
-export interface MemoryRecallAclVO {
-  readerUserId: number
-  readerUsername: string
-  targetUserId: number
-  targetUsername: string
-  createdBy: number
-}
-
-export interface MemoryRecallAclRequest {
-  readerUserId: number
-  targetUserIds: number[]
-}
-
 /** 生命周期折叠板行（已离开/已删除项目 + 本人可拉取流水账数，§3.7）。 */
 export interface MemoryLifecycleProjectVO {
   projectId: number
@@ -301,15 +287,9 @@ export const memoryApi = {
     return request.post<ApiResponse<boolean>>(`/chat/memory/conflicts/${id}/resolve`, { decision })
   },
 
-  // ---- 花名册 + ACL 配置（I4）----
+  // ---- 花名册（I4；recall-acl 二期 P1 下线——一期 ACL 矩阵废弃，FR-006）----
   getRoster(projectId: number) {
     return request.get<ApiResponse<MemoryRosterVO[]>>(`/chat/memory/projects/${projectId}/roster`)
-  },
-  getRecallAcl(projectId: number) {
-    return request.get<ApiResponse<MemoryRecallAclVO[]>>(`/chat/memory/projects/${projectId}/recall-acl`)
-  },
-  putRecallAcl(projectId: number, data: MemoryRecallAclRequest) {
-    return request.put<ApiResponse<number>>(`/chat/memory/projects/${projectId}/recall-acl`, data)
   },
 
   // ---- 生命周期折叠板（F-4b：已离开 copy-to / 已删除 restore）----
