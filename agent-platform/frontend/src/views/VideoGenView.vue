@@ -37,7 +37,7 @@
               v-model:value="form.prompt"
               type="textarea"
               :rows="4"
-              :maxlength="2000"
+              :maxlength="8000"
               show-count
               :placeholder="hasAnyAttachment
                 ? '描述如何运用参考素材，如：以图1为产品参考，视频1为运镜参考，音频1作背景音乐…'

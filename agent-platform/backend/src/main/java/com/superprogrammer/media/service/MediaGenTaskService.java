@@ -43,7 +43,8 @@ public class MediaGenTaskService {
     private static final Map<String, Integer> RES_RANK = Map.of("480p", 1, "720p", 2, "1080p", 3, "4K", 4);
     /** 附件类型白名单。 */
     private static final Set<String> ATTACHMENT_KINDS = Set.of("image", "video", "audio");
-    private static final int PROMPT_MAX_LEN = 2000;
+    /** 提示词长度上限（对齐画布/资产 8000；原 2000 过短）。 */
+    private static final int PROMPT_MAX_LEN = 8000;
 
     private final MediaGenTaskMapper taskMapper;
     private final MediaModelService mediaModelService;
