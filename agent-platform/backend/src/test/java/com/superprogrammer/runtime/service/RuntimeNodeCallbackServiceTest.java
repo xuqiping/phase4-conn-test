@@ -221,7 +221,7 @@ class RuntimeNodeCallbackServiceTest {
         agent.setStatus("PUBLISHED");
         when(agentMapper.selectById(3L)).thenReturn(agent);
         when(agentPermissionService.canUse(3L, 7L, false)).thenReturn(true);
-        when(agentRouter.route(agent, "write docs"))
+        when(agentRouter.route(agent, "write docs", 7L))
                 .thenReturn(RoutingResult.builder().skillIds(java.util.List.of(12L, 13L)).executionPlan("[12,13]").build());
         when(skillExecutor.executeSkill(eq(12L), org.mockito.ArgumentMatchers.any()))
                 .thenReturn("outline");
@@ -248,7 +248,7 @@ class RuntimeNodeCallbackServiceTest {
         assertThat(response.getStepOutputs().get(0)).containsEntry("skillId", 12L).containsEntry("output", "outline");
         assertThat(response.getStepOutputs().get(1)).containsEntry("skillId", 13L).containsEntry("output", "final docs");
 
-        verify(agentRouter).route(agent, "write docs");
+        verify(agentRouter).route(agent, "write docs", 7L);
         verify(skillExecutor).executeSkill(eq(12L), org.mockito.ArgumentMatchers.any());
         verify(skillExecutor).executeSkill(eq(13L), org.mockito.ArgumentMatchers.any());
     }
@@ -287,7 +287,7 @@ class RuntimeNodeCallbackServiceTest {
         agent.setStatus("DRAFT");
         agent.setCreatedBy(7L);
         when(agentMapper.selectById(3L)).thenReturn(agent);
-        when(agentRouter.route(agent, "write docs"))
+        when(agentRouter.route(agent, "write docs", 7L))
                 .thenReturn(RoutingResult.builder().skillIds(java.util.List.of(12L)).build());
         when(skillExecutor.executeSkill(eq(12L), org.mockito.ArgumentMatchers.any()))
                 .thenReturn("owner draft output");

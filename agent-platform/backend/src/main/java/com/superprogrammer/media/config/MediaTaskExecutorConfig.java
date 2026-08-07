@@ -1,5 +1,6 @@
 package com.superprogrammer.media.config;
 
+import com.superprogrammer.billing.context.BillingContextTaskDecorator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -25,6 +26,8 @@ public class MediaTaskExecutorConfig {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("media-task-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        // 计费归户：透传提交线程 userId（媒体 worker 已显式取 task.userId，此处保持一致性 + 兜底）
+        executor.setTaskDecorator(new BillingContextTaskDecorator());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

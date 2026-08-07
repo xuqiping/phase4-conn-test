@@ -134,7 +134,7 @@ public class RagRetrievalService {
             }
 
             // B4：query 多路扩展（规范 query + 释义 + HyDE），返回 halfvec 列表（规范第一个）
-            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(req.getQuery(), embedModel);
+            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(req.getQuery(), embedModel, userId);
             List<String> qHalfs = eq.qHalfs();
             if (qHalfs.isEmpty()) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");
@@ -298,7 +298,7 @@ public class RagRetrievalService {
             KnowledgeBase kb0 = knowledgeBaseService.ensure(effectiveKbs.get(0));
             String embedModel = (kb0.getEmbeddingModel() == null || kb0.getEmbeddingModel().isBlank())
                     ? EMBED_MODEL_FALLBACK : kb0.getEmbeddingModel();
-            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(query, embedModel);
+            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(query, embedModel, userId);
             List<String> qHalfs = eq.qHalfs();
             if (qHalfs.isEmpty()) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");

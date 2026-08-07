@@ -1,6 +1,7 @@
 package com.superprogrammer.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.llm.config.LlmConfig;
@@ -26,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -180,5 +182,52 @@ class LlmGatewayTest {
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
                 eq("CHAT"), eq(20), eq(10));
+    }
+
+    // ===== 归户兜底（层1 咽喉）：忘传 userId → 自动从 BillingContext 归户；无上下文 → 仅采不扣 =====
+
+    @Test
+    void chat_noUidButBillingContextSet_autoChargesContextUid() {
+        // 新模块免改计费的关键契约：调用方忘传 userId，gateway 自动从 BillingContext 归户照常采+扣。
+        BillingContext.set(42L);
+        try {
+            TokenUsage usage = TokenUsage.builder().promptTokens(8).completionTokens(4).totalTokens(12).build();
+            LlmResponse mockResp = LlmResponse.builder()
+                    .content("ans").model("deepseek-chat").usage(usage).duration(1L).build();
+            when(deepseekProvider.chat(any())).thenReturn(mockResp);
+            when(deepseekProvider.getId()).thenReturn(7L);
+            when(deepseekProvider.getProviderScope()).thenReturn("GLOBAL");
+
+            LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                    .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                    .build();
+            gateway.chat(request);   // 不传 uid（模拟新模块直调 chat(req)）
+
+            verify(walletService).requireAffordable(42L);   // uid 取自 BillingContext
+            verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"));
+        } finally {
+            BillingContext.clear();
+        }
+    }
+
+    @Test
+    void chat_noUidNoContext_collectsOnlyNullUidNoCharge() {
+        assertNull(BillingContext.current(), "无 BillingContext（系统调用场景）");
+        TokenUsage usage = TokenUsage.builder().promptTokens(8).completionTokens(4).build();
+        LlmResponse mockResp = LlmResponse.builder()
+                .content("ans").model("deepseek-chat").usage(usage).duration(1L).build();
+        when(deepseekProvider.chat(any())).thenReturn(mockResp);
+        when(deepseekProvider.getId()).thenReturn(7L);
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        gateway.chat(request);   // 不传 uid，无上下文 → uid 解析为 null
+
+        // uid=null → requireAffordable(null) 短路（不扣），onSuccess(null,...) 仅采集不扣费
+        verify(walletService).requireAffordable(null);
+        verify(billingService).onSuccess(isNull(), eq(7L), any(), eq("deepseek-chat"),
+                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"));
     }
 }

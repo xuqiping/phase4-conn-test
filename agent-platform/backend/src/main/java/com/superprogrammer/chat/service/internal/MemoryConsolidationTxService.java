@@ -72,7 +72,7 @@ public class MemoryConsolidationTxService {
         String initialStatus = "CLEAN";
         String askText = null;
         if (existing != null && !existing.isEmpty()) {
-            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(existing, cs.l1() + " " + cs.l2());
+            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(existing, cs.l1() + " " + cs.l2(), userId);
             if (judge.conflict()) {
                 initialStatus = "PENDING_CONFLICT";
                 askText = judge.askText();

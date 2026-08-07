@@ -110,7 +110,10 @@ public class IndexJobWorker {
             KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
             String embeddingModel = kb.getEmbeddingModel();
 
-            float[] vector = llmGateway.embed(node.getContent(), embeddingModel);
+            // 计费归户：@Scheduled 轮询线程无请求上下文，按文档上传者（doc.createdBy）归户 embed 计费
+            KnowledgeDocument doc = documentMapper.selectById(node.getDocumentId());
+            Long docOwner = doc != null ? doc.getCreatedBy() : null;
+            float[] vector = llmGateway.embed(node.getContent(), embeddingModel, docOwner);
             if (vector.length != HalfVecUtil.DIM) {
                 throw new RuntimeException("embedding 维度不匹配 expected=" + HalfVecUtil.DIM
                         + " actual=" + vector.length);
@@ -160,7 +163,8 @@ public class IndexJobWorker {
             KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
             String embeddingModel = kb.getEmbeddingModel();
 
-            float[] vector = llmGateway.embed(text, embeddingModel);
+            // 计费归户：按文档上传者（doc.createdBy，doc 已在上方取出）归户 L1 embed 计费
+            float[] vector = llmGateway.embed(text, embeddingModel, doc.getCreatedBy());
             if (vector.length != HalfVecUtil.DIM) {
                 throw new RuntimeException("L1 embedding 维度不匹配 expected=" + HalfVecUtil.DIM
                         + " actual=" + vector.length);

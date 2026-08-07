@@ -53,6 +53,16 @@
 - 向量字段用 `halfvec(2048)` + `halfvec_cosine_ops` HNSW 索引（**不要用 `vector(2048)` 建 HNSW，会报 >2000 维错误**）。
 - 外键/高频查询字段加索引；金额 DECIMAL；状态字段注释取值含义。
 
+## 计费归户约束（BillingContext / LlmGateway）
+
+> 详见 [开发进度/积分计费系统/开发进度4.md](../开发进度/积分计费系统/开发进度4.md)。目标：**加新模块调模型不再重接计费**。
+
+- **咽喉**：所有文本 LLM 调用走 `LlmGateway`（`chat`/`chatStream`/`embed`）。出口已做「userId 自动归户」——**调用方忘传 userId，gateway 从 `BillingContext.current()` 兜底，照常采 token + 扣费**。新模块调 `gateway.chat(req)` 即自动计费，**无需写计费代码、无需手传 userId**。
+- **userId 三路自动种入 `BillingContext`**：请求线程（`BillingContextFilter` 排 `JwtAuthenticationFilter` 后，从 `(Long)principal` 种入）、线程池任务（4 个 `*TaskExecutorConfig` 的 `BillingContextTaskDecorator` 透传）、SSE 裸线程（`ChatController.doStream`/`KnowledgeAskController.ask` 手工 `set/clear`）。
+- **`@Scheduled` / 定时轮询新模块例外**：调度线程无请求上下文，三路都不覆盖——**必须自种 `BillingContext.set(dbUserId)` 或显式传 uid 给 gateway**，否则 uid=null 仅采不扣（`log.warn("LLM 调用无用户上下文...")` 可见）。参考 `IndexJobWorker`（按 `doc.getCreatedBy()`）、`LlmProviderService.chargeAdminDiagnostic`（按 `BillingContext.current()`）。
+- **admin 诊断调用**（测试连通等须直调特定 provider 实例、不能走 gateway 按 model 路由）：直调 provider 后手动 `billingService.onSuccess(uid, providerId, "GLOBAL", model, kind, in, out)` 归户扣费，全链吞异常（诊断计费失败不得报错）。
+- **铁律不变**：计费是 side-channel——`LlmBillingService`/`MediaBillingService` 全链 try/catch 吞异常，**绝不回归成功的 LLM/媒体响应**；`userId=null` → 仅采不扣；`billing.enabled=false` → 扣/退短路。
+
 ## 模块级约束（按需新增并在此索引）
 - [通用约束.md](通用约束.md) —— 跨所有模块的编码/命名/响应规范
 

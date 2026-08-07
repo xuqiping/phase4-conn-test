@@ -86,7 +86,7 @@ class MemoryConsolidationTxServiceTest {
     void conflictMarksPendingAndInsertsConflictRow() {
         MemorySummary existing = clean(200L);
         when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(existing));
-        when(conflictJudge.judgeSummaryConflict(any(), any()))
+        when(conflictJudge.judgeSummaryConflict(any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(true, "新旧冲突，保留哪条？"));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);
@@ -114,7 +114,7 @@ class MemoryConsolidationTxServiceTest {
     @Test
     void coexistWritesCleanNoConflictRow() {
         when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(clean(200L)));
-        when(conflictJudge.judgeSummaryConflict(any(), any()))
+        when(conflictJudge.judgeSummaryConflict(any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(false, null));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);

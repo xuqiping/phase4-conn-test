@@ -82,7 +82,7 @@ class RagRetrievalServiceTest {
 
         assertTrue(vo.isAbstained());
         assertEquals("NO_VISIBLE_DOCS", vo.getAbstainReason());
-        verify(queryExpansionService, never()).expand(anyString(), anyString());  // 早 abstain，未扩展
+        verify(queryExpansionService, never()).expand(anyString(), anyString(), any());  // 早 abstain，未扩展
     }
 
     @Test
@@ -110,7 +110,7 @@ class RagRetrievalServiceTest {
         service.retrieve(req(1L, "如何安装"), 7L);
 
         // B4 精神：每个逻辑 query 一轮扩展；service 不再直调 embed（embed 在 QueryExpansionService 内）
-        verify(queryExpansionService, times(1)).expand(anyString(), anyString());
+        verify(queryExpansionService, times(1)).expand(anyString(), anyString(), any());
         verify(llmGateway, never()).embed(anyString(), anyString());
     }
 
@@ -131,7 +131,7 @@ class RagRetrievalServiceTest {
 
         assertTrue(vo.isAbstained());
         assertEquals("LOW_CONFIDENCE", vo.getAbstainReason());
-        verify(llmGateway, never()).chat(any());  // abstain 不生成
+        verify(llmGateway, never()).chat(any(), any());  // abstain 不生成
     }
 
     @Test
@@ -161,7 +161,7 @@ class RagRetrievalServiceTest {
 
     /** 扩展 mock：返回单规范 halfvec（非空，让流程进入 step5）。 */
     private void stubExpandSingle() {
-        when(queryExpansionService.expand(anyString(), anyString()))
+        when(queryExpansionService.expand(anyString(), anyString(), any()))
                 .thenReturn(new ExpandedQuery("q", List.of("[0.1]")));
     }
 

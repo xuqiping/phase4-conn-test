@@ -25,7 +25,7 @@ public class AgentRouter {
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
 
-    public RoutingResult route(Agent agent, String userMessage) {
+    public RoutingResult route(Agent agent, String userMessage, Long userId) {
         List<Long> ruleMatched = matchByRules(agent, userMessage);
         if (!ruleMatched.isEmpty()) {
             log.info("Agent[{}] 规则匹配成功, skills={}", agent.getName(), ruleMatched);
@@ -33,7 +33,7 @@ public class AgentRouter {
         }
 
         log.info("Agent[{}] 规则未命中，使用LLM意图识别", agent.getName());
-        return matchByLlm(agent, userMessage);
+        return matchByLlm(agent, userMessage, userId);
     }
 
     private List<Long> matchByRules(Agent agent, String userMessage) {
@@ -66,7 +66,7 @@ public class AgentRouter {
         return List.of();
     }
 
-    private RoutingResult matchByLlm(Agent agent, String userMessage) {
+    private RoutingResult matchByLlm(Agent agent, String userMessage, Long userId) {
         LambdaQueryWrapper<Skill> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Skill::getAgentId, agent.getId())
                .eq(Skill::getDeleted, 0)
@@ -93,7 +93,7 @@ public class AgentRouter {
                 .temperature(0.3)
                 .build();
 
-        var response = llmGateway.chat(request);
+        var response = llmGateway.chat(request, userId);
         List<Long> skillIds = parseSkillIds(response.getContent());
 
         return RoutingResult.builder()

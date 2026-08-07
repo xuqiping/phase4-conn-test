@@ -1,5 +1,6 @@
 package com.superprogrammer.llm.service;
 
+import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TestConnectionResult;
@@ -36,11 +37,14 @@ class TestConnectionTest {
     @Mock
     private EmbeddingModelVersionMapper embeddingModelVersionMapper;
 
+    @Mock
+    private LlmBillingService billingService;
+
     private LlmProviderService service;
 
     @BeforeEach
     void setUp() {
-        service = new LlmProviderService(mapper, aesEncryptService, llmConfig, embeddingModelVersionMapper);
+        service = new LlmProviderService(mapper, aesEncryptService, llmConfig, embeddingModelVersionMapper, billingService);
     }
 
     private LlmProviderEntity buildEntity() {

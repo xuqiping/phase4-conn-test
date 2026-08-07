@@ -40,12 +40,12 @@ class QueryExpansionServiceTest {
     @Test
     void disabled_returnsCanonicalOnly_noChatCall() {
         when(systemSettingService.getRagRecallExpansionEnabled()).thenReturn(false);
-        when(llmGateway.embed(anyString(), anyString())).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.embed(anyString(), anyString(), any())).thenReturn(new float[HalfVecUtil.DIM]);
 
-        ExpandedQuery eq = service.expand("如何安装部署我的系统", "doubao-embedding-vision");
+        ExpandedQuery eq = service.expand("如何安装部署我的系统", "doubao-embedding-vision", 7L);
 
         assertEquals(1, eq.qHalfs().size());
-        verify(llmGateway, never()).chat(any());   // 禁用 → 不做释义 LLM 调用
+        verify(llmGateway, never()).chat(any(), any());   // 禁用 → 不做释义 LLM 调用
     }
 
     @Test
@@ -53,22 +53,22 @@ class QueryExpansionServiceTest {
         when(systemSettingService.getRagRecallExpansionEnabled()).thenReturn(true);
         when(systemSettingService.getRagRecallExpansionThreshold()).thenReturn(200);
         // 2 释义 + 1 HyDE；规范 query 第一个
-        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content(
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content(
                 "{\"paraphrases\":[\"系统安装部署步骤\",\"怎么部署系统\"],\"hyde\":\"本系统安装部署文档...\"}").build());
         // 每次 embed 返回不同向量（否则 halfvec 相同被去重成 1 条）
         final int[] counter = {0};
-        when(llmGateway.embed(anyString(), anyString())).thenAnswer(inv -> {
+        when(llmGateway.embed(anyString(), anyString(), any())).thenAnswer(inv -> {
             float[] v = new float[HalfVecUtil.DIM];
             v[0] = ++counter[0];
             return v;
         });
 
-        ExpandedQuery eq = service.expand("如何安装部署我的系统", "m");
+        ExpandedQuery eq = service.expand("如何安装部署我的系统", "m", 7L);
 
         // 规范(1) + 2 释义 + 1 HyDE = 4（向量各不同）
         assertEquals(4, eq.qHalfs().size());
-        verify(llmGateway, times(1)).chat(any());
-        verify(llmGateway, times(4)).embed(anyString(), anyString());
+        verify(llmGateway, times(1)).chat(any(), any());
+        verify(llmGateway, times(4)).embed(anyString(), anyString(), any());
     }
 
     @Test
@@ -76,7 +76,7 @@ class QueryExpansionServiceTest {
         when(systemSettingService.getRagRecallExpansionEnabled()).thenReturn(true);
         when(systemSettingService.getRagRecallExpansionThreshold()).thenReturn(20);   // 小阈值触发切块
         final int[] counter = {0};
-        when(llmGateway.embed(anyString(), anyString())).thenAnswer(inv -> {
+        when(llmGateway.embed(anyString(), anyString(), any())).thenAnswer(inv -> {
             float[] v = new float[HalfVecUtil.DIM];
             v[0] = ++counter[0];
             return v;
@@ -84,21 +84,21 @@ class QueryExpansionServiceTest {
         // >20 字、多句多主题的长 query
         String longQuery = "第一段主题A内容描述。第二句继续A。第二段主题B完全不同。第三段主题C另一回事。";
 
-        ExpandedQuery eq = service.expand(longQuery, "m");
+        ExpandedQuery eq = service.expand(longQuery, "m", 7L);
 
         // 规范(1) + 多块（>1），不调改写 LLM（切块省 chat 调用）
         assertTrue(eq.qHalfs().size() > 1, "切块应产生多个 qHalf，实际=" + eq.qHalfs().size());
-        verify(llmGateway, never()).chat(any());
+        verify(llmGateway, never()).chat(any(), any());
     }
 
     @Test
     void chatThrows_fallsBackToCanonicalOnly() {
         when(systemSettingService.getRagRecallExpansionEnabled()).thenReturn(true);
         when(systemSettingService.getRagRecallExpansionThreshold()).thenReturn(200);
-        when(llmGateway.embed(anyString(), anyString())).thenReturn(new float[HalfVecUtil.DIM]);
-        when(llmGateway.chat(any())).thenThrow(new RuntimeException("LLM 宕机"));
+        when(llmGateway.embed(anyString(), anyString(), any())).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.chat(any(), any())).thenThrow(new RuntimeException("LLM 宕机"));
 
-        ExpandedQuery eq = service.expand("q", "m");
+        ExpandedQuery eq = service.expand("q", "m", 7L);
 
         // 释义失败不致命 → 仅规范 query
         assertEquals(1, eq.qHalfs().size());
@@ -107,9 +107,9 @@ class QueryExpansionServiceTest {
     @Test
     void embedFails_returnsEmpty() {
         // 规范 embed 都失败 → 空 qHalfs，上层兜底（不读 enabled）
-        when(llmGateway.embed(anyString(), anyString())).thenThrow(new RuntimeException("embed 挂"));
+        when(llmGateway.embed(anyString(), anyString(), any())).thenThrow(new RuntimeException("embed 挂"));
 
-        ExpandedQuery eq = service.expand("q", "m");
+        ExpandedQuery eq = service.expand("q", "m", 7L);
 
         assertTrue(eq.qHalfs().isEmpty());
     }

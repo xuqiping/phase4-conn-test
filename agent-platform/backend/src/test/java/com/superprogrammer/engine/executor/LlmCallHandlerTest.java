@@ -41,7 +41,7 @@ class LlmCallHandlerTest {
                 .usage(TokenUsage.builder().totalTokens(50).build())
                 .duration(300L)
                 .build();
-        when(llmGateway.chat(any())).thenReturn(mockResp);
+        when(llmGateway.chat(any(), any())).thenReturn(mockResp);
 
         StepResult result = handler.execute(stepConfig, ctx);
 
@@ -49,7 +49,7 @@ class LlmCallHandlerTest {
         assertEquals("这是一个问候语", result.getOutput());
         assertEquals("这是一个问候语", ctx.getVariableStore().get("analysis"));
         verify(llmGateway).chat(argThat(req ->
-                req.getMessages().get(0).getContent().contains("Hello World")));
+                req.getMessages().get(0).getContent().contains("Hello World")), any());
     }
 
     @Test
@@ -63,11 +63,11 @@ class LlmCallHandlerTest {
                 .content("回复")
                 .usage(TokenUsage.builder().totalTokens(10).build())
                 .build();
-        when(llmGateway.chat(any())).thenReturn(mockResp);
+        when(llmGateway.chat(any(), any())).thenReturn(mockResp);
 
         handler.execute(stepConfig, ctx);
 
-        verify(llmGateway).chat(argThat(req -> "gpt-4".equals(req.getModel())));
+        verify(llmGateway).chat(argThat(req -> "gpt-4".equals(req.getModel())), any());
     }
 
     @Test
@@ -88,7 +88,7 @@ class LlmCallHandlerTest {
                 .content("联调通过")
                 .usage(TokenUsage.builder().totalTokens(10).build())
                 .build();
-        when(llmGateway.chat(any())).thenReturn(mockResp);
+        when(llmGateway.chat(any(), any())).thenReturn(mockResp);
 
         handler.execute(stepConfig, ctx);
 
@@ -97,6 +97,6 @@ class LlmCallHandlerTest {
                         && "system".equals(req.getMessages().get(0).getRole())
                         && "你是联调验收助手".equals(req.getMessages().get(0).getContent())
                         && "user".equals(req.getMessages().get(1).getRole())
-                        && req.getMessages().get(1).getContent().contains("联调日志")));
+                        && req.getMessages().get(1).getContent().contains("联调日志")), any());
     }
 }

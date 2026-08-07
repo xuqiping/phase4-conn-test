@@ -103,7 +103,7 @@ class MemoryTagResolverTest {
         when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any())).thenReturn(ap);
         when(tagMapper.findWithinAnchorThreshold(eq(1L), eq("[0.1]"), anyDouble(), anyInt()))
                 .thenReturn(List.of(tag(30L, "杭州", "我", "居住")));
-        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content("[30]").build());
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content("[30]").build());
         // 路径①② miss
         when(tagMapper.findByUserSubjectTopic(eq(1L), anyString(), anyString())).thenReturn(null);
         when(tagMapper.findByLabelInAliases(eq(1L), anyString())).thenReturn(null);
@@ -122,7 +122,7 @@ class MemoryTagResolverTest {
         when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any())).thenReturn(ap);
         when(tagMapper.findWithinAnchorThreshold(eq(1L), eq("[0.1]"), anyDouble(), anyInt()))
                 .thenReturn(List.of(tag(30L, "工作地", "我", "工作")));
-        when(llmGateway.chat(any())).thenReturn(LlmResponse.builder().content("[]").build()); // LLM 明确判无同义
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content("[]").build()); // LLM 明确判无同义
         when(tagMapper.findByUserSubjectTopic(eq(1L), anyString(), anyString())).thenReturn(null);
         when(tagMapper.findByLabelInAliases(eq(1L), anyString())).thenReturn(null);
         stubInsertId(777L); // 模拟 DB 生成主键
@@ -140,7 +140,7 @@ class MemoryTagResolverTest {
         when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any())).thenReturn(ap);
         when(tagMapper.findWithinAnchorThreshold(eq(1L), eq("[0.1]"), anyDouble(), anyInt()))
                 .thenReturn(List.of(tag(30L, "工作地", "我", "工作")));
-        when(llmGateway.chat(any())).thenThrow(new RuntimeException("LLM 挂了")); // 两次都炸
+        when(llmGateway.chat(any(), any())).thenThrow(new RuntimeException("LLM 挂了")); // 两次都炸
         when(tagMapper.findByUserSubjectTopic(eq(1L), anyString(), anyString())).thenReturn(null);
         when(tagMapper.findByLabelInAliases(eq(1L), anyString())).thenReturn(null);
         stubInsertId(777L);

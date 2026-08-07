@@ -2,6 +2,7 @@
 package com.superprogrammer.auth.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.context.BillingContextFilter;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter;
@@ -27,6 +28,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    /** 计费归户：请求入口种 userId，排 JWT 之后（principal 已就位）。 */
+    private final BillingContextFilter billingContextFilter;
     private final ObjectMapper objectMapper;
 
     /** Sidecar 回调共享密钥（安全审计 #1）。env RUNTIME_CALLBACK_TOKEN。空 → fail-closed。 */
@@ -74,6 +77,8 @@ public class SecurityConfig {
                 )
                 // 添加JWT过滤器
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                // 计费归户：排 JWT 之后，从 principal 种 userId（自动计费基础设施）
+                .addFilterAfter(billingContextFilter, JwtAuthenticationFilter.class)
                 // 安全审计 #1：sidecar 回调端点共享密钥校验（permitAll 路径上的独立咽喉点）
                 .addFilterBefore(new RuntimeCallbackSecurityFilter(runtimeCallbackToken), JwtAuthenticationFilter.class);
 

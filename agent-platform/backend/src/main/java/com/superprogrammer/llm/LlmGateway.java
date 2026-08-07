@@ -1,6 +1,7 @@
 package com.superprogrammer.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
@@ -48,10 +49,11 @@ public class LlmGateway {
     }
 
     public LlmResponse chat(LlmRequest request, Long userId) {
-        LlmProviderInterface provider = findProvider(request.getModel(), userId);
-        log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), userId);
+        Long uid = resolveBillingUser(userId, request.getModel());
+        LlmProviderInterface provider = findProvider(request.getModel(), uid);
+        log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
-        walletService.requireAffordable(userId);
+        walletService.requireAffordable(uid);
         try {
             LlmResponse response = provider.chat(request);
             TokenUsage usage = response.getUsage();
@@ -64,11 +66,11 @@ public class LlmGateway {
                 out = 0;
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
-            billingService.onSuccess(userId, provider.getId(), provider.getProviderScope(),
+            billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
             return response;
         } catch (RuntimeException e) {
-            billingService.onFailure(userId, provider.getId(), provider.getProviderScope(),
+            billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
             throw e;
         }
@@ -90,13 +92,14 @@ public class LlmGateway {
      * </ul>
      */
     public Flux<StreamEvent> chatStream(LlmRequest request, Long userId) {
-        LlmProviderInterface provider = findProvider(request.getModel(), userId);
-        log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), userId);
-        walletService.requireAffordable(userId);
+        Long uid = resolveBillingUser(userId, request.getModel());
+        LlmProviderInterface provider = findProvider(request.getModel(), uid);
+        log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
+        walletService.requireAffordable(uid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
         String model = request.getModel();
-        return provider.chatStream(request, usage -> billingService.onSuccess(userId, providerId, providerScope,
+        return provider.chatStream(request, usage -> billingService.onSuccess(uid, providerId, providerScope,
                 model, LlmUsageLogEntity.KIND_CHAT,
                 usage.getPromptTokens(), usage.getCompletionTokens()))
                 .publishOn(Schedulers.boundedElastic());
@@ -112,9 +115,10 @@ public class LlmGateway {
      * <p>embed 路由仍在全局 EMBEDDING 行找（FR-003，不吃用户级 override）；userId 仅透给计费。
      */
     public float[] embed(String text, String model, Long userId) {
+        Long uid = resolveBillingUser(userId, model);
         LlmProviderInterface provider = findEmbedProvider(model);
-        log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), userId);
-        walletService.requireAffordable(userId);
+        log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
+        walletService.requireAffordable(uid);
         try {
             EmbedResult res = provider.embedWithUsage(text, model);
             TokenUsage usage = res.getUsage();
@@ -131,14 +135,32 @@ public class LlmGateway {
                 out = 0;
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
-            billingService.onSuccess(userId, provider.getId(), provider.getProviderScope(),
+            billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, in, out, status);
             return res.getEmbedding();
         } catch (RuntimeException e) {
-            billingService.onFailure(userId, provider.getId(), provider.getProviderScope(),
+            billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 计费归户：显式 userId 优先；空则回退 {@link BillingContext#current()}（请求线程 filter 种入 /
+     * 池线程 TaskDecorator 透传 / 裸线程手工 set）；再空 = 无用户上下文（系统调用），仅采不扣。
+     * <p>这是「新模块免改计费」的咽喉——调用方忘传 userId 也能自动归户。无上下文时 warn 让漏扣在日志可见。
+     */
+    private Long resolveBillingUser(Long userId, String model) {
+        if (userId != null) {
+            return userId;
+        }
+        Long ctx = BillingContext.current();
+        if (ctx != null) {
+            log.debug("计费归户：userId 取自 BillingContext model={} userId={}", model, ctx);
+            return ctx;
+        }
+        log.warn("LLM 调用无用户上下文，仅采集不扣费 model={}", model);
+        return null;
     }
 
     /** 估算请求 input token（chars/4 启发式，求和各 message content）。仅 usage 缺失兜底用。 */

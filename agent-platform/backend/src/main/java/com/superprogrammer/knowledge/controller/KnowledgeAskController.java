@@ -56,6 +56,8 @@ public class KnowledgeAskController {
         new Thread(() -> {
             try {
                 SecurityContextHolder.setContext(securityContext);
+                // 计费归户：裸线程不继承 ThreadLocal，手工种 userId（RAG 流式生成段 + 查询扩展 LLM 调用自动计费）
+                com.superprogrammer.billing.context.BillingContext.set(userId);
                 Flux<StreamEvent> flux = buildAskFlux(request, userId, admin);
                 AtomicBoolean sentDone = new AtomicBoolean(false);
                 flux.doOnNext(evt -> {
@@ -81,6 +83,7 @@ public class KnowledgeAskController {
                 } catch (Exception ignored) {}
             } finally {
                 SecurityContextHolder.clearContext();
+                com.superprogrammer.billing.context.BillingContext.clear();
             }
         }).start();
 

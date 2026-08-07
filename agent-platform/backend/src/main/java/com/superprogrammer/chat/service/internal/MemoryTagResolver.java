@@ -186,7 +186,7 @@ public class MemoryTagResolver {
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(200)
-                        .build()).getContent();
+                        .build(), userId).getContent();
                 Long pick = parseFirstValidId(raw, validIds);
                 if (pick != null) return pick;
                 // 解析成功但空集 = LLM 明确判无同义 → 直接落空（不再重试）

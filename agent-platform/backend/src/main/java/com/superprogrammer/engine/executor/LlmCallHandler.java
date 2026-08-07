@@ -52,7 +52,7 @@ public class LlmCallHandler implements StepActionHandler {
                     .temperature(temperature)
                     .build();
 
-            var response = llmGateway.chat(request);
+            var response = llmGateway.chat(request, context.getUserId());
             String output = response.getContent();
 
             context.getVariableStore().set(outputKey, output);

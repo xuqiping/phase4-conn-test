@@ -153,7 +153,7 @@ public class RuntimeNodeCallbackService {
         }
         assertAgentExecutable(agent, request.getUserId());
         String message = inputMessage(request);
-        RoutingResult routingResult = agentRouter.route(agent, message);
+        RoutingResult routingResult = agentRouter.route(agent, message, request.getUserId());
         List<Long> skillIds = routingResult.getSkillIds() == null ? List.of() : routingResult.getSkillIds();
         List<Map<String, Object>> stepOutputs = new ArrayList<>();
         String lastOutput = "";

@@ -42,12 +42,12 @@ class AgentRouterTest {
         agent.setId(1L);
         agent.setConfig("{\"routingRules\":[{\"keywords\":[\"代码\",\"bug\"],\"skillIds\":[1,2]}]}");
 
-        RoutingResult result = router.route(agent, "帮我写一段Java代码");
+        RoutingResult result = router.route(agent, "帮我写一段Java代码", 7L);
 
         assertEquals(2, result.getSkillIds().size());
         assertTrue(result.getSkillIds().contains(1L));
         assertTrue(result.getSkillIds().contains(2L));
-        verify(llmGateway, never()).chat(any());
+        verify(llmGateway, never()).chat(any(), any());
     }
 
     @Test
@@ -64,12 +64,12 @@ class AgentRouterTest {
         when(skillMapper.selectList(any())).thenReturn(List.of(s1));
 
         LlmResponse llmResp = LlmResponse.builder().content("[2]").build();
-        when(llmGateway.chat(any())).thenReturn(llmResp);
+        when(llmGateway.chat(any(), any())).thenReturn(llmResp);
 
-        RoutingResult result = router.route(agent, "帮我写个文档");
+        RoutingResult result = router.route(agent, "帮我写个文档", 7L);
 
         assertFalse(result.getSkillIds().isEmpty());
-        verify(llmGateway).chat(any());
+        verify(llmGateway).chat(any(), any());
     }
 
     @Test
@@ -84,9 +84,9 @@ class AgentRouterTest {
         when(skillMapper.selectList(any())).thenReturn(List.of(s1));
 
         LlmResponse llmResp = LlmResponse.builder().content("[1]").build();
-        when(llmGateway.chat(any())).thenReturn(llmResp);
+        when(llmGateway.chat(any(), any())).thenReturn(llmResp);
 
-        RoutingResult result = router.route(agent, "随便问个问题");
+        RoutingResult result = router.route(agent, "随便问个问题", 7L);
 
         assertEquals(List.of(1L), result.getSkillIds());
     }

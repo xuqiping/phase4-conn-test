@@ -72,7 +72,7 @@ class IndexJobWorkerTest {
         worker.poll();
 
         verify(txService).voidJob(eq(1L), contains("节点已变更"));
-        verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
         verify(txService, never()).completeUpsert(anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
 
@@ -85,7 +85,7 @@ class IndexJobWorkerTest {
         worker.poll();
 
         verify(txService).voidJob(eq(1L), anyString());
-        verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
     @Test
@@ -97,7 +97,7 @@ class IndexJobWorkerTest {
         worker.poll();
 
         verify(txService).voidJob(eq(1L), anyString());
-        verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
     @Test
@@ -112,7 +112,7 @@ class IndexJobWorkerTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setEmbeddingModel("doubao-embedding-vision");
         when(knowledgeBaseService.ensure(7L)).thenReturn(kb);
-        when(llmGateway.embed(anyString(), eq("doubao-embedding-vision"))).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.embed(anyString(), eq("doubao-embedding-vision"), any())).thenReturn(new float[HalfVecUtil.DIM]);
 
         worker.poll();
 
@@ -130,7 +130,7 @@ class IndexJobWorkerTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setEmbeddingModel("doubao-embedding-vision");
         when(knowledgeBaseService.ensure(7L)).thenReturn(kb);
-        when(llmGateway.embed(anyString(), anyString())).thenReturn(new float[1024]);  // 错维度
+        when(llmGateway.embed(anyString(), anyString(), any())).thenReturn(new float[1024]);  // 错维度
 
         worker.poll();
 
@@ -147,7 +147,7 @@ class IndexJobWorkerTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setEmbeddingModel("doubao-embedding-vision");
         when(knowledgeBaseService.ensure(7L)).thenReturn(kb);
-        when(llmGateway.embed(anyString(), anyString())).thenThrow(new RuntimeException("401 no key"));
+        when(llmGateway.embed(anyString(), anyString(), any())).thenThrow(new RuntimeException("401 no key"));
 
         worker.poll();
 
@@ -175,7 +175,7 @@ class IndexJobWorkerTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setEmbeddingModel("doubao-embedding-vision");
         when(knowledgeBaseService.ensure(7L)).thenReturn(kb);
-        when(llmGateway.embed(anyString(), eq("doubao-embedding-vision"))).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.embed(anyString(), eq("doubao-embedding-vision"), any())).thenReturn(new float[HalfVecUtil.DIM]);
 
         worker.poll();
 
@@ -197,7 +197,7 @@ class IndexJobWorkerTest {
 
         verify(txService).voidJob(eq(1L), contains("无 L1 元数据"));
         verify(txService, never()).completeUpsertL1(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
-        verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
     @Test
@@ -218,7 +218,7 @@ class IndexJobWorkerTest {
 
         verify(txService).voidJob(eq(1L), contains("L1 元数据已变更"));
         verify(txService, never()).completeUpsertL1(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
-        verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
     private KnowledgeIndexJob job(Long nodeId, Long jobId, String contentHash) {

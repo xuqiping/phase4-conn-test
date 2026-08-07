@@ -79,7 +79,7 @@ public class MemoryConflictJudge {
      * @param existing 同 (user, tag, scope) 已有 CLEAN 总结（summarized_at 倒序）
      * @param newText  新总结的 L1/L2 文本（喂 prompt 做语义+时序判定）
      */
-    public SummaryConflictResult judgeSummaryConflict(List<MemorySummary> existing, String newText) {
+    public SummaryConflictResult judgeSummaryConflict(List<MemorySummary> existing, String newText, Long userId) {
         if (existing == null || existing.isEmpty() || newText == null || newText.isBlank()) {
             return new SummaryConflictResult(false, null);
         }
@@ -87,7 +87,7 @@ public class MemoryConflictJudge {
             String existingDisplay = existing.stream()
                     .map(s -> "- " + summaryText(s))
                     .collect(java.util.stream.Collectors.joining("\n"));
-            String raw = chat(String.format(SUMMARY_CONFLICT_PROMPT, newText, existingDisplay));
+            String raw = chat(String.format(SUMMARY_CONFLICT_PROMPT, newText, existingDisplay), userId);
             JsonNode root = parseJson(stripFence(raw));
             if (root == null || !root.isObject()) {
                 log.warn("judgeSummaryConflict 返回非 JSON 对象, fail-safe 不冲突: {}",
@@ -123,14 +123,14 @@ public class MemoryConflictJudge {
     }
 
     /** 走固定 MEMORY_JUDGE_MODEL（legacy 对话流跟随 model 的重载已随旧栈废）。 */
-    private String chat(String prompt) {
+    private String chat(String prompt, Long userId) {
         Exception last = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 LlmResponse resp = llmGateway.chat(LlmRequest.builder()
                         .model(RagConfig.MEMORY_JUDGE_MODEL)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
-                        .temperature(JUDGE_TEMPERATURE).maxTokens(800).build());
+                        .temperature(JUDGE_TEMPERATURE).maxTokens(800).build(), userId);
                 String content = resp.getContent();
                 if (content != null && !content.isBlank()) return content;
                 log.warn("LLM 返回空(第{}/3次) prompt.len={}", attempt, prompt.length());

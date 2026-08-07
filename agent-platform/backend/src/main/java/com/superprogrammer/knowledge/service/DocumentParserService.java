@@ -2,6 +2,7 @@ package com.superprogrammer.knowledge.service;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
@@ -115,6 +116,9 @@ public class DocumentParserService {
         }
         KnowledgeBase kb = knowledgeBaseService.ensure(doc.getKbId());
         String strategy = normalizeStrategyRead(kb.getSummaryStrategy());
+        // 计费归户：异步解析线程显式种 operatorId（操作者），兜底 TaskDecorator 传播——
+        // 全链 extractImageByVision/chatJson 的 gateway.chat(req) 自动归户计费，免深透传 userId。
+        BillingContext.set(operatorId);
         try {
             updateStatus(documentId, "PARSING", operatorId);
             ExtractedDocument extracted = extract(doc);
@@ -133,6 +137,8 @@ public class DocumentParserService {
         } catch (Exception e) {
             log.error("文档解析失败 docId={}: {}", documentId, e.getMessage(), e);
             markFailed(documentId, operatorId, truncate(e.getMessage(), 1900));
+        } finally {
+            BillingContext.clear();
         }
     }
 

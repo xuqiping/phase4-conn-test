@@ -128,6 +128,8 @@ public class ChatController {
         new Thread(() -> {
             try {
                 SecurityContextHolder.setContext(securityContext);
+                // 计费归户：裸线程不继承 ThreadLocal，手工种 userId（流式链内 LLM 调用自动计费）
+                com.superprogrammer.billing.context.BillingContext.set(userId);
                 AtomicBoolean sentDone = new AtomicBoolean(false);
                 chatSessionService.sendMessageStream(userId, request)
                         .doOnNext(evt -> {
@@ -168,6 +170,7 @@ public class ChatController {
                 }
             } finally {
                 SecurityContextHolder.clearContext();
+                com.superprogrammer.billing.context.BillingContext.clear();
             }
         }).start();
 

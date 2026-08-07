@@ -1,5 +1,6 @@
 package com.superprogrammer.chat.config;
 
+import com.superprogrammer.billing.context.BillingContextTaskDecorator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -26,6 +27,8 @@ public class MemoryTaskExecutorConfig {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("mem-task-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        // 计费归户：透传提交线程 userId，记忆 embed/LLM 调用自动计费
+        executor.setTaskDecorator(new BillingContextTaskDecorator());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

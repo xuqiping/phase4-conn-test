@@ -1,8 +1,12 @@
 package com.superprogrammer.llm.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.billing.context.BillingContext;
+import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmProviderVO;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
@@ -56,13 +60,17 @@ public class LlmProviderService {
     private final AesEncryptService aesEncryptService;
     private final LlmConfig llmConfig;
     private final com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper embeddingModelVersionMapper;
+    /** 计费：admin「测试连通」按 admin 钱包计费（直调 provider 测特定实例，gateway 按 model 路由会测错）。 */
+    private final LlmBillingService billingService;
 
     public LlmProviderService(LlmProviderMapper mapper, AesEncryptService aesEncryptService, @Lazy LlmConfig llmConfig,
-                              com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper embeddingModelVersionMapper) {
+                              com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper embeddingModelVersionMapper,
+                              LlmBillingService billingService) {
         this.mapper = mapper;
         this.aesEncryptService = aesEncryptService;
         this.llmConfig = llmConfig;
         this.embeddingModelVersionMapper = embeddingModelVersionMapper;
+        this.billingService = billingService;
     }
 
     public LlmProviderEntity create(LlmProviderEntity entity) {
@@ -191,6 +199,9 @@ public class LlmProviderService {
             long start = System.currentTimeMillis();
             float[] vec = provider.embed("hello", model);
             long duration = System.currentTimeMillis() - start;
+            // 计费：admin 测试按 admin 钱包扣（embed 2-arg 无 usage，估算 input token；uid 取 BillingContext）
+            chargeAdminDiagnostic(entity.getId(), model, LlmUsageLogEntity.KIND_EMBED,
+                    TokenEstimator.estimate("hello"), 0);
             return TestConnectionResult.builder()
                     .success(true)
                     .message("连接成功 (维度 " + vec.length + ")")
@@ -233,10 +244,33 @@ public class LlmProviderService {
                     .stream(false)
                     .build();
             LlmResponse response = provider.chat(testRequest);
+            // 计费：admin 测试按 admin 钱包扣（chat 取真实 usage，无则估 input）
+            com.superprogrammer.llm.dto.TokenUsage u = response.getUsage();
+            Integer in = u != null ? u.getPromptTokens() : null;
+            Integer out = u != null ? u.getCompletionTokens() : null;
+            if (in == null && out == null) {
+                in = TokenEstimator.estimate("Hi");
+                out = 0;
+            }
+            chargeAdminDiagnostic(entity.getId(), model, LlmUsageLogEntity.KIND_CHAT, in, out);
             return TestConnectionResult.success(response.getModel(), response.getDuration());
         } catch (Exception e) {
             log.warn("LLM连通测试失败 [provider={}]: {}", entity.getName(), e.getMessage());
             return TestConnectionResult.fail(extractRootMessage(e));
+        }
+    }
+
+    /**
+     * admin「测试连通」诊断调用计费：直调 provider 测特定 providerId（gateway 按 model 路由会测错实例），
+     * 故不走 gateway，调完手动按 admin 钱包结算。uid 取 {@link BillingContext#current()}（admin 已认证），
+     * 全链吞异常（诊断计费失败不得让测试按钮报错）。无 uid（异常无上下文）→ onSuccess 仅采不扣。
+     */
+    private void chargeAdminDiagnostic(Long providerId, String model, String kind, Integer tokensInput, Integer tokensOutput) {
+        try {
+            billingService.onSuccess(BillingContext.current(), providerId, "GLOBAL",
+                    model, kind, tokensInput, tokensOutput);
+        } catch (Exception e) {
+            log.warn("admin 诊断计费失败(吞) provider={} model={}: {}", providerId, model, e.getMessage());
         }
     }
 
