@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.billing.mapper.LlmUsageLogMapper">
+
+    <!-- 批量插 usage 日志（UsageWriter 攒批 flush 调）。
+         NOW() 取服务端时间；不含 prompt/原文，无 PII。
+         列与 LlmUsageLogEntity 一一对应（map-underscore-to-camel-case 已开）。 -->
+    <insert id="batchInsert">
+        INSERT INTO llm_usage_logs (
+            created_at, user_id, provider_id, provider_scope, model, kind,
+            tokens_input, tokens_output, cost_yuan, points_consumed, status, error_msg
+        ) VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (NOW(), #{r.userId}, #{r.providerId}, #{r.providerScope}, #{r.model}, #{r.kind},
+             #{r.tokensInput}, #{r.tokensOutput}, #{r.costYuan}, #{r.pointsConsumed},
+             #{r.status}, #{r.errorMsg})
+        </foreach>
+    </insert>
+
+</mapper>
