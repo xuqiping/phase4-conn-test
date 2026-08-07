@@ -94,6 +94,26 @@ class MediaBillingServiceTest {
     }
 
     @Test
+    void chargeMedia_image_chargesByCountDimension() {
+        // Chunk G：IMAGE 走 count 维度（price_per_image×count），kind=IMAGE，videoSeconds/imageCount 占位互换
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_IMAGE), eq(7L), eq("doubao-3-0"),
+                eq(null), eq(null), eq(null), eq(4))).thenReturn(new BigDecimal("0.800000"));
+        when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
+
+        BigDecimal charged = service.chargeMedia(100L, 7L, "doubao-3-0", LlmUsageLogEntity.KIND_IMAGE,
+                null, null, 4, LlmUsageLogEntity.STATUS_SUCCESS, 9L);
+
+        assertEquals(new BigDecimal("80"), charged);
+        verify(walletService).charge(eq(100L), eq(new BigDecimal("80")),
+                eq(LlmUsageLogEntity.KIND_IMAGE), eq(9L), eq("doubao-3-0"));
+        verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("doubao-3-0"),
+                eq(LlmUsageLogEntity.KIND_IMAGE), eq(null), eq(null),
+                eq(new BigDecimal("0.800000")), eq(new BigDecimal("80")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null));
+    }
+
+    @Test
     void refundMedia_nullOrZero_isNoOp() {
         service.refundMedia(100L, null, LlmUsageLogEntity.KIND_VIDEO, 9L);
         service.refundMedia(100L, BigDecimal.ZERO, LlmUsageLogEntity.KIND_VIDEO, 9L);
