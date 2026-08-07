@@ -14,6 +14,8 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 @Slf4j
 public class ClaudeProvider implements LlmProviderInterface {
@@ -102,8 +104,26 @@ public class ClaudeProvider implements LlmProviderInterface {
 
     @Override
     public Flux<StreamEvent> chatStream(LlmRequest request) {
+        // 老入口（非计费调用方）：回落带 sink 实现，传 no-op（usage 不计）。
+        return chatStream(request, usage -> {});
+    }
+
+    /**
+     * 流式 usage side-channel（Step10 计费核心）：
+     * <ul>
+     *   <li>建 {@link AtomicReference}，在 {@code .map} 阶段把 {@code message_start}（input_tokens）
+     *       与 {@code message_delta}（output_tokens）写 ref——Claude 协议 usage 拆在这两个事件里；</li>
+     *   <li>{@code doOnComplete} 读 ref 回灌 {@code usageSink}（gateway 计费路径在此采+扣）；</li>
+     *   <li><b>不改 StreamEvent、不改发出 Flux 序列</b>。</li>
+     * </ul>
+     * 流异常（doOnError）不触发 doOnComplete → 不采不扣，由 gateway onFailure 兜。
+     */
+    @Override
+    public Flux<StreamEvent> chatStream(LlmRequest request, Consumer<TokenUsage> usageSink) {
         Map<String, Object> body = buildRequestBody(request);
         body.put("stream", true);
+
+        AtomicReference<TokenUsage> usageRef = new AtomicReference<>();
 
         return webClient.post()
                 .uri(endpoint)  // 全 URL 直发（FR-001）
@@ -117,8 +137,14 @@ public class ClaudeProvider implements LlmProviderInterface {
                 .map(line -> line.startsWith("data:") ? line.substring(5).trim() : line)
                 .filter(data -> data.startsWith("{") || "[DONE]".equals(data))
                 .filter(data -> !"[DONE]".equals(data))
-                .map(this::parseClaudeChunk)
-                .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty());
+                .map(data -> parseClaudeChunk(data, usageRef))   // side-channel：写 ref + 返 StreamEvent
+                .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty())
+                .doOnComplete(() -> {
+                    TokenUsage usage = usageRef.get();
+                    if (usage != null) {
+                        usageSink.accept(usage);
+                    }
+                });
     }
 
     @Override
@@ -234,10 +260,38 @@ public class ClaudeProvider implements LlmProviderInterface {
                 .build();
     }
 
-    private StreamEvent parseClaudeChunk(String data) {
+    /**
+     * 解析单个 Claude SSE chunk，并把 usage 写入 {@code usageRef}（side-channel）。
+     * <p>Claude 协议 usage 拆在两个事件：
+     * <ul>
+     *   <li>{@code message_start} → {@code message.usage.input_tokens}（prompt，一次）；</li>
+     *   <li>{@code message_delta} → {@code usage.output_tokens}（completion 累计，流末）。</li>
+     * </ul>
+     * 二者合并成一条 {@link TokenUsage}。usage 事件无 content → 返空 chunk 被下游过滤，
+     * 故须在 {@code .map} 阶段写 ref，{@code doOnComplete} 读取。<b>StreamEvent 序列不变。</b>
+     */
+    private StreamEvent parseClaudeChunk(String data, AtomicReference<TokenUsage> usageRef) {
         try {
             JsonNode node = objectMapper.readTree(data);
             String type = node.at("/type").asText("");
+
+            // side-channel：合并 message_start(input) + message_delta(output)
+            if ("message_start".equals(type)) {
+                int input = node.at("/message/usage/input_tokens").asInt(0);
+                usageRef.set(TokenUsage.builder()
+                        .promptTokens(input)
+                        .completionTokens(0)
+                        .totalTokens(input)
+                        .build());
+            } else if ("message_delta".equals(type)) {
+                int output = node.at("/usage/output_tokens").asInt(0);
+                int input = usageRef.get() != null ? defaultIfNull(usageRef.get().getPromptTokens()) : 0;
+                usageRef.set(TokenUsage.builder()
+                        .promptTokens(input)
+                        .completionTokens(output)
+                        .totalTokens(input + output)
+                        .build());
+            }
 
             if ("content_block_delta".equals(type)) {
                 String deltaType = node.at("/delta/type").asText("");
@@ -253,5 +307,9 @@ public class ClaudeProvider implements LlmProviderInterface {
         } catch (Exception e) {
             return StreamEvent.chunk("");
         }
+    }
+
+    private static int defaultIfNull(Integer v) {
+        return v == null ? 0 : v;
     }
 }

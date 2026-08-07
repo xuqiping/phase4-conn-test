@@ -2,11 +2,13 @@ package com.superprogrammer.llm.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.dto.*;
+import com.superprogrammer.chat.dto.StreamEvent;
 import okhttp3.mockwebserver.*;
 import org.junit.jupiter.api.*;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -78,6 +80,40 @@ class OpenAICompatibleProviderTest {
     }
 
     @Test
+    void embedWithUsage_shouldParseUsage() throws Exception {
+        // Step11：embed 响应带 /usage → embedWithUsage 返向量+usage
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "emb", server.url("/v1/embeddings").toString(), "k", List.of("emb-1"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"data\":[{\"embedding\":[0.1,0.2,0.3]}],\"usage\":{\"prompt_tokens\":7,\"total_tokens\":7}}")
+                .setHeader("Content-Type", "application/json"));
+
+        com.superprogrammer.llm.dto.EmbedResult res = embedProvider.embedWithUsage("hello", "emb-1");
+
+        assertEquals(3, res.getEmbedding().length);
+        assertEquals(0.1f, res.getEmbedding()[0], 1e-6);
+        assertNotNull(res.getUsage());
+        assertEquals(7, res.getUsage().getPromptTokens());
+        assertEquals(0, res.getUsage().getCompletionTokens()); // embed 无 completion
+        assertEquals(7, res.getUsage().getTotalTokens());
+    }
+
+    @Test
+    void embedWithUsage_shouldReturnNullUsageWhenAbsent() throws Exception {
+        // Step11：embed 响应无 usage → usage=null（gateway 估算兜底）
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "emb", server.url("/v1/embeddings").toString(), "k", List.of("emb-1"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"data\":[{\"embedding\":[0.1,0.2,0.3]}]}")
+                .setHeader("Content-Type", "application/json"));
+
+        com.superprogrammer.llm.dto.EmbedResult res = embedProvider.embedWithUsage("hello", "emb-1");
+
+        assertEquals(3, res.getEmbedding().length);
+        assertNull(res.getUsage());
+    }
+
+    @Test
     void supports_shouldMatchModelName() {
         assertTrue(provider.supports("deepseek-chat"));
         assertFalse(provider.supports("gpt-4"));
@@ -114,5 +150,60 @@ class OpenAICompatibleProviderTest {
                 .block();
 
         assertEquals(List.of("Hello", "!"), chunks);
+    }
+
+    @Test
+    void chatStream_shouldCaptureUsageViaSideChannel() throws Exception {
+        // Step9：流末 chunk（choices 空）带 usage，content 为空会被过滤，但 usage 须经 side-channel 采到
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        data: {"choices":[{"delta":{"content":"Hi"}}]}
+
+                        data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}
+
+                        data: [DONE]
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        AtomicReference<TokenUsage> captured = new AtomicReference<>();
+        List<String> chunks = provider.chatStream(request, captured::set)
+                .map(StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        // usage chunk content 空 → 不进发出流（SSE 序列不变）
+        assertEquals(List.of("Hi"), chunks);
+        // side-channel 采到 usage
+        assertNotNull(captured.get());
+        assertEquals(12, captured.get().getPromptTokens());
+        assertEquals(8, captured.get().getCompletionTokens());
+        assertEquals(20, captured.get().getTotalTokens());
+    }
+
+    @Test
+    void chatStream_shouldRequestIncludeUsage() throws Exception {
+        // Step9：请求体须带 stream_options.include_usage=true
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("data: [DONE]\n\n"));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        provider.chatStream(request, usage -> {}).collectList().block();
+
+        String sentBody = server.takeRequest().getBody().readUtf8();
+        assertTrue(sentBody.contains("\"stream_options\""), "请求体须含 stream_options");
+        assertTrue(sentBody.contains("\"include_usage\":true"), "请求体须含 include_usage=true");
     }
 }

@@ -14,6 +14,8 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 @Slf4j
 public class OpenAICompatibleProvider implements LlmProviderInterface {
@@ -98,8 +100,30 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
 
     @Override
     public Flux<StreamEvent> chatStream(LlmRequest request) {
+        // 老入口（非计费调用方）：usage 不计，回落到带 sink 的实现并传 no-op。
+        return chatStream(request, usage -> {});
+    }
+
+    /**
+     * 流式 usage side-channel（Step9 计费核心，最高风险）：
+     * <ul>
+     *   <li>请求体加 {@code stream_options.include_usage=true}，要求 OpenAI 兼容端点在末 chunk 回 usage；</li>
+     *   <li>建 {@link AtomicReference}，在 {@code .map} 阶段把末 chunk 的 usage 写入 ref（usage chunk 的
+     *       content 为空，会被下游 {@code .filter} 丢弃——故必须在过滤前写 ref）；</li>
+     *   <li>{@code doOnComplete} 读 ref，非空则回灌 {@code usageSink}（gateway 计费路径在此采+扣）；</li>
+     *   <li><b>绝不新增/改 StreamEvent 类型、绝不改发出 Flux 的序列</b>——SSE 字节与改造前一致，
+     *       否则 13 个调用方回归。</li>
+     * </ul>
+     * 流异常（doOnError）不会触发 doOnComplete，故不采不扣——由 gateway 的 onError 走 onFailure。
+     */
+    @Override
+    public Flux<StreamEvent> chatStream(LlmRequest request, Consumer<TokenUsage> usageSink) {
         Map<String, Object> body = buildRequestBody(request);
         body.put("stream", true);
+        // 要求末 chunk 带 usage（OpenAI/DeepSeek/Doubao/Qwen 等兼容端点均支持）
+        body.put("stream_options", Map.of("include_usage", true));
+
+        AtomicReference<TokenUsage> usageRef = new AtomicReference<>();
 
         return webClient.post()
                 .uri(endpoint)  // 全 URL 直发（FR-001）
@@ -113,8 +137,14 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                 .map(line -> line.startsWith("data:") ? line.substring(5).trim() : line)
                 .filter(data -> data.startsWith("{") || "[DONE]".equals(data))
                 .filter(data -> !"[DONE]".equals(data))
-                .map(this::parseStreamChunk)
-                .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty());
+                .map(data -> parseStreamChunk(data, usageRef))   // side-channel：写 ref + 返 StreamEvent
+                .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty())
+                .doOnComplete(() -> {
+                    TokenUsage usage = usageRef.get();
+                    if (usage != null) {
+                        usageSink.accept(usage);
+                    }
+                });
     }
 
     @Override
@@ -126,6 +156,15 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
 
     @Override
     public float[] embed(String text, String model) {
+        return embedWithUsage(text, model).getEmbedding();
+    }
+
+    /**
+     * embedding + usage（Step11 计费用）：解析 embed 响应 {@code /usage}（prompt_tokens）。
+     * usage 缺失返 null（gateway 估算兜底）。返回 {@link EmbedResult}。
+     */
+    @Override
+    public EmbedResult embedWithUsage(String text, String model) {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", model);
@@ -152,7 +191,18 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             for (int i = 0; i < arr.size(); i++) {
                 vec[i] = (float) arr.get(i).asDouble();
             }
-            return vec;
+            // usage：embed 多只回 prompt_tokens（input），无 completion
+            JsonNode usageNode = root.path("usage");
+            TokenUsage usage = null;
+            if (usageNode.isObject() && !usageNode.isEmpty()) {
+                int prompt = usageNode.path("prompt_tokens").asInt(0);
+                usage = TokenUsage.builder()
+                        .promptTokens(prompt)
+                        .completionTokens(0)
+                        .totalTokens(usageNode.path("total_tokens").asInt(prompt))
+                        .build();
+            }
+            return EmbedResult.builder().embedding(vec).usage(usage).build();
         } catch (Exception e) {
             // 安全审计 #3：不把 e.getMessage()（可能含响应片段/内部细节）拼进对外异常，仅服务端日志。
             log.warn("embedding 调用失败 provider={}: {}", name, e.getMessage());
@@ -235,9 +285,26 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                 .build();
     }
 
-    private StreamEvent parseStreamChunk(String data) {
+    /**
+     * 解析单个 SSE data chunk，并把末 chunk 的 usage 写入 {@code usageRef}（side-channel）。
+     * <p>usage 在流末随 {@code include_usage} 到达，其 {@code choices} 多为空 → content 为空，
+     * 会被 {@code chatStream} 的 {@code .filter} 丢弃；此处先写 ref，{@code doOnComplete} 读取，
+     * 故 usage 不丢。<b>返回的 StreamEvent 与改造前完全一致（不动 Flux 序列）。</b>
+     */
+    private StreamEvent parseStreamChunk(String data, AtomicReference<TokenUsage> usageRef) {
         try {
             JsonNode node = objectMapper.readTree(data);
+
+            // side-channel：usage 写 ref（末 chunk，choices 通常空）
+            JsonNode usageNode = node.path("usage");
+            if (usageNode.isObject() && !usageNode.isEmpty()) {
+                usageRef.set(TokenUsage.builder()
+                        .promptTokens(usageNode.path("prompt_tokens").asInt(0))
+                        .completionTokens(usageNode.path("completion_tokens").asInt(0))
+                        .totalTokens(usageNode.path("total_tokens").asInt(0))
+                        .build());
+            }
+
             JsonNode delta = node.at("/choices/0/delta");
 
             // DeepSeek R1 系列返回 reasoning_content
