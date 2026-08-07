@@ -86,8 +86,10 @@ public class LlmConfig {
         List<String> models = parseModels(entity.getModels());
 
         return switch (resolveProtocol(entity)) {
-            case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
-            default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
+            case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
+                    entity.getId(), "GLOBAL");
+            default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
+                    entity.getId(), "GLOBAL");
         };
     }
 

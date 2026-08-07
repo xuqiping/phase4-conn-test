@@ -24,6 +24,10 @@ public class ClaudeProvider implements LlmProviderInterface {
     private final ObjectMapper objectMapper;
     /** 完整请求 URL（V60 起 endpoint 即全 URL，如 …/v1/messages，运行时零拼接，FR-001）。 */
     private final String endpoint;
+    /** 计费用：provider 主键（全局=llm_providers.id / 用户级=user_llm_providers.id）。 */
+    private final Long providerId;
+    /** 计费用：GLOBAL / USER。 */
+    private final String providerScope;
 
     /** 连接建立超时（ms）。云上 DNS/路由抖动时避免线程长期挂起。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -31,13 +35,21 @@ public class ClaudeProvider implements LlmProviderInterface {
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
 
     public ClaudeProvider(String endpoint, String apiKey, List<String> models, ObjectMapper objectMapper) {
-        this("claude", endpoint, apiKey, models, objectMapper);
+        this("claude", endpoint, apiKey, models, objectMapper, null, "GLOBAL");
     }
 
     public ClaudeProvider(String name, String endpoint, String apiKey, List<String> models, ObjectMapper objectMapper) {
+        this(name, endpoint, apiKey, models, objectMapper, null, "GLOBAL");
+    }
+
+    /** 全参构造：含计费用 providerId + providerScope（FR-计费）。 */
+    public ClaudeProvider(String name, String endpoint, String apiKey, List<String> models,
+                          ObjectMapper objectMapper, Long providerId, String providerScope) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
+        this.providerId = providerId;
+        this.providerScope = providerScope != null ? providerScope : "GLOBAL";
         // 全 URL 直发：仅剥尾随斜杠，不做任何路径拼接/版本段剥离
         this.endpoint = endpoint == null ? "" : endpoint.replaceAll("/+$", "");
         // 底层 HttpClient 显式设 connect/response 超时，否则 WebClient 默认无超时，
@@ -57,6 +69,16 @@ public class ClaudeProvider implements LlmProviderInterface {
     @Override
     public String getName() {
         return name;
+    }
+
+    @Override
+    public Long getId() {
+        return providerId;
+    }
+
+    @Override
+    public String getProviderScope() {
+        return providerScope;
     }
 
     @Override

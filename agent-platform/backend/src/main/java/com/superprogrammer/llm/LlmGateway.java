@@ -101,7 +101,7 @@ public class LlmGateway {
                     return global; // use global provider directly
                 }
                 String protocol = globalEntity != null ? globalEntity.getProtocol() : null;
-                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), protocol, endpoint, apiKey, models);
+                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), protocol, endpoint, apiKey, models, up.getId());
                 if (provider != null && provider.supports(model)) {
                     log.debug("使用用户Provider: userId={}, provider={}", userId, up.getProviderName());
                     return provider;
@@ -145,13 +145,17 @@ public class LlmGateway {
                 .orElse(null);
     }
 
-    private LlmProviderInterface createProviderInstance(String name, String protocol, String baseUrl, String apiKey, List<String> models) {
+    private LlmProviderInterface createProviderInstance(String name, String protocol, String baseUrl, String apiKey,
+                                                         List<String> models, Long userProviderId) {
         if (baseUrl == null || baseUrl.isBlank()) return null;
         // 安全审计 #3：用户自填 endpoint SSRF 防护。单一咽喉点——所有用户级 provider 实例化必经此处。
         com.superprogrammer.common.security.SsrfGuard.validate(baseUrl);
+        // 用户级 override：scope=USER，id=user_llm_providers.id（独立命名空间，靠 scope 区分于全局 llm_providers.id）
         return switch (resolveProtocol(name, protocol)) {
-            case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
-            default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper);
+            case "ANTHROPIC" -> new ClaudeProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
+                    userProviderId, "USER");
+            default -> new OpenAICompatibleProvider(name, baseUrl, apiKey != null ? apiKey : "", models, objectMapper,
+                    userProviderId, "USER");
         };
     }
 
