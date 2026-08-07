@@ -26,18 +26,6 @@ export const useChatStore = defineStore('chat', () => {
   const selectedTarget = ref<string>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_TARGET) || DEFAULT_CHAT_TARGET
   )
-  // 项目记忆 scope（V33）：写目标 + 读开关（扁平对称）。store 持态，sendMessage 直接读。
-  const memProjectId = ref<number | null>(null)        // 写目标（null=总记忆会话）
-  const memIncludeGlobal = ref<boolean>(true)          // 读开关：总记忆 on/off
-  const memReadProjectIds = ref<number[]>([])          // 读开关：开启读取的项目集合
-
-  /** 请求体用的 scope 字段（memIncludeGlobal 始终带 = scope 更新标记，后端据此持久化三列）。 */
-  const memoryScopePayload = computed(() => ({
-    projectId: memProjectId.value,
-    memIncludeGlobal: memIncludeGlobal.value,
-    memReadProjectIds: memReadProjectIds.value
-  }))
-
   let ws: WebSocket | null = null
 
   function appendAssistantMessage(content: string, metadata: string | null = null) {
@@ -138,7 +126,7 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, ...memoryScopePayload.value })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -148,8 +136,7 @@ export const useChatStore = defineStore('chat', () => {
           ...targetPayload,
           model: selectedModel.value ?? undefined,
           ragEnabled,
-          webSearchEnabled,
-          ...memoryScopePayload.value
+          webSearchEnabled
         })
       }
 
@@ -198,16 +185,14 @@ export const useChatStore = defineStore('chat', () => {
             message: content,
             model: selectedModel.value ?? undefined,
             ragEnabled,
-            webSearchEnabled,
-            ...memoryScopePayload.value
+            webSearchEnabled
           })
         : chatApi.streamNewMessage({
             message: content,
             ...resolveSelectedTargetPayload(),
             model: selectedModel.value ?? undefined,
             ragEnabled,
-            webSearchEnabled,
-            ...memoryScopePayload.value
+            webSearchEnabled
           })
 
       // 60s timeout for initial response（修 #1：原 10s 对 AGENT/工作流等非真流式首字节太短，频繁误超时→REST 回退双跑更慢）
@@ -507,10 +492,6 @@ export const useChatStore = defineStore('chat', () => {
     disconnectWS,
     startConflictPoll,
     stopConflictPoll,
-    loadActiveConflicts,
-    // 项目记忆 scope（V33）
-    memProjectId,
-    memIncludeGlobal,
-    memReadProjectIds
+    loadActiveConflicts
   }
 })

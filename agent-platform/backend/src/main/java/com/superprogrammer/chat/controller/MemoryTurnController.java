@@ -124,8 +124,6 @@ public class MemoryTurnController {
                 .sessionId(t.getSessionId())
                 .direction(t.getDirection())
                 .rawContent(t.getRawContent())
-                .bornPersonal(t.getBornPersonal())
-                .projectIds(t.getProjectIds())
                 .createdAt(t.getCreatedAt())
                 .build();
     }

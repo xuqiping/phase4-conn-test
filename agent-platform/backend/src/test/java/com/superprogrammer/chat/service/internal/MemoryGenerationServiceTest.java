@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -31,7 +32,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * 计划12 · C · 写入链编排单测（Mockito，全依赖 mock）。
- * 出口对齐 plan C：两侧均跳不写 / gen-off 写 raw / gen-on 写生成层 / born_personal 矩阵 / 卸空转 / 非项目恒个人 / 异步包装 / 缓存 evict。
+ * <p>
+ * 二期 P1（V67，FR-006）：turns 纯个人域——写入签名去项目参数（写目标/读开关链删除），
+ * gen 开关恒读全局个人兜底（resolveGenEnabled(userId, null)），born_personal/project_ids
+ * 矩阵测试随四列下线。出口：两侧均跳不写 / gen-off 写 raw / gen-on 写生成层 / 异步包装 / 缓存 evict。
  */
 @ExtendWith(MockitoExtension.class)
 class MemoryGenerationServiceTest {
@@ -61,7 +65,7 @@ class MemoryGenerationServiceTest {
     void bothSkipped_noWriteNoLlmNoEvict() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(BOTH_SKIP);
 
-        int n = service.processTurn(1L, 10L, 100L, true, List.of(), "嗯", "您好");
+        int n = service.processTurn(1L, 10L, "嗯", "您好");
 
         assertEquals(0, n);
         verify(generator, never()).generate(anyLong(), anyString(), anyString(), any());
@@ -75,9 +79,9 @@ class MemoryGenerationServiceTest {
     @DisplayName("gen 关 + 双侧过过滤 → 写 2 条 raw turn(gen_done=false)，不调生成器/归一")
     void genOff_writesTwoRawTurns() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(1L, 100L)).thenReturn(false);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(false);
 
-        int n = service.processTurn(1L, 10L, 100L, true, List.of(), "我住萧山", "好的");
+        int n = service.processTurn(1L, 10L, "我住萧山", "好的");
 
         assertEquals(2, n);
         verify(generator, never()).generate(anyLong(), anyString(), anyString(), any());
@@ -97,20 +101,31 @@ class MemoryGenerationServiceTest {
         verify(queryCache, times(1)).evictUser(1L);
     }
 
+    @Test
+    @DisplayName("二期 P1：gen 开关恒读全局个人兜底（projectId=null），项目级开关移路由层")
+    void genToggle_alwaysPersonalFallback() {
+        when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(false);
+
+        service.processTurn(1L, 10L, "a", "b");
+
+        verify(toggleService).resolveGenEnabled(eq(1L), isNull());
+    }
+
     // ---------- gen 开：写生成层 ----------
 
     @Test
     @DisplayName("gen 开 + 双侧生成 → 写 2 条 gen_done=true turn，tag 归一 + L1/L2 落库")
     void genOn_bothGenerated() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(1L, 100L)).thenReturn(true);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
         when(generator.generate(eq(1L), anyString(), anyString(), eq(PASS))).thenReturn(
                 new MemoryGenerator.GenResult(
                         new SideLayers("我", "居住", "住址", "住萧山", "萧山区地铁沿线"),
                         new SideLayers("我", "编程", "爬虫", "写Python爬虫", "requests+BS4")));
         when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString())).thenReturn(7L, 8L);
 
-        int n = service.processTurn(1L, 10L, 100L, true, List.of(), "我住萧山", "写爬虫");
+        int n = service.processTurn(1L, 10L, "我住萧山", "写爬虫");
 
         assertEquals(2, n);
         verify(turnMapper, times(2)).insert(turnCaptor.capture());
@@ -131,13 +146,13 @@ class MemoryGenerationServiceTest {
     @DisplayName("gen 开 + 仅 INPUT 侧（OUTPUT 被过滤）→ 写 1 条 INPUT turn")
     void genOn_outputSkipped_oneTurn() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(OUTPUT_SKIP);
-        when(toggleService.resolveGenEnabled(1L, 100L)).thenReturn(true);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
         when(generator.generate(eq(1L), anyString(), anyString(), eq(OUTPUT_SKIP))).thenReturn(
                 new MemoryGenerator.GenResult(
                         new SideLayers("我", "居住", "住址", "住萧山", "详情"), null));
         when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString())).thenReturn(7L);
 
-        int n = service.processTurn(1L, 10L, 100L, true, List.of(), "我住萧山", "很高兴为您服务");
+        int n = service.processTurn(1L, 10L, "我住萧山", "很高兴为您服务");
 
         assertEquals(1, n);
         verify(turnMapper, times(1)).insert(turnCaptor.capture());
@@ -148,10 +163,10 @@ class MemoryGenerationServiceTest {
     @DisplayName("gen 开 + 生成器全失败返 null → 过过滤侧写 raw(gen_done=false) 降级")
     void genOn_generatorFailed_writesRaw() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(1L, 100L)).thenReturn(true);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
         when(generator.generate(anyLong(), anyString(), anyString(), any())).thenReturn(null);
 
-        int n = service.processTurn(1L, 10L, 100L, true, List.of(), "我住萧山", "写爬虫");
+        int n = service.processTurn(1L, 10L, "我住萧山", "写爬虫");
 
         assertEquals(2, n);
         verify(tagResolver, never()).resolve(anyLong(), anyString(), anyString(), anyString());
@@ -159,71 +174,12 @@ class MemoryGenerationServiceTest {
         turnCaptor.getAllValues().forEach(t -> assertFalse(t.getGenDone(), "生成失败应降级 raw"));
     }
 
-    // ---------- born_personal 矩阵 ----------
-
-    @Test
-    @DisplayName("born_personal：勾个人 + 项目 → bornPersonal=true + project_ids 叠加")
-    void bornPersonal_personalPlusProject() {
-        when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(anyLong(), anyLong())).thenReturn(false);
-
-        service.processTurn(1L, 10L, 100L, true, List.of(200L, 300L), "a", "b");
-
-        verify(turnMapper, times(2)).insert(turnCaptor.capture());
-        turnCaptor.getAllValues().forEach(t -> {
-            assertTrue(t.getBornPersonal(), "勾个人 → bornPersonal=true");
-            assertEquals(List.of(200L, 300L), t.getProjectIds());
-        });
-    }
-
-    @Test
-    @DisplayName("born_personal：仅项目(取消个人) → bornPersonal=false")
-    void bornPersonal_projectOnly_false() {
-        when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(anyLong(), anyLong())).thenReturn(false);
-
-        service.processTurn(1L, 10L, 100L, false, List.of(200L), "a", "b");
-
-        verify(turnMapper, times(2)).insert(turnCaptor.capture());
-        turnCaptor.getAllValues().forEach(t -> assertFalse(t.getBornPersonal(), "仅项目 → false"));
-    }
-
-    @Test
-    @DisplayName("卸空(无项目+取消个人) → bornPersonal 自动转 true（防无归属）")
-    void bornPersonal_unloadedFlipsToTrue() {
-        when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(anyLong(), anyLong())).thenReturn(false);
-
-        service.processTurn(1L, 10L, 100L, false, List.of(), "a", "b");
-
-        verify(turnMapper, times(2)).insert(turnCaptor.capture());
-        turnCaptor.getAllValues().forEach(t -> {
-            assertTrue(t.getBornPersonal(), "卸空应自动转 bornPersonal=true");
-            assertTrue(t.getProjectIds().isEmpty());
-        });
-    }
-
-    @Test
-    @DisplayName("非项目会话(projectId=null) + 传项目集 → 强制恒个人，projectIds 清空")
-    void nonProjectSession_forcedPersonal() {
-        when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(eq(1L), eq(null))).thenReturn(false);
-
-        service.processTurn(1L, 10L, null, false, List.of(200L), "a", "b");
-
-        verify(turnMapper, times(2)).insert(turnCaptor.capture());
-        turnCaptor.getAllValues().forEach(t -> {
-            assertTrue(t.getBornPersonal(), "非项目会话恒个人出身");
-            assertTrue(t.getProjectIds().isEmpty(), "非项目会话 projectIds 清空");
-        });
-    }
-
     // ---------- 异步包装 ----------
 
     @Test
     @DisplayName("processTurnAsync 提交 Runnable 到 executor（不阻塞调用方）")
     void async_submitsToExecutor() {
-        service.processTurnAsync(1L, 10L, 100L, true, List.of(), "我住萧山", "好的");
+        service.processTurnAsync(1L, 10L, "我住萧山", "好的");
 
         // 提交了任务，但 processTurn 尚未执行（executor 是 mock）
         verify(memoryTaskExecutor, times(1)).execute(any(Runnable.class));
@@ -234,11 +190,11 @@ class MemoryGenerationServiceTest {
     @DisplayName("processTurnAsync 提交的 Runnable 执行后等价于同步 processTurn")
     void async_runnableDelegates() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
-        when(toggleService.resolveGenEnabled(anyLong(), anyLong())).thenReturn(false);
+        when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(false);
 
         // 捕获 Runnable 并同步执行（模拟 executor 真跑）
         org.mockito.ArgumentCaptor<Runnable> rc = org.mockito.ArgumentCaptor.forClass(Runnable.class);
-        service.processTurnAsync(1L, 10L, 100L, true, List.of(), "我住萧山", "好的");
+        service.processTurnAsync(1L, 10L, "我住萧山", "好的");
         verify(memoryTaskExecutor).execute(rc.capture());
         rc.getValue().run();
 

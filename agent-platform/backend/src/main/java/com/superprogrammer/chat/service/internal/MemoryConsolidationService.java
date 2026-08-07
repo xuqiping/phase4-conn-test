@@ -62,8 +62,6 @@ public class MemoryConsolidationService {
     private final MemoryBackfillService backfillService;
     private final MemoryConsolidationCompressor compressor;
     private final MemoryConsolidationTxService txService;
-    private final MemoryRecallAclResolver aclResolver;
-    private final MemoryDepartedResolver departedResolver;
     private final MemoryQueryCache queryCache;
 
     /** 防膨胀阈值（同 user+tag+scope CLEAN 条数 > 此值 → 再压一次）。走 system_settings 可配，v1 走默认。 */
@@ -85,25 +83,19 @@ public class MemoryConsolidationService {
             return result;
         }
         boolean personal = isPersonalScope(req);
-        Long scopeProjectId = personal ? null : req.getProjectId();
-
-        // ① project scope 须本人可访问（向量 2 防越权取数）
-        List<Long> authorIds;
-        if (personal) {
-            authorIds = List.of(userId);
-        } else {
-            authorIds = resolveAuthorIds(userId, scopeProjectId, req);
-            if (authorIds.isEmpty()) {
-                result.addNote("项目 scope 无可读作者（ACL 空）→ 跳过");
-                return result;
-            }
+        // 二期 P1（V67，FR-006）：turns 纯个人域 → 项目总结（基项目 turns 取数）整体下线，
+        // P4 将基于收录条目（memory_project_entries）重建项目总结共享化。项目 scope 空跑跳过。
+        if (!personal) {
+            result.addNote("二期 P1：项目总结随 turns 纯个人域下线（P4 基于收录条目重建）→ 跳过");
+            return result;
         }
+        Long scopeProjectId = null;
         String direction = normalizeDirection(req.getDirection());
 
         // ② manual 先 backfill raw（定时路径不 backfill，gen 关态空跳过）
         boolean changed = false;
         if (manual) {
-            int backfilled = backfillService.backfillScope(userId, scopeProjectId, personal);
+            int backfilled = backfillService.backfillScope(userId);
             if (backfilled > 0) {
                 result.addNote("backfill " + backfilled + " 条 raw");
                 changed = true;
@@ -111,9 +103,7 @@ public class MemoryConsolidationService {
         }
 
         // ③ 枚举 scope 内标签
-        List<RecallTagMeta> tags = personal
-                ? tagMapper.findPersonalRecallTags(userId, direction, null, null, null)
-                : tagMapper.findProjectRecallTags(scopeProjectId, userId, authorIds, direction, null, null, null);
+        List<RecallTagMeta> tags = tagMapper.findPersonalRecallTags(userId, direction, null, null, null);
         if (tags == null || tags.isEmpty()) {
             return result;  // scope 无标签 → 空跑
         }
@@ -121,7 +111,7 @@ public class MemoryConsolidationService {
         // ④~⑦ per-tag 压缩
         for (RecallTagMeta tag : tags) {
             try {
-                summarizeOneTag(userId, scopeProjectId, personal, authorIds, direction, tag, result);
+                summarizeOneTag(userId, scopeProjectId, direction, tag, result);
             } catch (Exception e) {
                 log.warn("总结单 tag 异常 userId={} tagId={}: {}", userId, tag.getId(), e.getMessage());
                 result.addNote("tag " + tag.getId() + " 异常: " + e.getMessage());
@@ -131,18 +121,17 @@ public class MemoryConsolidationService {
         if (changed || result.summariesWritten > 0) {
             queryCache.evictUser(userId);
         }
-        log.info("总结 scope 完成 userId={} personal={} projectId={} summaries={} conflicts={} notes={}",
-                userId, personal, scopeProjectId, result.summariesWritten, result.conflictsCreated, result.notes);
+        log.info("总结 scope 完成 userId={} summaries={} conflicts={} notes={}",
+                userId, result.summariesWritten, result.conflictsCreated, result.notes);
         return result;
     }
 
     /** per-tag：取数 → 未覆盖判定 → 压缩 → 写 summary+coverage → 冲突检测 → 防膨胀。 */
-    private void summarizeOneTag(Long userId, Long scopeProjectId, boolean personal, List<Long> authorIds,
+    private void summarizeOneTag(Long userId, Long scopeProjectId,
                                  String direction, RecallTagMeta tag, SummarizeResult result) {
         Long tagId = tag.getId();
-        List<MemoryTurn> turns = personal
-                ? turnMapper.findPersonalTurnsForConsolidation(userId, List.of(tagId), direction, null, null, null)
-                : turnMapper.findProjectTurnsForConsolidation(scopeProjectId, authorIds, List.of(tagId), direction, null, null, null);
+        List<MemoryTurn> turns =
+                turnMapper.findPersonalTurnsForConsolidation(userId, List.of(tagId), direction, null, null, null);
         if (turns == null || turns.isEmpty()) {
             return;  // 该 tag 无 gen_done=true turn
         }
@@ -197,40 +186,6 @@ public class MemoryConsolidationService {
         if (req.getProjectId() == null) return true;
         String kind = req.getScopeKind();
         return kind == null || "PERSONAL".equalsIgnoreCase(kind);
-    }
-
-    /** 项目 scope 取数作者集：SELF（仅自己）/ SPECIFIC（∩ readableAuthors）/ ALL（readableAuthors 全集）。
-     *  I3 L10 离职开关（§3.7 line158）：{@code includeDeparted=false} → 剔 readable ∩ DEPARTED
-     *  （优先级高于人员多选，即便 SPECIFIC 勾了离职人员也剔）。 */
-    private List<Long> resolveAuthorIds(Long userId, Long projectId, MemoryConsolidationScopeRequest req) {
-        Set<Long> readable = aclResolver.readableAuthors(projectId, userId);
-        if (readable == null || readable.isEmpty()) {
-            return List.of();  // 无读权限 → 空（上层 skip，防越权向量 14）
-        }
-        // I3 离职开关关 → 剔 DEPARTED（null/true 不过滤）
-        if (req.getIncludeDeparted() != null && !req.getIncludeDeparted()) {
-            Set<Long> departed = departedResolver.resolveDeparted(projectId).intersectDeparted(readable);
-            if (!departed.isEmpty()) {
-                readable = new HashSet<>(readable);
-                readable.removeAll(departed);
-                log.debug("总结取数 projectId={} reader={} includeDeparted=false 剔 DEPARTED {} 人 → 剩 {} 作者",
-                        projectId, userId, departed.size(), readable.size());
-            }
-        }
-        String filter = req.getAuthorFilter();
-        if ("SPECIFIC".equalsIgnoreCase(filter) && req.getAuthorIds() != null) {
-            // ∩ readableAuthors（防越权读他人）
-            List<Long> intersection = new ArrayList<>();
-            for (Long aid : req.getAuthorIds()) {
-                if (readable.contains(aid)) intersection.add(aid);
-            }
-            return intersection;
-        }
-        if ("ALL".equalsIgnoreCase(filter)) {
-            return new ArrayList<>(readable);
-        }
-        // SELF 默认
-        return List.of(userId);
     }
 
     private static String normalizeDirection(String direction) {
@@ -302,31 +257,24 @@ public class MemoryConsolidationService {
         return aggregate;
     }
 
-    /** 取/建 scope 行（PERSONAL 由 trigger 默认建；PROJECT upsert auto=false 占位行作锁目标 + 越权校验）。 */
+    /** 取/建 scope 行（PERSONAL 由 trigger 默认建；二期 P1 项目 scope 下线 → null 跳过）。 */
     private Long ensureScopeRow(Long userId, MemoryConsolidationScopeRequest sr) {
         boolean personal = isPersonalScope(sr);
-        String kind = personal ? "PERSONAL" : "PROJECT";
-        Long projectId = personal ? null : sr.getProjectId();
         if (!personal) {
-            // 项目 scope 须本人可访问（向量 2）
-            Set<Long> readable = aclResolver.readableAuthors(projectId, userId);
-            if (!readable.contains(userId)) {
-                return null;
-            }
+            return null;  // 二期 P1：项目总结随 turns 纯个人域下线（P4 基于收录条目重建）
         }
         OffsetDateTime now = OffsetDateTime.now();
-        scopeMapper.upsertScope(userId, kind, projectId, false, now);  // 手动触发不自动改 auto_enabled
-        MemoryConsolidationScope row = scopeMapper.findByUserAndScope(userId, kind, projectId);
+        scopeMapper.upsertScope(userId, "PERSONAL", null, false, now);  // 手动触发不自动改 auto_enabled
+        MemoryConsolidationScope row = scopeMapper.findByUserAndScope(userId, "PERSONAL", null);
         return row == null ? null : row.getId();
     }
 
     /**
-     * 列总结入口（设计 §3.4 line119）：{个人} ∪ {本人已加入的 PROJECT scope 行}，标 hasChange/uncoveredCount/autoEnabled。
+     * 列总结入口（设计 §3.4 line119）：二期 P1 仅 {个人}（项目总结随 turns 纯个人域下线，P4 重建）。
      * 个人 uncoveredCount = gen_done=true 且无 coverage 的 turn（§3.9 告警阈值用）。
      */
     public List<MemoryConsolidationTargetView> listTargets(Long userId) {
         List<MemoryConsolidationTargetView> out = new ArrayList<>();
-        // 个人（恒在）
         int uncovered = turnMapper.countUncoveredPersonalTurns(userId);
         int raw = turnMapper.countRawPersonalTurns(userId);
         MemoryConsolidationScope personal = scopeMapper.findByUserAndScope(userId, "PERSONAL", null);
@@ -338,21 +286,6 @@ public class MemoryConsolidationService {
                 .uncoveredCount(uncovered)
                 .autoEnabled(personal != null && Boolean.TRUE.equals(personal.getAutoEnabled()))
                 .build());
-        // 已加入的 PROJECT scope 行（用户主动加的自动总结项目；全 ACTIVE 项目枚举走项目成员表，v1 露已配置项）
-        List<MemoryConsolidationScope> rows = scopeMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MemoryConsolidationScope>()
-                        .eq(MemoryConsolidationScope::getUserId, userId)
-                        .eq(MemoryConsolidationScope::getScopeKind, "PROJECT"));
-        for (MemoryConsolidationScope r : rows) {
-            out.add(MemoryConsolidationTargetView.builder()
-                    .scopeKind("PROJECT")
-                    .projectId(r.getProjectId())
-                    .displayName("项目#" + r.getProjectId())
-                    .hasChange(true)
-                    .uncoveredCount(0)
-                    .autoEnabled(Boolean.TRUE.equals(r.getAutoEnabled()))
-                    .build());
-        }
         return out;
     }
 

@@ -41,12 +41,8 @@ export interface ChatSendRequest {
   ragEnabled?: boolean
   /** 联网搜索开关（CHAT 模式，非 null 持久化到会话；ON→生成前联网检索注入）。 */
   webSearchEnabled?: boolean
-  /** 项目记忆写目标（V33，null=总记忆会话）。 */
-  projectId?: number | null
-  /** 读开关：是否注入总记忆（V33，非 null 时持久化 = scope 更新标记）。 */
-  memIncludeGlobal?: boolean
-  /** 读开关：开启读取的项目集合（V33）。 */
-  memReadProjectIds?: number[]
+  // 二期 P1（FR-006）：V33 写目标/读开关三字段（projectId/memIncludeGlobal/memReadProjectIds）已下线——
+  // turns 纯个人域，召回范围走 /api/chat/memory/recall-scope 持久化偏好（MemoryRecallScopePopover）
 }
 
 // ---- 计划12 H'-4：legacy /chat/memories/* 全族客户端方法已删 ----

@@ -127,11 +127,11 @@ public class ProjectService {
     @Transactional
     public void delete(Long id, Long userId, boolean admin) {
         assertManage(id, userId, admin);
-        Project project = ensureProject(id); // 软删前取项目名，供记忆波及通知文案
         projectMapper.deleteById(id); // @TableLogic 软删
         // 成员行随之失效：canAccess 先查项目存在性，软删项目后即不可见，成员残留无害
-        // 计划12：记忆新栈级联（turns 标 deleted_project_ids + 波及通知 + 清总结/coverage/成员行等，§3.7）
-        memoryLifecycleHookService.onProjectDeleted(id, project.getName());
+        // 计划12：记忆新栈级联（清总结/coverage/成员行/scope/开关 + 二期 P1 补清收录规则/条目，§3.7）
+        // 二期 P1（V67）：turns 纯个人域——无 turns 标记、无波及通知，故不再需要项目名参数
+        memoryLifecycleHookService.onProjectDeleted(id);
     }
 
     // ---------- 成员/共享 ----------

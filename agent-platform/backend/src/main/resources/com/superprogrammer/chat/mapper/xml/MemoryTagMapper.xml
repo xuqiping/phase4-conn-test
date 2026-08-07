@@ -90,9 +90,9 @@
         <result property="usageCount" column="usage_count"/>
     </resultMap>
 
-    <!-- 个人 scope 聚合：本人 born_personal=true 的 turns.tag_ids ∪ 本人个人总结(project_id IS NULL).tag_id。
+    <!-- 个人 scope 聚合：本人 turns.tag_ids ∪ 本人个人总结(project_id IS NULL).tag_id。
          gen_done=false raw 不参与（向量1）。timeWindow：relativeDays 优先（近N天），否则绝对时段。
-         ⚠️ born_personal=true 限定——项目出身(born_personal=false)不进个人召回（设计§3.3 line114）。 -->
+         二期 P1（V67）：turns 纯个人域，born_personal=true 限定随列 DROP 移除。 -->
     <select id="findPersonalRecallTags" resultMap="RecallTagMetaMap">
         SELECT t.id, t.subject, t.topic, t.label, t.user_id AS owner_user_id, t.usage_count
         FROM memory_tags t
@@ -100,7 +100,7 @@
           AND t.id IN (
               SELECT unnest(tag_ids) FROM memory_turns
               WHERE deleted = 0 AND gen_done = true
-                AND user_id = #{userId} AND born_personal = true
+                AND user_id = #{userId}
                 <if test="direction != null and direction != 'BOTH'"> AND direction = #{direction} </if>
                 <if test="relativeDays != null"> AND created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
                 <if test="twStart != null"> AND created_at &gt;= #{twStart} </if>
@@ -109,36 +109,6 @@
               SELECT tag_id FROM memory_summaries
               WHERE deleted = 0 AND status != 'STALE'
                 AND user_id = #{userId} AND project_id IS NULL
-                <if test="relativeDays != null"> AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
-                <if test="twStart != null"> AND summarized_at &gt;= #{twStart} </if>
-                <if test="twEnd != null"> AND summarized_at &lt;= #{twEnd} </if>
-          )
-        ORDER BY t.usage_count DESC
-    </select>
-
-    <!-- 项目 scope 聚合：项目 turns(project_ids 含 X 且 user_id ∈ readableAuthors).tag_ids ∪ 本人项目总结(project_id=X).tag_id。
-         readableAuthorIds 须非空（Aggregator 层空集 skip，防越权向量14）。summaries 恒 user_id=readerId（向量14 不受 ACL）。
-         ⚠️ && 数组重叠算子转义 &amp;&amp;；foreach IN 防 SQL 拼接。 -->
-    <select id="findProjectRecallTags" resultMap="RecallTagMetaMap">
-        SELECT t.id, t.subject, t.topic, t.label, t.user_id AS owner_user_id, t.usage_count
-        FROM memory_tags t
-        WHERE t.deleted = 0
-          AND t.id IN (
-              SELECT unnest(tag_ids) FROM memory_turns
-              WHERE deleted = 0 AND gen_done = true
-                AND project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
-                AND user_id IN
-                <foreach collection="readableAuthorIds" item="aid" open="(" separator="," close=")">
-                    #{aid}
-                </foreach>
-                <if test="direction != null and direction != 'BOTH'"> AND direction = #{direction} </if>
-                <if test="relativeDays != null"> AND created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
-                <if test="twStart != null"> AND created_at &gt;= #{twStart} </if>
-                <if test="twEnd != null"> AND created_at &lt;= #{twEnd} </if>
-              UNION
-              SELECT tag_id FROM memory_summaries
-              WHERE deleted = 0 AND status != 'STALE'
-                AND user_id = #{readerId} AND project_id = #{projectId}
                 <if test="relativeDays != null"> AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
                 <if test="twStart != null"> AND summarized_at &gt;= #{twStart} </if>
                 <if test="twEnd != null"> AND summarized_at &lt;= #{twEnd} </if>

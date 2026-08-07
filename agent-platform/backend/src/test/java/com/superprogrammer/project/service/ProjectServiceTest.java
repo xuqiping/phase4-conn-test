@@ -131,12 +131,13 @@ class ProjectServiceTest {
     }
 
     @Test
-    void delete_triggersOnProjectDeletedWithName() {
+    void delete_triggersOnProjectDeleted() {
         when(projectMapper.selectById(100L)).thenReturn(projectOwnedBy(1L));
 
         service.delete(100L, 1L, false);
 
         verify(projectMapper).deleteById(100L);
-        verify(hookService).onProjectDeleted(100L, "测试项目");
+        // 二期 P1（V67）：hook 不再需项目名（turns 纯个人域，无波及通知）
+        verify(hookService).onProjectDeleted(100L);
     }
 }

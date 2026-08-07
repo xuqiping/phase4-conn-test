@@ -64,7 +64,6 @@ public class MemoryRecallPipeline {
     private final MemoryTagSelector selector;
     private final MemorySummaryReader reader;
     private final MemoryTurnPatcher patcher;
-    private final MemoryDepartedResolver departedResolver;
     private final MemoryEntryRecallService entryRecallService;   // 记忆二期 P1 · ①.5 项目条目合流
     private final MemoryTagMapper tagMapper;                     // 条目标签并入 ② 候选用
 
@@ -93,11 +92,11 @@ public class MemoryRecallPipeline {
             log.warn("recall traceId={} resolve 失败: {}", traceId, e.getMessage());
             steps.add(step("resolve", t0, 0, false));
             notes.add("resolve 失败: " + e.getMessage());
-            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart, List.of());
+            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart);
         }
         if (scope.isEmpty()) {
             log.info("recall traceId={} 空 scope（取消全部勾选）→ 空召回", traceId);
-            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart, List.of());
+            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart);
         }
 
         // ② aggregate（向量 3/14）
@@ -205,37 +204,8 @@ public class MemoryRecallPipeline {
         String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble);
         steps.add(step("assemble", t5, summaries.size() + turns.size() + entriesToAssemble.size(), true));
 
-        // I3 已离开人员标注（L10 开 + 召回含 DEPARTED 作者时附，§3.7 line158）
-        List<String> departedNotes = collectDepartedNotes(scope, turns);
-
-        return finish(assembledText, selected, summaries.size(), turns.size(), traceId, steps, notes, tStart, departedNotes);
-    }
-
-    /**
-     * I3 已离开人员标注（§3.7 line158）：{@code includeDeparted=true} 且召回 turns 含 DEPARTED 作者时，
-     * 收「已离开人员·{用户名}·{date}」提示（前端展示该记忆来自已离开成员）。
-     * 关/无项目/无召回 → 空表。
-     */
-    private List<String> collectDepartedNotes(RecallScope scope, List<MemoryTurn> turns) {
-        if (turns == null || turns.isEmpty() || !scope.includeDeparted() || scope.projectIds().isEmpty()) {
-            return List.of();
-        }
-        Set<Long> recalledAuthors = turns.stream()
-                .map(MemoryTurn::getUserId).filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if (recalledAuthors.isEmpty()) {
-            return List.of();
-        }
-        List<String> out = new ArrayList<>();
-        for (Long pid : scope.projectIds()) {
-            MemoryDepartedResolver.DepartedInfo di = departedResolver.resolveDeparted(pid);
-            di.annotations().forEach((uid, note) -> {
-                if (recalledAuthors.contains(uid)) {
-                    out.add(note);
-                }
-            });
-        }
-        return out;
+        // 二期 P1：turns 纯个人域（召回 turns 恒本人），I3「已离开人员」标注随项目 turns 召回消亡下线
+        return finish(assembledText, selected, summaries.size(), turns.size(), traceId, steps, notes, tStart);
     }
 
     // ============================ 记忆二期 P1 · ①.5/⑥ 条目合流助手 ============================
@@ -390,13 +360,11 @@ public class MemoryRecallPipeline {
 
     private MemoryRecallResult finish(String assembledText, List<RecallTagMeta> selectedTags,
                                       int summaryCount, int turnCount, String traceId,
-                                      List<RecallTraceStep> steps, List<String> notes, long tStart,
-                                      List<String> departedAuthorNotes) {
+                                      List<RecallTraceStep> steps, List<String> notes, long tStart) {
         boolean degraded = !notes.isEmpty();
         long totalMs = (System.nanoTime() - tStart) / 1_000_000L;
-        log.info("recall 完成 traceId={} summaryCount={} turnCount={} degraded={} notes={} departed={} 耗时 {}ms",
-                traceId, summaryCount, turnCount, degraded, notes.size(),
-                departedAuthorNotes == null ? 0 : departedAuthorNotes.size(), totalMs);
+        log.info("recall 完成 traceId={} summaryCount={} turnCount={} degraded={} notes={} 耗时 {}ms",
+                traceId, summaryCount, turnCount, degraded, notes.size(), totalMs);
         return MemoryRecallResult.builder()
                 .assembledText(assembledText)
                 .selectedTags(selectedTags)
@@ -406,7 +374,6 @@ public class MemoryRecallPipeline {
                 .notes(notes)
                 .traceId(traceId)
                 .steps(steps)
-                .departedAuthorNotes(departedAuthorNotes)
                 .build();
     }
 }

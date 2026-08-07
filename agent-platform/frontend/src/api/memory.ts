@@ -12,8 +12,11 @@
  * - MemoryTagController           标签库
  * - MemoryRecallController        召回（preview / scope GET·PUT）
  * - MemoryConsolidationController 总结触发 / 自动勾选 / 冲突裁决
- * - MemoryRosterController        花名册 + ACL 配置（/projects/{pid}）
- * - MemoryLifecycleController     生命周期折叠板（departed/deleted list + copy-to/restore）
+ * - MemoryRosterController        花名册（/projects/{pid}）
+ *
+ * 二期 P1（FR-006，V67）：turns 纯个人域——一期「生命周期折叠板」（departed/deleted 拉取）随
+ * turns 四列下线，MemoryLifecycleController 已删；流水账 VO 去 projectIds/projectNames/bornPersonal；
+ * 召回结果去 departedAuthorNotes（项目 turns 召回消亡，条目合流取而代之）。
  */
 import request from './request'
 import type { ApiResponse } from './request'
@@ -57,7 +60,7 @@ export interface MemorySummaryVO {
   updatedAt: string | null
 }
 
-/** 流水账展示（本人全量，tag label + 项目名回填）。 */
+/** 流水账展示（本人全量，tag label 回填；二期 P1 纯个人域，无项目挂载/出身标记）。 */
 export interface MemoryTurnVO {
   id: number
   sessionId: number | null
@@ -68,20 +71,15 @@ export interface MemoryTurnVO {
   l2Detail: string | null
   rawContent: string | null
   genDone: boolean
-  projectIds: number[]
-  projectNames: (string | null)[]
-  bornPersonal: boolean
   createdAt: string
 }
 
-/** raw 流水账（gen_done=false，在线查看无导出）。 */
+/** raw 流水账（gen_done=false，在线查看无导出；二期 P1 纯个人域）。 */
 export interface MemoryRawView {
   id: number
   sessionId: number | null
   direction: 'INPUT' | 'OUTPUT'
   rawContent: string | null
-  bornPersonal: boolean
-  projectIds: number[]
   createdAt: string
 }
 
@@ -123,7 +121,6 @@ export interface MemoryRecallResult {
   degraded: boolean
   notes: string[]
   traceId: string | null
-  departedAuthorNotes: string[]
 }
 
 /** 总结入口弹框每行（{个人} ∪ 已加入项目，标未覆盖数 + 自动勾选）。 */
@@ -179,22 +176,6 @@ export interface MemoryRosterVO {
   recallAdmin: boolean
   status: 'ACTIVE' | 'DEPARTED'
   departedAt: string | null
-}
-
-/** 生命周期折叠板行（已离开/已删除项目 + 本人可拉取流水账数，§3.7）。 */
-export interface MemoryLifecycleProjectVO {
-  projectId: number
-  projectName: string
-  /** 仅 departed 列表有值。 */
-  departedAt: string | null
-  turnCount: number
-}
-
-/** copy-to / restore 结果（自建新项目 id/名 + 实际拉取条数）。 */
-export interface MemoryLifecycleActionVO {
-  newProjectId: number
-  newProjectName: string
-  affectedTurns: number
 }
 
 // ============================ 客户端 ============================
@@ -290,25 +271,5 @@ export const memoryApi = {
   // ---- 花名册（I4；recall-acl 二期 P1 下线——一期 ACL 矩阵废弃，FR-006）----
   getRoster(projectId: number) {
     return request.get<ApiResponse<MemoryRosterVO[]>>(`/chat/memory/projects/${projectId}/roster`)
-  },
-
-  // ---- 生命周期折叠板（F-4b：已离开 copy-to / 已删除 restore）----
-  listDepartedProjects() {
-    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/departed-projects')
-  },
-  copyDepartedProjectTo(projectId: number, projectName?: string) {
-    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
-      `/chat/memory/departed-projects/${projectId}/copy-to`,
-      projectName ? { projectName } : {}
-    )
-  },
-  listDeletedProjects() {
-    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/deleted-projects')
-  },
-  restoreDeletedProject(projectId: number, projectName?: string) {
-    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
-      `/chat/memory/deleted-projects/${projectId}/restore`,
-      projectName ? { projectName } : {}
-    )
   }
 }

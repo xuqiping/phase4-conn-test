@@ -21,7 +21,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 计划12 · 迭代 A · 数据层 IT（scope 隔离六路径 + coverage UNIQUE + halfvec XML + bigint[] 回读 + 新用户钩子）。
+ * 计划12 · 迭代 A · 数据层 IT（个人域隔离 + coverage UNIQUE + halfvec XML + bigint[] 回读 + 新用户钩子）。
+ *
+ * <p>二期 P1（V67）：turns 纯个人域——一期 SCOPE_FILTER 三路径（findVisibleTurns）与
+ * updateProjectIds 随四列下线；个人域隔离由 findPersonalRecallableTurns 的 user_id 恒等过滤验证。
  *
  * <p>约定：{@code @Tag("integration")} → surefire 默认排除；跑法：
  * <pre>
@@ -63,12 +66,11 @@ class MemoryDataLayerIT {
                 Long.class, userId, subject, topic, topic);
     }
 
-    /** 建一条 turn（gen_done=true 默认）并回填。projectIdsStr 形如 "{10,20}" 或 "{}"。 */
-    private Long insertTurn(Long userId, String direction, String projectIdsStr, boolean bornPersonal) {
+    /** 建一条 turn（gen_done=true 默认）。二期 P1：纯个人域，无 project_ids/born_personal。 */
+    private Long insertTurn(Long userId, String direction) {
         return jdbc.queryForObject(
-                "INSERT INTO memory_turns(user_id, direction, project_ids, born_personal, gen_done) " +
-                        "VALUES(?, ?, ?::bigint[], ?, true) RETURNING id",
-                Long.class, userId, direction, projectIdsStr, bornPersonal);
+                "INSERT INTO memory_turns(user_id, direction, gen_done) VALUES(?, ?, true) RETURNING id",
+                Long.class, userId, direction);
     }
 
     // ---- 1. 新用户钩子：trigger 默认插 PERSONAL scope ------------------------
@@ -83,17 +85,18 @@ class MemoryDataLayerIT {
         assertEquals(1, cnt, "新用户应自动插一条 PERSONAL 自动总结 scope");
     }
 
-    // ---- 2. BIGINT[] 写入回读（显式 typeHandler，绕开 LambdaUpdateWrapper 坑）----
+    // ---- 2. BIGINT[] 写入回读（tag_ids 经 LongArrayTypeHandler 回读等值）----
 
     @Test
     void bigIntArrayRoundtripViaExplicitTypeHandler() {
         Long uid = createUser("it_arr_" + System.nanoTime());
-        Long tid = insertTurn(uid, "INPUT", "{}", true);
-        // updateProjectIds 走 XML 显式 typeHandler（V33 教训规避点）
-        turnMapper.updateProjectIds(tid, List.of(10L, 20L, 30L));
+        Long tid = jdbc.queryForObject(
+                "INSERT INTO memory_turns(user_id, direction, tag_ids, gen_done) " +
+                        "VALUES(?, 'INPUT', '{10,20,30}'::bigint[], true) RETURNING id",
+                Long.class, uid);
         MemoryTurn reloaded = turnMapper.selectById(tid);
         assertNotNull(reloaded);
-        assertEquals(List.of(10L, 20L, 30L), reloaded.getProjectIds(), "BIGINT[] 经显式 typeHandler 写入应可回读等值");
+        assertEquals(List.of(10L, 20L, 30L), reloaded.getTagIds(), "BIGINT[] 经 LongArrayTypeHandler 回读应等值");
     }
 
     // ---- 3. coverage UNIQUE NULLS NOT DISTINCT 拦截 -------------------------
@@ -102,7 +105,7 @@ class MemoryDataLayerIT {
     void coverageUniqueNullsNotDistinctBlocksDuplicatePersonalScope() {
         Long uid = createUser("it_uniq_" + System.nanoTime());
         Long tagId = insertTag(uid, "我", "居住");
-        Long tid = insertTurn(uid, "INPUT", "{}", true);
+        Long tid = insertTurn(uid, "INPUT");
         // 第一行 project_id=NULL（个人 scope）——成功
         jdbc.update("INSERT INTO memory_summary_coverage(turn_id, tag_id, project_id, user_id) VALUES(?,?,NULL,?)",
                 tid, tagId, uid);
@@ -113,43 +116,26 @@ class MemoryDataLayerIT {
                 "个人 scope(project_id=NULL) 第二行应被 NULLS NOT DISTINCT UNIQUE 拦截");
     }
 
-    // ---- 4-6. scope 隔离：流水账 SCOPE_FILTER 三路径 -------------------------
+    // ---- 4-5. 个人域隔离：findPersonalRecallableTurns 恒 user_id=self -------------------------
 
     @Test
-    void scope_ownPersonalTurnVisibleToSelf() {
+    void scope_ownPersonalTurnRecallableBySelf() {
         Long a = createUser("it_a_" + System.nanoTime());
-        Long tid = insertTurn(a, "INPUT", "{}", true);
-        List<MemoryTurn> visible = turnMapper.findVisibleTurns(a, List.of());
+        Long tid = insertTurn(a, "INPUT");
+        List<MemoryTurn> visible = turnMapper.findPersonalRecallableTurns(a, "BOTH", null, null, null);
         assertTrue(visible.stream().anyMatch(t -> t.getId().equals(tid)),
-                "自己的个人出身 turn 对自己应可见");
+                "自己的个人 turn 对自己应可召回");
     }
 
     @Test
-    void scope_otherUserPersonalTurnInvisibleEvenWithAccessibleProjects() {
+    void scope_otherUserPersonalTurnInvisible() {
         Long a = createUser("it_a2_" + System.nanoTime());
         Long b = createUser("it_b2_" + System.nanoTime());
-        Long tid = insertTurn(a, "INPUT", "{}", true);  // A 的个人私有
-        // 即便给 B 一堆 accessible 项目，A 的个人 turn（project_ids 空）也命中不了
-        List<MemoryTurn> visibleToB = turnMapper.findVisibleTurns(b, List.of(999L));
+        Long tid = insertTurn(a, "INPUT");  // A 的个人私有
+        // 二期 P1：turns 纯个人域——B 召回恒 user_id=B，物理上不可能命中 A 的 turn
+        List<MemoryTurn> visibleToB = turnMapper.findPersonalRecallableTurns(b, "BOTH", null, null, null);
         assertFalse(visibleToB.stream().anyMatch(t -> t.getId().equals(tid)),
-                "他人个人私有 turn 命中不了（project_ids 空集，不在 accessible 内）");
-    }
-
-    @Test
-    void scope_otherUserProjectTurnVisibleOnlyWhenAccessible() {
-        Long a = createUser("it_a3_" + System.nanoTime());
-        Long b = createUser("it_b3_" + System.nanoTime());
-        Long c = createUser("it_c3_" + System.nanoTime());
-        Long projX = 5001L;
-        Long tid = insertTurn(a, "INPUT", "{" + projX + "}", false);  // A 纯项目出身挂 X
-        // B 持有 accessible=[X] → 可见 A 这条
-        List<MemoryTurn> visibleToB = turnMapper.findVisibleTurns(b, List.of(projX));
-        assertTrue(visibleToB.stream().anyMatch(t -> t.getId().equals(tid)),
-                "accessible 含该项目时他人项目 turn 应可见");
-        // C 持 accessible=[] → 不可见
-        List<MemoryTurn> visibleToC = turnMapper.findVisibleTurns(c, List.of());
-        assertFalse(visibleToC.stream().anyMatch(t -> t.getId().equals(tid)),
-                "accessible 不含该项目时他人项目 turn 不可见");
+                "他人个人 turn 不可召回（个人域硬隔离）");
     }
 
     // ---- 7. scope 隔离：总结恒只读自己 -------------------------------------
@@ -193,7 +179,7 @@ class MemoryDataLayerIT {
         Long a = createUser("it_cov_a_" + System.nanoTime());
         Long b = createUser("it_cov_b_" + System.nanoTime());
         Long tagId = insertTag(a, "我", "爱好");
-        Long tid = insertTurn(a, "INPUT", "{}", true);
+        Long tid = insertTurn(a, "INPUT");
         jdbc.update("INSERT INTO memory_summary_coverage(turn_id, tag_id, project_id, user_id) VALUES(?,?,NULL,?)",
                 tid, tagId, a);
         // A 查自己覆盖 turn 集 → 命中

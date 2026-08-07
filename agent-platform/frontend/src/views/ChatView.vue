@@ -159,47 +159,13 @@
                 @update:value="onSelectWebSearch"
               />
             </div>
-            <!-- M4:写目标 vs 读范围显式分组,避免语义混淆 -->
-            <div
-              class="chat-view__mem-scope chat-view__mem-scope--write"
-              title="写目标：新抽取的事实落入库的位置（选「总记忆」= 不挂任何项目；选某项目 = 归属该项目 home）"
-            >
-              <span class="chat-view__rag-label chat-view__rag-label--group">记忆落库于</span>
-              <ProjectSelector
-                :model-value="chatStore.memProjectId"
-                :disabled="chatStore.sending"
-                @update:model-value="chatStore.memProjectId = $event"
-              />
-            </div>
-            <div class="chat-view__mem-divider" aria-hidden="true" />
-            <div
-              class="chat-view__mem-scope chat-view__mem-scope--read"
-              title="读范围：召回注入 LLM 时读取哪些记忆（与写目标互相独立）。总记忆开关 + 项目多选均为「读」"
-            >
-              <span class="chat-view__rag-label chat-view__rag-label--group">读取记忆范围</span>
-              <n-select
-                :value="chatStore.memIncludeGlobal ? 'on' : 'off'"
-                :options="globalToggleOptions"
-                :disabled="chatStore.sending"
-                size="small"
-                style="width: 96px"
-                :consistent-menu-width="false"
-                @update:value="(v: string) => (chatStore.memIncludeGlobal = v === 'on')"
-              />
-              <n-select
-                v-model:value="chatStore.memReadProjectIds"
-                multiple
-                :options="projectOptions"
-                :disabled="chatStore.sending"
-                size="small"
-                placeholder="项目记忆"
-                style="width: 160px"
-                :consistent-menu-width="false"
-              />
+            <!-- 二期 P1（FR-006）：一期「写目标/读范围」手动控件已下线——
+                 turns 纯个人域（写入恒个人流水账），召回范围由 F-6 新栈 scope popover 统一承载 -->
+            <div class="chat-view__mem-scope chat-view__mem-scope--read">
               <n-button size="small" quaternary circle title="管理项目（新建/删除/共享）" @click="showProjectManager = true">
                 <template #icon><n-icon :component="FolderOpenOutline" /></template>
               </n-button>
-              <!-- F-6 新栈召回 scope（个人/项目/方向/时间窗/离职），双栈期与上 legacy 读控件并存到 H 收尾 -->
+              <!-- F-6 新栈召回 scope（个人/项目/方向/时间窗/离职） -->
               <MemoryRecallScopePopover />
             </div>
             <n-badge :value="chatStore.activeConflictCount" :max="99" :show="chatStore.activeConflictCount > 0" type="error">
@@ -228,7 +194,7 @@
     </n-drawer>
 
     <!-- 项目管理（V33）-->
-    <ProjectManagerModal v-model:show="showProjectManager" @changed="onProjectsChanged" />
+    <ProjectManagerModal v-model:show="showProjectManager" />
   </div>
 </template>
 
@@ -252,12 +218,10 @@ import MessageBubble from '@/components/chat/MessageBubble.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ModelSelector from '@/components/chat/ModelSelector.vue'
 import TargetSelector from '@/components/chat/TargetSelector.vue'
-import ProjectSelector from '@/components/chat/ProjectSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
-import { projectApi } from '@/api/project'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const route = useRoute()
@@ -296,21 +260,7 @@ const showMemory = ref(false)
  */
 const webSearchPref = ref<boolean>(!!getStorage<boolean>(STORAGE_KEYS.CHAT_WEB_SEARCH_ENABLED))
 
-// 项目记忆 scope（V33）：读开关多选用的项目选项
-const projectOptions = ref<Array<{ label: string; value: number }>>([])
-async function loadProjectOptions() {
-  try {
-    const res = await projectApi.list()
-    projectOptions.value = (res.data.data || []).map(p => ({ label: p.name, value: p.id }))
-  } catch {
-    projectOptions.value = []
-  }
-}
-
 const showProjectManager = ref(false)
-function onProjectsChanged() {
-  void loadProjectOptions()
-}
 
 // 计划12 H'-4：旧 getChatRagMode（/chat/memories/rag-mode）端点已删；globalRag 留 false（仅影响「跟随全局」显示文案）。
 
@@ -350,12 +300,6 @@ function onSelectWebSearch(v: 'on' | 'off') {
   setStorage(STORAGE_KEYS.CHAT_WEB_SEARCH_ENABLED, on)
 }
 
-// 总记忆开/关下拉(迭代2)
-const globalToggleOptions = [
-  { label: '总记忆：开', value: 'on' },
-  { label: '总记忆：关', value: 'off' }
-]
-
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 
 /**
@@ -377,7 +321,6 @@ onMounted(async () => {
   await chatStore.fetchSessions()
   chatStore.connectWS()
   chatStore.startConflictPoll()
-  void loadProjectOptions()
   const sessionId = route.params.sessionId
   if (sessionId) {
     await chatStore.selectSession(Number(sessionId))

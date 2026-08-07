@@ -72,13 +72,12 @@ class MemoryConsolidationDataLayerIT {
                 Long.class, userId, topic, topic);
     }
 
-    /** gen_done=true 默认；tagIdsStr 形如 "{1,2}" 或 "[]"→"{}"。 */
-    private Long insertTurn(Long userId, String direction, String projectIdsStr,
-                            String tagIdsStr, boolean bornPersonal, boolean genDone) {
+    /** 二期 P1（V67）：纯个人域——tagIdsStr 形如 "{1,2}" 或 "{}"。 */
+    private Long insertTurn(Long userId, String direction, String tagIdsStr, boolean genDone) {
         return jdbc.queryForObject(
-                "INSERT INTO memory_turns(user_id, direction, project_ids, tag_ids, born_personal, gen_done) " +
-                        "VALUES(?, ?, ?::bigint[], ?::bigint[], ?, ?) RETURNING id",
-                Long.class, userId, direction, projectIdsStr, tagIdsStr, bornPersonal, genDone);
+                "INSERT INTO memory_turns(user_id, direction, tag_ids, gen_done) " +
+                        "VALUES(?, ?, ?::bigint[], ?) RETURNING id",
+                Long.class, userId, direction, tagIdsStr, genDone);
     }
 
     private Long insertSummary(Long userId, Long projectId, Long tagId, String sourceTurnIdsStr, String status) {
@@ -187,17 +186,15 @@ class MemoryConsolidationDataLayerIT {
         Long tag = insertTag(uid, "hobby");
         Long otherTag = insertTag(uid, "work");
 
-        Long tGen = insertTurn(uid, "INPUT", "{}", "{" + tag + "}", true, true);
-        Long tRaw = insertTurn(uid, "INPUT", "{}", "{" + tag + "}", true, false);          // raw 不取
-        Long tOtherTag = insertTurn(uid, "INPUT", "{}", "{" + otherTag + "}", true, true); // 非 tag
-        Long tProjectBorn = insertTurn(uid, "INPUT", "{999}", "{" + tag + "}", false, true); // born_personal=false 不取
+        Long tGen = insertTurn(uid, "INPUT", "{" + tag + "}", true);
+        Long tRaw = insertTurn(uid, "INPUT", "{" + tag + "}", false);          // raw 不取
+        Long tOtherTag = insertTurn(uid, "INPUT", "{" + otherTag + "}", true); // 非 tag
 
         List<MemoryTurn> got = turnMapper.findPersonalTurnsForConsolidation(uid, List.of(tag), "BOTH", null, null, null);
         List<Long> ids = got.stream().map(MemoryTurn::getId).toList();
         assertTrue(ids.contains(tGen), "命本人 gen_done=true 含该 tag");
         assertFalse(ids.contains(tRaw), "raw(gen_done=false) 不进总结取数");
         assertFalse(ids.contains(tOtherTag), "非该 tag 不取");
-        assertFalse(ids.contains(tProjectBorn), "born_personal=false 项目出身不进个人总结");
     }
 
     @Test
@@ -205,11 +202,11 @@ class MemoryConsolidationDataLayerIT {
         Long uid = createUser("it_bf_" + System.nanoTime());
         Long tag = insertTag(uid, "diet");
 
-        Long t1 = insertTurn(uid, "INPUT", "{}", "{}", true, false);
-        Long t2 = insertTurn(uid, "OUTPUT", "{}", "{}", true, false);
-        insertTurn(uid, "INPUT", "{}", "{}", true, true); // 已生成，不进 backfill
+        Long t1 = insertTurn(uid, "INPUT", "{}", false);
+        Long t2 = insertTurn(uid, "OUTPUT", "{}", false);
+        insertTurn(uid, "INPUT", "{}", true); // 已生成，不进 backfill
 
-        List<MemoryTurn> raws = turnMapper.findRawTurnsForBackfill(uid, null, true, 20);
+        List<MemoryTurn> raws = turnMapper.findRawTurnsForBackfill(uid, 20);
         assertEquals(2, raws.size(), "仅 gen_done=false 的 raw 进 backfill");
 
         int updated = turnMapper.applyBackfill(t1, List.of(tag), "l1", "l2", uid);
@@ -220,7 +217,7 @@ class MemoryConsolidationDataLayerIT {
         assertEquals("l1", reloaded.getL1Summary());
 
         // 再取 raw，t1 已不在
-        List<MemoryTurn> raws2 = turnMapper.findRawTurnsForBackfill(uid, null, true, 20);
+        List<MemoryTurn> raws2 = turnMapper.findRawTurnsForBackfill(uid, 20);
         assertEquals(1, raws2.size());
         assertEquals(t2, raws2.get(0).getId());
     }
@@ -231,8 +228,8 @@ class MemoryConsolidationDataLayerIT {
     void softDeleteTurnsByIdsAndCoverageCascade() {
         Long uid = createUser("it_discard_" + System.nanoTime());
         Long tag = insertTag(uid, "addr");
-        Long t1 = insertTurn(uid, "INPUT", "{}", "{" + tag + "}", true, true);
-        Long t2 = insertTurn(uid, "OUTPUT", "{}", "{" + tag + "}", true, true);
+        Long t1 = insertTurn(uid, "INPUT", "{" + tag + "}", true);
+        Long t2 = insertTurn(uid, "OUTPUT", "{" + tag + "}", true);
 
         // 造 coverage（作者侧）
         MemorySummaryCoverage c = new MemorySummaryCoverage();
@@ -254,7 +251,7 @@ class MemoryConsolidationDataLayerIT {
         Long self = createUser("it_ref_self_" + System.nanoTime());
         Long other = createUser("it_ref_other_" + System.nanoTime());
         Long tag = insertTag(self, "job");
-        Long t1 = insertTurn(self, "INPUT", "{}", "{" + tag + "}", true, true);
+        Long t1 = insertTurn(self, "INPUT", "{" + tag + "}", true);
 
         // 本人 summary 引用 t1；他人 summary 也引用 t1（项目 scope 波及场景）
         insertSummary(self, null, tag, "{" + t1 + "}", "CLEAN");
@@ -272,7 +269,7 @@ class MemoryConsolidationDataLayerIT {
     void batchInsertCoverageOnConflictDoNothing() {
         Long uid = createUser("it_cov_" + System.nanoTime());
         Long tag = insertTag(uid, "skill");
-        Long t1 = insertTurn(uid, "INPUT", "{}", "{" + tag + "}", true, true);
+        Long t1 = insertTurn(uid, "INPUT", "{" + tag + "}", true);
 
         MemorySummaryCoverage c = new MemorySummaryCoverage();
         c.setTurnId(t1); c.setTagId(tag); c.setProjectId(null); c.setUserId(uid); c.setSummaryId(null);

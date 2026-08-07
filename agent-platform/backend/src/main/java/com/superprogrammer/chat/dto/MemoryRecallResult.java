@@ -24,7 +24,6 @@ import java.util.List;
  * @param notes         降级/告警明细（空表 = 全程正常）
  * @param traceId       本次召回 trace id
  * @param steps         每步打点
- * @param departedAuthorNotes I3「已离开人员·{用户名}·{date}」标注（includeDeparted=true 且召回含 DEPARTED 作者时附）
  */
 @Data
 @Builder
@@ -38,6 +37,4 @@ public class MemoryRecallResult {
     private List<String> notes;
     private String traceId;
     private List<RecallTraceStep> steps;
-    /** I3 已离开人员标注（开时附，前端展示「该记忆来自已离开成员」）。 */
-    private List<String> departedAuthorNotes;
 }

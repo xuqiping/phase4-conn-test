@@ -48,8 +48,6 @@ class ChatSessionServiceTest {
     @Mock private com.superprogrammer.knowledge.service.RagRetrievalService ragRetrievalService;
     @Mock private com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     @Mock private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
-    // V33 写 scope 解析（mock 返回 globalOnly，避免碰 projectService）；召回 scope 走 prefService 不经此
-    @Mock private MemoryScopeResolver memoryScopeResolver;
     // 联网搜索总开关等系统设置
     @Mock private com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
@@ -63,10 +61,6 @@ class ChatSessionServiceTest {
         testSession = new ChatSession();
         testSession.setId(1L);
         testSession.setUserId(100L);
-        // V33：写 scope resolver 默认返 globalOnly（ragOn=false 也会解析写 scope，须非 null）；召回 scope 走 prefService
-        com.superprogrammer.chat.service.internal.MemoryScope global =
-                com.superprogrammer.chat.service.internal.MemoryScope.globalOnly(100L);
-        org.mockito.Mockito.lenient().when(memoryScopeResolver.resolveWriteScope(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(global);
         testSession.setMode("CHAT");
         testSession.setStatus("ACTIVE");
         testSession.setDeleted(0);
@@ -291,7 +285,7 @@ class ChatSessionServiceTest {
 
         // 召回文本随 LLM 上下文进引擎；新栈写入提交一次
         verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L));
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), any(), anyBoolean(), any(), eq("Hello"), eq("回复"));
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"));
         assertEquals("回复", response.getContent());
     }
 
@@ -318,7 +312,7 @@ class ChatSessionServiceTest {
 
         // 空召回不崩，写入仍提交
         assertEquals("回复", response.getContent());
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), any(), anyBoolean(), any(), eq("Hello"), eq("回复"));
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"));
     }
 
     @Test

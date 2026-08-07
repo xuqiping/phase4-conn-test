@@ -22,33 +22,22 @@
       <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
         <MemoryGenMatrixPanel />
       </n-tab-pane>
-      <n-tab-pane name="lifecycle" display-directive="show">
-        <template #tab>
-          <n-badge :value="deletedPendingTurns" :max="99" :show="deletedPendingTurns > 0" type="error" :offset="[10, 0]">
-            生命周期
-          </n-badge>
-        </template>
-        <MemoryLifecyclePanel @update:deleted-pending-turns="(n: number) => (deletedPendingTurns = n)" />
-      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { NTabs, NTabPane, NBadge } from 'naive-ui'
+import { NTabs, NTabPane } from 'naive-ui'
 import MemoryTagLibrary from '@/components/memory/MemoryTagLibrary.vue'
 import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue'
 import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
-import MemoryLifecyclePanel from '@/components/memory/MemoryLifecyclePanel.vue'
 
 // 默认页签 = 流水账（新栈入口，最贴近日常「我记了什么」）。
-const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'lifecycle'>('turns')
-
-// 生命周期页签徽标：已删除项目未处理流水账总数（面板 emit 联动）
-const deletedPendingTurns = ref(0)
+// 二期 P1（FR-006）：「生命周期」页签随 turns 纯个人域下线（F-4b 拉取折叠板已删）。
+const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen'>('turns')
 </script>
 
 <style lang="scss" scoped>

@@ -64,8 +64,6 @@ public class ChatSessionService {
     private final com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     // 记忆模式开关解析（V26，session>agent/workflow>global，门控 RAG+记忆）
     private final com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
-    // 记忆项目 scope 解析（V33，写 scope 从 session 解析 + canAccess 守卫；召回 scope 走持久化偏好）
-    private final MemoryScopeResolver memoryScopeResolver;
     // 系统设置（联网搜索总开关等；记忆写入 HYBRID/ASYNC 模式随 H' 切流废弃）
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
     // 联网搜索（CHAT 模式生成前检索注入；开关门控由 session.webSearchEnabled + 全局 search.enabled）
@@ -92,10 +90,7 @@ public class ChatSessionService {
         if (request.getKbIds() != null && !request.getKbIds().isEmpty()) {
             session.setKbIds(request.getKbIds());   // CHAT 模式检索 scope（阶段5 RAG 绑定）
         }
-        // 项目记忆 scope（V33）：建会话时带上写目标 + 读开关
-        session.setProjectId(request.getProjectId());
-        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
-        session.setMemReadProjectIds(request.getMemReadProjectIds());
+        // 二期 P1：V33 记忆写目标/读开关三列随「取消手动写入目标」废弃，不再从请求写入
         // 联网搜索开关（V44，CHAT 模式会话级）
         session.setWebSearchEnabled(request.getWebSearchEnabled());
         sessionMapper.insert(session);
@@ -125,27 +120,7 @@ public class ChatSessionService {
         session.setAgentId(request.getAgentId());
         session.setWorkflowId(request.getWorkflowId());
         sessionMapper.updateById(session);
-        // 项目记忆 scope（V33）：切 target 时若前端带 scope 标记则一并持久化
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
         return toSessionVO(session);
-    }
-
-    /** 显式写 project scope 三列（projectId null=回总记忆，须显式 set 才能清，updateById 会跳过 null）。 */
-    private void persistMemoryScope(ChatSession session, ChatRequest request) {
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ChatSession> uw =
-                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
-        uw.eq(ChatSession::getId, session.getId())
-                .set(ChatSession::getProjectId, request.getProjectId())
-                .set(ChatSession::getMemIncludeGlobal, request.getMemIncludeGlobal())
-                // BIGINT[] 列须显式带 typeHandler：LambdaUpdateWrapper.set 不读实体 @TableField，裸 List 进 PG cast 失败
-                .set(ChatSession::getMemReadProjectIds, request.getMemReadProjectIds(),
-                        "typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler");
-        sessionMapper.update(null, uw);
-        session.setProjectId(request.getProjectId());
-        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
-        session.setMemReadProjectIds(request.getMemReadProjectIds());
     }
 
     public List<ChatMessage> getSessionMessages(Long userId, Long sessionId) {
@@ -212,13 +187,6 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
-        // 项目记忆 scope（V33）：前端发 memIncludeGlobal（scope 更新标记）→ 显式写三列（projectId null=回总记忆，须显式 set 才能清）
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
-        // 写 scope 解析（admin=false；召回 scope 走用户持久化偏好，见 recallMemoryContext）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
         boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -263,9 +231,9 @@ public class ChatSessionService {
             response = response + "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
         }
 
-        // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident 随旧栈废弃，冲突走总结 worker→面板）
+        // 记忆写入（H' 切流：新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标概念）
         if (ragOn) {
-            dispatchMemoryWrite(userId, session.getId(), session, writeScope, request.getMessage(), response);
+            dispatchMemoryWrite(userId, session.getId(), request.getMessage(), response);
         }
 
         // Save assistant message
@@ -314,16 +282,13 @@ public class ChatSessionService {
     }
 
     /**
-     * 异步写入一轮记忆（新栈 fire-and-forget）。sessionProjectId 来自会话；
-     * writeScope.includeGlobal/safeProjectIds 由 MemoryScopeResolver 经 canAccess 守卫（防越权写他人项目）。
+     * 异步写入一轮记忆（新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标参数）。
      * RejectedExecution 已在 processTurnAsync 内兜底，此处仅兜意外异常不崩主流程。
      */
-    private void dispatchMemoryWrite(Long userId, Long sessionId, ChatSession session,
-                                     com.superprogrammer.chat.service.internal.MemoryScope writeScope,
+    private void dispatchMemoryWrite(Long userId, Long sessionId,
                                      String userInput, String assistantOutput) {
         try {
-            memoryGenerationService.processTurnAsync(userId, sessionId, session.getProjectId(),
-                    writeScope.includeGlobal(), writeScope.safeProjectIds(), userInput, assistantOutput);
+            memoryGenerationService.processTurnAsync(userId, sessionId, userInput, assistantOutput);
         } catch (Exception e) {
             log.warn("记忆写入提交失败 userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
         }
@@ -380,12 +345,6 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
-        // 写 scope 在 lambda 外解析（reactor 闭包安全；召回 scope 走用户持久化偏好）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
         final boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -457,9 +416,9 @@ public class ChatSessionService {
                         disclaimer = "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
                         responseText = responseText + disclaimer;
                     }
-                    // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident/askText 随旧栈废弃）
+                    // 记忆写入（二期 P1 turns 纯个人域；HYBRID/ASYNC/incident/askText 随旧栈废弃）
                     if (ragOn) {
-                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId, request.getMessage(), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -519,9 +478,6 @@ public class ChatSessionService {
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
         AtomicBoolean hasError = new AtomicBoolean(false);
-        // 写 scope（streamWorkflow 不经 doSendMessageStream，独立解析；召回在 WORKFLOW 模式不注入）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
 
         return source
                 .flatMapIterable(event -> workflowStreamEvents(event, fullThinking, finalResponse, hasError))
@@ -535,7 +491,7 @@ public class ChatSessionService {
                     boolean wfRagOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                             session.getAgentId(), session.getWorkflowId());
                     if (wfRagOn) {
-                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId, request.getMessage(), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);

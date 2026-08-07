@@ -55,8 +55,6 @@ class MemoryRecallPipelineTest {
     @Mock
     MemoryTurnPatcher patcher;
     @Mock
-    MemoryDepartedResolver departedResolver;
-    @Mock
     MemoryEntryRecallService entryRecallService;
     @Mock
     MemoryTagMapper tagMapper;
@@ -70,7 +68,7 @@ class MemoryRecallPipelineTest {
     @BeforeEach
     void setUp() {
         pipeline = new MemoryRecallPipeline(resolver, aggregator, selector, reader, patcher,
-                departedResolver, entryRecallService, tagMapper);
+                entryRecallService, tagMapper);
         // ①.5 条目合流默认无条目（各条目用例自行覆盖）
         lenient().when(entryRecallService.collectActiveEntries(anyList(), anyLong())).thenReturn(List.of());
     }
@@ -433,8 +431,6 @@ class MemoryRecallPipelineTest {
         when(entryRecallService.collectActiveEntries(List.of(10L), SELF))
                 .thenThrow(new RuntimeException("entry db down"));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
-        when(departedResolver.resolveDeparted(10L)).thenReturn(
-                new MemoryDepartedResolver.DepartedInfo(java.util.Set.of(), java.util.Map.of()));
 
         MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
 

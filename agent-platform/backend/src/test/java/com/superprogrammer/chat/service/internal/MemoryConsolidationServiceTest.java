@@ -20,15 +20,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -47,8 +45,6 @@ class MemoryConsolidationServiceTest {
     @Mock MemoryBackfillService backfillService;
     @Mock MemoryConsolidationCompressor compressor;
     @Mock MemoryConsolidationTxService txService;
-    @Mock MemoryRecallAclResolver aclResolver;
-    @Mock MemoryDepartedResolver departedResolver;
     @Mock MemoryQueryCache queryCache;
 
     @InjectMocks MemoryConsolidationService service;
@@ -115,7 +111,7 @@ class MemoryConsolidationServiceTest {
 
         service.summarizeScope(1L, personalReq(), true);
 
-        verify(backfillService).backfillScope(eq(1L), eq(null), eq(true));
+        verify(backfillService).backfillScope(eq(1L));
     }
 
     // ---- 2b. auto 不 backfill ----
@@ -126,7 +122,7 @@ class MemoryConsolidationServiceTest {
 
         service.summarizeScope(1L, personalReq(), false);
 
-        verify(backfillService, never()).backfillScope(anyLong(), any(), anyBoolean());
+        verify(backfillService, never()).backfillScope(anyLong());
     }
 
     // ---- 3. 全已覆盖 → 空跳过，不调压缩 LLM（幂等）----
@@ -164,85 +160,19 @@ class MemoryConsolidationServiceTest {
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("压缩失败")));
     }
 
-    // ---- 5. 项目 scope 无可读作者 → skip（防越权）----
+    // ---- 5. 二期 P1：项目 scope 总结下线 → 早退 skip，不动任何 mapper ----
 
     @Test
-    void projectScopeNoReadableAuthorsSkips() {
+    void projectScopeSkipped_phase2P1() {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
-        when(aclResolver.readableAuthors(eq(99L), eq(1L))).thenReturn(Set.of());
 
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
-        verify(tagMapper, never()).findProjectRecallTags(anyLong(), anyLong(), any(), any(), any(), any(), any());
-        verify(txService, never()).writeSummaryAndCoverage(anyLong(), any(), anyLong(), any(), any(), any(), any());
-        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("无可读作者")));
-    }
-
-    // ---- 6. SPECIFIC 作者过滤：越权作者被剔（∩ readableAuthors）----
-
-    @Test
-    void specificAuthorFilterIntersectsReadable() {
-        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
-        req.setScopeKind("PROJECT");
-        req.setProjectId(99L);
-        req.setAuthorFilter("SPECIFIC");
-        req.setAuthorIds(List.of(1L, 777L));  // 777 不在 readable → 剔除
-        when(aclResolver.readableAuthors(eq(99L), eq(1L))).thenReturn(Set.of(1L, 2L));
-        when(tagMapper.findProjectRecallTags(anyLong(), anyLong(), any(), any(), any(), any(), any()))
-                .thenReturn(List.of());
-        // 用 ArgumentCaptor 验传入 authorIds
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        // 触发
-        service.summarizeScope(1L, req, false);
-        verify(tagMapper).findProjectRecallTags(eq(99L), eq(1L), captor.capture(), any(), any(), any(), any());
-        List<Long> passed = captor.getValue();
-        assertTrue(passed.contains(1L), "self 保留");
-        assertFalse(passed.contains(777L), "越权作者 777 被 readableAuthors 交集剔除");
-    }
-
-    // ---- 6b. I3 离职开关：includeDeparted=false → 项目候选剔 DEPARTED（优先级高于人员多选）----
-
-    @Test
-    void projectIncludeDepartedFalse剔DEPARTED作者() {
-        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
-        req.setScopeKind("PROJECT");
-        req.setProjectId(99L);
-        req.setAuthorFilter("ALL");
-        req.setIncludeDeparted(false);
-        when(aclResolver.readableAuthors(eq(99L), eq(1L))).thenReturn(Set.of(2L, 3L));  // 3 = DEPARTED
-        when(departedResolver.resolveDeparted(eq(99L))).thenReturn(
-                new MemoryDepartedResolver.DepartedInfo(Set.of(3L), Map.of(3L, "已离开人员·u3·2026-01-01")));
-        when(tagMapper.findProjectRecallTags(anyLong(), anyLong(), any(), any(), any(), any(), any()))
-                .thenReturn(List.of());
-
-        service.summarizeScope(1L, req, false);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        verify(tagMapper).findProjectRecallTags(eq(99L), eq(1L), captor.capture(), any(), any(), any(), any());
-        List<Long> passed = captor.getValue();
-        assertTrue(passed.contains(2L), "ACTIVE 作者保留");
-        assertFalse(passed.contains(3L), "DEPARTED 作者剔（includeDeparted=false 优先级高于人员多选）");
-    }
-
-    @Test
-    void projectIncludeDepartedTrue_不过滤() {
-        // includeDeparted=true（默认）→ 保留 DEPARTED，不调 departedResolver
-        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
-        req.setScopeKind("PROJECT");
-        req.setProjectId(99L);
-        req.setAuthorFilter("ALL");
-        req.setIncludeDeparted(true);
-        when(aclResolver.readableAuthors(eq(99L), eq(1L))).thenReturn(Set.of(2L, 3L));
-        when(tagMapper.findProjectRecallTags(anyLong(), anyLong(), any(), any(), any(), any(), any()))
-                .thenReturn(List.of());
-
-        service.summarizeScope(1L, req, false);
-
-        verify(departedResolver, never()).resolveDeparted(any());
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("二期 P1")), "项目总结下线 note");
+        assertEquals(0, r.getSummariesWritten());
+        verifyNoInteractions(tagMapper, turnMapper, coverageMapper, compressor, txService, backfillService);
     }
 
     // ---- 7. scope 无标签 → 空结果 ----
