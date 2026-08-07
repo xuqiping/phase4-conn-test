@@ -139,6 +139,11 @@ mod imp {
     /// 底行），所以拷贝时翻成 top-down（合成视频回环测试的顶部亮带断言
     /// 验证了这一点）。Uses the 1D `IMFMediaBuffer::Lock` —
     /// `IMFMediaBuffer2`/Lock2D isn't in the windows 0.61 bindings.
+    ///
+    /// alpha 通道强制置 255：MF RGB32 实为 BGRX，第 4 字节未定义（常为 0）。
+    /// 下游 windows-capture ImageEncoder 按 **Premultiplied alpha** 解释缓冲，
+    /// alpha=0 会被当成全透明 → 编码出纯黑图（2026-08-08 用户实机踩坑：
+    /// 视频正常但 page_*.jpg 全黑；录制直出帧 alpha=255 所以缩略图没事）。
     unsafe fn copy_frame(buffer: &IMFMediaBuffer, width: u32, height: u32) -> Result<Vec<u8>, String> {
         let mut ptr: *mut u8 = std::ptr::null_mut();
         let mut cur_len: u32 = 0;
@@ -157,6 +162,10 @@ mod imp {
                 let src = ptr.add((height as usize - 1 - row) * row_bytes);
                 let dst = &mut out[row * row_bytes..(row + 1) * row_bytes];
                 std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), row_bytes);
+            }
+            // BGRX → BGRA：每像素第 4 字节置 255（见函数文档）。
+            for px in out.chunks_exact_mut(4) {
+                px[3] = 255;
             }
             Ok(out)
         })();
@@ -235,19 +244,33 @@ mod tests {
         for f in &frames {
             assert_eq!((f.width, f.height), (320, 180));
             assert_eq!(f.bgra.len(), 320 * 180 * 4);
+            // copy_frame 必须把 BGRX 的未用字节规范成 alpha=255，
+            // 否则下游按 premultiplied alpha 编码会出纯黑图。
+            assert!(
+                f.bgra.chunks_exact(4).all(|px| px[3] == 255),
+                "alpha must be normalized to 255"
+            );
         }
         for w in frames.windows(2) {
             assert!(w[1].ts_ms > w[0].ts_ms, "timestamps must increase");
         }
-        // 前半暗页、后半亮页可区分（编码有损，给足余量）
-        let mean = |f: &SampledFrame| f.bgra.iter().map(|&b| b as u64).sum::<u64>() / f.bgra.len() as u64;
+        // 前半暗页、后半亮页可区分（编码有损，给足余量）。
+        // 亮度只算 B/G/R 三通道 —— alpha 已被规范成恒 255，算进来会抬高均值。
+        let bgr_mean = |buf: &[u8]| {
+            let (mut sum, mut n) = (0u64, 0u64);
+            for px in buf.chunks_exact(4) {
+                sum += px[0] as u64 + px[1] as u64 + px[2] as u64;
+                n += 3;
+            }
+            sum / n.max(1)
+        };
+        let mean = |f: &SampledFrame| bgr_mean(&f.bgra);
         assert!(mean(frames.first().unwrap()) < 80, "page A should be dark");
         assert!(mean(frames.last().unwrap()) > 160, "page B should be bright");
         // 方向标记：顶部 16 行必须显著亮于底部（H.264 有损会压暗亮带，
         // 用相对差而非绝对阈值）。行序翻错时亮带沉底、此断言反转。
         let band_mean = |f: &SampledFrame, from_row: usize| {
-            let rows = &f.bgra[from_row * 320 * 4..(from_row + 16) * 320 * 4];
-            rows.iter().map(|&b| b as u64).sum::<u64>() / rows.len() as u64
+            bgr_mean(&f.bgra[from_row * 320 * 4..(from_row + 16) * 320 * 4])
         };
         let first = frames.first().unwrap();
         assert!(
@@ -256,5 +279,37 @@ mod tests {
             band_mean(first, 0),
             band_mean(first, 164)
         );
+    }
+
+    /// 真实录制切片诊断（手动跑）：把任一 video_NNN.mp4 路径设进
+    /// `VTT_TEST_VIDEO` 环境变量再 `cargo test -- --ignored real_video_probe`，
+    /// 打印采样帧数/亮度/alpha 统计 —— 复现「视频正常但抽帧全黑」类问题用。
+    #[test]
+    #[ignore = "需要 VTT_TEST_VIDEO 指向真实切片"]
+    fn real_video_probe() {
+        let path = std::path::PathBuf::from(
+            std::env::var("VTT_TEST_VIDEO").expect("set VTT_TEST_VIDEO to a video slice path"),
+        );
+        let mut n = 0u64;
+        let mut dark = 0u64;
+        sample_video(&path, 500, |f| {
+            // 只算 B/G/R（alpha 恒 255，会抬高均值掩盖黑帧）
+            let (mut sum, mut cnt) = (0u64, 0u64);
+            for px in f.bgra.chunks_exact(4) {
+                sum += px[0] as u64 + px[1] as u64 + px[2] as u64;
+                cnt += 3;
+            }
+            let mean = sum / cnt.max(1);
+            if mean < 16 {
+                dark += 1;
+            }
+            n += 1;
+            if n <= 3 {
+                println!("frame ts={}ms {}x{} mean_luma={mean}", f.ts_ms, f.width, f.height);
+            }
+        })
+        .expect("sample real video");
+        println!("sampled={n} dark_frames={dark}");
+        assert!(n > 0, "no frames sampled");
     }
 }
