@@ -22,28 +22,28 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     private final Set<String> supportedModels;
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    /** 原始 baseUrl（未剥离 /v1），供 embedding 绝对 URL 拼接，兼容 Ark /api/v3 与 OpenAI /v1 */
-    private final String originalBaseUrl;
+    /** 完整请求 URL（V60 起 endpoint 即全 URL，运行时零拼接，FR-001）。
+     *  CHAT 行 → …/chat/completions；EMBEDDING 行 → …/embeddings。 */
+    private final String endpoint;
 
     /** 连接建立超时（ms）。云上 DNS/路由抖动时避免线程长期挂起。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     /** 单次响应超时。兜底 .block(Duration)，杜绝无超时 .block() 钉死线程。 */
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
 
-    public OpenAICompatibleProvider(String name, String baseUrl, String apiKey, List<String> models, ObjectMapper objectMapper) {
+    public OpenAICompatibleProvider(String name, String endpoint, String apiKey, List<String> models, ObjectMapper objectMapper) {
         this.name = name;
         this.supportedModels = models != null ? new HashSet<>(models) : Collections.emptySet();
         this.objectMapper = objectMapper;
-        this.originalBaseUrl = baseUrl == null ? "" : baseUrl;
-        // Normalize: strip trailing /v1 to avoid /v1/v1/ duplication
-        String normalized = baseUrl.replaceAll("/v1/?$", "");
+        // 全 URL 直发：仅剥尾随斜杠，不做任何路径拼接/版本段剥离
+        this.endpoint = endpoint == null ? "" : endpoint.replaceAll("/+$", "");
         // 底层 HttpClient 显式设 connect/response 超时，否则 WebClient 默认无超时，
         // 云上 LLM 端点 stall 会让 .block() 永久挂起、拖垮 Tomcat 线程池。
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
                 .responseTimeout(RESPONSE_TIMEOUT);
+        // 不设 baseUrl：每次请求用 endpoint 绝对地址直发
         this.webClient = WebClient.builder()
-                .baseUrl(normalized)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
@@ -61,7 +61,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         try {
             Map<String, Object> body = buildRequestBody(request);
             String responseJson = webClient.post()
-                    .uri("/v1/chat/completions")
+                    .uri(endpoint)  // 全 URL 直发（FR-001）
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
                     .retrieve()
@@ -80,7 +80,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         body.put("stream", true);
 
         return webClient.post()
-                .uri("/v1/chat/completions")
+                .uri(endpoint)  // 全 URL 直发（FR-001）
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve()
@@ -108,10 +108,9 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", model);
             body.put("input", text);
-            // 用原始 baseUrl 拼绝对 URL：Ark /api/v3 → /api/v3/embeddings；OpenAI /v1 → /v1/embeddings
-            String url = originalBaseUrl.replaceAll("/+$", "") + "/embeddings";
+            // 全 URL 直发（FR-001）：EMBEDDING 行的 endpoint 即完整 embed URL（V60 补全 /embeddings）
             String responseJson = webClient.post()
-                    .uri(url)
+                    .uri(endpoint)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
                     .retrieve()

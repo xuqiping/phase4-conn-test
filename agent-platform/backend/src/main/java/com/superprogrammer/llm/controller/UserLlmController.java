@@ -99,9 +99,10 @@ public class UserLlmController {
         Long userId = getCurrentUserId();
         List<AvailableModelVO> models = new ArrayList<>();
 
-        // Global providers（MEDIA 任务型 provider 不进 chat 模型列表）
+        // Global providers（仅 CHAT 进 chat 模型列表；EMBEDDING/VIDEO/IMAGE 均不进——
+        // 顺带修掉 EMBEDDING 模型混进 chat 选择器的旧缺陷，FR-003）
         for (LlmProviderEntity p : llmProviderService.listActive()) {
-            if (LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(p.getCategory())) {
+            if (!LlmProviderService.CATEGORY_CHAT.equalsIgnoreCase(p.getCategory())) {
                 continue;
             }
             if (p.getModels() != null && !p.getModels().isBlank()) {
@@ -140,15 +141,16 @@ public class UserLlmController {
     }
 
     /**
-     * C5/D2：视频模型列表（仅 CATEGORY_MEDIA 全局 provider，如 Seedance）。
-     * 与 /models/available 互补——后者排除 MEDIA（供 chat 文本/脚本节点），此处只收 MEDIA 供视频节点。
-     * 用户私有 provider 的 MEDIA 覆盖暂不纳入（MVP：视频生成走全局 MEDIA provider）。
+     * C5/D2：视频模型列表（仅 CATEGORY_VIDEO 全局 provider，如 Seedance）。
+     * 与 /models/available 互补——后者排除 VIDEO（供 chat 文本/脚本节点），此处只收 VIDEO 供视频节点。
+     * 用户私有 provider 的 VIDEO 覆盖暂不纳入（MVP：视频生成走全局 VIDEO provider）。
+     * 注：khfz2 V63 把旧 CATEGORY_MEDIA 拆四分为 CHAT/VIDEO/IMAGE/EMBEDDING，视频即 VIDEO。
      */
     @GetMapping("/models/video")
     public ResponseEntity<R<List<AvailableModelVO>>> listVideoModels() {
         List<AvailableModelVO> models = new ArrayList<>();
         for (LlmProviderEntity p : llmProviderService.listActive()) {
-            if (!LlmProviderService.CATEGORY_MEDIA.equalsIgnoreCase(p.getCategory())) {
+            if (!LlmProviderService.CATEGORY_VIDEO.equalsIgnoreCase(p.getCategory())) {
                 continue;
             }
             if (p.getModels() != null && !p.getModels().isBlank()) {

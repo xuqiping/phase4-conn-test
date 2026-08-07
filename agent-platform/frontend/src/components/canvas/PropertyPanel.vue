@@ -57,7 +57,7 @@
             size="small"
             clearable
             placeholder="默认（后端回落）"
-            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
           />
         </div>
         <n-button
@@ -165,7 +165,7 @@
             size="small"
             clearable
             placeholder="默认（provider 首个视频模型）"
-            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
           />
         </div>
 
@@ -291,7 +291,7 @@
             size="small"
             clearable
             placeholder="默认（后端回落）"
-            @update:value="(v: string | null) => { if (node) node.data.model = v ?? undefined }"
+            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
           />
         </div>
         <n-button
@@ -356,6 +356,8 @@ const emit = defineEmits<{
   (e: 'check-update', node: CanvasNode): void
   /** S12：更新节点引用到资产最新版（re-resolve 写回，L6「手动更新」）。 */
   (e: 'update-asset', node: CanvasNode): void
+  /** C5/FR-006：node.data 被面板改动需落库（模型选择器等离散选择），父组件 scheduleSave。 */
+  (e: 'data-changed'): void
 }>()
 
 /** S12：当前节点已绑定资产（node.data.assetId 存在）。 */

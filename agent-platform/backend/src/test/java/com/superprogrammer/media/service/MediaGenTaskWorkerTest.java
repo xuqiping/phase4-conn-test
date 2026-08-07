@@ -53,7 +53,7 @@ class MediaGenTaskWorkerTest {
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
         when(arkProvider.createTask(any())).thenReturn("cct-1");
-        when(arkProvider.queryTask("cct-1")).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(eq("https://ark/v.mp4"), eq(100L), anyString()))
                 .thenReturn("fid-1");
@@ -72,7 +72,7 @@ class MediaGenTaskWorkerTest {
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
         when(arkProvider.createTask(any())).thenReturn("cct-1");
-        when(arkProvider.queryTask("cct-1")).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", null, null)); // 无 usage → 估算
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
 
@@ -86,7 +86,7 @@ class MediaGenTaskWorkerTest {
         MediaGenTask task = pendingTask(1L, 100L, "cct-1"); // 已有 arkTaskId，跳过 createTask
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.queryTask("cct-1")).thenReturn(result(MediaGenResult.STATUS_FAILED,
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_FAILED,
                 null, null, "Ark 429 限流"));
 
         worker.poll();
@@ -106,7 +106,7 @@ class MediaGenTaskWorkerTest {
         worker.poll();
 
         verify(txService).markFailed(eq(1L), contains("key"));
-        verify(arkProvider, never()).queryTask(anyString());
+        verify(arkProvider, never()).queryTask(anyString(), any());
     }
 
     @Test
@@ -114,7 +114,7 @@ class MediaGenTaskWorkerTest {
         MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.queryTask("cct-1")).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 null, 100L, null)); // 成功但无 video_url
 
         worker.poll();
@@ -132,6 +132,61 @@ class MediaGenTaskWorkerTest {
 
         verify(taskMapper, never()).selectById(anyLong());
         verify(arkProvider, never()).createTask(any());
+    }
+
+    // ---------- buildRequest（附件分支，ReflectionTestUtils 直调私有方法） ----------
+
+    @Test
+    void buildRequest_attachments_convertedToDataUriByKind() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        task.setProviderId(7L);
+        task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
+        task.setRequestConfig("{\"prompt\":\"p\",\"ratio\":\"16:9\",\"duration\":5,\"resolution\":\"720p\","
+                + "\"attachments\":[{\"fileId\":\"i1.png\",\"kind\":\"image\"},"
+                + "{\"fileId\":\"v1.mp4\",\"kind\":\"video\"},"
+                + "{\"fileId\":\"a1.mp3\",\"kind\":\"audio\"}]}");
+        when(mediaStorageService.readAsDataUri("i1.png", 100L, "image")).thenReturn("data:image/png;base64,I");
+        when(mediaStorageService.readAsDataUri("v1.mp4", 100L, "video")).thenReturn("data:video/mp4;base64,V");
+        when(mediaStorageService.readAsDataUri("a1.mp3", 100L, "audio")).thenReturn("data:audio/mpeg;base64,A");
+
+        com.superprogrammer.media.dto.MediaGenRequest req =
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task);
+
+        assert req != null;
+        org.junit.jupiter.api.Assertions.assertEquals(3, req.getAttachments().size());
+        org.junit.jupiter.api.Assertions.assertEquals("image", req.getAttachments().get(0).getKind());
+        org.junit.jupiter.api.Assertions.assertEquals("data:video/mp4;base64,V",
+                req.getAttachments().get(1).getDataUri());
+        org.junit.jupiter.api.Assertions.assertEquals("audio", req.getAttachments().get(2).getKind());
+        // providerId 透传（多 MEDIA provider 路由）；attachments 分支不走旧首帧
+        org.junit.jupiter.api.Assertions.assertEquals(7L, req.getProviderId());
+        org.junit.jupiter.api.Assertions.assertNull(req.getRefImageUrl());
+    }
+
+    @Test
+    void buildRequest_legacyRefFileId_stillResolves() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
+        task.setRequestConfig("{\"prompt\":\"p\",\"refFileId\":\"legacy.png\"}");
+        when(mediaStorageService.readAsDataUri("legacy.png", 100L)).thenReturn("data:image/png;base64,L");
+
+        com.superprogrammer.media.dto.MediaGenRequest req =
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task);
+
+        assert req != null;
+        org.junit.jupiter.api.Assertions.assertEquals("data:image/png;base64,L", req.getRefImageUrl());
+        org.junit.jupiter.api.Assertions.assertNull(req.getAttachments());
+    }
+
+    @Test
+    void buildRequest_attachmentReadFailure_throws() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        task.setRequestConfig("{\"prompt\":\"p\",\"attachments\":[{\"fileId\":\"big.mp4\",\"kind\":\"video\"}]}");
+        when(mediaStorageService.readAsDataUri("big.mp4", 100L, "video"))
+                .thenThrow(new IllegalStateException("参考视频过大（>50MB）"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task));
     }
 
     // ---------- helpers ----------

@@ -17,6 +17,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * 媒体产物存储（Step4）：Ark 临时 URL → 本地 stored_files。
@@ -35,6 +36,14 @@ public class MediaStorageService {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
     private static final long MAX_DATA_URI_BYTES = 8L * 1024 * 1024; // 参考图 ≤8MB（防超大图打爆 Ark）
+    /** 分类型 data URI 上限：图 8MB / 音频 15MB / 视频 50MB（base64 体积 ×4/3，官方参考视频上限 50MB）。
+     *  package-private：MediaGenTaskService 提交侧按 meta.size 预检复用同一上限表（单一真相）。 */
+    static final Map<String, Long> KIND_MAX_BYTES = Map.of(
+            "image", 8L * 1024 * 1024,
+            "audio", 15L * 1024 * 1024,
+            "video", 50L * 1024 * 1024);
+    private static final Map<String, String> KIND_LABEL = Map.of(
+            "image", "参考图", "audio", "参考音频", "video", "参考视频");
 
     private final FileStorageService fileStorageService;
     private final WebClient downloadClient = buildDownloadClient();
@@ -77,21 +86,36 @@ public class MediaStorageService {
      * worker 系统态读取（admin=true 旁路归属，文件归属已在提交/上传时校验）。
      */
     public String readAsDataUri(String fileId, Long userId) {
+        return readAsDataUri(fileId, userId, "image");
+    }
+
+    /**
+     * 多模态参考附件：stored_files.file_id → data URI（image_url / video_url / audio_url 入参）。
+     * 按类型分别限大小（图 8MB / 音频 15MB / 视频 50MB）。
+     * F2：先按落库 meta.size 预检再读流——超限文件不再全量进堆后才拒。
+     */
+    public String readAsDataUri(String fileId, Long userId, String kind) {
+        long maxBytes = KIND_MAX_BYTES.getOrDefault(kind, MAX_DATA_URI_BYTES);
+        String label = KIND_LABEL.getOrDefault(kind, "参考附件");
+        StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        if (meta != null && meta.getSize() != null && meta.getSize() > maxBytes) {
+            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST,
+                    label + "过大（>" + (maxBytes / 1024 / 1024) + "MB）");
+        }
         Resource resource = fileStorageService.load(fileId, userId, true);
         try (InputStream in = resource.getInputStream()) {
             byte[] bytes = in.readAllBytes();
-            if (bytes.length > MAX_DATA_URI_BYTES) {
+            if (bytes.length > maxBytes) { // meta.size 缺失时的兜底（不应到达）
                 throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST,
-                        "参考图过大（>8MB）");
+                        label + "过大（>" + (maxBytes / 1024 / 1024) + "MB）");
             }
-            StoredFileEntity meta = fileStorageService.findMeta(fileId);
             String mime = meta != null && meta.getMime() != null && !meta.getMime().isBlank()
-                    ? meta.getMime() : "image/png";
+                    ? meta.getMime() : ("image".equals(kind) ? "image/png" : "application/octet-stream");
             return "data:" + mime + ";base64," + Base64.getEncoder().encodeToString(bytes);
         } catch (BusinessException be) {
             throw be;
         } catch (Exception e) {
-            throw new IllegalStateException("读取参考图失败: " + rootMessage(e), e);
+            throw new IllegalStateException("读取" + label + "失败: " + rootMessage(e), e);
         }
     }
 

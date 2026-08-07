@@ -203,6 +203,8 @@ export interface SceneVO {
 export interface ScriptBreakdownVO {
   version: number
   scenes: SceneVO[]
+  /** 实际使用的拆分模型（后端 ScriptBreakdownVO.model，FR-006 回显所选模型） */
+  model?: string
 }
 
 // ---------- 分镜（S17-S19，5 字段流水线） ----------

@@ -25,10 +25,19 @@ import java.util.stream.Collectors;
 @Service
 public class LlmProviderService {
 
-    private static final String DEFAULT_CATEGORY = "CHAT";
-    private static final Set<String> CATEGORIES = Set.of("CHAT", "EMBEDDING", "CHAT_EMBEDDING", "MEDIA");
-    /** MEDIA = 视频/生图等任务型 provider，不参与 chat 路由/模型列表（视频代码按 name 单独取）。 */
-    public static final String CATEGORY_MEDIA = "MEDIA";
+    /** CHAT = 对话 provider，进 chat 路由/模型列表。 */
+    public static final String CATEGORY_CHAT = "CHAT";
+    /** EMBEDDING = 向量 provider，只走 embed 路由，不进 chat 模型列表。 */
+    public static final String CATEGORY_EMBEDDING = "EMBEDDING";
+    /** VIDEO = 视频生成等任务型 provider，不参与 chat 路由（媒体侧按 category 单独取）。 */
+    public static final String CATEGORY_VIDEO = "VIDEO";
+    /** IMAGE = 生图 provider（预留，画布 R-3 接入），不进 chat 路由/视频目录。 */
+    public static final String CATEGORY_IMAGE = "IMAGE";
+
+    private static final String DEFAULT_CATEGORY = CATEGORY_CHAT;
+    /** category 白名单四分（FR-002）；CHAT_EMBEDDING / MEDIA 已由 V60 迁移废弃。 */
+    private static final Set<String> CATEGORIES =
+            Set.of(CATEGORY_CHAT, CATEGORY_EMBEDDING, CATEGORY_VIDEO, CATEGORY_IMAGE);
 
     /** 规范化 category：合法原样返回，null/blank/非法 → CHAT（容错 warn 不抛 400）。 */
     private String normalizeCategory(String raw) {
@@ -132,6 +141,15 @@ public class LlmProviderService {
         return mapper.selectOne(wrapper);
     }
 
+    /** 按 id 取 provider（未软删）。媒体任务 worker 按任务落库的 providerId 路由用。 */
+    public LlmProviderEntity getById(Long id) {
+        if (id == null) {
+            return null;
+        }
+        LlmProviderEntity entity = mapper.selectById(id);
+        return entity != null && Integer.valueOf(0).equals(entity.getDeleted()) ? entity : null;
+    }
+
     public LlmProviderEntity getDefaultProvider() {
         List<LlmProviderEntity> active = listActive();
         return active.isEmpty() ? null : active.get(0);
@@ -164,6 +182,10 @@ public class LlmProviderService {
         if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
             return TestConnectionResult.fail("未配置API端点");
         }
+        // ANTHROPIC+EMBEDDING 组合不成立：Claude 无 embedding 接口，给明确话术而非上游 404。
+        if (isAnthropic(entity)) {
+            return TestConnectionResult.fail("Claude（ANTHROPIC 协议）不提供 embedding 接口，请改用 OPENAI_COMPATIBLE 协议的向量服务");
+        }
         try {
             LlmProviderInterface provider = llmConfig.createProvider(entity, getDecryptedApiKey(providerId));
             long start = System.currentTimeMillis();
@@ -189,6 +211,10 @@ public class LlmProviderService {
     }
 
     private TestConnectionResult doTestConnection(LlmProviderEntity entity, String apiKey) {
+        // FR-004 测试分流：IMAGE 是生图预留位，provider 未接入，点「测试」不发请求直接给话术。
+        if (CATEGORY_IMAGE.equalsIgnoreCase(entity.getCategory())) {
+            return TestConnectionResult.fail("生图（IMAGE）provider 尚未接入，配置已保存，待生图功能上线后开放测试");
+        }
         String model = pickFirstModel(entity);
         if (model == null) {
             return TestConnectionResult.fail("未配置模型列表");
@@ -212,6 +238,15 @@ public class LlmProviderService {
             log.warn("LLM连通测试失败 [provider={}]: {}", entity.getName(), e.getMessage());
             return TestConnectionResult.fail(extractRootMessage(e));
         }
+    }
+
+    /** 判定 ANTHROPIC 协议（显式 protocol 优先，缺省沿用 name=claude 推断，与 LlmConfig 口径一致）。 */
+    private boolean isAnthropic(LlmProviderEntity entity) {
+        String protocol = entity.getProtocol();
+        if (protocol != null && !protocol.isBlank()) {
+            return "ANTHROPIC".equalsIgnoreCase(protocol.trim());
+        }
+        return "claude".equals(entity.getName());
     }
 
     private String pickFirstModel(LlmProviderEntity entity) {
@@ -253,7 +288,7 @@ public class LlmProviderService {
                 .status(entity.getStatus())
                 .sortOrder(entity.getSortOrder())
                 .category(entity.getCategory())
-                .dim("EMBEDDING".equals(entity.getCategory()) ? activeEmbeddingDim : null)
+                .dim(CATEGORY_EMBEDDING.equals(entity.getCategory()) ? activeEmbeddingDim : null)
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();

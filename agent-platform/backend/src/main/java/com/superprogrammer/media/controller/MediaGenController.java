@@ -47,6 +47,8 @@ public class MediaGenController {
     private final MediaGenTaskService taskService;
     private final MediaGenQueryService queryService;
     private final FileStorageService fileStorageService;
+    private final com.superprogrammer.media.service.MediaModelService mediaModelService;
+    private final com.superprogrammer.media.provider.ArkSeedanceProvider arkSeedanceProvider;
 
     @PostMapping("/video")
     @RequirePermission("media:gen")
@@ -61,8 +63,30 @@ public class MediaGenController {
         Long taskId = taskService.submit(
                 request.getPrompt(), ratio, duration, resolution,
                 request.getWatermark(), request.getGenerateAudio(), taskType,
-                request.getRefFileId(), request.getModel(), getCurrentUserId());
+                request.getRefFileId(), request.getAttachments(),
+                request.getModel(), getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
+    }
+
+    /**
+     * 可选视频模型目录（含每模型能力画像：附件上限/比例/分辨率/时长）。
+     * 前端据此渲染模型下拉 + 动态附件上传区。
+     */
+    @GetMapping("/models")
+    @RequirePermission("media:gen")
+    public ResponseEntity<R<List<com.superprogrammer.media.dto.MediaModelVO>>> models() {
+        return ResponseEntity.ok(R.ok(mediaModelService.listModels()));
+    }
+
+    /**
+     * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
+     * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
+     * 权限与 /api/llm/providers 管理端点一致（role:manage），非 media:gen。
+     */
+    @PostMapping("/providers/{id}/test")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<com.superprogrammer.llm.dto.TestConnectionResult>> testMediaProvider(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(arkSeedanceProvider.testConnection(id)));
     }
 
     @GetMapping("/tasks/{id}")

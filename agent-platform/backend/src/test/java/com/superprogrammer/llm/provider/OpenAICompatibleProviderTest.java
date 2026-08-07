@@ -20,8 +20,9 @@ class OpenAICompatibleProviderTest {
     void setUp() throws IOException {
         server = new MockWebServer();
         server.start();
-        String baseUrl = server.url("").toString();
-        provider = new OpenAICompatibleProvider("test", baseUrl, "test-key", List.of("deepseek-chat"), mapper);
+        // FR-001：endpoint 即完整请求 URL，provider 零拼接直发
+        String endpoint = server.url("/v1/chat/completions").toString();
+        provider = new OpenAICompatibleProvider("test", endpoint, "test-key", List.of("deepseek-chat"), mapper);
     }
 
     @AfterEach
@@ -55,6 +56,25 @@ class OpenAICompatibleProviderTest {
         assertEquals(15, response.getUsage().getTotalTokens());
         assertEquals("deepseek-chat", response.getModel());
         assertNotNull(response.getDuration());
+        // FR-001：发出的请求路径 == 配置的 endpoint 原样（零拼接）
+        assertEquals("/v1/chat/completions", server.takeRequest().getPath());
+    }
+
+    @Test
+    void embed_shouldPostToExactEndpoint() throws Exception {
+        // EMBEDDING 行的 endpoint 即完整 embed URL（V60 补全 /embeddings）
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "emb", server.url("/v1/embeddings").toString(), "k", List.of("emb-1"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"data\":[{\"embedding\":[0.1,0.2,0.3]}]}")
+                .setHeader("Content-Type", "application/json"));
+
+        float[] vec = embedProvider.embed("hello", "emb-1");
+
+        assertEquals(3, vec.length);
+        assertEquals(0.1f, vec[0], 1e-6);
+        // FR-001：embed 也直发 endpoint 原样，不再 baseUrl+"/embeddings"
+        assertEquals("/v1/embeddings", server.takeRequest().getPath());
     }
 
     @Test

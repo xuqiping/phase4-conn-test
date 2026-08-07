@@ -1,11 +1,12 @@
 // ============================================================
-// 媒体生成模块 API（SeedDance 2.0 视频生成）
-// 对应后端 /api/media/** + /api/files/upload（图生视频参考图复用单一上传咽喉点）
-//   POST /api/media/video           → media:gen（提交，文生/图生）
+// 媒体生成模块 API（视频生成：文生 / 多模态参考生视频）
+// 对应后端 /api/media/** + /api/files/upload（参考附件复用单一上传咽喉点）
+//   POST /api/media/video           → media:gen（提交）
+//   GET  /api/media/models          → media:gen（可选模型目录 + 能力画像）
 //   GET  /api/media/tasks/{id}      → media:gen（轮询任务态）
 //   GET  /api/media/tasks           → media:gen（历史列表，ownership 过滤）
 //   GET  /api/media/tasks/{id}/download → media:gen（视频附件，需 auth header）
-//   POST /api/files/upload          → 登录用户（图生参考图，返 fileId）
+//   POST /api/files/upload          → 登录用户（参考图/视频/音频，返 fileId）
 // ============================================================
 
 import request from './request'
@@ -57,7 +58,39 @@ export interface MediaTaskVO {
   updatedAt: string | null
 }
 
-/** 提交请求（对应后端 MediaSubmitRequest；duration 4-15，ratio/resolution 白名单） */
+/** 参考附件类型（对齐后端 AttachmentRef.kind 白名单） */
+export type AttachmentKind = 'image' | 'video' | 'audio'
+
+/** 参考附件（先经 /api/files/upload 拿 fileId） */
+export interface AttachmentRef {
+  fileId: string
+  kind: AttachmentKind
+}
+
+/**
+ * 视频模型目录项（GET /api/media/models）。
+ * 前端按能力画像动态渲染表单：附件上传区（x/maxImages 等）、比例/分辨率/时长选项、生成音频开关。
+ */
+export interface MediaModelVO {
+  modelId: string
+  displayName: string
+  providerName: string
+  maxImages: number
+  maxVideos: number
+  maxAudios: number
+  /** 附件总数上限（图+视频+音频合计） */
+  maxAttachments: number
+  supportedRatios: MediaRatio[]
+  supportedResolutions: MediaResolution[]
+  minDuration: number
+  maxDuration: number
+  /** 是否支持「生成音频」开关 */
+  supportsGenerateAudio: boolean
+  /** 参考视频是否允许 data URI 直传（false → 前端隐藏视频上传区） */
+  videoDataUri: boolean
+}
+
+/** 提交请求（对应后端 MediaSubmitRequest；duration/ratio/resolution 按模型能力校验） */
 export interface MediaSubmitRequest {
   prompt: string
   /** 画面比例（官方 ratio），默认 16:9 */
@@ -69,9 +102,11 @@ export interface MediaSubmitRequest {
   /** 同步生成原生音频（2.0 特色），默认 false */
   generateAudio?: boolean
   taskType?: MediaTaskType
-  /** 图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填） */
+  /** 旧版单首帧参考图 file_id（与 attachments 互斥；画布连线沿用此通道） */
   refFileId?: string
-  /** Ark 模型 id（可选，默认取 doubao 首个模型） */
+  /** 多模态参考附件（图/视频/音频；上限按模型能力，如 SeedDance 2.0：9图/3视频/3音频/总≤12） */
+  attachments?: AttachmentRef[]
+  /** 视频模型 id（可选，默认取默认 provider 首个模型） */
   model?: string
 }
 
@@ -104,13 +139,18 @@ export const mediaApi = {
     return request.get<ApiResponse<MediaTaskVO[]>>('/media/tasks', { params: { limit } })
   },
 
-  /** POST /api/files/upload — multipart 上传图生视频参考图，返 fileId（登录用户） */
-  uploadRefImage(file: File) {
+  /** GET /api/media/models — 可选视频模型目录（含能力画像，media:gen） */
+  listModels() {
+    return request.get<ApiResponse<MediaModelVO[]>>('/media/models')
+  },
+
+  /** POST /api/files/upload — multipart 上传参考附件（图/视频/音频），返 fileId（登录用户） */
+  uploadAttachment(file: File) {
     const fd = new FormData()
     fd.append('file', file)
     return request.post<ApiResponse<StoredFileRef>>('/files/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 30000
+      timeout: 120000 // 参考视频最大 50MB，放宽上传超时
     })
   }
 }

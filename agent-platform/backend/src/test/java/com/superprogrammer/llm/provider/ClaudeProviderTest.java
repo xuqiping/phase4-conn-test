@@ -24,8 +24,9 @@ class ClaudeProviderTest {
     void setUp() throws IOException {
         server = new MockWebServer();
         server.start();
+        // FR-001：endpoint 即完整请求 URL（…/v1/messages），provider 零拼接直发
         provider = new ClaudeProvider(
-                server.url("").toString(),
+                server.url("/v1/messages").toString(),
                 "test-key",
                 List.of("k2.6"),
                 new ObjectMapper()
@@ -38,7 +39,7 @@ class ClaudeProviderTest {
     }
 
     @Test
-    void chatStream_shouldParseSseLinesInsideChunk() {
+    void chatStream_shouldParseSseLinesInsideChunk() throws Exception {
         server.enqueue(new MockResponse()
                 .setHeader("Content-Type", "text/event-stream")
                 .setBody("""
@@ -71,5 +72,7 @@ class ClaudeProviderTest {
                 .block();
 
         assertEquals(List.of("hello", "!"), chunks);
+        // FR-001：发出的请求路径 == 配置的 endpoint 原样（零拼接）
+        assertEquals("/v1/messages", server.takeRequest().getPath());
     }
 }

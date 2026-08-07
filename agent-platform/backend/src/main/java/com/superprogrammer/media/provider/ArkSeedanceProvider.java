@@ -26,14 +26,16 @@ import java.util.Map;
  *
  * <p>协议：异步任务型（建任务→轮询→取 video_url），与 chat/embed 同步协议完全不同。
  * <ul>
- *   <li>{@code POST {base}/contents/generations/tasks} 建任务，返 {@code id}（{@code cct-xxx}）。</li>
- *   <li>{@code GET  {base}/contents/generations/tasks/{id}} 查态，{@code status} ∈ queued/running/succeeded/failed。</li>
+ *   <li>{@code POST {endpoint}} 建任务，返 {@code id}（{@code cct-xxx}）。</li>
+ *   <li>{@code GET  {endpoint}/{id}} 查态，{@code status} ∈ queued/running/succeeded/failed。</li>
  * </ul>
  *
- * <p><b>base URL 可配</b>：直接取视频 provider 的 {@code apiEndpoint} 作 baseUrl（含版本段），
- * 不再硬编 {@code /api/v3}。官方 Ark 填 {@code https://ark.cn-beijing.volces.com/api/v3}，
- * 第三方网关（如 ctaigw）填 {@code https://ai.ctaigw.cn/v1}——两者只是 base 不同，路径统一
- * {@code /contents/generations/tasks}，其余参数与官方完全一致。
+ * <p><b>endpoint 即完整任务 URL</b>（V60 起，FR-001）：直接取视频 provider 的 {@code apiEndpoint}
+ * 原样作为建任务 POST 地址，运行时零拼接。官方 Ark 填
+ * {@code https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks}，
+ * 第三方网关（如 ctaigw）填 {@code https://ai.ctaigw.cn/v1/contents/generations/tasks}。
+ * <b>唯一保留的拼接</b>：查询/探测的 {@code /{taskId}}——这是 Ark 协议级资源路径
+ * （任务 id 是运行时才有的一次性资源定位符），非 base URL 拼接，不得删除。
  *
  * <p><b>provider 独立</b>：视频用专门 provider（默认 name={@code seedance}，由 {@code media.provider-name} 配），
  * 与 chat 的 doubao 解耦——各自 endpoint/key/model，互不影响。每次调用前解析
@@ -49,8 +51,8 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     public static final String ID = "ark-seedance";
 
-    /** 任务端点相对路径（拼在可配 base 之后；不再硬编 /api/v3，兼容 ctaigw /v1 等网关）。 */
-    private static final String TASKS_PATH = "/contents/generations/tasks";
+    /** 连通探测用的不存在任务 id（GET 查它不会建任务、不计费）。 */
+    private static final String PROBE_TASK_ID = "probe-connectivity-nonexistent";
 
     /** 连接/响应超时（与 OpenAICompatibleProvider 一致，杜绝无超时 .block() 钉死线程）。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -61,8 +63,13 @@ public class ArkSeedanceProvider implements MediaGenProvider {
     private final MediaGenProperties properties;
 
     /** 缓存的 WebClient + 其指纹（endpoint + 密文），key 轮换后下次调用重建。 */
-    private volatile WebClient cachedClient;
-    private volatile String cachedFingerprint;
+    /**
+     * WebClient 缓存（F5：单槽→小 map）。key=指纹（providerId|endpoint|密文），
+     * 多 VIDEO provider 交替任务不再每轮重建 HttpClient；key/URL 改后指纹变自动换槽。
+     * provider 行数十量级，map 无界增长风险忽略。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, WebClient> clientCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public String getId() {
@@ -71,11 +78,12 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     @Override
     public String createTask(MediaGenRequest request) {
-        ResolvedArk ark = resolveArk();
+        ResolvedArk ark = resolveArk(request.getProviderId());
         Map<String, Object> body = buildCreateBody(request);
         try {
+            // 全 URL 直发（FR-001）：endpoint 即任务端点完整 URL，原样 POST
             String resp = ark.client.post()
-                    .uri(TASKS_PATH)
+                    .uri(ark.endpoint)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
                     .retrieve()
@@ -94,11 +102,20 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     @Override
     public MediaGenResult queryTask(String providerTaskId) {
-        ResolvedArk ark = resolveArk();
+        return queryTask(providerTaskId, null);
+    }
+
+    /**
+     * 查任务（多 provider 路由版）：providerId 非空时按任务落库的 provider 查，
+     * 否则回退默认 provider（旧行为）。
+     */
+    public MediaGenResult queryTask(String providerTaskId, Long providerId) {
+        ResolvedArk ark = resolveArk(providerId);
         String resp;
         try {
+            // /{taskId} 是 Ark 协议级资源路径（一次性任务定位符），为唯一保留的拼接
             resp = ark.client.get()
-                    .uri(TASKS_PATH + "/" + providerTaskId)
+                    .uri(ark.endpoint + "/" + providerTaskId)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(RESPONSE_TIMEOUT);
@@ -110,12 +127,29 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     // ---------- 请求体构建 ----------
 
-    private Map<String, Object> buildCreateBody(MediaGenRequest request) {
+    /** 附件类型 → Ark content 项 type / role。 */
+    private static final Map<String, String> KIND_TYPE = Map.of(
+            "image", "image_url", "video", "video_url", "audio", "audio_url");
+    private static final Map<String, String> KIND_ROLE = Map.of(
+            "image", "reference_image", "video", "reference_video", "audio", "reference_audio");
+
+    /** package-private：单测直接验证 content 结构（roles / generate_audio 省略等）。 */
+    Map<String, Object> buildCreateBody(MediaGenRequest request) {
         List<Map<String, Object>> content = new ArrayList<>();
         content.add(Map.of("type", "text", "text", request.getPrompt() == null ? "" : request.getPrompt()));
-        if (MediaGenRequest.TYPE_IMAGE2VIDEO.equals(request.getTaskType()) && request.getRefImageUrl() != null
-                && !request.getRefImageUrl().isBlank()) {
-            // 首帧参考图（图生视频）
+        if (request.getAttachments() != null && !request.getAttachments().isEmpty()) {
+            // 多模态参考（SeedDance 2.0）：图/视频/音频按 role 标注，positional 引用（图1/视频1/音频1）
+            for (MediaGenRequest.ResolvedAttachment a : request.getAttachments()) {
+                String type = KIND_TYPE.getOrDefault(a.getKind(), "image_url");
+                String role = KIND_ROLE.getOrDefault(a.getKind(), "reference_image");
+                content.add(Map.of(
+                        "type", type,
+                        type, Map.of("url", a.getDataUri()),
+                        "role", role));
+            }
+        } else if (MediaGenRequest.TYPE_IMAGE2VIDEO.equals(request.getTaskType())
+                && request.getRefImageUrl() != null && !request.getRefImageUrl().isBlank()) {
+            // 旧版首帧参考图（图生视频，无 role = 首帧语义）
             content.add(Map.of("type", "image_url", "image_url", Map.of("url", request.getRefImageUrl())));
         }
         // 官方契约：顶层平铺（无 parameters 包裹）。ratio/duration/watermark 必传，
@@ -188,6 +222,8 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             case "success":
                 return MediaGenResult.STATUS_SUCCEEDED;
             case "failed":
+            case "cancelled":   // F4：Ark 官方终态，原落 default→RUNNING 死轮询满超时，真实原因被吞
+            case "expired":
                 return MediaGenResult.STATUS_FAILED;
             case "queued":
                 return MediaGenResult.STATUS_PENDING;
@@ -197,43 +233,137 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         }
     }
 
+    // ---------- 连通性探测（VIDEO provider 测试按钮用） ----------
+
+    /**
+     * VIDEO provider 连通性探测（零成本，不建任务不计费）。
+     *
+     * <p>背景：VIDEO（视频）是任务型协议，{@code /chat/completions} 探测必然失败；
+     * 又不能为测试真建一个视频任务（计费）。故用 {@code GET 任务端点/不存在id} 探测：
+     * <ul>
+     *   <li>401/403 → Key 无效或无权限；</li>
+     *   <li>2xx/400/404 → 鉴权通过、任务端点可达，判定成功（404/400 是"任务不存在/参数非法"的正常业务响应）；</li>
+     *   <li>其余状态/网络异常 → 失败，附状态码与截断 body。</li>
+     * </ul>
+     * 独立建 WebClient（不走缓存），保证测的是表单里当前保存的 endpoint/key。
+     */
+    public com.superprogrammer.llm.dto.TestConnectionResult testConnection(Long providerId) {
+        LlmProviderEntity entity = llmProviderService.getById(providerId);
+        if (entity == null) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail("供应商不存在或已删除");
+        }
+        // F6：探测是 Ark 任务型协议专用，非 VIDEO provider（如 CHAT）测了会得到误导性判定
+        if (!com.superprogrammer.llm.service.LlmProviderService.CATEGORY_VIDEO.equalsIgnoreCase(entity.getCategory())) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail(
+                    "该供应商不是 VIDEO 类（当前 " + entity.getCategory() + "），请用对应类型的测试入口");
+        }
+        if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail("未配置API端点");
+        }
+        String apiKey = llmProviderService.getDecryptedApiKey(entity.getId());
+        if (apiKey == null || apiKey.isBlank()) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail("未配置 API Key");
+        }
+        String endpoint = entity.getApiEndpoint().replaceAll("/+$", "");
+        WebClient client = buildClient(apiKey);
+        long start = System.currentTimeMillis();
+        try {
+            // /{taskId} 是 Ark 协议级资源路径，唯一保留的拼接
+            ProbeResponse pr = client.get()
+                    .uri(endpoint + "/" + PROBE_TASK_ID)
+                    .exchangeToMono(resp -> resp.bodyToMono(String.class).defaultIfEmpty("")
+                            .map(body -> new ProbeResponse(resp.statusCode().value(), body)))
+                    .block(RESPONSE_TIMEOUT);
+            long duration = System.currentTimeMillis() - start;
+            int status = pr != null ? pr.status() : -1;
+            String body = pr != null ? pr.body() : "";
+            return interpretProbe(status, body, duration, firstModel(entity));
+        } catch (Exception e) {
+            log.warn("VIDEO 连通探测失败 [provider={}]: {}", entity.getName(), e.getMessage());
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail(rootMessage(e));
+        }
+    }
+
+    /** 探测响应判定（package-private 单测直测）。model 仅用于结果展示，可为 null。 */
+    static com.superprogrammer.llm.dto.TestConnectionResult interpretProbe(
+            int status, String body, long durationMs, String model) {
+        if (status == 401 || status == 403) {
+            return com.superprogrammer.llm.dto.TestConnectionResult.fail(
+                    "API Key 无效或无权限 (HTTP " + status + ")");
+        }
+        if ((status >= 200 && status < 300) || status == 400 || status == 404) {
+            // 400/404 = 请求带有效鉴权到达后端，仅业务层拒绝（任务不存在/参数非法）→ 连通性 OK
+            return com.superprogrammer.llm.dto.TestConnectionResult.builder()
+                    .success(true)
+                    .message("连接成功（任务端点可达，鉴权通过）")
+                    .model(model)
+                    .durationMs(durationMs)
+                    .build();
+        }
+        return com.superprogrammer.llm.dto.TestConnectionResult.fail(
+                "HTTP " + status + ": " + truncate(body, 200));
+    }
+
+    /** 取模型列表第一个（探测结果展示用，解析失败返回 null 不影响判定）。 */
+    private String firstModel(LlmProviderEntity entity) {
+        if (entity.getModels() == null || entity.getModels().isBlank()) return null;
+        try {
+            List<String> models = objectMapper.readValue(entity.getModels(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+            return models.isEmpty() ? null : models.get(0);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 探测响应（状态码 + body）。 */
+    private record ProbeResponse(int status, String body) {}
+
     // ---------- 视频 provider 解析 + WebClient 缓存 ----------
 
-    /** 解析视频 provider（endpoint + 解密 key），按指纹复用/重建 WebClient。 */
-    private ResolvedArk resolveArk() {
-        String providerName = properties.getProviderName();
-        LlmProviderEntity provider = llmProviderService.getByName(providerName);
-        if (provider == null) {
-            throw new IllegalStateException("未找到视频 provider(name=" + providerName
-                    + ")，无法生成视频（请先在「全局模型供应商」建一条 name=" + providerName
-                    + " 的 provider，配 endpoint/key/视频模型）");
+    /**
+     * 解析视频 provider（多 provider 路由版）。
+     * providerId 非空 → 按任务落库的 provider 直连（多 VIDEO provider 并存时各走各的 endpoint/key）；
+     * 为空 → 回退 media.provider-name 默认 provider（旧行为）。
+     */
+    private ResolvedArk resolveArk(Long providerId) {
+        LlmProviderEntity provider;
+        String label;
+        if (providerId != null) {
+            provider = llmProviderService.getById(providerId);
+            label = "id=" + providerId;
+            if (provider == null) {
+                throw new IllegalStateException("视频 provider 已停用或删除（id=" + providerId + "），任务无法续跑");
+            }
+        } else {
+            String providerName = properties.getProviderName();
+            provider = llmProviderService.getByName(providerName);
+            label = "name=" + providerName;
+            if (provider == null) {
+                throw new IllegalStateException("未找到视频 provider(name=" + providerName
+                        + ")，无法生成视频（请先在「全局模型供应商」建一条 name=" + providerName
+                        + " 的 provider，配 endpoint/key/视频模型）");
+            }
         }
         if (provider.getApiEndpoint() == null || provider.getApiEndpoint().isBlank()) {
-            throw new IllegalStateException("视频 provider(name=" + providerName + ") 未配置 API 端点");
+            throw new IllegalStateException("视频 provider(" + label + ") 未配置 API 端点");
         }
         String apiKey = llmProviderService.getDecryptedApiKey(provider.getId());
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("视频 provider(name=" + providerName + ") 未配置 API Key");
+            throw new IllegalStateException("视频 provider(" + label + ") 未配置 API Key");
         }
-        String fingerprint = provider.getApiEndpoint() + "|" + provider.getApiKeyEnc();
-        WebClient client = cachedClient;
-        if (client == null || !fingerprint.equals(cachedFingerprint)) {
-            client = buildClient(provider.getApiEndpoint(), apiKey);
-            cachedClient = client;
-            cachedFingerprint = fingerprint;
-        }
-        return new ResolvedArk(client);
+        String fingerprint = provider.getId() + "|" + provider.getApiEndpoint() + "|" + provider.getApiKeyEnc();
+        WebClient client = clientCache.computeIfAbsent(fingerprint, k -> buildClient(apiKey));
+        // endpoint 剥尾随斜杠后原样作任务端点完整 URL（FR-001）
+        return new ResolvedArk(client, provider.getApiEndpoint().replaceAll("/+$", ""));
     }
 
-    private WebClient buildClient(String rawEndpoint, String apiKey) {
-        // baseUrl 直接用视频 provider 配的 endpoint（含版本段，如 /api/v3 或 /v1），
-        // 只剥尾随斜杠。调用处拼相对路径 /contents/generations/tasks，兼容官方/网关。
-        String base = rawEndpoint.replaceAll("/+$", "");
+    private WebClient buildClient(String apiKey) {
+        // 不设 baseUrl：endpoint 已是完整任务 URL，每次请求绝对地址直发（FR-001）。
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
                 .responseTimeout(RESPONSE_TIMEOUT);
         return WebClient.builder()
-                .baseUrl(base)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
@@ -252,6 +382,6 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         return m == null ? c.getClass().getSimpleName() : truncate(m, 200);
     }
 
-    /** 解析后的 Ark 调用上下文（仅 WebClient，key 已注入 header）。 */
-    private record ResolvedArk(WebClient client) {}
+    /** 解析后的 Ark 调用上下文（WebClient + 任务端点完整 URL，key 已注入 header）。 */
+    private record ResolvedArk(WebClient client, String endpoint) {}
 }
