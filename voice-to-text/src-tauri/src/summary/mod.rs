@@ -9,6 +9,7 @@
 pub mod cloud_api;
 pub mod map_reduce;
 pub mod prompt;
+pub mod render;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

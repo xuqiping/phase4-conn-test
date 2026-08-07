@@ -561,6 +561,31 @@ async fn regenerate_summary(
     .map_err(|e| format!("regenerate task join: {e}"))?
 }
 
+// ---- Render & export (plan Step 9 / FR-108) ----
+//
+// 纯本地读草稿 + 写 exports/，无网络请求，不需要 spawn_blocking。
+
+/// 时间轴章节结构（章节 → 要点[时间戳] + 课件帧引用），供前端 Study.vue 消费。
+#[tauri::command]
+fn get_timeline(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<summary::render::Timeline, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    summary::render::build_timeline(&dir)
+}
+
+/// 导出 Markdown 到 session_dir/exports/summary.md，返回文件完整路径。
+#[tauri::command]
+fn export_markdown(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<String, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    summary::render::export_markdown(&dir, &session_id)
+        .map(|p| p.to_string_lossy().replace("\\\\?\\", ""))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -593,7 +618,9 @@ pub fn run() {
             clear_summary_api_key,
             test_summary_connection,
             summarize,
-            regenerate_summary
+            regenerate_summary,
+            get_timeline,
+            export_markdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
