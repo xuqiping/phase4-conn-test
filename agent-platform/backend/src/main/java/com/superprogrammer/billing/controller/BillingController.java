@@ -1,0 +1,107 @@
+package com.superprogrammer.billing.controller;
+
+import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.billing.dto.DailyTrendVO;
+import com.superprogrammer.billing.dto.UsageDimensionVO;
+import com.superprogrammer.billing.dto.UsageOverviewVO;
+import com.superprogrammer.billing.dto.UserUsageVO;
+import com.superprogrammer.billing.dto.UserWalletVO;
+import com.superprogrammer.billing.service.BillingQueryService;
+import com.superprogrammer.common.result.R;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+
+/**
+ * 账单/钱包查询（Chunk I Step16）。
+ *
+ * <p>分权两段：
+ * <ul>
+ *   <li><b>admin</b>（{@code /api/billing/admin/*}）：{@code @RequirePermission("usage:view")}，见真 token/¥/积分 +
+ *       用户/模型/kind 排行 + 日趋势。</li>
+ *   <li><b>user</b>（{@code /api/billing/me/*}）：ownership 强制——userId 取自 SecurityContext（不接外部入参），
+ *       VO 刻意不含 token/¥（spec §3 用户侧不暴露）。</li>
+ * </ul>
+ * <p>日期 from/to 均 optional（ISO_OFFSET_DATE_TIME）；service 层兜底默认窗 30 天 + 超 365 天 clamp。
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/billing")
+@RequiredArgsConstructor
+public class BillingController {
+
+    private final BillingQueryService queryService;
+
+    // ---------- admin（usage:view） ----------
+
+    @GetMapping("/admin/overview")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<UsageOverviewVO>> overview(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.overview(from, to)));
+    }
+
+    @GetMapping("/admin/by-user")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<UsageDimensionVO>>> byUser(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(R.ok(queryService.rankByUser(from, to, limit)));
+    }
+
+    @GetMapping("/admin/by-model")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<UsageDimensionVO>>> byModel(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(R.ok(queryService.rankByModel(from, to, limit)));
+    }
+
+    @GetMapping("/admin/by-kind")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<UsageDimensionVO>>> byKind(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.rankByKind(from, to)));
+    }
+
+    @GetMapping("/admin/trend")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<DailyTrendVO>>> trend(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.dailyTrend(from, to)));
+    }
+
+    // ---------- user（ownership = current userId，无外部旁路） ----------
+
+    @GetMapping("/me/wallet")
+    public ResponseEntity<R<UserWalletVO>> myWallet() {
+        return ResponseEntity.ok(R.ok(queryService.userWallet(currentUserId())));
+    }
+
+    @GetMapping("/me/usage")
+    public ResponseEntity<R<List<UserUsageVO>>> myUsage(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.userUsage(currentUserId(), from, to)));
+    }
+
+    private Long currentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth == null || auth.getPrincipal() == null ? null : (Long) auth.getPrincipal();
+    }
+}

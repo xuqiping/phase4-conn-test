@@ -17,4 +17,98 @@
         </foreach>
     </insert>
 
+    <!-- ============ Chunk I 聚合查询（GROUP BY 一次查，禁 per-user 循环；列名 underscore→camel 自动映射） ============ -->
+
+    <!-- 期内总量。COALESCE 兜 0（无数据返非 null）。from/to 可空（=不限界）。 -->
+    <select id="sumTotals" resultType="com.superprogrammer.billing.dto.UsageOverviewVO">
+        SELECT
+            COALESCE(SUM(tokens_input), 0)  AS total_tokens_input,
+            COALESCE(SUM(tokens_output), 0) AS total_tokens_output,
+            COALESCE(SUM(cost_yuan), 0)     AS total_cost_yuan,
+            COALESCE(SUM(points_consumed), 0) AS total_points,
+            COUNT(*)                        AS call_count
+        FROM llm_usage_logs
+        <where>
+            <if test="from != null">created_at &gt;= #{from}</if>
+            <if test="to != null">AND created_at &lt; #{to}</if>
+        </where>
+    </select>
+
+    <!-- 通用维度聚合片段：dim 为分组表达式别名 dimension_key。 -->
+    <sql id="dimCols">
+        ${dim} AS dimension_key,
+        COALESCE(SUM(tokens_input), 0)  AS tokens_input,
+        COALESCE(SUM(tokens_output), 0) AS tokens_output,
+        COALESCE(SUM(cost_yuan), 0)     AS cost_yuan,
+        COALESCE(SUM(points_consumed), 0) AS points,
+        COUNT(*)                        AS call_count
+    </sql>
+
+    <select id="groupByUser" resultType="com.superprogrammer.billing.dto.UsageDimensionVO">
+        SELECT <include refid="dimCols"><property name="dim" value="CAST(user_id AS TEXT)"/></include>
+        FROM llm_usage_logs
+        <where>
+            <if test="from != null">created_at &gt;= #{from}</if>
+            <if test="to != null">AND created_at &lt; #{to}</if>
+        </where>
+        GROUP BY user_id
+        ORDER BY points DESC NULLS LAST
+        LIMIT #{limit}
+    </select>
+
+    <select id="groupByModel" resultType="com.superprogrammer.billing.dto.UsageDimensionVO">
+        SELECT <include refid="dimCols"><property name="dim" value="model"/></include>
+        FROM llm_usage_logs
+        <where>
+            <if test="from != null">created_at &gt;= #{from}</if>
+            <if test="to != null">AND created_at &lt; #{to}</if>
+        </where>
+        GROUP BY model
+        ORDER BY points DESC NULLS LAST
+        LIMIT #{limit}
+    </select>
+
+    <select id="groupByKind" resultType="com.superprogrammer.billing.dto.UsageDimensionVO">
+        SELECT <include refid="dimCols"><property name="dim" value="kind"/></include>
+        FROM llm_usage_logs
+        <where>
+            <if test="from != null">created_at &gt;= #{from}</if>
+            <if test="to != null">AND created_at &lt; #{to}</if>
+        </where>
+        GROUP BY kind
+        ORDER BY points DESC NULLS LAST
+    </select>
+
+    <!-- 按日趋势。to_char 取 'YYYY-MM-DD'（服务器时区）；按日升序便于折线绘制。 -->
+    <select id="dailyTrend" resultType="com.superprogrammer.billing.dto.DailyTrendVO">
+        SELECT
+            to_char(created_at, 'YYYY-MM-DD') AS day,
+            COALESCE(SUM(cost_yuan), 0)     AS cost_yuan,
+            COALESCE(SUM(points_consumed), 0) AS points,
+            COUNT(*)                        AS call_count
+        FROM llm_usage_logs
+        <where>
+            <if test="from != null">created_at &gt;= #{from}</if>
+            <if test="to != null">AND created_at &lt; #{to}</if>
+        </where>
+        GROUP BY day
+        ORDER BY day ASC
+    </select>
+
+    <!-- 用户积分明细：刻意不 SELECT tokens_input/tokens_output/cost_yuan（用户侧不暴露 token/¥）。 -->
+    <select id="listForUser" resultType="com.superprogrammer.billing.dto.UserUsageVO">
+        SELECT
+            created_at,
+            model,
+            kind,
+            points_consumed,
+            status
+        FROM llm_usage_logs
+        WHERE user_id = #{userId}
+        <if test="from != null">AND created_at &gt;= #{from}</if>
+        <if test="to != null">AND created_at &lt; #{to}</if>
+        ORDER BY created_at DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>
