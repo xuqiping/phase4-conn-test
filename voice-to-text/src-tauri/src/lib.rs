@@ -1,5 +1,6 @@
 mod align;
 mod audio;
+mod feature_flags;
 mod ocr;
 mod screen;
 mod session;
@@ -134,6 +135,33 @@ fn get_recording_status(state: tauri::State<'_, AppState>) -> bool {
 
 // ---- Session management (网课录屏总结, plan Step 1 / FR-103) ----
 
+// ---- Feature flag (plan Step 12 / 运维开关) ----
+
+/// 前端启动时拉取，决定「网课总结」Tab 显隐。每次调用实时读配置，
+/// 运维改完 feature_flags.json / 环境变量后重启应用即生效。
+#[tauri::command]
+fn get_feature_flags(app: tauri::AppHandle) -> feature_flags::FeatureFlags {
+    match summary_config_dir(&app) {
+        Ok(dir) => feature_flags::effective_flags(&dir),
+        Err(_) => feature_flags::env_only_flags(),
+    }
+}
+
+/// 录制入口的服务端兜底校验：即使前端被绕过，关停状态下也拒绝开新会话。
+fn ensure_course_summary_enabled(app: &tauri::AppHandle) -> Result<(), String> {
+    let flags = match summary_config_dir(app) {
+        Ok(dir) => feature_flags::effective_flags(&dir),
+        Err(_) => feature_flags::env_only_flags(),
+    };
+    if flags.course_summary {
+        Ok(())
+    } else {
+        log::warn!("[feature] start_capture_session 被拒绝：course_summary 开关已关停");
+        Err("网课总结功能已被运维开关关闭（feature flag: course_summary=off）".into())
+    }
+}
+
+
 #[tauri::command]
 fn create_session(manager: tauri::State<'_, SessionManager>) -> Result<SessionInfo, String> {
     manager.create_session().map_err(|e| e.to_string())
@@ -242,6 +270,9 @@ async fn start_capture_session(
     if guard.is_some() {
         return Err("capture session already started".to_string());
     }
+
+    // Step 12 运维开关：功能关停时拒绝开新录制（服务端兜底，不依赖前端隐藏）。
+    ensure_course_summary_enabled(&app_handle)?;
 
     // 安全 + 状态校验：session 必须存在且不在录制中。
     let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
@@ -683,6 +714,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             get_recording_status,
+            get_feature_flags,
             create_session,
             list_sessions,
             get_session_status,

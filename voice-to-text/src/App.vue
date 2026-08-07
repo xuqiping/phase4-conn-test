@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import Controls from './components/Controls.vue'
 import Transcription from './components/Transcription.vue'
 import Recorder from './components/Recorder.vue'
@@ -11,6 +12,21 @@ import { useSessionStore } from './stores/session'
 
 // Step 10: 功能入口 feature flag —— 纯录音转文字（默认）与网课录屏总结并存。
 const mode = ref<'transcribe' | 'course'>('transcribe')
+
+// Step 12: 运维开关 —— 后端 feature_flags.json / 环境变量可关停「网课总结」入口，
+// 出线上问题不必回滚发版。拉取失败按默认开处理，不阻塞主功能。
+const courseEnabled = ref(true)
+onMounted(async () => {
+  try {
+    const flags = await invoke<{ course_summary: boolean }>('get_feature_flags')
+    courseEnabled.value = flags.course_summary
+    if (!flags.course_summary && mode.value === 'course') {
+      mode.value = 'transcribe'
+    }
+  } catch {
+    /* 默认开 */
+  }
+})
 
 // Step 11: 三区串联 —— 录制(Recorder) → 处理(Processing) → 学习(Study + SummaryPanel)。
 const session = useSessionStore()
@@ -31,6 +47,7 @@ const selectedChapter = ref(0)
           实时转写
         </button>
         <button
+          v-if="courseEnabled"
           class="tab"
           :class="{ active: mode === 'course' }"
           :aria-pressed="mode === 'course'"
@@ -48,7 +65,7 @@ const selectedChapter = ref(0)
         <Controls />
       </footer>
     </template>
-    <template v-else>
+    <template v-else-if="courseEnabled">
       <main class="main main-course">
         <Recorder />
         <Processing v-if="session.phase === 'processing'" />
