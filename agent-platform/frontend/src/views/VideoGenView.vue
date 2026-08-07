@@ -33,15 +33,17 @@
           </n-form-item>
 
           <n-form-item label="提示词">
-            <n-input
-              v-model:value="form.prompt"
-              type="textarea"
-              :rows="4"
+            <MentionTextarea
+              v-model="form.prompt"
+              :candidates="attachmentCandidates"
+              :broken-mentions="brokenAttachmentMentions"
+              :kind-labels="ATTACH_KIND_LABELS"
+              empty-hint="无附件可引用（先上传或从资产库选参考素材）"
               :maxlength="8000"
-              show-count
+              :rows="4"
               :placeholder="hasAnyAttachment
-                ? '描述如何运用参考素材，如：以图1为产品参考，视频1为运镜参考，音频1作背景音乐…'
-                : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和'"
+                ? '描述如何运用参考素材；输入 @ 引用图1/视频1/音频1，如：以 @图1 为产品参考…'
+                : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和（输入 @ 可引用参考附件）'"
             />
           </n-form-item>
 
@@ -285,11 +287,12 @@
 <script setup lang="ts">
 import { h, computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
-  NButton, NCard, NDataTable, NEmpty, NForm, NFormItem, NInput,
+  NButton, NCard, NDataTable, NEmpty, NForm, NFormItem,
   NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
 import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions, UploadFileInfo } from 'naive-ui'
+import MentionTextarea from '@/components/canvas/MentionTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
@@ -301,7 +304,9 @@ import {
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
+import type { MentionCandidate } from '@/types/canvas'
 import { fetchFilePreview } from '@/api/file'
+import { interpolateAttachmentPrompt } from '@/utils/attachmentMention'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -427,6 +432,34 @@ const KIND_LABEL: Record<AttachmentKind, string> = { image: '参考图', video: 
 
 const totalAttachments = computed(() => images.value.length + videos.value.length + audios.value.length)
 const hasAnyAttachment = computed(() => totalAttachments.value > 0)
+
+// === H（4.5）：提示词 @ 引用本会话附件（图1/视频1/音频1），对齐无限画布 @ 体验 ===
+// chip/候选 kind→短标签（图/视频/音频）；提交时 @{{image:<id>}} 序号化为「图N」给 Ark。
+const ATTACH_KIND_LABELS: Record<AttachmentKind, string> = { image: '图', video: '视频', audio: '音频' }
+
+/**
+ * @ 候选 = 本会话已添加附件（上传 + 资产库选）。
+ * id 用附件稳定 uuid（重排/删除不断链）；label 用当前列表序号「图N/视频N/音频N」（重排后跟随）。
+ */
+const attachmentCandidates = computed<MentionCandidate[]>(() => {
+  const out: MentionCandidate[] = []
+  images.value.forEach((a, i) => out.push({ kind: 'image', id: a.id, label: `图${i + 1}` }))
+  videos.value.forEach((a, i) => out.push({ kind: 'video', id: a.id, label: `视频${i + 1}` }))
+  audios.value.forEach((a, i) => out.push({ kind: 'audio', id: a.id, label: `音频${i + 1}` }))
+  return out
+})
+
+/** 断链 @（引用了已被删除/不存在的附件）→ mirror 染黄提醒，与画布断链语义同源。 */
+const brokenAttachmentMentions = computed<string[]>(() => {
+  const present = new Set(attachmentCandidates.value.map(c => `@{{${c.kind}:${c.id}}}`))
+  const out: string[] = []
+  const re = /@\{\{(image|video|audio):([^}]+)\}\}/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(form.prompt)) !== null) {
+    if (!present.has(m[0])) out.push(m[0])
+  }
+  return out
+})
 
 function kindList(kind: AttachmentKind) {
   return kind === 'image' ? images : kind === 'video' ? videos : audios
@@ -568,7 +601,7 @@ async function onSubmit() {
   submitting.value = true
   try {
     const { data } = await mediaApi.submitVideo({
-      prompt: form.prompt.trim(),
+      prompt: interpolateAttachmentPrompt(form.prompt.trim(), images.value, videos.value, audios.value),
       ratio: form.ratio,
       duration: form.duration,
       resolution: form.resolution,

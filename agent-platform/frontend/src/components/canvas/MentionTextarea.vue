@@ -21,11 +21,13 @@
       :placeholder="placeholder"
       :disabled="disabled"
       :rows="rows"
+      :maxlength="maxlength"
       @input="onInput"
       @keydown="onKeydown"
       @blur="onBlur"
       @scroll="onTaScroll"
     />
+    <span v-if="maxlength" class="mention-ta__count">{{ modelValue.length }}/{{ maxlength }}</span>
     <div v-if="open && filtered.length" class="mention-ta__popover">
       <div class="mention-ta__hint">@ 引用祖先节点（拓扑保证其先跑）</div>
       <button
@@ -37,12 +39,12 @@
         @mousedown.prevent="selectCandidate(c)"
         @mouseenter="activeIndex = i"
       >
-        <span class="mention-ta__kind">{{ c.kind === 'node' ? '节点' : '资产' }}</span>
+        <span class="mention-ta__kind">{{ kindLabels[c.kind] ?? c.kind }}</span>
         <span class="mention-ta__label">{{ c.label }}</span>
       </button>
     </div>
     <div v-else-if="open && !filtered.length" class="mention-ta__popover">
-      <div class="mention-ta__empty">无可引用祖先节点（无连线可达 / 画布成环）</div>
+      <div class="mention-ta__empty">{{ emptyHint }}</div>
     </div>
   </div>
 </template>
@@ -52,17 +54,25 @@ import { computed, nextTick, ref } from 'vue'
 import type { MentionCandidate } from '@/types/canvas'
 
 const props = withDefaults(defineProps<{
-  /** 文本（含 `@{{node:id}}` 占位符，v-model 双向）。 */
+  /** 文本（含 `@{{kind:id}}` 占位符，v-model 双向）。 */
   modelValue: string
-  /** @选择器候选（祖先节点；设计 §十三硬约束）。 */
+  /** @选择器候选（画布=祖先节点/资产；视频页=会话附件。设计 §十三硬约束仅对画布生效）。 */
   candidates: MentionCandidate[]
   /** C4：已断链的占位符原文集合（上游被删/断连），mirror 里这些 chip 染黄色；父组件用 findBrokenMentions 算好传入。 */
   brokenMentions?: string[]
+  /** chip/候选行里 kind→中文标签（默认画布 node/asset；视频页传 image/video/audio）。未知 kind 回退显 kind 本体。 */
+  kindLabels?: Record<string, string>
+  /** 无候选时的空态文案（默认画布「无祖先节点」；视频页传「无附件」类）。 */
+  emptyHint?: string
+  /** 字符上限（透传 textarea maxlength 硬截断 + 显计数器；不传则不限不计数）。 */
+  maxlength?: number
   placeholder?: string
   rows?: number
   disabled?: boolean
 }>(), {
   brokenMentions: () => [],
+  kindLabels: () => ({ node: '节点', asset: '资产' }),
+  emptyHint: '无可引用祖先节点（无连线可达 / 画布成环）',
   placeholder: '',
   rows: 4,
   disabled: false
@@ -96,7 +106,8 @@ const filtered = computed<MentionCandidate[]>(() => {
  * 占位符段按 brokenMentions 标黄（断链），其余标蓝（正常引用）。
  * 用本地正则带 index 精确切分（parseMentions 不返 index，故此处不复用）。
  */
-const MENTION_RE_LOCAL = /@\{\{(node|asset):([^}]+)\}\}/g
+// 占位符正则：@{{<kind>:<id>}}，kind 为任意单词（画布 node/asset；视频页 image/video/audio）。
+const MENTION_RE_LOCAL = /@\{\{(\w+):([^}]+)\}\}/g
 type Segment = { type: 'text'; value: string } | { type: 'mention'; raw: string; broken: boolean }
 const segments = computed<Segment[]>(() => {
   const text = props.modelValue
@@ -270,6 +281,16 @@ defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor })
 
     &:focus { border-color: var(--color-primary); }
     &:disabled { opacity: 0.6; cursor: not-allowed; }
+  }
+
+  &__count {
+    position: absolute;
+    right: var(--spacing-1);
+    bottom: 0;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    pointer-events: none;
+    line-height: 1.6;
   }
 
   &__popover {

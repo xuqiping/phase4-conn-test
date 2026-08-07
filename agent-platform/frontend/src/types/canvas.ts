@@ -38,11 +38,12 @@ export interface StoryboardSegment {
  * label 服务于人脑消歧，占位符本体存 id（重命名不断链，L8）。
  */
 export interface MentionCandidate {
-  /** 占位符种类：node=祖先节点 / asset=资产库资产（设计 §十三，资产不受祖先链约束）。 */
-  kind: 'node' | 'asset'
-  /** node→节点 id / asset→资产 id（占位符本体，重命名不断链）。 */
+  /** 占位符种类：node=祖先节点 / asset=资产库资产（设计 §十三，资产不受祖先链约束）；
+   *  image/video/audio=视频生成页会话附件引用（H，序号化插值，非画布祖先链）。 */
+  kind: 'node' | 'asset' | 'image' | 'video' | 'audio'
+  /** node→节点 id / asset→资产 id / image|video|audio→会话附件稳定 id（占位符本体，重命名/重排不断链）。 */
   id: string
-  /** 显示名（节点 label / 资产名；重命名后选择器即时跟随，占位符不变）。 */
+  /** 显示名（节点 label / 资产名 / 附件序号名；重命名或重排后选择器即时跟随，占位符不变）。 */
   label: string
 }
 
