@@ -74,6 +74,10 @@ export const useSessionStore = defineStore('session', () => {
   const sessionId = ref('')
   const windows = ref<WindowInfo[]>([])
   const selectedHwnd = ref<number | null>(null)
+  // 声音来源：'' = 系统默认麦克风；选 "[系统音频] ..." 项 = WASAPI loopback 内录。
+  // （2026-08-08 缺陷修复：此前写死 null → 永远录默认麦克风，戴耳机看课时收不到声音）
+  const audioDevices = ref<string[]>([])
+  const selectedAudioDevice = ref('')
   const entries = ref<TranscriptEntry[]>([])
   const partial = ref('')
   const errorMessage = ref('')
@@ -242,6 +246,15 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /** 枚举声音来源（麦克风 + [系统音频] loopback 内录设备）。 */
+  async function refreshAudioDevices() {
+    try {
+      audioDevices.value = await invoke<string[]>('list_audio_devices')
+    } catch (e) {
+      errorMessage.value = `枚举音频设备失败: ${e}`
+    }
+  }
+
   function selectWindow(hwnd: number | null) {
     selectedHwnd.value = hwnd
     if (phase.value === 'idle' || phase.value === 'source-selected') {
@@ -264,7 +277,7 @@ export const useSessionStore = defineStore('session', () => {
       await invoke('start_capture_session', {
         sessionId: sessionId.value,
         hwnd: selectedHwnd.value,
-        audioDevice: null,
+        audioDevice: selectedAudioDevice.value || null,
       })
       stopListen = await listen<TranscriptionEvent>('transcription', (e) => {
         const p = e.payload
@@ -337,12 +350,15 @@ export const useSessionStore = defineStore('session', () => {
     sessionId,
     windows,
     selectedHwnd,
+    audioDevices,
+    selectedAudioDevice,
     entries,
     partial,
     errorMessage,
     recording,
     elapsedMs,
     refreshWindows,
+    refreshAudioDevices,
     selectWindow,
     start,
     stop,

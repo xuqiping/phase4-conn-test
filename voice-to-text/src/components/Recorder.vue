@@ -6,7 +6,10 @@ import { useSessionStore } from '../stores/session'
 const store = useSessionStore()
 const subtitleRef = ref<HTMLElement | null>(null)
 
-onMounted(() => store.refreshWindows())
+onMounted(() => {
+  store.refreshWindows()
+  store.refreshAudioDevices()
+})
 
 // 字幕自动滚到底（新 final 句或 partial 变化时）。
 watch(
@@ -28,6 +31,10 @@ function onSelect(e: Event) {
   const v = (e.target as HTMLSelectElement).value
   store.selectWindow(v === '' ? null : Number(v))
 }
+
+function onAudioSelect(e: Event) {
+  store.selectedAudioDevice = (e.target as HTMLSelectElement).value
+}
 </script>
 
 <template>
@@ -45,6 +52,18 @@ function onSelect(e: Event) {
         <option v-for="w in store.windows" :key="w.hwnd" :value="w.hwnd">
           {{ w.title }}
         </option>
+      </select>
+
+      <select
+        class="window-select audio-select"
+        aria-label="选择声音来源"
+        :value="store.selectedAudioDevice"
+        :disabled="store.recording"
+        @change="onAudioSelect"
+        @focus="store.refreshAudioDevices"
+      >
+        <option value="">默认麦克风（不收系统声音）</option>
+        <option v-for="d in store.audioDevices" :key="d" :value="d">{{ d }}</option>
       </select>
 
       <button
@@ -131,6 +150,9 @@ function onSelect(e: Event) {
 .window-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.audio-select {
+  max-width: 240px;
 }
 .window-select option {
   background: #222;
