@@ -85,6 +85,12 @@ async function clearKey() {
 async function testConnection() {
   testing.value = true
   try {
+    // 输入框里有未保存的 Key → 先存再测（符合「填了就能测」的直觉）。
+    if (apiKey.value.trim()) {
+      await invoke('set_summary_api_key', { key: apiKey.value.trim() })
+      apiKey.value = '' // 输入框立即清空，不留明文
+      keySaved.value = true
+    }
     const r = await invoke<string>('test_summary_connection')
     flash('ok', r)
   } catch (e) {

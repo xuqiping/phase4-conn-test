@@ -35,7 +35,8 @@ oar-ocr = { version = "0.9", features = ["auto-download"] }
 # Step 8 (FR-107): 云端总结。reqwest blocking + rustls（不引 OpenSSL；调用方 spawn_blocking）；
 # keyring = API Key 存 Windows 凭据管理器（不落盘）；base64 = 多模态精修附图 data URI。
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-keyring = "3"
+# keyring 必须显式开 windows-native，否则静默回落到内存 mock 后端（set 完 get 不到）。
+keyring = { version = "3", features = ["windows-native"] }
 base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]

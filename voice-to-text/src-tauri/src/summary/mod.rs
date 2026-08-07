@@ -200,6 +200,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 真实凭据后端冒烟：set → get → clear 走 Windows 凭据管理器。
+    /// `cargo test -- --ignored keyring_real`（会动真实凭据库，日常跳过）。
+    #[test]
+    #[ignore]
+    fn keyring_real_roundtrip() {
+        set_api_key("test-key-请忽略").unwrap();
+        assert_eq!(get_api_key().unwrap().as_deref(), Some("test-key-请忽略"));
+        clear_api_key().unwrap();
+        assert_eq!(get_api_key().unwrap(), None);
+    }
+
     #[test]
     fn draft_history_push_and_cap() {
         let dir = std::env::temp_dir().join(format!("vtt_sumdraft_{}", std::process::id()));
