@@ -13,6 +13,8 @@
  * - MemoryRecallController        召回（preview / scope GET·PUT）
  * - MemoryConsolidationController 总结触发 / 自动勾选 / 冲突裁决
  * - MemoryRosterController        花名册（/projects/{pid}）
+ * - MemoryProjectRuleController   二期 P1 收录规则（/projects/{pid}/rule，FR-001）
+ * - MemoryEntryController         二期 P1 条目审核（/projects/{pid}/entries + /entries/{id}，FR-005）
  *
  * 二期 P1（FR-006，V67）：turns 纯个人域——一期「生命周期折叠板」（departed/deleted 拉取）随
  * turns 四列下线，MemoryLifecycleController 已删；流水账 VO 去 projectIds/projectNames/bornPersonal；
@@ -178,6 +180,50 @@ export interface MemoryRosterVO {
   departedAt: string | null
 }
 
+// ============================ 二期 P1 · 收录规则 + 条目审核 ============================
+
+/**
+ * 项目收录规则视图（二期 P1 · FR-001）。
+ * negativeExamples 仅 owner/admin 可见（成员恒 null）；
+ * anchorReady=false = embed 失败规则未生效（enabled 强制 false）。
+ */
+export interface MemoryProjectRuleVO {
+  id: number | null
+  projectId: number
+  ruleText: string | null
+  positiveExamples: string[] | null
+  negativeExamples: string[] | null
+  enabled: boolean
+  anchorReady: boolean
+  updatedAt: string | null
+}
+
+/** 收录规则保存请求（ruleText ≤2000 字；正/负例各 ≤5 条、单条 ≤500 字）。 */
+export interface MemoryProjectRuleRequest {
+  ruleText: string
+  positiveExamples?: string[]
+  negativeExamples?: string[]
+  enabled: boolean
+}
+
+/**
+ * 项目记忆条目（二期 P1 · FR-005）。
+ * 「为何被收录」= ruleText + confidence；脱敏蒸馏产物，不含原文。
+ */
+export interface MemoryProjectEntryVO {
+  id: number
+  projectId: number
+  authorUserId: number
+  authorName: string | null
+  l1Summary: string | null
+  l2Detail: string | null
+  confidence: number | null
+  status: 'ACTIVE' | 'PENDING_REVIEW'
+  contentType: 'TEXT' | 'FILE'
+  ruleText: string | null
+  createdAt: string | null
+}
+
 // ============================ 客户端 ============================
 
 export const memoryApi = {
@@ -271,5 +317,26 @@ export const memoryApi = {
   // ---- 花名册（I4；recall-acl 二期 P1 下线——一期 ACL 矩阵废弃，FR-006）----
   getRoster(projectId: number) {
     return request.get<ApiResponse<MemoryRosterVO[]>>(`/chat/memory/projects/${projectId}/roster`)
+  },
+
+  // ---- 二期 P1 · 收录规则（FR-001；GET 成员可读，PUT 仅 owner/admin）----
+  getProjectRule(projectId: number) {
+    return request.get<ApiResponse<MemoryProjectRuleVO | null>>(`/chat/memory/projects/${projectId}/rule`)
+  },
+  putProjectRule(projectId: number, data: MemoryProjectRuleRequest) {
+    return request.put<ApiResponse<MemoryProjectRuleVO>>(`/chat/memory/projects/${projectId}/rule`, data)
+  },
+
+  // ---- 二期 P1 · 收录条目审核（FR-005；list 成员可见自己产生的，review 仅 owner/admin）----
+  listEntries(projectId: number, status?: string) {
+    return request.get<ApiResponse<MemoryProjectEntryVO[]>>(`/chat/memory/projects/${projectId}/entries`, {
+      params: status ? { status } : {}
+    })
+  },
+  reviewEntry(entryId: number, action: 'approve' | 'reject') {
+    return request.post<ApiResponse<void>>(`/chat/memory/entries/${entryId}/review`, { action })
+  },
+  withdrawEntry(entryId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/entries/${entryId}`)
   }
 }

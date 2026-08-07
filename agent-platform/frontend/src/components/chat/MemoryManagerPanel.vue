@@ -1,8 +1,9 @@
 <!-- ============================================================
   记忆管理面板（计划12 · H'-4 瘦身版）
   旧栈「我的记忆 / 冲突 / 预览 / scope」首页签 + 全部 legacy 脚本已删（旧栈后端整体移除）。
-  现 6 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 总结 / 冲突裁决 / gen 矩阵 / 生命周期。
-  （记忆二期 P1：「项目 ACL」页签随一期 reader×target 矩阵下线，FR-006。）
+  现 7 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 总结 / 冲突裁决 / gen 矩阵 / 收录规则 / 收录审核。
+  （记忆二期 P1：「项目 ACL」页签随一期 reader×target 矩阵下线，FR-006；
+    新增「收录规则/收录审核」页签，FR-001/FR-005。）
   ============================================================ -->
 <template>
   <div class="memory-manager">
@@ -22,6 +23,12 @@
       <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
         <MemoryGenMatrixPanel />
       </n-tab-pane>
+      <n-tab-pane name="rule" tab="收录规则" display-directive="show">
+        <MemoryRulePanel />
+      </n-tab-pane>
+      <n-tab-pane name="entries" tab="收录审核" display-directive="show">
+        <MemoryEntryReviewPanel />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -34,10 +41,13 @@ import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue
 import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
 import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
 import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
+import MemoryRulePanel from '@/components/memory/MemoryRulePanel.vue'
+import MemoryEntryReviewPanel from '@/components/memory/MemoryEntryReviewPanel.vue'
 
 // 默认页签 = 流水账（新栈入口，最贴近日常「我记了什么」）。
-// 二期 P1（FR-006）：「生命周期」页签随 turns 纯个人域下线（F-4b 拉取折叠板已删）。
-const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen'>('turns')
+// 二期 P1（FR-006）：「生命周期」页签随 turns 纯个人域下线（F-4b 拉取折叠板已删）；
+// 新增「收录规则」（FR-001）+「收录审核」（FR-005）页签。
+const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'rule' | 'entries'>('turns')
 </script>
 
 <style lang="scss" scoped>
