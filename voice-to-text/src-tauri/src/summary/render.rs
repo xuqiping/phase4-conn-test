@@ -41,6 +41,9 @@ pub struct TimelineChapter {
 /// `get_timeline` 返回的整体结构。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Timeline {
+    /// 草稿版本号 + 生成模型（供 SummaryPanel 草稿态提示）。
+    pub version: u32,
+    pub model: String,
     /// 全局大纲（reduce 产物；为空数组表示 reduce 失败降级）。
     pub outline: Vec<String>,
     /// true = 整体或部分走了本地兜底。
@@ -98,6 +101,8 @@ pub fn build_timeline(session_dir: &Path) -> Result<Timeline, String> {
         })
         .collect();
     Ok(Timeline {
+        version: draft.version,
+        model: draft.model.clone(),
         outline: draft.outline.clone(),
         fallback: draft.fallback,
         chapters,

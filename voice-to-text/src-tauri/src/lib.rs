@@ -586,10 +586,94 @@ fn export_markdown(
         .map(|p| p.to_string_lossy().replace("\\\\?\\", ""))
 }
 
+// ---- Study commands (plan Step 11 / FR-108/109) ----
+//
+// 帧图与视频走 asset:// 协议（run() 里动态放行 sessions 根目录），不走 base64 IPC；
+// 这里只暴露元数据（切片清单 / OCR 原文）与草稿编辑。
+
+/// 视频切片清单（供 Study.vue 点播跳转）：切片时长 + 有序文件名。
+#[derive(Serialize)]
+struct VideoSlices {
+    slice_ms: i64,
+    files: Vec<String>,
+}
+
+#[tauri::command]
+fn get_video_slices(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<VideoSlices, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let mut files: Vec<String> = Vec::new();
+    let video_dir = dir.join("video");
+    if video_dir.is_dir() {
+        for entry in std::fs::read_dir(&video_dir).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("mp4") {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    files.push(name.to_string());
+                }
+            }
+        }
+        files.sort();
+    }
+    Ok(VideoSlices {
+        slice_ms: SLICE_MS,
+        files,
+    })
+}
+
+/// OCR 原文核对（Study.vue 展开用）：按 frame_ref 查 frames.json 的 ocr_text。
+/// frame_ref 形如 "frames/page_123.jpg"；找不到条目返回 Ok(None)，不算错误。
+#[tauri::command]
+fn get_ocr_text(
+    session_id: String,
+    frame_ref: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<Option<String>, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    // 路径穿越校验：frame_ref 必须是 frames/ 下的纯文件名引用。
+    if frame_ref.contains("..") || frame_ref.starts_with('/') || frame_ref.contains(':') {
+        return Err("非法的帧引用路径".into());
+    }
+    let raw = std::fs::read_to_string(dir.join("frames.json"))
+        .map_err(|e| format!("read frames.json: {e}"))?;
+    let entries: Vec<crate::screen::scene_detect::FrameEntry> =
+        serde_json::from_str(&raw).map_err(|e| format!("parse frames.json: {e}"))?;
+    Ok(entries
+        .into_iter()
+        .find(|e| e.orig_path == frame_ref || e.thumb_path == frame_ref)
+        .and_then(|e| e.ocr_text))
+}
+
+/// 要点局部编辑（SummaryPanel）：原地改文本，不压历史版本。
+#[tauri::command]
+fn update_summary_point(
+    session_id: String,
+    segment_id: usize,
+    point_index: usize,
+    text: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<(), String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    summary::update_point_text(&dir, segment_id, point_index, &text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
+        .setup(|app| {
+            // Step 11: 帧图/视频切片走 asset:// 协议（convertFileSrc）。
+            // 安全边界：只放行 sessions 根目录（递归），其他路径 webview 无权读。
+            use tauri::Manager;
+            let base = SessionManager::default_base_dir();
+            std::fs::create_dir_all(&base).map_err(|e| format!("create sessions dir: {e}"))?;
+            app.asset_protocol_scope()
+                .allow_directory(&base, true)
+                .map_err(|e| format!("allow asset scope: {e}"))?;
+            Ok(())
+        })
         .manage::<AppState>(Arc::new(Mutex::new(None)))
         .manage::<ScreenState>(Arc::new(Mutex::new(None)))
         .manage::<CaptureSessionState>(Arc::new(Mutex::new(None)))
@@ -620,7 +704,10 @@ pub fn run() {
             summarize,
             regenerate_summary,
             get_timeline,
-            export_markdown
+            export_markdown,
+            get_video_slices,
+            get_ocr_text,
+            update_summary_point
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

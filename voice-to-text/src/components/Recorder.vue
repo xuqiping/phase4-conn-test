@@ -79,8 +79,7 @@ function onSelect(e: Event) {
       class="processing-banner"
       role="status"
     >
-      录制已停止，会话处理中（录后处理入口将在下一步提供）。
-      <button class="link-btn" @click="store.reset">返回</button>
+      录制已停止，录后处理进行中（见下方进度）。
     </div>
 
     <div

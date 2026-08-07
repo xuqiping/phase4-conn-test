@@ -166,8 +166,38 @@ pub fn save_new_draft(session_dir: &Path, draft: SummaryDraft) -> Result<(), Str
         }
     }
     file.current = Some(draft);
-    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    save_file(session_dir, &file)
+}
+
+fn save_file(session_dir: &Path, file: &SummaryFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     std::fs::write(session_dir.join(DRAFT_FILE), json).map_err(|e| format!("write draft: {e}"))
+}
+
+/// 要点局部编辑（Step 11 SummaryPanel）：原地改文本，不动版本历史（撤销靠 regenerate 历史）。
+pub fn update_point_text(
+    session_dir: &Path,
+    segment_id: usize,
+    point_index: usize,
+    text: &str,
+) -> Result<(), String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("要点内容不能为空".into());
+    }
+    let mut file = load_summary_file(session_dir);
+    let draft = file.current.as_mut().ok_or("尚无总结草稿")?;
+    let seg = draft
+        .segments
+        .iter_mut()
+        .find(|s| s.segment_id == segment_id)
+        .ok_or_else(|| format!("段 {segment_id} 不存在"))?;
+    let point = seg
+        .points
+        .get_mut(point_index)
+        .ok_or_else(|| format!("段 {segment_id} 的要点 {point_index} 不存在"))?;
+    point.text = trimmed.to_string();
+    save_file(session_dir, &file)
 }
 
 #[cfg(test)]
@@ -230,6 +260,42 @@ mod tests {
         assert_eq!(f.current.as_ref().unwrap().version, 25);
         assert_eq!(f.history.len(), HISTORY_CAP);
         assert_eq!(f.history.last().unwrap().version, 24);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_point_text_edits_in_place_and_validates() {
+        let dir = std::env::temp_dir().join(format!("vtt_updpt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        save_new_draft(
+            &dir,
+            SummaryDraft {
+                version: 1,
+                model: "m".into(),
+                fallback: false,
+                outline: vec![],
+                segments: vec![SegmentSummary {
+                    segment_id: 0,
+                    start_ms: 0,
+                    end_ms: 1000,
+                    local_fallback: false,
+                    points: vec![SummaryPoint {
+                        text: "旧文本".into(),
+                        ts_ms: 100,
+                        frame_ref: None,
+                    }],
+                }],
+            },
+        )
+        .unwrap();
+        update_point_text(&dir, 0, 0, "  新文本  ").unwrap();
+        let f = load_summary_file(&dir);
+        assert_eq!(f.current.as_ref().unwrap().segments[0].points[0].text, "新文本");
+        assert!(f.history.is_empty(), "编辑不压历史版本");
+        // 校验：空文本 / 段不存在 / 要点越界。
+        assert!(update_point_text(&dir, 0, 0, "  ").is_err());
+        assert!(update_point_text(&dir, 9, 0, "x").is_err());
+        assert!(update_point_text(&dir, 0, 9, "x").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

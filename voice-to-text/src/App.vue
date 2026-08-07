@@ -4,9 +4,17 @@ import Controls from './components/Controls.vue'
 import Transcription from './components/Transcription.vue'
 import Recorder from './components/Recorder.vue'
 import SummarySettings from './components/SummarySettings.vue'
+import Processing from './components/Processing.vue'
+import Study from './components/Study.vue'
+import SummaryPanel from './components/SummaryPanel.vue'
+import { useSessionStore } from './stores/session'
 
 // Step 10: 功能入口 feature flag —— 纯录音转文字（默认）与网课录屏总结并存。
 const mode = ref<'transcribe' | 'course'>('transcribe')
+
+// Step 11: 三区串联 —— 录制(Recorder) → 处理(Processing) → 学习(Study + SummaryPanel)。
+const session = useSessionStore()
+const selectedChapter = ref(0)
 </script>
 
 <template>
@@ -43,6 +51,14 @@ const mode = ref<'transcribe' | 'course'>('transcribe')
     <template v-else>
       <main class="main main-course">
         <Recorder />
+        <Processing v-if="session.phase === 'processing'" />
+        <template v-if="session.phase === 'done'">
+          <Study
+            :chapter="selectedChapter"
+            @update:chapter="selectedChapter = $event"
+          />
+          <SummaryPanel :selected-chapter="selectedChapter" />
+        </template>
         <SummarySettings />
       </main>
     </template>
