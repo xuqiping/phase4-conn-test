@@ -31,13 +31,27 @@ public class LlmBillingService {
     private final UsageCollector usageCollector;
 
     /**
-     * LLM 调用成功：算价→折算→同步扣→异步采。全链吞异常。
+     * LLM 调用成功：算价→折算→同步扣→异步采。全链吞异常。usage 状态记 SUCCESS。
      *
      * @param kind {@link LlmUsageLogEntity#KIND_CHAT}/EMBED（视频/图片走 Chunk F，不经此 token 路径）
      * @return 扣后余额；未扣（系统调用/disabled/计费失败）返 null
      */
     public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
                                 Integer tokensInput, Integer tokensOutput) {
+        return onSuccess(userId, providerId, providerScope, model, kind, tokensInput, tokensOutput,
+                LlmUsageLogEntity.STATUS_SUCCESS);
+    }
+
+    /**
+     * LLM 调用成功 + 自定 usage 状态（gateway 估算兜底时传 {@link LlmUsageLogEntity#STATUS_ESTIMATED}）。
+     * <p>billing.enabled=false（{@link PointsWalletService#isEnabled()}）→ 直接返 null，跳过 computeCost，
+     * 避免价表未配时 PRICING_NOT_FOUND 误报噪声（disabled 态 record 也短路）。
+     */
+    public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
+                                Integer tokensInput, Integer tokensOutput, String status) {
+        if (!walletService.isEnabled()) {
+            return null;
+        }
         try {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
                     tokensInput, tokensOutput, 0, 0);
@@ -45,7 +59,7 @@ public class LlmBillingService {
             // refType = kind（CHAT/EMBED，与 ledger REF_* 同串）；refId 暂无单次调用 id
             BigDecimal after = walletService.charge(userId, points, kind, null, model);
             usageCollector.record(userId, providerId, providerScope, model, kind,
-                    tokensInput, tokensOutput, yuan, points, LlmUsageLogEntity.STATUS_SUCCESS, null);
+                    tokensInput, tokensOutput, yuan, points, status, null);
             return after;
         } catch (BusinessException e) {
             // 计费自身失败（PRICING_NOT_FOUND 等）：LLM 已答完不可逆，记 FAILED usage 让 admin 可见缺口，不抛

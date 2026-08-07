@@ -36,6 +36,7 @@ class LlmBillingServiceTest {
 
     @Test
     void onSuccess_happyPath_chargesAndRecords() {
+        when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
                 eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
@@ -52,6 +53,7 @@ class LlmBillingServiceTest {
 
     @Test
     void onSuccess_pricingNotFound_recordsFailed_noThrow_noCharge() {
+        when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
 
@@ -66,6 +68,7 @@ class LlmBillingServiceTest {
 
     @Test
     void onSuccess_systemUser_chargeNoops_stillRecords() {
+        when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
@@ -81,6 +84,7 @@ class LlmBillingServiceTest {
 
     @Test
     void onSuccess_unexpectedException_swallowed() {
+        when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenThrow(new RuntimeException("DB connection lost"));
 

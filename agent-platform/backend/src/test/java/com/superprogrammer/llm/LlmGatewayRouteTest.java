@@ -1,10 +1,14 @@
 package com.superprogrammer.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.service.LlmBillingService;
+import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.llm.config.LlmConfig;
+import com.superprogrammer.llm.dto.EmbedResult;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.llm.dto.TokenUsage;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
@@ -20,6 +24,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -48,6 +53,12 @@ class LlmGatewayRouteTest {
     @Mock
     private ObjectMapper objectMapper;
 
+    @Mock
+    private LlmBillingService billingService;
+
+    @Mock
+    private PointsWalletService walletService;
+
     private LlmGateway gateway;
 
     @BeforeEach
@@ -62,7 +73,7 @@ class LlmGatewayRouteTest {
         when(llmConfig.getProviders()).thenReturn(List.of(chatProvider));
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(embedProvider));
 
-        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper);
+        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper, billingService, walletService);
     }
 
     @Test
@@ -94,12 +105,13 @@ class LlmGatewayRouteTest {
 
     @Test
     void embed_withEmbeddingRowModel_shouldRouteToEmbedProvider() {
-        when(embedProvider.embed(any(), any())).thenReturn(new float[]{0.1f, 0.2f});
+        when(embedProvider.embedWithUsage(any(), any()))
+                .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f, 0.2f}).build());
 
         float[] vec = gateway.embed("hello", "text-embedding-3");
 
         assertEquals(2, vec.length);
-        verify(embedProvider).embed("hello", "text-embedding-3");
+        verify(embedProvider).embedWithUsage("hello", "text-embedding-3");
         // chat 表不参与 embed 路由
         verify(chatProvider, never()).embed(any(), any());
     }
@@ -117,13 +129,44 @@ class LlmGatewayRouteTest {
     @Test
     void embed_withUserId_shouldStillUseGlobalEmbedOnly() {
         // 用户级 provider 是 CHAT-only 覆盖：embed 带 userId 也只走全局 EMBEDDING 行
-        when(embedProvider.embed(any(), any())).thenReturn(new float[]{0.5f});
+        when(embedProvider.embedWithUsage(any(), any()))
+                .thenReturn(EmbedResult.builder().embedding(new float[]{0.5f}).build());
 
         float[] vec = gateway.embed("hello", "text-embedding-3", 42L);
 
         assertEquals(1, vec.length);
-        verify(embedProvider).embed("hello", "text-embedding-3");
+        verify(embedProvider).embedWithUsage("hello", "text-embedding-3");
         // 不查用户级 provider 列表
         verify(userLlmProviderService, never()).listByUser(any());
+    }
+
+    // ===== Step12 embed 计费出口接线 =====
+
+    @Test
+    void embed_withRealUsage_chargesEmbedSuccess() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(8).completionTokens(0).totalTokens(8).build();
+        when(embedProvider.embedWithUsage(any(), any()))
+                .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f}).usage(usage).build());
+        when(embedProvider.getId()).thenReturn(9L);
+        when(embedProvider.getProviderScope()).thenReturn("GLOBAL");
+
+        gateway.embed("hello", "text-embedding-3", 42L);
+
+        verify(walletService).requireAffordable(42L);
+        verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("text-embedding-3"),
+                eq("EMBED"), eq(8), eq(0), eq("SUCCESS"));
+    }
+
+    @Test
+    void embed_withoutUsage_estimatesAndRecordsEstimated() {
+        // usage=null → 估算 input（"hello" 5 chars → est 1），status=ESTIMATED
+        when(embedProvider.embedWithUsage(any(), any()))
+                .thenReturn(EmbedResult.builder().embedding(new float[]{0.1f}).build());
+        when(embedProvider.getId()).thenReturn(9L);
+
+        gateway.embed("hello", "text-embedding-3", 42L);
+
+        verify(billingService).onSuccess(eq(42L), eq(9L), any(), eq("text-embedding-3"),
+                eq("EMBED"), eq(1), eq(0), eq("ESTIMATED"));
     }
 }
