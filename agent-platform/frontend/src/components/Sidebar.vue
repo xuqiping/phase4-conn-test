@@ -67,7 +67,11 @@ import {
   BookOutline,
   VideocamOutline,
   AppsOutline,
-  AlbumsOutline
+  AlbumsOutline,
+  WalletOutline,
+  BarChartOutline,
+  CashOutline,
+  CardOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
@@ -91,6 +95,10 @@ const canGenVideo = computed(() => authStore.hasPermission('media:gen'))
 const canEditCanvas = computed(() => authStore.hasPermission('canvas:write'))
 /** 项目资产库入口仅 asset:write 持有者可见（gated，admin 默认有，同 canvas:write 范式） */
 const canEditAssets = computed(() => authStore.hasPermission('asset:write'))
+/** 积分计费：价表配置 / 账单总览 / 积分充值（gated，admin 默认有） */
+const canManagePricing = computed(() => authStore.hasPermission('pricing:manage'))
+const canViewUsage = computed(() => authStore.hasPermission('usage:view'))
+const canRecharge = computed(() => authStore.hasPermission('points:recharge'))
 
 /** 导航项配置 */
 const navItems = computed(() => {
@@ -116,6 +124,16 @@ const navItems = computed(() => {
       { path: '/admin/roles', label: '角色权限', icon: ShieldCheckmarkOutline }
     )
   }
+  if (canManagePricing.value) {
+    items.push({ path: '/admin/billing-pricing', label: '价表配置', icon: CashOutline })
+  }
+  if (canRecharge.value) {
+    items.push({ path: '/admin/billing-wallet', label: '积分充值', icon: WalletOutline })
+  }
+  if (canViewUsage.value) {
+    items.push({ path: '/admin/billing', label: '账单总览', icon: BarChartOutline })
+  }
+  items.push({ path: '/wallet', label: '我的钱包', icon: CardOutline })
   items.push({ path: '/settings', label: '设置', icon: SettingsOutline })
   return items
 })

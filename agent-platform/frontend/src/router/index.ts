@@ -122,6 +122,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '设置' }
       },
       {
+        path: 'wallet',
+        name: 'MyWallet',
+        component: () => import('@/views/MyWalletView.vue'),
+        // 所有登录用户可见自己的钱包（仅积分，无 token/¥）；权限靠 API ownership 兜底
+        meta: { title: '我的钱包' }
+      },
+      {
         path: 'admin/users',
         name: 'UserManage',
         component: () => import('@/views/admin/UserManageView.vue'),
@@ -132,6 +139,27 @@ const routes: RouteRecordRaw[] = [
         name: 'RoleManage',
         component: () => import('@/views/admin/RoleManageView.vue'),
         meta: { title: '角色权限' }
+      },
+      {
+        path: 'admin/billing',
+        name: 'BillingAdmin',
+        component: () => import('@/views/BillingAdminView.vue'),
+        // 菜单隐藏(hasPermission usage:view) + 页内 canView + API 403 三重兜底
+        meta: { title: '账单总览' }
+      },
+      {
+        path: 'admin/billing-pricing',
+        name: 'PricingConfig',
+        component: () => import('@/views/admin/PricingConfigView.vue'),
+        // pricing:manage 三重兜底
+        meta: { title: '价表配置' }
+      },
+      {
+        path: 'admin/billing-wallet',
+        name: 'WalletAdmin',
+        component: () => import('@/views/admin/WalletAdminView.vue'),
+        // points:recharge 三重兜底
+        meta: { title: '积分充值' }
       }
     ]
   },
