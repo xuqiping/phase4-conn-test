@@ -69,10 +69,11 @@ pub fn chat_blocking(
         .build()
         .map_err(|e| format!("http client: {e}"))?;
     let url = endpoint_url(&cfg.base_url, "/v1/chat/completions");
+    // 不传 temperature：Kimi k3 等模型强制 temperature=1，显式传 0.3 会 400；
+    // 缺省 = provider 默认，对所有 OpenAI 兼容端点最安全。
     let body = serde_json::json!({
         "model": model,
         "messages": messages,
-        "temperature": 0.3,
         "stream": false,
     });
 
