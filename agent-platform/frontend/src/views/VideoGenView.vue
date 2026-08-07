@@ -54,12 +54,25 @@
               </template>
               <n-upload
                 v-model:file-list="imageFileList"
-                :max="capability.maxImages"
+                :max="Math.max(0, capability.maxImages - assetImages.length)"
                 accept="image/*"
                 list-type="image-card"
                 :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'image')"
                 @remove="(o) => onAttachmentRemove(o, 'image')"
               />
+              <div class="video-gen__asset-row">
+                <n-button quaternary size="small" :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('image')">
+                  从资产库选
+                </n-button>
+              </div>
+              <div v-if="assetImages.length" class="video-gen__asset-previews">
+                <div v-for="a in assetImages" :key="a.id" class="video-gen__asset-tile">
+                  <img v-if="a.url" :src="a.url" :alt="a.name" class="video-gen__asset-media" />
+                  <span v-else class="video-gen__asset-media video-gen__asset-media--placeholder">{{ a.name }}</span>
+                  <n-button class="video-gen__asset-del" size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'image')">×</n-button>
+                  <span class="video-gen__asset-name">{{ a.name }}</span>
+                </div>
+              </div>
             </n-form-item>
 
             <n-form-item v-if="capability.maxVideos > 0 && capability.videoDataUri">
@@ -69,13 +82,26 @@
               </template>
               <n-upload
                 v-model:file-list="videoFileList"
-                :max="capability.maxVideos"
+                :max="Math.max(0, capability.maxVideos - assetVideos.length)"
                 accept="video/*"
                 :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')"
                 @remove="(o) => onAttachmentRemove(o, 'video')"
               >
                 <n-button size="small">上传视频</n-button>
               </n-upload>
+              <div class="video-gen__asset-row">
+                <n-button quaternary size="small" :disabled="videoSlotsLeft <= 0" @click="openAssetPicker('video')">
+                  从资产库选
+                </n-button>
+              </div>
+              <div v-if="assetVideos.length" class="video-gen__asset-previews">
+                <div v-for="a in assetVideos" :key="a.id" class="video-gen__asset-tile">
+                  <video v-if="a.url" :src="a.url" class="video-gen__asset-media" muted />
+                  <span v-else class="video-gen__asset-media video-gen__asset-media--placeholder">{{ a.name }}</span>
+                  <n-button class="video-gen__asset-del" size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'video')">×</n-button>
+                  <span class="video-gen__asset-name">{{ a.name }}</span>
+                </div>
+              </div>
             </n-form-item>
 
             <n-form-item v-if="capability.maxAudios > 0">
@@ -85,13 +111,26 @@
               </template>
               <n-upload
                 v-model:file-list="audioFileList"
-                :max="capability.maxAudios"
+                :max="Math.max(0, capability.maxAudios - assetAudios.length)"
                 accept="audio/*"
                 :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')"
                 @remove="(o) => onAttachmentRemove(o, 'audio')"
               >
                 <n-button size="small">上传音频</n-button>
               </n-upload>
+              <div class="video-gen__asset-row">
+                <n-button quaternary size="small" :disabled="audioSlotsLeft <= 0" @click="openAssetPicker('audio')">
+                  从资产库选
+                </n-button>
+              </div>
+              <div v-if="assetAudios.length" class="video-gen__asset-previews video-gen__asset-previews--col">
+                <div v-for="a in assetAudios" :key="a.id" class="video-gen__asset-audio-row">
+                  <audio v-if="a.url" :src="a.url" controls />
+                  <span v-else class="video-gen__asset-name">{{ a.name }}</span>
+                  <n-button size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'audio')">×</n-button>
+                  <span class="video-gen__asset-name video-gen__asset-name--inline">{{ a.name }}</span>
+                </div>
+              </div>
             </n-form-item>
 
             <n-form-item v-if="capability.maxAttachments > 0">
@@ -231,6 +270,15 @@
         </n-card>
       </div>
     </div>
+
+    <AssetFilePicker
+      :show="showAssetPicker"
+      :media-type="assetPickerKind ? ASSET_MEDIATYPE[assetPickerKind] : MEDIA_TYPE.IMAGE"
+      :max="assetPickerMax"
+      :exclude-asset-ids="assetPickerExcludeIds"
+      @update:show="showAssetPicker = $event"
+      @picked="onAssetPicked"
+    />
   </div>
 </template>
 
@@ -250,6 +298,9 @@ import {
   type MediaTaskVO, type MediaResolution, type MediaRatio,
   type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
+import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
+import { MEDIA_TYPE } from '@/types/asset'
+import type { AssetFilePicked } from '@/types/asset'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -355,7 +406,7 @@ const durationOptions = computed(() => {
 // === 多模态参考附件（复用 /api/files/upload 单一咽喉点） ===
 // F1 修复：n-upload 受控化（v-model:file-list），显示与提交载荷同源；
 // 关联键用 UploadFileInfo.id（上传期唯一），不用文件名（同名会错位）。
-interface UploadedAttachment { id: string; fileId: string; name: string }
+interface UploadedAttachment { id: string; fileId: string; name: string; assetId?: number; url?: string }
 const images = ref<UploadedAttachment[]>([])
 const videos = ref<UploadedAttachment[]>([])
 const audios = ref<UploadedAttachment[]>([])
@@ -410,6 +461,60 @@ function onAttachmentRemove({ file }: { file: { id: string } }, kind: Attachment
   const idx = list.value.findIndex(a => a.id === file.id)
   if (idx >= 0) list.value.splice(idx, 1)
   return true
+}
+
+// === 资产库选取（图/视频/音频 复用项目资产，免去重复上传） ===
+// 单个 picker 实例复用三类：mediaType/max/exclude 随 assetPickerKind 动态切换。
+const showAssetPicker = ref(false)
+const assetPickerKind = ref<AttachmentKind | null>(null)
+const ASSET_MEDIATYPE: Record<AttachmentKind, string> = {
+  image: MEDIA_TYPE.IMAGE, video: MEDIA_TYPE.VIDEO, audio: MEDIA_TYPE.AUDIO
+}
+const assetImages = computed(() => images.value.filter(a => a.assetId != null))
+const assetVideos = computed(() => videos.value.filter(a => a.assetId != null))
+const assetAudios = computed(() => audios.value.filter(a => a.assetId != null))
+const imageSlotsLeft = computed(() => (capability.value?.maxImages ?? 0) - images.value.length)
+const videoSlotsLeft = computed(() => (capability.value?.maxVideos ?? 0) - videos.value.length)
+const audioSlotsLeft = computed(() => (capability.value?.maxAudios ?? 0) - audios.value.length)
+
+function openAssetPicker(kind: AttachmentKind) {
+  assetPickerKind.value = kind
+  showAssetPicker.value = true
+}
+
+/** picker 剩余可选槽位 = 模型能力上限 - 当前已选（负数兜底 0）。 */
+const assetPickerMax = computed(() => {
+  const k = assetPickerKind.value
+  const cap = capability.value
+  if (!k || !cap) return 0
+  if (k === 'image') return Math.max(0, cap.maxImages - images.value.length)
+  if (k === 'video') return Math.max(0, cap.maxVideos - videos.value.length)
+  return Math.max(0, cap.maxAudios - audios.value.length)
+})
+
+/** 已添加的同类资产 id（picker 内去重置灰）。 */
+const assetPickerExcludeIds = computed<number[]>(() => {
+  const k = assetPickerKind.value
+  if (!k) return []
+  return kindList(k).value.map(a => a.assetId).filter((x): x is number => x != null)
+})
+
+/** picker 确认：逐项 push 进对应 kindList（与上传项同源，submit 透明）。 */
+function onAssetPicked(payload: AssetFilePicked[]) {
+  const k = assetPickerKind.value
+  if (!k) return
+  const list = kindList(k)
+  for (const p of payload) {
+    if (list.value.some(a => a.assetId === p.assetId)) continue
+    list.value.push({ id: crypto.randomUUID(), fileId: p.fileId, name: p.name, assetId: p.assetId, url: p.url })
+  }
+}
+
+/** 资产 chip × 移除（与 n-upload 上传项状态隔离，按 id 摘 kindList）。 */
+function onAssetChipRemove(id: string, kind: AttachmentKind) {
+  const list = kindList(kind)
+  const idx = list.value.findIndex(a => a.id === id)
+  if (idx >= 0) list.value.splice(idx, 1)
 }
 
 // === 提交 ===
@@ -676,6 +781,97 @@ onUnmounted(() => {
     font-size: 12px;
     color: var(--color-text-secondary);
     line-height: 32px;
+  }
+
+  &__asset-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-1);
+    margin-top: var(--spacing-2);
+  }
+
+  &__asset-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+    margin-top: var(--spacing-2);
+
+    &--col {
+      flex-direction: column;
+      gap: var(--spacing-1);
+    }
+  }
+
+  &__asset-tile {
+    position: relative;
+    width: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  &__asset-media {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: var(--radius-base);
+    border: 1px solid var(--color-border-light);
+    background: #000;
+    display: block;
+
+    &--placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--spacing-1);
+      font-size: 10px;
+      color: var(--color-text-tertiary);
+      text-align: center;
+      line-height: 1.3;
+      overflow: hidden;
+      background: var(--color-bg-secondary, var(--color-border-light));
+    }
+  }
+
+  &__asset-del {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    z-index: 1;
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    padding: 0;
+    line-height: 1;
+  }
+
+  &__asset-name {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+
+    &--inline {
+      max-width: 140px;
+      text-align: left;
+    }
+  }
+
+  &__asset-audio-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    width: 100%;
+
+    audio {
+      height: 32px;
+      max-width: 260px;
+    }
   }
 }
 

@@ -86,6 +86,40 @@ public class AssetService {
     private final FileStorageService fileStorageService;
     private final AssetVersionService versionService;
 
+    /**
+     * 该 fileId 是否为当前用户可访问的资产文件（项目成员 viewer+ 可读即放行；admin 放行）。
+     *
+     * <p>供 media 生成附件归属校验：资产库文件 {@code owner_user_id} 为上传者，项目其他成员
+     * 选他人上传的资产作多模态参考时，按项目成员身份放行（与 canvas bridge resolve 一致），
+     * 而非要求文件归属相等。非资产文件（查不到 asset_version）返 false，调用方回落原 owner 校验。
+     *
+     * @param fileId 附件 file_id（stored_files.file_id）
+     * @param userId 当前用户（nullable）
+     * @param admin  是否 admin
+     * @return true=可作附件使用；false=非资产文件或无项目访问权
+     */
+    public boolean isAttachmentFileAccessible(String fileId, Long userId, boolean admin) {
+        if (fileId == null || fileId.isBlank()) {
+            return false;
+        }
+        AssetVersion v = versionMapper.selectOne(new LambdaQueryWrapper<AssetVersion>()
+                .eq(AssetVersion::getFileId, fileId).last("LIMIT 1"));
+        if (v == null) {
+            return false;
+        }
+        Asset asset = assetMapper.selectById(v.getAssetId());
+        if (asset == null) {
+            return false;
+        }
+        try {
+            aclService.loadAccessible(asset.getProjectId(), userId, admin);
+            return true;
+        } catch (BusinessException e) {
+            // 非项目成员（FORBIDDEN）→ 不可用作附件
+            return false;
+        }
+    }
+
     /** 新建文本类资产（TEXT 类别：PROMPT/SCRIPT 或自定义 TEXT 类型）+ 版本 1。文件类经上传端点。 */
     @Transactional
     public AssetVO create(Long projectId, Long userId, boolean admin, AssetCreateRequest req) {

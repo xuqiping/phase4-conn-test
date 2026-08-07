@@ -1,6 +1,7 @@
 package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
@@ -45,6 +46,8 @@ class MediaGenTaskServiceTest {
     private MediaModelService mediaModelService;
     @Mock
     private FileStorageService fileStorageService;
+    @Mock
+    private AssetService assetService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -59,7 +62,7 @@ class MediaGenTaskServiceTest {
         service = new MediaGenTaskService(
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
-                fileStorageService, new MediaGenProperties(), new ObjectMapper());
+                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -201,6 +204,35 @@ class MediaGenTaskServiceTest {
         service.submit("p", "16:9", 5, "720p", false, false,
                 null, null, List.of(att("other.png", "image")), SEEDANCE_2, USER_ID, true);
         verify(taskMapper).insert(any(MediaGenTask.class));
+    }
+
+    @Test
+    void submit_sharedAssetAccessible_passes() {
+        // 他人上传的资产文件（owner=999），但当前用户是同项目成员 → 资产 ACL 放行
+        StoredFileEntity meta = new StoredFileEntity();
+        meta.setFileId("asset-img.png");
+        meta.setOwnerUserId(999L);
+        meta.setMime("image/png");
+        when(fileStorageService.findMeta("asset-img.png")).thenReturn(meta);
+        when(assetService.isAttachmentFileAccessible("asset-img.png", USER_ID, false)).thenReturn(true);
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, List.of(att("asset-img.png", "image")), SEEDANCE_2, USER_ID, false);
+        verify(taskMapper).insert(any(MediaGenTask.class));
+    }
+
+    @Test
+    void submit_sharedAssetNoAccess_403() {
+        // 资产文件存在但当前用户非项目成员 → 资产 ACL 不放行 → 403
+        StoredFileEntity meta = new StoredFileEntity();
+        meta.setFileId("asset-img.png");
+        meta.setOwnerUserId(999L);
+        meta.setMime("image/png");
+        when(fileStorageService.findMeta("asset-img.png")).thenReturn(meta);
+        when(assetService.isAttachmentFileAccessible("asset-img.png", USER_ID, false)).thenReturn(false);
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, List.of(att("asset-img.png", "image")), SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("无权使用该附件"));
     }
 
     @Test

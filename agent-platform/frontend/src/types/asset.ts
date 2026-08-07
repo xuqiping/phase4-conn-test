@@ -310,6 +310,15 @@ export interface ResolveVO {
   name?: string
 }
 
+/** 资产库文件选取结果（AssetFilePicker emit，供 VideoGenView 多模态附件复用）。 */
+export interface AssetFilePicked {
+  fileId: string
+  name: string
+  assetId: number
+  /** 预览/播放 URL（resolve 返回，图缩略/视频/音频播放用）。 */
+  url?: string
+}
+
 /** 资产「使用记录」一行（双向追溯）。 */
 export interface AssetUsageVO {
   id: number

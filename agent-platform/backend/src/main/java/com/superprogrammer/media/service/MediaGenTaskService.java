@@ -2,6 +2,7 @@ package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -49,6 +50,7 @@ public class MediaGenTaskService {
     private final FileStorageService fileStorageService;
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
+    private final AssetService assetService;
 
     /**
      * 提交生成任务。
@@ -248,7 +250,10 @@ public class MediaGenTaskService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "附件不存在: " + fileId);
         }
         if (!admin && userId != null && !userId.equals(meta.getOwnerUserId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用该附件: " + fileId);
+            // 资产库文件：按项目成员身份放行（与 canvas bridge resolve 一致），不要求文件归属相等
+            if (!assetService.isAttachmentFileAccessible(fileId, userId, admin)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用该附件: " + fileId);
+            }
         }
         long maxBytes = MediaStorageService.KIND_MAX_BYTES.getOrDefault(kind, Long.MAX_VALUE);
         if (meta.getSize() != null && meta.getSize() > maxBytes) {
