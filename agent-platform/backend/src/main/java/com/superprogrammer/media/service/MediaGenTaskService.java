@@ -3,6 +3,7 @@ package com.superprogrammer.media.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
+import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -51,6 +52,7 @@ public class MediaGenTaskService {
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
     private final AssetService assetService;
+    private final PointsWalletService walletService;
 
     /**
      * 提交生成任务。
@@ -76,6 +78,10 @@ public class MediaGenTaskService {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
+
+        // 0) 余额预检（Chunk F 联动）：余额>0 才允许提交生成任务，≤0 拒（task 不建）。
+        // userId=null（系统调用）/billing.enabled=false → requireAffordable 内部跳过（放行）。
+        walletService.requireAffordable(userId);
 
         // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;

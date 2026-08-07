@@ -2,6 +2,8 @@ package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
@@ -14,6 +16,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -44,6 +47,7 @@ public class MediaGenTaskWorker {
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
     private final Executor executor;
+    private final MediaBillingService mediaBillingService;
 
     public MediaGenTaskWorker(MediaGenTaskTxService txService,
                               MediaGenTaskMapper taskMapper,
@@ -51,7 +55,8 @@ public class MediaGenTaskWorker {
                               MediaStorageService mediaStorageService,
                               MediaGenProperties properties,
                               ObjectMapper objectMapper,
-                              @Qualifier("mediaTaskExecutor") Executor executor) {
+                              @Qualifier("mediaTaskExecutor") Executor executor,
+                              MediaBillingService mediaBillingService) {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.arkProvider = arkProvider;
@@ -59,6 +64,7 @@ public class MediaGenTaskWorker {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.executor = executor;
+        this.mediaBillingService = mediaBillingService;
     }
 
     @Scheduled(fixedDelayString = "${media.poll-ms:5000}")
@@ -134,10 +140,15 @@ public class MediaGenTaskWorker {
     }
 
     /**
-     * SUCCEEDED 处理（Step4 下载 + Step5 usage 记账）。
+     * SUCCEEDED 处理（Step4 下载 + Step5 usage 记账 + Chunk F 计费扣减）。
      * Ark URL 有时效（OSS 临时链接）→ 即时下载落 stored_files(source=MEDIA) → 写 result_file_id。
      * 下载失败 → DOWNLOAD_FAILED（ark_task_id 保留，可重试，worker 留入口）。
      * usage：Ark 返 usage.total_tokens 用真值（SUCCESS）；不返则像素/费率估算（ESTIMATED）。
+     *
+     * <p>计费（Chunk F）：markSucceeded <b>前</b>扣积分（视频已生成，真实成本已发生）；
+     * 扣减走 {@link MediaBillingService}（吞异常，价表缺/余额耗尽不阻塞落 SUCCEEDED）。
+     * 若扣成功但 markSucceeded 落库失败 → 退款（防扣了却没成功态的对账黑洞），再抛交 process() 转 markFailed。
+     * 失败/超时/下载失败路径本就没扣 → 不退。
      */
     private void handleSucceeded(MediaGenTask task, MediaGenResult result, MediaGenRequest request) {
         Long taskId = task.getId();
@@ -157,7 +168,24 @@ public class MediaGenTaskWorker {
         }
         Integer tokensCost = resolveUsage(result, request);
         String flag = result.getUsageTokens() != null ? MediaGenTask.FLAG_SUCCESS : MediaGenTask.FLAG_ESTIMATED;
-        txService.markSucceeded(taskId, fileId, tokensCost, flag);
+        // 计费扣减（返回实扣积分；null=未扣，disabled/系统调用/计费失败均吞不抛）
+        BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
+                task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
+                request.getDuration(), 0, usageStatus(flag), taskId);
+        try {
+            txService.markSucceeded(taskId, fileId, tokensCost, flag);
+        } catch (RuntimeException e) {
+            // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
+            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId);
+            throw e;
+        }
+    }
+
+    /** task status_flag → usage_logs status（估算口径仍计费，仅审计标记不同）。 */
+    private static String usageStatus(String flag) {
+        return MediaGenTask.FLAG_SUCCESS.equals(flag)
+                ? LlmUsageLogEntity.STATUS_SUCCESS
+                : LlmUsageLogEntity.STATUS_ESTIMATED;
     }
 
     /**

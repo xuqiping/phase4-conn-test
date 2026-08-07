@@ -2,7 +2,9 @@ package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
+import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
@@ -25,7 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,6 +52,8 @@ class MediaGenTaskServiceTest {
     private FileStorageService fileStorageService;
     @Mock
     private AssetService assetService;
+    @Mock
+    private PointsWalletService walletService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -62,7 +68,7 @@ class MediaGenTaskServiceTest {
         service = new MediaGenTaskService(
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
-                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService);
+                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -116,6 +122,19 @@ class MediaGenTaskServiceTest {
         assertEquals(7L, task.getProviderId());
         assertTrue(task.getRequestConfig().contains("\"attachments\""));
         assertTrue(task.getRequestConfig().contains("v1.mp4"));
+    }
+
+    @Test
+    void submit_insufficientBalance_rejectedBeforeInsert() {
+        // Chunk F 联动：余额≤0 → requireAffordable 抛 INSUFFICIENT_POINTS，task 不建（insert 不调）
+        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS)).when(walletService)
+                .requireAffordable(USER_ID);
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false));
+        assertEquals(ErrorCode.INSUFFICIENT_POINTS.getCode(), e.getCode());
+        verify(taskMapper, never()).insert(any());
     }
 
     @Test

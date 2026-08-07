@@ -1,6 +1,8 @@
 package com.superprogrammer.media.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenResult;
 import com.superprogrammer.media.entity.MediaGenTask;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -33,6 +36,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaGenTaskMapper taskMapper;
     @Mock private ArkSeedanceProvider arkProvider;
     @Mock private MediaStorageService mediaStorageService;
+    @Mock private MediaBillingService mediaBillingService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MediaGenProperties properties = new MediaGenProperties();
@@ -44,7 +48,7 @@ class MediaGenTaskWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider,
-                mediaStorageService, properties, objectMapper, directExecutor);
+                mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService);
     }
 
     @Test
@@ -63,6 +67,67 @@ class MediaGenTaskWorkerTest {
         verify(txService).setArkTaskId(1L, "cct-1");
         verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
         verify(txService, never()).markFailed(anyLong(), anyString());
+        // Chunk F：成功路径扣减计费（kind=VIDEO，refId=taskId，视频伪-token=200000）
+        verify(mediaBillingService).chargeMedia(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
+                eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L));
+        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void succeeded_marksSucceededWhenBillingDisabled() {
+        // 计费禁用/系统调用：chargeMedia 返 null（未扣），仍正常 markSucceeded，不退款
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.createTask(any())).thenReturn("cct-1");
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+                "https://ark/v.mp4", 200000L, null));
+        when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
+        when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(null);
+
+        worker.poll();
+
+        verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
+        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void markSucceededThrows_refundsChargedPointsAndFails() {
+        // 扣成功但 markSucceeded 落库失败：撤销已扣 + 抛交 process()→markFailed（spec §联动 失败全退边界）
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+                "https://ark/v.mp4", 1000L, null));
+        when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
+        when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(new BigDecimal("50"));
+        doThrow(new IllegalStateException("DB 抖动")).when(txService)
+                .markSucceeded(anyLong(), anyString(), anyInt(), anyString());
+
+        worker.poll();
+
+        verify(mediaBillingService).refundMedia(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(1L));
+        verify(txService).markFailed(eq(1L), contains("DB"));
+    }
+
+    @Test
+    void arkFailed_neverCharges() {
+        // 失败路径：未到扣减环节，chargeMedia 不应被调
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_FAILED,
+                null, null, "Ark 500"));
+
+        worker.poll();
+
+        verify(txService).markFailed(eq(1L), contains("500"));
+        verify(mediaBillingService, never()).chargeMedia(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong());
+        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
     }
 
     @Test
