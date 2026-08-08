@@ -21,4 +21,4 @@ Agent 大厅列表、详情、增删改查、启停、复制、Markdown 同步�
 无（Agent 作为节点配置由工作流执行，见 [12-Runtime-Sidecar执行](12-Runtime-Sidecar执行.md)）。
 
 ## 数据表
-`agents`、`agent_groups`、`agent_group_members`
+`agents`（`group_id` 外键直连 `agent_groups`，无成员中间表）、`agent_groups`
