@@ -627,6 +627,9 @@ fn export_markdown(
 struct VideoSlices {
     slice_ms: i64,
     files: Vec<String>,
+    /// audio.wav 是否存在 —— 视频分轨落盘无音轨（FR-103），
+    /// 学习区靠它在播放切片时同步播放音轨（2026-08-08 Phase4 手测缺陷修复）。
+    has_audio: bool,
 }
 
 #[tauri::command]
@@ -651,6 +654,7 @@ fn get_video_slices(
     Ok(VideoSlices {
         slice_ms: SLICE_MS,
         files,
+        has_audio: dir.join("audio.wav").is_file(),
     })
 }
 

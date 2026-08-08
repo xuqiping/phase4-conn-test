@@ -17,6 +17,7 @@ const selectedIdx = computed({
   set: (v: number) => emit('update:chapter', v),
 })
 const videoRef = ref<HTMLVideoElement | null>(null)
+const audioRef = ref<HTMLAudioElement | null>(null)
 const currentSlice = ref('')
 const pendingSeekSec = ref<number | null>(null)
 const ocrCache = ref<Record<string, string | null>>({})
@@ -41,6 +42,42 @@ const videoSrc = computed(() =>
     ? convertFileSrc(`${store.sessionPath}/video/${currentSlice.value}`)
     : ''
 )
+
+// 2026-08-08 Phase4 手测缺陷修复：视频分轨落盘无音轨（FR-103 设计），
+// 学习区播放切片时用隐藏 <audio> 同步播放 audio.wav 对应时间段。
+const audioSrc = computed(() =>
+  store.slices.has_audio ? convertFileSrc(`${store.sessionPath}/audio.wav`) : ''
+)
+
+/** 当前切片起点在整节课里的秒数（audio.wav 是全课一条音轨）。 */
+const sliceBaseSec = computed(() => {
+  const idx = store.slices.files.indexOf(currentSlice.value)
+  return idx < 0 ? 0 : (idx * store.slices.slice_ms) / 1000
+})
+
+/** 把音轨对齐到画面对应的全课时间点。 */
+function syncAudio() {
+  const v = videoRef.value
+  const a = audioRef.value
+  if (!v || !a) return
+  a.currentTime = sliceBaseSec.value + v.currentTime
+  a.playbackRate = v.playbackRate
+  a.volume = v.volume
+  a.muted = v.muted
+}
+
+function onVideoPlay() {
+  syncAudio()
+  audioRef.value?.play().catch(() => {})
+}
+
+function onVideoPause() {
+  audioRef.value?.pause()
+}
+
+function onVideoSeeked() {
+  syncAudio()
+}
 
 /** 点击要点/帧跳回视频时刻：ts → 切片序号 + 片内偏移秒。 */
 function seekTo(tsMs: number) {
@@ -134,7 +171,14 @@ async function doExport() {
             preload="metadata"
             aria-label="课程回放"
             @loadedmetadata="onVideoLoaded"
+            @play="onVideoPlay"
+            @pause="onVideoPause"
+            @ended="onVideoPause"
+            @seeked="onVideoSeeked"
+            @ratechange="syncAudio"
+            @volumechange="syncAudio"
           />
+          <audio v-if="audioSrc" ref="audioRef" :src="audioSrc" preload="auto" />
           <p v-else-if="!store.slices.files.length" class="no-video">
             本会话无视频切片（可能只录了音频）。
           </p>

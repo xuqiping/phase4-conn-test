@@ -67,6 +67,8 @@ export interface Timeline {
 export interface VideoSlices {
   slice_ms: number
   files: string[]
+  /** audio.wav 是否存在（视频分轨无音轨，学习区据此同步播放音轨）。 */
+  has_audio: boolean
 }
 
 export const useSessionStore = defineStore('session', () => {
@@ -102,7 +104,7 @@ export const useSessionStore = defineStore('session', () => {
   const pipelineRunning = ref(false)
   const pipelineCancelled = ref(false)
   const timeline = ref<Timeline | null>(null)
-  const slices = ref<VideoSlices>({ slice_ms: 900000, files: [] })
+  const slices = ref<VideoSlices>({ slice_ms: 900000, files: [], has_audio: false })
   const sessionPath = ref('')
   /** 多模态精修开关（默认关；开启经 SummaryPanel 二次确认，FR-107 安全检查）。 */
   const vlmOn = ref(false)
@@ -198,7 +200,7 @@ export const useSessionStore = defineStore('session', () => {
     try {
       slices.value = await invoke<VideoSlices>('get_video_slices', { sessionId: sessionId.value })
     } catch {
-      slices.value = { slice_ms: 900000, files: [] }
+      slices.value = { slice_ms: 900000, files: [], has_audio: false }
     }
   }
 
@@ -328,7 +330,7 @@ export const useSessionStore = defineStore('session', () => {
     partial.value = ''
     errorMessage.value = ''
     timeline.value = null
-    slices.value = { slice_ms: 900000, files: [] }
+    slices.value = { slice_ms: 900000, files: [], has_audio: false }
     lastExportPath.value = ''
     vlmOn.value = false
     pipelineRunning.value = false
