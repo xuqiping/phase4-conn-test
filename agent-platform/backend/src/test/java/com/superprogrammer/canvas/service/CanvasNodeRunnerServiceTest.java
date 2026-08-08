@@ -5,10 +5,12 @@ import com.superprogrammer.canvas.dto.NodeRunResult;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -17,8 +19,10 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -125,6 +129,46 @@ class CanvasNodeRunnerServiceTest {
         CanvasNodeDTO node = nodeOf("n10", CanvasNodeDTO.TYPE_SCRIPT, Map.of("synopsis", "  "));
         BusinessException ex = assertThrows(BusinessException.class, () -> runner.run(node, 7L));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void run_script_segmentCount_passedIntoPrompt() {
+        CanvasNodeDTO node = nodeOf("n11", CanvasNodeDTO.TYPE_SCRIPT,
+                Map.of("synopsis", "剧情", "model", "doubao-seed-2.0-code", "segmentCount", 4));
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(LlmResponse.builder()
+                .content("[{\"index\":1,\"description\":\"a\"}]").build());
+        ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
+        runner.run(node, 7L);
+        verify(llmGateway).chat(cap.capture(), eq(7L));
+        String prompt = cap.getValue().getMessages().get(0).getContent();
+        assertTrue(prompt.contains("拆成 4 个分镜"), "段数应注入提示词: " + prompt);
+        assertTrue(!prompt.contains("拆分规范"), "无规范不应出现拆分规范子句");
+    }
+
+    @Test
+    void run_script_storyboardSpec_passedIntoPrompt() {
+        CanvasNodeDTO node = nodeOf("n12", CanvasNodeDTO.TYPE_SCRIPT,
+                Map.of("synopsis", "剧情", "storyboardSpec", "每镜含景别与运镜"));
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(LlmResponse.builder()
+                .content("[{\"index\":1,\"description\":\"a\"}]").build());
+        ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
+        runner.run(node, 7L);
+        verify(llmGateway).chat(cap.capture(), eq(7L));
+        String prompt = cap.getValue().getMessages().get(0).getContent();
+        assertTrue(prompt.contains("每镜含景别与运镜"), "规范应注入提示词: " + prompt);
+        assertTrue(prompt.contains("3-10 个"), "无段数走默认 3-10: " + prompt);
+    }
+
+    @Test
+    void run_script_noParams_defaultsTo3to10() {
+        CanvasNodeDTO node = nodeOf("n13", CanvasNodeDTO.TYPE_SCRIPT, Map.of("synopsis", "剧情"));
+        when(llmGateway.chat(any(), eq(7L))).thenReturn(LlmResponse.builder()
+                .content("[{\"index\":1,\"description\":\"a\"}]").build());
+        ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
+        runner.run(node, 7L);
+        verify(llmGateway).chat(cap.capture(), eq(7L));
+        String prompt = cap.getValue().getMessages().get(0).getContent();
+        assertTrue(prompt.contains("3-10 个"), "无参数默认 3-10: " + prompt);
     }
 
     @Test

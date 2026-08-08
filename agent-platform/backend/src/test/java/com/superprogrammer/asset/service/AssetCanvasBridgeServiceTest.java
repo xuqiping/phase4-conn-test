@@ -135,6 +135,40 @@ class AssetCanvasBridgeServiceTest {
     }
 
     @Test
+    void importFromCanvas_storyboardNode_createsStoryboardAssetWithDescription() {
+        CanvasImportRequest req = newReq(null);
+        stubCanvasOwnership(snapshot(
+                "{\"nodes\":[{\"id\":\"n1\",\"type\":\"storyboard\",\"data\":{\"description\":\"远景海岸线\",\"index\":1}}]}"));
+        when(bindingService.findProduced(CANVAS_ID, NODE_ID)).thenReturn(null);
+        when(assetService.validateAssetName(any())).thenAnswer(inv -> inv.getArgument(0));
+        doAnswer(inv -> {
+            ((Asset) inv.getArgument(0)).setId(NEW_ASSET_ID);
+            return 1;
+        }).when(assetMapper).insert(any());
+
+        CanvasImportVO vo = service.importFromCanvas(req, USER_ID, false);
+
+        assertEquals(Asset.MEDIA_STORYBOARD, vo.getMediaType(), "分镜节点 → 分镜媒体类型");
+        ArgumentCaptor<AssetVersion> vc = ArgumentCaptor.forClass(AssetVersion.class);
+        verify(versionMapper).insert(vc.capture());
+        assertTrue(vc.getValue().getContent().contains("远景海岸线"), "正文取 description");
+        assertNull(vc.getValue().getFileId(), "分镜属文本类无 fileId");
+    }
+
+    @Test
+    void importFromCanvas_emptyStoryboardNode_rejected400() {
+        CanvasImportRequest req = newReq(null);
+        stubCanvasOwnership(snapshot(
+                "{\"nodes\":[{\"id\":\"n1\",\"type\":\"storyboard\",\"data\":{}}]}"));
+        when(bindingService.findProduced(CANVAS_ID, NODE_ID)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.importFromCanvas(req, USER_ID, false));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(assetMapper, never()).insert(any());
+    }
+
+    @Test
     void importFromCanvas_emptyTextNode_rejected400() {
         CanvasImportRequest req = newReq(null);
         stubCanvasOwnership(snapshot(

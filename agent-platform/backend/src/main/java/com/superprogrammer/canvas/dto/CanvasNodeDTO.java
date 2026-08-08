@@ -21,6 +21,8 @@ public class CanvasNodeDTO {
     public static final String TYPE_VIDEO = "video";
     public static final String TYPE_AUDIO = "audio";
     public static final String TYPE_SCRIPT = "script";
+    /** 分镜节点：脚本拆分镜后由前端扇出生成（每条 scene 一节点），存场景画面描述 description。 */
+    public static final String TYPE_STORYBOARD = "storyboard";
 
     /** 节点 id（前端生成，画布内唯一）。 */
     private String id;

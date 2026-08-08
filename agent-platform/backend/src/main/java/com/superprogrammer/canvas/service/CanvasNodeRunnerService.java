@@ -155,11 +155,21 @@ public class CanvasNodeRunnerService {
             model = defaultTextModel;
         }
 
+        // 拆分参数（前端脚本节点属性面板）：segmentCount=指定段数；storyboardSpec=拆分规范（空则 LLM 自由发挥）。
+        Integer segmentCount = readInt(node, "segmentCount");
+        String storyboardSpec = readString(node, "storyboardSpec");
+
+        String countClause = (segmentCount != null && segmentCount > 0)
+                ? "拆成 " + segmentCount + " 个分镜"
+                : "拆成 3-10 个分镜";
+        String specClause = (storyboardSpec != null && !storyboardSpec.isBlank())
+                ? " 拆分规范：" + storyboardSpec.trim() + "。"
+                : "";
         String instruction = """
-                你是影视分镜师。把下面剧本拆成 3-10 个分镜，严格只输出 JSON 数组，不要任何解释或 markdown 代码块：
+                你是影视分镜师。把下面剧本%s%s，严格只输出 JSON 数组，不要任何解释或 markdown 代码块：
                 [{"index":1,"description":"分镜画面描述"},{"index":2,"description":"…"}]
                 剧本：
-                """.replace("\n", " ") + synopsis;
+                """.formatted(countClause, specClause).replace("\n", " ") + synopsis;
         long started = System.currentTimeMillis();
         try {
             LlmRequest req = LlmRequest.builder()
@@ -242,5 +252,24 @@ public class CanvasNodeRunnerService {
         }
         Object v = node.getData().get(key);
         return v == null ? null : String.valueOf(v);
+    }
+
+    /** 读整数参数（segmentCount 等；非数字/缺失→null）。 */
+    private Integer readInt(CanvasNodeDTO node, String key) {
+        if (node.getData() == null) {
+            return null;
+        }
+        Object v = node.getData().get(key);
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        if (v instanceof String s && !s.isBlank()) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 }

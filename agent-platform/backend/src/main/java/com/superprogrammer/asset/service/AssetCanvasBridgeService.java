@@ -247,6 +247,7 @@ public class AssetCanvasBridgeService {
         return switch (nodeType) {
             case CanvasNodeDTO.TYPE_TEXT -> new NodeTypeMapping(Asset.MEDIA_PROMPT, Asset.CATEGORY_TEXT);
             case CanvasNodeDTO.TYPE_SCRIPT -> new NodeTypeMapping(Asset.MEDIA_SCRIPT, Asset.CATEGORY_TEXT);
+            case CanvasNodeDTO.TYPE_STORYBOARD -> new NodeTypeMapping(Asset.MEDIA_STORYBOARD, Asset.CATEGORY_TEXT);
             case CanvasNodeDTO.TYPE_IMAGE -> new NodeTypeMapping(Asset.MEDIA_IMAGE, Asset.CATEGORY_IMAGE);
             case CanvasNodeDTO.TYPE_VIDEO -> new NodeTypeMapping(Asset.MEDIA_VIDEO, Asset.CATEGORY_VIDEO);
             case CanvasNodeDTO.TYPE_AUDIO -> new NodeTypeMapping(Asset.MEDIA_AUDIO, Asset.CATEGORY_AUDIO);
@@ -278,6 +279,17 @@ public class AssetCanvasBridgeService {
                 JsonNode scenes = data.path("scenes");
                 if (scenes.isArray() && scenes.size() > 0) {
                     root.set("scenes", scenes);
+                }
+            } else if (Asset.MEDIA_STORYBOARD.equals(mediaType)) {
+                // 分镜节点：正文为单条分镜画面描述 description；空 → 400 拦截。
+                String desc = textOr(data, "description");
+                if (desc == null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "分镜节点无可入库内容（描述为空）");
+                }
+                root.put("description", desc);
+                JsonNode idx = data.path("index");
+                if (idx != null && idx.isNumber()) {
+                    root.set("index", idx);
                 }
             } else {
                 // 提示词：outputText 优先（运行后的产出），退回 prompt（输入原文）
