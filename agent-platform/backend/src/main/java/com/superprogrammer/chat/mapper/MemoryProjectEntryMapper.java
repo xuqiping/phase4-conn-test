@@ -47,5 +47,11 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
     @Update("UPDATE memory_project_entries SET deleted = 1, updated_at = NOW() "
             + "WHERE deleted = 0 AND content_type = 'FILE' AND file_id = #{fileId}")
     int softDeleteFileEntries(@Param("fileId") String fileId);
+
+    /** P4（FR-301/302/305）总结入口 hasChange/未覆盖计数：一批项目 ACTIVE 条目中，
+     *  在 (scope 项目, 主体) 下无 entry_coverage 行的条数。userId=null → 共享覆盖行（IS NULL）。 */
+    int countUncoveredEntries(@Param("sourceProjectIds") List<Long> sourceProjectIds,
+                              @Param("scopeProjectId") Long scopeProjectId,
+                              @Param("userId") Long userId);
 }
 

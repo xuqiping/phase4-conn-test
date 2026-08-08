@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper">
+
+    <!-- 一批条目在 (scope 项目, tag, 主体) 下已覆盖的 entry_id 集。userId=null → 共享行（IS NULL）。 -->
+    <select id="findCoveredEntryIds" resultType="long">
+        SELECT entry_id FROM memory_entry_coverage
+        WHERE tag_id = #{tagId} AND project_id = #{projectId}
+        <choose>
+            <when test="userId != null">AND user_id = #{userId}</when>
+            <otherwise>AND user_id IS NULL</otherwise>
+        </choose>
+        AND entry_id IN
+        <foreach collection="entryIds" item="eid" open="(" separator="," close=")">#{eid}</foreach>
+    </select>
+
+    <!-- 批量写覆盖行（UNIQUE 冲突 DO NOTHING 幂等，V47 batchInsert 范式）。 -->
+    <insert id="batchInsert">
+        INSERT INTO memory_entry_coverage (entry_id, summary_id, project_id, tag_id, user_id, created_at)
+        VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.entryId}, #{r.summaryId}, #{r.projectId}, #{r.tagId}, #{r.userId}, NOW())
+        </foreach>
+        ON CONFLICT (entry_id, project_id, tag_id, user_id) NULLS NOT DISTINCT DO NOTHING
+    </insert>
+
+    <!-- 级联清：删某 summary 的全部条目覆盖行。 -->
+    <delete id="deleteBySummaryId">
+        DELETE FROM memory_entry_coverage WHERE summary_id = #{summaryId}
+    </delete>
+</mapper>

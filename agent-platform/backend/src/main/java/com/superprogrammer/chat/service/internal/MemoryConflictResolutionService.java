@@ -57,6 +57,7 @@ public class MemoryConflictResolutionService {
     private final MemoryTurnMapper turnMapper;
     private final MemoryNotificationMapper notificationMapper;
     private final MemoryQueryCache queryCache;
+    private final MemoryProjectLinkService linkService;
 
     /**
      * 执行裁决。
@@ -67,8 +68,8 @@ public class MemoryConflictResolutionService {
     @Transactional(rollbackFor = Exception.class)
     public boolean resolve(Long userId, Long conflictId, String decision) {
         MemoryConflict c = conflictMapper.selectById(conflictId);
-        if (c == null || c.getTagId() == null || !c.getUserId().equals(userId)) {
-            // V47 冲突须 tag_id 非空；非作者或不存在统一 NOT_FOUND（防存在性探测）
+        if (c == null || c.getTagId() == null) {
+            // V47 冲突须 tag_id 非空；不存在统一 NOT_FOUND（防存在性探测）
             throw new BusinessException(ErrorCode.NOT_FOUND, "冲突不存在或无权操作");
         }
         if (!"PENDING".equals(c.getStatus())) {
@@ -83,37 +84,54 @@ public class MemoryConflictResolutionService {
         if (trigger == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "冲突关联总结不存在");
         }
+        // 二期 P4（FR-303「冲突裁决权随总结所有权」）：项目共享总结=项目 ACTIVE owner/admin 裁决
+        // （冲突行 user_id 仅是触发者留痕）；个人总结=作者本人（一期语义不变）。
+        boolean projectShared = "PROJECT".equals(trigger.getScopeOwner());
+        if (projectShared) {
+            if (!linkService.isOwnerOrAdmin(trigger.getProjectId(), userId)) {
+                log.info("项目总结冲突裁决越权拦截 userId={} conflictId={} projectId={}",
+                        userId, conflictId, trigger.getProjectId());
+                throw new BusinessException(ErrorCode.NOT_FOUND, "冲突不存在或无权操作");
+            }
+        } else if (!c.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "冲突不存在或无权操作");
+        }
         Long scopeProjectId = trigger.getProjectId();
 
         switch (decision) {
-            case "KEEP_BOTH" -> keepBoth(userId, c, scopeProjectId);
-            case "KEEP_NEW" -> keepOne(userId, c, trigger, scopeProjectId, true);
-            case "KEEP_OLD" -> keepOne(userId, c, trigger, scopeProjectId, false);
-            case "DISCARD" -> discard(userId, c, trigger);
+            case "KEEP_BOTH" -> keepBoth(userId, c, scopeProjectId, projectShared);
+            case "KEEP_NEW" -> keepOne(userId, c, trigger, scopeProjectId, true, projectShared);
+            case "KEEP_OLD" -> keepOne(userId, c, trigger, scopeProjectId, false, projectShared);
+            case "DISCARD" -> discard(userId, c, trigger, projectShared);
         }
 
         conflictMapper.markV47Resolved(conflictId, decision);
         queryCache.evictUser(userId);
-        log.info("冲突裁决 userId={} conflictId={} decision={}", userId, conflictId, decision);
+        log.info("冲突裁决 userId={} conflictId={} decision={} projectShared={}", userId, conflictId, decision, projectShared);
         return true;
     }
 
     // ---- KEEP_BOTH：两方 PENDING 都回 CLEAN（按 summarized_at 自动排序，无需用户填日期）----
 
-    private void keepBoth(Long userId, MemoryConflict c, Long scopeProjectId) {
-        List<MemorySummary> pendings = summaryMapper.findByUserTagScopeStatus(
-                userId, c.getTagId(), scopeProjectId, "PENDING_CONFLICT");
+    private void keepBoth(Long userId, MemoryConflict c, Long scopeProjectId, boolean projectShared) {
+        List<MemorySummary> pendings = findPendings(userId, c.getTagId(), scopeProjectId, projectShared);
         for (MemorySummary s : pendings) {
             summaryMapper.markStatus(s.getId(), "CLEAN");
         }
     }
 
+    /** PENDING_CONFLICT 双方取数：项目共享按 (project,tag,PROJECT) 域；个人按 (user,tag,scope)。 */
+    private List<MemorySummary> findPendings(Long userId, Long tagId, Long scopeProjectId, boolean projectShared) {
+        return projectShared
+                ? summaryMapper.findByProjectTagScopeStatus(scopeProjectId, tagId, "PENDING_CONFLICT")
+                : summaryMapper.findByUserTagScopeStatus(userId, tagId, scopeProjectId, "PENDING_CONFLICT");
+    }
+
     // ---- KEEP_NEW / KEEP_OLD：留一方，败方软删 + 清 coverage，turns 不动 ----
 
     private void keepOne(Long userId, MemoryConflict c, MemorySummary trigger,
-                         Long scopeProjectId, boolean keepNew) {
-        List<MemorySummary> pendings = summaryMapper.findByUserTagScopeStatus(
-                userId, c.getTagId(), scopeProjectId, "PENDING_CONFLICT");
+                         Long scopeProjectId, boolean keepNew, boolean projectShared) {
+        List<MemorySummary> pendings = findPendings(userId, c.getTagId(), scopeProjectId, projectShared);
         Long survivor = keepNew ? trigger.getId() : firstOther(pendings, trigger.getId());
         if (survivor == null) {
             survivor = trigger.getId();  // 兜底（理论 pendings 含 trigger）
@@ -145,7 +163,16 @@ public class MemoryConflictResolutionService {
 
     // ---- DISCARD：软删冲突 summary + source turns + §3.8 级联（12h 拒 / 他人 STALE / 通知）----
 
-    private void discard(Long userId, MemoryConflict c, MemorySummary trigger) {
+    private void discard(Long userId, MemoryConflict c, MemorySummary trigger, boolean projectShared) {
+        if (projectShared) {
+            // 二期 P4 项目共享总结 DISCARD：仅软删 summary 本体。条目是项目资产不动；
+            // entry_coverage 保留（summary_id 指向软删行无害）——删了会让下轮总结把同批条目
+            // 重压一遍重建同样冲突（死循环），故覆盖行随 summary 软删留档（worker 重生不触 PENDING 行）。
+            summaryMapper.softDeleteByIds(List.of(trigger.getId()));
+            log.info("项目共享总结 DISCARD userId={} summaryId={} projectId={}（条目保留+覆盖留档防重压循环）",
+                    userId, trigger.getId(), trigger.getProjectId());
+            return;
+        }
         List<Long> sourceTurnIds = trigger.getSourceTurnIds() == null
                 ? List.of() : trigger.getSourceTurnIds();
 

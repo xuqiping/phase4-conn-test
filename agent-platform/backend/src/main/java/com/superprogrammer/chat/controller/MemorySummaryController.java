@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -43,6 +44,13 @@ public class MemorySummaryController {
         Long uid = requireLogin();
         List<MemorySummaryVO> list = summaryViewService.listMySummaries(uid, projectId);
         return ResponseEntity.ok(R.ok(list));
+    }
+
+    /** 列项目共享总结（二期 P4，FR-301：scope_owner=PROJECT 全员可读；成员咽喉在 service 层）。 */
+    @GetMapping("/project/{projectId}")
+    public ResponseEntity<R<List<MemorySummaryVO>>> listProjectShared(@PathVariable Long projectId) {
+        Long uid = requireLogin();
+        return ResponseEntity.ok(R.ok(summaryViewService.listProjectSharedSummaries(uid, projectId)));
     }
 
     private Long requireLogin() {

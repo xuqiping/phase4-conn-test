@@ -38,6 +38,7 @@ class MemoryConflictResolutionServiceTest {
     @Mock MemoryTurnMapper turnMapper;
     @Mock MemoryNotificationMapper notificationMapper;
     @Mock MemoryQueryCache queryCache;
+    @Mock MemoryProjectLinkService linkService;
 
     @InjectMocks MemoryConflictResolutionService service;
 
@@ -226,5 +227,66 @@ class MemoryConflictResolutionServiceTest {
 
         verify(summaryMapper).softDeleteByIds(eq(List.of(100L)));
         verify(turnMapper, never()).softDeleteByIds(any());
+    }
+
+    // ============================ 二期 P4 · 项目共享总结冲突裁决（FR-303 裁决权随总结所有权）============================
+
+    private static MemorySummary projectSharedSummary(Long id, String status) {
+        MemorySummary s = new MemorySummary();
+        s.setId(id);
+        s.setUserId(null);                 // 项目资产
+        s.setProjectId(99L);
+        s.setTagId(10L);
+        s.setScopeOwner("PROJECT");
+        s.setStatus(status);
+        s.setSourceTurnIds(List.of());
+        s.setSourceEntryIds(List.of(201L));
+        s.setSummarizedAt(OffsetDateTime.now());
+        return s;
+    }
+
+    // ---- 11. P4 项目共享总结冲突：owner/admin 可裁决（conflict.user_id≠裁决者也行）----
+
+    @Test
+    void projectSharedConflictOwnerCanResolve() {
+        when(conflictMapper.selectById(1L)).thenReturn(pendingConflict(1L, 100L));  // user_id=UID=触发者留痕
+        when(summaryMapper.selectById(100L)).thenReturn(projectSharedSummary(100L, "PENDING_CONFLICT"));
+        when(linkService.isOwnerOrAdmin(99L, OTHER)).thenReturn(true);  // 裁决者是另一 admin
+        when(summaryMapper.findByProjectTagScopeStatus(99L, 10L, "PENDING_CONFLICT"))
+                .thenReturn(List.of(projectSharedSummary(100L, "PENDING_CONFLICT")));
+
+        boolean ok = service.resolve(OTHER, 1L, "KEEP_BOTH");
+
+        assertTrue(ok);
+        verify(summaryMapper).markStatus(100L, "CLEAN");
+        verify(conflictMapper).markV47Resolved(1L, "KEEP_BOTH");
+    }
+
+    // ---- 12. P4 项目共享总结冲突：普通成员裁决 → NOT_FOUND（越权防探测）----
+
+    @Test
+    void projectSharedConflictMemberForbidden() {
+        when(conflictMapper.selectById(1L)).thenReturn(pendingConflict(1L, 100L));
+        when(summaryMapper.selectById(100L)).thenReturn(projectSharedSummary(100L, "PENDING_CONFLICT"));
+        when(linkService.isOwnerOrAdmin(99L, OTHER)).thenReturn(false);
+
+        assertThrows(BusinessException.class, () -> service.resolve(OTHER, 1L, "KEEP_BOTH"));
+        verify(conflictMapper, never()).markV47Resolved(anyLong(), any());
+    }
+
+    // ---- 13. P4 项目共享总结 DISCARD：仅软删 summary，条目/turns 不动，覆盖留档防重压循环 ----
+
+    @Test
+    void projectSharedDiscardKeepsEntriesAndCoverage() {
+        when(conflictMapper.selectById(1L)).thenReturn(pendingConflict(1L, 100L));
+        when(summaryMapper.selectById(100L)).thenReturn(projectSharedSummary(100L, "PENDING_CONFLICT"));
+        when(linkService.isOwnerOrAdmin(99L, UID)).thenReturn(true);
+
+        service.resolve(UID, 1L, "DISCARD");
+
+        verify(summaryMapper).softDeleteByIds(eq(List.of(100L)));
+        verify(turnMapper, never()).softDeleteByIds(any());
+        verify(coverageMapper, never()).deleteBySummaryId(anyLong());  // turn 级 coverage 不动
+        verify(conflictMapper).markV47Resolved(1L, "DISCARD");
     }
 }

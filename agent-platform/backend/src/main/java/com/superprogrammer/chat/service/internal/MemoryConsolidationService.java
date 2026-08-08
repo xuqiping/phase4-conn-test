@@ -3,15 +3,22 @@ package com.superprogrammer.chat.service.internal;
 import com.superprogrammer.chat.dto.MemoryConsolidationScopeRequest;
 import com.superprogrammer.chat.dto.MemoryConsolidationTargetView;
 import com.superprogrammer.chat.dto.MemoryConsolidationTriggerRequest;
+import com.superprogrammer.chat.dto.MemoryGenMatrixItemVO;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
+import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
+import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedEntrySummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedSummary;
 import com.superprogrammer.chat.service.internal.MemoryQueryCache;
 import lombok.RequiredArgsConstructor;
@@ -21,8 +28,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -63,6 +74,10 @@ public class MemoryConsolidationService {
     private final MemoryConsolidationCompressor compressor;
     private final MemoryConsolidationTxService txService;
     private final MemoryQueryCache queryCache;
+    private final MemoryProjectEntryMapper entryMapper;
+    private final MemoryEntryCoverageMapper entryCoverageMapper;
+    private final MemoryProjectLinkService linkService;
+    private final MemoryProjectMemberMapper memberMapper;
 
     /** 防膨胀阈值（同 user+tag+scope CLEAN 条数 > 此值 → 再压一次）。走 system_settings 可配，v1 走默认。 */
     @Value("${memory.consolidation.bloat-threshold:5}")
@@ -83,11 +98,10 @@ public class MemoryConsolidationService {
             return result;
         }
         boolean personal = isPersonalScope(req);
-        // 二期 P1（V67，FR-006）：turns 纯个人域 → 项目总结（基项目 turns 取数）整体下线，
-        // P4 将基于收录条目（memory_project_entries）重建项目总结共享化。项目 scope 空跑跳过。
+        // 二期 P4（V70，FR-301/302）：项目总结重建——基于收录条目（memory_project_entries），
+        // 共享（scope_owner=PROJECT，owner/admin）/ 成员个人压缩（toPersonal=true）双通道。
         if (!personal) {
-            result.addNote("二期 P1：项目总结随 turns 纯个人域下线（P4 基于收录条目重建）→ 跳过");
-            return result;
+            return summarizeProjectScope(userId, req, result);
         }
         Long scopeProjectId = null;
         String direction = normalizeDirection(req.getDirection());
@@ -180,6 +194,113 @@ public class MemoryConsolidationService {
         return uncovered;
     }
 
+    // ============================ 二期 P4 · 项目总结（V70，FR-301/302/303/305）============================
+
+    /**
+     * 项目 scope 总结（二期 P4 重建，取数=收录条目非 turns）。
+     * <pre>
+     *   ① 权限：共享（toPersonal!=true）须 owner/admin（FR-301）；成员个人压缩须 ACTIVE 成员（FR-302）
+     *   ② 取数：本项目 ACTIVE 条目 ∪ ACTIVE links child 项目条目（FR-303 嵌套，实时算链，单级一跳）
+     *   ③ 按 tag 分组（tag_ids 数组展开；标签归一在作者个人库，仅借 label 喂 prompt）
+     *   ④ per tag：entry_coverage 判未覆盖（共享 user_id=NULL / 个人 user_id=self，各自幂等）
+     *   ⑤ 压缩（compressEntries + 日期铁律）→ 事务写 summary(scope_owner) + entry_coverage + 冲突
+     * </pre>
+     * 撤销授权后重压天然不含 child 内容（取数实时算 ACTIVE 链，坑点预判③）。
+     */
+    private SummarizeResult summarizeProjectScope(Long operatorId, MemoryConsolidationScopeRequest req,
+                                                  SummarizeResult result) {
+        Long projectId = req.getProjectId();
+        if (projectId == null) {
+            result.addNote("项目 scope 缺 projectId");
+            return result;
+        }
+        boolean shared = !Boolean.TRUE.equals(req.getToPersonal());
+        // ① 权限咽喉
+        if (shared && !linkService.isOwnerOrAdmin(projectId, operatorId)) {
+            result.addNote("项目 " + projectId + " 共享总结仅 owner/admin 可写 → 跳过");
+            log.info("项目共享总结越权拦截 operatorId={} projectId={}", operatorId, projectId);
+            return result;
+        }
+        if (!shared && !linkService.isActiveMember(projectId, operatorId)) {
+            result.addNote("项目 " + projectId + " 非 ACTIVE 成员，不可个人压缩 → 跳过");
+            log.info("成员个人压缩越权拦截 operatorId={} projectId={}", operatorId, projectId);
+            return result;
+        }
+
+        // ② 取数：本项目 ∪ ACTIVE child（实时算链）
+        List<Long> sourceProjectIds = new ArrayList<>();
+        sourceProjectIds.add(projectId);
+        sourceProjectIds.addAll(linkService.findActiveChildIds(List.of(projectId)));
+        List<MemoryProjectEntryVO> entries = entryMapper.listActiveForRecall(sourceProjectIds);
+        if (entries == null || entries.isEmpty()) {
+            return result;  // 无 ACTIVE 条目 → 空跑
+        }
+
+        // ③ 按 tag 分组（tag_ids 展开；无 tag 条目不进总结——无分组锚点）
+        Map<Long, List<MemoryProjectEntryVO>> byTag = new LinkedHashMap<>();
+        Set<Long> tagIds = new HashSet<>();
+        for (MemoryProjectEntryVO e : entries) {
+            if (e.getTagIds() == null) continue;
+            for (Long tid : e.getTagIds()) {
+                byTag.computeIfAbsent(tid, k -> new ArrayList<>()).add(e);
+                tagIds.add(tid);
+            }
+        }
+        if (byTag.isEmpty()) {
+            return result;
+        }
+        Map<Long, String> tagLabels = new HashMap<>();
+        for (MemoryTag t : tagMapper.selectBatchIds(tagIds)) {
+            tagLabels.put(t.getId(), t.getLabel());
+        }
+
+        // ④⑤ per tag：未覆盖判定 → 压缩 → 事务写
+        for (Map.Entry<Long, List<MemoryProjectEntryVO>> group : byTag.entrySet()) {
+            Long tagId = group.getKey();
+            List<MemoryProjectEntryVO> groupEntries = group.getValue();
+            groupEntries.sort(Comparator.comparing(MemoryProjectEntryVO::getCreatedAt,
+                    Comparator.nullsLast(Comparator.naturalOrder())));
+            try {
+                summarizeOneEntryTag(operatorId, projectId, shared, tagId,
+                        tagLabels.getOrDefault(tagId, "总结"), groupEntries, result);
+            } catch (Exception e) {
+                log.warn("项目总结单 tag 异常 operatorId={} projectId={} tagId={}: {}",
+                        operatorId, projectId, tagId, e.getMessage());
+                result.addNote("tag " + tagId + " 异常: " + e.getMessage());
+            }
+        }
+        if (result.summariesWritten > 0) {
+            queryCache.evictUser(operatorId);
+        }
+        log.info("项目总结完成 operatorId={} projectId={} shared={} summaries={} conflicts={}",
+                operatorId, projectId, shared, result.summariesWritten, result.conflictsCreated);
+        return result;
+    }
+
+    /** per tag：entry_coverage 未覆盖判定（幂等不调 LLM）→ 压缩 → 事务写。 */
+    private void summarizeOneEntryTag(Long operatorId, Long projectId, boolean shared, Long tagId,
+                                      String tagLabel, List<MemoryProjectEntryVO> groupEntries,
+                                      SummarizeResult result) {
+        List<Long> entryIds = groupEntries.stream().map(MemoryProjectEntryVO::getId).toList();
+        Set<Long> covered = new HashSet<>(entryCoverageMapper.findCoveredEntryIds(
+                entryIds, projectId, tagId, shared ? null : operatorId));
+        List<MemoryProjectEntryVO> uncovered = new ArrayList<>();
+        for (MemoryProjectEntryVO e : groupEntries) {
+            if (!covered.contains(e.getId())) {
+                uncovered.add(e);
+            }
+        }
+        if (uncovered.isEmpty()) {
+            return;  // 全已覆盖 → 空跳过（无新增不耗 token）
+        }
+        CompressedEntrySummary cs = compressor.compressEntries(operatorId, tagLabel, uncovered);
+        if (cs == null) {
+            result.addNote("tag " + tagId + " 条目压缩失败/日期铁律违则 skip");
+            return;
+        }
+        txService.writeProjectSummaryAndCoverage(operatorId, projectId, shared, tagId, uncovered, cs, result);
+    }
+
     // ---- scope 解析 helpers ----
 
     private static boolean isPersonalScope(MemoryConsolidationScopeRequest req) {
@@ -257,21 +378,28 @@ public class MemoryConsolidationService {
         return aggregate;
     }
 
-    /** 取/建 scope 行（PERSONAL 由 trigger 默认建；二期 P1 项目 scope 下线 → null 跳过）。 */
+    /** 取/建 scope 行（PERSONAL 由 trigger 默认建；二期 P4 PROJECT=成员即可建行，写权在 summarizeProjectScope 咽喉判）。 */
     private Long ensureScopeRow(Long userId, MemoryConsolidationScopeRequest sr) {
         boolean personal = isPersonalScope(sr);
-        if (!personal) {
-            return null;  // 二期 P1：项目总结随 turns 纯个人域下线（P4 基于收录条目重建）
+        if (!personal && sr.getProjectId() == null) {
+            return null;
         }
+        if (!personal && !linkService.isActiveMember(sr.getProjectId(), userId)) {
+            log.info("总结 scope 建行越权拦截 userId={} projectId={}", userId, sr.getProjectId());
+            return null;  // 非 ACTIVE 成员不可建项目 scope（P4：成员也可触发个人压缩，但须是成员）
+        }
+        String kind = personal ? "PERSONAL" : "PROJECT";
+        Long projectId = personal ? null : sr.getProjectId();
         OffsetDateTime now = OffsetDateTime.now();
-        scopeMapper.upsertScope(userId, "PERSONAL", null, false, now);  // 手动触发不自动改 auto_enabled
-        MemoryConsolidationScope row = scopeMapper.findByUserAndScope(userId, "PERSONAL", null);
+        scopeMapper.upsertScope(userId, kind, projectId, false, now);  // 手动触发不自动改 auto_enabled
+        MemoryConsolidationScope row = scopeMapper.findByUserAndScope(userId, kind, projectId);
         return row == null ? null : row.getId();
     }
 
     /**
-     * 列总结入口（设计 §3.4 line119）：二期 P1 仅 {个人}（项目总结随 turns 纯个人域下线，P4 重建）。
-     * 个人 uncoveredCount = gen_done=true 且无 coverage 的 turn（§3.9 告警阈值用）。
+     * 列总结入口（设计 §3.4 line119）：{个人} ∪ {本人 ACTIVE 项目}（二期 P4 重建项目总结）。
+     * 个人 uncoveredCount = gen_done=true 且无 coverage 的 turn（§3.9 告警阈值用）；
+     * 项目 uncoveredCount = 条目级未覆盖计数（共享通道 user_id=NULL；成员另见 canWriteShared）。
      */
     public List<MemoryConsolidationTargetView> listTargets(Long userId) {
         List<MemoryConsolidationTargetView> out = new ArrayList<>();
@@ -285,7 +413,32 @@ public class MemoryConsolidationService {
                 .hasChange(uncovered > 0 || raw > 0)
                 .uncoveredCount(uncovered)
                 .autoEnabled(personal != null && Boolean.TRUE.equals(personal.getAutoEnabled()))
+                .canWriteShared(true)
                 .build());
+
+        // 二期 P4（FR-301/302）：本人 ACTIVE 项目逐个出入口（owner/admin 可写共享总结）
+        List<MemoryGenMatrixItemVO> myProjects = memberMapper.findMyGenMatrix(userId);
+        if (myProjects != null) {
+            for (MemoryGenMatrixItemVO p : myProjects) {
+                boolean canShared = "OWNER".equals(p.getRole()) || "ADMIN".equals(p.getRole());
+                List<Long> sourceProjectIds = new ArrayList<>();
+                sourceProjectIds.add(p.getProjectId());
+                sourceProjectIds.addAll(linkService.findActiveChildIds(List.of(p.getProjectId())));
+                // 未覆盖计数：owner/admin 看共享通道（user_id=NULL）；成员看个人通道（user_id=self）
+                int entryUncovered = entryMapper.countUncoveredEntries(
+                        sourceProjectIds, p.getProjectId(), canShared ? null : userId);
+                MemoryConsolidationScope scopeRow = scopeMapper.findByUserAndScope(userId, "PROJECT", p.getProjectId());
+                out.add(MemoryConsolidationTargetView.builder()
+                        .scopeKind("PROJECT")
+                        .projectId(p.getProjectId())
+                        .displayName(p.getProjectName())
+                        .hasChange(entryUncovered > 0)
+                        .uncoveredCount(entryUncovered)
+                        .autoEnabled(scopeRow != null && Boolean.TRUE.equals(scopeRow.getAutoEnabled()))
+                        .canWriteShared(canShared)
+                        .build());
+            }
+        }
         return out;
     }
 

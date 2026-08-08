@@ -66,4 +66,24 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
                             @Param("l1") String l1,
                             @Param("l2") String l2,
                             @Param("status") String status);
+
+    // ============================ 二期 P4 · 项目共享总结（V70）============================
+
+    /** P4 项目共享总结读取（FR-301）：scope_owner=PROJECT 的项目总结，全员可读（成员咽喉在 service 层）。 */
+    List<MemorySummary> findProjectSharedSummaries(@Param("projectId") Long projectId);
+
+    /** P4 同 (project, tag, scope_owner=PROJECT) CLEAN 总结（共享总结时序互斥冲突判定用）。 */
+    List<MemorySummary> findCleanByProjectTagScope(@Param("projectId") Long projectId,
+                                                   @Param("tagId") Long tagId);
+
+    /** P4 同 (project, tag, scope_owner=PROJECT) 指定 status 总结（裁决找 PENDING_CONFLICT 另一方）。 */
+    List<MemorySummary> findByProjectTagScopeStatus(@Param("projectId") Long projectId,
+                                                    @Param("tagId") Long tagId,
+                                                    @Param("status") String status);
+
+    /** P4 删条目级联（FR-304）：source_entry_ids @> [entryId] 的全部总结（含共享总结）。 */
+    List<MemorySummary> findSummariesReferencingEntry(@Param("entryId") Long entryId);
+
+    /** P4 worker STALE 重生取数：项目共享总结（user_id IS NULL）status=STALE。 */
+    List<MemorySummary> findStaleProjectShared();
 }

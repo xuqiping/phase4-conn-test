@@ -1,13 +1,19 @@
 package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.dto.MemoryConsolidationScopeRequest;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
+import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
+import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedEntrySummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedSummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationService.SummarizeResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +52,10 @@ class MemoryConsolidationServiceTest {
     @Mock MemoryConsolidationCompressor compressor;
     @Mock MemoryConsolidationTxService txService;
     @Mock MemoryQueryCache queryCache;
+    @Mock MemoryProjectEntryMapper entryMapper;
+    @Mock MemoryEntryCoverageMapper entryCoverageMapper;
+    @Mock MemoryProjectLinkService linkService;
+    @Mock MemoryProjectMemberMapper memberMapper;
 
     @InjectMocks MemoryConsolidationService service;
 
@@ -160,22 +170,130 @@ class MemoryConsolidationServiceTest {
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("压缩失败")));
     }
 
-    // ---- 5. 二期 P1：项目 scope 总结下线 → 早退 skip，不动任何 mapper ----
+    // ---- 5. 二期 P4：非 owner/admin 触发项目共享总结 → 权限咽喉拦截 skip（FR-301）----
 
     @Test
-    void projectScopeSkipped_phase2P1() {
+    void projectSharedNonOwnerSkipped() {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
+        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(false);
 
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
-        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("二期 P1")), "项目总结下线 note");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("仅 owner/admin 可写")), "共享总结越权 note");
         assertEquals(0, r.getSummariesWritten());
-        verifyNoInteractions(tagMapper, turnMapper, coverageMapper, compressor, txService, backfillService);
+        verifyNoInteractions(entryMapper, entryCoverageMapper, compressor, txService);
     }
 
-    // ---- 7. scope 无标签 → 空结果 ----
+    // ---- 6. 二期 P4：成员个人压缩通道，非 ACTIVE 成员 → 拦截（FR-302）----
+
+    @Test
+    void projectPersonalNonMemberSkipped() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        req.setToPersonal(true);
+        when(linkService.isActiveMember(99L, 1L)).thenReturn(false);
+
+        SummarizeResult r = service.summarizeScope(1L, req, false);
+
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("非 ACTIVE 成员")), "个人压缩越权 note");
+        verifyNoInteractions(entryMapper, entryCoverageMapper, compressor, txService);
+    }
+
+    // ---- 7. 二期 P4：共享总结 happy path——嵌套取数含 child + 未覆盖压缩 + 委派写（FR-301/303/305）----
+
+    @Test
+    void projectSharedHappyPath() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(true);
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of(77L));  // ACTIVE child
+        MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
+        MemoryProjectEntryVO e2 = MemoryProjectEntryVO.builder()
+                .id(202L).projectId(77L).tagIds(List.of(10L)).l1Summary("child 条目").build();
+        when(entryMapper.listActiveForRecall(List.of(99L, 77L))).thenReturn(List.of(e1, e2));
+        MemoryTag tag = new MemoryTag();
+        tag.setId(10L);
+        tag.setLabel("工作");
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null)))
+                .thenReturn(List.of(201L));  // e1 已覆盖，e2 未覆盖
+        CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(202L));
+        when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
+
+        SummarizeResult r = service.summarizeScope(1L, req, true);
+
+        // 嵌套取数验证：查的是 [本项目, child]
+        verify(entryMapper).listActiveForRecall(List.of(99L, 77L));
+        // 覆盖行查共享通道（user_id=null）
+        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null));
+        // 仅未覆盖的 e2 委派写（shared=true）
+        ArgumentCaptor<List<MemoryProjectEntryVO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), captor.capture(), eq(cs), any());
+        assertEquals(1, captor.getValue().size(), "已覆盖条目不重压（幂等）");
+        assertEquals(202L, captor.getValue().get(0).getId());
+    }
+
+    // ---- 8. 二期 P4：成员个人压缩 happy path——user_id=self 通道 + shared=false（FR-302）----
+
+    @Test
+    void projectPersonalHappyPath() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        req.setToPersonal(true);
+        when(linkService.isActiveMember(99L, 1L)).thenReturn(true);
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
+        MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
+        when(entryMapper.listActiveForRecall(List.of(99L))).thenReturn(List.of(e1));
+        MemoryTag tag = new MemoryTag();
+        tag.setId(10L);
+        tag.setLabel("工作");
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L)))
+                .thenReturn(List.of());  // 个人通道未覆盖
+        CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(201L));
+        when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
+
+        service.summarizeScope(1L, req, true);
+
+        // 个人通道覆盖行 user_id=self（与共享通道互不影响）
+        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L));
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(false), eq(10L), any(), eq(cs), any());
+    }
+
+    // ---- 9. 二期 P4：全条目已覆盖 → 空跳过不调 LLM（幂等）----
+
+    @Test
+    void projectAllCoveredSkipsCompress() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(true);
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
+        MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
+        when(entryMapper.listActiveForRecall(List.of(99L))).thenReturn(List.of(e1));
+        MemoryTag tag = new MemoryTag();
+        tag.setId(10L);
+        tag.setLabel("工作");
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null)))
+                .thenReturn(List.of(201L));  // 全已覆盖
+
+        SummarizeResult r = service.summarizeScope(1L, req, false);
+
+        verify(compressor, never()).compressEntries(anyLong(), any(), any());
+        verify(txService, never()).writeProjectSummaryAndCoverage(anyLong(), anyLong(), eq(true), anyLong(), any(), any(), any());
+        assertEquals(0, r.getSummariesWritten());
+    }
+
+    // ---- 10. scope 无标签 → 空结果 ----
 
     @Test
     void emptyTagsEmptyResult() {

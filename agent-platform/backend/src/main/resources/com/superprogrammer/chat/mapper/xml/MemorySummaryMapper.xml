@@ -5,6 +5,7 @@
     <resultMap id="MemorySummaryMap" type="com.superprogrammer.chat.entity.MemorySummary" autoMapping="true">
         <id property="id" column="id"/>
         <result property="sourceTurnIds" column="source_turn_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="sourceEntryIds" column="source_entry_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
     </resultMap>
 
     <!-- 总结恒只读自己（user_id=self，他人总结不可见防污染）；project_id 单值 scope（NULL=个人）。 -->
@@ -128,4 +129,42 @@
         SET l1_summary = #{l1}, l2_detail = #{l2}, status = #{status}, summarized_at = NOW(), updated_at = NOW()
         WHERE id = #{id} AND deleted = 0
     </update>
+
+    <!-- ============================ 二期 P4 · 项目共享总结（V70）============================ -->
+
+    <!-- P4 项目共享总结读取（FR-301 全员可读；成员咽喉在 service 层）。 -->
+    <select id="findProjectSharedSummaries" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 同 (project, tag, scope_owner=PROJECT) CLEAN 总结（共享总结冲突判定用）。 -->
+    <select id="findCleanByProjectTagScope" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = 'CLEAN' AND tag_id = #{tagId}
+          AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 同 (project, tag, scope_owner=PROJECT) 指定 status 总结（裁决找另一方）。 -->
+    <select id="findByProjectTagScopeStatus" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = #{status} AND tag_id = #{tagId}
+          AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 删条目级联（FR-304）：source_entry_ids @> [entryId]（含共享总结）。 -->
+    <select id="findSummariesReferencingEntry" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND source_entry_ids @> ARRAY[#{entryId}]::bigint[]
+    </select>
+
+    <!-- P4 worker STALE 重生取数：项目共享总结（user_id IS NULL，findStaleByUser 覆盖不到）。 -->
+    <select id="findStaleProjectShared" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = 'STALE' AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at ASC
+    </select>
 </mapper>

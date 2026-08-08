@@ -284,6 +284,11 @@ public class MemoryProjectLinkService {
         return m != null && (ROLE_OWNER.equals(m.getRole()) || ROLE_ADMIN.equals(m.getRole()));
     }
 
+    /** P4（FR-302/303）：ACTIVE 成员判定（成员个人压缩通道 + 共享总结读咽喉）。 */
+    boolean isActiveMember(Long projectId, Long userId) {
+        return findMember(projectId, userId) != null;
+    }
+
     private MemoryProjectMember findMember(Long projectId, Long userId) {
         if (projectId == null || userId == null) {
             return null;

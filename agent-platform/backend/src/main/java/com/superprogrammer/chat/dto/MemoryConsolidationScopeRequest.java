@@ -42,4 +42,9 @@ public class MemoryConsolidationScopeRequest {
     /** L10「同步已离开人员」开关（§3.7 line158，同时控总结取数），null → 默认 true（不过滤）。
      *  false → 项目候选剔 DEPARTED（优先级高于人员多选，即便 SPECIFIC 勾了离职人员也剔）。 */
     private Boolean includeDeparted;
+
+    /** 二期 P4（FR-302）：PROJECT scope 专用。true=「压到我自己的总结」（成员个人压缩通道：
+     *  产出 user_id=自己、scope_owner=USER、project_id=该项目，对项目共享总结零写）；
+     *  null/false=项目共享总结（scope_owner=PROJECT，仅 owner/admin 可写，FR-301）。 */
+    private Boolean toPersonal;
 }

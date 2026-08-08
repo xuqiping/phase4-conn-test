@@ -65,4 +65,23 @@
         ORDER BY e.created_at DESC
         LIMIT 200
     </select>
+
+    <!-- P4（FR-301/302/305）总结入口未覆盖计数：sourceProjectIds 内 ACTIVE 条目中，
+         在 (scope 项目, 主体=userId[null=共享]) 下无 entry_coverage 行的条数。 -->
+    <select id="countUncoveredEntries" resultType="int">
+        SELECT COUNT(*) FROM memory_project_entries e
+        WHERE e.deleted = 0 AND e.status = 'ACTIVE'
+          AND e.project_id IN
+          <foreach collection="sourceProjectIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_entry_coverage c
+              WHERE c.entry_id = e.id AND c.project_id = #{scopeProjectId}
+              <choose>
+                  <when test="userId != null">AND c.user_id = #{userId}</when>
+                  <otherwise>AND c.user_id IS NULL</otherwise>
+              </choose>
+          )
+    </select>
 </mapper>
