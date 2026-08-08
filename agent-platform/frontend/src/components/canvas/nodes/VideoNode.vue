@@ -20,6 +20,11 @@
 <script setup lang="ts">
 import { VideocamOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+// vue-flow 把节点一等属性（label/position/dimensions 等）塞进本组件 $attrs。
+// 默认 inheritAttrs:true 会透传到根子组件 CanvasNodeBase 的 vnode props，
+// 其中 vue-flow 的 `label:undefined` 会覆盖显式 `:label="data.label"` → 节点头显「未命名」。
+// 关闭透传：仅显式绑定进 CNB，vue-flow 垃圾 attr 不污染（定位由外层 .vue-flow__node 包裹层负责）。
+defineOptions({ inheritAttrs: false })
 import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 

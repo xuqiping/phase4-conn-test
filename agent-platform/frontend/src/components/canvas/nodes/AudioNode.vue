@@ -9,6 +9,8 @@
 <script setup lang="ts">
 import { MusicalNotesOutline } from '@vicons/ionicons5'
 import CanvasNodeBase from './CanvasNodeBase.vue'
+// 见 VideoNode：关 vue-flow $attrs 透传，防 `label:undefined` 覆盖显式 :label。
+defineOptions({ inheritAttrs: false })
 import { useNodeAssetBadge } from './useNodeAssetBadge'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
