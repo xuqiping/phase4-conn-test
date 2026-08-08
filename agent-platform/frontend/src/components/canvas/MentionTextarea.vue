@@ -336,10 +336,29 @@ watch(
     render(v)
   }
 )
-// 断链集合/候选 label 变化 → 重渲染（chip 染色/名同步），不影响光标（失焦态或只读视觉）。
-watch([() => props.brokenMentions, () => props.candidates], () => {
-  render(lastEmitted.value)
-})
+
+/**
+ * 外科更新 chip 视觉（断链染色 + label 同步），**不重建 innerHTML**。
+ * 必须外科而非 render：brokenMentions 在 VideoGenView 依赖 form.prompt，每键都重算返新数组
+ * → 若走 render() 会重建 innerHTML → 光标丢失 → 下个字符插到开头 → 输入逆序（"abc"→"cba"）。
+ * chip 是 contenteditable=false 的原子块，光标永不在其内；改其 class/textContent 不影响
+ * 文本节点里的光标，故可安全在每次按键时调用。
+ */
+function applyChipVisuals() {
+  const el = editRef.value
+  if (!el) return
+  const brokenSet = new Set(props.brokenMentions)
+  el.querySelectorAll<HTMLElement>('.mention-ta__chip').forEach((chip) => {
+    const raw = chip.dataset.mention ?? ''
+    const kind = chip.dataset.kind ?? ''
+    const id = chip.dataset.id ?? ''
+    const label = labelMap.value.get(`${kind}:${id}`) ?? raw
+    if (chip.textContent !== label) chip.textContent = label
+    chip.classList.toggle('is-broken', brokenSet.has(raw))
+  })
+}
+// 断链集合/候选 label 变化 → 外科更新 chip（染色/名同步），不丢光标。
+watch([() => props.brokenMentions, () => props.candidates], applyChipVisuals, { deep: true })
 
 onMounted(() => {
   lastEmitted.value = props.modelValue

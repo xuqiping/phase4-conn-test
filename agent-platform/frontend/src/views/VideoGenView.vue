@@ -482,9 +482,11 @@ const ATTACH_KIND_LABELS: Record<AttachmentKind, string> = { image: '图', video
  */
 const attachmentCandidates = computed<MentionCandidate[]>(() => {
   const out: MentionCandidate[] = []
-  images.value.forEach((a, i) => out.push({ kind: 'image', id: a.id, label: `图${i + 1}` }))
-  videos.value.forEach((a, i) => out.push({ kind: 'video', id: a.id, label: `视频${i + 1}` }))
-  audios.value.forEach((a, i) => out.push({ kind: 'audio', id: a.id, label: `音频${i + 1}` }))
+  // chip 显附件真名（用户在瓦片改的名，如「抽帧(LAST)」），改名后 chip 实时同步；
+  // 无名时回退 图N/视频N/音频N。提交时 interpolateAttachmentPrompt 仍按序号转「图N」送后端，与此无关。
+  images.value.forEach((a, i) => out.push({ kind: 'image', id: a.id, label: a.name?.trim() || `图${i + 1}` }))
+  videos.value.forEach((a, i) => out.push({ kind: 'video', id: a.id, label: a.name?.trim() || `视频${i + 1}` }))
+  audios.value.forEach((a, i) => out.push({ kind: 'audio', id: a.id, label: a.name?.trim() || `音频${i + 1}` }))
   return out
 })
 
