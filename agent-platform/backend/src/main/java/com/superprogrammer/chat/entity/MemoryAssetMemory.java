@@ -35,6 +35,19 @@ public class MemoryAssetMemory extends BaseEntity {
     public static final String KIND_VIDEO = "VIDEO";
     public static final String KIND_OTHER = "OTHER";
 
+    /** 文件类型中文标签（卡片/总结话术共用，ingest 与 recall 同源）。 */
+    public static String kindLabel(String fileKind) {
+        return switch (fileKind == null ? "" : fileKind) {
+            case KIND_IMAGE -> "图片";
+            case KIND_PDF -> "PDF 文档";
+            case KIND_PPT -> "PPT 演示文稿";
+            case KIND_DOC -> "文档";
+            case KIND_AUDIO -> "音频";
+            case KIND_VIDEO -> "视频";
+            default -> "文件";
+        };
+    }
+
     private Long ownerUserId;        // 个人域边界（随用户 CASCADE）
     private String fileId;           // stored_files 登记行（UUID+ext 自然主键）
     private String fileKind;         // IMAGE/DOC/PPT/PDF/AUDIO/VIDEO/OTHER，决定 ingestion 分派

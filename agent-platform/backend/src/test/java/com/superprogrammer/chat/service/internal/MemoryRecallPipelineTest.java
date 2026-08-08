@@ -58,6 +58,8 @@ class MemoryRecallPipelineTest {
     MemoryEntryRecallService entryRecallService;
     @Mock
     MemoryTagMapper tagMapper;
+    @Mock
+    MemoryAssetRecallService assetRecallService;
 
     private MemoryRecallPipeline pipeline;
 
@@ -68,9 +70,12 @@ class MemoryRecallPipelineTest {
     @BeforeEach
     void setUp() {
         pipeline = new MemoryRecallPipeline(resolver, aggregator, selector, reader, patcher,
-                entryRecallService, tagMapper);
+                entryRecallService, tagMapper, assetRecallService);
         // ①.5 条目合流默认无条目（各条目用例自行覆盖）
         lenient().when(entryRecallService.collectActiveEntries(anyList(), anyLong())).thenReturn(List.of());
+        // ⑥.5 文件记忆默认无命中/无深读（各文件用例自行覆盖）
+        lenient().when(assetRecallService.collectFileCards(anyList(), anyLong())).thenReturn(List.of());
+        lenient().when(assetRecallService.deepReadChunks(anyList(), anyString(), anyLong())).thenReturn(List.of());
     }
 
     // ---------- helpers ----------
@@ -330,7 +335,8 @@ class MemoryRecallPipelineTest {
         stubHappy();
         MemoryRecallResult r = pipeline.recall(QUERY, new MemoryRecallScopeRequest(), SELF);
         List<String> names = r.getSteps().stream().map(RecallTraceStep::step).toList();
-        assertEquals(List.of("resolve", "aggregate", "entry-merge", "select", "read", "patch", "assemble"), names);
+        assertEquals(List.of("resolve", "aggregate", "entry-merge", "select", "read", "patch",
+                "file-recall", "file-deepread", "assemble"), names);
         assertTrue(r.getSteps().stream().allMatch(s -> s.durationMs() >= 0), "耗时非负");
         assertNotNull(r.getTraceId());
     }
@@ -487,5 +493,125 @@ class MemoryRecallPipelineTest {
                 List.of(entry(2, OTHER, "张三", "y", null)),
                 List.of(tag(10, "我", "爱好", SELF)),
                 List.of(tag(10, "我", "爱好", SELF))).isEmpty());
+    }
+
+    // ============================ 记忆二期 P3 · ⑥.5 文件记忆召回+深读（FR-203） ============================
+
+    private static com.superprogrammer.chat.dto.RecalledFileCard fileCard(long memoryId, String name,
+                                                                          boolean cleaned) {
+        return com.superprogrammer.chat.dto.RecalledFileCard.builder()
+                .memoryId(memoryId).fileId("file-" + memoryId).originalName(name)
+                .fileKind("PDF").chunkCount(12).weakMemory(false)
+                .fileCleaned(cleaned).downloadable(!cleaned)
+                .l1("讲了 hooks 基础").l2("第3页讲 useState").build();
+    }
+
+    /** ⑥.5 默认桩：个人 scope + 1 标签选中 + read/patch 空（reader/patcher lenient：用例可复写）。 */
+    private void stubFileRecallBase() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
+        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+    }
+
+    // ===== 21 文件命中 → 【文件记忆】卡片块 + fileCards 透出 =====
+
+    @Test
+    void fileCardHit_assemblesFileMemorySection() {
+        stubFileRecallBase();
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
+                fileCard(501, "React课件.pdf", false)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        assertTrue(r.getAssembledText().contains("【文件记忆】"), "含文件记忆段");
+        assertTrue(r.getAssembledText().contains("《React课件.pdf》（PDF 文档·共12块·可下载·file:file-501）：讲了 hooks 基础"),
+                "卡片行含名称/类型/块数/可下载/fileId/l1");
+        assertTrue(r.getAssembledText().contains("第3页讲 useState"), "l2 换行续接");
+        assertEquals(1, r.getFileCards().size(), "fileCards 透出（Step5 前端卡片数据源）");
+        assertFalse(r.isDegraded());
+    }
+
+    // ===== 22 深读命中 → 【文件深读】块带 pageRef =====
+
+    @Test
+    void deepReadHit_assemblesPageRefChunks() {
+        stubFileRecallBase();
+        java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> cards = List.of(
+                fileCard(501, "React课件.pdf", false));
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(cards);
+        when(assetRecallService.deepReadChunks(eq(cards), eq(QUERY), eq(SELF))).thenReturn(List.of(
+                new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第12页", "useEffect 依赖数组规则", 0.21d)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        assertTrue(r.getAssembledText().contains("【文件深读】"), "含深读段");
+        assertTrue(r.getAssembledText().contains("《React课件.pdf》[第12页]：useEffect 依赖数组规则"),
+                "深读行带 pageRef 锚点");
+        assertTrue(r.getAssembledText().contains("回答引用须带页码锚点"), "块头明示引用铁律");
+    }
+
+    // ===== 23 原文件 CLEANED → 卡片标「原文件已删除」总结仍可召回 =====
+
+    @Test
+    void cleanedFile_marksDeletedButKeepsSummary() {
+        stubFileRecallBase();
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
+                fileCard(502, "旧课件.pdf", true)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        assertTrue(r.getAssembledText().contains("《旧课件.pdf》（PDF 文档·共12块·原文件已删除·file:file-502）"),
+                "CLEANED 标原文件已删除");
+        assertTrue(r.getAssembledText().contains("讲了 hooks 基础"), "总结仍可召回");
+    }
+
+    // ===== 24 个人域关闭（personalOn=false）→ 不查文件记忆 =====
+
+    @Test
+    void personalOff_skipsFileRecall() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(
+                new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        pipeline.recall(QUERY, null, SELF);
+
+        verifyNoInteractions(assetRecallService);
+    }
+
+    // ===== 25 file-recall 抛异常 → 降级不中断，turns 仍兜底 =====
+
+    @Test
+    void fileRecallThrows_degradedTurnsFallback() {
+        stubFileRecallBase();
+        when(assetRecallService.collectFileCards(anyList(), eq(SELF)))
+                .thenThrow(new RuntimeException("asset db down"));
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        assertTrue(r.isDegraded(), "file-recall 失败标降级");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("file-recall")), "notes 收明细");
+        assertTrue(r.getAssembledText().contains("兜底原文"), "turns 兜底不受影响");
+        assertFalse(r.getAssembledText().contains("【文件记忆】"));
+    }
+
+    // ===== 26 tags 全空（无标签可选）→ 不查文件记忆但打点齐 =====
+
+    @Test
+    void emptyTags_skipsFileRecallButStepsRecorded() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        verifyNoInteractions(assetRecallService);
+        List<String> names = r.getSteps().stream().map(RecallTraceStep::step).toList();
+        assertTrue(names.contains("file-recall") && names.contains("file-deepread"), "零命中也打点");
     }
 }

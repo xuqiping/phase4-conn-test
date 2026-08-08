@@ -119,7 +119,7 @@ public class MemoryAssetIngestService {
         if (result.unsupported() || !result.hasText()) {
             String reason = result.unsupported() ? "暂不支持的模态，读不懂内容" : "未提取到文字（可能为扫描件/纯图），读不懂内容";
             String l1 = "《" + row.getOriginalName() + "》："
-                    + kindLabel(row.getFileKind()) + "（" + reason + "，仅保留文件信息）";
+                    + MemoryAssetMemory.kindLabel(row.getFileKind()) + "（" + reason + "，仅保留文件信息）";
             memoryMapper.finishIngest(id, MemoryAssetMemory.STATUS_READY, null, l1, null, true, row.getRetryCount());
             log.info("文件 ingestion 弱记忆降级 memoryId={} kind={} unsupported={}", id, row.getFileKind(), result.unsupported());
             return;
@@ -195,7 +195,7 @@ public class MemoryAssetIngestService {
                 文件名：%s（%s）
                 <memory_data>
                 %s
-                </memory_data>""".formatted(row.getOriginalName(), kindLabel(row.getFileKind()), data);
+                </memory_data>""".formatted(row.getOriginalName(), MemoryAssetMemory.kindLabel(row.getFileKind()), data);
         try {
             String raw = llmGateway.chat(LlmRequest.builder()
                             .model(RagConfig.MEMORY_JUDGE_MODEL)
@@ -242,17 +242,5 @@ public class MemoryAssetIngestService {
             log.warn("文件总结 JSON 解析失败: {}", e.getMessage());
             return null;
         }
-    }
-
-    private String kindLabel(String fileKind) {
-        return switch (fileKind == null ? "" : fileKind) {
-            case MemoryAssetMemory.KIND_IMAGE -> "图片";
-            case MemoryAssetMemory.KIND_PDF -> "PDF 文档";
-            case MemoryAssetMemory.KIND_PPT -> "PPT 演示文稿";
-            case MemoryAssetMemory.KIND_DOC -> "文档";
-            case MemoryAssetMemory.KIND_AUDIO -> "音频";
-            case MemoryAssetMemory.KIND_VIDEO -> "视频";
-            default -> "文件";
-        };
     }
 }

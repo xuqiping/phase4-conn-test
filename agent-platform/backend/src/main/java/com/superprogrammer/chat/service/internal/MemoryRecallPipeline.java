@@ -4,6 +4,7 @@ import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.MemoryRecallResult;
 import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
 import com.superprogrammer.chat.dto.RecallTagMeta;
+import com.superprogrammer.chat.dto.RecalledFileCard;
 import com.superprogrammer.chat.dto.RecalledSummary;
 import com.superprogrammer.chat.dto.RecallTraceStep;
 import com.superprogrammer.chat.entity.MemorySummary;
@@ -34,6 +35,9 @@ import java.util.stream.Stream;
  *       <i>tags 空时跳 select/read（无标签可选 → 直接走 turns 兜底）。</i></li>
  *   <li><b>④⑤ read</b>：本人总结 + reflect 判深读（{@link MemorySummaryReader}，向量 14 恒只读自己，最多 1 次 LLM）。</li>
  *   <li><b>⑥ patch</b>：未覆盖流水账（{@link MemoryTurnPatcher}，allCovered 严格 + 防 N+1）。</li>
+ *   <li><b>⑥.5 file-recall/deepread</b>：二期 P3 文件记忆——个人域 READY 文件记忆按 ③ 选中标签命中
+ *       进装配（「文件记忆」卡片块），query embed 分块向量 top-5 深读（「文件深读」块带 page_ref）；
+ *       仅 personalOn 时召回，独立降级不动主干（{@link MemoryAssetRecallService}）。</li>
  *   <li><b>⑦ assemble</b>：按 subject 聚合打 owner 前缀装配文本（注入对话 prompt）。</li>
  * </ol>
  * <p>
@@ -66,6 +70,7 @@ public class MemoryRecallPipeline {
     private final MemoryTurnPatcher patcher;
     private final MemoryEntryRecallService entryRecallService;   // 记忆二期 P1 · ①.5 项目条目合流
     private final MemoryTagMapper tagMapper;                     // 条目标签并入 ② 候选用
+    private final MemoryAssetRecallService assetRecallService;   // 记忆二期 P3 · ⑥.5 文件记忆召回+深读
 
     /**
      * 召回主流程入口。
@@ -92,11 +97,11 @@ public class MemoryRecallPipeline {
             log.warn("recall traceId={} resolve 失败: {}", traceId, e.getMessage());
             steps.add(step("resolve", t0, 0, false));
             notes.add("resolve 失败: " + e.getMessage());
-            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart);
+            return finish("", List.of(), 0, 0, null, traceId, steps, notes, tStart);
         }
         if (scope.isEmpty()) {
             log.info("recall traceId={} 空 scope（取消全部勾选）→ 空召回", traceId);
-            return finish("", List.of(), 0, 0, traceId, steps, notes, tStart);
+            return finish("", List.of(), 0, 0, null, traceId, steps, notes, tStart);
         }
 
         // ② aggregate（向量 3/14）
@@ -148,6 +153,7 @@ public class MemoryRecallPipeline {
         // ③ select + ④⑤ read（tags 空时跳过——无标签可选，直接走 turns 兜底）
         List<RecallTagMeta> selected = List.of();
         List<RecalledSummary> summaries = List.of();
+        List<Long> selectedTagIds = List.of();   // ⑥.5 文件记忆命中也用（提升作用域）
         if (!tags.isEmpty()) {
             // ③ select（向量 12，最多 1 次 LLM）
             long t2 = System.nanoTime();
@@ -167,7 +173,7 @@ public class MemoryRecallPipeline {
             }
 
             // ④⑤ read（向量 14 恒只读自己，最多 1 次 LLM）
-            List<Long> selectedTagIds = selected.stream()
+            selectedTagIds = selected.stream()
                     .map(RecallTagMeta::getId).filter(Objects::nonNull).toList();
             long t3 = System.nanoTime();
             try {
@@ -198,14 +204,51 @@ public class MemoryRecallPipeline {
             notes.add("patch 异常: " + e.getMessage());
         }
 
-        // ⑦ assemble（按 subject 聚合打 owner 前缀 + 项目条目打作者前缀）
+        // ⑥.5 文件记忆召回 + 深读（记忆二期 P3 · FR-203）：个人域 READY 文件记忆按 ③ 选中标签命中
+        // → 「文件记忆」卡片块；query embed 后分块向量 top-5（距离阈值过滤）→ 「文件深读」块带 page_ref。
+        // 文件记忆为个人域资产：仅 personalOn 时召回。独立 try/catch 降级跳过，绝不动主干。
+        long t4h = System.nanoTime();
+        List<RecalledFileCard> fileCards = List.of();
+        List<MemoryAssetRecallService.DeepReadChunk> fileChunks = List.of();
+        if (scope.personalOn() && !selectedTagIds.isEmpty()) {
+            try {
+                fileCards = assetRecallService.collectFileCards(selectedTagIds, userId);
+                steps.add(step("file-recall", t4h, fileCards.size(), true));
+            } catch (Exception e) {
+                log.warn("recall traceId={} file-recall 失败: {}", traceId, e.getMessage());
+                fileCards = List.of();
+                steps.add(step("file-recall", t4h, 0, false));
+                notes.add("file-recall 失败: " + e.getMessage());
+            }
+            if (!fileCards.isEmpty()) {
+                long t4i = System.nanoTime();
+                try {
+                    fileChunks = assetRecallService.deepReadChunks(fileCards, query, userId);
+                    steps.add(step("file-deepread", t4i, fileChunks.size(), true));
+                } catch (Exception e) {
+                    log.warn("recall traceId={} file-deepread 失败: {}", traceId, e.getMessage());
+                    fileChunks = List.of();
+                    steps.add(step("file-deepread", t4i, 0, false));
+                    notes.add("file-deepread 失败: " + e.getMessage());
+                }
+            } else {
+                steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+            }
+        } else {
+            // 个人域关闭 / 无选中标签：不查文件记忆，打点 count=0（非异常）
+            steps.add(new RecallTraceStep("file-recall", 0, 0, true));
+            steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+        }
+
+        // ⑦ assemble（按 subject 聚合打 owner 前缀 + 项目条目打作者前缀 + 文件卡片/深读块）
         long t5 = System.nanoTime();
         List<MemoryProjectEntryVO> entriesToAssemble = selectEntriesForAssemble(entries, selected, tags);
-        String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble);
-        steps.add(step("assemble", t5, summaries.size() + turns.size() + entriesToAssemble.size(), true));
+        String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble, fileCards, fileChunks);
+        steps.add(step("assemble", t5,
+                summaries.size() + turns.size() + entriesToAssemble.size() + fileCards.size() + fileChunks.size(), true));
 
         // 二期 P1：turns 纯个人域（召回 turns 恒本人），I3「已离开人员」标注随项目 turns 召回消亡下线
-        return finish(assembledText, selected, summaries.size(), turns.size(), traceId, steps, notes, tStart);
+        return finish(assembledText, selected, summaries.size(), turns.size(), fileCards, traceId, steps, notes, tStart);
     }
 
     // ============================ 记忆二期 P1 · ①.5/⑥ 条目合流助手 ============================
@@ -279,8 +322,24 @@ public class MemoryRecallPipeline {
      */
     String assemble(List<RecalledSummary> summaries, List<MemoryTurn> turns,
                     List<RecallTagMeta> selectedTags, Long userId, List<MemoryProjectEntryVO> entries) {
+        return assemble(summaries, turns, selectedTags, userId, entries, null, null);
+    }
+
+    /**
+     * 全量装配（二期 P3 ⑥.5 扩展）：在总结/项目条目/对话流水之外追加——
+     * <ul>
+     *   <li><b>【文件记忆】</b>：{@code - 《名》（类型·共N块·可下载|原文件已删除·file:fileId）：l1}，
+     *       l2 非空换行续接（文件卡片块，CLEANED 文件总结仍可召回但标失效不可下载）。</li>
+     *   <li><b>【文件深读】</b>：{@code - 《名》[pageRef]：chunkText}，块头明示「回答引用须带页码锚点」
+     *       （D-19.12 幻觉对冲）。</li>
+     * </ul>
+     */
+    String assemble(List<RecalledSummary> summaries, List<MemoryTurn> turns,
+                    List<RecallTagMeta> selectedTags, Long userId, List<MemoryProjectEntryVO> entries,
+                    List<RecalledFileCard> fileCards, List<MemoryAssetRecallService.DeepReadChunk> fileChunks) {
         if ((summaries == null || summaries.isEmpty()) && (turns == null || turns.isEmpty())
-                && (entries == null || entries.isEmpty())) {
+                && (entries == null || entries.isEmpty())
+                && (fileCards == null || fileCards.isEmpty()) && (fileChunks == null || fileChunks.isEmpty())) {
             return "";
         }
         Map<Long, RecallTagMeta> tagMap = (selectedTags == null ? List.<RecallTagMeta>of() : selectedTags).stream()
@@ -319,6 +378,31 @@ public class MemoryRecallPipeline {
                 sb.append("- ").append(sourcePrefix).append(author).append('·')
                         .append(tagLabel.isEmpty() ? "收录" : tagLabel)
                         .append("：").append(e.getL1Summary() == null ? "" : e.getL1Summary()).append('\n');
+            }
+        }
+        if (fileCards != null && !fileCards.isEmpty()) {
+            sb.append("【文件记忆】\n");
+            for (RecalledFileCard c : fileCards) {
+                String name = c.getOriginalName() == null || c.getOriginalName().isBlank()
+                        ? "未命名文件" : c.getOriginalName();
+                sb.append("- 《").append(name).append("》（")
+                        .append(com.superprogrammer.chat.entity.MemoryAssetMemory.kindLabel(c.getFileKind()))
+                        .append("·共").append(c.getChunkCount()).append("块·")
+                        .append(c.isFileCleaned() ? "原文件已删除" : "可下载")
+                        .append("·file:").append(c.getFileId() == null ? "-" : c.getFileId())
+                        .append("）：").append(c.getL1() == null ? "" : c.getL1());
+                if (c.getL2() != null && !c.getL2().isBlank()) {
+                    sb.append('\n').append(c.getL2());
+                }
+                sb.append('\n');
+            }
+        }
+        if (fileChunks != null && !fileChunks.isEmpty()) {
+            sb.append("【文件深读】（以下为文件分块原文，回答引用须带页码锚点）\n");
+            for (MemoryAssetRecallService.DeepReadChunk ch : fileChunks) {
+                sb.append("- 《").append(ch.fileName()).append("》")
+                        .append('[').append(ch.pageRef() == null ? "?" : ch.pageRef()).append("]：")
+                        .append(ch.chunkText() == null ? "" : ch.chunkText()).append('\n');
             }
         }
         if (turns != null && !turns.isEmpty()) {
@@ -364,17 +448,19 @@ public class MemoryRecallPipeline {
     }
 
     private MemoryRecallResult finish(String assembledText, List<RecallTagMeta> selectedTags,
-                                      int summaryCount, int turnCount, String traceId,
-                                      List<RecallTraceStep> steps, List<String> notes, long tStart) {
+                                      int summaryCount, int turnCount, List<RecalledFileCard> fileCards,
+                                      String traceId, List<RecallTraceStep> steps, List<String> notes, long tStart) {
         boolean degraded = !notes.isEmpty();
         long totalMs = (System.nanoTime() - tStart) / 1_000_000L;
-        log.info("recall 完成 traceId={} summaryCount={} turnCount={} degraded={} notes={} 耗时 {}ms",
-                traceId, summaryCount, turnCount, degraded, notes.size(), totalMs);
+        log.info("recall 完成 traceId={} summaryCount={} turnCount={} fileCards={} degraded={} notes={} 耗时 {}ms",
+                traceId, summaryCount, turnCount, fileCards == null ? 0 : fileCards.size(),
+                degraded, notes.size(), totalMs);
         return MemoryRecallResult.builder()
                 .assembledText(assembledText)
                 .selectedTags(selectedTags)
                 .summaryCount(summaryCount)
                 .turnCount(turnCount)
+                .fileCards(fileCards)
                 .degraded(degraded)
                 .notes(notes)
                 .traceId(traceId)

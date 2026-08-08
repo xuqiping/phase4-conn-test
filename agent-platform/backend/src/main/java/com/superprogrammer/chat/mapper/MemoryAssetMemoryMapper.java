@@ -50,4 +50,16 @@ public interface MemoryAssetMemoryMapper extends BaseMapper<MemoryAssetMemory> {
     @Update("UPDATE memory_asset_memories SET tag_ids = #{tagIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler}, "
             + "updated_at = NOW() WHERE id = #{id} AND deleted = 0")
     int updateTagIds(@Param("id") Long id, @Param("tagIds") List<Long> tagIds);
+
+    /**
+     * Step 3 召回（FR-203）：本人 READY 文件记忆按标签重叠命中（PG {@code &&} 数组重叠）。
+     * tagIds 走 LongArrayTypeHandler 成真 ARRAY 参数（createArrayOf），无需 ::bigint[] 强转。
+     */
+    @Select("SELECT * FROM memory_asset_memories WHERE deleted = 0 AND owner_user_id = #{userId} "
+            + "AND ingest_status = 'READY' "
+            + "AND tag_ids && #{tagIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler} "
+            + "ORDER BY updated_at DESC LIMIT #{limit}")
+    List<MemoryAssetMemory> findReadyByTagOverlap(@Param("userId") Long userId,
+                                                  @Param("tagIds") List<Long> tagIds,
+                                                  @Param("limit") int limit);
 }
