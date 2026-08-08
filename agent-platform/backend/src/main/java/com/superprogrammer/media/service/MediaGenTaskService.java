@@ -70,12 +70,25 @@ public class MediaGenTaskService {
      * @param model         视频模型 id（null 则取默认 provider 首个模型）
      * @param userId        提交用户（nullable：系统调用）
      * @param admin         是否 admin（附件归属校验旁路）
+     * @param frameRole     参考帧位置 "first"/"last"（仅 IMAGE2VIDEO + refFileId；null/first=首帧，last=尾帧）
      * @return 任务 id
+     */
+
+    /**
+     * 12 参重载（向后兼容，frameRole=null = 首帧默认）—— 旧调用方/测试无需改签名。
      */
     public Long submit(String prompt, String ratio, Integer duration, String resolution,
                        Boolean watermark, Boolean generateAudio, String taskType,
                        String refFileId, List<AttachmentRef> attachments,
                        String model, Long userId, boolean admin) {
+        return submit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
+                refFileId, attachments, model, userId, admin, null);
+    }
+
+    public Long submit(String prompt, String ratio, Integer duration, String resolution,
+                       Boolean watermark, Boolean generateAudio, String taskType,
+                       String refFileId, List<AttachmentRef> attachments,
+                       String model, Long userId, boolean admin, String frameRole) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
@@ -125,6 +138,10 @@ public class MediaGenTaskService {
         config.put("watermark", Boolean.TRUE.equals(watermark));
         config.put("generateAudio", Boolean.TRUE.equals(generateAudio));
         if (refFileId != null) config.put("refFileId", refFileId);
+        // C2 参考帧位置：归一化（只认 last=尾帧，其余 first=首帧默认），仅 refFileId 通道有意义
+        if (refFileId != null) {
+            config.put("frameRole", "last".equalsIgnoreCase(frameRole) ? "last" : "first");
+        }
         if (attachments != null && !attachments.isEmpty()) {
             List<Map<String, String>> list = new ArrayList<>(attachments.size());
             for (AttachmentRef a : attachments) {

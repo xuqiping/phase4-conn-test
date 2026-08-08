@@ -59,6 +59,14 @@ public class MediaGenRequest {
     private String refImageUrl;
 
     /**
+     * 参考帧位置（仅 IMAGE2VIDEO + refImageUrl 通道用）：{@code "first"} 首帧 / {@code "last"} 尾帧。
+     * nullable / "first" → Ark 裸 image_url（首帧语义，旧版默认，向后兼容）；
+     * "last" → role:{@code last_frame}（SeedDance 2.0 尾帧）。provider 拥有 Ark role 字符串映射，
+     * 对外只暴露 first/last 两个通用值。
+     */
+    private String frameRole;
+
+    /**
      * 多模态参考附件（已解析为 data URI，image/video/audio）。
      * nullable：纯文生视频 / 旧版 refImageUrl 首帧路径不带。
      * 与 refImageUrl 互斥（提交侧已校验）。

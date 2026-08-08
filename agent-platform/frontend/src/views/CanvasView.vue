@@ -464,6 +464,8 @@ async function onRunVideo(node: CanvasNode) {
       generateAudio: Boolean(data.generateAudio),
       taskType: refFileId ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
       refFileId,
+      // C2 参考帧位置：尾帧 role:last_frame；首帧/默认走裸 image_url（向后兼容）
+      frameRole: refFileId ? ((data.frameRole as 'first' | 'last') || 'first') : undefined,
       model: (data.model as string) || undefined
     })
     const taskId = submit.data.data.id

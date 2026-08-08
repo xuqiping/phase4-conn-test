@@ -148,6 +148,15 @@
             @update:value="(v: string) => { if (node) node.data.refFileId = v.trim() || undefined }"
           />
         </div>
+        <div v-if="(node.data.refFileId as string)" class="prop-panel__field">
+          <label>参考帧位置（C2）</label>
+          <n-select
+            :value="(node.data.frameRole as string) || 'first'"
+            size="small"
+            :options="frameRoleOpts"
+            @update:value="(v: string | null) => { if (node) { node.data.frameRole = v ?? 'first'; emit('data-changed') } }"
+          />
+        </div>
         <n-button
           size="small"
           type="primary"
@@ -414,6 +423,11 @@ const sceneCount = computed(() =>
 
 const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
 const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))
+// C2 参考帧位置：first=首帧（默认，裸 image_url）；last=尾帧（role:last_frame，SeedDance 2.0）
+const frameRoleOpts = [
+  { label: '首帧（图作开头）', value: 'first' },
+  { label: '尾帧（图作结尾）', value: 'last' }
+]
 const audioModeOpts = [
   { label: '上传', value: 'upload' },
   { label: 'TTS 语音', value: 'tts' },

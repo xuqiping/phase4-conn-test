@@ -149,8 +149,15 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             }
         } else if (MediaGenRequest.TYPE_IMAGE2VIDEO.equals(request.getTaskType())
                 && request.getRefImageUrl() != null && !request.getRefImageUrl().isBlank()) {
-            // 旧版首帧参考图（图生视频，无 role = 首帧语义）
-            content.add(Map.of("type", "image_url", "image_url", Map.of("url", request.getRefImageUrl())));
+            // C2 参考帧位置：last → role:last_frame（SeedDance 2.0 尾帧）；first/默认 → 裸 image_url（首帧，向后兼容）
+            if ("last".equalsIgnoreCase(request.getFrameRole())) {
+                content.add(Map.of(
+                        "type", "image_url",
+                        "image_url", Map.of("url", request.getRefImageUrl()),
+                        "role", "last_frame"));
+            } else {
+                content.add(Map.of("type", "image_url", "image_url", Map.of("url", request.getRefImageUrl())));
+            }
         }
         // 官方契约：顶层平铺（无 parameters 包裹）。ratio/duration/watermark 必传，
         // resolution/generate_audio 可选（官方默认 720p / false）。无 fps（统一 24）。

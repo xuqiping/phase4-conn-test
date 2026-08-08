@@ -64,7 +64,7 @@ public class MediaGenController {
                 request.getPrompt(), ratio, duration, resolution,
                 request.getWatermark(), request.getGenerateAudio(), taskType,
                 request.getRefFileId(), request.getAttachments(),
-                request.getModel(), getCurrentUserId(), isAdmin());
+                request.getModel(), getCurrentUserId(), isAdmin(), request.getFrameRole());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }
 

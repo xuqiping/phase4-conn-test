@@ -53,6 +53,12 @@ public class MediaSubmitRequest {
     /** 图生视频参考图 stored_files.file_id（IMAGE2VIDEO 必填）。 */
     private String refFileId;
 
+    /**
+     * 参考帧位置（仅 IMAGE2VIDEO + refFileId 通道）：{@code "first"} 首帧 / {@code "last"} 尾帧。
+     * null / "first" = 首帧（默认，向后兼容）；"last" = 尾帧（SeedDance 2.0）。
+     */
+    private String frameRole;
+
     /** Ark 模型 id（可选，默认取视频 provider 首个模型）。 */
     private String model;
 

@@ -104,6 +104,8 @@ export interface MediaSubmitRequest {
   taskType?: MediaTaskType
   /** 旧版单首帧参考图 file_id（与 attachments 互斥；画布连线沿用此通道） */
   refFileId?: string
+  /** 参考帧位置（仅 IMAGE2VIDEO + refFileId）：'first' 首帧（默认）/ 'last' 尾帧（SeedDance 2.0） */
+  frameRole?: 'first' | 'last'
   /** 多模态参考附件（图/视频/音频；上限按模型能力，如 SeedDance 2.0：9图/3视频/3音频/总≤12） */
   attachments?: AttachmentRef[]
   /** 视频模型 id（可选，默认取默认 provider 首个模型） */

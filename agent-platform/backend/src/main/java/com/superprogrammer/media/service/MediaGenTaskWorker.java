@@ -223,6 +223,7 @@ public class MediaGenTaskWorker {
         boolean watermark = false;
         boolean generateAudio = false;
         String refFileId = null;
+        String frameRole = null;
         List<String[]> attachments = new java.util.ArrayList<>(); // [fileId, kind]
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
@@ -233,6 +234,7 @@ public class MediaGenTaskWorker {
             watermark = cfg.path("watermark").asBoolean(false);
             generateAudio = cfg.path("generateAudio").asBoolean(false);
             refFileId = cfg.path("refFileId").asText(null);
+            frameRole = cfg.path("frameRole").asText(null);
             for (JsonNode a : cfg.path("attachments")) {
                 String fileId = a.path("fileId").asText(null);
                 String kind = a.path("kind").asText(null);
@@ -275,6 +277,8 @@ public class MediaGenTaskWorker {
         if (refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
             try {
                 b.refImageUrl(mediaStorageService.readAsDataUri(refFileId, task.getUserId()));
+                // C2：参考帧位置（last=尾帧 role:last_frame；first/默认=首帧裸 image_url）
+                b.frameRole(frameRole);
             } catch (Exception e) {
                 log.warn("参考图读取失败 taskId={} refFileId={}: {}", task.getId(), refFileId, e.getMessage());
                 throw new IllegalArgumentException("参考图读取失败: " + rootMessage(e));

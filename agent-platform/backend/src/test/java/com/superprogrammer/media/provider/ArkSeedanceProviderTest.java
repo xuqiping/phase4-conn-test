@@ -91,6 +91,33 @@ class ArkSeedanceProviderTest {
     }
 
     @Test
+    void frameRoleLast_emitsLastFrameRole() {
+        // C2 尾帧：frameRole=last → content 项带 role:last_frame（SeedDance 2.0 尾帧契约）
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("m").prompt("结尾镜头").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .refImageUrl("data:image/png;base64,X")
+                .frameRole("last")
+                .build());
+        List<Map<String, Object>> content = contentOf(body);
+        Map<String, Object> img = content.get(1);
+        assertEquals("image_url", img.get("type"));
+        assertEquals("last_frame", img.get("role"), "尾帧须带 role:last_frame");
+        assertTrue(img.containsKey("image_url"));
+    }
+
+    @Test
+    void frameRoleFirst_keepsBareImage_noRole() {
+        // C2 首帧（显式 first）= 默认行为：裸 image_url 不带 role（向后兼容，首帧语义）
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("m").prompt("p").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .refImageUrl("data:image/png;base64,X")
+                .frameRole("first")
+                .build());
+        Map<String, Object> img = contentOf(body).get(1);
+        assertFalse(img.containsKey("role"), "首帧不带 role（裸 image_url）");
+    }
+
+    @Test
     void attachments_winOverLegacyRefImage() {
         // 双通道同时出现时不应发生（提交侧互斥），provider 侧 attachments 优先且不回退首帧
         Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
