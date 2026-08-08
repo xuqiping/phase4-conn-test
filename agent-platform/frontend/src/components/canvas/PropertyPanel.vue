@@ -140,22 +140,29 @@
           <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
         </div>
         <div class="prop-panel__field">
-          <label>参考图（图生视频；C8 连线上游图节点自动填）</label>
-          <n-input
-            :value="(node.data.refFileId as string) || ''"
+          <label>首帧（可选，@选上游图节点作开头）</label>
+          <n-select
+            :value="(node.data.firstFrameNodeId as string | null) ?? null"
             size="small"
-            placeholder="留空 = 文生视频"
-            @update:value="(v: string) => { if (node) node.data.refFileId = v.trim() || undefined }"
+            clearable
+            :options="imageAncestorOptions"
+            placeholder="不选 = 无首帧"
+            @update:value="(v: string | null) => { if (node) { node.data.firstFrameNodeId = v ?? undefined; emit('data-changed') } }"
           />
         </div>
-        <div v-if="(node.data.refFileId as string)" class="prop-panel__field">
-          <label>参考帧位置（C2）</label>
+        <div class="prop-panel__field">
+          <label>尾帧（可选，@选上游图节点作结尾）</label>
           <n-select
-            :value="(node.data.frameRole as string) || 'first'"
+            :value="(node.data.lastFrameNodeId as string | null) ?? null"
             size="small"
-            :options="frameRoleOpts"
-            @update:value="(v: string | null) => { if (node) { node.data.frameRole = v ?? 'first'; emit('data-changed') } }"
+            clearable
+            :options="imageAncestorOptions"
+            placeholder="不选 = 无尾帧"
+            @update:value="(v: string | null) => { if (node) { node.data.lastFrameNodeId = v ?? undefined; emit('data-changed') } }"
           />
+        </div>
+        <div class="prop-panel__hint">
+          提示词里 @ 的图节点作<b>参考图</b>（图N），不算首/尾帧；首/尾帧在此显式选。
         </div>
         <n-button
           size="small"
@@ -348,10 +355,13 @@ const props = withDefaults(defineProps<{
   brokenMentions?: string[]
   /** S13：同画布全部节点 label（重命名查重用，L9 三入口之一）。 */
   allLabels?: string[]
+  /** F3：祖先图节点选项（首/尾帧@选择器用，{label,value=nodeId}）。 */
+  imageAncestorOptions?: { label: string; value: string }[]
 }>(), {
   candidates: () => [],
   brokenMentions: () => [],
-  allLabels: () => []
+  allLabels: () => [],
+  imageAncestorOptions: () => []
 })
 
 const emit = defineEmits<{
@@ -423,11 +433,6 @@ const sceneCount = computed(() =>
 
 const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
 const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))
-// C2 参考帧位置：first=首帧（默认，裸 image_url）；last=尾帧（role:last_frame，SeedDance 2.0）
-const frameRoleOpts = [
-  { label: '首帧（图作开头）', value: 'first' },
-  { label: '尾帧（图作结尾）', value: 'last' }
-]
 const audioModeOpts = [
   { label: '上传', value: 'upload' },
   { label: 'TTS 语音', value: 'tts' },

@@ -101,6 +101,7 @@
           :candidates="mentionCandidates"
           :broken-mentions="brokenMentions"
           :all-labels="otherLabels"
+          :image-ancestor-options="imageAncestorOptions"
           @run="onRunNode"
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
@@ -194,7 +195,8 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
-import type { MediaStatus } from '@/api/media'
+import type { MediaStatus, AttachmentRef } from '@/api/media'
+import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
@@ -283,6 +285,18 @@ const mentionCandidates = computed<MentionCandidate[]>(() => {
       kind: 'node' as const,
       id: n.id,
       label: String((n.data as Record<string, unknown>).label ?? n.id)
+    }))
+})
+
+/** F3：祖先图节点选项（首/尾帧选择器用）—— 只列有 fileId 的 image 祖先节点。 */
+const imageAncestorOptions = computed<{ label: string; value: string }[]>(() => {
+  const set = selectedAncestors.value
+  const nodes = boardRef.value?.getNodes() ?? []
+  return nodes
+    .filter((n) => set.has(n.id) && n.type === 'image' && (n.data as Record<string, unknown>).fileId)
+    .map((n) => ({
+      label: String((n.data as Record<string, unknown>).label ?? n.id),
+      value: n.id
     }))
 })
 
@@ -441,9 +455,8 @@ async function onRunNode(node: CanvasNode) {
 async function onRunVideo(node: CanvasNode) {
   if (!editingId.value) return
   const data = node.data as Record<string, unknown>
-  // S13：运行前插值 @占位符（不递归；断链处降级「【断链】」）
-  const prompt = interpolate(String(data.prompt ?? ''), buildMentionResolver()).trim()
-  if (!prompt) {
+  const rawPrompt = String(data.prompt ?? '').trim()
+  if (!rawPrompt) {
     message.warning('请先填写视频提示词')
     return
   }
@@ -453,19 +466,18 @@ async function onRunVideo(node: CanvasNode) {
   runningNodeId.value = node.id
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
-    // C8 数据流：图→视频连线时，上游图节点 fileId 自动作参考图（手动 refFileId 优先）
-    const refFileId = (data.refFileId ? String(data.refFileId) : undefined) ?? resolveUpstreamImageFileId(node.id)
+    // F3：首/尾帧 + @参考图 统一走 attachments[]（不再自动取上游图作首帧）。
+    // image 节点 @ → reference_image 附件 + 序号化为「图N」；非 image 节点 @ → 文本插值。
+    const attachments = buildVideoAttachments(node, rawPrompt)
     const submit = await mediaApi.submitVideo({
-      prompt,
+      prompt: attachments.rewrittenPrompt,
       ratio: (data.ratio as MediaRatioArg) || '16:9',
       duration: Number(data.duration ?? 5),
       resolution: (data.resolution as MediaResArg) || '720p',
       watermark: Boolean(data.watermark),
       generateAudio: Boolean(data.generateAudio),
-      taskType: refFileId ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
-      refFileId,
-      // C2 参考帧位置：尾帧 role:last_frame；首帧/默认走裸 image_url（向后兼容）
-      frameRole: refFileId ? ((data.frameRole as 'first' | 'last') || 'first') : undefined,
+      taskType: attachments.refs.length > 0 ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
+      attachments: attachments.refs.length > 0 ? attachments.refs : undefined,
       model: (data.model as string) || undefined
     })
     const taskId = submit.data.data.id
@@ -530,20 +542,24 @@ type MediaRatioArg = Parameters<typeof mediaApi.submitVideo>[0]['ratio']
 type MediaResArg = Parameters<typeof mediaApi.submitVideo>[0]['resolution']
 
 /**
- * C8 数据流：沿 target=nodeId 的入边找上游 image 节点已产出 fileId（图生视频参考图）。
- * 取第一个命中的（多入边场景后续可细化选择器）。无则 undefined（文生视频）。
+ * F3 视频帧重构：把视频节点的首/尾帧 + 提示词里 @ 的图节点统一收集成 attachments[]。
+ * 纯逻辑委托 resolveCanvasVideoAttachments（可单测）；本函数补 boardRef 节点源 + 文本插值器。
+ *
+ * 三类来源（顺序即 attachments 顺序，Ark 按序认参考图）：
+ * 1. data.firstFrameNodeId / data.lastFrameNodeId → 显式首/尾帧（image + frameRole）。
+ * 2. prompt 内 `@{{node:id}}` 指向的 **image** 节点 → reference_image 附件，并按出现顺序
+ *    序号化为「图N」写回 prompt（首/尾帧节点不参与图N序号，去重，排除已是帧的节点）。
+ * 3. 其余 `@{{node:id}}` / `@{{asset:id}}` → 走 buildMentionResolver 文本插值（非图节点内容）。
+ *
+ * 不再自动取上游连线图作首帧（旧画布已存 refFileId 仍走后端 legacy 通道）。
  */
-function resolveUpstreamImageFileId(nodeId: string): string | undefined {
-  const edges = boardRef.value?.getEdges() ?? []
-  for (const e of edges) {
-    if (e.target !== nodeId) continue
-    const src = boardRef.value?.getNode(e.source)
-    if (src?.type === 'image') {
-      const fid = (src.data as Record<string, unknown>).fileId as string | undefined
-      if (fid) return fid
-    }
-  }
-  return undefined
+function buildVideoAttachments(
+  node: CanvasNode,
+  rawPrompt: string
+): { refs: AttachmentRef[]; rewrittenPrompt: string } {
+  const data = node.data as Record<string, unknown>
+  const allNodes = boardRef.value?.getNodes() ?? []
+  return resolveCanvasVideoAttachments(data, rawPrompt, allNodes, buildMentionResolver())
 }
 
 /** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。 */
