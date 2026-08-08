@@ -9,13 +9,13 @@ mod summary;
 
 use crate::audio::{AudioCapture, AudioCaptureConfig};
 use crate::screen::scene_detect::ExtractConfig;
-use crate::screen::{encode::SLICE_MS, CaptureStatus, RecordConfig, ScreenCapture, WindowInfo};
+use crate::screen::{encode::SLICE_MS, CaptureStatus, RecordConfig, RegionRect, ScreenCapture, WindowInfo};
 use crate::session::{SessionClock, SessionInfo, SessionManager, SessionState};
 use crate::stt::{SpeechRecognizer, SpeechRecognizerConfig};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 struct RecordingState {
     capture: AudioCapture,
@@ -230,6 +230,75 @@ fn get_capture_status(state: tauri::State<'_, ScreenState>) -> CaptureStatus {
     }
 }
 
+// ---- 区域框选录屏（规格 §3.1 Should；2026-08-08 Phase4 手测问题4 实现）----
+//
+// 交互流：主窗口点「区域框选」→ open_region_select 弹全屏透明 overlay 窗口
+// （region-select，加载 index.html#/region-select）→ 用户拖出矩形 →
+// finish_region_select 收物理像素矩形（前端已乘 scaleFactor）、广播
+// "region-selected" 事件给主窗口、关 overlay → 开始录制时 region 传给
+// start_capture_session。Esc/取消走 cancel_region_select 直接关窗。
+
+/// 已框选区域（主显示器物理像素），开始录制时由前端显式回传。
+type RegionState = Arc<Mutex<Option<RegionRect>>>;
+
+#[tauri::command]
+fn open_region_select(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("region-select") {
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "region-select",
+        tauri::WebviewUrl::App("index.html#/region-select".into()),
+    )
+    .title("框选录制区域")
+    .fullscreen(true)
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .build()
+    .map_err(|e| format!("open region select window: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn finish_region_select(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RegionState>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    // H.264 要求偶数边：向下取偶；最小 2x2。
+    let rect = RegionRect {
+        x,
+        y,
+        width: width & !1,
+        height: height & !1,
+    };
+    if rect.width < 2 || rect.height < 2 {
+        return Err("框选区域太小".to_string());
+    }
+    *state.lock().unwrap() = Some(rect);
+    if let Some(w) = app.get_webview_window("region-select") {
+        let _ = w.close();
+    }
+    app.emit("region-selected", rect)
+        .map_err(|e| format!("emit region-selected: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_region_select(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("region-select") {
+        let _ = w.close();
+    }
+    Ok(())
+}
+
 // ---- Capture session: 三路录制集成 (plan Step 4 / FR-101/102/103) ----
 //
 // 一条命令同时拉起：屏幕捕获（视频硬编切片 + SAD 预筛）、音频采集、实时转写。
@@ -264,6 +333,7 @@ async fn start_capture_session(
     session_id: String,
     hwnd: isize,
     audio_device: Option<String>,
+    region: Option<RegionRect>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut guard = state.lock().unwrap();
@@ -335,16 +405,20 @@ async fn start_capture_session(
     audio.start().map_err(|e| e.to_string())?;
 
     // 屏幕轨 (FR-101/103)：视频切片 + SAD 预筛缩略图。失败时已起的音轨要收口。
-    let screen = match ScreenCapture::start_with_record(
-        hwnd,
-        Some(clock),
-        Some(RecordConfig {
-            video_dir: dir.join("video"),
-            frames_dir: Some(dir.join("frames")),
-            slice_ms: SLICE_MS,
-            trace: session_id.clone(),
-        }),
-    ) {
+    // region = Some → 区域框选模式：捕主显示器 + D3D11 裁剪（忽略 hwnd）。
+    let record_cfg = RecordConfig {
+        video_dir: dir.join("video"),
+        frames_dir: Some(dir.join("frames")),
+        slice_ms: SLICE_MS,
+        trace: session_id.clone(),
+    };
+    let screen = match region {
+        Some(rect) => {
+            ScreenCapture::start_region(rect, Some(clock), Some(record_cfg))
+        }
+        None => ScreenCapture::start_with_record(hwnd, Some(clock), Some(record_cfg)),
+    };
+    let screen = match screen {
         Ok(s) => s,
         Err(e) => {
             audio.stop();
@@ -746,6 +820,7 @@ pub fn run() {
         .manage::<AppState>(Arc::new(Mutex::new(None)))
         .manage::<ScreenState>(Arc::new(Mutex::new(None)))
         .manage::<CaptureSessionState>(Arc::new(Mutex::new(None)))
+        .manage::<RegionState>(Arc::new(Mutex::new(None)))
         .manage(SessionManager::new(SessionManager::default_base_dir()))
         .invoke_handler(tauri::generate_handler![
             list_audio_devices,
@@ -762,6 +837,9 @@ pub fn run() {
             get_capture_status,
             start_capture_session,
             stop_capture_session,
+            open_region_select,
+            finish_region_select,
+            cancel_region_select,
             process_frames,
             process_ocr,
             align_session,

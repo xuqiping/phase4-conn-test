@@ -100,17 +100,29 @@ function onAudioSelect(e: Event) {
 
       <button
         class="region-btn"
-        disabled
-        aria-label="区域框选（后续版本提供）"
-        title="区域框选（后续版本提供）"
+        :class="{ active: store.region != null }"
+        :disabled="store.recording"
+        aria-label="区域框选录制范围"
+        :title="store.region ? `已框选 ${store.region.width}×${store.region.height}（点击重新框选）` : '框选屏幕区域录制'"
+        @click="store.beginRegionSelect"
       >
-        区域框选
+        {{ store.region ? `区域 ${store.region.width}×${store.region.height}` : '区域框选' }}
+      </button>
+      <button
+        v-if="store.region"
+        class="region-clear"
+        :disabled="store.recording"
+        aria-label="清除已框选区域"
+        title="清除已框选区域"
+        @click="store.clearRegion"
+      >
+        ✕
       </button>
 
       <button
         class="record-btn"
         :class="{ recording: store.recording }"
-        :disabled="!store.recording && store.selectedHwnd == null"
+        :disabled="!store.recording && store.selectedHwnd == null && store.region == null"
         :aria-label="store.recording ? '停止录制' : '开始录制'"
         @click="store.recording ? store.stop() : store.start()"
       >
@@ -218,11 +230,34 @@ function onAudioSelect(e: Event) {
   padding: 8px 14px;
   font-size: 13px;
   background: #222;
-  color: #555;
+  color: #e0e0e0;
   border: 1px solid #333;
   border-radius: 6px;
-  cursor: not-allowed;
+  cursor: pointer;
   white-space: nowrap;
+}
+.region-btn:hover:not(:disabled) {
+  background: #2a2a2a;
+}
+.region-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.region-btn.active {
+  border-color: #2563eb;
+  color: #60a5fa;
+}
+.region-clear {
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #222;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.region-clear:hover:not(:disabled) {
+  color: #f87171;
 }
 .open-btn {
   padding: 8px 18px;

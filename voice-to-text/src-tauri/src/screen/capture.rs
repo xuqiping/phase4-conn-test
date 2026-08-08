@@ -12,7 +12,7 @@
 //! after [`STALL_THRESHOLD_MS`] without a frame so the UI can warn the user.
 //! When the window is closed, `on_closed` fires and the capture ends.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::mpsc::Receiver;
@@ -38,6 +38,16 @@ pub struct WindowInfo {
     pub hwnd: isize,
     pub title: String,
     pub process_name: String,
+}
+
+/// 区域框选矩形（主显示器物理像素）。规格 §3.1 Should「区域框选录屏」，
+/// 2026-08-08 Phase4 手测问题4 实现：捕主显示器 + D3D11 裁剪（buffer_crop）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegionRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Lightweight per-frame record. The BGRA pixel data never leaves the capture
@@ -94,9 +104,10 @@ mod imp {
     use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
     use windows_capture::frame::Frame;
     use windows_capture::graphics_capture_api::{GraphicsCaptureApi, InternalCaptureControl};
+    use windows_capture::monitor::Monitor;
     use windows_capture::settings::{
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
-        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
+        GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     };
     use windows_capture::window::Window;
 
@@ -111,6 +122,8 @@ mod imp {
         label: String,
         /// Step 4: when set, frames are also encoded to sliced MP4 segments.
         record: Option<RecordConfig>,
+        /// 区域框选模式：Some = 捕显示器后按矩形裁剪（像素路径喂抽帧/编码）。
+        crop: Option<RegionRect>,
     }
 
     /// The per-capture callback object living on the WGC thread.
@@ -130,6 +143,10 @@ mod imp {
         encoder_failed: bool,
         /// Step 4 轻量抽帧：SAD 预筛，存变化帧缩略图 + ts（不阻塞录制）。
         scene_tap: Option<SceneTap>,
+        /// 区域裁剪矩形（已按首帧实际尺寸收敛，永不越界）。
+        crop: Option<RegionRect>,
+        /// 裁剪帧像素去 padding 的 scratch（复用避免每帧分配）。
+        crop_scratch: Vec<u8>,
     }
 
     impl GraphicsCaptureApiHandler for CaptureHandler {
@@ -163,6 +180,8 @@ mod imp {
                 encoder: None,
                 encoder_failed: false,
                 scene_tap,
+                crop: f.crop,
+                crop_scratch: Vec::new(),
             })
         }
 
@@ -184,16 +203,61 @@ mod imp {
             self.last_frame_ts = ts;
             self.frames += 1;
 
-            // Step 4: SAD 预筛 (mutable borrow first) then video track.
-            if let Some(tap) = self.scene_tap.as_mut() {
-                tap.maybe_sample(frame, ts);
+            let (mut w, mut h) = (frame.width(), frame.height());
+            if self.crop.is_some() {
+                // 区域框选模式：D3D11 裁剪 → 像素路径喂抽帧 + 编码。
+                // 首帧把矩形收敛到实际帧尺寸内（多屏/缩放导致的越界只裁交集）。
+                let rect = self.crop.as_mut().unwrap();
+                rect.width = rect.width.min(w.saturating_sub(rect.x)) & !1;
+                rect.height = rect.height.min(h.saturating_sub(rect.y)) & !1;
+                let rect = *rect;
+                if rect.width < 2 || rect.height < 2 {
+                    log::error!(
+                        "[screen] {} region {:?} outside frame {}x{}, skip frame",
+                        self.label, rect, w, h
+                    );
+                } else {
+                    // scratch 先 take 成局部变量：pixels 借用它时 self 仍可
+                    // 整借给 encode_pixels / scene_tap（否则 E0499）。
+                    let mut scratch = std::mem::take(&mut self.crop_scratch);
+                    match frame.buffer_crop(
+                        rect.x,
+                        rect.y,
+                        rect.x + rect.width,
+                        rect.y + rect.height,
+                    ) {
+                        Ok(buf) => {
+                            let pixels = buf.as_nopadding_buffer(&mut scratch);
+                            if let Some(tap) = self.scene_tap.as_mut() {
+                                tap.maybe_sample_pixels(
+                                    pixels,
+                                    rect.width as usize,
+                                    rect.height as usize,
+                                    ts,
+                                );
+                            }
+                            self.encode_pixels(pixels, rect.width, rect.height, ts);
+                        }
+                        Err(e) => {
+                            log::error!("[screen] {} region crop failed: {e}", self.label);
+                        }
+                    }
+                    self.crop_scratch = scratch;
+                    w = rect.width;
+                    h = rect.height;
+                }
+            } else {
+                // Step 4: SAD 预筛 (mutable borrow first) then video track.
+                if let Some(tap) = self.scene_tap.as_mut() {
+                    tap.maybe_sample(frame, ts);
+                }
+                self.encode_frame(frame, ts);
             }
-            self.encode_frame(frame, ts);
 
             let meta = FrameMeta {
                 frame_ts: ts,
-                width: frame.width(),
-                height: frame.height(),
+                width: w,
+                height: h,
             };
             // Receiver gone (stop without drain) → halt capture thread.
             if self.sender.send(meta).is_err() {
@@ -229,8 +293,45 @@ mod imp {
     }
 
     impl CaptureHandler {
-        /// Step 4 video track: lazily create the encoder on the first frame,
-        /// then encode every frame. Any failure degrades to capture-without-
+        /// 区域框选模式的视频轨：裁剪后是 CPU 像素（无 GPU Frame），
+        /// 走 SliceEncoder 的缓冲路径。降级策略与 encode_frame 相同（O4）。
+        fn encode_pixels(&mut self, pixels: &[u8], width: u32, height: u32, ts: i64) {
+            let Some(rec) = &self.record else { return };
+            if self.encoder_failed {
+                return;
+            }
+            if self.encoder.is_none() {
+                match SliceEncoder::new(
+                    rec.video_dir.clone(),
+                    width,
+                    height,
+                    rec.slice_ms,
+                    rec.trace.clone(),
+                ) {
+                    Ok(enc) => self.encoder = Some(enc),
+                    Err(e) => {
+                        log::error!(
+                            "[screen] {} video track disabled (init failed): {e}",
+                            self.label
+                        );
+                        self.encoder_failed = true;
+                        return;
+                    }
+                }
+            }
+            if let Some(enc) = self.encoder.as_mut() {
+                if let Err(e) = enc.send_frame_buffer_bgra(pixels, ts) {
+                    log::error!(
+                        "[screen] {} video track disabled (encode failed): {e}",
+                        self.label
+                    );
+                    self.encoder = None;
+                    self.encoder_failed = true;
+                }
+            }
+        }
+
+        /// Step 4 video track: lazily create the encoder on the first frame,        /// then encode every frame. Any failure degrades to capture-without-
         /// video instead of killing the capture (O4).
         fn encode_frame(&mut self, frame: &mut Frame, ts: i64) {
             let Some(rec) = &self.record else { return };
@@ -332,7 +433,37 @@ mod imp {
             let title = window.title().unwrap_or_else(|_| "<untitled>".to_string());
             // traceId-ish label until Step 4: hwnd + title identify the capture.
             let label = format!("hwnd={hwnd:#x} \"{title}\"");
+            Self::start_item(window, label, clock, record, None)
+        }
 
+        /// 区域框选录屏（规格 Should，2026-08-08 Phase4 手测问题4）：
+        /// 捕获主显示器，handler 内按 `rect`（物理像素）D3D11 裁剪。
+        /// 多显示器暂不支持（overlay 框选层只覆盖主屏）。
+        pub fn start_region(
+            rect: RegionRect,
+            clock: Option<Arc<SessionClock>>,
+            record: Option<RecordConfig>,
+        ) -> Result<Self, String> {
+            if rect.width < 2 || rect.height < 2 {
+                return Err(format!("region too small: {rect:?}"));
+            }
+            let monitor =
+                Monitor::primary().map_err(|e| format!("primary monitor unavailable: {e}"))?;
+            let label = format!(
+                "region {}x{}+{}+{}",
+                rect.width, rect.height, rect.x, rect.y
+            );
+            Self::start_item(monitor, label, clock, record, Some(rect))
+        }
+
+        /// 共用启动骨架：窗口 / 显示器两种捕获源只差 item 与裁剪矩形。
+        fn start_item<T: TryInto<GraphicsCaptureItemType> + Send + 'static>(
+            item: T,
+            label: String,
+            clock: Option<Arc<SessionClock>>,
+            record: Option<RecordConfig>,
+            crop: Option<RegionRect>,
+        ) -> Result<Self, String> {
             let clock = clock.unwrap_or_else(|| Arc::new(SessionClock::new()));
             let started_ts = clock.now_ms();
             let (sender, receiver) = mpsc::channel::<FrameMeta>();
@@ -349,14 +480,14 @@ mod imp {
             };
 
             let settings = Settings::new(
-                window,
+                item,
                 CursorCaptureSettings::Default,
                 DrawBorderSettings::Default,
                 SecondaryWindowSettings::Default,
                 interval,
                 DirtyRegionSettings::Default,
                 ColorFormat::Bgra8,
-                CaptureFlags { clock: clock.clone(), sender, label: label.clone(), record },
+                CaptureFlags { clock: clock.clone(), sender, label: label.clone(), record, crop },
             );
 
             let control = CaptureHandler::start_free_threaded(settings)
@@ -443,6 +574,13 @@ mod imp {
         ) -> Result<Self, String> {
             Err("screen capture is only supported on Windows".to_string())
         }
+        pub fn start_region(
+            _rect: super::RegionRect,
+            _clock: Option<std::sync::Arc<crate::session::SessionClock>>,
+            _record: Option<RecordConfig>,
+        ) -> Result<Self, String> {
+            Err("screen capture is only supported on Windows".to_string())
+        }
         pub fn status(&mut self) -> CaptureStatus {
             CaptureStatus { running: false, frames_captured: 0, last_frame_ts: 0, stalled: false }
         }
@@ -488,10 +626,21 @@ mod tests {
         }
     }
 
+    /// 区域框选（Should）：过小的矩形必须被拒绝，不进 WGC。
     #[cfg(windows)]
     #[test]
-    fn start_rejects_invalid_hwnd() {
-        // 安全检查: 只捕用户选定的有效窗口；乱传 hwnd 必须被拒绝而不是 panic。
+    fn start_region_rejects_too_small() {
+        let rect = RegionRect { x: 0, y: 0, width: 1, height: 1 };
+        let err = match ScreenCapture::start_region(rect, None, None) {
+            Err(e) => e,
+            Ok(_) => panic!("1x1 region should have been rejected"),
+        };
+        assert!(err.contains("too small"), "unexpected error: {err}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn start_rejects_invalid_hwnd() {        // 安全检查: 只捕用户选定的有效窗口；乱传 hwnd 必须被拒绝而不是 panic。
         // (不用 unwrap_err：Ok 侧的 ScreenCapture 没实现 Debug)
         let err = match ScreenCapture::start(0x1, None) {
             Err(e) => e,

@@ -25,6 +25,14 @@ export interface SessionInfoItem {
   state: string
 }
 
+/** 区域框选矩形（主显示器物理像素，后端 finish_region_select 已取偶）。 */
+export interface RegionRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 interface TranscriptionEvent {
   text: string
   is_final: boolean
@@ -255,6 +263,35 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // ---- 2026-08-08 Phase4 手测问题4：区域框选录屏（规格 Should 实现）----
+
+  /** 已框选区域（物理像素）；与窗口选择互斥 —— 设了区域就忽略 hwnd。 */
+  const region = ref<RegionRect | null>(null)
+
+  // overlay 框选完成 → 后端广播 region-selected（store 级监听，随 app 生命周期）。
+  listen<RegionRect>('region-selected', (e) => {
+    region.value = e.payload
+    selectedHwnd.value = null
+    if (phase.value === 'idle') phase.value = 'source-selected'
+  })
+
+  /** 打开全屏透明框选 overlay（region-select 窗口）。 */
+  async function beginRegionSelect() {
+    if (recording.value || pipelineRunning.value) return
+    try {
+      await invoke('open_region_select')
+    } catch (e) {
+      errorMessage.value = `打开区域框选失败: ${e}`
+    }
+  }
+
+  function clearRegion() {
+    region.value = null
+    if (phase.value === 'source-selected' && selectedHwnd.value == null) {
+      phase.value = 'idle'
+    }
+  }
+
   /** 枚举声音来源（麦克风 + [系统音频] loopback 内录设备）。 */
   async function refreshAudioDevices() {
     try {
@@ -304,14 +341,15 @@ export const useSessionStore = defineStore('session', () => {
 
   function selectWindow(hwnd: number | null) {
     selectedHwnd.value = hwnd
+    if (hwnd != null) region.value = null // 窗口与区域框选互斥
     if (phase.value === 'idle' || phase.value === 'source-selected') {
-      phase.value = hwnd == null ? 'idle' : 'source-selected'
+      phase.value = hwnd == null && region.value == null ? 'idle' : 'source-selected'
     }
   }
 
   async function start() {
-    if (selectedHwnd.value == null) {
-      errorMessage.value = '请先选择要录制的窗口'
+    if (selectedHwnd.value == null && region.value == null) {
+      errorMessage.value = '请先选择要录制的窗口或框选区域'
       return
     }
     // 先清掉上一个会话的学习区/阶段残留（看过历史总结后点开始录制，
@@ -326,8 +364,9 @@ export const useSessionStore = defineStore('session', () => {
       sessionPath.value = info.path
       await invoke('start_capture_session', {
         sessionId: sessionId.value,
-        hwnd: selectedHwnd.value,
+        hwnd: selectedHwnd.value ?? 0,
         audioDevice: selectedAudioDevice.value || null,
+        region: region.value,
       })
       stopListen = await listen<TranscriptionEvent>('transcription', (e) => {
         const p = e.payload
@@ -384,6 +423,7 @@ export const useSessionStore = defineStore('session', () => {
     pipelineRunning.value = false
     pipelineCancelled.value = false
     cancelRequested = false
+    region.value = null
     for (const st of stages.value) {
       st.status = 'pending'
       st.detail = ''
@@ -412,6 +452,9 @@ export const useSessionStore = defineStore('session', () => {
     historySessions,
     refreshSessions,
     openSession,
+    region,
+    beginRegionSelect,
+    clearRegion,
     selectWindow,
     start,
     stop,

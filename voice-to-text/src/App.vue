@@ -8,7 +8,15 @@ import SummarySettings from './components/SummarySettings.vue'
 import Processing from './components/Processing.vue'
 import Study from './components/Study.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
+import RegionSelect from './components/RegionSelect.vue'
 import { useSessionStore } from './stores/session'
+
+// 区域框选 overlay 窗口（region-select）加载同一 SPA，按 hash 分流只渲染框选层；
+// overlay 窗口是透明的，body 深色背景必须去掉，否则遮罩下看不见屏幕内容。
+const isRegionSelect = window.location.hash.startsWith('#/region-select')
+if (isRegionSelect) {
+  document.body.style.background = 'transparent'
+}
 
 // Step 10: 功能入口 feature flag —— 纯录音转文字（默认）与网课录屏总结并存。
 const mode = ref<'transcribe' | 'course'>('transcribe')
@@ -34,7 +42,8 @@ const selectedChapter = ref(0)
 </script>
 
 <template>
-  <div class="app">
+  <RegionSelect v-if="isRegionSelect" />
+  <div v-else class="app">
     <header class="header">
       <h1>{{ mode === 'transcribe' ? '实时语音转文字' : '网课录屏总结' }}</h1>
       <nav class="tabs" aria-label="功能切换">

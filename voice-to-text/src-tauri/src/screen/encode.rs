@@ -155,6 +155,8 @@ mod imp {
         encoder: Option<VideoEncoder>,
         manifest: File,
         trace: String,
+        /// 区域框选缓冲路径的行翻转 scratch（MF 缓冲路径要 bottom-to-top）。
+        flip_scratch: Vec<u8>,
     }
 
     impl SliceEncoder {
@@ -186,6 +188,7 @@ mod imp {
                 encoder: None,
                 manifest,
                 trace,
+                flip_scratch: Vec::new(),
             })
         }
 
@@ -204,6 +207,46 @@ mod imp {
         /// Errors bubble up — the caller (handler) degrades to
         /// capture-without-video on failure (O4 降级路径).
         pub fn send_frame(&mut self, frame: &Frame, ts_ms: i64) -> Result<(), String> {
+            self.ensure_segment(ts_ms)?;
+            match self.encoder.as_mut() {
+                Some(enc) => enc
+                    .send_frame(frame)
+                    .map_err(|e| format!("encode frame failed: {e}")),
+                None => Err("encoder not open".to_string()),
+            }
+        }
+
+        /// 区域框选模式（Should，2026-08-08）：裁剪后是 CPU BGRA 像素（top-to-bottom），
+        /// 走 VideoEncoder 缓冲路径 —— 该路径要求 bottom-to-top 行序，故逐行翻转；
+        /// 时间戳 ms → 100ns ticks（缓冲路径首帧自减基准，与 GPU 路径一致）。
+        pub fn send_frame_buffer_bgra(&mut self, pixels: &[u8], ts_ms: i64) -> Result<(), String> {
+            self.ensure_segment(ts_ms)?;
+            let row = self.width as usize * 4;
+            let need = row * self.height as usize;
+            if pixels.len() != need {
+                return Err(format!(
+                    "buffer size {} != {}x{} BGRA ({need})",
+                    pixels.len(),
+                    self.width,
+                    self.height
+                ));
+            }
+            self.flip_scratch.clear();
+            self.flip_scratch.reserve(need);
+            for r in (0..self.height as usize).rev() {
+                self.flip_scratch
+                    .extend_from_slice(&pixels[r * row..(r + 1) * row]);
+            }
+            match self.encoder.as_mut() {
+                Some(enc) => enc
+                    .send_frame_buffer(&self.flip_scratch, ts_ms.saturating_mul(10_000))
+                    .map_err(|e| format!("encode frame buffer failed: {e}")),
+                None => Err("encoder not open".to_string()),
+            }
+        }
+
+        /// 切片轮转：planner 说开新段时先收尾旧段（完整可播，O7）再开新编码器。
+        fn ensure_segment(&mut self, ts_ms: i64) -> Result<(), String> {
             if let SliceAction::Open {
                 index,
                 file,
@@ -244,13 +287,7 @@ mod imp {
                 self.encoder = Some(encoder);
                 log::info!("[screen][{}] segment {index} opened: {file}", self.trace);
             }
-
-            match self.encoder.as_mut() {
-                Some(enc) => enc
-                    .send_frame(frame)
-                    .map_err(|e| format!("encode frame failed: {e}")),
-                None => Err("encoder not open".to_string()),
-            }
+            Ok(())
         }
 
         /// Flush the final segment + manifest. Called from the handler's Drop

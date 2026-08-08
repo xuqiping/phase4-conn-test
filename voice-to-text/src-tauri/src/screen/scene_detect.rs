@@ -166,17 +166,46 @@ mod imp {
             if self.counter % self.sample_every != 0 {
                 return;
             }
-            if let Err(e) = self.sample(frame, ts) {
+            let (w, h) = (frame.width() as usize, frame.height() as usize);
+            // scratch take 成局部：pixels 借它时 self 仍可整借给 sample_pixels_inner。
+            let mut scratch = std::mem::take(&mut self.scratch);
+            let result = match frame.buffer() {
+                Ok(buf) => {
+                    let pixels = buf.as_nopadding_buffer(&mut scratch);
+                    self.sample_pixels_inner(pixels, w, h, ts)
+                }
+                Err(e) => Err(format!("frame buffer: {e}")),
+            };
+            self.scratch = scratch;
+            if let Err(e) = result {
                 log::error!("[screen][{}] scene tap disabled: {e}", self.trace);
                 self.disabled = true;
             }
         }
 
-        fn sample(&mut self, frame: &mut Frame, ts: i64) -> Result<(), String> {
-            let (w, h) = (frame.width() as usize, frame.height() as usize);
-            let buffer = frame.buffer().map_err(|e| format!("frame buffer: {e}"))?;
-            let pixels = buffer.as_nopadding_buffer(&mut self.scratch);
+        /// 区域框选模式（2026-08-08）：裁剪后是 CPU 像素，无 GPU Frame 可传，
+        /// 与 maybe_sample 同一入口限速/降级策略。
+        pub fn maybe_sample_pixels(&mut self, pixels: &[u8], w: usize, h: usize, ts: i64) {
+            if self.disabled {
+                return;
+            }
+            self.counter += 1;
+            if self.counter % self.sample_every != 0 {
+                return;
+            }
+            if let Err(e) = self.sample_pixels_inner(pixels, w, h, ts) {
+                log::error!("[screen][{}] scene tap disabled: {e}", self.trace);
+                self.disabled = true;
+            }
+        }
 
+        fn sample_pixels_inner(
+            &mut self,
+            pixels: &[u8],
+            w: usize,
+            h: usize,
+            ts: i64,
+        ) -> Result<(), String> {
             let gray = downsample_gray(pixels, w, h, GRID_W, GRID_H);
             if gray.is_empty() {
                 return Err(format!("unexpected buffer size {} for {}x{}", pixels.len(), w, h));

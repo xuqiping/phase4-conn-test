@@ -16,4 +16,4 @@ pub mod decode;
 pub mod encode;
 pub mod scene_detect;
 
-pub use capture::{CaptureStatus, RecordConfig, ScreenCapture, WindowInfo};
+pub use capture::{CaptureStatus, RecordConfig, RegionRect, ScreenCapture, WindowInfo};
