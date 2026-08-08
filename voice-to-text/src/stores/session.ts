@@ -4,7 +4,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 export type SessionPhase =
   | 'idle'
@@ -267,22 +268,45 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 已框选区域（物理像素）；与窗口选择互斥 —— 设了区域就忽略 hwnd。 */
   const region = ref<RegionRect | null>(null)
+  /** 框选模式：主窗口临时全屏 + 截图背景（RegionSelect 渲染开关）。 */
+  const regionSelectMode = ref(false)
+  const regionShotSrc = ref('')
 
-  // overlay 框选完成 → 后端广播 region-selected（store 级监听，随 app 生命周期）。
+  // 框选完成 → 后端广播 region-selected（store 级监听，随 app 生命周期）。
   listen<RegionRect>('region-selected', (e) => {
     region.value = e.payload
     selectedHwnd.value = null
     if (phase.value === 'idle') phase.value = 'source-selected'
   })
 
-  /** 打开全屏透明框选 overlay（region-select 窗口）。 */
+  /**
+   * 打开框选层（单窗口方案）：已选窗口则先置顶 → 抓主屏截图 →
+   * 主窗口 setFullscreen(true) → App.vue 渲染 RegionSelect 铺满截图。
+   * Win10 运行时二窗渲染白屏不可用（3 次实测），故不新开窗口。
+   */
   async function beginRegionSelect() {
     if (recording.value || pipelineRunning.value) return
     try {
-      await invoke('open_region_select')
+      // 传 hwnd 让后端先把目标窗口置顶再抓图（否则窗口压在别的窗口下，
+      // 截图里找不到它，用户不知道框哪）
+      const path = await invoke<string>('grab_region_shot', {
+        hwnd: selectedHwnd.value ?? null,
+      })
+      regionShotSrc.value = convertFileSrc(path)
+      await getCurrentWindow().setFullscreen(true)
+      regionSelectMode.value = true
     } catch (e) {
       errorMessage.value = `打开区域框选失败: ${e}`
+      // 失败收口：窗口可能已全屏，务必恢复，别困住用户
+      await getCurrentWindow().setFullscreen(false).catch(() => {})
     }
+  }
+
+  /** 结束框选（确认/取消共用）：恢复窗口。 */
+  async function endRegionSelect() {
+    regionSelectMode.value = false
+    regionShotSrc.value = ''
+    await getCurrentWindow().setFullscreen(false).catch(() => {})
   }
 
   function clearRegion() {
@@ -454,6 +478,9 @@ export const useSessionStore = defineStore('session', () => {
     openSession,
     region,
     beginRegionSelect,
+    endRegionSelect,
+    regionSelectMode,
+    regionShotSrc,
     clearRegion,
     selectWindow,
     start,

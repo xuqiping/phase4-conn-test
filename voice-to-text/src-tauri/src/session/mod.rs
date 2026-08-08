@@ -106,6 +106,11 @@ impl SessionManager {
             .unwrap_or_else(|| PathBuf::from("sessions"))
     }
 
+    /// 区域框选 overlay 的屏幕快照路径（sessions 根目录下，asset:// scope 已覆盖）。
+    pub fn region_shot_path(&self) -> PathBuf {
+        self.base_dir.join(".region_shot.png")
+    }
+
     /// Create a new session directory tree. The id is a local timestamp
     /// generated internally — never taken from caller input (path-traversal guard).
     pub fn create_session(&self) -> std::io::Result<SessionInfo> {

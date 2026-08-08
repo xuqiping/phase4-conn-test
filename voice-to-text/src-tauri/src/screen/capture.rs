@@ -380,6 +380,100 @@ mod imp {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // 区域框选 overlay 的屏幕快照（2026-08-08 二次修复）
+    //
+    // 为什么不透明窗口 + 截图背景：Windows 10 上 Tauri/WebView2 的
+    // transparent 窗口渲染成纯白死窗（实测复现），透明方案此路不通；
+    // 改走微信截图式 —— 抓一帧主屏 PNG 做 overlay 背景，窗口本身不透明。
+    // -----------------------------------------------------------------------
+    struct OneShotHandler {
+        path: PathBuf,
+        saved: bool,
+    }
+
+    impl GraphicsCaptureApiHandler for OneShotHandler {
+        type Flags = PathBuf;
+        type Error = HandlerError;
+
+        fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
+            Ok(Self { path: ctx.flags, saved: false })
+        }
+
+        fn on_frame_arrived(
+            &mut self,
+            frame: &mut Frame,
+            capture_control: InternalCaptureControl,
+        ) -> Result<(), Self::Error> {
+            if !self.saved {
+                frame.save_as_image(&self.path, windows_capture::encoder::ImageFormat::Png)?;
+                self.saved = true;
+                capture_control.stop();
+            }
+            Ok(())
+        }
+
+        fn on_closed(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    /// 抓一帧主显示器画面存 PNG（无光标），供区域框选 overlay 当背景。
+    /// 失败返回 Err —— 调用方据此不开窗，杜绝"白窗困死"类事故。
+    pub fn grab_primary_monitor_shot(path: PathBuf) -> Result<(), String> {
+        let monitor =
+            Monitor::primary().map_err(|e| format!("primary monitor unavailable: {e}"))?;
+        let settings = Settings::new(
+            monitor,
+            CursorCaptureSettings::WithoutCursor,
+            DrawBorderSettings::Default,
+            SecondaryWindowSettings::Default,
+            MinimumUpdateIntervalSettings::Default,
+            DirtyRegionSettings::Default,
+            ColorFormat::Bgra8,
+            path.clone(),
+        );
+        let control = OneShotHandler::start_free_threaded(settings)
+            .map_err(|e| format!("start one-shot capture: {e}"))?;
+        // 等 handler 存图（存完它会自行 cc.stop()）。不能 start 完立刻 stop：
+        // WM_QUIT 会抢在首帧到达前把线程 halt 掉 → 永远拿不到图（实测踩坑）。
+        let mut ok = false;
+        for _ in 0..50 {
+            if std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+                ok = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        // 收口：线程已自停时 stop 直接返回；超时未出图也要把线程停掉。
+        let _ = control.stop();
+        if ok {
+            Ok(())
+        } else {
+            Err("one-shot capture timed out (no frame in 5s)".to_string())
+        }
+    }
+
+    /// 抓图前把已选录制窗口提到前台（最小化先还原），让截图里看得到它。
+    /// 用户刚在主窗口点了按钮，本进程持前台权限，SetForegroundWindow 应成功；
+    /// 失败（前台锁定等）由调用方降级为"截图照抓"，不阻塞框选流程。
+    pub fn foreground_window(hwnd: isize) -> Result<(), String> {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetForegroundWindow, ShowWindow, SW_RESTORE,
+        };
+        let h = HWND(hwnd as *mut std::ffi::c_void);
+        unsafe {
+            let _ = ShowWindow(h, SW_RESTORE);
+            if !SetForegroundWindow(h).as_bool() {
+                return Err(format!(
+                    "SetForegroundWindow({hwnd:#x}) 被拒绝（前台锁定）"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub struct ScreenCapture {
         control: Option<CaptureControl<CaptureHandler, HandlerError>>,
         receiver: Receiver<FrameMeta>,
@@ -591,6 +685,10 @@ mod imp {
 }
 
 pub use imp::ScreenCapture;
+#[cfg(windows)]
+pub use imp::grab_primary_monitor_shot;
+#[cfg(windows)]
+pub use imp::foreground_window;
 
 #[cfg(test)]
 mod tests {

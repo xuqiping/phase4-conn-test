@@ -232,49 +232,52 @@ fn get_capture_status(state: tauri::State<'_, ScreenState>) -> CaptureStatus {
 
 // ---- 区域框选录屏（规格 §3.1 Should；2026-08-08 Phase4 手测问题4 实现）----
 //
-// 交互流：主窗口点「区域框选」→ open_region_select 弹全屏透明 overlay 窗口
-// （region-select，加载 index.html#/region-select）→ 用户拖出矩形 →
+// 交互流（单窗口方案）：主窗口点「区域框选」→ grab_region_shot 抓主屏 PNG →
+// 前端把主窗口自己 setFullscreen(true)，把截图铺满当背景拖框 →
 // finish_region_select 收物理像素矩形（前端已乘 scaleFactor）、广播
-// "region-selected" 事件给主窗口、关 overlay → 开始录制时 region 传给
-// start_capture_session。Esc/取消走 cancel_region_select 直接关窗。
+// "region-selected" → 前端恢复窗口。Esc/取消 = 直接恢复窗口不调后端。
+//
+// 为什么是单窗口：Windows 10 上 Tauri 运行时创建的第二个 WebView 窗口
+// 渲染成纯白死窗（用户实测 3 次 + 开发截图复现 3 次，透明/不透明/最大化
+// 均同症）——运行时二窗渲染在此平台不可用，绕开。
 
-/// 已框选区域（主显示器物理像素），开始录制时由前端显式回传。
-type RegionState = Arc<Mutex<Option<RegionRect>>>;
-
+/// 抓一帧主显示器 PNG 存 sessions/.region_shot_<ms>.png，返回路径。
+/// 唯一文件名防 asset:// 缓存复用旧图。失败返回 Err，前端不开框选层。
+/// hwnd = 已选录制窗口：抓图前先把它提到前台，截图里才看得到它
+/// （Phase4 手测回归缺陷：选了窗口但窗口被压在其他窗口下，截图里找不到）。
+/// 置顶失败降级为"截图照抓"，不阻塞框选。
 #[tauri::command]
-fn open_region_select(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("region-select") {
-        let _ = w.set_focus();
-        return Ok(());
+fn grab_region_shot(
+    manager: tauri::State<'_, SessionManager>,
+    hwnd: Option<i64>,
+) -> Result<String, String> {
+    if let Some(h) = hwnd {
+        if let Err(e) = crate::screen::foreground_window(h as isize) {
+            log::warn!("[region] 置顶目标窗口失败，截图照抓: {e}");
+        }
+        // 等目标窗口重绘完再抓（WGC 抓的是屏幕合成结果，不等会抓到旧画面）
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
-    // 容错教训（2026-08-08 手测翻车）：fullscreen+transparent 在 Windows 上
-    // 可能渲染成不透明白窗 → 改用 maximized；不藏任务栏图标，渲染失败时
-    // 用户永远能从任务栏/Alt+F4 关窗，不会再被困住。
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "region-select",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("框选录制区域")
-    .maximized(true)
-    .transparent(true)
-    .decorations(false)
-    .always_on_top(true)
-    .build()
-    .map_err(|e| format!("open region select window: {e}"))?;
-    Ok(())
+    let dir = manager.region_shot_path();
+    let base = dir.parent().ok_or("sessions base dir")?;
+    std::fs::create_dir_all(base).map_err(|e| format!("create sessions dir: {e}"))?;
+    let shot = base.join(format!(
+        ".region_shot_{}.png",
+        chrono::Local::now().timestamp_millis()
+    ));
+    crate::screen::grab_primary_monitor_shot(shot.clone())?;
+    Ok(shot.to_string_lossy().replace("\\\\?\\", ""))
 }
 
+/// 框选完成：校验 + H.264 偶数边，广播给主窗口（store 监听设置 region）。
 #[tauri::command]
 fn finish_region_select(
     app: tauri::AppHandle,
-    state: tauri::State<'_, RegionState>,
     x: u32,
     y: u32,
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    // H.264 要求偶数边：向下取偶；最小 2x2。
     let rect = RegionRect {
         x,
         y,
@@ -284,20 +287,8 @@ fn finish_region_select(
     if rect.width < 2 || rect.height < 2 {
         return Err("框选区域太小".to_string());
     }
-    *state.lock().unwrap() = Some(rect);
-    if let Some(w) = app.get_webview_window("region-select") {
-        let _ = w.close();
-    }
     app.emit("region-selected", rect)
         .map_err(|e| format!("emit region-selected: {e}"))?;
-    Ok(())
-}
-
-#[tauri::command]
-fn cancel_region_select(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("region-select") {
-        let _ = w.close();
-    }
     Ok(())
 }
 
@@ -822,7 +813,6 @@ pub fn run() {
         .manage::<AppState>(Arc::new(Mutex::new(None)))
         .manage::<ScreenState>(Arc::new(Mutex::new(None)))
         .manage::<CaptureSessionState>(Arc::new(Mutex::new(None)))
-        .manage::<RegionState>(Arc::new(Mutex::new(None)))
         .manage(SessionManager::new(SessionManager::default_base_dir()))
         .invoke_handler(tauri::generate_handler![
             list_audio_devices,
@@ -839,9 +829,8 @@ pub fn run() {
             get_capture_status,
             start_capture_session,
             stop_capture_session,
-            open_region_select,
+            grab_region_shot,
             finish_region_select,
-            cancel_region_select,
             process_frames,
             process_ocr,
             align_session,

@@ -17,3 +17,8 @@ pub mod encode;
 pub mod scene_detect;
 
 pub use capture::{CaptureStatus, RecordConfig, RegionRect, ScreenCapture, WindowInfo};
+
+#[cfg(windows)]
+pub use capture::grab_primary_monitor_shot;
+#[cfg(windows)]
+pub use capture::foreground_window;

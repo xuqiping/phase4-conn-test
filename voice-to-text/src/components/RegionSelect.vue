@@ -1,12 +1,14 @@
 <script setup lang="ts">
-// 区域框选 overlay（规格 §3.1 Should；2026-08-08 Phase4 手测问题4）。
-// 独立透明最大化窗口（region-select），由 open_region_select 创建，
-// App.vue 按窗口 label 分流只渲染本组件。
-// 拖出矩形 → Enter/确定 → finish_region_select（CSS 像素 × scaleFactor = 物理像素）；
-// Esc/取消 → cancel_region_select。
+// 区域框选层（规格 §3.1 Should；2026-08-08 Phase4 手测问题4）。
+// 单窗口方案：store.beginRegionSelect 抓主屏截图并把主窗口 setFullscreen(true)，
+// App.vue 在 regionSelectMode 时把本组件铺满窗口（截图当背景拖框）。
+// 为什么不用独立窗口/透明窗口：Win10 上 Tauri 运行时二窗渲染纯白死窗（3 次实测）。
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useSessionStore } from '../stores/session'
+
+const store = useSessionStore()
 
 const dragging = ref(false)
 const startX = ref(0)
@@ -16,6 +18,9 @@ const curY = ref(0)
 const error = ref('')
 
 const rect = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 function computeRect() {
   const x = Math.min(startX.value, curX.value)
@@ -61,23 +66,20 @@ async function confirm() {
       width: Math.round(rect.value.w * scale),
       height: Math.round(rect.value.h * scale),
     })
-    // 窗口由后端关闭
+    await store.endRegionSelect()
   } catch (e) {
     error.value = `确认失败: ${e}`
   }
 }
 
 async function cancel() {
-  await invoke('cancel_region_select').catch(() => {})
+  await store.endRegionSelect()
 }
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') cancel()
   if (e.key === 'Enter') confirm()
 }
-
-onMounted(() => window.addEventListener('keydown', onKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
@@ -87,8 +89,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     @mousemove="onMove"
     @mouseup="onUp"
   >
-    <div class="hint-bar">
-      拖动鼠标框选录制区域（仅主显示器） · Enter 确认 · Esc 取消
+    <img v-if="store.regionShotSrc" class="bg" :src="store.regionShotSrc" alt="" draggable="false" />
+    <div class="dim" />
+
+    <div class="hint-bar" @mousedown.stop @mousemove.stop @mouseup.stop>
+      拖动鼠标框选录制区域（截图即当前主屏画面） · Enter 确认 · Esc 取消
       <button class="btn" :disabled="!rect" @click.stop="confirm">确定</button>
       <button class="btn ghost" @click.stop="cancel">取消</button>
     </div>
@@ -115,8 +120,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   position: fixed;
   inset: 0;
   cursor: crosshair;
-  /* 半透明遮罩：窗口本身 transparent，看得见底下的屏幕内容 */
-  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  user-select: none;
+  z-index: 100;
+  background: #000;
+}
+.bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
 }
 .hint-bar {
   position: fixed;
@@ -133,13 +152,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   border: 1px solid #333;
   border-radius: 8px;
   cursor: default;
+  z-index: 3;
 }
 .selection {
   position: fixed;
   border: 2px solid #2563eb;
-  /* 选区内保持清晰：用大阴影把遮罩“挖洞” */
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
-  background: transparent;
+  /* 选区内保持清晰：大阴影把遮罩"挖洞"，露出底下的截图 */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+  z-index: 2;
 }
 .size-tag {
   position: absolute;
@@ -179,5 +199,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   background: rgba(20, 20, 20, 0.92);
   padding: 6px 14px;
   border-radius: 6px;
+  z-index: 3;
 }
 </style>
