@@ -133,15 +133,16 @@ class MediaGenTaskServiceTest {
     }
 
     @Test
-    void submit_attachmentFrameRole_persistsAndAcceptsMixed() {
-        // B1：首帧+尾帧+参考图同请求合法，frameRole 落 config
+    void submit_attachmentFrameRole_persistsFirstAndLast() {
+        // B1：首帧+尾帧同请求合法（无参考图），frameRole 落 config。
+        // 注意：SeedDance 2.0 契约——last_frame 与 reference_image 互斥（Phase4 真跑确认），
+        // 故首+尾帧组合不再带参考图；带参考图的合法组合见 submit_firstFramePlusReferenceAccepted。
         List<AttachmentRef> attachments = new ArrayList<>();
         attachments.add(att("first.png", "image", "first_frame"));
         attachments.add(att("last.png", "image", "last_frame"));
-        attachments.add(att("ref.png", "image", null));
         attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
 
-        service.submit("首尾帧+参考", "16:9", 5, "720p", false, false,
+        service.submit("首尾帧", "16:9", 5, "720p", false, false,
                 null, null, attachments, SEEDANCE_2, USER_ID, false);
 
         ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
@@ -149,6 +150,39 @@ class MediaGenTaskServiceTest {
         String cfg = captor.getValue().getRequestConfig();
         assertTrue(cfg.contains("first_frame"), "首帧 frameRole 须落库");
         assertTrue(cfg.contains("last_frame"), "尾帧 frameRole 须落库");
+    }
+
+    @Test
+    void submit_firstFramePlusReferenceAccepted() {
+        // SeedDance 2.0 契约：first_frame + 参考图合法（last_frame 才与参考图互斥）。
+        List<AttachmentRef> attachments = new ArrayList<>();
+        attachments.add(att("first.png", "image", "first_frame"));
+        attachments.add(att("ref.png", "image", null));
+        attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
+
+        service.submit("首帧+参考图", "16:9", 5, "720p", false, false,
+                null, null, attachments, SEEDANCE_2, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        String cfg = captor.getValue().getRequestConfig();
+        assertTrue(cfg.contains("first_frame"), "首帧 frameRole 须落库");
+    }
+
+    @Test
+    void submit_lastFramePlusReference_400() {
+        // SeedDance 2.0 契约（Phase4 真跑确认）：last_frame 与 reference_image 互斥——
+        // ctaigw 对「尾帧+参考图」返 400 "last frame image content cannot be mixed with
+        // reference image"。service 前置拦截，给中文提示，不透传网关英文 400。
+        List<AttachmentRef> attachments = new ArrayList<>();
+        attachments.add(att("last.png", "image", "last_frame"));
+        attachments.add(att("ref.png", "image", null));
+        attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("尾帧+参考图", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("互斥"), "须提示 last_frame 与参考图互斥，实际: " + e.getMessage());
     }
 
     @Test

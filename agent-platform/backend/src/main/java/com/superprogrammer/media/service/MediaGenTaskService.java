@@ -262,6 +262,15 @@ public class MediaGenTaskService {
             }
             checkAttachmentOwnership(a.getFileId(), kind, userId, admin);
         }
+        // SeedDance 2.0 契约（Phase4 真跑确认）：last_frame 与 reference_image 互斥——
+        // 同请求含尾帧+参考图，ctaigw 返 400 "last frame image content cannot be mixed with
+        // reference image"。first_frame + 参考图允许；首尾帧（无参考图）允许。
+        // 在此前置拦截，给用户清晰中文提示，而非透传网关英文 400。
+        int referenceImages = images - firstFrame - lastFrame;
+        if (lastFrame > 0 && referenceImages > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "尾帧不能与参考图同时使用（SeedDance 2.0 限制：last_frame 与 reference_image 互斥，请二选一）");
+        }
         if (images > cap.getMaxImages()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "参考图超限（该模型 ≤" + cap.getMaxImages() + " 张，当前 " + images + "）");

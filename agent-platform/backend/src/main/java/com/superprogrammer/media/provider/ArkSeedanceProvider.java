@@ -96,6 +96,16 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             log.info("Ark 建任务成功 model={} arkTaskId={}", request.getModel(), taskId);
             return taskId;
         } catch (Exception e) {
+            // 网关 4xx/5xx：WebClientResponseException 携带响应体（具体拒绝原因，如 InvalidParameter）。
+            // 不 chain wce 作 cause——worker.markFailed 走 rootMessage(e) 会下钻到 WCE 的泛化
+            // "400 Bad Request from POST..."，丢掉网关真正原因。抛无 cause 异常、message 直带 body，
+            // errorMsg 落库即用户可读；完整堆栈由本行 log.error(...,wce) 记录。
+            if (e instanceof org.springframework.web.reactive.function.client.WebClientResponseException wce) {
+                String respBody = wce.getResponseBodyAsString();
+                log.error("Ark 建任务被网关拒绝 status={} body={}", wce.getStatusCode().value(), truncate(respBody, 800), wce);
+                throw new IllegalStateException("Ark 建任务失败 (HTTP " + wce.getStatusCode().value() + "): "
+                        + truncate(respBody, 500));
+            }
             throw new IllegalStateException("Ark 建任务失败: " + rootMessage(e), e);
         }
     }
