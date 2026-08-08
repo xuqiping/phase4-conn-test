@@ -19,4 +19,7 @@ public class ChatRequest {
 
     /** 联网搜索开关（CHAT 模式，非 null 时持久化到会话；null=不改继承）。ON→LLM 生成前联网检索注入。 */
     private Boolean webSearchEnabled;
+
+    /** 聊天附件 file_id 集（V69 二期 P3，须为本人的 CHAT 上传；≤5 个）。 */
+    private List<String> attachmentFileIds;
 }

@@ -42,7 +42,7 @@ public class MemoryProjectEntry extends BaseEntity {
     private Double confidence;       // 路由置信度 0~1
     private String status;           // ACTIVE / PENDING_REVIEW
     private String contentType;      // TEXT / FILE（P3 文件记忆收录）
-    private Long fileId;             // contentType=FILE 时指向 stored_files（P3 用）
+    private String fileId;           // contentType=FILE 时指向 stored_files.file_id（VARCHAR，V69 修正类型）
     private Long reviewedBy;         // 审核人（owner/admin 收/弃留痕）
     private OffsetDateTime reviewedAt;
 }

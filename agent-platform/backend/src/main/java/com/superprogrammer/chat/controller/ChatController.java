@@ -3,10 +3,12 @@ package com.superprogrammer.chat.controller;
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
 import com.superprogrammer.chat.dto.ChatTargetVO;
+import com.superprogrammer.chat.dto.MemoryAssetUploadVO;
 import com.superprogrammer.chat.dto.SessionVO;
 import com.superprogrammer.chat.entity.ChatMessage;
 import com.superprogrammer.chat.service.ChatSessionService;
 import com.superprogrammer.chat.service.ChatTargetService;
+import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +18,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -29,6 +32,14 @@ public class ChatController {
 
     private final ChatSessionService chatSessionService;
     private final ChatTargetService chatTargetService;
+    private final MemoryAssetUploadService memoryAssetUploadService;
+
+    /** 聊天附件上传（V69 二期 P3，FR-201）：落盘 stored_files(CHAT) + 建文件记忆行（PROCESSING）。 */
+    @PostMapping("/attachments")
+    public ResponseEntity<R<MemoryAssetUploadVO>> uploadAttachment(@RequestParam("file") MultipartFile file) {
+        Long userId = getCurrentUserId();
+        return ResponseEntity.ok(R.ok(memoryAssetUploadService.upload(file, userId)));
+    }
 
     @PostMapping("/sessions")
     public ResponseEntity<R<SessionVO>> createSession(@RequestBody ChatRequest request) {

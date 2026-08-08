@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.superprogrammer.chat.dto.MemoryRecallResult;
 import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
 import com.superprogrammer.chat.dto.StreamEvent;
+import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
 import com.superprogrammer.chat.service.internal.MemoryGenerationService;
 import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
 import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
@@ -68,6 +69,8 @@ public class ChatSessionService {
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
     // 联网搜索（CHAT 模式生成前检索注入；开关门控由 session.webSearchEnabled + 全局 search.enabled）
     private final com.superprogrammer.search.service.WebSearchService webSearchService;
+    // 聊天附件归属校验（V69 二期 P3：消息体携带 file_ids，turn 提及「含附件《名》」）
+    private final MemoryAssetUploadService memoryAssetUploadService;
 
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
@@ -165,11 +168,13 @@ public class ChatSessionService {
             session = getSessionOrFail(userId, request.getSessionId());
         }
 
-        // Save user message
+        // Save user message（P3 附件：落消息前校验归属，metadata 记 file_ids）
+        List<String> attachmentNames = resolveAttachmentNames(userId, request);
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
         userMsg.setContent(request.getMessage());
+        fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
 
         // Build execution context
@@ -233,7 +238,8 @@ public class ChatSessionService {
 
         // 记忆写入（H' 切流：新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标概念）
         if (ragOn) {
-            dispatchMemoryWrite(userId, session.getId(), request.getMessage(), response);
+            dispatchMemoryWrite(userId, session.getId(),
+                    withAttachmentMention(request.getMessage(), attachmentNames), response);
         }
 
         // Save assistant message
@@ -294,6 +300,36 @@ public class ChatSessionService {
         }
     }
 
+    // ============================ 二期 P3 · 聊天附件（V69）============================
+
+    /** 附件归属校验（落消息前拦）：任一 fileId 非本人 CHAT ACTIVE → BAD_REQUEST。无附件返空列表。 */
+    private List<String> resolveAttachmentNames(Long userId, ChatRequest request) {
+        if (request.getAttachmentFileIds() == null || request.getAttachmentFileIds().isEmpty()) {
+            return List.of();
+        }
+        return memoryAssetUploadService.resolveOwnedAttachmentNames(request.getAttachmentFileIds(), userId);
+    }
+
+    /** 消息 metadata 记 attachmentFileIds（前端渲染文件卡片用；无附件不写）。 */
+    private void fillAttachmentMetadata(ChatMessage msg, List<String> attachmentFileIds) {
+        if (attachmentFileIds == null || attachmentFileIds.isEmpty()) {
+            return;
+        }
+        try {
+            msg.setMetadata(new ObjectMapper().writeValueAsString(
+                    Map.of("attachmentFileIds", attachmentFileIds)));
+        } catch (Exception ignored) {}
+    }
+
+    /** 记忆写入文本带附件提及（P3 坑表：turn 的 raw/L2 记录「含附件《名》」，可回溯文件）。 */
+    private String withAttachmentMention(String message, List<String> attachmentNames) {
+        if (attachmentNames == null || attachmentNames.isEmpty()) {
+            return message;
+        }
+        String mention = attachmentNames.stream().map(n -> "《" + n + "》").collect(Collectors.joining());
+        return (message == null ? "" : message) + "\n（附件：" + mention + "）";
+    }
+
     private List<ChatMessage> loadContextWindow(Long sessionId) {
         LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId)
@@ -325,10 +361,13 @@ public class ChatSessionService {
     }
 
     private Flux<StreamEvent> doSendMessageStream(Long userId, ChatRequest request, ChatSession session) {
+        // P3 附件：落消息前校验归属，metadata 记 file_ids（流式路径与 REST 同一咽喉）
+        List<String> attachmentNames = resolveAttachmentNames(userId, request);
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
         userMsg.setContent(request.getMessage());
+        fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
 
         ExecutionContext context = new ExecutionContext(
@@ -383,9 +422,9 @@ public class ChatSessionService {
             Flux<ExecutionEvent> resumeFlux = runtimeExecutionService.resumeWorkflowFromChatAnswer(
                     session.getId(), request.getMessage(), userId);
             if (resumeFlux != null) {
-                return streamWorkflowFlux(userId, session, request, resumeFlux);
+                return streamWorkflowFlux(userId, session, request, resumeFlux, attachmentNames);
             }
-            return streamWorkflow(userId, session, request);
+            return streamWorkflow(userId, session, request, attachmentNames);
         }
 
         Long sessionId = session.getId();
@@ -418,7 +457,8 @@ public class ChatSessionService {
                     }
                     // 记忆写入（二期 P1 turns 纯个人域；HYBRID/ASYNC/incident/askText 随旧栈废弃）
                     if (ragOn) {
-                        dispatchMemoryWrite(userId, sessionId, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId,
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -466,14 +506,16 @@ public class ChatSessionService {
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
 
-    private Flux<StreamEvent> streamWorkflow(Long userId, ChatSession session, ChatRequest request) {
+    private Flux<StreamEvent> streamWorkflow(Long userId, ChatSession session, ChatRequest request,
+                                             List<String> attachmentNames) {
         return streamWorkflowFlux(userId, session, request,
-                runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, session.getId(), request.getMessage()));
+                runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, session.getId(), request.getMessage()),
+                attachmentNames);
     }
 
     /** 工作流事件流 → 对话流式事件的统一映射（首次执行与人机输入恢复复用）。 */
     private Flux<StreamEvent> streamWorkflowFlux(Long userId, ChatSession session, ChatRequest request,
-                                                 Flux<ExecutionEvent> source) {
+                                                 Flux<ExecutionEvent> source, List<String> attachmentNames) {
         Long sessionId = session.getId();
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
@@ -491,7 +533,8 @@ public class ChatSessionService {
                     boolean wfRagOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                             session.getAgentId(), session.getWorkflowId());
                     if (wfRagOn) {
-                        dispatchMemoryWrite(userId, sessionId, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId,
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText);
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);

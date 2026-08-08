@@ -50,6 +50,8 @@ class ChatSessionServiceTest {
     @Mock private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
     // 联网搜索总开关等系统设置
     @Mock private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    // 聊天附件归属校验（V69 二期 P3）
+    @Mock private com.superprogrammer.chat.service.internal.MemoryAssetUploadService memoryAssetUploadService;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
