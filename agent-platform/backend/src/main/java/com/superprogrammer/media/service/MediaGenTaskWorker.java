@@ -224,7 +224,7 @@ public class MediaGenTaskWorker {
         boolean generateAudio = false;
         String refFileId = null;
         String frameRole = null;
-        List<String[]> attachments = new java.util.ArrayList<>(); // [fileId, kind]
+        List<String[]> attachments = new java.util.ArrayList<>(); // [fileId, kind, frameRole?]
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
             prompt = cfg.path("prompt").asText(null);
@@ -239,7 +239,8 @@ public class MediaGenTaskWorker {
                 String fileId = a.path("fileId").asText(null);
                 String kind = a.path("kind").asText(null);
                 if (fileId != null && kind != null) {
-                    attachments.add(new String[]{fileId, kind});
+                    String role = a.path("frameRole").asText(null);
+                    attachments.add(new String[]{fileId, kind, role});
                 }
             }
         } catch (Exception e) {
@@ -263,6 +264,7 @@ public class MediaGenTaskWorker {
                     resolved.add(MediaGenRequest.ResolvedAttachment.builder()
                             .kind(pair[1])
                             .dataUri(mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
+                            .frameRole(pair.length > 2 ? pair[2] : null)
                             .build());
                 } catch (Exception e) {
                     log.warn("参考附件读取失败 taskId={} fileId={} kind={}: {}",

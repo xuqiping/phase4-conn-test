@@ -31,6 +31,10 @@ public class MediaGenRequest {
     public static final String TYPE_TEXT2VIDEO = "TEXT2VIDEO";
     public static final String TYPE_IMAGE2VIDEO = "IMAGE2VIDEO";
 
+    /** 附件级参考帧 role（SeedDance 2.0 content[] 枚举）：首帧 / 尾帧；null=reference_image。 */
+    public static final String FRAME_FIRST = "first_frame";
+    public static final String FRAME_LAST = "last_frame";
+
     /** Ark 模型 id，如 doubao-seedance-2-0 / Cdance2.0。 */
     private String model;
 
@@ -82,5 +86,7 @@ public class MediaGenRequest {
     public static class ResolvedAttachment {
         private String kind;
         private String dataUri;
+        /** 参考帧角色（仅 image）：first_frame/last_frame/null(=reference_image)。透传自 AttachmentRef。 */
+        private String frameRole;
     }
 }

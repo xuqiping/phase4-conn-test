@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -83,6 +84,13 @@ class MediaGenTaskServiceTest {
         return a;
     }
 
+    /** 带 frameRole 的附件构造（B1 附件级首/尾帧）。 */
+    private AttachmentRef att(String fileId, String kind, String frameRole) {
+        AttachmentRef a = att(fileId, kind);
+        a.setFrameRole(frameRole);
+        return a;
+    }
+
     private void stubOwnedFile(String fileId, String mime) {
         StoredFileEntity meta = new StoredFileEntity();
         meta.setFileId(fileId);
@@ -122,6 +130,55 @@ class MediaGenTaskServiceTest {
         assertEquals(7L, task.getProviderId());
         assertTrue(task.getRequestConfig().contains("\"attachments\""));
         assertTrue(task.getRequestConfig().contains("v1.mp4"));
+    }
+
+    @Test
+    void submit_attachmentFrameRole_persistsAndAcceptsMixed() {
+        // B1：首帧+尾帧+参考图同请求合法，frameRole 落 config
+        List<AttachmentRef> attachments = new ArrayList<>();
+        attachments.add(att("first.png", "image", "first_frame"));
+        attachments.add(att("last.png", "image", "last_frame"));
+        attachments.add(att("ref.png", "image", null));
+        attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
+
+        service.submit("首尾帧+参考", "16:9", 5, "720p", false, false,
+                null, null, attachments, SEEDANCE_2, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        String cfg = captor.getValue().getRequestConfig();
+        assertTrue(cfg.contains("first_frame"), "首帧 frameRole 须落库");
+        assertTrue(cfg.contains("last_frame"), "尾帧 frameRole 须落库");
+    }
+
+    @Test
+    void submit_twoFirstFrames_400() {
+        // 全局首帧 ≤1
+        List<AttachmentRef> attachments = new ArrayList<>();
+        attachments.add(att("f1.png", "image", "first_frame"));
+        attachments.add(att("f2.png", "image", "first_frame"));
+        attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("首帧最多 1 张"));
+    }
+
+    @Test
+    void submit_frameRoleOnVideo_ignoredNotStored() {
+        // frameRole 配在 video 上：normalizeFrameRole 非 image → null，不报错也不落 role
+        stubOwnedFile("v.mp4", "video/mp4");
+        List<AttachmentRef> attachments = new ArrayList<>();
+        attachments.add(att("v.mp4", "video", "first_frame"));
+
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, attachments, SEEDANCE_2, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertFalse(captor.getValue().getRequestConfig().contains("frameRole"),
+                "video 附件的 frameRole 必须被忽略，不入 config");
     }
 
     @Test

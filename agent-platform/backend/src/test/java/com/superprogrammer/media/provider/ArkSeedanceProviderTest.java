@@ -132,6 +132,36 @@ class ArkSeedanceProviderTest {
     }
 
     @Test
+    void attachmentFrameRoles_mixedFirstLastReference() {
+        // B1：附件级 frameRole — 首帧+尾帧+参考图同请求，各 image 项按 frameRole 路由 role
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("m").prompt("首尾帧+参考").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .attachments(List.of(
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,F").frameRole("first_frame").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,L").frameRole("last_frame").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,R").build()))
+                .build());
+        List<Map<String, Object>> content = contentOf(body);
+        // text + 3 images
+        assertEquals(4, content.size());
+        assertEquals("first_frame", content.get(1).get("role"), "首帧附件→role:first_frame");
+        assertEquals("last_frame", content.get(2).get("role"), "尾帧附件→role:last_frame");
+        assertEquals("reference_image", content.get(3).get("role"), "无 frameRole 的 image→reference_image");
+    }
+
+    @Test
+    void attachmentFrameRole_ignoredForNonImage() {
+        // frameRole 配在 video 附件上应被忽略（恒 reference_video）
+        Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
+                .model("m").prompt("p").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
+                        .kind("video").dataUri("data:video/mp4;base64,V").frameRole("first_frame").build()))
+                .build());
+        Map<String, Object> vid = contentOf(body).get(1);
+        assertEquals("reference_video", vid.get("role"), "video 附件的 frameRole 必须被忽略");
+    }
+
+    @Test
     void defaults_ratioAndWatermark() {
         Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
                 .model("m").prompt("p").taskType(MediaGenRequest.TYPE_TEXT2VIDEO).build());

@@ -139,9 +139,16 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         content.add(Map.of("type", "text", "text", request.getPrompt() == null ? "" : request.getPrompt()));
         if (request.getAttachments() != null && !request.getAttachments().isEmpty()) {
             // 多模态参考（SeedDance 2.0）：图/视频/音频按 role 标注，positional 引用（图1/视频1/音频1）
+            // image 附件：frameRole=first_frame/last_frame → 对应帧 role；否则 reference_image。
+            // 一次请求可含 1 首帧 + 1 尾帧 + N 参考图（service 已校验全局各 ≤1）。
             for (MediaGenRequest.ResolvedAttachment a : request.getAttachments()) {
                 String type = KIND_TYPE.getOrDefault(a.getKind(), "image_url");
                 String role = KIND_ROLE.getOrDefault(a.getKind(), "reference_image");
+                if ("image".equals(a.getKind())
+                        && (MediaGenRequest.FRAME_FIRST.equals(a.getFrameRole())
+                        || MediaGenRequest.FRAME_LAST.equals(a.getFrameRole()))) {
+                    role = a.getFrameRole();
+                }
                 content.add(Map.of(
                         "type", type,
                         type, Map.of("url", a.getDataUri()),

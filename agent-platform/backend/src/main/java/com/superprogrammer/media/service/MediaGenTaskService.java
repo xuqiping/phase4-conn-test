@@ -146,7 +146,14 @@ public class MediaGenTaskService {
             List<Map<String, String>> list = new ArrayList<>(attachments.size());
             for (AttachmentRef a : attachments) {
                 // F3：kind 归一化后落库（校验用的就是归一化值；worker/Ark 映射直接查表不再二次处理）
-                list.add(Map.of("fileId", a.getFileId(), "kind", a.getKind().trim().toLowerCase()));
+                // frameRole 归一化：仅 first_frame/last_frame 落库（null 省略，=普通参考图）
+                String kind = a.getKind().trim().toLowerCase();
+                String role = normalizeFrameRole(a.getFrameRole(), kind);
+                Map<String, String> item = new java.util.LinkedHashMap<>();
+                item.put("fileId", a.getFileId());
+                item.put("kind", kind);
+                if (role != null) item.put("frameRole", role);
+                list.add(item);
             }
             config.put("attachments", list);
         }
@@ -230,6 +237,7 @@ public class MediaGenTaskService {
                     "附件总数超限（≤" + cap.getMaxAttachments() + "，当前 " + attachments.size() + "）");
         }
         int images = 0, videos = 0, audios = 0;
+        int firstFrame = 0, lastFrame = 0;
         for (AttachmentRef a : attachments) {
             String kind = a.getKind() == null ? "" : a.getKind().trim().toLowerCase();
             if (!ATTACHMENT_KINDS.contains(kind)) {
@@ -240,6 +248,17 @@ public class MediaGenTaskService {
                 case "video" -> videos++;
                 case "audio" -> audios++;
                 default -> { /* 白名单已挡 */ }
+            }
+            // frameRole 仅 image 合法；首/尾帧全局各 ≤1（SeedDance content[] 契约）
+            String role = normalizeFrameRole(a.getFrameRole(), kind);
+            if (role != null) {
+                if ("first_frame".equals(role)) {
+                    if (firstFrame++ > 0) {
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "首帧最多 1 张");
+                    }
+                } else if (lastFrame++ > 0) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "尾帧最多 1 张");
+                }
             }
             checkAttachmentOwnership(a.getFileId(), kind, userId, admin);
         }
@@ -260,6 +279,16 @@ public class MediaGenTaskService {
         if (videos > 0 && !cap.isVideoDataUri()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型暂不支持视频参考（data URI 通道关闭）");
         }
+    }
+
+    /**
+     * 归一化附件 frameRole：仅 kind=image 接受 first_frame/last_frame（大小写不敏感）；
+     * 非 image 或非法值 → null（=普通参考图）。供 config 落库与校验共用同一判定，避免两处漂移。
+     */
+    private String normalizeFrameRole(String raw, String kind) {
+        if (raw == null || raw.isBlank() || !"image".equals(kind)) return null;
+        String r = raw.trim().toLowerCase();
+        return "first_frame".equals(r) || "last_frame".equals(r) ? r : null;
     }
 
     /**
