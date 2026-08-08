@@ -15,6 +15,7 @@
  * - MemoryRosterController        花名册（/projects/{pid}）
  * - MemoryProjectRuleController   二期 P1 收录规则（/projects/{pid}/rule，FR-001）
  * - MemoryEntryController         二期 P1 条目审核（/projects/{pid}/entries + /entries/{id}，FR-005）
+ * - MemoryProjectLinkController   二期 P2 项目授权（/projects/{pid}/links + /links/{id}，FR-101/103）
  *
  * 二期 P1（FR-006，V67）：turns 纯个人域——一期「生命周期折叠板」（departed/deleted 拉取）随
  * turns 四列下线，MemoryLifecycleController 已删；流水账 VO 去 projectIds/projectNames/bornPersonal；
@@ -25,10 +26,10 @@ import type { ApiResponse } from './request'
 
 // ============================ 类型 ============================
 
-/** 波及通知（跨用户：他人撤回 turn 波及我的 summary / 项目删除影响）。 */
+/** 波及通知（跨用户：他人撤回 turn 波及我的 summary / 项目删除影响 / 二期 P2 授权申请与结果）。 */
 export interface MemoryNotificationVO {
   id: number
-  type: 'SUMMARY_AFFECTED_BY_RECALL' | 'PROJECT_DELETED_AFFECTED'
+  type: 'SUMMARY_AFFECTED_BY_RECALL' | 'PROJECT_DELETED_AFFECTED' | 'LINK_REQUEST' | 'LINK_RESULT'
   refId: number | null
   message: string | null
   createdAt: string
@@ -224,6 +225,24 @@ export interface MemoryProjectEntryVO {
   createdAt: string | null
 }
 
+// ============================ 二期 P2 · 项目授权 ============================
+
+/** 项目授权链（二期 P2 · FR-101；带双方项目名+发起/审批人名，列表直显）。 */
+export interface MemoryProjectLinkVO {
+  id: number
+  parentProjectId: number
+  parentProjectName: string | null
+  childProjectId: number
+  childProjectName: string | null
+  grantedBy: number
+  grantedByName: string | null
+  approvedBy: number | null
+  approvedByName: string | null
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED'
+  createdAt: string | null
+  approvedAt: string | null
+}
+
 // ============================ 客户端 ============================
 
 export const memoryApi = {
@@ -338,5 +357,22 @@ export const memoryApi = {
   },
   withdrawEntry(entryId: number) {
     return request.delete<ApiResponse<void>>(`/chat/memory/entries/${entryId}`)
+  },
+
+  // ---- 二期 P2 · 项目授权（FR-101/103；发起=child owner，审批=parent owner/admin）----
+  createLink(childProjectId: number, parentProjectId: number) {
+    return request.post<ApiResponse<MemoryProjectLinkVO>>(`/chat/memory/projects/${childProjectId}/links`, { parentProjectId })
+  },
+  listMyLinks() {
+    return request.get<ApiResponse<MemoryProjectLinkVO[]>>('/chat/memory/links/mine')
+  },
+  approveLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/approve`)
+  },
+  rejectLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/reject`)
+  },
+  revokeLink(linkId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/links/${linkId}`)
   }
 }
