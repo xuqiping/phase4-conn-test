@@ -398,18 +398,22 @@ async fn start_capture_session(
     audio.start().map_err(|e| e.to_string())?;
 
     // 屏幕轨 (FR-101/103)：视频切片 + SAD 预筛缩略图。失败时已起的音轨要收口。
-    // region = Some → 区域框选模式：捕主显示器 + D3D11 裁剪（忽略 hwnd）。
+    // 选源三种形态（2026-08-08 回归缺陷修复后）：
+    //   region + hwnd → 录窗口再按区域裁剪（WGC 录窗口不受遮挡影响，最稳）；
+    //   仅 region     → 捕主显示器 + D3D11 裁剪（没选窗口直接框屏幕时用）；
+    //   仅 hwnd       → 整窗录制。
     let record_cfg = RecordConfig {
         video_dir: dir.join("video"),
         frames_dir: Some(dir.join("frames")),
         slice_ms: SLICE_MS,
         trace: session_id.clone(),
     };
-    let screen = match region {
-        Some(rect) => {
-            ScreenCapture::start_region(rect, Some(clock), Some(record_cfg))
+    let screen = match (region, hwnd) {
+        (Some(rect), h) if h != 0 => {
+            ScreenCapture::start_window_region(h, rect, Some(clock), Some(record_cfg))
         }
-        None => ScreenCapture::start_with_record(hwnd, Some(clock), Some(record_cfg)),
+        (Some(rect), _) => ScreenCapture::start_region(rect, Some(clock), Some(record_cfg)),
+        (None, _) => ScreenCapture::start_with_record(hwnd, Some(clock), Some(record_cfg)),
     };
     let screen = match screen {
         Ok(s) => s,

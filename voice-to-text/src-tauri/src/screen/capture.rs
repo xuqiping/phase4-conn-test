@@ -91,6 +91,41 @@ pub fn is_stalled(last_frame_ts: Option<i64>, started_ts: i64, now: i64) -> bool
     now - reference > STALL_THRESHOLD_MS
 }
 
+/// 屏幕物理像素矩形 → 窗口相对矩形（窗口+区域共存模式）。
+/// 框选是在主屏截图上做的（屏幕坐标），录窗口裁剪要窗口内坐标：
+/// 与窗口矩形求交集，宽高收敛到窗口内，H264 取偶。
+/// 有效交集 < 2px → Err。注：GetWindowRect 含 Win10 隐形缩放边框（±7px），
+/// 框课程画面区域这个精度够，不追求像素级对齐。
+pub fn screen_rect_to_window(
+    rect: RegionRect,
+    win_left: i32,
+    win_top: i32,
+    win_width: u32,
+    win_height: u32,
+) -> Result<RegionRect, String> {
+    let left = (rect.x as i64).max(win_left as i64);
+    let top = (rect.y as i64).max(win_top as i64);
+    let right = (rect.x as i64 + rect.width as i64).min(win_left as i64 + win_width as i64);
+    let bottom = (rect.y as i64 + rect.height as i64).min(win_top as i64 + win_height as i64);
+    let iw = right - left;
+    let ih = bottom - top;
+    // 先判交集再转 u32（负数 as u32 会回绕成天文数字）
+    if iw < 2 || ih < 2 {
+        return Err(format!(
+            "框选区域与窗口无有效交集（区域 {}x{}+{}+{}，窗口 {win_width}x{win_height}+{win_left}+{win_top}）",
+            rect.width, rect.height, rect.x, rect.y
+        ));
+    }
+    let w = iw as u32 & !1;
+    let h = ih as u32 & !1;
+    Ok(RegionRect {
+        x: (left - win_left as i64) as u32,
+        y: (top - win_top as i64) as u32,
+        width: w,
+        height: h,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Windows implementation (real WGC)
 // ---------------------------------------------------------------------------
@@ -550,6 +585,44 @@ mod imp {
             Self::start_item(monitor, label, clock, record, Some(rect))
         }
 
+        /// 窗口+区域共存（2026-08-08 Phase4 回归缺陷：框选后窗口选项被重置 →
+        /// 改为录窗口再按区域裁剪）。WGC 录窗口即使被其他窗口遮挡也能录到内容，
+        /// 比录屏幕区域稳（上课切窗口不串画面）。
+        /// rect = 主屏物理像素（框选时屏幕坐标）；启动时按 GetWindowRect 换算
+        /// 窗口相对坐标。框选后若挪动了窗口，裁剪位置按录制开始时的窗口位置
+        /// 重算，框选画面与录制画面可能错位 —— 框选完别挪窗口。
+        pub fn start_window_region(
+            hwnd: isize,
+            rect: RegionRect,
+            clock: Option<Arc<SessionClock>>,
+            record: Option<RecordConfig>,
+        ) -> Result<Self, String> {
+            let window = Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void);
+            if !window.is_valid() {
+                return Err(format!("window {hwnd:#x} is not capturable (invisible / gone?)"));
+            }
+            let title = window.title().unwrap_or_else(|_| "<untitled>".to_string());
+            let (wl, wt, ww, wh) = Self::window_rect_px(hwnd)?;
+            let rel = super::screen_rect_to_window(rect, wl, wt, ww, wh)?;
+            let label = format!(
+                "hwnd={hwnd:#x} \"{title}\" crop {}x{}+{}+{}",
+                rel.width, rel.height, rel.x, rel.y
+            );
+            Self::start_item(window, label, clock, record, Some(rel))
+        }
+
+        /// GetWindowRect → (left, top, width, height) 物理像素。
+        fn window_rect_px(hwnd: isize) -> Result<(i32, i32, u32, u32), String> {
+            use windows::Win32::Foundation::{HWND, RECT};
+            use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+            let mut r = RECT::default();
+            unsafe {
+                GetWindowRect(HWND(hwnd as *mut std::ffi::c_void), &mut r)
+                    .map_err(|e| format!("GetWindowRect({hwnd:#x}): {e}"))?;
+            }
+            Ok((r.left, r.top, (r.right - r.left) as u32, (r.bottom - r.top) as u32))
+        }
+
         /// 共用启动骨架：窗口 / 显示器两种捕获源只差 item 与裁剪矩形。
         fn start_item<T: TryInto<GraphicsCaptureItemType> + Send + 'static>(
             item: T,
@@ -675,6 +748,14 @@ mod imp {
         ) -> Result<Self, String> {
             Err("screen capture is only supported on Windows".to_string())
         }
+        pub fn start_window_region(
+            _hwnd: isize,
+            _rect: super::RegionRect,
+            _clock: Option<std::sync::Arc<crate::session::SessionClock>>,
+            _record: Option<RecordConfig>,
+        ) -> Result<Self, String> {
+            Err("screen capture is only supported on Windows".to_string())
+        }
         pub fn status(&mut self) -> CaptureStatus {
             CaptureStatus { running: false, frames_captured: 0, last_frame_ts: 0, stalled: false }
         }
@@ -708,6 +789,25 @@ mod tests {
         // stall measured from capture start
         assert!(is_stalled(None, 1000, 4000));
         assert!(!is_stalled(None, 1000, 2000));
+    }
+
+    /// 窗口+区域共存（AC-112 回归修复）：屏幕矩形 → 窗口相对矩形换算。
+    #[test]
+    fn screen_rect_to_window_converts_and_clamps() {
+        let r = |x, y, w, h| RegionRect { x, y, width: w, height: h };
+        // 完全在窗口内：减窗口原点，奇数宽取偶
+        let rel = screen_rect_to_window(r(310, 210, 301, 201), 300, 200, 800, 600).unwrap();
+        assert_eq!((rel.x, rel.y, rel.width, rel.height), (10, 10, 300, 200));
+        // 超出窗口右下：收敛到窗口内
+        let rel = screen_rect_to_window(r(700, 500, 500, 300), 300, 200, 800, 600).unwrap();
+        assert_eq!((rel.x, rel.y, rel.width, rel.height), (400, 300, 400, 300));
+        // 起点在窗口外（左上）：交集从 0,0 开始
+        let rel = screen_rect_to_window(r(100, 100, 400, 300), 300, 200, 800, 600).unwrap();
+        assert_eq!((rel.x, rel.y, rel.width, rel.height), (0, 0, 200, 200));
+        // 完全在窗口外 → Err
+        assert!(screen_rect_to_window(r(0, 0, 100, 100), 300, 200, 800, 600).is_err());
+        // 交集只剩 1px（区域右缘 301 探进窗口 1px）→ Err
+        assert!(screen_rect_to_window(r(201, 200, 100, 100), 300, 200, 800, 600).is_err());
     }
 
     #[cfg(windows)]

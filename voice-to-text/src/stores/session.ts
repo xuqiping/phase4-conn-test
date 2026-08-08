@@ -266,16 +266,18 @@ export const useSessionStore = defineStore('session', () => {
 
   // ---- 2026-08-08 Phase4 手测问题4：区域框选录屏（规格 Should 实现）----
 
-  /** 已框选区域（物理像素）；与窗口选择互斥 —— 设了区域就忽略 hwnd。 */
+  /** 已框选区域（主屏物理像素）。与窗口选择**共存**：两个都选 = 录该窗口再按区域
+   *  裁剪（WGC 录窗口不受遮挡影响）；只框不选窗 = 录主屏该区域。 */
   const region = ref<RegionRect | null>(null)
   /** 框选模式：主窗口临时全屏 + 截图背景（RegionSelect 渲染开关）。 */
   const regionSelectMode = ref(false)
   const regionShotSrc = ref('')
 
   // 框选完成 → 后端广播 region-selected（store 级监听，随 app 生命周期）。
+  // 注意：不清 selectedHwnd —— 框选语义 =「在这个窗口里框一块」（用户 2026-08-08
+  // 反馈：框选完窗口选项被重置像 bug）。换窗口才清 region（框是按旧窗口画面框的）。
   listen<RegionRect>('region-selected', (e) => {
     region.value = e.payload
-    selectedHwnd.value = null
     if (phase.value === 'idle') phase.value = 'source-selected'
   })
 
@@ -365,7 +367,8 @@ export const useSessionStore = defineStore('session', () => {
 
   function selectWindow(hwnd: number | null) {
     selectedHwnd.value = hwnd
-    if (hwnd != null) region.value = null // 窗口与区域框选互斥
+    // 换窗口清 region：框选是按当时那个窗口的画面框的，换窗后坐标无意义，需重框
+    region.value = null
     if (phase.value === 'idle' || phase.value === 'source-selected') {
       phase.value = hwnd == null && region.value == null ? 'idle' : 'source-selected'
     }

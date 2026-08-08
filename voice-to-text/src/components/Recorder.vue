@@ -108,6 +108,11 @@ function onAudioSelect(e: Event) {
       >
         {{ store.region ? `区域 ${store.region.width}×${store.region.height}` : '区域框选' }}
       </button>
+      <span
+        v-if="store.region && store.selectedHwnd != null"
+        class="region-hint"
+        title="已选窗口 + 已框选区域：录制该窗口并只保留框选范围，窗口被其他窗口遮挡也不影响录制"
+      >窗口内框选</span>
       <button
         v-if="store.region"
         class="region-clear"
@@ -255,6 +260,12 @@ function onAudioSelect(e: Event) {
   border: 1px solid #333;
   border-radius: 6px;
   cursor: pointer;
+}
+.region-hint {
+  font-size: 12px;
+  color: #60a5fa;
+  white-space: nowrap;
+  cursor: help;
 }
 .region-clear:hover:not(:disabled) {
   color: #f87171;
