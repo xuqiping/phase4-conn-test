@@ -354,7 +354,11 @@ public class MemoryRecallPipeline {
                 RecallTagMeta tag = s.getTagId() == null ? null : tagMap.get(s.getTagId());
                 String subject = tag == null ? null : tag.getSubject();
                 String topic = tag == null || tag.getTopic() == null ? "" : tag.getTopic();
-                sb.append("- ").append(ownerSubjectPrefix(s.getUserId(), subject, userId))
+                // 二期 P4（FR-305 装配来源标注）：项目共享总结（项目资产，user_id NULL）
+                // 标「项目共享·」前缀，与本人/成员个人总结区分
+                String sharedPrefix = "PROJECT".equals(s.getScopeOwner()) ? "项目共享·" : "";
+                sb.append("- ").append(sharedPrefix)
+                        .append(ownerSubjectPrefix(s.getUserId(), subject, userId))
                         .append(topic).append("：").append(summaryContent(rs)).append('\n');
             }
         }

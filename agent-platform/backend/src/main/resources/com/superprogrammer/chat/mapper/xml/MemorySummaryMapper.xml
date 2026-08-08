@@ -24,12 +24,15 @@
          ⚠️ personalOn=false+projectIds 空 → 1=0 兜底（空召回 scope，D-6 保证不调，此处防御）。 -->
     <select id="findSummariesForRecall" resultMap="MemorySummaryMap">
         SELECT * FROM memory_summaries
-        WHERE user_id = #{userId} AND deleted = 0 AND status != 'STALE'
+        WHERE deleted = 0 AND status != 'STALE'
           AND tag_id IN
           <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
               #{tid}
           </foreach>
           AND (
+          <!-- 二期 P4（FR-305）：本人总结（个人+成员个人压缩）∪ 项目共享总结（scope_owner=PROJECT，
+               user_id IS NULL，项目资产全员可读——召回 scope 已经 resolver 验过 ACTIVE 成员） -->
+          (user_id = #{userId} AND (
           <choose>
               <when test="personalOn and projectIds != null and !projectIds.isEmpty()">
                   project_id IS NULL OR project_id IN
@@ -52,6 +55,14 @@
                   </choose>
               </otherwise>
           </choose>
+          ))
+          <if test="projectIds != null and !projectIds.isEmpty()">
+          OR (scope_owner = 'PROJECT' AND user_id IS NULL AND project_id IN
+              <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                  #{pid}
+              </foreach>
+          )
+          </if>
           )
           <if test="relativeDays != null">AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
           <if test="twStart != null">AND summarized_at &gt;= #{twStart}</if>

@@ -21,8 +21,22 @@
         ORDER BY created_at DESC
     </select>
 
-    <!-- E-4 同 (user, tag) 已有 PENDING（防重复建）。 -->
-    <select id="findV47PendingByUserAndTag" resultType="com.superprogrammer.chat.entity.MemoryConflict">
+    <!-- 二期 P4（FR-303）：项目共享总结的 PENDING 冲突对该项目 ACTIVE owner/admin 可见。
+         裁决权随总结所有权（conflict.user_id 仅是触发者留痕）。 -->
+    <select id="findV47PendingProjectSharedByManager" resultType="com.superprogrammer.chat.entity.MemoryConflict">
+        SELECT c.id, c.user_id, c.session_id, c.tag_id, c.summary_id, c.status, c.resolution,
+               c.ask_text, c.created_at, c.resolved_at
+        FROM memory_conflicts c
+        JOIN memory_summaries s ON s.id = c.summary_id AND s.deleted = 0
+        WHERE c.status = 'PENDING' AND c.tag_id IS NOT NULL
+          AND s.scope_owner = 'PROJECT'
+          AND EXISTS (SELECT 1 FROM memory_project_members m
+                      WHERE m.project_id = s.project_id AND m.user_id = #{userId}
+                        AND m.status = 'ACTIVE' AND m.role IN ('OWNER', 'ADMIN') AND m.deleted = 0)
+        ORDER BY c.created_at DESC
+    </select>
+
+    <!-- E-4 同 (user, tag) 已有 PENDING（防重复建）。 -->    <select id="findV47PendingByUserAndTag" resultType="com.superprogrammer.chat.entity.MemoryConflict">
         SELECT id, user_id, session_id, tag_id, summary_id, status, resolution, ask_text, created_at, resolved_at
         FROM memory_conflicts
         WHERE user_id = #{userId} AND status = 'PENDING' AND tag_id = #{tagId}

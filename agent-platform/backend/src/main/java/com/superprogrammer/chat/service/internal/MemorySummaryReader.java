@@ -22,8 +22,9 @@ import java.util.stream.Collectors;
 /**
  * 计划12 · D-4 · 召回 ④⑤ 读总结 + reflect（总体设计 §3.3 ④⑤ + §6 向量 12/14）。
  * <p>
- * 读召回者本人的总结（{@code user_id=self} 恒只读自己，向量 14 不受 ACL；他人总结不召回防污染），
- * 按 {@code includeL2} 标记决定拼 L1 还是 L1+L2：
+ * 读召回者本人的总结 + 项目共享总结（二期 P4 · FR-305：{@code scope_owner='PROJECT'} 且
+ * {@code user_id IS NULL} 的项目资产总结全员可召回——召回 scope 已经 resolver 验过 ACTIVE 成员；
+ * 他人个人总结仍不召回防污染），按 {@code includeL2} 标记决定拼 L1 还是 L1+L2：
  * <ol>
  *   <li><b>0 条</b> → 返空（D-6 走 turns 兜底）。</li>
  *   <li><b>≤5 条</b> → 全 {@code includeL2=true}（跳 reflect 省一次 LLM）。</li>

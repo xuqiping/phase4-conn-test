@@ -291,4 +291,22 @@ class MemoryConflictResolutionServiceTest {
         verify(coverageMapper, never()).deleteBySummaryId(anyLong());  // turn 级 coverage 不动
         verify(conflictMapper).markV47Resolved(1L, "DISCARD");
     }
+
+    // ---- 14. P4 待裁决列表：本人冲突 ∪ 我 owner/admin 项目的共享冲突（去重 + projectShared 打标）----
+
+    @Test
+    void listPendingMergesProjectSharedForManagers() {
+        MemoryConflict mine = pendingConflict(1L, 100L);
+        MemoryConflict sharedDup = pendingConflict(1L, 100L);   // 同一条（触发者本人也是 admin）→ 去重
+        MemoryConflict sharedNew = pendingConflict(2L, 200L);
+        when(conflictMapper.findV47PendingByUser(UID)).thenReturn(List.of(mine));
+        when(conflictMapper.findV47PendingProjectSharedByManager(UID)).thenReturn(List.of(sharedDup, sharedNew));
+
+        List<MemoryConflict> out = service.listPending(UID);
+
+        assertEquals(2, out.size(), "并集去重");
+        assertNull(out.get(0).getProjectShared(), "本人冲突不打共享标");
+        assertEquals(Boolean.TRUE, out.get(1).getProjectShared(), "共享冲突打标供前端 badge");
+        assertEquals(2, service.countPending(UID));
+    }
 }

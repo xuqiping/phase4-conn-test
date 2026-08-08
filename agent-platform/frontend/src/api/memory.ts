@@ -57,6 +57,10 @@ export interface MemorySummaryVO {
   l2Detail: string | null
   sourceSummaryId: number | null
   sourceTurnIds: number[]
+  /** 二期 P4（FR-301）：PROJECT=项目共享总结（项目资产全员可读）；USER/缺省=个人总结。 */
+  scopeOwner?: 'USER' | 'PROJECT'
+  /** 二期 P4：条目级总结的 provenance（项目条目 id 集；turn 级总结为空）。 */
+  sourceEntryIds?: number[]
   status: 'CLEAN' | 'PENDING_CONFLICT' | 'STALE'
   summarizedAt: string | null
   createdAt: string | null
@@ -134,12 +138,17 @@ export interface MemoryConsolidationTargetView {
   hasChange: boolean
   uncoveredCount: number
   autoEnabled: boolean
+  /** 二期 P4（FR-302）：true=我是该项目 owner/admin，可写项目共享总结；false=仅可压到自己的总结。 */
+  canWriteShared?: boolean
 }
 
 export interface MemoryConsolidationScopeRequest {
   scopeKind: 'PERSONAL' | 'PROJECT'
   projectId?: number | null
   autoEnabled?: boolean
+  /** 二期 P4（FR-302）：true=项目条目压到「我自己的总结」（成员个人通道，仅自己可见）；
+   *  缺省/false=项目共享总结（owner/admin 才允许，后端判）。 */
+  toPersonal?: boolean
   /** I4-3 项目总结取数范围：SELF（仅自己，默认）/ SPECIFIC（authorIds）/ ALL（全部可召回人员）。 */
   authorFilter?: 'SELF' | 'SPECIFIC' | 'ALL'
   /** SPECIFIC 时的人员集；后端 ∩ readableAuthors 校验（向量 14 防越权读他人）。 */
@@ -168,6 +177,8 @@ export interface MemoryPendingConflictVO {
   status: string
   askText: string | null
   createdAt: string | null
+  /** 二期 P4（FR-303）：true=项目共享总结冲突（裁决权=项目 owner/admin，我因管理身份可见）。 */
+  projectShared?: boolean
 }
 
 /** 花名册行（含 DEPARTED 已离开，保交接）。 */
@@ -334,6 +345,10 @@ export const memoryApi = {
     return request.get<ApiResponse<MemorySummaryVO[]>>('/chat/memory/summaries', {
       params: projectId != null ? { projectId } : {}
     })
+  },
+  /** 二期 P4（FR-301）：项目共享总结（scope_owner=PROJECT，成员咽喉在后端 service 层）。 */
+  listProjectSharedSummaries(projectId: number) {
+    return request.get<ApiResponse<MemorySummaryVO[]>>(`/chat/memory/summaries/project/${projectId}`)
   },
 
   // ---- 流水账 ----

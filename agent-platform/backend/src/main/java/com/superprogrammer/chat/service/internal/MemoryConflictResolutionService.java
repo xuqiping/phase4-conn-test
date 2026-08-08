@@ -226,14 +226,33 @@ public class MemoryConflictResolutionService {
         notificationMapper.insert(n);
     }
 
-    /** 用户待裁决 V47 冲突列表（面板用，向量 6 user_id scope）。 */
+    /** 用户待裁决 V47 冲突列表（面板用）——本人冲突 ∪ 我任 owner/admin 项目的共享总结冲突
+     *  （二期 P4 · FR-303 裁决权随总结所有权；共享行打 projectShared 瞬态标供前端 badge）。 */
     public List<MemoryConflict> listPending(Long userId) {
-        return conflictMapper.findV47PendingByUser(userId);
+        List<MemoryConflict> mine = conflictMapper.findV47PendingByUser(userId);
+        List<MemoryConflict> shared = conflictMapper.findV47PendingProjectSharedByManager(userId);
+        if (shared == null || shared.isEmpty()) {
+            return mine == null ? List.of() : mine;
+        }
+        Set<Long> mineIds = new HashSet<>();
+        List<MemoryConflict> out = new ArrayList<>();
+        if (mine != null) {
+            for (MemoryConflict c : mine) {
+                mineIds.add(c.getId());
+                out.add(c);
+            }
+        }
+        for (MemoryConflict c : shared) {
+            if (mineIds.add(c.getId())) {  // 触发者本人已是 owner/admin → 去重
+                c.setProjectShared(true);
+                out.add(c);
+            }
+        }
+        return out;
     }
 
     /** 用户待裁决冲突计数（badge 轮询）。 */
     public int countPending(Long userId) {
-        List<MemoryConflict> l = conflictMapper.findV47PendingByUser(userId);
-        return l == null ? 0 : l.size();
+        return listPending(userId).size();
     }
 }

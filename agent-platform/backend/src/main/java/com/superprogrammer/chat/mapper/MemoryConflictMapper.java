@@ -48,6 +48,9 @@ public interface MemoryConflictMapper extends BaseMapper<MemoryConflict> {
     /** E-4 用户待裁决的 V47 PENDING 冲突（tag_id IS NOT NULL 区分新模型；含 tag+summary 字段）。 */
     List<MemoryConflict> findV47PendingByUser(@Param("userId") Long userId);
 
+    /** 二期 P4（FR-303）：项目共享总结冲突对该项目 ACTIVE owner/admin 全员可见（裁决权随总结所有权）。 */
+    List<MemoryConflict> findV47PendingProjectSharedByManager(@Param("userId") Long userId);
+
     /** E-4 同 (user, tag) 是否已有 PENDING（防重复建冲突行；时序互斥在同 tag 下）。 */
     MemoryConflict findV47PendingByUserAndTag(@Param("userId") Long userId,
                                               @Param("tagId") Long tagId);
