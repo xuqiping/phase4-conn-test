@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectLinkMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -21,7 +22,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * 记忆二期 P1 · MemoryEntryRecallService 单测（FR-007 ①.5 读权咽喉）。
+ * 记忆二期 P1 · MemoryEntryRecallService 单测（FR-007 ①.5 读权咽喉）+ P2 授权合流（FR-102）。
  * <p>
  * 覆盖：
  * <ol>
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.*;
  *   <li>读者 ACTIVE 成员的项目 → 批量查 ACTIVE 条目（一次 IN，禁 N+1）。</li>
  *   <li>读者 DEPARTED / 非成员的项目 → 静默排除（失读权）。</li>
  *   <li>无可读项目 → 不查条目表。</li>
+ *   <li>P2：ACTIVE 授权 child 并入查询 + viaAuthorizedLink 标记；链查询失败降级仅成员项目。</li>
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +38,7 @@ class MemoryEntryRecallServiceTest {
 
     @Mock MemoryProjectMemberMapper memberMapper;
     @Mock MemoryProjectEntryMapper entryMapper;
+    @Mock MemoryProjectLinkMapper linkMapper;
 
     private MemoryEntryRecallService service;
 
@@ -48,7 +51,7 @@ class MemoryEntryRecallServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemoryEntryRecallService(memberMapper, entryMapper);
+        service = new MemoryEntryRecallService(memberMapper, entryMapper, linkMapper);
     }
 
     private static MemoryProjectMember membership(long projectId, long userId, String status) {
@@ -132,5 +135,50 @@ class MemoryEntryRecallServiceTest {
 
         assertEquals(1, out.size());
         verify(entryMapper).listActiveForRecall(List.of(10L));
+    }
+
+    // ===== 6 P2 授权合流：ACTIVE 链 child 并入查询 + viaAuthorizedLink 标记（FR-102）=====
+
+    @Test
+    void authorizedChild_mergedAndMarked() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(membership(10L, 1L, "ACTIVE")));
+        when(linkMapper.findActiveChildIds(List.of(10L))).thenReturn(List.of(99L));
+        when(entryMapper.listActiveForRecall(List.of(10L, 99L))).thenReturn(List.of(
+                entry(1, 10L), entry(2, 99L)));
+
+        List<MemoryProjectEntryVO> out = service.collectActiveEntries(List.of(10L), 1L);
+
+        assertEquals(2, out.size());
+        assertNotEquals(Boolean.TRUE, out.get(0).getViaAuthorizedLink(), "成员项目条目不打授权标");
+        assertEquals(Boolean.TRUE, out.get(1).getViaAuthorizedLink(), "child 条目打授权标");
+    }
+
+    // ===== 7 P2 授权合流：链查询失败 → 降级仅成员项目（不动主干）=====
+
+    @Test
+    void linkQueryThrows_degradesToMemberOnly() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(membership(10L, 1L, "ACTIVE")));
+        when(linkMapper.findActiveChildIds(List.of(10L))).thenThrow(new RuntimeException("links db down"));
+        when(entryMapper.listActiveForRecall(List.of(10L))).thenReturn(List.of(entry(1, 10L)));
+
+        List<MemoryProjectEntryVO> out = service.collectActiveEntries(List.of(10L), 1L);
+
+        assertEquals(1, out.size());
+        verify(entryMapper).listActiveForRecall(List.of(10L));
+    }
+
+    // ===== 8 P2 授权合流：child 恰是成员项目 → 查询集不重复 =====
+
+    @Test
+    void authorizedChildAlreadyMember_noDuplicate() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(membership(10L, 1L, "ACTIVE")));
+        when(linkMapper.findActiveChildIds(List.of(10L))).thenReturn(List.of(10L));
+        when(entryMapper.listActiveForRecall(List.of(10L))).thenReturn(List.of(entry(1, 10L)));
+
+        List<MemoryProjectEntryVO> out = service.collectActiveEntries(List.of(10L), 1L);
+
+        assertEquals(1, out.size());
+        verify(entryMapper).listActiveForRecall(List.of(10L));
+        assertNotEquals(Boolean.TRUE, out.get(0).getViaAuthorizedLink(), "成员身份优先，不打授权标");
     }
 }

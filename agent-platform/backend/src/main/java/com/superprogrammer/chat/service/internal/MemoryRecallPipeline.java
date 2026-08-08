@@ -311,7 +311,12 @@ public class MemoryRecallPipeline {
                             .map(RecallTagMeta::getLabel).filter(Objects::nonNull)
                             .findFirst().orElse("");
                 }
-                sb.append("- ").append(author).append('·')
+                // 二期 P2（FR-102）：经 ACTIVE 授权链合流的 child 条目带来源标注「来自授权项目·X」
+                String sourcePrefix = Boolean.TRUE.equals(e.getViaAuthorizedLink())
+                        ? "来自授权项目·" + (e.getProjectName() != null && !e.getProjectName().isBlank()
+                                ? e.getProjectName() : "项目#" + e.getProjectId()) + "·"
+                        : "";
+                sb.append("- ").append(sourcePrefix).append(author).append('·')
                         .append(tagLabel.isEmpty() ? "收录" : tagLabel)
                         .append("：").append(e.getL1Summary() == null ? "" : e.getL1Summary()).append('\n');
             }

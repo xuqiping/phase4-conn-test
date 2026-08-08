@@ -26,5 +26,8 @@ public class MemoryProjectEntryVO {
     private String contentType;      // TEXT / FILE
     private String ruleText;         // 命中规则文案（「为何被收录」）
     private java.util.List<Long> tagIds;   // 标签 id 集（召回合流用；列表接口不返）
+    private String projectName;      // 条目所属项目名（召回合流 SQL join 填充；标注「来自授权项目·X」用）
+    /** 二期 P2（FR-102）：true=本条经 ACTIVE 授权链从 child 项目合流进来（service 层瞬态标记，非 DB 列）。 */
+    private Boolean viaAuthorizedLink;
     private OffsetDateTime createdAt;
 }

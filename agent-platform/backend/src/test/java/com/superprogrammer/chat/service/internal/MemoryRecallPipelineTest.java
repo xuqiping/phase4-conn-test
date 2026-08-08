@@ -450,6 +450,26 @@ class MemoryRecallPipelineTest {
         verifyNoInteractions(entryRecallService);
     }
 
+    // ===== 19b 二期 P2（FR-102）：授权 child 条目装配带「来自授权项目·X」标注 =====
+
+    @Test
+    void authorizedChildEntry_assemblesWithSourceMark() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        MemoryProjectEntryVO childEntry = entry(1, OTHER, "张三", "child 项目的蒸馏条目", List.of(10L));
+        childEntry.setViaAuthorizedLink(true);
+        childEntry.setProjectName("子项目X");
+        when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(childEntry));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+
+        assertTrue(r.getAssembledText().contains("来自授权项目·子项目X·张三·爱好：child 项目的蒸馏条目"),
+                "授权条目带来源标注");
+    }
+
     // ===== 20 selectEntriesForAssemble 纯函数边界 =====
 
     @Test
