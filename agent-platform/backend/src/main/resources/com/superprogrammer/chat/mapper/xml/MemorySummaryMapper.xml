@@ -167,4 +167,23 @@
         WHERE deleted = 0 AND status = 'STALE' AND scope_owner = 'PROJECT'
         ORDER BY summarized_at ASC
     </select>
+
+    <!-- P4（FR-303）撤销授权钩子：parent 共享总结中 provenance 命中 child 条目 → 批量 STALE。
+         && = 数组重叠算子；子查询取 child 项目全部条目 id（含已软删——provenance 可能指着旧条目）。 -->
+    <update id="markProjectSharedStaleByChildEntries">
+        UPDATE memory_summaries SET status = 'STALE', updated_at = NOW()
+        WHERE deleted = 0 AND scope_owner = 'PROJECT' AND project_id = #{parentProjectId}
+          AND source_entry_ids &amp;&amp; COALESCE(
+              (SELECT array_agg(id) FROM memory_project_entries WHERE project_id = #{childProjectId}),
+              '{}'::bigint[])
+    </update>
+
+    <!-- P4 worker 条目级 STALE 重生：更新文本 + status + source_entry_ids（实时算链后的新源集）。 -->
+    <update id="updateTextStatusAndEntries">
+        UPDATE memory_summaries
+        SET l1_summary = #{l1}, l2_detail = #{l2}, status = #{status},
+            source_entry_ids = #{sourceEntryIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler},
+            summarized_at = NOW(), updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
 </mapper>

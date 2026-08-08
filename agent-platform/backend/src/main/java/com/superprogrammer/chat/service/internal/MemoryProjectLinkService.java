@@ -56,6 +56,7 @@ public class MemoryProjectLinkService {
     private final MemoryProjectMemberMapper memberMapper;
     private final MemoryNotificationMapper notificationMapper;
     private final ProjectMapper projectMapper;
+    private final com.superprogrammer.chat.mapper.MemorySummaryMapper summaryMapper;
 
     /**
      * 发起授权（child owner；body=parentId）。落 PENDING + 通知 parent owner/admin。
@@ -182,6 +183,14 @@ public class MemoryProjectLinkService {
                 .set(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_REVOKED));
         if (updated == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
+        }
+        // 二期 P4（FR-303）：撤销授权 → parent 共享总结中 provenance 含 child 条目的标 STALE；
+        // worker 重压取数=当前 ACTIVE 链实时算 → 重压后不含 child 内容（坑点预判③）
+        int stale = summaryMapper.markProjectSharedStaleByChildEntries(
+                link.getParentProjectId(), link.getChildProjectId());
+        if (stale > 0) {
+            log.info("授权撤销级联：parent={} 共享总结 {} 条标 STALE（含 child={} 条目 provenance）",
+                    link.getParentProjectId(), stale, link.getChildProjectId());
         }
         log.info("项目授权撤销 linkId={} operatorId={} by={}", linkId, operatorId, childOwner ? "child" : "parent");
         notifyRequester(link, null);

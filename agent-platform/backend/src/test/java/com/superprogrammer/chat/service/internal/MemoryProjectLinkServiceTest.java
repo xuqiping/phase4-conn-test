@@ -10,6 +10,7 @@ import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.mapper.MemoryNotificationMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectLinkMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
+import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.project.entity.Project;
 import com.superprogrammer.project.mapper.ProjectMapper;
@@ -50,12 +51,13 @@ class MemoryProjectLinkServiceTest {
     @Mock private MemoryProjectMemberMapper memberMapper;
     @Mock private MemoryNotificationMapper notificationMapper;
     @Mock private ProjectMapper projectMapper;
+    @Mock private MemorySummaryMapper summaryMapper;
 
     private MemoryProjectLinkService service;
 
     @BeforeEach
     void setUp() {
-        service = new MemoryProjectLinkService(linkMapper, memberMapper, notificationMapper, projectMapper);
+        service = new MemoryProjectLinkService(linkMapper, memberMapper, notificationMapper, projectMapper, summaryMapper);
     }
 
     private MemoryProjectMember member(String role) {
@@ -234,5 +236,19 @@ class MemoryProjectLinkServiceTest {
         when(linkMapper.selectById(9L)).thenReturn(link(MemoryProjectLink.STATUS_ACTIVE));
         when(memberMapper.selectOne(any())).thenReturn(member("MEMBER"), member("MEMBER"));
         assertThrows(BusinessException.class, () -> service.revoke(9L, 300L));
+    }
+
+    // 二期 P4（FR-303）：撤 ACTIVE → parent 共享总结含 child 条目 provenance 的标 STALE
+    @Test
+    void revoke_active_marksProjectSharedSummariesStale_p4() {
+        when(linkMapper.selectById(9L)).thenReturn(link(MemoryProjectLink.STATUS_ACTIVE));
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"), (MemoryProjectMember) null);
+        when(linkMapper.update(any(), any())).thenReturn(1);
+        when(projectMapper.selectById(any())).thenReturn(project(1L, "P"));
+        when(summaryMapper.markProjectSharedStaleByChildEntries(1L, 2L)).thenReturn(2);
+
+        service.revoke(9L, 100L);
+
+        verify(summaryMapper).markProjectSharedStaleByChildEntries(1L, 2L);
     }
 }

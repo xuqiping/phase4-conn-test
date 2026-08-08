@@ -86,4 +86,16 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
 
     /** P4 worker STALE 重生取数：项目共享总结（user_id IS NULL）status=STALE。 */
     List<MemorySummary> findStaleProjectShared();
+
+    /** P4（FR-303）撤销授权钩子：parent 项目共享总结中 provenance 含 child 条目的一批量 STALE
+     *  （worker 重压取数=当前 ACTIVE 链实时算，重压后不含 child 内容）。 */
+    int markProjectSharedStaleByChildEntries(@Param("parentProjectId") Long parentProjectId,
+                                             @Param("childProjectId") Long childProjectId);
+
+    /** P4 worker 条目级 STALE 重生：更新文本 + status + source_entry_ids provenance（实时算链后的新源集）。 */
+    int updateTextStatusAndEntries(@Param("id") Long id,
+                                   @Param("l1") String l1,
+                                   @Param("l2") String l2,
+                                   @Param("status") String status,
+                                   @Param("sourceEntryIds") List<Long> sourceEntryIds);
 }

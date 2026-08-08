@@ -46,7 +46,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class MemoryConflictResolutionService {
 
-    /** §3.8 12h 规则阈值。 */
+    /** §3.8 12h 规则阈值。二期 P4（FR-304）已废——被引用不再拒删，统一 STALE+重生。 */
+    @Deprecated
     private static final Duration HOURS_12 = Duration.ofHours(12);
 
     private static final List<String> VALID_DECISIONS = List.of("KEEP_BOTH", "KEEP_NEW", "KEEP_OLD", "DISCARD");
@@ -176,18 +177,8 @@ public class MemoryConflictResolutionService {
         List<Long> sourceTurnIds = trigger.getSourceTurnIds() == null
                 ? List.of() : trigger.getSourceTurnIds();
 
-        // ① 12h 拒：source_turn_ids 每条查他人引用，引用方 summarized_at > 12h → 拒
-        List<MemorySummary> otherRefs = collectOtherReferences(userId, sourceTurnIds);
-        OffsetDateTime now = OffsetDateTime.now();
-        for (MemorySummary other : otherRefs) {
-            if (other.getSummarizedAt() != null
-                    && Duration.between(other.getSummarizedAt(), now).compareTo(HOURS_12) > 0) {
-                log.info("DISCARD 12h 拒 userId={} conflictId={} otherSummary={} summarizedAt={}（>12h）",
-                        userId, c.getId(), other.getId(), other.getSummarizedAt());
-                throw new BusinessException(ErrorCode.FORBIDDEN,
-                        "流水账已被他人总结引用超过 12h，无法 DISCARD，请改用 KEEP_OLD 或 KEEP_BOTH");
-            }
-        }
+        // ① 二期 P4（FR-304）：废 12h 拒删——被他人引用不再是拒绝理由（无 403），
+        //    他人引用方统一走 ④ STALE + 通知 + worker 重生。
 
         // ② 软删冲突 summary + 其 coverage
         summaryMapper.softDeleteByIds(List.of(trigger.getId()));
@@ -199,7 +190,8 @@ public class MemoryConflictResolutionService {
             coverageMapper.deleteByTurnIdsAndUser(sourceTurnIds, userId);
         }
 
-        // ④ 他人引用 summary（recent <12h，通过了 12h 检）→ STALE + 清 coverage + 波及通知（worker 重压缩）
+        // ④ 他人引用 summary → STALE + 清 coverage + 波及通知（worker 重压缩，不再有时长门槛）
+        List<MemorySummary> otherRefs = collectOtherReferences(userId, sourceTurnIds);
         for (MemorySummary other : otherRefs) {
             summaryMapper.markStatus(other.getId(), "STALE");
             coverageMapper.deleteBySummaryId(other.getId());

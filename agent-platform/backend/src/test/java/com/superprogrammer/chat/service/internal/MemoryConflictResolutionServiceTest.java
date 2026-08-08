@@ -179,20 +179,22 @@ class MemoryConflictResolutionServiceTest {
         verify(conflictMapper).markV47Resolved(1L, "DISCARD");
     }
 
-    // ---- 8. DISCARD 他人引用 >12h → FORBIDDEN 拒（防波及他人稳定总结）----
+    // ---- 8. 二期 P4（FR-304）：废 12h 拒删——他人引用 >12h 也不再 FORBIDDEN，统一 STALE + 通知 ----
 
     @Test
-    void discardRejectsWhenOtherReferenceOlderThan12h() {
+    void discardOldOtherRefNoLongerRejected_p4() {
         when(conflictMapper.selectById(1L)).thenReturn(pendingConflict(1L, 100L));
         when(summaryMapper.selectById(100L)).thenReturn(summary(100L, UID, "PENDING_CONFLICT", List.of(301L), OffsetDateTime.now()));
-        // 他人 summary 引用 301，13h 前总结 → 拒
+        // 他人 summary 引用 301，13h 前总结——P4 前会 12h 拒；废 12h 后照样 STALE
         when(summaryMapper.findSummariesReferencingTurn(301L)).thenReturn(List.of(
                 summary(500L, OTHER, "CLEAN", List.of(301L), OffsetDateTime.now().minusHours(13))));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.resolve(UID, 1L, "DISCARD"));
-        assertTrue(ex.getMessage().contains("12h") || ex.getMessage().contains("KEEP"));
-        verify(turnMapper, never()).softDeleteByIds(any());
-        verify(summaryMapper, never()).softDeleteByIds(any());
+        service.resolve(UID, 1L, "DISCARD");
+
+        verify(summaryMapper).softDeleteByIds(eq(List.of(100L)));   // 不再拒
+        verify(turnMapper).softDeleteByIds(eq(List.of(301L)));
+        verify(summaryMapper).markStatus(500L, "STALE");
+        verify(notificationMapper).insert(any());
     }
 
     // ---- 9. DISCARD 他人引用 <12h（recent）→ 通过 + STALE + 通知 + 清 coverage ----

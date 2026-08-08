@@ -84,4 +84,18 @@
               </choose>
           )
     </select>
+
+    <!-- P4（FR-304）turn 删除级联：引用这些 turn 的未删条目 id。 -->
+    <select id="findActiveIdsBySourceTurnIds" resultType="long">
+        SELECT id FROM memory_project_entries
+        WHERE deleted = 0 AND source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </select>
+
+    <!-- P4（FR-304）turn 删除级联：引用这些 turn 的条目全软删。 -->
+    <update id="softDeleteBySourceTurnIds">
+        UPDATE memory_project_entries SET deleted = 1, updated_at = NOW()
+        WHERE deleted = 0 AND source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </update>
 </mapper>

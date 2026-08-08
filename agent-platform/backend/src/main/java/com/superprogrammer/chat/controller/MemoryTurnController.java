@@ -54,6 +54,7 @@ public class MemoryTurnController {
 
     private final MemoryTurnMapper turnMapper;
     private final MemoryTurnViewService turnViewService;
+    private final com.superprogrammer.chat.service.internal.MemoryTurnDeleteCascadeService cascadeService;
 
     /**
      * 列本人流水账（含 raw + 已生成，向量 7 ownership），tag label + 项目名 batch 回填。
@@ -100,6 +101,8 @@ public class MemoryTurnController {
             throw new BusinessException(ErrorCode.NOT_FOUND, "流水账不存在或无权操作");
         }
         turnMapper.deleteById(id);  // @TableLogic 软删
+        // 二期 P4（FR-304）：废 12h 拒删——随时生效；级联软删蒸馏条目 + 波及总结 STALE + 通知（worker 重生）
+        cascadeService.cascadeAfterTurnsDeleted(uid, List.of(id));
         log.info("流水账删除 userId={} turnId={} dir={}", uid, id, t.getDirection());
         return ResponseEntity.ok(R.<Void>ok("已删除", null));
     }
@@ -114,6 +117,10 @@ public class MemoryTurnController {
         int deleted = turnMapper.delete(new LambdaQueryWrapper<MemoryTurn>()
                 .eq(MemoryTurn::getUserId, uid)
                 .in(MemoryTurn::getId, req.getIds()));
+        if (deleted > 0) {
+            // 二期 P4（FR-304）：级联只软删+标 STALE，重压异步（批量删不阻塞请求，坑点预判④）
+            cascadeService.cascadeAfterTurnsDeleted(uid, req.getIds());
+        }
         log.info("流水账批量删除 userId={} 请求={} 实删={}", uid, req.getIds().size(), deleted);
         return ResponseEntity.ok(R.ok("已删除 " + deleted + " 条", deleted));
     }

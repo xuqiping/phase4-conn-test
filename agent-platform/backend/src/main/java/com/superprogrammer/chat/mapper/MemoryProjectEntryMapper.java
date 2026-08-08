@@ -53,5 +53,11 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
     int countUncoveredEntries(@Param("sourceProjectIds") List<Long> sourceProjectIds,
                               @Param("scopeProjectId") Long scopeProjectId,
                               @Param("userId") Long userId);
+
+    /** P4（FR-304）turn 删除级联：查引用这些 turn 的未删条目 id（波及总结标 STALE 用）。 */
+    List<Long> findActiveIdsBySourceTurnIds(@Param("turnIds") List<Long> turnIds);
+
+    /** P4（FR-304）turn 删除级联：引用这些 turn 的条目全软删。 */
+    int softDeleteBySourceTurnIds(@Param("turnIds") List<Long> turnIds);
 }
 
