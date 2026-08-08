@@ -49,14 +49,16 @@ import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
 import AudioNode from './nodes/AudioNode.vue'
 import ScriptNode from './nodes/ScriptNode.vue'
+import StoryboardNode from './nodes/StoryboardNode.vue'
 
-/** 5 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
+/** 6 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
 const nodeTypes = {
   text: markRaw(TextNode),
   image: markRaw(ImageNode),
   video: markRaw(VideoNode),
   audio: markRaw(AudioNode),
-  script: markRaw(ScriptNode)
+  script: markRaw(ScriptNode),
+  storyboard: markRaw(StoryboardNode)
 } as unknown as NodeTypesObject
 
 const {
@@ -70,6 +72,8 @@ const {
 
 const nodes = ref<CanvasNode[]>([])
 const edges = ref<CanvasEdge[]>([])
+/** 节点 id 自增序号（防批量 addNode 同毫秒撞 id）。 */
+let seqCounter = 0
 /** 手选模式（同 FlowCanvas：onNodeClick 跟踪 id，规避 vue-flow Node.selected 联合类型不可达）。 */
 const selectedNodeId = ref('')
 const selectedEdgeId = ref('')
@@ -134,17 +138,20 @@ function onDblClick(event: MouseEvent) {
  * L9 节点命名唯一：label 撞名自动追加序号（图片 → 图片 2），覆盖新建/粘贴两入口
  * （重命名查重在 PropertyPanel.onRenameBlur，占位符存 id 不受 label 改名影响）。
  */
-function addNode(partial: { type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }) {
+function addNode(partial: { type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }): string {
   const baseLabel = String(partial.data?.label ?? '新节点')
   const existing = nodes.value.map((n) => String(n.data.label ?? ''))
   // label 放 spread 之后，确保去重值覆盖 partial.data 自带 label（L9 三入口）
+  // id 加 seqCounter 后缀防批量撞：脚本拆分镜同毫秒内连调 N 次 addNode，
+  // Date.now() 相同会撞 id → vue-flow 重复告警 + 渲染错乱。
   const node: CanvasNode = {
-    id: `node-${Date.now()}`,
+    id: `node-${Date.now()}-${seqCounter++}`,
     type: partial.type ?? 'text',
     position: partial.position ?? { x: Math.random() * 200 + 80, y: Math.random() * 120 + 80 },
     data: { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) }
   }
   nodes.value.push(node)
+  return node.id
 }
 
 function onConnect(connection: Connection) {
@@ -284,7 +291,7 @@ function addEdge(source: string, target: string) {
   })
 }
 
-defineExpose({ addNode, addEdge, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById })
+defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById })
 </script>
 
 <style lang="scss" scoped>

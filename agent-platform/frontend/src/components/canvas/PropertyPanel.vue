@@ -285,6 +285,26 @@
         <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
       </template>
 
+      <!-- 分镜节点：脚本拆分镜后扇出生成，单条分镜画面描述（可编辑微调后下游生图/视频） -->
+      <template v-else-if="node.type === 'storyboard'">
+        <div v-if="(node.data.index as number)" class="prop-panel__readonly">分镜 {{ node.data.index }}</div>
+        <div class="prop-panel__field">
+          <label>分镜描述</label>
+          <MentionTextarea
+            :model-value="(node.data.description as string) || ''"
+            :candidates="candidates"
+            :broken-mentions="brokenMentions"
+            :rows="5"
+            placeholder="分镜画面描述；下游图/视频节点 @本节点即注入此描述"
+            @update:model-value="(v: string) => { if (node) node.data.description = v }"
+            @mention-click="onMentionClick"
+          />
+          <div v-if="brokenMentions.length" class="prop-panel__warn">
+            断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连）
+          </div>
+        </div>
+      </template>
+
       <!-- 脚本节点：剧本 → LLM 拆分镜（S13 剧本支持 @引用上游产出） -->
       <template v-else-if="node.type === 'script'">
         <div class="prop-panel__field">
@@ -303,6 +323,30 @@
           </div>
         </div>
         <div class="prop-panel__field">
+          <label>拆分段数 <span class="prop-panel__inline-hint">留空由大模型自定</span></label>
+          <n-input-number
+            :value="(node.data.segmentCount as number | null) ?? null"
+            :min="1"
+            :max="20"
+            size="small"
+            placeholder="如 6（留空=大模型自定）"
+            clearable
+            @update:value="(v: number | null) => { if (node) { node.data.segmentCount = v ?? undefined; emit('data-changed') } }"
+          />
+        </div>
+        <div class="prop-panel__field">
+          <label>拆分规范 <span class="prop-panel__inline-hint">留空则大模型自由发挥</span></label>
+          <MentionTextarea
+            :model-value="(node.data.storyboardSpec as string) || ''"
+            :candidates="candidates"
+            :broken-mentions="brokenMentions"
+            :rows="2"
+            placeholder="如：每镜含景别+运镜；留空则大模型自由发挥"
+            @update:model-value="(v: string) => { if (node) node.data.storyboardSpec = v }"
+            @mention-click="onMentionClick"
+          />
+        </div>
+        <div class="prop-panel__field">
           <label>模型</label>
           <n-select
             :value="(node.data.model as string) || null"
@@ -319,7 +363,7 @@
           block
           :loading="running"
           :disabled="!(node.data.synopsis as string)?.trim()"
-          @click="emit('run', node)"
+          @click="emit('split-storyboard', node)"
         >
           <template #icon><n-icon :component="PlayOutline" /></template>
           拆分镜
@@ -366,6 +410,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'run', node: CanvasNode): void
+  /** 脚本节点拆分镜专用：后端拆 scenes → 前端扇出生成分镜子节点（替代脚本走通用 run）。 */
+  (e: 'split-storyboard', node: CanvasNode): void
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
   (e: 'focus-edit', node: CanvasNode): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
@@ -516,6 +562,13 @@ const videoModelOptions = computed(() => groupModels(videoModels.value))
     background: var(--color-bg);
     border-radius: var(--radius-base);
     word-break: break-all;
+  }
+
+  &__inline-hint {
+    margin-left: var(--spacing-1);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    font-weight: normal;
   }
 
   &__output {

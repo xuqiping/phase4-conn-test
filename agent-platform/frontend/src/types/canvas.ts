@@ -64,7 +64,7 @@ export interface CanvasNodeData {
   /** 节点标签 */
   label: string
   /** 节点类型（text/image/video/audio/script） */
-  nodeKind?: 'text' | 'image' | 'video' | 'audio' | 'script' | string
+  nodeKind?: 'text' | 'image' | 'video' | 'audio' | 'script' | 'storyboard' | string
   /** 运行态（C4+ 产出触发用） */
   status?: CanvasNodeStatus
   /** S12：节点已绑定的资产 id（库存→画布引用 / 画布→库入库回写）。 */

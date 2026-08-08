@@ -33,7 +33,7 @@ import { NIcon } from 'naive-ui'
 import type { CanvasNodeStatus, AssetBadge } from '@/types/canvas'
 
 const props = defineProps<{
-  kind: 'text' | 'image' | 'video' | 'audio' | 'script'
+  kind: 'text' | 'image' | 'video' | 'audio' | 'script' | 'storyboard'
   kindLabel: string
   /** C6：节点名（data.label）；空显「未命名」灰字。 */
   label?: string
