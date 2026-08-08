@@ -5,11 +5,43 @@ import { useSessionStore } from '../stores/session'
 
 const store = useSessionStore()
 const subtitleRef = ref<HTMLElement | null>(null)
+const selectedHistory = ref('')
 
 onMounted(() => {
   store.refreshWindows()
   store.refreshAudioDevices()
+  store.refreshSessions()
 })
+
+// 新课录完/处理完后刷新历史列表，让刚结束的会话能立刻被打开。
+watch(
+  () => store.phase,
+  (p) => {
+    if (p === 'done' || p === 'processing') store.refreshSessions()
+  }
+)
+
+const STATE_LABELS: Record<string, string> = {
+  idle: '未录制',
+  recording: '录制中',
+  processing: '待处理',
+  done: '已完成',
+}
+
+function stateLabel(s: string): string {
+  return STATE_LABELS[s] ?? s
+}
+
+function onHistorySelect(e: Event) {
+  selectedHistory.value = (e.target as HTMLSelectElement).value
+}
+
+async function openHistory() {
+  const info = store.historySessions.find((s) => s.id === selectedHistory.value)
+  if (!info) return
+  await store.openSession(info)
+  selectedHistory.value = ''
+}
 
 // 字幕自动滚到底（新 final 句或 partial 变化时）。
 watch(
@@ -91,6 +123,30 @@ function onAudioSelect(e: Event) {
       </span>
     </div>
 
+    <div class="row">
+      <select
+        class="window-select"
+        aria-label="选择历史会话查看总结"
+        :disabled="store.recording || store.pipelineRunning"
+        :value="selectedHistory"
+        @change="onHistorySelect"
+        @focus="store.refreshSessions"
+      >
+        <option value="">查看历史会话总结…</option>
+        <option v-for="s in store.historySessions" :key="s.id" :value="s.id">
+          {{ s.id }}（{{ stateLabel(s.state) }}）
+        </option>
+      </select>
+      <button
+        class="open-btn"
+        :disabled="!selectedHistory || store.recording || store.pipelineRunning"
+        aria-label="打开选中的历史会话"
+        @click="openHistory"
+      >
+        打开
+      </button>
+    </div>
+
     <p v-if="store.errorMessage" class="error" role="alert">{{ store.errorMessage }}</p>
 
     <div
@@ -167,6 +223,27 @@ function onAudioSelect(e: Event) {
   border-radius: 6px;
   cursor: not-allowed;
   white-space: nowrap;
+}
+.open-btn {
+  padding: 8px 18px;
+  font-size: 13px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.open-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.open-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.open-btn:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
 }
 .record-btn {
   display: inline-flex;

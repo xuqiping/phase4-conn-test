@@ -18,6 +18,13 @@ export interface WindowInfo {
   title: string
 }
 
+/** 历史会话条目（list_sessions 返回；state: idle/recording/processing/done）。 */
+export interface SessionInfoItem {
+  id: string
+  path: string
+  state: string
+}
+
 interface TranscriptionEvent {
   text: string
   is_final: boolean
@@ -257,6 +264,44 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // ---- 2026-08-08 Phase4 手测问题1：历史会话入口（规格外补漏 AC-110）----
+
+  const historySessions = ref<SessionInfoItem[]>([])
+
+  /** 枚举历史会话（新→旧排序；id 是时间戳，字典序即时间序）。 */
+  async function refreshSessions() {
+    try {
+      const list = await invoke<SessionInfoItem[]>('list_sessions')
+      historySessions.value = list.sort((a, b) => b.id.localeCompare(a.id))
+    } catch (e) {
+      errorMessage.value = `枚举历史会话失败: ${e}`
+    }
+  }
+
+  /**
+   * 打开历史会话：有总结草稿 → 直接进学习区（done）；
+   * 否则进处理区（processing），按磁盘产物探测把已完成阶段标 done，
+   * 避免 2h 视频重复抽帧/OCR（Processing.vue 挂载会自动续跑剩余阶段）。
+   */
+  async function openSession(info: SessionInfoItem) {
+    if (recording.value || pipelineRunning.value) return
+    reset()
+    sessionId.value = info.id
+    sessionPath.value = info.path
+    try {
+      const prog = await invoke<Record<string, boolean>>('get_session_progress', {
+        sessionId: info.id,
+      })
+      for (const st of stages.value) {
+        if (prog[st.key]) markStage(st.key, 'done', '（历史会话已完成）')
+      }
+    } catch {
+      /* 探测失败按全部 pending，重跑兜底 */
+    }
+    await Promise.all([loadTimeline(), loadSlices()])
+    phase.value = timeline.value ? 'done' : 'processing'
+  }
+
   function selectWindow(hwnd: number | null) {
     selectedHwnd.value = hwnd
     if (phase.value === 'idle' || phase.value === 'source-selected') {
@@ -269,7 +314,10 @@ export const useSessionStore = defineStore('session', () => {
       errorMessage.value = '请先选择要录制的窗口'
       return
     }
-    errorMessage.value = ''
+    // 先清掉上一个会话的学习区/阶段残留（看过历史总结后点开始录制，
+    // 否则旧 stages=done 会让新会话的处理流水线被整体跳过）。
+    // reset 不动 selectedHwnd / 声音来源选择。
+    reset()
     entries.value = []
     partial.value = ''
     try {
@@ -361,6 +409,9 @@ export const useSessionStore = defineStore('session', () => {
     elapsedMs,
     refreshWindows,
     refreshAudioDevices,
+    historySessions,
+    refreshSessions,
+    openSession,
     selectWindow,
     start,
     stop,

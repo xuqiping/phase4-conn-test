@@ -658,6 +658,40 @@ fn get_video_slices(
     })
 }
 
+/// 历史会话产物进度探测（2026-08-08 Phase4 手测问题1：历史会话入口）。
+/// 前端打开旧会话时按此把已完成阶段标 done，避免 2h 视频重复抽帧/OCR。
+#[derive(Serialize)]
+struct SessionProgress {
+    frames: bool,
+    ocr: bool,
+    align: bool,
+    summary: bool,
+}
+
+#[tauri::command]
+fn get_session_progress(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<SessionProgress, String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let mut frames = false;
+    let mut ocr = false;
+    if let Ok(raw) = std::fs::read_to_string(dir.join("frames.json")) {
+        if let Ok(entries) =
+            serde_json::from_str::<Vec<crate::screen::scene_detect::FrameEntry>>(&raw)
+        {
+            frames = !entries.is_empty();
+            ocr = entries.iter().any(|e| e.ocr_text.is_some());
+        }
+    }
+    Ok(SessionProgress {
+        frames,
+        ocr,
+        align: dir.join("aligned.json").is_file(),
+        summary: dir.join("summary_draft.json").is_file(),
+    })
+}
+
 /// OCR 原文核对（Study.vue 展开用）：按 frame_ref 查 frames.json 的 ocr_text。
 /// frame_ref 形如 "frames/page_123.jpg"；找不到条目返回 Ok(None)，不算错误。
 #[tauri::command]
@@ -742,6 +776,7 @@ pub fn run() {
             get_timeline,
             export_markdown,
             get_video_slices,
+            get_session_progress,
             get_ocr_text,
             update_summary_point
         ])
