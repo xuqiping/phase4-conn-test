@@ -98,6 +98,8 @@ export interface CanvasEdge {
   type?: string
   animated?: boolean
   style?: Record<string, string | number>
+  /** 选中态 class（watch selectedEdgeId 注入，高亮可删边）。非持久化语义字段，存库无副作用。 */
+  class?: string
 }
 
 /** 画布视口（缩放/平移） */

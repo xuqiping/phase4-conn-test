@@ -83,12 +83,13 @@ const message = useMessage()
 const NODE_TO_MEDIA: Record<string, AssetMediaType> = {
   text: '提示词',
   script: '剧本',
+  storyboard: '分镜',
   image: '图片',
   video: '视频',
   audio: '音频'
 }
 const KIND_LABEL: Record<string, string> = {
-  text: '提示词', script: '剧本', image: '图片', video: '视频', audio: '音频'
+  text: '提示词', script: '剧本', storyboard: '分镜', image: '图片', video: '视频', audio: '音频'
 }
 const mediaType = computed<AssetMediaType | undefined>(() =>
   props.node?.type ? NODE_TO_MEDIA[props.node.type] : undefined

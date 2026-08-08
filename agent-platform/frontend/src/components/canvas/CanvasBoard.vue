@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, nextTick, ref } from 'vue'
+import { markRaw, nextTick, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
@@ -93,6 +93,16 @@ const defaultEdgeOptions = {
   style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
 }
 const connectionLineStyle = { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
+
+/**
+ * 选中边视觉反馈：watch selectedEdgeId → 给选中边打 class（高亮描边，提示可 Delete 删除）。
+ * vue-flow 边渲染在子组件内，scoped 样式需 :deep 穿透（同 A1 chip 修复范式）。
+ */
+watch(selectedEdgeId, (id) => {
+  for (const e of edges.value) {
+    e.class = e.id === id ? 'canvas-edge--selected' : ''
+  }
+})
 
 /** 从节点调色板拖入：dataTransfer 带 {label}，落点转画布坐标。 */
 function onDragOver(event: DragEvent) {
@@ -249,7 +259,8 @@ function getSnapshot(): CanvasSnapshot {
   const vp = getViewport()
   return {
     nodes: nodes.value,
-    edges: edges.value,
+    // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）
+    edges: edges.value.map(({ class: _class, ...rest }) => rest),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
   }
 }
@@ -315,6 +326,17 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
   :deep(.vue-flow__edge-text) {
     fill: var(--color-text-primary);
     font-size: var(--font-size-xs);
+  }
+
+  /* 选中边高亮：红色加粗描边 + 手型，提示点 Delete 可删（class 由 watch 注入 edge.class） */
+  :deep(.canvas-edge--selected .vue-flow__edge-path) {
+    stroke: #ef4444;
+    stroke-width: 3;
+    cursor: pointer;
+  }
+
+  :deep(.canvas-edge--selected) {
+    cursor: pointer;
   }
 }
 

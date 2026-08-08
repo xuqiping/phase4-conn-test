@@ -88,6 +88,7 @@ const message = useMessage()
 const KIND_LABEL: Record<string, string> = {
   text: '提示词',
   script: '剧本',
+  storyboard: '分镜',
   image: '图片',
   video: '视频',
   audio: '音频'
@@ -130,6 +131,7 @@ const hasOutput = computed(() => {
   switch (n.type) {
     case 'text': return Boolean(d.outputText || d.prompt)
     case 'script': return Boolean(d.synopsis)
+    case 'storyboard': return Boolean(d.description)
     case 'image':
     case 'video':
     case 'audio': return Boolean(d.fileId)

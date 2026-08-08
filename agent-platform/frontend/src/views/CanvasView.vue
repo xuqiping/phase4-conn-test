@@ -938,6 +938,11 @@ async function applyAssetResolve(node: CanvasNode, resolve: ResolveVO) {
       if (typeof parsed.synopsis === 'string') patch.synopsis = parsed.synopsis
       if (Array.isArray(parsed.scenes)) patch.scenes = parsed.scenes
     }
+  } else if (resolve.mediaType === MEDIA_TYPE.STORYBOARD) {
+    // 分镜资产正文 JSON = {description, index?}；写回 node.data.description（+index）
+    const parsed = parseAssetContent(resolve.content)
+    patch.description = typeof parsed.description === 'string' ? parsed.description : (resolve.content ?? '')
+    if (typeof parsed.index === 'number') patch.index = parsed.index
   } else if (resolve.fileId) {
     patch.fileId = resolve.fileId
     // 文件类需带鉴权 fetch 转 objectURL 预览（/api/files/{id} 需 auth header）
