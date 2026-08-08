@@ -47,5 +47,6 @@ public class MemoryAssetMemory extends BaseEntity {
     private String ingestStatus;     // PROCESSING / READY / FAILED
     private String ingestError;      // FAILED 原因（固定话术）
     private Integer retryCount;      // 重试次数
+    private java.time.OffsetDateTime lockedUntil;  // worker 认领锁（条件 UPDATE 防并发，崩溃自愈）
     private Boolean weakMemory;      // 降级弱记忆标（FR-205）
 }

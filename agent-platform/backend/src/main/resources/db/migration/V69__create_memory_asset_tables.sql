@@ -26,6 +26,7 @@ CREATE TABLE memory_asset_memories (
                     CHECK (ingest_status IN ('PROCESSING','READY','FAILED')),
     ingest_error    VARCHAR(500),                                                                  -- FAILED 原因（固定话术，不透传异常细节）
     retry_count     INT                      NOT NULL DEFAULT 0,                                   -- 重试次数（上限由 worker 硬卡）
+    locked_until    TIMESTAMP WITH TIME ZONE,                                                      -- worker 认领锁（条件 UPDATE 防并发，崩溃 10min 后自愈可再认领）
     weak_memory     BOOLEAN                  NOT NULL DEFAULT FALSE,                               -- 降级弱记忆=TRUE（仅元数据+「读不懂内容」，FR-205）
     created_by      BIGINT,
     created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -39,6 +40,8 @@ CREATE TABLE memory_asset_memories (
 CREATE UNIQUE INDEX uk_memory_asset_memories_file ON memory_asset_memories(file_id);
 -- 召回主查询：按用户查 READY 文件记忆
 CREATE INDEX idx_memory_asset_memories_owner_status ON memory_asset_memories(owner_user_id, ingest_status) WHERE deleted = 0;
+-- worker 认领查询：PROCESSING 且锁过期
+CREATE INDEX idx_memory_asset_memories_claim ON memory_asset_memories(ingest_status, locked_until) WHERE deleted = 0;
 
 COMMENT ON TABLE  memory_asset_memories IS '文件记忆（二期 P3）：一文件一条目，个人域资产。ingestion 异步出 l1/l2+tags；FAILED 可重试；弱记忆=读不懂内容降级';
 COMMENT ON COLUMN memory_asset_memories.file_id      IS 'stored_files 登记行（V40 ACL 咽喉点 FileStorageService.load 强校验 owner）';
@@ -59,9 +62,11 @@ CREATE TABLE memory_asset_chunks (
     updated_by      BIGINT,
     updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     deleted         INT                      NOT NULL DEFAULT 0,
-    version         INT                      NOT NULL DEFAULT 0,
-    CONSTRAINT uk_memory_asset_chunks_no UNIQUE (asset_memory_id, chunk_no)
+    version         INT                      NOT NULL DEFAULT 0
 );
+
+-- 同记忆内序号唯一（部分唯一：软删行不挡重试重解析重建 chunk）
+CREATE UNIQUE INDEX uk_memory_asset_chunks_no ON memory_asset_chunks(asset_memory_id, chunk_no) WHERE deleted = 0;
 
 -- 深读向量召回按记忆内 top-k（embedding 走 halfvec_ops，索引由查询模式决定，暂不加向量索引——行数预期低）
 COMMENT ON TABLE  memory_asset_chunks IS '文件分块（深读层）：每页/每段要点+向量+page_ref 锚点。reflect 判深读时向量 top-k 进 prompt，引用须带 page_ref';
