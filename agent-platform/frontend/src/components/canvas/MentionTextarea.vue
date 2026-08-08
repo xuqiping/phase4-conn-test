@@ -383,8 +383,10 @@ defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, ren
     }
   }
 
-  // A1 chip：显人话 label，原子不可编辑，hover 手型可点击跳转
-  &__chip {
+  // A1 chip：显人话 label，原子不可编辑，hover 手型可点击跳转。
+  // chip 由 render() 经 innerHTML 注入（非 Vue 模板渲染），无 scoped data-v 属性，
+  // 故 scoped 的 &__chip 规则不匹配 → 必须用 :deep() 穿透 scope 才能命中注入元素。
+  :deep(.mention-ta__chip) {
     display: inline-block;
     background: rgba(var(--color-primary-rgb), 0.28);
     color: var(--color-primary);
