@@ -203,8 +203,10 @@ public class ChatSessionService {
         }
 
         // Load long-term memories（仅记忆模式开启；新栈召回 pipeline，scope 走用户持久化偏好）
+        MemoryRecallResult recallResult = null;
         if (ragOn) {
-            String memoryContext = recallMemoryContext(userId, request.getMessage());
+            recallResult = recallMemory(userId, request.getMessage());
+            String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("SYSTEM", "用户记忆:\n" + memoryContext);
             }
@@ -242,11 +244,18 @@ public class ChatSessionService {
                     withAttachmentMention(request.getMessage(), attachmentNames), response);
         }
 
-        // Save assistant message
+        // Save assistant message（二期 P3：召回命中的文件卡片随 metadata 落库，历史消息回显文件卡片）
         ChatMessage assistantMsg = new ChatMessage();
         assistantMsg.setSessionId(session.getId());
         assistantMsg.setRole("ASSISTANT");
         assistantMsg.setContent(response);
+        if (recallResult != null && recallResult.getFileCards() != null
+                && !recallResult.getFileCards().isEmpty()) {
+            try {
+                assistantMsg.setMetadata(new ObjectMapper().writeValueAsString(
+                        Map.of("fileCards", recallResult.getFileCards())));
+            } catch (Exception ignored) {}
+        }
         messageMapper.insert(assistantMsg);
 
         // Update session title on first exchange
@@ -268,22 +277,21 @@ public class ChatSessionService {
     // ============================ 记忆（H' 切流：新栈召回/写入）============================
 
     /**
-     * 召回长期记忆装配文本（注入对话 SYSTEM）。scope 走用户持久化偏好（F-6 底栏 popover），
-     * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返空串不崩聊天。
+     * 召回长期记忆（结果含装配文本 + 二期 P3 文件卡片）。scope 走用户持久化偏好（F-6 底栏 popover），
+     * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返 null 不崩聊天。
      */
-    private String recallMemoryContext(Long userId, String query) {
-        if (userId == null || query == null || query.isBlank()) return "";
+    private MemoryRecallResult recallMemory(Long userId, String query) {
+        if (userId == null || query == null || query.isBlank()) return null;
         try {
             MemoryRecallScopeRequest scopeReq = memoryRecallPrefService.getScope(userId);
             if (scopeReq == null) {
                 scopeReq = new MemoryRecallScopeRequest();
                 scopeReq.setPersonalOn(true);
             }
-            MemoryRecallResult result = memoryRecallPipeline.recall(query, scopeReq, userId);
-            return result == null ? "" : result.getAssembledText();
+            return memoryRecallPipeline.recall(query, scopeReq, userId);
         } catch (Exception e) {
             log.warn("记忆召回失败 userId={} query.len={}: {}", userId, query.length(), e.getMessage());
-            return "";
+            return null;
         }
     }
 
@@ -393,11 +401,15 @@ public class ChatSessionService {
             context.addMessage(msg.getRole(), msg.getContent());
         }
 
+        final java.util.concurrent.atomic.AtomicReference<java.util.List<com.superprogrammer.chat.dto.RecalledFileCard>> recalledFileCards =
+                new java.util.concurrent.atomic.AtomicReference<>();
         if (ragOn) {
-            String memoryContext = recallMemoryContext(userId, request.getMessage());
+            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage());
+            String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("system", "用户记忆:\n" + memoryContext);
             }
+            recalledFileCards.set(recallResult == null ? null : recallResult.getFileCards());
         }
 
         // 阶段5 RAG（CHAT 模式证据注入；WORKFLOW 走检索节点回调，此处不注入）— 受记忆模式门控
@@ -464,11 +476,17 @@ public class ChatSessionService {
                     assistantMsg.setSessionId(sessionId);
                     assistantMsg.setRole("ASSISTANT");
                     assistantMsg.setContent(responseText);
+                    // metadata：thinking + 二期 P3 文件卡片（召回命中随消息落库，历史回显文件卡片）
+                    java.util.Map<String, Object> metaMap = new java.util.LinkedHashMap<>();
                     if (fullThinking.length() > 0) {
+                        metaMap.put("thinking", fullThinking.toString());
+                    }
+                    if (recalledFileCards.get() != null && !recalledFileCards.get().isEmpty()) {
+                        metaMap.put("fileCards", recalledFileCards.get());
+                    }
+                    if (!metaMap.isEmpty()) {
                         try {
-                            assistantMsg.setMetadata(
-                                    new ObjectMapper().writeValueAsString(
-                                            Map.of("thinking", fullThinking.toString())));
+                            assistantMsg.setMetadata(new ObjectMapper().writeValueAsString(metaMap));
                         } catch (Exception ignored) {}
                     }
                     messageMapper.insert(assistantMsg);
@@ -490,6 +508,15 @@ public class ChatSessionService {
                         } catch (Exception ignored) {}
                     }
 
+                    // 二期 P3（FR-203）：文件记忆卡片事件（DONE 前发，前端渲染文件卡片；仅召回命中时）
+                    StreamEvent fileCardsEvt = null;
+                    if (recalledFileCards.get() != null && !recalledFileCards.get().isEmpty()) {
+                        try {
+                            fileCardsEvt = StreamEvent.fileCards(
+                                    new ObjectMapper().writeValueAsString(recalledFileCards.get()));
+                        } catch (Exception ignored) {}
+                    }
+
                     java.util.List<StreamEvent> tail = new java.util.ArrayList<>();
                     if (disclaimer != null) {
                         tail.add(StreamEvent.chunk(disclaimer));
@@ -499,6 +526,9 @@ public class ChatSessionService {
                     }
                     if (webCitationEvt != null) {
                         tail.add(webCitationEvt);
+                    }
+                    if (fileCardsEvt != null) {
+                        tail.add(fileCardsEvt);
                     }
                     tail.add(StreamEvent.done());
                     return Flux.fromIterable(tail);

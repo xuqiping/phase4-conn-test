@@ -243,6 +243,67 @@ export interface MemoryProjectLinkVO {
   approvedAt: string | null
 }
 
+// ============================ 二期 P3 · 文件记忆（FR-201~205）============================
+
+/** 聊天附件上传结果（FR-201；一文件一记忆，PROCESSING → worker 异步 READY/FAILED）。 */
+export interface MemoryAssetUploadVO {
+  memoryId: number
+  fileId: string
+  originalName: string
+  fileKind: string
+  size: number
+  ingestStatus: string
+}
+
+/** 文件记忆行（记忆面板「文件记忆」页签列表数据源，对应 memory_asset_memories）。 */
+export interface MemoryAssetMemoryVO {
+  id: number
+  fileId: string | null
+  fileKind: 'IMAGE' | 'DOC' | 'PPT' | 'PDF' | 'AUDIO' | 'VIDEO' | 'OTHER'
+  originalName: string | null
+  l1Summary: string | null
+  l2Detail: string | null
+  ingestStatus: 'PROCESSING' | 'READY' | 'FAILED'
+  ingestError: string | null
+  retryCount: number | null
+  weakMemory: boolean | null
+  createdAt: string | null
+}
+
+/** 文件分块视图（FR-203 文件卡片「展开分块」；pageRef 页码锚点，仅 owner 可读）。 */
+export interface FileChunkView {
+  chunkNo: number
+  pageRef: string | null
+  chunkText: string | null
+}
+
+/** 召回命中的文件卡片（FR-203；FILE_CARDS 流帧 / 助手消息 metadata.fileCards）。 */
+export interface RecalledFileCard {
+  memoryId: number
+  fileId: string
+  originalName: string
+  fileKind: string
+  chunkCount: number
+  weakMemory: boolean
+  fileCleaned: boolean
+  downloadable: boolean
+  l1: string | null
+  l2: string | null
+}
+
+/** 文件类型中文标签（与后端 MemoryAssetMemory.kindLabel 同源）。 */
+export function fileKindLabel(fileKind: string | null | undefined): string {
+  switch (fileKind) {
+    case 'IMAGE': return '图片'
+    case 'PDF': return 'PDF 文档'
+    case 'PPT': return 'PPT 演示文稿'
+    case 'DOC': return '文档'
+    case 'AUDIO': return '音频'
+    case 'VIDEO': return '视频'
+    default: return '文件'
+  }
+}
+
 // ============================ 客户端 ============================
 
 export const memoryApi = {
@@ -374,5 +435,32 @@ export const memoryApi = {
   },
   revokeLink(linkId: number) {
     return request.delete<ApiResponse<void>>(`/chat/memory/links/${linkId}`)
+  },
+
+  // ---- 二期 P3 · 文件记忆（FR-201~205；端点挂在 ChatController /chat/attachments 下）----
+  /** 聊天附件上传（multipart；一文件一记忆 PROCESSING，worker 异步 ingestion）。 */
+  uploadAttachment(file: File) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request.post<ApiResponse<MemoryAssetUploadVO>>('/chat/attachments', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000 // 单文件上限 50MB，放宽上传超时
+    })
+  },
+  /** 我的文件记忆列表（「文件记忆」页签）。 */
+  listAttachments() {
+    return request.get<ApiResponse<MemoryAssetMemoryVO[]>>('/chat/attachments')
+  },
+  /** FAILED 手动重试（retry_count 硬卡上限）。 */
+  retryAttachment(memoryId: number) {
+    return request.post<ApiResponse<void>>(`/chat/attachments/${memoryId}/retry`)
+  },
+  /** 删除文件记忆（项目 FILE 条目同步失效 + 原文件硬删，FR-204）。 */
+  deleteAttachment(memoryId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/attachments/${memoryId}`)
+  },
+  /** 文件分块列表（文件卡片「展开分块」；仅 owner，页码锚点随块返回）。 */
+  listAttachmentChunks(memoryId: number) {
+    return request.get<ApiResponse<FileChunkView[]>>(`/chat/attachments/${memoryId}/chunks`)
   }
 }

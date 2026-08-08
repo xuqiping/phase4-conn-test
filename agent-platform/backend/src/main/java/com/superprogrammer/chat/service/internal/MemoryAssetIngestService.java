@@ -125,6 +125,23 @@ public class MemoryAssetIngestService {
         }
     }
 
+    /**
+     * 我的文件记忆分块列表（Step 5，FR-203 文件卡片「展开分块」；仅 owner，页码锚点随块返回）。
+     */
+    public java.util.List<com.superprogrammer.chat.dto.FileChunkView> listChunks(Long memoryId, Long userId) {
+        MemoryAssetMemory row = memoryMapper.selectById(memoryId);
+        if (row == null || !row.getOwnerUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文件记忆不存在");
+        }
+        return chunkMapper.selectList(
+                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.superprogrammer.chat.entity.MemoryAssetChunk>()
+                                .eq(com.superprogrammer.chat.entity.MemoryAssetChunk::getAssetMemoryId, memoryId)
+                                .orderByAsc(com.superprogrammer.chat.entity.MemoryAssetChunk::getChunkNo))
+                .stream()
+                .map(c -> new com.superprogrammer.chat.dto.FileChunkView(c.getChunkNo(), c.getPageRef(), c.getChunkText()))
+                .toList();
+    }
+
     // ============================ 内部 ============================
 
     private void doIngest(MemoryAssetMemory row) throws Exception {

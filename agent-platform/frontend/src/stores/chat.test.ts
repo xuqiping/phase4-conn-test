@@ -125,8 +125,7 @@ describe('chat store', () => {
     }))
   })
 
-  it('updates the current session target and local session list', async () => {
-    vi.mocked(chatApi.listSessions).mockResolvedValue({ data: { code: 200, message: 'ok', data: [
+  it('updates the current session target and local session list', async () => {    vi.mocked(chatApi.listSessions).mockResolvedValue({ data: { code: 200, message: 'ok', data: [
       {
         id: 1,
         title: 'Run old workflow',
@@ -164,5 +163,59 @@ describe('chat store', () => {
     expect(store.selectedTarget).toBe('workflow:8')
     expect(store.visibleTargetValue).toBe('workflow:8')
     expect(store.currentSession?.workflowName).toBe('New Workflow')
+  })
+
+  // 二期 P3（FR-201）：附件引用随请求发送（fileId 集）+ 本地用户回显 metadata.attachments
+  it('threads attachment fileIds into the stream request and user echo metadata', async () => {
+    vi.mocked(chatApi.streamNewMessage).mockResolvedValue(streamResponse([
+      'data: {"type":"DONE","sessionId":1}',
+      ''
+    ]))
+    const store = useChatStore()
+
+    await store.sendStreamingMessage('看这个课件', undefined, undefined, [
+      { fileId: 'f-abc.pdf', name: '课件.pdf' }
+    ])
+
+    expect(chatApi.streamNewMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: '看这个课件',
+      attachmentFileIds: ['f-abc.pdf']
+    }))
+    const userMsg = store.messages[0]
+    expect(userMsg.role).toBe('USER')
+    expect(JSON.parse(userMsg.metadata!)).toEqual({
+      attachments: [{ fileId: 'f-abc.pdf', name: '课件.pdf' }]
+    })
+  })
+
+  // 二期 P3（FR-203）：FILE_CARDS 帧（DONE 前到达）→ 并入助手消息 metadata.fileCards
+  it('merges FILE_CARDS frames into the assistant message metadata', async () => {
+    const card = {
+      memoryId: 7,
+      fileId: 'f-abc.pdf',
+      originalName: '课件.pdf',
+      fileKind: 'PDF',
+      chunkCount: 12,
+      weakMemory: false,
+      fileCleaned: false,
+      downloadable: true,
+      l1: '《课件.pdf》：讲 hooks 原理',
+      l2: null
+    }
+    vi.mocked(chatApi.streamNewMessage).mockResolvedValue(streamResponse([
+      'data: {"type":"CHUNK","content":"这份课件讲了 hooks"}',
+      `data: {"type":"FILE_CARDS","content":${JSON.stringify(JSON.stringify([card]))},"sessionId":1}`,
+      'data: {"type":"DONE","sessionId":1}',
+      ''
+    ]))
+    const store = useChatStore()
+
+    await store.sendStreamingMessage('课件讲了什么')
+
+    expect(store.messages).toHaveLength(2)
+    const assistant = store.messages[1]
+    expect(assistant.role).toBe('ASSISTANT')
+    const meta = JSON.parse(assistant.metadata!)
+    expect(meta.fileCards).toEqual([card])
   })
 })

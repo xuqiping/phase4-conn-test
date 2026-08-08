@@ -219,6 +219,40 @@ class MemoryAssetIngestServiceTest {
         verify(memoryMapper).requeue(1L);
     }
 
+    // ============================ FR-203 Step 5 分块列表（卡片「展开分块」）============================
+
+    @Test
+    @DisplayName("FR-203 分块列表：非本人 → NOT_FOUND（IDOR 咽喉）")
+    void listChunks_notOwner_forbidden() {
+        MemoryAssetMemory r = row(MemoryAssetMemory.STATUS_READY);
+        r.setOwnerUserId(200L);
+        when(memoryMapper.selectById(1L)).thenReturn(r);
+        assertThrows(BusinessException.class, () -> service.listChunks(1L, 100L));
+        verifyNoInteractions(chunkMapper);
+    }
+
+    @Test
+    @DisplayName("FR-203 分块列表：本人 → 按 chunkNo 升序返回页码锚点视图")
+    void listChunks_owner_returnsViews() {
+        when(memoryMapper.selectById(1L)).thenReturn(row(MemoryAssetMemory.STATUS_READY));
+        com.superprogrammer.chat.entity.MemoryAssetChunk c1 = new com.superprogrammer.chat.entity.MemoryAssetChunk();
+        c1.setChunkNo(1);
+        c1.setPageRef("第1页");
+        c1.setChunkText("hooks 原理");
+        com.superprogrammer.chat.entity.MemoryAssetChunk c2 = new com.superprogrammer.chat.entity.MemoryAssetChunk();
+        c2.setChunkNo(2);
+        c2.setPageRef("第2页");
+        c2.setChunkText("常见坑");
+        when(chunkMapper.selectList(any())).thenReturn(List.of(c1, c2));
+
+        var views = service.listChunks(1L, 100L);
+
+        assertEquals(2, views.size());
+        assertEquals("第1页", views.get(0).getPageRef());
+        assertEquals("hooks 原理", views.get(0).getChunkText());
+        assertEquals(2, views.get(1).getChunkNo());
+    }
+
     // ============================ FR-204 删除闭环 ============================
 
     @Test

@@ -37,8 +37,7 @@ public interface MemoryAssetChunkMapper extends BaseMapper<MemoryAssetChunk> {
             + "WHERE asset_memory_id = #{assetMemoryId} AND deleted = 0")
     int softDeleteByMemoryId(@Param("assetMemoryId") Long assetMemoryId);
 
-    /** Step 3：命中记忆的分块计数（卡片「共N块」，GROUP BY 一次查防 N+1）。 */
-    @Select("SELECT asset_memory_id, COUNT(*) AS cnt FROM memory_asset_chunks "
+    /** Step 3：命中记忆的分块计数（卡片「共N块」，GROUP BY 一次查防 N+1）。 */    @Select("SELECT asset_memory_id, COUNT(*) AS cnt FROM memory_asset_chunks "
             + "WHERE deleted = 0 AND asset_memory_id = ANY(#{memoryIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler}) "
             + "GROUP BY asset_memory_id")
     List<AssetChunkCount> countByMemoryIds(@Param("memoryIds") List<Long> memoryIds);

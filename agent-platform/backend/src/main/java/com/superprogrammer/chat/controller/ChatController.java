@@ -58,6 +58,14 @@ public class ChatController {
         return ResponseEntity.ok(R.ok());
     }
 
+    /** 我的文件记忆分块列表（二期 P3 Step 5，FR-203 文件卡片「展开分块」；仅 owner）。 */
+    @GetMapping("/attachments/{memoryId}/chunks")
+    public ResponseEntity<R<List<com.superprogrammer.chat.dto.FileChunkView>>> listAttachmentChunks(
+            @PathVariable Long memoryId) {
+        Long userId = getCurrentUserId();
+        return ResponseEntity.ok(R.ok(memoryAssetIngestService.listChunks(memoryId, userId)));
+    }
+
     /** 删除我的文件记忆（二期 P3 Step 4，FR-204：项目 FILE 条目同步失效 + 原文件硬删）。 */
     @DeleteMapping("/attachments/{memoryId}")
     public ResponseEntity<R<Void>> deleteAttachment(@PathVariable Long memoryId) {

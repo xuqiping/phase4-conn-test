@@ -32,6 +32,9 @@
       <n-tab-pane name="links" tab="项目授权" display-directive="show">
         <MemoryProjectLinkPanel />
       </n-tab-pane>
+      <n-tab-pane name="assets" tab="文件记忆" display-directive="show">
+        <MemoryAssetMemorySection />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -47,11 +50,13 @@ import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
 import MemoryRulePanel from '@/components/memory/MemoryRulePanel.vue'
 import MemoryEntryReviewPanel from '@/components/memory/MemoryEntryReviewPanel.vue'
 import MemoryProjectLinkPanel from '@/components/memory/MemoryProjectLinkPanel.vue'
+import MemoryAssetMemorySection from '@/components/memory/MemoryAssetMemorySection.vue'
 
 // 默认页签 = 流水账（新栈入口，最贴近日常「我记了什么」）。
 // 二期 P1（FR-006）：「生命周期」页签随 turns 纯个人域下线（F-4b 拉取折叠板已删）；
-// 新增「收录规则」（FR-001）+「收录审核」（FR-005）页签；二期 P2 新增「项目授权」（FR-101）。
-const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'rule' | 'entries' | 'links'>('turns')
+// 新增「收录规则」（FR-001）+「收录审核」（FR-005）页签；二期 P2 新增「项目授权」（FR-101）；
+// 二期 P3 新增「文件记忆」（FR-201~205，聊天附件一文件一记忆）。
+const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'rule' | 'entries' | 'links' | 'assets'>('turns')
 </script>
 
 <style lang="scss" scoped>

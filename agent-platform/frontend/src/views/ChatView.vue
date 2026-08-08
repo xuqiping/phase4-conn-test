@@ -212,6 +212,7 @@ import {
   BookmarksOutline
 } from '@vicons/ionicons5'
 import { useChatStore } from '@/stores/chat'
+import type { ChatAttachmentRef } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 import SessionList from '@/components/chat/SessionList.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
@@ -363,10 +364,11 @@ async function handleSelectSession(sessionId: number) {
   if (isMobile.value) sessionDrawerOpen.value = false
 }
 
-function handleSend(message: string) {
+function handleSend(message: string, attachments?: ChatAttachmentRef[]) {
   // ragPref=null → 省略 ragEnabled 字段，后端继承全局；非 null → 覆盖（写 session.rag_enabled）。
   // webSearchPref：显式传 true/false（null=false 默认关），写 session.web_search_enabled。
-  chatStore.sendStreamingMessage(message, ragPref.value ?? undefined, webSearchPref.value)
+  // 二期 P3（FR-201）：附件 fileId 集随消息走，后端归属校验 + metadata 记录（文件卡片回显）。
+  chatStore.sendStreamingMessage(message, ragPref.value ?? undefined, webSearchPref.value, attachments)
 }
 
 function handleModelChange(model: string) {
