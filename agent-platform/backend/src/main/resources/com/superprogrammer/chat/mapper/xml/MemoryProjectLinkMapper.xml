@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryProjectLinkMapper">
+
+    <!-- 显式 resultMap：不依赖全局 mapUnderscoreToCamelCase（承 MemoryProjectEntryMapper 范式）。 -->
+    <resultMap id="LinkVOMap" type="com.superprogrammer.chat.dto.MemoryProjectLinkVO">
+        <id property="id" column="id"/>
+        <result property="parentProjectId" column="parent_project_id"/>
+        <result property="parentProjectName" column="parent_project_name"/>
+        <result property="childProjectId" column="child_project_id"/>
+        <result property="childProjectName" column="child_project_name"/>
+        <result property="grantedBy" column="granted_by"/>
+        <result property="grantedByName" column="granted_by_name"/>
+        <result property="approvedBy" column="approved_by"/>
+        <result property="approvedByName" column="approved_by_name"/>
+        <result property="status" column="status"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="approvedAt" column="approved_at"/>
+    </resultMap>
+
+    <!-- 我相关的授权链（FR-101 前端两栏数据源）：我是 parent 或 child 侧 ACTIVE owner/admin。
+         双方项目名 + 发起/审批人名一次 join 齐，免前端二次查询。 -->
+    <select id="listInvolving" resultMap="LinkVOMap">
+        SELECT l.id, l.parent_project_id, pp.name AS parent_project_name,
+               l.child_project_id, cp.name AS child_project_name,
+               l.granted_by, COALESCE(gu.name, gu.username) AS granted_by_name,
+               l.approved_by, COALESCE(au.name, au.username) AS approved_by_name,
+               l.status, l.created_at, l.approved_at
+        FROM memory_project_links l
+        JOIN projects pp ON pp.id = l.parent_project_id
+        JOIN projects cp ON cp.id = l.child_project_id
+        LEFT JOIN users gu ON gu.id = l.granted_by
+        LEFT JOIN users au ON au.id = l.approved_by
+        WHERE l.deleted = 0 AND (
+            EXISTS (SELECT 1 FROM memory_project_members m
+                    WHERE m.project_id = l.parent_project_id AND m.user_id = #{userId}
+                      AND m.status = 'ACTIVE' AND m.role IN ('OWNER','ADMIN'))
+            OR EXISTS (SELECT 1 FROM memory_project_members m
+                    WHERE m.project_id = l.child_project_id AND m.user_id = #{userId}
+                      AND m.status = 'ACTIVE' AND m.role IN ('OWNER','ADMIN'))
+        )
+        ORDER BY l.created_at DESC
+        LIMIT 100
+    </select>
+
+    <!-- 召回合流（FR-102）：一批 parent 项目的 ACTIVE child 集。单级一跳，不递归传递。 -->
+    <select id="findActiveChildIds" resultType="java.lang.Long">
+        SELECT child_project_id
+        FROM memory_project_links
+        WHERE deleted = 0 AND status = 'ACTIVE'
+          AND parent_project_id IN
+          <foreach collection="parentIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+    </select>
+</mapper>
