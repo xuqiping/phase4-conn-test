@@ -51,96 +51,121 @@
           <!-- 多模态参考附件（按模型能力动态渲染；不上传即文生视频） -->
           <div ref="attachAreaRef"></div>
           <template v-if="capability">
+            <!-- F2 首帧/尾帧独立槽位（可选，占参考图名额；SeedDance 2.0 role:first_frame/last_frame） -->
+            <div v-if="capability.maxImages > 0" class="video-gen__frame-row">
+              <div class="video-gen__frame-slot">
+                <label>首帧（可选，图作开头）</label>
+                <div class="video-gen__frame-tile">
+                  <template v-if="firstFrame">
+                    <img v-if="firstFrame.url" :src="firstFrame.url" class="video-gen__frame-media" :alt="firstFrame.name" />
+                    <span v-else class="video-gen__frame-media video-gen__frame-media--ph">{{ firstFrame.name }}</span>
+                    <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeFrame('first')">×</n-button>
+                    <n-input :value="firstFrame.name" size="tiny" class="video-gen__tile-name"
+                      @update:value="(v: string) => { if (firstFrame) firstFrame.name = v }" />
+                  </template>
+                  <template v-else>
+                    <n-upload :show-file-list="false" accept="image/*"
+                      :custom-request="(o: UploadCustomRequestOptions) => handleFrameUpload(o, 'first')">
+                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0">上传</n-button>
+                    </n-upload>
+                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('first')">从资产库</n-button>
+                  </template>
+                </div>
+              </div>
+              <div class="video-gen__frame-slot">
+                <label>尾帧（可选，图作结尾）</label>
+                <div class="video-gen__frame-tile">
+                  <template v-if="lastFrame">
+                    <img v-if="lastFrame.url" :src="lastFrame.url" class="video-gen__frame-media" :alt="lastFrame.name" />
+                    <span v-else class="video-gen__frame-media video-gen__frame-media--ph">{{ lastFrame.name }}</span>
+                    <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeFrame('last')">×</n-button>
+                    <n-input :value="lastFrame.name" size="tiny" class="video-gen__tile-name"
+                      @update:value="(v: string) => { if (lastFrame) lastFrame.name = v }" />
+                  </template>
+                  <template v-else>
+                    <n-upload :show-file-list="false" accept="image/*"
+                      :custom-request="(o: UploadCustomRequestOptions) => handleFrameUpload(o, 'last')">
+                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0">上传</n-button>
+                    </n-upload>
+                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('last')">从资产库</n-button>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <!-- 参考图（F1 统一横排瓦片：上传+资产库同源，序号图N，名称可改） -->
             <n-form-item v-if="capability.maxImages > 0">
               <template #label>
                 参考图
-                <span class="video-gen__hint">（{{ images.length }}/{{ capability.maxImages }}，≤8MB/张）</span>
+                <span class="video-gen__hint">（{{ images.length }}/{{ capability.maxImages - frameCount }}，≤8MB/张）</span>
               </template>
-              <n-upload
-                v-model:file-list="imageFileList"
-                :max="Math.max(0, capability.maxImages - assetImages.length)"
-                accept="image/*"
-                list-type="image-card"
-                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'image')"
-                @remove="(o) => onAttachmentRemove(o, 'image')"
-              />
-              <div class="video-gen__asset-row">
-                <n-button quaternary size="small" :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('image')">
-                  从资产库选
-                </n-button>
-              </div>
-              <div v-if="assetImages.length" class="video-gen__asset-previews">
-                <div v-for="a in assetImages" :key="a.id" class="video-gen__asset-tile">
-                  <img v-if="a.url" :src="a.url" :alt="a.name" class="video-gen__asset-media" />
-                  <span v-else class="video-gen__asset-media video-gen__asset-media--placeholder">{{ a.name }}</span>
-                  <n-button class="video-gen__asset-del" size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'image')">×</n-button>
-                  <span class="video-gen__asset-name">{{ a.name }}</span>
+              <div class="video-gen__tiles">
+                <div v-for="(a, i) in images" :key="a.id" class="video-gen__tile">
+                  <span class="video-gen__tile-idx">图{{ i + 1 }}</span>
+                  <img v-if="a.url" :src="a.url" :alt="a.name" class="video-gen__tile-media" />
+                  <span v-else class="video-gen__tile-media video-gen__tile-media--ph">{{ a.name }}</span>
+                  <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeAttachment(a.id, 'image')">×</n-button>
+                  <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
+                    @update:value="(v: string) => { a.name = v }" />
                 </div>
+                <n-upload :show-file-list="false" accept="image/*"
+                  :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'image')">
+                  <div class="video-gen__tile-add" :class="{ 'is-disabled': imageSlotsLeft <= 0 }">+</div>
+                </n-upload>
               </div>
+              <n-button quaternary size="small" :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('image')">从资产库选</n-button>
             </n-form-item>
 
+            <!-- 参考视频（F1 统一瓦片） -->
             <n-form-item v-if="capability.maxVideos > 0 && capability.videoDataUri">
               <template #label>
                 参考视频
                 <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
               </template>
-              <n-upload
-                v-model:file-list="videoFileList"
-                :max="Math.max(0, capability.maxVideos - assetVideos.length)"
-                accept="video/*"
-                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')"
-                @remove="(o) => onAttachmentRemove(o, 'video')"
-              >
-                <n-button size="small">上传视频</n-button>
-              </n-upload>
-              <div class="video-gen__asset-row">
-                <n-button quaternary size="small" :disabled="videoSlotsLeft <= 0" @click="openAssetPicker('video')">
-                  从资产库选
-                </n-button>
-              </div>
-              <div v-if="assetVideos.length" class="video-gen__asset-previews">
-                <div v-for="a in assetVideos" :key="a.id" class="video-gen__asset-tile">
-                  <video v-if="a.url" :src="a.url" class="video-gen__asset-media" muted />
-                  <span v-else class="video-gen__asset-media video-gen__asset-media--placeholder">{{ a.name }}</span>
-                  <n-button class="video-gen__asset-del" size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'video')">×</n-button>
-                  <span class="video-gen__asset-name">{{ a.name }}</span>
+              <div class="video-gen__tiles">
+                <div v-for="(a, i) in videos" :key="a.id" class="video-gen__tile">
+                  <span class="video-gen__tile-idx">视频{{ i + 1 }}</span>
+                  <video v-if="a.url" :src="a.url" class="video-gen__tile-media" muted />
+                  <span v-else class="video-gen__tile-media video-gen__tile-media--ph">{{ a.name }}</span>
+                  <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeAttachment(a.id, 'video')">×</n-button>
+                  <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
+                    @update:value="(v: string) => { a.name = v }" />
                 </div>
+                <n-upload :show-file-list="false" accept="video/*"
+                  :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')">
+                  <div class="video-gen__tile-add" :class="{ 'is-disabled': videoSlotsLeft <= 0 }">上传视频</div>
+                </n-upload>
               </div>
+              <n-button quaternary size="small" :disabled="videoSlotsLeft <= 0" @click="openAssetPicker('video')">从资产库选</n-button>
             </n-form-item>
 
+            <!-- 参考音频（F1 统一瓦片） -->
             <n-form-item v-if="capability.maxAudios > 0">
               <template #label>
                 参考音频
                 <span class="video-gen__hint">（{{ audios.length }}/{{ capability.maxAudios }}，≤15MB/个，音色/BGM 参考）</span>
               </template>
-              <n-upload
-                v-model:file-list="audioFileList"
-                :max="Math.max(0, capability.maxAudios - assetAudios.length)"
-                accept="audio/*"
-                :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')"
-                @remove="(o) => onAttachmentRemove(o, 'audio')"
-              >
-                <n-button size="small">上传音频</n-button>
-              </n-upload>
-              <div class="video-gen__asset-row">
-                <n-button quaternary size="small" :disabled="audioSlotsLeft <= 0" @click="openAssetPicker('audio')">
-                  从资产库选
-                </n-button>
-              </div>
-              <div v-if="assetAudios.length" class="video-gen__asset-previews video-gen__asset-previews--col">
-                <div v-for="a in assetAudios" :key="a.id" class="video-gen__asset-audio-row">
-                  <audio v-if="a.url" :src="a.url" controls />
-                  <span v-else class="video-gen__asset-name">{{ a.name }}</span>
-                  <n-button size="tiny" quaternary circle @click="onAssetChipRemove(a.id, 'audio')">×</n-button>
-                  <span class="video-gen__asset-name video-gen__asset-name--inline">{{ a.name }}</span>
+              <div class="video-gen__tiles video-gen__tiles--audio">
+                <div v-for="(a, i) in audios" :key="a.id" class="video-gen__tile video-gen__tile--audio">
+                  <span class="video-gen__tile-idx">音频{{ i + 1 }}</span>
+                  <audio v-if="a.url" :src="a.url" controls class="video-gen__tile-audio" />
+                  <span v-else class="video-gen__tile-name video-gen__tile-name--ph">{{ a.name }}</span>
+                  <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeAttachment(a.id, 'audio')">×</n-button>
+                  <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
+                    @update:value="(v: string) => { a.name = v }" />
                 </div>
+                <n-upload :show-file-list="false" accept="audio/*"
+                  :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')">
+                  <div class="video-gen__tile-add" :class="{ 'is-disabled': audioSlotsLeft <= 0 }">上传音频</div>
+                </n-upload>
               </div>
+              <n-button quaternary size="small" :disabled="audioSlotsLeft <= 0" @click="openAssetPicker('audio')">从资产库选</n-button>
             </n-form-item>
 
             <n-form-item v-if="capability.maxAttachments > 0">
               <span class="video-gen__hint">
                 附件总计 {{ totalAttachments }}/{{ capability.maxAttachments }}
-                （提示词里按「图1/图2…、视频1…、音频1…」顺序引用素材）
+                （提示词里按「图1/图2…、视频1…、音频1…」顺序引用参考素材；首/尾帧不参与序号）
               </span>
             </n-form-item>
           </template>
@@ -277,7 +302,7 @@
 
     <AssetFilePicker
       :show="showAssetPicker"
-      :media-type="assetPickerKind ? ASSET_MEDIATYPE[assetPickerKind] : MEDIA_TYPE.IMAGE"
+      :media-type="pickerMediaType"
       :max="assetPickerMax"
       :exclude-asset-ids="assetPickerExcludeIds"
       @update:show="showAssetPicker = $event"
@@ -293,7 +318,7 @@ import {
   NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
-import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions, UploadFileInfo } from 'naive-ui'
+import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
 import MentionTextarea from '@/components/canvas/MentionTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
@@ -370,9 +395,13 @@ async function loadModels() {
 /** 切换模型：能力可能变化 → 清空附件 + 收敛参数到新能力区间。释放资产预览 objectURL。 */
 function onModelChange() {
   ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
+  revokeFrame(firstFrame.value)
+  revokeFrame(lastFrame.value)
   images.value = []
   videos.value = []
   audios.value = []
+  firstFrame.value = null
+  lastFrame.value = null
   applyCapabilityConstraints()
 }
 
@@ -419,15 +448,18 @@ interface UploadedAttachment { id: string; fileId: string; name: string; assetId
 const images = ref<UploadedAttachment[]>([])
 const videos = ref<UploadedAttachment[]>([])
 const audios = ref<UploadedAttachment[]>([])
+// F2 首帧/尾帧：各最多 1 张图（占参考图名额），SeedDance 2.0 role:first_frame/last_frame
+const firstFrame = ref<UploadedAttachment | null>(null)
+const lastFrame = ref<UploadedAttachment | null>(null)
 /** A1：附件 @chip 点击 → 滚动到附件上传区（同页锚点，画布跳节点在此页无对应实体）。 */
 const attachAreaRef = ref<HTMLElement | null>(null)
 function onAttachmentMentionClick() {
   attachAreaRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
-const imageFileList = ref<UploadFileInfo[]>([])
-const videoFileList = ref<UploadFileInfo[]>([])
-const audioFileList = ref<UploadFileInfo[]>([])
 const uploadingCount = ref(0)
+
+/** F2 首尾帧已占名额（0/1/2）—— 参考图可用槽 = maxImages - frameCount。 */
+const frameCount = computed(() => (firstFrame.value ? 1 : 0) + (lastFrame.value ? 1 : 0))
 
 /** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
 const KIND_MAX_BYTES: Record<AttachmentKind, number> = {
@@ -437,7 +469,7 @@ const KIND_MAX_BYTES: Record<AttachmentKind, number> = {
 }
 const KIND_LABEL: Record<AttachmentKind, string> = { image: '参考图', video: '参考视频', audio: '参考音频' }
 
-const totalAttachments = computed(() => images.value.length + videos.value.length + audios.value.length)
+const totalAttachments = computed(() => images.value.length + videos.value.length + audios.value.length + frameCount.value)
 const hasAnyAttachment = computed(() => totalAttachments.value > 0)
 
 // === H（4.5）：提示词 @ 引用本会话附件（图1/视频1/音频1），对齐无限画布 @ 体验 ===
@@ -497,64 +529,89 @@ async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOpti
   }
 }
 
-/** n-upload remove → 按 UploadFileInfo.id 移除对应 fileId（同名文件不错位）。 */
-function onAttachmentRemove({ file }: { file: { id: string } }, kind: AttachmentKind) {
-  const list = kindList(kind)
-  const idx = list.value.findIndex(a => a.id === file.id)
-  if (idx >= 0) list.value.splice(idx, 1)
-  return true
-}
+/** n-upload remove 已废弃（统一瓦片自定义渲染，remove 走 removeAttachment）。保留 kindList 供上传/picker 复用。 */
 
-// === 资产库选取（图/视频/音频 复用项目资产，免去重复上传） ===
-// 单个 picker 实例复用三类：mediaType/max/exclude 随 assetPickerKind 动态切换。
+// === 资产库选取（图/视频/音频/首帧/尾帧 复用项目资产，免去重复上传） ===
+// 单个 picker 实例复用多目标：mediaType/max/exclude 随 pickerTarget 动态切换。
 const showAssetPicker = ref(false)
-const assetPickerKind = ref<AttachmentKind | null>(null)
+/** picker 目标：image/video/audio（参考素材，可多选）或 first/last（首尾帧，单选）。 */
+type PickerTarget = AttachmentKind | 'first' | 'last'
+const pickerTarget = ref<PickerTarget | null>(null)
 const ASSET_MEDIATYPE: Record<AttachmentKind, string> = {
   image: MEDIA_TYPE.IMAGE, video: MEDIA_TYPE.VIDEO, audio: MEDIA_TYPE.AUDIO
 }
-const assetImages = computed(() => images.value.filter(a => a.assetId != null))
-const assetVideos = computed(() => videos.value.filter(a => a.assetId != null))
-const assetAudios = computed(() => audios.value.filter(a => a.assetId != null))
-const imageSlotsLeft = computed(() => (capability.value?.maxImages ?? 0) - images.value.length)
+/** 参考图可用槽 = maxImages - 已用参考图 - 首尾帧已占名额。 */
+const imageSlotsLeft = computed(() => (capability.value?.maxImages ?? 0) - images.value.length - frameCount.value)
 const videoSlotsLeft = computed(() => (capability.value?.maxVideos ?? 0) - videos.value.length)
 const audioSlotsLeft = computed(() => (capability.value?.maxAudios ?? 0) - audios.value.length)
 
-function openAssetPicker(kind: AttachmentKind) {
-  assetPickerKind.value = kind
+function openAssetPicker(target: PickerTarget) {
+  pickerTarget.value = target
   showAssetPicker.value = true
 }
 
-/** picker 剩余可选槽位 = 模型能力上限 - 当前已选（负数兜底 0）。 */
+/** picker media-type：first/last→图片；其余按 kind。 */
+const pickerMediaType = computed(() => {
+  const t = pickerTarget.value
+  if (!t) return MEDIA_TYPE.IMAGE
+  if (t === 'first' || t === 'last') return MEDIA_TYPE.IMAGE
+  return ASSET_MEDIATYPE[t]
+})
+
+/** picker 剩余可选槽位 = 模型能力上限 - 当前已选（负数兜底 0）。首尾帧各按图片池算（减另一帧）。 */
 const assetPickerMax = computed(() => {
-  const k = assetPickerKind.value
+  const t = pickerTarget.value
   const cap = capability.value
-  if (!k || !cap) return 0
-  if (k === 'image') return Math.max(0, cap.maxImages - images.value.length)
-  if (k === 'video') return Math.max(0, cap.maxVideos - videos.value.length)
-  return Math.max(0, cap.maxAudios - audios.value.length)
+  if (!t || !cap) return 0
+  if (t === 'image') return Math.max(0, cap.maxImages - images.value.length - frameCount.value)
+  if (t === 'video') return Math.max(0, cap.maxVideos - videos.value.length)
+  if (t === 'audio') return Math.max(0, cap.maxAudios - audios.value.length)
+  // first/last：单选，剩余 = 图片池空槽（减另一帧已占）
+  const otherFrame = (t === 'first' ? lastFrame.value : firstFrame.value) ? 1 : 0
+  return Math.max(0, cap.maxImages - images.value.length - otherFrame)
 })
 
-/** 已添加的同类资产 id（picker 内去重置灰）。 */
+/** 已添加的同类资产 id（picker 内去重置灰）；首尾帧的资产 id 也纳入图片去重。 */
 const assetPickerExcludeIds = computed<number[]>(() => {
-  const k = assetPickerKind.value
-  if (!k) return []
-  return kindList(k).value.map(a => a.assetId).filter((x): x is number => x != null)
+  const t = pickerTarget.value
+  if (!t) return []
+  const ids = images.value.map(a => a.assetId).filter((x): x is number => x != null)
+  if (t === 'first' || t === 'image') {
+    const f = firstFrame.value?.assetId; if (f != null) ids.push(f)
+  }
+  if (t === 'last' || t === 'image') {
+    const l = lastFrame.value?.assetId; if (l != null) ids.push(l)
+  }
+  if (t === 'video') return videos.value.map(a => a.assetId).filter((x): x is number => x != null)
+  if (t === 'audio') return audios.value.map(a => a.assetId).filter((x): x is number => x != null)
+  return ids
 })
 
-/** picker 确认：逐项 push 进对应 kindList（与上传项同源，submit 透明）。
+/** picker 确认：first/last 单选填帧槽；image/video/audio 多选 push 进 kindList。
  *  G（4.4 资产图显示修复）：resolve 返的 url 是 `/api/files/{fileId}` 鉴权相对地址，
  *  `<img src>` 不带 JWT 拉不到 → 先无 url 占位（显文件名），异步用 fetchFilePreview
  *  拉 token blob 转 objectURL 填回（同 fetchVideoBlob / 卡片懒加载范式）。 */
 function onAssetPicked(payload: AssetFilePicked[]) {
-  const k = assetPickerKind.value
-  if (!k) return
-  const list = kindList(k)
+  const t = pickerTarget.value
+  if (!t) return
+  // 首尾帧：单选（取首项），替换原帧槽
+  if (t === 'first' || t === 'last') {
+    const p = payload[0]
+    if (!p) return
+    const slot = t === 'first' ? firstFrame : lastFrame
+    revokeFrame(slot.value)
+    const id = crypto.randomUUID()
+    slot.value = { id, fileId: p.fileId, name: p.name, assetId: p.assetId }
+    void previewFrame(t, id, p.fileId)
+    return
+  }
+  const list = kindList(t)
   for (const p of payload) {
     if (list.value.some(a => a.assetId === p.assetId)) continue
     const id = crypto.randomUUID()
     list.value.push({ id, fileId: p.fileId, name: p.name, assetId: p.assetId })
     // 异步拉预览：成功填 objectURL；期间已被移除则立即释放防泄漏
-    void previewAsset(id, k, p.fileId)
+    void previewAsset(id, t, p.fileId)
   }
 }
 
@@ -574,19 +631,70 @@ async function previewAsset(id: string, kind: AttachmentKind, fileId: string) {
   }
 }
 
-/** 释放某附件的 objectURL（资产预览项专用；上传项无 url 不受影响）。 */
-function revokeAttachmentUrl(att: UploadedAttachment) {
-  if (att.url && att.assetId != null) URL.revokeObjectURL(att.url)
+/** F2 拉取首/尾帧预览 objectURL 并回填；帧槽已被替换/清空则释放。 */
+async function previewFrame(slot: 'first' | 'last', id: string, fileId: string) {
+  try {
+    const objectUrl = await fetchFilePreview(fileId)
+    const cur = slot === 'first' ? firstFrame.value : lastFrame.value
+    if (cur && cur.id === id) {
+      if (slot === 'first') firstFrame.value = { ...cur, url: objectUrl }
+      else lastFrame.value = { ...cur, url: objectUrl }
+    } else {
+      URL.revokeObjectURL(objectUrl)
+    }
+  } catch {
+    /* 保留文件名占位 */
+  }
 }
 
-/** 资产 chip × 移除（与 n-upload 上传项状态隔离，按 id 摘 kindList）。释放其 objectURL。 */
-function onAssetChipRemove(id: string, kind: AttachmentKind) {
+/** 释放某附件的 objectURL（资产预览项专用；上传项无 url 不受影响）。 */
+function revokeAttachmentUrl(att: UploadedAttachment | null) {
+  if (att && att.url && att.assetId != null) URL.revokeObjectURL(att.url)
+}
+
+/** F2 释放首/尾帧 objectURL。 */
+function revokeFrame(att: UploadedAttachment | null) {
+  revokeAttachmentUrl(att)
+}
+
+/** F1 统一移除：按 id 摘 kindList（上传+资产同源），释放其 objectURL。 */
+function removeAttachment(id: string, kind: AttachmentKind) {
   const list = kindList(kind)
   const idx = list.value.findIndex(a => a.id === id)
   if (idx >= 0) {
     revokeAttachmentUrl(list.value[idx])
     list.value.splice(idx, 1)
   }
+}
+
+/** F2 首/尾帧上传：类型/大小预检 → /api/files/upload → 填帧槽（单选，替换旧值）。 */
+async function handleFrameUpload({ file, onFinish, onError }: UploadCustomRequestOptions, slot: 'first' | 'last') {
+  const raw = file.file as File | null
+  if (!raw) { onError(); return }
+  if (raw.size > KIND_MAX_BYTES.image) {
+    message.error(`首/尾帧图过大（>${KIND_MAX_BYTES.image / 1024 / 1024}MB）：${raw.name}`)
+    onError(); return
+  }
+  uploadingCount.value++
+  try {
+    const { data } = await mediaApi.uploadAttachment(raw)
+    const target = slot === 'first' ? firstFrame : lastFrame
+    revokeFrame(target.value)
+    target.value = { id: file.id, fileId: data.data.fileId, name: raw.name }
+    onFinish()
+  } catch {
+    onError()
+    message.error('首/尾帧上传失败')
+  } finally {
+    uploadingCount.value--
+  }
+}
+
+/** F2 移除首/尾帧（清槽 + 释放 objectURL）。 */
+function removeFrame(slot: 'first' | 'last') {
+  const target = slot === 'first' ? firstFrame : lastFrame
+  revokeFrame(target.value)
+  target.value = null
 }
 
 // === 提交 ===
@@ -600,11 +708,15 @@ const canSubmit = computed(
 )
 
 async function onSubmit() {
-  const attachments: AttachmentRef[] = [
+  // F2 首/尾帧作 image 附件带 frameRole（provider 路由 role:first_frame/last_frame）
+  const attachments: AttachmentRef[] = []
+  if (firstFrame.value) attachments.push({ fileId: firstFrame.value.fileId, kind: 'image', frameRole: 'first_frame' })
+  if (lastFrame.value) attachments.push({ fileId: lastFrame.value.fileId, kind: 'image', frameRole: 'last_frame' })
+  attachments.push(
     ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const })),
     ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const })),
     ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const }))
-  ]
+  )
   submitting.value = true
   try {
     const { data } = await mediaApi.submitVideo({
@@ -751,6 +863,8 @@ onUnmounted(() => {
   revokeVideo()
   // 释放资产预览 objectURL（防内存泄漏）
   ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
+  revokeFrame(firstFrame.value)
+  revokeFrame(lastFrame.value)
 })
 </script>
 
@@ -857,35 +971,96 @@ onUnmounted(() => {
     line-height: 32px;
   }
 
-  &__asset-row {
+  // F2 首帧/尾帧独立槽位
+  &__frame-row {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--spacing-1);
-    margin-top: var(--spacing-2);
+    gap: var(--spacing-3);
+    margin-bottom: var(--spacing-2);
   }
 
-  &__asset-previews {
+  &__frame-slot {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-1);
+    flex: 1;
+
+    label {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+    }
+  }
+
+  &__frame-tile {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-1);
+    min-height: 36px;
+    flex-wrap: wrap;
+  }
+
+  &__frame-media {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: var(--radius-base);
+    border: 1px solid var(--color-primary);
+    background: #000;
+    display: block;
+
+    &--ph {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px;
+      font-size: 10px;
+      color: var(--color-text-tertiary);
+      background: var(--color-bg-secondary, var(--color-border-light));
+      border-color: var(--color-border-light);
+    }
+  }
+
+  // F1 统一瓦片网格（上传+资产同源横排）
+  &__tiles {
     display: flex;
     flex-wrap: wrap;
     gap: var(--spacing-2);
-    margin-top: var(--spacing-2);
+    margin-bottom: var(--spacing-1);
 
-    &--col {
+    &--audio {
       flex-direction: column;
       gap: var(--spacing-1);
     }
   }
 
-  &__asset-tile {
+  &__tile {
     position: relative;
     width: 80px;
     display: flex;
     flex-direction: column;
     align-items: center;
+
+    &--audio {
+      width: 100%;
+      flex-direction: row;
+      align-items: center;
+      gap: var(--spacing-2);
+    }
   }
 
-  &__asset-media {
+  &__tile-idx {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    z-index: 1;
+    font-size: 10px;
+    color: #fff;
+    background: rgba(var(--color-primary-rgb), 0.85);
+    border-radius: var(--radius-small);
+    padding: 0 4px;
+    line-height: 1.4;
+  }
+
+  &__tile-media {
     width: 80px;
     height: 80px;
     object-fit: cover;
@@ -894,7 +1069,7 @@ onUnmounted(() => {
     background: #000;
     display: block;
 
-    &--placeholder {
+    &--ph {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -908,7 +1083,12 @@ onUnmounted(() => {
     }
   }
 
-  &__asset-del {
+  &__tile-audio {
+    height: 32px;
+    max-width: 260px;
+  }
+
+  &__tile-del {
     position: absolute;
     top: -6px;
     right: -6px;
@@ -920,31 +1100,41 @@ onUnmounted(() => {
     line-height: 1;
   }
 
-  &__asset-name {
+  &__tile-name {
     margin-top: 2px;
-    font-size: 11px;
-    color: var(--color-text-secondary);
-    max-width: 80px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: center;
+    width: 80px;
 
-    &--inline {
+    &--ph {
+      font-size: 11px;
+      color: var(--color-text-secondary);
       max-width: 140px;
-      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
-  &__asset-audio-row {
+  &__tile-add {
+    width: 80px;
+    height: 80px;
     display: flex;
     align-items: center;
-    gap: var(--spacing-2);
-    width: 100%;
+    justify-content: center;
+    border: 1px dashed var(--color-border-light);
+    border-radius: var(--radius-base);
+    color: var(--color-text-tertiary);
+    font-size: 20px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
 
-    audio {
-      height: 32px;
-      max-width: 260px;
+    &:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    &.is-disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
   }
 }

@@ -65,6 +65,12 @@ export type AttachmentKind = 'image' | 'video' | 'audio'
 export interface AttachmentRef {
   fileId: string
   kind: AttachmentKind
+  /**
+   * 参考帧角色（仅 kind=image）：first_frame 首帧 / last_frame 尾帧。
+   * 省略 = 普通参考图（role:reference_image）。首尾帧与参考图统一走 attachments 通道，
+   * 一次请求可含 1 首帧 + 1 尾帧 + N 参考图（后端校验全局各 ≤1）。
+   */
+  frameRole?: 'first_frame' | 'last_frame'
 }
 
 /**
