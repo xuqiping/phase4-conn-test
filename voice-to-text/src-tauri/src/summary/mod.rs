@@ -49,6 +49,11 @@ pub struct SummaryConfig {
     /// 单次请求超时（秒）。
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// 总结侧重点（2026-08-08 Phase4 手测问题2，AC-111）：
+    /// "" = 默认；exam = 考试复习；concept = 概念理解；practice = 实操步骤。
+    /// 注入分段 system prompt，下次生成/重生成生效。
+    #[serde(default)]
+    pub focus: String,
 }
 
 impl Default for SummaryConfig {
@@ -60,6 +65,7 @@ impl Default for SummaryConfig {
             max_segment_chars: default_max_segment_chars(),
             concurrency: default_concurrency(),
             timeout_secs: default_timeout_secs(),
+            focus: String::new(),
         }
     }
 }

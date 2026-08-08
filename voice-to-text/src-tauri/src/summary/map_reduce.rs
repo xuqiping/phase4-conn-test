@@ -243,11 +243,11 @@ fn summarize_segment(
         let messages = if use_vlm {
             let imgs = load_segment_images(session_dir, seg);
             vec![
-                ChatMessage::system(prompt::SEGMENT_SYSTEM),
+                ChatMessage::system(&prompt::segment_system(&cfg.focus)),
                 ChatMessage::user_with_images(text, imgs),
             ]
         } else {
-            prompt::segment_messages(seg)
+            prompt::segment_messages(seg, &cfg.focus)
         };
         let model = if use_vlm {
             cfg.vlm_model.as_deref().unwrap_or(&cfg.model)

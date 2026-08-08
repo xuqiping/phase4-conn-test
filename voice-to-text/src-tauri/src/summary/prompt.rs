@@ -34,6 +34,26 @@ fn fmt_ts(ms: i64) -> String {
     format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
+/// 分段 system 提示词（含侧重点注入，2026-08-08 Phase4 手测问题2 / AC-111）。
+///
+/// - 智能输出格式（恒生效）：涉及专业术语/公式/定义时，要点用「术语：大白话解释」；
+///   不涉及则保持普通要点（默认格式）。
+/// - 侧重点：exam / concept / practice 追加一行侧重指令；空串 = 默认不追加。
+pub fn segment_system(focus: &str) -> String {
+    let mut s = String::from(SEGMENT_SYSTEM);
+    s.push_str(
+        "\n6. 若本段内容涉及专业术语、公式或定义，对应要点用「术语：一句大白话解释」的格式写；不涉及则保持普通要点。",
+    );
+    let line = match focus {
+        "exam" => "\n7. 侧重点：考试复习 —— 优先提炼考点、定义公式、易错点、老师反复强调的内容。",
+        "concept" => "\n7. 侧重点：概念理解 —— 优先解释概念的含义、为什么是这样、与相近概念的区别，表述通俗易懂。",
+        "practice" => "\n7. 侧重点：实操步骤 —— 优先提炼操作步骤、流程顺序、注意事项和常见坑。",
+        _ => "",
+    };
+    s.push_str(line);
+    s
+}
+
 /// 分段 user 消息文本：段区间 + 逐页材料（OCR + 讲解，带时间戳）。
 pub fn segment_user_text(seg: &SegmentInput) -> String {
     let mut s = format!(
@@ -60,9 +80,9 @@ pub fn segment_user_text(seg: &SegmentInput) -> String {
 }
 
 /// 分段消息（纯文字；多模态精修时调用方改用 user_with_images 附图）。
-pub fn segment_messages(seg: &SegmentInput) -> Vec<ChatMessage> {
+pub fn segment_messages(seg: &SegmentInput, focus: &str) -> Vec<ChatMessage> {
     vec![
-        ChatMessage::system(SEGMENT_SYSTEM),
+        ChatMessage::system(&segment_system(focus)),
         ChatMessage::user(segment_user_text(seg)),
     ]
 }
@@ -184,5 +204,17 @@ mod tests {
     fn fmt_ts_hhmmss() {
         assert_eq!(fmt_ts(0), "00:00:00");
         assert_eq!(fmt_ts(3_723_000), "01:02:03");
+    }
+
+    /// AC-111：智能输出格式恒生效；侧重点按 focus 注入，空串不追加。
+    #[test]
+    fn segment_system_smart_format_and_focus() {
+        let def = segment_system("");
+        assert!(def.contains("术语：一句大白话解释"), "智能格式恒生效");
+        assert!(!def.contains("侧重点"), "默认不追加侧重点");
+        assert!(segment_system("exam").contains("考试复习"));
+        assert!(segment_system("concept").contains("概念理解"));
+        assert!(segment_system("practice").contains("实操步骤"));
+        assert!(!segment_system("unknown-junk").contains("侧重点"), "非法值按默认");
     }
 }

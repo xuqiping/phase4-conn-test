@@ -11,11 +11,13 @@ interface SummaryConfig {
   max_segment_chars: number
   concurrency: number
   timeout_secs: number
+  focus: string
 }
 
 const baseUrl = ref('')
 const model = ref('')
 const vlmModel = ref('')
+const focus = ref('')
 const apiKey = ref('')
 const keySaved = ref(false)
 const message = ref('')
@@ -33,6 +35,7 @@ onMounted(async () => {
     baseUrl.value = cfg.base_url
     model.value = cfg.model
     vlmModel.value = cfg.vlm_model ?? ''
+    focus.value = cfg.focus ?? ''
     keySaved.value = await invoke<boolean>('has_summary_api_key')
   } catch (e) {
     flash('err', `读取设置失败: ${e}`)
@@ -49,6 +52,7 @@ async function saveConfig() {
         max_segment_chars: 2000,
         concurrency: 2,
         timeout_secs: 120,
+        focus: focus.value,
       },
     })
     flash('ok', '设置已保存')
@@ -119,6 +123,15 @@ async function testConnection() {
         <input v-model="vlmModel" type="text" spellcheck="false" aria-label="视觉模型名" />
       </label>
       <label class="field">
+        <span>总结侧重点（下次生成/重生成生效）</span>
+        <select v-model="focus" class="focus-select" aria-label="总结侧重点">
+          <option value="">默认（均衡提炼）</option>
+          <option value="exam">考试复习（考点/公式/易错点）</option>
+          <option value="concept">概念理解（含义/为什么/辨析）</option>
+          <option value="practice">实操步骤（流程/注意事项）</option>
+        </select>
+      </label>
+      <label class="field">
         <span>API Key（仅存系统凭据管理器，不回显）</span>
         <input
           v-model="apiKey"
@@ -141,6 +154,7 @@ async function testConnection() {
 
     <p v-if="message" class="msg" :class="messageKind" role="status">{{ message }}</p>
     <p class="hint">仅上传转写与课件文字（多模态精修默认关）；音视频永不离开本机。</p>
+    <p class="hint">内容涉及专业术语/公式/定义时，要点自动带「术语：大白话解释」；不涉及则为默认格式。</p>
   </section>
 </template>
 
@@ -179,6 +193,20 @@ async function testConnection() {
   outline: none;
 }
 .field input:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+.focus-select {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: #222;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+}
+.focus-select:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 1px;
 }
