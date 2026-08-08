@@ -239,4 +239,59 @@ class MemoryRoutingServiceTest {
         assertEquals(List.of(1L, 2L, 3L), merged);
         assertTrue(MemoryRoutingService.mergeRrf(List.of(), List.of(), 3).isEmpty());
     }
+
+    // ============================ P3 Step 4 · FR-204 文件记忆路由 ============================
+
+    private MemoryRoutingService.RoutingInput fileInput() {
+        return MemoryRoutingService.RoutingInput.ofFile(100L, "f-abc.pdf",
+                "《课件.pdf》：讲 hooks 原理", "1. 原理", List.of(11L));
+    }
+
+    private void stubFileRouteHit() {
+        stubToCandidates();
+        when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
+        when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
+        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+                new MemoryEntryDistiller.Judgment(1L, true, 0.9, "文件：hooks 课件", "详述")));
+    }
+
+    // AC-FR-204：文件总结路由命中 → content_type=FILE + file_id 落库
+    @Test
+    void route_fileHit_insertsFileEntry() {
+        stubFileRouteHit();
+        when(entryMapper.countFileEntry(1L, "f-abc.pdf")).thenReturn(0L);
+
+        service.route(fileInput());
+
+        ArgumentCaptor<MemoryProjectEntry> captor = ArgumentCaptor.forClass(MemoryProjectEntry.class);
+        verify(entryMapper).insert(captor.capture());
+        MemoryProjectEntry e = captor.getValue();
+        assertEquals(MemoryProjectEntry.CONTENT_TYPE_FILE, e.getContentType());
+        assertEquals("f-abc.pdf", e.getFileId());
+        assertEquals(MemoryProjectEntry.STATUS_ACTIVE, e.getStatus());
+        assertEquals(null, e.getSourceTurnId(), "文件条目无 sourceTurn");
+    }
+
+    // AC-FR-204 幂等：同项目同文件已有条目 → 跳过不重复收录
+    @Test
+    void route_fileDuplicate_skips() {
+        stubFileRouteHit();
+        when(entryMapper.countFileEntry(1L, "f-abc.pdf")).thenReturn(1L);
+
+        service.route(fileInput());
+
+        verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
+    }
+
+    // 对话轮路由（fileId=null）→ 不查重、TEXT 条目（回归旧路径）
+    @Test
+    void route_turnInput_stillTextEntry() {
+        stubFileRouteHit();
+        service.route(input());
+        ArgumentCaptor<MemoryProjectEntry> captor = ArgumentCaptor.forClass(MemoryProjectEntry.class);
+        verify(entryMapper).insert(captor.capture());
+        assertEquals(MemoryProjectEntry.CONTENT_TYPE_TEXT, captor.getValue().getContentType());
+        assertEquals(null, captor.getValue().getFileId());
+        verify(entryMapper, never()).countFileEntry(any(), any());
+    }
 }

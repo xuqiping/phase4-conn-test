@@ -36,13 +36,16 @@ class MemoryAssetIngestServiceTest {
     @Mock private FileStorageService fileStorageService;
     @Mock private MemoryTagResolver tagResolver;
     @Mock private LlmGateway llmGateway;
+    @Mock private MemoryRoutingService routingService;
+    @Mock private com.superprogrammer.chat.mapper.MemoryProjectEntryMapper projectEntryMapper;
 
     private MemoryAssetIngestService service;
 
     @BeforeEach
     void setUp() {
         service = new MemoryAssetIngestService(memoryMapper, chunkMapper, extractor,
-                fileStorageService, tagResolver, llmGateway, new ObjectMapper());
+                fileStorageService, tagResolver, llmGateway, new ObjectMapper(),
+                routingService, projectEntryMapper);
     }
 
     private MemoryAssetMemory row(String status) {
@@ -88,6 +91,11 @@ class MemoryAssetIngestServiceTest {
         verify(memoryMapper).finishIngest(eq(1L), eq(MemoryAssetMemory.STATUS_READY), isNull(),
                 eq("《课件.pdf》：讲 hooks 原理与坑"), eq("1. 原理\n2. 坑"), eq(false), eq(0));
         verify(memoryMapper).updateTagIds(eq(1L), argThat(tags -> tags.size() == 2));
+        // FR-204 READY 钩子：文件 l1/l2 过路由（content_type=FILE 入口）
+        verify(routingService).routeAsync(argThat(input ->
+                "f-abc.pdf".equals(input.fileId()) && input.userId().equals(100L)
+                        && input.sourceTurnId() == null
+                        && input.l1().equals("《课件.pdf》：讲 hooks 原理与坑")));
     }
 
     @Test
@@ -120,6 +128,7 @@ class MemoryAssetIngestServiceTest {
         verify(memoryMapper).finishIngest(eq(1L), eq(MemoryAssetMemory.STATUS_READY), isNull(),
                 argThat(l1 -> l1.contains("读不懂内容")), isNull(), eq(true), eq(0));
         verifyNoInteractions(llmGateway, chunkMapper);
+        verify(routingService, never()).routeAsync(any());   // FR-204：弱记忆不路由（无内容蒸馏是噪声）
     }
 
     @Test
@@ -208,5 +217,47 @@ class MemoryAssetIngestServiceTest {
         when(memoryMapper.requeue(1L)).thenReturn(1);
         assertDoesNotThrow(() -> service.retry(1L, 100L));
         verify(memoryMapper).requeue(1L);
+    }
+
+    // ============================ FR-204 删除闭环 ============================
+
+    @Test
+    @DisplayName("FR-204 删除：非本人 → NOT_FOUND（IDOR 咽喉），不动任何数据")
+    void delete_notOwner_forbidden() {
+        MemoryAssetMemory r = row(MemoryAssetMemory.STATUS_READY);
+        r.setOwnerUserId(200L);
+        when(memoryMapper.selectById(1L)).thenReturn(r);
+        assertThrows(BusinessException.class, () -> service.delete(1L, 100L));
+        verify(chunkMapper, never()).softDeleteByMemoryId(any());
+        verify(projectEntryMapper, never()).softDeleteFileEntries(any());
+        verify(fileStorageService, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("FR-204 删除：本人 → 分块/记忆软删 + 项目 FILE 条目失效 + 原文件硬删")
+    void delete_owner_fullChain() {
+        when(memoryMapper.selectById(1L)).thenReturn(row(MemoryAssetMemory.STATUS_READY));
+        when(projectEntryMapper.softDeleteFileEntries("f-abc.pdf")).thenReturn(2);
+
+        service.delete(1L, 100L);
+
+        verify(chunkMapper).softDeleteByMemoryId(1L);
+        verify(memoryMapper).deleteById(1L);
+        verify(projectEntryMapper).softDeleteFileEntries("f-abc.pdf");  // 项目条目标失效
+        verify(fileStorageService).delete("f-abc.pdf");
+    }
+
+    @Test
+    @DisplayName("FR-204 删除：fileId 为空 → 跳过条目失效与文件删除")
+    void delete_noFileId_skipsFileSide() {
+        MemoryAssetMemory r = row(MemoryAssetMemory.STATUS_FAILED);
+        r.setFileId(null);
+        when(memoryMapper.selectById(1L)).thenReturn(r);
+
+        service.delete(1L, 100L);
+
+        verify(memoryMapper).deleteById(1L);
+        verify(projectEntryMapper, never()).softDeleteFileEntries(any());
+        verify(fileStorageService, never()).delete(any());
     }
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.entity.MemoryAssetMemory;
 import com.superprogrammer.chat.mapper.MemoryAssetChunkMapper;
 import com.superprogrammer.chat.mapper.MemoryAssetMemoryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -53,6 +54,8 @@ public class MemoryAssetIngestService {
     private final MemoryTagResolver tagResolver;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final MemoryRoutingService routingService;          // Step 4（FR-204）READY 钩子：文件总结过路由进项目
+    private final MemoryProjectEntryMapper projectEntryMapper;  // Step 4（FR-204）删文件 → FILE 条目同步失效
 
     /**
      * 处理一条 PROCESSING 记忆（worker 认领后调用；本方法不抛——成败都落状态）。
@@ -98,6 +101,28 @@ public class MemoryAssetIngestService {
             throw new BusinessException(ErrorCode.CONFLICT, "该记忆已被重试或处理中");
         }
         log.info("文件 ingestion 手动重试 memoryId={} userId={} retry={}", memoryId, userId, row.getRetryCount());
+    }
+
+    /**
+     * 删除我的文件记忆（Step 4，FR-204 闭环「作者删文件→项目条目标失效」）：
+     * 软删分块+记忆行 → 引用该文件的项目 FILE 条目全软删（标失效）→ 硬删原文件字节+登记行。
+     * 仅 owner 可删；PROCESSING 中也可删（worker 迟到 finishIngest 条件 deleted=0 不覆盖，幂等无害）。
+     */
+    public void delete(Long memoryId, Long userId) {
+        MemoryAssetMemory row = memoryMapper.selectById(memoryId);
+        if (row == null || !row.getOwnerUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文件记忆不存在");
+        }
+        chunkMapper.softDeleteByMemoryId(memoryId);
+        memoryMapper.deleteById(memoryId);
+        if (row.getFileId() != null) {
+            int invalidated = projectEntryMapper.softDeleteFileEntries(row.getFileId());
+            fileStorageService.delete(row.getFileId());
+            log.info("文件记忆删除 memoryId={} userId={} fileId={} 失效项目条目={}",
+                    memoryId, userId, row.getFileId(), invalidated);
+        } else {
+            log.info("文件记忆删除 memoryId={} userId={}（无 fileId）", memoryId, userId);
+        }
     }
 
     // ============================ 内部 ============================
@@ -165,6 +190,11 @@ public class MemoryAssetIngestService {
         if (!tagIds.isEmpty()) {
             memoryMapper.updateTagIds(id, tagIds);
         }
+        // Step 4（FR-204）READY 钩子：文件 l1/l2 过 P1 路由，命中进项目条目（content_type=FILE+file_id）。
+        // 仅全量 READY 走到这里（弱记忆早退不路由——「读不懂内容」蒸馏进项目是噪声）；
+        // routeAsync fire-and-forget 自带全兜底，路由失败不影响 READY。
+        routingService.routeAsync(MemoryRoutingService.RoutingInput.ofFile(
+                userId, row.getFileId(), outcome.l1(), outcome.l2(), tagIds));
         log.info("文件 ingestion 完成 memoryId={} chunks={} embedFailures={} tags={}",
                 id, result.chunks().size(), embedFailures, tagIds.size());
     }

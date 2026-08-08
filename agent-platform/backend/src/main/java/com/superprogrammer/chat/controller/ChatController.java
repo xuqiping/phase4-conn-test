@@ -58,6 +58,14 @@ public class ChatController {
         return ResponseEntity.ok(R.ok());
     }
 
+    /** 删除我的文件记忆（二期 P3 Step 4，FR-204：项目 FILE 条目同步失效 + 原文件硬删）。 */
+    @DeleteMapping("/attachments/{memoryId}")
+    public ResponseEntity<R<Void>> deleteAttachment(@PathVariable Long memoryId) {
+        Long userId = getCurrentUserId();
+        memoryAssetIngestService.delete(memoryId, userId);
+        return ResponseEntity.ok(R.ok());
+    }
+
     @PostMapping("/sessions")
     public ResponseEntity<R<SessionVO>> createSession(@RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();

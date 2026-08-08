@@ -68,4 +68,43 @@ class FileStorageServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("File must not be empty");
     }
+
+    // ============================ FR-204 共享放行分支 ============================
+
+    private StoredFileEntity metaOf(String fileId, Long owner) {
+        StoredFileEntity e = new StoredFileEntity();
+        e.setFileId(fileId);
+        e.setOwnerUserId(owner);
+        e.setStatus(StoredFileEntity.STATUS_ACTIVE);
+        return e;
+    }
+
+    @Test
+    void load_nonOwner_grantorAllows_passes() throws Exception {
+        String fileId = "shared.pdf";
+        Files.write(tempDir.resolve(fileId), new byte[]{1});
+        FileStorageService withGrantor = new FileStorageService(tempDir.toString(), storedFileMapper,
+                java.util.List.of((fid, uid) -> true));   // 放行桩
+        org.mockito.Mockito.when(storedFileMapper.selectById(fileId)).thenReturn(metaOf(fileId, 7L));
+
+        Path p = withGrantor.loadPath(fileId, 99L, false);   // 非 owner 非 admin，grantor 放行
+
+        assertThat(p).exists();
+    }
+
+    @Test
+    void load_nonOwner_grantorDeniesOrThrows_forbidden() throws Exception {
+        String fileId = "deny.pdf";
+        Files.write(tempDir.resolve(fileId), new byte[]{1});
+        org.mockito.Mockito.when(storedFileMapper.selectById(fileId)).thenReturn(metaOf(fileId, 7L));
+        FileStorageService denying = new FileStorageService(tempDir.toString(), storedFileMapper,
+                java.util.List.of((fid, uid) -> false));
+        FileStorageService throwing = new FileStorageService(tempDir.toString(), storedFileMapper,
+                java.util.List.of((fid, uid) -> { throw new RuntimeException("acl db down"); }));
+
+        assertThatThrownBy(() -> denying.loadPath(fileId, 99L, false))
+                .hasMessageContaining("无权访问");
+        assertThatThrownBy(() -> throwing.loadPath(fileId, 99L, false))
+                .hasMessageContaining("无权访问");   // grantor 异常 fail-closed
+    }
 }

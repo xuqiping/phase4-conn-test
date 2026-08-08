@@ -59,9 +59,19 @@ public class MemoryRoutingService {
     private final SystemSettingService systemSettingService;
     private final TaskExecutor memoryTaskExecutor;
 
-    /** 路由入参（一轮对话双侧合并后的蒸馏原料）。 */
+    /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目）。 */
     public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
-                               String l1, String l2, List<Long> tagIds) {
+                               String l1, String l2, List<Long> tagIds, String fileId) {
+        /** 对话轮入参（兼容旧签名，fileId=null）。 */
+        public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
+                            String l1, String l2, List<Long> tagIds) {
+            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null);
+        }
+
+        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2，无 sourceTurn。 */
+        public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2, List<Long> tagIds) {
+            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId);
+        }
     }
 
     /** fire-and-forget 入口：提交 executor 立即返回；队列满 → 降级日志（不影响主写入）。 */
@@ -145,13 +155,21 @@ public class MemoryRoutingService {
         // ⑤ 精判：一次 LLM 批量判 K 项目（FR-003）
         List<MemoryEntryDistiller.Judgment> judgments = distiller.judge(input.userId(), shortRules, input.l1(), input.l2());
 
-        // ⑥ 置信度分流 + 脱敏二次扫描 + 落库（FR-004）
+        // ⑥ 置信度分流 + 脱敏二次扫描 + 落库（FR-004；fileId 非空 = FR-204 文件条目）
         double autoApprove = systemSettingService.getMemoryRoutingAutoApproveThreshold();
         double review = systemSettingService.getMemoryRoutingReviewThreshold();
+        boolean isFile = input.fileId() != null && !input.fileId().isBlank();
         int active = 0, pending = 0, dropped = 0;
         for (MemoryEntryDistiller.Judgment j : judgments) {
             if (!j.hit() || j.confidence() < review) {
                 dropped++;
+                continue;
+            }
+            // FR-204 幂等：同项目同文件已有未删 FILE 条目 → 跳过（重试重灌不重复收录）
+            if (isFile && entryMapper.countFileEntry(j.projectId(), input.fileId()) > 0) {
+                dropped++;
+                log.info("路由跳过重复文件条目 userId={} projectId={} fileId={}",
+                        input.userId(), j.projectId(), input.fileId());
                 continue;
             }
             String status = j.confidence() >= autoApprove
@@ -171,7 +189,8 @@ public class MemoryRoutingService {
             entry.setL2Detail(j.distilledL2());
             entry.setConfidence(j.confidence());
             entry.setStatus(status);
-            entry.setContentType(MemoryProjectEntry.CONTENT_TYPE_TEXT);
+            entry.setContentType(isFile ? MemoryProjectEntry.CONTENT_TYPE_FILE : MemoryProjectEntry.CONTENT_TYPE_TEXT);
+            entry.setFileId(isFile ? input.fileId() : null);
             entry.setCreatedBy(input.userId());
             entry.setUpdatedBy(input.userId());
             entryMapper.insert(entry);

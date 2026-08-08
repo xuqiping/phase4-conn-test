@@ -37,11 +37,21 @@ public class FileStorageService {
 
     private final Path storageRoot;
     private final StoredFileMapper storedFileMapper;
+    /** 共享放行钩子（P3 记忆二期：项目 FILE 条目成员放行）；无实现 bean 时 Spring 注空列表 = 纯 owner 校验。 */
+    private final java.util.List<FileSharedAccessGrantor> sharedAccessGrantors;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FileStorageService(@Value("${app.files.storage-dir:uploads/workflow-inputs}") String storageDir,
-                              StoredFileMapper storedFileMapper) {
+                              StoredFileMapper storedFileMapper,
+                              java.util.List<FileSharedAccessGrantor> sharedAccessGrantors) {
         this.storageRoot = Paths.get(storageDir).toAbsolutePath().normalize();
         this.storedFileMapper = storedFileMapper;
+        this.sharedAccessGrantors = sharedAccessGrantors == null ? java.util.List.of() : sharedAccessGrantors;
+    }
+
+    /** 测试/纯 owner 校验用（无共享放行钩子）。 */
+    public FileStorageService(String storageDir, StoredFileMapper storedFileMapper) {
+        this(storageDir, storedFileMapper, java.util.List.of());
     }
 
     /** 落盘 + 登记 owner（kb_id 留空，通用上传）。 */
@@ -158,7 +168,7 @@ public class FileStorageService {
         if (meta == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在: " + fileId);
         }
-        if (!admin && !meta.getOwnerUserId().equals(userId)) {
+        if (!admin && !meta.getOwnerUserId().equals(userId) && !grantedByShare(fileId, userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该文件");
         }
         Path path = resolveSafe(fileId);
@@ -166,6 +176,25 @@ public class FileStorageService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在: " + fileId);
         }
         return path;
+    }
+
+    /** 共享放行分支（FR-204）：咨询已注册 grantor，任一放行即允许；grantor 异常 fail-closed。 */
+    private boolean grantedByShare(String fileId, Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        for (FileSharedAccessGrantor grantor : sharedAccessGrantors) {
+            try {
+                if (grantor.canAccess(fileId, userId)) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // fail-closed：放行链故障绝不打开门
+                org.slf4j.LoggerFactory.getLogger(FileStorageService.class)
+                        .warn("共享放行 grantor 异常 fileId={} userId={}: {}", fileId, userId, e.getMessage());
+            }
+        }
+        return false;
     }
 
     /** 删磁盘字节 + 删登记行（D5 文件生命周期：文档 INDEXED/删除后清 orphan）。 */
