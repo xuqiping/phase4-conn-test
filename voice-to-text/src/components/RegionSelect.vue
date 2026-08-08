@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 区域框选 overlay（规格 §3.1 Should；2026-08-08 Phase4 手测问题4）。
-// 独立全屏透明窗口（region-select），由 open_region_select 创建，
-// 加载 index.html#/region-select 时 App.vue 只渲染本组件。
+// 独立透明最大化窗口（region-select），由 open_region_select 创建，
+// App.vue 按窗口 label 分流只渲染本组件。
 // 拖出矩形 → Enter/确定 → finish_region_select（CSS 像素 × scaleFactor = 物理像素）；
 // Esc/取消 → cancel_region_select。
 import { onBeforeUnmount, onMounted, ref } from 'vue'

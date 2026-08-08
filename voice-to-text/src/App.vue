@@ -10,10 +10,12 @@ import Study from './components/Study.vue'
 import SummaryPanel from './components/SummaryPanel.vue'
 import RegionSelect from './components/RegionSelect.vue'
 import { useSessionStore } from './stores/session'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
-// 区域框选 overlay 窗口（region-select）加载同一 SPA，按 hash 分流只渲染框选层；
+// 区域框选 overlay 窗口（region-select）加载同一 SPA，按窗口 label 分流
+// （不靠 URL hash —— hash 可能被吞导致渲染错内容）；
 // overlay 窗口是透明的，body 深色背景必须去掉，否则遮罩下看不见屏幕内容。
-const isRegionSelect = window.location.hash.startsWith('#/region-select')
+const isRegionSelect = getCurrentWindow().label === 'region-select'
 if (isRegionSelect) {
   document.body.style.background = 'transparent'
 }

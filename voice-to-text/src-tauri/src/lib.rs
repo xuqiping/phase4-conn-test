@@ -247,17 +247,19 @@ fn open_region_select(app: tauri::AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
+    // 容错教训（2026-08-08 手测翻车）：fullscreen+transparent 在 Windows 上
+    // 可能渲染成不透明白窗 → 改用 maximized；不藏任务栏图标，渲染失败时
+    // 用户永远能从任务栏/Alt+F4 关窗，不会再被困住。
     tauri::WebviewWindowBuilder::new(
         &app,
         "region-select",
-        tauri::WebviewUrl::App("index.html#/region-select".into()),
+        tauri::WebviewUrl::App("index.html".into()),
     )
     .title("框选录制区域")
-    .fullscreen(true)
+    .maximized(true)
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
-    .skip_taskbar(true)
     .build()
     .map_err(|e| format!("open region select window: {e}"))?;
     Ok(())
