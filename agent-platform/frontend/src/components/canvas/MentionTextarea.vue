@@ -352,6 +352,11 @@ defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, ren
 <style lang="scss" scoped>
 .mention-ta {
   position: relative;
+  // 显式满宽：包裹层在 Naive n-form-item 里是 flex item，默认收缩到内容宽。
+  // 空态靠 ::before 占位符长文本撑宽（~346），一旦打 @ 触发 is-empty 移除 →
+  // 占位符消失 → min-content 塌到字宽（~31px），连带 input/popover 全塌成窄条，
+  // 空态文案竖排撑成 412px 高遮下方。width:100% 让宽度只跟父容器，与内容解耦。
+  width: 100%;
 
   &__input {
     position: relative;
@@ -426,11 +431,12 @@ defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, ren
     margin-top: 2px;
     min-width: 100%;
     max-width: 240px;
+    max-height: 240px;
+    overflow-y: auto;
     background: var(--color-surface);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-base);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-    overflow: hidden;
   }
 
   &__hint, &__empty {
