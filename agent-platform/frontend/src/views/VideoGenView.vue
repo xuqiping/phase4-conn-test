@@ -44,10 +44,12 @@
               :placeholder="hasAnyAttachment
                 ? '描述如何运用参考素材；输入 @ 引用图1/视频1/音频1，如：以 @图1 为产品参考…'
                 : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和（输入 @ 可引用参考附件）'"
+              @mention-click="onAttachmentMentionClick"
             />
           </n-form-item>
 
           <!-- 多模态参考附件（按模型能力动态渲染；不上传即文生视频） -->
+          <div ref="attachAreaRef"></div>
           <template v-if="capability">
             <n-form-item v-if="capability.maxImages > 0">
               <template #label>
@@ -417,6 +419,11 @@ interface UploadedAttachment { id: string; fileId: string; name: string; assetId
 const images = ref<UploadedAttachment[]>([])
 const videos = ref<UploadedAttachment[]>([])
 const audios = ref<UploadedAttachment[]>([])
+/** A1：附件 @chip 点击 → 滚动到附件上传区（同页锚点，画布跳节点在此页无对应实体）。 */
+const attachAreaRef = ref<HTMLElement | null>(null)
+function onAttachmentMentionClick() {
+  attachAreaRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 const imageFileList = ref<UploadFileInfo[]>([])
 const videoFileList = ref<UploadFileInfo[]>([])
 const audioFileList = ref<UploadFileInfo[]>([])

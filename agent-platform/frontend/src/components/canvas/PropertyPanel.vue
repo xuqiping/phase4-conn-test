@@ -44,6 +44,7 @@
             :rows="4"
             placeholder="文本节点提示词；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
@@ -118,6 +119,7 @@
             :rows="3"
             placeholder="视频生成 prompt；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
@@ -278,6 +280,7 @@
             :rows="5"
             placeholder="剧本输入；输入 @ 引用上游节点产出，经 LlmGateway 拆分镜"
             @update:model-value="(v: string) => { if (node) node.data.synopsis = v }"
+            @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
@@ -358,6 +361,8 @@ const emit = defineEmits<{
   (e: 'update-asset', node: CanvasNode): void
   /** C5/FR-006：node.data 被面板改动需落库（模型选择器等离散选择），父组件 scheduleSave。 */
   (e: 'data-changed'): void
+  /** A1 增强：提示词里 @chip 被点击 → 跳转聚焦被引用节点（CanvasView 居中选中该节点）。 */
+  (e: 'mention-focus', payload: { kind: string; id: string }): void
 }>()
 
 /** S12：当前节点已绑定资产（node.data.assetId 存在）。 */
@@ -395,6 +400,11 @@ function onRenameBlur() {
   if (deduped !== node.data.label) {
     node.data.label = deduped
   }
+}
+
+/** A1：提示词 @chip 被点击 → 上抛 mention-focus，CanvasView 居中选中被引用节点。 */
+function onMentionClick(payload: { kind: string; id: string }) {
+  emit('mention-focus', payload)
 }
 
 /** 脚本节点已拆分镜数（属性面板回显）。 */

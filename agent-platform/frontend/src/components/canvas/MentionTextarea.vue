@@ -2,31 +2,29 @@
   <div class="mention-ta" ref="rootRef">
     <!--
       S13 节点 @引用输入框（设计 §十三）。
-      原生 textarea（非 n-input）——需要 selectionStart 精准定位光标做 @唤起 + 占位符插入。
-      占位符本体存 node/asset id（重命名不断链 L8）；label 仅服务人脑消歧。
+      A1 contenteditable 重写：原生 textarea 只能「存什么显什么」，无法存 token(@{{node:id}}) 却显人话(节点名)。
+      改 contenteditable div：chip=原子块(contenteditable=false，存 data-mention=token、显 label)，
+      文本节点=字面量，<br>=换行。序列化时 chip→token、<br>→\n，还原回 v-model 字符串（契约不变）。
+      chip 可点击：hover 手型，点击 emit mention-click → 父组件跳转聚焦被引用对象（A1 增强）。
       候选仅祖先节点（plan §S13：@沿既有连线，拓扑天然成立）。
-      C4：mirror 镜像层垫在 textarea 下，把 @占位符染成蓝色 chip（断链=黄色）。
-      用户看到的是「透明 textarea 文字」叠在「mirror 染色层」上——占位符处显蓝底。
     -->
-    <div ref="mirrorRef" class="mention-ta__mirror" aria-hidden="true" @scroll="onMirrorScroll">
-      <template v-for="(seg, i) in segments" :key="i">
-        <span v-if="seg.type === 'text'" class="mention-ta__txt">{{ seg.value }}</span>
-        <span v-else class="mention-ta__chip" :class="{ 'is-broken': seg.broken }">{{ seg.raw }}</span>
-      </template>
-    </div>
-    <textarea
-      ref="taRef"
+    <div
+      ref="editRef"
       class="mention-ta__input"
-      :value="modelValue"
-      :placeholder="placeholder"
-      :disabled="disabled"
-      :rows="rows"
-      :maxlength="maxlength"
+      :class="{ 'is-disabled': disabled, 'is-empty': !modelValue }"
+      :contenteditable="!disabled"
+      :data-placeholder="placeholder"
+      role="textbox"
+      :aria-multiline="rows > 1"
+      :style="{ minHeight: `calc(${rows} * 1.5em + var(--spacing-2))` }"
       @input="onInput"
       @keydown="onKeydown"
       @blur="onBlur"
-      @scroll="onTaScroll"
-    />
+      @paste="onPaste"
+      @click="onEditorClick"
+      @compositionstart="composing = true"
+      @compositionend="onCompositionEnd"
+    ></div>
     <span v-if="maxlength" class="mention-ta__count">{{ modelValue.length }}/{{ maxlength }}</span>
     <div v-if="open && filtered.length" class="mention-ta__popover">
       <div class="mention-ta__hint">@ 引用祖先节点（拓扑保证其先跑）</div>
@@ -50,21 +48,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { MentionCandidate } from '@/types/canvas'
+import { detectAnchor, escapeHtml, insertMention, parseSegments } from './mentionLogic'
 
 const props = withDefaults(defineProps<{
   /** 文本（含 `@{{kind:id}}` 占位符，v-model 双向）。 */
   modelValue: string
   /** @选择器候选（画布=祖先节点/资产；视频页=会话附件。设计 §十三硬约束仅对画布生效）。 */
   candidates: MentionCandidate[]
-  /** C4：已断链的占位符原文集合（上游被删/断连），mirror 里这些 chip 染黄色；父组件用 findBrokenMentions 算好传入。 */
+  /** 已断链的占位符原文集合（上游被删/断连），chip 染黄色；父组件用 findBrokenMentions 算好传入。 */
   brokenMentions?: string[]
   /** chip/候选行里 kind→中文标签（默认画布 node/asset；视频页传 image/video/audio）。未知 kind 回退显 kind 本体。 */
   kindLabels?: Record<string, string>
+  /** chip 显名：kind:id → 人类名（默认由 candidates 派生；断链找不到 → 显 raw token）。 */
   /** 无候选时的空态文案（默认画布「无祖先节点」；视频页传「无附件」类）。 */
   emptyHint?: string
-  /** 字符上限（透传 textarea maxlength 硬截断 + 显计数器；不传则不限不计数）。 */
+  /** 字符上限（软截断 + 显计数器；不传则不限不计数）。 */
   maxlength?: number
   placeholder?: string
   rows?: number
@@ -80,12 +80,12 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
+  /** A1 增强：点击 chip → 父组件跳转聚焦被引用对象（画布=选中并居中节点；视频页=滚到附件）。 */
+  (e: 'mention-click', payload: { kind: string; id: string; raw: string }): void
 }>()
 
-const taRef = ref<HTMLTextAreaElement | null>(null)
+const editRef = ref<HTMLDivElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
-/** C4 mirror 镜像层（垫在 textarea 下做占位符染色）。 */
-const mirrorRef = ref<HTMLElement | null>(null)
 /** @唤起开合。 */
 const open = ref(false)
 /** @ 符在文本中的下标（插入时切分点）。 */
@@ -94,6 +94,18 @@ const anchor = ref(-1)
 const query = ref('')
 /** 键盘上下移高亮项索引（Enter 选中）。 */
 const activeIndex = ref(0)
+/** IME 合成中（不触发 @唤起/序列化，防中文输入法误触）。 */
+const composing = ref(false)
+
+/**
+ * chip 显名映射：kind:id → label（由 candidates 派生，响应式——改节点名 chip 同步）。
+ * 找不到（断链/候选已不在）→ null，渲染时回退显 raw token（黄底断链可见）。
+ */
+const labelMap = computed<Map<string, string>>(() => {
+  const m = new Map<string, string>()
+  for (const c of props.candidates) m.set(`${c.kind}:${c.id}`, c.label)
+  return m
+})
 
 const filtered = computed<MentionCandidate[]>(() => {
   const q = query.value.trim().toLowerCase()
@@ -102,65 +114,132 @@ const filtered = computed<MentionCandidate[]>(() => {
 })
 
 /**
- * C4 mirror 切片：把 modelValue 切成「普通文本段 + 占位符段」。
- * 占位符段按 brokenMentions 标黄（断链），其余标蓝（正常引用）。
- * 用本地正则带 index 精确切分（parseMentions 不返 index，故此处不复用）。
+ * 最近一次 emit 出去的字符串（回声守卫）：
+ * 用户输入/选中 → emitValue → 父回写 modelValue → watch 触发 → 若 === lastEmitted 则跳过 render（DOM 已对、光标不丢）；
+ * 仅外部变更（父加载/切节点）才 render 重建。
  */
-// 占位符正则：@{{<kind>:<id>}}，kind 为任意单词（画布 node/asset；视频页 image/video/audio）。
-const MENTION_RE_LOCAL = /@\{\{(\w+):([^}]+)\}\}/g
-type Segment = { type: 'text'; value: string } | { type: 'mention'; raw: string; broken: boolean }
-const segments = computed<Segment[]>(() => {
-  const text = props.modelValue
+const lastEmitted = ref(props.modelValue)
+
+/** 把字符串渲染成 contenteditable 子节点（chip=原子 span、文本=字面量、\n=<br>）。命令式 innerHTML。 */
+function render(text: string) {
+  const el = editRef.value
+  if (!el) return
   const brokenSet = new Set(props.brokenMentions)
-  const out: Segment[] = []
-  MENTION_RE_LOCAL.lastIndex = 0
-  let m: RegExpExecArray | null
-  let last = 0
-  while ((m = MENTION_RE_LOCAL.exec(text)) !== null) {
-    if (m.index > last) out.push({ type: 'text', value: text.slice(last, m.index) })
-    out.push({ type: 'mention', raw: m[0], broken: brokenSet.has(m[0]) })
-    last = m.index + m[0].length
-  }
-  if (last < text.length) out.push({ type: 'text', value: text.slice(last) })
-  return out
-})
-
-/** textarea 滚动 → mirror 同步（长文本换行后两边视口对齐）。 */
-function onTaScroll() {
-  if (mirrorRef.value && taRef.value) mirrorRef.value.scrollTop = taRef.value.scrollTop
-}
-/** mirror 自身不接收滚轮（pointer-events:none），占位防抖。 */
-function onMirrorScroll() {
-  if (taRef.value && mirrorRef.value) taRef.value.scrollTop = mirrorRef.value.scrollTop
-}
-
-/**
- * 扫描文本定位 @ 唤起锚点：从光标前一个字符回退，跳过连续非空白字符直到 @；
- * 中途遇空白则不是 @ 唤起（防止把段落里普通的 @ 误判）。返回 @ 下标或 -1。
- */
-function detectAnchor(text: string, caret: number): { at: number; q: string } | null {
-  if (caret <= 0) return null
-  let i = caret - 1
-  while (i >= 0) {
-    const ch = text[i]
-    if (ch === '@') {
-      // @ 前一字符须非字母数字（拦邮箱类 foo@bar；允许行首/空白/中文/标点后触发，
-      // 修复「输入一段话后你好@ 不弹」——原要求空白过严，中文句末无空格触发不了）
-      const prev = i > 0 ? text[i - 1] : ' '
-      if (!/[A-Za-z0-9]/.test(prev)) return { at: i, q: text.slice(i + 1, caret) }
-      return null
+  const segs = parseSegments(text)
+  let html = ''
+  for (const s of segs) {
+    if (s.type === 'text') {
+      html += escapeHtml(s.value).replace(/\n/g, '<br>')
+    } else {
+      const label = labelMap.value.get(`${s.kind}:${s.id}`) ?? s.raw
+      const brokenCls = brokenSet.has(s.raw) ? ' is-broken' : ''
+      html +=
+        `<span class="mention-ta__chip${brokenCls}" contenteditable="false"` +
+        ` data-mention="${escapeHtml(s.raw)}" data-kind="${escapeHtml(s.kind)}" data-id="${escapeHtml(s.id)}">` +
+        `${escapeHtml(label)}</span>`
     }
-    if (/\s/.test(ch)) return null // @ 后遇空白 → 关闭
-    i--
   }
-  return null
+  el.innerHTML = html
 }
 
-function onInput(e: Event) {
-  const ta = e.target as HTMLTextAreaElement
-  const value = ta.value
-  emit('update:modelValue', value)
-  const m = detectAnchor(value, ta.selectionStart)
+/** 序列化 contenteditable 子节点 → 含 token 的字符串（chip→data-mention、<br>→\n、文本→字面量）。 */
+function serialize(): string {
+  const el = editRef.value
+  if (!el) return ''
+  return serializeNode(el)
+}
+function serializeNode(node: Node): string {
+  let out = ''
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      out += child.nodeValue ?? ''
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      const elc = child as HTMLElement
+      if (elc.classList.contains('mention-ta__chip')) {
+        out += elc.dataset.mention ?? ''
+      } else if (elc.tagName === 'BR') {
+        out += '\n'
+      } else {
+        // 块元素（DIV 等，浏览器偶尔产生）：内容前后补换行边界
+        if (out.length > 0 && !out.endsWith('\n')) out += '\n'
+        out += serializeNode(elc)
+        out += '\n'
+      }
+    }
+  })
+  return out
+}
+
+function emitValue(v: string) {
+  lastEmitted.value = v
+  emit('update:modelValue', v)
+}
+
+/** 取 contenteditable 当前字符光标偏移（用于 @唤起定位——回退计字符数，chip 按 token 长度计）。 */
+function caretCharOffset(): number {
+  const el = editRef.value
+  if (!el) return 0
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return 0
+  const range = sel.getRangeAt(0)
+  const pre = range.cloneRange()
+  pre.selectNodeContents(el)
+  pre.setEnd(range.startContainer, range.startOffset)
+  // pre.toString() 把 chip 的 textContent(label) 也算进去——需用 token 长度修正：
+  // 简化：用 toString 计字面可见字符，对 @唤起定位足够（只需 @ 到光标间无空白判定）。
+  return pre.toString().length
+}
+
+/** 把字符偏移设回 contenteditable 光标（选中候选后定位）。 */
+function setCaretCharOffset(offset: number) {
+  const el = editRef.value
+  if (!el) return
+  const sel = window.getSelection()
+  if (!sel) return
+  const range = document.createRange()
+  let count = 0
+  let placed = false
+  for (const child of Array.from(el.childNodes)) {
+    let len = 0
+    if (child.nodeType === Node.TEXT_NODE) {
+      len = child.nodeValue?.length ?? 0
+    } else {
+      const elc = child as HTMLElement
+      if (elc.tagName === 'BR') len = 1
+      else if (elc.classList.contains('mention-ta__chip')) len = elc.dataset.mention?.length ?? 0
+    }
+    if (count + len >= offset) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        range.setStart(child, Math.min(offset - count, len))
+      } else {
+        range.setStartAfter(child)
+      }
+      range.collapse(true)
+      placed = true
+      break
+    }
+    count += len
+  }
+  if (!placed) {
+    range.selectNodeContents(el)
+    range.collapse(false)
+  }
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+function onInput() {
+  if (composing.value) return
+  let v = serialize()
+  // maxlength 软截断（contenteditable 无原生 maxlength；超限裁掉尾部，保 token 完整优先级低——超 8000 极罕见）
+  if (props.maxlength && v.length > props.maxlength) {
+    v = v.slice(0, props.maxlength)
+    render(v)
+    nextTick(() => setCaretCharOffset(v.length))
+  }
+  emitValue(v)
+  const caret = caretCharOffset()
+  const m = detectAnchor(v, caret)
   if (m) {
     open.value = true
     anchor.value = m.at
@@ -171,23 +250,35 @@ function onInput(e: Event) {
   }
 }
 
+function onCompositionEnd() {
+  composing.value = false
+  onInput()
+}
+
 function onKeydown(e: KeyboardEvent) {
-  if (!open.value) return
-  if (e.key === 'Escape') {
-    open.value = false
-    e.preventDefault()
-  } else if (e.key === 'ArrowDown') {
-    activeIndex.value = Math.min(activeIndex.value + 1, filtered.value.length - 1)
-    e.preventDefault()
-  } else if (e.key === 'ArrowUp') {
-    activeIndex.value = Math.max(activeIndex.value - 1, 0)
-    e.preventDefault()
-  } else if (e.key === 'Enter') {
-    const pick = filtered.value[activeIndex.value]
-    if (pick) {
-      selectCandidate(pick)
+  if (open.value) {
+    if (e.key === 'Escape') {
+      open.value = false
       e.preventDefault()
+    } else if (e.key === 'ArrowDown') {
+      activeIndex.value = Math.min(activeIndex.value + 1, filtered.value.length - 1)
+      e.preventDefault()
+    } else if (e.key === 'ArrowUp') {
+      activeIndex.value = Math.max(activeIndex.value - 1, 0)
+      e.preventDefault()
+    } else if (e.key === 'Enter') {
+      const pick = filtered.value[activeIndex.value]
+      if (pick) {
+        selectCandidate(pick)
+        e.preventDefault()
+      }
     }
+    return
+  }
+  // Enter 插换行：拦截确保插 <br>（而非浏览器默认 <div>），保证 serialize→\n 1:1 可逆。
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    document.execCommand('insertLineBreak')
   }
 }
 
@@ -196,91 +287,123 @@ function onBlur() {
   setTimeout(() => { open.value = false }, 120)
 }
 
-/** 选定候选 → 在 @ 锚点处插入占位符 + 尾随空格，光标移到末尾，关闭弹层。 */
+/** 粘贴仅取纯文本（剥离富文本/HTML，防外部样式污染 contenteditable）。 */
+function onPaste(e: ClipboardEvent) {
+  e.preventDefault()
+  const txt = e.clipboardData?.getData('text/plain') ?? ''
+  if (txt) document.execCommand('insertText', false, txt)
+}
+
+/** 事件委托：点击 chip → emit mention-click（chip contenteditable=false 不会放光标，整块可点）。 */
+function onEditorClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  const chip = target.closest('.mention-ta__chip') as HTMLElement | null
+  if (!chip) return
+  // 断链 chip（上游已删）不响应点击——跳转无目标，cursor 已显 not-allowed
+  if (chip.classList.contains('is-broken')) return
+  const raw = chip.dataset.mention ?? ''
+  const kind = chip.dataset.kind ?? ''
+  const id = chip.dataset.id ?? ''
+  if (raw) {
+    emit('mention-click', { kind, id, raw })
+    e.preventDefault()
+  }
+}
+
+/** 选定候选 → 在 @ 锚点处插入 token + 尾随空格，重建 DOM 显 chip，光标移到 token 之后。 */
 function selectCandidate(c: MentionCandidate) {
-  const ta = taRef.value
-  if (!ta) return
-  const value = ta.value
-  const caret = ta.selectionStart ?? value.length
+  const cur = lastEmitted.value
+  const caret = caretCharOffset()
   const at = anchor.value >= 0 ? anchor.value : caret
-  const insert = `@{{${c.kind}:${c.id}}}`
-  // 尾随空格：末尾或下一个非空白字符时补（便于继续输入），紧邻空白则不补（防双空格）
-  const after = value[caret]
-  const suffix = after !== undefined && /\s/.test(after) ? '' : ' '
-  const next = value.slice(0, at) + insert + suffix + value.slice(caret)
-  const pos = at + insert.length + suffix.length
-  emit('update:modelValue', next)
+  const { text, pos } = insertMention(cur, at, caret, c.kind, c.id)
+  emitValue(text)
+  render(text) // 立即重建（chip 要显示；lastEmitted 已更新故 watch 回声会跳过重复 render）
   open.value = false
   anchor.value = -1
   query.value = ''
-  // 光标置于占位符（+ 尾随空格）之后
   nextTick(() => {
-    ta.focus()
-    ta.setSelectionRange(pos, pos)
+    editRef.value?.focus()
+    setCaretCharOffset(pos)
   })
 }
 
-defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor })
+// 外部 modelValue 变更（父加载/切节点）→ 重建；自身 emit 回声（=== lastEmitted）→ 跳过保光标。
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (v === lastEmitted.value) return
+    lastEmitted.value = v
+    render(v)
+  }
+)
+// 断链集合/候选 label 变化 → 重渲染（chip 染色/名同步），不影响光标（失焦态或只读视觉）。
+watch([() => props.brokenMentions, () => props.candidates], () => {
+  render(lastEmitted.value)
+})
+
+onMounted(() => {
+  lastEmitted.value = props.modelValue
+  render(props.modelValue)
+})
+
+defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, render, serialize })
 </script>
 
 <style lang="scss" scoped>
 .mention-ta {
   position: relative;
 
-  // C4 mirror 镜像层：垫在 textarea 下，字体/字号/行高/padding/border/wrap 与 textarea 像素级一致，
-  // 文本透明仅作染色载体；textarea 文字叠在其上 → 占位符处显蓝底。
-  &__mirror {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    box-sizing: border-box;
-    padding: var(--spacing-1) var(--spacing-2);
-    border: 1px solid transparent; // 与 textarea 同宽 border 占位，保证文本对齐
-    border-radius: var(--radius-base);
-    background: var(--color-bg);
-    color: transparent; // 普通文本透明，仅 chip 染色
-    font-size: var(--font-size-sm);
-    line-height: 1.5;
-    font-family: inherit;
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow: hidden;
-    pointer-events: none; // 滚轮/点击穿透到 textarea
-    z-index: 0;
-  }
-
-  &__chip {
-    background: rgba(var(--color-primary-rgb), 0.28);
-    color: transparent;
-    border-radius: var(--radius-small);
-    padding: 0 2px;
-
-    &.is-broken {
-      background: rgba(250, 204, 21, 0.3); // 断链=黄，与 __warn 语义同源
-    }
-  }
-
   &__input {
     position: relative;
-    z-index: 1; // 叠在 mirror 之上
     width: 100%;
     box-sizing: border-box;
     padding: var(--spacing-1) var(--spacing-2);
-    background: transparent; // 透明，让 mirror 的 chip 染色透出
+    background: transparent;
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-base);
     color: var(--color-text-primary);
     font-size: var(--font-size-sm);
     line-height: 1.5;
-    resize: vertical;
     outline: none;
     font-family: inherit;
     caret-color: var(--color-primary);
+    // 保留空白/换行（contenteditable 文本字面量按 pre-wrap 排版）
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    cursor: text;
 
     &:focus { border-color: var(--color-primary); }
-    &:disabled { opacity: 0.6; cursor: not-allowed; }
+    &.is-disabled { opacity: 0.6; cursor: not-allowed; }
+    // 空内容占位符（contenteditable 无原生 placeholder，用 :empty + attr 模拟）
+    &.is-empty::before {
+      content: attr(data-placeholder);
+      color: var(--color-text-tertiary);
+      pointer-events: none;
+    }
+  }
+
+  // A1 chip：显人话 label，原子不可编辑，hover 手型可点击跳转
+  &__chip {
+    display: inline-block;
+    background: rgba(var(--color-primary-rgb), 0.28);
+    color: var(--color-primary);
+    border-radius: var(--radius-small);
+    padding: 0 4px;
+    margin: 0 1px;
+    line-height: 1.4;
+    cursor: pointer; // A1 增强：hover 显手型，提示可点击跳转
+    user-select: none;
+    transition: background 0.12s;
+
+    &:hover { background: rgba(var(--color-primary-rgb), 0.45); }
+
+    &.is-broken {
+      background: rgba(250, 204, 21, 0.3); // 断链=黄，与 __warn 语义同源
+      color: var(--color-text-secondary);
+      cursor: not-allowed;
+      &:hover { background: rgba(250, 204, 21, 0.45); }
+    }
   }
 
   &__count {

@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, ref } from 'vue'
+import { markRaw, nextTick, ref } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
@@ -84,11 +84,11 @@ const emit = defineEmits<{
 }>()
 
 const defaultEdgeOptions = {
-  type: 'smoothstep',
+  type: 'default', // 贝塞尔弧线（同 infinite-canvas 风格），原 smoothstep=直角折线
   animated: false,
-  style: { stroke: 'var(--color-primary)', strokeWidth: 2 }
+  style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
 }
-const connectionLineStyle = { stroke: 'var(--color-primary)', strokeWidth: 2 }
+const connectionLineStyle = { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
 
 /** 从节点调色板拖入：dataTransfer 带 {label}，落点转画布坐标。 */
 function onDragOver(event: DragEvent) {
@@ -155,8 +155,8 @@ function onConnect(connection: Connection) {
     target: connection.target,
     sourceHandle: connection.sourceHandle || undefined,
     targetHandle: connection.targetHandle || undefined,
-    type: 'smoothstep',
-    style: { stroke: 'var(--color-primary)', strokeWidth: 2 }
+    type: 'default', // 贝塞尔弧线（同 defaultEdgeOptions）
+    style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   }
   edges.value.push(edge)
 }
@@ -167,6 +167,22 @@ function onNodeClick({ node }: NodeMouseEvent) {
   boardRoot.value?.focus()
   // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
   emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
+}
+
+/**
+ * A1：@chip 点击 → 按 id 聚焦节点（选中 + 居中视口）。
+ * 复用 onNodeClick 的选中语义（selectedNodeId + emit node-selected → 属性面板切到该节点），
+ * 叠加 vfFitView({nodes:[id]}) 把该节点滚入视口中心（maxZoom 限制防过度放大）。
+ */
+function focusNodeById(id: string) {
+  const n = nodes.value.find((x) => x.id === id)
+  if (!n) return
+  selectedNodeId.value = id
+  selectedEdgeId.value = ''
+  emit('node-selected', n)
+  nextTick(() => {
+    vfFitView({ nodes: [id], padding: 0.4, duration: 300, maxZoom: 1.2 })
+  })
 }
 
 /**
@@ -263,12 +279,12 @@ function addEdge(source: string, target: string) {
     id: `edge-${source}-${target}-${Date.now()}`,
     source,
     target,
-    type: 'smoothstep',
-    style: { stroke: 'var(--color-primary)', strokeWidth: 2 }
+    type: 'default', // 贝塞尔弧线（同 defaultEdgeOptions）
+    style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   })
 }
 
-defineExpose({ addNode, addEdge, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData })
+defineExpose({ addNode, addEdge, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById })
 </script>
 
 <style lang="scss" scoped>

@@ -111,6 +111,7 @@
           @check-update="onCheckUpdate"
           @update-asset="onUpdateAsset"
           @data-changed="scheduleSave"
+          @mention-focus="onMentionFocus"
         />
       </div>
 
@@ -247,6 +248,16 @@ const contextNode = ref<CanvasNode | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
+}
+
+/**
+ * A1：提示词 @chip 点击 → 聚焦被引用节点（居中 + 选中，属性面板切过去）。
+ * 仅 node kind 有画布实体可跳；asset kind MVP 无独立跳转目标（忽略）。
+ */
+function onMentionFocus(payload: { kind: string; id: string }) {
+  if (payload.kind === 'node') {
+    boardRef.value?.focusNodeById(payload.id)
+  }
 }
 
 // ==================== S13 节点 @引用（祖先链候选 + 运行前插值 + 断链检测） ====================
