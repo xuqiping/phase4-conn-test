@@ -25,4 +25,10 @@ public class RechargeRequest {
 
     /** 备注（落 ledger.remark，可空）。 */
     private String remark;
+
+    /**
+     * 幂等键（可空，安全体系 S1 · SEC-FR-121）：admin 重复提交/网络重试同键只充一次，
+     * 返回首次结果。空则退化为普通充值。
+     */
+    private String idempotencyKey;
 }
