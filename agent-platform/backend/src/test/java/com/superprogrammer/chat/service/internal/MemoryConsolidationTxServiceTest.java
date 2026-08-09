@@ -77,7 +77,7 @@ class MemoryConsolidationTxServiceTest {
         });
 
         SummarizeResult result = new SummarizeResult();
-        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", List.of(turn(101L)), cs(), result);
+        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", "BOTH", List.of(turn(101L)), cs(), result);
 
         ArgumentCaptor<MemorySummary> sc = ArgumentCaptor.forClass(MemorySummary.class);
         verify(summaryMapper).insert(sc.capture());
@@ -102,7 +102,7 @@ class MemoryConsolidationTxServiceTest {
         });
 
         SummarizeResult result = new SummarizeResult();
-        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", List.of(turn(101L)), cs(), result);
+        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", "BOTH", List.of(turn(101L)), cs(), result);
 
         ArgumentCaptor<MemorySummary> sc = ArgumentCaptor.forClass(MemorySummary.class);
         verify(summaryMapper).insert(sc.capture());
@@ -130,7 +130,7 @@ class MemoryConsolidationTxServiceTest {
         });
 
         SummarizeResult result = new SummarizeResult();
-        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", List.of(turn(101L)), cs(), result);
+        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", "BOTH", List.of(turn(101L)), cs(), result);
 
         ArgumentCaptor<MemorySummary> sc = ArgumentCaptor.forClass(MemorySummary.class);
         verify(summaryMapper).insert(sc.capture());
@@ -151,7 +151,7 @@ class MemoryConsolidationTxServiceTest {
         });
 
         SummarizeResult result = new SummarizeResult();
-        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", List.of(), cs(), result);
+        txService.writeSummaryAndCoverage(1L, null, 10L, "工作", "BOTH", List.of(), cs(), result);
 
         verify(coverageMapper, never()).batchInsert(any());
         assertEquals(1, result.summariesWritten);

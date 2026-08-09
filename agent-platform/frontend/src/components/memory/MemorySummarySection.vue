@@ -26,6 +26,7 @@
         <div class="memory-summary-section__head">
           <n-tag size="tiny" type="info" :bordered="false">共享</n-tag>
           <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
+          <n-tag v-if="s.direction === 'INPUT' || s.direction === 'OUTPUT'" size="tiny" :type="s.direction === 'INPUT' ? 'info' : 'success'" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
           <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
           <span class="memory-summary-section__time">{{ s.summarizedAt || s.createdAt }}</span>
         </div>
@@ -43,6 +44,7 @@
     <n-card v-for="s in rows" :key="s.id" size="small" :bordered="true" style="margin-bottom: 8px">
       <div class="memory-summary-section__head">
         <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
+        <n-tag v-if="s.direction === 'INPUT' || s.direction === 'OUTPUT'" size="tiny" :type="s.direction === 'INPUT' ? 'info' : 'success'" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
         <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
         <span class="memory-summary-section__time">{{ s.summarizedAt || s.createdAt }}</span>
       </div>
@@ -120,6 +122,12 @@ function statusLabel(s: string): string {
   if (s === 'CLEAN') return '干净'
   if (s === 'PENDING_CONFLICT') return '冲突待裁'
   return '待重生'
+}
+/** P3c：总结方向徽标（INPUT=输入 / OUTPUT=输出；BOTH=综合不显示）。 */
+function directionLabel(d?: string): string {
+  if (d === 'INPUT') return '输入'
+  if (d === 'OUTPUT') return '输出'
+  return '综合'
 }
 
 onMounted(async () => {

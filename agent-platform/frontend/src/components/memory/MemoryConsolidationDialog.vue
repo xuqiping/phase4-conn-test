@@ -14,6 +14,27 @@
     :bordered="false"
   >
     <n-spin :show="loading">
+      <!-- 二期 P3b：重新总结筛选（标签 + 时间范围），应用到所有勾选 scope -->
+      <div class="consolidation-dialog__filter">
+        <div class="consolidation-dialog__filter-title">重新总结筛选（可选，留空 = 全部）</div>
+        <n-select
+          v-model:value="tagFilter"
+          multiple
+          filterable
+          size="small"
+          placeholder="仅总结所选标签"
+          :options="tagOptions"
+          :max-tag-count="2"
+          clearable
+        />
+        <n-date-picker
+          v-model:value="dateRange"
+          type="datetimerange"
+          size="small"
+          clearable
+          placeholder="按创建时间范围"
+        />
+      </div>
       <n-empty v-if="!loading && !targets.length" size="small" description="无可总结 scope" />
       <n-space v-else vertical :size="8">
         <div
@@ -77,7 +98,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NCheckbox, NEmpty, NModal, NRadioButton, NRadioGroup, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NDatePicker, NEmpty, NModal, NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import {
   memoryApi,
   type MemoryConsolidationTargetView,
@@ -102,6 +123,10 @@ const selected = ref(new Set<string>())
 const peopleCfgMap = ref<Record<string, any>>({})
 // 二期 P4（FR-302）：项目 scope 的总结通道（keyOf → 'shared' | 'personal'，缺省按 canWriteShared）
 const channelMap = ref<Record<string, 'shared' | 'personal'>>({})
+// 二期 P3b：重新总结筛选（标签 + 时间范围），应用到所有勾选 scope
+const tagOptions = ref<{ label: string; value: number }[]>([])
+const tagFilter = ref<number[]>([])
+const dateRange = ref<[number, number] | null>(null)
 
 function channelOf(t: MemoryConsolidationTargetView): 'shared' | 'personal' {
   return channelMap.value[keyOf(t)] ?? (t.canWriteShared ? 'shared' : 'personal')
@@ -127,6 +152,12 @@ const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
         base.authorIds = cfg.authorIds
         base.direction = cfg.direction
         base.includeDeparted = cfg.includeDeparted
+      }
+      // P3b：全局标签/时间筛选应用到本 scope
+      if (tagFilter.value.length) base.tagIds = tagFilter.value
+      if (dateRange.value) {
+        base.start = new Date(dateRange.value[0]).toISOString()
+        base.end = new Date(dateRange.value[1]).toISOString()
       }
       return base
     })
@@ -156,6 +187,19 @@ async function loadTargets() {
     selected.value = s
     peopleCfgMap.value = {}
     channelMap.value = {}
+    // P3b：重置筛选
+    tagFilter.value = []
+    dateRange.value = null
+    // P3b：载入本人标签做筛选候选（失败不阻塞）
+    try {
+      const tg = await memoryApi.listTags()
+      tagOptions.value = (tg.data?.data ?? []).map(t => ({
+        label: `${t.subject} : ${t.topic} · ${t.label}`,
+        value: t.id
+      }))
+    } catch {
+      tagOptions.value = []
+    }
   } catch (e: any) {
     message.error(e?.message || '加载 scope 失败')
   } finally {
@@ -202,6 +246,18 @@ watch(() => props.show, (s) => {
   }
   &__channel {
     padding-left: 24px;
+  }
+  &__filter {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 4px 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  &__filter-title {
+    font-size: 12px;
+    opacity: 0.65;
   }
 }
 </style>

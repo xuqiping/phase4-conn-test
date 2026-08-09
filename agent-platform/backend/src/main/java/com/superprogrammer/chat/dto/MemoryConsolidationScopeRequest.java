@@ -2,6 +2,7 @@ package com.superprogrammer.chat.dto;
 
 import lombok.Data;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -47,4 +48,18 @@ public class MemoryConsolidationScopeRequest {
      *  产出 user_id=自己、scope_owner=USER、project_id=该项目，对项目共享总结零写）；
      *  null/false=项目共享总结（scope_owner=PROJECT，仅 owner/admin 可写，FR-301）。 */
     private Boolean toPersonal;
+
+    /** 二期 P3b：只总结这些标签（null/空 = 该 scope 全部标签）。PERSONAL 枚举标签后过滤交集；
+     *  PROJECT byTag 分组后过滤交集。 */
+    private List<Long> tagIds;
+
+    /** 二期 P3b：取数时间窗下界（含），按 turn/entry 创建时间过滤；null = 不限下界。 */
+    private OffsetDateTime start;
+
+    /** 二期 P3b：取数时间窗上界（含），null = 不限上界。 */
+    private OffsetDateTime end;
+
+    /** 二期 P3b：近 N 天（按创建时间）；非空时优先于 start/end（PERSONAL 走 mapper，
+     *  PROJECT 在 service 内折算为 [now-N, now] 过滤 entry.created_at）。 */
+    private Integer relativeDays;
 }

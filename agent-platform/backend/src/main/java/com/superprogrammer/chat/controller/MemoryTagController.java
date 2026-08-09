@@ -1,6 +1,7 @@
 package com.superprogrammer.chat.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.chat.dto.MemoryTagCreateRequest;
 import com.superprogrammer.chat.dto.MemoryTagEditRequest;
 import com.superprogrammer.chat.dto.MemoryTagVO;
 import com.superprogrammer.chat.entity.MemoryTag;
@@ -17,19 +18,22 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 计划12 B：标签库对外端点（owner 自助 + 可见性收敛）。
  * <p>
- * <b>只有两个端点</b>：列本人标签 / owner 改 label 补 aliases。
+ * <b>端点</b>：列本人标签 / owner 改 label 补 aliases / <b>P3a 用户主动新建标签</b>。
  * <b>刻意不提供 merge/split/re-extract</b>——误并不可逆，已生成 summary 的 tag_id 会漂移
- * （L12 边界；单测反射断言 MemoryTagController 无此类端点）。
+ * （L12 边界；单测反射断言 MemoryTagController 无此类端点）。P3a 新建不走归并/拆分，
+ * 仅在 (user,subject,topic) 已存在时把 label 滚进既有 aliases（同路径①同义，铁律不破）。
  * <p>
  * 向量 4：VO 只露 label + subject + topic + usage_count（+ id 寻址），
  * aliases / anchor_embedding / anchor_tokens 一律不返。
@@ -57,6 +61,74 @@ public class MemoryTagController {
                 .orderByDesc(MemoryTag::getUsageCount)
                 .orderByDesc(MemoryTag::getCreatedAt));
         return ResponseEntity.ok(R.ok(tags.stream().map(MemoryTagController::toVO).toList()));
+    }
+
+    /**
+     * 二期 P3a：用户主动新建标签（主动建；写时归一被动建不变）。
+     * <p>
+     * 用户选定大类 topic + 自填 label（+可选别名），写入 {@code needs_review=false}（显式选定 = 已裁决）。
+     * <b>归一兜底</b>：若 (user, subject, topic) 已有标签（UNIQUE）→ 把 label 滚进既有 aliases 并复用，
+     * 同时清掉既有 needs_review（用户主动建此 topic 即认可）——与写时路径①同义，铁律不破。
+     */
+    @PostMapping
+    public ResponseEntity<R<MemoryTagVO>> create(@Valid @RequestBody MemoryTagCreateRequest req) {
+        Long uid = getCurrentUserId();
+        String subject = (req.getSubject() == null || req.getSubject().isBlank()) ? "我" : req.getSubject().trim();
+        String topic = req.getTopic().trim();
+        String label = req.getLabel().trim();
+        List<String> aliases = req.getAliases() == null ? List.of()
+                : req.getAliases().stream().filter(a -> a != null && !a.isBlank()).map(String::trim).toList();
+
+        // 路径①同义兜底：同 (user, subject, topic) 已有标签 → label 滚进 aliases 复用
+        MemoryTag exist = tagMapper.findByUserSubjectTopic(uid, subject, topic);
+        if (exist != null) {
+            if (!label.equals(exist.getLabel())) {
+                tagMapper.appendAlias(exist.getId(), label);
+            }
+            for (String a : aliases) {
+                tagMapper.appendAlias(exist.getId(), a);
+            }
+            if (Boolean.TRUE.equals(exist.getNeedsReview())) {
+                tagMapper.clearNeedsReview(exist.getId());
+                resolveTagNeedsReviewNotification(exist.getId());
+            }
+            log.info("主动建标签命中既有 (subject,topic) → 复用+滚别名 userId={} tagId={} label={}",
+                    uid, exist.getId(), label);
+            MemoryTag fresh = tagMapper.selectById(exist.getId());
+            return ResponseEntity.ok(R.ok("标签已存在，已并入", toVO(fresh)));
+        }
+
+        // 全 miss 新建（needs_review=false：用户显式选大类 = 已裁决；不发 TAG_NEEDS_REVIEW 通知）
+        MemoryTagAnchorService.AnchorPayload anchor = anchorService.build(uid, subject, topic, label, aliases);
+        MemoryTag m = new MemoryTag();
+        m.setUserId(uid);
+        m.setSubject(subject);
+        m.setTopic(topic);
+        m.setLabel(label);
+        m.setUsageCount(0);
+        m.setAliases(aliases.isEmpty() ? List.of() : new ArrayList<>(aliases));
+        m.setNeedsReview(false);
+        m.setCreatedBy(uid);
+        m.setUpdatedBy(uid);
+        try {
+            tagMapper.insertWithAnchor(m,
+                    anchor != null ? anchor.halfvec() : null,
+                    anchor != null ? anchor.tokens() : null);
+        } catch (org.springframework.dao.DuplicateKeyException dup) {
+            // 并发兜底（同路径④）：UNIQUE 拦截 → 复用已建行
+            log.info("主动建标签并发撞 UNIQUE userId={} subject={} topic={} → 复用", uid, subject, topic);
+            MemoryTag winner = tagMapper.findByUserSubjectTopic(uid, subject, topic);
+            if (winner != null) {
+                if (!label.equals(winner.getLabel())) {
+                    tagMapper.appendAlias(winner.getId(), label);
+                }
+                MemoryTag fresh = tagMapper.selectById(winner.getId());
+                return ResponseEntity.ok(R.ok("标签已存在，已并入", toVO(fresh)));
+            }
+            throw dup;
+        }
+        log.info("主动新建标签 userId={} tagId={} subject={} topic={} label={}", uid, m.getId(), subject, topic, label);
+        return ResponseEntity.ok(R.ok("标签已创建", toVO(m)));
     }
 
     /**

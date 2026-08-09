@@ -26,4 +26,13 @@ public class MemoryTurnVO {
     private String rawContent;
     private Boolean genDone;
     private OffsetDateTime createdAt;
+    /** 二期 P2：该流水账被收录到的项目（个人域 turn → memory_project_entries 反查；按 projectId 去重）。 */
+    private List<IndexedProject> indexedProjects;
+
+    /** 流水账收录项目缩略（流水账列表「收录于: X」徽标用）。 */
+    @Data
+    public static class IndexedProject {
+        private Long projectId;
+        private String name;
+    }
 }

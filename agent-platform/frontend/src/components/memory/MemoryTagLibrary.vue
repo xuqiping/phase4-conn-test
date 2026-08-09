@@ -15,6 +15,7 @@
         style="max-width: 280px"
       />
       <n-button size="small" :loading="loading" @click="load">刷新</n-button>
+      <n-button size="small" type="primary" ghost @click="openCreate">新增标签</n-button>
       <span class="memory-tag-library__hint">共 {{ filtered.length }} / {{ tags.length }} 个标签</span>
     </n-space>
 
@@ -64,13 +65,51 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- P3a 新建 modal：选大类 topic + 自填 label + 可选别名 -->
+    <n-modal v-model:show="creating" preset="card" title="新增标签" :style="{ maxWidth: '480px', width: '90vw' }">
+      <n-space vertical :size="12">
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">主体</span>
+          <n-input v-model:value="createForm.subject" size="small" placeholder="留空默认「我」" style="max-width: 160px" />
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">大类主题</span>
+          <n-select
+            v-model:value="createForm.topic"
+            size="small"
+            filterable
+            tag
+            placeholder="选择或输入大类（如 旅行出行 / 财务理财）"
+            :options="topicOptions"
+          />
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">标签名</span>
+          <n-input v-model:value="createForm.label" size="small" placeholder="对外展示名（后续符合的内容即落此标签）" />
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">别名</span>
+          <n-dynamic-tags v-model:value="createForm.aliases" size="small" :max="20" />
+        </div>
+        <n-alert type="info" :bordered="false" size="small">
+          主动建的标签直接生效（不再标「待裁决」）。若该主体+大类已有标签，新标签名会并入既有标签的别名。
+        </n-alert>
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button size="small" @click="creating = false">取消</n-button>
+          <n-button size="small" type="primary" :loading="saving" @click="submitCreate">创建</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { h, onMounted, ref, computed } from 'vue'
 import {
-  NAlert, NButton, NDataTable, NDynamicTags, NInput, NModal, NSpace, NTag, useMessage
+  NAlert, NButton, NDataTable, NDynamicTags, NInput, NModal, NSelect, NSpace, NTag, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { memoryApi, type MemoryTagVO } from '@/api/memory'
@@ -165,6 +204,55 @@ async function acceptAsVocab() {
     editing.value = false
   } catch (e: any) {
     message.error(e?.message || '操作失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+// ---- P3a 新建标签 ----
+const creating = ref(false)
+const createForm = ref<{ subject: string; topic: string | null; label: string; aliases: string[] }>({
+  subject: '', topic: null, label: '', aliases: []
+})
+
+/** 大类候选 = 既有标签的 topic 去重（用户已批准的大类）；n-select tag 模式允许输入新大类。 */
+const topicOptions = computed(() => {
+  const set = new Set<string>()
+  for (const t of tags.value) if (t.topic) set.add(t.topic)
+  return [...set].map(v => ({ label: v, value: v }))
+})
+
+function openCreate() {
+  createForm.value = { subject: '', topic: null, label: '', aliases: [] }
+  creating.value = true
+}
+
+async function submitCreate() {
+  const topic = (createForm.value.topic || '').trim()
+  const label = createForm.value.label.trim()
+  if (!topic) { message.warning('请选择或输入大类主题'); return }
+  if (!label) { message.warning('请填写标签名'); return }
+  saving.value = true
+  try {
+    const res = await memoryApi.createTag({
+      subject: createForm.value.subject.trim() || undefined,
+      topic,
+      label,
+      aliases: createForm.value.aliases.length ? createForm.value.aliases : undefined
+    })
+    message.success(res.data?.msg || '标签已创建')
+    const fresh = res.data?.data
+    if (fresh) {
+      // 已存在则并入既有（id 已在列表）→ 刷新该行；新建则插入
+      const idx = tags.value.findIndex(x => x.id === fresh.id)
+      if (idx >= 0) tags.value[idx] = fresh
+      else tags.value.unshift(fresh)
+    } else {
+      await load()
+    }
+    creating.value = false
+  } catch (e: any) {
+    message.error(e?.message || '创建失败')
   } finally {
     saving.value = false
   }

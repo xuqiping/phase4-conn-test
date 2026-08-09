@@ -44,6 +44,10 @@ public class MemorySummary extends BaseEntity {
 
     private String scopeOwner;       // V70：USER（默认，老行）/ PROJECT（项目共享总结）
 
+    /** 二期 P3c（V80）：方向 INPUT/OUTPUT/BOTH（缺省 BOTH）。PERSONAL 按 req.direction 取数落列；
+     *  PROJECT 条目无方向，落 BOTH。用于「输入/输出分离」展示。 */
+    private String direction;
+
     private String status;           // CLEAN / PENDING_CONFLICT / STALE
     private OffsetDateTime summarizedAt;
 }

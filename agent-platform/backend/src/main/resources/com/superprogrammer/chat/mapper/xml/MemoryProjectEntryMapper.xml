@@ -98,4 +98,14 @@
         WHERE deleted = 0 AND source_turn_id IN
         <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
     </update>
+
+    <!-- 二期 P2：流水账「被哪个项目收录」批量查询（不依赖全局 mapUnderscoreToCamelCase，
+         列别名直接用 camelCase 匹配 TurnProjectIndexRow 属性）。未删条目均算收录（含待审）。 -->
+    <select id="findProjectIndexByTurnIds" resultType="com.superprogrammer.chat.dto.TurnProjectIndexRow">
+        SELECT e.source_turn_id AS turnId, e.project_id AS projectId, p.name AS projectName
+        FROM memory_project_entries e
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.deleted = 0 AND e.source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </select>
 </mapper>

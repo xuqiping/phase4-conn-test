@@ -116,16 +116,23 @@ public class MemoryConsolidationService {
             }
         }
 
-        // ③ 枚举 scope 内标签
-        List<RecallTagMeta> tags = tagMapper.findPersonalRecallTags(userId, direction, null, null, null);
+        // ③ 枚举 scope 内标签（P3b：带时间窗 twStart/twEnd/relativeDays）
+        List<RecallTagMeta> tags = tagMapper.findPersonalRecallTags(userId, direction,
+                req.getStart(), req.getEnd(), req.getRelativeDays());
         if (tags == null || tags.isEmpty()) {
             return result;  // scope 无标签 → 空跑
         }
+        // P3b：指定标签集 → 仅总结交集（标签 id 过滤）
+        List<RecallTagMeta> scopedTags = filterTagsByIds(tags, req.getTagIds());
+        if (scopedTags.isEmpty()) {
+            return result;
+        }
 
         // ④~⑦ per-tag 压缩
-        for (RecallTagMeta tag : tags) {
+        for (RecallTagMeta tag : scopedTags) {
             try {
-                summarizeOneTag(userId, scopeProjectId, direction, tag, result);
+                summarizeOneTag(userId, scopeProjectId, direction, tag,
+                        req.getStart(), req.getEnd(), req.getRelativeDays(), result);
             } catch (Exception e) {
                 log.warn("总结单 tag 异常 userId={} tagId={}: {}", userId, tag.getId(), e.getMessage(), e);
                 result.addNote("tag " + tag.getId() + " 异常: " + e.getMessage());
@@ -140,12 +147,15 @@ public class MemoryConsolidationService {
         return result;
     }
 
-    /** per-tag：取数 → 未覆盖判定 → 压缩 → 写 summary+coverage → 冲突检测 → 防膨胀。 */
+    /** per-tag：取数 → 未覆盖判定 → 压缩 → 写 summary+coverage → 冲突检测 → 防膨胀。
+     *  P3b：start/end/relativeDays 时间窗透传给取数（mapper 内 relativeDays 优先）。 */
     private void summarizeOneTag(Long userId, Long scopeProjectId,
-                                 String direction, RecallTagMeta tag, SummarizeResult result) {
+                                 String direction, RecallTagMeta tag,
+                                 OffsetDateTime start, OffsetDateTime end, Integer relativeDays,
+                                 SummarizeResult result) {
         Long tagId = tag.getId();
         List<MemoryTurn> turns =
-                turnMapper.findPersonalTurnsForConsolidation(userId, List.of(tagId), direction, null, null, null);
+                turnMapper.findPersonalTurnsForConsolidation(userId, List.of(tagId), direction, start, end, relativeDays);
         if (turns == null || turns.isEmpty()) {
             return;  // 该 tag 无 gen_done=true turn
         }
@@ -164,7 +174,8 @@ public class MemoryConsolidationService {
         }
 
         // ⑥ 写 summary + coverage + 冲突检测（TxService 事务化，跨 bean 代理生效）
-        txService.writeSummaryAndCoverage(userId, scopeProjectId, tagId, tag.getLabel(), uncovered, cs, result);
+        txService.writeSummaryAndCoverage(userId, scopeProjectId, tagId, tag.getLabel(),
+                direction, uncovered, cs, result);
 
         // ⑦ 防膨胀
         if (bloatThreshold > 0 && summaryMapper.countByUserTagScope(userId, tagId, scopeProjectId) > bloatThreshold) {
@@ -235,16 +246,25 @@ public class MemoryConsolidationService {
         if (entries == null || entries.isEmpty()) {
             return result;  // 无 ACTIVE 条目 → 空跑
         }
+        // P3b：时间窗过滤 entry.created_at（relativeDays 非空 → 折算 [now-N, now]）
+        List<MemoryProjectEntryVO> timeScoped = filterEntriesByTime(entries, req);
+        if (timeScoped.isEmpty()) {
+            return result;
+        }
 
         // ③ 按 tag 分组（tag_ids 展开；无 tag 条目不进总结——无分组锚点）
         Map<Long, List<MemoryProjectEntryVO>> byTag = new LinkedHashMap<>();
         Set<Long> tagIds = new HashSet<>();
-        for (MemoryProjectEntryVO e : entries) {
+        for (MemoryProjectEntryVO e : timeScoped) {
             if (e.getTagIds() == null) continue;
             for (Long tid : e.getTagIds()) {
                 byTag.computeIfAbsent(tid, k -> new ArrayList<>()).add(e);
                 tagIds.add(tid);
             }
+        }
+        // P3b：指定标签集 → byTag 仅留交集
+        if (req.getTagIds() != null && !req.getTagIds().isEmpty()) {
+            byTag.keySet().retainAll(new HashSet<>(req.getTagIds()));
         }
         if (byTag.isEmpty()) {
             return result;
@@ -298,7 +318,8 @@ public class MemoryConsolidationService {
             result.addNote("tag " + tagId + " 条目压缩失败/日期铁律违则 skip");
             return;
         }
-        txService.writeProjectSummaryAndCoverage(operatorId, projectId, shared, tagId, uncovered, cs, result);
+        // 二期 P3c：项目条目（蒸馏产物）无方向 → 总结记 BOTH。
+        txService.writeProjectSummaryAndCoverage(operatorId, projectId, shared, tagId, "BOTH", uncovered, cs, result);
     }
 
     // ---- scope 解析 helpers ----
@@ -316,6 +337,43 @@ public class MemoryConsolidationService {
             case "INPUT", "OUTPUT", "BOTH" -> d;
             default -> "BOTH";
         };
+    }
+
+    /** P3b：标签集非空时仅留交集（PERSONAL 枚举标签后过滤）。 */
+    private static List<RecallTagMeta> filterTagsByIds(List<RecallTagMeta> tags, List<Long> wantedIds) {
+        if (wantedIds == null || wantedIds.isEmpty()) {
+            return tags;
+        }
+        Set<Long> wanted = new HashSet<>(wantedIds);
+        return tags.stream().filter(t -> wanted.contains(t.getId())).toList();
+    }
+
+    /** P3b：按创建时间过滤项目条目。relativeDays 非空 → [now-N, now]；否则用 start/end（null=不限）。 */
+    private static List<MemoryProjectEntryVO> filterEntriesByTime(List<MemoryProjectEntryVO> entries,
+                                                                  MemoryConsolidationScopeRequest req) {
+        OffsetDateTime start = null;
+        OffsetDateTime end = null;
+        if (req.getRelativeDays() != null && req.getRelativeDays() > 0) {
+            start = OffsetDateTime.now().minusDays(req.getRelativeDays());
+            end = null;  // 上界 = 至今
+        } else {
+            start = req.getStart();
+            end = req.getEnd();
+        }
+        if (start == null && end == null) {
+            return entries;  // 无时间窗 → 不过滤
+        }
+        List<MemoryProjectEntryVO> out = new ArrayList<>();
+        for (MemoryProjectEntryVO e : entries) {
+            OffsetDateTime c = e.getCreatedAt();
+            if (c == null) {
+                continue;  // 无创建时间不纳入时间窗总结
+            }
+            if (start != null && c.isBefore(start)) continue;
+            if (end != null && c.isAfter(end)) continue;
+            out.add(e);
+        }
+        return out;
     }
 
     private static boolean projectIdEquals(Long a, Long b) {

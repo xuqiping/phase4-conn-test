@@ -86,7 +86,8 @@ public class MemoryConsolidationTxService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void writeSummaryAndCoverage(Long userId, Long scopeProjectId, Long tagId, String tagLabel,
-                                        List<MemoryTurn> uncovered, CompressedSummary cs, SummarizeResult result) {
+                                        String direction, List<MemoryTurn> uncovered,
+                                        CompressedSummary cs, SummarizeResult result) {
         List<MemorySummary> existing = summaryMapper.findCleanByUserTagScope(userId, tagId, scopeProjectId);
         String initialStatus = "CLEAN";
         String askText = null;
@@ -108,6 +109,7 @@ public class MemoryConsolidationTxService {
         s.setL1Summary(cs.l1());
         s.setL2Detail(cs.l2());
         s.setSourceTurnIds(cs.sourceTurnIds());
+        s.setDirection(direction == null ? "BOTH" : direction);
         s.setStatus(initialStatus);
         s.setSummarizedAt(OffsetDateTime.now());
         s.setCreatedBy(userId);
@@ -166,7 +168,8 @@ public class MemoryConsolidationTxService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void writeProjectSummaryAndCoverage(Long operatorId, Long projectId, boolean shared,
-                                               Long tagId, List<MemoryProjectEntryVO> entries,
+                                               Long tagId, String direction,
+                                               List<MemoryProjectEntryVO> entries,
                                                CompressedEntrySummary cs, SummarizeResult result) {
         List<MemorySummary> existing = shared
                 ? summaryMapper.findCleanByProjectTagScope(projectId, tagId)
@@ -192,6 +195,7 @@ public class MemoryConsolidationTxService {
         s.setSourceTurnIds(List.of());
         s.setSourceEntryIds(cs.sourceEntryIds());
         s.setScopeOwner(shared ? "PROJECT" : "USER");
+        s.setDirection(direction == null ? "BOTH" : direction);
         s.setStatus(initialStatus);
         s.setSummarizedAt(OffsetDateTime.now());
         s.setCreatedBy(operatorId);

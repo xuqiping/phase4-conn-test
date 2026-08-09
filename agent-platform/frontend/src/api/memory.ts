@@ -59,6 +59,8 @@ export interface MemorySummaryVO {
   sourceTurnIds: number[]
   /** 二期 P4（FR-301）：PROJECT=项目共享总结（项目资产全员可读）；USER/缺省=个人总结。 */
   scopeOwner?: 'USER' | 'PROJECT'
+  /** 二期 P3c：方向 INPUT=输入 / OUTPUT=输出 / BOTH=综合（缺省）。 */
+  direction?: 'INPUT' | 'OUTPUT' | 'BOTH'
   /** 二期 P4：条目级总结的 provenance（项目条目 id 集；turn 级总结为空）。 */
   sourceEntryIds?: number[]
   status: 'CLEAN' | 'PENDING_CONFLICT' | 'STALE'
@@ -79,6 +81,8 @@ export interface MemoryTurnVO {
   rawContent: string | null
   genDone: boolean
   createdAt: string
+  /** 二期 P2：该流水账被收录到的项目（个人域 turn → memory_project_entries 反查，去重）。 */
+  indexedProjects?: { projectId: number; name: string }[]
 }
 
 /** raw 流水账（gen_done=false，在线查看无导出；二期 P1 纯个人域）。 */
@@ -159,6 +163,14 @@ export interface MemoryConsolidationScopeRequest {
   direction?: 'INPUT' | 'OUTPUT' | 'BOTH'
   /** L10「同步已离开人员」开关；false → 候选剔 DEPARTED（优先级高于人员多选）。 */
   includeDeparted?: boolean
+  /** 二期 P3b：只总结这些标签（null/空 = 全部）。PERSONAL 过滤本人标签；PROJECT 过滤条目 tag_ids。 */
+  tagIds?: number[]
+  /** 二期 P3b：取数时间窗下界（按 turn/entry 创建时间，ISO）。 */
+  start?: string
+  /** 二期 P3b：取数时间窗上界（ISO）。 */
+  end?: string
+  /** 二期 P3b：近 N 天（非空优先于 start/end）。 */
+  relativeDays?: number
 }
 
 export interface MemorySummarizeResult {
@@ -373,6 +385,10 @@ export const memoryApi = {
   },
   editTag(id: number, data: { label?: string; addAliases?: string[]; accept?: boolean }) {
     return request.put<ApiResponse<MemoryTagVO>>(`/chat/memory/tags/${id}`, data)
+  },
+  /** P3a：主动新建标签（选定大类 topic + 自填 label + 可选别名；needs_review=false）。 */
+  createTag(data: { subject?: string; topic: string; label: string; aliases?: string[] }) {
+    return request.post<ApiResponse<MemoryTagVO>>('/chat/memory/tags', data)
   },
 
   // ---- 召回 scope（底栏持久化 + 预览）----

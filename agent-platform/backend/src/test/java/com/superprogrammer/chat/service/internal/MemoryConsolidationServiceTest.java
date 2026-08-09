@@ -108,7 +108,7 @@ class MemoryConsolidationServiceTest {
         SummarizeResult r = service.summarizeScope(1L, personalReq(), false);
 
         ArgumentCaptor<List<MemoryTurn>> captor = ArgumentCaptor.forClass(List.class);
-        verify(txService).writeSummaryAndCoverage(eq(1L), eq(null), eq(10L), eq("工作"), captor.capture(), eq(cs), any());
+        verify(txService).writeSummaryAndCoverage(eq(1L), eq(null), eq(10L), eq("工作"), eq("BOTH"), captor.capture(), eq(cs), any());
         assertEquals(2, captor.getValue().size(), "两条未覆盖 turn 委派写入");
         // evict 由真实 TxService 累加 summariesWritten 触发；txService mock 不累加，evict 在 IT 验
     }
@@ -149,7 +149,7 @@ class MemoryConsolidationServiceTest {
         SummarizeResult r = service.summarizeScope(1L, personalReq(), false);
 
         verify(compressor, never()).compress(anyLong(), any(), any());
-        verify(txService, never()).writeSummaryAndCoverage(anyLong(), any(), anyLong(), any(), any(), any(), any());
+        verify(txService, never()).writeSummaryAndCoverage(anyLong(), any(), anyLong(), any(), any(), any(), any(), any());
         assertEquals(0, r.getSummariesWritten());
     }
 
@@ -166,7 +166,7 @@ class MemoryConsolidationServiceTest {
 
         SummarizeResult r = service.summarizeScope(1L, personalReq(), false);
 
-        verify(txService, never()).writeSummaryAndCoverage(anyLong(), any(), anyLong(), any(), any(), any(), any());
+        verify(txService, never()).writeSummaryAndCoverage(anyLong(), any(), anyLong(), any(), any(), any(), any(), any());
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("压缩失败")));
     }
 
@@ -233,7 +233,7 @@ class MemoryConsolidationServiceTest {
         verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null));
         // 仅未覆盖的 e2 委派写（shared=true）
         ArgumentCaptor<List<MemoryProjectEntryVO>> captor = ArgumentCaptor.forClass(List.class);
-        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), captor.capture(), eq(cs), any());
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), eq("BOTH"), captor.capture(), eq(cs), any());
         assertEquals(1, captor.getValue().size(), "已覆盖条目不重压（幂等）");
         assertEquals(202L, captor.getValue().get(0).getId());
     }
@@ -264,7 +264,7 @@ class MemoryConsolidationServiceTest {
 
         // 个人通道覆盖行 user_id=self（与共享通道互不影响）
         verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L));
-        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(false), eq(10L), any(), eq(cs), any());
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(false), eq(10L), eq("BOTH"), any(), eq(cs), any());
     }
 
     // ---- 9. 二期 P4：全条目已覆盖 → 空跳过不调 LLM（幂等）----
@@ -289,7 +289,7 @@ class MemoryConsolidationServiceTest {
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
         verify(compressor, never()).compressEntries(anyLong(), any(), any());
-        verify(txService, never()).writeProjectSummaryAndCoverage(anyLong(), anyLong(), eq(true), anyLong(), any(), any(), any());
+        verify(txService, never()).writeProjectSummaryAndCoverage(anyLong(), anyLong(), eq(true), anyLong(), any(), any(), any(), any());
         assertEquals(0, r.getSummariesWritten());
     }
 

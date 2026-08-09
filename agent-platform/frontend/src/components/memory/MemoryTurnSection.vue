@@ -47,6 +47,16 @@
           <div class="memory-turn-section__tags">
             <n-tag v-for="(label, i) in t.tagLabels" :key="i" size="tiny" :bordered="false">{{ label }}</n-tag>
           </div>
+          <div v-if="t.indexedProjects?.length" class="memory-turn-section__indexed">
+            <span class="memory-turn-section__indexed-label">收录于：</span>
+            <n-tag
+              v-for="p in t.indexedProjects"
+              :key="p.projectId"
+              size="tiny"
+              type="primary"
+              :bordered="false"
+            >{{ p.name }}</n-tag>
+          </div>
         </div>
       </div>
     </n-card>
@@ -177,6 +187,17 @@ defineExpose({ refresh: load })
     gap: 4px;
     flex-wrap: wrap;
     margin-top: 6px;
+  }
+  &__indexed {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  &__indexed-label {
+    font-size: 11px;
+    opacity: 0.55;
   }
 }
 </style>

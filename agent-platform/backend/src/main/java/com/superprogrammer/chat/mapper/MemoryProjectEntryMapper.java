@@ -2,6 +2,7 @@ package com.superprogrammer.chat.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
+import com.superprogrammer.chat.dto.TurnProjectIndexRow;
 import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -59,5 +60,9 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
 
     /** P4（FR-304）turn 删除级联：引用这些 turn 的条目全软删。 */
     int softDeleteBySourceTurnIds(@Param("turnIds") List<Long> turnIds);
+
+    /** 二期 P2：这些流水账（turn）被收录到的项目（未删条目，ACTIVE+PENDING_REVIEW）。
+     *  一条 turn 可能命中多项目、同项目多 tag 会产生多行——service 按 turnId 分组并对 projectId 去重。 */
+    List<TurnProjectIndexRow> findProjectIndexByTurnIds(@Param("turnIds") List<Long> turnIds);
 }
 

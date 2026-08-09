@@ -84,6 +84,7 @@ public class MemorySummaryViewService {
         vo.setSourceSummaryId(s.getSourceSummaryId());
         vo.setSourceTurnIds(s.getSourceTurnIds());
         vo.setScopeOwner(s.getScopeOwner());
+        vo.setDirection(s.getDirection());
         vo.setStatus(s.getStatus());
         vo.setSummarizedAt(s.getSummarizedAt());
         vo.setCreatedAt(s.getCreatedAt());
