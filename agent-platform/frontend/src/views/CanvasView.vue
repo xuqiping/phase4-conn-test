@@ -92,6 +92,7 @@
           @node-selected="onNodeSelect"
           @node-context-menu="onNodeContextMenu"
           @quick-add="onQuickAdd"
+          @structure-changed="scheduleSave"
         />
 
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->

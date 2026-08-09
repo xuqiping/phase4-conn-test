@@ -25,10 +25,14 @@ const props = defineProps<EdgeProps>()
 const removeEdge = inject<(id: string) => void>('canvasRemoveEdge', () => {})
 
 const path = computed(() =>
-  getBezierPath(
-    props.sourceX, props.sourceY, props.sourcePosition,
-    props.targetX, props.targetY, props.targetPosition
-  )
+  getBezierPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    sourcePosition: props.sourcePosition,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    targetPosition: props.targetPosition
+  })
 )
 
 function onDelete() {
