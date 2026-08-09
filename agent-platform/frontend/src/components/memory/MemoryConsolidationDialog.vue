@@ -9,13 +9,13 @@
     :show="show"
     @update:show="$emit('update:show', $event)"
     preset="card"
-    title="立即总结"
+    :title="mode === 'resummarize' ? '重新总结' : '立即总结'"
     :style="{ maxWidth: '560px', width: '90vw' }"
     :bordered="false"
   >
     <n-spin :show="loading">
-      <!-- 二期 P3b：重新总结筛选（标签 + 时间范围），应用到所有勾选 scope -->
-      <div class="consolidation-dialog__filter">
+      <!-- 二期人工测试 Req2：仅「重新总结」模式显示筛选（标签大类/时间/方向）；「立即总结」只压新增，无需筛选 -->
+      <div v-if="mode === 'resummarize'" class="consolidation-dialog__filter">
         <div class="consolidation-dialog__filter-title">重新总结筛选（可选，留空 = 全部）</div>
         <n-select
           v-model:value="tagFilter"
@@ -47,17 +47,17 @@
           </span>
         </div>
       </div>
-      <n-empty v-if="!loading && !targets.length" size="small" description="无可总结 scope" />
+      <n-empty v-if="!loading && !visibleTargets.length" size="small" description="无可总结 scope（仅创始人可总结项目）" />
       <n-space v-else vertical :size="8">
         <div
-          v-for="t in targets"
+          v-for="t in visibleTargets"
           :key="t.scopeKind + (t.projectId ?? '')"
           class="consolidation-dialog__row"
         >
           <div class="consolidation-dialog__row-head">
             <n-checkbox
               :checked="selected.has(keyOf(t))"
-              :disabled="!t.hasChange"
+              :disabled="mode === 'instant' && !t.hasChange"
               @update:checked="toggle(t, $event)"
             >
               <span class="consolidation-dialog__name">{{ t.displayName }}</span>
@@ -118,8 +118,8 @@ import {
 } from '@/api/memory'
 import MemoryConsolidationPeoplePicker from './MemoryConsolidationPeoplePicker.vue'
 
-interface Props { show: boolean }
-const props = defineProps<Props>()
+interface Props { show: boolean; mode?: 'instant' | 'resummarize' }
+const props = withDefaults(defineProps<Props>(), { mode: 'instant' })
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
   (e: 'done'): void
@@ -136,11 +136,18 @@ const peopleCfgMap = ref<Record<string, any>>({})
 // 二期 P4（FR-302）：项目 scope 的总结通道（keyOf → 'shared' | 'personal'，缺省按 canWriteShared）
 const channelMap = ref<Record<string, 'shared' | 'personal'>>({})
 // 二期 P3b：重新总结筛选（标签 + 时间范围），应用到所有勾选 scope
-const tagOptions = ref<{ label: string; value: number }[]>([])
-const tagFilter = ref<number[]>([])
+// 二期人工测试 Req3：标签筛选降到「主体:大类」第一层（避免子项过多）；topicKey → 该大类下所有 tagId 展开。
+const tagOptions = ref<{ label: string; value: string }[]>([])
+const topicToTagIds = ref<Record<string, number[]>>({})
+const tagFilter = ref<string[]>([])
 const dateRange = ref<[number, number] | null>(null)
 // 二期 P3c：全局方向筛选（综合 / 仅输入 / 仅输出），透传给非项目 scope
 const directionFilter = ref<'BOTH' | 'INPUT' | 'OUTPUT'>('BOTH')
+
+// 二期人工测试 Req1：仅显示可总结 scope（个人 + 本人创始人项目）；非创始人项目隐去（仅查看/召回）
+const visibleTargets = computed(() =>
+  targets.value.filter(t => t.scopeKind !== 'PROJECT' || t.canSummarize !== false)
+)
 
 function channelOf(t: MemoryConsolidationTargetView): 'shared' | 'personal' {
   return channelMap.value[keyOf(t)] ?? (t.canWriteShared ? 'shared' : 'personal')
@@ -151,7 +158,7 @@ function setChannel(t: MemoryConsolidationTargetView, v: string | number | boole
 }
 
 const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
-  targets.value
+  visibleTargets.value
     .filter(t => selected.value.has(keyOf(t)))
     .map(t => {
       const base: MemoryConsolidationScopeRequest = { scopeKind: t.scopeKind, projectId: t.projectId ?? undefined }
@@ -167,8 +174,14 @@ const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
         base.direction = cfg.direction
         base.includeDeparted = cfg.includeDeparted
       }
-      // P3b：全局标签/时间筛选应用到本 scope
-      if (tagFilter.value.length) base.tagIds = tagFilter.value
+      // P3b：全局标签/时间筛选应用到本 scope（Req3：tagFilter 是大类 topicKey，展开为该大类下全部 tagId）
+      if (tagFilter.value.length) {
+        const ids = new Set<number>()
+        for (const key of tagFilter.value) {
+          for (const id of (topicToTagIds.value[key] ?? [])) ids.add(id)
+        }
+        if (ids.size) base.tagIds = [...ids]
+      }
       if (dateRange.value) {
         base.start = new Date(dateRange.value[0]).toISOString()
         base.end = new Date(dateRange.value[1]).toISOString()
@@ -177,6 +190,8 @@ const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
       if (t.scopeKind !== 'PROJECT' && directionFilter.value !== 'BOTH') {
         base.direction = directionFilter.value
       }
+      // Req2：「重新总结」模式 force=true（后端跳过未覆盖幂等闸，强制重压）
+      if (props.mode === 'resummarize') base.force = true
       return base
     })
 )
@@ -197,10 +212,12 @@ async function loadTargets() {
   try {
     const res = await memoryApi.listConsolidationTargets()
     targets.value = res.data?.data ?? []
-    // 默认勾选 hasChange + autoEnabled 的 scope（自动总结的延续）
+    // 默认勾选：instant 模式预勾 hasChange+autoEnabled（自动总结延续）；resummarize 模式由用户显式选
     const s = new Set<string>()
-    for (const t of targets.value) {
-      if (t.hasChange && t.autoEnabled) s.add(keyOf(t))
+    if (props.mode === 'instant') {
+      for (const t of targets.value) {
+        if (t.hasChange && t.autoEnabled && t.canSummarize !== false) s.add(keyOf(t))
+      }
     }
     selected.value = s
     peopleCfgMap.value = {}
@@ -210,13 +227,20 @@ async function loadTargets() {
     dateRange.value = null
     directionFilter.value = 'BOTH'
     // P3b：载入本人标签做筛选候选（失败不阻塞）
+    // Req3：选项降到「主体:大类」第一层去重，记录 topicKey→tagIds[] 供展开。
     try {
       const tg = await memoryApi.listTags()
-      tagOptions.value = (tg.data?.data ?? []).map(t => ({
-        label: `${t.subject} : ${t.topic} · ${t.label}`,
-        value: t.id
-      }))
+      const map: Record<string, number[]> = {}
+      const labels: Record<string, string> = {}
+      for (const t of (tg.data?.data ?? [])) {
+        const key = `${t.subject || '我'}|${t.topic}`
+        ;(map[key] ||= []).push(t.id)
+        labels[key] = `${t.subject || '我'} : ${t.topic}`
+      }
+      topicToTagIds.value = map
+      tagOptions.value = Object.keys(map).map(k => ({ label: labels[k], value: k }))
     } catch {
+      topicToTagIds.value = {}
       tagOptions.value = []
     }
   } catch (e: any) {

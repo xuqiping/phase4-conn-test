@@ -146,6 +146,8 @@ export interface MemoryConsolidationTargetView {
   autoEnabled: boolean
   /** 二期 P4（FR-302）：true=我是该项目 owner/admin，可写项目共享总结；false=仅可压到自己的总结。 */
   canWriteShared?: boolean
+  /** 二期人工测试 Req1：当前用户可否对该 scope 触发总结。PROJECT=是否创始人(OWNER)；非创始人仅查看+召回。 */
+  canSummarize?: boolean
 }
 
 export interface MemoryConsolidationScopeRequest {
@@ -171,6 +173,8 @@ export interface MemoryConsolidationScopeRequest {
   end?: string
   /** 二期 P3b：近 N 天（非空优先于 start/end）。 */
   relativeDays?: number
+  /** 二期人工测试 Req2：true=「重新总结」模式，跳过「无变化/未覆盖」幂等闸强制重压；缺省=「立即总结」仅压新增。 */
+  force?: boolean
 }
 
 export interface MemorySummarizeResult {

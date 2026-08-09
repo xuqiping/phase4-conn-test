@@ -98,10 +98,12 @@ public class MemoryConsolidationService {
             return result;
         }
         boolean personal = isPersonalScope(req);
+        // 二期人工测试 Req2：force=重新总结（跳过未覆盖幂等闸，强制重压）。
+        boolean force = Boolean.TRUE.equals(req.getForce());
         // 二期 P4（V70，FR-301/302）：项目总结重建——基于收录条目（memory_project_entries），
         // 共享（scope_owner=PROJECT，owner/admin）/ 成员个人压缩（toPersonal=true）双通道。
         if (!personal) {
-            return summarizeProjectScope(userId, req, result);
+            return summarizeProjectScope(userId, req, force, result);
         }
         Long scopeProjectId = null;
         String direction = normalizeDirection(req.getDirection());
@@ -132,7 +134,7 @@ public class MemoryConsolidationService {
         for (RecallTagMeta tag : scopedTags) {
             try {
                 summarizeOneTag(userId, scopeProjectId, direction, tag,
-                        req.getStart(), req.getEnd(), req.getRelativeDays(), result);
+                        req.getStart(), req.getEnd(), req.getRelativeDays(), force, result);
             } catch (Exception e) {
                 log.warn("总结单 tag 异常 userId={} tagId={}: {}", userId, tag.getId(), e.getMessage(), e);
                 result.addNote("tag " + tag.getId() + " 异常: " + e.getMessage());
@@ -148,11 +150,12 @@ public class MemoryConsolidationService {
     }
 
     /** per-tag：取数 → 未覆盖判定 → 压缩 → 写 summary+coverage → 冲突检测 → 防膨胀。
-     *  P3b：start/end/relativeDays 时间窗透传给取数（mapper 内 relativeDays 优先）。 */
+     *  P3b：start/end/relativeDays 时间窗透传给取数（mapper 内 relativeDays 优先）。
+     *  二期人工测试 Req2：force=true 跳过未覆盖闸（重新总结，强制重压）。 */
     private void summarizeOneTag(Long userId, Long scopeProjectId,
                                  String direction, RecallTagMeta tag,
                                  OffsetDateTime start, OffsetDateTime end, Integer relativeDays,
-                                 SummarizeResult result) {
+                                 boolean force, SummarizeResult result) {
         Long tagId = tag.getId();
         List<MemoryTurn> turns =
                 turnMapper.findPersonalTurnsForConsolidation(userId, List.of(tagId), direction, start, end, relativeDays);
@@ -161,7 +164,7 @@ public class MemoryConsolidationService {
         }
 
         // ④ 未覆盖判定：查 coverage，剔已覆盖 turn（幂等——无未覆盖不调 LLM）
-        List<MemoryTurn> uncovered = filterUncovered(userId, tagId, scopeProjectId, turns);
+        List<MemoryTurn> uncovered = force ? turns : filterUncovered(userId, tagId, scopeProjectId, turns);
         if (uncovered.isEmpty()) {
             return;  // 全已覆盖 → 空跳过（设计 §3.4 line123 无新增不耗 token）
         }
@@ -219,22 +222,18 @@ public class MemoryConsolidationService {
      * 撤销授权后重压天然不含 child 内容（取数实时算 ACTIVE 链，坑点预判③）。
      */
     private SummarizeResult summarizeProjectScope(Long operatorId, MemoryConsolidationScopeRequest req,
-                                                  SummarizeResult result) {
+                                                  boolean force, SummarizeResult result) {
         Long projectId = req.getProjectId();
         if (projectId == null) {
             result.addNote("项目 scope 缺 projectId");
             return result;
         }
         boolean shared = !Boolean.TRUE.equals(req.getToPersonal());
-        // ① 权限咽喉
-        if (shared && !linkService.isOwnerOrAdmin(projectId, operatorId)) {
-            result.addNote("项目 " + projectId + " 共享总结仅 owner/admin 可写 → 跳过");
-            log.info("项目共享总结越权拦截 operatorId={} projectId={}", operatorId, projectId);
-            return result;
-        }
-        if (!shared && !linkService.isActiveMember(projectId, operatorId)) {
-            result.addNote("项目 " + projectId + " 非 ACTIVE 成员，不可个人压缩 → 跳过");
-            log.info("成员个人压缩越权拦截 operatorId={} projectId={}", operatorId, projectId);
+        // ① 权限咽喉——二期人工测试 Req1：非项目创始人（OWNER）不可总结该项目（共享/个人均禁），
+        //    仅可查看与召回。创始人=projects 建人，role=OWNER。
+        if (!linkService.isOwner(projectId, operatorId)) {
+            result.addNote("项目 " + projectId + " 总结仅创始人(OWNER)可写 → 跳过");
+            log.info("项目总结越权拦截(非创始人) operatorId={} projectId={} shared={}", operatorId, projectId, shared);
             return result;
         }
 
@@ -282,7 +281,7 @@ public class MemoryConsolidationService {
                     Comparator.nullsLast(Comparator.naturalOrder())));
             try {
                 summarizeOneEntryTag(operatorId, projectId, shared, tagId,
-                        tagLabels.getOrDefault(tagId, "总结"), groupEntries, result);
+                        tagLabels.getOrDefault(tagId, "总结"), groupEntries, force, result);
             } catch (Exception e) {
                 log.warn("项目总结单 tag 异常 operatorId={} projectId={} tagId={}: {}",
                         operatorId, projectId, tagId, e.getMessage(), e);
@@ -300,13 +299,13 @@ public class MemoryConsolidationService {
     /** per tag：entry_coverage 未覆盖判定（幂等不调 LLM）→ 压缩 → 事务写。 */
     private void summarizeOneEntryTag(Long operatorId, Long projectId, boolean shared, Long tagId,
                                       String tagLabel, List<MemoryProjectEntryVO> groupEntries,
-                                      SummarizeResult result) {
+                                      boolean force, SummarizeResult result) {
         List<Long> entryIds = groupEntries.stream().map(MemoryProjectEntryVO::getId).toList();
-        Set<Long> covered = new HashSet<>(entryCoverageMapper.findCoveredEntryIds(
+        Set<Long> covered = force ? Set.of() : new HashSet<>(entryCoverageMapper.findCoveredEntryIds(
                 entryIds, projectId, tagId, shared ? null : operatorId));
         List<MemoryProjectEntryVO> uncovered = new ArrayList<>();
         for (MemoryProjectEntryVO e : groupEntries) {
-            if (!covered.contains(e.getId())) {
+            if (force || !covered.contains(e.getId())) {
                 uncovered.add(e);
             }
         }
@@ -472,13 +471,16 @@ public class MemoryConsolidationService {
                 .uncoveredCount(uncovered)
                 .autoEnabled(personal != null && Boolean.TRUE.equals(personal.getAutoEnabled()))
                 .canWriteShared(true)
+                .canSummarize(true)
                 .build());
 
         // 二期 P4（FR-301/302）：本人 ACTIVE 项目逐个出入口（owner/admin 可写共享总结）
+        // 二期人工测试 Req1：仅创始人(OWNER)可总结；非创始人 canSummarize=false（前端隐，后端 trigger 拦）。
         List<MemoryGenMatrixItemVO> myProjects = memberMapper.findMyGenMatrix(userId);
         if (myProjects != null) {
             for (MemoryGenMatrixItemVO p : myProjects) {
-                boolean canShared = "OWNER".equals(p.getRole()) || "ADMIN".equals(p.getRole());
+                boolean isOwner = "OWNER".equals(p.getRole());
+                boolean canShared = isOwner || "ADMIN".equals(p.getRole());
                 List<Long> sourceProjectIds = new ArrayList<>();
                 sourceProjectIds.add(p.getProjectId());
                 sourceProjectIds.addAll(linkService.findActiveChildIds(List.of(p.getProjectId())));
@@ -494,6 +496,7 @@ public class MemoryConsolidationService {
                         .uncoveredCount(entryUncovered)
                         .autoEnabled(scopeRow != null && Boolean.TRUE.equals(scopeRow.getAutoEnabled()))
                         .canWriteShared(canShared)
+                        .canSummarize(isOwner)
                         .build());
             }
         }

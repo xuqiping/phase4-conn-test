@@ -170,35 +170,35 @@ class MemoryConsolidationServiceTest {
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("压缩失败")));
     }
 
-    // ---- 5. 二期 P4：非 owner/admin 触发项目共享总结 → 权限咽喉拦截 skip（FR-301）----
+    // ---- 5. 二期人工测试 Req1：非创始人(OWNER) 触发项目共享总结 → 权限咽喉拦截 skip ----
 
     @Test
     void projectSharedNonOwnerSkipped() {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
-        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(false);
+        when(linkService.isOwner(99L, 1L)).thenReturn(false);
 
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
-        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("仅 owner/admin 可写")), "共享总结越权 note");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("仅创始人")), "非创始人总结越权 note");
         assertEquals(0, r.getSummariesWritten());
         verifyNoInteractions(entryMapper, entryCoverageMapper, compressor, txService);
     }
 
-    // ---- 6. 二期 P4：成员个人压缩通道，非 ACTIVE 成员 → 拦截（FR-302）----
+    // ---- 6. 二期人工测试 Req1：非创始人(OWNER) 个人压缩通道 → 同样拦截（项目总结仅创始人）----
 
     @Test
-    void projectPersonalNonMemberSkipped() {
+    void projectPersonalNonOwnerSkipped() {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
         req.setToPersonal(true);
-        when(linkService.isActiveMember(99L, 1L)).thenReturn(false);
+        when(linkService.isOwner(99L, 1L)).thenReturn(false);
 
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
-        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("非 ACTIVE 成员")), "个人压缩越权 note");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("仅创始人")), "非创始人个人压缩越权 note");
         verifyNoInteractions(entryMapper, entryCoverageMapper, compressor, txService);
     }
 
@@ -209,7 +209,7 @@ class MemoryConsolidationServiceTest {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
-        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(true);
+        when(linkService.isOwner(99L, 1L)).thenReturn(true);
         when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of(77L));  // ACTIVE child
         MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
                 .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
@@ -238,7 +238,7 @@ class MemoryConsolidationServiceTest {
         assertEquals(202L, captor.getValue().get(0).getId());
     }
 
-    // ---- 8. 二期 P4：成员个人压缩 happy path——user_id=self 通道 + shared=false（FR-302）----
+    // ---- 8. 二期 P4：创始人个人压缩 happy path——user_id=self 通道 + shared=false（FR-302）----
 
     @Test
     void projectPersonalHappyPath() {
@@ -246,7 +246,7 @@ class MemoryConsolidationServiceTest {
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
         req.setToPersonal(true);
-        when(linkService.isActiveMember(99L, 1L)).thenReturn(true);
+        when(linkService.isOwner(99L, 1L)).thenReturn(true);
         when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
         MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
                 .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
@@ -274,7 +274,7 @@ class MemoryConsolidationServiceTest {
         MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
         req.setScopeKind("PROJECT");
         req.setProjectId(99L);
-        when(linkService.isOwnerOrAdmin(99L, 1L)).thenReturn(true);
+        when(linkService.isOwner(99L, 1L)).thenReturn(true);
         when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
         MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
                 .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
@@ -291,6 +291,35 @@ class MemoryConsolidationServiceTest {
         verify(compressor, never()).compressEntries(anyLong(), any(), any());
         verify(txService, never()).writeProjectSummaryAndCoverage(anyLong(), anyLong(), eq(true), anyLong(), any(), any(), any(), any());
         assertEquals(0, r.getSummariesWritten());
+    }
+
+    // ---- 9b. 二期人工测试 Req2：force=true（重新总结）→ 跳过未覆盖闸，全已覆盖也强制重压 ----
+
+    @Test
+    void projectForceResummarizeIgnoresCoverage() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        req.setForce(true);
+        when(linkService.isOwner(99L, 1L)).thenReturn(true);
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
+        MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("条目一").build();
+        when(entryMapper.listActiveForRecall(List.of(99L))).thenReturn(List.of(e1));
+        MemoryTag tag = new MemoryTag();
+        tag.setId(10L);
+        tag.setLabel("工作");
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
+        // force 下不查覆盖行（直接当全未覆盖重压）→ 无需 stub findCoveredEntryIds
+        CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(201L));
+        when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
+
+        SummarizeResult r = service.summarizeScope(1L, req, false);
+
+        // force 跳过覆盖闸：不查 findCoveredEntryIds，直接压缩已覆盖的 e1
+        verify(entryCoverageMapper, never()).findCoveredEntryIds(any(), any(), any(), any());
+        verify(compressor).compressEntries(eq(1L), eq("工作"), any());
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), eq("BOTH"), any(), eq(cs), any());
     }
 
     // ---- 10. scope 无标签 → 空结果 ----

@@ -62,4 +62,9 @@ public class MemoryConsolidationScopeRequest {
     /** 二期 P3b：近 N 天（按创建时间）；非空时优先于 start/end（PERSONAL 走 mapper，
      *  PROJECT 在 service 内折算为 [now-N, now] 过滤 entry.created_at）。 */
     private Integer relativeDays;
+
+    /** 二期人工测试 Req2：「重新总结」模式 = true 时跳过「未覆盖/无变化」幂等闸，对（已按标签/时间/方向
+     *  过滤的）取数强制重压（写新 summary 行，旧 summary 命中冲突走裁决）。false（默认）=「立即总结」，
+     *  仅压未覆盖的新增，无新增空跳过不耗 token。 */
+    private Boolean force;
 }

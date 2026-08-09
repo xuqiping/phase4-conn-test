@@ -41,4 +41,8 @@ public class MemoryConsolidationTargetView {
     /** 二期 P4（FR-301/302）：PROJECT scope 时当前用户可否写项目共享总结（owner/admin）。
      *  false 的成员仅可走「压到我自己的总结」通道。PERSONAL scope 恒 true（无意义）。 */
     private boolean canWriteShared;
+
+    /** 二期人工测试 Req1：当前用户可否对该 scope 触发总结。PROJECT scope = 是否创始人(OWNER)；
+     *  非创始人仅可查看与召回，不能总结。PERSONAL scope 恒 true。 */
+    private boolean canSummarize;
 }

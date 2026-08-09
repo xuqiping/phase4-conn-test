@@ -12,7 +12,8 @@
         <n-radio-button value="personal">个人</n-radio-button>
         <n-radio-button v-for="p in projects" :key="p.id" :value="String(p.id)">{{ p.name }}</n-radio-button>
       </n-radio-group>
-      <n-button size="small" type="primary" ghost @click="consolidationShow = true">立即总结</n-button>
+      <n-button size="small" type="primary" ghost @click="instantShow = true">立即总结</n-button>
+      <n-button size="small" type="warning" ghost @click="resummarizeShow = true">重新总结</n-button>
       <n-button size="small" :loading="loading" @click="load">刷新</n-button>
       <span class="memory-summary-section__hint">{{ rows.length + sharedRows.length }} 条</span>
     </n-space>
@@ -57,7 +58,9 @@
       </div>
     </n-card>
 
-    <MemoryConsolidationDialog v-model:show="consolidationShow" @done="load" />
+    <!-- Req2：立即总结（仅压新增，无筛选）/ 重新总结（强制重压 + 标签大类/时间/方向筛选）分两个入口 -->
+    <MemoryConsolidationDialog v-model:show="instantShow" mode="instant" @done="load" />
+    <MemoryConsolidationDialog v-model:show="resummarizeShow" mode="resummarize" @done="load" />
   </div>
 </template>
 
@@ -76,7 +79,8 @@ const projects = ref<{ id: number; name: string }[]>([])
 const scope = ref<number | null>(null)
 const scopeKey = computed(() => (scope.value === null ? 'personal' : String(scope.value)))
 const loading = ref(false)
-const consolidationShow = ref(false)
+const instantShow = ref(false)
+const resummarizeShow = ref(false)
 
 function onScopeChange(k: string | number | boolean) {
   scope.value = k === 'personal' ? null : Number(k)
