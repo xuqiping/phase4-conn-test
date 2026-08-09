@@ -109,6 +109,24 @@
       或个人申请召回某项目（待项目 owner/admin 审批）。任一方可随时撤销，撤销即时断召回。
     </n-alert>
 
+    <!-- 第二轮 #5：公共池管理（我 owner/admin 的项目，推入后所有人可申请召回） -->
+    <n-card size="small" :bordered="true" class="memory-link-panel__block">
+      <template #header>公共池管理（我 owner/admin 的项目）</template>
+      <n-empty v-if="!managedProjectOptions.length" size="small" description="暂无可管理的项目" />
+      <div v-for="p in managedProjectOptions" :key="p.value" class="memory-link-panel__row">
+        <div class="memory-link-panel__desc"><b>{{ p.label }}</b></div>
+        <n-switch
+          :value="poolFlagOf(p.value)"
+          :loading="poolBusyId === p.value"
+          size="small"
+          @update:value="togglePool(p.value, $event)"
+        >
+          <template #checked>已推入公共池</template>
+          <template #unchecked>推入公共池</template>
+        </n-switch>
+      </div>
+    </n-card>
+
     <!-- A. 项目授权给个人 -->
     <n-card size="small" :bordered="true" class="memory-link-panel__block">
       <template #header>项目授权给个人（我 owner/admin 的项目）</template>
@@ -132,6 +150,7 @@
           placeholder="搜索被授权人姓名/账号"
           class="memory-link-panel__select"
           @search="onSearchUser"
+          @focus="preloadUsers"
         />
         <n-button size="small" type="primary" :disabled="!grantUserProjectId || !grantUserId" :loading="granting" @click="grantUser">
           授权
@@ -170,9 +189,10 @@
           remote
           clearable
           :loading="projSearching"
-          placeholder="搜索要申请召回的项目"
+          placeholder="搜索要申请召回的项目（空=公共池）"
           class="memory-link-panel__select"
           @search="onSearchProject"
+          @focus="preloadProjects"
         />
         <n-button size="small" type="primary" :disabled="!applyProjectId" :loading="granting" @click="applyGrant">
           申请召回
@@ -217,7 +237,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
-  NAlert, NButton, NCard, NDivider, NEmpty, NSelect, NSpace, NTag, useDialog, useMessage
+  NAlert, NButton, NCard, NDivider, NEmpty, NSelect, NSpace, NSwitch, NTag, useDialog, useMessage
 } from 'naive-ui'
 import {
   memoryApi,
@@ -317,22 +337,50 @@ async function load() {
 
 // ---- 二期 P1 · 个人授权 ----
 
+/** 第二轮 #6：空关键词也请求（后端返默认候选），下拉打开即有数据；@focus 预载。 */
 async function onSearchUser(q: string) {
-  if (!q || q.trim().length < 1) { userOptions.value = []; return }
   userSearching.value = true
   try {
-    const res = await memoryApi.searchGrantUsers(q)
+    const res = await memoryApi.searchGrantUsers(q ?? '')
     userOptions.value = (res.data?.data ?? []).map(u => ({ label: u.name, value: u.id }))
   } catch { userOptions.value = [] } finally { userSearching.value = false }
 }
+async function preloadUsers() {
+  if (userOptions.value.length) return
+  await onSearchUser('')
+}
 
+/** 第二轮 #6：空关键词返公共池默认候选（后端），下拉打开即有数据；@focus 预载。 */
 async function onSearchProject(q: string) {
-  if (!q || q.trim().length < 1) { projOptions.value = []; return }
   projSearching.value = true
   try {
-    const res = await memoryApi.searchGrantProjects(q)
+    const res = await memoryApi.searchGrantProjects(q ?? '')
     projOptions.value = (res.data?.data ?? []).map(p => ({ label: p.name, value: p.id }))
   } catch { projOptions.value = [] } finally { projSearching.value = false }
+}
+async function preloadProjects() {
+  if (projOptions.value.length) return
+  await onSearchProject('')
+}
+
+// ---- 第二轮 #5 · 公共池管理 ----
+const poolBusyId = ref<number | null>(null)
+/** 项目是否已推入公共池（初值来自 gen 矩阵 memoryPoolPublic）。 */
+function poolFlagOf(projectId: number): boolean {
+  return projects.value.find(p => p.projectId === projectId)?.memoryPoolPublic ?? false
+}
+async function togglePool(projectId: number, on: boolean | string | number) {
+  const pub = !!on
+  poolBusyId.value = projectId
+  try {
+    await memoryApi.toggleProjectPool(projectId, pub)
+    message.success(pub ? '已推入公共池，所有人可申请召回' : '已移出公共池')
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '切换失败')
+  } finally {
+    poolBusyId.value = null
+  }
 }
 
 async function grantUser() {

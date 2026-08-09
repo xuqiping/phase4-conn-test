@@ -43,6 +43,9 @@ class MemoryProjectUserGrantServiceTest {
         MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
         TableInfoHelper.initTableInfo(assistant, MemoryProjectUserGrant.class);
         TableInfoHelper.initTableInfo(assistant, MemoryProjectMember.class);
+        // 第二轮 #5/#6：togglePool / searchUsers / searchProjects 用 Project / User 的 LambdaQueryWrapper
+        TableInfoHelper.initTableInfo(assistant, Project.class);
+        TableInfoHelper.initTableInfo(assistant, User.class);
     }
 
     @Mock private MemoryProjectUserGrantMapper grantMapper;
@@ -265,5 +268,47 @@ class MemoryProjectUserGrantServiceTest {
     void findActiveGrantedProjectIds_nullUser_empty() {
         assertEquals(java.util.List.of(), service.findActiveGrantedProjectIds(null));
         verify(grantMapper, never()).findActiveGrantedProjectIds(any());
+    }
+
+    // ---- 第二轮 #5 · togglePool（仅 owner/admin 可切换公共池）----
+
+    @Test
+    void togglePool_owner_updatesFlag() {
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"));
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, "P"));
+        when(projectMapper.update(any(), any())).thenReturn(1);
+        service.togglePool(1L, 100L, true);
+        verify(projectMapper).update(any(), any());
+    }
+
+    @Test
+    void togglePool_member_forbidden() {
+        when(memberMapper.selectOne(any())).thenReturn(member("MEMBER"));
+        assertThrows(BusinessException.class, () -> service.togglePool(1L, 100L, true));
+        verify(projectMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void togglePool_projectNotFound_notFound() {
+        when(memberMapper.selectOne(any())).thenReturn(member("ADMIN"));
+        when(projectMapper.selectById(1L)).thenReturn(null);
+        assertThrows(BusinessException.class, () -> service.togglePool(1L, 100L, true));
+    }
+
+    // ---- 第二轮 #6 · search 空关键词返默认候选（下拉打开即有数据）----
+
+    @Test
+    void searchUsers_emptyKeyword_returnsDefaults() {
+        when(userMapper.selectList(any())).thenReturn(java.util.List.of(user(2L, "张三"), user(3L, "李四")));
+        var res = service.searchUsers("", 100L);
+        assertEquals(2, res.size());
+        assertEquals("张三", res.get(0).getName());
+    }
+
+    @Test
+    void searchProjects_emptyKeyword_returnsPool() {
+        when(projectMapper.selectList(any())).thenReturn(java.util.List.of(project(2L, "P2"), project(3L, "P3")));
+        var res = service.searchProjects("", 100L);
+        assertEquals(2, res.size());
     }
 }

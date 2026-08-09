@@ -26,7 +26,8 @@
                p.name           AS projectName,
                m.role           AS role,
                ps.gen_enabled   AS ownerEnabled,
-               us.gen_enabled   AS memberEnabled
+               us.gen_enabled   AS memberEnabled,
+               p.memory_pool_public AS memoryPoolPublic
         FROM memory_project_members m
         JOIN projects p ON p.id = m.project_id
         LEFT JOIN memory_project_settings ps ON ps.project_id = m.project_id

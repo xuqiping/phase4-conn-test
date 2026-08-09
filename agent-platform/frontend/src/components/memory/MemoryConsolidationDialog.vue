@@ -14,7 +14,7 @@
     :bordered="false"
   >
     <n-spin :show="loading">
-      <!-- 二期人工测试 Req2：仅「重新总结」模式显示筛选（标签大类/时间/方向）；「立即总结」只压新增，无需筛选 -->
+      <!-- 二期人工测试 Req2：仅「重新总结」模式显示标签/时间筛选；「立即总结」只压新增，无需标签/时间筛选 -->
       <div v-if="mode === 'resummarize'" class="consolidation-dialog__filter">
         <div class="consolidation-dialog__filter-title">重新总结筛选（可选，留空 = 全部）</div>
         <n-select
@@ -34,18 +34,18 @@
           clearable
           placeholder="按创建时间范围"
         />
-        <!-- 二期 P3c：方向筛选——个人/个人记忆等非项目 scope 透传，按输入/输出各生成独立总结行 -->
-        <div class="consolidation-dialog__direction">
-          <span class="consolidation-dialog__filter-hint">方向</span>
-          <n-radio-group v-model:value="directionFilter" size="small">
-            <n-radio-button value="BOTH">综合</n-radio-button>
-            <n-radio-button value="INPUT">仅输入</n-radio-button>
-            <n-radio-button value="OUTPUT">仅输出</n-radio-button>
-          </n-radio-group>
-          <span v-if="directionFilter !== 'BOTH'" class="consolidation-dialog__filter-hint">
-            仅 {{ directionFilter === 'INPUT' ? '输入' : '输出' }} 流水账 → 生成独立总结行
-          </span>
-        </div>
+      </div>
+      <!-- 二期人工测试第二轮 #1：方向筛选两模式都显（综合/仅输入/仅输出），个人等非项目 scope 透传，按输入/输出各生成独立总结行 -->
+      <div class="consolidation-dialog__direction">
+        <span class="consolidation-dialog__filter-hint">方向</span>
+        <n-radio-group v-model:value="directionFilter" size="small">
+          <n-radio-button value="BOTH">综合</n-radio-button>
+          <n-radio-button value="INPUT">仅输入</n-radio-button>
+          <n-radio-button value="OUTPUT">仅输出</n-radio-button>
+        </n-radio-group>
+        <span v-if="directionFilter !== 'BOTH'" class="consolidation-dialog__filter-hint">
+          仅 {{ directionFilter === 'INPUT' ? '输入' : '输出' }} 流水账 → 生成独立总结行
+        </span>
       </div>
       <n-empty v-if="!loading && !visibleTargets.length" size="small" description="无可总结 scope（仅创始人可总结项目）" />
       <n-space v-else vertical :size="8">
@@ -253,13 +253,17 @@ async function loadTargets() {
 async function trigger() {
   if (selectedScopes.value.length === 0) return
   triggering.value = true
+  // 第二轮 #2：总结同步跑 LLM 可能耗时 1-2 分钟，显 loading 提示承接长等待（不再秒报超时）。
+  const loadingMsg = message.loading('正在总结，多 scope 压缩可能需要 1-2 分钟，请勿关闭…', { duration: 0 })
   try {
     const res = await memoryApi.triggerConsolidation(selectedScopes.value)
     const r = res.data?.data
+    loadingMsg.destroy()
     message.success(`已写 ${r?.summariesWritten ?? 0} 条总结${r?.conflictsCreated ? `，${r.conflictsCreated} 条冲突待裁` : ''}`)
     emit('done')
     emit('update:show', false)
   } catch (e: any) {
+    loadingMsg.destroy()
     message.error(e?.message || '总结失败')
   } finally {
     triggering.value = false
@@ -307,6 +311,9 @@ watch(() => props.show, (s) => {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    padding: 8px 4px 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   &__filter-hint {
     font-size: 12px;

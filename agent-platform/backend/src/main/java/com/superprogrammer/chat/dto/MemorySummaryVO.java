@@ -16,6 +16,8 @@ import java.util.List;
 public class MemorySummaryVO {
     private Long id;
     private Long projectId;
+    /** 第二轮 #3：所属项目名（projectId 非空时回填，前端卡片直显归属项目）。 */
+    private String projectName;
     private Long tagId;
     private String subject;
     private String topic;

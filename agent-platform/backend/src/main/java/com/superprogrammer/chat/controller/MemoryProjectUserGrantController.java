@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -91,16 +92,33 @@ public class MemoryProjectUserGrantController {
         return ResponseEntity.ok(R.ok("已撤销", null));
     }
 
-    /** 关键词检索用户（项目授权个人的被授权人选择；仅 id+name，限 10）。 */
+    /** 关键词检索用户（项目授权个人的被授权人选择；空关键词返默认候选，限 20）。 */
     @GetMapping("/user-grants/search-users")
     public ResponseEntity<R<List<MemorySearchItemVO>>> searchUsers(@RequestParam(required = false) String q) {
-        return ResponseEntity.ok(R.ok(grantService.searchUsers(q)));
+        return ResponseEntity.ok(R.ok(grantService.searchUsers(q, requireLogin())));
     }
 
-    /** 关键词检索项目（个人申请召回的目标项目选择；仅 id+name，限 10，排除自建）。 */
+    /** 关键词检索项目（个人申请召回的目标项目选择；空关键词返公共池默认候选，限 20，排除自建）。 */
     @GetMapping("/user-grants/search-projects")
     public ResponseEntity<R<List<MemorySearchItemVO>>> searchProjects(@RequestParam(required = false) String q) {
         return ResponseEntity.ok(R.ok(grantService.searchProjects(q, requireLogin())));
+    }
+
+    /**
+     * 第二轮 #5：切换项目的记忆公共池可见性（仅项目 OWNER/ADMIN）。
+     * body={"public": true/false}。
+     */
+    @PutMapping("/projects/{projectId}/pool")
+    public ResponseEntity<R<Void>> togglePool(@PathVariable Long projectId, @RequestBody Map<String, Boolean> body) {
+        boolean publicPool = body != null && Boolean.TRUE.equals(body.get("public"));
+        grantService.togglePool(projectId, requireLogin(), publicPool);
+        return ResponseEntity.ok(R.ok(publicPool ? "已推入公共池，所有人可申请召回" : "已移出公共池", null));
+    }
+
+    /** 第二轮 #5：公共池候选项目列表（所有人可申请，排除自建）。 */
+    @GetMapping("/pool-projects")
+    public ResponseEntity<R<List<MemorySearchItemVO>>> listPoolProjects() {
+        return ResponseEntity.ok(R.ok(grantService.listPoolProjects(requireLogin())));
     }
 
     private Long requireLogin() {

@@ -22,4 +22,6 @@ public class MemoryGenMatrixItemVO {
     private Boolean ownerEnabled;
     private Boolean memberEnabled;
     private Boolean effective;
+    /** 第二轮 #5：是否已推入记忆公共池（前端授权面板 pool 开关初值）。 */
+    private Boolean memoryPoolPublic;
 }

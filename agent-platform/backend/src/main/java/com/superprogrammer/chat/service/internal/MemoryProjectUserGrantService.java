@@ -228,16 +228,20 @@ public class MemoryProjectUserGrantService {
 
     /**
      * 关键词检索用户（二期 P1 · 项目授权个人的被授权人选择）。
-     * 仅返 id+name，LIKE name/username 限 10 条，任何登录用户可调。
+     * 仅返 id+name；第二轮 #6：空关键词 → 返默认候选（排除自己，限 20），下拉打开即有数据，
+     * 非空 → LIKE name/username 限 10。任何登录用户可调。
      */
-    public List<MemorySearchItemVO> searchUsers(String keyword) {
-        if (keyword == null || keyword.isBlank()) {
-            return List.of();
+    public List<MemorySearchItemVO> searchUsers(String keyword, Long userId) {
+        String q = keyword == null ? null : keyword.trim();
+        LambdaQueryWrapper<User> w = new LambdaQueryWrapper<User>()
+                .ne(userId != null, User::getId, userId);
+        if (q == null || q.isBlank()) {
+            // 第二轮 #6：空关键词默认候选（排除自己，限 20），下拉打开即有数据，不再「无数据」。
+            w.last("LIMIT 20");
+        } else {
+            w.and(x -> x.like(User::getName, q).or().like(User::getUsername, q)).last("LIMIT 10");
         }
-        String q = keyword.trim();
-        return userMapper.selectList(new LambdaQueryWrapper<User>()
-                        .and(w -> w.like(User::getName, q).or().like(User::getUsername, q))
-                        .last("LIMIT 10")).stream()
+        return userMapper.selectList(w).stream()
                 .map(u -> new MemorySearchItemVO(u.getId(),
                         (u.getName() != null && !u.getName().isBlank()) ? u.getName() : u.getUsername()))
                 .toList();
@@ -245,16 +249,53 @@ public class MemoryProjectUserGrantService {
 
     /**
      * 关键词检索项目（二期 P1 · 个人申请召回的目标项目选择）。
-     * 仅返 id+name，LIKE name 限 10 条；排除当前用户创建的项目（无需向自己项目申请）。
+     * 仅返 id+name，排除当前用户自建（无需向自己项目申请）；第二轮 #6：空关键词 → 返公共池默认候选，
+     * 非空 → LIKE name 限 10。
      */
     public List<MemorySearchItemVO> searchProjects(String keyword, Long userId) {
-        if (keyword == null || keyword.isBlank()) {
-            return List.of();
+        String q = keyword == null ? null : keyword.trim();
+        LambdaQueryWrapper<Project> w = new LambdaQueryWrapper<Project>()
+                .ne(userId != null, Project::getCreatedBy, userId);
+        if (q == null || q.isBlank()) {
+            // 第二轮 #6：空关键词默认返公共池项目（排除自建），下拉打开即有数据。
+            w.eq(Project::getMemoryPoolPublic, true).last("LIMIT 20");
+        } else {
+            w.like(Project::getName, q).last("LIMIT 10");
         }
+        return projectMapper.selectList(w).stream()
+                .map(p -> new MemorySearchItemVO(p.getId(), p.getName()))
+                .toList();
+    }
+
+    /**
+     * 第二轮 #5：切换项目的记忆公共池可见性（仅项目 OWNER/ADMIN）。
+     * 推入公共池后，所有人可在「申请召回」候选看到本项目并发起授权申请。
+     */
+    public void togglePool(Long projectId, Long operatorId, boolean publicPool) {
+        if (!isOwnerOrAdmin(projectId, operatorId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅项目 owner/admin 可切换公共池");
+        }
+        Project project = projectMapper.selectById(projectId);
+        if (project == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目不存在");
+        }
+        int updated = projectMapper.update(null, new LambdaUpdateWrapper<Project>()
+                .eq(Project::getId, projectId)
+                .set(Project::getMemoryPoolPublic, publicPool));
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "项目状态已被并发变更，请刷新重试");
+        }
+        log.info("项目公共池切换 projectId={} public={} operatorId={}", projectId, publicPool, operatorId);
+    }
+
+    /**
+     * 第二轮 #5：公共池候选项目（memory_pool_public=true，排除本人自建，所有人可申请召回）。
+     */
+    public List<MemorySearchItemVO> listPoolProjects(Long userId) {
         return projectMapper.selectList(new LambdaQueryWrapper<Project>()
-                        .like(Project::getName, keyword.trim())
+                        .eq(Project::getMemoryPoolPublic, true)
                         .ne(userId != null, Project::getCreatedBy, userId)
-                        .last("LIMIT 10")).stream()
+                        .last("LIMIT 50")).stream()
                 .map(p -> new MemorySearchItemVO(p.getId(), p.getName()))
                 .toList();
     }

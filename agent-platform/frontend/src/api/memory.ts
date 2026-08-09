@@ -43,12 +43,16 @@ export interface MemoryGenMatrixItemVO {
   ownerEnabled: boolean
   memberEnabled: boolean
   effective: boolean
+  /** 第二轮 #5：是否已推入记忆公共池（授权面板 pool 开关初值）。 */
+  memoryPoolPublic?: boolean
 }
 
 /** 总结展示（只读自己，tag 信息回填，status 状态徽标）。 */
 export interface MemorySummaryVO {
   id: number
   projectId: number | null
+  /** 第二轮 #3：所属项目名（projectId 非空时回填，卡片直显归属项目）。 */
+  projectName?: string | null
   tagId: number | null
   subject: string | null
   topic: string | null
@@ -223,16 +227,18 @@ export interface MemoryProjectRuleVO {
   ruleText: string | null
   positiveExamples: string[] | null
   negativeExamples: string[] | null
+  filenamePatterns: string[] | null
   enabled: boolean
   anchorReady: boolean
   updatedAt: string | null
 }
 
-/** 收录规则保存请求（ruleText ≤2000 字；正/负例各 ≤5 条、单条 ≤500 字）。 */
+/** 收录规则保存请求（ruleText ≤2000 字；正/负例各 ≤5 条、单条 ≤500 字；文件名规则 ≤10 条、单条 ≤100 字）。 */
 export interface MemoryProjectRuleRequest {
   ruleText: string
   positiveExamples?: string[]
   negativeExamples?: string[]
+  filenamePatterns?: string[]
   enabled: boolean
 }
 
@@ -428,7 +434,11 @@ export const memoryApi = {
     return request.get<ApiResponse<MemoryConsolidationTargetView[]>>('/chat/memory/consolidation/targets')
   },
   triggerConsolidation(scopes: MemoryConsolidationScopeRequest[]) {
-    return request.post<ApiResponse<MemorySummarizeResult>>('/chat/memory/consolidation/trigger', { scopes })
+    // 第二轮 #2：总结同步跑多 scope LLM 压缩，常 > 全局 15s timeout → 前端误报「服务暂不可达」但后端继续。
+    // 单独放宽至 3min，覆盖最慢路径；UX 由 Dialog 的 loading 提示承接。
+    return request.post<ApiResponse<MemorySummarizeResult>>('/chat/memory/consolidation/trigger', { scopes }, {
+      timeout: 180000
+    })
   },
   getAutoScopes() {
     return request.get<ApiResponse<MemoryScopeAutoView[]>>('/chat/memory/consolidation/auto')
@@ -519,6 +529,14 @@ export const memoryApi = {
   /** 关键词检索项目（个人申请召回的目标项目选择；仅 id+name）。 */
   searchGrantProjects(q: string) {
     return request.get<ApiResponse<{ id: number; name: string }[]>>('/chat/memory/user-grants/search-projects', { params: { q } })
+  },
+  /** 第二轮 #5：切换项目记忆公共池可见性（owner/admin；true=推入，所有人可申请召回）。 */
+  toggleProjectPool(projectId: number, publicPool: boolean) {
+    return request.put<ApiResponse<void>>(`/chat/memory/projects/${projectId}/pool`, { public: publicPool })
+  },
+  /** 第二轮 #5：公共池候选项目（排除自建，所有人可申请）。 */
+  listPoolProjects() {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>(`/chat/memory/pool-projects`)
   },
 
   // ---- 二期 P3 · 文件记忆（FR-201~205；端点挂在 ChatController /chat/attachments 下）----
