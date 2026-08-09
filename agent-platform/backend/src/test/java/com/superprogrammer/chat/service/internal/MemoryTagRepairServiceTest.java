@@ -104,6 +104,38 @@ class MemoryTagRepairServiceTest {
         verify(anchorService, never()).build(anyLong(), anyString(), anyString(), anyString(), any());
     }
 
+    // ===== survivor 优先取已是目标大类的干净标签（避免改 topic 撞 UNIQUE）=====
+
+    @Test
+    void execute_prefersAlreadyCleanTagAsSurvivor() throws Exception {
+        wire();
+        // 300 已是干净大类 topic=旅行出行（usage 低）；301/302 细标签（usage 高）待归并。
+        // 期望：300 留作 survivor（保留干净 topic，免改 topic 撞 uk），301/302 并入它。
+        when(repairMapper.findNullAnchorTags()).thenReturn(List.of());
+        when(tagMapper.selectList(any())).thenReturn(List.of(
+                tag(300L, "我", "旅行出行", "杭州游", 1),
+                tag(301L, "我", "旅游攻略", "苏州", 9),
+                tag(302L, "我", "旅行计划", "南京", 8)));
+        when(systemSettingService.getMemoryTagVocab()).thenReturn(List.of("旅行出行", "技术技能"));
+        when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        when(llmGateway.chat(any(), eq(1L))).thenReturn(LlmResponse.builder().content(
+                "[{\"id\":300,\"topic\":\"旅行出行\"},{\"id\":301,\"topic\":\"旅行出行\"},{\"id\":302,\"topic\":\"旅行出行\"}]")
+                .build());
+        when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any()))
+                .thenReturn(new MemoryTagAnchorService.AnchorPayload("[0.2]", "tok"));
+
+        RepairReport r = service.repair(false);
+
+        assertEquals(1, r.mergeGroups.size());
+        assertEquals(300L, r.mergeGroups.get(0).survivorId, "已是目标大类的干净标签应作 survivor");
+        // 301/302 并入 300（6 表重指 + 软删）
+        verify(repairMapper).reassignSummariesTagId(301L, 300L);
+        verify(repairMapper).softDeleteTag(301L);
+        verify(repairMapper).softDeleteTag(302L);
+        // survivor 300 topic 已是旅行出行→updateTopicAndAnchor 仍调（重生锚点），但不撞 UNIQUE
+        verify(repairMapper).updateTopicAndAnchor(eq(300L), eq("旅行出行"), any(), any());
+    }
+
     // ===== execute：6 表全重指 + survivor 改大类 + loser 软删 =====
 
     @Test

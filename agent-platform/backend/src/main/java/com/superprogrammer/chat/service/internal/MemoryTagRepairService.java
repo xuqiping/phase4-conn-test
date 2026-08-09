@@ -118,9 +118,15 @@ public class MemoryTagRepairService {
                     }
                     continue;
                 }
-                // 多标签组：survivor（usage_count 最高，平手 id 最小）吞并 loser
+                // 多标签组：survivor 吞并 loser。survivor 选取优先级：
+                //   ① 已是目标大类（topic==category）的优先——保留干净标签，避免把它改 topic 时撞
+                //      uk_memory_tags_user_subject_topic（该标签本就占着 (user,subject,category) 槽位）。
+                //   ② usage_count 最高（常用者优先，被引最多）；
+                //   ③ id 最小（确定性平手打破）。
+                final String survivorCategory = category;
                 group.sort(Comparator
-                        .comparingInt((MemoryTag t) -> t.getUsageCount() == null ? 0 : -t.getUsageCount())
+                        .comparingInt((MemoryTag t) -> survivorCategory.equals(t.getTopic()) ? 0 : 1)
+                        .thenComparingInt((MemoryTag t) -> t.getUsageCount() == null ? 0 : -t.getUsageCount())
                         .thenComparingLong(MemoryTag::getId));
                 MemoryTag survivor = group.get(0);
                 List<MemoryTag> losers = group.subList(1, group.size());
