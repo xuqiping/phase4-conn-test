@@ -37,4 +37,8 @@ public class MemoryConsolidationTargetView {
 
     /** 是否已加入自动定时总结。 */
     private boolean autoEnabled;
+
+    /** 二期 P4（FR-301/302）：PROJECT scope 时当前用户可否写项目共享总结（owner/admin）。
+     *  false 的成员仅可走「压到我自己的总结」通道。PERSONAL scope 恒 true（无意义）。 */
+    private boolean canWriteShared;
 }

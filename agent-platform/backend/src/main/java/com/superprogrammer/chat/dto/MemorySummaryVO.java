@@ -24,6 +24,8 @@ public class MemorySummaryVO {
     private String l2Detail;
     private Long sourceSummaryId;
     private List<Long> sourceTurnIds;
+    /** V70 二期 P4：USER=个人总结 / PROJECT=项目共享总结（全员可读）。 */
+    private String scopeOwner;
     /** CLEAN / PENDING_CONFLICT / STALE */
     private String status;
     private OffsetDateTime summarizedAt;

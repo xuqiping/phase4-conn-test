@@ -22,6 +22,21 @@
       </div>
       <!-- Content -->
       <div class="message-bubble__text">{{ message.content }}</div>
+      <!-- 二期 P3（FR-201）：用户消息附件 chips（本地回显带名；历史仅 fileId → 通用「附件」标） -->
+      <div v-if="userAttachments.length" class="message-bubble__attachments">
+        <button
+          v-for="a in userAttachments"
+          :key="a.fileId"
+          class="message-bubble__attachment"
+          :title="`下载 ${a.name}`"
+          @click="downloadAttachment(a)"
+        >📎 {{ a.name }}</button>
+      </div>
+      <!-- 二期 P3（FR-203）：召回命中的文件记忆卡片（下载 / 展开分块页码锚点） -->
+      <div v-if="fileCards.length" class="message-bubble__file-cards">
+        <div class="message-bubble__file-cards-title">🗂 相关文件记忆</div>
+        <MessageFileCard v-for="c in fileCards" :key="c.memoryId" :card="c" />
+      </div>
       <!-- P3：RAG 引用回显（文本中 [n] 对应底部第 n 条；IMAGE 缩略图 / FILE 下载链 / 联网外链） -->
       <div v-if="citations.length" class="message-bubble__citations">
         <div class="message-bubble__citations-title">📎 引用来源</div>
@@ -67,7 +82,10 @@ import { ref, computed } from 'vue'
 import { NIcon } from 'naive-ui'
 import { PersonOutline, SparklesOutline } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/api/chat'
+import type { RecalledFileCard } from '@/api/memory'
 import { knowledgeApi } from '@/api/knowledge'
+import { fetchFilePreview } from '@/api/file'
+import MessageFileCard from './MessageFileCard.vue'
 
 const props = defineProps<{
   message: ChatMessage
@@ -109,6 +127,49 @@ const citations = computed<Citation[]>(() => {
     return []
   }
 })
+
+/** 二期 P3（FR-203）：metadata.fileCards → 文件记忆卡片列表（流式 FILE_CARDS 帧 / REST 召回随消息落库）。 */
+const fileCards = computed<RecalledFileCard[]>(() => {
+  if (!props.message.metadata) return []
+  try {
+    const meta = JSON.parse(props.message.metadata)
+    const list = Array.isArray(meta.fileCards) ? meta.fileCards : []
+    return list.filter((c: any) => c && typeof c.memoryId === 'number' && c.fileId)
+  } catch {
+    return []
+  }
+})
+
+/** 二期 P3（FR-201）：用户附件 chips。本地回显 metadata.attachments（带名）；历史仅 attachmentFileIds（通用标）。 */
+const userAttachments = computed<{ fileId: string; name: string }[]>(() => {
+  if (props.message.role !== 'USER' || !props.message.metadata) return []
+  try {
+    const meta = JSON.parse(props.message.metadata)
+    if (Array.isArray(meta.attachments)) {
+      return meta.attachments.filter((a: any) => a && a.fileId)
+    }
+    if (Array.isArray(meta.attachmentFileIds)) {
+      return meta.attachmentFileIds.map((fid: string, i: number) => ({ fileId: fid, name: `附件 ${i + 1}` }))
+    }
+    return []
+  } catch {
+    return []
+  }
+})
+
+/** 附件下载：/api/files/{fileId} 需 JWT header → axios blob 转 objectURL 触发下载。 */
+async function downloadAttachment(a: { fileId: string; name: string }) {
+  try {
+    const url = await fetchFilePreview(a.fileId)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = a.name
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 30_000)
+  } catch {
+    // 拦截器已 toast（原文件删除/无权限 → 404/403 提示）
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -290,5 +351,43 @@ const citations = computed<Citation[]>(() => {
   &:hover {
     opacity: 0.85;
   }
+}
+
+.message-bubble__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message-bubble__attachment {
+  border: 1px solid var(--color-border-light);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+}
+
+.message-bubble__file-cards {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-bubble__file-cards-title {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 </style>

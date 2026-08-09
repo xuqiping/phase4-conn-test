@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { chatApi } from '@/api/chat'
-import type { ChatSession, ChatMessage, ChatResponse } from '@/api/chat'
+import type { ChatSession, ChatMessage, ChatResponse, ChatAttachmentRef } from '@/api/chat'
+import type { RecalledFileCard } from '@/api/memory'
 import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
 
 const DEFAULT_CHAT_MODEL = 'doubao-seed-2.0-code'
@@ -17,6 +18,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingThinking = ref('')
   /** P3：RAG 命中引用（CITATION 帧捕获；DONE 前到达），DONE 时并入 message.metadata.citations 供 MessageBubble 渲染 [n]。 */
   const streamingCitations = ref<any[] | null>(null)
+  /** 二期 P3（FR-203）：召回命中的文件卡片（FILE_CARDS 帧捕获；DONE 前到达），DONE 时并入 message.metadata.fileCards 供文件卡片渲染。 */
+  const streamingFileCards = ref<RecalledFileCard[] | null>(null)
   /** 工作流 HUMAN_INPUT 待答问题规格（INPUT_REQUIRED 帧捕获；select 型可渲染选项按钮）。text 型直接用普通输入框作答即可。 */
   const pendingInput = ref<Record<string, any> | null>(null)
   const wsConnected = ref(false)
@@ -26,18 +29,6 @@ export const useChatStore = defineStore('chat', () => {
   const selectedTarget = ref<string>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_TARGET) || DEFAULT_CHAT_TARGET
   )
-  // 项目记忆 scope（V33）：写目标 + 读开关（扁平对称）。store 持态，sendMessage 直接读。
-  const memProjectId = ref<number | null>(null)        // 写目标（null=总记忆会话）
-  const memIncludeGlobal = ref<boolean>(true)          // 读开关：总记忆 on/off
-  const memReadProjectIds = ref<number[]>([])          // 读开关：开启读取的项目集合
-
-  /** 请求体用的 scope 字段（memIncludeGlobal 始终带 = scope 更新标记，后端据此持久化三列）。 */
-  const memoryScopePayload = computed(() => ({
-    projectId: memProjectId.value,
-    memIncludeGlobal: memIncludeGlobal.value,
-    memReadProjectIds: memReadProjectIds.value
-  }))
-
   let ws: WebSocket | null = null
 
   function appendAssistantMessage(content: string, metadata: string | null = null) {
@@ -122,8 +113,14 @@ export const useChatStore = defineStore('chat', () => {
     return deleted
   }
 
+  /** 二期 P3：本地用户回显 metadata（附件引用 chips；无附件 → null）。 */
+  function attachmentEchoMetadata(attachments?: ChatAttachmentRef[]): string | null {
+    return attachments?.length ? JSON.stringify({ attachments }) : null
+  }
+
   // REST send (non-streaming fallback)
-  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean) {
+  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[]) {
+    const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     try {
       messages.value.push({
@@ -131,14 +128,14 @@ export const useChatStore = defineStore('chat', () => {
         sessionId: currentSessionId.value ?? 0,
         role: 'USER',
         content,
-        metadata: null,
+        metadata: attachmentEchoMetadata(attachments),
         createdAt: new Date().toISOString()
       })
 
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, ...memoryScopePayload.value })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, attachmentFileIds })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -149,7 +146,7 @@ export const useChatStore = defineStore('chat', () => {
           model: selectedModel.value ?? undefined,
           ragEnabled,
           webSearchEnabled,
-          ...memoryScopePayload.value
+          attachmentFileIds
         })
       }
 
@@ -176,10 +173,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // SSE streaming
-  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean) {
+  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[]) {
+    const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     streamingContent.value = ''
     streamingThinking.value = ''
+    streamingFileCards.value = null
     // 用户作答（或发新消息）：清掉上一轮 HUMAN_INPUT 待答状态（防 select 选项按钮答完后 stale 残留）
     pendingInput.value = null
 
@@ -188,7 +187,7 @@ export const useChatStore = defineStore('chat', () => {
       sessionId: currentSessionId.value ?? 0,
       role: 'USER',
       content,
-      metadata: null,
+      metadata: attachmentEchoMetadata(attachments),
       createdAt: new Date().toISOString()
     })
 
@@ -199,7 +198,7 @@ export const useChatStore = defineStore('chat', () => {
             model: selectedModel.value ?? undefined,
             ragEnabled,
             webSearchEnabled,
-            ...memoryScopePayload.value
+            attachmentFileIds
           })
         : chatApi.streamNewMessage({
             message: content,
@@ -207,7 +206,7 @@ export const useChatStore = defineStore('chat', () => {
             model: selectedModel.value ?? undefined,
             ragEnabled,
             webSearchEnabled,
-            ...memoryScopePayload.value
+            attachmentFileIds
           })
 
       // 60s timeout for initial response（修 #1：原 10s 对 AGENT/工作流等非真流式首字节太短，频繁误超时→REST 回退双跑更慢）
@@ -221,7 +220,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!response.ok || !response.body) {
         sending.value = false
         messages.value.pop()
-        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
       }
 
       const reader = response.body.getReader()
@@ -268,6 +267,17 @@ export const useChatStore = defineStore('chat', () => {
                     // 单帧解析失败不丢已有引用
                   }
                   break
+                case 'FILE_CARDS':
+                  // 二期 P3（FR-203）：content 为 RecalledFileCard[] JSON 串（DONE 前到达，单帧）。
+                  try {
+                    const cards = evt.content ? JSON.parse(evt.content) : null
+                    if (Array.isArray(cards) && cards.length) {
+                      streamingFileCards.value = cards
+                    }
+                  } catch {
+                    // 解析失败不丢流内容
+                  }
+                  break
                 case 'DONE':
                   messages.value.push({
                     id: Date.now(),
@@ -277,13 +287,15 @@ export const useChatStore = defineStore('chat', () => {
                     metadata: JSON.stringify({
                       ...(streamingThinking.value ? { thinking: streamingThinking.value } : {}),
                       ...(pendingInput.value ? { pendingInput: pendingInput.value } : {}),
-                      ...(streamingCitations.value ? { citations: streamingCitations.value } : {})
+                      ...(streamingCitations.value ? { citations: streamingCitations.value } : {}),
+                      ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {})
                     }),
                     createdAt: new Date().toISOString()
                   })
                   streamingContent.value = ''
                   streamingThinking.value = ''
                   streamingCitations.value = null
+                  streamingFileCards.value = null
                   sending.value = false
                   await fetchSessions()
                   break
@@ -309,16 +321,18 @@ export const useChatStore = defineStore('chat', () => {
         sending.value = false
         streamingContent.value = ''
         streamingThinking.value = ''
+        streamingFileCards.value = null
         messages.value.pop()
-        return sendMessage(content)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
       }
     } catch (e) {
       console.warn('SSE failed, falling back to REST:', e)
       sending.value = false
       streamingContent.value = ''
       streamingThinking.value = ''
+      streamingFileCards.value = null
       messages.value.pop()
-      return sendMessage(content)
+      return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
     }
   }
 
@@ -362,6 +376,17 @@ export const useChatStore = defineStore('chat', () => {
             // 单帧解析失败不丢已有引用
           }
           break
+        case 'FILE_CARDS':
+          // 二期 P3（FR-203）：文件记忆卡片帧（MESSAGE_COMPLETE 前到达，单帧）
+          try {
+            const cards = data.content ? JSON.parse(data.content) : null
+            if (Array.isArray(cards) && cards.length) {
+              streamingFileCards.value = cards
+            }
+          } catch {
+            // 解析失败不丢流内容
+          }
+          break
         case 'MESSAGE_COMPLETE':
           // Finalize streaming message
           if (streamingContent.value) {
@@ -372,13 +397,15 @@ export const useChatStore = defineStore('chat', () => {
               content: streamingContent.value,
               metadata: JSON.stringify({
                 ...(pendingInput.value ? { pendingInput: pendingInput.value } : {}),
-                ...(streamingCitations.value ? { citations: streamingCitations.value } : {})
+                ...(streamingCitations.value ? { citations: streamingCitations.value } : {}),
+                ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {})
               }),
               createdAt: new Date().toISOString()
             })
           }
           streamingContent.value = ''
           streamingCitations.value = null
+          streamingFileCards.value = null
           sending.value = false
           fetchSessions()
           break
@@ -395,14 +422,15 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function sendWSMessage(content: string, agentId?: number, workflowId?: number) {
+  function sendWSMessage(content: string, agentId?: number, workflowId?: number, attachments?: ChatAttachmentRef[]) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       // Fallback to REST
-      return sendMessage(content, agentId, workflowId)
+      return sendMessage(content, agentId, workflowId, undefined, undefined, attachments)
     }
 
     sending.value = true
     streamingContent.value = ''
+    streamingFileCards.value = null
     // 用户作答（或发新消息）：清掉上一轮 HUMAN_INPUT 待答状态
     pendingInput.value = null
 
@@ -412,7 +440,7 @@ export const useChatStore = defineStore('chat', () => {
       sessionId: currentSessionId.value ?? 0,
       role: 'USER',
       content,
-      metadata: null,
+      metadata: attachmentEchoMetadata(attachments),
       createdAt: new Date().toISOString()
     })
 
@@ -421,7 +449,8 @@ export const useChatStore = defineStore('chat', () => {
       sessionId: currentSessionId.value,
       agentId,
       workflowId,
-      model: selectedModel.value
+      model: selectedModel.value,
+      attachmentFileIds: attachments?.map(a => a.fileId)
     }))
   }
 
@@ -507,10 +536,6 @@ export const useChatStore = defineStore('chat', () => {
     disconnectWS,
     startConflictPoll,
     stopConflictPoll,
-    loadActiveConflicts,
-    // 项目记忆 scope（V33）
-    memProjectId,
-    memIncludeGlobal,
-    memReadProjectIds
+    loadActiveConflicts
   }
 })

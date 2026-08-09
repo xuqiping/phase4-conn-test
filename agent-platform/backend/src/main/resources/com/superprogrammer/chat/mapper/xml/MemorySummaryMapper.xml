@@ -5,6 +5,7 @@
     <resultMap id="MemorySummaryMap" type="com.superprogrammer.chat.entity.MemorySummary" autoMapping="true">
         <id property="id" column="id"/>
         <result property="sourceTurnIds" column="source_turn_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="sourceEntryIds" column="source_entry_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
     </resultMap>
 
     <!-- 总结恒只读自己（user_id=self，他人总结不可见防污染）；project_id 单值 scope（NULL=个人）。 -->
@@ -23,12 +24,15 @@
          ⚠️ personalOn=false+projectIds 空 → 1=0 兜底（空召回 scope，D-6 保证不调，此处防御）。 -->
     <select id="findSummariesForRecall" resultMap="MemorySummaryMap">
         SELECT * FROM memory_summaries
-        WHERE user_id = #{userId} AND deleted = 0 AND status != 'STALE'
+        WHERE deleted = 0 AND status != 'STALE'
           AND tag_id IN
           <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
               #{tid}
           </foreach>
           AND (
+          <!-- 二期 P4（FR-305）：本人总结（个人+成员个人压缩）∪ 项目共享总结（scope_owner=PROJECT，
+               user_id IS NULL，项目资产全员可读——召回 scope 已经 resolver 验过 ACTIVE 成员） -->
+          (user_id = #{userId} AND (
           <choose>
               <when test="personalOn and projectIds != null and !projectIds.isEmpty()">
                   project_id IS NULL OR project_id IN
@@ -51,6 +55,14 @@
                   </choose>
               </otherwise>
           </choose>
+          ))
+          <if test="projectIds != null and !projectIds.isEmpty()">
+          OR (scope_owner = 'PROJECT' AND user_id IS NULL AND project_id IN
+              <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                  #{pid}
+              </foreach>
+          )
+          </if>
           )
           <if test="relativeDays != null">AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
           <if test="twStart != null">AND summarized_at &gt;= #{twStart}</if>
@@ -126,6 +138,63 @@
     <update id="updateTextAndStatus">
         UPDATE memory_summaries
         SET l1_summary = #{l1}, l2_detail = #{l2}, status = #{status}, summarized_at = NOW(), updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- ============================ 二期 P4 · 项目共享总结（V70）============================ -->
+
+    <!-- P4 项目共享总结读取（FR-301 全员可读；成员咽喉在 service 层）。 -->
+    <select id="findProjectSharedSummaries" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 同 (project, tag, scope_owner=PROJECT) CLEAN 总结（共享总结冲突判定用）。 -->
+    <select id="findCleanByProjectTagScope" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = 'CLEAN' AND tag_id = #{tagId}
+          AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 同 (project, tag, scope_owner=PROJECT) 指定 status 总结（裁决找另一方）。 -->
+    <select id="findByProjectTagScopeStatus" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = #{status} AND tag_id = #{tagId}
+          AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at DESC
+    </select>
+
+    <!-- P4 删条目级联（FR-304）：source_entry_ids @> [entryId]（含共享总结）。 -->
+    <select id="findSummariesReferencingEntry" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND source_entry_ids @> ARRAY[#{entryId}]::bigint[]
+    </select>
+
+    <!-- P4 worker STALE 重生取数：项目共享总结（user_id IS NULL，findStaleByUser 覆盖不到）。 -->
+    <select id="findStaleProjectShared" resultMap="MemorySummaryMap">
+        SELECT * FROM memory_summaries
+        WHERE deleted = 0 AND status = 'STALE' AND scope_owner = 'PROJECT'
+        ORDER BY summarized_at ASC
+    </select>
+
+    <!-- P4（FR-303）撤销授权钩子：parent 共享总结中 provenance 命中 child 条目 → 批量 STALE。
+         && = 数组重叠算子；子查询取 child 项目全部条目 id（含已软删——provenance 可能指着旧条目）。 -->
+    <update id="markProjectSharedStaleByChildEntries">
+        UPDATE memory_summaries SET status = 'STALE', updated_at = NOW()
+        WHERE deleted = 0 AND scope_owner = 'PROJECT' AND project_id = #{parentProjectId}
+          AND source_entry_ids &amp;&amp; COALESCE(
+              (SELECT array_agg(id) FROM memory_project_entries WHERE project_id = #{childProjectId}),
+              '{}'::bigint[])
+    </update>
+
+    <!-- P4 worker 条目级 STALE 重生：更新文本 + status + source_entry_ids（实时算链后的新源集）。 -->
+    <update id="updateTextStatusAndEntries">
+        UPDATE memory_summaries
+        SET l1_summary = #{l1}, l2_detail = #{l2}, status = #{status},
+            source_entry_ids = #{sourceEntryIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler},
+            summarized_at = NOW(), updated_at = NOW()
         WHERE id = #{id} AND deleted = 0
     </update>
 </mapper>

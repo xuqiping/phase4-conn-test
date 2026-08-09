@@ -28,6 +28,7 @@ public class MemorySummaryViewService {
 
     private final MemorySummaryMapper summaryMapper;
     private final MemoryTagMapper tagMapper;
+    private final MemoryProjectLinkService linkService;
 
     /**
      * 列当前用户的总结（按 scope）。
@@ -37,6 +38,23 @@ public class MemorySummaryViewService {
      */
     public List<MemorySummaryVO> listMySummaries(Long userId, Long projectId) {
         List<MemorySummary> summaries = summaryMapper.findByUserAndScope(userId, projectId);
+        return toVOs(summaries);
+    }
+
+    /**
+     * 列项目共享总结（二期 P4，FR-301）：scope_owner=PROJECT，全员可读。
+     * <b>读权咽喉</b>：调用者须是该项目 ACTIVE 成员，否则 FORBIDDEN（成员身份实时判）。
+     */
+    public List<MemorySummaryVO> listProjectSharedSummaries(Long userId, Long projectId) {
+        if (projectId == null || !linkService.isActiveMember(projectId, userId)) {
+            log.info("项目共享总结读取越权拦截 userId={} projectId={}", userId, projectId);
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.FORBIDDEN, "仅项目成员可读项目共享总结");
+        }
+        return toVOs(summaryMapper.findProjectSharedSummaries(projectId));
+    }
+
+    private List<MemorySummaryVO> toVOs(List<MemorySummary> summaries) {
 
         // batch 回填 tag 信息防 N+1
         List<Long> tagIds = summaries.stream().map(MemorySummary::getTagId).filter(java.util.Objects::nonNull).distinct().toList();
@@ -65,6 +83,7 @@ public class MemorySummaryViewService {
         vo.setL2Detail(s.getL2Detail());
         vo.setSourceSummaryId(s.getSourceSummaryId());
         vo.setSourceTurnIds(s.getSourceTurnIds());
+        vo.setScopeOwner(s.getScopeOwner());
         vo.setStatus(s.getStatus());
         vo.setSummarizedAt(s.getSummarizedAt());
         vo.setCreatedAt(s.getCreatedAt());

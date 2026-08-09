@@ -2,14 +2,18 @@ package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.entity.MemoryConflict;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
+import com.superprogrammer.chat.entity.MemoryEntryCoverage;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.entity.MemoryTurn;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.mapper.MemoryConflictMapper;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.service.internal.MemoryConflictJudge.SummaryConflictResult;
+import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedEntrySummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedSummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationService.SummarizeResult;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +39,7 @@ public class MemoryConsolidationTxService {
 
     private final MemorySummaryMapper summaryMapper;
     private final MemorySummaryCoverageMapper coverageMapper;
+    private final MemoryEntryCoverageMapper entryCoverageMapper;
     private final MemoryConflictMapper conflictMapper;
     private final MemoryConflictJudge conflictJudge;
     private final MemoryConsolidationScopeMapper scopeMapper;
@@ -128,5 +133,75 @@ public class MemoryConsolidationTxService {
         c.setStatus("PENDING");
         c.setCreatedAt(OffsetDateTime.now());
         conflictMapper.insert(c);
+    }
+
+    // ============================ 二期 P4 · 项目总结写库（V70，FR-301/302/305）============================
+
+    /**
+     * 写项目域 summary + 条目级 coverage + 冲突检测（事务化原子）。
+     * <ul>
+     *   <li>shared=true（FR-301 共享总结）：scope_owner=PROJECT + user_id=NULL（项目资产），
+     *       冲突判定/覆盖行按项目域（coverage.user_id=NULL）；冲突行记触发者（裁决权 owner/admin，
+     *       {@link MemoryConflictResolutionService} 项目分支鉴权）。</li>
+     *   <li>shared=false（FR-302 成员个人压缩）：scope_owner=USER + user_id=成员本人 + project_id=该项目
+     *       （标注来源项目），覆盖行 user_id=成员（各自幂等，与共享覆盖互不影响）；对项目共享总结零写。</li>
+     * </ul>
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void writeProjectSummaryAndCoverage(Long operatorId, Long projectId, boolean shared,
+                                               Long tagId, List<MemoryProjectEntryVO> entries,
+                                               CompressedEntrySummary cs, SummarizeResult result) {
+        List<MemorySummary> existing = shared
+                ? summaryMapper.findCleanByProjectTagScope(projectId, tagId)
+                : summaryMapper.findCleanByUserTagScope(operatorId, tagId, projectId);
+        String initialStatus = "CLEAN";
+        String askText = null;
+        if (existing != null && !existing.isEmpty()) {
+            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(existing, cs.l1() + " " + cs.l2());
+            if (judge.conflict()) {
+                initialStatus = "PENDING_CONFLICT";
+                askText = judge.askText();
+            }
+        }
+
+        MemorySummary s = new MemorySummary();
+        s.setUserId(shared ? null : operatorId);
+        s.setProjectId(projectId);
+        s.setTagId(tagId);
+        s.setL1Summary(cs.l1());
+        s.setL2Detail(cs.l2());
+        s.setSourceTurnIds(List.of());
+        s.setSourceEntryIds(cs.sourceEntryIds());
+        s.setScopeOwner(shared ? "PROJECT" : "USER");
+        s.setStatus(initialStatus);
+        s.setSummarizedAt(OffsetDateTime.now());
+        s.setCreatedBy(operatorId);
+        s.setUpdatedBy(operatorId);
+        summaryMapper.insert(s);
+
+        List<MemoryEntryCoverage> rows = new ArrayList<>(entries.size());
+        for (MemoryProjectEntryVO e : entries) {
+            MemoryEntryCoverage c = new MemoryEntryCoverage();
+            c.setEntryId(e.getId());
+            c.setSummaryId(s.getId());
+            c.setProjectId(projectId);
+            c.setTagId(tagId);
+            c.setUserId(shared ? null : operatorId);
+            rows.add(c);
+        }
+        if (!rows.isEmpty()) {
+            entryCoverageMapper.batchInsert(rows);
+        }
+
+        if ("PENDING_CONFLICT".equals(initialStatus)) {
+            if (existing != null) {
+                for (MemorySummary ex : existing) {
+                    summaryMapper.markStatus(ex.getId(), "PENDING_CONFLICT");
+                }
+            }
+            insertV47Conflict(operatorId, tagId, s.getId(), askText);
+            result.conflictsCreated++;
+        }
+        result.summariesWritten++;
     }
 }

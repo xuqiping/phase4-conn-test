@@ -1,11 +1,15 @@
 package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.dto.MemoryConsolidationScopeRequest;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
+import com.superprogrammer.chat.entity.MemoryEntryCoverage;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
@@ -18,6 +22,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -58,6 +63,9 @@ public class MemoryConsolidationWorker {
     private final MemoryTurnMapper turnMapper;
     private final MemoryTagMapper tagMapper;
     private final MemorySummaryCoverageMapper coverageMapper;
+    private final MemoryProjectEntryMapper entryMapper;
+    private final MemoryEntryCoverageMapper entryCoverageMapper;
+    private final MemoryProjectLinkService linkService;
 
     /**
      * 定时自动总结（默认每 10min 轮询认领；周期默认 1 天，{@code last_run_at >= 周期起点} 跳过）。
@@ -89,6 +97,13 @@ public class MemoryConsolidationWorker {
             } catch (Exception e) {
                 log.warn("STALE 重生异常 userId={}: {}", uid, e.getMessage());
             }
+        }
+        // 二期 P4：项目共享总结 STALE 重生（user_id IS NULL 不在 per-user 循环内；
+        // 撤销授权/turn 删除级联标的 PROJECT 行，重压取数=当前 ACTIVE 链实时算）
+        try {
+            regenStaleProjectShared();
+        } catch (Exception e) {
+            log.warn("项目共享总结 STALE 重生异常: {}", e.getMessage(), e);
         }
     }
 
@@ -134,6 +149,11 @@ public class MemoryConsolidationWorker {
     }
 
     private void regenOne(Long userId, MemorySummary s) {
+        // 二期 P4：成员个人压缩（scope_owner=USER + project_id 非空）的条目级总结走条目重生
+        if (s.getSourceEntryIds() != null && !s.getSourceEntryIds().isEmpty()) {
+            regenEntryOne(s);
+            return;
+        }
         List<Long> source = s.getSourceTurnIds() == null ? List.of() : s.getSourceTurnIds();
         List<MemoryTurn> remaining = source.isEmpty() ? List.of() : turnMapper.findTurnsByIds(source);
         if (remaining.isEmpty()) {
@@ -165,5 +185,87 @@ public class MemoryConsolidationWorker {
         }
         coverageMapper.batchInsert(rows);
         log.info("STALE 重生完成 summary={} remainingTurns={}", s.getId(), remaining.size());
+    }
+
+    // ============================ 二期 P4 · 条目级 STALE 重生（FR-303/304/305）============================
+
+    /** 项目共享总结 STALE 重生入口（user_id IS NULL，per-user 循环覆盖不到，pollAuto 末尾统一跑）。 */
+    void regenStaleProjectShared() {
+        List<MemorySummary> stales = summaryMapper.findStaleProjectShared();
+        if (stales == null || stales.isEmpty()) {
+            return;
+        }
+        for (MemorySummary s : stales) {
+            try {
+                regenEntryOne(s);
+            } catch (Exception e) {
+                log.warn("项目共享总结 STALE 重生异常 summaryId={} projectId={}: {}",
+                        s.getId(), s.getProjectId(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 条目级重生：<b>取数=当前 ACTIVE 链实时算</b>（坑点预判③——撤销授权后重压天然不含 child 内容；
+     * 被删条目 @TableLogic 自动排除）。共享总结按 (project, PROJECT) 域；成员个人压缩总结要求作者
+     * 仍是 ACTIVE 成员（否则软删——离职失读权，其个人项目总结一并清）。
+     */
+    private void regenEntryOne(MemorySummary s) {
+        boolean shared = "PROJECT".equals(s.getScopeOwner());
+        Long projectId = s.getProjectId();
+        if (projectId == null) {
+            return;  // 防御：条目级总结必有 project scope
+        }
+        Long meterUser = shared ? s.getCreatedBy() : s.getUserId();
+        if (!shared && !linkService.isActiveMember(projectId, s.getUserId())) {
+            summaryMapper.softDeleteByIds(List.of(s.getId()));
+            entryCoverageMapper.deleteBySummaryId(s.getId());
+            log.info("条目级 STALE 重生：作者已非项目成员，软删 summary={}", s.getId());
+            return;
+        }
+        List<Long> sourceProjectIds = new ArrayList<>();
+        sourceProjectIds.add(projectId);
+        sourceProjectIds.addAll(linkService.findActiveChildIds(List.of(projectId)));
+        List<MemoryProjectEntryVO> entries = entryMapper.listActiveForRecall(sourceProjectIds);
+        List<MemoryProjectEntryVO> tagEntries = new ArrayList<>();
+        if (entries != null) {
+            for (MemoryProjectEntryVO e : entries) {
+                if (e.getTagIds() != null && e.getTagIds().contains(s.getTagId())) {
+                    tagEntries.add(e);
+                }
+            }
+        }
+        tagEntries.sort(Comparator.comparing(MemoryProjectEntryVO::getCreatedAt,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        if (tagEntries.isEmpty()) {
+            // 源条目全删/链全撤 → 软删 summary + 清条目 coverage
+            summaryMapper.softDeleteByIds(List.of(s.getId()));
+            entryCoverageMapper.deleteBySummaryId(s.getId());
+            log.info("条目级 STALE 重生：源条目空，软删 summary={}", s.getId());
+            return;
+        }
+        String tagLabel = tagMapper.selectById(s.getTagId()) != null
+                ? tagMapper.selectById(s.getTagId()).getLabel() : "总结";
+        MemoryConsolidationCompressor.CompressedEntrySummary cs =
+                compressor.compressEntries(meterUser, tagLabel, tagEntries);
+        if (cs == null) {
+            log.info("条目级 STALE 重生压缩失败 summary={} → 保留 STALE 下轮再试", s.getId());
+            return;
+        }
+        List<Long> newEntryIds = tagEntries.stream().map(MemoryProjectEntryVO::getId).toList();
+        summaryMapper.updateTextStatusAndEntries(s.getId(), cs.l1(), cs.l2(), "CLEAN", newEntryIds);
+        entryCoverageMapper.deleteBySummaryId(s.getId());
+        List<MemoryEntryCoverage> rows = new ArrayList<>(tagEntries.size());
+        for (MemoryProjectEntryVO e : tagEntries) {
+            MemoryEntryCoverage c = new MemoryEntryCoverage();
+            c.setEntryId(e.getId());
+            c.setSummaryId(s.getId());
+            c.setProjectId(projectId);
+            c.setTagId(s.getTagId());
+            c.setUserId(shared ? null : s.getUserId());
+            rows.add(c);
+        }
+        entryCoverageMapper.batchInsert(rows);
+        log.info("条目级 STALE 重生完成 summary={} shared={} entries={}", s.getId(), shared, tagEntries.size());
     }
 }

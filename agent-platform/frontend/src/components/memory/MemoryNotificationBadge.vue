@@ -93,6 +93,8 @@ async function ackAll() {
 function typeLabel(t: string): string {
   if (t === 'PROJECT_DELETED_AFFECTED') return '项目删除'
   if (t === 'SUMMARY_AFFECTED_BY_RECALL') return '撤回波及'
+  if (t === 'LINK_REQUEST') return '授权申请'
+  if (t === 'LINK_RESULT') return '授权结果'
   return t
 }
 

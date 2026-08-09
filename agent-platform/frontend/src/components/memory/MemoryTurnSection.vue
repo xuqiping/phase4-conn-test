@@ -39,7 +39,6 @@
               {{ t.direction === 'INPUT' ? '我说' : '回答' }}
             </n-tag>
             <n-tag v-if="!t.genDone" size="tiny" type="warning" :bordered="false">raw 未生成</n-tag>
-            <span v-if="!t.bornPersonal" class="memory-turn-section__born">项目出身</span>
             <span class="memory-turn-section__time">{{ t.createdAt }}</span>
           </div>
           <div v-if="t.l1Summary" class="memory-turn-section__l1">{{ t.l1Summary }}</div>
@@ -47,7 +46,6 @@
           <div v-if="t.rawContent" class="memory-turn-section__raw">{{ t.rawContent }}</div>
           <div class="memory-turn-section__tags">
             <n-tag v-for="(label, i) in t.tagLabels" :key="i" size="tiny" :bordered="false">{{ label }}</n-tag>
-            <n-tag v-for="(name, i) in t.projectNames" :key="`p${i}`" size="tiny" type="info" :bordered="false">{{ name }}</n-tag>
           </div>
         </div>
       </div>
@@ -154,10 +152,6 @@ defineExpose({ refresh: load })
     font-size: 11px;
     opacity: 0.5;
     margin-left: auto;
-  }
-  &__born {
-    font-size: 11px;
-    opacity: 0.6;
   }
   &__l1 {
     font-size: 13px;

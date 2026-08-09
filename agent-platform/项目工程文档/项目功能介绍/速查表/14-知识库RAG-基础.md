@@ -33,7 +33,7 @@
 
 ## 前端 (frontend)
 - 视图：[KnowledgeView.vue](../../frontend/src/views/KnowledgeView.vue)
-- 组件：[knowledge/](../../frontend/src/components/knowledge/) DocumentManager、KbFormModal、KbPermissionModal、**DocumentOptionsModal**（上传选项：docType + indexMode + 手填文本 + Excel sheet）、RetrievalDebugPanel（检索调试，含「来源」列回显图片/文件）、RagQaPanel、RetrievalAuditPanel、SheetPickerModal
+- 组件：[knowledge/](../../frontend/src/components/knowledge/) DocumentManager、KbFormModal、KbPermissionModal、**DocumentOptionsModal**（上传选项：docType + indexMode + 手填文本 + Excel sheet）、RetrievalDebugPanel（检索调试，含「来源」列回显图片/文件）、RagAskPanel、RetrievalAuditPanel、SheetPickerModal
 - API：[knowledge.ts](../../frontend/src/api/knowledge.ts)（`UploadOptions` + `documentAssetUrl(docId)`）
 - 状态：[knowledge.ts (store)](../../frontend/src/stores/knowledge.ts)（`uploadDocument/uploadDocumentSheets` 透传 opts）
 - 路由：`/knowledge`
@@ -45,7 +45,7 @@
 [RAG设计v6](../设计/后续其他功能设计/RAG设计v6-模块作用与通俗解读.md)、[调试手册](../项目开发进度/企业级RAG知识库-功能调试手册.md)
 
 ## 数据表
-`knowledge_bases`、`knowledge_documents`（V39 加 `parse_options`/`parse_warning` 列）、`knowledge_nodes`(chunk)、`knowledge_embeddings`(pgvector)、`knowledge_index_jobs`、`knowledge_permissions`、`stored_files`(V40，文件归属 owner + 生命周期)
+`knowledge_bases`、`knowledge_documents`（V39 加 `parse_options`/`parse_warning` 列）、`knowledge_nodes`(chunk)、`knowledge_embeddings_doubao`(pgvector，V17 建表即带 `_doubao` 后缀)、`knowledge_index_jobs`、`knowledge_permissions`、`stored_files`(V40，文件归属 owner + 生命周期)
 
 ## 前端 (frontend) — 上传（统一选项 modal）
 - `DocumentManager.vue` accept 含 `.md/.txt/.pdf/.docx/.html/.xlsx/.xls` + 图片 `.png/.jpg/.jpeg/.gif/.webp/.bmp`；所有文件上传先弹 **DocumentOptionsModal** 选 `docType`+`indexMode`（MANUAL 显手填 textarea、IMAGE+AUTO P2 占位、EXCEL 显 sheet 勾选）→ confirm。
@@ -54,7 +54,8 @@
 - `knowledge.ts`/`stores/knowledge.ts`：`previewSheets` + `uploadDocument(kbId,file,opts?)` + `uploadDocumentSheets(kbId,tempFileRef,sheets,opts?)` + `documentAssetUrl(docId)`。
 
 ## 待增删改
-- ✅ 向知识库中增加图片和文件（Phase 1 落地：IMAGE/FILE + MANUAL/AUTO 索引 + 原件回显；图片 AUTO 视觉模型 = Phase 2）
+- ✅ 向知识库中增加图片和文件（Phase 1 落地：IMAGE/FILE + MANUAL/AUTO 索引 + 原件回显）
 - ✅ excel（V39/V40 多 Sheet 导入已落地）
-- ⏳ Phase 2：LLM 多模态（`LlmMessage.parts` + 两 provider）+ IMAGE-AUTO 视觉识图 + ModelSelector 接入
-- ⏳ Phase 3：聊天答案 `[n]` 引用渲染（接 CITATION SSE 事件 + MessageBubble 内联缩略图/下载 chip）
+- ✅ Phase 2：LLM 多模态（`LlmMessage.parts` + 两 provider）+ IMAGE-AUTO 视觉识图（`DocumentParserService.extractImageByVision`）已落地
+- ✅ Phase 3：聊天答案 `[n]` 引用渲染（CITATION SSE 事件 + MessageBubble「📎 引用来源」+ 缩略图/下载）已落地
+- 进度细节见 [14-知识库RAG-更新进度](14-知识库RAG-更新进度.md)（P1–P3 全落）

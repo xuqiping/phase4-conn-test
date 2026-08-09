@@ -33,7 +33,7 @@
 - `rag_retrieval_logs.candidates_l1`（V37 加列）记 L1 文档向量通道命中，可空（短路路径未算 L1 即 null）。
 
 ## 数据表
-`knowledge_embeddings`(L0 检索源)、`knowledge_doc_embeddings_doubao`(L1 文档向量，V36)、`rag_retrieval_logs`(审计，含 `candidates_l0`/`candidates_l1`/`l2_lexical_fallback`/`token_budget`)、答案缓存见 [16-记忆与缓存对账](16-知识库RAG-记忆与缓存对账.md)。扩展开关存 `system_settings`（键 `rag.recall.expansion.*`）。
+`knowledge_embeddings_doubao`(L0 检索源，V17 建表即带 `_doubao` 后缀)、`knowledge_doc_embeddings_doubao`(L1 文档向量，V36)、`rag_retrieval_logs`(审计，含 `candidates_l0`/`candidates_l1`/`l2_lexical_fallback`/`token_budget`)、答案缓存见 [16-记忆与缓存对账](16-知识库RAG-记忆与缓存对账.md)。扩展开关存 `system_settings`（键 `rag.recall.expansion.*`）。
 
 
 ## 已落地演进

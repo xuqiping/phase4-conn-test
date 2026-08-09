@@ -43,16 +43,16 @@ public class MemoryBackfillService {
     private final MemoryTurnMapper turnMapper;
 
     /**
-     * 回填 scope 内全部 raw turn（分批 ≤20），同步阻塞——由 MemoryConsolidationService 在 worker/手动
-     * 线程内调用。personalScope=true → 个人 raw（born_personal=true）；否则项目 raw（project_ids 含 X）。
+     * 回填本人全部 raw turn（分批 ≤20），同步阻塞——由 MemoryConsolidationService 在 worker/手动
+     * 线程内调用。二期 P1（V67）：turns 纯个人域，恒本人 raw（user_id=self）。
      *
      * @return 处理 turn 数（含「无可提取事实」置 gen_done=true 的）
      */
-    public int backfillScope(Long userId, Long projectId, boolean personalScope) {
+    public int backfillScope(Long userId) {
         int processed = 0;
         int guard = 0;  // 兜底防异常导致死循环（applyBackfill 失败时 raw 不出 batch）
         while (guard++ < 1000) {
-            List<MemoryTurn> raws = turnMapper.findRawTurnsForBackfill(userId, projectId, personalScope, BATCH_SIZE);
+            List<MemoryTurn> raws = turnMapper.findRawTurnsForBackfill(userId, BATCH_SIZE);
             if (raws == null || raws.isEmpty()) {
                 break;
             }
@@ -62,8 +62,7 @@ public class MemoryBackfillService {
             }
         }
         if (processed > 0) {
-            log.info("backfill 完成 userId={} scope={} personal={} 处理 {} 条 raw",
-                    userId, projectId, personalScope, processed);
+            log.info("backfill 完成 userId={} 处理 {} 条 raw", userId, processed);
         }
         return processed;
     }

@@ -21,6 +21,7 @@
 - 回调：
   - [RuntimeCallbackController.java](../../backend/src/main/java/com/superprogrammer/runtime/controller/RuntimeCallbackController.java) — `POST /api/runtime/callbacks/nodes/execute`
   - [RuntimeNodeCallbackService.java](../../backend/src/main/java/com/superprogrammer/runtime/service/RuntimeNodeCallbackService.java) — 处理节点回调（调用 Agent/Skill/Retrieval）
+  - [RuntimeCallbackSecurityFilter.java](../../backend/src/main/java/com/superprogrammer/runtime/security/RuntimeCallbackSecurityFilter.java) — 回调通道 `X-Runtime-Token` 校验过滤器
 - 组装：[WorkflowDefinitionAssembler.java](../../backend/src/main/java/com/superprogrammer/runtime/service/WorkflowDefinitionAssembler.java) — 把 DB 工作流转成下发定义
 - DTO/模型：`runtime/dto/` ExecutionRequest、ExecutionResult、ExecutionEvent、RuntimeNode、RuntimeEdge、RuntimeNodeType、WorkflowDefinition、AgentDefinition、RuntimeNodeCallbackRequest/Response
 
@@ -31,4 +32,4 @@
 详见 [项目相关配置说明/Runtime Sidecar部署配置说明](../项目相关配置说明/Runtime%20Sidecar部署配置说明.md)、[LangGraph+Agent+工作流运行说明](../LangGraph+Agent+工作流运行说明.md)
 
 ## 数据表
-`executions`、`execution_logs`（见 [13-执行监控](13-执行监控.md)）
+`execution_logs`、`execution_step_logs`（见 [13-执行监控](13-执行监控.md)）。注：不存在 `executions` 表。

@@ -3,10 +3,13 @@ package com.superprogrammer.chat.controller;
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
 import com.superprogrammer.chat.dto.ChatTargetVO;
+import com.superprogrammer.chat.dto.MemoryAssetUploadVO;
 import com.superprogrammer.chat.dto.SessionVO;
 import com.superprogrammer.chat.entity.ChatMessage;
 import com.superprogrammer.chat.service.ChatSessionService;
 import com.superprogrammer.chat.service.ChatTargetService;
+import com.superprogrammer.chat.service.internal.MemoryAssetIngestService;
+import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +19,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -29,6 +33,46 @@ public class ChatController {
 
     private final ChatSessionService chatSessionService;
     private final ChatTargetService chatTargetService;
+    private final MemoryAssetUploadService memoryAssetUploadService;
+    private final MemoryAssetIngestService memoryAssetIngestService;
+
+    /** 聊天附件上传（V69 二期 P3，FR-201）：落盘 stored_files(CHAT) + 建文件记忆行（PROCESSING）。 */
+    @PostMapping("/attachments")
+    public ResponseEntity<R<MemoryAssetUploadVO>> uploadAttachment(@RequestParam("file") MultipartFile file) {
+        Long userId = getCurrentUserId();
+        return ResponseEntity.ok(R.ok(memoryAssetUploadService.upload(file, userId)));
+    }
+
+    /** 我的文件记忆列表（二期 P3 Step 2，记忆面板「文件记忆」页签数据源）。 */
+    @GetMapping("/attachments")
+    public ResponseEntity<R<List<com.superprogrammer.chat.entity.MemoryAssetMemory>>> listAttachments() {
+        Long userId = getCurrentUserId();
+        return ResponseEntity.ok(R.ok(memoryAssetIngestService.listMine(userId)));
+    }
+
+    /** FAILED 文件记忆手动重试（二期 P3 Step 2，FR-202；retry_count 硬卡上限）。 */
+    @PostMapping("/attachments/{memoryId}/retry")
+    public ResponseEntity<R<Void>> retryAttachment(@PathVariable Long memoryId) {
+        Long userId = getCurrentUserId();
+        memoryAssetIngestService.retry(memoryId, userId);
+        return ResponseEntity.ok(R.ok());
+    }
+
+    /** 我的文件记忆分块列表（二期 P3 Step 5，FR-203 文件卡片「展开分块」；仅 owner）。 */
+    @GetMapping("/attachments/{memoryId}/chunks")
+    public ResponseEntity<R<List<com.superprogrammer.chat.dto.FileChunkView>>> listAttachmentChunks(
+            @PathVariable Long memoryId) {
+        Long userId = getCurrentUserId();
+        return ResponseEntity.ok(R.ok(memoryAssetIngestService.listChunks(memoryId, userId)));
+    }
+
+    /** 删除我的文件记忆（二期 P3 Step 4，FR-204：项目 FILE 条目同步失效 + 原文件硬删）。 */
+    @DeleteMapping("/attachments/{memoryId}")
+    public ResponseEntity<R<Void>> deleteAttachment(@PathVariable Long memoryId) {
+        Long userId = getCurrentUserId();
+        memoryAssetIngestService.delete(memoryId, userId);
+        return ResponseEntity.ok(R.ok());
+    }
 
     @PostMapping("/sessions")
     public ResponseEntity<R<SessionVO>> createSession(@RequestBody ChatRequest request) {

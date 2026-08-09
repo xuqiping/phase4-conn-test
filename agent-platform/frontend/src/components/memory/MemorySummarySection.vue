@@ -1,7 +1,8 @@
 <!-- ============================================================
-  总结页签（计划12 F-3b）— 列本人总结（按 scope）+ provenance + 状态徽标
+  总结页签（计划12 F-3b + 二期 P4 FR-301）— 列本人总结（按 scope）+ provenance + 状态徽标
   · 走 memoryApi.listSummaries（/memory/summaries?projectId=）
-  · status 徽标：CLEAN / PENDING_CONFLICT / STALE；恒只读自己
+  · 项目 scope 下并列「项目共享总结」（memoryApi.listProjectSharedSummaries，全员可读）
+  · status 徽标：CLEAN / PENDING_CONFLICT / STALE
   · 顶部「立即总结」入口开 MemoryConsolidationDialog
   ============================================================ -->
 <template>
@@ -13,8 +14,29 @@
       </n-radio-group>
       <n-button size="small" type="primary" ghost @click="consolidationShow = true">立即总结</n-button>
       <n-button size="small" :loading="loading" @click="load">刷新</n-button>
-      <span class="memory-summary-section__hint">{{ rows.length }} 条</span>
+      <span class="memory-summary-section__hint">{{ rows.length + sharedRows.length }} 条</span>
     </n-space>
+
+    <!-- 二期 P4（FR-301）：项目 scope 下「项目共享总结」区（项目资产，全员可读） -->
+    <template v-if="scope !== null">
+      <div class="memory-summary-section__group">项目共享总结</div>
+      <n-empty v-if="!loading && !sharedRows.length" size="small"
+        description="暂无共享总结（项目 owner/admin 可在「立即总结」中压到共享）" />
+      <n-card v-for="s in sharedRows" :key="'shared-' + s.id" size="small" :bordered="true" style="margin-bottom: 8px">
+        <div class="memory-summary-section__head">
+          <n-tag size="tiny" type="info" :bordered="false">共享</n-tag>
+          <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
+          <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
+          <span class="memory-summary-section__time">{{ s.summarizedAt || s.createdAt }}</span>
+        </div>
+        <div class="memory-summary-section__l1">{{ s.l1Summary }}</div>
+        <div v-if="s.l2Detail" class="memory-summary-section__l2">{{ s.l2Detail }}</div>
+        <div class="memory-summary-section__prov">
+          来源 {{ (s.sourceEntryIds ?? []).length }} 条项目条目
+        </div>
+      </n-card>
+      <div class="memory-summary-section__group">我的总结</div>
+    </template>
 
     <n-empty v-if="!loading && !rows.length" size="small" description="暂无总结（周期总结 worker 自动生成，或点「立即总结」）" />
 
@@ -27,7 +49,8 @@
       <div class="memory-summary-section__l1">{{ s.l1Summary }}</div>
       <div v-if="s.l2Detail" class="memory-summary-section__l2">{{ s.l2Detail }}</div>
       <div class="memory-summary-section__prov">
-        来源 {{ s.sourceTurnIds.length }} 条流水账
+        <template v-if="(s.sourceEntryIds ?? []).length">来源 {{ (s.sourceEntryIds ?? []).length }} 条项目条目</template>
+        <template v-else>来源 {{ s.sourceTurnIds.length }} 条流水账</template>
         <span v-if="s.sourceSummaryId">· 链式压缩自 #{{ s.sourceSummaryId }}</span>
       </div>
     </n-card>
@@ -46,6 +69,7 @@ import MemoryConsolidationDialog from './MemoryConsolidationDialog.vue'
 const message = useMessage()
 
 const rows = ref<MemorySummaryVO[]>([])
+const sharedRows = ref<MemorySummaryVO[]>([])
 const projects = ref<{ id: number; name: string }[]>([])
 const scope = ref<number | null>(null)
 const scopeKey = computed(() => (scope.value === null ? 'personal' : String(scope.value)))
@@ -62,6 +86,17 @@ async function load() {
   try {
     const res = await memoryApi.listSummaries(scope.value)
     rows.value = res.data?.data ?? []
+    // 二期 P4：项目 scope 并列拉共享总结（非成员后端 403 → 视为无共享区）
+    if (scope.value !== null) {
+      try {
+        const shared = await memoryApi.listProjectSharedSummaries(scope.value)
+        sharedRows.value = shared.data?.data ?? []
+      } catch {
+        sharedRows.value = []
+      }
+    } else {
+      sharedRows.value = []
+    }
   } catch (e: any) {
     message.error(e?.message || '加载总结失败')
   } finally {
@@ -103,6 +138,12 @@ defineExpose({ refresh: load })
   &__hint {
     font-size: 12px;
     opacity: 0.65;
+  }
+  &__group {
+    font-size: 12px;
+    opacity: 0.7;
+    margin: 10px 0 6px;
+    font-weight: 600;
   }
   &__head {
     display: flex;

@@ -36,4 +36,9 @@ public class MemoryConflict {
     private OffsetDateTime createdAt;
     private OffsetDateTime resolvedAt;
     private OffsetDateTime expiresAt;
+
+    /** 二期 P4（FR-303）：true=项目共享总结冲突（裁决权=项目 ACTIVE owner/admin，非冲突行 user_id）。
+     *  瞬态标记，非 DB 列——service 层 listPending 并集时打标供前端 badge。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Boolean projectShared;
 }

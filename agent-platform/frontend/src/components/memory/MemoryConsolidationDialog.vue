@@ -33,6 +33,22 @@
             <n-tag v-else size="tiny" type="warning" :bordered="false">未总结 {{ t.uncoveredCount }}</n-tag>
             <n-tag v-if="t.autoEnabled" size="tiny" type="info" :bordered="false">自动</n-tag>
           </div>
+          <!-- 二期 P4（FR-302）：项目 scope 通道选择——owner/admin 可选共享/压到自己；普通成员仅个人通道 -->
+          <div
+            v-if="t.scopeKind === 'PROJECT' && selected.has(keyOf(t))"
+            class="consolidation-dialog__channel"
+          >
+            <n-radio-group
+              v-if="t.canWriteShared"
+              :value="channelOf(t)"
+              size="small"
+              @update:value="setChannel(t, $event)"
+            >
+              <n-radio-button value="shared">项目共享总结（全员可见）</n-radio-button>
+              <n-radio-button value="personal">压到我自己的总结（仅我可见）</n-radio-button>
+            </n-radio-group>
+            <n-tag v-else size="tiny" :bordered="false">普通成员：压到我自己的总结（仅我可见）</n-tag>
+          </div>
           <!-- I4-3 项目 scope 勾选后展开取数选人（人员范围/方向/离职开关） -->
           <MemoryConsolidationPeoplePicker
             v-if="t.scopeKind === 'PROJECT' && t.projectId != null && selected.has(keyOf(t))"
@@ -61,7 +77,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NCheckbox, NEmpty, NModal, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NEmpty, NModal, NRadioButton, NRadioGroup, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import {
   memoryApi,
   type MemoryConsolidationTargetView,
@@ -84,6 +100,16 @@ const triggering = ref(false)
 const selected = ref(new Set<string>())
 // I4-3：项目 scope 的取数配置（keyOf → { authorFilter, authorIds, direction, includeDeparted }）
 const peopleCfgMap = ref<Record<string, any>>({})
+// 二期 P4（FR-302）：项目 scope 的总结通道（keyOf → 'shared' | 'personal'，缺省按 canWriteShared）
+const channelMap = ref<Record<string, 'shared' | 'personal'>>({})
+
+function channelOf(t: MemoryConsolidationTargetView): 'shared' | 'personal' {
+  return channelMap.value[keyOf(t)] ?? (t.canWriteShared ? 'shared' : 'personal')
+}
+
+function setChannel(t: MemoryConsolidationTargetView, v: string | number | boolean) {
+  channelMap.value = { ...channelMap.value, [keyOf(t)]: v === 'personal' ? 'personal' : 'shared' }
+}
 
 const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
   targets.value
@@ -91,6 +117,10 @@ const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
     .map(t => {
       const base: MemoryConsolidationScopeRequest = { scopeKind: t.scopeKind, projectId: t.projectId ?? undefined }
       const k = keyOf(t)
+      if (t.scopeKind === 'PROJECT') {
+        // 二期 P4：个人通道 → toPersonal=true（普通成员唯一通道；owner/admin 选了「压到自己」同）
+        base.toPersonal = channelOf(t) === 'personal'
+      }
       const cfg = peopleCfgMap.value[k]
       if (t.scopeKind === 'PROJECT' && cfg) {
         base.authorFilter = cfg.authorFilter
@@ -125,6 +155,7 @@ async function loadTargets() {
     }
     selected.value = s
     peopleCfgMap.value = {}
+    channelMap.value = {}
   } catch (e: any) {
     message.error(e?.message || '加载 scope 失败')
   } finally {
@@ -168,6 +199,9 @@ watch(() => props.show, (s) => {
   }
   &__name {
     font-size: 13px;
+  }
+  &__channel {
+    padding-left: 24px;
   }
 }
 </style>
