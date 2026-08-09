@@ -9,14 +9,17 @@ import java.util.List;
  *
  * <p>三类登记：
  * <ul>
- *   <li>{@link #PUBLIC_PATHS} 免认证白名单——必须与 SecurityConfig 的 permitAll 严格对齐，
- *       新增公开端点两处同步（ scanner 与白名单不一致会在启动日志现形）；</li>
+ *   <li>{@link #PUBLIC_PATHS} 免认证白名单——覆盖 scanner 评估的 `/api` 前缀端点，与 SecurityConfig
+ *       中 /api 的 permitAll 严格对齐（/ws/chat、/actuator/* 等非 /api permitAll 不属 scanner 评估面，
+ *       由 SecurityConfig 独立管辖），新增公开端点两处同步（ scanner 与白名单不一致会在启动日志现形）；</li>
  *   <li>{@link #AUTHENTICATED_ONLY_REVIEWED} 已评审「仅登录即可」端点——无方法级权限是有意设计
  *       （用户域数据由 service 层归属/ACL 校验兜底），每条带评审依据注释；</li>
  *   <li>其余无 {@code @RequirePermission}/{@code @PreAuthorize} 的端点 = 未覆盖，
  *       启动期 {@link PermissionCoverageScanner} WARN 清单 + 计数指标。</li>
  * </ul>
  * 红线：新增端点要么标注解，要么显式登记进上面两张表并写明依据——不许静默裸奔。
+ * 注意：scanner 只认识方法/类级注解与本表白名单，仅靠 SecurityConfig URL 规则
+ * （requestMatchers+hasAuthority）保护的端点会被误判未覆盖——新端点不要用那种写法。
  */
 public final class SecurityEndpointRegistry {
 
@@ -43,7 +46,8 @@ public final class SecurityEndpointRegistry {
             "/api/llm/user/**",          // 用户自有 provider CRUD（按 userId 隔离）
             "/api/files/**",             // S1 文件 owner 校验咽喉（非 owner 非 admin → 403）
             "/api/projects/**",          // 项目创建者作用域
-            "/api/billing/wallet/**"     // 本人钱包只读视图
+            "/api/billing/me/**",        // 本人钱包/用量只读视图（userId 取自 SecurityContext，无入参旁路）
+            "/api/departments"           // 组织架构只读引用数据（VO 无敏感字段，内网常规语义；写操作均 role:manage）
     );
 
     public enum Coverage {

@@ -59,9 +59,10 @@ public class LlmGateway {
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
-        walletService.requireAffordable(uid);
+        // 余额复用：返回值直接喂给闸门，省一次重复查库
+        java.math.BigDecimal balance = walletService.requireAffordable(uid);
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
-        boolean held = inflightGate.acquire(uid);
+        boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
         try {
             LlmResponse response = provider.chat(request);
@@ -110,9 +111,7 @@ public class LlmGateway {
         Long uid = resolveBillingUser(userId, request.getModel());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
-        walletService.requireAffordable(uid);
-        // L7：流式槽位在订阅终结（complete/error/cancel 三态互斥正好一次）时经 doFinally 释放
-        boolean held = inflightGate.acquire(uid);
+        java.math.BigDecimal balance = walletService.requireAffordable(uid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
         String providerName = provider.getName();
@@ -120,24 +119,40 @@ public class LlmGateway {
         long startNanos = System.nanoTime();
         // OPS-FR-03 流式正好一次：doOnComplete/doOnError/doOnCancel 三分支互斥，各记一次终态；
         // tokens 在 usage sink 回灌时记（provider 不回 usage → 不记，与计费同口径宁少不误）。
-        return provider.chatStream(request, usage -> {
-                    billingService.onSuccess(uid, providerId, providerScope,
-                            model, LlmUsageLogEntity.KIND_CHAT,
-                            usage.getPromptTokens(), usage.getCompletionTokens());
-                    bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
-                            usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
-                    bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
-                            usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
-                })
-                .publishOn(Schedulers.boundedElastic())
-                .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
-                .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
-                .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos))
-                .doFinally(signal -> {
-                    if (held) {
-                        inflightGate.release(uid);
-                    }
-                });
+        //
+        // L7 槽位生命周期=订阅生命周期：acquire 推迟到 Flux.defer 订阅期（组装期 acquire 的话
+        // 「Flux 从未被订阅」与「provider.chatStream 组装期抛异常」两条路径都会泄漏槽位）；
+        // 订阅后终结三态互斥必走 doFinally，acquire/release 正好一次配对。
+        return Flux.defer(() -> {
+            boolean held = inflightGate.acquire(uid, balance);
+            final Flux<StreamEvent> inner;
+            try {
+                inner = provider.chatStream(request, usage -> {
+                            billingService.onSuccess(uid, providerId, providerScope,
+                                    model, LlmUsageLogEntity.KIND_CHAT,
+                                    usage.getPromptTokens(), usage.getCompletionTokens());
+                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
+                                    usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
+                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
+                                    usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
+                        })
+                        .publishOn(Schedulers.boundedElastic())
+                        .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
+                        .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
+                        .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos));
+            } catch (RuntimeException e) {
+                // 组装期抛异常 → doFinally 尚未注册，此处配对释放
+                if (held) {
+                    inflightGate.release(uid);
+                }
+                throw e;
+            }
+            return inner.doFinally(signal -> {
+                if (held) {
+                    inflightGate.release(uid);
+                }
+            });
+        });
     }
 
     public float[] embed(String text, String model) {

@@ -53,15 +53,18 @@ public class PointsWalletService {
     /**
      * 预检：余额&gt;0 放行，≤0（含负数欠款）抛 {@link ErrorCode#INSUFFICIENT_POINTS}。
      * <p>enabled=false 或 userId=null（系统调用）跳过。
+     *
+     * @return 当前余额（跳过时 null）——调用方紧接着做余额判定（如 L7 在途闸门）时复用，省一次查库
      */
-    public void requireAffordable(Long userId) {
+    public BigDecimal requireAffordable(Long userId) {
         if (!enabled || userId == null) {
-            return;
+            return null;
         }
         UserPointsBalanceEntity b = balanceMapper.selectByUserId(userId);
         if (b == null || b.getBalancePoints() == null || b.getBalancePoints().signum() <= 0) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS);
         }
+        return b.getBalancePoints();
     }
 
     /**

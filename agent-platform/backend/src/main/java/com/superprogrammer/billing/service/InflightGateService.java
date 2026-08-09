@@ -66,13 +66,33 @@ public class InflightGateService {
      *         （系统调用/计费关/余额充足/余额≤0 交给 requireAffordable 拦/Redis 故障降级），无需 release
      */
     public boolean acquire(Long userId) {
+        return acquire(userId, null);
+    }
+
+    /**
+     * 带余额的过闸（调用方刚从 requireAffordable 拿到余额时传入，省一次重复查库）；
+     * balance=null 时自行查库兜底。
+     */
+    public boolean acquire(Long userId, BigDecimal balance) {
         if (userId == null || !walletService.isEnabled()) {
+            return false;
+        }
+        // 阈值先读（DB）：读失败 → 降级放行且不动计数（避免 INCR 后无人 release 的泄漏窗口）
+        final long threshold;
+        final long maxInflight;
+        try {
+            threshold = systemSettingService.getLong(
+                    SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, DEFAULT_THRESHOLD);
+            maxInflight = systemSettingService.getLong(
+                    SystemSettingService.BILLING_LOW_BALANCE_MAX_INFLIGHT, DEFAULT_MAX_INFLIGHT);
+        } catch (Exception e) {
+            log.warn("在途闸门阈值读取失败(降级放行) userId={} : {}", userId, e.getMessage());
             return false;
         }
         try {
             // 余额≤0 不过闸：紧随的 requireAffordable 会抛 INSUFFICIENT_POINTS，语义不重复
-            BigDecimal balance = walletService.getBalance(userId);
-            if (balance == null || balance.signum() <= 0) {
+            BigDecimal bal = balance != null ? balance : walletService.getBalance(userId);
+            if (bal == null || bal.signum() <= 0) {
                 return false;
             }
             String key = INFLIGHT_PREFIX + userId;
@@ -81,14 +101,10 @@ public class InflightGateService {
                 // 仅新建设 TTL：每次 acquire 刷新会削弱泄漏兜底；release 到 0 删键是主路径
                 redisTemplate.expire(key, KEY_TTL_MINUTES, TimeUnit.MINUTES);
             }
-            long threshold = systemSettingService.getLong(
-                    SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, DEFAULT_THRESHOLD);
-            long maxInflight = systemSettingService.getLong(
-                    SystemSettingService.BILLING_LOW_BALANCE_MAX_INFLIGHT, DEFAULT_MAX_INFLIGHT);
-            if (balance.compareTo(BigDecimal.valueOf(threshold)) < 0 && count != null && count > maxInflight) {
+            if (bal.compareTo(BigDecimal.valueOf(threshold)) < 0 && count != null && count > maxInflight) {
                 // 超上限：退回本次计数 + 安全审计 + 固定话术拒绝
                 decrementFloor(key);
-                auditRejected(userId, balance, count - 1);
+                auditRejected(userId, bal, count - 1);
                 throw new BusinessException(ErrorCode.LOW_BALANCE_INFLIGHT_LIMIT);
             }
             return true;
@@ -100,9 +116,12 @@ public class InflightGateService {
         }
     }
 
-    /** 释放槽位（DECR，到 0 删键；异常吞 + WARN——绝不阻断主链收尾）。 */
+    /**
+     * 释放槽位（DECR，到 0 删键；异常吞 + WARN——绝不阻断主链收尾）。
+     * 不看 billing.enabled：submit 计数后运行期关计费，release 仍须配对（DECR 不存在键代价可忽略）。
+     */
     public void release(Long userId) {
-        if (userId == null || !walletService.isEnabled()) {
+        if (userId == null) {
             return;
         }
         try {

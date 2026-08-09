@@ -136,12 +136,41 @@ class SessionServiceTest {
         assertTrue(sessionService.isCurrent(1L, "sid-a"));
     }
 
+    // 降级红线：开关读取失败（DB 抖动）→ 放行（不杀主链，与 Redis 故障同范式）
     @Test
-    void clearSession_deletesKey_nullSafe() {
-        sessionService.clearSession(1L);
-        verify(redisTemplate).delete("session:user:1");
+    void isCurrent_settingsReadFails_degradesOpen() {
+        when(systemSettingService.getBoolean(SystemSettingService.AUTH_SINGLE_SESSION_ENABLED, true))
+                .thenThrow(new RuntimeException("db down"));
 
-        sessionService.clearSession(null);
-        verify(redisTemplate, times(1)).delete(anyString());
+        assertTrue(sessionService.isCurrent(1L, "sid-a"));
+    }
+
+    @Test
+    void clearSession_sidMatches_deletesKey() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("session:user:1")).thenReturn("sid-a");
+
+        sessionService.clearSession(1L, "sid-a");
+
+        verify(redisTemplate).delete("session:user:1");
+    }
+
+    // F2 防 logout-bomb：旧（被踢）会话登出不得删掉新会话的键
+    @Test
+    void clearSession_sidMismatch_keepsCurrentSession() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("session:user:1")).thenReturn("sid-new");
+
+        sessionService.clearSession(1L, "sid-old");
+
+        verify(redisTemplate, never()).delete(anyString());
+    }
+
+    @Test
+    void clearSession_nullSafe() {
+        sessionService.clearSession(null, "sid-a");
+        sessionService.clearSession(1L, null);
+
+        verifyNoInteractions(redisTemplate);
     }
 }

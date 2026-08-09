@@ -443,10 +443,9 @@ public class AuthService {
             throw new BusinessException(ErrorCode.TOKEN_INVALID, "请使用Refresh Token刷新");
         }
 
-        // 检查Redis黑名单
+        // 检查Redis黑名单（降级放行同 isTokenBlacklisted：Redis 故障不阻断刷新主链）
         String jti = jwtUtil.getTokenId(refreshToken);
-        String blacklistKey = TOKEN_BLACKLIST_PREFIX + jti;
-        if (Boolean.TRUE.equals(redisTemplate.hasKey(blacklistKey))) {
+        if (isTokenBlacklisted(jti)) {
             throw new BusinessException(ErrorCode.TOKEN_INVALID, "Token已失效");
         }
 
@@ -478,35 +477,43 @@ public class AuthService {
     }
 
     public void logout(String accessToken, String refreshToken) {
-        // 将access token加入黑名单
-        if (accessToken != null && jwtUtil.isTokenValid(accessToken)) {
-            String accessJti = jwtUtil.getTokenId(accessToken);
-            long accessTtl = jwtUtil.getRemainingTtl(accessToken);
-            if (accessTtl > 0) {
-                redisTemplate.opsForValue().set(
-                        TOKEN_BLACKLIST_PREFIX + accessJti, "1", accessTtl, TimeUnit.MILLISECONDS);
+        // 黑名单写入（Redis 故障 → WARN 不阻断登出；黑名单缺失的代价=token 残留至自然过期，access 仅 15min）
+        try {
+            // 将access token加入黑名单
+            if (accessToken != null && jwtUtil.isTokenValid(accessToken)) {
+                String accessJti = jwtUtil.getTokenId(accessToken);
+                long accessTtl = jwtUtil.getRemainingTtl(accessToken);
+                if (accessTtl > 0) {
+                    redisTemplate.opsForValue().set(
+                            TOKEN_BLACKLIST_PREFIX + accessJti, "1", accessTtl, TimeUnit.MILLISECONDS);
+                }
             }
-        }
 
-        // 将refresh token加入黑名单
-        if (refreshToken != null && jwtUtil.isTokenValid(refreshToken)) {
-            String refreshJti = jwtUtil.getTokenId(refreshToken);
-            long refreshTtl = jwtUtil.getRemainingTtl(refreshToken);
-            if (refreshTtl > 0) {
-                redisTemplate.opsForValue().set(
-                        TOKEN_BLACKLIST_PREFIX + refreshJti, "1", refreshTtl, TimeUnit.MILLISECONDS);
+            // 将refresh token加入黑名单
+            if (refreshToken != null && jwtUtil.isTokenValid(refreshToken)) {
+                String refreshJti = jwtUtil.getTokenId(refreshToken);
+                long refreshTtl = jwtUtil.getRemainingTtl(refreshToken);
+                if (refreshTtl > 0) {
+                    redisTemplate.opsForValue().set(
+                            TOKEN_BLACKLIST_PREFIX + refreshJti, "1", refreshTtl, TimeUnit.MILLISECONDS);
+                }
             }
+        } catch (Exception e) {
+            log.warn("登出黑名单写入失败(降级:登出继续,token残留至自然过期): {}", e.getMessage());
         }
 
         // 审计：登出（MDC 已有 userId/username——logout 必带 JWT 经过 MdcUserFilter；无上下文走"-"兜底）
         Long logoutUserId = null;
         String logoutUsername = null;
+        String logoutSid = null;
         if (accessToken != null && jwtUtil.isTokenValid(accessToken)) {
             logoutUserId = jwtUtil.getUserIdFromToken(accessToken);
             logoutUsername = jwtUtil.getUsernameFromToken(accessToken);
+            logoutSid = jwtUtil.getSidFromToken(accessToken);
         }
-        // A8：登出删会话键（黑名单保留防登出后 token 残留复用；sid 比对在黑名单之后）
-        sessionService.clearSession(logoutUserId);
+        // A8：登出删会话键——比对 sid 只删自己的会话（旧会话登出不踢飞当前会话，防 logout-bomb）；
+        // 黑名单保留防登出后 token 残留复用；sid 比对在黑名单之后
+        sessionService.clearSession(logoutUserId, logoutSid);
         auditAuth("logout", logoutUserId, logoutUsername, AuditLogEntity.RESULT_SUCCESS, null);
         log.info("用户登出成功");
     }
@@ -535,8 +542,17 @@ public class AuthService {
                 .build();
     }
 
+    /**
+     * 黑名单查询。Redis 故障 → 降级放行 + WARN（可用性 > 强制力，与 S1 防爆破/A8 会话比对同范式；
+     * 黑名单条目本就短 TTL=token 剩余有效期，降级窗口内被登出 token 至多残留几分钟）。
+     */
     public boolean isTokenBlacklisted(String jti) {
-        return Boolean.TRUE.equals(redisTemplate.hasKey(TOKEN_BLACKLIST_PREFIX + jti));
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey(TOKEN_BLACKLIST_PREFIX + jti));
+        } catch (Exception e) {
+            log.warn("Token黑名单查询失败(降级放行): {}", e.getMessage());
+            return false;
+        }
     }
 
     /**

@@ -69,17 +69,25 @@ public class SessionService {
                         AuditLogEntity.RESULT_SUCCESS));
             }
         } catch (Exception e) {
-            log.warn("会话写入失败(降级放行,单点登录本轮不生效) userId={} : {}", userId, e.getMessage());
+            log.warn("会话写入失败(降级放行,单点登录本轮不生效;Redis 恢复后该用户须重新登录一次) userId={} : {}", userId, e.getMessage());
         }
         return sid;
     }
 
     /**
      * 校验 token 的 sid 是否当前会话。false=被踢/旧 token（调用方拒绝）。
-     * 开关关闭或 Redis 故障 → true（降级放行 + WARN）。
+     * 开关关闭、开关读取失败（DB 抖动）或 Redis 故障 → true（降级放行 + WARN，不杀主链）。
      */
     public boolean isCurrent(Long userId, String sid) {
-        if (!isSingleSessionEnabled()) {
+        boolean enabled;
+        try {
+            enabled = isSingleSessionEnabled();
+        } catch (Exception e) {
+            // 开关读库异常（DB 抖动）→ 降级放行；与 Redis 故障同范式，可用性 > 强制力
+            log.warn("单点登录开关读取失败(降级放行) userId={} : {}", userId, e.getMessage());
+            return true;
+        }
+        if (!enabled) {
             return true;
         }
         if (sid == null) {
@@ -94,13 +102,22 @@ public class SessionService {
         }
     }
 
-    /** 登出删会话键（黑名单保留防登出后 token 残留复用；sid 比对在黑名单之后）。 */
-    public void clearSession(Long userId) {
-        if (userId == null) {
+    /**
+     * 登出删会话键——**比对 sid 只删自己的会话**：旧（已被踢）会话登出时不得删掉新会话的键
+     * （否则被踢者/15min 窗口内的 token 持有者可反复 logout 踢飞当前会话 = logout-bomb）。
+     * GET-then-DEL 非原子，竞态良性：并发登录落在 GET 与 DEL 之间至多误删一次新键（该会话重登即愈）。
+     * sid=null（旧 token 登出）→ 不删（旧 token 本就过不了过滤器，防御性兜底）。
+     */
+    public void clearSession(Long userId, String sid) {
+        if (userId == null || sid == null) {
             return;
         }
         try {
-            redisTemplate.delete(SESSION_PREFIX + userId);
+            String key = SESSION_PREFIX + userId;
+            String current = redisTemplate.opsForValue().get(key);
+            if (sid.equals(current)) {
+                redisTemplate.delete(key);
+            }
         } catch (Exception e) {
             log.warn("会话删除失败(已吞) userId={} : {}", userId, e.getMessage());
         }

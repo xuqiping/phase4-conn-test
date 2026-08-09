@@ -146,4 +146,34 @@ class InflightGateServiceTest {
 
         assertDoesNotThrow(() -> gate.release(1L));
     }
+
+    // 计费运行期关闭不影响 release 配对（submit 已计数 → 关计费 → worker 仍须释放；release 不看开关）
+    @Test
+    void release_billingDisabledMidFlight_stillReleases() {
+        when(valueOperations.decrement("inflight:u:1")).thenReturn(0L);
+
+        gate.release(1L);
+
+        verify(valueOperations).decrement("inflight:u:1");
+    }
+
+    // 阈值读取失败（DB 抖动）→ 降级放行且不动计数（避免 INCR 后无人 release 的泄漏窗口）
+    @Test
+    void acquire_settingsReadFails_degradesWithoutTouchingCounter() {
+        when(systemSettingService.getLong(SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, 100L))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertFalse(gate.acquire(1L));
+        verifyNoInteractions(redisTemplate);
+    }
+
+    // 余额复用：调用方传入余额时不再重复查库
+    @Test
+    void acquire_withBalance_skipsBalanceQuery() {
+        when(valueOperations.increment("inflight:u:1")).thenReturn(1L);
+
+        assertTrue(gate.acquire(1L, new BigDecimal("99")));
+
+        verify(walletService, never()).getBalance(anyLong());
+    }
 }

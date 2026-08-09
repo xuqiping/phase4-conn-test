@@ -79,6 +79,7 @@ public class AgentController {
     }
 
     @PutMapping("/agents/{id}/permissions")
+    @RequirePermission("agent:update")
     public ResponseEntity<R<Void>> saveAgentPermissions(
             @PathVariable Long id,
             @RequestBody List<com.superprogrammer.agent.dto.AgentPermissionSaveRequest> body) {

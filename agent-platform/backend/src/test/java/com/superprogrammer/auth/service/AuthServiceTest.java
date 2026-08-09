@@ -350,4 +350,24 @@ class AuthServiceTest {
 
         verify(valueOperations, times(2)).set(anyString(), eq("1"), anyLong(), eq(TimeUnit.MILLISECONDS));
     }
+
+    // 降级红线：Redis 故障 → 黑名单查询放行（可用性 > 强制力，不杀认证主链）
+    @Test
+    void isTokenBlacklisted_redisDown_degradesOpen() {
+        when(redisTemplate.hasKey(anyString())).thenThrow(new RuntimeException("redis down"));
+
+        assertFalse(authService.isTokenBlacklisted("any-jti"));
+    }
+
+    // 降级红线：logout 黑名单写失败不阻断登出（token 残留至自然过期，access 仅 15min）
+    @Test
+    void logout_redisDown_stillSucceeds() {
+        String accessToken = "valid-access-token";
+        when(jwtUtil.isTokenValid(accessToken)).thenReturn(true);
+        when(jwtUtil.getTokenId(accessToken)).thenReturn("access-jti");
+        when(jwtUtil.getRemainingTtl(accessToken)).thenReturn(50000L);
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis down"));
+
+        assertDoesNotThrow(() -> authService.logout(accessToken, null));
+    }
 }
