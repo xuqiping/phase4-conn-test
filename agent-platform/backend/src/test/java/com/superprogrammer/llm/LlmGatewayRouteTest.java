@@ -73,7 +73,9 @@ class LlmGatewayRouteTest {
         when(llmConfig.getProviders()).thenReturn(List.of(chatProvider));
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(embedProvider));
 
-        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper, billingService, walletService);
+        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                billingService, walletService,
+                new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     }
 
     @Test

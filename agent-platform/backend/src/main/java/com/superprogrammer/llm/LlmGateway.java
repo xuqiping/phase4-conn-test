@@ -6,6 +6,7 @@ import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.chat.dto.StreamEvent;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.EmbedResult;
 import com.superprogrammer.llm.dto.LlmMessage;
@@ -42,6 +43,8 @@ public class LlmGateway {
     private final LlmBillingService billingService;
     /** 钱包：入口预检 requireAffordable（≤0 抛 INSUFFICIENT_POINTS）。 */
     private final PointsWalletService walletService;
+    /** 运维系统 OPS-FR-03：LLM 指标统一出口埋点（calls/tokens/latency，tag 仅 provider/model/result/direction）。 */
+    private final BizMetrics bizMetrics;
 
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
@@ -54,6 +57,7 @@ public class LlmGateway {
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
         walletService.requireAffordable(uid);
+        long startNanos = System.nanoTime();
         try {
             LlmResponse response = provider.chat(request);
             TokenUsage usage = response.getUsage();
@@ -68,10 +72,12 @@ public class LlmGateway {
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
+            recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             return response;
         } catch (RuntimeException e) {
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
+            recordLlmTerminal(provider.getName(), request.getModel(), BizMetrics.RESULT_FAIL, startNanos);
             throw e;
         }
     }
@@ -98,11 +104,24 @@ public class LlmGateway {
         walletService.requireAffordable(uid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
+        String providerName = provider.getName();
         String model = request.getModel();
-        return provider.chatStream(request, usage -> billingService.onSuccess(uid, providerId, providerScope,
-                model, LlmUsageLogEntity.KIND_CHAT,
-                usage.getPromptTokens(), usage.getCompletionTokens()))
-                .publishOn(Schedulers.boundedElastic());
+        long startNanos = System.nanoTime();
+        // OPS-FR-03 流式正好一次：doOnComplete/doOnError/doOnCancel 三分支互斥，各记一次终态；
+        // tokens 在 usage sink 回灌时记（provider 不回 usage → 不记，与计费同口径宁少不误）。
+        return provider.chatStream(request, usage -> {
+                    billingService.onSuccess(uid, providerId, providerScope,
+                            model, LlmUsageLogEntity.KIND_CHAT,
+                            usage.getPromptTokens(), usage.getCompletionTokens());
+                    bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
+                            usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
+                    bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
+                            usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
+                })
+                .publishOn(Schedulers.boundedElastic())
+                .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
+                .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
+                .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos));
     }
 
     public float[] embed(String text, String model) {
@@ -119,6 +138,7 @@ public class LlmGateway {
         LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
         walletService.requireAffordable(uid);
+        long startNanos = System.nanoTime();
         try {
             EmbedResult res = provider.embedWithUsage(text, model);
             TokenUsage usage = res.getUsage();
@@ -137,10 +157,12 @@ public class LlmGateway {
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, in, out, status);
+            recordLlmSuccess(provider.getName(), model, in, out, startNanos);
             return res.getEmbedding();
         } catch (RuntimeException e) {
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, e.getMessage());
+            recordLlmTerminal(provider.getName(), model, BizMetrics.RESULT_FAIL, startNanos);
             throw e;
         }
     }
@@ -161,6 +183,27 @@ public class LlmGateway {
         }
         log.warn("LLM 调用无用户上下文，仅采集不扣费 model={}", model);
         return null;
+    }
+
+    /**
+     * OPS-FR-03 成功终态：calls +1（success）+ tokens in/out（估算兜底也记，口径与计费一致）+ latency。
+     * Micrometer 纯内存 O(1)，绝不拖垮主链路；tag 仅 provider/model（有界枚举，红线见 BizMetrics）。
+     */
+    private void recordLlmSuccess(String providerName, String model, Integer in, Integer out, long startNanos) {
+        bizMetrics.llmCall(providerName, model, BizMetrics.RESULT_SUCCESS);
+        bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN, in == null ? 0 : in);
+        bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT, out == null ? 0 : out);
+        bizMetrics.llmLatency(providerName, model, elapsedSince(startNanos));
+    }
+
+    /** OPS-FR-03 终态计数 + latency（success/fail/cancel 三态互斥正好一次）。 */
+    private void recordLlmTerminal(String providerName, String model, String result, long startNanos) {
+        bizMetrics.llmCall(providerName, model, result);
+        bizMetrics.llmLatency(providerName, model, elapsedSince(startNanos));
+    }
+
+    private static java.time.Duration elapsedSince(long startNanos) {
+        return java.time.Duration.ofNanos(System.nanoTime() - startNanos);
     }
 
     /** 估算请求 input token（chars/4 启发式，求和各 message content）。仅 usage 缺失兜底用。 */
