@@ -66,6 +66,8 @@ public class MemoryConsolidationWorker {
     private final MemoryProjectEntryMapper entryMapper;
     private final MemoryEntryCoverageMapper entryCoverageMapper;
     private final MemoryProjectLinkService linkService;
+    /** 运维系统 OPS-FR-06：记忆管线耗时/异常指标。 */
+    private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     /**
      * 定时自动总结（默认每 10min 轮询认领；周期默认 1 天，{@code last_run_at >= 周期起点} 跳过）。
@@ -107,8 +109,9 @@ public class MemoryConsolidationWorker {
         }
     }
 
-    /** 处理单 scope（事务外，含 LLM 压缩）→ 成功/失败释放锁。 */
+    /** 处理单 scope（事务外，含 LLM 压缩）→ 成功/失败释放锁。OPS-FR-06：耗时必记，失败记 incident。 */
     private void processScope(MemoryConsolidationScope scope) {
+        long startNanos = System.nanoTime();
         try {
             MemoryConsolidationScopeRequest req = buildReq(scope);
             consolidationService.summarizeScope(scope.getUserId(), req, false);
@@ -116,6 +119,9 @@ public class MemoryConsolidationWorker {
         } catch (Exception e) {
             log.error("总结 scope 失败 userId={} scopeId={}: {}", scope.getUserId(), scope.getId(), e.getMessage(), e);
             scopeMapper.releaseLockFailure(scope.getId());
+            bizMetrics.memoryIncident();
+        } finally {
+            bizMetrics.memoryPipelineDuration(java.time.Duration.ofNanos(System.nanoTime() - startNanos));
         }
     }
 

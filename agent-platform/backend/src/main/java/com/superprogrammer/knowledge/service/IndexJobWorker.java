@@ -54,6 +54,8 @@ public class IndexJobWorker {
     private final Executor executor;
     private final FileStorageService fileStorageService;
     private final boolean retainAfterIndex;
+    /** 运维系统 OPS-FR-05：queue.depth Gauge + indexed.total 指标。 */
+    private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     public IndexJobWorker(IndexJobTxService txService,
                           KnowledgeNodeMapper nodeMapper,
@@ -63,7 +65,8 @@ public class IndexJobWorker {
                           ObjectMapper objectMapper,
                           @Qualifier("knowledgeTaskExecutor") Executor executor,
                           FileStorageService fileStorageService,
-                          @Value("${app.files.retain-after-index:false}") boolean retainAfterIndex) {
+                          @Value("${app.files.retain-after-index:false}") boolean retainAfterIndex,
+                          com.superprogrammer.common.metrics.BizMetrics bizMetrics) {
         this.txService = txService;
         this.nodeMapper = nodeMapper;
         this.documentMapper = documentMapper;
@@ -73,6 +76,13 @@ public class IndexJobWorker {
         this.executor = executor;
         this.fileStorageService = fileStorageService;
         this.retainAfterIndex = retainAfterIndex;
+        this.bizMetrics = bizMetrics;
+    }
+
+    /** OPS-FR-05：启动即注册 queue.depth Gauge（否则首次 scrape 前无值/NaN）。回调为轻 count 查询。 */
+    @jakarta.annotation.PostConstruct
+    void registerQueueDepthGauge() {
+        bizMetrics.registerIndexQueueDepth(txService::countClaimable);
     }
 
     @Scheduled(fixedDelayString = "${knowledge.index.poll-ms:5000}")
@@ -104,6 +114,7 @@ public class IndexJobWorker {
                     || !"ACTIVE".equals(node.getStatus())
                     || !eq(node.getContentHash(), job.getContentHash())) {
                 txService.voidJob(job.getId(), "节点已变更/失活/删除，job 作废（新版本 job 接管）");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
                 return;
             }
 
@@ -123,10 +134,12 @@ public class IndexJobWorker {
             IndexJobTxService.IndexedDoc indexed = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
                     job.getKbId(), embeddingModel, halfvec, node.getContentHash());
             cleanOriginalFileAfterIndex(indexed);
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_SUCCESS);
             log.info("索引完成 nodeId={} kbId={} model={}", node.getId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
             txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_FAIL);
         }
     }
 
@@ -140,6 +153,7 @@ public class IndexJobWorker {
             KnowledgeDocument doc = documentMapper.selectById(job.getDocumentId());
             if (doc == null || doc.getL1Metadata() == null || doc.getL1Metadata().isBlank()) {
                 txService.voidJob(job.getId(), "文档已删除或无 L1 元数据，L1 job 作废");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
                 return;
             }
             L1Metadata l1;
@@ -147,16 +161,19 @@ public class IndexJobWorker {
                 l1 = objectMapper.readValue(doc.getL1Metadata(), L1Metadata.class);
             } catch (Exception e) {
                 txService.voidJob(job.getId(), "L1 元数据解析失败，L1 job 作废: " + e.getMessage());
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
                 return;
             }
             String text = L1EmbedText.build(l1);
             String l1Hash = HashUtil.sha256(text);
             if (!eq(l1Hash, job.getContentHash())) {
                 txService.voidJob(job.getId(), "L1 元数据已变更，L1 job 作废（新版本 job 接管）");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
                 return;
             }
             if (text.isBlank()) {
                 txService.voidJob(job.getId(), "L1 文本为空（summary/outline/rules 全空），L1 job 作废");
+                bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
                 return;
             }
 
@@ -174,10 +191,12 @@ public class IndexJobWorker {
             IndexJobTxService.IndexedDoc indexed = txService.completeUpsertL1(job.getId(), job.getDocumentId(), job.getKbId(),
                     embeddingModel, halfvec, l1Hash);
             cleanOriginalFileAfterIndex(indexed);
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_SUCCESS);
             log.info("L1 索引完成 docId={} kbId={} model={}", job.getDocumentId(), job.getKbId(), embeddingModel);
         } catch (Exception e) {
             log.error("索引 job 处理失败 jobId={}: {}", job.getId(), e.getMessage(), e);
             txService.failJob(job.getId(), truncate(e.getMessage(), MAX_ERROR_LEN));
+            bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_FAIL);
         }
     }
 

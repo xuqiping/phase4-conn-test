@@ -83,6 +83,22 @@ public class IndexJobTxService {
     }
 
     /**
+     * 运维系统 OPS-FR-05：可认领积压数（queue.depth Gauge 回调用）。
+     * 口径与 claimBatch 一致（PENDING/RUNNING + 三类 jobType + 锁过期），不含 FOR UPDATE。
+     */
+    public long countClaimable() {
+        OffsetDateTime now = OffsetDateTime.now();
+        LambdaQueryWrapper<KnowledgeIndexJob> w = new LambdaQueryWrapper<>();
+        w.and(q -> q.eq(KnowledgeIndexJob::getStatus, "PENDING")
+                        .or().eq(KnowledgeIndexJob::getStatus, "RUNNING"))
+                .in(KnowledgeIndexJob::getJobType, List.of("UPSERT", "REINDEX", "UPSERT_L1"))
+                .and(q -> q.isNull(KnowledgeIndexJob::getLockedUntil)
+                        .or().lt(KnowledgeIndexJob::getLockedUntil, now));
+        Long n = indexJobMapper.selectCount(w);
+        return n == null ? 0 : n;
+    }
+
+    /**
      * 完成一个 UPSERT job：tx 内复校 node（I1/I2）→ upsert 向量 → job DONE → 文档可能 INDEXED。
      * contentHash = 写入向量时所依据的 node.content_hash（worker 在 embed 前读到）。
      * 若 tx 内复校发现 node 已变更/失活 → 转作 voidJob（新版本 job 接管，本 job 作废）。

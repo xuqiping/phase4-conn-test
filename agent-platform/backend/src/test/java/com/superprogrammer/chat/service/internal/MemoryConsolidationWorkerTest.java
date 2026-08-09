@@ -50,6 +50,7 @@ class MemoryConsolidationWorkerTest {
     @Mock MemoryProjectEntryMapper entryMapper;
     @Mock MemoryEntryCoverageMapper entryCoverageMapper;
     @Mock MemoryProjectLinkService linkService;
+    @Mock com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     @InjectMocks MemoryConsolidationWorker worker;
 
@@ -110,6 +111,36 @@ class MemoryConsolidationWorkerTest {
 
         verify(scopeMapper).releaseLockFailure(1L);
         verify(scopeMapper, never()).releaseLockSuccess(anyLong(), any());
+    }
+
+    // ---- 3b. OPS-FR-06：失败记 incident + 耗时必记 ----
+
+    @Test
+    void pollAutoFailure_recordsIncidentAndDuration() {
+        when(txService.claimAutoScopes(anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(personalScope(1L, 10L)));
+        when(consolidationService.summarizeScope(anyLong(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenThrow(new RuntimeException("LLM 宕机"));
+        when(summaryMapper.findStaleByUser(anyLong())).thenReturn(List.of());
+
+        worker.pollAuto();
+
+        verify(bizMetrics).memoryIncident();
+        verify(bizMetrics).memoryPipelineDuration(any());
+    }
+
+    @Test
+    void pollAutoSuccess_recordsDurationNoIncident() {
+        when(txService.claimAutoScopes(anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(personalScope(1L, 10L)));
+        when(consolidationService.summarizeScope(anyLong(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(null);
+        when(summaryMapper.findStaleByUser(anyLong())).thenReturn(List.of());
+
+        worker.pollAuto();
+
+        verify(bizMetrics).memoryPipelineDuration(any());
+        verify(bizMetrics, never()).memoryIncident();
     }
 
     // ---- 4. STALE 重生：剩余 turn → 压缩 → updateTextAndStatus CLEAN + coverage 重建 ----
