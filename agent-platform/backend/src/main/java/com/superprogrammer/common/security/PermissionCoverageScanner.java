@@ -41,7 +41,10 @@ public class PermissionCoverageScanner implements ApplicationRunner {
     private final AtomicInteger unguardedGauge = new AtomicInteger(0);
     private final AtomicBoolean gaugeRegistered = new AtomicBoolean(false);
 
-    public PermissionCoverageScanner(RequestMappingHandlerMapping handlerMapping, MeterRegistry meterRegistry) {
+    public PermissionCoverageScanner(
+            // 限定主 MVC 映射：actuator 另有一个 controllerEndpointHandlerMapping，不扫它
+            @org.springframework.beans.factory.annotation.Qualifier("requestMappingHandlerMapping")
+            RequestMappingHandlerMapping handlerMapping, MeterRegistry meterRegistry) {
         this.handlerMapping = handlerMapping;
         this.meterRegistry = meterRegistry;
     }
