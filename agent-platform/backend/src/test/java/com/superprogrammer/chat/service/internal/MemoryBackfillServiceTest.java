@@ -5,6 +5,8 @@ import com.superprogrammer.chat.mapper.MemoryTurnMapper;
 import com.superprogrammer.chat.service.internal.MemoryGenerator.GenResult;
 import com.superprogrammer.chat.service.internal.MemoryGenerator.SideLayers;
 import com.superprogrammer.chat.service.internal.MemoryPrefilter.FilterResult;
+import com.superprogrammer.system.service.SystemSettingService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -18,6 +20,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -34,8 +37,14 @@ class MemoryBackfillServiceTest {
     @Mock MemoryGenerator generator;
     @Mock MemoryTagResolver tagResolver;
     @Mock MemoryTurnMapper turnMapper;
+    @Mock SystemSettingService systemSettingService;
 
     @InjectMocks MemoryBackfillService service;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+    }
 
     private static MemoryTurn raw(Long id, String direction) {
         MemoryTurn t = new MemoryTurn();
@@ -61,7 +70,7 @@ class MemoryBackfillServiceTest {
 
         org.junit.jupiter.api.Assertions.assertEquals(0, n);
         verify(prefilter, never()).filter(any(), any());
-        verify(generator, never()).generate(anyLong(), any(), any(), any());
+        verify(generator, never()).generate(anyLong(), any(), any(), any(), any());
     }
 
     // ---- 2. INPUT raw 命中 → 单侧生成 + 归一 + applyBackfill 带 tag+l1+l2 ----
@@ -73,7 +82,7 @@ class MemoryBackfillServiceTest {
                 .thenReturn(List.of());
         when(prefilter.filter(eq("用户用Java写后端"), eq(null)))
                 .thenReturn(new FilterResult(false, true, null, "空回复"));
-        when(generator.generate(eq(1L), eq("用户用Java写后端"), eq(null), any()))
+        when(generator.generate(eq(1L), eq("用户用Java写后端"), eq(null), any(), any()))
                 .thenReturn(new GenResult(side("工作", "职业"), null));
         when(tagResolver.resolve(1L, "我", "工作", "职业")).thenReturn(77L);
 
@@ -92,7 +101,7 @@ class MemoryBackfillServiceTest {
                 .thenReturn(List.of());
         when(prefilter.filter(eq(null), eq("用户用Java写后端")))
                 .thenReturn(new FilterResult(true, false, "空回复", null));
-        when(generator.generate(eq(1L), eq(null), eq("用户用Java写后端"), any()))
+        when(generator.generate(eq(1L), eq(null), eq("用户用Java写后端"), any(), any()))
                 .thenReturn(new GenResult(null, side("偏好", "编程语言")));
         when(tagResolver.resolve(1L, "我", "偏好", "编程语言")).thenReturn(88L);
 
@@ -112,7 +121,7 @@ class MemoryBackfillServiceTest {
 
         service.backfillScope(1L);
 
-        verify(generator, never()).generate(anyLong(), any(), any(), any());
+        verify(generator, never()).generate(anyLong(), any(), any(), any(), any());
         verify(turnMapper).applyBackfill(eq(30L), eq(List.of()), eq(null), eq(null), eq(1L));
     }
 
@@ -124,7 +133,7 @@ class MemoryBackfillServiceTest {
                 .thenReturn(List.of(raw(40L, "INPUT")))
                 .thenReturn(List.of());
         when(prefilter.filter(any(), any())).thenReturn(new FilterResult(false, true, null, "空回复"));
-        when(generator.generate(anyLong(), any(), any(), any())).thenReturn(null);
+        when(generator.generate(anyLong(), any(), any(), any(), any())).thenReturn(null);
 
         service.backfillScope(1L);
 
@@ -140,7 +149,7 @@ class MemoryBackfillServiceTest {
                 .thenReturn(List.of());
         when(prefilter.filter(any(), any())).thenReturn(new FilterResult(false, true, null, "空回复"));
         // topic 空 → hasCore=false
-        when(generator.generate(anyLong(), any(), any(), any()))
+        when(generator.generate(anyLong(), any(), any(), any(), any()))
                 .thenReturn(new GenResult(side("", "职业"), null));
 
         service.backfillScope(1L);
@@ -157,7 +166,7 @@ class MemoryBackfillServiceTest {
                 .thenReturn(List.of(raw(60L, "INPUT")))
                 .thenReturn(List.of());
         when(prefilter.filter(any(), any())).thenReturn(new FilterResult(false, true, null, "空回复"));
-        when(generator.generate(anyLong(), any(), any(), any()))
+        when(generator.generate(anyLong(), any(), any(), any(), any()))
                 .thenReturn(new GenResult(side("工作", "职业"), null));
         when(tagResolver.resolve(anyLong(), any(), any(), any())).thenReturn(null);
 

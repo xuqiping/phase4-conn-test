@@ -53,6 +53,7 @@ public class MemoryGenerationService {
     private final MemoryTurnMapper turnMapper;
     private final MemoryQueryCache queryCache;
     private final MemoryRoutingService routingService;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /** 按 bean 名注入（同 MemoryService / ChatSessionService 范式）。 */
     private final TaskExecutor memoryTaskExecutor;
@@ -65,13 +66,15 @@ public class MemoryGenerationService {
      * @param sessionId       会话 id
      * @param userInput       用户本轮输入
      * @param assistantOutput 助手本轮回复
+     * @param chatModel       本轮对话所选 model（落库 chat_model，并下沉给路由/生成；null 回退默认）
      */
     public void processTurnAsync(Long userId, Long sessionId,
-                                 String userInput, String assistantOutput) {
+                                 String userInput, String assistantOutput, String chatModel) {
         final String input = userInput;
         final String output = assistantOutput;
+        final String model = chatModel;
         try {
-            memoryTaskExecutor.execute(() -> processTurn(userId, sessionId, input, output));
+            memoryTaskExecutor.execute(() -> processTurn(userId, sessionId, input, output, model));
         } catch (org.springframework.core.task.TaskRejectedException e) {
             log.warn("记忆生成任务被拒(队列满) userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
         }
@@ -82,7 +85,7 @@ public class MemoryGenerationService {
      *
      * @return 写入的 turn 数（0 / 1 / 2）
      */
-    int processTurn(Long userId, Long sessionId, String userInput, String assistantOutput) {
+    int processTurn(Long userId, Long sessionId, String userInput, String assistantOutput, String chatModel) {
         MemoryPrefilter.FilterResult filter = prefilter.filter(userInput, assistantOutput);
         if (filter.bothSkipped()) {
             log.debug("两侧均被前置过滤跳过 userId={} → 不调 LLM 不写 raw", userId);
@@ -91,8 +94,11 @@ public class MemoryGenerationService {
 
         // 二期 P1：turns 纯个人域 → gen 开关恒读全局个人兜底（项目级开关在路由收录层判定）
         boolean genOn = toggleService.resolveGenEnabled(userId, null);
+        // 生成用 effective model：对话所选优先，null 回退可配默认（chatModel 原值仍落库 turn.chat_model）
+        String genModel = (chatModel != null && !chatModel.isBlank())
+                ? chatModel : systemSettingService.getMemoryJudgeModel();
         MemoryGenerator.GenResult gen = genOn
-                ? generator.generate(userId, userInput, assistantOutput, filter)
+                ? generator.generate(userId, userInput, assistantOutput, filter, genModel)
                 : null;
         if (genOn && gen == null) {
             log.info("生成 LLM 失败 userId={} → 过过滤侧写 raw(gen_done=false) 降级", userId);
@@ -103,12 +109,12 @@ public class MemoryGenerationService {
         MemoryTurn outputTurn = null;
         if (!filter.skipInput()) {
             inputTurn = writeTurn(userId, sessionId, DIR_INPUT, userInput,
-                    gen != null ? gen.input() : null);
+                    gen != null ? gen.input() : null, chatModel);
             written += inputTurn != null ? 1 : 0;
         }
         if (!filter.skipOutput()) {
             outputTurn = writeTurn(userId, sessionId, DIR_OUTPUT, assistantOutput,
-                    gen != null ? gen.output() : null);
+                    gen != null ? gen.output() : null, chatModel);
             written += outputTurn != null ? 1 : 0;
         }
 
@@ -121,14 +127,15 @@ public class MemoryGenerationService {
         // 仅 gen_done 的轮次参与（路由粗筛要 L1+tags）；双侧 L1 合并送路由，source_turn 优先 OUTPUT 侧。
         if ((inputTurn != null && Boolean.TRUE.equals(inputTurn.getGenDone()))
                 || (outputTurn != null && Boolean.TRUE.equals(outputTurn.getGenDone()))) {
-            routingService.routeAsync(buildRoutingInput(userId, sessionId, inputTurn, outputTurn));
+            routingService.routeAsync(buildRoutingInput(userId, sessionId, inputTurn, outputTurn, chatModel));
         }
         return written;
     }
 
     /** 组装路由入参：双侧 L1/L2 合并（单侧 null 容忍），tag_ids 取并集，source_turn 优先 OUTPUT。 */
     private MemoryRoutingService.RoutingInput buildRoutingInput(Long userId, Long sessionId,
-                                                                MemoryTurn inputTurn, MemoryTurn outputTurn) {
+                                                                MemoryTurn inputTurn, MemoryTurn outputTurn,
+                                                                String chatModel) {
         String l1 = joinNonBlank(inputTurn != null ? inputTurn.getL1Summary() : null,
                 outputTurn != null ? outputTurn.getL1Summary() : null);
         String l2 = joinNonBlank(inputTurn != null ? inputTurn.getL2Detail() : null,
@@ -141,7 +148,8 @@ public class MemoryGenerationService {
             tagIds.addAll(outputTurn.getTagIds());
         }
         Long sourceTurnId = outputTurn != null ? outputTurn.getId() : (inputTurn != null ? inputTurn.getId() : null);
-        return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, l1, l2, new ArrayList<>(tagIds));
+        return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, l1, l2,
+                new ArrayList<>(tagIds), chatModel);
     }
 
     private static String joinNonBlank(String a, String b) {
@@ -156,12 +164,13 @@ public class MemoryGenerationService {
 
     /** 写一条 turn：有生成层 → tag 归一 + L1/L2 + gen_done=true；无 → 仅 raw + gen_done=false。返回落库后的 turn。 */
     private MemoryTurn writeTurn(Long userId, Long sessionId, String direction, String rawText,
-                                 MemoryGenerator.SideLayers layers) {
+                                 MemoryGenerator.SideLayers layers, String chatModel) {
         MemoryTurn t = new MemoryTurn();
         t.setUserId(userId);
         t.setSessionId(sessionId);
         t.setDirection(direction);
         t.setRawContent(rawText);
+        t.setChatModel(chatModel);
         // 审计字段显式置（异步线程无请求上下文，MetaObjectHandler 可能不填）
         t.setCreatedBy(userId);
         t.setUpdatedBy(userId);

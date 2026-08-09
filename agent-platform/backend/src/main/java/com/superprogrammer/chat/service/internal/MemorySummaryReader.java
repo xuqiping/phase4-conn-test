@@ -56,6 +56,7 @@ public class MemorySummaryReader {
     private final MemorySummaryMapper summaryMapper;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /**
      * 读召回者本人总结 + reflect 判深读。
@@ -64,9 +65,10 @@ public class MemorySummaryReader {
      * @param tagIds D-3 选中标签 id 集 T
      * @param scope  召回 scope（个人/项目 + timeWindow）
      * @param userId 召回者
+     * @param model  LLM model（跟随对话所选，null 回退 system_settings.memory.judge.model）
      * @return 带 includeL2 标记的总结清单；空 = 无总结走 turns
      */
-    public List<RecalledSummary> read(String query, List<Long> tagIds, RecallScope scope, Long userId) {
+    public List<RecalledSummary> read(String query, List<Long> tagIds, RecallScope scope, Long userId, String model) {
         if (tagIds == null || tagIds.isEmpty()) {
             return List.of();
         }
@@ -84,20 +86,21 @@ public class MemorySummaryReader {
         }
 
         // >5 → reflect 选深读子集
-        Set<Long> deepIds = reflectDeepReadIds(query, summaries, userId);
+        String judgeModel = (model != null && !model.isBlank()) ? model : systemSettingService.getMemoryJudgeModel();
+        Set<Long> deepIds = reflectDeepReadIds(query, summaries, userId, judgeModel);
         return summaries.stream()
                 .map(s -> new RecalledSummary(s, deepIds.contains(s.getId())))
                 .toList();
     }
 
     /** reflect 批量 LLM 选需深读 L2 的 summary id 集；失败 → 空集（全只读 L1 降级）。 */
-    private Set<Long> reflectDeepReadIds(String query, List<MemorySummary> summaries, Long userId) {
+    private Set<Long> reflectDeepReadIds(String query, List<MemorySummary> summaries, Long userId, String judgeModel) {
         String prompt = buildReflectPrompt(query, summaries);
         Set<Long> validIds = summaries.stream().map(MemorySummary::getId).collect(Collectors.toSet());
         for (int attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(judgeModel)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)

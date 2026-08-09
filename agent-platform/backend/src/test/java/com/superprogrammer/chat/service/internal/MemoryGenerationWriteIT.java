@@ -61,7 +61,7 @@ class MemoryGenerationWriteIT {
         Long uid = createUser("it_gen_" + System.nanoTime());
         genOffPersonal();
 
-        int n = service.processTurn(uid, SESSION, INPUT, OUTPUT);
+        int n = service.processTurn(uid, SESSION, INPUT, OUTPUT, "glm-5.1");
 
         assertEquals(2, n);
         Integer cnt = jdbc.queryForObject(
@@ -92,7 +92,7 @@ class MemoryGenerationWriteIT {
         Long uid = createUser("it_skip_" + System.nanoTime());
         genOffPersonal();
 
-        int n = service.processTurn(uid, SESSION, "嗯", "很高兴为您服务");
+        int n = service.processTurn(uid, SESSION, "嗯", "很高兴为您服务", "glm-5.1");
 
         assertEquals(0, n);
         Integer cnt = jdbc.queryForObject(
@@ -108,7 +108,7 @@ class MemoryGenerationWriteIT {
         genOffPersonal();
 
         // OUTPUT 是套话被跳，INPUT 有事实
-        int n = service.processTurn(uid, SESSION, INPUT, "很高兴为您服务");
+        int n = service.processTurn(uid, SESSION, INPUT, "很高兴为您服务", "glm-5.1");
 
         assertEquals(1, n);
         Integer cnt = jdbc.queryForObject(

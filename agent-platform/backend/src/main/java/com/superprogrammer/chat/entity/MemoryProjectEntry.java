@@ -45,4 +45,7 @@ public class MemoryProjectEntry extends BaseEntity {
     private String fileId;           // contentType=FILE 时指向 stored_files.file_id（VARCHAR，V69 修正类型）
     private Long reviewedBy;         // 审核人（owner/admin 收/弃留痕）
     private OffsetDateTime reviewedAt;
+
+    /** 条目沿用源 turn 的对话 model；后台条目级压缩按此取，NULL 回退 memory.judge.model 默认。 */
+    private String chatModel;
 }

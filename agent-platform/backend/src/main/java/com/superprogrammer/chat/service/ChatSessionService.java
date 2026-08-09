@@ -205,7 +205,7 @@ public class ChatSessionService {
         // Load long-term memories（仅记忆模式开启；新栈召回 pipeline，scope 走用户持久化偏好）
         MemoryRecallResult recallResult = null;
         if (ragOn) {
-            recallResult = recallMemory(userId, request.getMessage());
+            recallResult = recallMemory(userId, request.getMessage(), request.getModel());
             String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("SYSTEM", "用户记忆:\n" + memoryContext);
@@ -241,7 +241,7 @@ public class ChatSessionService {
         // 记忆写入（H' 切流：新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标概念）
         if (ragOn) {
             dispatchMemoryWrite(userId, session.getId(),
-                    withAttachmentMention(request.getMessage(), attachmentNames), response);
+                    withAttachmentMention(request.getMessage(), attachmentNames), response, request.getModel());
         }
 
         // Save assistant message（二期 P3：召回命中的文件卡片随 metadata 落库，历史消息回显文件卡片）
@@ -280,7 +280,7 @@ public class ChatSessionService {
      * 召回长期记忆（结果含装配文本 + 二期 P3 文件卡片）。scope 走用户持久化偏好（F-6 底栏 popover），
      * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返 null 不崩聊天。
      */
-    private MemoryRecallResult recallMemory(Long userId, String query) {
+    private MemoryRecallResult recallMemory(Long userId, String query, String model) {
         if (userId == null || query == null || query.isBlank()) return null;
         try {
             MemoryRecallScopeRequest scopeReq = memoryRecallPrefService.getScope(userId);
@@ -288,7 +288,7 @@ public class ChatSessionService {
                 scopeReq = new MemoryRecallScopeRequest();
                 scopeReq.setPersonalOn(true);
             }
-            return memoryRecallPipeline.recall(query, scopeReq, userId);
+            return memoryRecallPipeline.recall(query, scopeReq, userId, model);
         } catch (Exception e) {
             log.warn("记忆召回失败 userId={} query.len={}: {}", userId, query.length(), e.getMessage());
             return null;
@@ -300,9 +300,9 @@ public class ChatSessionService {
      * RejectedExecution 已在 processTurnAsync 内兜底，此处仅兜意外异常不崩主流程。
      */
     private void dispatchMemoryWrite(Long userId, Long sessionId,
-                                     String userInput, String assistantOutput) {
+                                     String userInput, String assistantOutput, String chatModel) {
         try {
-            memoryGenerationService.processTurnAsync(userId, sessionId, userInput, assistantOutput);
+            memoryGenerationService.processTurnAsync(userId, sessionId, userInput, assistantOutput, chatModel);
         } catch (Exception e) {
             log.warn("记忆写入提交失败 userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
         }
@@ -404,7 +404,7 @@ public class ChatSessionService {
         final java.util.concurrent.atomic.AtomicReference<java.util.List<com.superprogrammer.chat.dto.RecalledFileCard>> recalledFileCards =
                 new java.util.concurrent.atomic.AtomicReference<>();
         if (ragOn) {
-            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage());
+            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage(), request.getModel());
             String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("system", "用户记忆:\n" + memoryContext);
@@ -470,7 +470,7 @@ public class ChatSessionService {
                     // 记忆写入（二期 P1 turns 纯个人域；HYBRID/ASYNC/incident/askText 随旧栈废弃）
                     if (ragOn) {
                         dispatchMemoryWrite(userId, sessionId,
-                                withAttachmentMention(request.getMessage(), attachmentNames), responseText);
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText, request.getModel());
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
@@ -564,7 +564,7 @@ public class ChatSessionService {
                             session.getAgentId(), session.getWorkflowId());
                     if (wfRagOn) {
                         dispatchMemoryWrite(userId, sessionId,
-                                withAttachmentMention(request.getMessage(), attachmentNames), responseText);
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText, request.getModel());
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);

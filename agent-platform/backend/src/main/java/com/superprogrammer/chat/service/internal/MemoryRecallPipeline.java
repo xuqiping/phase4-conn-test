@@ -78,9 +78,10 @@ public class MemoryRecallPipeline {
      * @param query  用户当前问题（召回 query，选标签 + reflect 判据）
      * @param req    用户 scope 勾选（可 null → 默认 {个人}）
      * @param userId 召回者
+     * @param model  对话所选 model（透传给 select/reflect LLM，null → 各组件回退默认）
      * @return 装配产物 + 打点 + 降级标记
      */
-    public MemoryRecallResult recall(String query, MemoryRecallScopeRequest req, Long userId) {
+    public MemoryRecallResult recall(String query, MemoryRecallScopeRequest req, Long userId, String model) {
         String traceId = UUID.randomUUID().toString();
         List<RecallTraceStep> steps = new ArrayList<>();
         List<String> notes = new ArrayList<>();
@@ -158,7 +159,7 @@ public class MemoryRecallPipeline {
             // ③ select（向量 12，最多 1 次 LLM）
             long t2 = System.nanoTime();
             try {
-                selected = selector.select(query, tags, userId);
+                selected = selector.select(query, tags, userId, model);
                 steps.add(step("select", t2, selected.size(), true));
             } catch (Exception e) {
                 log.warn("recall traceId={} select 异常: {}", traceId, e.getMessage());
@@ -177,7 +178,7 @@ public class MemoryRecallPipeline {
                     .map(RecallTagMeta::getId).filter(Objects::nonNull).toList();
             long t3 = System.nanoTime();
             try {
-                summaries = reader.read(query, selectedTagIds, scope, userId);
+                summaries = reader.read(query, selectedTagIds, scope, userId, model);
                 steps.add(step("read", t3, summaries.size(), true));
             } catch (Exception e) {
                 log.warn("recall traceId={} read 异常: {}", traceId, e.getMessage());

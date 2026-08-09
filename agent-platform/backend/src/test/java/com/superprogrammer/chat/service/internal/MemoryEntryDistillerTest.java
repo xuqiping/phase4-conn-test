@@ -59,7 +59,7 @@ class MemoryEntryDistillerTest {
                         + "\"distilled_l1\":\"问了 cfg 参数\",\"distilled_l2\":\"细节\"},"
                         + "{\"project_id\":2,\"hit\":false,\"confidence\":0.1,\"distilled_l1\":\"\",\"distilled_l2\":\"\"}]}"));
 
-        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L), rule(2L)), "聊了 cfg", null);
+        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L), rule(2L)), "聊了 cfg", null, "doubao-seed-2.0-code");
 
         assertEquals(2, out.size());
         assertTrue(out.get(0).hit());
@@ -75,7 +75,7 @@ class MemoryEntryDistillerTest {
                 "好的，判定如下：\n```json\n{\"results\":[{\"project_id\":1,\"hit\":true,\"confidence\":0.85,"
                         + "\"distilled_l1\":\"蒸馏\",\"distilled_l2\":\"\"}]}\n```\n以上。"));
 
-        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null);
+        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null, "doubao-seed-2.0-code");
 
         assertEquals(1, out.size());
         assertEquals("蒸馏", out.get(0).distilledL1());
@@ -87,7 +87,7 @@ class MemoryEntryDistillerTest {
         when(llmGateway.chat(any(), anyLong())).thenReturn(resp(
                 "{\"results\":[{\"project_id\":1,\"hit\":true,\"confidence\":0.9,\"distilled_l1\":\"\",\"distilled_l2\":\"\"}]}"));
 
-        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null);
+        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null, "doubao-seed-2.0-code");
 
         assertTrue(out.isEmpty());
         verify(llmGateway, times(2)).chat(any(), anyLong());   // 1 次重试
@@ -100,7 +100,7 @@ class MemoryEntryDistillerTest {
                 "{\"results\":[{\"project_id\":999,\"hit\":true,\"confidence\":0.9,"
                         + "\"distilled_l1\":\"幻觉\",\"distilled_l2\":\"\"}]}"));
 
-        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null);
+        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null, "doubao-seed-2.0-code");
 
         assertTrue(out.isEmpty());
         verify(llmGateway, times(1)).chat(any(), anyLong());   // 非 schema 错误不重试
@@ -111,7 +111,7 @@ class MemoryEntryDistillerTest {
     void judge_llmThrows_emptyFallback() {
         when(llmGateway.chat(any(), anyLong())).thenThrow(new RuntimeException("provider down"));
 
-        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null);
+        List<MemoryEntryDistiller.Judgment> out = distiller.judge(100L, List.of(rule(1L)), "聊了 cfg", null, "doubao-seed-2.0-code");
 
         assertTrue(out.isEmpty());
         verify(llmGateway, times(2)).chat(any(), anyLong());
@@ -120,7 +120,7 @@ class MemoryEntryDistillerTest {
     // 空候选 → 不调 LLM
     @Test
     void judge_emptyCandidates_noLlm() {
-        assertTrue(distiller.judge(100L, List.of(), "x", null).isEmpty());
+        assertTrue(distiller.judge(100L, List.of(), "x", null, "doubao-seed-2.0-code").isEmpty());
         verify(llmGateway, times(0)).chat(any(), anyLong());
     }
 }

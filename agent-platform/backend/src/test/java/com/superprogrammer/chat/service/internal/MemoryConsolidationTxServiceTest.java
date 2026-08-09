@@ -37,8 +37,16 @@ class MemoryConsolidationTxServiceTest {
     @Mock MemorySummaryCoverageMapper coverageMapper;
     @Mock MemoryConflictMapper conflictMapper;
     @Mock MemoryConflictJudge conflictJudge;
+    @Mock com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     @InjectMocks MemoryConsolidationTxService txService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        // 冲突判定 model 回退读可配默认（无源 turn chat_model 时）
+        org.mockito.Mockito.lenient().when(systemSettingService.getMemoryJudgeModel())
+                .thenReturn("doubao-seed-2.0-code");
+    }
 
     private static MemoryTurn turn(long id) {
         MemoryTurn t = new MemoryTurn();
@@ -86,7 +94,7 @@ class MemoryConsolidationTxServiceTest {
     void conflictMarksPendingAndInsertsConflictRow() {
         MemorySummary existing = clean(200L);
         when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(existing));
-        when(conflictJudge.judgeSummaryConflict(any(), any(), any()))
+        when(conflictJudge.judgeSummaryConflict(any(), any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(true, "新旧冲突，保留哪条？"));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);
@@ -114,7 +122,7 @@ class MemoryConsolidationTxServiceTest {
     @Test
     void coexistWritesCleanNoConflictRow() {
         when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(clean(200L)));
-        when(conflictJudge.judgeSummaryConflict(any(), any(), any()))
+        when(conflictJudge.judgeSummaryConflict(any(), any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(false, null));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);

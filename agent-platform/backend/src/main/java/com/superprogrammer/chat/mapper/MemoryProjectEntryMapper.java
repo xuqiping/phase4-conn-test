@@ -33,7 +33,7 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
 
     /** P3 Step 4（FR-204）放行裁决：该文件被某 ACTIVE FILE 条目引用 且 请求者是该条目项目 ACTIVE 成员。 */
     @Select("SELECT COUNT(*) FROM memory_project_entries e "
-            + "JOIN memory_project_members m ON m.project_id = e.project_id AND m.deleted = 0 "
+            + "JOIN memory_project_members m ON m.project_id = e.project_id "
             + "WHERE e.deleted = 0 AND e.status = 'ACTIVE' AND e.content_type = 'FILE' AND e.file_id = #{fileId} "
             + "AND m.user_id = #{userId} AND m.status = 'ACTIVE'")
     long countAccessibleFileEntries(@Param("fileId") String fileId, @Param("userId") Long userId);

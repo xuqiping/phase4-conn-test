@@ -63,7 +63,7 @@ class MemoryGeneratorTest {
         mockChatReturn(userId, BOTH_JSON);
         FilterResult pass = new FilterResult(false, false, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫代码", pass);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫代码", pass, "doubao-seed-2.0-code");
 
         assertNotNull(r);
         assertNotNull(r.input());
@@ -91,7 +91,7 @@ class MemoryGeneratorTest {
                 });
         FilterResult outputSkipped = new FilterResult(false, true, null, "套话");
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "很高兴为您服务", outputSkipped);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "很高兴为您服务", outputSkipped, "doubao-seed-2.0-code");
 
         assertNotNull(r);
         assertNotNull(r.input());
@@ -107,7 +107,7 @@ class MemoryGeneratorTest {
         mockChatReturn(userId, dirty);
         FilterResult pass = new FilterResult(false, false, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass, "doubao-seed-2.0-code");
 
         assertNotNull(r, "脏 JSON 走 applyClean 兜底应解析成功");
         assertEquals("居住", r.input().topic());
@@ -122,7 +122,7 @@ class MemoryGeneratorTest {
                 .thenReturn(LlmResponse.builder().content("这不是JSON，是无法解析的自然语言").build());
         FilterResult pass = new FilterResult(false, false, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass, "doubao-seed-2.0-code");
 
         assertNull(r, "全失败应返 null 让上层写 raw genDone=false");
     }
@@ -138,7 +138,7 @@ class MemoryGeneratorTest {
                 .thenReturn(LlmResponse.builder().content(json).build());
         FilterResult inputOnly = new FilterResult(false, true, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "嗯", "好的", inputOnly);
+        MemoryGenerator.GenResult r = generator.generate(userId, "嗯", "好的", inputOnly, "doubao-seed-2.0-code");
 
         assertNull(r, "必要侧 topic/label 缺失应视为生成失败");
     }
@@ -152,7 +152,7 @@ class MemoryGeneratorTest {
                 .thenThrow(new RuntimeException("provider down"));
         FilterResult pass = new FilterResult(false, false, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "写爬虫", pass, "doubao-seed-2.0-code");
 
         assertNull(r);
     }
@@ -163,7 +163,7 @@ class MemoryGeneratorTest {
         wireObjectMapper();
         FilterResult both = new FilterResult(true, true, "过短", "套话");
 
-        MemoryGenerator.GenResult r = generator.generate(1L, "嗯", "您好", both);
+        MemoryGenerator.GenResult r = generator.generate(1L, "嗯", "您好", both, "doubao-seed-2.0-code");
 
         assertNotNull(r);
         assertTrue(r.isEmpty(), "两侧跳过应返回空结果");
@@ -181,7 +181,7 @@ class MemoryGeneratorTest {
                 .thenReturn(LlmResponse.builder().content(json).build());
         FilterResult inputOnly = new FilterResult(false, true, null, null);
 
-        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "好的", inputOnly);
+        MemoryGenerator.GenResult r = generator.generate(userId, "我住萧山", "好的", inputOnly, "doubao-seed-2.0-code");
 
         assertNotNull(r);
         assertNotNull(r.input());

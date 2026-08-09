@@ -41,11 +41,15 @@ class MemorySummaryReaderTest {
     @Mock
     LlmGateway llmGateway;
 
+    @Mock
+    com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     private MemorySummaryReader reader;
 
     @BeforeEach
     void setUp() {
-        reader = new MemorySummaryReader(summaryMapper, llmGateway, new ObjectMapper());
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        reader = new MemorySummaryReader(summaryMapper, llmGateway, new ObjectMapper(), systemSettingService);
     }
 
     private static MemorySummary summary(long id) {
@@ -79,7 +83,7 @@ class MemorySummaryReaderTest {
 
     @Test
     void emptyTagIds_returnsEmpty() {
-        assertTrue(reader.read("q", List.of(), personalScope(), 1L).isEmpty());
+        assertTrue(reader.read("q", List.of(), personalScope(), 1L, null).isEmpty());
         verifyNoInteractions(summaryMapper);
     }
 
@@ -87,7 +91,7 @@ class MemorySummaryReaderTest {
     void mapperReturnsEmpty_returnsEmpty() {
         when(summaryMapper.findSummariesForRecall(anyLong(), anyList(), any(), anyBoolean(), any(), any(), any()))
                 .thenReturn(List.of());
-        assertTrue(reader.read("q", List.of(10L), personalScope(), 1L).isEmpty());
+        assertTrue(reader.read("q", List.of(10L), personalScope(), 1L, null).isEmpty());
         verifyNoInteractions(llmGateway);
     }
 
@@ -97,7 +101,7 @@ class MemorySummaryReaderTest {
     void underThreshold_allIncludeL2_noLlm() {
         when(summaryMapper.findSummariesForRecall(anyLong(), anyList(), any(), anyBoolean(), any(), any(), any()))
                 .thenReturn(summaries(5));
-        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L);
+        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L, null);
         assertEquals(5, r.size());
         assertTrue(r.stream().allMatch(RecalledSummary::includeL2));
         verifyNoInteractions(llmGateway);
@@ -111,7 +115,7 @@ class MemorySummaryReaderTest {
                 .thenReturn(summaries(6));
         mockChatReturn("[1,3]");
 
-        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L);
+        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L, null);
 
         assertEquals(6, r.size());
         // id=1/3 深读 L2，其余只读 L1
@@ -127,7 +131,7 @@ class MemorySummaryReaderTest {
                 .thenReturn(summaries(6));
         mockChatReturn("[]");
 
-        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L);
+        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L, null);
 
         // LLM 明确判无深读 → 全只读 L1
         assertTrue(r.stream().noneMatch(RecalledSummary::includeL2));
@@ -139,7 +143,7 @@ class MemorySummaryReaderTest {
                 .thenReturn(summaries(6));
         when(llmGateway.chat(any(), eq(1L))).thenThrow(new RuntimeException("LLM down"));
 
-        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L);
+        List<RecalledSummary> r = reader.read("q", List.of(10L), personalScope(), 1L, null);
 
         // 降级：全只读 L1（设计「reflect 失败→只读 L1」）
         assertTrue(r.stream().noneMatch(RecalledSummary::includeL2));
@@ -153,7 +157,7 @@ class MemorySummaryReaderTest {
                 .thenReturn(List.of());
         RecallTimeWindow tw = new RecallTimeWindow(7, null, null);
         RecallScope scope = new RecallScope(true, List.of(), RecallDirection.INPUT, tw, true);
-        reader.read("q", List.of(10L, 20L), scope, 1L);
+        reader.read("q", List.of(10L, 20L), scope, 1L, null);
         verify(summaryMapper).findSummariesForRecall(eq(1L), eq(List.of(10L, 20L)), eq(List.of()),
                 eq(true), isNull(), isNull(), eq(7));
     }

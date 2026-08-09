@@ -69,23 +69,23 @@ class MemoryRecallControllerTest {
         MemoryRecallPreviewRequest req = new MemoryRecallPreviewRequest();
         req.setQuery("爱好");
         MemoryRecallResult stub = MemoryRecallResult.builder().assembledText("记忆").summaryCount(1).build();
-        when(pipeline.recall(eq("爱好"), any(), eq(1L))).thenReturn(stub);
+        when(pipeline.recall(eq("爱好"), any(), eq(1L), any())).thenReturn(stub);
 
         MemoryRecallResult data = controller.preview(req).getBody().getData();
 
         assertSame(stub, data);
-        verify(pipeline).recall(eq("爱好"), any(), eq(1L));
+        verify(pipeline).recall(eq("爱好"), any(), eq(1L), any());
     }
 
     @Test
     void preview_scopeNull_passedThrough() {
         MemoryRecallPreviewRequest req = new MemoryRecallPreviewRequest();
         req.setQuery("q");
-        when(pipeline.recall(anyString(), any(), anyLong())).thenReturn(MemoryRecallResult.builder().build());
+        when(pipeline.recall(anyString(), any(), anyLong(), any())).thenReturn(MemoryRecallResult.builder().build());
 
         controller.preview(req);
 
-        verify(pipeline).recall(eq("q"), isNull(), eq(1L));
+        verify(pipeline).recall(eq("q"), isNull(), eq(1L), any());
     }
 
     // ===== scope 持久化 =====

@@ -32,7 +32,7 @@
           AND s.scope_owner = 'PROJECT'
           AND EXISTS (SELECT 1 FROM memory_project_members m
                       WHERE m.project_id = s.project_id AND m.user_id = #{userId}
-                        AND m.status = 'ACTIVE' AND m.role IN ('OWNER', 'ADMIN') AND m.deleted = 0)
+                        AND m.status = 'ACTIVE' AND m.role IN ('OWNER', 'ADMIN'))
         ORDER BY c.created_at DESC
     </select>
 

@@ -66,6 +66,7 @@ class MemoryRecallPipelineTest {
     private static final Long SELF = 1L;
     private static final Long OTHER = 2L;
     private static final String QUERY = "最近爱好啥";
+    private static final String MODEL = "doubao-seed-2.0-code";
 
     @BeforeEach
     void setUp() {
@@ -122,10 +123,10 @@ class MemoryRecallPipelineTest {
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(
                 tag(10, "我", "爱好", SELF),
                 tag(11, "表哥", "居住", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(
                 tag(10, "我", "爱好", SELF),
                 tag(11, "表哥", "居住", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(1, SELF, 10, "喜欢爬山", "周末常去西湖"), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(
                 turn(100, SELF, "INPUT", "用户问天气")));
@@ -137,7 +138,7 @@ class MemoryRecallPipelineTest {
     void emptyScope_returnsEmpty() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(
                 new RecallScope(false, List.of(), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
         assertEquals("", r.getAssembledText());
         assertEquals(0, r.getSummaryCount());
         assertEquals(0, r.getTurnCount());
@@ -149,7 +150,7 @@ class MemoryRecallPipelineTest {
     @Test
     void happyPath_assemblesSummaryAndTurn() {
         stubHappy();
-        MemoryRecallResult r = pipeline.recall(QUERY, new MemoryRecallScopeRequest(), SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, new MemoryRecallScopeRequest(), SELF, MODEL);
         assertEquals(1, r.getSummaryCount());
         assertEquals(1, r.getTurnCount());
         assertEquals(2, r.getSelectedTags().size());
@@ -158,8 +159,8 @@ class MemoryRecallPipelineTest {
         assertFalse(r.isDegraded());
         // 串行顺序：resolve → aggregate → select → read → patch
         verify(aggregator, times(1)).aggregate(any(), eq(SELF));
-        verify(selector, times(1)).select(eq(QUERY), anyList(), eq(SELF));
-        verify(reader, times(1)).read(eq(QUERY), anyList(), any(), eq(SELF));
+        verify(selector, times(1)).select(eq(QUERY), anyList(), eq(SELF), any());
+        verify(reader, times(1)).read(eq(QUERY), anyList(), any(), eq(SELF), any());
         verify(patcher, times(1)).collectUncovered(any(), eq(SELF));
     }
 
@@ -169,11 +170,11 @@ class MemoryRecallPipelineTest {
     void ownSubjectMe_omitsSubjectPrefix() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(1, SELF, 10, "喜欢爬山", null), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("- 爱好：喜欢爬山"), "省主体直接 topic");
         assertFalse(text.contains("我·爱好"), "不留「我·」前缀");
     }
@@ -184,11 +185,11 @@ class MemoryRecallPipelineTest {
     void ownSubjectOther_keepsSubjectPrefix() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(11, "表哥", "居住", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(11, "表哥", "居住", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(11, "表哥", "居住", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(1, SELF, 11, "住上海", null), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("- 表哥·居住：住上海"), "保留主体");
     }
 
@@ -199,11 +200,11 @@ class MemoryRecallPipelineTest {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(
                 new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(20, "我", "爱好", OTHER)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(20, "我", "爱好", OTHER)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(20, "我", "爱好", OTHER)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(2, OTHER, 20, "爱打球", null), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("- user#2·爱好：爱打球"), "owner 前缀替代「我」");
         assertFalse(text.contains("我·爱好"), "不留「我」");
     }
@@ -215,11 +216,11 @@ class MemoryRecallPipelineTest {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(
                 new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(21, "本人", "工作", OTHER)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(21, "本人", "工作", OTHER)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(21, "本人", "工作", OTHER)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(3, OTHER, 21, "写代码", null), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("- user#2·本人·工作：写代码"), "owner + 主体双前缀");
     }
 
@@ -229,11 +230,11 @@ class MemoryRecallPipelineTest {
     void includeL2False_onlyL1() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(1, SELF, 10, "L1概要", "L2详述"), false)));  // includeL2=false
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("L1概要"));
         assertFalse(text.contains("L2详述"), "includeL2=false 不展 L2");
     }
@@ -242,11 +243,11 @@ class MemoryRecallPipelineTest {
     void includeL2True_l1AndL2() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(
                 recalled(summary(1, SELF, 10, "L1概要", "L2详述"), true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("L1概要"));
         assertTrue(text.contains("L2详述"), "includeL2=true 展 L2");
     }
@@ -260,7 +261,7 @@ class MemoryRecallPipelineTest {
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(
                 turn(100, SELF, "OUTPUT", "自答天气"),
                 turn(101, OTHER, "INPUT", "他问日程")));
-        String text = pipeline.recall(QUERY, null, SELF).getAssembledText();
+        String text = pipeline.recall(QUERY, null, SELF, MODEL).getAssembledText();
         assertTrue(text.contains("- [OUTPUT] 自答天气"), "自身 turn 无 owner 前缀带方向");
         assertTrue(text.contains("- user#2·[INPUT] 他问日程"), "他人 turn owner 前缀");
     }
@@ -272,7 +273,7 @@ class MemoryRecallPipelineTest {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenThrow(new RuntimeException("db down"));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
         assertTrue(r.isDegraded(), "标记降级");
         assertFalse(r.getNotes().isEmpty(), "收降级明细");
         assertEquals(0, r.getSummaryCount());
@@ -288,10 +289,10 @@ class MemoryRecallPipelineTest {
     void readThrows_degradedTurnsFallback() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenThrow(new RuntimeException("llm dead"));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenThrow(new RuntimeException("llm dead"));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "原文兜")));
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
         assertTrue(r.isDegraded());
         assertEquals(0, r.getSummaryCount());
         assertEquals(1, r.getTurnCount());
@@ -303,10 +304,10 @@ class MemoryRecallPipelineTest {
     void selectedEmpty_readEmpty_patchStillWorks() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of());  // 选空
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());  // tagIds 空 → 空
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of());  // 选空
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());  // tagIds 空 → 空
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "原文")));
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
         assertEquals(0, r.getSummaryCount());
         assertEquals(1, r.getTurnCount());
         assertFalse(r.isDegraded(), "select 返空非异常不标降级");
@@ -321,10 +322,10 @@ class MemoryRecallPipelineTest {
         List<RecallTagMeta> many = java.util.stream.LongStream.rangeClosed(1, 31)
                 .mapToObj(i -> tag(i, "我", "t" + i, SELF)).toList();
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(many);
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(many);  // 等量全集
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(many);  // 等量全集
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
         assertTrue(r.isDegraded(), "selected==tags 且 size>30 → 启发式降级标记");
     }
 
@@ -333,7 +334,7 @@ class MemoryRecallPipelineTest {
     @Test
     void stepsRecorded_sevenSteps() {
         stubHappy();
-        MemoryRecallResult r = pipeline.recall(QUERY, new MemoryRecallScopeRequest(), SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, new MemoryRecallScopeRequest(), SELF, MODEL);
         List<String> names = r.getSteps().stream().map(RecallTraceStep::step).toList();
         assertEquals(List.of("resolve", "aggregate", "entry-merge", "select", "read", "patch",
                 "file-recall", "file-deepread", "assemble"), names);
@@ -351,7 +352,7 @@ class MemoryRecallPipelineTest {
         when(resolver.resolve(eq(req), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of());  // tags 空 → 跳 select/read
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
-        pipeline.recall(QUERY, req, SELF);
+        pipeline.recall(QUERY, req, SELF, MODEL);
         verify(resolver).resolve(eq(req), eq(SELF));
     }
 
@@ -378,11 +379,11 @@ class MemoryRecallPipelineTest {
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
         when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(
                 entry(1, OTHER, "张三", "接口超时阈值定为 3s", List.of(10L))));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("【项目记忆】"), "含项目记忆段");
         assertTrue(r.getAssembledText().contains("张三·爱好：接口超时阈值定为 3s"), "作者·标签：L1 格式");
@@ -402,11 +403,11 @@ class MemoryRecallPipelineTest {
         t99.setId(99L);
         t99.setLabel("无关");
         when(tagMapper.selectBatchIds(List.of(99L))).thenReturn(List.of(t99));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertFalse(r.getAssembledText().contains("【项目记忆】"), "未选中标签的条目不拼");
         assertFalse(r.getAssembledText().contains("不相关条目"));
@@ -422,7 +423,7 @@ class MemoryRecallPipelineTest {
                 entry(1, OTHER, "张三", "无标签条目也拼", null)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("【项目记忆】"));
         assertTrue(r.getAssembledText().contains("张三·收录：无标签条目也拼"), "无标签 → 「收录」占位");
@@ -438,7 +439,7 @@ class MemoryRecallPipelineTest {
                 .thenThrow(new RuntimeException("entry db down"));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.isDegraded(), "entry-merge 失败标降级");
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("entry-merge")), "notes 收降级明细");
@@ -452,7 +453,7 @@ class MemoryRecallPipelineTest {
     void emptyScope_noEntryMerge() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(
                 new RecallScope(false, List.of(), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
-        pipeline.recall(QUERY, null, SELF);
+        pipeline.recall(QUERY, null, SELF, MODEL);
         verifyNoInteractions(entryRecallService);
     }
 
@@ -465,11 +466,11 @@ class MemoryRecallPipelineTest {
         childEntry.setViaAuthorizedLink(true);
         childEntry.setProjectName("子项目X");
         when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(childEntry));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("来自授权项目·子项目X·张三·爱好：child 项目的蒸馏条目"),
                 "授权条目带来源标注");
@@ -481,7 +482,7 @@ class MemoryRecallPipelineTest {
     void projectSharedSummary_assemblesWithSharedMark() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
         MemorySummary shared = new MemorySummary();          // user_id NULL=项目资产
         shared.setId(7L);
         shared.setUserId(null);
@@ -490,10 +491,10 @@ class MemoryRecallPipelineTest {
         shared.setL1Summary("团队约定接口超时 3s");
         shared.setStatus("CLEAN");
         shared.setScopeOwner("PROJECT");
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of(recalled(shared, true)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of(recalled(shared, true)));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("项目共享·爱好：团队约定接口超时 3s"),
                 "共享总结带「项目共享·」标注");
@@ -533,8 +534,8 @@ class MemoryRecallPipelineTest {
     private void stubFileRecallBase() {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
-        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
+        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
     }
 
@@ -546,7 +547,7 @@ class MemoryRecallPipelineTest {
         when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
                 fileCard(501, "React课件.pdf", false)));
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("【文件记忆】"), "含文件记忆段");
         assertTrue(r.getAssembledText().contains("《React课件.pdf》（PDF 文档·共12块·可下载·file:file-501）：讲了 hooks 基础"),
@@ -567,7 +568,7 @@ class MemoryRecallPipelineTest {
         when(assetRecallService.deepReadChunks(eq(cards), eq(QUERY), eq(SELF))).thenReturn(List.of(
                 new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第12页", "useEffect 依赖数组规则", 0.21d)));
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("【文件深读】"), "含深读段");
         assertTrue(r.getAssembledText().contains("《React课件.pdf》[第12页]：useEffect 依赖数组规则"),
@@ -583,7 +584,7 @@ class MemoryRecallPipelineTest {
         when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
                 fileCard(502, "旧课件.pdf", true)));
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.getAssembledText().contains("《旧课件.pdf》（PDF 文档·共12块·原文件已删除·file:file-502）"),
                 "CLEANED 标原文件已删除");
@@ -597,11 +598,11 @@ class MemoryRecallPipelineTest {
         when(resolver.resolve(any(), eq(SELF))).thenReturn(
                 new RecallScope(false, List.of(10L), RecallDirection.BOTH, RecallTimeWindow.unbounded(), true));
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(selector.select(eq(QUERY), anyList(), eq(SELF))).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
-        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF))).thenReturn(List.of());
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "爱好", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        pipeline.recall(QUERY, null, SELF);
+        pipeline.recall(QUERY, null, SELF, MODEL);
 
         verifyNoInteractions(assetRecallService);
     }
@@ -615,7 +616,7 @@ class MemoryRecallPipelineTest {
                 .thenThrow(new RuntimeException("asset db down"));
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         assertTrue(r.isDegraded(), "file-recall 失败标降级");
         assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("file-recall")), "notes 收明细");
@@ -631,7 +632,7 @@ class MemoryRecallPipelineTest {
         when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
 
-        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF);
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
         verifyNoInteractions(assetRecallService);
         List<String> names = r.getSteps().stream().map(RecallTraceStep::step).toList();

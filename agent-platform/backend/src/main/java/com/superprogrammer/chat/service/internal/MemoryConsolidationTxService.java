@@ -43,6 +43,20 @@ public class MemoryConsolidationTxService {
     private final MemoryConflictMapper conflictMapper;
     private final MemoryConflictJudge conflictJudge;
     private final MemoryConsolidationScopeMapper scopeMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
+    /** 源 turn 链最新非空 chat_model 优先，否则可配默认。 */
+    private String resolveTurnModel(List<MemoryTurn> turns) {
+        if (turns != null) {
+            for (int i = turns.size() - 1; i >= 0; i--) {
+                MemoryTurn t = turns.get(i);
+                if (t.getChatModel() != null && !t.getChatModel().isBlank()) {
+                    return t.getChatModel();
+                }
+            }
+        }
+        return systemSettingService.getMemoryJudgeModel();
+    }
 
     /**
      * E-6 worker 定时认领（@Transactional：FOR UPDATE SKIP LOCKED 须在事务内，
@@ -77,7 +91,10 @@ public class MemoryConsolidationTxService {
         String initialStatus = "CLEAN";
         String askText = null;
         if (existing != null && !existing.isEmpty()) {
-            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(existing, cs.l1() + " " + cs.l2(), userId);
+            // 冲突判定 model 跟随源 turn 链最新 chat_model（与压缩同源），缺则回退默认
+            String judgeModel = resolveTurnModel(uncovered);
+            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(
+                    existing, cs.l1() + " " + cs.l2(), userId, judgeModel);
             if (judge.conflict()) {
                 initialStatus = "PENDING_CONFLICT";
                 askText = judge.askText();
@@ -157,7 +174,9 @@ public class MemoryConsolidationTxService {
         String initialStatus = "CLEAN";
         String askText = null;
         if (existing != null && !existing.isEmpty()) {
-            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(existing, cs.l1() + " " + cs.l2());
+            // 条目 VO 不携带 chat_model → 冲突判定走可配默认
+            SummaryConflictResult judge = conflictJudge.judgeSummaryConflict(
+                    existing, cs.l1() + " " + cs.l2(), operatorId);
             if (judge.conflict()) {
                 initialStatus = "PENDING_CONFLICT";
                 askText = judge.askText();

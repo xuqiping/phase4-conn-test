@@ -44,6 +44,20 @@ public class MemoryConsolidationCompressor {
 
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
+    /** 解析有效 model：源 turn 链最新非空 chat_model 优先，否则回退可配默认。 */
+    private String resolveModel(List<MemoryTurn> turns) {
+        if (turns != null) {
+            for (int i = turns.size() - 1; i >= 0; i--) {
+                MemoryTurn t = turns.get(i);
+                if (t.getChatModel() != null && !t.getChatModel().isBlank()) {
+                    return t.getChatModel();
+                }
+            }
+        }
+        return systemSettingService.getMemoryJudgeModel();
+    }
 
     /** 压缩产物（L1 + L2 + flat source turn ids）。null = 压缩失败/日期铁律违则，调用方 skip。 */
     public record CompressedSummary(String l1, String l2, List<Long> sourceTurnIds) {
@@ -87,11 +101,13 @@ public class MemoryConsolidationCompressor {
                     .append(" <memory_data>").append(escape(text)).append("</memory_data>\n");
         }
         String prompt = sb.toString();
+        // 条目 VO 不携带 chat_model（多源聚合）→ 走可配默认
+        String judgeModel = systemSettingService.getMemoryJudgeModel();
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                                .model(RagConfig.MEMORY_JUDGE_MODEL)
+                                .model(judgeModel)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
                                 .maxTokens(800)
@@ -151,12 +167,13 @@ public class MemoryConsolidationCompressor {
         }
         Set<Integer> sourceYears = collectYears(turns);
         String prompt = buildPrompt(tagLabel, turns);
+        String judgeModel = resolveModel(turns);
 
         Exception last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                                .model(RagConfig.MEMORY_JUDGE_MODEL)
+                                .model(judgeModel)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
                                 .maxTokens(800)

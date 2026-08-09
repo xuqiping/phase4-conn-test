@@ -41,6 +41,7 @@ public class MemoryBackfillService {
     private final MemoryGenerator generator;
     private final MemoryTagResolver tagResolver;
     private final MemoryTurnMapper turnMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /**
      * 回填本人全部 raw turn（分批 ≤20），同步阻塞——由 MemoryConsolidationService 在 worker/手动
@@ -81,7 +82,7 @@ public class MemoryBackfillService {
             return;
         }
 
-        GenResult gen = generator.generate(userId, userInput, assistantOutput, filter);
+        GenResult gen = generator.generate(userId, userInput, assistantOutput, filter, systemSettingService.getMemoryJudgeModel());
         SideLayers side = extractSide(gen, isInput);
         if (side == null || !hasCore(side)) {
             log.debug("backfill turn {} 无可提取事实（gen={}）→ 置 gen_done=true 空 tag", raw.getId(),

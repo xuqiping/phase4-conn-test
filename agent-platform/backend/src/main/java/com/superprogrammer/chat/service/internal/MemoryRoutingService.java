@@ -61,16 +61,22 @@ public class MemoryRoutingService {
 
     /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目）。 */
     public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
-                               String l1, String l2, List<Long> tagIds, String fileId) {
-        /** 对话轮入参（兼容旧签名，fileId=null）。 */
+                               String l1, String l2, List<Long> tagIds, String fileId, String chatModel) {
+        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
                             String l1, String l2, List<Long> tagIds) {
-            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null);
+            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, null);
         }
 
-        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2，无 sourceTurn。 */
+        /** 对话轮入参（带对话 model，fileId=null）。 */
+        public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
+                            String l1, String l2, List<Long> tagIds, String chatModel) {
+            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, chatModel);
+        }
+
+        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2，无 sourceTurn，无对话 model。 */
         public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2, List<Long> tagIds) {
-            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId);
+            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId, null);
         }
     }
 
@@ -152,8 +158,10 @@ public class MemoryRoutingService {
                 .collect(Collectors.toMap(MemoryProjectRule::getId, Function.identity()));
         List<MemoryProjectRule> shortRules = shortlisted.stream().map(ruleById::get).filter(r -> r != null).toList();
 
-        // ⑤ 精判：一次 LLM 批量判 K 项目（FR-003）
-        List<MemoryEntryDistiller.Judgment> judgments = distiller.judge(input.userId(), shortRules, input.l1(), input.l2());
+        // ⑤ 精判：一次 LLM 批量判 K 项目（FR-003）。model 跟随对话所选，null 回退可配默认。
+        String judgeModel = input.chatModel() != null && !input.chatModel().isBlank()
+                ? input.chatModel() : systemSettingService.getMemoryJudgeModel();
+        List<MemoryEntryDistiller.Judgment> judgments = distiller.judge(input.userId(), shortRules, input.l1(), input.l2(), judgeModel);
 
         // ⑥ 置信度分流 + 脱敏二次扫描 + 落库（FR-004；fileId 非空 = FR-204 文件条目）
         double autoApprove = systemSettingService.getMemoryRoutingAutoApproveThreshold();
@@ -191,6 +199,7 @@ public class MemoryRoutingService {
             entry.setStatus(status);
             entry.setContentType(isFile ? MemoryProjectEntry.CONTENT_TYPE_FILE : MemoryProjectEntry.CONTENT_TYPE_TEXT);
             entry.setFileId(isFile ? input.fileId() : null);
+            entry.setChatModel(judgeModel);
             entry.setCreatedBy(input.userId());
             entry.setUpdatedBy(input.userId());
             entryMapper.insert(entry);

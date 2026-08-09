@@ -66,6 +66,7 @@ public class MemoryTagSelector {
     private final MemoryTagMapper tagMapper;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /**
      * 选与 query 相关的标签子集。
@@ -73,17 +74,19 @@ public class MemoryTagSelector {
      * @param query 用户当前问题（召回 query）
      * @param tags  D-2 聚合标签清单（usage 倒序）
      * @param userId 召回者（embed/chat 走用户 provider）
+     * @param model  LLM model（跟随对话所选，null 回退 system_settings.memory.judge.model）
      * @return 选中标签（保候选顺序）；空表 = 无相关；tags 空 → 空
      */
-    public List<RecallTagMeta> select(String query, List<RecallTagMeta> tags, Long userId) {
+    public List<RecallTagMeta> select(String query, List<RecallTagMeta> tags, Long userId, String model) {
         if (tags == null || tags.isEmpty()) {
             return List.of();
         }
+        String judgeModel = (model != null && !model.isBlank()) ? model : systemSettingService.getMemoryJudgeModel();
         List<RecallTagMeta> candidates = tags.size() <= COARSE_TOP ? tags : coarsen(query, tags, userId);
         if (candidates.isEmpty()) {
             return List.of();
         }
-        List<RecallTagMeta> selected = llmSelect(query, candidates, userId);
+        List<RecallTagMeta> selected = llmSelect(query, candidates, userId, judgeModel);
         if (selected == null) {
             // LLM 全失败 → 降级用 candidates 全集（未精筛，不丢召回）
             log.warn("选标签 LLM {} 次均失败 userId={} query.len={} → 降级用 {} 候选全集",
@@ -142,7 +145,7 @@ public class MemoryTagSelector {
     // ---------- LLM 精选 ----------
 
     /** LLM 精选相关标签；解析失败重试；全失败 → null（调用方降级用 candidates）。 */
-    private List<RecallTagMeta> llmSelect(String query, List<RecallTagMeta> candidates, Long userId) {
+    private List<RecallTagMeta> llmSelect(String query, List<RecallTagMeta> candidates, Long userId, String judgeModel) {
         String prompt = buildPrompt(query, candidates);
         Set<Long> validIds = candidates.stream().map(RecallTagMeta::getId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, RecallTagMeta> byId = candidates.stream()
@@ -151,7 +154,7 @@ public class MemoryTagSelector {
         for (int attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(judgeModel)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)

@@ -160,4 +160,34 @@ class SystemSettingServiceTest {
 
         assertEquals(12, service.getKeywordMax());
     }
+
+    // ============================ 记忆管线 LLM 默认 model（V76）============================
+
+    @Test
+    void getMemoryJudgeModel_shouldReturnStoredValue() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("glm-4.5");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals("glm-4.5", service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void getMemoryJudgeModel_shouldFallbackToDefaultWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        // 缺失 → 回退 RagConfig.MEMORY_JUDGE_MODEL 常量（doubao-seed-2.0-code）
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL,
+                service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void getMemoryJudgeModel_shouldFallbackOnBlank() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("   ");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL,
+                service.getMemoryJudgeModel());
+    }
 }

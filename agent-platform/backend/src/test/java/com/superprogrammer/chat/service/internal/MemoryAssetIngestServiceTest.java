@@ -9,6 +9,7 @@ import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,14 +39,16 @@ class MemoryAssetIngestServiceTest {
     @Mock private LlmGateway llmGateway;
     @Mock private MemoryRoutingService routingService;
     @Mock private com.superprogrammer.chat.mapper.MemoryProjectEntryMapper projectEntryMapper;
+    @Mock private SystemSettingService systemSettingService;
 
     private MemoryAssetIngestService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
         service = new MemoryAssetIngestService(memoryMapper, chunkMapper, extractor,
                 fileStorageService, tagResolver, llmGateway, new ObjectMapper(),
-                routingService, projectEntryMapper);
+                routingService, projectEntryMapper, systemSettingService);
     }
 
     private MemoryAssetMemory row(String status) {

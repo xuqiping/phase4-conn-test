@@ -276,7 +276,7 @@ class ChatSessionServiceTest {
         com.superprogrammer.chat.dto.MemoryRecallScopeRequest pref = new com.superprogrammer.chat.dto.MemoryRecallScopeRequest();
         pref.setPersonalOn(true);
         when(memoryRecallPrefService.getScope(100L)).thenReturn(pref);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L))).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("用户偏好深空主题").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 
@@ -286,8 +286,8 @@ class ChatSessionServiceTest {
         ChatResponse response = chatSessionService.sendMessage(100L, request);
 
         // 召回文本随 LLM 上下文进引擎；新栈写入提交一次
-        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L));
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"));
+        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L), any());
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"), any());
         assertEquals("回复", response.getContent());
     }
 
@@ -303,7 +303,7 @@ class ChatSessionServiceTest {
         when(ragScopeResolver.resolveEffectiveKbs(any(), any(), any(), any(), eq(100L), anyBoolean())).thenReturn(List.of());
         // 召回装配空串
         when(memoryRecallPrefService.getScope(100L)).thenReturn(null);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L))).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 
@@ -314,7 +314,7 @@ class ChatSessionServiceTest {
 
         // 空召回不崩，写入仍提交
         assertEquals("回复", response.getContent());
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"));
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"), any());
     }
 
     @Test

@@ -30,6 +30,7 @@ public class MemoryConflictJudge {
 
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /** 判定统一低温（确定性优先）。 */
     private static final double JUDGE_TEMPERATURE = 0.0;
@@ -80,14 +81,24 @@ public class MemoryConflictJudge {
      * @param newText  新总结的 L1/L2 文本（喂 prompt 做语义+时序判定）
      */
     public SummaryConflictResult judgeSummaryConflict(List<MemorySummary> existing, String newText, Long userId) {
+        return judgeSummaryConflict(existing, newText, userId, null);
+    }
+
+    /**
+     * 同上，显式指定 model（跟随压缩源 turn/entry 的 chat_model，null 回退可配默认）。
+     */
+    public SummaryConflictResult judgeSummaryConflict(List<MemorySummary> existing, String newText,
+                                                     Long userId, String model) {
         if (existing == null || existing.isEmpty() || newText == null || newText.isBlank()) {
             return new SummaryConflictResult(false, null);
         }
+        String judgeModel = (model != null && !model.isBlank())
+                ? model : systemSettingService.getMemoryJudgeModel();
         try {
             String existingDisplay = existing.stream()
                     .map(s -> "- " + summaryText(s))
                     .collect(java.util.stream.Collectors.joining("\n"));
-            String raw = chat(String.format(SUMMARY_CONFLICT_PROMPT, newText, existingDisplay), userId);
+            String raw = chat(String.format(SUMMARY_CONFLICT_PROMPT, newText, existingDisplay), userId, judgeModel);
             JsonNode root = parseJson(stripFence(raw));
             if (root == null || !root.isObject()) {
                 log.warn("judgeSummaryConflict 返回非 JSON 对象, fail-safe 不冲突: {}",
@@ -122,13 +133,13 @@ public class MemoryConflictJudge {
         }
     }
 
-    /** 走固定 MEMORY_JUDGE_MODEL（legacy 对话流跟随 model 的重载已随旧栈废）。 */
-    private String chat(String prompt, Long userId) {
+    /** 走指定 model（调用方解析后传入；fail-safe 3 重试）。 */
+    private String chat(String prompt, Long userId, String model) {
         Exception last = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 LlmResponse resp = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(model)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(JUDGE_TEMPERATURE).maxTokens(800).build(), userId);
                 String content = resp.getContent();

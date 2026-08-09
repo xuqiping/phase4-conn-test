@@ -56,6 +56,7 @@ public class MemoryAssetIngestService {
     private final ObjectMapper objectMapper;
     private final MemoryRoutingService routingService;          // Step 4（FR-204）READY 钩子：文件总结过路由进项目
     private final MemoryProjectEntryMapper projectEntryMapper;  // Step 4（FR-204）删文件 → FILE 条目同步失效
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /**
      * 处理一条 PROCESSING 记忆（worker 认领后调用；本方法不抛——成败都落状态）。
@@ -245,7 +246,7 @@ public class MemoryAssetIngestService {
                 </memory_data>""".formatted(row.getOriginalName(), MemoryAssetMemory.kindLabel(row.getFileKind()), data);
         try {
             String raw = llmGateway.chat(LlmRequest.builder()
-                            .model(RagConfig.MEMORY_JUDGE_MODEL)
+                            .model(systemSettingService.getMemoryJudgeModel())
                             .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                             .temperature(0.0)
                             .maxTokens(800)

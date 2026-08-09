@@ -81,6 +81,9 @@ public class SystemSettingService {
     public static final String MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD = "memory.routing.auto-approve-threshold";
     /** 路由置信度 ≥ 此值且 < auto-approve 进 PENDING_REVIEW；低于此丢弃（D1 定案默认 0.5）。 */
     public static final String MEMORY_ROUTING_REVIEW_THRESHOLD = "memory.routing.review-threshold";
+    /** 记忆管线 LLM 默认 model（路由/蒸馏/生成/压缩/冲突/召回标签）。请求域被对话所选 model 覆盖，
+     *  后台域读源 chat_model，NULL/混合回退本值。默认 doubao-seed-2.0-code。 */
+    public static final String MEMORY_JUDGE_MODEL = "memory.judge.model";
 
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
@@ -407,6 +410,13 @@ public class SystemSettingService {
     /** 路由置信度待审核阈值（0~1），默认 0.5。 */
     public double getMemoryRoutingReviewThreshold() {
         return getDoubleInRange(MEMORY_ROUTING_REVIEW_THRESHOLD, 0.5, 0.0, 1.0);
+    }
+
+    /** 记忆管线 LLM 默认 model：读 memory.judge.model，空/缺失回退 RagConfig.MEMORY_JUDGE_MODEL 常量。
+     *  请求域被对话所选 model 覆盖；后台域读源 chat_model，NULL/混合回退本值。 */
+    public String getMemoryJudgeModel() {
+        String v = getValue(MEMORY_JUDGE_MODEL);
+        return (v == null || v.isBlank()) ? com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL : v;
     }
 
     /** 通用读 double（范围校验，非法/越界 → def）。 */

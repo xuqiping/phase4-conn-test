@@ -70,10 +70,11 @@ public class MemoryGenerator {
      * @param userInput        用户本轮输入原文
      * @param assistantOutput  助手本轮回复原文
      * @param filter           前置过滤结果（决定 input/output 侧是否送生成）
+     * @param model            LLM model（跟随对话所选，调用方解析 null→默认后传入）
      * @return 生成结果；两侧均跳过 → {@link GenResult#empty()}；LLM 全失败 → {@code null}（写 raw 降级）
      */
     public GenResult generate(Long userId, String userInput, String assistantOutput,
-                              MemoryPrefilter.FilterResult filter) {
+                              MemoryPrefilter.FilterResult filter, String model) {
         boolean genInput = !filter.skipInput();
         boolean genOutput = !filter.skipOutput();
         if (!genInput && !genOutput) {
@@ -86,7 +87,7 @@ public class MemoryGenerator {
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                                .model(RagConfig.MEMORY_JUDGE_MODEL)
+                                .model(model)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
                                 .maxTokens(800)

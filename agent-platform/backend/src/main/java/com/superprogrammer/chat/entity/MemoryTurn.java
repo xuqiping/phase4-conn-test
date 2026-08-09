@@ -36,4 +36,7 @@ public class MemoryTurn extends BaseEntity {
     private String l2Detail;
     private String rawContent;
     private Boolean genDone;
+
+    /** 该轮对话所用的对话 model（ChatRequest.model 落库）；后台压缩按此取，NULL 回退 memory.judge.model 默认。 */
+    private String chatModel;
 }

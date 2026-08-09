@@ -75,6 +75,7 @@ class MemoryRoutingServiceTest {
         lenient().when(systemSettingService.getMemoryRoutingCoarseThreshold()).thenReturn(0.35);
         lenient().when(systemSettingService.getMemoryRoutingAutoApproveThreshold()).thenReturn(0.8);
         lenient().when(systemSettingService.getMemoryRoutingReviewThreshold()).thenReturn(0.5);
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
     }
 
     private MemoryProjectMember activeMember(long projectId) {
@@ -121,7 +122,7 @@ class MemoryRoutingServiceTest {
     void route_noActiveProjects_skips() {
         when(memberMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         service.route(input());
-        verify(distiller, never()).judge(any(), any(), any(), any());
+        verify(distiller, never()).judge(any(), any(), any(), any(), any());
     }
 
     // AC-FR-008：会员关「允许被路由」覆写 → 该项目零条目
@@ -141,7 +142,7 @@ class MemoryRoutingServiceTest {
         when(toggleService.resolveGenEnabled(100L, 1L)).thenReturn(true);
         when(ruleService.findRoutingCandidates(anyList())).thenReturn(List.of());
         service.route(input());
-        verify(distiller, never()).judge(any(), any(), any(), any());
+        verify(distiller, never()).judge(any(), any(), any(), any(), any());
     }
 
     // AC-FR-002：粗筛不过阈值 → 零 LLM 调用
@@ -151,7 +152,7 @@ class MemoryRoutingServiceTest {
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of());
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
         service.route(input());
-        verify(distiller, never()).judge(any(), any(), any(), any());
+        verify(distiller, never()).judge(any(), any(), any(), any(), any());
         verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
     }
 
@@ -161,7 +162,7 @@ class MemoryRoutingServiceTest {
         stubToCandidates();
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
-        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+        when(distiller.judge(any(), anyList(), anyString(), any(), any())).thenReturn(List.of(
                 new MemoryEntryDistiller.Judgment(1L, true, 0.9, "直接收录", ""),
                 new MemoryEntryDistiller.Judgment(1L, true, 0.6, "待审核", ""),
                 new MemoryEntryDistiller.Judgment(1L, true, 0.3, "丢弃", "")));
@@ -180,7 +181,7 @@ class MemoryRoutingServiceTest {
         stubToCandidates();
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
-        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+        when(distiller.judge(any(), anyList(), anyString(), any(), any())).thenReturn(List.of(
                 new MemoryEntryDistiller.Judgment(1L, true, 0.8, "边界上", ""),
                 new MemoryEntryDistiller.Judgment(1L, true, 0.5, "边界下", "")));
 
@@ -198,7 +199,7 @@ class MemoryRoutingServiceTest {
         stubToCandidates();
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
-        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+        when(distiller.judge(any(), anyList(), anyString(), any(), any())).thenReturn(List.of(
                 new MemoryEntryDistiller.Judgment(1L, true, 0.95, "密码是 123456 的讨论", "")));
         when(prefilter.hitsBlacklist(anyString())).thenReturn(true);
 
@@ -215,7 +216,7 @@ class MemoryRoutingServiceTest {
         stubToCandidates();
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
-        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+        when(distiller.judge(any(), anyList(), anyString(), any(), any())).thenReturn(List.of(
                 new MemoryEntryDistiller.Judgment(1L, false, 0.9, null, null)));
         service.route(input());
         verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
@@ -251,7 +252,7 @@ class MemoryRoutingServiceTest {
         stubToCandidates();
         when(ruleMapper.findWithinAnchorThreshold(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of(9L));
         when(ruleMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
-        when(distiller.judge(any(), anyList(), anyString(), any())).thenReturn(List.of(
+        when(distiller.judge(any(), anyList(), anyString(), any(), any())).thenReturn(List.of(
                 new MemoryEntryDistiller.Judgment(1L, true, 0.9, "文件：hooks 课件", "详述")));
     }
 

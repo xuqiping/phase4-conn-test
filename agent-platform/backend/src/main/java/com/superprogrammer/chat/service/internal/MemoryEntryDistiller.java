@@ -48,10 +48,11 @@ public class MemoryEntryDistiller {
      * @param candidates 粗筛 shortlisted 规则（≤3，各有 rule_text/正/负例）
      * @param turnL1     本轮对话 L1（双侧合并）
      * @param turnL2     本轮对话 L2（双侧合并，可空）
+     * @param model      LLM model（跟随对话所选，由路由层解析 null→默认后传入）
      * @return 每候选一判定；LLM/解析全失败 → 空 List（不收录降级）
      */
     public List<Judgment> judge(Long userId, List<MemoryProjectRule> candidates,
-                                String turnL1, String turnL2) {
+                                String turnL1, String turnL2, String model) {
         if (candidates == null || candidates.isEmpty()) {
             return List.of();
         }
@@ -59,7 +60,7 @@ public class MemoryEntryDistiller {
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                                .model(RagConfig.MEMORY_JUDGE_MODEL)
+                                .model(model)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
                                 .maxTokens(1200)

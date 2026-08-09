@@ -55,7 +55,7 @@ public class MemoryRecallController {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "query 必填");
         }
         MemoryRecallScopeRequest scopeReq = req.getScope();
-        MemoryRecallResult result = pipeline.recall(query, scopeReq, uid);
+        MemoryRecallResult result = pipeline.recall(query, scopeReq, uid, null);
         log.info("recall preview userId={} traceId={} summaryCount={} turnCount={} degraded={}",
                 uid, result.getTraceId(), result.getSummaryCount(), result.getTurnCount(), result.isDegraded());
         return ResponseEntity.ok(R.ok(result));

@@ -177,7 +177,7 @@ public class MemoryTagResolver {
         }
         String prompt = String.format(SYN_JUDGE_PROMPT, quote(label), quote(subject), quote(topic), candList);
 
-        String model = RagConfig.MEMORY_JUDGE_MODEL;
+        String model = systemSettingService.getMemoryJudgeModel();
         Exception last = null;
         for (int attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
             try {

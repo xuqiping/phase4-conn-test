@@ -42,11 +42,15 @@ class MemoryTagSelectorTest {
     @Mock
     LlmGateway llmGateway;
 
+    @Mock
+    com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     private MemoryTagSelector selector;
 
     @BeforeEach
     void setUp() {
-        selector = new MemoryTagSelector(tagMapper, llmGateway, new ObjectMapper());
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        selector = new MemoryTagSelector(tagMapper, llmGateway, new ObjectMapper(), systemSettingService);
     }
 
     private static RecallTagMeta meta(long id) {
@@ -76,7 +80,7 @@ class MemoryTagSelectorTest {
 
     @Test
     void emptyTags_returnsEmpty_noLlm() {
-        assertTrue(selector.select("q", List.of(), 1L).isEmpty());
+        assertTrue(selector.select("q", List.of(), 1L, null).isEmpty());
         verifyNoInteractions(llmGateway);
     }
 
@@ -86,7 +90,7 @@ class MemoryTagSelectorTest {
     void under30_fullPassToLlm_noCoarsen() {
         List<RecallTagMeta> tags = metas(5);
         mockChatReturn("[1,3]");
-        List<RecallTagMeta> r = selector.select("q", tags, 1L);
+        List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
         assertEquals(List.of(1L, 3L), r.stream().map(RecallTagMeta::getId).toList());
         verify(tagMapper, never()).rankByAnchorHalfvec(anyList(), anyString(), anyInt());
         verify(tagMapper, never()).rankByAnchorTsv(anyList(), anyString(), anyInt());
@@ -96,14 +100,14 @@ class MemoryTagSelectorTest {
     @Test
     void under30_llmReturnsEmpty_emptyResult() {
         mockChatReturn("[]");
-        assertTrue(selector.select("q", metas(5), 1L).isEmpty());
+        assertTrue(selector.select("q", metas(5), 1L, null).isEmpty());
     }
 
     @Test
     void under30_llmThrows_degradeToCandidates() {
         when(llmGateway.chat(any(), eq(1L))).thenThrow(new RuntimeException("LLM down"));
         List<RecallTagMeta> tags = metas(5);
-        List<RecallTagMeta> r = selector.select("q", tags, 1L);
+        List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
         // 降级：返 candidates 全集（5 条，未精筛）
         assertEquals(5, r.size());
     }
@@ -112,7 +116,7 @@ class MemoryTagSelectorTest {
     void under30_llmDirtyJson_retryThenDegrade() {
         // 前两次脏 JSON，第三次也脏 → 重试 3 次全失败 → 降级 candidates
         mockChatReturn("not a json");
-        List<RecallTagMeta> r = selector.select("q", metas(3), 1L);
+        List<RecallTagMeta> r = selector.select("q", metas(3), 1L, null);
         assertEquals(3, r.size());
         verify(llmGateway, times(3)).chat(any(), eq(1L));
     }
@@ -131,7 +135,7 @@ class MemoryTagSelectorTest {
                 .thenReturn(metas(30).stream().map(RecallTagMeta::getId).toList());
         mockChatReturn("[1,2]");
 
-        List<RecallTagMeta> r = selector.select("q", tags, 1L);
+        List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
 
         verify(llmGateway).embed(anyString(), eq(RagConfig.MEMORY_EMBED_MODEL), eq(1L));
         verify(tagMapper).rankByAnchorHalfvec(anyList(), anyString(), anyInt());
@@ -147,7 +151,7 @@ class MemoryTagSelectorTest {
                 .thenReturn(metas(30).stream().map(RecallTagMeta::getId).toList());
         mockChatReturn("[5]");
 
-        List<RecallTagMeta> r = selector.select("q", tags, 1L);
+        List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
 
         // halfvec 失败不阻断，单路 BM25 继续
         verify(tagMapper).rankByAnchorTsv(anyList(), anyString(), anyInt());
@@ -162,7 +166,7 @@ class MemoryTagSelectorTest {
         when(tagMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
         mockChatReturn("[1]");
 
-        List<RecallTagMeta> r = selector.select("q", tags, 1L);
+        List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
 
         // 双路空 → usage 前 30 灌 LLM（仍精选）
         assertEquals(List.of(1L), r.stream().map(RecallTagMeta::getId).toList());
