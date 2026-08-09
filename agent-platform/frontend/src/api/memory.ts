@@ -90,13 +90,15 @@ export interface MemoryRawView {
   createdAt: string
 }
 
-/** 标签库行（对外只露 label/subject/topic/usageCount，不露 aliases/anchor）。 */
+/** 标签库行（对外只露 label/subject/topic/usageCount/needsReview，不露 aliases/anchor）。 */
 export interface MemoryTagVO {
   id: number
   subject: string
   topic: string
   label: string
   usageCount: number
+  /** V77：大类词表外内容标记待裁决。 */
+  needsReview: boolean
 }
 
 /** 召回 scope 视图（底栏 + 召回预览用）。 */
@@ -369,7 +371,7 @@ export const memoryApi = {
   listTags() {
     return request.get<ApiResponse<MemoryTagVO[]>>('/chat/memory/tags')
   },
-  editTag(id: number, data: { label?: string; addAliases?: string[] }) {
+  editTag(id: number, data: { label?: string; addAliases?: string[]; accept?: boolean }) {
     return request.put<ApiResponse<MemoryTagVO>>(`/chat/memory/tags/${id}`, data)
   },
 

@@ -48,11 +48,12 @@
     <insert id="insertWithAnchor" useGeneratedKeys="true" keyProperty="m.id">
         INSERT INTO memory_tags
             (user_id, subject, topic, label, usage_count, aliases, anchor_embedding, anchor_tokens,
-             deleted, created_by, created_at, updated_by, updated_at)
+             needs_review, deleted, created_by, created_at, updated_by, updated_at)
         VALUES
             (#{m.userId}, #{m.subject}, #{m.topic}, #{m.label}, COALESCE(#{m.usageCount}, 0),
              COALESCE(#{m.aliases,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
              #{anchorHalfvec}::halfvec, #{anchorTokens},
+             COALESCE(#{m.needsReview}, false),
              0, #{m.createdBy}, now(), #{m.updatedBy}, now())
     </insert>
 
@@ -78,6 +79,18 @@
             updated_at = now()
         WHERE id = #{id} AND deleted = 0
     </update>
+
+    <!-- V77：owner 改名/补别名/接受后清 needs_review（标签入库裁决）。 -->
+    <update id="clearNeedsReview">
+        UPDATE memory_tags SET needs_review = false, updated_at = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- V77：用户已批准（needs_review=false）的存量 topic → 拼有效大类词表（base vocab ∪ 此）。 -->
+    <select id="findDistinctApprovedTopics" resultType="string">
+        SELECT DISTINCT topic FROM memory_tags
+        WHERE user_id = #{userId} AND needs_review = false AND deleted = 0
+    </select>
     <!-- ============================ 计划12 · D-2 召回聚合 ② ============================ -->
 
     <!-- 聚合标签元显式映射（不依赖全局 mapUnderscoreToCamelCase，owner_user_id→ownerUserId 稳）。 -->
@@ -132,7 +145,7 @@
     </select>
 
     <!-- 路 B：anchor BM25 tsv 相关度降序（限定聚合 tagIds 集内）。@@ 匹配算子 + ts_rank 排序。
-         queryTokens = jieba 分词空格串；plainto_tsquery('simple') 按空格切词与/或。 -->
+         ⚠️ V77：to_tsquery OR 串（TsQueryUtil.toOrQuery）——plainto_tsquery 走 AND 多 token 永不命中（死路）。 -->
     <select id="rankByAnchorTsv" resultType="long">
         SELECT id FROM memory_tags
         WHERE deleted = 0
@@ -140,8 +153,8 @@
           <foreach collection="tagIds" item="tid" open="(" separator="," close=")">
               #{tid}
           </foreach>
-          AND anchor_tokens_tsv @@ plainto_tsquery('simple', #{queryTokens})
-        ORDER BY ts_rank(anchor_tokens_tsv, plainto_tsquery('simple', #{queryTokens})) DESC
+          AND anchor_tokens_tsv @@ to_tsquery('simple', #{orQuery})
+        ORDER BY ts_rank(anchor_tokens_tsv, to_tsquery('simple', #{orQuery})) DESC
         LIMIT #{limit}
     </select>
 </mapper>

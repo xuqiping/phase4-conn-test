@@ -23,4 +23,8 @@ public class MemoryTagEditRequest {
     /** 追加进 aliases 的同义别名（去重）。null/空 = 不补。单条 ≤64。 */
     @Size(max = 20, message = "单次补别名不能超过 20 条")
     private List<@Size(max = 64, message = "单条别名长度不能超过 64") String> addAliases;
+
+    /** V77：接受为新大类（清 needs_review + 消解 TAG_NEEDS_REVIEW 通知）。true = 接受裁决。
+     *  label/addAliases 任一改动也会顺带清 needs_review；此字段供「不改名直接接受」场景。 */
+    private Boolean accept;
 }

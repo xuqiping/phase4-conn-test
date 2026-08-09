@@ -27,6 +27,9 @@ public class MemoryTag extends BaseEntity {
     private String label;            // 对外展示名（同义归一后规范名）
     private Integer usageCount;      // 复用次数，归一命中自增
 
+    /** 大类词表外内容标记待用户裁决（V77）；owner 改名/补别名/接受后清。默认 false。 */
+    private Boolean needsReview;
+
     /** 同义别名集（归一命中滚进）。TEXT[] 走 StringArrayTypeHandler。 */
     @TableField(typeHandler = StringArrayTypeHandler.class)
     private List<String> aliases;

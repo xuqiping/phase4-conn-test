@@ -52,4 +52,11 @@ public class RagConfig {
     public static final double MEMORY_BLOCK_SIM_THRESHOLD = 0.6;   // 归块门槛
     public static final int    MEMORY_CONFLICT_EXPIRE_MIN = 10;    // PENDING 超时（分钟）
     public static final String MEMORY_JUDGE_MODEL = "doubao-seed-2.0-code";  // 抽取/judge/路由
+
+    /** 个人记忆标签「大类」base vocab 兜底（system_settings.memory.tag.vocab 缺失/非法时回退）。
+     *  同概念内容共用同一 topic → UNIQUE(user,subject,topic) 路径①自动合并，杜绝细标签。
+     *  「其他」为哨兵：词表外内容填它 → 触发 needs_review 交用户裁决。 */
+    public static final java.util.List<String> MEMORY_TAG_VOCAB_DEFAULT = java.util.List.of(
+            "个人信息", "工作职业", "学习教育", "兴趣爱好", "生活日常", "旅行出行",
+            "社交人际", "健康医疗", "财务理财", "技术技能", "创作内容", "教学方法", "其他");
 }

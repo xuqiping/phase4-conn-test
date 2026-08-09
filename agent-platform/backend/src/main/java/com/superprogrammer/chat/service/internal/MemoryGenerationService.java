@@ -51,6 +51,7 @@ public class MemoryGenerationService {
     private final MemoryGenerator generator;
     private final MemoryTagResolver tagResolver;
     private final MemoryTurnMapper turnMapper;
+    private final com.superprogrammer.chat.mapper.MemoryTagMapper tagMapper;
     private final MemoryQueryCache queryCache;
     private final MemoryRoutingService routingService;
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
@@ -97,8 +98,10 @@ public class MemoryGenerationService {
         // 生成用 effective model：对话所选优先，null 回退可配默认（chatModel 原值仍落库 turn.chat_model）
         String genModel = (chatModel != null && !chatModel.isBlank())
                 ? chatModel : systemSettingService.getMemoryJudgeModel();
+        // 大类词表（V77）：base vocab ∪ 用户已批准 topic，约束 topic 落大类，杜绝细标签
+        java.util.Set<String> effectiveVocab = buildEffectiveVocab(userId);
         MemoryGenerator.GenResult gen = genOn
-                ? generator.generate(userId, userInput, assistantOutput, filter, genModel)
+                ? generator.generate(userId, userInput, assistantOutput, filter, genModel, effectiveVocab)
                 : null;
         if (genOn && gen == null) {
             log.info("生成 LLM 失败 userId={} → 过过滤侧写 raw(gen_done=false) 降级", userId);
@@ -162,6 +165,25 @@ public class MemoryGenerationService {
         return a + "\n" + b;
     }
 
+    /** 大类有效词表 = base vocab（system_settings.memory.tag.vocab）∪ 用户已批准（needs_review=false）的存量 topic。
+     *  使生成器把 topic 约束到大类，同概念→同 topic→路径① UNIQUE 自动合并。失败 → 仅 base vocab（不阻塞生成）。 */
+    private java.util.Set<String> buildEffectiveVocab(Long userId) {
+        java.util.Set<String> vocab = new java.util.LinkedHashSet<>();
+        List<String> base = systemSettingService.getMemoryTagVocab();
+        if (base != null) {
+            vocab.addAll(base);
+        }
+        try {
+            List<String> approved = tagMapper.findDistinctApprovedTopics(userId);
+            if (approved != null) {
+                vocab.addAll(approved);
+            }
+        } catch (Exception e) {
+            log.warn("读取用户已批准 topic 失败 userId={} 仅用 base vocab: {}", userId, e.getMessage());
+        }
+        return vocab;
+    }
+
     /** 写一条 turn：有生成层 → tag 归一 + L1/L2 + gen_done=true；无 → 仅 raw + gen_done=false。返回落库后的 turn。 */
     private MemoryTurn writeTurn(Long userId, Long sessionId, String direction, String rawText,
                                  MemoryGenerator.SideLayers layers, String chatModel) {
@@ -176,7 +198,15 @@ public class MemoryGenerationService {
         t.setUpdatedBy(userId);
 
         if (layers != null) {
-            Long tagId = tagResolver.resolve(userId, layers.subject(), layers.topic(), layers.label());
+            // 大类词表外映射：topic=__OTHER__ → suggestedTopic（兜底「其他」）+ needsReview=true（V77）
+            String topic = layers.topic();
+            boolean needsReview = false;
+            if (MemoryGenerator.OTHER_TOPIC.equals(topic)) {
+                topic = (layers.suggestedTopic() != null && !layers.suggestedTopic().isBlank())
+                        ? layers.suggestedTopic().trim() : "其他";
+                needsReview = true;
+            }
+            Long tagId = tagResolver.resolve(userId, layers.subject(), topic, layers.label(), needsReview);
             t.setTagIds(tagId != null ? List.of(tagId) : List.of());
             t.setL1Summary(layers.l1Summary());
             t.setL2Detail(layers.l2Detail());

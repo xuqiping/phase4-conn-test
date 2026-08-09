@@ -84,6 +84,9 @@ public class SystemSettingService {
     /** 记忆管线 LLM 默认 model（路由/蒸馏/生成/压缩/冲突/召回标签）。请求域被对话所选 model 覆盖，
      *  后台域读源 chat_model，NULL/混合回退本值。默认 doubao-seed-2.0-code。 */
     public static final String MEMORY_JUDGE_MODEL = "memory.judge.model";
+    /** 个人记忆标签「大类」base vocab（JSON 数组，可热调）。有效词表 = 此 ∪ 用户 needs_review=false 的存量 topic。
+     *  缺失/非法 JSON 回退 RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。 */
+    public static final String MEMORY_TAG_VOCAB = "memory.tag.vocab";
 
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
@@ -417,6 +420,26 @@ public class SystemSettingService {
     public String getMemoryJudgeModel() {
         String v = getValue(MEMORY_JUDGE_MODEL);
         return (v == null || v.isBlank()) ? com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL : v;
+    }
+
+    /** 个人记忆标签「大类」base vocab：读 memory.tag.vocab（JSON 数组），缺失/非法 JSON 回退
+     *  RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。调用方应再 ∪ 用户已批准 topic 得有效词表。 */
+    public java.util.List<String> getMemoryTagVocab() {
+        String v = getValue(MEMORY_TAG_VOCAB);
+        if (v == null || v.isBlank()) {
+            return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+        }
+        try {
+            java.util.List<String> parsed = objectMapper.readValue(v,
+                    objectMapper.getTypeFactory().constructCollectionType(java.util.List.class, String.class));
+            if (parsed == null || parsed.isEmpty()) {
+                return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+            }
+            return parsed;
+        } catch (Exception e) {
+            log.warn("memory.tag.vocab 解析失败，回退默认词表：{}", e.getMessage());
+            return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+        }
     }
 
     /** 通用读 double（范围校验，非法/越界 → def）。 */

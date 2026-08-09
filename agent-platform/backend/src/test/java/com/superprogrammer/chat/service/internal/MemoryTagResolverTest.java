@@ -33,12 +33,14 @@ class MemoryTagResolverTest {
     @Mock MemoryTagAnchorService anchorService;
     @Mock SystemSettingService systemSettingService;
     @Mock LlmGateway llmGateway;
+    @Mock com.superprogrammer.chat.mapper.MemoryNotificationMapper notificationMapper;
 
     private MemoryTagResolver resolver;
 
     @BeforeEach
     void setUp() {
-        resolver = new MemoryTagResolver(tagMapper, anchorService, systemSettingService, llmGateway, new ObjectMapper());
+        resolver = new MemoryTagResolver(tagMapper, anchorService, systemSettingService, llmGateway,
+                new ObjectMapper(), notificationMapper);
     }
 
     private MemoryTag tag(long id, String label, String subject, String topic) {
@@ -180,6 +182,40 @@ class MemoryTagResolverTest {
 
         assertEquals(99L, id);
         verify(tagMapper).incrementUsage(99L);
+    }
+
+    // ===== V77 needs_review：词表外新标签建条 + 发非阻塞通知 =====
+
+    @Test
+    void path4_needsReviewTrue_insertsTagAndNotification() {
+        when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any())).thenReturn(null);
+        when(tagMapper.findByUserSubjectTopic(eq(1L), anyString(), anyString())).thenReturn(null);
+        when(tagMapper.findByLabelInAliases(eq(1L), anyString())).thenReturn(null);
+        stubInsertId(888L);
+
+        Long id = resolver.resolve(1L, "我", "异宠养殖", "养螳螂", true);
+
+        assertEquals(888L, id);
+        // needsReview 透传到实体
+        org.mockito.ArgumentCaptor<MemoryTag> cap = org.mockito.ArgumentCaptor.forClass(MemoryTag.class);
+        verify(tagMapper).insertWithAnchor(cap.capture(), isNull(), isNull());
+        assertEquals(Boolean.TRUE, cap.getValue().getNeedsReview(), "词表外新标签 needs_review=true");
+        // 发 TAG_NEEDS_REVIEW 通知
+        verify(notificationMapper).insert(org.mockito.ArgumentMatchers.argThat(n ->
+                "TAG_NEEDS_REVIEW".equals(n.getType()) && 888L == n.getRefId()));
+    }
+
+    @Test
+    void path4_needsReviewFalse_noNotification() {
+        when(anchorService.build(eq(1L), anyString(), anyString(), anyString(), any())).thenReturn(null);
+        when(tagMapper.findByUserSubjectTopic(eq(1L), anyString(), anyString())).thenReturn(null);
+        when(tagMapper.findByLabelInAliases(eq(1L), anyString())).thenReturn(null);
+        stubInsertId(889L);
+
+        Long id = resolver.resolve(1L, "我", "居住", "住址", false);
+
+        assertEquals(889L, id);
+        verify(notificationMapper, never()).insert(any());
     }
 
     // ===== 入参校验 =====

@@ -116,11 +116,11 @@ public class MemoryTagSelector {
         } catch (Exception e) {
             log.warn("选标签 halfvec 粗筛失败 userId={}: {}", userId, e.getMessage());
         }
-        // 路 B：BM25 tsv（query 空白 → 跳过）
+        // 路 B：BM25 tsv（query 空白 → 跳过）。V77：to_tsquery OR 串（plainto AND 死路）
         try {
-            String tokens = JiebaTokenizer.tokenize(query);
-            if (tokens != null && !tokens.isBlank()) {
-                tsvRank = tagMapper.rankByAnchorTsv(tagIds, tokens, RRF_K);
+            String orQuery = com.superprogrammer.knowledge.util.TsQueryUtil.toOrQuery(JiebaTokenizer.tokenize(query));
+            if (!orQuery.isBlank()) {
+                tsvRank = tagMapper.rankByAnchorTsv(tagIds, orQuery, RRF_K);
             }
         } catch (Exception e) {
             log.warn("选标签 BM25 粗筛失败 userId={}: {}", userId, e.getMessage());

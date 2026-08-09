@@ -190,4 +190,44 @@ class SystemSettingServiceTest {
         assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL,
                 service.getMemoryJudgeModel());
     }
+
+    // ============================ V77 记忆标签大类词表 ============================
+
+    @Test
+    void getMemoryTagVocab_shouldReturnStoredArray() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("[\"旅行出行\",\"技术技能\"]");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(java.util.List.of("旅行出行", "技术技能"), service.getMemoryTagVocab());
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackToDefault13WhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        java.util.List<String> v = service.getMemoryTagVocab();
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT, v);
+        assertEquals(13, v.size(), "内置大类词表 13 类");
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackOnIllegalJson() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("不是JSON");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT,
+                service.getMemoryTagVocab());
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackOnEmptyArray() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("[]");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT,
+                service.getMemoryTagVocab());
+    }
 }

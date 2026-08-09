@@ -18,4 +18,6 @@ public class MemoryTagVO {
     private String topic;
     private String label;
     private Integer usageCount;
+    /** 大类词表外内容标记待用户裁决（V77）。 */
+    private Boolean needsReview;
 }

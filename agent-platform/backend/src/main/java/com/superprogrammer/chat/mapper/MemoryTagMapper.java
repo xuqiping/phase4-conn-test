@@ -67,6 +67,12 @@ public interface MemoryTagMapper extends BaseMapper<MemoryTag> {
                              @Param("anchorHalfvec") String anchorHalfvec,
                              @Param("anchorTokens") String anchorTokens);
 
+    /** V77：清 needs_review（owner 改名/补别名/接受为新大类后调用）。 */
+    int clearNeedsReview(@Param("id") Long id);
+
+    /** V77：用户已批准（needs_review=false）的存量 topic，拼有效大类词表（base vocab ∪ 此）。 */
+    List<String> findDistinctApprovedTopics(@Param("userId") Long userId);
+
     // ============================ 计划12 · D-2 召回聚合 ② ============================
 
     /** 个人 scope 召回标签聚合：本人 turns 的 tag_ids ∪ 本人个人总结（project_id IS NULL）的 tag_id
@@ -87,9 +93,9 @@ public interface MemoryTagMapper extends BaseMapper<MemoryTag> {
                                    @Param("queryVec") String queryVec,
                                    @Param("limit") int limit);
 
-    /** anchor BM25 tsv 排序（路 B）：限定 tagIds 集内，按 ts_rank(anchor_tokens_tsv, plainto_tsquery) 降序。
-     *  queryTokens 为 jieba 分词后空格串。返 id 有序列表。 */
+    /** anchor BM25 tsv 排序（路 B）：限定 tagIds 集内，按 ts_rank(anchor_tokens_tsv, to_tsquery) 降序。
+     *  orQuery = {@code TsQueryUtil.toOrQuery(jieba 空格串)}（OR 串，复活多 token 命中）。返 id 有序列表。 */
     List<Long> rankByAnchorTsv(@Param("tagIds") List<Long> tagIds,
-                               @Param("queryTokens") String queryTokens,
+                               @Param("orQuery") String orQuery,
                                @Param("limit") int limit);
 }

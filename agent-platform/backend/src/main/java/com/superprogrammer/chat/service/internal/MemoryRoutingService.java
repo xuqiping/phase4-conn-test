@@ -147,7 +147,8 @@ public class MemoryRoutingService {
         List<Long> candidateRuleIds = candidates.stream().map(MemoryProjectRule::getId).toList();
         double coarseThreshold = systemSettingService.getMemoryRoutingCoarseThreshold();
         List<Long> vecHit = ruleMapper.findWithinAnchorThreshold(candidateRuleIds, queryAnchor.halfvec(), coarseThreshold, COARSE_TOP_K);
-        List<Long> bm25Hit = ruleMapper.rankByAnchorTsv(candidateRuleIds, queryAnchor.tokens(), COARSE_TOP_K);
+        List<Long> bm25Hit = ruleMapper.rankByAnchorTsv(candidateRuleIds,
+                com.superprogrammer.knowledge.util.TsQueryUtil.toOrQuery(queryAnchor.tokens()), COARSE_TOP_K);
         List<Long> shortlisted = mergeRrf(vecHit, bm25Hit, COARSE_TOP_K);
         log.info("路由粗筛 userId={} sessionId={} candidates={} vecHit={} bm25Hit={} shortlisted={}",
                 input.userId(), input.sessionId(), candidates.size(), vecHit.size(), bm25Hit.size(), shortlisted.size());

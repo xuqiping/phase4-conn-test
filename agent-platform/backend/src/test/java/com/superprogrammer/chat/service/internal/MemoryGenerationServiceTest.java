@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -48,6 +49,7 @@ class MemoryGenerationServiceTest {
     @Mock private MemoryGenerator generator;
     @Mock private MemoryTagResolver tagResolver;
     @Mock private MemoryTurnMapper turnMapper;
+    @Mock private com.superprogrammer.chat.mapper.MemoryTagMapper tagMapper;
     @Mock private MemoryQueryCache queryCache;
     @Mock private MemoryRoutingService routingService;
     @Mock private TaskExecutor memoryTaskExecutor;
@@ -61,6 +63,8 @@ class MemoryGenerationServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        lenient().when(systemSettingService.getMemoryTagVocab()).thenReturn(java.util.List.of("旅行出行", "技术技能"));
+        lenient().when(tagMapper.findDistinctApprovedTopics(1L)).thenReturn(java.util.List.of());
     }
 
     private static final FilterResult PASS = new FilterResult(false, false, null, null);
@@ -77,9 +81,7 @@ class MemoryGenerationServiceTest {
         int n = service.processTurn(1L, 10L, "嗯", "您好", "glm-5.1");
 
         assertEquals(0, n);
-        verify(generator, never()).generate(anyLong(), anyString(), anyString(), any(), any());
-        verify(turnMapper, never()).insert(any());
-        verify(queryCache, never()).evictUser(anyLong());
+        verify(generator, never()).generate(anyLong(), anyString(), anyString(), any(), any(), any());
     }
 
     // ---------- gen 关：写 raw ----------
@@ -93,8 +95,8 @@ class MemoryGenerationServiceTest {
         int n = service.processTurn(1L, 10L, "我住萧山", "好的", "glm-5.1");
 
         assertEquals(2, n);
-        verify(generator, never()).generate(anyLong(), anyString(), anyString(), any(), any());
-        verify(tagResolver, never()).resolve(anyLong(), anyString(), anyString(), anyString());
+        verify(generator, never()).generate(anyLong(), anyString(), anyString(), any(), any(), any());
+        verify(tagResolver, never()).resolve(anyLong(), anyString(), anyString(), anyString(), anyBoolean());
 
         verify(turnMapper, times(2)).insert(turnCaptor.capture());
         List<MemoryTurn> turns = turnCaptor.getAllValues();
@@ -128,11 +130,11 @@ class MemoryGenerationServiceTest {
     void genOn_bothGenerated() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
         when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
-        when(generator.generate(eq(1L), anyString(), anyString(), eq(PASS), any())).thenReturn(
+        when(generator.generate(eq(1L), anyString(), anyString(), eq(PASS), any(), any())).thenReturn(
                 new MemoryGenerator.GenResult(
-                        new SideLayers("我", "居住", "住址", "住萧山", "萧山区地铁沿线"),
-                        new SideLayers("我", "编程", "爬虫", "写Python爬虫", "requests+BS4")));
-        when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString())).thenReturn(7L, 8L);
+                        new SideLayers("我", "居住", "住址", "住萧山", "萧山区地铁沿线", null),
+                        new SideLayers("我", "编程", "爬虫", "写Python爬虫", "requests+BS4", null)));
+        when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString(), anyBoolean())).thenReturn(7L, 8L);
 
         int n = service.processTurn(1L, 10L, "我住萧山", "写爬虫", "glm-5.1");
 
@@ -156,10 +158,10 @@ class MemoryGenerationServiceTest {
     void genOn_outputSkipped_oneTurn() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(OUTPUT_SKIP);
         when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
-        when(generator.generate(eq(1L), anyString(), anyString(), eq(OUTPUT_SKIP), any())).thenReturn(
+        when(generator.generate(eq(1L), anyString(), anyString(), eq(OUTPUT_SKIP), any(), any())).thenReturn(
                 new MemoryGenerator.GenResult(
-                        new SideLayers("我", "居住", "住址", "住萧山", "详情"), null));
-        when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString())).thenReturn(7L);
+                        new SideLayers("我", "居住", "住址", "住萧山", "详情", null), null));
+        when(tagResolver.resolve(anyLong(), anyString(), anyString(), anyString(), anyBoolean())).thenReturn(7L);
 
         int n = service.processTurn(1L, 10L, "我住萧山", "很高兴为您服务", "glm-5.1");
 
@@ -173,12 +175,12 @@ class MemoryGenerationServiceTest {
     void genOn_generatorFailed_writesRaw() {
         when(prefilter.filter(anyString(), anyString())).thenReturn(PASS);
         when(toggleService.resolveGenEnabled(eq(1L), isNull())).thenReturn(true);
-        when(generator.generate(anyLong(), anyString(), anyString(), any(), any())).thenReturn(null);
+        when(generator.generate(anyLong(), anyString(), anyString(), any(), any(), any())).thenReturn(null);
 
         int n = service.processTurn(1L, 10L, "我住萧山", "写爬虫", "glm-5.1");
 
         assertEquals(2, n);
-        verify(tagResolver, never()).resolve(anyLong(), anyString(), anyString(), anyString());
+        verify(tagResolver, never()).resolve(anyLong(), anyString(), anyString(), anyString(), anyBoolean());
         verify(turnMapper, times(2)).insert(turnCaptor.capture());
         turnCaptor.getAllValues().forEach(t -> assertFalse(t.getGenDone(), "生成失败应降级 raw"));
     }

@@ -56,7 +56,7 @@ class MemoryBackfillServiceTest {
     }
 
     private static SideLayers side(String topic, String label) {
-        return new SideLayers("我", topic, label, "l1概要", "l2详述");
+        return new SideLayers("我", topic, label, "l1概要", "l2详述", null);
     }
 
     // ---- 1. 空召回 → 0 处理，不调生成 ----

@@ -59,6 +59,7 @@ public class MemoryTagResolver {
     private final SystemSettingService systemSettingService;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.chat.mapper.MemoryNotificationMapper notificationMapper;
 
     /**
      * 解析标签 → 返回归一后的 tag_id（写 turn 前调用）。
@@ -70,6 +71,16 @@ public class MemoryTagResolver {
      * @return 复用或新建的 tag_id
      */
     public Long resolve(Long userId, String subject, String topic, String label) {
+        return resolve(userId, subject, topic, label, false);
+    }
+
+    /**
+     * 解析标签 → 返回归一后的 tag_id（写 turn 前调用）。
+     *
+     * @param needsReview V77：大类词表外内容（topic=__OTHER__ 映射后）→ 新建标签打 needs_review + 发非阻塞通知
+     * @return 复用或新建的 tag_id
+     */
+    public Long resolve(Long userId, String subject, String topic, String label, boolean needsReview) {
         if (userId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "标签归一缺 userId");
         }
@@ -119,12 +130,13 @@ public class MemoryTagResolver {
         }
 
         // ④ 全 miss 新建
-        return insertNew(userId, subj, normTopic, normLabel, anchor);
+        return insertNew(userId, subj, normTopic, normLabel, anchor, needsReview);
     }
 
-    /** 路径④：新建 tag（anchor 可空 = embed 失败降级，后续 owner 改 label 重生补回）。 */
+    /** 路径④：新建 tag（anchor 可空 = embed 失败降级，后续 owner 改 label 重生补回）。
+     *  needsReview=true（大类词表外）→ 新建后发非阻塞 TAG_NEEDS_REVIEW 通知。 */
     private Long insertNew(Long userId, String subject, String topic, String label,
-                           MemoryTagAnchorService.AnchorPayload anchor) {
+                           MemoryTagAnchorService.AnchorPayload anchor, boolean needsReview) {
         MemoryTag m = new MemoryTag();
         m.setUserId(userId);
         m.setSubject(subject);
@@ -132,12 +144,16 @@ public class MemoryTagResolver {
         m.setLabel(label);
         m.setUsageCount(0);
         m.setAliases(List.of());
+        m.setNeedsReview(needsReview);
         m.setCreatedBy(userId);
         m.setUpdatedBy(userId);
         try {
             tagMapper.insertWithAnchor(m,
                     anchor != null ? anchor.halfvec() : null,
                     anchor != null ? anchor.tokens() : null);
+            if (needsReview) {
+                notifyTagNeedsReview(userId, m.getId(), topic, label);
+            }
             return m.getId();
         } catch (DuplicateKeyException dup) {
             // 并发兜底：UNIQUE(user_id,subject,topic) 拦截 → 改查已建行复用（10 线程同义 → 一条）
@@ -153,6 +169,21 @@ public class MemoryTagResolver {
             }
             // 理论不可达（UNIQUE 拦了必有行）——抛出让上层感知
             throw dup;
+        }
+    }
+
+    /** V77：词表外新标签 → 发非阻塞 TAG_NEEDS_REVIEW 通知（用户处理标签后由 controller 消解 resolved_at）。
+     *  fire-and-forget 容错：通知插入失败不阻塞归一（标签已建）。 */
+    private void notifyTagNeedsReview(Long userId, Long tagId, String topic, String label) {
+        try {
+            com.superprogrammer.chat.entity.MemoryNotification n = new com.superprogrammer.chat.entity.MemoryNotification();
+            n.setUserId(userId);
+            n.setType("TAG_NEEDS_REVIEW");
+            n.setRefId(tagId);
+            n.setMessage("新标签「" + label + "」（建议大类：" + topic + "）不在大类词表内，待你裁决：接受为新大类 / 改名 / 补别名");
+            notificationMapper.insert(n);
+        } catch (Exception e) {
+            log.warn("TAG_NEEDS_REVIEW 通知插入失败 userId={} tagId={}（不阻塞）: {}", userId, tagId, e.getMessage());
         }
     }
 

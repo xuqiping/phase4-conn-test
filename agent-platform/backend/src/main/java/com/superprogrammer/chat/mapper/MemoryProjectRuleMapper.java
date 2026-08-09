@@ -42,8 +42,9 @@ public interface MemoryProjectRuleMapper extends BaseMapper<MemoryProjectRule> {
                                          @Param("threshold") double threshold,
                                          @Param("limit") int limit);
 
-    /** 粗筛路 B：anchor BM25 tsv 相关度降序（限定候选规则集内）。queryTokens 为 jieba 分词空格串。 */
+    /** 粗筛路 B：anchor BM25 tsv 相关度降序（限定候选规则集内）。
+     *  orQuery = {@code TsQueryUtil.toOrQuery(jieba 空格串)}（OR 串，复活多 token 命中）。 */
     List<Long> rankByAnchorTsv(@Param("ruleIds") List<Long> ruleIds,
-                               @Param("queryTokens") String queryTokens,
+                               @Param("orQuery") String orQuery,
                                @Param("limit") int limit);
 }

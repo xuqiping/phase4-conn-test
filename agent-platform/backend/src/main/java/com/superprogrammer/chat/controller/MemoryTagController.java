@@ -45,6 +45,8 @@ public class MemoryTagController {
 
     private final MemoryTagMapper tagMapper;
     private final MemoryTagAnchorService anchorService;
+    private final com.superprogrammer.chat.mapper.MemoryNotificationMapper notificationMapper;
+    private final com.superprogrammer.chat.service.internal.MemoryTagRepairService repairService;
 
     /** 列本人全部标签（按 usage_count 倒序）。只露 VO 字段（向量 4）。 */
     @GetMapping
@@ -68,8 +70,9 @@ public class MemoryTagController {
         Long uid = getCurrentUserId();
         boolean hasLabel = req.getLabel() != null && !req.getLabel().isBlank();
         boolean hasAliases = req.getAddAliases() != null && !req.getAddAliases().isEmpty();
-        if (!hasLabel && !hasAliases) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "label 和 addAliases 至少填一项");
+        boolean accept = Boolean.TRUE.equals(req.getAccept());
+        if (!hasLabel && !hasAliases && !accept) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "label/addAliases/accept 至少填一项");
         }
 
         MemoryTag tag = tagMapper.selectById(id);
@@ -105,6 +108,13 @@ public class MemoryTagController {
             log.info("标签补 aliases userId={} tagId={} 条数={}", uid, id, appended);
         }
 
+        // V77：owner 改名/补别名/接受 → 清 needs_review + 消解 TAG_NEEDS_REVIEW 通知（裁决完成）
+        if (Boolean.TRUE.equals(tag.getNeedsReview()) && (hasLabel || hasAliases || accept)) {
+            tagMapper.clearNeedsReview(id);
+            resolveTagNeedsReviewNotification(id);
+            log.info("标签 needs_review 已清（用户裁决）userId={} tagId={}", uid, id);
+        }
+
         MemoryTag fresh = tagMapper.selectById(id);
         return ResponseEntity.ok(R.ok("标签已更新", toVO(fresh)));
     }
@@ -117,11 +127,37 @@ public class MemoryTagController {
                 .topic(t.getTopic())
                 .label(t.getLabel())
                 .usageCount(t.getUsageCount())
+                .needsReview(Boolean.TRUE.equals(t.getNeedsReview()))
                 .build();
+    }
+
+    /**
+     * V77 管理员：大类重映射 / 孤儿锚点回填（一次性 repair 工具）。
+     * <p>
+     * dryRun=true（默认）→ 仅返回报告（孤儿数/归并组/loser 列表）不落库；
+     * dryRun=false → 单事务执行：孤儿锚点重生 + 细标签按 大类 归并（6 表 tag_id 重指 + loser 软删）。
+     * <b>不可逆</b>，务必先 dryRun 审报告再 execute。权限：{@code memory:manage}。
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/repair")
+    @com.superprogrammer.auth.security.RequirePermission("memory:manage")
+    public ResponseEntity<R<com.superprogrammer.chat.service.internal.MemoryTagRepairService.RepairReport>>
+            repair(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "true") boolean dryRun) {
+        return ResponseEntity.ok(R.ok(repairService.repair(dryRun)));
     }
 
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth == null ? null : (Long) auth.getPrincipal();
+    }
+
+    /** V77：消解该标签关联的未处理 TAG_NEEDS_REVIEW 通知（resolved_at=now）。MP wrapper 走 BaseMapper。 */
+    private void resolveTagNeedsReviewNotification(Long tagId) {
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.superprogrammer.chat.entity.MemoryNotification> w =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        w.eq(com.superprogrammer.chat.entity.MemoryNotification::getType, "TAG_NEEDS_REVIEW")
+                .eq(com.superprogrammer.chat.entity.MemoryNotification::getRefId, tagId)
+                .isNull(com.superprogrammer.chat.entity.MemoryNotification::getResolvedAt)
+                .set(com.superprogrammer.chat.entity.MemoryNotification::getResolvedAt, java.time.OffsetDateTime.now());
+        notificationMapper.update(null, w);
     }
 }

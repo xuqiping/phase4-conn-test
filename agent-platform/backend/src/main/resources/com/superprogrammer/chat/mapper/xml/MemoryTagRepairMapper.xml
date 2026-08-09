@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryTagRepairMapper">
+
+    <resultMap id="MemoryTagMap" type="com.superprogrammer.chat.entity.MemoryTag" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="aliases" column="aliases" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 孤儿标签：anchor_embedding IS NULL（路径③/路由粗筛永远跳过的死标签）。 -->
+    <select id="findNullAnchorTags" resultMap="MemoryTagMap">
+        SELECT * FROM memory_tags WHERE deleted = 0 AND anchor_embedding IS NULL
+    </select>
+
+    <!-- 改 topic 为大类 + 重生 anchor（null 保留旧值）+ 清 needs_review。⚠️ &lt;=&gt; 不涉及，无需转义。 -->
+    <update id="updateTopicAndAnchor">
+        UPDATE memory_tags
+        SET topic           = #{topic},
+            anchor_embedding = COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding),
+            anchor_tokens    = COALESCE(#{anchorTokens}, anchor_tokens),
+            needs_review     = false,
+            updated_at       = now()
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="softDeleteTag">
+        UPDATE memory_tags SET deleted = 1, updated_at = now() WHERE id = #{id}
+    </update>
+
+    <!-- 合并 loser 别名到 survivor（去重并集）。 -->
+    <update id="mergeAliases">
+        UPDATE memory_tags
+        SET aliases = (
+            SELECT COALESCE(array_agg(DISTINCT x), ARRAY[]::text[]) FROM (
+                SELECT unnest(survivor.aliases) x
+                FROM memory_tags survivor WHERE survivor.id = #{survivorId}
+                UNION
+                SELECT unnest(loser.aliases) x
+                FROM memory_tags loser WHERE loser.id = #{loserId}
+            ) sub
+        ), updated_at = now()
+        WHERE id = #{survivorId}
+    </update>
+
+    <!-- ============ scalar tag_id 重指（无 UNIQUE 冲突）============ -->
+
+    <update id="reassignSummariesTagId">
+        UPDATE memory_summaries SET tag_id = #{survivor} WHERE tag_id = #{loser}
+    </update>
+
+    <update id="reassignConflictTagId">
+        UPDATE memory_conflicts SET tag_id = #{survivor} WHERE tag_id = #{loser}
+    </update>
+
+    <!-- ============ array tag_ids 重指（array_replace：loser→survivor）============ -->
+
+    <update id="reassignTurnsTagIds">
+        UPDATE memory_turns
+        SET tag_ids = array_replace(tag_ids, #{loser}::bigint, #{survivor}::bigint)
+        WHERE #{loser}::bigint = ANY(tag_ids)
+    </update>
+
+    <update id="reassignEntriesTagIds">
+        UPDATE memory_project_entries
+        SET tag_ids = array_replace(tag_ids, #{loser}::bigint, #{survivor}::bigint)
+        WHERE #{loser}::bigint = ANY(tag_ids)
+    </update>
+
+    <!-- ============ 带 UNIQUE 冲突的 coverage 重指 ============
+         先删 loser 中与 survivor 同 (业务键) 冲突的行（survivor 已覆盖），再 UPDATE 剩余 loser 行 → survivor。 -->
+
+    <update id="reassignEntryCoverageTagId">
+        DELETE FROM memory_entry_coverage
+        WHERE tag_id = #{loser}
+          AND (entry_id, project_id, user_id) IN (
+              SELECT entry_id, project_id, user_id FROM memory_entry_coverage WHERE tag_id = #{survivor}
+          );
+        UPDATE memory_entry_coverage SET tag_id = #{survivor} WHERE tag_id = #{loser}
+    </update>
+
+    <update id="reassignSummaryCoverageTagId">
+        DELETE FROM memory_summary_coverage
+        WHERE tag_id = #{loser}
+          AND (turn_id, project_id, user_id) IN (
+              SELECT turn_id, project_id, user_id FROM memory_summary_coverage WHERE tag_id = #{survivor}
+          );
+        UPDATE memory_summary_coverage SET tag_id = #{survivor} WHERE tag_id = #{loser}
+    </update>
+</mapper>

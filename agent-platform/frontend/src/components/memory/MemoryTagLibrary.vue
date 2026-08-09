@@ -46,10 +46,20 @@
         <n-alert type="info" :bordered="false" size="small">
           改标签名会重生语义锚点（纠错预期）；别名仅追加不删除。无合并 / 拆分 / 重抽。
         </n-alert>
+        <n-alert v-if="editTarget?.needsReview" type="warning" :bordered="false" size="small">
+          该标签不在大类词表内（待裁决）：改名 / 补别名 / 保存即视为接受，并清「待裁决」标记。
+        </n-alert>
       </n-space>
       <template #footer>
         <n-space justify="end">
           <n-button size="small" @click="editing = false">取消</n-button>
+          <n-button
+            v-if="editTarget?.needsReview"
+            size="small"
+            type="warning"
+            :loading="saving"
+            @click="acceptAsVocab"
+          >接受为新大类</n-button>
           <n-button size="small" type="primary" :loading="saving" @click="save">保存</n-button>
         </n-space>
       </template>
@@ -122,7 +132,7 @@ async function save() {
       addAliases: addAliases.length ? addAliases : undefined
     })
     message.success('标签已更新')
-    // 用后端回传的 VO 刷新本行（usageCount/label 可能变）
+    // 用后端回传的 VO 刷新本行（usageCount/label/needsReview 可能变）
     const fresh = res.data?.data
     if (fresh) {
       const idx = tags.value.findIndex(x => x.id === fresh.id)
@@ -133,6 +143,28 @@ async function save() {
     editing.value = false
   } catch (e: any) {
     message.error(e?.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+/** V77：接受为新大类（不改名，仅清 needs_review + 消解通知）。 */
+async function acceptAsVocab() {
+  if (!editTarget.value) return
+  saving.value = true
+  try {
+    const res = await memoryApi.editTag(editTarget.value.id, { accept: true })
+    message.success('已接受为新大类')
+    const fresh = res.data?.data
+    if (fresh) {
+      const idx = tags.value.findIndex(x => x.id === fresh.id)
+      if (idx >= 0) tags.value[idx] = fresh
+    } else {
+      await load()
+    }
+    editing.value = false
+  } catch (e: any) {
+    message.error(e?.message || '操作失败')
   } finally {
     saving.value = false
   }
@@ -154,6 +186,14 @@ const columns = computed<DataTableColumns<MemoryTagVO>>(() => [
     key: 'usageCount',
     width: 100,
     render: (t) => h('span', { class: 'memory-tag-library__count' }, String(t.usageCount))
+  },
+  {
+    title: '状态',
+    key: 'needsReview',
+    width: 90,
+    render: (t) => t.needsReview
+      ? h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => '待裁决' })
+      : h('span', { style: 'opacity:0.4' }, '—')
   },
   {
     title: '操作',

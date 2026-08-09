@@ -76,7 +76,7 @@
     </select>
 
     <!-- 粗筛路 B：anchor BM25 tsv 相关度降序（限定候选规则集内）。
-         queryTokens = jieba 分词空格串；plainto_tsquery('simple') 按空格切词。 -->
+         ⚠️ V77：to_tsquery OR 串（TsQueryUtil.toOrQuery）——plainto_tsquery 走 AND 多 token 永不命中（死路）。 -->
     <select id="rankByAnchorTsv" resultType="long">
         SELECT id FROM memory_project_rules
         WHERE deleted = 0
@@ -84,8 +84,8 @@
           <foreach collection="ruleIds" item="rid" open="(" separator="," close=")">
               #{rid}
           </foreach>
-          AND anchor_tokens_tsv @@ plainto_tsquery('simple', #{queryTokens})
-        ORDER BY ts_rank(anchor_tokens_tsv, plainto_tsquery('simple', #{queryTokens})) DESC
+          AND anchor_tokens_tsv @@ to_tsquery('simple', #{orQuery})
+        ORDER BY ts_rank(anchor_tokens_tsv, to_tsquery('simple', #{orQuery})) DESC
         LIMIT #{limit}
     </select>
 </mapper>
