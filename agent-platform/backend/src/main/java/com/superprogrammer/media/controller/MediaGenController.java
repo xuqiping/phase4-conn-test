@@ -4,6 +4,8 @@ import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
+import com.superprogrammer.media.dto.ImageModelVO;
+import com.superprogrammer.media.dto.ImageSubmitRequest;
 import com.superprogrammer.media.dto.MediaSubmitRequest;
 import com.superprogrammer.media.dto.MediaTaskVO;
 import com.superprogrammer.media.entity.MediaGenTask;
@@ -79,6 +81,31 @@ public class MediaGenController {
     }
 
     /**
+     * 生图任务提交（Seedream 同步生图，按张计费）。
+     * 参数按模型能力清单校验；参考图从资产库 file_id 选取。
+     */
+    @PostMapping("/image")
+    @RequirePermission("media:gen")
+    public ResponseEntity<R<Map<String, Object>>> submitImage(@Valid @RequestBody ImageSubmitRequest request) {
+        Long taskId = taskService.submitImage(
+                request.getPrompt(), request.getRefFileIds(), request.getSize(), request.getOutputFormat(),
+                request.getWatermark(), request.getGuidanceScale(), request.getOptimizeMode(),
+                request.getSequential(), request.getMaxImages(), request.getWebSearch(),
+                request.getModel(), getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
+    }
+
+    /**
+     * 可选生图模型目录（含每模型能力清单 ImageModelCapability：参考图上限/size枚举/组图/联网/引导尺度等）。
+     * 前端据此渲染模型下拉 + 数据驱动动态表单（按 supportsXxx 显隐控件、按 List 枚举填下拉）。
+     */
+    @GetMapping("/image/models")
+    @RequirePermission("media:gen")
+    public ResponseEntity<R<List<ImageModelVO>>> imageModels() {
+        return ResponseEntity.ok(R.ok(mediaModelService.listImageModels()));
+    }
+
+    /**
      * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
      * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
      * 权限与 /api/llm/providers 管理端点一致（role:manage），非 media:gen。
@@ -107,11 +134,30 @@ public class MediaGenController {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         MediaGenTask task = queryService.loadForDownload(id, userId, admin);
-        Resource resource = fileStorageService.load(task.getResultFileId(), userId, admin);
-        StoredFileEntity meta = fileStorageService.findMeta(task.getResultFileId());
-        String mime = meta != null && meta.getMime() != null ? meta.getMime() : "video/mp4";
+        return serveFile(task.getResultFileId(), id, userId, admin, "task-" + id, ".mp4", "video/mp4");
+    }
+
+    /**
+     * 图片任务逐张下载：{idx} 对应 result_meta.imageFileIds 顺序（0-based）。
+     * 归属门控 + Content-Disposition 附件（同视频 download，防 inline 执行）。
+     */
+    @GetMapping("/tasks/{id}/images/{idx}/download")
+    @RequirePermission("media:gen")
+    public ResponseEntity<Resource> downloadImage(@PathVariable Long id, @PathVariable int idx) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        String fileId = queryService.loadImageFileId(id, idx, userId, admin);
+        return serveFile(fileId, id, userId, admin, "task-" + id + "-" + idx, ".png", "image/png");
+    }
+
+    /** 通用文件下发：load + findMeta → Content-Disposition 附件。视频/图片共用（只差默认名/mime）。 */
+    private ResponseEntity<Resource> serveFile(String fileId, Long id, Long userId, boolean admin,
+                                               String nameFallback, String extFallback, String mimeFallback) {
+        Resource resource = fileStorageService.load(fileId, userId, admin);
+        StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        String mime = meta != null && meta.getMime() != null ? meta.getMime() : mimeFallback;
         String filename = meta != null && meta.getOriginalName() != null && !meta.getOriginalName().isBlank()
-                ? meta.getOriginalName() : ("task-" + id + ".mp4");
+                ? meta.getOriginalName() : (nameFallback + extFallback);
         String disposition = "attachment; filename=\"" + URLEncoder.encode(filename, StandardCharsets.UTF_8) + "\"";
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition)

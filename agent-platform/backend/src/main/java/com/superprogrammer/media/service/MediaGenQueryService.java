@@ -62,6 +62,53 @@ public class MediaGenQueryService {
         return task;
     }
 
+    /**
+     * 图片任务逐张下载：校验归属 + SUCCEEDED + idx 合法，返回 imageFileIds[idx]。
+     *
+     * @param idx 图片下标（0-based，对应 imageFileIds 顺序）
+     * @return 该张 stored_files.file_id
+     */
+    public String loadImageFileId(Long id, int idx, Long userId, boolean admin) {
+        MediaGenTask task = taskMapper.selectById(id);
+        if (task == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "任务不存在");
+        }
+        ensureOwnership(task, userId, admin);
+        if (!MediaGenTask.STATUS_SUCCEEDED.equals(task.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务尚未生成完成");
+        }
+        List<String> fileIds = readImageFileIds(task);
+        if (idx < 0 || idx >= fileIds.size()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片下标越界（0-" + (fileIds.size() - 1) + "）");
+        }
+        return fileIds.get(idx);
+    }
+
+    /** 解析 result_meta.imageFileIds（图片任务）；非图片任务或无 meta 返回空表。 */
+    private List<String> readImageFileIds(MediaGenTask task) {
+        if (task.getResultMeta() == null || task.getResultMeta().isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode meta = objectMapper.readTree(task.getResultMeta());
+            JsonNode arr = meta.path("imageFileIds");
+            if (!arr.isArray()) {
+                return List.of();
+            }
+            List<String> ids = new java.util.ArrayList<>(arr.size());
+            for (JsonNode n : arr) {
+                String fid = n.asText(null);
+                if (fid != null && !fid.isBlank()) {
+                    ids.add(fid);
+                }
+            }
+            return ids;
+        } catch (Exception e) {
+            log.warn("解析 result_meta 失败 taskId={}: {}", task.getId(), e.getMessage());
+            return List.of();
+        }
+    }
+
     private void ensureOwnership(MediaGenTask task, Long userId, boolean admin) {
         if (!admin && !owns(task, userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该任务");
@@ -76,20 +123,45 @@ public class MediaGenQueryService {
         String prompt = null;
         Integer duration = null;
         String resolution = null;
+        String size = null;
+        String outputFormat = null;
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
             prompt = cfg.path("prompt").asText(null);
             if (cfg.path("duration").isNumber()) duration = cfg.path("duration").asInt();
             resolution = cfg.path("resolution").asText(null);
+            size = cfg.path("size").asText(null);
+            outputFormat = cfg.path("outputFormat").asText(null);
         } catch (Exception e) {
             log.warn("VO 解析 requestConfig 失败 taskId={}: {}", task.getId(), e.getMessage());
         }
-        String videoUrl = (mayAccessFile && MediaGenTask.STATUS_SUCCEEDED.equals(task.getStatus())
-                && task.getResultFileId() != null)
+        boolean succeeded = MediaGenTask.STATUS_SUCCEEDED.equals(task.getStatus());
+        boolean imageTask = MediaGenTask.TYPE_TEXT2IMAGE.equals(task.getTaskType())
+                || MediaGenTask.TYPE_IMAGE2IMAGE.equals(task.getTaskType());
+        String videoUrl = (mayAccessFile && succeeded && task.getResultFileId() != null)
                 ? "/api/media/tasks/" + task.getId() + "/download"
                 : null;
-        String resultFileId = (mayAccessFile && MediaGenTask.STATUS_SUCCEEDED.equals(task.getStatus()))
-                ? task.getResultFileId() : null;
+        String resultFileId = (mayAccessFile && succeeded) ? task.getResultFileId() : null;
+        // 图片任务：各张下载端点 + 计费/审计字段
+        List<String> imageUrls = null;
+        Integer generatedImages = null;
+        Long outputTokens = null;
+        if (imageTask && mayAccessFile && succeeded) {
+            List<String> fileIds = readImageFileIds(task);
+            if (!fileIds.isEmpty()) {
+                imageUrls = new java.util.ArrayList<>(fileIds.size());
+                for (int i = 0; i < fileIds.size(); i++) {
+                    imageUrls.add("/api/media/tasks/" + task.getId() + "/images/" + i + "/download");
+                }
+            }
+            try {
+                JsonNode meta = objectMapper.readTree(task.getResultMeta());
+                generatedImages = meta.path("generatedImages").asInt(imageUrls == null ? null : imageUrls.size());
+                outputTokens = meta.path("outputTokens").asLong(0L);
+            } catch (Exception e) {
+                log.warn("VO 解析 result_meta 失败 taskId={}: {}", task.getId(), e.getMessage());
+            }
+        }
         return MediaTaskVO.builder()
                 .id(task.getId())
                 .status(task.getStatus())
@@ -103,6 +175,11 @@ public class MediaGenQueryService {
                 .errorMsg(task.getErrorMsg())
                 .videoUrl(videoUrl)
                 .resultFileId(resultFileId)
+                .imageUrls(imageUrls)
+                .generatedImages(generatedImages)
+                .outputTokens(outputTokens)
+                .size(size)
+                .outputFormat(outputFormat)
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();

@@ -7,6 +7,7 @@ import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenResult;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
+import com.superprogrammer.media.provider.ArkImageProvider;
 import com.superprogrammer.media.provider.ArkSeedanceProvider;
 import com.superprogrammer.media.service.internal.MediaGenTaskTxService;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +36,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaGenTaskTxService txService;
     @Mock private MediaGenTaskMapper taskMapper;
     @Mock private ArkSeedanceProvider arkProvider;
+    @Mock private ArkImageProvider imageProvider;
     @Mock private MediaStorageService mediaStorageService;
     @Mock private MediaBillingService mediaBillingService;
 
@@ -47,7 +49,7 @@ class MediaGenTaskWorkerTest {
 
     @BeforeEach
     void setUp() {
-        worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider,
+        worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
                 mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService);
     }
 

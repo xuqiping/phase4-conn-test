@@ -121,6 +121,77 @@ class MediaGenQueryServiceTest {
         assertEquals("file-xyz", loaded.getResultFileId());
     }
 
+    // ---------- 图片任务（TEXT2IMAGE/IMAGE2IMAGE）分支 ----------
+
+    @Test
+    void get_imageSucceeded_voHasPerImageDownloadUrls() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_SUCCEEDED,
+                "{\"imageFileIds\":[\"img-a\",\"img-b\",\"img-c\"],\"generatedImages\":3,\"outputTokens\":900}",
+                "{\"prompt\":\"测试\",\"size\":\"2K\"}");
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        var vo = queryService.get(2L, 100L, false);
+
+        assertEquals(3, vo.getImageUrls().size(), "3 张图→3 个逐张下载端点");
+        assertEquals("/api/media/tasks/2/images/0/download", vo.getImageUrls().get(0));
+        assertEquals("/api/media/tasks/2/images/2/download", vo.getImageUrls().get(2));
+        assertEquals(3, vo.getGeneratedImages());
+        assertEquals(900L, vo.getOutputTokens());
+        assertEquals("2K", vo.getSize());
+        assertNull(vo.getVideoUrl(), "图片任务无 videoUrl");
+    }
+
+    @Test
+    void get_imageRunning_imageUrlsNull() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_RUNNING, null,
+                "{\"prompt\":\"p\"}");
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        var vo = queryService.get(2L, 100L, false);
+
+        assertNull(vo.getImageUrls(), "未完成不暴露图片下载端点");
+    }
+
+    @Test
+    void loadImageFileId_validIdx_returnsFileId() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_SUCCEEDED,
+                "{\"imageFileIds\":[\"img-a\",\"img-b\"]}", null);
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        assertEquals("img-b", queryService.loadImageFileId(2L, 1, 100L, false));
+    }
+
+    @Test
+    void loadImageFileId_idxOutOfBounds_throwsBadRequest() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_SUCCEEDED,
+                "{\"imageFileIds\":[\"img-a\"]}", null);
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> queryService.loadImageFileId(2L, 5, 100L, false));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void loadImageFileId_nonOwner_throwsForbidden() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_SUCCEEDED,
+                "{\"imageFileIds\":[\"img-a\"]}", null);
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        assertThrows(BusinessException.class,
+                () -> queryService.loadImageFileId(2L, 0, 999L, false));
+    }
+
+    @Test
+    void loadImageFileId_notSucceeded_throwsBadRequest() {
+        MediaGenTask task = imageTask(2L, 100L, MediaGenTask.STATUS_FAILED,
+                "{\"imageFileIds\":[\"img-a\"]}", null);
+        when(taskMapper.selectById(2L)).thenReturn(task);
+
+        assertThrows(BusinessException.class,
+                () -> queryService.loadImageFileId(2L, 0, 100L, false));
+    }
+
     // ---------- helpers ----------
 
     /** 造一个任务，requestConfig 含标准 prompt/duration/resolution。 */
@@ -133,6 +204,19 @@ class MediaGenQueryServiceTest {
         t.setTaskType(MediaGenTask.TYPE_TEXT2VIDEO);
         t.setModel("doubao-seedance-1-0");
         t.setRequestConfig("{\"prompt\":\"一只橘猫晒太阳\",\"duration\":5,\"resolution\":\"720p\"}");
+        return t;
+    }
+
+    /** 造一个图片任务（resultMeta JSONB + requestConfig）。 */
+    private MediaGenTask imageTask(Long id, Long userId, String status, String resultMeta, String requestConfig) {
+        MediaGenTask t = new MediaGenTask();
+        t.setId(id);
+        t.setUserId(userId);
+        t.setStatus(status);
+        t.setResultMeta(resultMeta);
+        t.setTaskType(MediaGenTask.TYPE_TEXT2IMAGE);
+        t.setModel("doubao-seedream-5.0-lite");
+        t.setRequestConfig(requestConfig == null ? "{\"prompt\":\"p\"}" : requestConfig);
         return t;
     }
 }
