@@ -13,6 +13,8 @@ import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.system.service.SystemSettingService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,8 @@ public class AuthService {
     private final StringRedisTemplate redisTemplate;
     private final SystemSettingService systemSettingService;
     private final DepartmentService departmentService;
+    /** 日志系统 LOG-FR-11：登录/登出/刷新/注册审计（异步落库，绝不阻断认证主流程）。 */
+    private final AuditLogService auditLogService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -84,6 +88,7 @@ public class AuthService {
         }
 
         log.info("用户注册成功: {}", user.getUsername());
+        auditAuth("register", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
     }
 
     /**
@@ -141,16 +146,19 @@ public class AuthService {
         User user = userMapper.selectOne(wrapper);
 
         if (user == null) {
+            auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
 
         // 验证密码
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "bad_password");
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
 
         // 检查用户状态
         if (!"ACTIVE".equals(user.getStatus())) {
+            auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_disabled");
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
         }
 
@@ -160,7 +168,39 @@ public class AuthService {
 
         // 生成JWT Token（走公共方法）
         log.info("用户登录成功: {}", user.getUsername());
+        auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         return issueTokens(user, roleCodes, permissionCodes);
+    }
+
+    /**
+     * 登录/认证审计（LOG-FR-11）：module=auth，detail 只带 reason 码——<b>严禁密码/token 原文</b>。
+     * 异步落库，任何异常吞掉（认证主流程绝不被审计拖垮）。
+     */
+    private void auditAuth(String action, Long userId, String username, String result, String reason) {
+        try {
+            String detail = reason == null ? "{}" : "{\"reason\":\"" + reason + "\"}";
+            AuditLogEntity row = auditLogService.fromMdc("auth", action, "user",
+                    userId == null ? null : String.valueOf(userId), detail, result);
+            // 登录前无 JWT，MDC userId 是 "-"——显式覆盖为真实身份
+            row.setUserId(userId);
+            row.setUsername(username);
+            row.setUserAgent(currentUserAgent());
+            auditLogService.record(row);
+        } catch (Exception e) {
+            log.warn("认证审计落库失败(已吞): action={} : {}", action, e.toString());
+        }
+    }
+
+    /** UA 截断 256；非 web 上下文 → null。 */
+    private String currentUserAgent() {
+        try {
+            Object attrsObj = RequestContextHolder.currentRequestAttributes();
+            if (!(attrsObj instanceof ServletRequestAttributes attrs)) return null;
+            String ua = attrs.getRequest().getHeader("User-Agent");
+            return ua != null && ua.length() > 256 ? ua.substring(0, 256) : ua;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -230,6 +270,7 @@ public class AuthService {
                 userRoleMapper.insert(userRole);
             }
             log.info("钉钉用户首次登录自动建号: unionId={}, userId={}, name={}", info.unionId(), user.getId(), info.nick());
+            auditAuth("dingtalk_register", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         } else {
             // 已绑定 → 刷新 openId/avatar/name（防钉钉变更）
             if (info.openId() != null && !info.openId().equals(user.getDingtalkOpenId())) {
@@ -243,6 +284,7 @@ public class AuthService {
                 userMapper.updateById(user);
             }
             if (!"ACTIVE".equals(user.getStatus())) {
+                auditAuth("dingtalk_login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_disabled");
                 throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
             }
         }
@@ -251,6 +293,7 @@ public class AuthService {
         List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
         // 同步钉钉部门到本地（按 dingtalkDeptId 建/匹配 + 关联用户，幂等）
         departmentService.syncUserDepartmentsFromDingtalk(user.getId(), info.depts(), user.getId());
+        auditAuth("dingtalk_login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         return issueTokens(user, roleCodes, permissionCodes);
     }
 
@@ -279,6 +322,7 @@ public class AuthService {
         Long userId = jwtUtil.getUserIdFromToken(refreshToken);
         User user = userMapper.selectById(userId);
         if (user == null) {
+            auditAuth("refresh", null, "-", AuditLogEntity.RESULT_FAIL, "user_not_found");
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
 
@@ -286,6 +330,7 @@ public class AuthService {
         long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
         String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs);
 
+        auditAuth("refresh", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         return TokenResponse.builder()
                 .accessToken(newAccessToken)
                 .tokenType("Bearer")
@@ -314,6 +359,14 @@ public class AuthService {
             }
         }
 
+        // 审计：登出（MDC 已有 userId/username——logout 必带 JWT 经过 MdcUserFilter；无上下文走"-"兜底）
+        Long logoutUserId = null;
+        String logoutUsername = null;
+        if (accessToken != null && jwtUtil.isTokenValid(accessToken)) {
+            logoutUserId = jwtUtil.getUserIdFromToken(accessToken);
+            logoutUsername = jwtUtil.getUsernameFromToken(accessToken);
+        }
+        auditAuth("logout", logoutUserId, logoutUsername, AuditLogEntity.RESULT_SUCCESS, null);
         log.info("用户登出成功");
     }
 

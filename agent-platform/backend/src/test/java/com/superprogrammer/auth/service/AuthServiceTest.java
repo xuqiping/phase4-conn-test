@@ -10,6 +10,7 @@ import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,12 @@ class AuthServiceTest {
 
     @Mock
     private SystemSettingService systemSettingService;
+
+    @Mock
+    private DepartmentService departmentService;
+
+    @Mock
+    private AuditLogService auditLogService;
 
     @Mock
     private ValueOperations<String, String> valueOperations;
