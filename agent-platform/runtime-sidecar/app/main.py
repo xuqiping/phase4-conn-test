@@ -1,10 +1,13 @@
 import json
 import asyncio
+import time
 
 import structlog
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from sse_starlette.sse import EventSourceResponse
 
+from app import metrics as sidecar_metrics
 from app.checkpoint_store import create_checkpoint_store
 from app.logging_config import TRACEPARENT_HEADER, configure_logging, parse_traceparent
 from app.models import ExecutionRequest, ExecutionResult
@@ -17,6 +20,10 @@ log = structlog.get_logger("sidecar")
 app = FastAPI(title="Agent Platform Runtime Sidecar")
 checkpoint_store = create_checkpoint_store()
 END_OF_EVENTS = object()
+
+# 运维系统 OPS-FR-08：FastAPI 自动指标（http 请求数/耗时）+ /metrics 暴露。
+# 同 Java /actuator 红线：仅内网可达，Nginx 不反代 /metrics。
+Instrumentator().instrument(app).expose(app, include_in_schema=False)
 
 
 @app.middleware("http")
@@ -43,8 +50,11 @@ def health():
 @app.post("/api/runtime/executions")
 def execute(request: ExecutionRequest):
     if request.runtime.get("stream", True):
-        return EventSourceResponse(stream_events(iter_events(request, checkpoint_store)))
+        return EventSourceResponse(stream_events(
+            sidecar_metrics.observe(iter_events(request, checkpoint_store), request)))
+    start = time.monotonic()
     events = build_events(request, checkpoint_store)
+    sidecar_metrics.record_events(request, events, start)
     return ExecutionResult(
         executionId=request.executionId,
         rootExecutionId=request.rootExecutionId,

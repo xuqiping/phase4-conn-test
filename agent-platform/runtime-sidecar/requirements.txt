@@ -5,3 +5,6 @@ pytest==8.2.2
 sse-starlette==2.1.2
 structlog==24.4.0
 uvicorn==0.30.1
+# 运维系统 OPS-FR-08：FastAPI 指标自动插桩 + /metrics 暴露
+# 版本红线：7.x 强拉 starlette>=0.38 与 fastapi 0.111.0 冲突；6.0.0 兼容 starlette 0.37
+prometheus-fastapi-instrumentator==6.0.0
