@@ -37,12 +37,24 @@ class LogbackConfigTest {
 
     @SuppressWarnings("unchecked")
     private Appender<ILoggingEvent> appender(LoggerContext ctx, String name) {
-        Appender<ILoggingEvent> found = ctx.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).getAppender(name);
-        if (found == null) {
-            // SQL_FILE 挂在 "sql" logger 上
-            found = (Appender<ILoggingEvent>) ctx.getLogger("sql").getAppender(name);
+        // root 与 "sql" logger 上挂的是 MASKED_* 包装器（MaskingAppender），向下钻一层取真实 appender
+        for (String loggerName : new String[]{org.slf4j.Logger.ROOT_LOGGER_NAME, "sql"}) {
+            java.util.Iterator<Appender<ILoggingEvent>> it = ctx.getLogger(loggerName).iteratorForAppenders();
+            while (it.hasNext()) {
+                Appender<ILoggingEvent> a = it.next();
+                if (name.equals(a.getName())) {
+                    return a;
+                }
+                if (a instanceof ch.qos.logback.core.spi.AppenderAttachable) {
+                    Appender<ILoggingEvent> nested =
+                            ((ch.qos.logback.core.spi.AppenderAttachable<ILoggingEvent>) a).getAppender(name);
+                    if (nested != null) {
+                        return nested;
+                    }
+                }
+            }
         }
-        return found;
+        return null;
     }
 
     @Test

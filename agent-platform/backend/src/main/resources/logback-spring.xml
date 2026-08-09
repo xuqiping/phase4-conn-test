@@ -87,13 +87,28 @@
     <!-- SQL 通道 logger：mybatis-plus log-prefix=sql. 使全部 mapper SQL logger 归 "sql" 前缀下，
          一条 logger 覆盖所有现存/未来 mapper 包。默认 OFF 无 sql.log 产出；LOG_SQL_ENABLED=DEBUG 开启。 -->
     <logger name="sql" level="${LOG_SQL_LEVEL}" additivity="false">
-        <appender-ref ref="SQL_FILE"/>
+        <appender-ref ref="MASKED_SQL"/>
     </logger>
 
-    <root level="INFO">
+    <!-- ===== 脱敏滤网（LOG-FR-07）：事件层打码，console/JSON/SQL 全通道一次生效。
+         事件先过 MaskingAppender（五类敏感正则），再下发内嵌真实 appender。 ===== -->
+    <appender name="MASKED_CONSOLE" class="com.superprogrammer.common.logging.MaskingAppender">
         <appender-ref ref="CONSOLE"/>
+    </appender>
+    <appender name="MASKED_APP" class="com.superprogrammer.common.logging.MaskingAppender">
         <appender-ref ref="APP_FILE"/>
+    </appender>
+    <appender name="MASKED_ERROR" class="com.superprogrammer.common.logging.MaskingAppender">
         <appender-ref ref="ERROR_FILE"/>
+    </appender>
+    <appender name="MASKED_SQL" class="com.superprogrammer.common.logging.MaskingAppender">
+        <appender-ref ref="SQL_FILE"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="MASKED_CONSOLE"/>
+        <appender-ref ref="MASKED_APP"/>
+        <appender-ref ref="MASKED_ERROR"/>
     </root>
 
 </configuration>
