@@ -47,6 +47,8 @@ public class MediaStorageService {
 
     private final FileStorageService fileStorageService;
     private final WebClient downloadClient = buildDownloadClient();
+    /** 图片下载专用 client：4K/组图单张可能 >16MB，buffer 抬到 64MB（视频 client 仅 16MB 不够）。 */
+    private final WebClient imageDownloadClient = buildImageDownloadClient();
 
     /**
      * 下载 Ark 视频 URL → 落 stored_files(source=MEDIA)。
@@ -87,6 +89,67 @@ public class MediaStorageService {
      */
     public String readAsDataUri(String fileId, Long userId) {
         return readAsDataUri(fileId, userId, "image");
+    }
+
+    /**
+     * 下载生图 URL（Ark 24h 临时链接）→ 落 stored_files(source=MEDIA)。
+     *
+     * <p>与 {@link #downloadAndStore}（视频）区别：图片用 64MB buffer（4K/组图单张可能超 16MB）、
+     * 按 url/name 推断图片 mime 与扩展名（.png/.jpg/.jpeg/.webp）。返回 fileId 写入 result_meta.imageFileIds。
+     *
+     * @param imageUrl Ark 返回的图片临时 URL
+     * @param nameHint 命名提示（如 img-task-12-0）
+     * @return fileId
+     */
+    public String downloadImageAndStore(String imageUrl, Long userId, String nameHint) {
+        Resource resource;
+        try {
+            // URI 对象防二次编码（同 downloadAndStore，预签名链接含已编码字符）。
+            resource = imageDownloadClient.get()
+                    .uri(URI.create(imageUrl))
+                    .retrieve()
+                    .bodyToMono(Resource.class)
+                    .block(RESPONSE_TIMEOUT);
+        } catch (Exception e) {
+            throw new IllegalStateException("图片下载失败: " + rootMessage(e), e);
+        }
+        if (resource == null) {
+            throw new IllegalStateException("图片下载失败：响应为空");
+        }
+        String fileName = deriveImageName(imageUrl, nameHint);
+        String mime = guessImageMime(fileName);
+        long size;
+        try (InputStream in = resource.getInputStream()) {
+            size = in.available();
+            return fileStorageService.storeStream(in, fileName, mime, size, userId, StoredFileEntity.SOURCE_MEDIA);
+        } catch (Exception e) {
+            throw new IllegalStateException("图片落盘失败: " + rootMessage(e), e);
+        }
+    }
+
+    private String deriveImageName(String url, String hint) {
+        String ext = ".png";
+        try {
+            int q = url.indexOf('?');
+            String path = q >= 0 ? url.substring(0, q) : url;
+            int slash = path.lastIndexOf('/');
+            String base = slash >= 0 ? path.substring(slash + 1) : path;
+            int dot = base.lastIndexOf('.');
+            if (dot >= 0 && dot < base.length() - 1) {
+                String e = base.substring(dot).toLowerCase(Locale.ROOT);
+                if (e.equals(".jpg") || e.equals(".jpeg") || e.equals(".png") || e.equals(".webp")) {
+                    ext = e;
+                }
+            }
+        } catch (Exception ignore) { /* fallback */ }
+        return (hint != null && !hint.isBlank() ? hint : "image") + ext;
+    }
+
+    private String guessImageMime(String fileName) {
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".webp")) return "image/webp";
+        return "image/png";
     }
 
     /**
@@ -159,6 +222,17 @@ public class MediaStorageService {
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024)) // 视频 buffer 上限
+                .build();
+    }
+
+    /** 图片下载 client：4K/组图单张可能 >16MB，buffer 抬到 64MB。 */
+    private static WebClient buildImageDownloadClient() {
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS)
+                .responseTimeout(RESPONSE_TIMEOUT);
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(64 * 1024 * 1024)) // 图片 buffer 上限（4K/组图）
                 .build();
     }
 

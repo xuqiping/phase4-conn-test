@@ -91,6 +91,23 @@ public class MediaGenTaskTxService {
         taskMapper.update(null, u);
     }
 
+    /**
+     * 图片任务成功：写 result_meta（多图 fileId 元数据 JSONB）+ tokens_cost + status_flag。
+     * 与 {@link #markSucceeded} 区别：图片一次返 N 张，无单 result_file_id，多图信息落 result_meta。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void markImageSucceeded(Long taskId, String resultMeta, Integer tokensCost, String statusFlag) {
+        LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
+        u.eq(MediaGenTask::getId, taskId)
+                .set(MediaGenTask::getStatus, MediaGenTask.STATUS_SUCCEEDED)
+                .set(MediaGenTask::getResultMeta, resultMeta)
+                .set(MediaGenTask::getTokensCost, tokensCost)
+                .set(MediaGenTask::getStatusFlag, statusFlag)
+                .set(MediaGenTask::getLockedUntil, null)
+                .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
+        taskMapper.update(null, u);
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void markFailed(Long taskId, String errorMsg) {
         LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();

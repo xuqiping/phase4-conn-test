@@ -7,8 +7,11 @@ import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
+import com.superprogrammer.media.dto.MediaImageRequest;
+import com.superprogrammer.media.dto.MediaImageResult;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
+import com.superprogrammer.media.provider.ArkImageProvider;
 import com.superprogrammer.media.provider.ArkSeedanceProvider;
 import com.superprogrammer.media.service.internal.MediaGenTaskTxService;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +20,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 
 /**
@@ -43,6 +48,7 @@ public class MediaGenTaskWorker {
     private final MediaGenTaskTxService txService;
     private final MediaGenTaskMapper taskMapper;
     private final ArkSeedanceProvider arkProvider;
+    private final ArkImageProvider imageProvider;
     private final MediaStorageService mediaStorageService;
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
@@ -52,6 +58,7 @@ public class MediaGenTaskWorker {
     public MediaGenTaskWorker(MediaGenTaskTxService txService,
                               MediaGenTaskMapper taskMapper,
                               ArkSeedanceProvider arkProvider,
+                              ArkImageProvider imageProvider,
                               MediaStorageService mediaStorageService,
                               MediaGenProperties properties,
                               ObjectMapper objectMapper,
@@ -60,6 +67,7 @@ public class MediaGenTaskWorker {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.arkProvider = arkProvider;
+        this.imageProvider = imageProvider;
         this.mediaStorageService = mediaStorageService;
         this.properties = properties;
         this.objectMapper = objectMapper;
@@ -89,6 +97,11 @@ public class MediaGenTaskWorker {
             return;
         }
         try {
+            // 图片任务（Seedream）走同步生图路径，与视频异步轮询分流（video 路径零改动）。
+            if (isImageTask(task.getTaskType())) {
+                processImage(task);
+                return;
+            }
             MediaGenRequest request = buildRequest(task);
             String arkTaskId = task.getArkTaskId();
             if (arkTaskId == null || arkTaskId.isBlank()) {
@@ -179,6 +192,137 @@ public class MediaGenTaskWorker {
             mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId);
             throw e;
         }
+    }
+
+    // ---------- 图片任务路径（Seedream 同步生图，与视频异步轮询零耦合） ----------
+
+    private static boolean isImageTask(String taskType) {
+        return MediaGenTask.TYPE_TEXT2IMAGE.equals(taskType)
+                || MediaGenTask.TYPE_IMAGE2IMAGE.equals(taskType);
+    }
+
+    /**
+     * 图片任务处理：同步生图（一次返全量 url）→ 逐张下载落盘 → 写 result_meta → 按张计费。
+     * 同步协议无 arkTaskId/轮询；失败走 markFailed（与视频 catch 同一路径）。
+     */
+    private void processImage(MediaGenTask task) {
+        Long taskId = task.getId();
+        MediaImageRequest request = buildImageRequest(task);
+        MediaImageResult result = imageProvider.generate(request);
+        if (!result.isSuccess()) {
+            txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "生图失败");
+            log.warn("生图失败 taskId={} model={} reason={}", taskId, request.getModel(), result.getErrorMsg());
+            return;
+        }
+        handleImageSucceeded(task, result, request);
+    }
+
+    /**
+     * 图片成功处理：逐张下载 Ark 24h 临时 URL → stored_files(source=MEDIA) →
+     * 收集 fileIds 写 result_meta → 按 {@code usage.generated_images} 计费扣减。
+     *
+     * <p>逐张下载隔离：任一张失败即整体 FAILED（部分图不落盘则 result_meta 不完整，前端无法展示，
+     * 不留半成功态）。计费与视频同口径：markImageSucceeded 前扣，落库失败退款。
+     */
+    private void handleImageSucceeded(MediaGenTask task, MediaImageResult result, MediaImageRequest request) {
+        Long taskId = task.getId();
+        List<String> urls = result.getImageUrls();
+        List<String> fileIds = new java.util.ArrayList<>(urls.size());
+        try {
+            for (int i = 0; i < urls.size(); i++) {
+                String hint = "img-task-" + taskId + "-" + i;
+                fileIds.add(mediaStorageService.downloadImageAndStore(urls.get(i), task.getUserId(), hint));
+            }
+        } catch (Exception e) {
+            log.error("图片下载落盘失败 taskId={}: {}", taskId, e.getMessage(), e);
+            txService.markDownloadFailed(taskId, "图片下载落盘失败: " + rootMessage(e));
+            return;
+        }
+        Integer imageCount = result.getGeneratedImages() != null ? result.getGeneratedImages() : fileIds.size();
+        Long outputTokens = result.getOutputTokens();
+        String resultMeta = buildImageResultMeta(fileIds, imageCount, outputTokens);
+        // 按张计费扣减（返回实扣积分；null=未扣/系统调用/计费失败均吞不抛）
+        BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
+                task.getModel(), LlmUsageLogEntity.KIND_IMAGE, null, 0, imageCount,
+                LlmUsageLogEntity.STATUS_SUCCESS, taskId);
+        try {
+            txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);
+        } catch (RuntimeException e) {
+            // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
+            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId);
+            throw e;
+        }
+        log.info("生图任务成功 taskId={} model={} 张数={} fileIds={}",
+                taskId, task.getModel(), imageCount, fileIds.size());
+    }
+
+    /** result_meta JSON：{imageFileIds:[], generatedImages, outputTokens}（前端列表展示 + 逐张下载/入库用）。 */
+    private String buildImageResultMeta(List<String> fileIds, Integer generatedImages, Long outputTokens) {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("imageFileIds", fileIds);
+        meta.put("generatedImages", generatedImages);
+        meta.put("outputTokens", outputTokens);
+        try {
+            return objectMapper.writeValueAsString(meta);
+        } catch (Exception e) {
+            throw new IllegalStateException("result_meta 序列化失败", e);
+        }
+    }
+
+    /**
+     * 从 requestConfig 解析图片参数 + 参考图 file_id → data URI（Ark image 入参）。
+     * 图片 requestConfig 由 submitImage 落库：prompt/size/outputFormat/watermark/guidanceScale/
+     * optimizeMode/sequential/maxImages/webSearch/refFileIds。
+     */
+    private MediaImageRequest buildImageRequest(MediaGenTask task) {
+        String prompt = null, size = null, outputFormat = null, optimizeMode = null, sequential = null;
+        Double guidanceScale = null;
+        Integer maxImages = null;
+        Boolean watermark = null, webSearch = null;
+        List<String> refFileIds = new java.util.ArrayList<>();
+        try {
+            JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
+            prompt = cfg.path("prompt").asText(null);
+            size = cfg.path("size").asText(null);
+            outputFormat = cfg.path("outputFormat").asText(null);
+            optimizeMode = cfg.path("optimizeMode").asText(null);
+            sequential = cfg.path("sequential").asText(null);
+            if (cfg.path("guidanceScale").isNumber()) guidanceScale = cfg.path("guidanceScale").asDouble();
+            if (cfg.path("maxImages").isNumber()) maxImages = cfg.path("maxImages").asInt();
+            if (cfg.has("watermark")) watermark = cfg.path("watermark").asBoolean();
+            if (cfg.has("webSearch")) webSearch = cfg.path("webSearch").asBoolean();
+            for (JsonNode f : cfg.path("refFileIds")) {
+                String fid = f.asText(null);
+                if (fid != null && !fid.isBlank()) refFileIds.add(fid);
+            }
+        } catch (Exception e) {
+            log.warn("解析图片 requestConfig 失败 taskId={}: {}", task.getId(), e.getMessage());
+        }
+        // 参考图 file_id → data URI（图生图/多图融合；纯文生图 refFileIds 空）
+        List<String> refDataUris = new java.util.ArrayList<>();
+        for (String fid : refFileIds) {
+            if (task.getUserId() == null) break;
+            try {
+                refDataUris.add(mediaStorageService.readAsDataUri(fid, task.getUserId()));
+            } catch (Exception e) {
+                log.warn("参考图读取失败 taskId={} fileId={}: {}", task.getId(), fid, e.getMessage());
+                throw new IllegalArgumentException("参考图读取失败: " + rootMessage(e));
+            }
+        }
+        return MediaImageRequest.builder()
+                .model(task.getModel())
+                .providerId(task.getProviderId())
+                .prompt(prompt)
+                .size(size)
+                .outputFormat(outputFormat)
+                .watermark(watermark)
+                .guidanceScale(guidanceScale)
+                .optimizeMode(optimizeMode)
+                .sequential(sequential)
+                .maxImages(maxImages)
+                .webSearch(webSearch)
+                .refImageUrls(refDataUris.isEmpty() ? null : refDataUris)
+                .build();
     }
 
     /** task status_flag → usage_logs status（估算口径仍计费，仅审计标记不同）。 */

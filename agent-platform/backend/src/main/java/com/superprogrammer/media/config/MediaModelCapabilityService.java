@@ -52,6 +52,120 @@ public class MediaModelCapabilityService {
         }
     }
 
+    /**
+     * 解析某<b>生图</b>模型的能力清单（lite/pro 参数集）。
+     *
+     * <p>合并顺序同 {@link #resolve}：保守兜底 → 前缀默认（seedream+lite / seedream+pro）
+     * → provider config {@code capabilities: {"<modelId>": {...}}} 精确覆盖。
+     *
+     * @param modelId        模型 id（Doubao-Seedream-5.0-lite / doubao-seedream-5.0-pro-0724 等）
+     * @param providerConfig 所属 IMAGE provider 的 config JSON（可空）
+     */
+    public ImageModelCapability resolveImage(String modelId, String providerConfig) {
+        ImageModelCapability cap = defaultsForImage(modelId);
+        if (providerConfig == null || providerConfig.isBlank()) {
+            return cap;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(providerConfig);
+            JsonNode override = root.path("capabilities").path(modelId);
+            if (override.isMissingNode() || !override.isObject()) {
+                return cap;
+            }
+            return applyImageOverride(cap, override);
+        } catch (Exception e) {
+            log.warn("解析 provider config capabilities 失败（image model={}），使用默认能力: {}", modelId, e.getMessage());
+            return cap;
+        }
+    }
+
+    /**
+     * 生图前缀默认：seedream+lite（参数丰富）/ seedream+pro（精准编辑，不同参数集）；
+     * 未知走保守兜底 + WARN。
+     *
+     * <p>来源：lite 官方文档 82379/1541523（权威）；pro 用户提供官方参数表（权威）。
+     */
+    private ImageModelCapability defaultsForImage(String modelId) {
+        String id = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);
+        List<String> jpegPng = List.of("jpeg", "png");
+        if (id.contains("seedream") && id.contains("lite")) {
+            // Seedream 5.0 lite：≤14 参考图、组图 sequential(max15)、联网、流式、4K、optimize 仅 standard
+            return ImageModelCapability.builder()
+                    .refImageMax(14)
+                    .refImageFormats(List.of("jpeg", "png", "webp", "bmp", "tiff", "gif", "heic", "heif"))
+                    .sizePresets(List.of("2K", "3K", "4K"))
+                    .supportsWhSize(true)
+                    .supportsSequential(true)
+                    .maxSequentialImages(15)
+                    .supportsWebSearch(true)
+                    .supportsStream(true)
+                    .outputFormats(jpegPng)
+                    .optimizeModes(List.of("standard"))
+                    .supportsGuidanceScale(false)
+                    .watermarkDefault(true)
+                    .build();
+        }
+        if (id.contains("seedream") && id.contains("pro")) {
+            // Seedream 5.0 pro：≤10 参考图、无组图/联网/流式、2K/3K、guidance[1,10]、optimize standard+fast
+            return ImageModelCapability.builder()
+                    .refImageMax(10)
+                    .refImageFormats(jpegPng)
+                    .sizePresets(List.of("2K", "3K"))
+                    .supportsWhSize(true)
+                    .supportsSequential(false)
+                    .maxSequentialImages(0)
+                    .supportsWebSearch(false)
+                    .supportsStream(false)
+                    .outputFormats(jpegPng)
+                    .optimizeModes(List.of("standard", "fast"))
+                    .supportsGuidanceScale(true)
+                    .guidanceMin(1.0)
+                    .guidanceMax(10.0)
+                    .watermarkDefault(true)
+                    .build();
+        }
+        log.warn("未知生图模型 {}，使用保守能力兜底（1 参考图/2K/无组图联网/guidance）", modelId);
+        return ImageModelCapability.builder()
+                .refImageMax(1)
+                .refImageFormats(jpegPng)
+                .sizePresets(List.of("2K"))
+                .supportsWhSize(true)
+                .supportsSequential(false)
+                .maxSequentialImages(0)
+                .supportsWebSearch(false)
+                .supportsStream(false)
+                .outputFormats(jpegPng)
+                .optimizeModes(List.of("standard"))
+                .supportsGuidanceScale(false)
+                .watermarkDefault(true)
+                .build();
+    }
+
+    /** config JSON 覆盖（生图字段）：只覆盖出现的字段，未出现的保留默认。 */
+    private ImageModelCapability applyImageOverride(ImageModelCapability base, JsonNode o) {
+        return ImageModelCapability.builder()
+                .refImageMax(intOr(o, "refImageMax", base.getRefImageMax()))
+                .refImageFormats(listOr(o, "refImageFormats", base.getRefImageFormats()))
+                .sizePresets(listOr(o, "sizePresets", base.getSizePresets()))
+                .supportsWhSize(boolOr(o, "supportsWhSize", base.isSupportsWhSize()))
+                .supportsSequential(boolOr(o, "supportsSequential", base.isSupportsSequential()))
+                .maxSequentialImages(intOr(o, "maxSequentialImages", base.getMaxSequentialImages()))
+                .supportsWebSearch(boolOr(o, "supportsWebSearch", base.isSupportsWebSearch()))
+                .supportsStream(boolOr(o, "supportsStream", base.isSupportsStream()))
+                .outputFormats(listOr(o, "outputFormats", base.getOutputFormats()))
+                .optimizeModes(listOr(o, "optimizeModes", base.getOptimizeModes()))
+                .supportsGuidanceScale(boolOr(o, "supportsGuidanceScale", base.isSupportsGuidanceScale()))
+                .guidanceMin(doubleOr(o, "guidanceMin", base.getGuidanceMin()))
+                .guidanceMax(doubleOr(o, "guidanceMax", base.getGuidanceMax()))
+                .watermarkDefault(boolOr(o, "watermarkDefault", base.isWatermarkDefault()))
+                .build();
+    }
+
+    private double doubleOr(JsonNode o, String field, double dft) {
+        JsonNode n = o.get(field);
+        return n != null && n.isNumber() ? n.asDouble() : dft;
+    }
+
     /** 前缀默认值：2.0 系多模态全开；1.0 系仅首帧图；未知模型走保守兜底 + WARN。 */
     private MediaModelCapability defaultsFor(String modelId) {
         String id = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);

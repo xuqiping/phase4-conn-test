@@ -25,6 +25,9 @@ public class MediaGenTask {
 
     public static final String TYPE_TEXT2VIDEO = "TEXT2VIDEO";
     public static final String TYPE_IMAGE2VIDEO = "IMAGE2VIDEO";
+    /** 图片生成任务类型（V84 起，Seedream 生图）：纯文生图 / 参考图生图（图生图/多图融合）。 */
+    public static final String TYPE_TEXT2IMAGE = "TEXT2IMAGE";
+    public static final String TYPE_IMAGE2IMAGE = "IMAGE2IMAGE";
 
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_RUNNING = "RUNNING";
@@ -54,6 +57,13 @@ public class MediaGenTask {
     private String requestConfig;
     /** → stored_files.file_id。 */
     private String resultFileId;
+    /**
+     * JSONB：图片任务结果元数据 {imageFileIds[],generatedImages,outputTokens}（V84）。
+     * 图片一次返 N 张图，与视频单 url 不同，故多图 fileId 存此列；视频任务恒 NULL。
+     * 用 JsonbStringTypeHandler 做 String↔jsonb 转换（同 requestConfig）。
+     */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String resultMeta;
     private Integer tokensCost;
     private BigDecimal cost;
     private String statusFlag;
