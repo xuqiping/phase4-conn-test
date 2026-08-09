@@ -1,5 +1,6 @@
 package com.superprogrammer.billing.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.RechargeRequest;
 import com.superprogrammer.billing.entity.PaymentOrderEntity;
@@ -39,6 +40,7 @@ public class WalletAdminController {
      */
     @PostMapping("/recharge")
     @RequirePermission("points:recharge")
+    @AuditLog(module = "billing", action = "admin_recharge", targetType = "wallet")
     public ResponseEntity<R<Map<String, Object>>> recharge(@Valid @RequestBody RechargeRequest req) {
         BigDecimal after = walletService.grant(
                 req.getUserId(),

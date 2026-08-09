@@ -1,5 +1,6 @@
 package com.superprogrammer.system.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.search.service.WebSearchService;
@@ -32,6 +33,7 @@ public class SystemSettingController {
 
     @PutMapping("/auth")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_auth_settings", targetType = "setting")
     public ResponseEntity<R<AuthSettingsVO>> updateAuthSettings(
             @Valid @RequestBody AuthSettingsUpdateRequest request) {
         return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs())));
@@ -58,6 +60,7 @@ public class SystemSettingController {
 
     @PutMapping("/rag-memory")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_rag_memory_settings", targetType = "setting")
     public ResponseEntity<R<RagMemorySettingsVO>> updateRagMemorySettings(
             @Valid @RequestBody RagMemorySettingsUpdateRequest request) {
         service.updateRagMemoryEnabled(request.getEnabled());
@@ -112,6 +115,7 @@ public class SystemSettingController {
 
     @PutMapping("/rag-recall")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_rag_recall_settings", targetType = "setting")
     public ResponseEntity<R<RagRecallSettingsVO>> updateRagRecallSettings(
             @Valid @RequestBody RagRecallSettingsUpdateRequest request) {
         service.updateRagRecallExpansionEnabled(request.getEnabled());
@@ -134,6 +138,7 @@ public class SystemSettingController {
 
     @PutMapping("/web-search")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_web_search_settings", targetType = "setting")
     public ResponseEntity<R<WebSearchSettingsVO>> updateWebSearchSettings(
             @Valid @RequestBody WebSearchSettingsUpdateRequest req) {
         if (req.getEnabled() != null) {

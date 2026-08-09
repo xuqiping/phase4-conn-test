@@ -1,5 +1,6 @@
 package com.superprogrammer.knowledge.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
@@ -78,6 +79,7 @@ public class KnowledgeDocumentController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_delete", targetType = "document")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         knowledgeDocumentService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("删除成功", null));

@@ -1,5 +1,6 @@
 package com.superprogrammer.knowledge.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgeBaseRequest;
@@ -57,6 +58,7 @@ public class KnowledgeBaseController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "kb_delete", targetType = "knowledge_base")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         knowledgeBaseService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("删除成功", null));
