@@ -59,6 +59,15 @@ public class AuthService {
     private static final long REGISTER_MAX_PER_IP = 5;
     private static final long REGISTER_MAX_PER_USERNAME = 5;
 
+    // 安全体系 S1 · SEC-FR-001 登录防爆破：同账号 5 次失败锁 15min；同 IP 1h 失败 >20 次封禁。
+    // 计数键 TTL=窗口（自然过期自动解锁，TTL 误杀合法用户风险归零）；Redis 故障降级放行 + WARN。
+    private static final String LOGIN_FAIL_USER_PREFIX = "login:fail:u:";
+    private static final String LOGIN_FAIL_IP_PREFIX = "login:fail:ip:";
+    private static final long LOGIN_LOCK_MAX_FAILS = 5;
+    private static final long LOGIN_LOCK_WINDOW_SECONDS = 15 * 60;
+    private static final long LOGIN_IP_BAN_MAX_FAILS = 20;
+    private static final long LOGIN_IP_WINDOW_SECONDS = 3600;
+
     @Transactional
     public void register(RegisterRequest request) {
         // 限流（安全审计 #9）：IP + 用户名双维度，超阈值 → 429
@@ -150,12 +159,18 @@ public class AuthService {
 
     @Transactional
     public TokenResponse login(LoginRequest request) {
+        // SEC-FR-001 防爆破前置闸：命中账号锁/IP 封禁 → 固定话术拒绝（不区分「密码错」与「已锁定」）
+        String usernameKey = request.getUsername() == null ? "" : request.getUsername().toLowerCase(java.util.Locale.ROOT);
+        String clientIp = currentClientIp();
+        assertLoginAllowed(usernameKey, clientIp);
+
         // 查询用户
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(User::getUsername, request.getUsername());
         User user = userMapper.selectOne(wrapper);
 
         if (user == null) {
+            recordLoginFailure(usernameKey, clientIp, null, request.getUsername());
             auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
@@ -163,6 +178,7 @@ public class AuthService {
 
         // 验证密码
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            recordLoginFailure(usernameKey, clientIp, user.getId(), user.getUsername());
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "bad_password");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
@@ -179,11 +195,87 @@ public class AuthService {
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
         List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
 
+        // 登录成功清账号失败计数（IP 计数保留：防多账号轮试）
+        clearLoginFailure(usernameKey);
+
         // 生成JWT Token（走公共方法）
         log.info("用户登录成功: {}", user.getUsername());
         auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_SUCCESS);
         return issueTokens(user, roleCodes, permissionCodes);
+    }
+
+    /**
+     * SEC-FR-001 前置闸：账号失败计数 ≥5（15min 窗口）或 IP 失败计数 >20（1h 窗口）→ 拒绝。
+     * 固定话术（LOGIN_LOCKED 单一口径），不泄露是账号锁还是 IP 封。Redis 异常 → 降级放行 + WARN。
+     */
+    private void assertLoginAllowed(String usernameKey, String ip) {
+        try {
+            if (!usernameKey.isBlank()) {
+                String fails = redisTemplate.opsForValue().get(LOGIN_FAIL_USER_PREFIX + usernameKey);
+                if (fails != null && Long.parseLong(fails) >= LOGIN_LOCK_MAX_FAILS) {
+                    bizMetrics.authLoginLocked("account");
+                    throw new BusinessException(ErrorCode.LOGIN_LOCKED);
+                }
+            }
+            if (ip != null && !ip.isBlank()) {
+                String fails = redisTemplate.opsForValue().get(LOGIN_FAIL_IP_PREFIX + ip);
+                if (fails != null && Long.parseLong(fails) > LOGIN_IP_BAN_MAX_FAILS) {
+                    bizMetrics.authLoginLocked("ip");
+                    throw new BusinessException(ErrorCode.LOGIN_LOCKED);
+                }
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("登录防爆破 Redis 检查失败，降级放行: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 登录失败计数（user-not-found / bad_password 两分支调用）。越过阈值瞬间写安全审计
+     * （login_locked / ip_banned，仅跃迁写一次防刷屏）+ ERROR 级日志供锁定风暴排查。
+     */
+    private void recordLoginFailure(String usernameKey, String ip, Long userId, String username) {
+        try {
+            if (!usernameKey.isBlank()) {
+                Long n = incrWithWindow(LOGIN_FAIL_USER_PREFIX + usernameKey, LOGIN_LOCK_WINDOW_SECONDS);
+                if (n != null && n == LOGIN_LOCK_MAX_FAILS) {
+                    bizMetrics.authLoginLocked("account");
+                    auditAuth("login_locked", userId, username, AuditLogEntity.RESULT_FAIL, "fail_count_" + n);
+                    log.error("账号登录失败达阈值锁定 15min: username={} ip={}", username, ip);
+                }
+            }
+            if (ip != null && !ip.isBlank()) {
+                Long n = incrWithWindow(LOGIN_FAIL_IP_PREFIX + ip, LOGIN_IP_WINDOW_SECONDS);
+                if (n != null && n == LOGIN_IP_BAN_MAX_FAILS + 1) {
+                    bizMetrics.authLoginLocked("ip");
+                    auditAuth("ip_banned", userId, username, AuditLogEntity.RESULT_FAIL, "ip_fail_count_" + n);
+                    log.error("IP 登录失败达阈值封禁 1h: ip={} lastUsername={}", ip, username);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("登录失败计数 Redis 失败(已吞，不阻断登录): {}", e.getMessage());
+        }
+    }
+
+    private Long incrWithWindow(String key, long windowSeconds) {
+        Long n = redisTemplate.opsForValue().increment(key);
+        if (n != null && n == 1L) {
+            redisTemplate.expire(key, windowSeconds, TimeUnit.SECONDS);
+        }
+        return n;
+    }
+
+    /** 登录成功清账号计数（IP 计数保留）。Redis 异常吞掉——清零失败只是锁多留到 TTL。 */
+    private void clearLoginFailure(String usernameKey) {
+        try {
+            if (!usernameKey.isBlank()) {
+                redisTemplate.delete(LOGIN_FAIL_USER_PREFIX + usernameKey);
+            }
+        } catch (Exception e) {
+            log.warn("登录成功清零计数 Redis 失败(已吞): {}", e.getMessage());
+        }
     }
 
     /**

@@ -165,6 +165,15 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 登录锁定/封禁：auth_login_locked_total{scope=account|ip}（安全体系 S1 · SEC-FR-001）。 */
+    public void authLoginLocked(String scope) {
+        Counter.builder("auth.login.locked")
+                .description("登录防爆破触发次数（按维度）")
+                .tags("scope", safe(scope))
+                .register(registry)
+                .increment();
+    }
+
     /** tag 兜底：null/空白归一为 unknown，防 Micrometer 拒 null tag 抛异常拖垮主链路。 */
     private static String safe(String tag) {
         return tag == null || tag.isBlank() ? "unknown" : tag;

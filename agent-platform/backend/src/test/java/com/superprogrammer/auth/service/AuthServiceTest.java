@@ -197,6 +197,86 @@ class AuthServiceTest {
         assertThrows(BusinessException.class, () -> authService.login(loginRequest));
     }
 
+    // ===== 安全体系 S1 · SEC-FR-001 登录防爆破 =====
+
+    // AC-SEC-FR-001：账号失败计数 ≥5 → 前置闸拒绝，固定话术，连库都不查
+    @Test
+    void login_accountLocked_rejectedBeforeDb() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("login:fail:u:testuser")).thenReturn("5");
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        assertEquals(40103, e.getCode());   // LOGIN_LOCKED
+        verify(bizMetrics).authLoginLocked("account");
+        verify(userMapper, never()).selectOne(any(LambdaQueryWrapper.class));
+    }
+
+    // AC-SEC-FR-001：第 5 次失败跃迁 → 写 login_locked 安全审计（仅跃迁一次）
+    @Test
+    void login_fifthFailure_auditsLoginLocked() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("login:fail:u:testuser")).thenReturn(5L);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
+
+        assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        verify(bizMetrics).authLoginLocked("account");
+        verify(auditLogService).fromMdc(eq("auth"), eq("login_locked"), eq("user"),
+                eq("1"), contains("fail_count_5"), eq("FAIL"));
+    }
+
+    // AC-SEC-FR-001：同 IP 1h 失败 >20 → 封禁（带请求上下文供 IP 解析）
+    @Test
+    void login_ipBanned_rejected() {
+        org.springframework.mock.web.MockHttpServletRequest req = new org.springframework.mock.web.MockHttpServletRequest();
+        req.setRemoteAddr("9.9.9.9");
+        org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+                new org.springframework.web.context.request.ServletRequestAttributes(req));
+        try {
+            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+            when(valueOperations.get("login:fail:u:testuser")).thenReturn(null);
+            when(valueOperations.get("login:fail:ip:9.9.9.9")).thenReturn("21");
+
+            BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+            assertEquals(40103, e.getCode());
+            verify(bizMetrics).authLoginLocked("ip");
+        } finally {
+            org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
+    // AC-SEC-FR-001：Redis 故障降级放行——登录主链不被打死（user_not_found 仍正常走）
+    @Test
+    void login_redisDown_degradesOpen() {
+        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis down"));
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        assertEquals(401, e.getCode());   // 走的是正常「用户名或密码错误」，不是 500
+    }
+
+    // AC-SEC-FR-001：登录成功清账号失败计数
+    @Test
+    void login_success_clearsAccountFailCounter() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+
+        authService.login(loginRequest);
+
+        verify(redisTemplate).delete("login:fail:u:testuser");
+    }
+
     @Test
     void refreshToken_success() {
         RefreshTokenRequest request = new RefreshTokenRequest();
