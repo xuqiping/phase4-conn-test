@@ -119,4 +119,37 @@ class AuditHashChainServiceTest {
         verify(mapper).insert(captor.capture());
         assertThat(captor.getValue().getRecordHash()).isNotBlank();
     }
+
+    @Test
+    void canonicalJsonToleratesPgJsonbNormalization() {
+        // PG jsonb 落库会键重排+冒号加空格：两侧解析成同一棵树 → 规范化串一致（否则校验恒断链）
+        assertThat(AuditHashChainService.canonicalJson("{\"b\":1,\"a\":\"x\"}"))
+                .isEqualTo(AuditHashChainService.canonicalJson("{\"a\": \"x\", \"b\": 1}"));
+    }
+
+    @Test
+    void canonicalJsonKeepsNumberPrecision() {
+        assertThat(AuditHashChainService.canonicalJson("{\"v\":0.57}"))
+                .isEqualTo(AuditHashChainService.canonicalJson("{\"v\": 0.57}"));
+        // 0.57 vs 0.58 必须可区分（防 stripTrailingZeros 之类误并）
+        assertThat(AuditHashChainService.canonicalJson("{\"v\":0.57}"))
+                .isNotEqualTo(AuditHashChainService.canonicalJson("{\"v\": 0.58}"));
+    }
+
+    @Test
+    void canonicalJsonNonJsonPassthrough() {
+        assertThat(AuditHashChainService.canonicalJson("not-json")).isEqualTo("not-json");
+        assertThat(AuditHashChainService.canonicalJson(null)).isEmpty();
+        assertThat(AuditHashChainService.canonicalJson("  ")).isEmpty();
+    }
+
+    @Test
+    void createdAtWrittenAsUtcMicros() {
+        // pgjdbc 读回 timestamptz 恒 UTC+微秒精度，写入侧必须同型归一
+        when(mapper.selectLastRecordHash()).thenReturn(null);
+        AuditLogEntity r = row("login");
+        service.insertChained(r);
+        assertThat(r.getCreatedAt().getOffset()).isEqualTo(java.time.ZoneOffset.UTC);
+        assertThat(r.getCreatedAt().getNano() % 1000).isZero();
+    }
 }

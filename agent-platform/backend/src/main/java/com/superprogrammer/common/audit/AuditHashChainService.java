@@ -1,5 +1,8 @@
 package com.superprogrammer.common.audit;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,6 +13,13 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 审计哈希链服务（安全体系 S2 · D1，SEC-FR-040）：audit_logs 每行带 prev_hash/record_hash，
@@ -62,7 +72,8 @@ public class AuditHashChainService {
 
     /**
      * 链式插入一条审计行（在审计异步池线程内调用，失败由调用方按 fire-and-forget 降级）。
-     * <p>created_at 在此显式赋值——DB DEFAULT NOW() 在插入后才确定，哈希须覆盖确定值。
+     * <p>created_at 在此显式赋值为 UTC 微秒精度——DB DEFAULT 在插入后才确定，且 pgjdbc 读回
+     * timestamptz 恒为 UTC offset+微秒精度，写入侧必须同型归一，否则校验重算恒断链。
      */
     @Transactional(rollbackFor = Exception.class)
     public void insertChained(AuditLogEntity row) {
@@ -70,7 +81,7 @@ public class AuditHashChainService {
         String last = auditLogMapper.selectLastRecordHash();
         String prev = (last == null || last.isBlank()) ? GENESIS : last;
         if (row.getCreatedAt() == null) {
-            row.setCreatedAt(OffsetDateTime.now());
+            row.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS));
         }
         row.setPrevHash(prev);
         row.setRecordHash(hmacHex(canonical(row) + prev));
@@ -85,11 +96,19 @@ public class AuditHashChainService {
         return hmacHex(canonical(row) + row.getPrevHash()).equals(row.getRecordHash());
     }
 
-    /** 规范化行内容：全字段（除 prev/record_hash）按固定顺序 + 控制符分隔，null→空串。 */
+    /** JSON 解析器：浮点走 BigDecimal 保字面值精度（toPlainString 输出，两侧一致）。 */
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+
+    /**
+     * 规范化行内容：全字段（除 id/prev/record_hash）按固定顺序 + 控制符分隔，null→空串。
+     * <p>id 不入哈希：插入时 id 由 DB IDENTITY 生成尚不存在，行位置已由 prev_hash 链绑定。
+     * <p>detailJson 走 {@link #canonicalJson}：jsonb 落库会被 PG 规整（键重排/冒号空格），
+     * 直接哈希原文会导致校验读回恒不匹配；两侧统一「解析成树→确定性重排输出」后一致。
+     */
     static String canonical(AuditLogEntity r) {
         StringBuilder sb = new StringBuilder(256);
-        sb.append(n(r.getId())).append(FS)
-          .append(r.getCreatedAt() == null ? "" : r.getCreatedAt().toString()).append(FS)
+        sb.append(r.getCreatedAt() == null ? "" : r.getCreatedAt().toString()).append(FS)
           .append(n(r.getTraceId())).append(FS)
           .append(n(r.getUserId())).append(FS)
           .append(n(r.getUsername())).append(FS)
@@ -97,11 +116,74 @@ public class AuditHashChainService {
           .append(n(r.getAction())).append(FS)
           .append(n(r.getTargetType())).append(FS)
           .append(n(r.getTargetId())).append(FS)
-          .append(n(r.getDetailJson())).append(FS)
+          .append(canonicalJson(r.getDetailJson())).append(FS)
           .append(n(r.getClientIp())).append(FS)
           .append(n(r.getUserAgent())).append(FS)
           .append(n(r.getResult()));
         return sb.toString();
+    }
+
+    /**
+     * JSON 规范化：解析成树后确定性重排输出（对象键按 UTF-8 字典序、无空格、数字 toPlainString）。
+     * 插入侧（原始 JSON 串）与校验侧（PG jsonb 读回串）解析出同一棵树 → 同一串。
+     * 非 JSON（解析失败）原样返回（两侧同样处理，仍一致）。
+     */
+    static String canonicalJson(String json) {
+        if (json == null || json.isBlank()) {
+            return "";
+        }
+        try {
+            return emitJson(JSON.readTree(json));
+        } catch (Exception e) {
+            return json;
+        }
+    }
+
+    private static String emitJson(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return "null";
+        }
+        if (node.isObject()) {
+            List<Map.Entry<String, JsonNode>> entries = new ArrayList<>();
+            for (Iterator<Map.Entry<String, JsonNode>> it = node.fields(); it.hasNext(); ) {
+                entries.add(it.next());
+            }
+            entries.sort(Comparator.comparing(Map.Entry::getKey));
+            StringBuilder sb = new StringBuilder("{");
+            for (Map.Entry<String, JsonNode> e : entries) {
+                if (sb.length() > 1) {
+                    sb.append(',');
+                }
+                sb.append(emitString(e.getKey())).append(':').append(emitJson(e.getValue()));
+            }
+            return sb.append('}').toString();
+        }
+        if (node.isArray()) {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < node.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(emitJson(node.get(i)));
+            }
+            return sb.append(']').toString();
+        }
+        if (node.isNumber()) {
+            return node.decimalValue().toPlainString();
+        }
+        if (node.isBoolean()) {
+            return node.booleanValue() ? "true" : "false";
+        }
+        return emitString(node.asText());
+    }
+
+    /** 字符串 JSON 转义输出（Jackson writeValueAsString 等价，保非 ASCII 原字符，两侧一致）。 */
+    private static String emitString(String s) {
+        try {
+            return JSON.writeValueAsString(s);
+        } catch (Exception e) {
+            return "\"" + s + "\"";
+        }
     }
 
     private static String n(Object v) {

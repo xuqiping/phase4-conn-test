@@ -26,6 +26,7 @@ import java.util.List;
 public class AuditLogController {
 
     private final AuditLogMapper auditLogMapper;
+    private final AuditChainVerifyService chainVerifyService;
 
     @GetMapping
     @RequirePermission("system:audit:read")
@@ -55,5 +56,15 @@ public class AuditLogController {
         Page<AuditLogEntity> entityPage = auditLogMapper.selectPage(new Page<>(page, safeSize), wrapper);
         List<AuditLogVO> vos = entityPage.getRecords().stream().map(AuditLogVO::from).toList();
         return R.ok(PageResult.of(vos, entityPage.getTotal(), page, safeSize));
+    }
+
+    /**
+     * 安全体系 S2 D3（SEC-FR-042）：手动触发审计链全量校验（每日 03:40 定时之外的即时入口）。
+     * 通过则顺带完成 D4 锚定；断链返 ok=false + 首个断点行号（同时已写安全审计+ERROR 日志）。
+     */
+    @GetMapping("/verify-chain")
+    @RequirePermission("system:audit:read")
+    public R<AuditChainVerifyService.ChainVerifyResult> verifyChain() {
+        return R.ok(chainVerifyService.verifyAndAnchor());
     }
 }
