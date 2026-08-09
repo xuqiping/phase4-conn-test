@@ -290,6 +290,32 @@ export interface CanvasImportVO {
   message?: string
 }
 
+// ---------- 媒体生图 → 资产库（生成→库，无画布节点） ----------
+
+/** POST /assets/from-media — 生图结果某张图入库（复用 SOURCE_MEDIA fileId，不拷贝）。 */
+export interface MediaImportRequest {
+  /** 生图任务 id（media_gen_tasks.id）。 */
+  taskId: number
+  /** 目标图下标（0-based，对应 result_meta.imageFileIds 顺序）。 */
+  imageIdx: number
+  /** 目标项目 id（必填，须当前用户可写）。 */
+  projectId: number
+  /** 资产名（≤100；空则后端兜底「图片产出」）。 */
+  name?: string
+  /** 资产描述。 */
+  description?: string
+}
+
+/** 生图入库结果（无画布节点 → 无重复入库三态，created 恒 true）。 */
+export interface MediaImportVO {
+  created: boolean
+  assetId?: number
+  name?: string
+  mediaType?: string
+  version?: number
+  message?: string
+}
+
 export interface ResolveRequest {
   /** 指定版本号；空=当前版本（版本快照，设计 §六）。 */
   version?: number

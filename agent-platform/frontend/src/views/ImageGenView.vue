@@ -163,6 +163,7 @@
               <NSpin v-else size="small" />
               <div class="result__actions">
                 <NButton size="tiny" tertiary @click="downloadImage(img.url, i)">下载</NButton>
+                <NButton size="tiny" tertiary type="primary" @click="openSaveDialog(i)">入库</NButton>
               </div>
             </div>
           </div>
@@ -192,6 +193,16 @@
       @update:show="showPicker = $event"
       @picked="onPicked"
     />
+
+    <!-- 一键入库弹窗（生成→库，复用 SOURCE_MEDIA fileId） -->
+    <SaveImageToAssetDialog
+      :show="saveDialog.show"
+      :task-id="saveDialog.taskId"
+      :image-idx="saveDialog.imageIdx"
+      :default-name="saveDialog.defaultName"
+      @update:show="saveDialog.show = $event"
+      @imported="onImported"
+    />
   </div>
 </template>
 
@@ -208,6 +219,7 @@ import {
   type ImageSubmitRequest, type MediaTaskVO
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
+import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import type { AssetFilePicked } from '@/types/asset'
@@ -384,6 +396,26 @@ async function downloadImage(url: string | null, idx: number) {
   a.href = url
   a.download = `image-${activeTask.value?.id ?? 'task'}-${idx + 1}.png`
   a.click()
+}
+
+// ---- 一键入库（生成→库） ----
+const saveDialog = reactive({
+  show: false,
+  taskId: null as number | null,
+  imageIdx: null as number | null,
+  defaultName: ''
+})
+function openSaveDialog(idx: number) {
+  if (!activeTask.value?.id) return
+  saveDialog.taskId = activeTask.value.id
+  saveDialog.imageIdx = idx
+  // 默认名取提示词截断，空则后端兜底「图片产出」
+  const p = form.prompt?.trim()
+  saveDialog.defaultName = p ? (p.length > 40 ? p.slice(0, 40) + '…' : p) : ''
+  saveDialog.show = true
+}
+function onImported(payload: { assetId: number; name: string }) {
+  message.success(`已入库：${payload.name}`)
 }
 
 // ---- 历史 ----

@@ -18,6 +18,8 @@ import type {
   CanvasImportVO,
   ConsistencyPackRequest,
   MatrixCountVO,
+  MediaImportRequest,
+  MediaImportVO,
   MemberAddRequest,
   MemberRoleUpdateRequest,
   MemberVO,
@@ -221,5 +223,14 @@ export const assetBridgeApi = {
   /** GET /assets/assets/{id}/usages — 使用记录（双向追溯；viewer 可读） */
   usages(assetId: number) {
     return request.get<ApiResponse<AssetUsageVO[]>>(`/assets/assets/${assetId}/usages`)
+  },
+
+  /**
+   * POST /assets/from-media — 生图结果某张图入库（生成→库）。
+   * 复用 SOURCE_MEDIA fileId（不拷贝）；genMeta.source=MEDIA 标来源。
+   * requireWrite（viewer 不可入库）。无画布节点 → 无重复检测三态，created 恒 true。
+   */
+  importFromMedia(data: MediaImportRequest) {
+    return request.post<ApiResponse<MediaImportVO>>('/assets/from-media', data)
   }
 }

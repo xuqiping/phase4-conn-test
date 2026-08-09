@@ -69,6 +69,18 @@ public class MediaGenQueryService {
      * @return 该张 stored_files.file_id
      */
     public String loadImageFileId(Long id, int idx, Long userId, boolean admin) {
+        return loadImageForImport(id, idx, userId, admin).fileId();
+    }
+
+    /** 媒体→资产库导入上下文（任务实体 + 目标图 fileId，归属/终态/idx 已校验）。 */
+    public record ImageImportContext(MediaGenTask task, String fileId) {
+    }
+
+    /**
+     * 图片入库用：校验归属 + SUCCEEDED + idx，返任务实体 + imageFileIds[idx]。
+     * 资产桥据此取 model/prompt 写 genMeta + fileId 建 AssetVersion（单一咽喉，避免桥内重复校验）。
+     */
+    public ImageImportContext loadImageForImport(Long id, int idx, Long userId, boolean admin) {
         MediaGenTask task = taskMapper.selectById(id);
         if (task == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "任务不存在");
@@ -81,7 +93,7 @@ public class MediaGenQueryService {
         if (idx < 0 || idx >= fileIds.size()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "图片下标越界（0-" + (fileIds.size() - 1) + "）");
         }
-        return fileIds.get(idx);
+        return new ImageImportContext(task, fileIds.get(idx));
     }
 
     /** 解析 result_meta.imageFileIds（图片任务）；非图片任务或无 meta 返回空表。 */
