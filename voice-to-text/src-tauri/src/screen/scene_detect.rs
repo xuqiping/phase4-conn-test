@@ -78,6 +78,29 @@ pub fn sad_mean(a: &[u8], b: &[u8]) -> f64 {
     sum as f64 / a.len() as f64
 }
 
+/// 4×4 分块的最大块内 SAD（输入都是 32×32 判页栅格）。局部内容变化的判别器：
+/// 整窗录制时翻页只改课件区那几块，整帧均值被静态区域摊薄，块级最大值不会。
+pub fn max_block_sad(a: &[u8], b: &[u8]) -> f64 {
+    if a.len() != PAGE_GRID * PAGE_GRID || b.len() != PAGE_GRID * PAGE_GRID {
+        return 0.0;
+    }
+    const B: usize = PAGE_GRID / PAGE_BLOCKS; // 8
+    let mut max = 0f64;
+    for by in 0..PAGE_BLOCKS {
+        for bx in 0..PAGE_BLOCKS {
+            let mut sum = 0u64;
+            for cy in 0..B {
+                for cx in 0..B {
+                    let i = (by * B + cy) * PAGE_GRID + bx * B + cx;
+                    sum += a[i].abs_diff(b[i]) as u64;
+                }
+            }
+            max = max.max(sum as f64 / (B * B) as f64);
+        }
+    }
+    max
+}
+
 /// One detected change, appended as a JSON line to `frames/changes.jsonl`.
 /// `ts` is on the session wall clock — Step 5 精细抽帧按它定位视频切片。
 #[derive(Debug, Clone, Serialize)]
@@ -256,6 +279,13 @@ pub const HIST_DISTANCE_THRESHOLD: f64 = 0.35;
 pub const PHASH_HAMMING_NEW_PAGE: u32 = 8;
 /// 判页栅格边长（32×32 = 1024 采样点：SAD/直方图/pHash 共用）。
 pub const PAGE_GRID: usize = 32;
+/// 判页分块数（32×32 栅格 → 4×4 块，每块 8×8 cell）。
+pub const PAGE_BLOCKS: usize = 4;
+/// 块级 SAD 新页阈值：整窗录制时翻页只发生在局部区域，整帧 SAD/直方图/pHash
+/// 全被静态区域（浏览器框/章节侧栏）摊薄 —— 实机锚点 20260809_104544_114：
+/// 同页+老师红笔标注块级 SAD ≤ 7.7，同模板真翻页（文字页→拓扑图页）≥ 13.4，
+/// 而 pHash 汉明仅 4-6（≤8 旧阈值漏判）。取 10 坐中间。
+pub const BLOCK_SAD_NEW_PAGE: f64 = 10.0;
 
 /// O2 可配置阈值包（当前命令用 Default；后续接设置界面）。
 #[derive(Debug, Clone)]
@@ -265,6 +295,7 @@ pub struct ExtractConfig {
     pub sad_threshold: f64,
     pub hist_threshold: f64,
     pub hamming_new_page: u32,
+    pub block_sad_new_page: f64,
 }
 
 impl Default for ExtractConfig {
@@ -275,6 +306,7 @@ impl Default for ExtractConfig {
             sad_threshold: SAD_THRESHOLD,
             hist_threshold: HIST_DISTANCE_THRESHOLD,
             hamming_new_page: PHASH_HAMMING_NEW_PAGE,
+            block_sad_new_page: BLOCK_SAD_NEW_PAGE,
         }
     }
 }
@@ -381,10 +413,20 @@ pub struct DetectedPage {
     pub phash: u64,
 }
 
-/// 判页流水线状态机：SAD 预筛 → 去抖 → 直方图/pHash **双判（OR）** → pHash 去重。
-/// 双判语义：直方图距离大 → 明显新页；直方图距离小但 pHash 与当前页距离大 →
-/// 同亮度分布的新内容页（翻页召回命门，串联 AND 会漏判）——任一成立即候选新页，
-/// 最后再过 seen 去重（翻回旧页不收）。
+/// 一页的判页参照（栅格 + 直方图 + pHash）。判"是否不同页"用三路信号 OR：
+/// 直方图/pHash 管整帧大改，块级 SAD 管局部翻页（整窗录制被静态区域摊薄的场景）。
+#[derive(Debug, Clone)]
+struct PageRef {
+    grid: Vec<u8>,
+    hist: [u32; 32],
+    phash: u64,
+}
+
+/// 判页流水线状态机：SAD 预筛 → 去抖 → **三路判（OR）** → 去重。
+/// 三路语义：直方图距离大 → 明显新页；pHash 距离大 → 同亮度分布的新内容页；
+/// 块级 SAD 大 → 局部区域翻页（整窗录制课件区占比小，整帧信号被摊薄，
+/// 实机锚点 20260809_104544_114：同模板翻页 hamming 仅 4-6 但块级 SAD ≥13.4）
+/// —— 任一成立即候选新页，最后再过 seen 去重（翻回旧页不收）。
 ///
 /// 去抖语义（design「2–3s 内多次变化合并为一次翻页」）：变化先挂 pending，
 /// 窗内再变 → 更新 pending（画面还在动）；**静置满窗**（或段末 flush）才提交
@@ -394,9 +436,8 @@ pub struct PageExtractor {
     last_grid: Option<Vec<u8>>,
     /// 未提交的变化帧（ts + 栅格）；静置满 debounce 窗后提交判页。
     pending: Option<(i64, Vec<u8>)>,
-    current_page_hist: Option<[u32; 32]>,
-    current_page_phash: Option<u64>,
-    seen_phashes: Vec<u64>,
+    current: Option<PageRef>,
+    seen: Vec<PageRef>,
     pages: Vec<DetectedPage>,
 }
 
@@ -406,36 +447,49 @@ impl PageExtractor {
             cfg,
             last_grid: None,
             pending: None,
-            current_page_hist: None,
-            current_page_phash: None,
-            seen_phashes: Vec::new(),
+            current: None,
+            seen: Vec::new(),
             pages: Vec::new(),
         }
     }
 
-    /// 双判 + 去重，提交一个已静置的变化帧。返回 Some = 新页。
+    /// 三路判（OR）：page 参照与候选帧是否"不同页"。
+    fn page_differs(&self, page: &PageRef, grid: &[u8], hist: &[u32; 32], hash: u64) -> bool {
+        bhattacharyya_distance(&page.hist, hist) > self.cfg.hist_threshold
+            || hamming(page.phash, hash) > self.cfg.hamming_new_page
+            || max_block_sad(&page.grid, grid) > self.cfg.block_sad_new_page
+    }
+
+    /// 与当前页参照是否不同页 —— SAD 预筛漏网兜底用，与 commit 同语义。
+    /// 当前页未建立（首帧前）时恒 false。
+    fn differs_from_current_page(&self, grid: &[u8]) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|cur| self.page_differs(cur, grid, &gray_histogram(grid), phash64(grid)))
+    }
+
+    /// 三路判 + 去重，提交一个已静置的变化帧。返回 Some = 新页。
     fn commit(&mut self, ts_ms: i64, grid: &[u8]) -> Option<DetectedPage> {
         let hist = gray_histogram(grid);
         let hash = phash64(grid);
-        let hist_differs = match &self.current_page_hist {
-            Some(cur) => bhattacharyya_distance(cur, &hist) > self.cfg.hist_threshold,
-            None => true,
-        };
-        let phash_differs = match self.current_page_phash {
-            Some(cur) => hamming(cur, hash) > self.cfg.hamming_new_page,
-            None => true,
-        };
-        // 同页（老师标注/激光笔/小动画）或翻回旧页 → 只更新当前页参照，不收
+        let differs = self
+            .current
+            .as_ref()
+            .map_or(true, |cur| self.page_differs(cur, grid, &hist, hash));
+        // 与任何已收页"相同"（三路都判同）= 翻回旧页 → 只更新当前页参照，不收
         let is_dup = self
-            .seen_phashes
+            .seen
             .iter()
-            .any(|&p| hamming(p, hash) <= self.cfg.hamming_new_page);
-        self.current_page_hist = Some(hist);
-        self.current_page_phash = Some(hash);
-        if (!hist_differs && !phash_differs) || is_dup {
+            .any(|s| !self.page_differs(s, grid, &hist, hash));
+        self.current = Some(PageRef {
+            grid: grid.to_vec(),
+            hist,
+            phash: hash,
+        });
+        if !differs || is_dup {
             return None;
         }
-        self.seen_phashes.push(hash);
+        self.seen.push(self.current.clone().unwrap());
         let page = DetectedPage { ts_ms, phash: hash };
         self.pages.push(page.clone());
         Some(page)
@@ -455,7 +509,23 @@ impl PageExtractor {
                 if ts_ms - pts >= self.cfg.debounce_ms {
                     return self.commit(pts, &pgrid);
                 }
-                self.pending = Some((pts, pgrid)); // 窗还没满，继续挂着
+                // 窗还没满。内容相对 pending 帧仍在漂移（低 SAD 缓慢变化，
+                // 如嵌入视频播放）→ 重挂计时，防"每 2.5s 刷一页"的垃圾页；
+                // 静置中 → 继续挂着。
+                if sad_mean(&pgrid, grid) > self.cfg.sad_threshold {
+                    self.pending = Some((ts_ms, grid.to_vec()));
+                } else {
+                    self.pending = Some((pts, pgrid));
+                }
+                return None;
+            }
+            // SAD 预筛漏网兜底（2026-08-09 实机锚点 20260809_104544_114）：
+            // 整窗录制时课件区只占画面一部分 / 白底幻灯片只换文字，翻页
+            // SAD 实测仅 8.24 < 12 阈值，但与当前页 pHash 汉明 12 > 8。
+            // 画面静止却与当前页内容不同 = 悄悄翻到了新页 → 挂 pending
+            // 走去抖（静置满窗才提交，上文的漂移重挂防视频段刷页）。
+            if self.differs_from_current_page(grid) {
+                self.pending = Some((ts_ms, grid.to_vec()));
             }
             return None;
         }
@@ -783,6 +853,86 @@ mod tests {
         assert_eq!(ex.pages().len(), 2);
     }
 
+    /// AC-104 回归（2026-08-09 实机锚点 20260809_104544_114）：白底课件只换内容
+    /// （或整窗录制课件区占比小）时翻页 SAD 仅 ~8 < 12 预筛阈值，hist/pHash 兜底
+    /// 必须兜住 —— 静置满窗照样判新页。此前整段 147s 视频只抽出首帧 1 页。
+    #[test]
+    fn extractor_catches_low_sad_page_flip_via_content_fallback() {
+        // 白底稀疏内容页：横条 vs 竖条 ≈ "白底幻灯片换了一页内容"
+        let bar = |vertical: bool| -> Vec<u8> {
+            (0..PAGE_GRID * PAGE_GRID)
+                .map(|i| {
+                    let (x, y) = (i % PAGE_GRID, i / PAGE_GRID);
+                    if (vertical && x == 8) || (!vertical && y == 8) { 80 } else { 230 }
+                })
+                .collect()
+        };
+        let (a, b) = (bar(false), bar(true));
+        let cfg = ExtractConfig::default();
+        // 前提锚点：SAD 低于预筛阈值（兜底存在的意义），但 pHash 判为不同页
+        assert!(
+            sad_mean(&a, &b) <= cfg.sad_threshold,
+            "SAD 必须低于预筛阈值（否则测不到兜底）: {}",
+            sad_mean(&a, &b)
+        );
+        assert!(
+            hamming(phash64(&a), phash64(&b)) > cfg.hamming_new_page,
+            "前提：pHash 应判为不同页"
+        );
+
+        let mut ex = PageExtractor::new(cfg);
+        assert!(ex.push(0, &a).is_some(), "first frame = page 1");
+        for i in 1..20 {
+            assert!(ex.push(i * 500, &a).is_none(), "static page 1, ts={}", i * 500);
+        }
+        assert_eq!(ex.pages().len(), 1);
+        // 低 SAD 翻页：预筛不触发，兜底挂 pending；静置满窗 → 提交新页
+        assert!(ex.push(10_000, &b).is_none(), "change → pending");
+        for i in 1..5 {
+            assert!(ex.push(10_000 + i * 500, &b).is_none(), "settling, ts={}", 10_000 + i * 500);
+        }
+        assert!(ex.push(12_500, &b).is_some(), "settled low-SAD flip must commit");
+        assert_eq!(ex.pages().len(), 2);
+        // 提交后当前页参照已更新：继续静止不再出页
+        assert!(ex.push(15_000, &b).is_none());
+        assert_eq!(ex.pages().len(), 2);
+    }
+
+    /// 低 SAD 持续漂移（嵌入视频/动画一直动）不得每 2.5s 刷一页：
+    /// 内容不停变 → pending 被不断更新/重挂，永不静置满窗 → 永不提交。
+    #[test]
+    fn extractor_drift_rearms_pending_and_does_not_spam_pages() {
+        let cfg = ExtractConfig::default();
+        // 2 格宽竖条每 500ms 右移 1 格（模拟画面局部持续运动）：
+        // 与上一变化帧的 SAD 在 9~19 间波动（静态/变化分支都会走到），
+        // 关键是内容一直在动 → pending 永远挂不到 2.5s 静置。
+        let bar_at = |col: usize| -> Vec<u8> {
+            (0..PAGE_GRID * PAGE_GRID)
+                .map(|i| {
+                    let x = i % PAGE_GRID;
+                    if x == col || x == col + 1 { 80 } else { 230 }
+                })
+                .collect()
+        };
+        let mut ex = PageExtractor::new(cfg);
+        assert!(ex.push(0, &bar_at(2)).is_some(), "first frame = page 1");
+        let mut s = 0usize;
+        for i in 1..24 {
+            let col = 2 + i as usize;
+            if col + 1 >= PAGE_GRID {
+                break;
+            }
+            s += 1;
+            assert!(
+                ex.push(i * 500, &bar_at(col)).is_none(),
+                "drifting content must not commit, ts={}",
+                i * 500
+            );
+        }
+        assert!(s > 10, "漂移序列要足够长才测得到不刷页");
+        assert_eq!(ex.pages().len(), 1, "漂移段不得刷出新页");
+    }
+
     /// AC-104 端到端：合成 4s 切片（2 页）+ manifest（段起点 5000ms）→
     /// extract_session_frames 应检出 2 页、ts 带段偏移、图片落盘、ocr_text 占位。
     #[cfg(windows)]
@@ -841,6 +991,112 @@ mod tests {
         // 页间 ts 间隔 ≥ 去抖窗（粗判，H.264 噪声可能引入小幅抖动页）
         for pair in entries.windows(2) {
             assert!(pair[1].frame_ts > pair[0].frame_ts, "page ts must increase");
+        }
+    }
+
+    /// 真实切片判页诊断探针（2026-08-09「课件翻页多次却只抽 1 帧」）。
+    /// 每 500ms 采样打印 SAD/直方图距离/pHash 汉明距离 + PageExtractor 判定结果，
+    /// 看翻页到底死在哪一级（SAD 预筛 / 直方图 / pHash / 去抖）。
+    /// 用法：`VTT_TEST_VIDEO=<切片路径> cargo test --lib page_diag_probe -- --ignored --nocapture`
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "需要 VTT_TEST_VIDEO 指向真实切片"]
+    fn page_diag_probe() {
+        use crate::screen::decode::sample_video;
+        let path = std::path::PathBuf::from(
+            std::env::var("VTT_TEST_VIDEO").expect("set VTT_TEST_VIDEO to a video slice path"),
+        );
+        let cfg = ExtractConfig::default();
+        let mut extractor_holder = PageExtractor::new(cfg.clone());
+        let ex = &mut extractor_holder;
+        let mut prev: Option<Vec<u8>> = None;
+        let mut max_sad = 0f64;
+        let mut n = 0u64;
+        // 每 15s 存一帧 jpg 目检：验证"没被判页的时刻课件是否真的没变"
+        let dump_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target").join("test-sessions").join("decode").join("diag");
+        let _ = std::fs::remove_dir_all(&dump_dir);
+        std::fs::create_dir_all(&dump_dir).unwrap();
+        let mut anchors: Vec<(i64, Vec<u8>)> = Vec::new();
+        sample_video(&path, cfg.sample_step_ms, |f| {
+            let grid = downsample_gray(
+                &f.bgra,
+                f.width as usize,
+                f.height as usize,
+                PAGE_GRID,
+                PAGE_GRID,
+            );
+            let sad = prev.as_ref().map_or(0.0, |p| sad_mean(p, &grid));
+            max_sad = max_sad.max(sad);
+            // SAD 过 1/4 阈值就打印（全量 296 行太多，但静音期也要有据可查）
+            if sad > cfg.sad_threshold / 4.0 || n < 3 {
+                let hist = gray_histogram(&grid);
+                let hash = phash64(&grid);
+                let (hist_d, ham, blk) = match &ex.current {
+                    Some(cur) => (
+                        bhattacharyya_distance(&cur.hist, &hist),
+                        hamming(cur.phash, hash) as i32,
+                        max_block_sad(&cur.grid, &grid),
+                    ),
+                    None => (-1.0, -1, -1.0),
+                };
+                println!(
+                    "ts={:>6}ms SAD={sad:6.2} hist_d={hist_d:5.3} hamming={ham:>2} block_sad={blk:5.1} (阈值 SAD>{} hist>{} ham>{} block>{})",
+                    f.ts_ms, cfg.sad_threshold, cfg.hist_threshold, cfg.hamming_new_page, cfg.block_sad_new_page
+                );
+            }
+            if ex.push(f.ts_ms, &grid).is_some() {
+                println!("ts={:>6}ms → ★ 判为新页 #{}", f.ts_ms, ex.pages().len());
+            }
+            if f.ts_ms % 15_000 == 0 || f.ts_ms <= 5_000 {
+                let jpg = windows_capture::encoder::ImageEncoder::new(
+                    windows_capture::encoder::ImageFormat::Jpeg,
+                    windows_capture::encoder::ImageEncoderPixelFormat::Bgra8,
+                )
+                .and_then(|enc| enc.encode(&f.bgra, f.width, f.height))
+                .expect("encode diag jpg");
+                std::fs::write(dump_dir.join(format!("diag_{:06}.jpg", f.ts_ms)), jpg)
+                    .expect("write diag jpg");
+                anchors.push((f.ts_ms, grid.clone()));
+            }
+            prev = Some(grid);
+            n += 1;
+        })
+        .expect("sample real video");
+        if ex.flush().is_some() {
+            println!("flush → ★ 判为新页 #{}", ex.pages().len());
+        }
+        println!("sampled={n} max_SAD={max_sad:.2} pages={}", ex.pages().len());
+        // 锚点帧两两 pHash 汉明 / 直方图距离矩阵：看"同页带标注"与"真翻页"的数值间隔
+        let hashes: Vec<u64> = anchors.iter().map(|(_, g)| phash64(g)).collect();
+        let hists: Vec<[u32; 32]> = anchors.iter().map(|(_, g)| gray_histogram(g)).collect();
+        println!("pairwise (ts_s: hamming / hist_d / max_block_sad):");
+        for i in 0..anchors.len() {
+            for j in (i + 1)..anchors.len() {
+                // 32×32 栅格切成 4×4 块（每块 8×8 cell），取块内 SAD 的最大值：
+                // 局部翻页（课件区只占整窗一部分）在块级差异上应该暴露得更明显
+                let mut max_block = 0f64;
+                for by in 0..4 {
+                    for bx in 0..4 {
+                        let mut sum = 0u64;
+                        for cy in 0..8 {
+                            for cx in 0..8 {
+                                let idx = (by * 8 + cy) * 32 + bx * 8 + cx;
+                                sum += anchors[i].1[idx].abs_diff(anchors[j].1[idx]) as u64;
+                            }
+                        }
+                        max_block = max_block.max(sum as f64 / 64.0);
+                    }
+                }
+                println!(
+                    "  {:>3}s vs {:>3}s: ham={:>2} hist={:.3} block_sad={:.1}",
+                    anchors[i].0 / 1000,
+                    anchors[j].0 / 1000,
+                    hamming(hashes[i], hashes[j]),
+                    bhattacharyya_distance(&hists[i], &hists[j]),
+                    max_block
+                );
+            }
         }
     }
 }
