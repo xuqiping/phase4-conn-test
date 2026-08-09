@@ -62,6 +62,8 @@ docs/
 # 日志和临时文件
 *.log
 logs/
+# 例外：前端审计日志中心源码目录（非运行时日志输出）
+!agent-platform/frontend/src/views/admin/logs/
 *.tmp
 *.temp
 *.bak

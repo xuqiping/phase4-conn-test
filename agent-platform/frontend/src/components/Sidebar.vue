@@ -71,7 +71,8 @@ import {
   WalletOutline,
   BarChartOutline,
   CashOutline,
-  CardOutline
+  CardOutline,
+  DocumentTextOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
@@ -99,6 +100,8 @@ const canEditAssets = computed(() => authStore.hasPermission('asset:write'))
 const canManagePricing = computed(() => authStore.hasPermission('pricing:manage'))
 const canViewUsage = computed(() => authStore.hasPermission('usage:view'))
 const canRecharge = computed(() => authStore.hasPermission('points:recharge'))
+/** 审计日志入口仅 system:audit:read 持有者可见（日志系统 LOG-FR-12，admin 默认有） */
+const canViewAudit = computed(() => authStore.hasPermission('system:audit:read'))
 
 /** 导航项配置 */
 const navItems = computed(() => {
@@ -132,6 +135,9 @@ const navItems = computed(() => {
   }
   if (canViewUsage.value) {
     items.push({ path: '/admin/billing', label: '账单总览', icon: BarChartOutline })
+  }
+  if (canViewAudit.value) {
+    items.push({ path: '/admin/logs/audit', label: '审计日志', icon: DocumentTextOutline })
   }
   items.push({ path: '/wallet', label: '我的钱包', icon: CardOutline })
   items.push({ path: '/settings', label: '设置', icon: SettingsOutline })
