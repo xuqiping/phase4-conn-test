@@ -151,7 +151,12 @@ public class PointsWalletService {
         balanceMapper.insertIfAbsent(userId);
         BigDecimal after = balanceMapper.adjustBalanceReturn(userId, signedDelta);
         if (after == null) {
-            // 行不存在——理论 insertIfAbsent 已建；防御性抛错（不静默吞，防对账黑洞）
+            if (signedDelta.signum() < 0) {
+                // SEC-FR-120：SQL 守卫拦下透支（并发超扣/余额不足）→ 该笔拒扣。
+                // 计费铁律（LlmBillingService/MediaBillingService 吞异常）保证不炸用户请求。
+                throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS);
+            }
+            // 正向调整返 null = 行不存在——理论 insertIfAbsent 已建；防御性抛错（不静默吞，防对账黑洞）
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "钱包余额行缺失 userId=" + userId);
         }
         PointsLedgerEntity ledger = new PointsLedgerEntity();

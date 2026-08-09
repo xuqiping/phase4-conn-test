@@ -69,6 +69,30 @@ class PointsWalletServiceTest {
                 .isInstanceOf(BusinessException.class);
     }
 
+    // ---------- 安全体系 S1 · SEC-FR-120 SQL 守卫 ----------
+
+    // AC-SEC-FR-120：并发透支被 SQL 守卫拦下（adjustBalanceReturn 0 行）→ INSUFFICIENT_POINTS，非 500
+    @Test
+    void charge_overdrawGuard_throwsInsufficient() {
+        when(balanceMapper.adjustBalanceReturn(eq(1L), any())).thenReturn(null);
+
+        assertThatThrownBy(() -> wallet.charge(1L, new BigDecimal("5.00"), "CHAT", null, "m"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ErrorCode.INSUFFICIENT_POINTS.getCode()));
+    }
+
+    // AC-SEC-FR-120：正向调整返 null 仍是「行缺失」防御性 500（语义不混）
+    @Test
+    void refund_nullReturn_stillInternalError() {
+        when(balanceMapper.adjustBalanceReturn(eq(1L), any())).thenReturn(null);
+
+        assertThatThrownBy(() -> wallet.refund(1L, new BigDecimal("5.00"), "CHAT", null, "m"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ErrorCode.INTERNAL_ERROR.getCode()));
+    }
+
     @Test
     void requireAffordable_positiveBalance_passes() {
         when(balanceMapper.selectByUserId(1L)).thenReturn(balance("100.00"));
