@@ -21,7 +21,7 @@
         <foreach collection="rows" item="r" separator=",">
             (#{r.entryId}, #{r.summaryId}, #{r.projectId}, #{r.tagId}, #{r.userId}, NOW())
         </foreach>
-        ON CONFLICT (entry_id, project_id, tag_id, user_id) NULLS NOT DISTINCT DO NOTHING
+        ON CONFLICT (entry_id, project_id, tag_id, user_id) DO NOTHING
     </insert>
 
     <!-- 级联清：删某 summary 的全部条目覆盖行。 -->

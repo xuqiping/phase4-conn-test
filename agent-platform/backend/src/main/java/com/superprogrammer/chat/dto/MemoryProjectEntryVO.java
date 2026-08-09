@@ -1,7 +1,9 @@
 package com.superprogrammer.chat.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 
@@ -13,6 +15,8 @@ import java.time.OffsetDateTime;
  */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class MemoryProjectEntryVO {
 
     private Long id;

@@ -127,7 +127,7 @@ public class MemoryConsolidationService {
             try {
                 summarizeOneTag(userId, scopeProjectId, direction, tag, result);
             } catch (Exception e) {
-                log.warn("总结单 tag 异常 userId={} tagId={}: {}", userId, tag.getId(), e.getMessage());
+                log.warn("总结单 tag 异常 userId={} tagId={}: {}", userId, tag.getId(), e.getMessage(), e);
                 result.addNote("tag " + tag.getId() + " 异常: " + e.getMessage());
             }
         }
@@ -265,7 +265,7 @@ public class MemoryConsolidationService {
                         tagLabels.getOrDefault(tagId, "总结"), groupEntries, result);
             } catch (Exception e) {
                 log.warn("项目总结单 tag 异常 operatorId={} projectId={} tagId={}: {}",
-                        operatorId, projectId, tagId, e.getMessage());
+                        operatorId, projectId, tagId, e.getMessage(), e);
                 result.addNote("tag " + tagId + " 异常: " + e.getMessage());
             }
         }
@@ -369,7 +369,7 @@ public class MemoryConsolidationService {
                 } catch (Exception e) {
                     scopeMapper.releaseLockFailure(scopeId);
                     aggregate.addNote("scope " + scopeId + " 失败: " + e.getMessage());
-                    log.warn("手动总结 scope 失败 userId={} scopeId={}: {}", userId, scopeId, e.getMessage());
+                    log.warn("手动总结 scope 失败 userId={} scopeId={}: {}", userId, scopeId, e.getMessage(), e);
                 }
             } catch (Exception e) {
                 aggregate.addNote("scope 异常: " + e.getMessage());
