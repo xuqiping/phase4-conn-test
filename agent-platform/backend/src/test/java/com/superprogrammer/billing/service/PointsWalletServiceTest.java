@@ -59,7 +59,6 @@ class PointsWalletServiceTest {
     }
 
     // ---------- requireAffordable ----------
-
     @Test
     void requireAffordable_zeroBalance_throws() {
         when(balanceMapper.selectByUserId(1L)).thenReturn(balance("0"));
@@ -234,6 +233,8 @@ class PointsWalletServiceTest {
     void chargeIdempotent_duplicateKey_returnsFirstResultWithoutRecharging() {
         IdempotencyKeyEntity existing = new IdempotencyKeyEntity();
         existing.setIdemKey("k1");
+        existing.setUserId(1L);
+        existing.setScope("billing.charge");
         existing.setResultRef("42");
         PointsLedgerEntity first = new PointsLedgerEntity();
         first.setId(42L);
@@ -257,6 +258,8 @@ class PointsWalletServiceTest {
     void chargeIdempotent_sameKeyDifferentAmount_auditsAndReturnsFirst() {
         IdempotencyKeyEntity existing = new IdempotencyKeyEntity();
         existing.setIdemKey("k1");
+        existing.setUserId(1L);
+        existing.setScope("billing.charge");
         existing.setResultRef("42");
         PointsLedgerEntity first = new PointsLedgerEntity();
         first.setId(42L);
@@ -281,6 +284,8 @@ class PointsWalletServiceTest {
     void chargeIdempotent_occupiedButNoResult_throwsConflict() {
         IdempotencyKeyEntity existing = new IdempotencyKeyEntity();
         existing.setIdemKey("k1"); // resultRef = null
+        existing.setUserId(1L);
+        existing.setScope("billing.charge");
         when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
         when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
 
@@ -322,6 +327,52 @@ class PointsWalletServiceTest {
         assertThat(result).isEqualByComparingTo(points);
         verify(paymentOrderMapper).insert(any());
         verify(idempotencyKeyMapper).updateResultRef("g1", "7");
+    }
+
+    // Phase4 审查修正（opus 资金🔴）：撞键身份核验——键全局唯一，跨用户同键 = 疑似重放/伪造，
+    // 绝不回返首次结果（含他人 balanceAfter = 跨用户余额泄露信道）→ 审计 + CONFLICT
+    @Test
+    void chargeIdempotent_collidingKeyDifferentUser_throwsConflictAndAudits() {
+        IdempotencyKeyEntity existing = new IdempotencyKeyEntity();
+        existing.setIdemKey("k1");
+        existing.setUserId(2L); // 键属他人
+        existing.setScope("billing.charge");
+        existing.setResultRef("42");
+        when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
+        when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
+        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), any(), eq("FAIL")))
+                .thenReturn(new AuditLogEntity());
+
+        assertThatThrownBy(() -> wallet.chargeIdempotent(1L, new BigDecimal("50.00"),
+                PointsLedgerEntity.REF_CHAT, 99L, "m", "k1"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ErrorCode.CONFLICT.getCode()));
+        verify(auditLogService).record(any(AuditLogEntity.class));
+        verify(balanceMapper, org.mockito.Mockito.never()).adjustBalanceReturn(any(), any()); // 绝不扣也不回查返结果
+        verify(ledgerMapper, org.mockito.Mockito.never()).selectById(any());
+    }
+
+    // 同上：同用户但跨 scope 同键（grant 的键拿到 charge 用）= 伪造 → CONFLICT + 审计
+    @Test
+    void chargeIdempotent_collidingKeyDifferentScope_throwsConflictAndAudits() {
+        IdempotencyKeyEntity existing = new IdempotencyKeyEntity();
+        existing.setIdemKey("k1");
+        existing.setUserId(1L);
+        existing.setScope("billing.grant"); // 键属另一 scope
+        existing.setResultRef("42");
+        when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
+        when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
+        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), any(), eq("FAIL")))
+                .thenReturn(new AuditLogEntity());
+
+        assertThatThrownBy(() -> wallet.chargeIdempotent(1L, new BigDecimal("50.00"),
+                PointsLedgerEntity.REF_CHAT, 99L, "m", "k1"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ErrorCode.CONFLICT.getCode()));
+        verify(auditLogService).record(any(AuditLogEntity.class));
+        verify(balanceMapper, org.mockito.Mockito.never()).adjustBalanceReturn(any(), any());
     }
 
     private UserPointsBalanceEntity balance(String points) {

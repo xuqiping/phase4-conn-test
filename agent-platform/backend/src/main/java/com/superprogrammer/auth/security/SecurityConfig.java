@@ -45,6 +45,9 @@ public class SecurityConfig {
         http
                 // 禁用CSRF（前后端分离，使用JWT）
                 .csrf(AbstractHttpConfigurer::disable)
+                // CORS 内联进安全链（corsConfigurationSource bean，见 CorsConfig）——预检 OPTIONS 须在
+                // 授权判定之前处理，否则白名单 Origin 的跨域预检被 anyRequest().authenticated() 401 截杀。
+                .cors(org.springframework.security.config.Customizer.withDefaults())
                 // 安全体系 S1 · SEC-FR-002 安全响应头：CSP / X-Frame-Options / nosniff / Referrer-Policy。
                 // style-src 'unsafe-inline' 是 Naive UI 内联样式的放行（plan 联动点）；HSTS 待 HTTPS 落地后开启。
                 .headers(headers -> headers

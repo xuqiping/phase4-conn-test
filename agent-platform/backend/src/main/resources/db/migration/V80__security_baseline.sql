@@ -12,7 +12,7 @@
 --   ALTER TABLE user_points_balance DROP CONSTRAINT IF EXISTS chk_balance_non_negative;
 --   DROP TABLE IF EXISTS idempotency_keys;
 --   ALTER TABLE points_ledger DROP CONSTRAINT IF EXISTS uq_ledger_ref;
---   GRANT UPDATE, DELETE ON points_ledger TO <应用账号>;  -- 按部署账号名
+--   GRANT UPDATE, DELETE ON points_ledger TO agent_app;  -- 生产应用账号
 -- ============================================================
 
 -- ---------- Step 8 · SEC-FR-120：余额非负 CHECK 兜底 ----------
@@ -43,5 +43,15 @@ ALTER TABLE points_ledger
 
 -- ---------- Step 11 · SEC-FR-123：流水只增不改 ----------
 -- 应用账号禁 UPDATE/DELETE points_ledger（对账可信源；沿用 V78 audit_logs 同范式）。
--- CURRENT_USER = 迁移执行账号 = 应用运行账号（本部署同一账号）。
-REVOKE UPDATE, DELETE ON points_ledger FROM CURRENT_USER;
+-- Phase4 交叉审查实证修正：REVOKE ... FROM CURRENT_USER 是空操作——PG 表 owner 权限不可回收，
+-- 且迁移执行账号 ≠ 应用运行账号时（生产 owner=postgres 跑迁移、agent_app 跑应用）根本收不到应用账号头上。
+-- 回归 V78 机制：DO 块判 agent_app 角色存在再收；本地 dev 超管下本就无效（打 NOTICE 不炸迁移）。
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agent_app') THEN
+        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON points_ledger FROM agent_app';
+        RAISE NOTICE 'points_ledger REVOKE applied to role agent_app';
+    ELSE
+        RAISE NOTICE 'role agent_app 不存在，跳过 points_ledger REVOKE（本地 dev 超管账号下本就无效；生产部署须先建 agent_app 非超管账号）';
+    END IF;
+END $$;

@@ -114,17 +114,23 @@ public class PointsWalletService {
                 () -> adjust(userId, points, PointsLedgerEntity.TYPE_REFUND, null, refType, refId, remark, "积分退款"));
     }
 
+    public BigDecimal grantIdempotent(Long userId, BigDecimal points, BigDecimal moneyYuan,
+                                      String channel, String channelOrderId, String idemKey) {
+        return grantIdempotent(userId, points, moneyYuan, channel, channelOrderId, idemKey, null);
+    }
+
     /**
      * SEC-FR-121 幂等充值（admin grant / 支付回调）：idemKey 空退化为普通 {@link #grant}。
+     * remark 可空，空走默认文案「积分充值」。
      */
     @Transactional(rollbackFor = Exception.class)
     public BigDecimal grantIdempotent(Long userId, BigDecimal points, BigDecimal moneyYuan,
-                                      String channel, String channelOrderId, String idemKey) {
+                                      String channel, String channelOrderId, String idemKey, String remark) {
         if (idemKey == null || idemKey.isBlank()) {
-            return grant(userId, points, moneyYuan, channel, channelOrderId);
+            return grant(userId, points, moneyYuan, channel, channelOrderId, remark);
         }
         return runIdempotent(idemKey, userId, "billing.grant", points,
-                () -> grantWithLedger(userId, points, moneyYuan, channel, channelOrderId));
+                () -> grantWithLedger(userId, points, moneyYuan, channel, channelOrderId, remark));
     }
 
     /**
@@ -137,6 +143,13 @@ public class PointsWalletService {
                                      java.util.function.Supplier<PointsLedgerEntity> action) {
         if (idempotencyKeyMapper.tryOccupy(idemKey, userId, scope) == 0) {
             IdempotencyKeyEntity existing = idempotencyKeyMapper.selectByKey(idemKey);
+            // Phase4 审查修正：撞键必须核验身份——键全局唯一，跨用户/跨 scope 同键 = 疑似重放/伪造，
+            // 绝不回返首次结果（含他人 balanceAfter，是跨用户余额泄露信道），审计 + CONFLICT。
+            if (existing != null && (!existing.getUserId().equals(userId) || !existing.getScope().equals(scope))) {
+                auditIdemConflict(idemKey, userId, scope + "|owner=" + existing.getUserId() + "/" + existing.getScope(),
+                        null, expectPoints);
+                throw new BusinessException(ErrorCode.CONFLICT, "幂等键冲突，请更换幂等键");
+            }
             PointsLedgerEntity first = null;
             if (existing != null && existing.getResultRef() != null) {
                 first = ledgerMapper.selectById(Long.valueOf(existing.getResultRef()));
@@ -198,12 +211,19 @@ public class PointsWalletService {
     @Transactional(rollbackFor = Exception.class)
     public BigDecimal grant(Long userId, BigDecimal points, BigDecimal moneyYuan,
                             String channel, String channelOrderId) {
-        return grantWithLedger(userId, points, moneyYuan, channel, channelOrderId).getBalanceAfter();
+        return grant(userId, points, moneyYuan, channel, channelOrderId, null);
+    }
+
+    /** remark 可空版：空走默认文案「充值」（admin 充值备注落 ledger.remark）。 */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal grant(Long userId, BigDecimal points, BigDecimal moneyYuan,
+                            String channel, String channelOrderId, String remark) {
+        return grantWithLedger(userId, points, moneyYuan, channel, channelOrderId, remark).getBalanceAfter();
     }
 
     /** grant 的实体返回版（SEC-FR-121 幂等回填 result_ref 需要流水 id）。 */
     private PointsLedgerEntity grantWithLedger(Long userId, BigDecimal points, BigDecimal moneyYuan,
-                                               String channel, String channelOrderId) {
+                                               String channel, String channelOrderId, String remark) {
         if (userId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "充值目标用户不能为空");
         }
@@ -227,7 +247,7 @@ public class PointsWalletService {
                 ? PointsLedgerEntity.TYPE_ADMIN_GRANT
                 : PointsLedgerEntity.TYPE_RECHARGE;
         return adjust(userId, points, type, moneyYuan, PointsLedgerEntity.REF_PAYMENT,
-                order.getId(), "充值", "积分充值");
+                order.getId(), remark != null && !remark.isBlank() ? remark : "充值", "积分充值");
     }
 
     /** 查余额（用户钱包页）。无行返 0。 */

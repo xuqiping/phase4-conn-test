@@ -3,6 +3,7 @@ package com.superprogrammer.billing.dto;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -26,12 +27,14 @@ public class RechargeRequest {
     @DecimalMax(value = "100000000", message = "points 超出单次充值上限(1 亿)")
     private BigDecimal points;
 
-    /** 备注（落 ledger.remark，可空）。 */
+    /** 备注（落 ledger.remark，可空；上限对齐 ledger.remark VARCHAR(256)）。 */
+    @Size(max = 256, message = "remark 超长（≤256）")
     private String remark;
 
     /**
      * 幂等键（可空，安全体系 S1 · SEC-FR-121）：admin 重复提交/网络重试同键只充一次，
-     * 返回首次结果。空则退化为普通充值。
+     * 返回首次结果。空则退化为普通充值。上限对齐 idempotency_keys.idem_key VARCHAR(128)。
      */
+    @Size(max = 128, message = "idempotencyKey 超长（≤128）")
     private String idempotencyKey;
 }

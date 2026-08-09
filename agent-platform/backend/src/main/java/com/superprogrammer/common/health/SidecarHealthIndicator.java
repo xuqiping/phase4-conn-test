@@ -1,6 +1,7 @@
 package com.superprogrammer.common.health;
 
 import com.superprogrammer.runtime.config.RuntimeGatewayProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -26,6 +27,8 @@ public class SidecarHealthIndicator implements HealthIndicator {
     private final RuntimeGatewayProperties properties;
     private final HttpClient httpClient;
 
+    /** 多构造器（测试可注入 mock HttpClient）须显式 @Autowired，否则 Spring 回退找无参构造启动即炸。 */
+    @Autowired
     public SidecarHealthIndicator(RuntimeGatewayProperties properties) {
         this(properties, HttpClient.newBuilder().connectTimeout(TIMEOUT).build());
     }

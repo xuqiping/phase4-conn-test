@@ -74,6 +74,12 @@ public class MediaBillingService {
             log.warn("媒体计费失败(已记FAILED,不阻塞媒体出口) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());
             return null;
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Phase4 审查修正：refId=任务 id 锚定 uq_ledger_ref，重复扣减被唯一约束拦下会落进这里——
+            // 这不是失败而是「恰好一次」语义生效，单列日志不与真实失败混淆（对账时不计缺口）。
+            log.info("媒体计费疑似重复扣减被唯一约束拦截(恰好一次生效,非失败) userId={} model={} kind={} refId={} : {}",
+                    userId, model, kind, refId, e.toString());
+            return null;
         } catch (Exception e) {
             // 兜底：任何意外都不许回归媒体出口
             log.warn("媒体计费意外异常(吞) userId={} model={} kind={} refId={} : {}",

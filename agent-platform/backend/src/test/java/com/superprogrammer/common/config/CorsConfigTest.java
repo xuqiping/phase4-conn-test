@@ -3,27 +3,22 @@ package com.superprogrammer.common.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.filter.CorsFilter;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 安全体系 S1 · SEC-FR-003 CORS 收紧测试：白名单模式精确放行 / 空配置 dev 宽松。
+ * <p>Phase4 审查修正：CORS 内联进安全链后 bean 从独立 CorsFilter 改为
+ * {@link CorsConfig#corsConfigurationSource()}（预检须在授权判定前处理），断言目标同步换。
  */
 class CorsConfigTest {
 
     private CorsConfiguration configWith(String allowedOrigins) {
         CorsConfig cors = new CorsConfig();
         ReflectionTestUtils.setField(cors, "allowedOrigins", allowedOrigins);
-        CorsFilter filter = cors.corsFilter();
-        // CorsFilter 暴露 config source；直接从 filter 抽配置断言
-        return filterConfig(filter);
-    }
-
-    private static CorsConfiguration filterConfig(CorsFilter filter) {
-        org.springframework.web.cors.UrlBasedCorsConfigurationSource source =
-                (org.springframework.web.cors.UrlBasedCorsConfigurationSource)
-                        ReflectionTestUtils.getField(filter, "configSource");
+        UrlBasedCorsConfigurationSource source =
+                (UrlBasedCorsConfigurationSource) cors.corsConfigurationSource();
         return source.getCorsConfigurations().get("/**");
     }
 

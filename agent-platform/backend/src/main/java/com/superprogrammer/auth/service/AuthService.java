@@ -63,6 +63,8 @@ public class AuthService {
     // 计数键 TTL=窗口（自然过期自动解锁，TTL 误杀合法用户风险归零）；Redis 故障降级放行 + WARN。
     private static final String LOGIN_FAIL_USER_PREFIX = "login:fail:u:";
     private static final String LOGIN_FAIL_IP_PREFIX = "login:fail:ip:";
+    /** user==null 分支的 dummy 比对目标（有效 bcrypt，强度与真实口令一致），抹平账号存在性时间侧信道。 */
+    private static final String DUMMY_BCRYPT_HASH = "$2b$10$dinNKZ7q5nyOQXsC.P6uo.eqMpM6WlTeRO.2yV26dGK4V1tV0p2Kq";
     private static final long LOGIN_LOCK_MAX_FAILS = 5;
     private static final long LOGIN_LOCK_WINDOW_SECONDS = 15 * 60;
     private static final long LOGIN_IP_BAN_MAX_FAILS = 20;
@@ -140,21 +142,38 @@ public class AuthService {
         }
     }
 
-    /** 取真实客户端 IP（经 Nginx 反代时取 X-Forwarded-For 首段）。无请求上下文 → null。 */
+    /**
+     * 取真实客户端 IP。Phase4 审查修正：X-Forwarded-For 是客户端可伪造头，无条件信任 =
+     * 攻击者轮换 XFF 即架空 IP 封禁（且 login:fail:ip:* 键无限膨胀）。
+     * 仅当 remoteAddr 命中可信代理网段（{@code app.security.trusted-proxies}，逗号分隔精确 IP，
+     * 默认空=不信任何 XFF）才采纳 XFF 首段；生产 Nginx 反代须把 Nginx 内网地址配进来。
+     */
+    @org.springframework.beans.factory.annotation.Value("${app.security.trusted-proxies:}")
+    private String trustedProxies;
+
     private String currentClientIp() {
         try {
             Object attrsObj = RequestContextHolder.currentRequestAttributes();
             if (!(attrsObj instanceof ServletRequestAttributes attrs)) return null;
             HttpServletRequest req = attrs.getRequest();
+            String remote = req.getRemoteAddr();
             String xff = req.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
+            if (xff != null && !xff.isBlank() && isTrustedProxy(remote)) {
                 int comma = xff.indexOf(',');
                 return (comma > 0 ? xff.substring(0, comma) : xff).trim();
             }
-            return req.getRemoteAddr();
+            return remote;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private boolean isTrustedProxy(String remoteAddr) {
+        if (remoteAddr == null || trustedProxies == null || trustedProxies.isBlank()) return false;
+        for (String p : trustedProxies.split(",")) {
+            if (remoteAddr.equals(p.trim())) return true;
+        }
+        return false;
     }
 
     @Transactional
@@ -170,6 +189,9 @@ public class AuthService {
         User user = userMapper.selectOne(wrapper);
 
         if (user == null) {
+            // Phase4 审查修正：不存在用户也做一次 dummy bcrypt 比对——否则响应时间差（跳过 ~100ms 哈希）
+            // 即账号存在性 oracle（40103 统一话术堵了内容侧，时间侧也得堵）。
+            passwordEncoder.matches(request.getPassword(), DUMMY_BCRYPT_HASH);
             recordLoginFailure(usernameKey, clientIp, null, request.getUsername());
             auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
