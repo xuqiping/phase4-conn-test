@@ -49,6 +49,7 @@ class AuditLogControllerTest {
 
     @Autowired MockMvc mvc;
     @MockBean AuditLogMapper auditLogMapper;
+    @MockBean AuditChainVerifyService auditChainVerifyService;
     @MockBean PermissionEvaluator permissionEvaluator;
 
     @AfterEach

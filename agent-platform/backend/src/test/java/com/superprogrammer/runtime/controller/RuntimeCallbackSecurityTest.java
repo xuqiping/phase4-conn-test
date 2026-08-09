@@ -22,7 +22,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(RuntimeCallbackController.class)
+@WebMvcTest(controllers = RuntimeCallbackController.class,
+        properties = "runtime.callback.token=test-token")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class RuntimeCallbackSecurityTest {
 
@@ -38,6 +39,9 @@ class RuntimeCallbackSecurityTest {
     @MockBean
     private AuthService authService;
 
+    @MockBean
+    private com.superprogrammer.auth.service.SessionService sessionService;
+
     @Test
     void executeNode_allowsSidecarCallbackWithoutJwt() throws Exception {
         when(runtimeNodeCallbackService.executeNode(any()))
@@ -47,6 +51,8 @@ class RuntimeCallbackSecurityTest {
                         .build());
 
         mockMvc.perform(post("/api/runtime/callbacks/nodes/execute")
+                        // 安全加固后回调端点 fail-closed：须带预共享密钥头（无 JWT，模拟 sidecar 出站）
+                        .header("X-Runtime-Token", "test-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
