@@ -24,6 +24,10 @@ public enum ErrorCode {
     AGENT_NO_SKILL(42203, "Agent无技能"),
     RATE_LIMIT(429, "请求频率超限"),
 
+    // 文件（安全体系 S1）
+    FILE_TYPE_NOT_ALLOWED(40010, "文件类型不允许上传"),
+    LOGIN_LOCKED(40103, "登录失败次数过多，请稍后再试"),
+
     // 计费（402 Payment Required 桶）
     INSUFFICIENT_POINTS(40201, "积分余额不足，请联系管理员充值"),
     PRICING_NOT_FOUND(40202, "未配置该模型的价表，无法计费"),

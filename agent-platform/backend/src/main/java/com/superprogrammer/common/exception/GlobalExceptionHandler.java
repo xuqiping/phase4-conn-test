@@ -138,13 +138,24 @@ public class GlobalExceptionHandler {
         return msg;
     }
 
+    /**
+     * 业务码 → HTTP 状态映射。5 位业务码约定「前三位 = HTTP 语义」：
+     * 40010→400、40103→401、40201→402、40301→403、42202→422。
+     * （安全体系 S1 顺手修既有 F4：40201 曾落 500；RATE_LIMIT 429 曾落 400。）
+     */
     private HttpStatus resolveHttpStatus(int code) {
         if (code == 200) return HttpStatus.OK;
-        if (code == 409) return HttpStatus.CONFLICT;
-        if (code == 401 || code == 40101 || code == 40102) return HttpStatus.UNAUTHORIZED;
-        if (code == 403 || code == 40301) return HttpStatus.FORBIDDEN;
-        if (code == 404) return HttpStatus.NOT_FOUND;
-        if (code >= 400 && code < 500) return HttpStatus.BAD_REQUEST;
-        return HttpStatus.INTERNAL_SERVER_ERROR;
+        int http = code >= 10000 ? code / 100 : code;
+        return switch (http) {
+            case 400 -> HttpStatus.BAD_REQUEST;
+            case 401 -> HttpStatus.UNAUTHORIZED;
+            case 402 -> HttpStatus.PAYMENT_REQUIRED;
+            case 403 -> HttpStatus.FORBIDDEN;
+            case 404 -> HttpStatus.NOT_FOUND;
+            case 409 -> HttpStatus.CONFLICT;
+            case 422 -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case 429 -> HttpStatus.TOO_MANY_REQUESTS;
+            default -> HttpStatus.INTERNAL_SERVER_ERROR;
+        };
     }
 }
