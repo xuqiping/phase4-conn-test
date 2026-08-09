@@ -1,6 +1,7 @@
 package com.superprogrammer.auth.security;
 
 import com.superprogrammer.auth.service.AuthService;
+import com.superprogrammer.auth.service.SessionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -29,6 +30,9 @@ class SecurityHeadersTest {
 
     @MockBean
     private AuthService authService;
+
+    @MockBean
+    private SessionService sessionService;
 
     // AC-SEC-FR-002：四安全头齐出（未认证 401 响应同样带头——HeaderWriterFilter 在入口点前写入）
     @Test

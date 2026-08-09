@@ -48,6 +48,7 @@ class AuthServiceAuditTest {
     @Mock private DepartmentService departmentService;
     @Mock private AuditLogService auditLogService;
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    @Mock private SessionService sessionService;
 
     @InjectMocks
     private AuthService authService;
@@ -84,8 +85,8 @@ class AuthServiceAuditTest {
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(List.of("user"));
         when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(List.of());
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("at");
-        when(jwtUtil.generateRefreshToken(1L)).thenReturn("rt");
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("at");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("rt");
 
         LoginRequest req = new LoginRequest();
         req.setUsername("testuser");
@@ -169,10 +170,12 @@ class AuthServiceAuditTest {
         when(jwtUtil.getTokenId("rt")).thenReturn("jti-1");
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
         when(jwtUtil.getUserIdFromToken("rt")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("rt")).thenReturn("sid-1");
+        when(sessionService.isCurrent(1L, "sid-1")).thenReturn(true);
         when(userMapper.selectById(1L)).thenReturn(testUser);
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(List.of("user"));
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("new-at");
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), eq("sid-1"))).thenReturn("new-at");
 
         RefreshTokenRequest req = new RefreshTokenRequest();
         req.setRefreshToken("rt");

@@ -11,4 +11,7 @@ public class AuthSettingsUpdateRequest {
     @Min(60000)
     @Max(604800000)
     private Long accessTokenExpirationMs;
+
+    /** A8 单点登录开关；null=不改动（部分更新）。 */
+    private Boolean singleSessionEnabled;
 }

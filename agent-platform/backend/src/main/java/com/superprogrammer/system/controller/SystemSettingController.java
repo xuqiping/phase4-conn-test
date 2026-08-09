@@ -36,7 +36,7 @@ public class SystemSettingController {
     @AuditLog(module = "system", action = "update_auth_settings", targetType = "setting")
     public ResponseEntity<R<AuthSettingsVO>> updateAuthSettings(
             @Valid @RequestBody AuthSettingsUpdateRequest request) {
-        return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs())));
+        return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs(), request.getSingleSessionEnabled())));
     }
 
     // ---- RAG/记忆模式全局开关（V26）----

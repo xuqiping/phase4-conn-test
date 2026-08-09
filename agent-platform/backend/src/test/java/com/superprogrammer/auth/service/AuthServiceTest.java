@@ -65,6 +65,9 @@ class AuthServiceTest {
     private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     @Mock
+    private SessionService sessionService;
+
+    @Mock
     private ValueOperations<String, String> valueOperations;
 
     @InjectMocks
@@ -122,8 +125,8 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
-        when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
         when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
         when(userMapper.updateById(any(User.class))).thenReturn(1);
@@ -155,8 +158,8 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
-        when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
         when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
         when(userMapper.updateById(any(User.class))).thenReturn(1);
@@ -266,8 +269,8 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
-        when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
         when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
         when(userMapper.updateById(any(User.class))).thenReturn(1);
@@ -285,9 +288,11 @@ class AuthServiceTest {
         when(jwtUtil.isTokenValid("valid-refresh-token")).thenReturn(true);
         when(jwtUtil.getTypeFromToken("valid-refresh-token")).thenReturn("refresh");
         when(jwtUtil.getUserIdFromToken("valid-refresh-token")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("valid-refresh-token")).thenReturn("sid-1");
+        when(sessionService.isCurrent(1L, "sid-1")).thenReturn(true);
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
         when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
-        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L))).thenReturn("new-access-token");
+        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L), eq("sid-1"))).thenReturn("new-access-token");
         when(userMapper.selectById(1L)).thenReturn(testUser);
         when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
 
@@ -306,6 +311,26 @@ class AuthServiceTest {
         when(jwtUtil.isTokenValid("invalid-token")).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> authService.refreshToken(request));
+    }
+
+    // AC-SEC-FR-008：被踢会话的 refresh 同样拒绝（40104 固定话术），不查库不签发
+    @Test
+    void refreshToken_kickedSession_rejected() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("old-refresh-token");
+
+        when(jwtUtil.isTokenValid("old-refresh-token")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("old-refresh-token")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("old-refresh-token")).thenReturn("jti-old");
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(jwtUtil.getUserIdFromToken("old-refresh-token")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("old-refresh-token")).thenReturn("sid-old");
+        when(sessionService.isCurrent(1L, "sid-old")).thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.refreshToken(request));
+
+        assertEquals(40104, e.getCode());   // SESSION_KICKED
+        verify(userMapper, never()).selectById(anyLong());
     }
 
     @Test

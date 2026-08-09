@@ -49,6 +49,8 @@ public class AuthService {
     private final AuditLogService auditLogService;
     /** 运维系统 OPS-FR-07：登录结果 + 注册限流触发指标（result 仅 success/fail）。 */
     private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    /** 安全体系 S2 · A8（SEC-FR-008）：单点登录会话（sid 签发/比对/登出清除）。 */
+    private final SessionService sessionService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -336,8 +338,10 @@ public class AuthService {
      */
     private TokenResponse issueTokens(User user, List<String> roleCodes, List<String> permissionCodes) {
         long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
-        String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getUsername(), roleCodes, accessExpirationMs);
-        String refreshToken = jwtUtil.generateRefreshToken(user.getId());
+        // A8 单点登录：开新会话（覆盖写=踢旧），sid 签进 access+refresh
+        String sid = sessionService.newSession(user.getId(), user.getUsername());
+        String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getUsername(), roleCodes, accessExpirationMs, sid);
+        String refreshToken = jwtUtil.generateRefreshToken(user.getId(), sid);
 
         // 更新最后登录时间
         user.setLastLoginAt(OffsetDateTime.now());
@@ -448,6 +452,12 @@ public class AuthService {
 
         // 获取用户信息并生成新access token
         Long userId = jwtUtil.getUserIdFromToken(refreshToken);
+        // A8：refresh 须带 sid 且匹配当前会话（被踢会话的 refresh 同样拒绝，固定话术）
+        String sid = jwtUtil.getSidFromToken(refreshToken);
+        if (!sessionService.isCurrent(userId, sid)) {
+            auditAuth("refresh", userId, "-", AuditLogEntity.RESULT_FAIL, "session_kicked");
+            throw new BusinessException(ErrorCode.SESSION_KICKED);
+        }
         User user = userMapper.selectById(userId);
         if (user == null) {
             auditAuth("refresh", null, "-", AuditLogEntity.RESULT_FAIL, "user_not_found");
@@ -456,7 +466,8 @@ public class AuthService {
 
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
         long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
-        String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs);
+        // A8：旋转沿用同 sid（会话延续）
+        String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs, sid);
 
         auditAuth("refresh", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         return TokenResponse.builder()
@@ -494,6 +505,8 @@ public class AuthService {
             logoutUserId = jwtUtil.getUserIdFromToken(accessToken);
             logoutUsername = jwtUtil.getUsernameFromToken(accessToken);
         }
+        // A8：登出删会话键（黑名单保留防登出后 token 残留复用；sid 比对在黑名单之后）
+        sessionService.clearSession(logoutUserId);
         auditAuth("logout", logoutUserId, logoutUsername, AuditLogEntity.RESULT_SUCCESS, null);
         log.info("用户登出成功");
     }

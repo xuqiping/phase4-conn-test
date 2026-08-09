@@ -57,11 +57,31 @@ class SystemSettingServiceTest {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
 
-        service.updateAuthSettings(600000L);
+        service.updateAuthSettings(600000L, null);
 
         verify(mapper).insert(argThat(s ->
                 SystemSettingService.ACCESS_TOKEN_EXPIRATION_MS.equals(s.getSettingKey())
                         && "600000".equals(s.getSettingValue())));
+    }
+
+    // AC-SEC-FR-008：单点登录开关 upsert + 默认开；传 null = 不改动
+    @Test
+    void updateAuthSettings_singleSessionFlag_upsertsWhenProvided() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+
+        service.updateAuthSettings(600000L, false);
+
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.AUTH_SINGLE_SESSION_ENABLED.equals(s.getSettingKey())
+                        && "false".equals(s.getSettingValue())));
+    }
+
+    @Test
+    void getBoolean_singleSession_defaultsTrueWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertTrue(service.getBoolean(SystemSettingService.AUTH_SINGLE_SESSION_ENABLED, true));
     }
 
     // ============================ V38 LLM_KEY 检索模式 + BOTH 标签语言 ============================
