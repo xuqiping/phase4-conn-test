@@ -1,6 +1,8 @@
 package com.superprogrammer.media.config;
 
 import com.superprogrammer.billing.context.BillingContextTaskDecorator;
+import com.superprogrammer.common.logging.CompositeTaskDecorator;
+import com.superprogrammer.common.logging.MdcContextTaskDecorator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -27,7 +29,9 @@ public class MediaTaskExecutorConfig {
         executor.setThreadNamePrefix("media-task-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         // 计费归户：透传提交线程 userId（媒体 worker 已显式取 task.userId，此处保持一致性 + 兜底）
-        executor.setTaskDecorator(new BillingContextTaskDecorator());
+        // 日志系统 LOG-FR-02：MDC 快照透传（traceId/userId 异步不断链），与计费上下文组合
+        executor.setTaskDecorator(new CompositeTaskDecorator(
+                new MdcContextTaskDecorator(), new BillingContextTaskDecorator()));
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

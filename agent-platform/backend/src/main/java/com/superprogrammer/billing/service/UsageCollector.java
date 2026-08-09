@@ -2,6 +2,7 @@ package com.superprogrammer.billing.service;
 
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
+import com.superprogrammer.common.logging.MdcContextTaskDecorator;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -115,7 +116,8 @@ public class UsageCollector {
     /** 提交一行入库；队列满 / 写失败均降级 warn，绝不抛回调用线程。 */
     private void submit(LlmUsageLogEntity row) {
         try {
-            pool.submit(() -> {
+            // 日志系统 LOG-FR-02：原始 ExecutorService 无 TaskDecorator，submit 处手工包 MDC 快照（traceId 不断链）
+            pool.submit(MdcContextTaskDecorator.wrap(() -> {
                 try {
                     usageLogMapper.insert(row);
                 } catch (Exception e) {
@@ -123,7 +125,7 @@ public class UsageCollector {
                     log.warn("usage 日志写入失败(已丢) userId={} model={} kind={} : {}",
                             row.getUserId(), row.getModel(), row.getKind(), e.toString());
                 }
-            });
+            }));
         } catch (Exception e) {
             // RejectedExecutionException（队列满）等提交期异常 → 丢一条 + warn
             log.warn("usage 采集队列满(已丢) userId={} model={} : {}", row.getUserId(), row.getModel(), e.toString());

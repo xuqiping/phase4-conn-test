@@ -1,6 +1,8 @@
 package com.superprogrammer.knowledge.config;
 
 import com.superprogrammer.billing.context.BillingContextTaskDecorator;
+import com.superprogrammer.common.logging.CompositeTaskDecorator;
+import com.superprogrammer.common.logging.MdcContextTaskDecorator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -26,7 +28,9 @@ public class ReconciliationTaskExecutorConfig {
         executor.setThreadNamePrefix("kb-recon-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         // 计费归户：透传提交线程 userId（对账本身不调 LLM，但 repairDrift 触发的 reindex 由此继承用户）
-        executor.setTaskDecorator(new BillingContextTaskDecorator());
+        // 日志系统 LOG-FR-02：MDC 快照透传（traceId/userId 异步不断链），与计费上下文组合
+        executor.setTaskDecorator(new CompositeTaskDecorator(
+                new MdcContextTaskDecorator(), new BillingContextTaskDecorator()));
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

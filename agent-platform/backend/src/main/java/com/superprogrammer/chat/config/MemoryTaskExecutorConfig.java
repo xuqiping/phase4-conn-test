@@ -1,6 +1,8 @@
 package com.superprogrammer.chat.config;
 
 import com.superprogrammer.billing.context.BillingContextTaskDecorator;
+import com.superprogrammer.common.logging.CompositeTaskDecorator;
+import com.superprogrammer.common.logging.MdcContextTaskDecorator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -28,7 +30,9 @@ public class MemoryTaskExecutorConfig {
         executor.setThreadNamePrefix("mem-task-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         // 计费归户：透传提交线程 userId，记忆 embed/LLM 调用自动计费
-        executor.setTaskDecorator(new BillingContextTaskDecorator());
+        // 日志系统 LOG-FR-02：MDC 快照透传（traceId/userId 异步不断链），与计费上下文组合
+        executor.setTaskDecorator(new CompositeTaskDecorator(
+                new MdcContextTaskDecorator(), new BillingContextTaskDecorator()));
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();
