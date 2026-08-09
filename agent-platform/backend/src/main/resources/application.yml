@@ -81,6 +81,17 @@ jwt:
   access-expiration: 900000
   refresh-expiration: 604800000
 
+management:
+  tracing:
+    sampling:
+      # 全采样：日志关联要求每条请求都有 traceId（日志系统 LOG-FR-01）。生产量大可降（如 0.1）。
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  endpoints:
+    web:
+      exposure:
+        # 只暴露健康检查；metrics/prometheus 等端点留待运维系统 P0 显式开启。
+        include: health
+
 logging:
   # 日志输出文件（控制台照常输出，文件供后续审查）。路径相对工作目录，云上即 jar 同级 logs/。
   # 可用环境变量 LOG_FILE 覆盖（如 Docker 挂卷 /var/log/agent-platform/agent-platform.log）。
