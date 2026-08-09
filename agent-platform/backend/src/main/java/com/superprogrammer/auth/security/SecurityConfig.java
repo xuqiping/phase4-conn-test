@@ -45,6 +45,18 @@ public class SecurityConfig {
         http
                 // 禁用CSRF（前后端分离，使用JWT）
                 .csrf(AbstractHttpConfigurer::disable)
+                // 安全体系 S1 · SEC-FR-002 安全响应头：CSP / X-Frame-Options / nosniff / Referrer-Policy。
+                // style-src 'unsafe-inline' 是 Naive UI 内联样式的放行（plan 联动点）；HSTS 待 HTTPS 落地后开启。
+                .headers(headers -> headers
+                        .contentTypeOptions(org.springframework.security.config.Customizer.withDefaults())
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(ref -> ref.policy(
+                                org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
+                                        .ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                                        + "img-src 'self' data: blob:; media-src 'self' blob:"))
+                )
                 // 无状态Session
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

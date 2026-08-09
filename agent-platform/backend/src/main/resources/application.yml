@@ -167,3 +167,10 @@ dingtalk:
   app-key: ${DINGTALK_APP_KEY:}
   app-secret: ${DINGTALK_APP_SECRET:}
   agent-id: ${DINGTALK_AGENT_ID:}
+
+# 应用级安全项（安全体系 S1）
+app:
+  cors:
+    # SEC-FR-003：生产必须配精确 Origin 白名单（逗号分隔，含前端域 + 钉钉 H5 回调域），禁 *；
+    # 留空 = dev 宽松模式（originPattern=*），仅本地联调用。
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}
