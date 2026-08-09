@@ -107,3 +107,6 @@ agent-platform/login-page.png
 # 覆盖上面的全局 docs/ 规则
 !coze项目引入/docs/
 !coze项目引入/docs/**
+
+# Claude Code 临时 worktree（基线对拍/隔离实验用，含 target 等构建产物，不入库）
+.claude/worktrees/
