@@ -29,7 +29,7 @@ pub struct SampledFrame {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use windows::core::HSTRING;
+    use windows::core::{Interface, HSTRING};
     use windows::Win32::Media::MediaFoundation::*;
 
     /// Stream frames from `path`, invoking `on_frame` at most once per
@@ -92,6 +92,18 @@ mod imp {
             return Err("video reports 0x0 frame size".to_string());
         }
 
+        // stride 语义：有符号 int32 按 UINT32 存；MF 约定正 = bottom-up。
+        // ⚠ 但此值在「首帧读出前」是协商请求值，不可靠（2026-08-09 实机：
+        // 请求值报 6512 紧凑，实际表面 1632x1024 pitch 6528）。真正的
+        // pitch/朝向在首个 sample 读出后重查（下方 first-sample 重查块）。
+        let mut stride = current
+            .GetUINT32(&MF_MT_DEFAULT_STRIDE)
+            .map(|v| v as i32)
+            .unwrap_or(width as i32 * 4);
+        // 朝向 hint：pitch 有填充（对齐表面拷贝）→ top-down；紧凑 DIB →
+        // bottom-up 符号约定成立。两个分支各有实机/单测锚点（见下方首帧重查块）。
+        let mut top_down_hint = false;
+
         let step_ticks = step_ms.max(1) * 10_000; // ms → 100ns units
         let mut next_sample_ts = 0i64;
         let mut sampled = 0u64;
@@ -119,10 +131,24 @@ mod imp {
             }
             next_sample_ts = timestamp + step_ticks;
 
-            let buffer = sample
-                .ConvertToContiguousBuffer()
-                .map_err(|e| format!("contiguous buffer: {e}"))?;
-            let bgra = copy_frame(&buffer, width, height)?;
+            // 首个 sample 读出后重查协商媒体类型 —— 此刻才是视频处理器
+            // 真实输出：stride 幅值 = 真实 pitch（首帧 copy 也要用，放 copy 前）。
+            if sampled == 0 {
+                if let Ok(live) =
+                    reader.GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32)
+                {
+                    if let Ok(s) = live.GetUINT32(&MF_MT_DEFAULT_STRIDE) {
+                        stride = s as i32;
+                    }
+                }
+                // 朝向判定：pitch 有填充（对齐表面拷贝）→ top-down；
+                // pitch 紧凑（经典 DIB）→ 符号约定（正 = bottom-up）。
+                // 锚点：synth 320x180 pitch 紧凑=bottom-up（单测回环）；
+                //       实机 1628x1021 pitch 6528>6512=top-down（2026-08-09）。
+                top_down_hint = stride.unsigned_abs() as usize > width as usize * 4;
+            }
+
+            let bgra = copy_sample_frame(&sample, width, height, stride, top_down_hint)?;
             on_frame(SampledFrame {
                 ts_ms: timestamp / 10_000,
                 width,
@@ -134,43 +160,162 @@ mod imp {
         Ok(sampled)
     }
 
-    /// Copy an RGB32 media buffer into a tightly packed top-down BGRA vec.
-    /// MF 对未压缩 RGB32 的默认约定是 **bottom-up**（buffer 第 0 行 = 画面
-    /// 底行），所以拷贝时翻成 top-down（合成视频回环测试的顶部亮带断言
-    /// 验证了这一点）。Uses the 1D `IMFMediaBuffer::Lock` —
-    /// `IMFMediaBuffer2`/Lock2D isn't in the windows 0.61 bindings.
+    /// Copy an RGB32 sample into a tightly packed top-down BGRA vec.
+    ///
+    /// pitch 探测（2026-08-09 实机斜纹根因完整记录）：1628x1021 奇数高视频，
+    /// 解码器输出 **16 对齐表面**（1632x1024，pitch 6528），协商请求值却报
+    /// 紧凑 6512 → 按假 pitch 读 = 整幅斜纹。首帧读出后重查的 live 媒体类型
+    /// 给出真实 pitch；拿不到再用 cur_len 反推（`derive_pitch`）。
+    ///
+    /// 朝向（同为正 stride，两种布局都真实存在过）：
+    ///   - pitch 紧凑（== width×4，经典 DIB）：bottom-up 约定成立（单测回环锚点）；
+    ///   - pitch 有填充（对齐表面拷贝）：输出 **top-down**
+    ///     （实机锚点：1628x1021 pitch 6528，翻转会得到倒置图）。
+    ///   调用方传 top_down_hint 区分。
     ///
     /// alpha 通道强制置 255：MF RGB32 实为 BGRX，第 4 字节未定义（常为 0）。
     /// 下游 windows-capture ImageEncoder 按 **Premultiplied alpha** 解释缓冲，
-    /// alpha=0 会被当成全透明 → 编码出纯黑图（2026-08-08 用户实机踩坑：
-    /// 视频正常但 page_*.jpg 全黑；录制直出帧 alpha=255 所以缩略图没事）。
-    unsafe fn copy_frame(buffer: &IMFMediaBuffer, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    /// alpha=0 会被当成全透明 → 编码出纯黑图（2026-08-08 用户实机踩坑）。
+    unsafe fn copy_sample_frame(
+        sample: &IMFSample,
+        width: u32,
+        height: u32,
+        stride: i32,
+        top_down_hint: bool,
+    ) -> Result<Vec<u8>, String> {
+        let row_bytes = width as usize * 4;
+        // 1) 原始 buffer 的 2D 锁（真实 pitch；ConvertToContiguousBuffer 摊平后
+        //    2D 能力丢失，必须在摊平前试）。Lock2D 语义：scanline0 = 内存首行，
+        //    pitch 带符号（正 = bottom-up 需翻，负 = top-down）。
+        if let Ok(raw) = sample.GetBufferByIndex(0) {
+            if let Ok(buf2d) = raw.cast::<IMF2DBuffer>() {
+                let mut scanline0: *mut u8 = std::ptr::null_mut();
+                let mut pitch: i32 = 0;
+                if buf2d.Lock2D(&mut scanline0, &mut pitch).is_ok() {
+                    let result = (|| {
+                        if scanline0.is_null() || (pitch.unsigned_abs() as usize) < row_bytes {
+                            return Err(format!("lock2d pitch {pitch} invalid for {width}x{height}"));
+                        }
+                        Ok(copy_rows_2d(scanline0, pitch, width, height, top_down_hint))
+                    })();
+                    let _ = buf2d.Unlock2D();
+                    return result;
+                }
+            }
+        }
+        // 2) 摊平 + 1D Lock：pitch 优先 live stride 幅值，对不上用 cur_len 反推
+        let buffer = sample
+            .ConvertToContiguousBuffer()
+            .map_err(|e| format!("contiguous buffer: {e}"))?;
         let mut ptr: *mut u8 = std::ptr::null_mut();
         let mut cur_len: u32 = 0;
         buffer
             .Lock(&mut ptr, None, Some(&mut cur_len))
             .map_err(|e| format!("lock: {e}"))?;
         let result = (|| {
-            let row_bytes = width as usize * 4;
-            let need = row_bytes * height as usize;
+            let derived = derive_pitch(cur_len as usize, row_bytes, height as usize);
+            let attr = stride.unsigned_abs() as usize;
+            // live stride 放得下就用（首帧时 attr 可能还是请求假值，则靠反推）
+            let pitch = if attr >= row_bytes
+                && attr * (height as usize - 1) + row_bytes <= cur_len as usize
+            {
+                attr
+            } else {
+                derived
+            };
+            // 最后一行起点 + 一行字节 = 实际需要的缓冲长度（pitch 对齐填充只在行间）
+            let need = pitch * (height as usize - 1) + row_bytes;
             if ptr.is_null() || (cur_len as usize) < need {
-                return Err(format!("buffer too small: {cur_len} < {need}"));
+                return Err(format!(
+                    "buffer too small: {cur_len} < {need} (pitch {pitch})"
+                ));
             }
-            let mut out = vec![0u8; need];
-            for row in 0..height as usize {
-                // bottom-up source → top-down destination
-                let src = ptr.add((height as usize - 1 - row) * row_bytes);
-                let dst = &mut out[row * row_bytes..(row + 1) * row_bytes];
-                std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), row_bytes);
-            }
-            // BGRX → BGRA：每像素第 4 字节置 255（见函数文档）。
-            for px in out.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
-            Ok(out)
+            let bottom_up = stride > 0 && !top_down_hint;
+            Ok(reorder_bgra(ptr, cur_len as usize, width, height, pitch, bottom_up))
         })();
         let _ = buffer.Unlock();
         result
+    }
+
+    /// 从摊平缓冲长度反推行距：解码器对齐表面时 cur_len = pitch × 对齐后
+    /// 行数（≥ 图像行数）。紧凑（cur_len == row_bytes × height）直接返回；
+    /// 否则找最小合法 pitch（4 字节倍数、整除 cur_len、容纳得下 height 行）。
+    /// 实机锚点：1628x1021 视频 → cur_len 6684672 = 6528 × 1024，搜出 6528。
+    pub(crate) fn derive_pitch(cur_len: usize, row_bytes: usize, height: usize) -> usize {
+        if cur_len == row_bytes * height {
+            return row_bytes;
+        }
+        let mut pitch = row_bytes + 4;
+        while pitch <= row_bytes + 4096 {
+            if cur_len % pitch == 0 && cur_len / pitch >= height {
+                return pitch;
+            }
+            pitch += 4;
+        }
+        row_bytes // 找不到按紧凑，长度检查会兜底报错
+    }
+
+    /// 2D 锁路径重排：scanline0 = 内存首行，pitch 带符号（正 = bottom-up，
+    /// 负 = top-down，负 pitch 时行地址向下递减）。top_down_hint（对齐表面）
+    /// 覆盖符号约定。输出紧凑 top-down、alpha 恒 255。
+    unsafe fn copy_rows_2d(
+        scanline0: *const u8,
+        pitch: i32,
+        width: u32,
+        height: u32,
+        top_down_hint: bool,
+    ) -> Vec<u8> {
+        let row_bytes = width as usize * 4;
+        let mut out = vec![0u8; row_bytes * height as usize];
+        let bottom_up = pitch > 0 && !top_down_hint;
+        for row in 0..height as usize {
+            let img_row = if bottom_up {
+                height as usize - 1 - row
+            } else {
+                row
+            };
+            let src = scanline0.offset(img_row as isize * pitch as isize);
+            std::ptr::copy_nonoverlapping(src, out[row * row_bytes..].as_mut_ptr(), row_bytes);
+        }
+        for px in out.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        out
+    }
+
+    /// 纯像素重排（抽出便于单测）：按 pitch 行距读源行，输出紧凑 top-down，
+    /// alpha 恒置 255。bottom_up=true 时源第 0 行是画面底行，翻成 top-down。
+    pub(crate) unsafe fn reorder_bgra(
+        src: *const u8,
+        src_len: usize,
+        width: u32,
+        height: u32,
+        pitch: usize,
+        bottom_up: bool,
+    ) -> Vec<u8> {
+        let row_bytes = width as usize * 4;
+        let mut out = vec![0u8; row_bytes * height as usize];
+        for row in 0..height as usize {
+            let src_row = if bottom_up {
+                height as usize - 1 - row
+            } else {
+                row
+            };
+            let offset = src_row * pitch;
+            if offset + row_bytes > src_len {
+                break; // 末尾截断防御（正常路径已被 copy_frame 的长度检查拦住）
+            }
+            std::ptr::copy_nonoverlapping(
+                src.add(offset),
+                out[row * row_bytes..].as_mut_ptr(),
+                row_bytes,
+            );
+        }
+        // BGRX → BGRA：每像素第 4 字节置 255（见 copy_frame 文档）。
+        for px in out.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        out
     }
 }
 
@@ -190,6 +335,7 @@ pub fn sample_video(
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use super::imp::{derive_pitch, reorder_bgra};
     use windows_capture::encoder::{
         AudioSettingsBuilder, ContainerSettingsBuilder, VideoEncoder, VideoSettingsBuilder,
         VideoSettingsSubType,
@@ -226,10 +372,43 @@ mod tests {
         enc.finish().expect("finish encoder");
     }
 
+    /// padded stride（2026-08-09 实机斜纹根因）：行间有填充时按 pitch 读，
+    /// 输出必须紧凑且不斜。构造 3x2 图、pitch 16（行内容 12 + 4 填充）。
+    #[test]
+    fn reorder_bgra_honours_padded_pitch() {
+        let (w, h, pitch) = (3usize, 2usize, 16usize);
+        let row_bytes = w * 4;
+        // bottom-up 源：buffer 第 0 行 = 画面底行。底行像素全 1，顶行全 2。
+        let mut src = vec![0u8; pitch * h];
+        for i in 0..row_bytes {
+            src[i] = 1; // buffer 行 0 = 底行
+            src[pitch + i] = 2; // buffer 行 1 = 顶行
+        }
+        let out = unsafe { reorder_bgra(src.as_ptr(), src.len(), w as u32, h as u32, pitch, true) };
+        assert_eq!(out.len(), row_bytes * h);
+        // top-down 输出：行 0 = 顶行（源值 2，alpha 置 255）
+        assert_eq!(&out[0..4], &[2, 2, 2, 255]);
+        assert_eq!(&out[row_bytes..row_bytes + 4], &[1, 1, 1, 255]);
+        // top-down（负 stride）不翻
+        let out = unsafe { reorder_bgra(src.as_ptr(), src.len(), w as u32, h as u32, pitch, false) };
+        assert_eq!(&out[0..4], &[1, 1, 1, 255]);
+    }
+
+    /// 行距反推：紧凑直返；对齐表面用实机锚点（1628x1021 → 6528×1024）；
+    /// 长度对不上按紧凑兜底（交给上层长度检查报错，不出错图）。
+    #[test]
+    fn derive_pitch_finds_aligned_surface_pitch() {
+        // 紧凑
+        assert_eq!(derive_pitch(6512 * 1022, 6512, 1022), 6512);
+        // 实机斜纹锚点：6684672 = 6528 × 1024（16 对齐表面）
+        assert_eq!(derive_pitch(6_684_672, 6512, 1022), 6528);
+        // 对不上 → 紧凑兜底
+        assert_eq!(derive_pitch(6512 * 1022 + 7, 6512, 1022), 6512);
+    }
+
     /// AC-104 前置：切片可读回、采样间隔生效、时间戳单调、几何正确。
     #[test]
-    fn sample_video_roundtrip() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn sample_video_roundtrip() {        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test-sessions")
             .join("decode");
@@ -283,13 +462,19 @@ mod tests {
 
     /// 真实录制切片诊断（手动跑）：把任一 video_NNN.mp4 路径设进
     /// `VTT_TEST_VIDEO` 环境变量再 `cargo test -- --ignored real_video_probe`，
-    /// 打印采样帧数/亮度/alpha 统计 —— 复现「视频正常但抽帧全黑」类问题用。
+    /// 打印采样帧数/亮度/alpha 统计，并把首帧存成 real_frame.jpg 供目检
+    /// —— 复现「视频正常但抽帧全黑」「抽帧斜纹」类问题用。
     #[test]
     #[ignore = "需要 VTT_TEST_VIDEO 指向真实切片"]
     fn real_video_probe() {
         let path = std::path::PathBuf::from(
             std::env::var("VTT_TEST_VIDEO").expect("set VTT_TEST_VIDEO to a video slice path"),
         );
+        let out_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-sessions")
+            .join("decode");
+        std::fs::create_dir_all(&out_dir).unwrap();
         let mut n = 0u64;
         let mut dark = 0u64;
         sample_video(&path, 500, |f| {
@@ -302,6 +487,18 @@ mod tests {
             let mean = sum / cnt.max(1);
             if mean < 16 {
                 dark += 1;
+            }
+            if n == 0 {
+                // 首帧存图目检（斜纹/翻转/黑帧一眼可辨）
+                let jpg = windows_capture::encoder::ImageEncoder::new(
+                    windows_capture::encoder::ImageFormat::Jpeg,
+                    windows_capture::encoder::ImageEncoderPixelFormat::Bgra8,
+                )
+                .and_then(|enc| enc.encode(&f.bgra, f.width, f.height))
+                .expect("encode probe jpg");
+                let out = out_dir.join("real_frame.jpg");
+                std::fs::write(&out, jpg).expect("write probe jpg");
+                println!("first frame saved: {}", out.display());
             }
             n += 1;
             if n <= 3 {

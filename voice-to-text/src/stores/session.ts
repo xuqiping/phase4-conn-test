@@ -381,7 +381,10 @@ export const useSessionStore = defineStore('session', () => {
     }
     // 先清掉上一个会话的学习区/阶段残留（看过历史总结后点开始录制，
     // 否则旧 stages=done 会让新会话的处理流水线被整体跳过）。
-    // reset 不动 selectedHwnd / 声音来源选择。
+    // reset 不动 selectedHwnd / 声音来源选择，但**会清 region**（放弃会话语义）
+    // —— 所以先存下来，invoke 时用存下的值（2026-08-09 缺陷：reset 把 region
+    // 清掉导致框选从未到达后端，录了整窗）。
+    const regionToRecord = region.value
     reset()
     entries.value = []
     partial.value = ''
@@ -393,7 +396,7 @@ export const useSessionStore = defineStore('session', () => {
         sessionId: sessionId.value,
         hwnd: selectedHwnd.value ?? 0,
         audioDevice: selectedAudioDevice.value || null,
-        region: region.value,
+        region: regionToRecord,
       })
       stopListen = await listen<TranscriptionEvent>('transcription', (e) => {
         const p = e.payload
@@ -410,6 +413,7 @@ export const useSessionStore = defineStore('session', () => {
       nowMs.value = startedAt.value
       timer = setInterval(() => (nowMs.value = Date.now()), 500)
       phase.value = 'recording'
+      region.value = regionToRecord // 恢复显示（reset 清掉了），停止后可直接原样重录
     } catch (e) {
       errorMessage.value = `启动录制失败: ${e}`
     }
