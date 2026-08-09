@@ -6,6 +6,8 @@ import com.superprogrammer.common.result.R;
 import com.superprogrammer.search.service.WebSearchService;
 import com.superprogrammer.system.dto.AuthSettingsUpdateRequest;
 import com.superprogrammer.system.dto.AuthSettingsVO;
+import com.superprogrammer.system.dto.BillingSettingsUpdateRequest;
+import com.superprogrammer.system.dto.BillingSettingsVO;
 import com.superprogrammer.system.dto.RagMemorySettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagMemorySettingsVO;
 import com.superprogrammer.system.dto.RagRecallSettingsUpdateRequest;
@@ -37,6 +39,23 @@ public class SystemSettingController {
     public ResponseEntity<R<AuthSettingsVO>> updateAuthSettings(
             @Valid @RequestBody AuthSettingsUpdateRequest request) {
         return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs(), request.getSingleSessionEnabled())));
+    }
+
+    // ---- 计费设置（安全体系 S2 · L7 低余额并行闸门，SEC-FR-126）----
+
+    @GetMapping("/billing")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<BillingSettingsVO>> getBillingSettings() {
+        return ResponseEntity.ok(R.ok(service.getBillingSettings()));
+    }
+
+    @PutMapping("/billing")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_billing_settings", targetType = "setting")
+    public ResponseEntity<R<BillingSettingsVO>> updateBillingSettings(
+            @Valid @RequestBody BillingSettingsUpdateRequest request) {
+        return ResponseEntity.ok(R.ok(service.updateBillingSettings(
+                request.getLowBalanceThreshold(), request.getLowBalanceMaxInflight())));
     }
 
     // ---- RAG/记忆模式全局开关（V26）----

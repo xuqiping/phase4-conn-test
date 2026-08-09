@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import com.superprogrammer.billing.service.InflightGateService;
 
 /**
  * FR-003 网关按类型路由：CHAT 行只进 chat 路由，EMBEDDING 行只进 embed 路由，
@@ -58,6 +59,8 @@ class LlmGatewayRouteTest {
 
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
 
     private LlmGateway gateway;
 
@@ -75,7 +78,8 @@ class LlmGatewayRouteTest {
 
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
                 billingService, walletService,
-                new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+                new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+                inflightGate);
     }
 
     @Test

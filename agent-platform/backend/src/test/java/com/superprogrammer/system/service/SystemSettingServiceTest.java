@@ -84,6 +84,31 @@ class SystemSettingServiceTest {
         assertTrue(service.getBoolean(SystemSettingService.AUTH_SINGLE_SESSION_ENABLED, true));
     }
 
+    // AC-SEC-FR-126：L7 阈值/在途上限 upsert + 非法值回退默认
+    @Test
+    void updateBillingSettings_upsertsBothKeys() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+
+        service.updateBillingSettings(50L, 2L);
+
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD.equals(s.getSettingKey())
+                        && "50".equals(s.getSettingValue())));
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.BILLING_LOW_BALANCE_MAX_INFLIGHT.equals(s.getSettingKey())
+                        && "2".equals(s.getSettingValue())));
+    }
+
+    @Test
+    void getLong_invalidValue_fallsBackToDefault() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("not-a-number");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(100L, service.getLong(SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, 100L));
+    }
+
     // ============================ V38 LLM_KEY 检索模式 + BOTH 标签语言 ============================
 
     @Test

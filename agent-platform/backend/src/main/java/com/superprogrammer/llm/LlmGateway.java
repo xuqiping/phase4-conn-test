@@ -3,6 +3,7 @@ package com.superprogrammer.llm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.InflightGateService;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.chat.dto.StreamEvent;
@@ -45,6 +46,8 @@ public class LlmGateway {
     private final PointsWalletService walletService;
     /** 运维系统 OPS-FR-03：LLM 指标统一出口埋点（calls/tokens/latency，tag 仅 provider/model/result/direction）。 */
     private final BizMetrics bizMetrics;
+    /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：只挂 chat/chatStream 用户入口；embed 与系统调用不过闸。 */
+    private final InflightGateService inflightGate;
 
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
@@ -57,6 +60,8 @@ public class LlmGateway {
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
         walletService.requireAffordable(uid);
+        // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
+        boolean held = inflightGate.acquire(uid);
         long startNanos = System.nanoTime();
         try {
             LlmResponse response = provider.chat(request);
@@ -79,6 +84,10 @@ public class LlmGateway {
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
             recordLlmTerminal(provider.getName(), request.getModel(), BizMetrics.RESULT_FAIL, startNanos);
             throw e;
+        } finally {
+            if (held) {
+                inflightGate.release(uid);
+            }
         }
     }
 
@@ -102,6 +111,8 @@ public class LlmGateway {
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         walletService.requireAffordable(uid);
+        // L7：流式槽位在订阅终结（complete/error/cancel 三态互斥正好一次）时经 doFinally 释放
+        boolean held = inflightGate.acquire(uid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
         String providerName = provider.getName();
@@ -121,7 +132,12 @@ public class LlmGateway {
                 .publishOn(Schedulers.boundedElastic())
                 .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
                 .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
-                .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos));
+                .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos))
+                .doFinally(signal -> {
+                    if (held) {
+                        inflightGate.release(uid);
+                    }
+                });
     }
 
     public float[] embed(String text, String model) {

@@ -158,6 +158,51 @@ public class SystemSettingService {
         upsert(key, String.valueOf(val), description);
     }
 
+    // ============================ 通用 long get/set ============================
+
+    /** 通用读 long；缺失/非法 → def（实时查库，管理员页面改即生效）。 */
+    public long getLong(String key, long def) {
+        String value = getValue(key);
+        if (value == null || value.isBlank()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
+    }
+
+    // ============================ 计费（安全体系 S2 · L7 低余额并行闸门，SEC-FR-126）============================
+
+    public long getLowBalanceThreshold() {
+        return getLong(BILLING_LOW_BALANCE_THRESHOLD, 100);
+    }
+
+    public long getLowBalanceMaxInflight() {
+        return getLong(BILLING_LOW_BALANCE_MAX_INFLIGHT, 1);
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO getBillingSettings() {
+        return com.superprogrammer.system.dto.BillingSettingsVO.builder()
+                .lowBalanceThreshold(getLowBalanceThreshold())
+                .lowBalanceMaxInflight(getLowBalanceMaxInflight())
+                .build();
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO updateBillingSettings(
+            Long lowBalanceThreshold, Long lowBalanceMaxInflight) {
+        if (lowBalanceThreshold != null) {
+            upsert(BILLING_LOW_BALANCE_THRESHOLD, String.valueOf(lowBalanceThreshold),
+                    "L7 低余额并行闸门阈值（SEC-FR-126）：余额低于此值禁多任务并行");
+        }
+        if (lowBalanceMaxInflight != null) {
+            upsert(BILLING_LOW_BALANCE_MAX_INFLIGHT, String.valueOf(lowBalanceMaxInflight),
+                    "L7 低余额最大在途任务数（SEC-FR-126），默认 1");
+        }
+        return getBillingSettings();
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

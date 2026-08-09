@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
+import com.superprogrammer.billing.service.InflightGateService;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -60,6 +61,8 @@ class LlmGatewayTest {
 
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
 
     private LlmGateway gateway;
     private PrometheusMeterRegistry meterRegistry;
@@ -76,7 +79,7 @@ class LlmGatewayTest {
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry));
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
     }
 
     @Test
@@ -114,7 +117,7 @@ class LlmGatewayTest {
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
         LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry));
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
     }

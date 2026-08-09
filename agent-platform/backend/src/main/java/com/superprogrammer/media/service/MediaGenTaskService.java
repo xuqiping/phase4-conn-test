@@ -3,6 +3,7 @@ package com.superprogrammer.media.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
+import com.superprogrammer.billing.service.InflightGateService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -54,6 +55,8 @@ public class MediaGenTaskService {
     private final ObjectMapper objectMapper;
     private final AssetService assetService;
     private final PointsWalletService walletService;
+    /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：提交时 acquire，worker 终态 release。 */
+    private final InflightGateService inflightGate;
 
     /**
      * 提交生成任务。
@@ -96,6 +99,8 @@ public class MediaGenTaskService {
         // 0) 余额预检（Chunk F 联动）：余额>0 才允许提交生成任务，≤0 拒（task 不建）。
         // userId=null（系统调用）/billing.enabled=false → requireAffordable 内部跳过（放行）。
         walletService.requireAffordable(userId);
+        // L7：低余额用户超在途上限 → 42902（计数由 worker 终态 release 配对释放）
+        inflightGate.acquire(userId);
 
         // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;
