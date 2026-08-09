@@ -30,4 +30,7 @@ public class MemoryProjectLink extends BaseEntity {
     private Long approvedBy;         // 审批人（parent owner/admin）
     private String status;           // PENDING / ACTIVE / REJECTED / REVOKED
     private OffsetDateTime approvedAt;
+    // 三期非对称撤销：child owner 主动撤销的申请人（非空=撤销申请挂起待 parent 审批；status 仍 ACTIVE）
+    private Long revokeRequestedBy;
+    private OffsetDateTime revokeRequestedAt;
 }

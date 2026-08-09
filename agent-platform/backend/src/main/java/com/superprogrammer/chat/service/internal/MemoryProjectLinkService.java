@@ -51,6 +51,10 @@ public class MemoryProjectLinkService {
 
     public static final String NOTIFY_TYPE_LINK_REQUEST = "LINK_REQUEST";
     public static final String NOTIFY_TYPE_LINK_RESULT = "LINK_RESULT";
+    /** 三期非对称撤销：child owner 申请撤销 → 通知 parent owner/admin 审批。 */
+    public static final String NOTIFY_TYPE_LINK_REVOKE_REQUEST = "LINK_REVOKE_REQUEST";
+    /** 三期非对称撤销：parent 审批撤销结果 → 通知 child 申请人。 */
+    public static final String NOTIFY_TYPE_LINK_REVOKE_RESULT = "LINK_REVOKE_RESULT";
 
     private final MemoryProjectLinkMapper linkMapper;
     private final MemoryProjectMemberMapper memberMapper;
@@ -120,6 +124,8 @@ public class MemoryProjectLinkService {
                 .set(MemoryProjectLink::getGrantedBy, operatorId)
                 .set(MemoryProjectLink::getApprovedBy, null)
                 .set(MemoryProjectLink::getApprovedAt, null)
+                .set(MemoryProjectLink::getRevokeRequestedBy, null)
+                .set(MemoryProjectLink::getRevokeRequestedAt, null)
                 .set(MemoryProjectLink::getCreatedAt, now));
         if (updated == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
@@ -156,8 +162,14 @@ public class MemoryProjectLinkService {
     }
 
     /**
-     * 撤销/取消：child owner 可撤（ACTIVE→REVOKED 或 PENDING 取消=软删）；
-     * parent owner/admin 可撤 ACTIVE。其他身份/状态 → 403/409。
+     * 撤销/取消（三期非对称）：
+     * <ul>
+     *   <li>PENDING + child owner → 软删（取消未生效申请）。</li>
+     *   <li>ACTIVE + child owner（非 parent manager）→ <b>不立即生效</b>，置 revoke_requested_by/at 挂起待 parent 审批，
+     *       status 仍 ACTIVE（parent 仍可读/召回），不 fire STALE。</li>
+     *   <li>ACTIVE + parent manager → <b>即时</b> REVOKED + STALE + 通知 child（不需 child 审核）。</li>
+     * </ul>
+     * 其他身份/状态 → 403/409。
      */
     public void revoke(Long linkId, Long operatorId) {
         MemoryProjectLink link = requireLink(linkId);
@@ -177,23 +189,101 @@ public class MemoryProjectLinkService {
         if (!childOwner && !parentManager) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅双方项目 owner/admin 可撤销授权");
         }
+        // 三期非对称：child owner 主动撤销（且非 parent manager）→ 挂起待 parent 审批，不立即 REVOKED
+        if (childOwner && !parentManager) {
+            if (link.getRevokeRequestedBy() != null) {
+                throw new BusinessException(ErrorCode.CONFLICT, "撤销申请已在审批中，请等待对方处理或撤回申请");
+            }
+            int updated = linkMapper.update(null, new LambdaUpdateWrapper<MemoryProjectLink>()
+                    .eq(MemoryProjectLink::getId, linkId)
+                    .eq(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_ACTIVE)
+                    .isNull(MemoryProjectLink::getRevokeRequestedBy)
+                    .set(MemoryProjectLink::getRevokeRequestedBy, operatorId)
+                    .set(MemoryProjectLink::getRevokeRequestedAt, OffsetDateTime.now()));
+            if (updated == 0) {
+                throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
+            }
+            log.info("项目授权撤销申请(child 待 parent 审批) linkId={} operatorId={}", linkId, operatorId);
+            notifyParentManagersRevokeRequest(link);
+            return;
+        }
+        // parent manager 主动撤销（或同时是双方管理者按 parent 身份）→ 即时 REVOKED
+        doRevokeNow(link, operatorId);
+    }
+
+    /**
+     * 三期：parent owner/admin 审批通过 child 的撤销申请 → ACTIVE→REVOKED（此时 fire STALE）+ 通知 child。
+     */
+    public void approveRevoke(Long linkId, Long operatorId) {
+        MemoryProjectLink link = requireLink(linkId);
+        requireParentManager(link, operatorId, "审批撤销");
+        if (link.getRevokeRequestedBy() == null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该授权无待审批的撤销申请");
+        }
+        if (!MemoryProjectLink.STATUS_ACTIVE.equals(link.getStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "仅生效中的授权可审批撤销");
+        }
         int updated = linkMapper.update(null, new LambdaUpdateWrapper<MemoryProjectLink>()
                 .eq(MemoryProjectLink::getId, linkId)
                 .eq(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_ACTIVE)
+                .isNotNull(MemoryProjectLink::getRevokeRequestedBy)
                 .set(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_REVOKED));
         if (updated == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
         }
-        // 二期 P4（FR-303）：撤销授权 → parent 共享总结中 provenance 含 child 条目的标 STALE；
-        // worker 重压取数=当前 ACTIVE 链实时算 → 重压后不含 child 内容（坑点预判③）
         int stale = summaryMapper.markProjectSharedStaleByChildEntries(
                 link.getParentProjectId(), link.getChildProjectId());
         if (stale > 0) {
-            log.info("授权撤销级联：parent={} 共享总结 {} 条标 STALE（含 child={} 条目 provenance）",
+            log.info("撤销审批通过级联：parent={} 共享总结 {} 条标 STALE（含 child={} 条目 provenance）",
                     link.getParentProjectId(), stale, link.getChildProjectId());
         }
-        log.info("项目授权撤销 linkId={} operatorId={} by={}", linkId, operatorId, childOwner ? "child" : "parent");
-        notifyRequester(link, null);
+        log.info("项目授权撤销审批通过 linkId={} operatorId={}", linkId, operatorId);
+        notifyRevokeRequester(link, true);
+    }
+
+    /**
+     * 三期：parent owner/admin 拒绝 child 的撤销申请 → 清 revoke_requested_by/at（status 留 ACTIVE）+ 通知 child。
+     */
+    public void rejectRevoke(Long linkId, Long operatorId) {
+        MemoryProjectLink link = requireLink(linkId);
+        requireParentManager(link, operatorId, "审批撤销");
+        if (link.getRevokeRequestedBy() == null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该授权无待审批的撤销申请");
+        }
+        int updated = linkMapper.update(null, new LambdaUpdateWrapper<MemoryProjectLink>()
+                .eq(MemoryProjectLink::getId, linkId)
+                .eq(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_ACTIVE)
+                .isNotNull(MemoryProjectLink::getRevokeRequestedBy)
+                .set(MemoryProjectLink::getRevokeRequestedBy, null)
+                .set(MemoryProjectLink::getRevokeRequestedAt, null));
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
+        }
+        log.info("项目授权撤销申请被拒 linkId={} operatorId={}", linkId, operatorId);
+        notifyRevokeRequester(link, false);
+    }
+
+    /**
+     * 三期：child owner 撤回自己挂起的撤销申请 → 清 revoke_requested_by/at（status 留 ACTIVE），不通知 parent。
+     */
+    public void withdrawRevokeRequest(Long linkId, Long operatorId) {
+        MemoryProjectLink link = requireLink(linkId);
+        if (!isOwner(link.getChildProjectId(), operatorId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅授权方项目 owner 可撤回撤销申请");
+        }
+        if (link.getRevokeRequestedBy() == null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该授权无待审批的撤销申请");
+        }
+        int updated = linkMapper.update(null, new LambdaUpdateWrapper<MemoryProjectLink>()
+                .eq(MemoryProjectLink::getId, linkId)
+                .eq(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_ACTIVE)
+                .isNotNull(MemoryProjectLink::getRevokeRequestedBy)
+                .set(MemoryProjectLink::getRevokeRequestedBy, null)
+                .set(MemoryProjectLink::getRevokeRequestedAt, null));
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
+        }
+        log.info("项目授权撤销申请撤回 linkId={} operatorId={}", linkId, operatorId);
     }
 
     /** 一批 parent 项目的 ACTIVE child 集（召回合流用；单级一跳不递归）。 */
@@ -222,6 +312,27 @@ public class MemoryProjectLinkService {
     }
 
     // ============================ 内部 ============================
+
+    /** 即时撤销（parent manager 主动撤销）：ACTIVE→REVOKED 条件 UPDATE + STALE 级联 + 通知 child。 */
+    private void doRevokeNow(MemoryProjectLink link, Long operatorId) {
+        int updated = linkMapper.update(null, new LambdaUpdateWrapper<MemoryProjectLink>()
+                .eq(MemoryProjectLink::getId, link.getId())
+                .eq(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_ACTIVE)
+                .set(MemoryProjectLink::getStatus, MemoryProjectLink.STATUS_REVOKED));
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "授权状态已被并发变更，请刷新重试");
+        }
+        // 二期 P4（FR-303）：撤销授权 → parent 共享总结中 provenance 含 child 条目的标 STALE；
+        // worker 重压取数=当前 ACTIVE 链实时算 → 重压后不含 child 内容（坑点预判③）
+        int stale = summaryMapper.markProjectSharedStaleByChildEntries(
+                link.getParentProjectId(), link.getChildProjectId());
+        if (stale > 0) {
+            log.info("授权撤销级联：parent={} 共享总结 {} 条标 STALE（含 child={} 条目 provenance）",
+                    link.getParentProjectId(), stale, link.getChildProjectId());
+        }
+        log.info("项目授权撤销(parent 即时) linkId={} operatorId={}", link.getId(), operatorId);
+        notifyRequester(link, null);
+    }
 
     /** PENDING→target 条件翻转（并发安全）；approved_by/at 留痕。 */
     private void transition(MemoryProjectLink link, String target, Long operatorId) {
@@ -274,6 +385,31 @@ public class MemoryProjectLinkService {
                 ? "项目「" + childName + "」的记忆授权已通过，「" + parentName + "」成员可召回到条目"
                 : "项目「" + childName + "」对「" + parentName + "」的记忆授权被拒绝";
         insertNotification(link.getGrantedBy(), NOTIFY_TYPE_LINK_RESULT, link.getId(), msg);
+    }
+
+    /** 三期：通知 parent 全部 ACTIVE owner/admin —— child 申请撤销，待审批。 */
+    private void notifyParentManagersRevokeRequest(MemoryProjectLink link) {
+        List<MemoryProjectMember> managers = memberMapper.selectList(new LambdaQueryWrapper<MemoryProjectMember>()
+                .eq(MemoryProjectMember::getProjectId, link.getParentProjectId())
+                .eq(MemoryProjectMember::getStatus, STATUS_ACTIVE_MEMBER)
+                .in(MemoryProjectMember::getRole, ROLE_OWNER, ROLE_ADMIN));
+        String childName = projectName(link.getChildProjectId());
+        String parentName = projectName(link.getParentProjectId());
+        for (MemoryProjectMember m : managers) {
+            insertNotification(m.getUserId(), NOTIFY_TYPE_LINK_REVOKE_REQUEST, link.getId(),
+                    "项目「" + childName + "」申请撤销对「" + parentName + "」的记忆授权，请到 记忆管理→项目授权 审批");
+        }
+    }
+
+    /** 三期：通知撤销申请人(parent 审批结果；approved=true=通过→已解除，false=拒绝→保持生效)。 */
+    private void notifyRevokeRequester(MemoryProjectLink link, boolean approved) {
+        String childName = projectName(link.getChildProjectId());
+        String parentName = projectName(link.getParentProjectId());
+        String msg = approved
+                ? "你发起的撤销（项目「" + childName + "」→「" + parentName + "」）已通过，记忆授权已解除"
+                : "你发起的撤销（项目「" + childName + "」→「" + parentName + "」）被拒绝，记忆授权保持生效";
+        insertNotification(link.getRevokeRequestedBy() != null ? link.getRevokeRequestedBy() : link.getGrantedBy(),
+                NOTIFY_TYPE_LINK_REVOKE_RESULT, link.getId(), msg);
     }
 
     private void insertNotification(Long userId, String type, Long refId, String message) {
@@ -337,6 +473,8 @@ public class MemoryProjectLinkService {
                 .status(link.getStatus())
                 .createdAt(link.getCreatedAt())
                 .approvedAt(link.getApprovedAt())
+                .revokeRequestedBy(link.getRevokeRequestedBy())
+                .revokeRequestedAt(link.getRevokeRequestedAt())
                 .build();
     }
 }

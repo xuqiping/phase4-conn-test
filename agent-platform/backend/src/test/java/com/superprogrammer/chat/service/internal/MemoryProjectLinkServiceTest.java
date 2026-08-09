@@ -213,19 +213,34 @@ class MemoryProjectLinkServiceTest {
         assertEquals(MemoryProjectLink.STATUS_REJECTED, l.getStatus());
     }
 
-    // ---- 撤销（revoke）----
+    // ---- 撤销（revoke · 三期非对称）----
 
-    // AC-FR-101：child owner 撤 ACTIVE → REVOKED（行留痕）
+    // 三期：child owner 撤 ACTIVE → 不立即生效，置 revoke_requested_by 待 parent 审批（不 REVOKED、不 STALE）
     @Test
-    void revoke_activeByChildOwner_revoked() {
+    void revoke_activeByChildOwner_setsRevokeRequestPending() {
         when(linkMapper.selectById(9L)).thenReturn(link(MemoryProjectLink.STATUS_ACTIVE));
+        // isOwner(child)=OWNER, isOwnerOrAdmin(parent)=null → child 路径
         when(memberMapper.selectOne(any())).thenReturn(member("OWNER"), (MemoryProjectMember) null);
         when(linkMapper.update(any(), any())).thenReturn(1);
+        when(memberMapper.selectList(any())).thenReturn(java.util.List.of(member("OWNER"))); // parent 管理者（通知）
         when(projectMapper.selectById(any())).thenReturn(project(1L, "P"));
 
         service.revoke(9L, 100L);
-        verify(linkMapper).update(any(), any());
-        verify(linkMapper, never()).deleteById(any(Long.class));
+
+        verify(linkMapper).update(any(), any());                 // 置 revoke_requested_by
+        verify(linkMapper, never()).deleteById(any(Long.class)); // 不软删
+        verify(summaryMapper, never()).markProjectSharedStaleByChildEntries(any(), any()); // 不 STALE（仍 ACTIVE）
+        verify(notificationMapper).insert(any(MemoryNotification.class)); // 通知 parent 审批
+    }
+
+    // 三期：child owner 已挂起申请时再点撤销 → 409
+    @Test
+    void revoke_activeByChildOwner_alreadyPending_conflict() {
+        MemoryProjectLink l = link(MemoryProjectLink.STATUS_ACTIVE);
+        l.setRevokeRequestedBy(100L);
+        when(linkMapper.selectById(9L)).thenReturn(l);
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"), (MemoryProjectMember) null);
+        assertThrows(BusinessException.class, () -> service.revoke(9L, 100L));
     }
 
     // child owner 取消自己 PENDING → 软删
@@ -246,18 +261,87 @@ class MemoryProjectLinkServiceTest {
         assertThrows(BusinessException.class, () -> service.revoke(9L, 300L));
     }
 
-    // 二期 P4（FR-303）：撤 ACTIVE → parent 共享总结含 child 条目 provenance 的标 STALE
+    // 三期：parent manager 主动撤 ACTIVE → 即时 REVOKED + STALE + 通知 child（不需 child 审核）
     @Test
-    void revoke_active_marksProjectSharedSummariesStale_p4() {
+    void revoke_activeByParentManager_revokedImmediateAndStale() {
         when(linkMapper.selectById(9L)).thenReturn(link(MemoryProjectLink.STATUS_ACTIVE));
-        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"), (MemoryProjectMember) null);
+        // isOwner(child)=null, isOwnerOrAdmin(parent)=OWNER → parent 即时路径
+        when(memberMapper.selectOne(any())).thenReturn((MemoryProjectMember) null, member("OWNER"));
         when(linkMapper.update(any(), any())).thenReturn(1);
         when(projectMapper.selectById(any())).thenReturn(project(1L, "P"));
         when(summaryMapper.markProjectSharedStaleByChildEntries(1L, 2L)).thenReturn(2);
 
-        service.revoke(9L, 100L);
+        service.revoke(9L, 200L);
 
+        verify(linkMapper).update(any(), any());
         verify(summaryMapper).markProjectSharedStaleByChildEntries(1L, 2L);
+        verify(notificationMapper).insert(any(MemoryNotification.class)); // 通知 child
+    }
+
+    // ---- 三期：撤销审批（approveRevoke / rejectRevoke）----
+
+    @Test
+    void approveRevoke_parentApproves_revokedAndStale() {
+        MemoryProjectLink l = link(MemoryProjectLink.STATUS_ACTIVE);
+        l.setRevokeRequestedBy(100L);
+        when(linkMapper.selectById(9L)).thenReturn(l);
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"));   // parent manager
+        when(linkMapper.update(any(), any())).thenReturn(1);
+        when(projectMapper.selectById(any())).thenReturn(project(1L, "P"));
+        when(summaryMapper.markProjectSharedStaleByChildEntries(1L, 2L)).thenReturn(1);
+
+        service.approveRevoke(9L, 200L);
+
+        verify(linkMapper).update(any(), any());
+        verify(summaryMapper).markProjectSharedStaleByChildEntries(1L, 2L);
+        verify(notificationMapper).insert(any(MemoryNotification.class)); // 通知申请人
+    }
+
+    @Test
+    void approveRevoke_noRevokeRequest_conflict() {
+        when(linkMapper.selectById(9L)).thenReturn(link(MemoryProjectLink.STATUS_ACTIVE));
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"));
+        assertThrows(BusinessException.class, () -> service.approveRevoke(9L, 200L));
+    }
+
+    @Test
+    void rejectRevoke_parentRejects_clearsAndNotifies() {
+        MemoryProjectLink l = link(MemoryProjectLink.STATUS_ACTIVE);
+        l.setRevokeRequestedBy(100L);
+        when(linkMapper.selectById(9L)).thenReturn(l);
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"));
+        when(linkMapper.update(any(), any())).thenReturn(1);
+        when(projectMapper.selectById(any())).thenReturn(project(1L, "P"));
+
+        service.rejectRevoke(9L, 200L);
+
+        verify(linkMapper).update(any(), any());
+        verify(summaryMapper, never()).markProjectSharedStaleByChildEntries(any(), any()); // 不 STALE（留 ACTIVE）
+        verify(notificationMapper).insert(any(MemoryNotification.class));
+    }
+
+    // ---- 三期：撤回撤销申请（withdrawRevokeRequest）----
+
+    @Test
+    void withdrawRevokeRequest_childOwner_clears() {
+        MemoryProjectLink l = link(MemoryProjectLink.STATUS_ACTIVE);
+        l.setRevokeRequestedBy(100L);
+        when(linkMapper.selectById(9L)).thenReturn(l);
+        when(memberMapper.selectOne(any())).thenReturn(member("OWNER"));
+        when(linkMapper.update(any(), any())).thenReturn(1);
+
+        service.withdrawRevokeRequest(9L, 100L);
+
+        verify(linkMapper).update(any(), any());
+    }
+
+    @Test
+    void withdrawRevokeRequest_nonOwner_forbidden() {
+        MemoryProjectLink l = link(MemoryProjectLink.STATUS_ACTIVE);
+        l.setRevokeRequestedBy(100L);
+        when(linkMapper.selectById(9L)).thenReturn(l);
+        when(memberMapper.selectOne(any())).thenReturn((MemoryProjectMember) null);
+        assertThrows(BusinessException.class, () -> service.withdrawRevokeRequest(9L, 300L));
     }
 
     // ---- 三期：findReadableChildProjectIds（被授权方 parent 成员 → 可读 child 项目集）----

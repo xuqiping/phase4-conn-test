@@ -69,11 +69,32 @@ public class MemoryProjectLinkController {
         return ResponseEntity.ok(R.ok("已拒绝", null));
     }
 
-    /** 撤销 ACTIVE / 取消 PENDING（child owner；ACTIVE 撤销 parent owner/admin 亦可）。 */
+    /** 撤销 ACTIVE / 取消 PENDING（三期非对称：child owner ACTIVE→挂起待审批；parent manager ACTIVE→即时撤销；PENDING child→软删）。 */
     @DeleteMapping("/links/{linkId}")
     public ResponseEntity<R<Void>> revoke(@PathVariable Long linkId) {
         linkService.revoke(linkId, requireLogin());
         return ResponseEntity.ok(R.ok("已撤销", null));
+    }
+
+    /** 三期：parent owner/admin 通过 child 的撤销申请（ACTIVE→REVOKED）。 */
+    @PostMapping("/links/{linkId}/approve-revoke")
+    public ResponseEntity<R<Void>> approveRevoke(@PathVariable Long linkId) {
+        linkService.approveRevoke(linkId, requireLogin());
+        return ResponseEntity.ok(R.ok("已通过撤销，记忆授权已解除", null));
+    }
+
+    /** 三期：parent owner/admin 拒绝 child 的撤销申请（status 留 ACTIVE）。 */
+    @PostMapping("/links/{linkId}/reject-revoke")
+    public ResponseEntity<R<Void>> rejectRevoke(@PathVariable Long linkId) {
+        linkService.rejectRevoke(linkId, requireLogin());
+        return ResponseEntity.ok(R.ok("已拒绝撤销，授权保持生效", null));
+    }
+
+    /** 三期：child owner 撤回自己挂起的撤销申请（status 留 ACTIVE）。 */
+    @PostMapping("/links/{linkId}/withdraw-revoke")
+    public ResponseEntity<R<Void>> withdrawRevoke(@PathVariable Long linkId) {
+        linkService.withdrawRevokeRequest(linkId, requireLogin());
+        return ResponseEntity.ok(R.ok("已撤回撤销申请", null));
     }
 
     private Long requireLogin() {

@@ -276,6 +276,10 @@ export interface MemoryProjectLinkVO {
   status: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED'
   createdAt: string | null
   approvedAt: string | null
+  /** 三期非对称撤销：非空=child owner 已申请撤销，待 parent 审批（status 仍 ACTIVE）。 */
+  revokeRequestedBy?: number | null
+  revokeRequestedByName?: string | null
+  revokeRequestedAt?: string | null
 }
 
 /** 项目↔个人授权视图（二期 P1 · 只读召回）。 */
@@ -499,6 +503,18 @@ export const memoryApi = {
   },
   revokeLink(linkId: number) {
     return request.delete<ApiResponse<void>>(`/chat/memory/links/${linkId}`)
+  },
+  /** 三期非对称撤销：parent owner/admin 通过 child 的撤销申请（ACTIVE→REVOKED）。 */
+  approveRevokeLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/approve-revoke`)
+  },
+  /** 三期非对称撤销：parent owner/admin 拒绝 child 的撤销申请（status 留 ACTIVE）。 */
+  rejectRevokeLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/reject-revoke`)
+  },
+  /** 三期非对称撤销：child owner 撤回自己挂起的撤销申请（status 留 ACTIVE）。 */
+  withdrawRevokeRequest(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/withdraw-revoke`)
   },
 
   // ---- 二期 P1 · 项目↔个人授权（只读召回；双向发起，落同一 ACTIVE 授权）----

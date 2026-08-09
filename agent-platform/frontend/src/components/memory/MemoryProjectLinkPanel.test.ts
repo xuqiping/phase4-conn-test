@@ -25,7 +25,10 @@ vi.mock('@/api/memory', () => ({
     createLink: vi.fn(),
     approveLink: vi.fn(),
     rejectLink: vi.fn(),
-    revokeLink: vi.fn()
+    revokeLink: vi.fn(),
+    approveRevokeLink: vi.fn(),
+    rejectRevokeLink: vi.fn(),
+    withdrawRevokeRequest: vi.fn()
   }
 }))
 
@@ -49,7 +52,7 @@ function mkProject(projectId: number, role: 'OWNER' | 'ADMIN' | 'MEMBER'): Memor
   }
 }
 
-function mkLink(id: number, parentId: number, childId: number, status: MemoryProjectLinkVO['status']): MemoryProjectLinkVO {
+function mkLink(id: number, parentId: number, childId: number, status: MemoryProjectLinkVO['status'], revokeRequestedBy: number | null = null): MemoryProjectLinkVO {
   return {
     id,
     parentProjectId: parentId,
@@ -62,7 +65,10 @@ function mkLink(id: number, parentId: number, childId: number, status: MemoryPro
     approvedByName: null,
     status,
     createdAt: '2026-08-08T10:00:00Z',
-    approvedAt: null
+    approvedAt: null,
+    revokeRequestedBy,
+    revokeRequestedByName: null,
+    revokeRequestedAt: null
   }
 }
 
@@ -216,5 +222,41 @@ describe('MemoryProjectLinkPanel（二期 P2 · FR-101 项目授权）', () => {
     await settle()
 
     expect(memoryApi.revokeLink).toHaveBeenCalledWith(11)
+  })
+
+  // 三期非对称撤销：child 挂起申请后 → 撤回按钮调 withdrawRevokeRequest
+  it('三期：child 侧 ACTIVE 且已申请撤销(revokeRequestedBy 非空) → 撤回申请调 withdrawRevokeRequest', async () => {
+    vi.mocked(memoryApi.getGenMatrix).mockResolvedValue(apiOk([mkProject(1, 'OWNER')]))
+    vi.mocked(memoryApi.listMyLinks).mockResolvedValue(apiOk([mkLink(11, 3, 1, 'ACTIVE', 100)]))
+    vi.mocked(memoryApi.withdrawRevokeRequest).mockResolvedValue(apiOk(undefined as never))
+
+    const wrapper = mount(MemoryProjectLinkPanel)
+    await settle()
+
+    const vm = wrapper.vm as unknown as {
+      outgoing: MemoryProjectLinkVO[]
+      withdrawRevoke: (l: MemoryProjectLinkVO) => Promise<void>
+    }
+    await vm.withdrawRevoke(vm.outgoing[0])
+
+    expect(memoryApi.withdrawRevokeRequest).toHaveBeenCalledWith(11)
+  })
+
+  // 三期非对称撤销：parent 待我审批 ACTIVE 链 + 对方申请撤销 → 通过撤销调 approveRevokeLink
+  it('三期：parent 侧 ACTIVE 且对方申请撤销(revokeRequestedBy 非空) → 通过撤销调 approveRevokeLink', async () => {
+    vi.mocked(memoryApi.getGenMatrix).mockResolvedValue(apiOk([mkProject(2, 'OWNER')]))
+    vi.mocked(memoryApi.listMyLinks).mockResolvedValue(apiOk([mkLink(12, 2, 5, 'ACTIVE', 100)]))
+    vi.mocked(memoryApi.approveRevokeLink).mockResolvedValue(apiOk(undefined as never))
+
+    const wrapper = mount(MemoryProjectLinkPanel)
+    await settle()
+
+    const vm = wrapper.vm as unknown as {
+      incoming: MemoryProjectLinkVO[]
+      approveRevoke: (l: MemoryProjectLinkVO) => Promise<void>
+    }
+    await vm.approveRevoke(vm.incoming[0])
+
+    expect(memoryApi.approveRevokeLink).toHaveBeenCalledWith(12)
   })
 })

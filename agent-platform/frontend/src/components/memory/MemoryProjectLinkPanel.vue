@@ -9,7 +9,7 @@
   <div class="memory-link-panel">
     <n-alert type="info" :bordered="false" size="small" class="memory-link-panel__top">
       项目授权：把我项目的记忆条目授权给另一个项目的成员召回（对方成员只读摘要，原文不出个人域）。
-      双向确认——你发起后对方 owner/admin 审批通过才生效；任一方可随时撤销，撤销即时生效。
+      双向确认——你发起后对方 owner/admin 审批通过才生效。撤销非对称：授权方（我 owner）发起撤销需对方项目 owner/admin 审批通过后才解除（审批前对方仍可召回）；被授权方（对方 owner/admin）撤销则即时生效并通知授权方。
     </n-alert>
 
     <!-- ============ 我授权出去的（child 侧） ============ -->
@@ -59,13 +59,24 @@
           >
             取消申请
           </n-button>
+          <template v-if="l.status === 'ACTIVE' && l.revokeRequestedBy">
+            <n-tag size="tiny" type="warning" :bordered="false">撤销审批中</n-tag>
+            <n-button
+              size="tiny"
+              ghost
+              :loading="busyId === l.id"
+              @click="withdrawRevoke(l)"
+            >
+              撤回申请
+            </n-button>
+          </template>
           <n-button
-            v-if="l.status === 'ACTIVE'"
+            v-else-if="l.status === 'ACTIVE'"
             size="tiny"
             type="error"
             ghost
             :loading="busyId === l.id"
-            @click="revoke(l, '撤销后对方成员立即召回不到你项目的条目。')"
+            @click="revoke(l, '撤销需对方项目 owner/admin 审批通过后才生效，审批前对方仍可召回你项目条目。', '撤销申请已提交，待对方 owner/admin 审批')"
           >
             撤销
           </n-button>
@@ -87,13 +98,18 @@
             <n-button size="tiny" type="primary" :loading="busyId === l.id" @click="approve(l)">通过</n-button>
             <n-button size="tiny" type="error" ghost :loading="busyId === l.id" @click="reject(l)">拒绝</n-button>
           </template>
+          <template v-if="l.status === 'ACTIVE' && l.revokeRequestedBy">
+            <n-tag size="tiny" type="warning" :bordered="false">对方申请撤销</n-tag>
+            <n-button size="tiny" type="primary" :loading="busyId === l.id" @click="approveRevoke(l)">通过撤销</n-button>
+            <n-button size="tiny" type="error" ghost :loading="busyId === l.id" @click="rejectRevoke(l)">拒绝撤销</n-button>
+          </template>
           <n-button
-            v-if="l.status === 'ACTIVE'"
+            v-else-if="l.status === 'ACTIVE'"
             size="tiny"
             type="error"
             ghost
             :loading="busyId === l.id"
-            @click="revoke(l, '撤销后你项目成员立即召回不到对方条目。')"
+            @click="revoke(l, '你侧撤销立即生效，无需对方审核；撤销后你项目成员立即召回不到对方条目，并通知对方。', '已撤销，已通知对方')"
           >
             撤销
           </n-button>
@@ -537,7 +553,7 @@ function reject(l: MemoryProjectLinkVO) {
   })
 }
 
-function revoke(l: MemoryProjectLinkVO, hint: string) {
+function revoke(l: MemoryProjectLinkVO, hint: string, successMsg?: string) {
   dialog.warning({
     title: l.status === 'PENDING' ? '取消申请？' : '撤销授权？',
     content: hint,
@@ -547,7 +563,7 @@ function revoke(l: MemoryProjectLinkVO, hint: string) {
       busyId.value = l.id
       try {
         await memoryApi.revokeLink(l.id)
-        message.success(l.status === 'PENDING' ? '已取消' : '已撤销')
+        message.success(successMsg ?? (l.status === 'PENDING' ? '已取消' : '已撤销'))
         await load()
       } catch (e: any) {
         message.error(e?.message || '操作失败')
@@ -556,6 +572,47 @@ function revoke(l: MemoryProjectLinkVO, hint: string) {
       }
     }
   })
+}
+
+// ---- 三期非对称撤销：parent 审 child 的撤销申请 / child 撤回自己的申请 ----
+
+async function approveRevoke(l: MemoryProjectLinkVO) {
+  busyId.value = l.id
+  try {
+    await memoryApi.approveRevokeLink(l.id)
+    message.success('已通过撤销，记忆授权已解除')
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '操作失败')
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function rejectRevoke(l: MemoryProjectLinkVO) {
+  busyId.value = l.id
+  try {
+    await memoryApi.rejectRevokeLink(l.id)
+    message.success('已拒绝撤销，授权保持生效')
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '操作失败')
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function withdrawRevoke(l: MemoryProjectLinkVO) {
+  busyId.value = l.id
+  try {
+    await memoryApi.withdrawRevokeRequest(l.id)
+    message.success('已撤回撤销申请，授权保持生效')
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '操作失败')
+  } finally {
+    busyId.value = null
+  }
 }
 
 onMounted(load)

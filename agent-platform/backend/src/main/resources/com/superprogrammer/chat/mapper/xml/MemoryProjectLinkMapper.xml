@@ -16,6 +16,9 @@
         <result property="status" column="status"/>
         <result property="createdAt" column="created_at"/>
         <result property="approvedAt" column="approved_at"/>
+        <result property="revokeRequestedBy" column="revoke_requested_by"/>
+        <result property="revokeRequestedByName" column="revoke_requested_by_name"/>
+        <result property="revokeRequestedAt" column="revoke_requested_at"/>
     </resultMap>
 
     <!-- 我相关的授权链（FR-101 前端两栏数据源）：我是 parent 或 child 侧 ACTIVE owner/admin。
@@ -25,12 +28,15 @@
                l.child_project_id, cp.name AS child_project_name,
                l.granted_by, COALESCE(gu.name, gu.username) AS granted_by_name,
                l.approved_by, COALESCE(au.name, au.username) AS approved_by_name,
+               l.revoke_requested_by, COALESCE(ru.name, ru.username) AS revoke_requested_by_name,
+               l.revoke_requested_at,
                l.status, l.created_at, l.approved_at
         FROM memory_project_links l
         JOIN projects pp ON pp.id = l.parent_project_id
         JOIN projects cp ON cp.id = l.child_project_id
         LEFT JOIN users gu ON gu.id = l.granted_by
         LEFT JOIN users au ON au.id = l.approved_by
+        LEFT JOIN users ru ON ru.id = l.revoke_requested_by
         WHERE l.deleted = 0 AND (
             EXISTS (SELECT 1 FROM memory_project_members m
                     WHERE m.project_id = l.parent_project_id AND m.user_id = #{userId}
