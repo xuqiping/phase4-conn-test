@@ -66,6 +66,7 @@ import {
   ChatbubblesOutline,
   BookOutline,
   VideocamOutline,
+  ImageOutline,
   AppsOutline,
   AlbumsOutline,
   WalletOutline,
@@ -111,6 +112,7 @@ const navItems = computed(() => {
   ]
   if (canGenVideo.value) {
     items.push({ path: '/video-gen', label: '视频生成', icon: VideocamOutline })
+    items.push({ path: '/image-gen', label: '图片生成', icon: ImageOutline })
   }
   if (canEditCanvas.value) {
     items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline })

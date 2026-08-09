@@ -90,6 +90,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '视频生成' }
       },
       {
+        path: 'image-gen',
+        name: 'ImageGen',
+        component: () => import('@/views/ImageGenView.vue'),
+        meta: { title: '图片生成' }
+      },
+      {
         path: 'canvas',
         name: 'CanvasList',
         component: () => import('@/views/CanvasView.vue'),

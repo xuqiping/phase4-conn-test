@@ -23,7 +23,11 @@ export type MediaStatus =
   | 'DOWNLOAD_FAILED'
 
 /** 任务类型 */
-export type MediaTaskType = 'TEXT2VIDEO' | 'IMAGE2VIDEO'
+export type MediaTaskType =
+  | 'TEXT2VIDEO'
+  | 'IMAGE2VIDEO'
+  | 'TEXT2IMAGE'
+  | 'IMAGE2IMAGE'
 
 /** 分辨率白名单（对齐后端校验；4K 仅 SeedDance 2.0 全版） */
 export type MediaResolution = '480p' | '720p' | '1080p' | '4K'
@@ -54,6 +58,16 @@ export interface MediaTaskVO {
   videoUrl: string | null
   /** 结果文件 stored_files.file_id（仅 SUCCEEDED 且有归属）；C11 画布抽帧用 */
   resultFileId: string | null
+  /** 图片任务：各张逐张下载端点列表（同 videoUrl 归属门控）；视频任务为 null */
+  imageUrls: string[] | null
+  /** 图片任务：官方 generated_images（计费张数） */
+  generatedImages: number | null
+  /** 图片任务：usage.output_tokens（审计） */
+  outputTokens: number | null
+  /** 图片任务回显：size */
+  size: string | null
+  /** 图片任务回显：输出格式 */
+  outputFormat: string | null
   createdAt: string
   updatedAt: string | null
 }
@@ -94,6 +108,75 @@ export interface MediaModelVO {
   supportsGenerateAudio: boolean
   /** 参考视频是否允许 data URI 直传（false → 前端隐藏视频上传区） */
   videoDataUri: boolean
+}
+
+// === 图片生成（Seedream lite/pro，GET /api/media/image/models） ===
+
+/**
+ * 生图模型能力清单（对应后端 ImageModelCapability）—— 前端数据驱动动态表单的唯一来源。
+ * 「选不同模型 → 页面按该模型实际参数决定展示内容，枚举值用下拉框」硬约束由此驱动：
+ * 各 supportsXxx 显隐控件，各 List 枚举填下拉候选。
+ */
+export interface ImageModelCapability {
+  /** 参考图上限（lite=14，pro=10；0=不支持参考图） */
+  refImageMax: number
+  /** 参考图允许格式（lite 多格式，pro 仅 jpeg/png） */
+  refImageFormats: string[]
+  /** size 预设枚举（下拉候选）：lite=[2K,3K,4K]，pro=[2K,3K] */
+  sizePresets: string[]
+  /** 是否支持自定义「宽x高」size */
+  supportsWhSize: boolean
+  /** 是否支持组图 sequential（lite 独有） */
+  supportsSequential: boolean
+  /** 组图最大生成数（lite=15） */
+  maxSequentialImages: number
+  /** 是否支持联网搜索（lite 独有） */
+  supportsWebSearch: boolean
+  /** 是否支持流式（lite 独有；MVP 固定 false，仅驱动 UI） */
+  supportsStream: boolean
+  /** 输出格式枚举（下拉候选）：[jpeg,png] */
+  outputFormats: string[]
+  /** 提示词优化模式枚举（下拉候选）：lite=[standard]，pro=[standard,fast] */
+  optimizeModes: string[]
+  /** 是否支持引导尺度 guidance_scale（pro 独有） */
+  supportsGuidanceScale: boolean
+  /** guidance_scale 下限（pro=1） */
+  guidanceMin: number
+  /** guidance_scale 上限（pro=10） */
+  guidanceMax: number
+  /** 水印默认值 */
+  watermarkDefault: boolean
+}
+
+/** 生图模型目录项（GET /api/media/image/models） */
+export interface ImageModelVO {
+  modelId: string
+  displayName: string
+  providerName: string
+  capability: ImageModelCapability
+}
+
+/** 生图提交请求（对应后端 ImageSubmitRequest）；不支持的字段传了值后端即拒 */
+export interface ImageSubmitRequest {
+  model: string
+  prompt?: string
+  /** 参考图 file_id 列表（资产库选取；纯文生图省略） */
+  refFileIds?: string[]
+  /** size 预设或自定义宽x高 */
+  size?: string
+  /** 输出格式 jpeg/png */
+  outputFormat?: string
+  watermark?: boolean
+  /** 引导尺度（pro） */
+  guidanceScale?: number
+  /** 提示词优化模式 standard/fast */
+  optimizeMode?: string
+  /** 组图 auto/disabled（lite） */
+  sequential?: string
+  /** 组图最大生成数（lite） */
+  maxImages?: number
+  /** 联网搜索（lite） */
+  webSearch?: boolean
 }
 
 /** 提交请求（对应后端 MediaSubmitRequest；duration/ratio/resolution 按模型能力校验） */
@@ -152,6 +235,18 @@ export const mediaApi = {
     return request.get<ApiResponse<MediaModelVO[]>>('/media/models')
   },
 
+  // === 图片生成（Seedream 同步生图，按张计费） ===
+
+  /** GET /api/media/image/models — 生图模型目录（含 ImageModelCapability，media:gen） */
+  listImageModels() {
+    return request.get<ApiResponse<ImageModelVO[]>>('/media/image/models')
+  },
+
+  /** POST /api/media/image — 提交生图任务，返 {id,status}（media:gen，按张计费） */
+  submitImage(data: ImageSubmitRequest) {
+    return request.post<ApiResponse<MediaSubmitResult>>('/media/image', data)
+  },
+
   /** POST /api/files/upload — multipart 上传参考附件（图/视频/音频），返 fileId（登录用户） */
   uploadAttachment(file: File) {
     const fd = new FormData()
@@ -173,6 +268,17 @@ export const mediaApi = {
 export async function fetchVideoBlob(downloadPath: string): Promise<string> {
   // VO 的 videoUrl 是 `/api/media/tasks/{id}/download`（带 /api 前缀），axios baseURL 已是 /api，
   // 去掉前缀避免拼成 /api/api/media/...
+  const path = downloadPath.replace(/^\/api/, '')
+  const res = await request.get<Blob>(path, { responseType: 'blob' })
+  return URL.createObjectURL(res.data)
+}
+
+/**
+ * 带鉴权拉取媒体产物并转 objectURL（视频/图片通用）。
+ * 图片逐张下载端点 `/api/media/tasks/{id}/images/{idx}/download` 同样 @RequirePermission 需 auth header，
+ * 走 axios 拉 blob（拦截器自动注 JWT）再 objectURL；调用方负责卸载/换图时 revoke。
+ */
+export async function fetchMediaBlob(downloadPath: string): Promise<string> {
   const path = downloadPath.replace(/^\/api/, '')
   const res = await request.get<Blob>(path, { responseType: 'blob' })
   return URL.createObjectURL(res.data)
