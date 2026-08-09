@@ -2,6 +2,7 @@ package com.superprogrammer.billing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.superprogrammer.billing.dto.DailyTrendVO;
+import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
 import com.superprogrammer.billing.dto.UserUsageVO;
@@ -57,4 +58,27 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                                   @Param("from") OffsetDateTime from,
                                   @Param("to") OffsetDateTime to,
                                   @Param("limit") int limit);
+
+    // ---------- admin 调用明细（逐条 llm_usage_logs，含 token/¥/积分；LEFT JOIN users 取用户名） ----------
+
+    /** 明细总数（与 {@link #pageDetail} 同筛选条件，供分页 total）。不 join，轻量。 */
+    long countDetail(@Param("from") OffsetDateTime from,
+                     @Param("to") OffsetDateTime to,
+                     @Param("userId") Long userId,
+                     @Param("model") String model,
+                     @Param("kind") String kind,
+                     @Param("status") String status);
+
+    /**
+     * 逐条明细分页（含 username/displayName via LEFT JOIN users）。user_id 可空（系统调用）→ LEFT JOIN 不丢行。
+     * <p>offset/size 由 service 算好（{@code (page-1)*size}）；按 created_at 倒序（最新在前）。
+     */
+    List<UsageDetailVO> pageDetail(@Param("from") OffsetDateTime from,
+                                   @Param("to") OffsetDateTime to,
+                                   @Param("userId") Long userId,
+                                   @Param("model") String model,
+                                   @Param("kind") String kind,
+                                   @Param("status") String status,
+                                   @Param("offset") long offset,
+                                   @Param("size") long size);
 }

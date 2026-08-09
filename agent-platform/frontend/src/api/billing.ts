@@ -11,6 +11,7 @@
 
 import request from './request'
 import type { ApiResponse } from './request'
+import type { PageResult } from './admin'
 
 // === 类型定义 ===
 
@@ -115,6 +116,35 @@ export interface UserUsageVO {
   status: string
 }
 
+/** admin 调用明细行（逐条 llm_usage_logs，含 token/¥/积分 + username via JOIN） */
+export interface UsageDetailVO {
+  id: number
+  createdAt: string
+  userId: number | null
+  username: string | null
+  displayName: string | null
+  model: string | null
+  kind: BillingKind
+  tokensInput: number
+  tokensOutput: number
+  costYuan: number
+  pointsConsumed: number
+  status: string
+  errorMsg: string | null
+}
+
+/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to） */
+export interface UsageDetailQuery {
+  page?: number
+  size?: number
+  userId?: number
+  model?: string
+  kind?: BillingKind
+  status?: string
+  from?: string
+  to?: string
+}
+
 // === API 函数 ===
 
 export const billingApi = {
@@ -161,6 +191,10 @@ export const billingApi = {
   dailyTrend(params: BillingQueryParams) {
     return request.get<ApiResponse<DailyTrendVO[]>>('/billing/admin/trend', { params })
   },
+  // admin 调用明细（逐条，含 token/¥/积分 + 用户名，分页 + 筛选）
+  listUsageDetail(params: UsageDetailQuery) {
+    return request.get<ApiResponse<PageResult<UsageDetailVO>>>('/billing/admin/call-log', { params })
+  },
   // 我的钱包
   myWallet() {
     return request.get<ApiResponse<UserWalletVO>>('/billing/me/wallet')
@@ -198,4 +232,18 @@ export const LEDGER_TYPE_LABEL: Record<string, string> = {
   REFUND: '退款',
   ADMIN_GRANT: '管理员发放',
   RECHARGE: '充值'
+}
+
+/** 调用状态 → 中文（SUCCESS 成功 / FAILED 失败 / ESTIMATED 预估） */
+export const USAGE_STATUS_LABEL: Record<string, string> = {
+  SUCCESS: '成功',
+  FAILED: '失败',
+  ESTIMATED: '预估'
+}
+
+/** 调用状态 → NTag 色调 */
+export const USAGE_STATUS_TAG_TYPE: Record<string, 'success' | 'error' | 'warning'> = {
+  SUCCESS: 'success',
+  FAILED: 'error',
+  ESTIMATED: 'warning'
 }

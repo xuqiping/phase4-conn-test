@@ -7,7 +7,7 @@
         <n-button size="small" type="primary" :disabled="!rect" @click="onConfirm">提取为新图节点</n-button>
       </div>
       <div ref="stageRef" class="focus-overlay__stage" @mousedown="onMouseDown">
-        <img v-if="previewUrl" :src="previewUrl" class="focus-overlay__img" alt="焦点编辑底图" />
+        <img v-if="previewUrl" :src="previewUrl" class="focus-overlay__img" alt="焦点编辑底图" draggable="false" />
         <div v-if="rect" class="focus-overlay__rect" :style="rectStyle" />
         <div v-if="!previewUrl" class="focus-overlay__empty">该图节点尚无可预览图片</div>
       </div>
@@ -39,6 +39,9 @@ const start = ref<{ x: number; y: number } | null>(null)
 const rect = ref<CropRect | null>(null)
 
 function onMouseDown(e: MouseEvent) {
+  // 抑制浏览器原生 img 拖拽（幽灵预览会劫持后续 drag 事件致框选断裂 + 视觉上图片被拉动）
+  e.preventDefault()
+  e.stopPropagation()
   const stage = stageRef.value
   if (!stage) return
   const r = stage.getBoundingClientRect()
@@ -119,6 +122,8 @@ function clamp(v: number, lo: number, hi: number) {
     max-width: 90vw;
     max-height: 70vh;
     display: block;
+    -webkit-user-drag: none;
+    user-select: none;
   }
 
   &__rect {

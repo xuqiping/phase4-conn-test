@@ -14,6 +14,7 @@
       v-model:nodes="nodes"
       v-model:edges="edges"
       :node-types="nodeTypes"
+      :edge-types="edgeTypes"
       :default-edge-options="defaultEdgeOptions"
       :connection-line-style="connectionLineStyle"
       :snap-to-grid="true"
@@ -22,6 +23,7 @@
       @connect="onConnect"
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
+      @node-drag-stop="onNodeDragStop"
       @edge-click="onEdgeClick"
       @pane-click="onPaneClick"
     >
@@ -38,10 +40,10 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, nextTick, ref, watch } from 'vue'
+import { markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
-import type { Connection, EdgeMouseEvent, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
+import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import TextNode from './nodes/TextNode.vue'
@@ -50,6 +52,7 @@ import VideoNode from './nodes/VideoNode.vue'
 import AudioNode from './nodes/AudioNode.vue'
 import ScriptNode from './nodes/ScriptNode.vue'
 import StoryboardNode from './nodes/StoryboardNode.vue'
+import DeletableEdge from './edges/DeletableEdge.vue'
 
 /** 6 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
 const nodeTypes = {
@@ -60,6 +63,11 @@ const nodeTypes = {
   script: markRaw(ScriptNode),
   storyboard: markRaw(StoryboardNode)
 } as unknown as NodeTypesObject
+
+/** 自定义边：贝塞尔弧线 + 中点「×」删除按钮（点按钮即删，无需键盘，可发现性强）。 */
+const edgeTypes = {
+  deletable: markRaw(DeletableEdge)
+} as unknown as EdgeTypesObject
 
 const {
   project,
@@ -85,10 +93,12 @@ const emit = defineEmits<{
   (e: 'node-context-menu', node: CanvasNode): void
   /** C6：双击画布空白处 → 父开「快速加节点」搜索框（坐标已转画布坐标系）。 */
   (e: 'quick-add', position: { x: number; y: number }): void
+  /** 结构变更（连线增/删、节点拖动结束）→ 父 scheduleSave 落库。 */
+  (e: 'structure-changed'): void
 }>()
 
 const defaultEdgeOptions = {
-  type: 'default', // 贝塞尔弧线（同 infinite-canvas 风格），原 smoothstep=直角折线
+  type: 'deletable', // 自定义边：贝塞尔 + 中点删除按钮（原 default 无删除入口）
   animated: false,
   style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
 }
@@ -102,6 +112,29 @@ watch(selectedEdgeId, (id) => {
   for (const e of edges.value) {
     e.class = e.id === id ? 'canvas-edge--selected' : ''
   }
+})
+
+/**
+ * 全局 Delete/Backspace 删除（focus 无关）。boardRoot 上的 @keydown 仅在 boardRoot 聚焦时触发，
+ * 用户点边后若焦点被属性面板/输入框/IME 抢占则 Delete 失效——window 监听兜底。
+ * 排除可编辑元素（input/textarea/contenteditable/naive 控件），避免误删用户输入。
+ */
+function onWindowKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return
+  if (!selectedNodeId.value && !selectedEdgeId.value) return
+  const t = e.target as HTMLElement | null
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
+    || t.closest('.n-input,.n-base-selection,.mention-ta'))) return
+  e.preventDefault()
+  deleteSelected()
+}
+onMounted(() => window.addEventListener('keydown', onWindowKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onWindowKeydown))
+
+/** 暴露给自定义边 DeletableEdge 的删除回调（统一走 removeEdges → emit structure-changed 落库）。 */
+provide('canvasRemoveEdge', (id: string) => {
+  removeEdges([id])
+  if (selectedEdgeId.value === id) selectedEdgeId.value = ''
 })
 
 /** 从节点调色板拖入：dataTransfer 带 {label}，落点转画布坐标。 */
@@ -172,10 +205,11 @@ function onConnect(connection: Connection) {
     target: connection.target,
     sourceHandle: connection.sourceHandle || undefined,
     targetHandle: connection.targetHandle || undefined,
-    type: 'default', // 贝塞尔弧线（同 defaultEdgeOptions）
+    type: 'deletable', // 贝塞尔 + 中点删除按钮（同 defaultEdgeOptions）
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   }
   edges.value.push(edge)
+  emit('structure-changed')
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {
@@ -241,17 +275,25 @@ function removeNodes(nodeIds: string[]) {
   const removeSet = new Set(nodeIds)
   nodes.value = nodes.value.filter(n => !removeSet.has(n.id))
   edges.value = edges.value.filter(e => !removeSet.has(e.source) && !removeSet.has(e.target))
+  emit('structure-changed')
 }
 
 function removeEdges(edgeIds: string[]) {
   const removeSet = new Set(edgeIds)
   edges.value = edges.value.filter(e => !removeSet.has(e.id))
+  emit('structure-changed')
+}
+
+/** 节点拖动结束 → 落库新位置（vue-flow @node-drag-stop）。 */
+function onNodeDragStop() {
+  emit('structure-changed')
 }
 
 /** 载入快照（从后端加载画布时调）。 */
 function loadSnapshot(snap: CanvasSnapshot) {
   nodes.value = snap.nodes ?? []
-  edges.value = snap.edges ?? []
+  // 旧画布边为 smoothstep/default 无删除入口 → 统一归一为 deletable（贝塞尔+删除按钮）
+  edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
 }
 
 /** 序列化快照（保存时调）。getViewport 是函数非 ref（@vue-flow/core 1.41）。 */
@@ -297,7 +339,7 @@ function addEdge(source: string, target: string) {
     id: `edge-${source}-${target}-${Date.now()}`,
     source,
     target,
-    type: 'default', // 贝塞尔弧线（同 defaultEdgeOptions）
+    type: 'deletable', // 贝塞尔 + 中点删除按钮（同 defaultEdgeOptions）
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   })
 }

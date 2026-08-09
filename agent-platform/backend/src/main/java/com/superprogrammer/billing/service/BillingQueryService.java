@@ -3,6 +3,7 @@ package com.superprogrammer.billing.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.billing.dto.DailyTrendVO;
 import com.superprogrammer.billing.dto.LedgerItemVO;
+import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
 import com.superprogrammer.billing.dto.UserUsageVO;
@@ -10,6 +11,7 @@ import com.superprogrammer.billing.dto.UserWalletVO;
 import com.superprogrammer.billing.entity.PointsLedgerEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
 import com.superprogrammer.billing.mapper.PointsLedgerMapper;
+import com.superprogrammer.common.result.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -47,6 +49,10 @@ public class BillingQueryService {
     static final int WALLET_LEDGER_LIMIT = 50;
     /** 用户积分明细上限。 */
     static final int USER_USAGE_LIMIT = 200;
+    /** 调用明细默认每页条数。 */
+    static final int DETAIL_PAGE_SIZE = 20;
+    /** 调用明细每页上限（防恶意大 size 拖垮 DB）。 */
+    static final int DETAIL_MAX_SIZE = 100;
 
     private final LlmUsageLogMapper usageLogMapper;
     private final PointsLedgerMapper ledgerMapper;
@@ -77,6 +83,24 @@ public class BillingQueryService {
     public List<DailyTrendVO> dailyTrend(OffsetDateTime from, OffsetDateTime to) {
         Window w = clamp(from, to);
         return usageLogMapper.dailyTrend(w.from, w.to);
+    }
+
+    /**
+     * admin 调用明细分页（逐条 llm_usage_logs，含 token/¥/积分 + username via JOIN）。
+     * <p>复用 {@link #clamp} 兜底窗；size 缺省 {@link #DETAIL_PAGE_SIZE}、封顶 {@link #DETAIL_MAX_SIZE}；
+     * total==0 短路免一次空分页查询。
+     */
+    public PageResult<UsageDetailVO> pageDetail(OffsetDateTime from, OffsetDateTime to,
+                                                Long userId, String model, String kind, String status,
+                                                long page, long size) {
+        Window w = clamp(from, to);
+        long sz = size <= 0 ? DETAIL_PAGE_SIZE : Math.min(size, DETAIL_MAX_SIZE);
+        long pg = Math.max(page, 1);
+        long total = usageLogMapper.countDetail(w.from(), w.to(), userId, model, kind, status);
+        List<UsageDetailVO> records = total == 0
+                ? List.of()
+                : usageLogMapper.pageDetail(w.from(), w.to(), userId, model, kind, status, (pg - 1) * sz, sz);
+        return PageResult.of(records, total, pg, sz);
     }
 
     // ---------- user（ownership 由 controller 传 current userId，无外部旁路） ----------

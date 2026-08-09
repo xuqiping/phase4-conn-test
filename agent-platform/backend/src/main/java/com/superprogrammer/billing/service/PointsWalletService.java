@@ -109,7 +109,8 @@ public class PointsWalletService {
 
         PaymentOrderEntity order = new PaymentOrderEntity();
         order.setUserId(userId);
-        order.setAmountYuan(moneyYuan);
+        // amount_yuan 列 NOT NULL（V65）：admin 纯发放（moneyYuan=null）合法记 ¥0，避免违反非空约束
+        order.setAmountYuan(moneyYuan != null ? moneyYuan : BigDecimal.ZERO);
         order.setPointsGranted(points);
         order.setStatus(PaymentOrderEntity.STATUS_PAID);
         order.setChannel(channel != null ? channel : PaymentOrderEntity.CHANNEL_ADMIN);

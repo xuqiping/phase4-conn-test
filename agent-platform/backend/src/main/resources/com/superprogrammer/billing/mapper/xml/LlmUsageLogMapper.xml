@@ -111,4 +111,48 @@
         LIMIT #{limit}
     </select>
 
+    <!-- ============ admin 调用明细（逐条，含 token/¥/积分；LEFT JOIN users 取用户名） ============ -->
+
+    <!-- 明细筛选 where 片段：from/to（半开）+ userId/model/kind/status 精确匹配。countDetail 与 pageDetail 共用。 -->
+    <sql id="detailWhere">
+        <where>
+            <if test="from != null">l.created_at &gt;= #{from}</if>
+            <if test="to != null">AND l.created_at &lt; #{to}</if>
+            <if test="userId != null">AND l.user_id = #{userId}</if>
+            <if test="model != null and model != ''">AND l.model = #{model}</if>
+            <if test="kind != null and kind != ''">AND l.kind = #{kind}</if>
+            <if test="status != null and status != ''">AND l.status = #{status}</if>
+        </where>
+    </sql>
+
+    <!-- 明细总数（不 join，轻量）。 -->
+    <select id="countDetail" resultType="long">
+        SELECT COUNT(*) FROM llm_usage_logs l
+        <include refid="detailWhere"/>
+    </select>
+
+    <!-- 逐条明细分页：LEFT JOIN users（user_id 可空=系统调用，LEFT JOIN 不丢行）。
+         u.name AS display_name → 自动映射 displayName；列名 underscore→camel 自动映射已开。 -->
+    <select id="pageDetail" resultType="com.superprogrammer.billing.dto.UsageDetailVO">
+        SELECT
+            l.id,
+            l.created_at,
+            l.user_id,
+            u.username,
+            u.name AS display_name,
+            l.model,
+            l.kind,
+            l.tokens_input,
+            l.tokens_output,
+            l.cost_yuan,
+            l.points_consumed,
+            l.status,
+            l.error_msg
+        FROM llm_usage_logs l
+        LEFT JOIN users u ON u.id = l.user_id
+        <include refid="detailWhere"/>
+        ORDER BY l.created_at DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
 </mapper>

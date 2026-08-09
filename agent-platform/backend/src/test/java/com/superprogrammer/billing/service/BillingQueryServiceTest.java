@@ -1,11 +1,13 @@
 package com.superprogrammer.billing.service;
 
+import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
 import com.superprogrammer.billing.dto.UserUsageVO;
 import com.superprogrammer.billing.dto.UserWalletVO;
 import com.superprogrammer.billing.entity.PointsLedgerEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
 import com.superprogrammer.billing.mapper.PointsLedgerMapper;
+import com.superprogrammer.common.result.PageResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,9 +20,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -126,5 +131,57 @@ class BillingQueryServiceTest {
         verify(usageLogMapper).listForUser(eq(100L), any(), any(), eq(BillingQueryService.USER_USAGE_LIMIT));
         // 用户 VO 字段无 token/cost_yuan（编译期保证：UserUsageVO 仅 5 字段 createdAt/model/kind/pointsConsumed/status）
         assertEquals(new BigDecimal("12"), list.get(0).getPointsConsumed());
+    }
+
+    // ---------- admin 调用明细 pageDetail ----------
+
+    @Test
+    void pageDetail_returnsPageResultWithRecords() {
+        UsageDetailVO row = new UsageDetailVO();
+        row.setId(7L);
+        row.setModel("glm-5.1");
+        row.setUsername("admin");
+        row.setTokensInput(496);
+        row.setTokensOutput(36);
+        row.setPointsConsumed(new BigDecimal("0.57"));
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(17L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), anyLong(), eq((long) BillingQueryService.DETAIL_PAGE_SIZE)))
+                .thenReturn(List.of(row));
+
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 1, 0);
+
+        assertEquals(17L, pr.getTotal());
+        assertEquals(1, pr.getRecords().size());
+        assertEquals("admin", pr.getRecords().get(0).getUsername());
+        assertEquals(496, pr.getRecords().get(0).getTokensInput());
+        assertEquals((long) BillingQueryService.DETAIL_PAGE_SIZE, pr.getSize());
+    }
+
+    @Test
+    void pageDetail_sizeCappedToMax_andOffsetComputed() {
+        // size=999（恶意大）→ 截到 DETAIL_MAX_SIZE(100)；page=3 → offset=(3-1)*100=200
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(500L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), eq(200L), eq((long) BillingQueryService.DETAIL_MAX_SIZE)))
+                .thenReturn(List.of());
+
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 3, 999);
+
+        assertEquals((long) BillingQueryService.DETAIL_MAX_SIZE, pr.getSize());
+        assertEquals(3L, pr.getPage());
+        org.mockito.ArgumentCaptor<Long> offsetCap = org.mockito.ArgumentCaptor.forClass(Long.class);
+        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), offsetCap.capture(), eq((long) BillingQueryService.DETAIL_MAX_SIZE));
+        assertEquals(200L, offsetCap.getValue());
+    }
+
+    @Test
+    void pageDetail_totalZero_shortCircuitsPageQuery() {
+        // total=0 → 不调 pageDetail（短路免空查询），返空 records
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(0L);
+
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 1, 20);
+
+        assertTrue(pr.getRecords().isEmpty());
+        assertEquals(0L, pr.getTotal());
+        verify(usageLogMapper, never()).pageDetail(any(), any(), any(), any(), any(), any(), anyLong(), anyLong());
     }
 }

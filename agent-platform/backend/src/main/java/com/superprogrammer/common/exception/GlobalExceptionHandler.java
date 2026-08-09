@@ -72,11 +72,25 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({DuplicateKeyException.class, DataIntegrityViolationException.class})
     public ResponseEntity<R<Void>> handleDuplicateKey(DataIntegrityViolationException e) {
         String root = extractRootMessage(e);
+        // 非空约束违例（null value in column ...）不是「唯一约束冲突」，单列分支给准确提示，
+        // 否则下面的 extractConstraintName 会把列名误当约束名报「唯一约束：amount_yuan」。
+        if (root != null && (root.contains("null value") || root.toLowerCase().contains("not-null"))) {
+            String col = extractNotNullColumn(root);
+            log.warn("非空约束违例: column={}, root={}", col, root);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(R.fail(400, "必填字段为空" + (col != null ? "（" + col + "）" : "") + "，请补全后重试"));
+        }
         String constraint = extractConstraintName(root);
         String friendly = buildDuplicateFriendlyMessage(constraint);
         log.warn("唯一约束冲突: constraint={}, root={}", constraint, root);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(R.fail(ErrorCode.CONFLICT.getCode(), friendly));
+    }
+
+    /** 从 PG 非空违例信息提取列名，如 `null value in column "amount_yuan" of relation ...` → amount_yuan。 */
+    private String extractNotNullColumn(String msg) {
+        Matcher m = Pattern.compile("column \"([^\"]+)\"").matcher(msg);
+        return m.find() ? m.group(1) : extractConstraintName(msg);
     }
 
     /** 从 PG 错误信息提取约束名，如 "uk_kb_tenant_name" */

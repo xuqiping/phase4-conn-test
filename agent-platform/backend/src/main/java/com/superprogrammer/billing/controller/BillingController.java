@@ -2,11 +2,13 @@ package com.superprogrammer.billing.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.DailyTrendVO;
+import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
 import com.superprogrammer.billing.dto.UserUsageVO;
 import com.superprogrammer.billing.dto.UserWalletVO;
 import com.superprogrammer.billing.service.BillingQueryService;
+import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -84,6 +86,24 @@ public class BillingController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
         return ResponseEntity.ok(R.ok(queryService.dailyTrend(from, to)));
+    }
+
+    /**
+     * admin 调用明细（逐条 llm_usage_logs，含 token/¥/积分 + username）。
+     * <p>分页 + 按 用户/模型/类型/状态 筛选 + 日期区间。镜像 RagRetrievalLog 的分页范式。
+     */
+    @GetMapping("/admin/call-log")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<PageResult<UsageDetailVO>>> callLog(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String model,
+            @RequestParam(required = false) String kind,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.pageDetail(from, to, userId, model, kind, status, page, size)));
     }
 
     // ---------- user（ownership = current userId，无外部旁路） ----------
