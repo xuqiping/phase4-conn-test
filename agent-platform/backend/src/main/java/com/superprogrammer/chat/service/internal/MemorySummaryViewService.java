@@ -62,12 +62,16 @@ public class MemorySummaryViewService {
         return toVOs(summaryMapper.findProjectSharedSummaries(projectId));
     }
 
-    /** 项目共享总结读权：ACTIVE 成员 或 ACTIVE grant 被授权人（第二轮 #4）。 */
+    /** 项目共享总结读权：ACTIVE 成员 / ACTIVE grant 被授权人（第二轮 #4）/ ACTIVE link 被授权方（三期）。 */
     private boolean canReadProjectShared(Long projectId, Long userId) {
         if (linkService.isActiveMember(projectId, userId)) {
             return true;
         }
-        return grantService.findActiveGrantedProjectIds(userId).contains(projectId);
+        if (grantService.findActiveGrantedProjectIds(userId).contains(projectId)) {
+            return true;
+        }
+        // 三期：项目↔项目 link 被授权方(parent 成员)可只读授权方(child)共享总结
+        return linkService.findReadableChildProjectIds(userId).contains(projectId);
     }
 
     private List<MemorySummaryVO> toVOs(List<MemorySummary> summaries) {

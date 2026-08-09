@@ -21,6 +21,7 @@ vi.mock('@/api/memory', () => ({
     getGenMatrix: vi.fn(),
     listMyLinks: vi.fn(),
     listMyUserGrants: vi.fn(),
+    listPoolProjects: vi.fn(),
     createLink: vi.fn(),
     approveLink: vi.fn(),
     rejectLink: vi.fn(),
@@ -81,6 +82,8 @@ describe('MemoryProjectLinkPanel（二期 P2 · FR-101 项目授权）', () => {
     vi.clearAllMocks()
     // 二期 P1：load() 现多查 listMyUserGrants；默认空（现有用例不涉及个人授权）
     vi.mocked(memoryApi.listMyUserGrants).mockResolvedValue(apiOk([]))
+    // 三期：load() 增查公共池候选；默认空（现有用例不涉及 pool）
+    vi.mocked(memoryApi.listPoolProjects).mockResolvedValue(apiOk([]))
   })
 
   it('按「我管的侧」拆分两栏：child 我管=授权出去，parent 我管=待我审批', async () => {
@@ -127,6 +130,32 @@ describe('MemoryProjectLinkPanel（二期 P2 · FR-101 项目授权）', () => {
 
     expect(memoryApi.createLink).toHaveBeenCalledWith(1, 2)
     expect(messageMock.success).toHaveBeenCalledWith('已发起，待对方审批')
+  })
+
+  it('三期 G1：被授权方下拉纳入公共池项目（标「公共池」，去重，排除已选 child）', async () => {
+    vi.mocked(memoryApi.getGenMatrix).mockResolvedValue(apiOk([mkProject(1, 'OWNER')]))
+    vi.mocked(memoryApi.listMyLinks).mockResolvedValue(apiOk([]))
+    // 公共池含 id=1（与本人项目重复，应去重）+ id=50（新项目）
+    vi.mocked(memoryApi.listPoolProjects).mockResolvedValue(apiOk([
+      { id: 1, name: '项目1' }, { id: 50, name: '测试' }
+    ]))
+
+    const wrapper = mount(MemoryProjectLinkPanel)
+    await settle()
+
+    const vm = wrapper.vm as unknown as {
+      grantParentOptions: { label: string; value: number }[]
+      grantChildId: number | null
+    }
+    // 去重：项目1 已在 gen 矩阵，不重复；公共池 50 入选项带后缀
+    expect(vm.grantParentOptions).toEqual([
+      { label: '项目1', value: 1 },
+      { label: '测试（公共池）', value: 50 }
+    ])
+    // 选 child=1 后，被授权方排除 child 防自环
+    vm.grantChildId = 1
+    await settle()
+    expect(vm.grantParentOptions.map(o => o.value)).toEqual([50])
   })
 
   it('parent 侧 PENDING：通过调用 approveLink 并刷新', async () => {

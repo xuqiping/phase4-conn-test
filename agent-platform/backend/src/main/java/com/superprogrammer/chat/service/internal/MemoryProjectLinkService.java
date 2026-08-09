@@ -204,6 +204,23 @@ public class MemoryProjectLinkService {
         return linkMapper.findActiveChildIds(parentIds);
     }
 
+    /**
+     * 三期：userId 作为某 ACTIVE link 的 parent 成员时，可只读召回/查看的那些 child 项目 id 集
+     * （总结视图读权用——被授权方可看授权方共享总结，呼应 Style A：link ACTIVE 即生效读，不另建 grant）。
+     * 实现 = userId 的 ACTIVE 项目（其作为 parent）→ 这些 parent 的 ACTIVE child（单级一跳，不递归）。
+     */
+    public List<Long> findReadableChildProjectIds(Long userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        List<Long> myProjects = memberMapper.selectList(new LambdaQueryWrapper<MemoryProjectMember>()
+                        .select(MemoryProjectMember::getProjectId)
+                        .eq(MemoryProjectMember::getUserId, userId)
+                        .eq(MemoryProjectMember::getStatus, STATUS_ACTIVE_MEMBER))
+                .stream().map(MemoryProjectMember::getProjectId).distinct().toList();
+        return findActiveChildIds(myProjects);
+    }
+
     // ============================ 内部 ============================
 
     /** PENDING→target 条件翻转（并发安全）；approved_by/at 留痕。 */

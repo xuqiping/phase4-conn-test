@@ -67,6 +67,14 @@ class MemoryProjectLinkServiceTest {
         return m;
     }
 
+    /** 带 projectId 的 ACTIVE 成员（findReadableChildProjectIds 查 myProjects 用）。 */
+    private MemoryProjectMember member(Long projectId) {
+        MemoryProjectMember m = new MemoryProjectMember();
+        m.setProjectId(projectId);
+        m.setStatus("ACTIVE");
+        return m;
+    }
+
     private Project project(Long id, String name) {
         Project p = new Project();
         p.setId(id);
@@ -250,5 +258,31 @@ class MemoryProjectLinkServiceTest {
         service.revoke(9L, 100L);
 
         verify(summaryMapper).markProjectSharedStaleByChildEntries(1L, 2L);
+    }
+
+    // ---- 三期：findReadableChildProjectIds（被授权方 parent 成员 → 可读 child 项目集）----
+
+    // userId null → 空（不查库）
+    @Test
+    void findReadableChildProjectIds_nullUser_empty() {
+        assertEquals(java.util.List.of(), service.findReadableChildProjectIds(null));
+        verify(memberMapper, never()).selectList(any());
+    }
+
+    // userId 是 parent(1) 的 ACTIVE 成员，link ACTIVE child=21 → 返回 [21]
+    @Test
+    void findReadableChildProjectIds_asParentMember_returnsChildren() {
+        when(memberMapper.selectList(any())).thenReturn(java.util.List.of(member(1L)));
+        when(linkMapper.findActiveChildIds(java.util.List.of(1L))).thenReturn(java.util.List.of(21L));
+
+        assertEquals(java.util.List.of(21L), service.findReadableChildProjectIds(100L));
+    }
+
+    // userId 无任何 ACTIVE 项目 → myProjects 空 → findActiveChildIds 空入参短路（不查 link）
+    @Test
+    void findReadableChildProjectIds_noProjects_empty() {
+        when(memberMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        assertEquals(java.util.List.of(), service.findReadableChildProjectIds(100L));
     }
 }

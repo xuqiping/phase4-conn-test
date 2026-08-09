@@ -29,6 +29,8 @@
       <n-card v-for="s in sharedRows" :key="'shared-' + s.id" size="small" :bordered="true" style="margin-bottom: 8px">
         <div class="memory-summary-section__head">
           <n-tag size="tiny" type="info" :bordered="false">共享</n-tag>
+          <!-- 三期 req#4：被授权方读授权方共享总结时显式标注来源项目 -->
+          <n-tag v-if="s.projectName" size="tiny" type="warning" :bordered="false">{{ s.projectName }}</n-tag>
           <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
           <n-tag v-if="s.direction === 'INPUT' || s.direction === 'OUTPUT'" size="tiny" :type="s.direction === 'INPUT' ? 'info' : 'success'" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
           <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
@@ -72,7 +74,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NButton, NCard, NEmpty, NRadioButton, NRadioGroup, NSpace, NTag, useMessage } from 'naive-ui'
-import { memoryApi, type MemoryProjectUserGrantVO, type MemorySummaryVO } from '@/api/memory'
+import { memoryApi, type MemoryProjectLinkVO, type MemoryProjectUserGrantVO, type MemorySummaryVO } from '@/api/memory'
 import { projectApi } from '@/api/project'
 import MemoryConsolidationDialog from './MemoryConsolidationDialog.vue'
 
@@ -83,27 +85,45 @@ const sharedRows = ref<MemorySummaryVO[]>([])
 const projects = ref<{ id: number; name: string }[]>([])
 /** 第二轮 #4：我被 ACTIVE 授权只读召回的项目（scope radio 并入，标「授权」，隐总结按钮）。 */
 const grants = ref<MemoryProjectUserGrantVO[]>([])
+/** 三期：我涉及的 project↔project link（被授权方 parent 成员 → 可只读授权方 child 共享总结）。 */
+const links = ref<MemoryProjectLinkVO[]>([])
 const scope = ref<number | null>(null)
 const scopeKey = computed(() => (scope.value === null ? 'personal' : String(scope.value)))
 const loading = ref(false)
 const instantShow = ref(false)
 const resummarizeShow = ref(false)
 
-/** 第二轮 #4：ACTIVE 授权只读召回的项目 id 集（grantee=本人）。 */
+/** 三期：我作为 parent 成员可只读的 link-child 项目（ACTIVE link 且 parent 在我项目域内）。 */
+const linkChildProjects = computed(() => {
+  const myIds = new Set(projects.value.map(p => p.id))
+  return links.value
+    .filter(l => l.status === 'ACTIVE' && myIds.has(l.parentProjectId))
+    .map(l => ({ id: l.childProjectId, name: l.childProjectName ?? `项目#${l.childProjectId}` }))
+})
+
+/** 第二轮 #4 + 三期：ACTIVE 授权只读召回的项目 id 集（个人 grant ∪ link-child；grantee=本人）。 */
 const grantedProjectIds = computed(() => {
   const s = new Set<number>()
   for (const g of grants.value) {
     if (g.status === 'ACTIVE') s.add(g.projectId)
   }
+  for (const c of linkChildProjects.value) {
+    s.add(c.id)
+  }
   return s
 })
-/** scope radio 候选 = 我所在项目 ∪ ACTIVE 授权项目（去重，授权项标 granted）。 */
+/** scope radio 候选 = 我所在项目 ∪ ACTIVE 授权项目 ∪ link-child（去重，授权项标 granted）。 */
 const scopeItems = computed(() => {
   const own = projects.value.map(p => ({ id: p.id, name: p.name, granted: false }))
   const ownIds = new Set(own.map(p => p.id))
   for (const g of grants.value) {
     if (g.status === 'ACTIVE' && !ownIds.has(g.projectId)) {
       own.push({ id: g.projectId, name: g.projectName ?? `项目#${g.projectId}`, granted: true })
+    }
+  }
+  for (const c of linkChildProjects.value) {
+    if (!ownIds.has(c.id)) {
+      own.push({ id: c.id, name: c.name, granted: true })
     }
   }
   return own
@@ -154,6 +174,14 @@ async function loadGrants() {
   } catch { /* ignore */ }
 }
 
+/** 三期：拉我涉及的 project↔project link（被授权方 parent 成员 → scope 并入 link-child 只读）。 */
+async function loadLinks() {
+  try {
+    const res = await memoryApi.listMyLinks()
+    links.value = res.data?.data ?? []
+  } catch { /* ignore */ }
+}
+
 function statusType(s: string): 'success' | 'warning' | 'error' {
   if (s === 'CLEAN') return 'success'
   if (s === 'PENDING_CONFLICT') return 'error'
@@ -174,6 +202,7 @@ function directionLabel(d?: string): string {
 onMounted(async () => {
   await loadProjects()
   await loadGrants()
+  await loadLinks()
   await load()
 })
 defineExpose({ refresh: load })

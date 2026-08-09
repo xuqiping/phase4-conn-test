@@ -254,6 +254,8 @@ const authStore = useAuthStore()
 const projects = ref<MemoryGenMatrixItemVO[]>([])
 const links = ref<MemoryProjectLinkVO[]>([])
 const grants = ref<MemoryProjectUserGrantVO[]>([])
+/** 三期 G1：公共池项目（被授权方下拉候选；所有人可申请，已排除自建）。 */
+const poolProjects = ref<{ id: number; name: string }[]>([])
 const loading = ref(false)
 const granting = ref(false)
 const busyId = ref<number | null>(null)
@@ -298,12 +300,22 @@ const ownedProjectOptions = computed(() =>
   projects.value.filter(p => p.role === 'OWNER').map(p => ({ label: p.projectName, value: p.projectId }))
 )
 
-/** 被授权方选项：我所在的全部项目（排除已选 child，防自环）。 */
-const grantParentOptions = computed(() =>
-  projects.value
-    .filter(p => p.projectId !== grantChildId.value)
-    .map(p => ({ label: p.projectName, value: p.projectId }))
-)
+/** 被授权方选项：我所在的全部项目 ∪ 公共池项目（排除已选 child，防自环；pool 项标「公共池」）。 */
+const grantParentOptions = computed(() => {
+  const opts: { label: string; value: number }[] = []
+  const seen = new Set<number>()
+  for (const p of projects.value) {
+    if (p.projectId === grantChildId.value || seen.has(p.projectId)) continue
+    seen.add(p.projectId)
+    opts.push({ label: p.projectName, value: p.projectId })
+  }
+  for (const p of poolProjects.value) {
+    if (p.id === grantChildId.value || seen.has(p.id)) continue
+    seen.add(p.id)
+    opts.push({ label: `${p.name}（公共池）`, value: p.id })
+  }
+  return opts
+})
 
 function statusLabel(s: MemoryProjectLinkVO['status']): string {
   if (s === 'PENDING') return '待审批'
@@ -322,12 +334,14 @@ function statusTagType(s: MemoryProjectLinkVO['status']): 'success' | 'warning' 
 async function load() {
   loading.value = true
   try {
-    const [pRes, lRes, gRes] = await Promise.all([
-      memoryApi.getGenMatrix(), memoryApi.listMyLinks(), memoryApi.listMyUserGrants()
+    const [pRes, lRes, gRes, poolRes] = await Promise.all([
+      memoryApi.getGenMatrix(), memoryApi.listMyLinks(), memoryApi.listMyUserGrants(),
+      memoryApi.listPoolProjects()
     ])
     projects.value = pRes.data?.data ?? []
     links.value = lRes.data?.data ?? []
     grants.value = gRes.data?.data ?? []
+    poolProjects.value = poolRes.data?.data ?? []
   } catch (e: any) {
     message.error(e?.message || '加载授权链失败')
   } finally {
