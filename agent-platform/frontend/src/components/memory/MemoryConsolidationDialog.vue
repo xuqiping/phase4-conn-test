@@ -34,6 +34,18 @@
           clearable
           placeholder="按创建时间范围"
         />
+        <!-- 二期 P3c：方向筛选——个人/个人记忆等非项目 scope 透传，按输入/输出各生成独立总结行 -->
+        <div class="consolidation-dialog__direction">
+          <span class="consolidation-dialog__filter-hint">方向</span>
+          <n-radio-group v-model:value="directionFilter" size="small">
+            <n-radio-button value="BOTH">综合</n-radio-button>
+            <n-radio-button value="INPUT">仅输入</n-radio-button>
+            <n-radio-button value="OUTPUT">仅输出</n-radio-button>
+          </n-radio-group>
+          <span v-if="directionFilter !== 'BOTH'" class="consolidation-dialog__filter-hint">
+            仅 {{ directionFilter === 'INPUT' ? '输入' : '输出' }} 流水账 → 生成独立总结行
+          </span>
+        </div>
       </div>
       <n-empty v-if="!loading && !targets.length" size="small" description="无可总结 scope" />
       <n-space v-else vertical :size="8">
@@ -127,6 +139,8 @@ const channelMap = ref<Record<string, 'shared' | 'personal'>>({})
 const tagOptions = ref<{ label: string; value: number }[]>([])
 const tagFilter = ref<number[]>([])
 const dateRange = ref<[number, number] | null>(null)
+// 二期 P3c：全局方向筛选（综合 / 仅输入 / 仅输出），透传给非项目 scope
+const directionFilter = ref<'BOTH' | 'INPUT' | 'OUTPUT'>('BOTH')
 
 function channelOf(t: MemoryConsolidationTargetView): 'shared' | 'personal' {
   return channelMap.value[keyOf(t)] ?? (t.canWriteShared ? 'shared' : 'personal')
@@ -159,6 +173,10 @@ const selectedScopes = computed<MemoryConsolidationScopeRequest[]>(() =>
         base.start = new Date(dateRange.value[0]).toISOString()
         base.end = new Date(dateRange.value[1]).toISOString()
       }
+      // P3c：全局方向筛选——非项目 scope 透传（项目 scope 走 people-picker 自带 direction）
+      if (t.scopeKind !== 'PROJECT' && directionFilter.value !== 'BOTH') {
+        base.direction = directionFilter.value
+      }
       return base
     })
 )
@@ -187,9 +205,10 @@ async function loadTargets() {
     selected.value = s
     peopleCfgMap.value = {}
     channelMap.value = {}
-    // P3b：重置筛选
+    // P3b/P3c：重置筛选
     tagFilter.value = []
     dateRange.value = null
+    directionFilter.value = 'BOTH'
     // P3b：载入本人标签做筛选候选（失败不阻塞）
     try {
       const tg = await memoryApi.listTags()
@@ -256,6 +275,16 @@ watch(() => props.show, (s) => {
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   &__filter-title {
+    font-size: 12px;
+    opacity: 0.65;
+  }
+  &__direction {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  &__filter-hint {
     font-size: 12px;
     opacity: 0.65;
   }
