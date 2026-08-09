@@ -47,6 +47,8 @@ public class AuthService {
     private final DepartmentService departmentService;
     /** 日志系统 LOG-FR-11：登录/登出/刷新/注册审计（异步落库，绝不阻断认证主流程）。 */
     private final AuditLogService auditLogService;
+    /** 运维系统 OPS-FR-07：登录结果 + 注册限流触发指标（result 仅 success/fail）。 */
+    private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -60,7 +62,15 @@ public class AuthService {
     @Transactional
     public void register(RegisterRequest request) {
         // 限流（安全审计 #9）：IP + 用户名双维度，超阈值 → 429
-        checkRegisterRateLimit(currentClientIp(), request.getUsername());
+        try {
+            checkRegisterRateLimit(currentClientIp(), request.getUsername());
+        } catch (BusinessException e) {
+            // OPS-FR-07：限流触发计数（每次被拒注册正好一次；IP/用户名双窗口可能双中，这里只记一次）
+            if (e.getCode() == ErrorCode.RATE_LIMIT.getCode()) {
+                bizMetrics.registerRateLimited();
+            }
+            throw e;
+        }
 
         // 检查用户名唯一
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
@@ -147,18 +157,21 @@ public class AuthService {
 
         if (user == null) {
             auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
+            bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
 
         // 验证密码
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "bad_password");
+            bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
 
         // 检查用户状态
         if (!"ACTIVE".equals(user.getStatus())) {
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_disabled");
+            bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
         }
 
@@ -169,6 +182,7 @@ public class AuthService {
         // 生成JWT Token（走公共方法）
         log.info("用户登录成功: {}", user.getUsername());
         auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
+        bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_SUCCESS);
         return issueTokens(user, roleCodes, permissionCodes);
     }
 

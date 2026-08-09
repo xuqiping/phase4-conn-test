@@ -35,6 +35,7 @@ class AuthServiceDingTalkTest {
     @Mock StringRedisTemplate redisTemplate;
     @Mock SystemSettingService systemSettingService;
     @Mock DepartmentService departmentService;
+    @Mock com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     @InjectMocks AuthService authService;
 

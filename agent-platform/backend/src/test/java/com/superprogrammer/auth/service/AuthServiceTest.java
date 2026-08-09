@@ -62,6 +62,9 @@ class AuthServiceTest {
     private AuditLogService auditLogService;
 
     @Mock
+    private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+
+    @Mock
     private ValueOperations<String, String> valueOperations;
 
     @InjectMocks
@@ -143,6 +146,48 @@ class AuthServiceTest {
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+    }
+
+    // ===== OPS-FR-07 登录/限流指标 =====
+
+    @Test
+    void login_success_countsAuthLoginSuccess() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L))).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L))).thenReturn("refresh-token");
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+
+        authService.login(loginRequest);
+
+        verify(bizMetrics).authLogin("success");
+        verify(bizMetrics, never()).authLogin("fail");
+    }
+
+    @Test
+    void login_wrongPassword_countsAuthLoginFail() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
+
+        assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        verify(bizMetrics).authLogin("fail");
+        verify(bizMetrics, never()).authLogin("success");
+    }
+
+    @Test
+    void register_rateLimited_countsOnceAndRethrows() {
+        // 无请求上下文 → IP 窗口跳过；用户名窗口 increment=6 超阈值(5) → RATE_LIMIT
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("ratelimit:register:user:newuser")).thenReturn(6L);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+
+        assertEquals(429, e.getCode());
+        verify(bizMetrics, times(1)).registerRateLimited();
     }
 
     @Test

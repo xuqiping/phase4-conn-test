@@ -47,6 +47,7 @@ class AuthServiceAuditTest {
     @Mock private SystemSettingService systemSettingService;
     @Mock private DepartmentService departmentService;
     @Mock private AuditLogService auditLogService;
+    @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     @InjectMocks
     private AuthService authService;
