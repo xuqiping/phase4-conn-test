@@ -65,6 +65,8 @@ export interface RechargeRequest {
   userId: number
   points: number
   remark?: string
+  /** 安全体系 S1 · SEC-FR-121：同一笔表单提交生成一次 UUID，双击/重试同键只到账一次 */
+  idempotencyKey?: string
 }
 
 /** admin 账单总览 */
