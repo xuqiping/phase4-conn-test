@@ -64,4 +64,10 @@ public class AuditLogEntity {
 
     /** SUCCESS / FAIL（登录失败等也留痕）。 */
     private String result = RESULT_SUCCESS;
+
+    /** 安全体系 S2 D1（SEC-FR-040）：前一行 record_hash；首条链上行=GENESIS；null=存量链外行（V81 前）。 */
+    private String prevHash;
+
+    /** 安全体系 S2 D1（SEC-FR-040）：HMAC-SHA256(canonical(row)+prev_hash, AUDIT_HMAC_KEY) 小写 hex。 */
+    private String recordHash;
 }

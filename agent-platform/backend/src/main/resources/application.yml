@@ -82,6 +82,11 @@ jwt:
   access-expiration: 900000
   refresh-expiration: 604800000
 
+# 安全体系 S2（SEC-FR-040）：审计哈希链 HMAC 密钥——仅环境变量注入，缺失/过短(<32)拒绝启动（fail-fast 同 JWT_SECRET）。
+# 生成方式: openssl rand -base64 48 | tr -d '\n'。入 G1 轮换清单（轮换后旧链重算必断，须配合全量校验+新锚定公告）。
+audit:
+  hmac-key: ${AUDIT_HMAC_KEY:}
+
 management:
   tracing:
     sampling:

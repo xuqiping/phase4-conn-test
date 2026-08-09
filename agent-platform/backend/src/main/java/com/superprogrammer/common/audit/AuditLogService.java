@@ -25,14 +25,14 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class AuditLogService {
 
-    private final AuditLogMapper auditLogMapper;
+    private final AuditHashChainService hashChainService;
     private final Executor auditTaskExecutor;
 
     /** 落库失败/队列满丢弃累计数（可观测性：WARN 日志带此计数）。 */
     private final AtomicLong droppedCount = new AtomicLong();
 
-    public AuditLogService(AuditLogMapper auditLogMapper, Executor auditTaskExecutor) {
-        this.auditLogMapper = auditLogMapper;
+    public AuditLogService(AuditHashChainService hashChainService, Executor auditTaskExecutor) {
+        this.hashChainService = hashChainService;
         this.auditTaskExecutor = auditTaskExecutor;
     }
 
@@ -41,7 +41,8 @@ public class AuditLogService {
         try {
             auditTaskExecutor.execute(() -> {
                 try {
-                    auditLogMapper.insert(row);
+                    // 安全体系 S2 D1（SEC-FR-040）：insert 收敛到链式咽喉点（advisory 锁+哈希链）
+                    hashChainService.insertChained(row);
                 } catch (Exception e) {
                     log.warn("审计落库失败(已丢) module={} action={} dropped={} : {}",
                             row.getModule(), row.getAction(), droppedCount.incrementAndGet(), e.toString());

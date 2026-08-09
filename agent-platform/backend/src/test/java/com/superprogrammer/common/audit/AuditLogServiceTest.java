@@ -17,8 +17,8 @@ import static org.mockito.Mockito.verify;
  */
 class AuditLogServiceTest {
 
-    private final AuditLogMapper mapper = mock(AuditLogMapper.class);
-    private final AuditLogService service = new AuditLogService(mapper, Runnable::run);
+    private final AuditHashChainService chainService = mock(AuditHashChainService.class);
+    private final AuditLogService service = new AuditLogService(chainService, Runnable::run);
 
     @AfterEach
     void tearDown() {
@@ -36,7 +36,7 @@ class AuditLogServiceTest {
                 AuditLogEntity.RESULT_SUCCESS);
         service.record(row);
 
-        verify(mapper).insert(any(AuditLogEntity.class));
+        verify(chainService).insertChained(any(AuditLogEntity.class));
         assertThat(row.getTraceId()).isEqualTo("trace-9");
         assertThat(row.getUserId()).isEqualTo(42L);
         assertThat(row.getUsername()).isEqualTo("alice");
@@ -53,7 +53,7 @@ class AuditLogServiceTest {
     @Test
     void insertFailureSwallowedNeverThrows() {
         // 安全检查：模拟 DB 断 → 业务主流程不受影响（仅 WARN 计数）
-        doThrow(new RuntimeException("db down")).when(mapper).insert(any(AuditLogEntity.class));
+        doThrow(new RuntimeException("db down")).when(chainService).insertChained(any(AuditLogEntity.class));
         assertThatCode(() -> service.record(service.fromMdc("role", "x", null, null, "{}", "SUCCESS")))
                 .doesNotThrowAnyException();
     }
