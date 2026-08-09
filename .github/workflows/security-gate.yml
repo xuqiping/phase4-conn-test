@@ -1,0 +1,36 @@
+# 安全体系 S1 · SEC-FR-071 + SEC-FR-020：CI 安全门禁。
+# - gitleaks：密钥进仓库即红（防第二次 #2 密钥泄露事件）；既有历史命中走 baseline，只拦新增。
+# - mybatis-dollar-check：Mapper ${} 拼接即红（SQL 注入防回潮）。
+# 本地同款：agent-platform/scripts/security/*.sh（Git Bash 可跑）。
+name: security-gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: SEC-FR-071 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks scan（baseline 只拦新增）
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: agent-platform/.gitleaks.toml
+          # 组织仓库需 GITLEAKS_LICENSE secret（个人仓库免费可留空）
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  mybatis-dollar-check:
+    name: SEC-FR-020 SQL 注入门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mapper ${} 拼接扫描
+        run: bash agent-platform/scripts/security/mybatis-dollar-check.sh

@@ -1,0 +1,7 @@
+# MyBatis ${} 门禁白名单（安全体系 S1 · SEC-FR-020）
+# 确有合法用途（动态表名等）的 `${}` 行，把 grep 输出的「整行」（含 路径:行号: 前缀）贴到本文件。
+# 每行一条，精确匹配（grep -F）。
+#
+# LlmUsageLogMapper.xml dimCols 片段：${dim} 只由 XML 内部 <property name="dim" value="字面值"/> 静态注入
+# （CAST(user_id AS TEXT) / model / kind / date_trunc 等），永不接触用户输入，属安全的 SQL 片段复用。
+backend/src/main/resources/com/superprogrammer/billing/mapper/xml/LlmUsageLogMapper.xml:39:        ${dim} AS dimension_key,

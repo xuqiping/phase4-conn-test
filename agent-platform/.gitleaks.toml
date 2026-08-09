@@ -1,0 +1,18 @@
+# 安全体系 S1 · SEC-FR-071：gitleaks 配置。
+# baseline（既有历史命中，人工确认为误报/已失效串）在 .gitleaks-baseline.json，本文件只管规则豁免。
+title = "agent-platform gitleaks config"
+
+[allowlist]
+description = "测试 fixtures / 文档示例 / 公开占位符豁免"
+paths = [
+  # 文档与计划中的示例串
+  '''workflow_output/''',
+  '''项目工程文档/''',
+  # 前端/后端测试资源
+  '''backend/src/test/''',
+  '''frontend/src/.*\.test\.''',
+]
+# 明显非机密的占位符/示例值
+regexes = [
+  '''(?i)(example|placeholder|dummy|your[-_]|changeme|xxx+)''',
+]
