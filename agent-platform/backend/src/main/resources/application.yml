@@ -63,9 +63,10 @@ mybatis-plus:
   type-aliases-package: com.superprogrammer.**.entity
   configuration:
     map-underscore-to-camel-case: true
-    # SQL 走 slf4j（按 mapper 包名分级），不再 StdOutImpl 裸打 stdout 刷屏。
-    # 调试单 mapper SQL：把 logging.level 下对应 mapper 包降到 DEBUG。
+    # SQL 走 slf4j；log-prefix=sql. 使全部 mapper SQL logger 统一挂 "sql" 前缀下
+    #（logback 里单条 logger name="sql" 即可覆盖所有现存/未来 mapper 包，免登记）。
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+    log-prefix: sql.
   global-config:
     db-config:
       id-type: auto
@@ -106,12 +107,10 @@ logging:
     # 业务 INFO：保留记忆管线关键日志（processMemory / 记忆注入 / LLM调用 / applyClean 等），
     # 砍掉 DEBUG 噪声（JwtAuthenticationFilter 逐请求认证、内部细节）。
     com.superprogrammer: INFO
-    # mapper 全 WARN：SQL（DEBUG）不再刷屏。需调试某 mapper SQL 时单降该包到 DEBUG。
-    com.superprogrammer.knowledge.mapper: WARN
-    com.superprogrammer.chat.mapper: WARN
-    com.superprogrammer.auth.mapper: WARN
-    com.superprogrammer.system.mapper: WARN
-    com.superprogrammer.project.mapper: WARN
+    # SQL 独立通道（LOG-FR-04）：logger 名="sql."+mapper 全类名（mybatis log-prefix），
+    # 默认 OFF 静默（无 sql.log 产出）；开 SQL 排障设环境变量 LOG_SQL_ENABLED=DEBUG。
+    # 只进 logs/sql.log（logback additivity=false），不污染 app.log。
+    sql: ${LOG_SQL_ENABLED:OFF}
     org.apache.ibatis: WARN
     # security 降 INFO：砍掉「Securing GET ...」「Set SecurityContextHolder」每请求一行。
     org.springframework.security: INFO

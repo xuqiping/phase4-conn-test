@@ -76,6 +76,13 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing-bridge-otel</artifactId>
         </dependency>
+        <!-- LogstashEncoder：文件类 appender 输出 JSON 结构化日志（LOG-FR-05）。
+             console 保留彩色文本，双格式互不影响。BOM 不管此构件，显式 pin 7.4（logback 1.4/1.5 兼容）。 -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
 
         <!-- MyBatis-Plus -->
         <dependency>
