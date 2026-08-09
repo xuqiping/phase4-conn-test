@@ -59,6 +59,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // WebSocket端点（通过拦截器认证）
                         .requestMatchers("/ws/chat").permitAll()
+                        // 运维系统 OPS-FR-01：健康检查/指标端点 permitAll（Prometheus 抓取与部署探活无 JWT）。
+                        // 暴露面控制不在这一层——Nginx 不反代 /actuator + 防火墙仅内网（见 application.yml 红线注释）。
+                        .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
                         // 其他路径需要认证
                         .anyRequest().authenticated()
                 )

@@ -90,8 +90,22 @@ management:
   endpoints:
     web:
       exposure:
-        # 只暴露健康检查；metrics/prometheus 等端点留待运维系统 P0 显式开启。
-        include: health
+        # 运维系统 OPS-FR-01：health(探活/发布门禁) + info + prometheus(指标抓取)。
+        # 安全红线：Nginx 不反代 /actuator，防火墙仅放行内网/localhost → 外网不可达；
+        # 应用层这三个端点 permitAll（Prometheus 抓取无 JWT），其余端点一律不暴露。
+        include: health,info,prometheus
+  endpoint:
+    health:
+      # 健康细节只在已认证时展示（防泄露连接串/凭证）；匿名探活只见 {"status":"UP"}。
+      show-details: when-authorized
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # HTTP 延迟直方图（运维系统 OPS-FR-02）：接口质量看板 P95/P99 依赖 bucket 序列。
+        # Boot3 已无 web.server.request.autotime 属性，等效开关即本项。uri 默认按模板聚合（防高基数）。
+        http:
+          server:
+            requests: true
 
 logging:
   # 日志输出文件（控制台照常输出，文件供后续审查）。路径相对工作目录，云上即 jar 同级 logs/。

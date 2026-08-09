@@ -70,6 +70,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Prometheus registry：/actuator/prometheus 暴露指标（运维系统 OPS-FR-01）。
+             版本由 Spring Boot BOM 管理；单 jar 无外部进程，Prometheus 15s 拉模式。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <!-- Micrometer Tracing（OTel bridge）：traceId/spanId 自动入 MDC（LOG-FR-01），
              MVC/WebClient/RestTemplate 自动插桩。版本由 Spring Boot BOM 管理（3.2.5 线）。 -->
         <dependency>
