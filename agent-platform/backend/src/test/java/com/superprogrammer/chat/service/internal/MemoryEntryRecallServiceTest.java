@@ -39,6 +39,7 @@ class MemoryEntryRecallServiceTest {
     @Mock MemoryProjectMemberMapper memberMapper;
     @Mock MemoryProjectEntryMapper entryMapper;
     @Mock MemoryProjectLinkMapper linkMapper;
+    @Mock MemoryProjectUserGrantService grantService;
 
     private MemoryEntryRecallService service;
 
@@ -51,7 +52,7 @@ class MemoryEntryRecallServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemoryEntryRecallService(memberMapper, entryMapper, linkMapper);
+        service = new MemoryEntryRecallService(memberMapper, entryMapper, linkMapper, grantService);
     }
 
     private static MemoryProjectMember membership(long projectId, long userId, String status) {
@@ -180,5 +181,38 @@ class MemoryEntryRecallServiceTest {
         assertEquals(1, out.size());
         verify(entryMapper).listActiveForRecall(List.of(10L));
         assertNotEquals(Boolean.TRUE, out.get(0).getViaAuthorizedLink(), "成员身份优先，不打授权标");
+    }
+
+    // ===== 9 P1 个人授权合流：非成员但有 ACTIVE 授权的项目条目并入 + 打授权标 =====
+
+    @Test
+    void personalGrant_mergedAndMarked() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(membership(10L, 1L, "ACTIVE")));
+        when(grantService.findActiveGrantedProjectIds(1L)).thenReturn(List.of(50L));  // 50 非成员，仅授权
+        when(linkMapper.findActiveChildIds(List.of(10L))).thenReturn(List.of());
+        when(entryMapper.listActiveForRecall(List.of(10L, 50L))).thenReturn(List.of(
+                entry(1, 10L), entry(2, 50L)));
+
+        List<MemoryProjectEntryVO> out = service.collectActiveEntries(List.of(10L, 50L), 1L);
+
+        assertEquals(2, out.size());
+        assertNotEquals(Boolean.TRUE, out.get(0).getViaAuthorizedLink(), "成员项目条目不打授权标");
+        assertEquals(Boolean.TRUE, out.get(1).getViaAuthorizedLink(), "个人授权项目条目打授权标");
+    }
+
+    // ===== 10 P1 个人授权合流：读者非任何项目成员，仅凭授权召回 → 仍出条目 =====
+
+    @Test
+    void personalGrantOnly_noMembership_stillRecalls() {
+        when(memberMapper.selectList(any())).thenReturn(List.of());  // 非任何项目成员
+        when(grantService.findActiveGrantedProjectIds(1L)).thenReturn(List.of(50L));
+        when(entryMapper.listActiveForRecall(List.of(50L))).thenReturn(List.of(entry(2, 50L)));
+
+        List<MemoryProjectEntryVO> out = service.collectActiveEntries(List.of(50L), 1L);
+
+        assertEquals(1, out.size());
+        assertEquals(50L, out.get(0).getProjectId());
+        assertEquals(Boolean.TRUE, out.get(0).getViaAuthorizedLink());
+        verify(linkMapper, never()).findActiveChildIds(anyList());  // readable 空 → 不查 child 链（防 IN() 空集）
     }
 }

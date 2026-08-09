@@ -111,13 +111,17 @@ const DEFAULT_FORM: ScopeForm = {
 }
 
 const form = ref<ScopeForm>({ ...DEFAULT_FORM })
-const availableProjects = ref<{ projectId: number; name: string }[]>([])
+const availableProjects = ref<{ projectId: number; name: string; viaGrant?: boolean }[]>([])
 const loading = ref(true)
 const dirty = ref(false)
 const saved = ref(false)
 
 const projectOptions = computed(() =>
-  availableProjects.value.map(p => ({ label: p.name, value: p.projectId }))
+  availableProjects.value.map(p => ({
+    // P1：经个人授权获得读权的项目标注「（授权）」，与成员项目区分
+    label: p.viaGrant ? `${p.name}（授权）` : p.name,
+    value: p.projectId
+  }))
 )
 
 const directionOptions = [

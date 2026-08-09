@@ -114,7 +114,7 @@ export interface MemoryRecallScopeView {
   start: string | null
   end: string | null
   includeDeparted: boolean
-  availableProjects: { projectId: number; name: string }[]
+  availableProjects: { projectId: number; name: string; viaGrant?: boolean }[]
 }
 
 export interface MemoryRecallScopeRequest {
@@ -260,6 +260,23 @@ export interface MemoryProjectLinkVO {
   childProjectId: number
   childProjectName: string | null
   grantedBy: number
+  grantedByName: string | null
+  approvedBy: number | null
+  approvedByName: string | null
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED'
+  createdAt: string | null
+  approvedAt: string | null
+}
+
+/** 项目↔个人授权视图（二期 P1 · 只读召回）。 */
+export interface MemoryProjectUserGrantVO {
+  id: number
+  projectId: number
+  projectName: string | null
+  userId: number
+  userName: string | null
+  initiatedBy: 'PROJECT' | 'USER'   // PROJECT=项目主动授权 / USER=个人申请
+  grantedBy: number | null
   grantedByName: string | null
   approvedBy: number | null
   approvedByName: string | null
@@ -468,6 +485,36 @@ export const memoryApi = {
   },
   revokeLink(linkId: number) {
     return request.delete<ApiResponse<void>>(`/chat/memory/links/${linkId}`)
+  },
+
+  // ---- 二期 P1 · 项目↔个人授权（只读召回；双向发起，落同一 ACTIVE 授权）----
+  /** 项目主动授权个人（项目 owner/admin；立即 ACTIVE）。 */
+  grantUserByProject(projectId: number, userId: number) {
+    return request.post<ApiResponse<MemoryProjectUserGrantVO>>(`/chat/memory/projects/${projectId}/user-grants`, { userId })
+  },
+  /** 个人申请召回某项目（本人 → PENDING 待项目 owner/admin 审批）。 */
+  applyUserGrant(projectId: number) {
+    return request.post<ApiResponse<MemoryProjectUserGrantVO>>('/chat/memory/user-grants/apply', { projectId })
+  },
+  listMyUserGrants() {
+    return request.get<ApiResponse<MemoryProjectUserGrantVO[]>>('/chat/memory/user-grants/mine')
+  },
+  approveUserGrant(grantId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}/approve`)
+  },
+  rejectUserGrant(grantId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}/reject`)
+  },
+  revokeUserGrant(grantId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}`)
+  },
+  /** 关键词检索用户（项目授权个人的被授权人选择；仅 id+name）。 */
+  searchGrantUsers(q: string) {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>('/chat/memory/user-grants/search-users', { params: { q } })
+  },
+  /** 关键词检索项目（个人申请召回的目标项目选择；仅 id+name）。 */
+  searchGrantProjects(q: string) {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>('/chat/memory/user-grants/search-projects', { params: { q } })
   },
 
   // ---- 二期 P3 · 文件记忆（FR-201~205；端点挂在 ChatController /chat/attachments 下）----

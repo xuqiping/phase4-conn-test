@@ -240,7 +240,7 @@ async function submitCreate() {
       label,
       aliases: createForm.value.aliases.length ? createForm.value.aliases : undefined
     })
-    message.success(res.data?.msg || '标签已创建')
+    message.success(res.data?.message || '标签已创建')
     const fresh = res.data?.data
     if (fresh) {
       // 已存在则并入既有（id 已在列表）→ 刷新该行；新建则插入

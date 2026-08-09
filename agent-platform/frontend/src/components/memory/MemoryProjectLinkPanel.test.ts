@@ -20,11 +20,17 @@ vi.mock('@/api/memory', () => ({
   memoryApi: {
     getGenMatrix: vi.fn(),
     listMyLinks: vi.fn(),
+    listMyUserGrants: vi.fn(),
     createLink: vi.fn(),
     approveLink: vi.fn(),
     rejectLink: vi.fn(),
     revokeLink: vi.fn()
   }
+}))
+
+// 二期 P1：useAuthStore 需 pinia；测试桩直接返回 userInfo.id 供「我被授权的」拆分
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ userInfo: { id: 100 } })
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -73,6 +79,8 @@ async function settle() {
 describe('MemoryProjectLinkPanel（二期 P2 · FR-101 项目授权）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 二期 P1：load() 现多查 listMyUserGrants；默认空（现有用例不涉及个人授权）
+    vi.mocked(memoryApi.listMyUserGrants).mockResolvedValue(apiOk([]))
   })
 
   it('按「我管的侧」拆分两栏：child 我管=授权出去，parent 我管=待我审批', async () => {

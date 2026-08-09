@@ -3,11 +3,16 @@ package com.superprogrammer.chat.controller;
 import com.superprogrammer.chat.dto.MemoryRecallPreviewRequest;
 import com.superprogrammer.chat.dto.MemoryRecallResult;
 import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
+import com.superprogrammer.chat.dto.MemoryRecallScopeView;
+import com.superprogrammer.chat.service.internal.MemoryProjectUserGrantService;
 import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
 import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.project.entity.Project;
+import com.superprogrammer.project.mapper.ProjectMapper;
+import com.superprogrammer.project.service.ProjectService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +24,12 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 计划12 · D-7 · 召回对外端点（总体设计 §3.3 + 运维「preview 透出」）。
@@ -45,6 +56,9 @@ public class MemoryRecallController {
 
     private final MemoryRecallPipeline pipeline;
     private final MemoryRecallScopePreferenceService prefService;
+    private final ProjectService projectService;
+    private final ProjectMapper projectMapper;
+    private final MemoryProjectUserGrantService grantService;
 
     /** 召回 preview（透出装配文本 + 选中标签 + counts + 降级标记 + traceId）。 */
     @PostMapping("/preview")
@@ -61,12 +75,63 @@ public class MemoryRecallController {
         return ResponseEntity.ok(R.ok(result));
     }
 
-    /** 取上次 scope 偏好；无历史默认 {个人}（设计 §3.3 line 113）。 */
+    /**
+     * 取上次 scope 偏好 + 用户可勾选项目集；无历史默认 {个人}（设计 §3.3 line 113）。
+     * <p>
+     * 记忆二期 P1：{@code availableProjects} = 本人可访问项目（viaGrant=false）∪ 被授权召回项目（viaGrant=true）。
+     * 修正此前 getScope 仅返 Request（无 availableProjects）→ 前端项目勾选下拉恒空的历史缺口。
+     */
     @GetMapping("/scope")
-    public ResponseEntity<R<MemoryRecallScopeRequest>> getScope() {
+    public ResponseEntity<R<MemoryRecallScopeView>> getScope() {
         Long uid = requireLogin();
-        MemoryRecallScopeRequest saved = prefService.getScope(uid);
-        return ResponseEntity.ok(R.ok(saved != null ? saved : defaultPersonalOnly()));
+        MemoryRecallScopeRequest base = prefService.getScope(uid);
+        if (base == null) {
+            base = defaultPersonalOnly();
+        }
+        return ResponseEntity.ok(R.ok(buildScopeView(base, uid)));
+    }
+
+    /** 持久化偏好回显 View（含 availableProjects，供前端即时刷新可勾选项）。 */
+    private MemoryRecallScopeView buildScopeView(MemoryRecallScopeRequest base, Long uid) {
+        Set<Long> accessible = projectService.listAccessibleProjectIds(uid);
+        List<Long> granted = grantService.findActiveGrantedProjectIds(uid);
+
+        // 一次性批量查项目名（accessible ∪ granted），防 N+1
+        List<Long> allIds = new ArrayList<>(accessible);
+        for (Long g : granted) {
+            if (!accessible.contains(g)) {
+                allIds.add(g);
+            }
+        }
+        Map<Long, String> nameMap = new HashMap<>();
+        if (!allIds.isEmpty()) {
+            for (Project p : projectMapper.selectBatchIds(allIds)) {
+                nameMap.put(p.getId(), p.getName());
+            }
+        }
+
+        List<MemoryRecallScopeView.ProjectOption> options = new ArrayList<>();
+        for (Long pid : accessible) {
+            options.add(MemoryRecallScopeView.ProjectOption.builder()
+                    .projectId(pid).name(nameMap.getOrDefault(pid, "项目#" + pid)).viaGrant(false).build());
+        }
+        for (Long pid : granted) {
+            if (!accessible.contains(pid)) {
+                options.add(MemoryRecallScopeView.ProjectOption.builder()
+                        .projectId(pid).name(nameMap.getOrDefault(pid, "项目#" + pid)).viaGrant(true).build());
+            }
+        }
+
+        return MemoryRecallScopeView.builder()
+                .personalOn(base.getPersonalOn() == null || base.getPersonalOn())
+                .projectIds(base.getProjectIds())
+                .direction(base.getDirection())
+                .relativeDays(base.getRelativeDays())
+                .start(base.getStart())
+                .end(base.getEnd())
+                .includeDeparted(base.getIncludeDeparted() == null || base.getIncludeDeparted())
+                .availableProjects(options)
+                .build();
     }
 
     /** 保存 scope 偏好（跨会话沿用）。 */

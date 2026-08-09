@@ -101,30 +101,167 @@
         </div>
       </div>
     </n-card>
+
+    <!-- ============ 二期 P1 · 个人授权（项目↔个人，只读召回）============ -->
+    <n-divider class="memory-link-panel__divider">个人授权（项目 ↔ 个人）</n-divider>
+    <n-alert type="info" :bordered="false" size="small" class="memory-link-panel__top">
+      把「项目条目的召回读权」授权给某个个人（只读摘要，不写回）。双向：项目 owner/admin 主动授权个人（立即生效），
+      或个人申请召回某项目（待项目 owner/admin 审批）。任一方可随时撤销，撤销即时断召回。
+    </n-alert>
+
+    <!-- A. 项目授权给个人 -->
+    <n-card size="small" :bordered="true" class="memory-link-panel__block">
+      <template #header>项目授权给个人（我 owner/admin 的项目）</template>
+      <n-space :size="8" align="center" class="memory-link-panel__grant" wrap>
+        <n-select
+          v-model:value="grantUserProjectId"
+          :options="managedProjectOptions"
+          size="small"
+          placeholder="授权项目（我 owner/admin）"
+          class="memory-link-panel__select"
+        />
+        <span class="memory-link-panel__arrow">→ 授权给 →</span>
+        <n-select
+          v-model:value="grantUserId"
+          :options="userOptions"
+          size="small"
+          filterable
+          remote
+          clearable
+          :loading="userSearching"
+          placeholder="搜索被授权人姓名/账号"
+          class="memory-link-panel__select"
+          @search="onSearchUser"
+        />
+        <n-button size="small" type="primary" :disabled="!grantUserProjectId || !grantUserId" :loading="granting" @click="grantUser">
+          授权
+        </n-button>
+      </n-space>
+
+      <n-empty v-if="!myManagedGrants.length" size="small" description="暂无我管理项目的个人授权" />
+      <div v-for="g in myManagedGrants" :key="'mg-' + g.id" class="memory-link-panel__row">
+        <div class="memory-link-panel__desc">
+          <b>{{ g.projectName }}</b> → <b>{{ g.userName }}</b>
+          <n-tag v-if="g.initiatedBy === 'USER'" size="tiny" type="warning" :bordered="false">个人申请</n-tag>
+          <n-tag size="tiny" :type="statusTagType(g.status)" :bordered="false">{{ statusLabel(g.status) }}</n-tag>
+        </div>
+        <div class="memory-link-panel__actions">
+          <template v-if="g.status === 'PENDING'">
+            <n-button size="tiny" type="primary" :loading="busyId === g.id" @click="approveGrant(g)">通过</n-button>
+            <n-button size="tiny" type="error" ghost :loading="busyId === g.id" @click="rejectGrant(g)">拒绝</n-button>
+          </template>
+          <n-button v-if="g.status === 'ACTIVE'" size="tiny" type="error" ghost :loading="busyId === g.id" @click="revokeGrant(g)">
+            撤销
+          </n-button>
+          <span class="memory-link-panel__meta">{{ g.createdAt }}</span>
+        </div>
+      </div>
+    </n-card>
+
+    <!-- B. 我被授权的 + 我申请召回 -->
+    <n-card size="small" :bordered="true" class="memory-link-panel__block">
+      <template #header>我被授权的 / 申请召回</template>
+      <n-space :size="8" align="center" class="memory-link-panel__grant" wrap>
+        <n-select
+          v-model:value="applyProjectId"
+          :options="projOptions"
+          size="small"
+          filterable
+          remote
+          clearable
+          :loading="projSearching"
+          placeholder="搜索要申请召回的项目"
+          class="memory-link-panel__select"
+          @search="onSearchProject"
+        />
+        <n-button size="small" type="primary" :disabled="!applyProjectId" :loading="granting" @click="applyGrant">
+          申请召回
+        </n-button>
+      </n-space>
+
+      <n-empty v-if="!myGranteeGrants.length" size="small" description="暂无被授权/申请中的项目" />
+      <div v-for="g in myGranteeGrants" :key="'gg-' + g.id" class="memory-link-panel__row">
+        <div class="memory-link-panel__desc">
+          <b>{{ g.projectName }}</b>
+          <n-tag v-if="g.initiatedBy === 'USER'" size="tiny" type="warning" :bordered="false">我申请</n-tag>
+          <n-tag v-else size="tiny" type="info" :bordered="false">项目授权</n-tag>
+          <n-tag size="tiny" :type="statusTagType(g.status)" :bordered="false">{{ statusLabel(g.status) }}</n-tag>
+        </div>
+        <div class="memory-link-panel__actions">
+          <n-button
+            v-if="g.status === 'PENDING'"
+            size="tiny"
+            ghost
+            :loading="busyId === g.id"
+            @click="revokeGrant(g)"
+          >
+            取消申请
+          </n-button>
+          <n-button
+            v-if="g.status === 'ACTIVE'"
+            size="tiny"
+            type="error"
+            ghost
+            :loading="busyId === g.id"
+            @click="revokeGrant(g)"
+          >
+            放弃授权
+          </n-button>
+          <span class="memory-link-panel__meta">{{ g.createdAt }}</span>
+        </div>
+      </div>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
-  NAlert, NButton, NCard, NEmpty, NSelect, NSpace, NTag, useDialog, useMessage
+  NAlert, NButton, NCard, NDivider, NEmpty, NSelect, NSpace, NTag, useDialog, useMessage
 } from 'naive-ui'
 import {
   memoryApi,
   type MemoryGenMatrixItemVO,
-  type MemoryProjectLinkVO
+  type MemoryProjectLinkVO,
+  type MemoryProjectUserGrantVO
 } from '@/api/memory'
+import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
 const dialog = useDialog()
+const authStore = useAuthStore()
 
 const projects = ref<MemoryGenMatrixItemVO[]>([])
 const links = ref<MemoryProjectLinkVO[]>([])
+const grants = ref<MemoryProjectUserGrantVO[]>([])
 const loading = ref(false)
 const granting = ref(false)
 const busyId = ref<number | null>(null)
 const grantChildId = ref<number | null>(null)
 const grantParentId = ref<number | null>(null)
+
+// ---- 二期 P1 · 个人授权状态 ----
+const currentUserId = computed(() => authStore.userInfo?.id)
+/** 我 owner/admin 的项目（项目授权个人=owner/admin 发起权）。 */
+const managedProjectOptions = computed(() =>
+  projects.value.filter(p => p.role === 'OWNER' || p.role === 'ADMIN').map(p => ({ label: p.projectName, value: p.projectId }))
+)
+const grantUserProjectId = ref<number | null>(null)
+const grantUserId = ref<number | null>(null)
+const userOptions = ref<{ label: string; value: number }[]>([])
+const userSearching = ref(false)
+const applyProjectId = ref<number | null>(null)
+const projOptions = ref<{ label: string; value: number }[]>([])
+const projSearching = ref(false)
+
+/** 我被授权的（grantee=本人）。 */
+const myGranteeGrants = computed(() =>
+  grants.value.filter(g => g.userId === currentUserId.value)
+)
+/** 我管理的项目授权出去的 / 待我审批的（我 owner/admin 该项目，且被授权人非本人）。 */
+const myManagedGrants = computed(() =>
+  grants.value.filter(g => managedIds.value.has(g.projectId) && g.userId !== currentUserId.value)
+)
 
 /** 我 owner/admin 的项目 id 集（区分「我授权出去的/待我审批的」两侧归属）。 */
 const managedIds = computed(() =>
@@ -165,14 +302,128 @@ function statusTagType(s: MemoryProjectLinkVO['status']): 'success' | 'warning' 
 async function load() {
   loading.value = true
   try {
-    const [pRes, lRes] = await Promise.all([memoryApi.getGenMatrix(), memoryApi.listMyLinks()])
+    const [pRes, lRes, gRes] = await Promise.all([
+      memoryApi.getGenMatrix(), memoryApi.listMyLinks(), memoryApi.listMyUserGrants()
+    ])
     projects.value = pRes.data?.data ?? []
     links.value = lRes.data?.data ?? []
+    grants.value = gRes.data?.data ?? []
   } catch (e: any) {
     message.error(e?.message || '加载授权链失败')
   } finally {
     loading.value = false
   }
+}
+
+// ---- 二期 P1 · 个人授权 ----
+
+async function onSearchUser(q: string) {
+  if (!q || q.trim().length < 1) { userOptions.value = []; return }
+  userSearching.value = true
+  try {
+    const res = await memoryApi.searchGrantUsers(q)
+    userOptions.value = (res.data?.data ?? []).map(u => ({ label: u.name, value: u.id }))
+  } catch { userOptions.value = [] } finally { userSearching.value = false }
+}
+
+async function onSearchProject(q: string) {
+  if (!q || q.trim().length < 1) { projOptions.value = []; return }
+  projSearching.value = true
+  try {
+    const res = await memoryApi.searchGrantProjects(q)
+    projOptions.value = (res.data?.data ?? []).map(p => ({ label: p.name, value: p.id }))
+  } catch { projOptions.value = [] } finally { projSearching.value = false }
+}
+
+async function grantUser() {
+  if (!grantUserProjectId.value || !grantUserId.value) return
+  granting.value = true
+  try {
+    await memoryApi.grantUserByProject(grantUserProjectId.value, grantUserId.value)
+    message.success('已授权，对方可在召回范围勾选本项目')
+    grantUserId.value = null
+    userOptions.value = []
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '授权失败')
+  } finally {
+    granting.value = false
+  }
+}
+
+async function applyGrant() {
+  if (!applyProjectId.value) return
+  granting.value = true
+  try {
+    await memoryApi.applyUserGrant(applyProjectId.value)
+    message.success('已申请，待项目 owner/admin 审批')
+    applyProjectId.value = null
+    projOptions.value = []
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '申请失败')
+  } finally {
+    granting.value = false
+  }
+}
+
+async function approveGrant(g: MemoryProjectUserGrantVO) {
+  busyId.value = g.id
+  try {
+    await memoryApi.approveUserGrant(g.id)
+    message.success('已通过，对方可在召回范围勾选本项目')
+    await load()
+  } catch (e: any) {
+    message.error(e?.message || '操作失败')
+  } finally {
+    busyId.value = null
+  }
+}
+
+function rejectGrant(g: MemoryProjectUserGrantVO) {
+  dialog.warning({
+    title: '拒绝该申请？',
+    content: `拒绝后 30 天内「${g.userName || '该用户'}」不能再次申请召回本项目。`,
+    positiveText: '拒绝',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      busyId.value = g.id
+      try {
+        await memoryApi.rejectUserGrant(g.id)
+        message.success('已拒绝')
+        await load()
+      } catch (e: any) {
+        message.error(e?.message || '操作失败')
+      } finally {
+        busyId.value = null
+      }
+    }
+  })
+}
+
+function revokeGrant(g: MemoryProjectUserGrantVO) {
+  dialog.warning({
+    title: g.status === 'PENDING' ? '取消申请？' : '撤销授权？',
+    content: g.status === 'PENDING'
+      ? '取消后该项目将不会收到你的申请。'
+      : (g.userId === currentUserId.value
+          ? '撤销后召回范围将不再包含该项目。'
+          : '撤销后对方将立即召回不到本项目条目。'),
+    positiveText: '确认',
+    negativeText: '再想想',
+    onPositiveClick: async () => {
+      busyId.value = g.id
+      try {
+        await memoryApi.revokeUserGrant(g.id)
+        message.success(g.status === 'PENDING' ? '已取消' : '已撤销')
+        await load()
+      } catch (e: any) {
+        message.error(e?.message || '操作失败')
+      } finally {
+        busyId.value = null
+      }
+    }
+  })
 }
 
 async function grant() {
@@ -253,6 +504,10 @@ defineExpose({ refresh: load })
 .memory-link-panel {
   &__top {
     margin-bottom: 12px;
+  }
+  &__divider {
+    margin: 8px 0 4px;
+    font-size: 13px;
   }
   &__block {
     margin-bottom: 12px;
