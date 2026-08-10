@@ -28,6 +28,12 @@ public class ProjectVO {
     private List<MediaTypeDef> mediaTypes;
     /** 当前用户在本项目的角色。 */
     private AssetRole role;
+    /** 公众池发布快照；详情接口仅对已有内容读权用户返回完整项目。 */
+    private Boolean publicPool;
+    private String publicAccessMode;
+    private Long publishedBy;
+    private OffsetDateTime publishedAt;
+    private Boolean publishedByAdmin;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }
