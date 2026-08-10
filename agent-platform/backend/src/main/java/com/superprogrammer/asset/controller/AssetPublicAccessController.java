@@ -1,5 +1,6 @@
 package com.superprogrammer.asset.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.asset.dto.PublicAccessDecisionRequest;
 import com.superprogrammer.asset.dto.PublicAccessRequestVO;
 import com.superprogrammer.asset.service.AssetPublicAccessService;
@@ -29,6 +30,7 @@ public class AssetPublicAccessController {
 
     private final AssetPublicAccessService publicAccessService;
 
+    @AuditLog(module = "asset", action = "public_access_request", targetType = "asset_public_access")
     @PostMapping
     @RequirePermission("asset:write")
     public ResponseEntity<R<PublicAccessRequestVO>> request(@PathVariable Long projectId) {
@@ -48,6 +50,7 @@ public class AssetPublicAccessController {
                 projectId, currentUserId(), isAdmin())));
     }
 
+    @AuditLog(module = "asset", action = "public_access_decision", targetType = "asset_public_access")
     @PutMapping("/{requestId}/decision")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> decide(@PathVariable Long projectId,
@@ -58,6 +61,7 @@ public class AssetPublicAccessController {
         return ResponseEntity.ok(R.ok("申请已处理", null));
     }
 
+    @AuditLog(module = "asset", action = "public_access_revoke", targetType = "asset_public_access")
     @DeleteMapping("/{requestId}/approval")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> revoke(@PathVariable Long projectId,

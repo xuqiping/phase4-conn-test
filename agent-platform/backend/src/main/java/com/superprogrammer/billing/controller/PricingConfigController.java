@@ -1,5 +1,6 @@
 package com.superprogrammer.billing.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.AvailablePricingModelVO;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
@@ -42,12 +43,14 @@ public class PricingConfigController {
         return ResponseEntity.ok(R.ok(pricingConfigService.availablePricingModels()));
     }
 
+    @AuditLog(module = "billing", action = "pricing_create", targetType = "pricing_rule")
     @PostMapping("/pricing")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<PricingRuleVO>> createPricingRule(@Valid @RequestBody PricingRuleRequest req) {
         return ResponseEntity.ok(R.ok("价表已创建", pricingConfigService.createPricingRule(req)));
     }
 
+    @AuditLog(module = "billing", action = "pricing_update", targetType = "pricing_rule")
     @PutMapping("/pricing/{id}")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<PricingRuleVO>> updatePricingRule(@PathVariable Long id,
@@ -63,12 +66,14 @@ public class PricingConfigController {
         return ResponseEntity.ok(R.ok(pricingConfigService.listRatioTiers()));
     }
 
+    @AuditLog(module = "billing", action = "ratio_create", targetType = "ratio_tier")
     @PostMapping("/ratio")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<RatioTierVO>> createRatioTier(@Valid @RequestBody RatioTierRequest req) {
         return ResponseEntity.ok(R.ok("阶梯比例已创建", pricingConfigService.createRatioTier(req)));
     }
 
+    @AuditLog(module = "billing", action = "ratio_update", targetType = "ratio_tier")
     @PutMapping("/ratio/{id}")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<RatioTierVO>> updateRatioTier(@PathVariable Long id,
@@ -76,6 +81,7 @@ public class PricingConfigController {
         return ResponseEntity.ok(R.ok("阶梯比例已更新", pricingConfigService.updateRatioTier(id, req)));
     }
 
+    @AuditLog(module = "billing", action = "ratio_delete", targetType = "ratio_tier")
     @DeleteMapping("/ratio/{id}")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<Void>> deleteRatioTier(@PathVariable Long id) {

@@ -1,5 +1,6 @@
 package com.superprogrammer.chat.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.chat.dto.MemoryProjectUserGrantVO;
 import com.superprogrammer.chat.dto.MemorySearchItemVO;
 import com.superprogrammer.chat.service.internal.MemoryProjectUserGrantService;
@@ -46,6 +47,7 @@ public class MemoryProjectUserGrantController {
     private final MemoryProjectUserGrantService grantService;
 
     /** 项目主动授权个人（项目 owner/admin；立即 ACTIVE）。body={"userId": 被授权人}。 */
+    @AuditLog(module = "memory", action = "user_grant_create", targetType = "memory_project_user_grant")
     @PostMapping("/projects/{projectId}/user-grants")
     public ResponseEntity<R<MemoryProjectUserGrantVO>> grantByProject(@PathVariable Long projectId,
                                                                       @RequestBody Map<String, Long> body) {
@@ -55,6 +57,7 @@ public class MemoryProjectUserGrantController {
     }
 
     /** 个人申请召回某项目（本人发起 → 待项目 owner/admin 审批）。body={"projectId": 目标项目}。 */
+    @AuditLog(module = "memory", action = "user_grant_apply", targetType = "memory_project_user_grant")
     @PostMapping("/user-grants/apply")
     public ResponseEntity<R<MemoryProjectUserGrantVO>> apply(@RequestBody Map<String, Long> body) {
         Long projectId = body != null ? body.get("projectId") : null;
@@ -72,6 +75,7 @@ public class MemoryProjectUserGrantController {
     }
 
     /** 审批通过（项目 owner/admin）。 */
+    @AuditLog(module = "memory", action = "user_grant_approve", targetType = "memory_project_user_grant")
     @PostMapping("/user-grants/{grantId}/approve")
     public ResponseEntity<R<Void>> approve(@PathVariable Long grantId) {
         grantService.approve(grantId, requireLogin());
@@ -79,6 +83,7 @@ public class MemoryProjectUserGrantController {
     }
 
     /** 审批拒绝（项目 owner/admin；30 天内同对个人不可重申）。 */
+    @AuditLog(module = "memory", action = "user_grant_reject", targetType = "memory_project_user_grant")
     @PostMapping("/user-grants/{grantId}/reject")
     public ResponseEntity<R<Void>> reject(@PathVariable Long grantId) {
         grantService.reject(grantId, requireLogin());
@@ -86,6 +91,7 @@ public class MemoryProjectUserGrantController {
     }
 
     /** 撤销 ACTIVE / 取消 PENDING。 */
+    @AuditLog(module = "memory", action = "user_grant_revoke", targetType = "memory_project_user_grant")
     @DeleteMapping("/user-grants/{grantId}")
     public ResponseEntity<R<Void>> revoke(@PathVariable Long grantId) {
         grantService.revoke(grantId, requireLogin());
@@ -108,6 +114,7 @@ public class MemoryProjectUserGrantController {
      * 第二轮 #5：切换项目的记忆公共池可见性（仅项目 OWNER/ADMIN）。
      * body={"public": true/false}。
      */
+    @AuditLog(module = "memory", action = "pool_toggle", targetType = "memory_project")
     @PutMapping("/projects/{projectId}/pool")
     public ResponseEntity<R<Void>> togglePool(@PathVariable Long projectId, @RequestBody Map<String, Boolean> body) {
         boolean publicPool = body != null && Boolean.TRUE.equals(body.get("public"));

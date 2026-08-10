@@ -1,5 +1,6 @@
 package com.superprogrammer.asset.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.asset.dto.PublicProjectSummaryVO;
 import com.superprogrammer.asset.dto.PublicPublishRequest;
 import com.superprogrammer.asset.service.AssetPublicPoolService;
@@ -34,6 +35,7 @@ public class AssetPublicPoolController {
         return ResponseEntity.ok(R.ok(publicPoolService.listPublic(currentUserId(), isAdmin())));
     }
 
+    @AuditLog(module = "asset", action = "public_pool_publish", targetType = "asset_project")
     @PostMapping("/{projectId}/publish")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> publish(@PathVariable Long projectId,
@@ -42,6 +44,7 @@ public class AssetPublicPoolController {
         return ResponseEntity.ok(R.ok("项目已发布到公众池", null));
     }
 
+    @AuditLog(module = "asset", action = "public_pool_unpublish", targetType = "asset_project")
     @DeleteMapping("/{projectId}/publish")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> unpublish(@PathVariable Long projectId) {

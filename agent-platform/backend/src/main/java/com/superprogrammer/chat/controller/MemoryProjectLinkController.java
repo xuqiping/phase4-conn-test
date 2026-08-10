@@ -1,5 +1,6 @@
 package com.superprogrammer.chat.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.chat.dto.MemoryProjectLinkVO;
 import com.superprogrammer.chat.service.internal.MemoryProjectLinkService;
 import com.superprogrammer.common.exception.BusinessException;
@@ -41,6 +42,7 @@ public class MemoryProjectLinkController {
     private final MemoryProjectLinkService linkService;
 
     /** 发起授权（child=path 项目；body.parentProjectId=被授权方）。 */
+    @AuditLog(module = "memory", action = "link_request", targetType = "memory_project_link")
     @PostMapping("/projects/{projectId}/links")
     public ResponseEntity<R<MemoryProjectLinkVO>> request(@PathVariable Long projectId,
                                                           @RequestBody Map<String, Long> body) {
@@ -56,6 +58,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 审批通过（parent owner/admin）。 */
+    @AuditLog(module = "memory", action = "link_approve", targetType = "memory_project_link")
     @PostMapping("/links/{linkId}/approve")
     public ResponseEntity<R<Void>> approve(@PathVariable Long linkId) {
         linkService.approve(linkId, requireLogin());
@@ -63,6 +66,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 审批拒绝（parent owner/admin；30 天内同对不可重发）。 */
+    @AuditLog(module = "memory", action = "link_reject", targetType = "memory_project_link")
     @PostMapping("/links/{linkId}/reject")
     public ResponseEntity<R<Void>> reject(@PathVariable Long linkId) {
         linkService.reject(linkId, requireLogin());
@@ -70,6 +74,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 撤销 ACTIVE / 取消 PENDING（三期非对称：child owner ACTIVE→挂起待审批；parent manager ACTIVE→即时撤销；PENDING child→软删）。 */
+    @AuditLog(module = "memory", action = "link_revoke", targetType = "memory_project_link")
     @DeleteMapping("/links/{linkId}")
     public ResponseEntity<R<Void>> revoke(@PathVariable Long linkId) {
         linkService.revoke(linkId, requireLogin());
@@ -77,6 +82,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 三期：parent owner/admin 通过 child 的撤销申请（ACTIVE→REVOKED）。 */
+    @AuditLog(module = "memory", action = "link_approve_revoke", targetType = "memory_project_link")
     @PostMapping("/links/{linkId}/approve-revoke")
     public ResponseEntity<R<Void>> approveRevoke(@PathVariable Long linkId) {
         linkService.approveRevoke(linkId, requireLogin());
@@ -84,6 +90,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 三期：parent owner/admin 拒绝 child 的撤销申请（status 留 ACTIVE）。 */
+    @AuditLog(module = "memory", action = "link_reject_revoke", targetType = "memory_project_link")
     @PostMapping("/links/{linkId}/reject-revoke")
     public ResponseEntity<R<Void>> rejectRevoke(@PathVariable Long linkId) {
         linkService.rejectRevoke(linkId, requireLogin());
@@ -91,6 +98,7 @@ public class MemoryProjectLinkController {
     }
 
     /** 三期：child owner 撤回自己挂起的撤销申请（status 留 ACTIVE）。 */
+    @AuditLog(module = "memory", action = "link_withdraw_revoke", targetType = "memory_project_link")
     @PostMapping("/links/{linkId}/withdraw-revoke")
     public ResponseEntity<R<Void>> withdrawRevoke(@PathVariable Long linkId) {
         linkService.withdrawRevokeRequest(linkId, requireLogin());
