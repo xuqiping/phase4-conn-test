@@ -93,7 +93,7 @@
         :page-size="pageSize"
         size="small"
         class="asset-project__pagination"
-        @update:page="loadAssets"
+        @update:page="() => loadAssets()"
       />
     </template>
 
@@ -206,7 +206,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   NButton,
   NEmpty,
@@ -253,6 +253,20 @@ const assets = ref<AssetVO[]>([])
 const matrix = ref<MatrixCountVO>({ cells: [], typeTotals: [] })
 const total = ref(0)
 const loading = ref(false)
+
+interface RouteLoadContext {
+  session: number
+  projectId: number
+}
+
+let routeLoadSession = 0
+let activeRouteContext: RouteLoadContext | null = null
+
+function isCurrentRouteContext(context: RouteLoadContext) {
+  return activeRouteContext?.session === context.session
+    && activeRouteContext.projectId === context.projectId
+    && projectId.value === context.projectId
+}
 
 const ROLE_LABEL: Record<ProjectRole, string> = { OWNER: '所有者', EDITOR: '编辑者', VIEWER: '浏览者' }
 const ROLE_TYPE: Record<ProjectRole, 'success' | 'info' | 'default'> = {
@@ -476,6 +490,7 @@ const copyTargetsError = ref('')
 const copySubmitting = ref(false)
 const copyError = ref('')
 let copySession = 0
+const copyMutationsInFlight = new Set<string>()
 
 const copyTargetOptions = computed(() =>
   writableTargets.value.map((p) => ({ label: p.name, value: p.id }))
@@ -488,7 +503,8 @@ function isCurrentCopyContext(session: number, sourceProjectId: number, assetId:
     && copyAsset.value?.id === assetId
 }
 
-function clearCopyState() {
+function clearCopyState(force = false) {
+  if (copySubmitting.value && !force) return false
   copySession += 1
   showCopy.value = false
   copyAsset.value = null
@@ -498,9 +514,11 @@ function clearCopyState() {
   copyTargetsError.value = ''
   copySubmitting.value = false
   copyError.value = ''
+  return true
 }
 
 async function openCopy(asset: AssetVO) {
+  if (copySubmitting.value && showCopy.value) return
   copySession += 1
   const session = copySession
   const sourceProjectId = projectId.value
@@ -545,22 +563,26 @@ async function submitCopy() {
     copyError.value = '请选择有效的目标项目'
     return
   }
+  const mutationKey = `${projectId.value}:${asset.id}:${targetProjectId}`
+  if (copyMutationsInFlight.has(mutationKey)) return
   const session = copySession
   const sourceProjectId = projectId.value
   const assetId = asset.id
   copySubmitting.value = true
   copyError.value = ''
+  copyMutationsInFlight.add(mutationKey)
   try {
     await assetApi.copy(assetId, { targetProjectId })
     if (!isCurrentCopyContext(session, sourceProjectId, assetId)) return
     message.success(`已复制到「${target.name}」`)
-    clearCopyState()
+    clearCopyState(true)
   } catch {
     if (isCurrentCopyContext(session, sourceProjectId, assetId)) {
       copyError.value = '复制失败，请重试'
       message.error('复制失败')
     }
   } finally {
+    copyMutationsInFlight.delete(mutationKey)
     if (isCurrentCopyContext(session, sourceProjectId, assetId)) copySubmitting.value = false
   }
 }
@@ -571,45 +593,64 @@ async function onDetailChanged() {
 }
 
 // === 加载 ===
-async function loadAssets() {
+async function loadAssets(context = activeRouteContext) {
+  if (!context) return
   loading.value = true
   try {
-    const res = await assetApi.list(projectId.value, {
+    const res = await assetApi.list(context.projectId, {
       type: filter.value.type,
       role: filter.value.role,
       q: filter.value.q,
       page: page.value,
       size: pageSize
     })
-    assets.value = res.data.data?.records ?? []
-    total.value = res.data.data?.total ?? 0
+    if (isCurrentRouteContext(context)) {
+      assets.value = res.data.data?.records ?? []
+      total.value = res.data.data?.total ?? 0
+    }
   } catch {
-    message.error('加载资产列表失败')
+    if (isCurrentRouteContext(context)) message.error('加载资产列表失败')
   } finally {
-    loading.value = false
+    if (isCurrentRouteContext(context)) loading.value = false
   }
 }
 
-async function loadMatrix() {
+async function loadMatrix(context = activeRouteContext) {
+  if (!context) return
   try {
-    const res = await assetApi.countMatrix(projectId.value)
-    matrix.value = res.data.data ?? { cells: [], typeTotals: [] }
+    const res = await assetApi.countMatrix(context.projectId)
+    if (isCurrentRouteContext(context)) matrix.value = res.data.data ?? { cells: [], typeTotals: [] }
   } catch {
     // 矩阵失败不阻塞列表
   }
 }
 
-async function loadProject() {
+async function loadProject(context = activeRouteContext) {
+  if (!context) return
   try {
-    const res = await projectApi.get(projectId.value)
-    project.value = res.data.data
+    const res = await projectApi.get(context.projectId)
+    if (isCurrentRouteContext(context)) project.value = res.data.data
   } catch {
-    message.error('加载项目失败')
+    if (isCurrentRouteContext(context)) message.error('加载项目失败')
   }
 }
 
 async function reload() {
-  await Promise.all([loadAssets(), loadMatrix()])
+  const context = activeRouteContext
+  if (!context) return
+  await Promise.all([loadAssets(context), loadMatrix(context)])
+}
+
+async function loadRoute(nextProjectId: number) {
+  const context = { session: ++routeLoadSession, projectId: nextProjectId }
+  activeRouteContext = context
+  project.value = null
+  assets.value = []
+  matrix.value = { cells: [], typeTotals: [] }
+  total.value = 0
+  loading.value = true
+  clearCopyState(true)
+  await Promise.all([loadProject(context), loadAssets(context), loadMatrix(context)])
 }
 
 // === C1a 分类管理（叙事角色桶） ===
@@ -653,13 +694,9 @@ watch(
   { deep: true }
 )
 
-watch(projectId, async () => {
-  clearCopyState()
-  if (projectId.value) {
-    await loadProject()
-    await reload()
-  }
-})
+watch(projectId, (id) => {
+  if (id) void loadRoute(id)
+}, { immediate: true })
 
 defineExpose({
   project,
@@ -687,17 +724,11 @@ defineExpose({
   copyError,
   openCopy,
   closeCopy,
+  onCopyVisibilityChange,
   submitCopy,
   reload,
   loadAssets,
   loadMatrix
-})
-
-onMounted(async () => {
-  if (projectId.value) {
-    await loadProject()
-    await reload()
-  }
 })
 </script>
 

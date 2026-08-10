@@ -19,7 +19,12 @@
     <template v-else>
       <n-tabs v-model:value="activeTab" type="line" animated class="asset-list__tabs">
         <n-tab-pane name="mine" :tab="`我的项目（${mineProjects.length}）`">
+          <div v-if="localError" class="asset-list__local-error" role="alert">
+            <span>{{ localError }}</span>
+            <n-button size="small" secondary @click="loadLocalData">重新加载</n-button>
+          </div>
           <project-grid
+            v-else
             :loading="loading"
             :projects="mineProjects"
             :busy-project-ids="unpublishingIds"
@@ -32,7 +37,12 @@
           />
         </n-tab-pane>
         <n-tab-pane name="shared" :tab="`共享给我（${sharedProjects.length}）`">
+          <div v-if="localError" class="asset-list__local-error" role="alert">
+            <span>{{ localError }}</span>
+            <n-button size="small" secondary @click="loadLocalData">重新加载</n-button>
+          </div>
           <project-grid
+            v-else
             :loading="loading"
             :projects="sharedProjects"
             :busy-project-ids="unpublishingIds"
@@ -245,6 +255,7 @@ const projects = ref<AssetProjectVO[]>([])
 const publicProjects = ref<PublicProjectSummaryVO[]>([])
 const loading = ref(true)
 const publicLoading = ref(true)
+const localError = ref('')
 const publicError = ref('')
 const activeTab = ref<'mine' | 'shared' | 'public'>('mine')
 const mineProjects = computed(() => projects.value.filter((p) => p.role === 'OWNER'))
@@ -352,14 +363,19 @@ async function requestPublicAccess(p: PublicProjectSummaryVO) {
 
 let localLoadSession = 0
 async function loadLocalData() {
+  if (!canEdit.value) {
+    loading.value = false
+    localError.value = ''
+    return
+  }
   const session = ++localLoadSession
   loading.value = true
+  localError.value = ''
   try {
     const res = await projectApi.list()
     if (session === localLoadSession) projects.value = res.data.data || []
-  } catch (e) {
-    console.error('加载项目列表失败:', e)
-    message.error('加载项目列表失败')
+  } catch {
+    if (session === localLoadSession) localError.value = '项目列表加载失败，请重试'
   } finally {
     if (session === localLoadSession) loading.value = false
   }
@@ -367,6 +383,11 @@ async function loadLocalData() {
 
 let publicLoadSession = 0
 async function loadPublicData() {
+  if (!canEdit.value) {
+    publicLoading.value = false
+    publicError.value = ''
+    return
+  }
   const session = ++publicLoadSession
   publicLoading.value = true
   publicError.value = ''
@@ -380,11 +401,18 @@ async function loadPublicData() {
   }
 }
 
-async function loadData() { await Promise.all([loadLocalData(), loadPublicData()]) }
+async function loadData() {
+  if (!canEdit.value) {
+    loading.value = false
+    publicLoading.value = false
+    return
+  }
+  await Promise.all([loadLocalData(), loadPublicData()])
+}
 
 defineExpose({
   projects, publicProjects, activeTab, mineProjects, sharedProjects, canEdit,
-  loading, publicLoading, publicError, form, showCreate, saving, showPublish,
+  loading, publicLoading, localError, publicError, form, showCreate, saving, showPublish,
   publishProject, showAccess, accessProject, requestingIds, unpublishingIds,
   openCreate, submitCreate, confirmDelete, confirmUnpublish, requestPublicAccess,
   loadData, loadLocalData, loadPublicData
@@ -407,6 +435,7 @@ onMounted(loadData)
   &__tabs { margin-top: var(--spacing-3); }
   &__loading, &__empty { display: flex; align-items: center; justify-content: center; min-height: 280px; }
   &__forbidden { margin-top: var(--spacing-8); }
+  &__local-error,
   &__public-error {
     min-height: 220px;
     display: flex;

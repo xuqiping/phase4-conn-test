@@ -42,6 +42,13 @@ function response<T>(data: T): AxiosResponse<T> {
   return { data, status: 200, statusText: 'OK', headers: {}, config: { headers: {} as never } }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
 function mkProject(id: number, role: 'OWNER' | 'EDITOR' | 'VIEWER', over: Partial<AssetProjectVO> = {}): AssetProjectVO {
   return {
     id,
@@ -146,6 +153,49 @@ describe('AssetListView (S9 项目列表页 + 公共池)', () => {
     expect(wrapper.text()).toContain('公共池加载失败')
   })
 
+  it('本地列表失败显示持久重试错误且不误报空态，公共池仍可用', async () => {
+    vi.mocked(projectApi.list).mockRejectedValueOnce(new Error('local offline'))
+    const wrapper = mountView(['asset:write'])
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { localError: string; publicProjects: PublicProjectSummaryVO[]; activeTab: string }
+    expect(vm.localError).toContain('项目列表加载失败')
+    expect(vm.publicProjects).toHaveLength(2)
+    expect(wrapper.text()).toContain('项目列表加载失败')
+    expect(wrapper.text()).not.toContain('暂无项目')
+    vm.activeTab = 'public'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('公共池（2）')
+  })
+
+  it('本地列表旧成功/旧失败均不覆盖新会话且不产生旧错误 toast', async () => {
+    const oldSuccess = deferred<AxiosResponse<{ code: number; message: string; data: AssetProjectVO[] }>>()
+    vi.mocked(projectApi.list)
+      .mockReturnValueOnce(oldSuccess.promise)
+      .mockResolvedValueOnce(response({ code: 200, message: 'ok', data: [mkProject(9, 'OWNER')] }))
+    const wrapper = mountView(['asset:write'])
+    await Promise.resolve()
+    const vm = wrapper.vm as unknown as { projects: AssetProjectVO[]; localError: string; loadLocalData: () => Promise<void> }
+    await vm.loadLocalData()
+    oldSuccess.resolve(response({ code: 200, message: 'ok', data: [mkProject(1, 'OWNER')] }))
+    await flushPromises()
+    expect(vm.projects.map((p) => p.id)).toEqual([9])
+    expect(vm.localError).toBe('')
+
+    const oldFailure = deferred<AxiosResponse<{ code: number; message: string; data: AssetProjectVO[] }>>()
+    vi.mocked(projectApi.list)
+      .mockReturnValueOnce(oldFailure.promise)
+      .mockResolvedValueOnce(response({ code: 200, message: 'ok', data: [mkProject(10, 'OWNER')] }))
+    const staleLoad = vm.loadLocalData()
+    await Promise.resolve()
+    await vm.loadLocalData()
+    oldFailure.reject(new Error('stale offline'))
+    await staleLoad
+    expect(vm.projects.map((p) => p.id)).toEqual([10])
+    expect(vm.localError).toBe('')
+    expect(messageMock.error).not.toHaveBeenCalledWith('加载项目列表失败')
+  })
+
   it('OPEN/usable 公共卡可进入，未获批卡点击不路由', async () => {
     vi.mocked(publicPoolApi.list).mockResolvedValueOnce(response({ code: 200, message: 'ok', data: [
       mkPublic(11),
@@ -192,6 +242,25 @@ describe('AssetListView (S9 项目列表页 + 公共池)', () => {
     expect(routerPushMock).not.toHaveBeenCalled()
   })
 
+  it('申请按钮同步防双击且 stopPropagation 不打开公共卡', async () => {
+    const slowRequest = deferred<AxiosResponse<never>>()
+    vi.mocked(publicPoolApi.list).mockResolvedValue(response({ code: 200, message: 'ok', data: [
+      mkPublic(31, { publicAccessMode: 'APPROVAL_REQUIRED', usable: false })
+    ] }))
+    vi.mocked(publicPoolApi.requestAccess).mockReturnValueOnce(slowRequest.promise)
+    const wrapper = mountView(['asset:write'])
+    await flushPromises()
+    ;(wrapper.vm as unknown as { activeTab: string }).activeTab = 'public'
+    await wrapper.vm.$nextTick()
+    const button = wrapper.findAll('button').find((b) => b.text().includes('申请使用'))!
+    await button.trigger('click')
+    await button.trigger('click')
+    expect(publicPoolApi.requestAccess).toHaveBeenCalledOnce()
+    expect(routerPushMock).not.toHaveBeenCalled()
+    slowRequest.resolve(response({ code: 200, message: 'ok', data: undefined as never }) as never)
+    await flushPromises()
+  })
+
   it('OWNER 显示发布/移出/审批入口，弹窗事件与移出确认刷新两份列表', async () => {
     vi.mocked(projectApi.list).mockResolvedValue(response({ code: 200, message: 'ok', data: [
       mkProject(1, 'OWNER'),
@@ -206,6 +275,7 @@ describe('AssetListView (S9 项目列表页 + 公共池)', () => {
 
     const publishButton = wrapper.findAll('button').find((b) => b.text().includes('发布到公共池'))
     await publishButton!.trigger('click')
+    expect(routerPushMock).not.toHaveBeenCalled()
     const publishDialog = wrapper.findComponent(PublicPublishDialog)
     expect(publishDialog.props('show')).toBe(true)
     expect((publishDialog.props('project') as AssetProjectVO | null)?.id).toBe(1)
@@ -235,11 +305,32 @@ describe('AssetListView (S9 项目列表页 + 公共池)', () => {
     expect(publicPoolApi.list).toHaveBeenCalledTimes(4)
   })
 
+  it('移出确认回调重复执行只调用一次 API 且按钮不路由', async () => {
+    const slowUnpublish = deferred<AxiosResponse<never>>()
+    vi.mocked(projectApi.list).mockResolvedValue(response({ code: 200, message: 'ok', data: [
+      mkProject(4, 'OWNER', { publicPool: true, publicAccessMode: 'OPEN' })
+    ] }))
+    vi.mocked(publicPoolApi.unpublish).mockReturnValueOnce(slowUnpublish.promise)
+    const wrapper = mountView(['asset:write'])
+    await flushPromises()
+    const button = wrapper.findAll('button').find((b) => b.text().includes('移出公共池'))!
+    await button.trigger('click')
+    expect(routerPushMock).not.toHaveBeenCalled()
+    const call = dialogMock.warning.mock.calls[0][0] as { onPositiveClick: () => Promise<void> }
+    const first = call.onPositiveClick()
+    const second = call.onPositiveClick()
+    expect(publicPoolApi.unpublish).toHaveBeenCalledOnce()
+    slowUnpublish.resolve(response({ code: 200, message: 'ok', data: undefined as never }) as never)
+    await Promise.all([first, second])
+  })
+
   it('无 asset:write 渲染 403 兜底', async () => {
     const wrapper = mountView([])
     await flushPromises()
     expect((wrapper.vm as unknown as { canEdit: boolean }).canEdit).toBe(false)
     expect(wrapper.text()).toContain('无 asset:write 权限')
+    expect(projectApi.list).not.toHaveBeenCalled()
+    expect(publicPoolApi.list).not.toHaveBeenCalled()
   })
 
   it('新建项目调 projectApi.create（trim + 空 desc → undefined）', async () => {
