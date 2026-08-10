@@ -34,6 +34,12 @@ export type AssetStatus = 'DRAFT' | 'LOCKED' | 'ARCHIVED'
 /** 项目角色（设计 §七 7.2）：OWNER 不落成员表，由 owner_id 合成。 */
 export type ProjectRole = 'OWNER' | 'EDITOR' | 'VIEWER'
 
+/** 公众池访问方式：开放使用或先申请审批。 */
+export type PublicAccessMode = 'OPEN' | 'APPROVAL_REQUIRED'
+
+/** 公众池访问申请状态。 */
+export type PublicAccessStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVOKED'
+
 /** 重复入库处理模式（plan §S7 / L5）。 */
 export type CanvasImportMode = 'NEW_VERSION' | 'NEW_ASSET'
 
@@ -51,8 +57,31 @@ export interface AssetProjectVO {
   /** 媒体类型受控词汇桶（V60，{key,category}）。 */
   mediaTypes: MediaTypeDef[]
   role: ProjectRole
+  /** 新后端必返；可选仅用于兼容尚未补公众池字段的旧前端夹具。 */
+  publicPool?: boolean
+  publicAccessMode?: PublicAccessMode | null
+  publishedBy?: number | null
+  publishedAt?: string | null
+  /** 新后端必返；可选仅用于兼容尚未补公众池字段的旧前端夹具。 */
+  publishedByAdmin?: boolean
   createdAt: string
   updatedAt?: string
+}
+
+/** 公众池列表的安全摘要，不包含项目词汇、资产详情、版本或文件内容。 */
+export interface PublicProjectSummaryVO {
+  id: number
+  name: string
+  description?: string | null
+  coverFileId?: string | null
+  publicAccessMode: PublicAccessMode
+  publishedBy: number
+  publisherUsername?: string | null
+  publishedAt: string
+  publishedByAdmin: boolean
+  assetCount: number
+  myRequestStatus?: PublicAccessStatus | null
+  usable: boolean
 }
 
 export interface ProjectCreateRequest {
@@ -76,10 +105,17 @@ export interface ProjectUpdateRequest {
 /** 成员视图（MemberVO，含合成的 owner 行）。 */
 export interface MemberVO {
   userId: number
+  username: string
   role: ProjectRole
   isOwner: boolean
   grantedBy?: number
   grantedAt?: string
+}
+
+/** 分享弹窗按关键词远程返回的最小候选字段。 */
+export interface MemberCandidateVO {
+  id: number
+  username: string
 }
 
 export interface MemberAddRequest {
@@ -93,6 +129,29 @@ export interface MemberRoleUpdateRequest {
 
 export interface TransferRequest {
   toUserId: number
+}
+
+export interface PublicAccessRequestVO {
+  id: number
+  projectId: number
+  applicantId: number
+  status: PublicAccessStatus
+  decidedBy?: number | null
+  decidedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PublicPublishRequest {
+  accessMode: PublicAccessMode
+}
+
+export interface PublicAccessDecisionRequest {
+  decision: 'APPROVED' | 'REJECTED'
+}
+
+export interface AssetCopyRequest {
+  targetProjectId: number
 }
 
 // ---------- 资产 ----------
