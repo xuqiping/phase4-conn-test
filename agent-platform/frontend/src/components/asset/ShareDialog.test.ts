@@ -38,12 +38,26 @@ function response<T>(data: T): AxiosResponse<T> {
   return { data, status: 200, statusText: 'OK', headers: {}, config: { headers: {} as never } }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function mkMember(userId: number, username: string, role: 'OWNER' | 'EDITOR' | 'VIEWER'): MemberVO {
   return { userId, username, role, isOwner: role === 'OWNER', grantedBy: 1, grantedAt: '2026-08-05' }
 }
 
 function candidate(id: number, username: string): MemberCandidateVO {
   return { id, username }
+}
+
+function memberListResponse(members: MemberVO[]) {
+  return response({ code: 200, message: 'ok', data: members })
 }
 
 function mountDialog() {
@@ -102,15 +116,16 @@ describe('ShareDialog (资产成员安全分享)', () => {
     expect(wrapper.text()).toContain('输入用户名搜索候选成员')
   })
 
-  it('按关键词从资产域搜索候选，候选只映射 id 与 username', async () => {
+  it('通过远程选择器 search 事件按关键词搜索最小候选', async () => {
     const wrapper = mountDialog()
     await settle()
     const vm = wrapper.vm as unknown as {
-      searchCandidates: (keyword: string) => Promise<void>
       candidateOptions: { label: string; value: number }[]
     }
+    const userSelect = wrapper.findAllComponents(NSelect)[0]
 
-    await vm.searchCandidates('  view  ')
+    userSelect.vm.$emit('search', '  view  ')
+    await settle()
 
     expect(memberApi.searchCandidates).toHaveBeenCalledWith(7, 'view')
     expect(vm.candidateOptions).toEqual([
@@ -153,6 +168,68 @@ describe('ShareDialog (资产成员安全分享)', () => {
     expect(wrapper.text()).toContain('成员列表加载失败')
   })
 
+  it('慢 A 响应晚于快 B 时不能覆盖 B 成员', async () => {
+    const slowA = deferred<ReturnType<typeof memberListResponse>>()
+    vi.mocked(memberApi.list)
+      .mockReset()
+      .mockImplementationOnce(() => slowA.promise)
+      .mockResolvedValueOnce(memberListResponse([mkMember(8, 'project-b-owner', 'OWNER')]))
+    const wrapper = mountDialog()
+    await Promise.resolve()
+
+    await wrapper.setProps({ projectId: 8, projectName: '项目 B' })
+    await settle()
+    const vm = wrapper.vm as unknown as { rows: { username: string }[] }
+    expect(vm.rows.map((row) => row.username)).toEqual(['project-b-owner'])
+
+    slowA.resolve(memberListResponse([mkMember(1, 'late-project-a-owner', 'OWNER')]))
+    await settle()
+    expect(vm.rows.map((row) => row.username)).toEqual(['project-b-owner'])
+  })
+
+  it('从已有成员的 A 切到加载失败的 B 时立即清空旧 rows', async () => {
+    const failingB = deferred<ReturnType<typeof memberListResponse>>()
+    vi.mocked(memberApi.list)
+      .mockReset()
+      .mockResolvedValueOnce(memberListResponse([mkMember(1, 'project-a-owner', 'OWNER')]))
+      .mockImplementationOnce(() => failingB.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as { rows: { username: string }[] }
+    expect(vm.rows.map((row) => row.username)).toEqual(['project-a-owner'])
+
+    await wrapper.setProps({ projectId: 8, projectName: '项目 B' })
+    expect(memberApi.list).toHaveBeenLastCalledWith(8)
+    expect(vm.rows).toEqual([])
+
+    failingB.reject(new Error('project B unavailable'))
+    await settle()
+    expect(wrapper.text()).toContain('成员列表加载失败')
+  })
+
+  it('切换项目时清空已选择的候选用户', async () => {
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as { selectedUserIds: number[] }
+    vm.selectedUserIds = [3]
+
+    await wrapper.setProps({ projectId: 8, projectName: '项目 B' })
+
+    expect(vm.selectedUserIds).toEqual([])
+  })
+
+  it('关闭并重新打开时清空已选择的候选用户', async () => {
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as { selectedUserIds: number[] }
+    vm.selectedUserIds = [3]
+
+    await wrapper.setProps({ show: false })
+    expect(vm.selectedUserIds).toEqual([])
+    await wrapper.setProps({ show: true })
+    expect(vm.selectedUserIds).toEqual([])
+  })
+
   it('候选搜索失败显示独立错误且保留成员表', async () => {
     const wrapper = mountDialog()
     await settle()
@@ -189,6 +266,36 @@ describe('ShareDialog (资产成员安全分享)', () => {
     expect(vm.candidateOptions).toEqual([])
     expect(vi.mocked(memberApi.list).mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(wrapper.emitted('changed')).toBeTruthy()
+  })
+
+  it('邀请期间切换项目时不向新项目续发邀请，也不由旧操作刷新或通知新上下文', async () => {
+    const firstInvite = deferred<ReturnType<typeof response<{ code: number; message: string; data: MemberVO }>>>()
+    vi.mocked(memberApi.invite)
+      .mockReset()
+      .mockImplementationOnce(() => firstInvite.promise)
+      .mockResolvedValue(response({ code: 200, message: 'ok', data: mkMember(4, 'outsider', 'VIEWER') }))
+    const wrapper = mountDialog()
+    await settle()
+    vi.mocked(memberApi.list).mockClear()
+    const vm = wrapper.vm as unknown as {
+      selectedUserIds: number[]
+      inviteSelected: () => Promise<void>
+    }
+    vm.selectedUserIds = [3, 4]
+
+    const inviting = vm.inviteSelected()
+    await Promise.resolve()
+    expect(memberApi.invite).toHaveBeenCalledWith(7, { userId: 3, role: 'VIEWER' })
+    await wrapper.setProps({ projectId: 8, projectName: '项目 B' })
+    await settle()
+    firstInvite.resolve(response({ code: 200, message: 'ok', data: mkMember(3, 'viewer', 'VIEWER') }))
+    await inviting
+    await settle()
+
+    expect(memberApi.invite).toHaveBeenCalledTimes(1)
+    expect(memberApi.list).toHaveBeenCalledTimes(1)
+    expect(memberApi.list).toHaveBeenCalledWith(8)
+    expect(wrapper.emitted('changed')).toBeFalsy()
   })
 
   it('改角色调 memberApi.changeRole', async () => {

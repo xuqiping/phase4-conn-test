@@ -108,6 +108,12 @@ const memberError = ref('')
 const candidateError = ref('')
 const candidateKeyword = ref('')
 let candidateSearchVersion = 0
+let contextVersion = 0
+
+interface DialogContext {
+  projectId: number
+  version: number
+}
 
 /** 角色 label/type（owner 锁定；成员可选 VIEWER/EDITOR，设计 §七 7.2） */
 const ROLE_LABEL: Record<ProjectRole, string> = { OWNER: '所有者', EDITOR: '编辑者', VIEWER: '浏览者' }
@@ -195,28 +201,47 @@ const columns = computed<DataTableColumns<(typeof rows.value)[number]>>(() => [
   }
 ])
 
+function captureContext(): DialogContext {
+  return { projectId: props.projectId, version: contextVersion }
+}
+
+function isCurrentContext(context: DialogContext): boolean {
+  return props.show && props.projectId === context.projectId && contextVersion === context.version
+}
+
+function resetDialogState() {
+  members.value = []
+  memberError.value = ''
+  loadingMembers.value = false
+  selectedUserIds.value = []
+  inviteRole.value = 'VIEWER'
+  clearCandidateSearch()
+}
+
 watch(
-  () => props.show,
-  (show) => {
-    if (show && props.projectId) {
-      clearCandidateSearch()
-      void reloadMembers()
-    }
+  [() => props.show, () => props.projectId],
+  ([show, projectId]) => {
+    contextVersion += 1
+    resetDialogState()
+    if (show && projectId) void reloadMembers({ projectId, version: contextVersion })
   },
   { immediate: true }
 )
 
-async function reloadMembers() {
+async function reloadMembers(context: DialogContext = captureContext()) {
+  if (!isCurrentContext(context)) return
   loadingMembers.value = true
   memberError.value = ''
   try {
-    const res = await memberApi.list(props.projectId)
+    const res = await memberApi.list(context.projectId)
+    if (!isCurrentContext(context)) return
     members.value = res.data.data || []
   } catch {
+    if (!isCurrentContext(context)) return
     memberError.value = '成员列表加载失败，请重试'
     message.error('刷新成员列表失败')
   } finally {
-    loadingMembers.value = false
+    if (isCurrentContext(context)) loadingMembers.value = false
   }
 }
 
@@ -230,6 +255,8 @@ function clearCandidateSearch() {
 
 /** 空关键词本地清空；非空关键词只从资产成员候选端点取最小字段。 */
 async function searchCandidates(rawKeyword: string) {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
   const keyword = rawKeyword.trim()
   candidateKeyword.value = keyword
   candidateError.value = ''
@@ -242,81 +269,97 @@ async function searchCandidates(rawKeyword: string) {
 
   loadingCandidates.value = true
   try {
-    const res = await memberApi.searchCandidates(props.projectId, keyword)
-    if (searchVersion !== candidateSearchVersion) return
+    const res = await memberApi.searchCandidates(context.projectId, keyword)
+    if (searchVersion !== candidateSearchVersion || !isCurrentContext(context)) return
     candidates.value = (res.data.data || []).map(({ id, username }) => ({ id, username }))
   } catch {
-    if (searchVersion !== candidateSearchVersion) return
+    if (searchVersion !== candidateSearchVersion || !isCurrentContext(context)) return
     candidates.value = []
     candidateError.value = '候选成员搜索失败，请重试'
   } finally {
-    if (searchVersion === candidateSearchVersion) loadingCandidates.value = false
+    if (searchVersion === candidateSearchVersion && isCurrentContext(context)) loadingCandidates.value = false
   }
 }
 
 /** 邀请选中用户（逐个 invite；空角色默认 VIEWER） */
 async function inviteSelected() {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
   const ids = [...selectedUserIds.value]
+  const role = inviteRole.value
   if (ids.length === 0) return
   try {
     for (const userId of ids) {
-      await memberApi.invite(props.projectId, { userId, role: inviteRole.value })
+      if (!isCurrentContext(context)) return
+      await memberApi.invite(context.projectId, { userId, role })
+      if (!isCurrentContext(context)) return
     }
     message.success(`已邀请 ${ids.length} 位用户`)
     selectedUserIds.value = []
     clearCandidateSearch()
-    await reloadMembers()
-    emit('changed')
+    await reloadMembers(context)
+    if (isCurrentContext(context)) emit('changed')
   } catch {
-    message.error('邀请失败')
+    if (isCurrentContext(context)) message.error('邀请失败')
   }
 }
 
 async function changeRole(userId: number, role: 'VIEWER' | 'EDITOR') {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
   try {
-    await memberApi.changeRole(props.projectId, userId, { role })
+    await memberApi.changeRole(context.projectId, userId, { role })
+    if (!isCurrentContext(context)) return
     message.success('角色已更新')
-    await reloadMembers()
-    emit('changed')
+    await reloadMembers(context)
+    if (isCurrentContext(context)) emit('changed')
   } catch {
-    message.error('更新角色失败')
+    if (isCurrentContext(context)) message.error('更新角色失败')
   }
 }
 
 function confirmRemove(userId: number, name: string) {
+  const context = captureContext()
   dialog.warning({
     title: '确认移除成员',
     content: `确定将「${name}」移出本项目？其将立即失去访问权（L1）。`,
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {
+      if (!isCurrentContext(context)) return
       try {
-        await memberApi.remove(props.projectId, userId)
+        await memberApi.remove(context.projectId, userId)
+        if (!isCurrentContext(context)) return
         message.success('已移除')
-        await reloadMembers()
-        emit('changed')
+        await reloadMembers(context)
+        if (isCurrentContext(context)) emit('changed')
       } catch {
-        message.error('移除失败')
+        if (isCurrentContext(context)) message.error('移除失败')
       }
     }
   })
 }
 
 function confirmTransfer(toUserId: number, name: string) {
+  const context = captureContext()
   dialog.warning({
     title: '确认转让所有者',
     content: `将本项目所有者转让给「${name}」？你将降级为编辑者。此操作不可撤销。`,
     positiveText: '转让',
     negativeText: '取消',
     onPositiveClick: async () => {
+      if (!isCurrentContext(context)) return
       try {
-        await projectApi.transfer(props.projectId, { toUserId })
+        await projectApi.transfer(context.projectId, { toUserId })
+        if (!isCurrentContext(context)) return
         message.success('已转让所有者')
-        await reloadMembers()
-        emit('changed')
-        emit('update:show', false)
+        await reloadMembers(context)
+        if (isCurrentContext(context)) {
+          emit('changed')
+          emit('update:show', false)
+        }
       } catch {
-        message.error('转让失败')
+        if (isCurrentContext(context)) message.error('转让失败')
       }
     }
   })
