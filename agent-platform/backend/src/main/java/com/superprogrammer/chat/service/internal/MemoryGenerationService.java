@@ -4,6 +4,7 @@ import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
@@ -57,6 +58,7 @@ public class MemoryGenerationService {
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /** 按 bean 名注入（同 MemoryService / ChatSessionService 范式）。 */
+    @Qualifier("memoryTaskExecutor")
     private final TaskExecutor memoryTaskExecutor;
 
     /**

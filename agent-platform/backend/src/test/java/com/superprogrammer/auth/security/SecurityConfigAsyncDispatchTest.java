@@ -1,6 +1,7 @@
 package com.superprogrammer.auth.security;
 
 import com.superprogrammer.auth.service.AuthService;
+import com.superprogrammer.auth.service.SessionService;
 import jakarta.servlet.DispatcherType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +28,9 @@ class SecurityConfigAsyncDispatchTest {
 
     @MockBean
     private AuthService authService;
+
+    @MockBean
+    private SessionService sessionService;
 
     @Test
     void asyncDispatchWithoutJwtIsAllowedToCompleteCommittedStreams() throws Exception {

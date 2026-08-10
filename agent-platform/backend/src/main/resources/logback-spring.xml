@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- agent-platform/backend/src/main/resources/logback-spring.xml
-  三个 appender：
-    CONSOLE     —— 控制台（INFO+，带颜色，开发看）
-    FILE        —— 全量日志文件（INFO+，审查用），滚动 50MB × 30 天 × 上限 2GB
-    ERROR_FILE  —— 仅 ERROR 级（快速翻问题），滚动 20MB × 30 天 × 上限 1GB
-  日志级别由 application.yml 的 logging.level.* 驱动（Spring Boot 应用层覆盖），此处不重复声明 logger 级别。
-  路径可用环境变量覆盖：LOG_FILE（全量）、ERROR_LOG_FILE（错误）。云上 Docker 挂卷指这两个。
+  日志系统 P0（LOG-FR-01/04/05）四通道：
+    CONSOLE     —— 控制台彩色文本（开发看），pattern 带 traceId/spanId/userId（MDC）
+    APP_FILE    —— 全量日志 JSON（LogstashEncoder），滚动 50MB × 30 天 × 上限 2GB
+    ERROR_FILE  —— 仅 ERROR 级 JSON（快速定位故障），滚动 20MB × 90 天 × 上限 1GB
+    SQL_FILE    —— SQL 独立通道 JSON，滚动 50MB × 7 天 × 上限 500MB；默认 OFF，
+                   设环境变量 LOG_SQL_ENABLED=DEBUG 才开（mybatis log-prefix=sql. 统一走 "sql" logger，
+                   新增 mapper 包无需登记本文件）
+  双格式：console 文本 / 文件 JSON，互不引用。JSON 每行带 traceId/spanId（MDC 默认全量入 JSON）。
+  业务日志级别由 application.yml 的 logging.level.* 驱动，此处只管 appender 与 sql 通道。
+  路径可用环境变量覆盖：LOG_FILE（全量）、ERROR_LOG_FILE（错误）、SQL_LOG_FILE（SQL）。
 -->
 <configuration>
 
@@ -15,8 +19,16 @@
     <springProperty name="LOG_FILE" source="logging.file.name" defaultValue="logs/agent-platform.log"/>
     <!-- 错误日志文件路径：默认 logs/error.log，可被 ERROR_LOG_FILE 覆盖 -->
     <springProperty name="ERROR_LOG_FILE" source="logging.file.error-name" defaultValue="logs/error.log"/>
+    <!-- SQL 日志文件路径：默认 logs/sql.log，可被 SQL_LOG_FILE 覆盖 -->
+    <springProperty name="SQL_LOG_FILE" source="logging.file.sql-name" defaultValue="logs/sql.log"/>
+    <!-- SQL 通道级别：OFF（默认，静默）/ DEBUG（开启）。env LOG_SQL_ENABLED=DEBUG 开启。 -->
+    <springProperty name="LOG_SQL_LEVEL" source="logging.level.sql" defaultValue="OFF"/>
 
-    <!-- ===== 控制台：INFO+，彩色（开发主用） ===== -->
+    <!-- console pattern：Spring 默认彩色格式 + traceId/spanId/userId（MDC，无值显示 -） -->
+    <property name="CONSOLE_LOG_PATTERN"
+              value="%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr([%mdc{traceId:-},%mdc{userId:-}]){yellow} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"/>
+
+    <!-- ===== 控制台：INFO+，彩色文本（开发主用） ===== -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${CONSOLE_LOG_PATTERN}</pattern>
@@ -24,12 +36,12 @@
         </encoder>
     </appender>
 
-    <!-- ===== 全量文件：INFO+（审查用） ===== -->
-    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <!-- ===== 全量文件：INFO+ JSON（审查/Alloy 采集用） ===== -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_FILE}</file>
-        <encoder>
-            <pattern>${FILE_LOG_PATTERN}</pattern>
-            <charset>UTF-8</charset>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"app":"agent-platform","channel":"app"}</customFields>
+            <timeZone>Asia/Shanghai</timeZone>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
@@ -39,28 +51,64 @@
         </rollingPolicy>
     </appender>
 
-    <!-- ===== ERROR-only 文件：只收 ERROR（快速定位故障） ===== -->
+    <!-- ===== ERROR-only 文件：只收 ERROR JSON（快速定位故障） ===== -->
     <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${ERROR_LOG_FILE}</file>
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>ERROR</level>
         </filter>
-        <encoder>
-            <pattern>${FILE_LOG_PATTERN}</pattern>
-            <charset>UTF-8</charset>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"app":"agent-platform","channel":"error"}</customFields>
+            <timeZone>Asia/Shanghai</timeZone>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${ERROR_LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
             <maxFileSize>20MB</maxFileSize>
-            <maxHistory>30</maxHistory>
+            <maxHistory>90</maxHistory>
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
     </appender>
 
-    <root level="INFO">
+    <!-- ===== SQL 独立通道：mapper SQL 只进此文件，不污染 app.log（additivity=false） ===== -->
+    <appender name="SQL_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${SQL_LOG_FILE}</file>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"app":"agent-platform","channel":"sql"}</customFields>
+            <timeZone>Asia/Shanghai</timeZone>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${SQL_LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <!-- SQL 通道 logger：mybatis-plus log-prefix=sql. 使全部 mapper SQL logger 归 "sql" 前缀下，
+         一条 logger 覆盖所有现存/未来 mapper 包。默认 OFF 无 sql.log 产出；LOG_SQL_ENABLED=DEBUG 开启。 -->
+    <logger name="sql" level="${LOG_SQL_LEVEL}" additivity="false">
+        <appender-ref ref="MASKED_SQL"/>
+    </logger>
+
+    <!-- ===== 脱敏滤网（LOG-FR-07）：事件层打码，console/JSON/SQL 全通道一次生效。
+         事件先过 MaskingAppender（五类敏感正则），再下发内嵌真实 appender。 ===== -->
+    <appender name="MASKED_CONSOLE" class="com.superprogrammer.common.logging.MaskingAppender">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
+    </appender>
+    <appender name="MASKED_APP" class="com.superprogrammer.common.logging.MaskingAppender">
+        <appender-ref ref="APP_FILE"/>
+    </appender>
+    <appender name="MASKED_ERROR" class="com.superprogrammer.common.logging.MaskingAppender">
         <appender-ref ref="ERROR_FILE"/>
+    </appender>
+    <appender name="MASKED_SQL" class="com.superprogrammer.common.logging.MaskingAppender">
+        <appender-ref ref="SQL_FILE"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="MASKED_CONSOLE"/>
+        <appender-ref ref="MASKED_APP"/>
+        <appender-ref ref="MASKED_ERROR"/>
     </root>
 
 </configuration>

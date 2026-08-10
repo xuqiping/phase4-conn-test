@@ -4,11 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.*;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
+import io.micrometer.prometheus.PrometheusConfig;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +32,7 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
+import com.superprogrammer.billing.service.InflightGateService;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -57,8 +61,11 @@ class LlmGatewayTest {
 
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
 
     private LlmGateway gateway;
+    private PrometheusMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
@@ -70,7 +77,9 @@ class LlmGatewayTest {
         lenient().when(openaiProvider.supports(anyString())).thenReturn(true);
 
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
-        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper, billingService, walletService);
+        meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
     }
 
     @Test
@@ -107,7 +116,8 @@ class LlmGatewayTest {
     @Test
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
-        LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper, billingService, walletService);
+        LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
     }
@@ -229,5 +239,95 @@ class LlmGatewayTest {
         verify(walletService).requireAffordable(null);
         verify(billingService).onSuccess(isNull(), eq(7L), any(), eq("deepseek-chat"),
                 eq("CHAT"), eq(8), eq(4), eq("SUCCESS"));
+    }
+
+    // ===== OPS-FR-03 LLM 指标埋点（正好一次，不重不漏）=====
+
+    @Test
+    void chat_metrics_successCountsCallTokensLatency() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(100).completionTokens(50).totalTokens(150).build();
+        LlmResponse mockResp = LlmResponse.builder()
+                .content("ans").model("deepseek-chat").usage(usage).duration(1L).build();
+        when(deepseekProvider.chat(any())).thenReturn(mockResp);
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        gateway.chat(request, 42L);
+
+        String out = meterRegistry.scrape();
+        assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"success\",} 1.0"), out);
+        assertTrue(out.contains("llm_tokens_total{direction=\"in\",model=\"deepseek-chat\",provider=\"deepseek\",} 100.0"), out);
+        assertTrue(out.contains("llm_tokens_total{direction=\"out\",model=\"deepseek-chat\",provider=\"deepseek\",} 50.0"), out);
+        assertTrue(out.contains("llm_latency_seconds_count{model=\"deepseek-chat\",provider=\"deepseek\",} 1.0"), out);
+        assertFalse(out.contains("result=\"fail\""), out);
+    }
+
+    @Test
+    void chat_metrics_failureCountsFailOnce() {
+        when(deepseekProvider.chat(any())).thenThrow(new RuntimeException("boom"));
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        assertThrows(RuntimeException.class, () -> gateway.chat(request, 42L));
+
+        String out = meterRegistry.scrape();
+        assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"fail\",} 1.0"), out);
+        assertFalse(out.contains("result=\"success\""), out);
+    }
+
+    @Test
+    void chatStream_metrics_completeCountsSuccessAndTokens() {
+        when(deepseekProvider.chatStream(any(), any())).thenAnswer(inv -> {
+            Consumer<TokenUsage> sink = inv.getArgument(1);
+            sink.accept(TokenUsage.builder().promptTokens(20).completionTokens(10).totalTokens(30).build());
+            return Flux.<com.superprogrammer.chat.dto.StreamEvent>empty();
+        });
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        gateway.chatStream(request, 42L).collectList().block();
+
+        String out = meterRegistry.scrape();
+        assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"success\",} 1.0"), out);
+        assertTrue(out.contains("llm_tokens_total{direction=\"in\",model=\"deepseek-chat\",provider=\"deepseek\",} 20.0"), out);
+        assertFalse(out.contains("result=\"cancel\""), out);
+    }
+
+    @Test
+    void chatStream_metrics_errorCountsFailOnce() {
+        when(deepseekProvider.chatStream(any(), any())).thenReturn(
+                Flux.<com.superprogrammer.chat.dto.StreamEvent>error(new RuntimeException("stream boom")));
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        assertThrows(RuntimeException.class,
+                () -> gateway.chatStream(request, 42L).collectList().block());
+
+        String out = meterRegistry.scrape();
+        assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"fail\",} 1.0"), out);
+        assertFalse(out.contains("result=\"success\""), out);
+    }
+
+    @Test
+    void chatStream_metrics_cancelCountsCancelOnce() {
+        // 发一个事件后永不完结；take(1) 拿到首事件即取消上游 → doOnCancel 计 cancel，success/fail 均不动
+        com.superprogrammer.chat.dto.StreamEvent ev = com.superprogrammer.chat.dto.StreamEvent.builder()
+                .type("delta").build();
+        when(deepseekProvider.chatStream(any(), any())).thenReturn(
+                Flux.concat(Flux.just(ev), Flux.<com.superprogrammer.chat.dto.StreamEvent>never()));
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        gateway.chatStream(request, 42L).take(1).collectList().block();
+
+        String out = meterRegistry.scrape();
+        assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"cancel\",} 1.0"), out);
+        assertFalse(out.contains("result=\"success\""), out);
+        assertFalse(out.contains("result=\"fail\""), out);
     }
 }

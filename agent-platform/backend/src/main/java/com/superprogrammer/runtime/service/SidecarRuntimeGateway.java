@@ -25,20 +25,24 @@ public class SidecarRuntimeGateway implements RuntimeGateway {
 
     private final RuntimeGatewayProperties properties;
     private final ObjectMapper objectMapper;
+    /** Spring 托管 Builder：actuator+tracing 下自动插桩，出站请求自动注入 W3C traceparent（LOG-FR-08）。 */
+    private final WebClient.Builder webClientBuilder;
 
     public SidecarRuntimeGateway(RuntimeGatewayProperties properties) {
-        this(properties, new ObjectMapper().findAndRegisterModules());
+        this(properties, new ObjectMapper().findAndRegisterModules(), WebClient.builder());
     }
 
     @Autowired
-    public SidecarRuntimeGateway(RuntimeGatewayProperties properties, ObjectMapper objectMapper) {
+    public SidecarRuntimeGateway(RuntimeGatewayProperties properties, ObjectMapper objectMapper,
+                                 WebClient.Builder webClientBuilder) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.webClientBuilder = webClientBuilder;
     }
 
     @Override
     public Flux<ExecutionEvent> run(ExecutionRequest request) {
-        WebClient client = WebClient.builder()
+        WebClient client = webClientBuilder
                 .baseUrl(normalizeBaseUrl(properties.getSidecarBaseUrl()))
                 .build();
 

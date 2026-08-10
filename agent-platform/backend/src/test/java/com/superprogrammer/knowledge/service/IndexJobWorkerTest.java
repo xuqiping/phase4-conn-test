@@ -39,6 +39,7 @@ class IndexJobWorkerTest {
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private LlmGateway llmGateway;
     @Mock private FileStorageService fileStorageService;
+    @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 同步 executor：poll 提交的 process 立即在同线程跑。 */
@@ -50,7 +51,36 @@ class IndexJobWorkerTest {
     void setUp() {
         // retainAfterIndex=false：completeUpsert 返回 fileRef 时触发清原件（此处 mock 返 null，不触发）
         worker = new IndexJobWorker(txService, nodeMapper, documentMapper, knowledgeBaseService,
-                llmGateway, objectMapper, directExecutor, fileStorageService, false);
+                llmGateway, objectMapper, directExecutor, fileStorageService, false, bizMetrics);
+    }
+
+    // ===== OPS-FR-05 队列指标 =====
+
+    @Test
+    void gaugeRegistersAtStartup_andReadsCountClaimable() {
+        // 启动即注册 queue.depth Gauge（防首次 scrape NaN），读数=txService.countClaimable
+        io.micrometer.prometheus.PrometheusMeterRegistry registry =
+                new io.micrometer.prometheus.PrometheusMeterRegistry(io.micrometer.prometheus.PrometheusConfig.DEFAULT);
+        IndexJobWorker w = new IndexJobWorker(txService, nodeMapper, documentMapper, knowledgeBaseService,
+                llmGateway, objectMapper, directExecutor, fileStorageService, false,
+                new com.superprogrammer.common.metrics.BizMetrics(registry));
+        when(txService.countClaimable()).thenReturn(37L);
+
+        w.registerQueueDepthGauge();
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.scrape().contains("knowledge_index_queue_depth 37.0"), registry.scrape());
+    }
+
+    @Test
+    void i2_void_recordsVoidMetric() {
+        KnowledgeIndexJob job = job(10L, 1L, "hash1");
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        when(nodeMapper.selectById(10L)).thenReturn(null);
+
+        worker.poll();
+
+        verify(bizMetrics).indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
     }
 
     @Test

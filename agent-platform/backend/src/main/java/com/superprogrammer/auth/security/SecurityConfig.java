@@ -30,6 +30,10 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     /** 计费归户：请求入口种 userId，排 JWT 之后（principal 已就位）。 */
     private final BillingContextFilter billingContextFilter;
+    /** 日志系统 LOG-FR-03：userId/username/clientIp 入 MDC，排 JWT 之后。 */
+    private final com.superprogrammer.common.logging.MdcUserFilter mdcUserFilter;
+    /** 日志系统 LOG-FR-06：每请求一行耗时摘要，排 MdcUserFilter 之后（MDC 字段已就位）。 */
+    private final com.superprogrammer.common.logging.RequestLogFilter requestLogFilter;
     private final ObjectMapper objectMapper;
 
     /** Sidecar 回调共享密钥（安全审计 #1）。env RUNTIME_CALLBACK_TOKEN。空 → fail-closed。 */
@@ -41,6 +45,21 @@ public class SecurityConfig {
         http
                 // 禁用CSRF（前后端分离，使用JWT）
                 .csrf(AbstractHttpConfigurer::disable)
+                // CORS 内联进安全链（corsConfigurationSource bean，见 CorsConfig）——预检 OPTIONS 须在
+                // 授权判定之前处理，否则白名单 Origin 的跨域预检被 anyRequest().authenticated() 401 截杀。
+                .cors(org.springframework.security.config.Customizer.withDefaults())
+                // 安全体系 S1 · SEC-FR-002 安全响应头：CSP / X-Frame-Options / nosniff / Referrer-Policy。
+                // style-src 'unsafe-inline' 是 Naive UI 内联样式的放行（plan 联动点）；HSTS 待 HTTPS 落地后开启。
+                .headers(headers -> headers
+                        .contentTypeOptions(org.springframework.security.config.Customizer.withDefaults())
+                        .frameOptions(frame -> frame.deny())
+                        .referrerPolicy(ref -> ref.policy(
+                                org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
+                                        .ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                                        + "img-src 'self' data: blob:; media-src 'self' blob:"))
+                )
                 // 无状态Session
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -55,6 +74,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // WebSocket端点（通过拦截器认证）
                         .requestMatchers("/ws/chat").permitAll()
+                        // 运维系统 OPS-FR-01：健康检查/指标端点 permitAll（Prometheus 抓取与部署探活无 JWT）。
+                        // 暴露面控制不在这一层——Nginx 不反代 /actuator + 防火墙仅内网（见 application.yml 红线注释）。
+                        .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
                         // 其他路径需要认证
                         .anyRequest().authenticated()
                 )
@@ -77,6 +99,10 @@ public class SecurityConfig {
                 )
                 // 添加JWT过滤器
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                // 日志系统 LOG-FR-03：排 JWT 之后，SecurityContext 已就绪 → userId/username/clientIp 入 MDC
+                .addFilterAfter(mdcUserFilter, JwtAuthenticationFilter.class)
+                // 日志系统 LOG-FR-06：排 MdcUserFilter 之后，摘要行含 userId/traceId（MDC）
+                .addFilterAfter(requestLogFilter, com.superprogrammer.common.logging.MdcUserFilter.class)
                 // 计费归户：排 JWT 之后，从 principal 种 userId（自动计费基础设施）
                 .addFilterAfter(billingContextFilter, JwtAuthenticationFilter.class)
                 // 安全审计 #1：sidecar 回调端点共享密钥校验（permitAll 路径上的独立咽喉点）

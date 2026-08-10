@@ -8,6 +8,7 @@ import com.superprogrammer.billing.dto.RatioTierRequest;
 import com.superprogrammer.billing.dto.RatioTierVO;
 import com.superprogrammer.billing.service.PricingConfigService;
 import com.superprogrammer.common.result.R;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -43,14 +44,14 @@ public class PricingConfigController {
 
     @PostMapping("/pricing")
     @RequirePermission("pricing:manage")
-    public ResponseEntity<R<PricingRuleVO>> createPricingRule(@RequestBody PricingRuleRequest req) {
+    public ResponseEntity<R<PricingRuleVO>> createPricingRule(@Valid @RequestBody PricingRuleRequest req) {
         return ResponseEntity.ok(R.ok("价表已创建", pricingConfigService.createPricingRule(req)));
     }
 
     @PutMapping("/pricing/{id}")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<PricingRuleVO>> updatePricingRule(@PathVariable Long id,
-                                                              @RequestBody PricingRuleRequest req) {
+                                                              @Valid @RequestBody PricingRuleRequest req) {
         return ResponseEntity.ok(R.ok("价表已更新", pricingConfigService.updatePricingRule(id, req)));
     }
 
@@ -64,14 +65,14 @@ public class PricingConfigController {
 
     @PostMapping("/ratio")
     @RequirePermission("pricing:manage")
-    public ResponseEntity<R<RatioTierVO>> createRatioTier(@RequestBody RatioTierRequest req) {
+    public ResponseEntity<R<RatioTierVO>> createRatioTier(@Valid @RequestBody RatioTierRequest req) {
         return ResponseEntity.ok(R.ok("阶梯比例已创建", pricingConfigService.createRatioTier(req)));
     }
 
     @PutMapping("/ratio/{id}")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<RatioTierVO>> updateRatioTier(@PathVariable Long id,
-                                                          @RequestBody RatioTierRequest req) {
+                                                          @Valid @RequestBody RatioTierRequest req) {
         return ResponseEntity.ok(R.ok("阶梯比例已更新", pricingConfigService.updateRatioTier(id, req)));
     }
 

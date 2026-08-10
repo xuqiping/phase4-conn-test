@@ -1,5 +1,6 @@
 package com.superprogrammer.auth.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.superprogrammer.auth.entity.Permission;
@@ -68,6 +69,7 @@ public class RoleController {
     @PutMapping("/{id}/permissions")
     @PreAuthorize("hasAuthority('role:manage')")
     @Transactional
+    @AuditLog(module = "role", action = "update_permissions", targetType = "role")
     public ResponseEntity<R<Void>> updateRolePermissions(
             @PathVariable Long id,
             @RequestBody List<Long> permissionIds) {

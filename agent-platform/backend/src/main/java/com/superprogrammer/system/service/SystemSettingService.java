@@ -20,6 +20,12 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SystemSettingService {
     public static final String ACCESS_TOKEN_EXPIRATION_MS = "auth.access_token_expiration_ms";
+    /** 安全体系 S2 · A8（SEC-FR-008）：单点登录开关（默认开；关=恢复多会话，秒级回滚）。 */
+    public static final String AUTH_SINGLE_SESSION_ENABLED = "auth.single_session.enabled";
+    /** 安全体系 S2 · L7（SEC-FR-126）：低余额并行闸门阈值（积分，默认 100；0=关闭闸门）。 */
+    public static final String BILLING_LOW_BALANCE_THRESHOLD = "billing.low-balance.threshold";
+    /** 安全体系 S2 · L7（SEC-FR-126）：低余额时允许的最大在途任务数（默认 1）。 */
+    public static final String BILLING_LOW_BALANCE_MAX_INFLIGHT = "billing.low-balance.max-inflight";
     /** RAG/记忆模式总开关（false=opt-in）。4 层优先级：session>agent/workflow>global。 */
     public static final String RAG_MEMORY_ENABLED = "rag.memory.enabled";
     /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */
@@ -126,11 +132,16 @@ public class SystemSettingService {
     public AuthSettingsVO getAuthSettings() {
         return AuthSettingsVO.builder()
                 .accessTokenExpirationMs(getAccessTokenExpirationMs())
+                .singleSessionEnabled(getBoolean(AUTH_SINGLE_SESSION_ENABLED, true))
                 .build();
     }
 
-    public AuthSettingsVO updateAuthSettings(long accessTokenExpirationMs) {
+    public AuthSettingsVO updateAuthSettings(long accessTokenExpirationMs, Boolean singleSessionEnabled) {
         upsert(ACCESS_TOKEN_EXPIRATION_MS, String.valueOf(accessTokenExpirationMs), "Access Token有效期(毫秒)");
+        if (singleSessionEnabled != null) {
+            upsert(AUTH_SINGLE_SESSION_ENABLED, String.valueOf(singleSessionEnabled),
+                    "A8 单点登录开关（SEC-FR-008）：同账号仅一处在线，新登录踢旧会话");
+        }
         return getAuthSettings();
     }
 
@@ -148,6 +159,51 @@ public class SystemSettingService {
     /** 通用写 boolean。 */
     public void setBoolean(String key, boolean val, String description) {
         upsert(key, String.valueOf(val), description);
+    }
+
+    // ============================ 通用 long get/set ============================
+
+    /** 通用读 long；缺失/非法 → def（实时查库，管理员页面改即生效）。 */
+    public long getLong(String key, long def) {
+        String value = getValue(key);
+        if (value == null || value.isBlank()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
+    }
+
+    // ============================ 计费（安全体系 S2 · L7 低余额并行闸门，SEC-FR-126）============================
+
+    public long getLowBalanceThreshold() {
+        return getLong(BILLING_LOW_BALANCE_THRESHOLD, 100);
+    }
+
+    public long getLowBalanceMaxInflight() {
+        return getLong(BILLING_LOW_BALANCE_MAX_INFLIGHT, 1);
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO getBillingSettings() {
+        return com.superprogrammer.system.dto.BillingSettingsVO.builder()
+                .lowBalanceThreshold(getLowBalanceThreshold())
+                .lowBalanceMaxInflight(getLowBalanceMaxInflight())
+                .build();
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO updateBillingSettings(
+            Long lowBalanceThreshold, Long lowBalanceMaxInflight) {
+        if (lowBalanceThreshold != null) {
+            upsert(BILLING_LOW_BALANCE_THRESHOLD, String.valueOf(lowBalanceThreshold),
+                    "L7 低余额并行闸门阈值（SEC-FR-126）：余额低于此值禁多任务并行");
+        }
+        if (lowBalanceMaxInflight != null) {
+            upsert(BILLING_LOW_BALANCE_MAX_INFLIGHT, String.valueOf(lowBalanceMaxInflight),
+                    "L7 低余额最大在途任务数（SEC-FR-126），默认 1");
+        }
+        return getBillingSettings();
     }
 
     // ============================ RAG/记忆模式 ============================

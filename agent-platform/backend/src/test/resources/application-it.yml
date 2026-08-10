@@ -81,3 +81,7 @@ logging:
     com.superprogrammer: WARN
     org.springframework.security: WARN
     org.flywaydb: INFO
+
+# 安全体系 S2：审计哈希链测试密钥（仅测试环境，生产经 AUDIT_HMAC_KEY 注入）
+audit:
+  hmac-key: testAuditHmacKeyForTestingPurposesOnly0123456789

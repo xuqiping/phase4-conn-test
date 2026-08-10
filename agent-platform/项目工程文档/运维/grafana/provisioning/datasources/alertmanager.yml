@@ -1,0 +1,14 @@
+# 运维系统 Step 10：把 Alertmanager 挂进 Grafana（部署拷到 D:\IT\ops\grafana\conf\provisioning\datasources\）
+# 作用：Grafana 中文界面「告警」菜单里能直接看 8 条规则的触发状态、历史，还能挂静默（维护窗口免打扰）
+# 注意：告警判定仍在 Prometheus 做，这里只是「看板+管理入口」，删除本数据源不影响告警发送
+apiVersion: 1
+
+datasources:
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    access: proxy
+    url: http://127.0.0.1:9093
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false

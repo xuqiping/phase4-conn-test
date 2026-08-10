@@ -3,6 +3,7 @@ package com.superprogrammer.media.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.InflightGateService;
 import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenRequest;
@@ -54,6 +55,8 @@ public class MediaGenTaskWorker {
     private final ObjectMapper objectMapper;
     private final Executor executor;
     private final MediaBillingService mediaBillingService;
+    /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：任务终态释放提交时占的槽位。 */
+    private final InflightGateService inflightGate;
 
     public MediaGenTaskWorker(MediaGenTaskTxService txService,
                               MediaGenTaskMapper taskMapper,
@@ -63,7 +66,8 @@ public class MediaGenTaskWorker {
                               MediaGenProperties properties,
                               ObjectMapper objectMapper,
                               @Qualifier("mediaTaskExecutor") Executor executor,
-                              MediaBillingService mediaBillingService) {
+                              MediaBillingService mediaBillingService,
+                              InflightGateService inflightGate) {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.arkProvider = arkProvider;
@@ -73,6 +77,7 @@ public class MediaGenTaskWorker {
         this.objectMapper = objectMapper;
         this.executor = executor;
         this.mediaBillingService = mediaBillingService;
+        this.inflightGate = inflightGate;
     }
 
     @Scheduled(fixedDelayString = "${media.poll-ms:5000}")
@@ -112,6 +117,10 @@ public class MediaGenTaskWorker {
         } catch (Exception e) {
             log.error("媒体任务处理失败 taskId={}: {}", taskId, e.getMessage(), e);
             txService.markFailed(taskId, rootMessage(e));
+        } finally {
+            // L7：任务离开本 worker（成功/失败/超时/下载失败均视为终态让位）→ 释放提交时占的槽位；
+            // 错配场景（submit 未计数）由 release 的负值清零兜底，方向 fail-open
+            inflightGate.release(task.getUserId());
         }
     }
 

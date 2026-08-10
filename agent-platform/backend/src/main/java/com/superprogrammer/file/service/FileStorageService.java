@@ -64,6 +64,11 @@ public class FileStorageService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("File must not be empty");
         }
+        // 安全体系 S1 · SEC-FR-030c：上传白名单咽喉点——所有用户上传入口（/api/files、画布、
+        // 资产库、聊天记忆、KB 文档）都经本方法，扩展名正列举校验一处生效；
+        // html/svg/js/exe 等拒收，与下载端 inline 白名单（Step1）双保险根治存储型 XSS。
+        // storeStream 不校验：服务端可信来源（Ark 媒体产物回拉）。
+        validateUploadExtension(file.getOriginalFilename());
         String originalName = StringUtils.cleanPath(
                 file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
                         ? "file"
@@ -252,6 +257,17 @@ public class FileStorageService {
             return null;
         }
         return storedFileMapper.selectById(fileId);
+    }
+
+    /**
+     * 上传扩展名白名单校验（安全体系 S1 · SEC-FR-030c，FileUploadValidator 雏形）。
+     * 正列举放行生产资料（文档/图片/音视频/压缩包），危险类型与无扩展名一律 400 固定话术。
+     * S4 F-2 将叠加 magic number 字节嗅探，本方法保留为入口第一关。
+     */
+    public void validateUploadExtension(String originalFilename) {
+        if (!FileSecurityPolicy.isUploadAllowed(originalFilename)) {
+            throw new BusinessException(ErrorCode.FILE_TYPE_NOT_ALLOWED);
+        }
     }
 
     private Path resolveSafe(String fileId) {

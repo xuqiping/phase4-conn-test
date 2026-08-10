@@ -173,6 +173,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/WalletAdminView.vue'),
         // points:recharge 三重兜底
         meta: { title: '积分充值' }
+      },
+      {
+        path: 'admin/logs/audit',
+        name: 'AuditLog',
+        component: () => import('@/views/admin/logs/AuditLogView.vue'),
+        // system:audit:read 三重兜底（菜单隐藏 + 页内 canView + API 403）
+        meta: { title: '审计日志' }
       }
     ]
   },

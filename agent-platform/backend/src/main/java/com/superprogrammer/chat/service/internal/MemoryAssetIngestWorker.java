@@ -30,13 +30,17 @@ public class MemoryAssetIngestWorker {
     private final boolean enabled;
     private final MemoryAssetMemoryMapper memoryMapper;
     private final MemoryAssetIngestService ingestService;
+    /** 运维系统 OPS-FR-06：记忆管线耗时/异常指标。 */
+    private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     public MemoryAssetIngestWorker(@Value("${memory.asset.ingest.enabled:true}") boolean enabled,
                                    MemoryAssetMemoryMapper memoryMapper,
-                                   MemoryAssetIngestService ingestService) {
+                                   MemoryAssetIngestService ingestService,
+                                   com.superprogrammer.common.metrics.BizMetrics bizMetrics) {
         this.enabled = enabled;
         this.memoryMapper = memoryMapper;
         this.ingestService = ingestService;
+        this.bizMetrics = bizMetrics;
     }
 
     /** 轮询认领 PROCESSING 文件记忆（默认 60s；单批 5 条防单轮 LLM 风暴）。 */
@@ -54,6 +58,7 @@ public class MemoryAssetIngestWorker {
             return;
         }
         for (Long id : candidates) {
+            long startNanos = System.nanoTime();
             try {
                 if (memoryMapper.claim(id, now, now.plusMinutes(LOCK_MINUTES)) == 0) {
                     continue;   // 被他节点抢走/状态已前移
@@ -62,6 +67,9 @@ public class MemoryAssetIngestWorker {
             } catch (Exception e) {
                 // processOne 内部已兜状态；此处仅兜意外异常防整批中断
                 log.error("ingestion worker 处理异常 memoryId={}: {}", id, e.getMessage(), e);
+                bizMetrics.memoryIncident();
+            } finally {
+                bizMetrics.memoryPipelineDuration(java.time.Duration.ofNanos(System.nanoTime() - startNanos));
             }
         }
     }

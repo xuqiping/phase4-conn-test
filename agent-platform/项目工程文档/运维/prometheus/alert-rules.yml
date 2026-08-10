@@ -1,0 +1,114 @@
+# 运维系统 OPS-FR-12：Prometheus 告警规则（Step 10）
+# 7 条规则（宕机/磁盘/5xx/LLM失败率/队列积压/heap/爆破），对应 plan「功能联动点清单」。
+# 安装位置：D:\IT\ops\prometheus\alert-rules.yml（与 prometheus.yml 同目录，prometheus.yml 的 rule_files 引用）
+# 修改后无需重启：promtool check rules 校验通过 → 重启 agent-prometheus 服务（或 POST /-/reload）。
+#
+# 红线：
+# ① alert 的 labels/annotations 严禁放 userId/traceId/agentId/prompt 等高基数或敏感数据（与 metric tag 同规约）；
+# ② annotations 文案面向钉钉群，写中文大白话 + 处置入口（运维手册 runbook 条目）。
+
+groups:
+  # ── 组1：可用性（最严重，1 分钟到人）──────────────────────────
+  - name: availability
+    rules:
+      # 规则1：后端进程宕机（kill 后端 → 本条应触发，P1 验收用例）
+      # 偏离说明：plan 原文 "up==0 1min critical" 不区分组件；sidecar 在 Step13 服务化前
+      # 日常不在跑属预期，若一并 critical 会造成告警疲劳，故拆成两条：
+      # 后端 critical（1min）/ sidecar warning（5min，服务化后可提级）。
+      - alert: 后端进程宕机
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "后端进程挂了（agent-platform backend :8080）"
+          description: "已持续 1 分钟抓取不到后端指标。处置：先看 Windows 服务/进程是否还在，再按《运维手册》runbook「后端宕机」处理。"
+
+      - alert: sidecar进程宕机
+        expr: up{job="sidecar"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "sidecar 进程挂了（:8090，AI 图执行不可用）"
+          description: "已持续 5 分钟抓取不到 sidecar 指标。若当前本就没在跑 AI 功能可忽略；否则重启 sidecar。"
+
+  # ── 组2：主机资源 ────────────────────────────────────────────
+  - name: host-resources
+    rules:
+      # 规则2：磁盘可用 <15%（与 DiskSpaceHealthIndicator 阈值对齐；备份磁盘满是最常见失败因）
+      - alert: 磁盘空间不足
+        expr: windows_logical_disk_free_bytes / windows_logical_disk_size_bytes < 0.15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "磁盘 {{ $labels.volume }} 剩余不足 15%"
+          description: "当前剩余 {{ $value | humanizePercentage }}。处置：清备份目录旧文件/清日志，详见《运维手册》磁盘水位闸门。"
+
+      # 规则6：JVM 堆使用 >85% 持续 10min（泄漏前兆，info 级先入眼）
+      - alert: 后端堆内存偏高
+        expr: sum(jvm_memory_used_bytes{job="backend", area="heap"}) / sum(jvm_memory_max_bytes{job="backend", area="heap"}) > 0.85
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "后端 JVM 堆使用超 85%（持续 10 分钟）"
+          description: "当前 {{ $value | humanizePercentage }}。持续不降说明有泄漏苗头，安排重启窗口并抓 heap dump。"
+
+  # ── 组3：接口与 AI 链路质量 ───────────────────────────────────
+  - name: service-quality
+    rules:
+      # 规则3：5xx 错误率 >5%/5min（排除 /actuator 自抓取噪音）
+      - alert: 接口5xx错误率超标
+        expr: >-
+          sum(rate(http_server_requests_seconds_count{job="backend", status=~"5..", uri!~"/actuator.*"}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{job="backend", uri!~"/actuator.*"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "接口 5xx 错误率超 5%（5 分钟窗口）"
+          description: "当前 {{ $value | humanizePercentage }}。处置：Grafana「接口质量」看板定位是哪个 uri，再查后端日志。"
+
+      # 规则4：单 provider LLM 失败率 >30%/5min（RB-001 类故障早期信号）
+      # 流量过低时比率抖动大，加最小流量门槛：该 provider 5min 内至少 0.02 次/秒（≈6 次）才评估。
+      - alert: 大模型调用失败率偏高
+        expr: >-
+          sum by (provider) (rate(llm_calls_total{result="fail"}[5m]))
+          /
+          sum by (provider) (rate(llm_calls_total[5m])) > 0.3
+          and
+          sum by (provider) (rate(llm_calls_total[5m])) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "模型服务商 {{ $labels.provider }} 调用失败率超 30%"
+          description: "5 分钟窗口失败率 {{ $value | humanizePercentage }}。处置：查该 provider 密钥/额度/网络，详见《运维手册》runbook「LLM 超时失败」。"
+
+      # 规则5：索引队列积压 >1000 持续 10min（大批量导入期属正常，看趋势不看单点）
+      - alert: 知识库索引队列积压
+        expr: knowledge_index_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "知识库索引队列积压超 1000 条（持续 10 分钟）"
+          description: "当前积压 {{ $value }} 条。处置：重启 IndexJobWorker（重启后端即可），详见《运维手册》runbook「队列积压」。"
+
+  # ── 组4：安全 ────────────────────────────────────────────────
+  - name: security
+    rules:
+      # 规则7：登录失败突增（疑似爆破）
+      # 偏离说明：plan 原文 "单 IP 登录失败 >10次/min"，但 IP 是高基数红线严禁进 metric tag，
+      # 故用全局失败速率近似（>10 次/分钟）；真实单 IP 判定由安全体系限流/审计日志负责。
+      - alert: 登录失败突增疑似爆破
+        expr: sum(rate(auth_login_total{result="fail"}[1m])) * 60 > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "登录失败每分钟超 10 次（疑似爆破）"
+          description: "当前约 {{ $value }} 次/分钟。处置：查审计日志中心按 IP 筛失败记录，必要时临时封 IP，联动《安全体系》限流策略。"

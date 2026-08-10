@@ -13,6 +13,9 @@
       <n-tab-pane v-if="authStore.isAdmin" name="auth" tab="认证设置">
         <AuthSettingsTab />
       </n-tab-pane>
+      <n-tab-pane v-if="authStore.isAdmin" name="billing" tab="计费设置">
+        <BillingSettingsTab />
+      </n-tab-pane>
       <!-- 计划12 H'-4：旧「RAG/记忆」页签移除（legacy user_memories 读控件）；新栈 gen 配置走记忆抽屉 MemoryGenMatrixPanel。 -->
       <n-tab-pane v-if="authStore.isAdmin" name="rag-recall" tab="RAG/召回">
         <RagRecallSettingsTab />
@@ -30,6 +33,7 @@ import { useAuthStore } from '@/stores/auth'
 import UserProviderTab from '@/components/settings/UserProviderTab.vue'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
 import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
+import BillingSettingsTab from '@/components/settings/BillingSettingsTab.vue'
 import RagRecallSettingsTab from '@/components/settings/RagRecallSettingsTab.vue'
 import WebSearchSettingsTab from '@/components/settings/WebSearchSettingsTab.vue'
 

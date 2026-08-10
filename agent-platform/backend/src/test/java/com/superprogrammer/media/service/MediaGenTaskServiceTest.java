@@ -33,6 +33,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.superprogrammer.billing.service.InflightGateService;
 
 /**
  * MediaGenTaskService 单测：模型路由 + 能力校验 + 附件归属校验 + taskType 派生。
@@ -55,6 +56,8 @@ class MediaGenTaskServiceTest {
     private AssetService assetService;
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -69,7 +72,8 @@ class MediaGenTaskServiceTest {
         service = new MediaGenTaskService(
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
-                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService);
+                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService,
+                inflightGate);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);

@@ -69,6 +69,14 @@ public class JwtUtil {
     }
 
     public String generateAccessToken(Long userId, String username, List<String> roles, Long expirationMs) {
+        return generateAccessToken(userId, username, roles, expirationMs, null);
+    }
+
+    /**
+     * 安全体系 S2 · A8（SEC-FR-008）：sid=会话 id 追加 claim（不改既有 claim）；
+     * 无 sid 的旧签名保留编译过渡，签出的 token 在单点登录开启时视为失效（强制重登一次）。
+     */
+    public String generateAccessToken(Long userId, String username, List<String> roles, Long expirationMs, String sid) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expirationMs);
 
@@ -77,6 +85,7 @@ public class JwtUtil {
                 .claim("username", username)
                 .claim("roles", roles)
                 .claim("type", "access")
+                .claim("sid", sid)
                 .id(UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiration(expiryDate)
@@ -85,12 +94,18 @@ public class JwtUtil {
     }
 
     public String generateRefreshToken(Long userId) {
+        return generateRefreshToken(userId, null);
+    }
+
+    /** A8：refresh 同样带 sid（旋转沿用同 sid = 会话延续）。 */
+    public String generateRefreshToken(Long userId, String sid) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + refreshExpiration);
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("type", "refresh")
+                .claim("sid", sid)
                 .id(UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiration(expiryDate)
@@ -122,6 +137,12 @@ public class JwtUtil {
     public String getTokenId(String token) {
         Claims claims = parseToken(token);
         return claims.getId();
+    }
+
+    /** A8：会话 id（无 sid 的旧 token → null，单点登录开启时视为失效）。 */
+    public String getSidFromToken(String token) {
+        Claims claims = parseToken(token);
+        return claims.get("sid", String.class);
     }
 
     public boolean isTokenValid(String token) {

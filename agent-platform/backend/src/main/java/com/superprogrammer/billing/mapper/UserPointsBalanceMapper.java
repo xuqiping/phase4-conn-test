@@ -21,10 +21,14 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
      * 原子调余额（扣/加通用）。delta 负=扣，正=加。
      * <p>UPDATE ... RETURNING balance_points：扣同时返回新余额，行锁串行化并发扣减。
      * 调用前须 {@link #insertIfAbsent} 保证行存在；行不存在时 RETURNING 0 行 → 返 null。
+     * <p>安全体系 S1 · SEC-FR-120：追加 {@code AND balance_points + #{delta} >= 0} 守卫——
+     * 并发透支时本语句 0 行返 null（service 层转 INSUFFICIENT_POINTS），
+     * 「余额≥0」从预检软约定升级为 SQL 硬守卫；与 V80 CHECK 约束双保险。
+     * V65 的「可负=欠款」模型自此作废：透支笔拒扣（计费层吞异常，用户本次免扣），不再欠债。
      */
     @Select("UPDATE user_points_balance "
             + "SET balance_points = balance_points + #{delta}, updated_at = NOW() "
-            + "WHERE user_id = #{userId} RETURNING balance_points")
+            + "WHERE user_id = #{userId} AND balance_points + #{delta} >= 0 RETURNING balance_points")
     BigDecimal adjustBalanceReturn(@Param("userId") Long userId, @Param("delta") BigDecimal delta);
 
     /**

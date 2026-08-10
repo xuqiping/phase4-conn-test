@@ -39,6 +39,7 @@ class MediaGenTaskWorkerTest {
     @Mock private ArkImageProvider imageProvider;
     @Mock private MediaStorageService mediaStorageService;
     @Mock private MediaBillingService mediaBillingService;
+    @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MediaGenProperties properties = new MediaGenProperties();
@@ -50,7 +51,8 @@ class MediaGenTaskWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
-                mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService);
+                mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService,
+                inflightGate);
     }
 
     @Test

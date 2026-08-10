@@ -1,0 +1,10 @@
+# 钉钉适配器配置样例（prometheus-webhook-dingtalk v2.1.0）
+# 真实文件在 D:\IT\ops\dingtalk-webhook\config.yml（含密钥，不入 git）——用「配置钉钉告警.bat」自动生成。
+# targets 下的名字（ops）对应 alertmanager.yml 里的发送路径 /dingtalk/ops/send。
+targets:
+  ops:
+    url: https://oapi.dingtalk.com/robot/send?access_token=__填你的token__
+    # secret: __加签密钥SEC开头__   # 机器人安全设置选了「加签」才需要
+    message:
+      title: '{{ template "legacy.title" . }}'
+      text: '{{ template "legacy.text" . }}'

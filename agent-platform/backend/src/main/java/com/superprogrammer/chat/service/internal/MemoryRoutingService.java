@@ -12,6 +12,7 @@ import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
@@ -58,6 +59,7 @@ public class MemoryRoutingService {
     private final MemoryEntryDistiller distiller;
     private final MemoryPrefilter prefilter;
     private final SystemSettingService systemSettingService;
+    @Qualifier("memoryTaskExecutor")
     private final TaskExecutor memoryTaskExecutor;
 
     /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目；

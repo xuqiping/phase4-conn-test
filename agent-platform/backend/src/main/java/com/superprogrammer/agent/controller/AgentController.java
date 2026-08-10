@@ -1,6 +1,7 @@
 // agent-platform/backend/src/main/java/com/superprogrammer/agent/controller/AgentController.java
 package com.superprogrammer.agent.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.agent.dto.AgentCreateRequest;
 import com.superprogrammer.agent.dto.AgentDetailVO;
 import com.superprogrammer.agent.dto.AgentVO;
@@ -78,6 +79,7 @@ public class AgentController {
     }
 
     @PutMapping("/agents/{id}/permissions")
+    @RequirePermission("agent:update")
     public ResponseEntity<R<Void>> saveAgentPermissions(
             @PathVariable Long id,
             @RequestBody List<com.superprogrammer.agent.dto.AgentPermissionSaveRequest> body) {
@@ -194,6 +196,7 @@ public class AgentController {
 
     @PutMapping("/agents/{id}/status")
     @RequirePermission("agent:publish")
+    @AuditLog(module = "agent", action = "publish", targetType = "agent")
     public ResponseEntity<R<Void>> updateAgentStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
         Long operatorId = getOperatorId();
         agentService.updateStatus(id, body.get("status"), operatorId);

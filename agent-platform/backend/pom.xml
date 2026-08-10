@@ -64,6 +64,32 @@
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
+        <!-- Actuator：micrometer-tracing 自动配置的载体（日志系统 LOG-FR-01）；
+             运维系统 P0 指标/健康检查同样依赖。web 端点默认只暴露 /actuator/health。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Prometheus registry：/actuator/prometheus 暴露指标（运维系统 OPS-FR-01）。
+             版本由 Spring Boot BOM 管理；单 jar 无外部进程，Prometheus 15s 拉模式。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- Micrometer Tracing（OTel bridge）：traceId/spanId 自动入 MDC（LOG-FR-01），
+             MVC/WebClient/RestTemplate 自动插桩。版本由 Spring Boot BOM 管理（3.2.5 线）。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <!-- LogstashEncoder：文件类 appender 输出 JSON 结构化日志（LOG-FR-05）。
+             console 保留彩色文本，双格式互不影响。BOM 不管此构件，显式 pin 7.4（logback 1.4/1.5 兼容）。 -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
         <!-- MyBatis-Plus -->
         <dependency>
             <groupId>com.baomidou</groupId>
