@@ -63,6 +63,16 @@
 - **admin 诊断调用**（测试连通等须直调特定 provider 实例、不能走 gateway 按 model 路由）：直调 provider 后手动 `billingService.onSuccess(uid, providerId, "GLOBAL", model, kind, in, out)` 归户扣费，全链吞异常（诊断计费失败不得报错）。
 - **铁律不变**：计费是 side-channel——`LlmBillingService`/`MediaBillingService` 全链 try/catch 吞异常，**绝不回归成功的 LLM/媒体响应**；`userId=null` → 仅采不扣；`billing.enabled=false` → 扣/退短路。
 
+## 运维/脚本约束（运维系统沉淀）
+
+- **Windows .bat 红线**：含中文的 .bat 必须 **GBK + CRLF + 无 BOM、禁止 chcp 65001**（UTF-8/65001 多字节错位致 REM 行被当命令执行；BOM 炸 `@echo off`；LF 致 REM 保护失效）。
+- **改 GBK bat 禁用 git-bash sed**——sed 输出会丢 `\r` 触发上一条全炸。一律 PowerShell 字节级：`[IO.File]::ReadAllBytes` + `[Text.Encoding]::GetEncoding('GBK')` 改写。
+- bat 子例程末尾显式 `exit /b 0`（cmd 的 echo 不复位 errorlevel，错误码会泄漏给调用方）。
+- bat 发往 webhook 的 JSON 一律 ASCII（GBK 字节钉钉乱码）；生成的 yml 注释也 ASCII。
+- **监控红线**：userId/traceId/agentId/IP 等高基数值永远不进 metric tag 和 alert label；指标埋点 O(1)、禁 IO/查库（Gauge 回调除外）；告警 annotations 中文大白话+处置入口，不含敏感数据。
+- **监控组件安全策略**：Prometheus/Grafana/Alertmanager/适配器全部只绑 127.0.0.1，不经 Nginx 反代（与 /actuator 同策略）。
+- **密钥**：webhook/SMTP/DB 密码等只存服务器本地文件，仓库只存 .example 模板；钉钉机器人须经转译适配器（拒收 Alertmanager 原生报文）。
+
 ## 模块级约束（按需新增并在此索引）
 - [通用约束.md](通用约束.md) —— 跨所有模块的编码/命名/响应规范
 
