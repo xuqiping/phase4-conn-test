@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM 运维系统 Step 8：监控四组件 WinSW 服务注册 + 启动
+REM 运维系统 Step 8：监控四组件 + 钉钉告警适配器（Step10 新增第五服务）WinSW 注册 + 启动
 REM 红线：本脚本含中文注释，必须 GBK + CRLF + 无 BOM + 不 chcp 65001
 REM 前提：D:\IT\ops\ 下四组件已解压，各目录已放好 agent-*.exe(WinSW 改名) + agent-*.xml
 REM 用法：必须管理员身份运行（注册服务需提权）
@@ -23,9 +23,11 @@ call :svc grafana grafana
 if errorlevel 1 exit /b 1
 call :svc windows-exporter windows_exporter
 if errorlevel 1 exit /b 1
+call :svc dingtalk-webhook dingtalk-webhook
+if errorlevel 1 exit /b 1
 
 echo.
-echo [OK] 四个服务全部处理完成，用 services.msc 或 sc query 复核状态
+echo [OK] 五个服务全部处理完成，用 services.msc 或 sc query 复核状态
 exit /b 0
 
 REM ---- 子例程：%1=服务名后缀(agent-%1) %2=组件目录名 ----
