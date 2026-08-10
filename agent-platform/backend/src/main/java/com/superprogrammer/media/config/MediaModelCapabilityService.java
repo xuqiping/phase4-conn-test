@@ -106,7 +106,9 @@ public class MediaModelCapabilityService {
                     .build();
         }
         if (id.contains("seedream") && id.contains("pro")) {
-            // Seedream 5.0 pro：≤10 参考图、无组图/联网/流式、2K/3K、guidance[1,10]、optimize standard+fast
+            // Seedream 5.0 pro：≤10 参考图、无组图/联网/流式、2K/3K、optimize standard+fast。
+            // 注：ctaigw 的 pro-0724 实测不支持 guidance_scale（官网参数表标注支持，但网关 400 拒绝——
+            //     「guidance_scale is not supported by the current model」），故关闭该控件，避免误发参数。
             return ImageModelCapability.builder()
                     .refImageMax(10)
                     .refImageFormats(jpegPng)
@@ -118,9 +120,7 @@ public class MediaModelCapabilityService {
                     .supportsStream(false)
                     .outputFormats(jpegPng)
                     .optimizeModes(List.of("standard", "fast"))
-                    .supportsGuidanceScale(true)
-                    .guidanceMin(1.0)
-                    .guidanceMax(10.0)
+                    .supportsGuidanceScale(false)
                     .watermarkDefault(true)
                     .build();
         }

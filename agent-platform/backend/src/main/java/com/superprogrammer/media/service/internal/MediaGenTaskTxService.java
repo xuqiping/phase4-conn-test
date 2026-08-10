@@ -97,15 +97,10 @@ public class MediaGenTaskTxService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void markImageSucceeded(Long taskId, String resultMeta, Integer tokensCost, String statusFlag) {
-        LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
-        u.eq(MediaGenTask::getId, taskId)
-                .set(MediaGenTask::getStatus, MediaGenTask.STATUS_SUCCEEDED)
-                .set(MediaGenTask::getResultMeta, resultMeta)
-                .set(MediaGenTask::getTokensCost, tokensCost)
-                .set(MediaGenTask::getStatusFlag, statusFlag)
-                .set(MediaGenTask::getLockedUntil, null)
-                .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
-        taskMapper.update(null, u);
+        // 走 mapper @Update 显式 ::jsonb 强转（见 MediaGenTaskMapper.markImageSucceeded javadoc）：
+        // LambdaUpdateWrapper.set 不带 typeHandler，String 直入 jsonb 列会报类型不匹配。
+        taskMapper.markImageSucceeded(taskId, resultMeta, tokensCost, statusFlag,
+                MediaGenTask.STATUS_SUCCEEDED, OffsetDateTime.now());
     }
 
     @Transactional(rollbackFor = Exception.class)
