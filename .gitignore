@@ -114,4 +114,4 @@ agent-platform/login-page.png
 .claude/worktrees/
 
 # 运维备份本地机密（backup-env.bat 只存在服务器本地；模板 backup-env.example.bat 入库）
-agent-platform/项目工程文档/运维/backup/backup-env.bat
+agent-platform/scripts/ops/backup/backup-env.bat

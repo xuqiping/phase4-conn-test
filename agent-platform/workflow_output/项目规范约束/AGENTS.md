@@ -68,6 +68,7 @@
 - **Windows .bat 红线**：含中文的 .bat 必须 **GBK + CRLF + 无 BOM、禁止 chcp 65001**（UTF-8/65001 多字节错位致 REM 行被当命令执行；BOM 炸 `@echo off`；LF 致 REM 保护失效）。
 - **改 GBK bat 禁用 git-bash sed**——sed 输出会丢 `\r` 触发上一条全炸。一律 PowerShell 字节级：`[IO.File]::ReadAllBytes` + `[Text.Encoding]::GetEncoding('GBK')` 改写。
 - bat 子例程末尾显式 `exit /b 0`（cmd 的 echo 不复位 errorlevel，错误码会泄漏给调用方）。
+- **可执行 bat 一律放仓库英文目录 `scripts/ops/`**：SYSTEM 计划任务解析不了中文路径（实测报「系统找不到指定的路径」，同脚本提权 cmd 直跑却正常）；`项目工程文档/运维/` 只放模板与文档。
 - bat 发往 webhook 的 JSON 一律 ASCII（GBK 字节钉钉乱码）；生成的 yml 注释也 ASCII。
 - **监控红线**：userId/traceId/agentId/IP 等高基数值永远不进 metric tag 和 alert label；指标埋点 O(1)、禁 IO/查库（Gauge 回调除外）；告警 annotations 中文大白话+处置入口，不含敏感数据。
 - **监控组件安全策略**：Prometheus/Grafana/Alertmanager/适配器全部只绑 127.0.0.1，不经 Nginx 反代（与 /actuator 同策略）。
