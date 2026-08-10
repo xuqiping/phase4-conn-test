@@ -17,6 +17,8 @@
         <n-tag v-if="project" size="small" :type="ROLE_TYPE[project.role]" bordered>
           {{ ROLE_LABEL[project.role] }}
         </n-tag>
+        <n-tag v-if="project?.publicPool" size="small" bordered type="info">公共项目</n-tag>
+        <n-tag v-if="project?.publishedByAdmin" size="small" bordered type="warning">官方发布</n-tag>
         <span class="asset-project__count">{{ total }} 个资产</span>
         <div class="asset-project__spacer" />
         <template v-if="canWrite">
@@ -54,7 +56,19 @@
 
         <!-- 卡片网格 -->
         <div v-else-if="assets.length" class="asset-project__grid">
-          <AssetCard v-for="a in assets" :key="a.id" :asset="a" @open="openDetail" />
+          <div v-for="a in assets" :key="a.id" class="asset-project__asset-item">
+            <AssetCard :asset="a" @open="openDetail" />
+            <n-button
+              v-if="isPublicViewer"
+              class="asset-project__copy-button"
+              size="small"
+              secondary
+              type="primary"
+              @click.stop="openCopy(a)"
+            >
+              复制到我的项目
+            </n-button>
+          </div>
         </div>
 
         <!-- 空态：双引导 -->
@@ -153,6 +167,41 @@
         <n-button type="primary" :disabled="!pendingUploadType" @click="confirmUploadPick">上传</n-button>
       </template>
     </n-modal>
+
+    <n-modal
+      :show="showCopy"
+      preset="card"
+      title="复制到我的项目"
+      style="max-width:480px"
+      @update:show="onCopyVisibilityChange"
+    >
+      <p class="asset-project__copy-hint">
+        将「{{ copyAsset?.name || '当前资产' }}」复制为目标项目中的独立资产，源项目不会被修改。
+      </p>
+      <div v-if="copyTargetsLoading" class="asset-project__copy-loading"><n-spin size="small" /> 正在加载可写项目…</div>
+      <div v-else-if="copyTargetsError" class="asset-project__copy-error" role="alert">{{ copyTargetsError }}</div>
+      <n-empty v-else-if="writableTargets.length === 0" description="暂无可写的目标项目" class="asset-project__copy-empty" />
+      <n-select
+        v-else
+        v-model:value="selectedTargetProjectId"
+        :options="copyTargetOptions"
+        placeholder="选择目标项目"
+        :disabled="copySubmitting"
+      />
+      <div v-if="copyError" class="asset-project__copy-error" role="alert">{{ copyError }}</div>
+      <template #action>
+        <n-button :disabled="copySubmitting" @click="closeCopy">取消</n-button>
+        <n-button
+          type="primary"
+          :loading="copySubmitting"
+          :disabled="copyTargetsLoading || !!copyTargetsError || !selectedTargetProjectId || writableTargets.length === 0"
+          :title="!selectedTargetProjectId ? '请先选择目标项目' : undefined"
+          @click="submitCopy"
+        >
+          复制
+        </n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -217,6 +266,9 @@ const canWrite = computed(() => {
   const r = project.value?.role
   return r === 'OWNER' || r === 'EDITOR'
 })
+
+/** 公共池 VIEWER 可浏览并复制，但仍不能编辑源项目。 */
+const isPublicViewer = computed(() => project.value?.publicPool === true && project.value.role === 'VIEWER')
 
 const roleOptions = computed(() =>
   (project.value?.narrativeRoles ?? []).map((r) => ({ label: r, value: r }))
@@ -414,6 +466,105 @@ function openDetail(a: AssetVO) {
   showDetail.value = true
 }
 
+// === 公共资产复制（每次打开均创建新上下文，避免旧列表/旧复制结果污染） ===
+const showCopy = ref(false)
+const copyAsset = ref<AssetVO | null>(null)
+const writableTargets = ref<AssetProjectVO[]>([])
+const selectedTargetProjectId = ref<number | null>(null)
+const copyTargetsLoading = ref(false)
+const copyTargetsError = ref('')
+const copySubmitting = ref(false)
+const copyError = ref('')
+let copySession = 0
+
+const copyTargetOptions = computed(() =>
+  writableTargets.value.map((p) => ({ label: p.name, value: p.id }))
+)
+
+function isCurrentCopyContext(session: number, sourceProjectId: number, assetId: number) {
+  return session === copySession
+    && showCopy.value
+    && projectId.value === sourceProjectId
+    && copyAsset.value?.id === assetId
+}
+
+function clearCopyState() {
+  copySession += 1
+  showCopy.value = false
+  copyAsset.value = null
+  writableTargets.value = []
+  selectedTargetProjectId.value = null
+  copyTargetsLoading.value = false
+  copyTargetsError.value = ''
+  copySubmitting.value = false
+  copyError.value = ''
+}
+
+async function openCopy(asset: AssetVO) {
+  copySession += 1
+  const session = copySession
+  const sourceProjectId = projectId.value
+  const assetId = asset.id
+  showCopy.value = true
+  copyAsset.value = asset
+  writableTargets.value = []
+  selectedTargetProjectId.value = null
+  copyTargetsLoading.value = true
+  copyTargetsError.value = ''
+  copySubmitting.value = false
+  copyError.value = ''
+  try {
+    const res = await projectApi.list()
+    if (!isCurrentCopyContext(session, sourceProjectId, assetId)) return
+    writableTargets.value = (res.data.data || []).filter(
+      (p) => p.id !== sourceProjectId && (p.role === 'OWNER' || p.role === 'EDITOR')
+    )
+  } catch {
+    if (isCurrentCopyContext(session, sourceProjectId, assetId)) {
+      copyTargetsError.value = '加载可写项目失败，请关闭后重试'
+    }
+  } finally {
+    if (isCurrentCopyContext(session, sourceProjectId, assetId)) copyTargetsLoading.value = false
+  }
+}
+
+function closeCopy() {
+  clearCopyState()
+}
+
+function onCopyVisibilityChange(value: boolean) {
+  if (!value) closeCopy()
+}
+
+async function submitCopy() {
+  const asset = copyAsset.value
+  const targetProjectId = selectedTargetProjectId.value
+  if (!asset || !targetProjectId || copySubmitting.value) return
+  const target = writableTargets.value.find((p) => p.id === targetProjectId)
+  if (!target) {
+    copyError.value = '请选择有效的目标项目'
+    return
+  }
+  const session = copySession
+  const sourceProjectId = projectId.value
+  const assetId = asset.id
+  copySubmitting.value = true
+  copyError.value = ''
+  try {
+    await assetApi.copy(assetId, { targetProjectId })
+    if (!isCurrentCopyContext(session, sourceProjectId, assetId)) return
+    message.success(`已复制到「${target.name}」`)
+    clearCopyState()
+  } catch {
+    if (isCurrentCopyContext(session, sourceProjectId, assetId)) {
+      copyError.value = '复制失败，请重试'
+      message.error('复制失败')
+    }
+  } finally {
+    if (isCurrentCopyContext(session, sourceProjectId, assetId)) copySubmitting.value = false
+  }
+}
+
 async function onDetailChanged() {
   // L2/L3：定稿/归档/一致性包可能改变资产态与矩阵计数
   await reload()
@@ -503,6 +654,7 @@ watch(
 )
 
 watch(projectId, async () => {
+  clearCopyState()
   if (projectId.value) {
     await loadProject()
     await reload()
@@ -518,12 +670,24 @@ defineExpose({
   total,
   canEdit,
   canWrite,
+  isPublicViewer,
   openCreate,
   submitCreate,
   triggerUpload,
   onFileChange,
   inferMediaType,
   openDetail,
+  showCopy,
+  copyAsset,
+  writableTargets,
+  selectedTargetProjectId,
+  copyTargetsLoading,
+  copyTargetsError,
+  copySubmitting,
+  copyError,
+  openCopy,
+  closeCopy,
+  submitCopy,
   reload,
   loadAssets,
   loadMatrix
@@ -606,6 +770,43 @@ onMounted(async () => {
     @media (max-width: 600px) {
       grid-template-columns: 1fr;
     }
+  }
+
+  &__asset-item {
+    position: relative;
+    min-width: 0;
+  }
+
+  &__copy-button {
+    width: 100%;
+    margin-top: var(--spacing-2);
+  }
+
+  &__copy-hint {
+    margin: 0 0 var(--spacing-4);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+  }
+
+  &__copy-loading,
+  &__copy-empty {
+    min-height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-2);
+    color: var(--color-text-secondary);
+  }
+
+  &__copy-error {
+    margin-top: var(--spacing-3);
+    padding: var(--spacing-2) var(--spacing-3);
+    border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+    border-radius: var(--radius-md, 8px);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    color: var(--color-error);
+    font-size: var(--font-size-sm);
   }
 
   &__pagination {
