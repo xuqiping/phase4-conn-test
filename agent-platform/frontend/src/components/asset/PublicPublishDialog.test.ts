@@ -192,7 +192,7 @@ describe('PublicPublishDialog', () => {
     expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
   })
 
-  it('同项目完成锁在弹窗关闭后清理，后续会话允许再次提交', async () => {
+  it('发布成功后关闭重开同项目仍保持完成锁', async () => {
     const slowA = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
     vi.mocked(publicPoolApi.publish).mockReturnValueOnce(slowA.promise)
     const wrapper = mountDialog()
@@ -207,24 +207,40 @@ describe('PublicPublishDialog', () => {
 
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
-    expect(vm.publishCompleted).toBe(false)
+    expect(vm.publishCompleted).toBe(true)
     await vm.submit()
-    expect(publicPoolApi.publish).toHaveBeenCalledTimes(2)
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
   })
 
-  it('project prop 标记已发布时持续禁用提交，移出公众池后才允许重发', async () => {
-    const wrapper = mountDialog({ project: { ...project(7), publicPool: true } })
+  it('发布成功后切到 B 再回到滞后状态的 A 仍保持完成锁', async () => {
+    const wrapper = mountDialog({ project: project(7) })
     const vm = wrapper.vm as unknown as { submit: () => Promise<void>; publishCompleted: boolean }
 
-    expect(vm.publishCompleted).toBe(true)
-    expect(wrapper.text()).toContain('已发布，等待列表刷新')
     await vm.submit()
-    expect(publicPoolApi.publish).not.toHaveBeenCalled()
+    expect(vm.publishCompleted).toBe(true)
+    await wrapper.setProps({ project: project(8) })
+    expect(vm.publishCompleted).toBe(false)
+    await wrapper.setProps({ project: project(7) })
+    expect(vm.publishCompleted).toBe(true)
+    await vm.submit()
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
+  })
+
+  it('完成锁仅在权威 prop 先确认已发布、再确认移出公众池后解除', async () => {
+    const wrapper = mountDialog({ project: project(7) })
+    const vm = wrapper.vm as unknown as { submit: () => Promise<void>; publishCompleted: boolean }
+
+    await vm.submit()
+    expect(vm.publishCompleted).toBe(true)
+    await wrapper.setProps({ project: { ...project(7), publicPool: true } })
+    expect(vm.publishCompleted).toBe(true)
+    await vm.submit()
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
 
     await wrapper.setProps({ project: { ...project(7), publicPool: false } })
     expect(vm.publishCompleted).toBe(false)
     await vm.submit()
-    expect(publicPoolApi.publish).toHaveBeenCalledOnce()
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(2)
   })
 
   it('同项目被强制关闭重开后，旧发布失败不得写入新会话错误', async () => {

@@ -79,12 +79,12 @@ const mode = ref<PublicAccessMode>('OPEN')
 const error = ref('')
 const publishingProjectIds = ref<number[]>([])
 const completedProjectIds = ref<number[]>([])
+const observedPublishedProjectIds = ref<number[]>([])
 const submitting = computed(() => Boolean(props.project && publishingProjectIds.value.includes(props.project.id)))
 const publishCompleted = computed(() => Boolean(
   props.project && (props.project.publicPool || completedProjectIds.value.includes(props.project.id))
 ))
 let contextVersion = 0
-let lastProjectId: number | undefined
 
 interface PublishContext {
   projectId: number
@@ -95,12 +95,11 @@ watch(
   [() => props.show, () => props.project?.id, () => props.project?.publicPool],
   ([show, projectId, publicPool]) => {
     contextVersion += 1
-    if (lastProjectId !== projectId) {
-      completedProjectIds.value = []
-      lastProjectId = projectId
-    }
-    if (projectId && (publicPool || (!show && !publishingProjectIds.value.includes(projectId)))) {
+    if (projectId && publicPool === true) {
+      setObservedPublished(projectId, true)
+    } else if (projectId && publicPool === false && observedPublishedProjectIds.value.includes(projectId)) {
       setCompleted(projectId, false)
+      setObservedPublished(projectId, false)
     }
     mode.value = 'OPEN'
     error.value = ''
@@ -138,6 +137,16 @@ function setCompleted(projectId: number, completed: boolean) {
   completedProjectIds.value = completedProjectIds.value.filter((id) => id !== projectId)
 }
 
+function setObservedPublished(projectId: number, observed: boolean) {
+  if (observed) {
+    if (!observedPublishedProjectIds.value.includes(projectId)) {
+      observedPublishedProjectIds.value = [...observedPublishedProjectIds.value, projectId]
+    }
+    return
+  }
+  observedPublishedProjectIds.value = observedPublishedProjectIds.value.filter((id) => id !== projectId)
+}
+
 async function submit() {
   const currentProject = props.project
   if (
@@ -155,7 +164,7 @@ async function submit() {
   try {
     await publicPoolApi.publish(currentProject.id, { accessMode })
     emit('published', currentProject.id)
-    if (props.show && props.project?.id === currentProject.id) setCompleted(currentProject.id, true)
+    setCompleted(currentProject.id, true)
     if (isCurrentContext(context)) {
       message.success(props.isAdmin ? '官方项目已发布到公众池' : '项目已发布到公众池')
       closeCurrentDialog = true
