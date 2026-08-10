@@ -2,6 +2,7 @@ package com.superprogrammer.asset.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.superprogrammer.asset.dto.MatrixCountVO;
+import com.superprogrammer.asset.dto.ProjectAssetCountVO;
 import com.superprogrammer.asset.entity.Asset;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -42,6 +43,15 @@ public interface AssetMapper extends BaseMapper<Asset> {
      */
     @Select("SELECT COUNT(*) FROM assets WHERE project_id = #{projectId} AND media_type = #{mediaType} AND deleted = 0")
     long countByMediaType(@Param("projectId") Long projectId, @Param("mediaType") String mediaType);
+
+    /** 公众池项目资产数一次 GROUP BY 批查，避免项目列表 N+1。 */
+    @Select({"<script>",
+            "SELECT project_id AS projectId, COUNT(*) AS assetCount FROM assets ",
+            "WHERE deleted = 0 AND project_id IN ",
+            "<foreach collection='projectIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> ",
+            "GROUP BY project_id",
+            "</script>"})
+    List<ProjectAssetCountVO> countByProjectIds(@Param("projectIds") List<Long> projectIds);
 
     /**
      * 乐观锁并发建版（plan §S5 坑点预判：两人同时提交版本号撞车）。
