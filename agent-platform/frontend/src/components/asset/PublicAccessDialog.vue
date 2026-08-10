@@ -67,6 +67,7 @@ interface DialogContext {
   projectId: number
   version: number
 }
+type ReloadResult = 'success' | 'failed' | 'stale'
 
 const message = useMessage()
 const requests = ref<PublicAccessRequestVO[]>([])
@@ -186,22 +187,30 @@ watch(
   { immediate: true }
 )
 
-async function reload(context: DialogContext = captureContext()) {
-  if (!isCurrentContext(context)) return
+async function reload(context: DialogContext = captureContext(), silent = false): Promise<ReloadResult> {
+  if (!isCurrentContext(context)) return 'stale'
   const currentReloadVersion = ++reloadVersion
   loading.value = true
-  error.value = ''
+  if (!silent) error.value = ''
   try {
     const res = await publicPoolApi.listRequests(context.projectId)
-    if (!isCurrentContext(context) || currentReloadVersion !== reloadVersion) return
+    if (!isCurrentContext(context) || currentReloadVersion !== reloadVersion) return 'stale'
     requests.value = res.data.data || []
+    return 'success'
   } catch {
-    if (!isCurrentContext(context) || currentReloadVersion !== reloadVersion) return
+    if (!isCurrentContext(context) || currentReloadVersion !== reloadVersion) return 'stale'
+    if (silent) return 'failed'
     error.value = '申请列表加载失败，请稍后重试'
     message.error('刷新访问申请失败')
+    return 'failed'
   } finally {
     if (isCurrentContext(context) && currentReloadVersion === reloadVersion) loading.value = false
   }
+}
+
+function reconcileLocalStatus(context: DialogContext, requestId: number, status: PublicAccessStatus) {
+  if (!isCurrentContext(context)) return
+  requests.value = requests.value.map((item) => item.id === requestId ? { ...item, status } : item)
 }
 
 function mutationKey(projectId: number, requestId: number) {
@@ -229,7 +238,14 @@ async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
   setActing(context.projectId, requestId, true)
   try {
     await publicPoolApi.decideRequest(context.projectId, requestId, { decision })
-    if (!isCurrentContext(context)) return
+    if (!isCurrentContext(context)) {
+      if (props.show && props.projectId === context.projectId) {
+        const currentContext = captureContext()
+        const reloadResult = await reload(currentContext, true)
+        if (reloadResult === 'failed') reconcileLocalStatus(currentContext, requestId, decision)
+      }
+      return
+    }
     message.success(decision === 'APPROVED' ? '已批准访问申请' : '已拒绝访问申请')
     emit('changed')
     await reload(context)
@@ -246,7 +262,14 @@ async function revoke(requestId: number) {
   setActing(context.projectId, requestId, true)
   try {
     await publicPoolApi.revokeApproval(context.projectId, requestId)
-    if (!isCurrentContext(context)) return
+    if (!isCurrentContext(context)) {
+      if (props.show && props.projectId === context.projectId) {
+        const currentContext = captureContext()
+        const reloadResult = await reload(currentContext, true)
+        if (reloadResult === 'failed') reconcileLocalStatus(currentContext, requestId, 'REVOKED')
+      }
+      return
+    }
     message.success('已撤销访问权限')
     emit('changed')
     await reload(context)

@@ -48,8 +48,8 @@
     <template #action>
       <n-space justify="end">
         <n-button :disabled="submitting" @click="handleShowUpdate(false)">取消</n-button>
-        <n-button type="primary" :loading="submitting" :disabled="!project" @click="submit">
-          发布到公众池
+        <n-button type="primary" :loading="submitting" :disabled="!project || publishCompleted" @click="submit">
+          {{ publishCompleted ? '已发布，等待列表刷新' : '发布到公众池' }}
         </n-button>
       </n-space>
     </template>
@@ -78,8 +78,13 @@ const message = useMessage()
 const mode = ref<PublicAccessMode>('OPEN')
 const error = ref('')
 const publishingProjectIds = ref<number[]>([])
+const completedProjectIds = ref<number[]>([])
 const submitting = computed(() => Boolean(props.project && publishingProjectIds.value.includes(props.project.id)))
+const publishCompleted = computed(() => Boolean(
+  props.project && (props.project.publicPool || completedProjectIds.value.includes(props.project.id))
+))
 let contextVersion = 0
+let lastProjectId: number | undefined
 
 interface PublishContext {
   projectId: number
@@ -87,9 +92,16 @@ interface PublishContext {
 }
 
 watch(
-  [() => props.show, () => props.project?.id],
-  ([show]) => {
+  [() => props.show, () => props.project?.id, () => props.project?.publicPool],
+  ([show, projectId, publicPool]) => {
     contextVersion += 1
+    if (lastProjectId !== projectId) {
+      completedProjectIds.value = []
+      lastProjectId = projectId
+    }
+    if (projectId && (publicPool || (!show && !publishingProjectIds.value.includes(projectId)))) {
+      setCompleted(projectId, false)
+    }
     mode.value = 'OPEN'
     error.value = ''
     if (!show) return
@@ -116,9 +128,24 @@ function setPublishing(projectId: number, publishing: boolean) {
   publishingProjectIds.value = publishingProjectIds.value.filter((id) => id !== projectId)
 }
 
+function setCompleted(projectId: number, completed: boolean) {
+  if (completed) {
+    if (!completedProjectIds.value.includes(projectId)) {
+      completedProjectIds.value = [...completedProjectIds.value, projectId]
+    }
+    return
+  }
+  completedProjectIds.value = completedProjectIds.value.filter((id) => id !== projectId)
+}
+
 async function submit() {
   const currentProject = props.project
-  if (!currentProject || publishingProjectIds.value.includes(currentProject.id)) return
+  if (
+    !currentProject ||
+    currentProject.publicPool ||
+    publishingProjectIds.value.includes(currentProject.id) ||
+    completedProjectIds.value.includes(currentProject.id)
+  ) return
   const context: PublishContext = { projectId: currentProject.id, version: contextVersion }
 
   setPublishing(currentProject.id, true)
@@ -128,6 +155,7 @@ async function submit() {
   try {
     await publicPoolApi.publish(currentProject.id, { accessMode })
     emit('published', currentProject.id)
+    if (props.show && props.project?.id === currentProject.id) setCompleted(currentProject.id, true)
     if (isCurrentContext(context)) {
       message.success(props.isAdmin ? '官方项目已发布到公众池' : '项目已发布到公众池')
       closeCurrentDialog = true
@@ -143,7 +171,7 @@ async function submit() {
   if (closeCurrentDialog && isCurrentContext(context)) emit('update:show', false)
 }
 
-defineExpose({ mode, submitting, error, submit, handleShowUpdate })
+defineExpose({ mode, submitting, publishCompleted, error, submit, handleShowUpdate })
 </script>
 
 <style scoped lang="scss">

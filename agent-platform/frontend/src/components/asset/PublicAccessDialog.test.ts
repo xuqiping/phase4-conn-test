@@ -63,7 +63,7 @@ async function settle() {
 
 describe('PublicAccessDialog', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     vi.mocked(publicPoolApi.listRequests).mockResolvedValue(listResponse([]))
     vi.mocked(publicPoolApi.decideRequest).mockResolvedValue(response({ code: 200, message: 'ok', data: undefined }))
     vi.mocked(publicPoolApi.revokeApproval).mockResolvedValue(response({ code: 200, message: 'ok', data: undefined }))
@@ -196,7 +196,7 @@ describe('PublicAccessDialog', () => {
     await pending
   })
 
-  it('同项目被强制关闭重开后保留 mutation 防重与行 busy，旧完成不通知或刷新新会话', async () => {
+  it('同项目被强制关闭重开后保留防重，旧成功静默刷新新会话最终状态', async () => {
     vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
     const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
     vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
@@ -219,10 +219,77 @@ describe('PublicAccessDialog', () => {
     await vm.decide(11, 'APPROVED')
     expect(publicPoolApi.decideRequest).toHaveBeenCalledTimes(1)
 
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'APPROVED')]))
     slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
     await oldDecision
     expect(wrapper.emitted('changed')).toBeUndefined()
-    expect(publicPoolApi.listRequests).not.toHaveBeenCalled()
+    expect(messageMock.success).not.toHaveBeenCalled()
+    expect(publicPoolApi.listRequests).toHaveBeenCalledOnce()
+    expect(publicPoolApi.listRequests).toHaveBeenCalledWith(7)
+    const rows = (wrapper.vm as unknown as { rows: Array<{ statusLabel: string; actions: string[] }> }).rows
+    expect(rows).toEqual([expect.objectContaining({ statusLabel: '已批准', actions: ['revoke'] })])
+  })
+
+  it('旧批准成功但静默 reload 失败时，本地对账为已批准且不污染新会话消息', async () => {
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+      rows: Array<{ statusLabel: string; actions: string[] }>
+      error: string
+    }
+    const oldDecision = vm.decide(11, 'APPROVED')
+
+    await wrapper.setProps({ show: false })
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    await wrapper.setProps({ show: true })
+    await settle()
+    vi.mocked(publicPoolApi.listRequests).mockRejectedValueOnce(new Error('silent reload failed'))
+
+    slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await oldDecision
+
+    expect(vm.rows).toEqual([expect.objectContaining({ statusLabel: '已批准', actions: ['revoke'] })])
+    expect(vm.error).toBe('')
+    expect(wrapper.emitted('changed')).toBeUndefined()
+    expect(messageMock.success).not.toHaveBeenCalled()
+    expect(messageMock.error).not.toHaveBeenCalled()
+  })
+
+  it('静默 reload 被更新刷新淘汰时，不得用旧 mutation 状态覆盖权威结果', async () => {
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    const staleSilentReload = deferred<AxiosResponse<{ code: number; message: string; data: PublicAccessRequestVO[] }>>()
+    vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+      reload: () => Promise<unknown>
+      rows: Array<{ statusLabel: string; actions: string[] }>
+    }
+    const oldDecision = vm.decide(11, 'APPROVED')
+
+    await wrapper.setProps({ show: false })
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    await wrapper.setProps({ show: true })
+    await settle()
+
+    vi.mocked(publicPoolApi.listRequests).mockReturnValueOnce(staleSilentReload.promise)
+    slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await flushPromises()
+
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'REVOKED')]))
+    await vm.reload()
+    staleSilentReload.reject(new Error('superseded request failed'))
+    await oldDecision
+
+    expect(vm.rows).toEqual([expect.objectContaining({ statusLabel: '已撤销', actions: [] })])
+    expect(wrapper.emitted('changed')).toBeUndefined()
+    expect(messageMock.error).not.toHaveBeenCalled()
   })
 
   it('加载失败显示明确错误，不伪装成空列表', async () => {
