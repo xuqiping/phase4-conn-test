@@ -143,7 +143,7 @@ class AuthServiceAuditTest {
     @Test
     void register_success_recordsAudit() {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(passwordEncoder.encode("pw123")).thenReturn("$2a$10$enc");
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$enc");
         when(userMapper.insert(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
             u.setId(7L);
@@ -153,14 +153,14 @@ class AuthServiceAuditTest {
 
         RegisterRequest req = new RegisterRequest();
         req.setUsername("newbie");
-        req.setPassword("pw123");
+        req.setPassword("Str0ng#Pass");
         req.setEmail("n@e.com");
         authService.register(req);
 
         ArgumentCaptor<AuditLogEntity> captor = ArgumentCaptor.forClass(AuditLogEntity.class);
         verify(auditLogService).record(captor.capture());
         assertEquals("register", captor.getValue().getAction());
-        assertFalse(String.valueOf(captor.getValue().getDetailJson()).contains("pw123"));
+        assertFalse(String.valueOf(captor.getValue().getDetailJson()).contains("Str0ng#Pass"));
     }
 
     @Test

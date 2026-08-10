@@ -59,7 +59,7 @@ class AuthIntegrationTest {
     void step1_register_newUser_returnsCreated() throws Exception {
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
-        request.setPassword("password123");
+        request.setPassword("Str0ng#Pass");
         request.setEmail("integration@test.com");
 
         mockMvc.perform(post("/api/auth/register")
@@ -74,7 +74,7 @@ class AuthIntegrationTest {
     void step2_register_duplicateUser_returnsConflict() throws Exception {
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
-        request.setPassword("password123");
+        request.setPassword("Str0ng#Pass");
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -87,7 +87,7 @@ class AuthIntegrationTest {
     void step3_login_withRegisteredUser_returnsToken() throws Exception {
         LoginRequest request = new LoginRequest();
         request.setUsername("integrationuser");
-        request.setPassword("password123");
+        request.setPassword("Str0ng#Pass");
 
         MvcResult result = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -135,7 +135,7 @@ class AuthIntegrationTest {
         // 先登录获取token
         LoginRequest loginRequest = new LoginRequest();
         loginRequest.setUsername("integrationuser");
-        loginRequest.setPassword("password123");
+        loginRequest.setPassword("Str0ng#Pass");
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -161,7 +161,7 @@ class AuthIntegrationTest {
         // 先登录获取refresh token
         LoginRequest loginRequest = new LoginRequest();
         loginRequest.setUsername("integrationuser");
-        loginRequest.setPassword("password123");
+        loginRequest.setPassword("Str0ng#Pass");
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -189,7 +189,7 @@ class AuthIntegrationTest {
         // 先登录
         LoginRequest loginRequest = new LoginRequest();
         loginRequest.setUsername("integrationuser");
-        loginRequest.setPassword("password123");
+        loginRequest.setPassword("Str0ng#Pass");
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -90,7 +90,7 @@ class AuthServiceTest {
 
         registerRequest = new RegisterRequest();
         registerRequest.setUsername("newuser");
-        registerRequest.setPassword("password123");
+        registerRequest.setPassword("Str0ng#Pass");
         registerRequest.setEmail("new@example.com");
 
         loginRequest = new LoginRequest();
@@ -101,7 +101,7 @@ class AuthServiceTest {
     @Test
     void register_success() {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(passwordEncoder.encode("password123")).thenReturn("$2a$10$encoded");
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
         when(userMapper.insert(any(User.class))).thenReturn(1);
         when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
@@ -118,6 +118,18 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
 
         assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+    }
+
+    // 密码策略：弱密码在查重之后、写库之前被拒（不落库不审计成功）
+    @Test
+    void register_weakPassword_rejected() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        registerRequest.setPassword("123456");
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+
+        assertEquals(400, e.getCode());
+        verify(userMapper, never()).insert(any(User.class));
     }
 
     @Test

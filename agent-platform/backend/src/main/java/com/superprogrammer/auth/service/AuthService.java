@@ -11,6 +11,7 @@ import com.superprogrammer.auth.mapper.RoleMapper;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
+import com.superprogrammer.auth.security.PasswordPolicy;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.audit.AuditLogEntity;
@@ -92,6 +93,9 @@ public class AuthService {
         if (existing != null) {
             throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
         }
+
+        // 密码策略（复杂度/弱密码字典/与用户名相同/bcrypt 72 字节上限）
+        PasswordPolicy.validate(request.getUsername(), request.getPassword());
 
         // 创建用户
         User user = new User();
