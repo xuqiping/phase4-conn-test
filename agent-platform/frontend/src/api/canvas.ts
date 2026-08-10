@@ -68,6 +68,18 @@ export interface VideoClipVO {
   sourceNodeId: string
 }
 
+// === C10 增强：焦点编辑图片裁剪（对齐后端 ImageCropRequest / ImageCropVO） ===
+
+/** 焦点编辑裁剪响应（对齐后端 ImageCropVO）。 */
+export interface ImageCropVO {
+  fileId: string
+  url: string
+  mime: string
+  size: number
+  /** 源图节点 id（前端建图节点后自动连边 image→image）。 */
+  sourceNodeId: string
+}
+
 // === C13：故事板拼接（对齐后端 StoryboardConcatRequest / StoryboardConcatVO） ===
 
 /** 拼接响应（对齐后端 StoryboardConcatVO）。 */
@@ -178,6 +190,18 @@ export const canvasApi = {
     return request.post<ApiResponse<VideoClipVO>>(
       `/canvas/${id}/nodes/${nodeId}/clip`,
       { startSec: payload.startSec, endSec: payload.endSec }
+    )
+  },
+
+  /**
+   * POST /api/canvas/{id}/nodes/{nodeId}/crop-image — 焦点编辑图片裁剪（C10 增强）。
+   * 按归一化框选区 [0,1] 真裁剪源图 → 新图片文件（SOURCE_CANVAS）；前端建图节点 + 自动连边回源图节点。
+   * 源图 fileId 从快照节点 data.fileId 解析（不信任客户端传入）；失败不产空文件。
+   */
+  cropImage(id: number, nodeId: string, payload: { x: number; y: number; w: number; h: number }) {
+    return request.post<ApiResponse<ImageCropVO>>(
+      `/canvas/${id}/nodes/${nodeId}/crop-image`,
+      payload
     )
   },
 

@@ -154,13 +154,15 @@ public class MediaGenQueryService {
                 ? "/api/media/tasks/" + task.getId() + "/download"
                 : null;
         String resultFileId = (mayAccessFile && succeeded) ? task.getResultFileId() : null;
-        // 图片任务：各张下载端点 + 计费/审计字段
+        // 图片任务：各张下载端点 + fileId 列表 + 计费/审计字段
         List<String> imageUrls = null;
+        List<String> imageFileIds = null;
         Integer generatedImages = null;
         Long outputTokens = null;
         if (imageTask && mayAccessFile && succeeded) {
             List<String> fileIds = readImageFileIds(task);
             if (!fileIds.isEmpty()) {
+                imageFileIds = fileIds;
                 imageUrls = new java.util.ArrayList<>(fileIds.size());
                 for (int i = 0; i < fileIds.size(); i++) {
                     imageUrls.add("/api/media/tasks/" + task.getId() + "/images/" + i + "/download");
@@ -188,6 +190,7 @@ public class MediaGenQueryService {
                 .videoUrl(videoUrl)
                 .resultFileId(resultFileId)
                 .imageUrls(imageUrls)
+                .imageFileIds(imageFileIds)
                 .generatedImages(generatedImages)
                 .outputTokens(outputTokens)
                 .size(size)

@@ -12,7 +12,7 @@
         <div v-if="!previewUrl" class="focus-overlay__empty">该图节点尚无可预览图片</div>
       </div>
       <div class="focus-overlay__hint">
-        R-8 弱保底：框选区会作为新图节点的 cropRect + 描述（prompt）记录，实际元素提取质量依赖后续生图/分割模型。
+        在图上拖拽框选要提取的区域，确认后按该区域裁剪源图生成新图节点（纯像素裁剪，非 AI 提取）。
       </div>
     </div>
   </teleport>
@@ -35,7 +35,10 @@ const emit = defineEmits<{
 
 const stageRef = ref<HTMLElement | null>(null)
 const start = ref<{ x: number; y: number } | null>(null)
-/** 框选矩形（相对 stage 的 px，归一化由调用方按需换算）。 */
+/**
+ * 框选矩形（相对 stage 的 px，用于实时绘制 rectStyle）。
+ * 提交时按 stage 尺寸归一化为 0-1（与源图自然分辨率解耦，后端按实际像素换算裁剪）。
+ */
 const rect = ref<CropRect | null>(null)
 
 function onMouseDown(e: MouseEvent) {
@@ -68,9 +71,19 @@ function onMouseUp() {
 
 function onConfirm() {
   if (!rect.value || (rect.value.w < 8 || rect.value.h < 8)) return
+  const stage = stageRef.value
+  if (!stage) return
+  const r = stage.getBoundingClientRect()
+  if (r.width <= 0 || r.height <= 0) return
+  // px → 归一化 0-1（按 stage 尺寸），后端按源图自然像素换算裁剪
   emit('confirm', {
-    rect: { ...rect.value },
-    description: '从图节点框选元素提取（待生图/分割模型）'
+    rect: {
+      x: rect.value.x / r.width,
+      y: rect.value.y / r.height,
+      w: rect.value.w / r.width,
+      h: rect.value.h / r.height
+    },
+    description: '从图节点框选区域裁剪'
   })
 }
 

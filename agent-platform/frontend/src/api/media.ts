@@ -60,6 +60,8 @@ export interface MediaTaskVO {
   resultFileId: string | null
   /** 图片任务：各张逐张下载端点列表（同 videoUrl 归属门控）；视频任务为 null */
   imageUrls: string[] | null
+  /** 图片任务：各张 stored_files.file_id 列表（同 imageUrls 归属门控）；视频任务为 null。画布生图节点存首张作 fileId */
+  imageFileIds: string[] | null
   /** 图片任务：官方 generated_images（计费张数） */
   generatedImages: number | null
   /** 图片任务：usage.output_tokens（审计） */
@@ -122,7 +124,7 @@ export interface ImageModelCapability {
   refImageMax: number
   /** 参考图允许格式（lite 多格式，pro 仅 jpeg/png） */
   refImageFormats: string[]
-  /** size 预设枚举（下拉候选）：lite=[2K,3K,4K]，pro=[2K,3K] */
+  /** size 预设枚举（下拉候选）：lite=[2K,3K,4K]，pro=[1K,1.5K,2K] */
   sizePresets: string[]
   /** 是否支持自定义「宽x高」size */
   supportsWhSize: boolean

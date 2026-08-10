@@ -9,9 +9,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -267,6 +269,71 @@ class VideoFrameServiceTest {
         } finally {
             Files.deleteIfExists(a.tempFile());
         }
+    }
+
+    // ==================== C10 焦点编辑图片裁剪（cropImage）====================
+
+    @Test
+    void cropImage_returnsPngOfSubregion() throws Exception {
+        // 源图 100x100：左上 50x50=红，其余=蓝。裁左上 1/4（归一化 0,0,0.5,0.5）→ 50x50 全红 PNG。
+        Path src = writeQuadrantPng();
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.cropImage(src, 0, 0, 0.5, 0.5);
+
+        assertThat(f.mimeType()).isEqualTo("image/png");
+        assertThat(f.size()).isEqualTo(f.bytes().length);
+        assertThat(f.bytes()).isNotEmpty();
+        // PNG 魔数 89 50 4E 47
+        assertThat(f.bytes()[0]).isEqualTo((byte) 0x89);
+        // 解码回 BufferedImage 断言尺寸 + 像素 = 红象限
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        assertThat(out.getWidth()).isEqualTo(50);
+        assertThat(out.getHeight()).isEqualTo(50);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(49, 49)).isEqualTo(Color.RED.getRGB());
+    }
+
+    @Test
+    void cropImage_bottomRightQuarter_correctPixels() throws Exception {
+        // 裁右下 1/4（归一化 0.5,0.5,0.5,0.5）→ 50x50 全蓝
+        Path src = writeQuadrantPng();
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.cropImage(src, 0.5, 0.5, 0.5, 0.5);
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        assertThat(out.getWidth()).isEqualTo(50);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.BLUE.getRGB());
+    }
+
+    @Test
+    void cropImage_rectOutOfBounds_throwsBadRequest() throws Exception {
+        Path src = writeQuadrantPng();
+        VideoFrameService svc = new VideoFrameService();
+        // x+w = 1.2 > 1
+        assertThatThrownBy(() -> svc.cropImage(src, 0.5, 0.5, 0.7, 0.5))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("裁剪区域非法");
+    }
+
+    @Test
+    void cropImage_nullPath_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.cropImage(null, 0, 0, 0.5, 0.5))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("源图路径缺失");
+    }
+
+    /** 造源图 PNG（100x100，左上 50x50 红、其余蓝），供裁剪测试用。 */
+    private Path writeQuadrantPng() throws Exception {
+        BufferedImage img = new BufferedImage(100, 100, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        g.setColor(Color.BLUE);
+        g.fillRect(0, 0, 100, 100);
+        g.setColor(Color.RED);
+        g.fillRect(0, 0, 50, 50);
+        g.dispose();
+        Path p = tempDir.resolve("quadrant_" + System.nanoTime() + ".png");
+        ImageIO.write(img, "png", p.toFile());
+        return p;
     }
 
     /** 生成纯色帧，颜色随 index 变化（保证首帧与中段帧画面不同）。 */

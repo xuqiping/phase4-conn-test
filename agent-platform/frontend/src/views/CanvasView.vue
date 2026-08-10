@@ -196,7 +196,7 @@ import {
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
-import { mediaApi, fetchVideoBlob, isTerminal } from '@/api/media'
+import { mediaApi, fetchVideoBlob, fetchMediaBlob, isTerminal } from '@/api/media'
 import type { MediaStatus, AttachmentRef } from '@/api/media'
 import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
 import { assetApi, assetBridgeApi } from '@/api/assets'
@@ -391,32 +391,50 @@ function onFocusEdit(node: CanvasNode) {
 }
 
 /**
- * C10 焦点编辑确认：在原图节点右侧产新 image 节点（带 cropRect + parentFileId + 描述），
- * 并自动连原图→新节点。提取质量依赖后续生图/分割模型（R-8 弱保底：链路通即可）。
+ * C10 焦点编辑确认：按归一化框选区裁剪源图 → 产真实图片的新 image 节点（带 fileId+预览）+ 自动连边。
+ * rect 为归一化 0-1（FocusEditOverlay 按 stage 尺寸换算，与源图分辨率解耦）；后端按源图实际像素裁剪。
+ * 裁剪失败不产空节点（端点抛 → catch 标红源节点，不建图节点；overlay 保留供用户重新框选）。
  */
-function onFocusConfirm(payload: { rect: CropRect; description: string }) {
+async function onFocusConfirm(payload: { rect: CropRect; description: string }) {
   const src = focusNode.value
-  if (!src || !boardRef.value) return
-  const offsetX = (src.position?.x ?? 0) + 260
-  const offsetY = src.position?.y ?? 0
-  boardRef.value.addNode({
-    type: 'image',
-    position: { x: offsetX, y: offsetY },
-    data: {
-      label: '衍生图',
-      parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
-      cropRect: payload.rect,
-      prompt: payload.description,
-      status: 'idle'
-    }
-  })
-  // 取最新加入的节点 id 连边（addNode 用 Date.now id，取数组末尾）
-  const nodes = boardRef.value.getNodes()
-  const created = nodes[nodes.length - 1]
-  if (created) boardRef.value.addEdge(src.id, created.id)
-  focusNode.value = null
-  message.success('已产新图节点（提取质量待生图/分割模型）')
-  scheduleSave()
+  if (!src || !boardRef.value || !editingId.value) return
+  runningNodeId.value = src.id
+  boardRef.value.updateNodeData(src.id, { status: 'running', errorMsg: '' })
+  try {
+    const res = await canvasApi.cropImage(editingId.value, src.id, payload.rect)
+    const f = res.data.data
+    const previewUrl = await fetchCanvasPreview(f.fileId)
+    const offsetX = (src.position?.x ?? 0) + 260
+    const offsetY = src.position?.y ?? 0
+    boardRef.value.addNode({
+      type: 'image',
+      position: { x: offsetX, y: offsetY },
+      data: {
+        label: '衍生图',
+        fileId: f.fileId,
+        previewUrl,
+        parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
+        cropRect: payload.rect,
+        prompt: payload.description,
+        sourceNodeId: src.id,
+        status: 'success'
+      }
+    })
+    const nodes = boardRef.value.getNodes()
+    const created = nodes[nodes.length - 1]
+    if (created) boardRef.value.addEdge(src.id, created.id)
+    boardRef.value.updateNodeData(src.id, { status: 'success', errorMsg: '' })
+    focusNode.value = null
+    message.success('已裁剪生成新图节点')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '裁剪失败'
+    boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+    // 裁剪失败：保留 overlay 供用户重新框选或取消
+  } finally {
+    runningNodeId.value = null
+  }
 }
 
 /** 运行节点（C4 文本/图片 / C5 视频）：按类型分发。视频走 media API（media:gen gated）。 */
@@ -425,6 +443,10 @@ async function onRunNode(node: CanvasNode) {
   if (runningNodeId.value === node.id) return
   if (node.type === 'video') {
     await onRunVideo(node)
+    return
+  }
+  if (node.type === 'image') {
+    await onRunImage(node)
     return
   }
   // text/image 走画布 runner（无状态）
@@ -627,6 +649,108 @@ function buildVideoAttachments(
   return resolveCanvasVideoAttachments(data, rawPrompt, allNodes, buildMentionResolver())
 }
 
+/**
+ * 运行图片节点（#7：画布图片节点接入 AI 生图，复用 media 图片管线）。
+ * 提交（文生/图生二选一，@ 的图节点作参考图）→ 轮询至终态 → 成功 fetch 首张 blob 转 objectURL 预览。
+ * 权限：media:gen gated，无权则 submit 403 → 节点 FAILED。首张 imageFileIds[0] 存为节点 fileId（焦点编辑裁剪源）。
+ */
+async function onRunImage(node: CanvasNode) {
+  if (!editingId.value) return
+  const data = node.data as Record<string, unknown>
+  const rawPrompt = String(data.prompt ?? '').trim()
+  if (!rawPrompt) {
+    message.warning('请先填写图片提示词')
+    return
+  }
+  // 生图 model 必填（后端图片任务无默认 provider 回退，须指定模型反查 IMAGE provider）
+  const model = (data.model as string) || ''
+  if (!model) {
+    message.warning('请先选择图片模型')
+    return
+  }
+  if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
+    message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
+  }
+  runningNodeId.value = node.id
+  boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
+  try {
+    // @ 的图节点 → 参考图 refFileIds（复用 resolveCanvasVideoAttachments 的序号化逻辑）；其余 @ → 文本插值
+    const refs = buildImageRefs(node, rawPrompt)
+    const submit = await mediaApi.submitImage({
+      model,
+      prompt: refs.rewrittenPrompt,
+      refFileIds: refs.fileIds.length > 0 ? refs.fileIds : undefined
+    })
+    const taskId = submit.data.data.id
+    boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+    message.info('图片已提交，生成中…')
+    scheduleSave()
+    await pollImageTask(node.id, taskId)
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '图片提交失败'
+    boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeId.value = null
+  }
+}
+
+/**
+ * 收集图片节点的参考图：提示词里 @ 的图节点 → refFileIds（fileId 列表），并序号化「图N」写回 prompt。
+ * 复用 resolveCanvasVideoAttachments（图片节点无首/尾帧字段，全部 @ 图节点落为普通参考图）。
+ */
+function buildImageRefs(node: CanvasNode, rawPrompt: string): { fileIds: string[]; rewrittenPrompt: string } {
+  const data = node.data as Record<string, unknown>
+  const allNodes = boardRef.value?.getNodes() ?? []
+  const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(data, rawPrompt, allNodes, buildMentionResolver())
+  return { fileIds: refs.map(r => r.fileId), rewrittenPrompt }
+}
+
+/** 轮询图片任务至终态；成功 fetch 首张 blob 预览 + 存首张 fileId（焦点编辑裁剪源），失败标红。 */
+async function pollImageTask(nodeId: string, taskId: number) {
+  const maxRounds = 48 // 图片同步生成，~4min 上限（每 5s 一次）
+  for (let i = 0; i < maxRounds; i++) {
+    await new Promise<void>(r => setTimeout(r, 5000))
+    let status: MediaStatus
+    try {
+      const res = await mediaApi.getTask(taskId)
+      status = res.data.data.status
+    } catch {
+      continue // 瞬时网络错误继续轮询
+    }
+    if (!isTerminal(status)) {
+      boardRef.value?.updateNodeData(nodeId, { status: 'running' })
+      continue
+    }
+    if (status === 'SUCCEEDED') {
+      const detail = await mediaApi.getTask(taskId)
+      const urls = detail.data.data.imageUrls ?? []
+      const fileIds = detail.data.data.imageFileIds ?? []
+      // 首张下载端点带 auth → fetchMediaBlob 拉 blob 转 objectURL（<img src> 无法带 header）
+      const objectUrl = urls[0] ? await fetchMediaBlob(urls[0]) : ''
+      boardRef.value?.updateNodeData(nodeId, {
+        status: 'success',
+        mediaStatus: 'SUCCEEDED',
+        previewUrl: objectUrl,
+        // 首张 stored_files.file_id：焦点编辑裁剪据此 loadPath 取源图（同视频 resultFileId 范式）
+        fileId: fileIds[0] ?? undefined,
+        errorMsg: ''
+      })
+      message.success('图片生成完成')
+    } else {
+      boardRef.value?.updateNodeData(nodeId, {
+        status: 'failed',
+        mediaStatus: status,
+        errorMsg: '图片生成失败'
+      })
+      message.error('图片生成失败')
+    }
+    scheduleSave()
+    return
+  }
+  boardRef.value?.updateNodeData(nodeId, { status: 'failed', errorMsg: '生成超时' })
+}
+
 /** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。 */
 async function onRerunAll() {
   if (!boardRef.value || rerunning.value) return
@@ -658,9 +782,9 @@ async function onRerunAll() {
   }
 }
 
-/** 可生成节点类型（image/audio 为上传型，跳过；image AI 生图 provider 落地后加入）。 */
+/** 可生成节点类型（image 走 AI 生图 / 上传二选一；audio 为上传型，跳过）。 */
 function isRunnable(type: string): boolean {
-  return type === 'text' || type === 'script' || type === 'video'
+  return type === 'text' || type === 'script' || type === 'video' || type === 'image'
 }
 
 /**

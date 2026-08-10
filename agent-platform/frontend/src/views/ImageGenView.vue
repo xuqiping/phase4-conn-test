@@ -28,12 +28,12 @@
                 />
               </NFormItem>
 
-              <!-- 参考图（资产库选取） -->
+              <!-- 参考图（资产库选取 + 本地上传） -->
               <NFormItem v-if="cap.refImageMax > 0" class="form-item" :label="`参考图（≤${cap.refImageMax}）`">
                 <div class="refs">
                   <div v-for="(r, i) in refImages" :key="r.fileId" class="refs__chip">
                     <img :src="r.url" class="refs__thumb" :alt="r.name" />
-                    <NButton size="tiny" quaternary circle @click="refImages.splice(i, 1)">✕</NButton>
+                    <NButton size="tiny" quaternary circle @click="removeRef(i)">✕</NButton>
                   </div>
                   <NButton
                     v-if="refImages.length < cap.refImageMax"
@@ -43,6 +43,15 @@
                   >
                     + 从资产库选取
                   </NButton>
+                  <NUpload
+                    v-if="refImages.length < cap.refImageMax"
+                    :show-file-list="false"
+                    :accept="refAccept"
+                    :custom-request="() => {}"
+                    @change="onUploadRef"
+                  >
+                    <NButton size="small" dashed :loading="uploadingRef">+ 上传本地图片</NButton>
+                  </NUpload>
                 </div>
                 <div class="hint">支持格式：{{ cap.refImageFormats.join(' / ') }}</div>
               </NFormItem>
@@ -159,7 +168,7 @@
           </div>
           <div v-if="images.length" class="result__grid">
             <div v-for="(img, i) in images" :key="i" class="result__cell">
-              <img v-if="img.url" :src="img.url" :alt="`生成图 ${i + 1}`" />
+              <img v-if="img.url" :src="img.url" :alt="`生成图 ${i + 1}`" @click="previewSrc = img.url" />
               <NSpin v-else size="small" />
               <div class="result__actions">
                 <NButton size="tiny" tertiary @click="downloadImage(img.url, i)">下载</NButton>
@@ -203,6 +212,13 @@
       @update:show="saveDialog.show = $event"
       @imported="onImported"
     />
+
+    <!-- 生成图点击放大（沉浸预览，点击空白关闭） -->
+    <Teleport to="body">
+      <div v-if="previewSrc" class="lightbox" @click="previewSrc = null">
+        <img :src="previewSrc" class="lightbox__img" alt="预览" />
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -210,7 +226,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   NButton, NCard, NDivider, NEmpty, NForm, NFormItem,
-  NInput, NInputNumber, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, useMessage
+  NInput, NInputNumber, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, NUpload, useMessage
 } from 'naive-ui'
 import {
   mediaApi, fetchMediaBlob,
@@ -218,6 +234,7 @@ import {
   type ImageModelVO, type ImageModelCapability,
   type ImageSubmitRequest, type MediaTaskVO
 } from '@/api/media'
+import { fetchFilePreview } from '@/api/file'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -252,10 +269,27 @@ const form = reactive({
 })
 const customSize = ref('')
 
-// 参考图（资产库选取）
-const refImages = ref<AssetFilePicked[]>([])
+// 参考图（资产库选取 + 本地上传）：fileId 提交用，url 为带鉴权拉的 objectURL（缩略展示用）。
+interface RefImage { fileId: string; name: string; url: string }
+const refImages = ref<RefImage[]>([])
 const showPicker = ref(false)
 const pickerMax = computed(() => (cap.value ? cap.value.refImageMax - refImages.value.length : 0))
+
+/** 本地上传中（按钮 loading）。 */
+const uploadingRef = ref(false)
+/** 本地上传 accept：按模型参考图格式白名单拼扩展名（jpg/jpeg 互通）。 */
+const refAccept = computed(() => {
+  if (!cap.value || !cap.value.refImageFormats.length) return 'image/*'
+  const exts = new Set<string>()
+  for (const f of cap.value.refImageFormats) {
+    exts.add('.' + f)
+    if (f === 'jpeg') exts.add('.jpg')
+    if (f === 'jpg') exts.add('.jpeg')
+  }
+  return Array.from(exts).join(',')
+})
+/** 生成图点击放大的预览源（null=关闭）。 */
+const previewSrc = ref<string | null>(null)
 
 // 下拉候选
 const sizeOptions = computed(() => {
@@ -290,6 +324,12 @@ function onModelChange() {
   form.maxImages = Math.min(4, c.maxSequentialImages || 4)
   form.webSearch = false
   form.watermark = c.watermarkDefault
+  clearRefs()
+}
+
+/** 释放参考图 objectURL 并清空。 */
+function clearRefs() {
+  refImages.value.forEach(r => { if (r.url.startsWith('blob:')) URL.revokeObjectURL(r.url) })
   refImages.value = []
 }
 
@@ -300,8 +340,42 @@ function openPicker() {
   }
   showPicker.value = true
 }
-function onPicked(payload: AssetFilePicked[]) {
-  refImages.value.push(...payload)
+/** 资产库选取 → 逐张带鉴权拉 objectURL 缩略（resolve.url 直塞 <img> 无 auth header 会裂图）。 */
+async function onPicked(payload: AssetFilePicked[]) {
+  for (const p of payload) {
+    if (!p.fileId) continue
+    if (refImages.value.length >= (cap.value?.refImageMax ?? 0)) break
+    try {
+      const url = await fetchFilePreview(p.fileId)
+      refImages.value.push({ fileId: p.fileId, name: p.name ?? '参考图', url })
+    } catch { /* 单张预览失败跳过 */ }
+  }
+}
+/** 本地上传参考图：/api/files/upload 落库 → 带鉴权拉 objectURL 展示。 */
+async function onUploadRef(opts: { file?: { file?: File | null } } | undefined) {
+  const file = opts?.file?.file
+  if (!file) return
+  if (refImages.value.length >= (cap.value?.refImageMax ?? 0)) {
+    message.warning(`参考图已达上限（${cap.value?.refImageMax}）`)
+    return
+  }
+  uploadingRef.value = true
+  try {
+    const up = await mediaApi.uploadAttachment(file)
+    const fileId = up.data.data.fileId
+    const url = await fetchFilePreview(fileId)
+    refImages.value.push({ fileId, name: file.name, url })
+  } catch (e: unknown) {
+    message.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '上传失败')
+  } finally {
+    uploadingRef.value = false
+  }
+}
+/** 移除单张参考图（释放 objectURL）。 */
+function removeRef(i: number) {
+  const r = refImages.value[i]
+  if (r?.url.startsWith('blob:')) URL.revokeObjectURL(r.url)
+  refImages.value.splice(i, 1)
 }
 
 // ---- 提交 ----
@@ -459,6 +533,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearPolling()
   resetImages()
+  clearRefs()
 })
 </script>
 
@@ -491,6 +566,14 @@ onUnmounted(() => {
     img { width: 100%; display: block; cursor: zoom-in; }
   }
   &__actions { padding: 6px; display: flex; gap: 6px; justify-content: flex-end; }
+}
+// 生成图点击放大（沉浸预览）
+.lightbox {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex; align-items: center; justify-content: center;
+  cursor: zoom-out;
+  &__img { max-width: 94vw; max-height: 92vh; object-fit: contain; }
 }
 .history {
   &__title { font-size: 13px; color: var(--text-color-3); margin-bottom: 8px; }

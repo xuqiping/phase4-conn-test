@@ -39,6 +39,11 @@ public class MediaTaskVO {
     private String resultFileId;
     /** 图片任务：各张下载端点列表（同 videoUrl 归属门控）。视频任务 null。 */
     private List<String> imageUrls;
+    /**
+     * 图片任务：各张 stored_files.file_id 列表（同 imageUrls 归属门控）。视频任务 null。
+     * 画布图片节点 AI 生图用：存首张 fileId 作节点 fileId，焦点编辑裁剪据此 loadPath 取源图（同视频 resultFileId 范式）。
+     */
+    private List<String> imageFileIds;
     /** 图片任务：官方 generated_images（计费张数）。 */
     private Integer generatedImages;
     /** 图片任务：usage.output_tokens（审计）。 */

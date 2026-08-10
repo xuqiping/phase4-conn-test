@@ -154,6 +154,71 @@ public class VideoFrameService {
     }
 
     /**
+     * 图片裁剪（焦点编辑框选区 → 新图）。归一化坐标 [0,1] × 原图自然尺寸 getSubimage → PNG 字节。
+     *
+     * <p>非 AI：纯像素裁剪，确定性产物（区别于「生图提取元素」的概念）。前端 FocusEditOverlay
+     * 框选得 px 矩形，按 stage 尺寸归一化为 0-1 传本方法，本方法按源图自然像素换算回整数像素裁剪。
+     *
+     * <p>输出 PNG（无损，避免二次 JPEG 压缩；裁剪区通常不大，体积可控）。校验归一化区间合法。
+     *
+     * @param srcPath 源图路径（已过 FileStorageService.loadPath 归属咽喉点）
+     * @param nx      裁剪区左上角 x 归一化（0-1）
+     * @param ny      裁剪区左上角 y 归一化（0-1）
+     * @param nw      裁剪区宽归一化（0-1）
+     * @param nh      裁剪区高归一化（0-1）
+     * @return PNG 字节（mime=image/png）
+     */
+    public ExtractedFrame cropImage(Path srcPath, double nx, double ny, double nw, double nh) {
+        if (srcPath == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源图路径缺失");
+        }
+        // 归一化合法性：均在 [0,1]，且矩形不越界（x+w<=1 / y+h<=1）
+        if (nx < 0 || ny < 0 || nw <= 0 || nh <= 0 || nx + nw > 1.0001 || ny + nh > 1.0001) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "裁剪区域非法");
+        }
+
+        long started = System.currentTimeMillis();
+        BufferedImage src;
+        try {
+            src = ImageIO.read(srcPath.toFile());
+        } catch (IOException e) {
+            log.warn("canvas cropImage read failed: err={}", e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图读取失败，无法裁剪");
+        }
+        if (src == null) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图格式不支持，无法裁剪");
+        }
+        int ow = src.getWidth();
+        int oh = src.getHeight();
+        if (ow <= 0 || oh <= 0) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图尺寸异常，无法裁剪");
+        }
+        // 归一化 → 整数像素（clamp 到源图边界，防浮点误差越界）
+        int sx = clampPixel((int) Math.round(nx * ow), 0, ow - 1);
+        int sy = clampPixel((int) Math.round(ny * oh), 0, oh - 1);
+        int sw = clampPixel((int) Math.round(nw * ow), 1, ow - sx);
+        int sh = clampPixel((int) Math.round(nh * oh), 1, oh - sy);
+
+        BufferedImage sub = src.getSubimage(sx, sy, sw, sh);
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(sub, "png", baos);
+            byte[] bytes = baos.toByteArray();
+            long costMs = System.currentTimeMillis() - started;
+            log.info("canvas image cropped: srcW={} srcH={} rect=[{},{},{},{}] outBytes={} costMs={}",
+                    ow, oh, sx, sy, sw, sh, bytes.length, costMs);
+            return new ExtractedFrame(bytes, "image/png", bytes.length);
+        } catch (IOException e) {
+            log.warn("canvas cropImage encode failed: err={}", e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "裁剪图编码失败");
+        }
+    }
+
+    private static int clampPixel(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    /**
      * 视频截取（plan C12 / IC-13）。时间段 [startSec,endSec) 裁剪 → 新 mp4 临时文件。
      *
      * <p>实现：{@link FFmpegFrameGrabber} seek 到 startSec，逐帧 {@link FFmpegFrameGrabber#grabImage()}

@@ -45,9 +45,10 @@ public class ArkImageProvider {
 
     public static final String ID = "ark-image";
 
-    /** 连接/响应超时。同步生图（尤其 4K/组图）耗时较长，response 给 90s（高于视频 30s）。 */
+    /** 连接/响应超时。同步生图（pro 高质/4K/组图）耗时较长，response 给 180s
+     *  （低于 media.lock-minutes=5min 认领锁，故单次同步生成不会被 worker 重复认领）。 */
     private static final int CONNECT_TIMEOUT_MS = 10_000;
-    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(90);
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(180);
 
     private final LlmProviderService llmProviderService;
     private final ObjectMapper objectMapper;

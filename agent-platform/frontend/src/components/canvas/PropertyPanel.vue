@@ -78,7 +78,7 @@
         </div>
       </template>
 
-      <!-- 图片节点：上传（MVP）/ AI 生图（R-3 待接入） -->
+      <!-- 图片节点：上传 / AI 生图（Seedream lite+pro）/ 焦点编辑裁剪 -->
       <template v-else-if="node.type === 'image'">
         <n-upload
           :show-file-list="false"
@@ -90,9 +90,42 @@
             上传图片
           </n-button>
         </n-upload>
-        <n-button size="small" block tertiary disabled title="生图 provider 未接入（R-3）">
+        <div class="prop-panel__field">
+          <label>提示词</label>
+          <MentionTextarea
+            :model-value="(node.data.prompt as string) || ''"
+            :candidates="candidates"
+            :broken-mentions="brokenMentions"
+            :rows="3"
+            placeholder="图片生成 prompt；输入 @ 引用上游图节点作参考图"
+            @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @mention-click="onMentionClick"
+          />
+          <div v-if="brokenMentions.length" class="prop-panel__warn">
+            断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连）
+          </div>
+        </div>
+        <div class="prop-panel__field">
+          <label>图片模型</label>
+          <n-select
+            :value="(node.data.model as string) || null"
+            :options="imageModelOptions"
+            size="small"
+            clearable
+            placeholder="选择生图模型（必选）"
+            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
+          />
+        </div>
+        <n-button
+          size="small"
+          type="primary"
+          block
+          :loading="running"
+          :disabled="!(node.data.prompt as string)?.trim() || !(node.data.model as string)?.trim()"
+          @click="emit('run', node)"
+        >
           <template #icon><n-icon :component="SparklesOutline" /></template>
-          AI 生图（待接入）
+          AI 生图
         </n-button>
         <n-button
           size="small"
@@ -102,9 +135,10 @@
           @click="emit('focus-edit', node)"
         >
           <template #icon><n-icon :component="CropOutline" /></template>
-          焦点编辑（框选提元素）
+          焦点编辑（框选裁剪）
         </n-button>
         <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
+        <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
       </template>
 
@@ -385,6 +419,8 @@ import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode } from '@/api/canvas'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
+import { mediaApi } from '@/api/media'
+import type { ImageModelVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import { uniqueLabel } from '@/utils/interpolate'
 
@@ -485,9 +521,10 @@ const audioModeOpts = [
   { label: '音乐生成', value: 'music' }
 ]
 
-// ---------- C5 节点选模型（text/script=chat 模型；video=MEDIA 视频模型） ----------
+// ---------- C5 节点选模型（text/script=chat 模型；video=MEDIA 视频模型；image=生图模型） ----------
 const chatModels = ref<AvailableModel[]>([])
 const videoModels = ref<AvailableModel[]>([])
+const imageModels = ref<ImageModelVO[]>([])
 onMounted(async () => {
   try {
     const [c, v] = await Promise.all([llmApi.listAvailableModels(), llmApi.listVideoModels()])
@@ -496,9 +533,16 @@ onMounted(async () => {
   } catch {
     // 模型列表可选，失败静默（下拉空态不崩）
   }
+  // 生图模型独立取：图片 API 与 chat/video 解耦，单独 try 不影响既有模型列表加载
+  try {
+    const img = await mediaApi.listImageModels()
+    imageModels.value = img.data.data ?? []
+  } catch {
+    // 生图 provider 未配时列表空（下拉空态不崩）
+  }
 })
-/** 按 providerName 分组（与 chat ModelSelector 同范式）。 */
-function groupModels(list: AvailableModel[]) {
+/** 按 providerName 分组（与 chat ModelSelector 同范式；结构类型兼容 AvailableModel/ImageModelVO）。 */
+function groupModels(list: { providerName: string; displayName: string; modelId: string }[]) {
   const grouped = new Map<string, { type: 'group'; label: string; key: string; children: { label: string; value: string }[] }>()
   for (const m of list) {
     if (!grouped.has(m.providerName)) {
@@ -510,6 +554,7 @@ function groupModels(list: AvailableModel[]) {
 }
 const chatModelOptions = computed(() => groupModels(chatModels.value))
 const videoModelOptions = computed(() => groupModels(videoModels.value))
+const imageModelOptions = computed(() => groupModels(imageModels.value))
 </script>
 
 <style lang="scss" scoped>
