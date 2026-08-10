@@ -18,6 +18,14 @@ import type { PageResult } from './admin'
 export type BillingKind = 'CHAT' | 'EMBED' | 'IMAGE' | 'VIDEO'
 export type VideoBillingMode = 'TOKEN' | 'SECOND'
 
+/** 新增价表时可选择的 ACTIVE 全局模型。 */
+export interface AvailablePricingModelVO {
+  providerId: number
+  providerName: string
+  model: string
+  kind: BillingKind
+}
+
 /** 价表行（GET /billing/pricing） */
 export interface PricingRuleVO {
   id: number
@@ -151,6 +159,9 @@ export const billingApi = {
   // 价表
   listPricingRules() {
     return request.get<ApiResponse<PricingRuleVO[]>>('/billing/pricing')
+  },
+  availablePricingModels() {
+    return request.get<ApiResponse<AvailablePricingModelVO[]>>('/billing/pricing/available-models')
   },
   createPricingRule(data: PricingRuleRequest) {
     return request.post<ApiResponse<PricingRuleVO>>('/billing/pricing', data)

@@ -23,11 +23,44 @@
     <!-- 价表表单 -->
     <n-modal v-model:show="pricingShow" preset="card" title="价表" style="width: 560px">
       <n-form ref="pricingFormRef" :model="pricingForm" label-placement="left" :label-width="150">
-        <n-form-item label="类型 kind" path="kind">
-          <n-select v-model:value="pricingForm.kind" :options="kindOptions" />
-        </n-form-item>
-        <n-form-item label="providerId"><n-input-number v-model:value="pricingForm.providerId" placeholder="空=全局价" /></n-form-item>
-        <n-form-item label="model"><n-input v-model:value="pricingForm.model" placeholder="模型名（全局价可空）" /></n-form-item>
+        <template v-if="pricingEditId == null">
+          <n-form-item label="全局模型" path="model">
+            <n-select
+              v-model:value="selectedCandidateKey"
+              :options="candidateOptions"
+              :loading="candidateLoading"
+              filterable
+              clearable
+              placeholder="搜索供应商或模型"
+              @update:value="onCandidateChange"
+            />
+          </n-form-item>
+          <n-alert v-if="candidateError" type="error" :show-icon="false" class="pricing-config__identity-note">
+            {{ candidateError }}，请关闭后重试。
+          </n-alert>
+          <n-alert
+            v-else-if="!candidateLoading && availableModels.length === 0"
+            type="info"
+            :show-icon="false"
+            class="pricing-config__identity-note"
+          >
+            所有全局模型均已配置价表。
+          </n-alert>
+        </template>
+        <template v-else>
+          <n-alert type="info" :show-icon="false" class="pricing-config__identity-note">
+            模型身份已锁定。编辑时只能调整价格、计费模式和生效参数。
+          </n-alert>
+          <n-form-item label="类型 kind" path="kind">
+            <n-select v-model:value="pricingForm.kind" :options="kindOptions" disabled />
+          </n-form-item>
+          <n-form-item label="providerId">
+            <n-input-number v-model:value="pricingForm.providerId" disabled />
+          </n-form-item>
+          <n-form-item label="model">
+            <n-input v-model:value="pricingForm.model" disabled />
+          </n-form-item>
+        </template>
         <n-form-item label="输入价 ¥/百万"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="输出价 ¥/百万"><n-input-number v-model:value="pricingForm.priceOutputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="视频计费模式" v-if="pricingForm.kind === 'VIDEO'">
@@ -64,11 +97,11 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, useMessage
+  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { billingApi, KIND_LABEL } from '@/api/billing'
-import type { PricingRuleVO, PricingRuleRequest, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode } from '@/api/billing'
+import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -122,8 +155,42 @@ function fmt(n: number | null | undefined): string {
 const pricingShow = ref(false)
 const pricingEditId = ref<number | null>(null)
 const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null })
+const availableModels = ref<AvailablePricingModelVO[]>([])
+const candidateLoading = ref(false)
+const candidateError = ref('')
+const selectedCandidateKey = ref<string | null>(null)
+const candidateOptions = computed(() => availableModels.value.map(candidate => ({
+  label: `${candidate.providerName} · ${candidate.model} · ${KIND_LABEL[candidate.kind]}`,
+  value: candidateKey(candidate)
+})))
 
-function openPricingModal(rule?: PricingRuleVO) {
+function candidateKey(candidate: Pick<AvailablePricingModelVO, 'providerId' | 'model'>): string {
+  return `${candidate.providerId}\u0000${candidate.model}`
+}
+
+async function loadAvailableModels() {
+  candidateLoading.value = true
+  candidateError.value = ''
+  try {
+    const response = await billingApi.availablePricingModels()
+    availableModels.value = response.data.data ?? []
+  } catch {
+    availableModels.value = []
+    candidateError.value = '全局模型候选加载失败'
+  } finally {
+    candidateLoading.value = false
+  }
+}
+
+function onCandidateChange(value: string | null) {
+  selectedCandidateKey.value = value
+  const candidate = availableModels.value.find(item => candidateKey(item) === value)
+  Object.assign(pricingForm, candidate
+    ? { providerId: candidate.providerId, model: candidate.model, kind: candidate.kind }
+    : { providerId: null, model: null, kind: 'CHAT' as BillingKind })
+}
+
+async function openPricingModal(rule?: PricingRuleVO) {
   if (rule) {
     pricingEditId.value = rule.id
     Object.assign(pricingForm, {
@@ -133,12 +200,18 @@ function openPricingModal(rule?: PricingRuleVO) {
     })
   } else {
     pricingEditId.value = null
+    selectedCandidateKey.value = null
     Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null })
   }
   pricingShow.value = true
+  if (!rule) await loadAvailableModels()
 }
 
 async function savePricing() {
+  if (pricingEditId.value == null && selectedCandidateKey.value == null) {
+    message.error('请先选择一个未配置的全局模型')
+    return
+  }
   saving.value = true
   try {
     if (pricingEditId.value == null) {
@@ -219,5 +292,9 @@ onMounted(load)
   margin-top: 8px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+.pricing-config__identity-note {
+  margin: 0 0 16px 150px;
+  border-left: 3px solid var(--color-primary);
 }
 </style>
