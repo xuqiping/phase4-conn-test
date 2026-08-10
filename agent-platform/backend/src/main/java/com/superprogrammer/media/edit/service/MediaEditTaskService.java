@@ -3,6 +3,7 @@ package com.superprogrammer.media.edit.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.media.edit.config.MediaEditProperties;
 import com.superprogrammer.media.edit.dto.EditSpec;
@@ -30,6 +31,8 @@ public class MediaEditTaskService {
     private final MediaEditTaskMapper taskMapper;
     private final MediaEditProperties properties;
     private final ObjectMapper objectMapper;
+    /** 剪辑提交指标（media.task.submitted, kind=edit）。 */
+    private final BizMetrics bizMetrics;
 
     /**
      * 提交剪辑渲染任务。
@@ -60,6 +63,7 @@ public class MediaEditTaskService {
                 .sum();
         log.info("提交视频剪辑任务 taskId={} userId={} tracks={} videoClips={}",
                 task.getId(), userId, spec.getTracks().size(), videoClips);
+        bizMetrics.mediaSubmit(BizMetrics.MEDIA_EDIT);
         return task.getId();
     }
 

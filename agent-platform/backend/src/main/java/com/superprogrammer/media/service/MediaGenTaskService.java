@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.billing.service.InflightGateService;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -58,6 +59,8 @@ public class MediaGenTaskService {
     private final PointsWalletService walletService;
     /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：提交时 acquire，worker 终态 release。 */
     private final InflightGateService inflightGate;
+    /** 媒体提交指标（media.task.submitted）。 */
+    private final BizMetrics bizMetrics;
 
     /**
      * 提交生成任务。
@@ -106,8 +109,13 @@ public class MediaGenTaskService {
         // 接手 → 此处配对释放，否则低余额用户一次失败提交即自我锁死至 TTL（30min）
         boolean held = inflightGate.acquire(userId, balance);
         try {
-            return doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
+            Long taskId = doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
                     refFileId, attachments, model, userId, admin, frameRole);
+            // 指标：落库成功才计提交（acquire 失败/参数校验失败不计）
+            bizMetrics.mediaSubmit(MediaGenTask.TYPE_TEXT2IMAGE.equals(taskType)
+                    || MediaGenTask.TYPE_IMAGE2IMAGE.equals(taskType)
+                    ? BizMetrics.MEDIA_IMAGE : BizMetrics.MEDIA_VIDEO);
+            return taskId;
         } catch (RuntimeException e) {
             if (held) {
                 inflightGate.release(userId);

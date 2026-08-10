@@ -1,5 +1,6 @@
 package com.superprogrammer.media.service;
 
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.billing.service.PointsWalletService;
@@ -58,6 +59,8 @@ class MediaGenTaskServiceTest {
     private PointsWalletService walletService;
     @Mock
     private InflightGateService inflightGate;
+    @Mock
+    private BizMetrics bizMetrics;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -73,7 +76,7 @@ class MediaGenTaskServiceTest {
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService,
-                inflightGate);
+                inflightGate, bizMetrics);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -395,5 +398,14 @@ class MediaGenTaskServiceTest {
                 service.submit("p", "16:9", 5, "4K", false, false,
                         null, null, null, fast, USER_ID, false));
         assertTrue(e.getMessage().contains("不支持分辨率"));
+    }
+
+    @Test
+    void submit_success_recordsSubmittedMetric() {
+        // 指标：落库成功计 mediaSubmit(video)；acquire/校验失败不计（由既有失败用例覆盖）
+        service.submit("p", "16:9", 5, "720p", null, null, MediaGenTask.TYPE_TEXT2VIDEO,
+                null, null, SEEDANCE_2, 100L, false, null);
+
+        verify(bizMetrics).mediaSubmit("video");
     }
 }

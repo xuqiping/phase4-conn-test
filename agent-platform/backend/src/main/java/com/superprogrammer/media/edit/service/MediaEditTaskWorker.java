@@ -9,6 +9,7 @@ import com.superprogrammer.media.edit.dto.EditSpecNormalizer;
 import com.superprogrammer.media.edit.entity.MediaEditTask;
 import com.superprogrammer.media.edit.mapper.MediaEditTaskMapper;
 import com.superprogrammer.media.edit.provider.MediaEditProvider;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.media.edit.service.internal.MediaEditTaskTxService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -63,6 +64,8 @@ public class MediaEditTaskWorker {
     private final MediaEditProperties properties;
     private final ObjectMapper objectMapper;
     private final Executor executor;
+    /** 剪辑终态/耗时指标（media.task.terminal/duration, kind=edit）。 */
+    private final BizMetrics bizMetrics;
 
     public MediaEditTaskWorker(MediaEditTaskTxService txService,
                                MediaEditTaskMapper taskMapper,
@@ -71,7 +74,8 @@ public class MediaEditTaskWorker {
                                FileStorageService fileStorageService,
                                MediaEditProperties properties,
                                ObjectMapper objectMapper,
-                               @Qualifier("mediaEditExecutor") Executor executor) {
+                               @Qualifier("mediaEditExecutor") Executor executor,
+                               BizMetrics bizMetrics) {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.provider = provider;
@@ -80,6 +84,7 @@ public class MediaEditTaskWorker {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.executor = executor;
+        this.bizMetrics = bizMetrics;
     }
 
     @Scheduled(fixedDelayString = "${media.edit.poll-ms:5000}")
@@ -103,33 +108,45 @@ public class MediaEditTaskWorker {
         if (task == null) {
             return;
         }
-        EditSpec spec;
+        // 终态结果（每次处理正好记一次）：renderTask 到 markSucceeded 才置 true
+        boolean succeeded = false;
         try {
-            spec = objectMapper.readValue(task.getEditSpec(), EditSpec.class);
-        } catch (Exception e) {
-            log.error("剪辑任务 edit_spec 解析失败 taskId={}: {}", taskId, e.getMessage());
-            txService.markFailed(taskId, "edit_spec 解析失败: " + rootMessage(e));
-            return;
-        }
-        Path workDir;
-        try {
-            workDir = Files.createTempDirectory("edit-" + taskId + "-");
-        } catch (IOException e) {
-            log.error("剪辑任务建 temp 目录失败 taskId={}: {}", taskId, e.getMessage());
-            txService.markFailed(taskId, "建 temp 目录失败: " + rootMessage(e));
-            return;
-        }
-        try {
-            renderTask(task, spec, workDir);
-        } catch (Exception e) {
-            log.error("剪辑任务处理失败 taskId={}: {}", taskId, e.getMessage(), e);
-            txService.markFailed(taskId, rootMessage(e));
+            EditSpec spec;
+            try {
+                spec = objectMapper.readValue(task.getEditSpec(), EditSpec.class);
+            } catch (Exception e) {
+                log.error("剪辑任务 edit_spec 解析失败 taskId={}: {}", taskId, e.getMessage());
+                txService.markFailed(taskId, "edit_spec 解析失败: " + rootMessage(e));
+                return;
+            }
+            Path workDir;
+            try {
+                workDir = Files.createTempDirectory("edit-" + taskId + "-");
+            } catch (IOException e) {
+                log.error("剪辑任务建 temp 目录失败 taskId={}: {}", taskId, e.getMessage());
+                txService.markFailed(taskId, "建 temp 目录失败: " + rootMessage(e));
+                return;
+            }
+            try {
+                succeeded = renderTask(task, spec, workDir);
+            } catch (Exception e) {
+                log.error("剪辑任务处理失败 taskId={}: {}", taskId, e.getMessage(), e);
+                txService.markFailed(taskId, rootMessage(e));
+            } finally {
+                cleanupDir(workDir);
+            }
         } finally {
-            cleanupDir(workDir);
+            bizMetrics.mediaTaskTerminal(BizMetrics.MEDIA_EDIT,
+                    succeeded ? BizMetrics.RESULT_SUCCESS : BizMetrics.RESULT_FAIL);
+            if (task.getCreatedAt() != null) {
+                bizMetrics.mediaTaskDuration(BizMetrics.MEDIA_EDIT,
+                        Duration.between(task.getCreatedAt(), java.time.OffsetDateTime.now()));
+            }
         }
     }
 
-    private void renderTask(MediaEditTask task, EditSpec spec, Path workDir) throws Exception {
+    /** 渲染主链；返回 true 仅当 markSucceeded（产物存盘失败/异常均 false）。 */
+    private boolean renderTask(MediaEditTask task, EditSpec spec, Path workDir) throws Exception {
         Long taskId = task.getId();
         Long userId = task.getUserId();
 
@@ -160,10 +177,11 @@ public class MediaEditTaskWorker {
         } catch (Exception e) {
             log.error("剪辑产物存盘失败 taskId={}: {}", taskId, e.getMessage());
             txService.markDownloadFailed(taskId, "产物存盘失败: " + rootMessage(e));
-            return;
+            return false;
         }
         txService.markSucceeded(taskId, resultFileId);
         log.info("剪辑任务成功 taskId={} media={}", taskId, mediaByFileId.size());
+        return true;
     }
 
     /** 兜底清理：worker 崩溃残留的 temp 目录（>2h）每日清一次，防磁盘涨爆。 */

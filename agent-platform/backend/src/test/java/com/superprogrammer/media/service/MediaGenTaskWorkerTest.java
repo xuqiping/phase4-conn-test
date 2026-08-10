@@ -40,6 +40,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaStorageService mediaStorageService;
     @Mock private MediaBillingService mediaBillingService;
     @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
+    @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MediaGenProperties properties = new MediaGenProperties();
@@ -52,7 +53,7 @@ class MediaGenTaskWorkerTest {
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
                 mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService,
-                inflightGate);
+                inflightGate, bizMetrics);
     }
 
     @Test
@@ -75,6 +76,9 @@ class MediaGenTaskWorkerTest {
         verify(mediaBillingService).chargeMedia(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
                 eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L));
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
+        // 指标：成功终态正好一次（kind=video,result=success）+ 端到端耗时
+        verify(bizMetrics).mediaTaskTerminal("video", "success");
+        verify(bizMetrics).mediaTaskDuration(eq("video"), any());
     }
 
     @Test
@@ -129,6 +133,9 @@ class MediaGenTaskWorkerTest {
         worker.poll();
 
         verify(txService).markFailed(eq(1L), contains("500"));
+        // 指标：失败终态正好一次（result=fail），不记成功
+        verify(bizMetrics).mediaTaskTerminal("video", "fail");
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), eq("success"));
         verify(mediaBillingService, never()).chargeMedia(anyLong(), any(), anyString(), anyString(),
                 anyInt(), anyInt(), anyInt(), anyString(), anyLong());
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
@@ -270,6 +277,7 @@ class MediaGenTaskWorkerTest {
         t.setTaskType(MediaGenTask.TYPE_TEXT2VIDEO);
         t.setModel("doubao-seedance-1-0");
         t.setRequestConfig("{\"prompt\":\"一只橘猫晒太阳\",\"duration\":5,\"resolution\":\"720p\"}");
+        t.setCreatedAt(java.time.OffsetDateTime.now().minusSeconds(5));
         return t;
     }
 

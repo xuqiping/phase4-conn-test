@@ -36,6 +36,11 @@ public class BizMetrics {
     public static final String DIRECTION_IN = "in";
     public static final String DIRECTION_OUT = "out";
 
+    /** 媒体任务类型（有界枚举，tag 安全）。 */
+    public static final String MEDIA_VIDEO = "video";
+    public static final String MEDIA_IMAGE = "image";
+    public static final String MEDIA_EDIT = "edit";
+
     /** 索引结果。void=job 作废（节点变更/失活接管），非失败非成功。 */
     public static final String INDEX_SUCCESS = "success";
     public static final String INDEX_FAIL = "fail";
@@ -172,6 +177,35 @@ public class BizMetrics {
                 .tags("scope", safe(scope))
                 .register(registry)
                 .increment();
+    }
+
+    // ---------- 媒体生成/剪辑（合并收尾项 6：beifen 媒体域接入统一指标） ----------
+
+    /** 媒体任务提交：media_task_submitted_total{kind=video|image|edit}。落库成功后记。 */
+    public void mediaSubmit(String kind) {
+        Counter.builder("media.task.submitted")
+                .description("媒体任务提交次数（按类型）")
+                .tags("kind", safe(kind))
+                .register(registry)
+                .increment();
+    }
+
+    /** 媒体任务终态：media_task_terminal_total{kind,result}。worker 每次处理终态正好一次（重试按次计）。 */
+    public void mediaTaskTerminal(String kind, String result) {
+        Counter.builder("media.task.terminal")
+                .description("媒体任务终态次数（按类型与结果）")
+                .tags("kind", safe(kind), "result", safe(result))
+                .register(registry)
+                .increment();
+    }
+
+    /** 媒体任务端到端耗时（创建→终态，含排队）：media_task_duration{kind}。 */
+    public void mediaTaskDuration(String kind, Duration duration) {
+        Timer.builder("media.task.duration")
+                .description("媒体任务端到端耗时（创建→终态）")
+                .tags("kind", safe(kind))
+                .register(registry)
+                .record(duration);
     }
 
     /** tag 兜底：null/空白归一为 unknown，防 Micrometer 拒 null tag 抛异常拖垮主链路。 */
