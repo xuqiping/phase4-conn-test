@@ -153,7 +153,7 @@ describe('PublicPublishDialog', () => {
     expect(vm.error).toBe('')
   })
 
-  it('发布中拦截关闭，同项目被强制关闭重开后也不得重复 POST', async () => {
+  it('发布中同项目被强制关闭重开后不得重复 POST，旧成功只通知 published 不关闭新会话', async () => {
     const slowA = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
     vi.mocked(publicPoolApi.publish).mockReturnValueOnce(slowA.promise)
     const wrapper = mountDialog()
@@ -178,6 +178,27 @@ describe('PublicPublishDialog', () => {
     await pendingA
     expect(vm.error).toBe('')
     expect(wrapper.emitted('published')).toEqual([[7]])
-    expect(wrapper.emitted('update:show')).toEqual([[false]])
+    expect(wrapper.emitted('update:show')).toBeUndefined()
+    expect(messageMock.success).not.toHaveBeenCalled()
+  })
+
+  it('同项目被强制关闭重开后，旧发布失败不得写入新会话错误', async () => {
+    const slowA = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    vi.mocked(publicPoolApi.publish).mockReturnValueOnce(slowA.promise)
+    const wrapper = mountDialog()
+    const vm = wrapper.vm as unknown as { submit: () => Promise<void>; submitting: boolean; error: string }
+    const pendingA = vm.submit()
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    expect(vm.submitting).toBe(true)
+    await vm.submit()
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
+
+    slowA.reject(new Error('old session failed'))
+    await pendingA
+    expect(vm.error).toBe('')
+    expect(messageMock.error).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:show')).toBeUndefined()
   })
 })

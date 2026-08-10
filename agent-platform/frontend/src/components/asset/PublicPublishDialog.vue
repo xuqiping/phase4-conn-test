@@ -79,10 +79,17 @@ const mode = ref<PublicAccessMode>('OPEN')
 const error = ref('')
 const publishingProjectIds = ref<number[]>([])
 const submitting = computed(() => Boolean(props.project && publishingProjectIds.value.includes(props.project.id)))
+let contextVersion = 0
+
+interface PublishContext {
+  projectId: number
+  version: number
+}
 
 watch(
   [() => props.show, () => props.project?.id],
   ([show]) => {
+    contextVersion += 1
     mode.value = 'OPEN'
     error.value = ''
     if (!show) return
@@ -90,8 +97,8 @@ watch(
   { immediate: true }
 )
 
-function isDisplayedProject(projectId: number) {
-  return props.show && props.project?.id === projectId
+function isCurrentContext(context: PublishContext) {
+  return props.show && props.project?.id === context.projectId && contextVersion === context.version
 }
 
 function handleShowUpdate(value: boolean) {
@@ -112,6 +119,7 @@ function setPublishing(projectId: number, publishing: boolean) {
 async function submit() {
   const currentProject = props.project
   if (!currentProject || publishingProjectIds.value.includes(currentProject.id)) return
+  const context: PublishContext = { projectId: currentProject.id, version: contextVersion }
 
   setPublishing(currentProject.id, true)
   error.value = ''
@@ -120,19 +128,19 @@ async function submit() {
   try {
     await publicPoolApi.publish(currentProject.id, { accessMode })
     emit('published', currentProject.id)
-    if (isDisplayedProject(currentProject.id)) {
+    if (isCurrentContext(context)) {
       message.success(props.isAdmin ? '官方项目已发布到公众池' : '项目已发布到公众池')
       closeCurrentDialog = true
     }
   } catch {
-    if (isDisplayedProject(currentProject.id)) {
+    if (isCurrentContext(context)) {
       error.value = '发布失败，请稍后重试'
       message.error('发布到公众池失败')
     }
   } finally {
     setPublishing(currentProject.id, false)
   }
-  if (closeCurrentDialog && isDisplayedProject(currentProject.id)) emit('update:show', false)
+  if (closeCurrentDialog && isCurrentContext(context)) emit('update:show', false)
 }
 
 defineExpose({ mode, submitting, error, submit, handleShowUpdate })

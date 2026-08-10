@@ -72,7 +72,13 @@ const message = useMessage()
 const requests = ref<PublicAccessRequestVO[]>([])
 const loading = ref(false)
 const error = ref('')
-const actingRequestIds = ref<number[]>([])
+const inFlightMutationKeys = ref<Set<string>>(new Set())
+const actingRequestIds = computed(() => {
+  const prefix = `${props.projectId}:`
+  return [...inFlightMutationKeys.value]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => Number(key.slice(prefix.length)))
+})
 const hasActiveMutation = computed(() => actingRequestIds.value.length > 0)
 let contextVersion = 0
 let reloadVersion = 0
@@ -168,7 +174,6 @@ function resetState() {
   requests.value = []
   loading.value = false
   error.value = ''
-  actingRequestIds.value = []
 }
 
 watch(
@@ -199,19 +204,29 @@ async function reload(context: DialogContext = captureContext()) {
   }
 }
 
-function setActing(requestId: number, acting: boolean) {
+function mutationKey(projectId: number, requestId: number) {
+  return `${projectId}:${requestId}`
+}
+
+function isMutationInFlight(projectId: number, requestId: number) {
+  return inFlightMutationKeys.value.has(mutationKey(projectId, requestId))
+}
+
+function setActing(projectId: number, requestId: number, acting: boolean) {
+  const next = new Set(inFlightMutationKeys.value)
+  const key = mutationKey(projectId, requestId)
   if (acting) {
-    if (!actingRequestIds.value.includes(requestId)) actingRequestIds.value = [...actingRequestIds.value, requestId]
-    return
+    next.add(key)
+  } else {
+    next.delete(key)
   }
-  actingRequestIds.value = actingRequestIds.value.filter((id) => id !== requestId)
+  inFlightMutationKeys.value = next
 }
 
 async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
-  if (actingRequestIds.value.includes(requestId)) return
   const context = captureContext()
-  if (!isCurrentContext(context)) return
-  setActing(requestId, true)
+  if (!isCurrentContext(context) || isMutationInFlight(context.projectId, requestId)) return
+  setActing(context.projectId, requestId, true)
   try {
     await publicPoolApi.decideRequest(context.projectId, requestId, { decision })
     if (!isCurrentContext(context)) return
@@ -221,15 +236,14 @@ async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
   } catch {
     if (isCurrentContext(context)) message.error(decision === 'APPROVED' ? '批准失败，请重试' : '拒绝失败，请重试')
   } finally {
-    if (isCurrentContext(context)) setActing(requestId, false)
+    setActing(context.projectId, requestId, false)
   }
 }
 
 async function revoke(requestId: number) {
-  if (actingRequestIds.value.includes(requestId)) return
   const context = captureContext()
-  if (!isCurrentContext(context)) return
-  setActing(requestId, true)
+  if (!isCurrentContext(context) || isMutationInFlight(context.projectId, requestId)) return
+  setActing(context.projectId, requestId, true)
   try {
     await publicPoolApi.revokeApproval(context.projectId, requestId)
     if (!isCurrentContext(context)) return
@@ -239,7 +253,7 @@ async function revoke(requestId: number) {
   } catch {
     if (isCurrentContext(context)) message.error('撤销访问失败，请重试')
   } finally {
-    if (isCurrentContext(context)) setActing(requestId, false)
+    setActing(context.projectId, requestId, false)
   }
 }
 

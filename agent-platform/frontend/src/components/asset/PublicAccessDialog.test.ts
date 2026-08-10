@@ -196,6 +196,35 @@ describe('PublicAccessDialog', () => {
     await pending
   })
 
+  it('同项目被强制关闭重开后保留 mutation 防重与行 busy，旧完成不通知或刷新新会话', async () => {
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+    }
+    const oldDecision = vm.decide(11, 'APPROVED')
+
+    await wrapper.setProps({ show: false })
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    await wrapper.setProps({ show: true })
+    await settle()
+    const approve = wrapper.findAllComponents(NButton).find((button) => button.text() === '批准')
+    expect(approve?.props('disabled')).toBe(true)
+    expect(approve?.props('loading')).toBe(true)
+
+    vi.mocked(publicPoolApi.listRequests).mockClear()
+    await vm.decide(11, 'APPROVED')
+    expect(publicPoolApi.decideRequest).toHaveBeenCalledTimes(1)
+
+    slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await oldDecision
+    expect(wrapper.emitted('changed')).toBeUndefined()
+    expect(publicPoolApi.listRequests).not.toHaveBeenCalled()
+  })
+
   it('加载失败显示明确错误，不伪装成空列表', async () => {
     vi.mocked(publicPoolApi.listRequests).mockRejectedValueOnce(new Error('offline'))
     const wrapper = mountDialog()
