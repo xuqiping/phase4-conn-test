@@ -82,7 +82,7 @@ const completedProjectIds = ref<number[]>([])
 const observedPublishedProjectIds = ref<number[]>([])
 const submitting = computed(() => Boolean(props.project && publishingProjectIds.value.includes(props.project.id)))
 const publishCompleted = computed(() => Boolean(
-  props.project && (props.project.publicPool || completedProjectIds.value.includes(props.project.id))
+  props.project && (props.project.publicPool || completedProjectIds.value.includes(props.project.id) || observedPublishedProjectIds.value.includes(props.project.id))
 ))
 let contextVersion = 0
 
@@ -151,9 +151,8 @@ async function submit() {
   const currentProject = props.project
   if (
     !currentProject ||
-    currentProject.publicPool ||
-    publishingProjectIds.value.includes(currentProject.id) ||
-    completedProjectIds.value.includes(currentProject.id)
+    publishCompleted.value ||
+    publishingProjectIds.value.includes(currentProject.id)
   ) return
   const context: PublishContext = { projectId: currentProject.id, version: contextVersion }
 

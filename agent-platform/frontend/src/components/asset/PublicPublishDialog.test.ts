@@ -243,6 +243,22 @@ describe('PublicPublishDialog', () => {
     expect(publicPoolApi.publish).toHaveBeenCalledTimes(2)
   })
 
+  it('已观察到 publicPool=true 后兼容对象缺字段仍锁定，显式 false 才解锁', async () => {
+    const wrapper = mountDialog({ project: { ...project(7), publicPool: true } })
+    const vm = wrapper.vm as unknown as { submit: () => Promise<void>; publishCompleted: boolean }
+
+    expect(vm.publishCompleted).toBe(true)
+    await wrapper.setProps({ project: project(7) })
+    expect(vm.publishCompleted).toBe(true)
+    await vm.submit()
+    expect(publicPoolApi.publish).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ project: { ...project(7), publicPool: false } })
+    expect(vm.publishCompleted).toBe(false)
+    await vm.submit()
+    expect(publicPoolApi.publish).toHaveBeenCalledOnce()
+  })
+
   it('同项目被强制关闭重开后，旧发布失败不得写入新会话错误', async () => {
     const slowA = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
     vi.mocked(publicPoolApi.publish).mockReturnValueOnce(slowA.promise)
