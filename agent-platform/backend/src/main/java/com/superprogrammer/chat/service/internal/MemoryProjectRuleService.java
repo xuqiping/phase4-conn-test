@@ -38,6 +38,8 @@ public class MemoryProjectRuleService {
     static final int MAX_RULE_TEXT_LEN = 2000;
     static final int MAX_EXAMPLES = 5;
     static final int MAX_EXAMPLE_LEN = 500;
+    static final int MAX_FILENAME_PATTERNS = 10;
+    static final int MAX_FILENAME_PATTERN_LEN = 100;
 
     private final MemoryProjectRuleMapper ruleMapper;
     private final MemoryProjectMemberMapper memberMapper;
@@ -79,6 +81,7 @@ public class MemoryProjectRuleService {
         rule.setRuleText(req.getRuleText().trim());
         rule.setPositiveExamples(trimExamples(req.getPositiveExamples()));
         rule.setNegativeExamples(trimExamples(req.getNegativeExamples()));
+        rule.setFilenamePatterns(trimExamples(req.getFilenamePatterns()));
         rule.setEnabled(enabled);
         rule.setAnchorTokens(anchorReady ? anchor.tokens() : null);
 
@@ -169,6 +172,7 @@ public class MemoryProjectRuleService {
                 .ruleText(rule.getRuleText())
                 .positiveExamples(rule.getPositiveExamples())
                 .negativeExamples(privileged ? rule.getNegativeExamples() : null)
+                .filenamePatterns(rule.getFilenamePatterns())
                 .enabled(rule.getEnabled())
                 .anchorReady(rule.getAnchorTokens() != null)
                 .updatedAt(rule.getUpdatedAt())
@@ -184,6 +188,7 @@ public class MemoryProjectRuleService {
         }
         checkExamples(req.getPositiveExamples(), "正例");
         checkExamples(req.getNegativeExamples(), "负例");
+        checkFilenamePatterns(req.getFilenamePatterns());
     }
 
     private void checkExamples(List<String> examples, String label) {
@@ -199,6 +204,26 @@ public class MemoryProjectRuleService {
             }
             if (ex.length() > MAX_EXAMPLE_LEN) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, label + "单条超长（≤" + MAX_EXAMPLE_LEN + "字）");
+            }
+        }
+    }
+
+    /** 文件名硬规则校验：≤10 条、单条 ≤100 字、无空条目（v1 子串包含）。 */
+    private void checkFilenamePatterns(List<String> patterns) {
+        if (patterns == null) {
+            return;
+        }
+        if (patterns.size() > MAX_FILENAME_PATTERNS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "文件名规则最多 " + MAX_FILENAME_PATTERNS + " 条");
+        }
+        for (String p : patterns) {
+            if (p == null || p.isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "文件名规则含空条目");
+            }
+            if (p.length() > MAX_FILENAME_PATTERN_LEN) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "文件名规则单条超长（≤" + MAX_FILENAME_PATTERN_LEN + "字）");
             }
         }
     }

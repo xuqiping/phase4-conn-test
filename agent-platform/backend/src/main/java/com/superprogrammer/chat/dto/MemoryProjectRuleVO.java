@@ -22,6 +22,7 @@ public class MemoryProjectRuleVO {
     private String ruleText;
     private List<String> positiveExamples;
     private List<String> negativeExamples;   // 仅 owner/admin；成员恒 null
+    private List<String> filenamePatterns;   // 文件名硬规则（成员可见）
     private Boolean enabled;
     private Boolean anchorReady;             // anchor 是否就绪（false=embed 失败降级）
     private OffsetDateTime updatedAt;

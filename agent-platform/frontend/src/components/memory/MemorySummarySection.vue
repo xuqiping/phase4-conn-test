@@ -101,14 +101,17 @@ const linkChildProjects = computed(() => {
     .map(l => ({ id: l.childProjectId, name: l.childProjectName ?? `项目#${l.childProjectId}` }))
 })
 
-/** 第二轮 #4 + 三期：ACTIVE 授权只读召回的项目 id 集（个人 grant ∪ link-child；grantee=本人）。 */
+/** 第二轮 #4 + 三期：ACTIVE 授权只读召回的项目 id 集（个人 grant ∪ link-child；grantee=本人）。
+ *  排除「我 own 的项目」——自己拥有/已是成员的项目即使存在 grant 记录（自授权/冗余）也不算只读授权，
+ *  否则 currentGranted 误真会隐掉 owner 的「立即总结/重新总结」入口。 */
 const grantedProjectIds = computed(() => {
+  const ownIds = new Set(projects.value.map(p => p.id))
   const s = new Set<number>()
   for (const g of grants.value) {
-    if (g.status === 'ACTIVE') s.add(g.projectId)
+    if (g.status === 'ACTIVE' && !ownIds.has(g.projectId)) s.add(g.projectId)
   }
   for (const c of linkChildProjects.value) {
-    s.add(c.id)
+    if (!ownIds.has(c.id)) s.add(c.id)
   }
   return s
 })

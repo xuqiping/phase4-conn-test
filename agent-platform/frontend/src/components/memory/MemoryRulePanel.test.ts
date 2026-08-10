@@ -41,6 +41,7 @@ function mkRule(overrides: Partial<MemoryProjectRuleVO> = {}): MemoryProjectRule
     ruleText: '涉及 SeedDance 的讨论',
     positiveExamples: ['正例A'],
     negativeExamples: ['负例B'],
+    filenamePatterns: null,
     enabled: true,
     anchorReady: true,
     updatedAt: '2026-08-08T10:00:00Z',
@@ -135,6 +136,7 @@ describe('MemoryRulePanel（二期 P1 · FR-001 收录规则）', () => {
       ruleText: '新规则',
       positiveExamples: ['例1'],
       negativeExamples: [],
+      filenamePatterns: [],
       enabled: true
     })
     expect(messageMock.success).toHaveBeenCalledWith('已保存，但向量化失败规则未生效')

@@ -14,5 +14,7 @@ public class MemoryProjectRuleRequest {
     private String ruleText;
     private List<String> positiveExamples;
     private List<String> negativeExamples;
+    /** 文件名硬规则（v1 子串包含，大小写不敏感，≤10 条、单条 ≤100 字）。 */
+    private List<String> filenamePatterns;
     private Boolean enabled;
 }

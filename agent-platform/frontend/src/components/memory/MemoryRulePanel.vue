@@ -65,6 +65,27 @@
             />
           </n-form-item>
 
+          <n-form-item label="文件名硬规则（上传附件文件名含这些词就一定进本项目，≤10 条）">
+            <n-dynamic-input
+              v-model:value="form.filenamePatterns"
+              :max="10"
+              :disabled="!canEdit"
+              :on-create="() => ''"
+            >
+              <template #default="{ index }">
+                <n-input
+                  v-model:value="form.filenamePatterns[index]"
+                  maxlength="100"
+                  placeholder="例：课件（大小写不敏感，子串包含）"
+                  :readonly="!canEdit"
+                />
+              </template>
+            </n-dynamic-input>
+            <div class="memory-rule-panel__hint">
+              命中即确定性收录为项目条目（直接生效，成员可读），不经过语义判断和敏感过滤——内容安全风险由上传者自负。
+            </div>
+          </n-form-item>
+
           <n-form-item label="正例（该收录的对话样例，≤5 条）">
             <n-dynamic-input
               v-model:value="form.positiveExamples"
@@ -149,6 +170,7 @@ const form = ref({
   ruleText: '',
   positiveExamples: [] as string[],
   negativeExamples: [] as string[],
+  filenamePatterns: [] as string[],
   enabled: true
 })
 
@@ -190,6 +212,7 @@ async function loadRule() {
       ruleText: rule.value?.ruleText ?? '',
       positiveExamples: [...(rule.value?.positiveExamples ?? [])],
       negativeExamples: [...(rule.value?.negativeExamples ?? [])],
+      filenamePatterns: [...(rule.value?.filenamePatterns ?? [])],
       enabled: rule.value?.enabled ?? true
     }
   } catch (e: any) {
@@ -211,6 +234,7 @@ async function save() {
       ruleText: form.value.ruleText.trim(),
       positiveExamples: form.value.positiveExamples.map(s => s.trim()).filter(Boolean),
       negativeExamples: form.value.negativeExamples.map(s => s.trim()).filter(Boolean),
+      filenamePatterns: form.value.filenamePatterns.map(s => s.trim()).filter(Boolean),
       enabled: form.value.enabled
     })
     rule.value = res.data?.data ?? null
@@ -245,6 +269,12 @@ defineExpose({ refresh: loadProjects })
     margin-left: 8px;
     font-size: 12px;
     opacity: 0.65;
+  }
+  &__hint {
+    margin-top: 4px;
+    font-size: 12px;
+    opacity: 0.7;
+    line-height: 1.5;
   }
   &__meta {
     font-size: 11px;

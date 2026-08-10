@@ -212,7 +212,7 @@ public class MemoryAssetIngestService {
         // 仅全量 READY 走到这里（弱记忆早退不路由——「读不懂内容」蒸馏进项目是噪声）；
         // routeAsync fire-and-forget 自带全兜底，路由失败不影响 READY。
         routingService.routeAsync(MemoryRoutingService.RoutingInput.ofFile(
-                userId, row.getFileId(), outcome.l1(), outcome.l2(), tagIds));
+                userId, row.getFileId(), outcome.l1(), outcome.l2(), tagIds, row.getOriginalName()));
         log.info("文件 ingestion 完成 memoryId={} chunks={} embedFailures={} tags={}",
                 id, result.chunks().size(), embedFailures, tagIds.size());
     }

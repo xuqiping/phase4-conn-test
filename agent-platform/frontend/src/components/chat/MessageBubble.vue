@@ -35,7 +35,7 @@
       <!-- 二期 P3（FR-203）：召回命中的文件记忆卡片（下载 / 展开分块页码锚点） -->
       <div v-if="fileCards.length" class="message-bubble__file-cards">
         <div class="message-bubble__file-cards-title">🗂 相关文件记忆</div>
-        <MessageFileCard v-for="c in fileCards" :key="c.memoryId" :card="c" />
+        <MessageFileCard v-for="c in fileCards" :key="c.memoryId ?? c.fileId" :card="c" />
       </div>
       <!-- P3：RAG 引用回显（文本中 [n] 对应底部第 n 条；IMAGE 缩略图 / FILE 下载链 / 联网外链） -->
       <div v-if="citations.length" class="message-bubble__citations">
@@ -134,7 +134,8 @@ const fileCards = computed<RecalledFileCard[]>(() => {
   try {
     const meta = JSON.parse(props.message.metadata)
     const list = Array.isArray(meta.fileCards) ? meta.fileCards : []
-    return list.filter((c: any) => c && typeof c.memoryId === 'number' && c.fileId)
+    // 项目收录附件下载卡 memoryId=null（跨用户、仅下载不展开分块）需放行；个人文件记忆卡 memoryId 为数字。
+    return list.filter((c: any) => c && c.fileId && (c.memoryId === null || typeof c.memoryId === 'number'))
   } catch {
     return []
   }

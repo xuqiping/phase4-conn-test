@@ -107,3 +107,7 @@ agent-platform/login-page.png
 # 覆盖上面的全局 docs/ 规则
 !coze项目引入/docs/
 !coze项目引入/docs/**
+
+# backend JWT secret (local, do not commit)
+backend-run-secret.txt
+backend-run.log

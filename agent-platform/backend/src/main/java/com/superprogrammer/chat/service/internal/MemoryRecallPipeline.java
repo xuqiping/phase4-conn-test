@@ -7,6 +7,7 @@ import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.dto.RecalledFileCard;
 import com.superprogrammer.chat.dto.RecalledSummary;
 import com.superprogrammer.chat.dto.RecallTraceStep;
+import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
@@ -244,12 +245,39 @@ public class MemoryRecallPipeline {
         // ⑦ assemble（按 subject 聚合打 owner 前缀 + 项目条目打作者前缀 + 文件卡片/深读块）
         long t5 = System.nanoTime();
         List<MemoryProjectEntryVO> entriesToAssemble = selectEntriesForAssemble(entries, selected, tags);
-        String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble, fileCards, fileChunks);
+        // 项目收录的附件（FILE 条目）→ 下载卡片（记忆二期 P3 扩展：教学课件在项目上下文召回须可下载，
+        // 下载鉴权走 MemoryFileEntryAccessGrantor「成员可读」咽喉）。与个人文件记忆卡片按 fileId 去重
+        // （个人卡优先——有展开分块；同一文件若已是本人记忆则不重复出项目卡）。
+        List<RecalledFileCard> projectFileCards = List.of();
+        boolean hasFileEntry = entriesToAssemble.stream().anyMatch(e ->
+                MemoryProjectEntry.CONTENT_TYPE_FILE.equals(e.getContentType())
+                        && e.getFileId() != null && !e.getFileId().isBlank());
+        if (hasFileEntry) {
+            try {
+                List<RecalledFileCard> cards = assetRecallService.collectFileCardsForEntries(entriesToAssemble);
+                projectFileCards = cards == null ? List.of() : cards;
+            } catch (Exception e) {
+                log.warn("recall traceId={} 项目文件卡片构建失败: {}", traceId, e.getMessage());
+                notes.add("项目文件卡片构建失败: " + e.getMessage());
+            }
+        }
+        List<RecalledFileCard> mergedFileCards = fileCards;
+        if (!projectFileCards.isEmpty()) {
+            Set<String> personalFileIds = fileCards.stream()
+                    .map(RecalledFileCard::getFileId).filter(Objects::nonNull).collect(Collectors.toSet());
+            List<RecalledFileCard> deduped = projectFileCards.stream()
+                    .filter(c -> !personalFileIds.contains(c.getFileId())).toList();
+            if (!deduped.isEmpty()) {
+                mergedFileCards = new ArrayList<>(fileCards);
+                mergedFileCards.addAll(deduped);
+            }
+        }
+        String assembledText = assemble(summaries, turns, selected, userId, entriesToAssemble, mergedFileCards, fileChunks);
         steps.add(step("assemble", t5,
-                summaries.size() + turns.size() + entriesToAssemble.size() + fileCards.size() + fileChunks.size(), true));
+                summaries.size() + turns.size() + entriesToAssemble.size() + mergedFileCards.size() + fileChunks.size(), true));
 
         // 二期 P1：turns 纯个人域（召回 turns 恒本人），I3「已离开人员」标注随项目 turns 召回消亡下线
-        return finish(assembledText, selected, summaries.size(), turns.size(), fileCards, traceId, steps, notes, tStart);
+        return finish(assembledText, selected, summaries.size(), turns.size(), mergedFileCards, traceId, steps, notes, tStart);
     }
 
     // ============================ 记忆二期 P1 · ①.5/⑥ 条目合流助手 ============================
@@ -270,6 +298,10 @@ public class MemoryRecallPipeline {
      * ⑥ 条目拼入筛选（P4 前条目无 coverage，恒拼 L1——但走标签流）：
      * tags 全空（无标签可选，turns 兜底路径）→ 全部已收集条目都拼；
      * 否则只拼 tag_ids ∩ selected 非空的条目（③ LLM 选标签天然过滤不相关条目）。
+     * <p>
+     * <b>无标签条目恒拼</b>：单条 tag_ids 为空的条目（项目收录课件/附件，确定性上下文，无标签可筛）
+     * 一律保留——与「tags 全空→全拼」同义。否则 scope 内一旦存在任何标签源（个人记忆 / 其他项目 summary），
+     * aggregate 非空即走 selection，空标签的收录课件会被吞掉（教学课件永远召不回）。
      */
     static List<MemoryProjectEntryVO> selectEntriesForAssemble(List<MemoryProjectEntryVO> entries,
                                                                List<RecallTagMeta> selected,
@@ -283,7 +315,14 @@ public class MemoryRecallPipeline {
         Set<Long> selectedIds = (selected == null ? List.<RecallTagMeta>of() : selected).stream()
                 .map(RecallTagMeta::getId).filter(Objects::nonNull).collect(Collectors.toSet());
         return entries.stream()
-                .filter(e -> e.getTagIds() != null && e.getTagIds().stream().anyMatch(selectedIds::contains))
+                .filter(e -> {
+                    List<Long> et = e.getTagIds();
+                    // 无标签条目（收录课件/附件）恒拼：无标签可筛 = 确定性上下文。
+                    if (et == null || et.isEmpty()) {
+                        return true;
+                    }
+                    return et.stream().anyMatch(selectedIds::contains);
+                })
                 .toList();
     }
 
@@ -346,6 +385,10 @@ public class MemoryRecallPipeline {
         Map<Long, RecallTagMeta> tagMap = (selectedTags == null ? List.<RecallTagMeta>of() : selectedTags).stream()
                 .filter(t -> t != null && t.getId() != null)
                 .collect(Collectors.toMap(RecallTagMeta::getId, t -> t, (a, b) -> a));
+        // fileId → 文件卡片（项目 FILE 条目行尾标注附件可下载/已删除用，记忆二期 P3 扩展）
+        Map<String, RecalledFileCard> cardByFile = (fileCards == null ? List.<RecalledFileCard>of() : fileCards).stream()
+                .filter(c -> c.getFileId() != null && !c.getFileId().isBlank())
+                .collect(Collectors.toMap(RecalledFileCard::getFileId, c -> c, (a, b) -> a));
 
         StringBuilder sb = new StringBuilder();
         if (summaries != null && !summaries.isEmpty()) {
@@ -382,12 +425,31 @@ public class MemoryRecallPipeline {
                         : "";
                 sb.append("- ").append(sourcePrefix).append(author).append('·')
                         .append(tagLabel.isEmpty() ? "收录" : tagLabel)
-                        .append("：").append(e.getL1Summary() == null ? "" : e.getL1Summary()).append('\n');
+                        .append("：").append(e.getL1Summary() == null ? "" : e.getL1Summary());
+                // 项目收录附件（FILE 条目）行尾标注下载回链（LLM 据此告知「可下载」，前端卡片独立渲染下载按钮）
+                if (MemoryProjectEntry.CONTENT_TYPE_FILE.equals(e.getContentType())
+                        && e.getFileId() != null && !e.getFileId().isBlank()) {
+                    RecalledFileCard fc = cardByFile.get(e.getFileId());
+                    String fname = fc != null && fc.getOriginalName() != null && !fc.getOriginalName().isBlank()
+                            ? fc.getOriginalName() : "附件";
+                    sb.append("（附件《").append(fname).append("》");
+                    if (fc != null && fc.isFileCleaned()) {
+                        sb.append("原文件已删除");
+                    } else {
+                        sb.append("可下载·file:").append(e.getFileId());
+                    }
+                    sb.append("）");
+                }
+                sb.append('\n');
             }
         }
-        if (fileCards != null && !fileCards.isEmpty()) {
+        // 【文件记忆】仅装配个人文件卡片（memoryId != null）；项目来源卡片（memoryId=null）
+        // 已在【项目记忆】段标注下载，不重复入此块——故先过滤，避免空块残留「【文件记忆】」表头。
+        List<RecalledFileCard> personalFileCards = (fileCards == null ? List.<RecalledFileCard>of() : fileCards).stream()
+                .filter(c -> c.getMemoryId() != null).toList();
+        if (!personalFileCards.isEmpty()) {
             sb.append("【文件记忆】\n");
-            for (RecalledFileCard c : fileCards) {
+            for (RecalledFileCard c : personalFileCards) {
                 String name = c.getOriginalName() == null || c.getOriginalName().isBlank()
                         ? "未命名文件" : c.getOriginalName();
                 sb.append("- 《").append(name).append("》（")

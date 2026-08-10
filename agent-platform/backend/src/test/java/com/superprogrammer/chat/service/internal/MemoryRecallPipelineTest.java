@@ -509,14 +509,18 @@ class MemoryRecallPipelineTest {
         assertTrue(MemoryRecallPipeline.selectEntriesForAssemble(List.of(), List.of(), List.of()).isEmpty(), "空条目 → 空");
         // tags 空 → 全拼
         assertEquals(1, MemoryRecallPipeline.selectEntriesForAssemble(entries, List.of(), List.of()).size());
-        // tags 非空 + selected 空 → 全滤
+        // tags 非空 + selected 空 → 有标签条目被滤（tag_ids 非空且未命中 selected）
         assertTrue(MemoryRecallPipeline.selectEntriesForAssemble(
                 entries, List.of(), List.of(tag(10, "我", "爱好", SELF))).isEmpty());
-        // tagIds null 的条目在 tags 非空时被滤
-        assertTrue(MemoryRecallPipeline.selectEntriesForAssemble(
+        // 无标签条目（收录课件/附件）恒拼：tagIds null 或空，即使 scope 有标签源也保留
+        assertEquals(1, MemoryRecallPipeline.selectEntriesForAssemble(
                 List.of(entry(2, OTHER, "张三", "y", null)),
                 List.of(tag(10, "我", "爱好", SELF)),
-                List.of(tag(10, "我", "爱好", SELF))).isEmpty());
+                List.of(tag(10, "我", "爱好", SELF))).size(), "tagIds null → 恒拼");
+        assertEquals(1, MemoryRecallPipeline.selectEntriesForAssemble(
+                List.of(entry(3, OTHER, "张三", "z", List.of())),
+                List.of(tag(10, "我", "爱好", SELF)),
+                List.of(tag(10, "我", "爱好", SELF))).size(), "tagIds 空 → 恒拼");
     }
 
     // ============================ 记忆二期 P3 · ⑥.5 文件记忆召回+深读（FR-203） ============================
@@ -637,5 +641,103 @@ class MemoryRecallPipelineTest {
         verifyNoInteractions(assetRecallService);
         List<String> names = r.getSteps().stream().map(RecallTraceStep::step).toList();
         assertTrue(names.contains("file-recall") && names.contains("file-deepread"), "零命中也打点");
+    }
+
+    // ============================ 记忆二期 P3 扩展 · 项目收录附件下载卡片（FR-204+） ============================
+
+    /** 项目 FILE 条目 → 召回装配后产出下载卡片（成员可下载，memoryId=null 不展开分块）。 */
+    private static com.superprogrammer.chat.dto.RecalledFileCard projectFileCard(String fileId, String name,
+                                                                                  boolean cleaned) {
+        return com.superprogrammer.chat.dto.RecalledFileCard.builder()
+                .memoryId(null).fileId(fileId).originalName(name)
+                .fileKind("PDF").chunkCount(0).weakMemory(false)
+                .fileCleaned(cleaned).downloadable(!cleaned)
+                .l1("项目蒸馏 L1").build();
+    }
+
+    // ===== 27 项目收录附件（FILE 条目）→ 【项目记忆】标注可下载 + fileCards 透出下载卡片 =====
+
+    @Test
+    void projectFileEntry_emitsDownloadCardAndHint() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        MemoryProjectEntryVO fileEntry = MemoryProjectEntryVO.builder()
+                .id(7L).projectId(10L).authorUserId(OTHER).authorName("张三")
+                .l1Summary("hooks 课件讲义").contentType("FILE").fileId("f-courseware")
+                .tagIds(List.of(10L)).build();
+        when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(fileEntry));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+        when(assetRecallService.collectFileCardsForEntries(anyList())).thenReturn(List.of(
+                projectFileCard("f-courseware", "React课件.pdf", false)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        // 【项目记忆】段：FILE 条目行尾标注附件可下载 + fileId（LLM 据此告知用户可下载）
+        assertTrue(r.getAssembledText().contains("【项目记忆】"));
+        assertTrue(r.getAssembledText().contains(
+                "张三·课件：hooks 课件讲义（附件《React课件.pdf》可下载·file:f-courseware）"),
+                "FILE 条目行尾标注附件可下载+fileId");
+        // 项目卡片透出（前端 MessageFileCard 据此渲染下载按钮）
+        assertEquals(1, r.getFileCards().size(), "项目文件卡片透出");
+        assertEquals("f-courseware", r.getFileCards().get(0).getFileId());
+        assertNull(r.getFileCards().get(0).getMemoryId(), "项目卡片 memoryId=null（不展开分块，仅下载）");
+        assertEquals(0, r.getFileCards().get(0).getChunkCount(), "项目卡片 chunkCount=0（前端隐藏展开分块按钮）");
+        // 项目卡片不进【文件记忆】文本块（已在【项目记忆】标注，避免重复）
+        assertFalse(r.getAssembledText().contains("【文件记忆】"), "项目卡片不重复入文件记忆块");
+    }
+
+    // ===== 28 项目附件原文件已删除（CLEANED）→ 标注「原文件已删除」、卡片不可下载 =====
+
+    @Test
+    void projectFileEntry_cleaned_marksDeleted() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        MemoryProjectEntryVO fileEntry = MemoryProjectEntryVO.builder()
+                .id(8L).projectId(10L).authorUserId(OTHER).authorName("李四")
+                .l1Summary("已删课件").contentType("FILE").fileId("f-gone")
+                .tagIds(List.of(10L)).build();
+        when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(fileEntry));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+        when(assetRecallService.collectFileCardsForEntries(anyList())).thenReturn(List.of(
+                projectFileCard("f-gone", "旧课件.pdf", true)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        assertTrue(r.getAssembledText().contains("李四·课件：已删课件（附件《旧课件.pdf》原文件已删除）"),
+                "CLEANED 标原文件已删除");
+        assertTrue(r.getFileCards().get(0).isFileCleaned(), "卡片标已删除");
+        assertFalse(r.getFileCards().get(0).isDownloadable(), "不可下载");
+    }
+
+    // ===== 29 项目文件卡片与个人文件记忆按 fileId 去重（同一文件已是本人记忆则不重复出项目卡） =====
+
+    @Test
+    void projectFileCard_dedupsWithPersonalCardByFileId() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());  // personalOn=true + 项目 10
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+        // 个人文件记忆命中 fileId=file-501（memoryId=501，有展开分块）
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
+                fileCard(501, "React课件.pdf", false)));
+        // 项目条目同 fileId → collectFileCardsForEntries 返项目卡，但应被去重剔除
+        MemoryProjectEntryVO fileEntry = MemoryProjectEntryVO.builder()
+                .id(9L).projectId(10L).authorUserId(OTHER).authorName("张三")
+                .l1Summary("同文件项目收录").contentType("FILE").fileId("file-501")
+                .tagIds(List.of(10L)).build();
+        when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(fileEntry));
+        when(assetRecallService.collectFileCardsForEntries(anyList())).thenReturn(List.of(
+                projectFileCard("file-501", "React课件.pdf", false)));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        // 仅 1 张卡片（个人卡优先，项目卡同 fileId 去重）
+        assertEquals(1, r.getFileCards().size(), "同 fileId 去重：仅 1 张卡片");
+        assertEquals(501L, r.getFileCards().get(0).getMemoryId(), "保留个人卡（有展开分块），项目卡被剔");
     }
 }

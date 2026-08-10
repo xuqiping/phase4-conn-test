@@ -2,8 +2,10 @@ package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.dto.AssetChunkCount;
 import com.superprogrammer.chat.dto.FileChunkHit;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.RecalledFileCard;
 import com.superprogrammer.chat.entity.MemoryAssetMemory;
+import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import com.superprogrammer.chat.mapper.MemoryAssetChunkMapper;
 import com.superprogrammer.chat.mapper.MemoryAssetMemoryMapper;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -200,5 +202,68 @@ class MemoryAssetRecallServiceTest {
         service.deepReadChunks(List.of(card(501, "课件A.pdf")), longQuery, SELF);
 
         verify(llmGateway).embed(argThat(q -> q.length() == 1000), anyString(), eq(SELF));
+    }
+
+    // ===== collectFileCardsForEntries（记忆二期 P3 扩展 · 项目收录附件下载卡片）=====
+
+    private static MemoryProjectEntryVO fileEntry(long id, String fileId, String l1) {
+        return MemoryProjectEntryVO.builder()
+                .id(id).projectId(10L).authorUserId(2L).authorName("张三")
+                .contentType(MemoryProjectEntry.CONTENT_TYPE_FILE).fileId(fileId)
+                .l1Summary(l1).l2Detail("L2").status("ACTIVE").build();
+    }
+
+    @Test
+    void collectForEntries_buildsDownloadCardFromEntry() {
+        when(memoryMapper.findReadyByFileIds(List.of("f-a")))
+                .thenReturn(List.of(row(501, "f-a", "课件A.pdf")));
+        when(storedFileMapper.selectBatchIds(List.of("f-a")))
+                .thenReturn(List.of(meta("f-a", StoredFileEntity.STATUS_ACTIVE)));
+
+        List<RecalledFileCard> cards = service.collectFileCardsForEntries(
+                List.of(fileEntry(7, "f-a", "项目蒸馏L1")));
+
+        assertEquals(1, cards.size());
+        RecalledFileCard c = cards.get(0);
+        assertNull(c.getMemoryId(), "项目卡片 memoryId=null（前端不展开分块）");
+        assertEquals("f-a", c.getFileId());
+        assertEquals("课件A.pdf", c.getOriginalName(), "文件名/类型从 memory 行回查");
+        assertEquals(MemoryAssetMemory.KIND_PDF, c.getFileKind());
+        assertEquals(0, c.getChunkCount(), "项目卡片不深读/不展开分块");
+        assertFalse(c.getWeakMemory());
+        assertTrue(c.isDownloadable(), "ACTIVE → 可下载");
+        assertEquals("项目蒸馏L1", c.getL1(), "l1 取条目蒸馏（项目上下文相关），非文件原总结");
+        assertEquals("L2", c.getL2());
+        verifyNoInteractions(chunkMapper, llmGateway);
+    }
+
+    @Test
+    void collectForEntries_skipsTextEntriesAndNullFileId() {
+        // TEXT 条目 + null/blank fileId 条目被跳过 → 无 fileIds → 不查 mapper
+        MemoryProjectEntryVO textEntry = MemoryProjectEntryVO.builder()
+                .id(1L).contentType(MemoryProjectEntry.CONTENT_TYPE_TEXT).l1Summary("纯文本条目").build();
+        MemoryProjectEntryVO nullFile = MemoryProjectEntryVO.builder()
+                .id(2L).contentType(MemoryProjectEntry.CONTENT_TYPE_FILE).fileId(null).build();
+        assertTrue(service.collectFileCardsForEntries(List.of(textEntry, nullFile)).isEmpty());
+        assertTrue(service.collectFileCardsForEntries(List.of()).isEmpty());
+        assertTrue(service.collectFileCardsForEntries(null).isEmpty());
+        verifyNoInteractions(memoryMapper, storedFileMapper, chunkMapper);
+    }
+
+    @Test
+    void collectForEntries_cleanedOrMissingMeta_marksNotDownloadable() {
+        when(memoryMapper.findReadyByFileIds(List.of("f-clean", "f-nomem")))
+                .thenReturn(List.of(row(502, "f-clean", "旧.pdf")));  // f-nomem 无 memory 行
+        when(storedFileMapper.selectBatchIds(List.of("f-clean", "f-nomem")))
+                .thenReturn(List.of(meta("f-clean", StoredFileEntity.STATUS_CLEANED)));  // f-nomem meta 缺失
+
+        List<RecalledFileCard> cards = service.collectFileCardsForEntries(List.of(
+                fileEntry(7, "f-clean", "L1"), fileEntry(8, "f-nomem", "L1")));
+
+        assertTrue(cards.get(0).isFileCleaned(), "CLEANED 标删除");
+        assertFalse(cards.get(0).isDownloadable());
+        assertTrue(cards.get(1).isFileCleaned(), "meta 缺失标删除");
+        assertFalse(cards.get(1).isDownloadable());
+        assertNull(cards.get(1).getOriginalName(), "无 memory 行 → 文件名 null（前端兜底未命名）");
     }
 }

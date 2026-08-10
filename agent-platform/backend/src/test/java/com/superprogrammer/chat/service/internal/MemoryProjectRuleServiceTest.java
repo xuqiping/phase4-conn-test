@@ -164,6 +164,35 @@ class MemoryProjectRuleServiceTest {
         assertEquals(List.of("负例A"), ownerView.getNegativeExamples());
     }
 
+    // AC-文件名硬规则：filenamePatterns 随规则持久化（trim 后落库 + 回显）
+    @Test
+    void saveRule_filenamePatternsPersisted() {
+        when(ruleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(anchorService.build(any(), isNull(), isNull(), any(), any()))
+                .thenReturn(new MemoryTagAnchorService.AnchorPayload("[0.1]", "tok"));
+
+        MemoryProjectRuleRequest r = req("涉及课件的讨论");
+        r.setFilenamePatterns(List.of(" 课件 ", "讲义"));
+        MemoryProjectRuleVO vo = service.saveRule(1L, r, 100L);
+
+        ArgumentCaptor<MemoryProjectRule> captor = ArgumentCaptor.forClass(MemoryProjectRule.class);
+        verify(ruleMapper).insertWithAnchor(captor.capture(), any());
+        assertEquals(List.of("课件", "讲义"), captor.getValue().getFilenamePatterns());
+        assertEquals(List.of("课件", "讲义"), vo.getFilenamePatterns());
+    }
+
+    // 文件名规则校验：>10 条 / 单条 >100 字 → 400（validate 先于 anchor，无需 stub anchor）
+    @Test
+    void saveRule_filenamePatternsValidation() {
+        MemoryProjectRuleRequest tooMany = req("ok");
+        tooMany.setFilenamePatterns(List.of("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"));
+        assertThrows(BusinessException.class, () -> service.saveRule(1L, tooMany, 100L));
+
+        MemoryProjectRuleRequest tooLong = req("ok");
+        tooLong.setFilenamePatterns(List.of("x".repeat(101)));
+        assertThrows(BusinessException.class, () -> service.saveRule(1L, tooLong, 100L));
+    }
+
     // AC-FR-005 前置：负例滚动追加 ≤5 先进先出；anchor 不动
     @Test
     void appendNegativeExample_rollingFive() {

@@ -2,8 +2,10 @@ package com.superprogrammer.chat.service.internal;
 
 import com.superprogrammer.chat.dto.AssetChunkCount;
 import com.superprogrammer.chat.dto.FileChunkHit;
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.RecalledFileCard;
 import com.superprogrammer.chat.entity.MemoryAssetMemory;
+import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import com.superprogrammer.chat.mapper.MemoryAssetChunkMapper;
 import com.superprogrammer.chat.mapper.MemoryAssetMemoryMapper;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -93,6 +95,63 @@ public class MemoryAssetRecallService {
                     .l2(row.getL2Detail())
                     .build();
         }).toList();
+    }
+
+    /**
+     * 项目收录的附件（FILE 条目）→ 下载卡片（记忆二期 P3 扩展：项目上下文召回的课件须可下载）。
+     * <p>
+     * 与 {@link #collectFileCards} 个人文件卡片的差异：
+     * <ul>
+     *   <li><b>跨用户</b>：按 file_id 回查 memory_asset_memories 元数据（非 owner），下载鉴权走
+     *       {@code MemoryFileEntryAccessGrantor}「成员可读」咽喉——只取文件名/类型，不分块、不深读
+     *       （分块浏览仅作者本人 owner 域）。</li>
+     *   <li><b>memoryId=null</b>：卡片不挂个人记忆 id → 前端不渲染「展开分块」（{@code listAttachmentChunks}
+     *       是 owner-only），仅下载按钮生效。</li>
+     *   <li><b>l1/l2 取条目蒸馏</b>：用项目条目的 L1/L2（项目上下文相关），非文件原总结。</li>
+     * </ul>
+     * 调用方须先过读权（条目本身经 {@code collectActiveEntries} 已限 ACTIVE 成员项目）。
+     *
+     * @param entries 召回装配的项目条目（取 contentType=FILE 者）
+     * @return 项目附件下载卡片（memoryId=null、chunkCount=0）
+     */
+    public List<RecalledFileCard> collectFileCardsForEntries(List<MemoryProjectEntryVO> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return List.of();
+        }
+        List<String> fileIds = entries.stream()
+                .filter(e -> MemoryProjectEntry.CONTENT_TYPE_FILE.equals(e.getContentType()))
+                .map(MemoryProjectEntryVO::getFileId)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct().toList();
+        if (fileIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, MemoryAssetMemory> memByFile = memoryMapper.findReadyByFileIds(fileIds).stream()
+                .filter(m -> m.getFileId() != null)
+                .collect(Collectors.toMap(MemoryAssetMemory::getFileId, m -> m, (a, b) -> a));
+        Map<String, StoredFileEntity> metaByFile = storedFileMapper.selectBatchIds(fileIds).stream()
+                .collect(Collectors.toMap(StoredFileEntity::getFileId, Function.identity(), (a, b) -> a));
+        return entries.stream()
+                .filter(e -> MemoryProjectEntry.CONTENT_TYPE_FILE.equals(e.getContentType()))
+                .filter(e -> e.getFileId() != null && !e.getFileId().isBlank())
+                .map(e -> {
+                    String fid = e.getFileId();
+                    MemoryAssetMemory mem = memByFile.get(fid);
+                    StoredFileEntity meta = metaByFile.get(fid);
+                    boolean cleaned = meta == null || !StoredFileEntity.STATUS_ACTIVE.equals(meta.getStatus());
+                    return RecalledFileCard.builder()
+                            .memoryId(null)              // 项目卡片无个人 memoryId → 前端不渲染「展开分块」（分块仅作者本人可读）
+                            .fileId(fid)
+                            .originalName(mem != null ? mem.getOriginalName() : null)
+                            .fileKind(mem != null ? mem.getFileKind() : null)
+                            .chunkCount(0)               // 项目卡片不深读/不展开分块（跨用户），仅下载
+                            .weakMemory(false)
+                            .fileCleaned(cleaned)
+                            .downloadable(!cleaned)
+                            .l1(e.getL1Summary())        // 项目蒸馏 L1（项目上下文相关）
+                            .l2(e.getL2Detail())
+                            .build();
+                }).toList();
     }
 
     /**

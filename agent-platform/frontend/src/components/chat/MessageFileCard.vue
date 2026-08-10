@@ -89,7 +89,8 @@ async function handleDownload() {
 /** 展开分块：首点懒加载（页码锚点随块返回，回答引用可反查原文）。 */
 async function toggleChunks() {
   expanded.value = !expanded.value
-  if (!expanded.value || chunks.value.length || chunksLoading.value) return
+  // 项目收录附件下载卡 memoryId=null（无个人记忆分块，展开按钮 chunkCount>0 门控本不显示，双保险）
+  if (!expanded.value || props.card.memoryId == null || chunks.value.length || chunksLoading.value) return
   chunksLoading.value = true
   try {
     const res = await memoryApi.listAttachmentChunks(props.card.memoryId)

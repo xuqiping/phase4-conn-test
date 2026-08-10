@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -59,24 +60,27 @@ public class MemoryRoutingService {
     private final SystemSettingService systemSettingService;
     private final TaskExecutor memoryTaskExecutor;
 
-    /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目）。 */
+    /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目；
+     *  originalName = 文件原名，文件名硬规则短路用）。 */
     public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
-                               String l1, String l2, List<Long> tagIds, String fileId, String chatModel) {
-        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null）。 */
+                               String l1, String l2, List<Long> tagIds, String fileId, String chatModel,
+                               String originalName) {
+        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null，originalName=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
                             String l1, String l2, List<Long> tagIds) {
-            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, null);
+            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, null, null);
         }
 
         /** 对话轮入参（带对话 model，fileId=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
                             String l1, String l2, List<Long> tagIds, String chatModel) {
-            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, chatModel);
+            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, chatModel, null);
         }
 
-        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2，无 sourceTurn，无对话 model。 */
-        public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2, List<Long> tagIds) {
-            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId, null);
+        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2 + 原名，无 sourceTurn，无对话 model。 */
+        public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2,
+                                          List<Long> tagIds, String originalName) {
+            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId, null, originalName);
         }
     }
 
@@ -134,6 +138,13 @@ public class MemoryRoutingService {
             log.debug("路由跳过 userId={} sessionId={} 无候选规则", input.userId(), input.sessionId());
             return;
         }
+        final boolean isFile = input.fileId() != null && !input.fileId().isBlank();
+        // ③.5 【文件名硬规则】确定性短路（仅 FILE）：文件名命中某候选规则的 filename_patterns
+        //     → 直接落 ACTIVE 一定进，跳过粗筛/精判/置信度/脱敏（用户显式「一定进，风险上传者自负」）。
+        //     语义管线（④⑤⑥）仍照跑：经 countFileEntry 幂等跳过已收录项目，不双插。
+        if (isFile) {
+            routeFilenameHardRule(input, candidates);
+        }
         // ④ 粗筛：turn L1 + tag labels 算查询锚点 → 向量阈值 ∪ BM25，top-K≤3
         String queryText = buildQueryText(input);
         if (queryText.isBlank()) {
@@ -167,7 +178,6 @@ public class MemoryRoutingService {
         // ⑥ 置信度分流 + 脱敏二次扫描 + 落库（FR-004；fileId 非空 = FR-204 文件条目）
         double autoApprove = systemSettingService.getMemoryRoutingAutoApproveThreshold();
         double review = systemSettingService.getMemoryRoutingReviewThreshold();
-        boolean isFile = input.fileId() != null && !input.fileId().isBlank();
         int active = 0, pending = 0, dropped = 0;
         for (MemoryEntryDistiller.Judgment j : judgments) {
             if (!j.hit() || j.confidence() < review) {
@@ -212,6 +222,66 @@ public class MemoryRoutingService {
         }
         log.info("路由分流 userId={} sessionId={} sourceTurnId={} ACTIVE={} PENDING={} dropped={}",
                 input.userId(), input.sessionId(), input.sourceTurnId(), active, pending, dropped);
+    }
+
+    /**
+     * 文件名硬规则短路（FR-204+）：上传附件文件名命中某候选规则的 filename_patterns（v1 子串包含，
+     * 大小写不敏感）→ 确定性直接落 ACTIVE 条目一定进该项目，跳过语义路由/精判/脱敏。
+     * <p>
+     * 用户显式「一定进，风险上传者自负」（决策②）：不走敏感黑名单二次扫描。
+     * 幂等：同项目同文件已有未删 FILE 条目 → 跳过（与语义分支同一 countFileEntry 守门，防双插）。
+     */
+    private void routeFilenameHardRule(RoutingInput input, List<MemoryProjectRule> candidates) {
+        String filename = input.originalName();
+        if (filename == null || filename.isBlank()) {
+            return;
+        }
+        String filenameLower = filename.toLowerCase(Locale.ROOT);
+        for (MemoryProjectRule rule : candidates) {
+            List<String> patterns = rule.getFilenamePatterns();
+            if (patterns == null || patterns.isEmpty()) {
+                continue;
+            }
+            if (!matchesAnyPattern(filenameLower, patterns)) {
+                continue;
+            }
+            if (entryMapper.countFileEntry(rule.getProjectId(), input.fileId()) > 0) {
+                log.info("文件名硬规则跳过重复条目 userId={} projectId={} fileId={}",
+                        input.userId(), rule.getProjectId(), input.fileId());
+                continue;
+            }
+            MemoryProjectEntry entry = new MemoryProjectEntry();
+            entry.setProjectId(rule.getProjectId());
+            entry.setAuthorUserId(input.userId());
+            entry.setSourceTurnId(null);
+            entry.setTagIds(input.tagIds() != null ? input.tagIds() : List.of());
+            entry.setL1Summary(input.l1());
+            entry.setL2Detail(input.l2());
+            entry.setConfidence(1.0);                              // 确定性「一定进」→ 置满置信
+            entry.setStatus(MemoryProjectEntry.STATUS_ACTIVE);     // 决策①：直接 ACTIVE 一定进
+            entry.setContentType(MemoryProjectEntry.CONTENT_TYPE_FILE);
+            entry.setFileId(input.fileId());
+            entry.setChatModel(null);                              // 短路不经 LLM 精判
+            entry.setCreatedBy(input.userId());
+            entry.setUpdatedBy(input.userId());
+            entryMapper.insert(entry);
+            log.info("文件名硬规则命中 userId={} projectId={} fileId={} filename={} → ACTIVE 一定进",
+                    input.userId(), rule.getProjectId(), input.fileId(), filename);
+        }
+    }
+
+    /** v1 子串包含匹配（大小写不敏感）：文件名小写含任一模式（trim 后小写）即命中。 */
+    static boolean matchesAnyPattern(String filenameLower, List<String> patterns) {
+        for (String p : patterns) {
+            if (p == null) {
+                continue;
+            }
+            String pt = p.trim().toLowerCase(Locale.ROOT);
+            if (!pt.isEmpty() && filenameLower.contains(pt)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 查询文本 = turn L1 + tag labels（标签名语义密度高，粗筛对齐规则锚点）。 */

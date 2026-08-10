@@ -335,7 +335,7 @@ export interface FileChunkView {
 
 /** 召回命中的文件卡片（FR-203；FILE_CARDS 流帧 / 助手消息 metadata.fileCards）。 */
 export interface RecalledFileCard {
-  memoryId: number
+  memoryId: number | null  // null = 项目收录附件下载卡（跨用户，仅下载不展开分块）
   fileId: string
   originalName: string
   fileKind: string

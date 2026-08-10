@@ -35,6 +35,11 @@ public class MemoryProjectRule extends BaseEntity {
     @TableField(typeHandler = StringArrayTypeHandler.class)
     private List<String> negativeExamples;
 
+    /** 文件名硬规则（v1 子串包含，大小写不敏感，≤10 条）。FILE 路由短路：文件名命中 → 直接 ACTIVE 一定进。
+     *  TEXT[] 走 StringArrayTypeHandler。 */
+    @TableField(typeHandler = StringArrayTypeHandler.class)
+    private List<String> filenamePatterns;
+
     /** BM25 词法串（jieba 分词空格拼接），写入后由 DB 生成 anchor_tokens_tsv。 */
     private String anchorTokens;
 }

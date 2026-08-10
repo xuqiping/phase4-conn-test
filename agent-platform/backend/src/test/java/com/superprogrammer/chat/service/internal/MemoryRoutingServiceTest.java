@@ -245,7 +245,7 @@ class MemoryRoutingServiceTest {
 
     private MemoryRoutingService.RoutingInput fileInput() {
         return MemoryRoutingService.RoutingInput.ofFile(100L, "f-abc.pdf",
-                "《课件.pdf》：讲 hooks 原理", "1. 原理", List.of(11L));
+                "《课件.pdf》：讲 hooks 原理", "1. 原理", List.of(11L), "课件.pdf");
     }
 
     private void stubFileRouteHit() {
@@ -294,5 +294,76 @@ class MemoryRoutingServiceTest {
         assertEquals(MemoryProjectEntry.CONTENT_TYPE_TEXT, captor.getValue().getContentType());
         assertEquals(null, captor.getValue().getFileId());
         verify(entryMapper, never()).countFileEntry(any(), any());
+    }
+
+    // ============================ 文件名硬规则（FR-204+ 确定性短路） ============================
+
+    private MemoryProjectRule ruleWithFilename(long id, long projectId, List<String> patterns) {
+        MemoryProjectRule r = rule(id, projectId);
+        r.setFilenamePatterns(patterns);
+        return r;
+    }
+
+    private MemoryRoutingService.RoutingInput fileInputNamed(String originalName) {
+        return MemoryRoutingService.RoutingInput.ofFile(100L, "f-abc.pdf",
+                "《" + originalName + "》：内容总结", "详述", List.of(11L), originalName);
+    }
+
+    /** 铺到「候选规则就绪」+ 关掉语义锚点（隔离文件名短路，使其独立于语义管线）。 */
+    private void stubCandidatesAnchorDown(MemoryProjectRule rule) {
+        when(memberMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(activeMember(1L)));
+        when(toggleService.resolveGenEnabled(100L, 1L)).thenReturn(true);
+        when(ruleService.findRoutingCandidates(List.of(1L))).thenReturn(List.of(rule));
+        when(anchorService.build(any(), any(), any(), anyString(), any())).thenReturn(null);
+    }
+
+    // AC-文件名硬规则：文件名命中 patterns → 语义锚点全 miss 仍确定性直接落 ACTIVE 一定进
+    @Test
+    void route_filenameHardRule_hitForcesActive() {
+        stubCandidatesAnchorDown(ruleWithFilename(9L, 1L, List.of("课件")));
+        when(entryMapper.countFileEntry(1L, "f-abc.pdf")).thenReturn(0L);
+
+        service.route(fileInputNamed("XX课件.pdf"));
+
+        ArgumentCaptor<MemoryProjectEntry> captor = ArgumentCaptor.forClass(MemoryProjectEntry.class);
+        verify(entryMapper).insert(captor.capture());
+        MemoryProjectEntry e = captor.getValue();
+        assertEquals(MemoryProjectEntry.STATUS_ACTIVE, e.getStatus(), "一定进 → 直接 ACTIVE");
+        assertEquals(MemoryProjectEntry.CONTENT_TYPE_FILE, e.getContentType());
+        assertEquals("f-abc.pdf", e.getFileId());
+        assertEquals(1.0, e.getConfidence(), 1e-9);
+        verify(distiller, never()).judge(any(), any(), any(), any(), any());
+    }
+
+    // 子串包含 + 大小写不敏感：pattern "课件" 命中 "REPORT课件2024.PDF"
+    @Test
+    void route_filenameHardRule_caseInsensitiveSubstring() {
+        stubCandidatesAnchorDown(ruleWithFilename(9L, 1L, List.of("课件")));
+        when(entryMapper.countFileEntry(1L, "f-abc.pdf")).thenReturn(0L);
+
+        service.route(fileInputNamed("REPORT课件2024.PDF"));
+
+        verify(entryMapper).insert(any(MemoryProjectEntry.class));
+    }
+
+    // 文件名未命中 → 不产生文件名驱动条目（语义锚点也 down → 零条目）
+    @Test
+    void route_filenameHardRule_noMatch_noInsert() {
+        stubCandidatesAnchorDown(ruleWithFilename(9L, 1L, List.of("报表")));
+
+        service.route(fileInputNamed("XX课件.pdf"));
+
+        verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
+    }
+
+    // 幂等：文件名命中但同项目同文件已有条目 → 跳过不重复收录
+    @Test
+    void route_filenameHardRule_duplicateSkips() {
+        stubCandidatesAnchorDown(ruleWithFilename(9L, 1L, List.of("课件")));
+        when(entryMapper.countFileEntry(1L, "f-abc.pdf")).thenReturn(1L);
+
+        service.route(fileInputNamed("XX课件.pdf"));
+
+        verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
     }
 }

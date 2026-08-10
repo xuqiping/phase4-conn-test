@@ -6,19 +6,21 @@
         <id property="id" column="id"/>
         <result property="positiveExamples" column="positive_examples" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
         <result property="negativeExamples" column="negative_examples" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+        <result property="filenamePatterns" column="filename_patterns" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
     </resultMap>
 
     <!-- 新建规则（anchor 两列走自定义 SQL；实体不映射 halfvec/tsv 生成列）。
          ⚠️ 软删部分唯一索引 uk_memory_project_rules_project 兜底并发——并发插入撞索引由 service 捕获改走更新。 -->
     <insert id="insertWithAnchor" useGeneratedKeys="true" keyProperty="m.id">
         INSERT INTO memory_project_rules
-            (project_id, rule_text, positive_examples, negative_examples, enabled,
+            (project_id, rule_text, positive_examples, negative_examples, filename_patterns, enabled,
              anchor_embedding, anchor_tokens,
              deleted, created_by, created_at, updated_by, updated_at)
         VALUES
             (#{m.projectId}, #{m.ruleText},
              COALESCE(#{m.positiveExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
              COALESCE(#{m.negativeExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             COALESCE(#{m.filenamePatterns,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
              COALESCE(#{m.enabled}, true),
              #{anchorHalfvec}::halfvec, #{m.anchorTokens},
              0, #{m.createdBy}, now(), #{m.updatedBy}, now())
@@ -30,6 +32,7 @@
         SET rule_text         = #{m.ruleText},
             positive_examples = COALESCE(#{m.positiveExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
             negative_examples = COALESCE(#{m.negativeExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+            filename_patterns = COALESCE(#{m.filenamePatterns,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
             enabled           = COALESCE(#{m.enabled}, false),
             anchor_embedding  = COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding),
             anchor_tokens     = COALESCE(#{m.anchorTokens}, anchor_tokens),

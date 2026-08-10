@@ -62,4 +62,16 @@ public interface MemoryAssetMemoryMapper extends BaseMapper<MemoryAssetMemory> {
     List<MemoryAssetMemory> findReadyByTagOverlap(@Param("userId") Long userId,
                                                   @Param("tagIds") List<Long> tagIds,
                                                   @Param("limit") int limit);
+
+    /**
+     * 项目收录附件的元数据回查（记忆二期 P3 扩展）：按 file_id 批量取文件记忆行
+     * （original_name/file_kind）——<b>不限 owner</b>，因项目 FILE 条目已被收录进项目，
+     * 下载鉴权走 {@code MemoryFileEntryAccessGrantor}「成员可读」咽喉（非 owner 身份）。
+     * 仅取元数据，不分块深读（分块浏览仅作者本人）。
+     */
+    @Select("<script>"
+            + "SELECT * FROM memory_asset_memories WHERE deleted = 0 AND file_id IN "
+            + "<foreach collection='fileIds' item='fid' open='(' separator=',' close=')'>#{fid}</foreach>"
+            + "</script>")
+    List<MemoryAssetMemory> findReadyByFileIds(@Param("fileIds") List<String> fileIds);
 }

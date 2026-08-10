@@ -32,11 +32,16 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
      *  调用方须先把 projectIds 过滤为「读者是其 ACTIVE 成员」的集（读权咽喉在本类查询之外）。 */
     List<MemoryProjectEntryVO> listActiveForRecall(@Param("projectIds") List<Long> projectIds);
 
-    /** P3 Step 4（FR-204）放行裁决：该文件被某 ACTIVE FILE 条目引用 且 请求者是该条目项目 ACTIVE 成员。 */
+    /** P3 Step 4（FR-204）放行裁决：该文件被某 ACTIVE FILE 条目引用 且 请求者对该条目项目有读权
+     *  —— ACTIVE 项目成员（memory_project_members）<b>或</b> ACTIVE 被授权方（memory_project_user_grants，
+     *  教学课件场景：项目授权的子账号同样可下载被召回的收录附件）。 */
     @Select("SELECT COUNT(*) FROM memory_project_entries e "
-            + "JOIN memory_project_members m ON m.project_id = e.project_id "
-            + "WHERE e.deleted = 0 AND e.status = 'ACTIVE' AND e.content_type = 'FILE' AND e.file_id = #{fileId} "
-            + "AND m.user_id = #{userId} AND m.status = 'ACTIVE'")
+            + "JOIN ("
+            + "  SELECT project_id FROM memory_project_members WHERE user_id = #{userId} AND status = 'ACTIVE'"
+            + "  UNION"
+            + "  SELECT project_id FROM memory_project_user_grants WHERE user_id = #{userId} AND status = 'ACTIVE' AND deleted = 0"
+            + ") p ON p.project_id = e.project_id "
+            + "WHERE e.deleted = 0 AND e.status = 'ACTIVE' AND e.content_type = 'FILE' AND e.file_id = #{fileId}")
     long countAccessibleFileEntries(@Param("fileId") String fileId, @Param("userId") Long userId);
 
     /** P3 Step 4（FR-204）幂等去重：同项目同文件已有未删 FILE 条目 → 重路由跳过（防重试重灌重复条目）。 */
