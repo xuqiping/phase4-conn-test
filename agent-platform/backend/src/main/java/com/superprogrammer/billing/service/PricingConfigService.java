@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -138,6 +139,27 @@ public class PricingConfigService {
     @Transactional(rollbackFor = Exception.class)
     public PricingRuleVO createPricingRule(PricingRuleRequest req) {
         validatePricingRule(req);
+        if (req.getProviderId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "providerId 不能为空");
+        }
+        LlmProviderEntity provider = llmProviderMapper.selectByIdForUpdate(req.getProviderId());
+        if (provider == null || !"ACTIVE".equals(provider.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "全局供应商不存在或未启用");
+        }
+        if (!parseProviderModels(provider).contains(req.getModel().trim())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型不属于所选全局供应商");
+        }
+        String expectedKind = toPricingKind(provider.getCategory());
+        if (expectedKind == null || !expectedKind.equals(req.getKind())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 与全局供应商类别不匹配");
+        }
+        long duplicateCount = pricingRuleMapper.selectCount(
+                new LambdaQueryWrapper<PricingRuleEntity>()
+                        .eq(PricingRuleEntity::getProviderId, req.getProviderId())
+                        .eq(PricingRuleEntity::getModel, req.getModel().trim()));
+        if (duplicateCount > 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该全局模型已配置价表");
+        }
         PricingRuleEntity e = new PricingRuleEntity();
         applyRequest(req, e);
         pricingRuleMapper.insert(e);
@@ -151,6 +173,11 @@ public class PricingConfigService {
         PricingRuleEntity e = pricingRuleMapper.selectById(id);
         if (e == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "价表不存在 id=" + id);
+        }
+        if (!Objects.equals(e.getProviderId(), req.getProviderId())
+                || !Objects.equals(e.getModel(), req.getModel().trim())
+                || !Objects.equals(e.getKind(), req.getKind())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "编辑时不可修改 provider/model/kind");
         }
         applyRequest(req, e);
         pricingRuleMapper.updateById(e);

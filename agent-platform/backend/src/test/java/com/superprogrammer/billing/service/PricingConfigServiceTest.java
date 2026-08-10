@@ -112,12 +112,86 @@ class PricingConfigServiceTest {
 
     @Test
     void createPricingRule_chatValid_ok() {
-        PricingRuleRequest req = new PricingRuleRequest();
-        req.setKind(PricingRuleEntity.KIND_CHAT);
-        req.setModel("gpt-4");
-        req.setPriceInputPerMillion(new BigDecimal("1"));
+        PricingRuleRequest req = pricingReq(1L, "gpt-4", PricingRuleEntity.KIND_CHAT);
         req.setPriceOutputPerMillion(new BigDecimal("2"));
+        when(llmProviderMapper.selectByIdForUpdate(1L))
+                .thenReturn(provider(1L, "聊天", "CHAT", "gpt-4"));
         assertThatCode(() -> service.createPricingRule(req)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void createPricingRule_missingProviderId_throws() {
+        // AC-F20-01：新增价表必须绑定候选中的全局供应商。
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(null, "chat-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("providerId");
+    }
+
+    @Test
+    void createPricingRule_inactiveProvider_throws() {
+        // AC-F20-01：创建必须锁定并复核 ACTIVE 全局供应商，不能信任前端候选。
+        LlmProviderEntity inactive = provider(9L, "停用供应商", "CHAT", "chat-model");
+        inactive.setStatus("INACTIVE");
+        when(llmProviderMapper.selectByIdForUpdate(9L)).thenReturn(inactive);
+
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(9L, "chat-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未启用");
+    }
+
+    @Test
+    void createPricingRule_modelNotOwnedByProvider_throws() {
+        // AC-F20-01：请求模型必须真实存在于锁定供应商的 models 中。
+        when(llmProviderMapper.selectByIdForUpdate(1L))
+                .thenReturn(provider(1L, "聊天", "CHAT", "owned-model"));
+
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(1L, "forged-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不属于");
+    }
+
+    @Test
+    void createPricingRule_kindDoesNotMatchProviderCategory_throws() {
+        // AC-F20-01：kind 由供应商类别决定，不能由调用方伪造。
+        when(llmProviderMapper.selectByIdForUpdate(2L))
+                .thenReturn(provider(2L, "向量", "EMBEDDING", "embed-model"));
+
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(2L, "embed-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("kind");
+    }
+
+    @Test
+    void createPricingRule_duplicateProviderModel_throws() {
+        // AC-F20-01：供应商行锁内复查重复，防止并发穿透候选列表。
+        when(llmProviderMapper.selectByIdForUpdate(1L))
+                .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
+        when(pricingRuleMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已配置");
+    }
+
+    @Test
+    void updatePricingRule_identityChange_throws() {
+        // AC-F20-01：编辑只能改价格/模式/生效时间，三元身份不可变。
+        PricingRuleEntity existing = new PricingRuleEntity();
+        existing.setId(6L);
+        existing.setProviderId(1L);
+        existing.setModel("chat-model");
+        existing.setKind(PricingRuleEntity.KIND_CHAT);
+        when(pricingRuleMapper.selectById(6L)).thenReturn(existing);
+
+        assertThatThrownBy(() -> service.updatePricingRule(
+                6L, pricingReq(2L, "other-model", PricingRuleEntity.KIND_EMBED)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不可修改");
     }
 
     @Test
@@ -198,5 +272,15 @@ class PricingConfigServiceTest {
         p.setStatus("ACTIVE");
         p.setModels("[\"" + model + "\"]");
         return p;
+    }
+
+    private PricingRuleRequest pricingReq(Long providerId, String model, String kind) {
+        PricingRuleRequest req = new PricingRuleRequest();
+        req.setProviderId(providerId);
+        req.setModel(model);
+        req.setKind(kind);
+        req.setPriceInputPerMillion(BigDecimal.ONE);
+        req.setPriceOutputPerMillion(BigDecimal.ONE);
+        return req;
     }
 }
