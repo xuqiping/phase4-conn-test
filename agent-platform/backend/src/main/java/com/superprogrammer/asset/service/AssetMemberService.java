@@ -2,12 +2,15 @@ package com.superprogrammer.asset.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.asset.dto.MemberAddRequest;
+import com.superprogrammer.asset.dto.MemberCandidateVO;
 import com.superprogrammer.asset.dto.MemberVO;
 import com.superprogrammer.asset.dto.TransferRequest;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetProjectMember;
 import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
+import com.superprogrammer.auth.entity.User;
+import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 项目资产库·成员授权（plan §S3 / FR-002，设计方案 §七）。
@@ -39,32 +47,62 @@ public class AssetMemberService {
     private final AssetProjectMapper projectMapper;
     private final AssetProjectMemberMapper memberMapper;
     private final AssetAclService aclService;
+    private final UserMapper userMapper;
 
     /** 成员列表（owner 行合成居首）。 */
     public List<MemberVO> list(Long projectId, Long userId, boolean admin) {
         aclService.loadAccessible(projectId, userId, admin);
         AssetProject p = loadProject(projectId);
+        List<AssetProjectMember> members = memberMapper.selectList(
+                new LambdaQueryWrapper<AssetProjectMember>()
+                        .eq(AssetProjectMember::getProjectId, projectId)
+                        .eq(AssetProjectMember::getDeleted, 0)
+                        .orderByAsc(AssetProjectMember::getCreatedAt));
+        List<Long> userIds = new ArrayList<>();
+        userIds.add(p.getOwnerId());
+        members.stream().map(AssetProjectMember::getUserId).forEach(userIds::add);
+        Map<Long, User> users = userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
         List<MemberVO> result = new ArrayList<>();
         // owner 行合成居首
         result.add(MemberVO.builder()
                 .userId(p.getOwnerId())
+                .username(usernameOf(users.get(p.getOwnerId())))
                 .role("OWNER")
                 .isOwner(true)
                 .grantedBy(null)
                 .grantedAt(p.getCreatedAt())
                 .build());
-        memberMapper.selectList(new LambdaQueryWrapper<AssetProjectMember>()
-                        .eq(AssetProjectMember::getProjectId, projectId)
-                        .eq(AssetProjectMember::getDeleted, 0)
-                        .orderByAsc(AssetProjectMember::getCreatedAt))
-                .forEach(m -> result.add(MemberVO.builder()
+        members.forEach(m -> result.add(MemberVO.builder()
                         .userId(m.getUserId())
+                        .username(usernameOf(users.get(m.getUserId())))
                         .role(m.getRole())
                         .isOwner(false)
                         .grantedBy(m.getGrantedBy())
                         .grantedAt(m.getCreatedAt())
                         .build()));
         return result;
+    }
+
+    /** OWNER/admin 使用的资产域候选搜索，不依赖 user:manage。 */
+    public List<MemberCandidateVO> searchCandidates(Long projectId, Long currentUserId,
+                                                     boolean admin, String keyword) {
+        aclService.requireManage(projectId, currentUserId, admin);
+        AssetProject project = loadProject(projectId);
+        Set<Long> excluded = new LinkedHashSet<>();
+        excluded.add(project.getOwnerId());
+        if (currentUserId != null) {
+            excluded.add(currentUserId);
+        }
+        memberMapper.selectList(new LambdaQueryWrapper<AssetProjectMember>()
+                        .eq(AssetProjectMember::getProjectId, projectId)
+                        .eq(AssetProjectMember::getDeleted, 0))
+                .stream().map(AssetProjectMember::getUserId).forEach(excluded::add);
+        String safeKeyword = escapeLikeKeyword(keyword);
+        return userMapper.searchActiveCandidates(safeKeyword, new ArrayList<>(excluded), 20)
+                .stream().limit(20)
+                .map(user -> new MemberCandidateVO(user.getId(), user.getUsername()))
+                .toList();
     }
 
     /** 邀请成员（指定角色）。仅 owner。重复授权友好报错（数据库 UNIQUE 兜底，plan 坑点预判）。 */
@@ -93,9 +131,11 @@ public class AssetMemberService {
         m.setRole(role);
         m.setGrantedBy(currentUserId);
         memberMapper.insert(m);
+        User invitedUser = userMapper.selectById(m.getUserId());
         log.info("asset member invited: projectId={} targetUser={} role={} by={}", projectId, req.getUserId(), role, currentUserId);
         return MemberVO.builder()
                 .userId(m.getUserId())
+                .username(usernameOf(invitedUser))
                 .role(m.getRole())
                 .isOwner(false)
                 .grantedBy(m.getGrantedBy())
@@ -185,6 +225,23 @@ public class AssetMemberService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "角色必须为 VIEWER 或 EDITOR");
         }
         return role;
+    }
+
+    private String escapeLikeKeyword(String keyword) {
+        if (keyword == null) {
+            return "";
+        }
+        String trimmed = keyword.trim();
+        if (trimmed.length() > 50) {
+            trimmed = trimmed.substring(0, 50);
+        }
+        return trimmed.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
+    private String usernameOf(User user) {
+        return user == null ? null : user.getUsername();
     }
 
     private AssetProjectMember requireMember(Long projectId, Long userId) {
