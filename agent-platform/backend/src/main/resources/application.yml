@@ -137,6 +137,18 @@ rag:
     kb-batch: 20
     auto-repair: false      # drift → REINDEX：claimBatch 已消费 REINDEX，翻 true 即修复（承担 re-embed 计费）
 
+# 视频剪辑（media.edit）FFmpeg 多轨渲染配置
+media:
+  edit:
+    enabled: true
+    # FFmpeg 二进制：本机 PATH 已有（/d/ImageMagick-7.1.1-Q16-HDRI/ffmpeg、/c/ffmpeg-n7.1.1/bin）；
+    # Linux 生产机须装 ffmpeg（libx264 + aac）。可绝对路径或环境变量 MEDIA_EDIT_FFMPEG_PATH 覆盖。
+    ffmpeg-path: ${MEDIA_EDIT_FFMPEG_PATH:ffmpeg}
+    # drawtext 字体：逗号分隔候选，MediaEditProperties.resolveFontFile() 按序取第一个存在文件（跨平台 CJK）。
+    # ffmpeg 4.4 不收 .ttc 须 .ttf/.otf，故优先 .ttf（simhei）；msyh.ttc 兜底（ffmpeg 7+ 收）。
+    # 全部不存在 + 有字幕 → 渲染 fail-fast（不静默跳过）。可被环境变量 MEDIA_EDIT_FONT_FILE 整体覆盖（单路径）。
+    font-file: "${MEDIA_EDIT_FONT_FILE:/System/Library/Fonts/Supplemental/Arial Unicode.ttf, /Library/Fonts/Arial Unicode.ttf, /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf, C:/Windows/Fonts/simhei.ttf, C:/Windows/Fonts/msyh.ttc}"
+
 # 钉钉 H5 微应用免登（默认关，配齐 AppKey/AppSecret 再开）
 dingtalk:
   enabled: ${DINGTALK_ENABLED:false}

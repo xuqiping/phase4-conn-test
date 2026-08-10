@@ -67,6 +67,7 @@ import {
   BookOutline,
   VideocamOutline,
   ImageOutline,
+  FilmOutline,
   AppsOutline,
   AlbumsOutline,
   WalletOutline,
@@ -96,6 +97,8 @@ const canGenVideo = computed(() => authStore.hasPermission('media:gen'))
 const canEditCanvas = computed(() => authStore.hasPermission('canvas:write'))
 /** 项目资产库入口仅 asset:write 持有者可见（gated，admin 默认有，同 canvas:write 范式） */
 const canEditAssets = computed(() => authStore.hasPermission('asset:write'))
+/** 视频剪辑入口仅 media:edit 持有者可见（gated，admin 默认有，同 media:gen 范式） */
+const canEditVideo = computed(() => authStore.hasPermission('media:edit'))
 /** 积分计费：价表配置 / 账单总览 / 积分充值（gated，admin 默认有） */
 const canManagePricing = computed(() => authStore.hasPermission('pricing:manage'))
 const canViewUsage = computed(() => authStore.hasPermission('usage:view'))
@@ -113,6 +116,9 @@ const navItems = computed(() => {
   if (canGenVideo.value) {
     items.push({ path: '/video-gen', label: '视频生成', icon: VideocamOutline })
     items.push({ path: '/image-gen', label: '图片生成', icon: ImageOutline })
+  }
+  if (canEditVideo.value) {
+    items.push({ path: '/video-edit', label: '视频剪辑', icon: FilmOutline })
   }
   if (canEditCanvas.value) {
     items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline })

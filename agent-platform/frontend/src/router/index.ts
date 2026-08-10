@@ -96,6 +96,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '图片生成' }
       },
       {
+        path: 'video-edit',
+        name: 'VideoEdit',
+        component: () => import('@/views/VideoEditView.vue'),
+        // 同 video-gen：菜单隐藏(hasPermission('media:edit')) + 页内 canEdit + API 403 三重兜底
+        meta: { title: '视频剪辑' }
+      },
+      {
         path: 'canvas',
         name: 'CanvasList',
         component: () => import('@/views/CanvasView.vue'),
