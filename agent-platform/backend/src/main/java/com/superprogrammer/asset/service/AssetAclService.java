@@ -3,9 +3,11 @@ package com.superprogrammer.asset.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetProjectMember;
+import com.superprogrammer.asset.entity.AssetPublicAccessRequest;
 import com.superprogrammer.asset.enums.AssetRole;
 import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
+import com.superprogrammer.asset.mapper.AssetPublicAccessRequestMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class AssetAclService {
 
     private final AssetProjectMapper projectMapper;
     private final AssetProjectMemberMapper memberMapper;
+    private final AssetPublicAccessRequestMapper publicRequestMapper;
 
     /**
      * 载入项目并校验访问权（admin 旁路）。所有项目级端点的咽喉点。
@@ -64,6 +67,23 @@ public class AssetAclService {
                 .eq(AssetProjectMember::getUserId, userId));
         if (member != null) {
             return AssetRole.fromMemberRole(member.getRole());
+        }
+        // 公众池授权始终降级为只读 VIEWER，不进入成员表，也不能获得写权限。
+        if (Boolean.TRUE.equals(project.getPublicPool())) {
+            if (AssetProject.PUBLIC_ACCESS_OPEN.equals(project.getPublicAccessMode())) {
+                return AssetRole.VIEWER;
+            }
+            if (AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED.equals(project.getPublicAccessMode())) {
+                AssetPublicAccessRequest request = publicRequestMapper.selectOne(
+                        new LambdaQueryWrapper<AssetPublicAccessRequest>()
+                                .eq(AssetPublicAccessRequest::getProjectId, projectId)
+                                .eq(AssetPublicAccessRequest::getApplicantId, userId)
+                                .eq(AssetPublicAccessRequest::getStatus,
+                                        AssetPublicAccessRequest.STATUS_APPROVED));
+                if (request != null) {
+                    return AssetRole.VIEWER;
+                }
+            }
         }
         log.warn("asset access denied: projectId={} userId={}", projectId, userId);
         throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该项目");

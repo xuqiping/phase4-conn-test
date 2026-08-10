@@ -161,6 +161,10 @@ class AssetMemberServiceTest {
     void transfer_oldOwnerDowngradedToEditor() {
         when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
         AssetProject p = project(OWNER_ID);
+        p.setPublicPool(true);
+        p.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        p.setPublishedBy(1L);
+        p.setPublishedByAdmin(true);
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
         TransferRequest req = new TransferRequest();
         req.setToUserId(NEW_OWNER_ID);
@@ -175,6 +179,10 @@ class AssetMemberServiceTest {
         assertEquals("EDITOR", captor.getValue().getRole());
         // 项目 owner 更新为新 owner
         assertEquals(NEW_OWNER_ID, p.getOwnerId());
+        assertEquals(true, p.getPublicPool());
+        assertEquals(AssetProject.PUBLIC_ACCESS_OPEN, p.getPublicAccessMode());
+        assertEquals(1L, p.getPublishedBy());
+        assertEquals(true, p.getPublishedByAdmin());
         verify(projectMapper).updateById(p);
     }
 

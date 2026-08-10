@@ -2,9 +2,11 @@ package com.superprogrammer.asset.service;
 
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetProjectMember;
+import com.superprogrammer.asset.entity.AssetPublicAccessRequest;
 import com.superprogrammer.asset.enums.AssetRole;
 import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
+import com.superprogrammer.asset.mapper.AssetPublicAccessRequestMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,12 +38,14 @@ class AssetAclServiceTest {
     private AssetProjectMapper projectMapper;
     @Mock
     private AssetProjectMemberMapper memberMapper;
+    @Mock
+    private AssetPublicAccessRequestMapper publicRequestMapper;
 
     private AssetAclService acl;
 
     @BeforeEach
     void setUp() {
-        acl = new AssetAclService(projectMapper, memberMapper);
+        acl = new AssetAclService(projectMapper, memberMapper, publicRequestMapper);
     }
 
     @Test
@@ -82,6 +86,37 @@ class AssetAclServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> acl.loadAccessible(PROJECT_ID, OUTSIDER_ID, false));
         assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
+    }
+
+    @Test
+    void publicOpen_outsiderGetsReadOnlyViewer() {
+        AssetProject project = project(OWNER_ID);
+        project.setPublicPool(true);
+        project.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project);
+        when(memberMapper.selectOne(any())).thenReturn(null);
+
+        assertEquals(AssetRole.VIEWER, acl.loadAccessible(PROJECT_ID, OUTSIDER_ID, false));
+        assertThrows(BusinessException.class,
+                () -> acl.requireWrite(PROJECT_ID, OUTSIDER_ID, false));
+    }
+
+    @Test
+    void publicApproval_approvedGetsViewer_pendingDenied() {
+        AssetProject project = project(OWNER_ID);
+        project.setPublicPool(true);
+        project.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project);
+        when(memberMapper.selectOne(any())).thenReturn(null);
+        AssetPublicAccessRequest approved = new AssetPublicAccessRequest();
+        approved.setStatus(AssetPublicAccessRequest.STATUS_APPROVED);
+        when(publicRequestMapper.selectOne(any())).thenReturn(
+                approved, (AssetPublicAccessRequest) null);
+
+        assertEquals(AssetRole.VIEWER, acl.loadAccessible(PROJECT_ID, OUTSIDER_ID, false));
+
+        assertThrows(BusinessException.class,
+                () -> acl.loadAccessible(PROJECT_ID, OUTSIDER_ID, false));
     }
 
     @Test
