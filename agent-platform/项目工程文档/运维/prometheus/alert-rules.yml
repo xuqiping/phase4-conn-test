@@ -112,3 +112,21 @@ groups:
         annotations:
           summary: "登录失败每分钟超 10 次（疑似爆破）"
           description: "当前约 {{ $value }} 次/分钟。处置：查审计日志中心按 IP 筛失败记录，必要时临时封 IP，联动《安全体系》限流策略。"
+
+  # ── 组5：媒体生成/剪辑（合并收尾项 8）───────────────────────────
+  - name: media-quality
+    rules:
+      # 规则8：媒体任务失败率 >50%/15min（视频/生图/剪辑按 kind 分别评估；低流量门槛防抖动）
+      - alert: 媒体任务失败率偏高
+        expr: >-
+          sum by (kind) (rate(media_task_terminal_total{result="fail"}[15m]))
+          /
+          sum by (kind) (rate(media_task_terminal_total[15m])) > 0.5
+          and
+          sum by (kind) (rate(media_task_terminal_total[15m])) > 0.005
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.kind }} 类媒体任务失败率超 50%"
+          description: "15 分钟窗口失败率 {{ $value | humanizePercentage }}。处置：查后端日志媒体 worker（Ark 配额/ffmpeg 进程），详见《运维手册》runbook。"

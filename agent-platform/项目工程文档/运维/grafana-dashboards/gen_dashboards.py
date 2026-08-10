@@ -146,6 +146,16 @@ ai = dash("ops-ai-core", "AI 核心链路", "LLM 调用/Token/延迟 + 工作流
     ts("记忆处理事故（每小时）", [
         ("sum(increase(memory_incidents_total[1h]))", "事故数"),
     ], 12, 40, 12, 8, "none", "线程池拒绝/LLM 失败等记忆异步处理事故"),
+    ts("媒体任务提交速率（视频/生图/剪辑）", [
+        ("sum by (kind)(rate(media_task_submitted_total[5m]))", "{{kind}}"),
+    ], 0, 48, 12, 8, "reqps"),
+    ts("媒体任务终态结果", [
+        ("sum by (kind)(rate(media_task_terminal_total{result=\"success\"}[5m]))", "{{kind}} 成功"),
+        ("sum by (kind)(rate(media_task_terminal_total{result=\"fail\"}[5m]))", "{{kind}} 失败"),
+    ], 12, 48, 12, 8, "reqps", "终态正好一次/次（重试按次计）；失败率>50%/15min 触发告警"),
+    ts("媒体任务端到端平均耗时（含排队）", [
+        ("sum by (kind)(rate(media_task_duration_seconds_sum[5m])) / clamp_min(sum by (kind)(rate(media_task_duration_seconds_count[5m])), 0.001)", "{{kind}}"),
+    ], 0, 56, 24, 8, "s", "创建→终态含排队等待；生图同步路径≈纯生成耗时，视频含轮询"),
 ])
 
 # ============ 4. 安全态势 ============
