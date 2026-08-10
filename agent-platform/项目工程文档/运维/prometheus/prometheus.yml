@@ -9,13 +9,14 @@ global:
   external_labels:
     env: prod-local          # 本机即服务器；迁真服务器时改机器名
 
-# Step 10 落地后启用（告警规则文件已在仓库：../prometheus/alert-rules.yml）
-# rule_files:
-#   - alert-rules.yml
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets: ["localhost:9093"]
+# Step 10 已落地：告警规则 + 推送 Alertmanager（规则文件见同目录 alert-rules.yml）
+rule_files:
+  - alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["localhost:9093"]
 
 scrape_configs:
   # ① 后端 Spring Boot Actuator（Step 1 已暴露 /actuator/prometheus，permitAll）
