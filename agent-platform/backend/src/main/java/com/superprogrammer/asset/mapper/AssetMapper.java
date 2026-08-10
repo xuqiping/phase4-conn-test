@@ -20,6 +20,40 @@ import java.util.List;
 @Mapper
 public interface AssetMapper extends BaseMapper<Asset> {
 
+    /**
+     * 文件共享读取裁决：只要 fileId 被请求者可读的存量资产项目引用，即允许文件咽喉点读取。
+     * 可读来源仅限 owner、项目成员、OPEN 公众池或仍为 APPROVED 的公众池申请。
+     */
+    @Select("""
+            SELECT COUNT(*)
+            FROM asset_versions av
+            JOIN assets a ON a.id = av.asset_id AND a.deleted = 0
+            JOIN asset_projects p ON p.id = a.project_id AND p.deleted = 0
+            WHERE av.file_id = #{fileId}
+              AND (
+                    p.owner_id = #{userId}
+                 OR EXISTS (
+                        SELECT 1 FROM asset_project_members m
+                        WHERE m.project_id = p.id AND m.user_id = #{userId} AND m.deleted = 0
+                    )
+                 OR (
+                        p.public_pool = TRUE
+                    AND (
+                           p.public_access_mode = 'OPEN'
+                        OR EXISTS (
+                               SELECT 1 FROM asset_public_access_requests r
+                               WHERE r.project_id = p.id
+                                 AND r.applicant_id = #{userId}
+                                 AND r.status = 'APPROVED'
+                                 AND r.deleted = 0
+                           )
+                    )
+                 )
+              )
+            """)
+    long countAccessibleFileReferences(@Param("fileId") String fileId,
+                                       @Param("userId") Long userId);
+
     /** 复制当前版本时锁住源资产行，防止并发建版改变 current_version。 */
     @Select("SELECT id FROM assets WHERE id = #{assetId} AND deleted = 0 FOR UPDATE")
     Long lockByIdForUpdate(@Param("assetId") Long assetId);

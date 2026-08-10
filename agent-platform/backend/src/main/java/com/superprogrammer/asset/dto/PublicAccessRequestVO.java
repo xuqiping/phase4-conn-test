@@ -12,6 +12,7 @@ public class PublicAccessRequestVO {
     private Long id;
     private Long projectId;
     private Long applicantId;
+    private String applicantUsername;
     private String status;
     private Long decidedBy;
     private OffsetDateTime decidedAt;

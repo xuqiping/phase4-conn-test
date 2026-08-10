@@ -100,7 +100,7 @@ function actionsFor(status: PublicAccessStatus): RowAction[] {
 const rows = computed<AccessRow[]>(() =>
   requests.value.map((item) => ({
     ...item,
-    applicant: `用户 #${item.applicantId}`,
+    applicant: item.applicantUsername || `用户 #${item.applicantId}`,
     statusLabel: STATUS_META[item.status].label,
     actions: actionsFor(item.status)
   }))

@@ -2,14 +2,35 @@ package com.superprogrammer.asset.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.superprogrammer.asset.entity.AssetPublicAccessRequest;
+import com.superprogrammer.asset.dto.PublicAccessRequestVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.annotations.Insert;
 
+import java.util.List;
+
 @Mapper
 public interface AssetPublicAccessRequestMapper extends BaseMapper<AssetPublicAccessRequest> {
+
+    /** 项目所有者审批列表：只联查展示所需的用户名，不暴露邮箱或凭据字段。 */
+    @Select("""
+            SELECT r.id,
+                   r.project_id,
+                   r.applicant_id,
+                   u.username AS applicant_username,
+                   r.status,
+                   r.decided_by,
+                   r.decided_at,
+                   r.created_at,
+                   r.updated_at
+            FROM asset_public_access_requests r
+            JOIN users u ON u.id = r.applicant_id
+            WHERE r.project_id = #{projectId} AND r.deleted = 0
+            ORDER BY r.created_at DESC
+            """)
+    List<PublicAccessRequestVO> selectOwnerViewByProjectId(@Param("projectId") Long projectId);
 
     @Insert("""
             INSERT INTO asset_public_access_requests

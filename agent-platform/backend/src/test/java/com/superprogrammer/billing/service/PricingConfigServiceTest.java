@@ -170,7 +170,7 @@ class PricingConfigServiceTest {
         // AC-F20-01：供应商行锁内复查重复，防止并发穿透候选列表。
         when(llmProviderMapper.selectByIdForUpdate(1L))
                 .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.selectCount(any())).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModel(1L, "chat-model")).thenReturn(1L);
 
         assertThatThrownBy(() -> service.createPricingRule(
                 pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
@@ -225,6 +225,33 @@ class PricingConfigServiceTest {
         when(pricingRuleMapper.selectList(any())).thenReturn(List.of(configured));
 
         org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
+    }
+
+    @Test
+    void availablePricingModels_excludesModelOccupiedByGlobalRule() {
+        // V66 的 provider_id=null 是全局价：同名模型不能再作为任何 provider 的“未配置候选”。
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(1L, "聊天A", "CHAT", "chat-model"),
+                provider(2L, "聊天B", "CHAT", "chat-model")));
+        PricingRuleEntity global = new PricingRuleEntity();
+        global.setProviderId(null);
+        global.setModel("chat-model");
+        global.setKind(PricingRuleEntity.KIND_CHAT);
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(global));
+
+        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
+    }
+
+    @Test
+    void createPricingRule_duplicateCheckIncludesGlobalRule() {
+        when(llmProviderMapper.selectByIdForUpdate(1L))
+                .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
+        when(pricingRuleMapper.countConflictingProviderModel(1L, "chat-model")).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.createPricingRule(
+                pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已配置");
     }
 
     @Test

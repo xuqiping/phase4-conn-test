@@ -64,8 +64,15 @@ public class PricingConfigService {
 
     public List<AvailablePricingModelVO> availablePricingModels() {
         Set<String> configured = new HashSet<>();
+        Set<String> configuredGlobalModels = new HashSet<>();
         for (PricingRuleEntity rule : pricingRuleMapper.selectList(new LambdaQueryWrapper<>())) {
-            if (rule.getProviderId() != null && rule.getModel() != null) {
+            if (rule.getModel() == null || rule.getModel().isBlank()) {
+                continue;
+            }
+            if (rule.getProviderId() == null) {
+                // 兼容 V66 历史全局价：其同名模型对所有供应商都已配置。
+                configuredGlobalModels.add(rule.getModel().trim());
+            } else {
                 configured.add(pricingIdentity(rule.getProviderId(), rule.getModel()));
             }
         }
@@ -74,8 +81,9 @@ public class PricingConfigService {
                 .stream()
                 .filter(provider -> "ACTIVE".equals(provider.getStatus()))
                 .flatMap(provider -> toAvailableModels(provider))
-                .filter(candidate -> !configured.contains(
-                        pricingIdentity(candidate.getProviderId(), candidate.getModel())))
+                .filter(candidate -> !configuredGlobalModels.contains(candidate.getModel())
+                        && !configured.contains(
+                                pricingIdentity(candidate.getProviderId(), candidate.getModel())))
                 .sorted(Comparator.comparing(AvailablePricingModelVO::getProviderName)
                         .thenComparing(AvailablePricingModelVO::getModel))
                 .toList();
@@ -153,10 +161,8 @@ public class PricingConfigService {
         if (expectedKind == null || !expectedKind.equals(req.getKind())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 与全局供应商类别不匹配");
         }
-        long duplicateCount = pricingRuleMapper.selectCount(
-                new LambdaQueryWrapper<PricingRuleEntity>()
-                        .eq(PricingRuleEntity::getProviderId, req.getProviderId())
-                        .eq(PricingRuleEntity::getModel, req.getModel().trim()));
+        long duplicateCount = pricingRuleMapper.countConflictingProviderModel(
+                req.getProviderId(), req.getModel().trim());
         if (duplicateCount > 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "该全局模型已配置价表");
         }

@@ -135,6 +135,7 @@ export interface PublicAccessRequestVO {
   id: number
   projectId: number
   applicantId: number
+  applicantUsername?: string | null
   status: PublicAccessStatus
   decidedBy?: number | null
   decidedAt?: string | null

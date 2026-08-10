@@ -35,11 +35,18 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function request(id: number, projectId: number, status: PublicAccessStatus, applicantId = id + 100): PublicAccessRequestVO {
+function request(
+  id: number,
+  projectId: number,
+  status: PublicAccessStatus,
+  applicantId = id + 100,
+  applicantUsername?: string
+): PublicAccessRequestVO {
   return {
     id,
     projectId,
     applicantId,
+    applicantUsername,
     status,
     createdAt: '2026-08-10T08:00:00Z',
     updatedAt: '2026-08-10T08:00:00Z'
@@ -93,6 +100,21 @@ describe('PublicAccessDialog', () => {
     expect(wrapper.text()).toContain('批准')
     expect(wrapper.text()).toContain('拒绝')
     expect(wrapper.text()).toContain('撤销访问')
+  })
+
+  it('优先显示申请用户名，旧数据没有用户名时保留用户 ID 兜底', async () => {
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([
+      request(1, 7, 'PENDING', 21, 'newuser'),
+      request(2, 7, 'PENDING', 22)
+    ]))
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as { rows: Array<{ applicant: string }> }
+
+    expect(vm.rows).toEqual([
+      expect.objectContaining({ applicant: 'newuser' }),
+      expect.objectContaining({ applicant: '用户 #22' })
+    ])
   })
 
   it('批准、拒绝和撤销分别调用正确 API，成功后刷新并通知变更', async () => {

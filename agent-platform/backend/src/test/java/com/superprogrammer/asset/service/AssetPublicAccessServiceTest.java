@@ -13,6 +13,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -111,6 +113,26 @@ class AssetPublicAccessServiceTest {
         BusinessException error = assertThrows(BusinessException.class, () -> service.request(1L, 20L));
 
         assertEquals(ErrorCode.UNPROCESSABLE.getCode(), error.getCode());
+    }
+
+    @Test
+    void listForOwner_returnsApplicantUsernameFromOwnerView() {
+        when(projectMapper.selectById(1L)).thenReturn(approvalProject());
+        when(aclService.requireManage(1L, 10L, false))
+                .thenReturn(com.superprogrammer.asset.enums.AssetRole.OWNER);
+        PublicAccessRequestVO row = PublicAccessRequestVO.builder()
+                .id(7L)
+                .projectId(1L)
+                .applicantId(20L)
+                .applicantUsername("newuser")
+                .status(AssetPublicAccessRequest.STATUS_PENDING)
+                .build();
+        when(requestMapper.selectOwnerViewByProjectId(1L)).thenReturn(List.of(row));
+
+        List<PublicAccessRequestVO> result = service.listForOwner(1L, 10L, false);
+
+        assertEquals("newuser", result.get(0).getApplicantUsername());
+        verify(requestMapper).selectOwnerViewByProjectId(1L);
     }
 
     private AssetProject approvalProject() {

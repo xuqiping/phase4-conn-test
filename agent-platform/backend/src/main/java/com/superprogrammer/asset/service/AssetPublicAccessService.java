@@ -68,10 +68,7 @@ public class AssetPublicAccessService {
     public List<PublicAccessRequestVO> listForOwner(Long projectId, Long userId, boolean admin) {
         aclService.requireManage(projectId, userId, admin);
         requirePublished(projectId);
-        return requestMapper.selectList(new LambdaQueryWrapper<AssetPublicAccessRequest>()
-                        .eq(AssetPublicAccessRequest::getProjectId, projectId)
-                        .orderByDesc(AssetPublicAccessRequest::getCreatedAt))
-                .stream().map(AssetPublicAccessService::toVO).toList();
+        return requestMapper.selectOwnerViewByProjectId(projectId);
     }
 
     @Transactional(rollbackFor = Exception.class)
