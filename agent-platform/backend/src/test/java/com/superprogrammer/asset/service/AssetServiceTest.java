@@ -3,6 +3,7 @@ package com.superprogrammer.asset.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
+import com.superprogrammer.asset.dto.AssetCopyRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.MatrixCountVO;
@@ -156,6 +157,173 @@ class AssetServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.create(PROJECT_ID, OWNER_ID, false, req));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    // ---------- F19 公众池资产复制 ----------
+
+    @Test
+    void copyCurrent_sourceWithoutReadPermission_createsNothing() {
+        Asset source = asset(100L, "MAP");
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "无权读取源项目"));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), error.getCode());
+        verify(aclService, never()).requireWrite(eq(2L), any(), anyBoolean());
+        verify(assetMapper, never()).insert(any());
+    }
+
+    @Test
+    void copyCurrent_targetWithoutWritePermission_createsNothing() {
+        Asset source = asset(100L, "MAP");
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
+        when(aclService.requireWrite(2L, VIEWER_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "目标项目不可写"));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), error.getCode());
+        verify(assetMapper, never()).insert(any());
+    }
+
+    @Test
+    void copyCurrent_missingCurrentVersion_createsNothing() {
+        Asset source = asset(100L, "MAP");
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        source.setCurrentVersion(3);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), error.getCode());
+        verify(assetMapper, never()).insert(any());
+    }
+
+    @Test
+    void copyCurrent_copiesOnlyCurrentSnapshotAndCompatibleRoles() {
+        Asset source = asset(100L, "MAP");
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        source.setCurrentVersion(3);
+        source.setName("World map");
+        source.setDescription("source description");
+        source.setTags("[\"tag-a\"]");
+        source.setGenMeta("{\"seed\":7}");
+        source.setContent("{\"stale\":true}");
+        AssetVersion current = new AssetVersion();
+        current.setAssetId(100L);
+        current.setVersion(3);
+        current.setFileId("file-shared-1");
+        current.setContent("{\"snapshot\":3}");
+        AssetProject target = targetProject(2L, "[\"CHARACTER\",\"SCENE\"]", "[]");
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(versionMapper.selectOne(any())).thenReturn(current);
+        when(projectMapper.selectById(2L)).thenReturn(target);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of(
+                roleLink(100L, "CHARACTER"), roleLink(100L, "PROP")));
+        when(assetMapper.insert(any(Asset.class))).thenAnswer(invocation -> {
+            ((Asset) invocation.getArgument(0)).setId(200L);
+            return 1;
+        });
+
+        AssetVO result = service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L));
+
+        assertEquals(200L, result.getId());
+        assertEquals(2L, result.getProjectId());
+        assertEquals(1, result.getCurrentVersion());
+        assertEquals(Asset.STATUS_DRAFT, result.getStatus());
+        assertEquals("{\"snapshot\":3}", result.getContent());
+        assertEquals("file-shared-1", result.getFileId());
+
+        ArgumentCaptor<Asset> assetCaptor = ArgumentCaptor.forClass(Asset.class);
+        verify(assetMapper).insert(assetCaptor.capture());
+        assertEquals("MAP", assetCaptor.getValue().getMediaType());
+        assertEquals("{\"snapshot\":3}", assetCaptor.getValue().getContent());
+        assertEquals("{\"seed\":7}", assetCaptor.getValue().getGenMeta());
+
+        ArgumentCaptor<AssetVersion> versionCaptor = ArgumentCaptor.forClass(AssetVersion.class);
+        verify(versionMapper).insert(versionCaptor.capture());
+        assertEquals(200L, versionCaptor.getValue().getAssetId());
+        assertEquals(1, versionCaptor.getValue().getVersion());
+        assertEquals("file-shared-1", versionCaptor.getValue().getFileId());
+        assertEquals("{\"snapshot\":3}", versionCaptor.getValue().getContent());
+
+        ArgumentCaptor<AssetRoleLink> roleCaptor = ArgumentCaptor.forClass(AssetRoleLink.class);
+        verify(roleLinkMapper).insert(roleCaptor.capture());
+        assertEquals("CHARACTER", roleCaptor.getValue().getRoleKey());
+        verify(fileStorageService, never()).store(any(), any(), any());
+        assertTrue(target.getMediaTypes().contains("\"key\":\"MAP\""));
+        assertTrue(target.getMediaTypes().contains("\"category\":\"IMAGE\""));
+        verify(projectMapper).updateById(target);
+    }
+
+    @Test
+    void copyCurrent_versionInsertFailure_doesNotContinueToRoles() {
+        Asset source = asset(100L, Asset.MEDIA_IMAGE);
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        AssetVersion current = new AssetVersion();
+        current.setAssetId(100L);
+        current.setVersion(1);
+        current.setFileId("file-shared-1");
+        current.setContent("{}");
+        AssetProject target = targetProject(2L, "[\"CHARACTER\"]",
+                "[{\"key\":\"图片\",\"category\":\"IMAGE\"}]");
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(current);
+        when(projectMapper.selectById(2L)).thenReturn(target);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of(roleLink(100L, "CHARACTER")));
+        when(assetMapper.insert(any(Asset.class))).thenAnswer(invocation -> {
+            ((Asset) invocation.getArgument(0)).setId(200L);
+            return 1;
+        });
+        when(versionMapper.insert(any())).thenThrow(new IllegalStateException("version insert failed"));
+
+        assertThrows(IllegalStateException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        verify(roleLinkMapper, never()).insert(any());
+    }
+
+    @Test
+    void copyCurrent_sameMediaTypeWithDifferentCategory_returnsConflict() {
+        Asset source = asset(100L, "MAP");
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        source.setCurrentVersion(2);
+        AssetVersion current = new AssetVersion();
+        current.setAssetId(100L);
+        current.setVersion(2);
+        current.setContent("{}");
+        AssetProject target = targetProject(2L, "[]",
+                "[{\"key\":\"MAP\",\"category\":\"TEXT\"}]");
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(current);
+        when(projectMapper.selectById(2L)).thenReturn(target);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.CONFLICT.getCode(), error.getCode());
+        verify(assetMapper, never()).insert(any());
     }
 
     @Test
@@ -530,6 +698,20 @@ class AssetServiceTest {
         p.setId(PROJECT_ID);
         p.setNarrativeRoles("[\"人物\",\"道具\",\"场景\",\"风格\",\"通用\"]");
         return p;
+    }
+
+    private AssetCopyRequest copyRequest(Long targetProjectId) {
+        AssetCopyRequest request = new AssetCopyRequest();
+        request.setTargetProjectId(targetProjectId);
+        return request;
+    }
+
+    private AssetProject targetProject(Long id, String roles, String mediaTypes) {
+        AssetProject project = new AssetProject();
+        project.setId(id);
+        project.setNarrativeRoles(roles);
+        project.setMediaTypes(mediaTypes);
+        return project;
     }
 
     private Asset asset(long id, String mediaType) {

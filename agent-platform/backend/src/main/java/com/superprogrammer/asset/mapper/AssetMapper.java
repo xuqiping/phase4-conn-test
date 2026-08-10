@@ -20,6 +20,10 @@ import java.util.List;
 @Mapper
 public interface AssetMapper extends BaseMapper<Asset> {
 
+    /** 复制当前版本时锁住源资产行，防止并发建版改变 current_version。 */
+    @Select("SELECT id FROM assets WHERE id = #{assetId} AND deleted = 0 FOR UPDATE")
+    Long lockByIdForUpdate(@Param("assetId") Long assetId);
+
     /**
      * 矩阵每格计数：按 (media_type, role_key) 聚合（单条 SQL，防 N+1）。
      * LEFT JOIN 保留未挂角色的资产（roleKey=null）；默认排除 ARCHIVED。

@@ -1,6 +1,7 @@
 package com.superprogrammer.asset.controller;
 
 import com.superprogrammer.asset.dto.AssetCreateRequest;
+import com.superprogrammer.asset.dto.AssetCopyRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.ConsistencyPackRequest;
@@ -63,6 +64,13 @@ public class AssetController {
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> create(@PathVariable("id") Long id, @RequestBody AssetCreateRequest req) {
         return ResponseEntity.ok(R.ok("资产已创建", assetService.create(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
+    @PostMapping("/assets/{id}/copy")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<AssetVO>> copy(@PathVariable Long id, @RequestBody AssetCopyRequest request) {
+        return ResponseEntity.ok(R.ok("资产已复制到目标项目",
+                assetService.copyCurrent(id, getCurrentUserId(), isAdmin(), request)));
     }
 
     @GetMapping("/projects/{id}/assets")
