@@ -1,6 +1,7 @@
 package com.superprogrammer.billing.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.billing.dto.AvailablePricingModelVO;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
 import com.superprogrammer.billing.dto.PricingRuleVO;
 import com.superprogrammer.billing.dto.RatioTierRequest;
@@ -32,6 +33,12 @@ public class PricingConfigController {
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<List<PricingRuleVO>>> listPricingRules() {
         return ResponseEntity.ok(R.ok(pricingConfigService.listPricingRules()));
+    }
+
+    @GetMapping("/pricing/available-models")
+    @RequirePermission("pricing:manage")
+    public ResponseEntity<R<List<AvailablePricingModelVO>>> availablePricingModels() {
+        return ResponseEntity.ok(R.ok(pricingConfigService.availablePricingModels()));
     }
 
     @PostMapping("/pricing")

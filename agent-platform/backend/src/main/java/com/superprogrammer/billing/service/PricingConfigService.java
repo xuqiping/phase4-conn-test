@@ -1,6 +1,9 @@
 package com.superprogrammer.billing.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.billing.dto.AvailablePricingModelVO;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
 import com.superprogrammer.billing.dto.PricingRuleVO;
 import com.superprogrammer.billing.dto.RatioTierRequest;
@@ -11,6 +14,8 @@ import com.superprogrammer.billing.mapper.PricingRuleMapper;
 import com.superprogrammer.billing.mapper.PointsRatioTierMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.llm.entity.LlmProviderEntity;
+import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,8 +25,10 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * admin 价表/比例配置服务：CRUD + 校验。
@@ -42,6 +49,8 @@ public class PricingConfigService {
 
     private final PricingRuleMapper pricingRuleMapper;
     private final PointsRatioTierMapper tierMapper;
+    private final LlmProviderMapper llmProviderMapper;
+    private final ObjectMapper objectMapper;
 
     // ---------------- 价表 ----------------
 
@@ -50,6 +59,80 @@ public class PricingConfigService {
                         .orderByAsc(PricingRuleEntity::getKind)
                         .orderByAsc(PricingRuleEntity::getModel))
                 .stream().map(PricingConfigService::toVO).toList();
+    }
+
+    public List<AvailablePricingModelVO> availablePricingModels() {
+        Set<String> configured = new HashSet<>();
+        for (PricingRuleEntity rule : pricingRuleMapper.selectList(new LambdaQueryWrapper<>())) {
+            if (rule.getProviderId() != null && rule.getModel() != null) {
+                configured.add(pricingIdentity(rule.getProviderId(), rule.getModel()));
+            }
+        }
+        return llmProviderMapper.selectList(new LambdaQueryWrapper<LlmProviderEntity>()
+                        .eq(LlmProviderEntity::getStatus, "ACTIVE"))
+                .stream()
+                .filter(provider -> "ACTIVE".equals(provider.getStatus()))
+                .flatMap(provider -> toAvailableModels(provider))
+                .filter(candidate -> !configured.contains(
+                        pricingIdentity(candidate.getProviderId(), candidate.getModel())))
+                .sorted(Comparator.comparing(AvailablePricingModelVO::getProviderName)
+                        .thenComparing(AvailablePricingModelVO::getModel))
+                .toList();
+    }
+
+    private Stream<AvailablePricingModelVO> toAvailableModels(LlmProviderEntity provider) {
+        String kind = toPricingKind(provider.getCategory());
+        if (kind == null) {
+            log.warn("价表候选跳过未知供应商类别: providerId={} category={}",
+                    provider.getId(), provider.getCategory());
+            return Stream.empty();
+        }
+        return parseProviderModels(provider).stream()
+                .map(model -> AvailablePricingModelVO.builder()
+                        .providerId(provider.getId())
+                        .providerName(provider.getDisplayName() != null
+                                ? provider.getDisplayName() : provider.getName())
+                        .model(model)
+                        .kind(kind)
+                        .build());
+    }
+
+    private String pricingIdentity(Long providerId, String model) {
+        return providerId + "\u0000" + model.trim();
+    }
+
+    private List<String> parseProviderModels(LlmProviderEntity provider) {
+        if (provider.getModels() == null || provider.getModels().isBlank()) {
+            return List.of();
+        }
+        try {
+            List<String> models = objectMapper.readValue(
+                    provider.getModels(), new TypeReference<List<String>>() { });
+            if (models == null) {
+                return List.of();
+            }
+            return models.stream()
+                    .filter(model -> model != null && !model.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .toList();
+        } catch (Exception ex) {
+            log.warn("价表候选跳过无法解析的供应商模型: providerId={}", provider.getId());
+            return List.of();
+        }
+    }
+
+    private String toPricingKind(String category) {
+        if (category == null) {
+            return null;
+        }
+        return switch (category) {
+            case "CHAT" -> PricingRuleEntity.KIND_CHAT;
+            case "EMBEDDING" -> PricingRuleEntity.KIND_EMBED;
+            case "IMAGE" -> PricingRuleEntity.KIND_IMAGE;
+            case "VIDEO" -> PricingRuleEntity.KIND_VIDEO;
+            default -> null;
+        };
     }
 
     @Transactional(rollbackFor = Exception.class)

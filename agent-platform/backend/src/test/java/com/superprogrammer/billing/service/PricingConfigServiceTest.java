@@ -1,5 +1,6 @@
 package com.superprogrammer.billing.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
 import com.superprogrammer.billing.dto.RatioTierRequest;
 import com.superprogrammer.billing.entity.PricingRuleEntity;
@@ -7,10 +8,13 @@ import com.superprogrammer.billing.entity.PointsRatioTierEntity;
 import com.superprogrammer.billing.mapper.PricingRuleMapper;
 import com.superprogrammer.billing.mapper.PointsRatioTierMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.llm.entity.LlmProviderEntity;
+import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
@@ -31,6 +35,10 @@ class PricingConfigServiceTest {
     private PricingRuleMapper pricingRuleMapper;
     @Mock
     private PointsRatioTierMapper tierMapper;
+    @Mock
+    private LlmProviderMapper llmProviderMapper;
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private PricingConfigService service;
@@ -112,6 +120,57 @@ class PricingConfigServiceTest {
         assertThatCode(() -> service.createPricingRule(req)).doesNotThrowAnyException();
     }
 
+    @Test
+    void availablePricingModels_mapsAllActiveProviderCategories() {
+        // AC-F20-01：全局供应商类别必须集中映射到计费 kind。
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(1L, "聊天", "CHAT", "chat-model"),
+                provider(2L, "向量", "EMBEDDING", "embed-model"),
+                provider(3L, "图片", "IMAGE", "image-model"),
+                provider(4L, "视频", "VIDEO", "video-model")));
+        var result = service.availablePricingModels();
+
+        org.assertj.core.api.Assertions.assertThat(result)
+                .extracting("providerId", "model", "kind")
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(1L, "chat-model", "CHAT"),
+                        org.assertj.core.groups.Tuple.tuple(2L, "embed-model", "EMBED"),
+                        org.assertj.core.groups.Tuple.tuple(3L, "image-model", "IMAGE"),
+                        org.assertj.core.groups.Tuple.tuple(4L, "video-model", "VIDEO"));
+    }
+
+    @Test
+    void availablePricingModels_excludesAlreadyConfiguredProviderModel() {
+        // AC-F20-01：候选是全局模型与既有 (providerId, model) 的差集。
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(1L, "聊天", "CHAT", "chat-model")));
+        PricingRuleEntity configured = new PricingRuleEntity();
+        configured.setProviderId(1L);
+        configured.setModel("chat-model");
+        configured.setKind(PricingRuleEntity.KIND_CHAT);
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(configured));
+
+        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
+    }
+
+    @Test
+    void availablePricingModels_normalizesModelsAndSkipsUnusableProviders() {
+        // AC-F20-01：模型 trim+去重；停用、未知类别、坏 JSON 均不进入候选。
+        LlmProviderEntity active = provider(1L, "聊天", "CHAT", "unused");
+        active.setModels("[\" chat-model \",\"chat-model\",\" \",\"chat-model\"]");
+        LlmProviderEntity inactive = provider(2L, "停用", "CHAT", "disabled-model");
+        inactive.setStatus("INACTIVE");
+        LlmProviderEntity badJson = provider(3L, "坏配置", "CHAT", "unused");
+        badJson.setModels("not-json");
+        LlmProviderEntity unknown = provider(4L, "未知", "AUDIO", "audio-model");
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(active, inactive, badJson, unknown));
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of());
+
+        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels())
+                .extracting("providerId", "model", "kind")
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(1L, "chat-model", "CHAT"));
+    }
+
     // helpers
 
     private PointsRatioTierEntity tier(BigDecimal min, BigDecimal max, String ratio) {
@@ -128,5 +187,16 @@ class PricingConfigServiceTest {
         r.setMaxAmount(max != null ? new BigDecimal(max) : null);
         r.setRatio(new BigDecimal(ratio));
         return r;
+    }
+
+    private LlmProviderEntity provider(Long id, String name, String category, String model) {
+        LlmProviderEntity p = new LlmProviderEntity();
+        p.setId(id);
+        p.setDisplayName(name);
+        p.setName(name);
+        p.setCategory(category);
+        p.setStatus("ACTIVE");
+        p.setModels("[\"" + model + "\"]");
+        return p;
     }
 }
