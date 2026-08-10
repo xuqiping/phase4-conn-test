@@ -3,8 +3,11 @@
     :show="show"
     preset="card"
     :title="`发布到公众池 · ${project?.name || '未选择项目'}`"
+    :closable="!submitting"
+    :mask-closable="!submitting"
+    :close-on-esc="!submitting"
     style="max-width: 620px"
-    @update:show="emit('update:show', $event)"
+    @update:show="handleShowUpdate"
   >
     <div class="public-publish-dialog">
       <section v-if="isAdmin" class="public-publish-dialog__official" aria-label="官方发布说明">
@@ -44,7 +47,7 @@
 
     <template #action>
       <n-space justify="end">
-        <n-button :disabled="submitting" @click="emit('update:show', false)">取消</n-button>
+        <n-button :disabled="submitting" @click="handleShowUpdate(false)">取消</n-button>
         <n-button type="primary" :loading="submitting" :disabled="!project" @click="submit">
           发布到公众池
         </n-button>
@@ -54,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NIcon, NModal, NRadio, NRadioGroup, NSpace, NTag, useMessage } from 'naive-ui'
 import { RibbonOutline } from '@vicons/ionicons5'
 import { publicPoolApi } from '@/api/assets'
@@ -73,55 +76,66 @@ const emit = defineEmits<{
 
 const message = useMessage()
 const mode = ref<PublicAccessMode>('OPEN')
-const submitting = ref(false)
 const error = ref('')
-let contextVersion = 0
-
-interface PublishContext {
-  projectId: number
-  version: number
-}
+const publishingProjectIds = ref<number[]>([])
+const submitting = computed(() => Boolean(props.project && publishingProjectIds.value.includes(props.project.id)))
 
 watch(
   [() => props.show, () => props.project?.id],
   ([show]) => {
-    contextVersion += 1
     mode.value = 'OPEN'
-    submitting.value = false
     error.value = ''
     if (!show) return
   },
   { immediate: true }
 )
 
-function isCurrentContext(context: PublishContext) {
-  return props.show && props.project?.id === context.projectId && contextVersion === context.version
+function isDisplayedProject(projectId: number) {
+  return props.show && props.project?.id === projectId
+}
+
+function handleShowUpdate(value: boolean) {
+  if (!value && submitting.value) return
+  emit('update:show', value)
+}
+
+function setPublishing(projectId: number, publishing: boolean) {
+  if (publishing) {
+    if (!publishingProjectIds.value.includes(projectId)) {
+      publishingProjectIds.value = [...publishingProjectIds.value, projectId]
+    }
+    return
+  }
+  publishingProjectIds.value = publishingProjectIds.value.filter((id) => id !== projectId)
 }
 
 async function submit() {
   const currentProject = props.project
-  if (!currentProject || submitting.value) return
-  const context: PublishContext = { projectId: currentProject.id, version: contextVersion }
+  if (!currentProject || publishingProjectIds.value.includes(currentProject.id)) return
 
-  submitting.value = true
+  setPublishing(currentProject.id, true)
   error.value = ''
   const accessMode: PublicAccessMode = props.isAdmin ? 'OPEN' : mode.value
+  let closeCurrentDialog = false
   try {
     await publicPoolApi.publish(currentProject.id, { accessMode })
-    if (!isCurrentContext(context)) return
-    message.success(props.isAdmin ? '官方项目已发布到公众池' : '项目已发布到公众池')
     emit('published', currentProject.id)
-    emit('update:show', false)
+    if (isDisplayedProject(currentProject.id)) {
+      message.success(props.isAdmin ? '官方项目已发布到公众池' : '项目已发布到公众池')
+      closeCurrentDialog = true
+    }
   } catch {
-    if (!isCurrentContext(context)) return
-    error.value = '发布失败，请稍后重试'
-    message.error('发布到公众池失败')
+    if (isDisplayedProject(currentProject.id)) {
+      error.value = '发布失败，请稍后重试'
+      message.error('发布到公众池失败')
+    }
   } finally {
-    if (isCurrentContext(context)) submitting.value = false
+    setPublishing(currentProject.id, false)
   }
+  if (closeCurrentDialog && isDisplayedProject(currentProject.id)) emit('update:show', false)
 }
 
-defineExpose({ mode, submitting, error, submit })
+defineExpose({ mode, submitting, error, submit, handleShowUpdate })
 </script>
 
 <style scoped lang="scss">

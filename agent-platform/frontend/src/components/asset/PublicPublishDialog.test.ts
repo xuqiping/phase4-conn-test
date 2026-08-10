@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { NButton, NRadio } from 'naive-ui'
+import { NButton, NModal, NRadio } from 'naive-ui'
 import type { AxiosResponse } from 'axios'
 import PublicPublishDialog from './PublicPublishDialog.vue'
 import { publicPoolApi } from '@/api/assets'
@@ -147,28 +147,37 @@ describe('PublicPublishDialog', () => {
     slowA.resolve(response({ code: 200, message: 'ok', data: undefined }))
     await pendingA
 
-    expect(wrapper.emitted('published')).toBeUndefined()
+    expect(wrapper.emitted('published')).toEqual([[7]])
     expect(wrapper.emitted('update:show')).toBeUndefined()
     expect(messageMock.success).not.toHaveBeenCalled()
     expect(vm.error).toBe('')
   })
 
-  it('关闭后重开的新会话不受旧发布失败影响，并可重新提交', async () => {
+  it('发布中拦截关闭，同项目被强制关闭重开后也不得重复 POST', async () => {
     const slowA = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
     vi.mocked(publicPoolApi.publish).mockReturnValueOnce(slowA.promise)
     const wrapper = mountDialog()
     const vm = wrapper.vm as unknown as { submit: () => Promise<void>; submitting: boolean; error: string }
     const pendingA = vm.submit()
+    await wrapper.vm.$nextTick()
+    const modal = wrapper.findComponent(NModal)
+    const cancel = wrapper.findAllComponents(NButton).find((button) => button.text() === '取消')
+
+    modal.vm.$emit('update:show', false)
+    await cancel!.trigger('click')
+    expect(wrapper.emitted('update:show')).toBeUndefined()
+    expect(cancel!.props('disabled')).toBe(true)
 
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
-    expect(vm.submitting).toBe(false)
+    expect(vm.submitting).toBe(true)
     await vm.submit()
-    expect(publicPoolApi.publish).toHaveBeenCalledTimes(2)
+    expect(publicPoolApi.publish).toHaveBeenCalledTimes(1)
 
-    slowA.reject(new Error('stale failure'))
+    slowA.resolve(response({ code: 200, message: 'ok', data: undefined }))
     await pendingA
     expect(vm.error).toBe('')
-    expect(messageMock.error).not.toHaveBeenCalled()
+    expect(wrapper.emitted('published')).toEqual([[7]])
+    expect(wrapper.emitted('update:show')).toEqual([[false]])
   })
 })

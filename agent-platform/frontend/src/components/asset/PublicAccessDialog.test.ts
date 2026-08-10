@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { NButton, NModal } from 'naive-ui'
 import type { AxiosResponse } from 'axios'
 import PublicAccessDialog from './PublicAccessDialog.vue'
 import { publicPoolApi } from '@/api/assets'
@@ -116,6 +117,83 @@ describe('PublicAccessDialog', () => {
     expect(publicPoolApi.listRequests).toHaveBeenCalledTimes(3)
     expect(wrapper.emitted('changed')).toHaveLength(3)
     expect(messageMock.success).toHaveBeenCalledTimes(3)
+  })
+
+  it('通过真实批准按钮触发决定 API', async () => {
+    vi.mocked(publicPoolApi.listRequests).mockResolvedValueOnce(listResponse([request(11, 7, 'PENDING')]))
+    const wrapper = mountDialog()
+    await settle()
+    const approve = wrapper.findAllComponents(NButton).find((button) => button.text() === '批准')
+
+    expect(approve).toBeDefined()
+    await approve!.trigger('click')
+    await settle()
+
+    expect(publicPoolApi.decideRequest).toHaveBeenCalledWith(7, 11, { decision: 'APPROVED' })
+  })
+
+  it('快速重复批准或撤销同一申请时各只发送一次 mutation API', async () => {
+    const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    const slowRevoke = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
+    vi.mocked(publicPoolApi.revokeApproval).mockReturnValueOnce(slowRevoke.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+      revoke: (requestId: number) => Promise<void>
+    }
+
+    const firstDecision = vm.decide(11, 'APPROVED')
+    const duplicateDecision = vm.decide(11, 'APPROVED')
+    expect(publicPoolApi.decideRequest).toHaveBeenCalledTimes(1)
+    slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await Promise.all([firstDecision, duplicateDecision])
+
+    const firstRevoke = vm.revoke(12)
+    const duplicateRevoke = vm.revoke(12)
+    expect(publicPoolApi.revokeApproval).toHaveBeenCalledTimes(1)
+    slowRevoke.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await Promise.all([firstRevoke, duplicateRevoke])
+  })
+
+  it('mutation API 成功后立即通知 changed，不等待慢刷新', async () => {
+    const slowReload = deferred<AxiosResponse<{ code: number; message: string; data: PublicAccessRequestVO[] }>>()
+    const wrapper = mountDialog()
+    await settle()
+    vi.mocked(publicPoolApi.listRequests).mockReturnValueOnce(slowReload.promise)
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+    }
+
+    const pending = vm.decide(11, 'APPROVED')
+    await flushPromises()
+    expect(wrapper.emitted('changed')).toEqual([[]])
+
+    slowReload.resolve(listResponse([]))
+    await pending
+  })
+
+  it('审批进行中拦截关闭入口并禁用完成按钮', async () => {
+    const slowDecision = deferred<AxiosResponse<{ code: number; message: string; data: undefined }>>()
+    vi.mocked(publicPoolApi.decideRequest).mockReturnValueOnce(slowDecision.promise)
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as {
+      decide: (requestId: number, decision: 'APPROVED' | 'REJECTED') => Promise<void>
+    }
+    const pending = vm.decide(11, 'APPROVED')
+    await wrapper.vm.$nextTick()
+    const modal = wrapper.findComponent(NModal)
+    const done = wrapper.findAllComponents(NButton).find((button) => button.text() === '完成')
+
+    modal.vm.$emit('update:show', false)
+    await done!.trigger('click')
+    expect(wrapper.emitted('update:show')).toBeUndefined()
+    expect(done!.props('disabled')).toBe(true)
+
+    slowDecision.resolve(response({ code: 200, message: 'ok', data: undefined }))
+    await pending
   })
 
   it('加载失败显示明确错误，不伪装成空列表', async () => {

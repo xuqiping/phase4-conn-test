@@ -3,8 +3,11 @@
     :show="show"
     preset="card"
     :title="`访问审批 · ${projectName}`"
+    :closable="!hasActiveMutation"
+    :mask-closable="!hasActiveMutation"
+    :close-on-esc="!hasActiveMutation"
     style="max-width: 780px"
-    @update:show="emit('update:show', $event)"
+    @update:show="handleShowUpdate"
   >
     <div class="public-access-dialog">
       <div class="public-access-dialog__summary">
@@ -30,7 +33,7 @@
 
     <template #action>
       <n-space justify="end">
-        <n-button @click="emit('update:show', false)">完成</n-button>
+        <n-button :disabled="hasActiveMutation" @click="handleShowUpdate(false)">完成</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -70,6 +73,7 @@ const requests = ref<PublicAccessRequestVO[]>([])
 const loading = ref(false)
 const error = ref('')
 const actingRequestIds = ref<number[]>([])
+const hasActiveMutation = computed(() => actingRequestIds.value.length > 0)
 let contextVersion = 0
 let reloadVersion = 0
 
@@ -154,6 +158,11 @@ function isCurrentContext(context: DialogContext) {
   return props.show && props.projectId === context.projectId && contextVersion === context.version
 }
 
+function handleShowUpdate(value: boolean) {
+  if (!value && hasActiveMutation.value) return
+  emit('update:show', value)
+}
+
 function resetState() {
   reloadVersion += 1
   requests.value = []
@@ -199,6 +208,7 @@ function setActing(requestId: number, acting: boolean) {
 }
 
 async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
+  if (actingRequestIds.value.includes(requestId)) return
   const context = captureContext()
   if (!isCurrentContext(context)) return
   setActing(requestId, true)
@@ -206,8 +216,8 @@ async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
     await publicPoolApi.decideRequest(context.projectId, requestId, { decision })
     if (!isCurrentContext(context)) return
     message.success(decision === 'APPROVED' ? '已批准访问申请' : '已拒绝访问申请')
+    emit('changed')
     await reload(context)
-    if (isCurrentContext(context)) emit('changed')
   } catch {
     if (isCurrentContext(context)) message.error(decision === 'APPROVED' ? '批准失败，请重试' : '拒绝失败，请重试')
   } finally {
@@ -216,6 +226,7 @@ async function decide(requestId: number, decision: 'APPROVED' | 'REJECTED') {
 }
 
 async function revoke(requestId: number) {
+  if (actingRequestIds.value.includes(requestId)) return
   const context = captureContext()
   if (!isCurrentContext(context)) return
   setActing(requestId, true)
@@ -223,8 +234,8 @@ async function revoke(requestId: number) {
     await publicPoolApi.revokeApproval(context.projectId, requestId)
     if (!isCurrentContext(context)) return
     message.success('已撤销访问权限')
+    emit('changed')
     await reload(context)
-    if (isCurrentContext(context)) emit('changed')
   } catch {
     if (isCurrentContext(context)) message.error('撤销访问失败，请重试')
   } finally {
@@ -232,7 +243,7 @@ async function revoke(requestId: number) {
   }
 }
 
-defineExpose({ rows, loading, error, reload, decide, revoke })
+defineExpose({ rows, loading, error, reload, decide, revoke, hasActiveMutation, handleShowUpdate })
 </script>
 
 <style scoped lang="scss">
