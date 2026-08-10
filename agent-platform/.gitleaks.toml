@@ -2,6 +2,11 @@
 # baseline（既有历史命中，人工确认为误报/已失效串）在 .gitleaks-baseline.json，本文件只管规则豁免。
 title = "agent-platform gitleaks config"
 
+# 关键：自定义 config 不含任何 [rules] 时 gitleaks 一条规则都不跑（0 检出假象）。
+# extend.useDefault 继承内置规则集，下方 allowlist 只起豁免作用。
+[extend]
+useDefault = true
+
 [allowlist]
 description = "测试 fixtures / 文档示例 / 公开占位符豁免"
 paths = [

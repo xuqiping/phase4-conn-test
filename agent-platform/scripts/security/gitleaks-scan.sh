@@ -23,7 +23,23 @@ fi
 
 if [ "${1:-}" = "--baseline" ]; then
   # 全量扫 + 生成 baseline（命中项须人工逐条确认为误报/历史串，再提交 baseline 文件）
-  gitleaks git --config "$CONFIG" --baseline-path /dev/null --report-path "$BASELINE" --report-format json --exit-code 0 .
+  # 不传 --baseline-path 即为全量（原 /dev/null 写法在 Windows Git Bash 下被解析成 \nul 报错）
+  gitleaks git --config "$CONFIG" --report-path "$BASELINE" --report-format json --exit-code 0 .
+  # 安全：报告含明文 Secret/Match/Line 字段，提交前必须剥除（baseline 匹配只用 fingerprint 元数据）
+  if command -v python >/dev/null 2>&1; then
+    python -c "
+import json, io, sys
+p = r'''$BASELINE'''
+d = json.load(io.open(p, encoding='utf-8'))
+for h in d:
+    for k in ('Secret', 'Match', 'Line'):
+        h.pop(k, None)
+json.dump(d, io.open(p, 'w', encoding='utf-8'), indent=2)
+print('baseline 已剥除明文 Secret 字段')
+"
+  else
+    echo "⚠️ 未找到 python，请手工剥除 $BASELINE 中的 Secret/Match/Line 字段后再提交！"
+  fi
   echo "baseline 已写入 $BASELINE —— 请人工确认全部为误报后再提交！"
   exit 0
 fi
