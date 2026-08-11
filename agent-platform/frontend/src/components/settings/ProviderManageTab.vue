@@ -6,6 +6,23 @@
         添加供应商
       </n-button>
       <n-button @click="handleReload">刷新配置</n-button>
+      <!-- 10x-2：全局供应商导出/导入（仅 admin 可达，Tab 已 isAdmin 门控） -->
+      <n-button :loading="exporting" aria-label="导出供应商" @click="handleExport">
+        <template #icon><n-icon :component="DownloadOutline" /></template>
+        导出
+      </n-button>
+      <n-button :loading="importing" aria-label="导入供应商" @click="triggerImport">
+        <template #icon><n-icon :component="CloudUploadOutline" /></template>
+        导入
+      </n-button>
+      <!-- 隐藏 file input，按钮触发点击 -->
+      <input
+        ref="importInputRef"
+        type="file"
+        accept=".json,application/json"
+        style="display: none"
+        @change="onImportFileChange"
+      />
     </div>
 
     <n-data-table :columns="columns" :data="providers" :loading="loading" :scroll-x="1000" :bordered="false" />
@@ -50,17 +67,23 @@
 import { ref, computed, watch, onMounted, h } from 'vue'
 import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NTag, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
+import { CloudUploadOutline, DownloadOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
-import type { LlmProvider, LlmProviderCreateRequest, ProviderCategory } from '@/api/llm'
+import type { LlmProvider, LlmProviderCreateRequest, ProviderCategory, LlmProviderExportItem } from '@/api/llm'
+import { useDialog } from 'naive-ui'
 
 const message = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const exporting = ref(false)
+const importing = ref(false)
 const providers = ref<LlmProvider[]>([])
 const showModal = ref(false)
 const editingId = ref<number | null>(null)
 const testingId = ref<number | null>(null)
+const importInputRef = ref<HTMLInputElement | null>(null)
 
 const form = ref<LlmProviderCreateRequest>({
   name: '',
@@ -283,6 +306,102 @@ async function handleTestInModal() {
 async function handleReload() {
   await llmApi.reloadProviders()
   message.success('配置已刷新')
+}
+
+// ===== 10x-2：导出/导入全局供应商 =====
+
+/** 导出：含明文 API Key，二次确认后下载 JSON 文件。 */
+function handleExport() {
+  dialog.warning({
+    title: '导出供应商',
+    content: '导出文件将包含明文 API Key，请妥善保管。确认导出？',
+    positiveText: '确认导出',
+    negativeText: '取消',
+    onPositiveClick: doExport
+  })
+}
+
+async function doExport() {
+  exporting.value = true
+  try {
+    const res = await llmApi.exportProviders()
+    // responseType: 'blob' → res 是 Blob；触发浏览器下载
+    const blob = res as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `llm-providers-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    message.success('导出成功')
+  } catch {
+    // error handled by interceptor
+  } finally {
+    exporting.value = false
+  }
+}
+
+/** 导入入口：触发隐藏 file input 选文件。 */
+function triggerImport() {
+  importInputRef.value?.click()
+}
+
+/** 选定文件后：解析 JSON → 预览新增/更新/非法数 → 确认后提交。 */
+async function onImportFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 重置 input.value 允许重复选同一文件
+  input.value = ''
+  if (!file) return
+
+  // 读文件内容
+  let items: LlmProviderExportItem[]
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text)
+    if (!Array.isArray(parsed)) {
+      message.error('文件格式错误：应为 JSON 数组')
+      return
+    }
+    items = parsed
+  } catch {
+    message.error('文件解析失败：不是合法 JSON')
+    return
+  }
+
+  // 预检：粗分新增候选 / 非法（仅前端提示，真实 upsert 以服务端为准）
+  const seen = new Set(providers.value.map((p) => p.name))
+  const willCreate = items.filter((it) => it.name && !seen.has(it.name)).length
+  const willUpdate = items.filter((it) => it.name && seen.has(it.name)).length
+  const invalid = items.filter((it) => !it.name || !it.apiEndpoint).length
+
+  dialog.warning({
+    title: '确认导入',
+    content: `共 ${items.length} 条：预计新增 ${willCreate} / 更新 ${willUpdate}${invalid ? ` / 疑似非法 ${invalid}` : ''}。同名供应商的非空字段将被覆盖（API Key 为空则保留原值）。确认导入？`,
+    positiveText: '确认导入',
+    negativeText: '取消',
+    onPositiveClick: () => doImport(items)
+  })
+}
+
+async function doImport(items: LlmProviderExportItem[]) {
+  importing.value = true
+  try {
+    const res = await llmApi.importProviders(items)
+    const r = res.data.data
+    message.success(`导入完成：新增 ${r.created} / 更新 ${r.updated} / 失败 ${r.failed}`)
+    if (r.failed > 0 && r.errors?.length) {
+      // 失败详情走 console 供排查，不弹大段文本
+      console.warn('供应商导入失败明细', r.errors)
+    }
+    await load()
+  } catch {
+    // error handled by interceptor
+  } finally {
+    importing.value = false
+  }
 }
 </script>
 

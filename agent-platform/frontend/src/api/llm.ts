@@ -57,6 +57,29 @@ export interface TestConnectionResult {
   durationMs: number | null
 }
 
+/** 供应商导出/导入条目（10x-2）。导出文件含明文 API Key，仅 admin 可调。 */
+export interface LlmProviderExportItem {
+  name: string
+  displayName?: string | null
+  protocol?: 'OPENAI_COMPATIBLE' | 'ANTHROPIC' | null
+  apiEndpoint: string
+  /** 明文 API Key（导出含明文；导入空值则保留原 key） */
+  apiKey?: string | null
+  models?: string | null
+  config?: string | null
+  sortOrder?: number | null
+  category?: ProviderCategory | null
+  status?: string | null
+}
+
+/** 批量导入结果统计（10x-2）。 */
+export interface ProviderImportResult {
+  created: number
+  updated: number
+  failed: number
+  errors: string[]
+}
+
 export interface AvailableModel {
   modelId: string
   displayName: string
@@ -98,6 +121,16 @@ export const llmApi = {
   // VIDEO 专用测试（任务型协议不支持 chat，走媒体包零成本探测 GET 任务端点/不存在id）
   testProviderVideo(id: number) {
     return request.post<ApiResponse<TestConnectionResult>>(`/media/providers/${id}/test`)
+  },
+
+  // 导出全量供应商（10x-2）：返回 blob 触发浏览器下载，含明文 API Key
+  exportProviders() {
+    return request.get<Blob>('/llm/providers/export', { responseType: 'blob' })
+  },
+
+  // 批量导入供应商（10x-2）：按 name upsert，返回 created/updated/failed 统计
+  importProviders(items: LlmProviderExportItem[]) {
+    return request.post<ApiResponse<ProviderImportResult>>('/llm/providers/import', items)
   },
 
   // User: Own providers
