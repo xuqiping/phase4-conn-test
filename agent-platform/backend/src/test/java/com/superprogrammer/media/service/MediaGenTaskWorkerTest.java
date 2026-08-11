@@ -43,6 +43,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaBillingService mediaBillingService;
     @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MediaGenProperties properties = new MediaGenProperties();
@@ -55,7 +56,7 @@ class MediaGenTaskWorkerTest {
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
                 mediaStorageService, mediaReferenceUrlService, properties, objectMapper, directExecutor, mediaBillingService,
-                inflightGate, bizMetrics);
+                inflightGate, bizMetrics, auditLogService);
     }
 
     @Test
@@ -74,8 +75,9 @@ class MediaGenTaskWorkerTest {
         verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
         verify(txService, never()).markFailed(anyLong(), anyString());
         // Chunk F：成功路径扣减计费（kind=VIDEO，refId=taskId，视频伪-token=200000）
+        // 7x-3：chargeMedia 现为 10 参（带 hasReference），verify 用 anyBoolean()
         verify(mediaBillingService).chargeMedia(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
-                eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L));
+                eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L), anyBoolean());
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
         // 指标：成功终态正好一次（kind=video,result=success）+ 端到端耗时
         verify(bizMetrics).mediaTaskTerminal("video", "success");
@@ -92,7 +94,7 @@ class MediaGenTaskWorkerTest {
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
         when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(null);
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn(null);
 
         worker.poll();
 
@@ -110,7 +112,7 @@ class MediaGenTaskWorkerTest {
                 "https://ark/v.mp4", 1000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
         when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(new BigDecimal("50"));
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn(new BigDecimal("50"));
         doThrow(new IllegalStateException("DB 抖动")).when(txService)
                 .markSucceeded(anyLong(), anyString(), anyInt(), anyString());
 
@@ -137,7 +139,7 @@ class MediaGenTaskWorkerTest {
         verify(bizMetrics).mediaTaskTerminal("video", "fail");
         verify(bizMetrics, never()).mediaTaskTerminal(anyString(), eq("success"));
         verify(mediaBillingService, never()).chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong());
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
     }
 

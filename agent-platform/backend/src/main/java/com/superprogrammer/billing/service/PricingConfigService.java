@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.dto.AvailablePricingModelVO;
+import com.superprogrammer.billing.dto.PricingRuleExportItem;
+import com.superprogrammer.billing.dto.PricingImportResult;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
 import com.superprogrammer.billing.dto.PricingRuleVO;
 import com.superprogrammer.billing.dto.RatioTierRequest;
@@ -60,6 +62,158 @@ public class PricingConfigService {
                         .orderByAsc(PricingRuleEntity::getKind)
                         .orderByAsc(PricingRuleEntity::getModel))
                 .stream().map(PricingConfigService::toVO).toList();
+    }
+
+    // ---------------- 7x-2：价表导出 / 模板 / 导入 ----------------
+
+    /**
+     * 导出当前全量价表（7x-2）。价表无加密，纯字段拷贝。
+     * <p>仅 admin 可调（Controller 层 @RequirePermission("pricing:manage")）。
+     */
+    public List<PricingRuleExportItem> exportAll() {
+        return pricingRuleMapper.selectList(new LambdaQueryWrapper<PricingRuleEntity>()
+                        .orderByAsc(PricingRuleEntity::getKind)
+                        .orderByAsc(PricingRuleEntity::getModel))
+                .stream().map(PricingConfigService::toExportItem).toList();
+    }
+
+    /**
+     * 生成「填充模板」（7x-2）：联动全局供应商，自动把<b>未配置过</b>的模型预填为空白价表行，
+     * 用户只填价格即可上传。天然区分 LLM/图片/视频（kind 字段即区分）。
+     * <p>复用 {@link #availablePricingModels()}（已排除 provider 专属配置 + 历史全局价同名模型）。
+     */
+    public List<PricingRuleExportItem> generateTemplate() {
+        return availablePricingModels().stream()
+                .map(c -> {
+                    PricingRuleExportItem item = new PricingRuleExportItem();
+                    item.setKind(c.getKind());
+                    item.setProviderId(c.getProviderId());
+                    item.setProviderName(c.getProviderName());
+                    item.setModel(c.getModel());
+                    item.setHasReference(false);
+                    // 价格字段全留 null（由用户填）
+                    return item;
+                })
+                .sorted(Comparator.comparing(PricingRuleExportItem::getKind)
+                        .thenComparing(i -> i.getProviderName() == null ? "" : i.getProviderName())
+                        .thenComparing(i -> i.getModel() == null ? "" : i.getModel()))
+                .toList();
+    }
+
+    /** 导入单批上限（防恶意巨大体导致 OOM/长事务），与供应商导入一致。 */
+    private static final int IMPORT_MAX_SIZE = 200;
+
+    /**
+     * 批量导入价表（7x-2）：按 (providerId, model, kind, hasReference) upsert，非法行跳过记入 errors。
+     * <p>规则：
+     * <ul>
+     *   <li>size > 200 → 抛 BAD_REQUEST；</li>
+     *   <li>逐行校验：复用 {@link #validatePricingRule} + provider 存在 ACTIVE + model 属于 provider +
+     *       kind 匹配 category；不过 → incFailed，不中断整体；</li>
+     *   <li>upsert：命中 {@link PricingRuleMapper#countConflictingProviderModelHasRef} → UPDATE 价格 +
+     *       effective_from=now（覆盖旧价）；未命中 → INSERT；</li>
+     *   <li>{@code providerName} 字段导入时忽略（仅按 providerId 定位）；</li>
+     *   <li>无内存缓存需 reload（{@code findEffective} 实时查库）。</li>
+     * </ul>
+     */
+    public PricingImportResult importAll(List<PricingRuleExportItem> items) {
+        if (items == null) {
+            items = List.of();
+        }
+        if (items.size() > IMPORT_MAX_SIZE) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "单次导入上限 " + IMPORT_MAX_SIZE + " 条，当前 " + items.size() + " 条");
+        }
+        PricingImportResult result = PricingImportResult.builder().build();
+        for (int i = 0; i < items.size(); i++) {
+            PricingRuleExportItem item = items.get(i);
+            int lineNo = i + 1;
+            try {
+                upsertPricingRow(item, result);
+            } catch (Exception e) {
+                log.warn("导入价表第{}行失败 model={}: {}", lineNo, item.getModel(), e.getMessage());
+                result.incFailed("第" + lineNo + "行 model=" + item.getModel() + " 失败: " + e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    /** 单行 upsert：校验 → 查重 → 命中更新 / 未命中新建。 */
+    private void upsertPricingRow(PricingRuleExportItem item, PricingImportResult result) {
+        PricingRuleRequest req = toItemRequest(item);
+        validatePricingRule(req);
+        if (req.getProviderId() == null) {
+            result.incFailed("providerId 为空（价表导入仅支持 provider 专属价，不支持全局价）");
+            return;
+        }
+        LlmProviderEntity provider = llmProviderMapper.selectById(req.getProviderId());
+        if (provider == null || !"ACTIVE".equals(provider.getStatus())) {
+            result.incFailed("providerId=" + req.getProviderId() + " 不存在或未启用");
+            return;
+        }
+        if (!parseProviderModels(provider).contains(req.getModel().trim())) {
+            result.incFailed("model=" + req.getModel() + " 不属于 providerId=" + req.getProviderId());
+            return;
+        }
+        String expectedKind = toPricingKind(provider.getCategory());
+        if (expectedKind == null || !expectedKind.equals(req.getKind())) {
+            result.incFailed("kind=" + req.getKind() + " 与 provider 类别 " + provider.getCategory() + " 不匹配");
+            return;
+        }
+        boolean hasRef = effectiveHasReference(req);
+        long dup = pricingRuleMapper.countConflictingProviderModelHasRef(
+                req.getProviderId(), req.getModel().trim(), hasRef);
+        if (dup > 0) {
+            // upsert：覆盖价格，刷新 effective_from=now（生效即按新价）
+            PricingRuleEntity existing = pricingRuleMapper.findEffective(
+                    req.getKind(), req.getProviderId(), req.getModel().trim(), hasRef);
+            if (existing == null) {
+                // 命中 count 但 findEffective 取不到（如 effective_from 未来态）：按新建
+                PricingRuleEntity e = new PricingRuleEntity();
+                applyRequest(req, e);
+                pricingRuleMapper.insert(e);
+                result.incCreated();
+                return;
+            }
+            applyRequest(req, existing);
+            existing.setEffectiveFrom(OffsetDateTime.now());
+            pricingRuleMapper.updateById(existing);
+            result.incUpdated();
+        } else {
+            PricingRuleEntity e = new PricingRuleEntity();
+            applyRequest(req, e);
+            pricingRuleMapper.insert(e);
+            result.incCreated();
+        }
+    }
+
+    /** 导入 DTO → Request（复用既有校验/apply 路径），hasReference null 归一为 false。 */
+    private PricingRuleRequest toItemRequest(PricingRuleExportItem item) {
+        PricingRuleRequest req = new PricingRuleRequest();
+        req.setKind(item.getKind());
+        req.setProviderId(item.getProviderId());
+        req.setModel(item.getModel());
+        req.setHasReference(item.getHasReference());
+        req.setPriceInputPerMillion(item.getPriceInputPerMillion());
+        req.setPriceOutputPerMillion(item.getPriceOutputPerMillion());
+        req.setVideoBillingMode(item.getVideoBillingMode());
+        req.setPricePerSecond(item.getPricePerSecond());
+        req.setPricePerImage(item.getPricePerImage());
+        return req;
+    }
+
+    private static PricingRuleExportItem toExportItem(PricingRuleEntity e) {
+        PricingRuleExportItem item = new PricingRuleExportItem();
+        item.setKind(e.getKind());
+        item.setProviderId(e.getProviderId());
+        item.setModel(e.getModel());
+        item.setHasReference(e.getHasReference() != null && e.getHasReference());
+        item.setPriceInputPerMillion(e.getPriceInputPerMillion());
+        item.setPriceOutputPerMillion(e.getPriceOutputPerMillion());
+        item.setVideoBillingMode(e.getVideoBillingMode());
+        item.setPricePerSecond(e.getPricePerSecond());
+        item.setPricePerImage(e.getPricePerImage());
+        return item;
     }
 
     public List<AvailablePricingModelVO> availablePricingModels() {

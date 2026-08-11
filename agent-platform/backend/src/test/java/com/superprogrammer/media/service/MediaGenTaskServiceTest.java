@@ -61,6 +61,8 @@ class MediaGenTaskServiceTest {
     private InflightGateService inflightGate;
     @Mock
     private BizMetrics bizMetrics;
+    @Mock
+    private com.superprogrammer.common.audit.AuditLogService auditLogService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -79,7 +81,7 @@ class MediaGenTaskServiceTest {
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
-                inflightGate, bizMetrics);
+                inflightGate, bizMetrics, auditLogService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);

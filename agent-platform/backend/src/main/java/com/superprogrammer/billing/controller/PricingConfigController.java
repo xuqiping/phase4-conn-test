@@ -1,17 +1,24 @@
 package com.superprogrammer.billing.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.AvailablePricingModelVO;
+import com.superprogrammer.billing.dto.PricingImportResult;
+import com.superprogrammer.billing.dto.PricingRuleExportItem;
 import com.superprogrammer.billing.dto.PricingRuleRequest;
 import com.superprogrammer.billing.dto.PricingRuleVO;
 import com.superprogrammer.billing.dto.RatioTierRequest;
 import com.superprogrammer.billing.dto.RatioTierVO;
 import com.superprogrammer.billing.service.PricingConfigService;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,6 +35,7 @@ import java.util.List;
 public class PricingConfigController {
 
     private final PricingConfigService pricingConfigService;
+    private final ObjectMapper objectMapper;
 
     // ---------------- 价表 ----------------
 
@@ -56,6 +64,65 @@ public class PricingConfigController {
     public ResponseEntity<R<PricingRuleVO>> updatePricingRule(@PathVariable Long id,
                                                               @Valid @RequestBody PricingRuleRequest req) {
         return ResponseEntity.ok(R.ok("价表已更新", pricingConfigService.updatePricingRule(id, req)));
+    }
+
+    /**
+     * 7x-2：导出当前全量价表为 JSON 文件（备份/迁移）。价表无加密，纯明文价格。
+     */
+    @GetMapping("/pricing/export")
+    @RequirePermission("pricing:manage")
+    @AuditLog(module = "billing", action = "pricing_export", targetType = "pricing_rule")
+    public ResponseEntity<byte[]> exportPricingRules() {
+        var items = pricingConfigService.exportAll();
+        byte[] body;
+        try {
+            body = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(items);
+        } catch (Exception e) {
+            log.error("导出价表序列化失败", e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "导出失败");
+        }
+        String filename = "pricing-rules-" + java.time.LocalDate.now() + ".json";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
+    }
+
+    /**
+     * 7x-2：下载「填充模板」——联动全局供应商，自动预填未配置过的模型（区分 LLM/图片/视频），
+     * 用户填价格后上传。价表无密钥，无需二次确认。
+     */
+    @GetMapping("/pricing/template")
+    @RequirePermission("pricing:manage")
+    @AuditLog(module = "billing", action = "pricing_template_download", targetType = "pricing_rule")
+    public ResponseEntity<byte[]> downloadPricingTemplate() {
+        var items = pricingConfigService.generateTemplate();
+        byte[] body;
+        try {
+            body = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(items);
+        } catch (Exception e) {
+            log.error("生成价表模板序列化失败", e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "模板生成失败");
+        }
+        String filename = "pricing-template-" + java.time.LocalDate.now() + ".json";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
+    }
+
+    /**
+     * 7x-2：批量导入价表——按 (providerId, model, kind, hasReference) upsert，存在则覆盖价格。
+     * 非法行不中断整体导入，返 created/updated/failed 统计。
+     */
+    @PostMapping("/pricing/import")
+    @RequirePermission("pricing:manage")
+    @AuditLog(module = "billing", action = "pricing_import", targetType = "pricing_rule")
+    public ResponseEntity<R<PricingImportResult>> importPricingRules(
+            @RequestBody List<PricingRuleExportItem> items) {
+        return ResponseEntity.ok(R.ok(pricingConfigService.importAll(items)));
     }
 
     // ---------------- 阶梯比例 ----------------

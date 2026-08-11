@@ -4,7 +4,19 @@
     <template v-else>
       <n-card title="模型价表">
         <template #header-extra>
-          <n-button type="primary" @click="openPricingModal()">新增价表</n-button>
+          <n-space>
+            <n-button @click="handleExport" :loading="exporting">导出</n-button>
+            <n-button @click="handleDownloadTemplate" :loading="downloadingTemplate">下载模板</n-button>
+            <n-button @click="triggerImport" :loading="importing">导入</n-button>
+            <n-button type="primary" @click="openPricingModal()">新增价表</n-button>
+          </n-space>
+          <input
+            ref="importFileInput"
+            type="file"
+            accept=".json,application/json"
+            style="display: none"
+            @change="onImportFileChange"
+          />
         </template>
         <n-data-table :columns="pricingColumns" :data="pricingRules" :loading="loading" size="small" />
       </n-card>
@@ -101,15 +113,16 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, useMessage
+  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, useMessage, useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { billingApi, KIND_LABEL } from '@/api/billing'
-import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode } from '@/api/billing'
+import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, PricingRuleExportItem, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 const message = useMessage()
+const dialog = useDialog()
 const canManage = computed(() => authStore.hasPermission('pricing:manage'))
 
 const pricingRules = ref<PricingRuleVO[]>([])
@@ -260,6 +273,124 @@ async function savePricing() {
     /* 拦截器已 toast */
   } finally {
     saving.value = false
+  }
+}
+
+// ---------------- 7x-2：价表导出 / 导入 / 模板 ----------------
+const exporting = ref(false)
+const downloadingTemplate = ref(false)
+const importing = ref(false)
+const importFileInput = ref<HTMLInputElement | null>(null)
+
+async function handleExport() {
+  dialog.warning({
+    title: '导出价表',
+    content: '将导出当前全部价表为 JSON 文件，可用于备份或迁移。是否继续？',
+    positiveText: '导出',
+    negativeText: '取消',
+    onPositiveClick: doExport
+  })
+}
+
+async function doExport() {
+  exporting.value = true
+  try {
+    const resp = await billingApi.exportPricingRules()
+    const blob = resp.data as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pricing-rules-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    message.success('价表已导出')
+  } catch {
+    /* 拦截器已 toast */
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function handleDownloadTemplate() {
+  downloadingTemplate.value = true
+  try {
+    const resp = await billingApi.downloadPricingTemplate()
+    const blob = resp.data as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pricing-template-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    message.success('模板已下载，填好价格后点「导入」上传')
+  } catch {
+    /* 拦截器已 toast */
+  } finally {
+    downloadingTemplate.value = false
+  }
+}
+
+function triggerImport() {
+  importFileInput.value?.click()
+}
+
+async function onImportFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 清空 value 让同文件可重选
+  input.value = ''
+  if (!file) return
+  let items: PricingRuleExportItem[]
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text)
+    if (!Array.isArray(parsed)) {
+      message.error('文件格式错误：应为 JSON 数组')
+      return
+    }
+    items = parsed as PricingRuleExportItem[]
+  } catch {
+    message.error('文件解析失败：不是合法 JSON')
+    return
+  }
+  // 客户端预检：按 (providerId+model+kind+hasReference) 比对本地 pricingRules，估 created/updated
+  const existingKeys = new Set(pricingRules.value.map(r => `${r.providerId}\u0000${r.model}\u0000${r.kind}\u0000${r.hasReference ? 1 : 0}`))
+  let estCreated = 0
+  let estUpdated = 0
+  for (const it of items) {
+    const key = `${it.providerId}\u0000${it.model}\u0000${it.kind}\u0000${it.hasReference ? 1 : 0}`
+    if (existingKeys.has(key)) estUpdated++
+    else estCreated++
+  }
+  dialog.warning({
+    title: '确认导入',
+    content: `将导入 ${items.length} 行（预计新增 ${estCreated} / 更新 ${estUpdated}）。存在的同名行价格会被覆盖。是否继续？`,
+    positiveText: '导入',
+    negativeText: '取消',
+    onPositiveClick: () => doImport(items)
+  })
+}
+
+async function doImport(items: PricingRuleExportItem[]) {
+  importing.value = true
+  try {
+    const resp = await billingApi.importPricingRules(items)
+    const result = resp.data.data
+    if (result.failed > 0) {
+      message.warning(`导入完成：新增 ${result.created} / 更新 ${result.updated} / 失败 ${result.failed}`)
+      console.warn('价表导入失败行：', result.errors)
+    } else {
+      message.success(`导入完成：新增 ${result.created} / 更新 ${result.updated}`)
+    }
+    await load()
+  } catch {
+    /* 拦截器已 toast */
+  } finally {
+    importing.value = false
   }
 }
 

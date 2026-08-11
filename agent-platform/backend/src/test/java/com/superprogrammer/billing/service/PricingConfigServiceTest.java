@@ -299,6 +299,114 @@ class PricingConfigServiceTest {
                 .hasMessageContaining("hasReference");
     }
 
+    // ---------------- 7x-2：导出 / 模板 / 导入 ----------------
+
+    @Test
+    void exportAll_mapsAllFields() {
+        PricingRuleEntity e = new PricingRuleEntity();
+        e.setKind(PricingRuleEntity.KIND_VIDEO);
+        e.setProviderId(4L);
+        e.setModel("seedance");
+        e.setHasReference(true);
+        e.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        e.setPriceInputPerMillion(new BigDecimal("10"));
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(e));
+
+        var items = service.exportAll();
+        org.assertj.core.api.Assertions.assertThat(items).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(items.get(0).getHasReference()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(items.get(0).getKind()).isEqualTo(PricingRuleEntity.KIND_VIDEO);
+        org.assertj.core.api.Assertions.assertThat(items.get(0).getPriceInputPerMillion())
+                .isEqualByComparingTo("10");
+    }
+
+    @Test
+    void generateTemplate_excludesConfiguredModels() {
+        // 模板只含未配置模型（复用 availablePricingModels 过滤）
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(1L, "聊天", "CHAT", "chat-model"),
+                provider(3L, "图片", "IMAGE", "image-model")));
+        PricingRuleEntity configured = new PricingRuleEntity();
+        configured.setProviderId(1L);
+        configured.setModel("chat-model");
+        configured.setKind(PricingRuleEntity.KIND_CHAT);
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(configured));
+
+        var template = service.generateTemplate();
+        // chat-model 已配置 → 模板只剩 image-model
+        org.assertj.core.api.Assertions.assertThat(template)
+                .extracting("model")
+                .containsExactly("image-model");
+    }
+
+    @Test
+    void importAll_overLimit_throws() {
+        // 超 200 行抛 BAD_REQUEST
+        java.util.List<com.superprogrammer.billing.dto.PricingRuleExportItem> items = new java.util.ArrayList<>();
+        for (int i = 0; i < 201; i++) {
+            com.superprogrammer.billing.dto.PricingRuleExportItem it = new com.superprogrammer.billing.dto.PricingRuleExportItem();
+            it.setModel("m" + i);
+            items.add(it);
+        }
+        assertThatThrownBy(() -> service.importAll(items))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("200");
+    }
+
+    @Test
+    void importAll_invalidProvider_skippedToFailed() {
+        // provider 不存在 → incFailed，不中断整体（无其他行时 created=0/failed=1）
+        com.superprogrammer.billing.dto.PricingRuleExportItem item = new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_CHAT);
+        item.setProviderId(999L);
+        item.setModel("ghost");
+        item.setPriceInputPerMillion(new BigDecimal("1"));
+        when(llmProviderMapper.selectById(999L)).thenReturn(null);
+
+        var result = service.importAll(List.of(item));
+        org.assertj.core.api.Assertions.assertThat(result.getFailed()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(result.getCreated()).isZero();
+        org.assertj.core.api.Assertions.assertThat(result.getErrors()).hasSize(1);
+    }
+
+    @Test
+    void importAll_newRow_inserts() {
+        com.superprogrammer.billing.dto.PricingRuleExportItem item = new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_CHAT);
+        item.setProviderId(1L);
+        item.setModel("chat-model");
+        item.setPriceInputPerMillion(new BigDecimal("2"));
+        item.setPriceOutputPerMillion(new BigDecimal("3"));
+        when(llmProviderMapper.selectById(1L)).thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(0L);
+
+        var result = service.importAll(List.of(item));
+        org.assertj.core.api.Assertions.assertThat(result.getCreated()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(result.getUpdated()).isZero();
+    }
+
+    @Test
+    void importAll_existingRow_upsertsPrice() {
+        // 已配置 → 覆盖价格（updated++）
+        com.superprogrammer.billing.dto.PricingRuleExportItem item = new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_CHAT);
+        item.setProviderId(1L);
+        item.setModel("chat-model");
+        item.setPriceInputPerMillion(new BigDecimal("5"));
+        when(llmProviderMapper.selectById(1L)).thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
+        PricingRuleEntity existing = new PricingRuleEntity();
+        existing.setId(10L);
+        existing.setKind(PricingRuleEntity.KIND_CHAT);
+        existing.setProviderId(1L);
+        existing.setModel("chat-model");
+        when(pricingRuleMapper.findEffective("CHAT", 1L, "chat-model", false)).thenReturn(existing);
+
+        var result = service.importAll(List.of(item));
+        org.assertj.core.api.Assertions.assertThat(result.getUpdated()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(result.getCreated()).isZero();
+    }
+
     @Test
     void availablePricingModels_normalizesModelsAndSkipsUnusableProviders() {
         // AC-F20-01：模型 trim+去重；停用、未知类别、坏 JSON 均不进入候选。

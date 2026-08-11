@@ -66,6 +66,30 @@ export interface RatioTierVO {
   effectiveFrom: string
 }
 
+/** 7x-2：价表导出/导入行（镜像后端 PricingRuleExportItem） */
+export interface PricingRuleExportItem {
+  kind: BillingKind
+  providerId: number
+  /** 仅模板/可读性用，导入时忽略 */
+  providerName?: string
+  model: string
+  /** 仅 VIDEO 有意义；true=带参考视频价，false=无参考/兜底 */
+  hasReference?: boolean | null
+  priceInputPerMillion?: number | null
+  priceOutputPerMillion?: number | null
+  videoBillingMode?: VideoBillingMode | null
+  pricePerSecond?: number | null
+  pricePerImage?: number | null
+}
+
+/** 7x-2：价表批量导入结果 */
+export interface PricingImportResult {
+  created: number
+  updated: number
+  failed: number
+  errors: string[]
+}
+
 export interface RatioTierRequest {
   minAmount: number
   maxAmount?: number | null
@@ -174,6 +198,18 @@ export const billingApi = {
   },
   updatePricingRule(id: number, data: PricingRuleRequest) {
     return request.put<ApiResponse<PricingRuleVO>>(`/billing/pricing/${id}`, data)
+  },
+  // 7x-2：导出当前全量价表（blob 触发下载）
+  exportPricingRules() {
+    return request.get<Blob>('/billing/pricing/export', { responseType: 'blob' })
+  },
+  // 7x-2：下载填充模板（联动全局供应商未配置模型）
+  downloadPricingTemplate() {
+    return request.get<Blob>('/billing/pricing/template', { responseType: 'blob' })
+  },
+  // 7x-2：批量导入价表（upsert，返 created/updated/failed）
+  importPricingRules(items: PricingRuleExportItem[]) {
+    return request.post<ApiResponse<PricingImportResult>>('/billing/pricing/import', items)
   },
   // 阶梯比例
   listRatioTiers() {
