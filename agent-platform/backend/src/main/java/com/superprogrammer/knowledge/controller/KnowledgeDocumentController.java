@@ -41,6 +41,7 @@ public class KnowledgeDocumentController {
     /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。
      *  docType/indexMode/manualIndexText/visionModel 为图片/文件知识库扩展（空=后端按后缀推断 + AUTO 默认）。 */
     @PostMapping("/upload")
+    @AuditLog(module = "kb", action = "document_upload", targetType = "document")
     @RequirePermission("knowledge:write")
     public ResponseEntity<R<KnowledgeDocumentVO>> upload(
             @RequestParam("kbId") Long kbId,

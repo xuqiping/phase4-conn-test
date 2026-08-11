@@ -10,6 +10,7 @@ import com.superprogrammer.chat.service.ChatSessionService;
 import com.superprogrammer.chat.service.ChatTargetService;
 import com.superprogrammer.chat.service.internal.MemoryAssetIngestService;
 import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +39,7 @@ public class ChatController {
 
     /** 聊天附件上传（V69 二期 P3，FR-201）：落盘 stored_files(CHAT) + 建文件记忆行（PROCESSING）。 */
     @PostMapping("/attachments")
+    @AuditLog(module = "chat", action = "upload_attachment")
     public ResponseEntity<R<MemoryAssetUploadVO>> uploadAttachment(@RequestParam("file") MultipartFile file) {
         Long userId = getCurrentUserId();
         return ResponseEntity.ok(R.ok(memoryAssetUploadService.upload(file, userId)));

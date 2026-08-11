@@ -4,6 +4,7 @@ import com.superprogrammer.asset.dto.MediaImportRequest;
 import com.superprogrammer.asset.dto.MediaImportVO;
 import com.superprogrammer.asset.service.AssetMediaBridgeService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,7 @@ public class AssetMediaBridgeController {
 
     /** 生图结果入库（生成→库）。requireWrite（viewer 不可入库）。 */
     @PostMapping("/from-media")
+    @AuditLog(module = "asset", action = "save_to_library", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<MediaImportVO>> importFromMedia(@RequestBody MediaImportRequest req) {
         return ResponseEntity.ok(R.ok("已处理",

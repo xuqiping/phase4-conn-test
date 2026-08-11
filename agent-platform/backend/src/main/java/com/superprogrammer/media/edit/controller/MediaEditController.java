@@ -1,6 +1,7 @@
 package com.superprogrammer.media.edit.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
@@ -91,6 +92,7 @@ public class MediaEditController {
     }
 
     @GetMapping("/tasks/{id}/download")
+    @AuditLog(module = "media", action = "download_edit_video", targetType = "media_edit_task")
     @RequirePermission("media:edit")
     public ResponseEntity<Resource> download(@PathVariable Long id) {
         Long userId = getCurrentUserId();

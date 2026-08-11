@@ -1,6 +1,7 @@
 package com.superprogrammer.media.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
@@ -136,6 +137,7 @@ public class MediaGenController {
     }
 
     @GetMapping("/tasks/{id}/download")
+    @AuditLog(module = "media", action = "download_video", targetType = "media_gen_task")
     @RequirePermission("media:gen")
     public ResponseEntity<Resource> download(@PathVariable Long id) {
         Long userId = getCurrentUserId();
@@ -149,6 +151,7 @@ public class MediaGenController {
      * 归属门控 + Content-Disposition 附件（同视频 download，防 inline 执行）。
      */
     @GetMapping("/tasks/{id}/images/{idx}/download")
+    @AuditLog(module = "media", action = "download_image", targetType = "media_gen_task")
     @RequirePermission("media:gen")
     public ResponseEntity<Resource> downloadImage(@PathVariable Long id, @PathVariable int idx) {
         Long userId = getCurrentUserId();

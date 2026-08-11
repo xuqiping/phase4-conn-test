@@ -1,5 +1,6 @@
 package com.superprogrammer.file.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileSecurityPolicy;
@@ -29,6 +30,7 @@ public class FileController {
     private final FileStorageService fileStorageService;
 
     @PostMapping("/upload")
+    @AuditLog(module = "system", action = "upload_file", targetType = "file")
     public ResponseEntity<R<StoredFile>> upload(@RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(R.ok(fileStorageService.store(
                 file, getCurrentUserId(), StoredFileEntity.SOURCE_WORKFLOW)));

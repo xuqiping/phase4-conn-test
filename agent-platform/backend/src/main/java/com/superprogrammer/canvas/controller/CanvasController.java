@@ -18,6 +18,7 @@ import com.superprogrammer.canvas.entity.Canvas;
 import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
 import com.superprogrammer.canvas.service.VideoFrameService;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
@@ -139,6 +140,7 @@ public class CanvasController {
      * 衍生/生图不覆盖原图：每次上传产新 fileId（plan R-5 只存引用不嵌 base64）。
      */
     @PostMapping("/{id}/upload")
+    @AuditLog(module = "canvas", action = "canvas_upload")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<StoredFile>> upload(@PathVariable Long id,
                                                 @RequestParam("file") MultipartFile file) {
