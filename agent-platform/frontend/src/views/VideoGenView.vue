@@ -126,11 +126,14 @@
             </n-form-item>
 
             <!-- 参考视频（F1 统一瓦片） -->
-            <n-form-item v-if="capability.maxVideos > 0 && capability.referenceVideoEnabled">
+            <n-form-item v-if="capability.maxVideos > 0">
               <template #label>
                 参考视频
                 <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
               </template>
+              <n-alert v-if="!referenceVideoUsable" type="warning" :show-icon="false" style="margin-bottom: 10px">
+                当前环境未开放参考视频：需要配置 Ark 可访问的公网 HTTPS 地址和签名密钥后才能上传或从资产库选择。
+              </n-alert>
               <div class="video-gen__tiles">
                 <div v-for="(a, i) in videos" :key="a.id" class="video-gen__tile">
                   <span class="video-gen__tile-idx">视频{{ i + 1 }}</span>
@@ -323,6 +326,7 @@
             :data="history"
             :loading="loadingHistory"
             size="small"
+            :scroll-x="1080"
             :pagination="{ pageSize: 8 }"
             :max-height="320"
             striped
@@ -505,6 +509,9 @@ const uploadingCount = ref(0)
 /** F2 首尾帧已占名额（0/1/2）—— 参考图可用槽 = maxImages - frameCount。 */
 const frameCount = computed(() => (firstFrame.value ? 1 : 0) + (lastFrame.value ? 1 : 0))
 const referenceMediaCount = computed(() => images.value.length + videos.value.length + audios.value.length)
+const referenceVideoUsable = computed(() => Boolean(
+  capability.value && capability.value.maxVideos > 0 && capability.value.referenceVideoEnabled
+))
 
 function modeAllows(target: VideoAttachmentTarget, notify = false) {
   const allowed = canAddVideoAttachment(target, {
@@ -607,7 +614,9 @@ const ASSET_MEDIATYPE: Record<AttachmentKind, string> = {
 /** 参考图可用槽 = maxImages - 已用参考图 - 首尾帧已占名额。 */
 const imageSlotsLeft = computed(() => (capability.value?.maxImages ?? 0) - images.value.length - frameCount.value)
 const referenceImageSlotsLeft = computed(() => frameCount.value > 0 ? 0 : imageSlotsLeft.value)
-const videoSlotsLeft = computed(() => frameCount.value > 0 ? 0 : (capability.value?.maxVideos ?? 0) - videos.value.length)
+const videoSlotsLeft = computed(() => !referenceVideoUsable.value || frameCount.value > 0
+  ? 0
+  : (capability.value?.maxVideos ?? 0) - videos.value.length)
 const audioSlotsLeft = computed(() => frameCount.value > 0 ? 0 : (capability.value?.maxAudios ?? 0) - audios.value.length)
 
 function openAssetPicker(target: PickerTarget) {
@@ -991,9 +1000,9 @@ function clearHistoryFilters() {
 watch([historyQuery, historyTimeRange], scheduleHistoryLoad)
 
 const historyColumns: DataTableColumns<MediaTaskVO> = [
-  { title: 'ID', key: 'id', width: 60 },
+  { title: 'ID', key: 'id', width: 60, fixed: 'left' },
   {
-    title: '提示词', key: 'prompt', ellipsis: { tooltip: true },
+    title: '提示词', key: 'prompt', width: 260, fixed: 'left', ellipsis: { tooltip: true },
     render: r => r.prompt || '-'
   },
   {

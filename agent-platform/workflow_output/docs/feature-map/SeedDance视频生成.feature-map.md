@@ -7,6 +7,8 @@
 > **v3（2026-08-11）**：历史服务端筛选/参数与附件恢复、历史和资产媒体懒预览、多次 `@`、非阻塞持续轮询，以及实际 Provider 请求脱敏快照。外部契约见 [媒体生成 API](../api/媒体生成.md)。
 >
 > **v4（2026-08-11）**：Ark 参考视频改为短期 HMAC 签名 HTTPS URL；首/尾帧与全部参考媒体互斥；签名 URL 在 Provider 快照中整体脱敏。
+>
+> **v5（2026-08-11）**：未配置公网参考视频通道时入口不再消失，改为可见禁用态并提示部署条件；历史提示词列固定在左侧，窄栏下仍保持可见。
 
 ## 后端 `media/` 包（com.superprogrammer.media）
 
@@ -56,7 +58,7 @@
 | `components/asset/AssetPickerMediaPreview.vue` | 资产选择器图片/视频懒预览，失败降级文字 |
 | `components/canvas/MentionTextarea.vue` | chip 按内部 token 长度计算光标，可连续多次 `@` |
 | `utils/mediaTaskPolling.ts` | 画布媒体无限、可取消轮询策略 |
-| `views/VideoGenView.vue` | 动态表单 + 历史筛选/视频预览/参数恢复/请求参数入口；下线模型只读警告，失权附件禁止重提 |
+| `views/VideoGenView.vue` | 动态表单 + 历史筛选/视频预览/参数恢复/请求参数入口；参考视频未配置时可见但禁用；历史提示词列固定可见；下线模型只读警告，失权附件禁止重提 |
 | `router/index.ts` | 注册 `/video-gen` 路由（meta 仅 requiresAuth） |
 | `components/Sidebar.vue` | 菜单项 `v-if="canGenVideo"`（hasPermission('media:gen')） |
 
@@ -98,4 +100,4 @@
 - **模型从哪来**：`llm_providers` 表 category=`VIDEO` 的 ACTIVE provider，其 `models` JSON 数组即可选模型；加新模型/新厂商 = 「全局模型供应商」页加/改一条 VIDEO provider，零代码。
 - **能力怎么配**：内置前缀默认（`MediaModelCapabilityService`）；需微调时在 provider 的 `config` JSON 写
   `{"capabilities":{"doubao-seedance-2-0-260128":{"maxVideos":3,"maxAudios":3,"maxImages":9,"maxAttachments":12,"videoDataUri":true}}}`（只覆盖出现的字段）。
-- **参考视频部署开关**：Ark 已确认拒绝视频 data URI。模型 `maxVideos>0` 且 `MEDIA_REFERENCE_PUBLIC_BASE_URL` 为公网 HTTPS、`MEDIA_REFERENCE_SIGNING_KEY` 长度至少 32 时，模型目录才返回 `referenceVideoEnabled=true`；否则前端隐藏参考视频入口，后端 fail-closed。
+- **参考视频部署开关**：Ark 已确认拒绝视频 data URI。模型 `maxVideos>0` 且 `MEDIA_REFERENCE_PUBLIC_BASE_URL` 为公网 HTTPS、`MEDIA_REFERENCE_SIGNING_KEY` 长度至少 32 时，模型目录才返回 `referenceVideoEnabled=true`；否则前端保留入口但禁用上传/资产库选择并显示配置提示，后端继续 fail-closed。
