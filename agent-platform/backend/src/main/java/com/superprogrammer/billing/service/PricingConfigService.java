@@ -73,9 +73,15 @@ public class PricingConfigService {
                 // 兼容 V66 历史全局价：其同名模型对所有供应商都已配置。
                 configuredGlobalModels.add(rule.getModel().trim());
             } else {
-                configured.add(pricingIdentity(rule.getProviderId(), rule.getModel()));
+                // 7x-3：VIDEO 的 has_reference=true/false 视为不同配置行——
+                // 一个 VIDEO 模型只配了 false 不应阻止 admin 再配 true，故候选身份带 has_reference 维度。
+                // 非 VIDEO 行 has_reference 恒 false，身份退化为原 provider+model（行为不变）。
+                configured.add(pricingIdentity(rule.getProviderId(), rule.getModel(),
+                        PricingRuleEntity.KIND_VIDEO.equals(rule.getKind())
+                                && Boolean.TRUE.equals(rule.getHasReference())));
             }
         }
+        // 候选恒按 has_reference=false 出（VIDEO 单行候选），admin 通过表单开关新增 true 变体行
         return llmProviderMapper.selectList(new LambdaQueryWrapper<LlmProviderEntity>()
                         .eq(LlmProviderEntity::getStatus, "ACTIVE"))
                 .stream()
@@ -83,7 +89,7 @@ public class PricingConfigService {
                 .flatMap(provider -> toAvailableModels(provider))
                 .filter(candidate -> !configuredGlobalModels.contains(candidate.getModel())
                         && !configured.contains(
-                                pricingIdentity(candidate.getProviderId(), candidate.getModel())))
+                                pricingIdentity(candidate.getProviderId(), candidate.getModel(), false)))
                 .sorted(Comparator.comparing(AvailablePricingModelVO::getProviderName)
                         .thenComparing(AvailablePricingModelVO::getModel))
                 .toList();
@@ -106,8 +112,8 @@ public class PricingConfigService {
                         .build());
     }
 
-    private String pricingIdentity(Long providerId, String model) {
-        return providerId + "\u0000" + model.trim();
+    private String pricingIdentity(Long providerId, String model, boolean hasReference) {
+        return providerId + "\u0000" + model.trim() + "\u0000" + (hasReference ? "1" : "0");
     }
 
     private List<String> parseProviderModels(LlmProviderEntity provider) {
@@ -161,10 +167,10 @@ public class PricingConfigService {
         if (expectedKind == null || !expectedKind.equals(req.getKind())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 与全局供应商类别不匹配");
         }
-        long duplicateCount = pricingRuleMapper.countConflictingProviderModel(
-                req.getProviderId(), req.getModel().trim());
+        long duplicateCount = pricingRuleMapper.countConflictingProviderModelHasRef(
+                req.getProviderId(), req.getModel().trim(), effectiveHasReference(req));
         if (duplicateCount > 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "该全局模型已配置价表");
+            throw new BusinessException(ErrorCode.CONFLICT, "该全局模型已配置价表（相同参考视频维度）");
         }
         PricingRuleEntity e = new PricingRuleEntity();
         applyRequest(req, e);
@@ -182,8 +188,10 @@ public class PricingConfigService {
         }
         if (!Objects.equals(e.getProviderId(), req.getProviderId())
                 || !Objects.equals(e.getModel(), req.getModel().trim())
-                || !Objects.equals(e.getKind(), req.getKind())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "编辑时不可修改 provider/model/kind");
+                || !Objects.equals(e.getKind(), req.getKind())
+                || !Objects.equals(e.getHasReference(), effectiveHasReference(req))) {
+            // 7x-3：has_reference 视为身份的一部分（VIDEO 不同参考维度是不同行），编辑不可改
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "编辑时不可修改 provider/model/kind/hasReference");
         }
         applyRequest(req, e);
         pricingRuleMapper.updateById(e);
@@ -214,6 +222,18 @@ public class PricingConfigService {
                 && (req.getPricePerImage() == null || req.getPricePerImage().signum() < 0)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "IMAGE 须配 pricePerImage");
         }
+        // 7x-3：非 VIDEO 强制 has_reference=false（true 仅对 VIDEO 有意义）
+        if (!PricingRuleEntity.KIND_VIDEO.equals(req.getKind()) && Boolean.TRUE.equals(req.getHasReference())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "hasReference=true 仅对 VIDEO kind 有效");
+        }
+    }
+
+    /** has_reference 归一化为 boolean：null 视为 false；非 VIDEO 恒 false。 */
+    private boolean effectiveHasReference(PricingRuleRequest req) {
+        if (!PricingRuleEntity.KIND_VIDEO.equals(req.getKind())) {
+            return false;
+        }
+        return Boolean.TRUE.equals(req.getHasReference());
     }
 
     private void applyRequest(PricingRuleRequest req, PricingRuleEntity e) {
@@ -225,6 +245,7 @@ public class PricingConfigService {
         e.setVideoBillingMode(req.getVideoBillingMode());
         e.setPricePerSecond(req.getPricePerSecond());
         e.setPricePerImage(req.getPricePerImage());
+        e.setHasReference(effectiveHasReference(req));
         e.setEffectiveFrom(req.getEffectiveFrom() != null ? req.getEffectiveFrom() : OffsetDateTime.now());
     }
 
@@ -236,6 +257,7 @@ public class PricingConfigService {
                 .videoBillingMode(e.getVideoBillingMode())
                 .pricePerSecond(e.getPricePerSecond())
                 .pricePerImage(e.getPricePerImage())
+                .hasReference(e.getHasReference() != null && e.getHasReference())
                 .effectiveFrom(e.getEffectiveFrom())
                 .build();
     }

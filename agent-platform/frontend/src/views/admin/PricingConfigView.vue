@@ -61,10 +61,14 @@
             <n-input v-model:value="pricingForm.model" disabled />
           </n-form-item>
         </template>
-        <n-form-item label="输入价 ¥/百万"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
-        <n-form-item label="输出价 ¥/百万"><n-input-number v-model:value="pricingForm.priceOutputPerMillion" :precision="6" /></n-form-item>
+        <n-form-item label="输入价 ¥/百万" v-if="pricingForm.kind === 'CHAT' || pricingForm.kind === 'EMBED'"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
+        <n-form-item label="输出价 ¥/百万" v-if="pricingForm.kind === 'CHAT'"><n-input-number v-model:value="pricingForm.priceOutputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="视频计费模式" v-if="pricingForm.kind === 'VIDEO'">
           <n-select v-model:value="pricingForm.videoBillingMode" :options="modeOptions" />
+        </n-form-item>
+        <n-form-item label="是否含参考视频" v-if="pricingForm.kind === 'VIDEO'">
+          <n-switch v-model:value="pricingForm.hasReference" />
+          <span class="pricing-config__hint" style="margin-left: 8px">同一视频模型可分别配「无参考」和「有参考」两行价</span>
         </n-form-item>
         <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
@@ -123,8 +127,11 @@ const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '类型', key: 'kind', render: r => KIND_LABEL[r.kind] ?? r.kind },
   { title: 'providerId', key: 'providerId', render: r => r.providerId == null ? '全局' : String(r.providerId) },
   { title: 'model', key: 'model', render: r => r.model ?? '—' },
-  { title: '输入价', key: 'priceInputPerMillion', render: r => fmt(r.priceInputPerMillion) },
-  { title: '输出价', key: 'priceOutputPerMillion', render: r => fmt(r.priceOutputPerMillion) },
+  { title: '参考视频', key: 'hasReference', render: r => r.kind === 'VIDEO' ? (r.hasReference ? '有参考' : '无参考') : '—' },
+  { title: '输入价 ¥/百万', key: 'priceInputPerMillion', render: r => fmt(r.priceInputPerMillion) },
+  { title: '输出价 ¥/百万', key: 'priceOutputPerMillion', render: r => fmt(r.priceOutputPerMillion) },
+  { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => fmt(r.pricePerSecond) },
+  { title: '图片单价 ¥', key: 'pricePerImage', render: r => fmt(r.pricePerImage) },
   { title: '生效时间', key: 'effectiveFrom', render: r => new Date(r.effectiveFrom).toLocaleString('zh-CN', { hour12: false }) },
   { title: '操作', key: 'op', render: r => h(NButton, { size: 'small', text: true, type: 'primary', onClick: () => openPricingModal(r) }, { default: () => '编辑' }) }
 ]
@@ -154,7 +161,7 @@ function fmt(n: number | null | undefined): string {
 // 价表表单
 const pricingShow = ref(false)
 const pricingEditId = ref<number | null>(null)
-const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null })
+const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false })
 const availableModels = ref<AvailablePricingModelVO[]>([])
 const candidateLoading = ref(false)
 const candidateError = ref('')
@@ -196,15 +203,41 @@ async function openPricingModal(rule?: PricingRuleVO) {
     Object.assign(pricingForm, {
       kind: rule.kind, providerId: rule.providerId, model: rule.model,
       priceInputPerMillion: rule.priceInputPerMillion, priceOutputPerMillion: rule.priceOutputPerMillion,
-      videoBillingMode: rule.videoBillingMode ?? 'TOKEN', pricePerSecond: rule.pricePerSecond, pricePerImage: rule.pricePerImage
+      videoBillingMode: rule.videoBillingMode ?? 'TOKEN', pricePerSecond: rule.pricePerSecond, pricePerImage: rule.pricePerImage,
+      hasReference: rule.hasReference ?? false
     })
   } else {
     pricingEditId.value = null
     selectedCandidateKey.value = null
-    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null })
+    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false })
   }
   pricingShow.value = true
   if (!rule) await loadAvailableModels()
+}
+
+/**
+ * 按 kind 归一化价表 payload：与本 kind 无关的字段一律清空，避免泄漏默认值污染存量行
+ * （7x-1 修复：非 VIDEO 行不应写 videoBillingMode='TOKEN'；非 IMAGE 不应写 pricePerImage 等）。
+ */
+function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
+  const out: PricingRuleRequest = { ...form }
+  const k = out.kind
+  // 非文本/embed：清掉 token 价
+  if (k !== 'CHAT' && k !== 'EMBED') {
+    out.priceInputPerMillion = null
+    out.priceOutputPerMillion = null
+  }
+  // 非图片：清掉按张价
+  if (k !== 'IMAGE') out.pricePerImage = null
+  // 非视频：清掉视频专属字段，has_reference 强制 false
+  if (k !== 'VIDEO') {
+    out.videoBillingMode = null
+    out.pricePerSecond = null
+    out.hasReference = false
+  } else {
+    out.hasReference = out.hasReference === true
+  }
+  return out
 }
 
 async function savePricing() {
@@ -214,10 +247,11 @@ async function savePricing() {
   }
   saving.value = true
   try {
+    const payload = sanitizePricingPayload(pricingForm)
     if (pricingEditId.value == null) {
-      await billingApi.createPricingRule({ ...pricingForm })
+      await billingApi.createPricingRule(payload)
     } else {
-      await billingApi.updatePricingRule(pricingEditId.value, { ...pricingForm })
+      await billingApi.updatePricingRule(pricingEditId.value, payload)
     }
     message.success('价表已保存')
     pricingShow.value = false

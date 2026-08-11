@@ -45,14 +45,37 @@ public class PricingService {
      * @param videoSeconds  视频秒数（VIDEO SECOND 模式用）
      * @param imageCount    图片张数（IMAGE 用）
      * @return 真实金额 ¥（6 位小数，对齐 cost_yuan NUMERIC(12,6)）
+     * @deprecated 使用 {@link #computeCost(String, Long, String, Integer, Integer, Integer, Integer, boolean)}
+     *             显式传 hasReference。本重载恒按无参考计价，仅向后兼容旧调用点。
      */
+    @Deprecated
     public BigDecimal computeCost(String kind, Long providerId, String model,
                                   Integer tokensInput, Integer tokensOutput,
                                   Integer videoSeconds, Integer imageCount) {
-        PricingRuleEntity rule = pricingRuleMapper.findEffective(kind, providerId, model);
+        return computeCost(kind, providerId, model, tokensInput, tokensOutput,
+                videoSeconds, imageCount, false);
+    }
+
+    /**
+     * 计算单次调用真实金额（¥），VIDEO 支持按 hasReference 区分参考视频价。
+     *
+     * @param hasReference  VIDEO 任务是否带参考视频（其他 kind 忽略，恒按 false 查）。
+     *                      VIDEO 查不到精确行时回退 false 行（兜底），再查不到抛 PRICING_NOT_FOUND。
+     */
+    public BigDecimal computeCost(String kind, Long providerId, String model,
+                                  Integer tokensInput, Integer tokensOutput,
+                                  Integer videoSeconds, Integer imageCount,
+                                  boolean hasReference) {
+        boolean effectiveHasRef = PricingRuleEntity.KIND_VIDEO.equals(kind) && hasReference;
+        PricingRuleEntity rule = pricingRuleMapper.findEffective(kind, providerId, model, effectiveHasRef);
+        // 7x-3 fallback：VIDEO 精确查不到（如只配了 false 行却来了个 true 任务）→ 回退 false 行兜底
+        if (rule == null && effectiveHasRef) {
+            rule = pricingRuleMapper.findEffective(kind, providerId, model, false);
+        }
         if (rule == null) {
             throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
-                    "未配置价表: kind=" + kind + " providerId=" + providerId + " model=" + model);
+                    "未配置价表: kind=" + kind + " providerId=" + providerId
+                            + " model=" + model + " hasReference=" + hasReference);
         }
         return switch (kind) {
             case PricingRuleEntity.KIND_CHAT ->

@@ -47,5 +47,11 @@ public class PricingRuleEntity {
 
     private BigDecimal pricePerImage;
 
+    /**
+     * 7x-3（V95）：仅 VIDEO 有意义。TRUE=带参考视频任务的价；FALSE=无参考（或作为兜底）。
+     * CHAT/EMBED/IMAGE 始终 FALSE。NOT NULL DEFAULT FALSE 保证旧行兼容。
+     */
+    private Boolean hasReference;
+
     private OffsetDateTime effectiveFrom;
 }

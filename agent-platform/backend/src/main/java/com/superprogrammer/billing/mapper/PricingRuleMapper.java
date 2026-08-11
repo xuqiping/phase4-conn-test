@@ -26,19 +26,44 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
                                        @Param("model") String model);
 
     /**
-     * 询价取生效价表。
-     * <p>命中策略：(kind+model+effective&lt;=now) AND (provider_id=给定 OR 全局)，
+     * 7x-3：判重带 has_reference 维度。VIDEO 同模型可合法配两行（false+true 不冲突）；
+     * 其他 kind 一律按 false 查（无重复）。历史全局价（provider_id IS NULL）仍视为占用。
+     */
+    @Select("""
+            SELECT COUNT(*) FROM pricing_rule
+            WHERE model = #{model}
+              AND (provider_id = #{providerId} OR provider_id IS NULL)
+              AND has_reference = #{hasReference}
+            """)
+    long countConflictingProviderModelHasRef(@Param("providerId") Long providerId,
+                                             @Param("model") String model,
+                                             @Param("hasReference") boolean hasReference);
+
+    /**
+     * 询价取生效价表（含 has_reference 精确匹配）。
+     * <p>命中策略：(kind+model+has_reference+effective&lt;=now) AND (provider_id=给定 OR 全局)，
      * <code>ORDER BY (provider_id IS NULL) ASC</code> 让 provider 专属价（非空）排前，
      * 再按 effective_from DESC 取最新。providerId 传 null 时只命中全局价。
-     * <p>providerId = NULL 的分支：<code>provider_id = #{providerId}</code> 在 SQL 里恒假
-     * （NULL=NULL），自动落到 <code>provider_id IS NULL</code> 全局行。
+     * <p>fallback 到 false 行（无参考/兜底）由 {@link
+     * com.superprogrammer.billing.service.PricingService#computeCost} 编排，本 SQL 只做精确匹配。
      */
     @Select("SELECT * FROM pricing_rule "
             + "WHERE kind = #{kind} AND model = #{model} AND effective_from <= NOW() "
             + "AND (provider_id = #{providerId} OR provider_id IS NULL) "
+            + "AND has_reference = #{hasReference} "
             + "ORDER BY (provider_id IS NULL) ASC, effective_from DESC "
             + "LIMIT 1")
     PricingRuleEntity findEffective(@Param("kind") String kind,
                                     @Param("providerId") Long providerId,
-                                    @Param("model") String model);
+                                    @Param("model") String model,
+                                    @Param("hasReference") boolean hasReference);
+
+    /**
+     * 兼容旧调用方（无 has_reference）：恒按 false 查。
+     * @deprecated 使用 {@link #findEffective(String, Long, String, boolean)}。
+     */
+    @Deprecated
+    default PricingRuleEntity findEffective(String kind, Long providerId, String model) {
+        return findEffective(kind, providerId, model, false);
+    }
 }

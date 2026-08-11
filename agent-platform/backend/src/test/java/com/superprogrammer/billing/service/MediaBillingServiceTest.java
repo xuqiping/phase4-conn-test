@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -45,7 +46,7 @@ class MediaBillingServiceTest {
     void chargeMedia_happy_chargesAndRecords() {
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_VIDEO), eq(7L), eq("seedance"),
-                eq(200000), eq(null), eq(5), eq(0))).thenReturn(new BigDecimal("0.500000"));
+                eq(200000), eq(null), eq(5), eq(0), anyBoolean())).thenReturn(new BigDecimal("0.500000"));
         when(ratioService.toPoints(new BigDecimal("0.500000"))).thenReturn(new BigDecimal("50"));
 
         BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
@@ -69,7 +70,7 @@ class MediaBillingServiceTest {
 
         assertNull(charged);
         verify(pricingService, never()).computeCost(anyString(), anyLong(), anyString(),
-                anyInt(), any(), anyInt(), anyInt());
+                anyInt(), any(), anyInt(), anyInt(), anyBoolean());
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
         verify(usageCollector, never()).record(anyLong(), anyLong(), anyString(), anyString(), anyString(),
                 anyInt(), any(), any(), any(), anyString(), any());
@@ -80,7 +81,7 @@ class MediaBillingServiceTest {
         // 价表缺（PRICING_NOT_FOUND）：视频已生成不可逆→记 FAILED usage 供 admin 排障，不抛、不扣
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(anyString(), anyLong(), anyString(),
-                anyInt(), any(), anyInt(), anyInt()))
+                anyInt(), any(), anyInt(), anyInt(), anyBoolean()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
 
         BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
@@ -98,7 +99,7 @@ class MediaBillingServiceTest {
         // Chunk G：IMAGE 走 count 维度（price_per_image×count），kind=IMAGE，videoSeconds/imageCount 占位互换
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_IMAGE), eq(7L), eq("doubao-3-0"),
-                eq(null), eq(null), eq(null), eq(4))).thenReturn(new BigDecimal("0.800000"));
+                eq(null), eq(null), eq(null), eq(4), anyBoolean())).thenReturn(new BigDecimal("0.800000"));
         when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
 
         BigDecimal charged = service.chargeMedia(100L, 7L, "doubao-3-0", LlmUsageLogEntity.KIND_IMAGE,
@@ -111,6 +112,25 @@ class MediaBillingServiceTest {
                 eq(LlmUsageLogEntity.KIND_IMAGE), eq(null), eq(null),
                 eq(new BigDecimal("0.800000")), eq(new BigDecimal("80")),
                 eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null));
+    }
+
+    // ---------------- 7x-3：VIDEO has_reference 计费穿线 ----------------
+
+    @Test
+    void chargeMedia_videoWithReference_threadsHasReferenceToPricing() {
+        // 7x-3：带参考视频任务计费时，hasReference=true 必须透传到 PricingService（命中 true 价表行）
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_VIDEO), eq(7L), eq("seedance"),
+                eq(200000), eq(null), eq(5), eq(0), eq(true))).thenReturn(new BigDecimal("0.100000"));
+        when(ratioService.toPoints(new BigDecimal("0.100000"))).thenReturn(new BigDecimal("10"));
+
+        BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, true);
+
+        assertEquals(new BigDecimal("10"), charged);
+        // 关键断言：computeCost 收到的第 8 个参数是 true（hasReference 透传正确）
+        verify(pricingService).computeCost(eq(LlmUsageLogEntity.KIND_VIDEO), eq(7L), eq("seedance"),
+                eq(200000), eq(null), eq(5), eq(0), eq(true));
     }
 
     @Test

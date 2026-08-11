@@ -39,5 +39,11 @@ public class PricingRuleRequest {
     @DecimalMax(value = "100000000", message = "pricePerImage 超出上限")
     private BigDecimal pricePerImage;
 
+    /**
+     * 7x-3：视频任务「是否带参考视频」的定价维度。仅 VIDEO kind 有效（true=配带参考视频的价）；
+     * 非 VIDEO 强制 false（{@code PricingConfigService} 校验）。null 视为 false。
+     */
+    private Boolean hasReference;
+
     private OffsetDateTime effectiveFrom;
 }

@@ -170,7 +170,7 @@ class PricingConfigServiceTest {
         // AC-F20-01：供应商行锁内复查重复，防止并发穿透候选列表。
         when(llmProviderMapper.selectByIdForUpdate(1L))
                 .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModel(1L, "chat-model")).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
 
         assertThatThrownBy(() -> service.createPricingRule(
                 pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
@@ -246,12 +246,57 @@ class PricingConfigServiceTest {
     void createPricingRule_duplicateCheckIncludesGlobalRule() {
         when(llmProviderMapper.selectByIdForUpdate(1L))
                 .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModel(1L, "chat-model")).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
 
         assertThatThrownBy(() -> service.createPricingRule(
                 pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("已配置");
+    }
+
+    // ---------------- 7x-3：has_reference 视频参考定价 ----------------
+
+    @Test
+    void createPricingRule_videoHasReferenceTwoVariants_ok() {
+        // 7x-3：同一 VIDEO 模型可配 false 和 true 两行（不冲突），admin 分别定价。
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "seedance", true)).thenReturn(0L);
+
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setPriceInputPerMillion(new BigDecimal("10"));
+        req.setHasReference(true);
+        assertThatCode(() -> service.createPricingRule(req)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void createPricingRule_nonVideoWithHasReferenceTrue_throws() {
+        // 7x-3：非 VIDEO kind 不允许 hasReference=true（仅对视频参考有意义）。
+        PricingRuleRequest req = pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT);
+        req.setHasReference(true);
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("hasReference");
+    }
+
+    @Test
+    void updatePricingRule_changeHasReference_throws() {
+        // 7x-3：has_reference 视为身份一部分，编辑不可改（请新增另一变体行）。
+        PricingRuleEntity existing = new PricingRuleEntity();
+        existing.setId(8L);
+        existing.setProviderId(4L);
+        existing.setModel("seedance");
+        existing.setKind(PricingRuleEntity.KIND_VIDEO);
+        existing.setHasReference(false);
+        when(pricingRuleMapper.selectById(8L)).thenReturn(existing);
+
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setHasReference(true); // 改了 has_reference
+        assertThatThrownBy(() -> service.updatePricingRule(8L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("hasReference");
     }
 
     @Test

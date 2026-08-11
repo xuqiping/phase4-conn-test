@@ -37,6 +37,8 @@ export interface PricingRuleVO {
   videoBillingMode: VideoBillingMode | null
   pricePerSecond: number | null
   pricePerImage: number | null
+  /** 7x-3：VIDEO 行才有意义（true=有参考视频价），其他 kind 始终 false */
+  hasReference: boolean
   effectiveFrom: string
 }
 
@@ -50,6 +52,8 @@ export interface PricingRuleRequest {
   videoBillingMode?: VideoBillingMode | null
   pricePerSecond?: number | null
   pricePerImage?: number | null
+  /** 7x-3：视频任务「是否带参考视频」的定价维度（仅 VIDEO kind 有效，其他强制 false） */
+  hasReference?: boolean | null
   effectiveFrom?: string | null
 }
 

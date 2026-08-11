@@ -212,10 +212,12 @@ public class MediaGenTaskWorker {
         }
         Integer tokensCost = resolveUsage(result, request);
         String flag = result.getUsageTokens() != null ? MediaGenTask.FLAG_SUCCESS : MediaGenTask.FLAG_ESTIMATED;
+        // 7x-3：按是否带参考视频选价表行（kind=="video" 附件才算参考视频；首尾帧图 kind=="image" 不算）
+        boolean hasReference = hasReferenceVideo(request);
         // 计费扣减（返回实扣积分；null=未扣，disabled/系统调用/计费失败均吞不抛）
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
-                request.getDuration(), 0, usageStatus(flag), taskId);
+                request.getDuration(), 0, usageStatus(flag), taskId, hasReference);
         try {
             txService.markSucceeded(taskId, fileId, tokensCost, flag);
         } catch (RuntimeException e) {
@@ -300,6 +302,20 @@ public class MediaGenTaskWorker {
         } catch (Exception e) {
             throw new IllegalStateException("result_meta 序列化失败", e);
         }
+    }
+
+    /**
+     * 7x-3：判断本次视频生成是否带参考视频附件。
+     * <p>仅当 attachments 含 {@code kind=="video"} 时为 true。
+     * <b>不用 taskType 判断</b>（IMAGE2VIDEO 被重载用于 image/video/audio 参考，不可靠）；
+     * <b>首尾帧参考图（kind=="image"）不算参考视频</b>，定价与展示均不区分。
+     */
+    private boolean hasReferenceVideo(MediaGenRequest request) {
+        List<MediaGenRequest.ResolvedAttachment> attachments = request.getAttachments();
+        if (attachments == null || attachments.isEmpty()) {
+            return false;
+        }
+        return attachments.stream().anyMatch(a -> "video".equals(a.getKind()));
     }
 
     /**
