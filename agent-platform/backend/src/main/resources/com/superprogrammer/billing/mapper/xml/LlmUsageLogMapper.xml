@@ -8,12 +8,13 @@
     <insert id="batchInsert">
         INSERT INTO llm_usage_logs (
             created_at, user_id, provider_id, provider_scope, model, kind,
-            tokens_input, tokens_output, cost_yuan, points_consumed, status, error_msg
+            tokens_input, tokens_output, cost_yuan, points_consumed, status, error_msg,
+            trace_id, task_id
         ) VALUES
         <foreach collection="rows" item="r" separator=",">
             (NOW(), #{r.userId}, #{r.providerId}, #{r.providerScope}, #{r.model}, #{r.kind},
              #{r.tokensInput}, #{r.tokensOutput}, #{r.costYuan}, #{r.pointsConsumed},
-             #{r.status}, #{r.errorMsg})
+             #{r.status}, #{r.errorMsg}, #{r.traceId}, #{r.taskId})
         </foreach>
     </insert>
 
@@ -113,7 +114,8 @@
 
     <!-- ============ admin 调用明细（逐条，含 token/¥/积分；LEFT JOIN users 取用户名） ============ -->
 
-    <!-- 明细筛选 where 片段：from/to（半开）+ userId/model/kind/status 精确匹配。countDetail 与 pageDetail 共用。 -->
+    <!-- 明细筛选 where 片段：from/to（半开）+ userId/model/kind/status 精确匹配
+         + 8x Chunk7 traceId(chat 关联)/taskId(媒体关联) drill-down 反查键。countDetail 与 pageDetail 共用。 -->
     <sql id="detailWhere">
         <where>
             <if test="from != null">l.created_at &gt;= #{from}</if>
@@ -122,6 +124,8 @@
             <if test="model != null and model != ''">AND l.model = #{model}</if>
             <if test="kind != null and kind != ''">AND l.kind = #{kind}</if>
             <if test="status != null and status != ''">AND l.status = #{status}</if>
+            <if test="traceId != null and traceId != ''">AND l.trace_id = #{traceId}</if>
+            <if test="taskId != null">AND l.task_id = #{taskId}</if>
         </where>
     </sql>
 
@@ -147,7 +151,9 @@
             l.cost_yuan,
             l.points_consumed,
             l.status,
-            l.error_msg
+            l.error_msg,
+            l.trace_id,
+            l.task_id
         FROM llm_usage_logs l
         LEFT JOIN users u ON u.id = l.user_id
         <include refid="detailWhere"/>

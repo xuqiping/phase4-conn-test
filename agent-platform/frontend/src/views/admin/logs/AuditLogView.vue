@@ -37,6 +37,13 @@
       <!-- detailJson 查看弹窗 -->
       <n-modal v-model:show="showDetail" preset="card" title="审计详情" style="max-width:640px">
         <pre class="audit-log__detail">{{ prettyDetail }}</pre>
+        <!-- 8x Chunk7：模型调用动作 → 一键跳「账单总览·调用明细」查同请求模型/token/积分明细 -->
+        <div v-if="drillUrl" class="audit-log__drill">
+          <n-button size="small" type="primary" @click="openDrill">查看调用明细</n-button>
+          <span class="audit-log__drill-hint">
+            {{ drillByKey }}
+          </span>
+        </div>
       </n-modal>
     </template>
   </div>
@@ -50,9 +57,11 @@ import {
 import type { DataTableColumns } from 'naive-ui'
 import { auditApi, type AuditLogVO } from '@/api/audit'
 import { useAuthStore } from '@/stores/auth'
+import { useRouter } from 'vue-router'
 
 const message = useMessage()
 const authStore = useAuthStore()
+const router = useRouter()
 /** 菜单隐藏(hasPermission) + 页内 canView + API 403 三重兜底 */
 const canView = computed(() => authStore.hasPermission('system:audit:read'))
 
@@ -60,7 +69,34 @@ const loading = ref(false)
 const rows = ref<AuditLogVO[]>([])
 const showDetail = ref(false)
 const detailText = ref('')
+const detailRow = ref<AuditLogVO | null>(null)
 const timeRange = ref<[number, number] | null>(null)
+
+/**
+ * 8x Chunk7：模型调用动作的调用明细 drill-down URL。
+ * chat 行（chat_completed/send_message）按 traceId 过滤；media 行（video/image_gen_success）按 targetId=taskId 过滤。
+ * 旧数据无 traceId/taskId → drillUrl=null（按钮不显示，#9 边界③）。
+ */
+const drillUrl = computed(() => {
+  const r = detailRow.value
+  if (!r) return ''
+  if (r.module === 'chat' && r.traceId) return `/admin/billing?traceId=${encodeURIComponent(r.traceId)}`
+  if (r.module === 'media' && r.targetId != null) return `/admin/billing?taskId=${r.targetId}`
+  return ''
+})
+const drillByKey = computed(() => {
+  const r = detailRow.value
+  if (!r) return ''
+  if (r.module === 'chat' && r.traceId) return `按 traceId 关联本次对话的模型调用`
+  if (r.module === 'media' && r.targetId != null) return `按任务 id 关联本次生成的模型调用`
+  return ''
+})
+function openDrill() {
+  if (!drillUrl.value) return
+  // 新窗口打开账单总览（预填 traceId/taskId + 自动切到调用明细 tab）
+  const href = router.resolve(drillUrl.value).href
+  window.open(href, '_blank')
+}
 
 const filters = reactive({
   userId: null as number | null,
@@ -135,7 +171,7 @@ const columns: DataTableColumns<AuditLogVO> = [
     title: '详情', key: 'detail', width: 90, fixed: 'right',
     render: (row) => h(NButton, {
       size: 'small', quaternary: true,
-      onClick: () => { detailText.value = row.detailJson || ''; showDetail.value = true }
+      onClick: () => { detailText.value = row.detailJson || ''; detailRow.value = row; showDetail.value = true }
     }, () => '查看')
   }
 ]
@@ -220,6 +256,20 @@ onMounted(() => {
     word-break: break-all;
     max-height: 50vh;
     overflow: auto;
+  }
+
+  &__drill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+  }
+
+  &__drill-hint {
+    font-size: 12px;
+    color: var(--color-text-secondary);
   }
 }
 </style>

@@ -67,11 +67,14 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                      @Param("userId") Long userId,
                      @Param("model") String model,
                      @Param("kind") String kind,
-                     @Param("status") String status);
+                     @Param("status") String status,
+                     @Param("traceId") String traceId,
+                     @Param("taskId") Long taskId);
 
     /**
      * 逐条明细分页（含 username/displayName via LEFT JOIN users）。user_id 可空（系统调用）→ LEFT JOIN 不丢行。
      * <p>offset/size 由 service 算好（{@code (page-1)*size}）；按 created_at 倒序（最新在前）。
+     * <p>8x Chunk7：{@code traceId}(chat 关联)/{@code taskId}(媒体关联) 为 drill-down 反查键，非空时精确过滤。
      */
     List<UsageDetailVO> pageDetail(@Param("from") OffsetDateTime from,
                                    @Param("to") OffsetDateTime to,
@@ -79,6 +82,8 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                                    @Param("model") String model,
                                    @Param("kind") String kind,
                                    @Param("status") String status,
+                                   @Param("traceId") String traceId,
+                                   @Param("taskId") Long taskId,
                                    @Param("offset") long offset,
                                    @Param("size") long size);
 }

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -94,6 +95,23 @@ public class UsageCollector {
                        Integer tokensInput, Integer tokensOutput,
                        BigDecimal costYuan, BigDecimal pointsConsumed,
                        String status, String errorMsg) {
+        record(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, costYuan, pointsConsumed, status, errorMsg, null);
+    }
+
+    /**
+     * 异步落一条 usage 审计日志（8x Chunk7：+taskId 媒体关联键）。fire-and-forget。
+     *
+     * <p>{@code traceId} 在<b>调用线程</b>从 MDC 取（与 {@code audit_logs.trace_id} 同源同值，坑点 #11 单一源）：
+     * chat 同请求 submit→completion→usage 三处 traceId 一致；media worker 无 MDC → null（媒体靠 taskId 关联）。
+     * {@code taskId} 仅媒体出口传（任务 id）；chat/embed 传 null。
+     *
+     * @param taskId 媒体任务 id（{@code chargeMedia} 的 refId）；非媒体调用传 null
+     */
+    public void record(Long userId, Long providerId, String providerScope, String model, String kind,
+                       Integer tokensInput, Integer tokensOutput,
+                       BigDecimal costYuan, BigDecimal pointsConsumed,
+                       String status, String errorMsg, Long taskId) {
         if (!enabled) {
             return;
         }
@@ -110,7 +128,20 @@ public class UsageCollector {
         row.setPointsConsumed(pointsConsumed);
         row.setStatus(status != null ? status : LlmUsageLogEntity.STATUS_SUCCESS);
         row.setErrorMsg(errorMsg);
+        // 8x Chunk7：traceId 取调用线程 MDC（与 audit_logs 同源；调用线程无 traceId 则 null，不崩）
+        row.setTraceId(currentTraceId());
+        row.setTaskId(taskId);
         submit(row);
+    }
+
+    /** 取当前线程 MDC traceId（与 AuditLogService.fromMdc/recordTask 同 key "traceId"）。无则 null。 */
+    private static String currentTraceId() {
+        Map<String, String> ctx = org.slf4j.MDC.getCopyOfContextMap();
+        if (ctx == null) {
+            return null;
+        }
+        Object v = ctx.get("traceId");
+        return v == null ? null : v.toString();
     }
 
     /** 提交一行入库；队列满 / 写失败均降级 warn，绝不抛回调用线程。 */

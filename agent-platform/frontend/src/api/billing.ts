@@ -169,9 +169,13 @@ export interface UsageDetailVO {
   pointsConsumed: number
   status: string
   errorMsg: string | null
+  /** 8x Chunk7：请求 traceId（chat 路径关联键，与 audit_logs.trace_id 同值） */
+  traceId: string | null
+  /** 8x Chunk7：媒体任务 id（媒体路径关联键，与 media 审计行 targetId 对齐） */
+  taskId: number | null
 }
 
-/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to） */
+/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to + 8x Chunk7 traceId/taskId drill-down） */
 export interface UsageDetailQuery {
   page?: number
   size?: number
@@ -179,6 +183,10 @@ export interface UsageDetailQuery {
   model?: string
   kind?: BillingKind
   status?: string
+  /** chat 路径 drill-down 反查键（与审计行 traceId 对齐） */
+  traceId?: string
+  /** 媒体路径 drill-down 反查键（与审计行 targetId=taskId 对齐） */
+  taskId?: number
   from?: string
   to?: string
 }

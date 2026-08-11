@@ -58,7 +58,7 @@ class MediaBillingServiceTest {
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
                 eq(new BigDecimal("0.500000")), eq(new BigDecimal("50")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(9L));
     }
 
     @Test
@@ -73,7 +73,7 @@ class MediaBillingServiceTest {
                 anyInt(), any(), anyInt(), anyInt(), anyBoolean());
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
         verify(usageCollector, never()).record(anyLong(), anyLong(), anyString(), anyString(), anyString(),
-                anyInt(), any(), any(), any(), anyString(), any());
+                anyInt(), any(), any(), any(), anyString(), any(), any());
     }
 
     @Test
@@ -91,7 +91,7 @@ class MediaBillingServiceTest {
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
-                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString());
+                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L));
     }
 
     @Test
@@ -111,7 +111,7 @@ class MediaBillingServiceTest {
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("doubao-3-0"),
                 eq(LlmUsageLogEntity.KIND_IMAGE), eq(null), eq(null),
                 eq(new BigDecimal("0.800000")), eq(new BigDecimal("80")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(9L));
     }
 
     // ---------------- 7x-3：VIDEO has_reference 计费穿线 ----------------

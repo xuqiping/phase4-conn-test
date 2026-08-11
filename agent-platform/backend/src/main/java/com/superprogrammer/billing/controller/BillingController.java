@@ -104,9 +104,12 @@ public class BillingController {
             @RequestParam(required = false) String model,
             @RequestParam(required = false) String kind,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String traceId,
+            @RequestParam(required = false) Long taskId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
-        return ResponseEntity.ok(R.ok(queryService.pageDetail(from, to, userId, model, kind, status, page, size)));
+        return ResponseEntity.ok(R.ok(queryService.pageDetail(
+                from, to, userId, model, kind, status, traceId, taskId, page, size)));
     }
 
     /**

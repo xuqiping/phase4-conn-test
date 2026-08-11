@@ -80,13 +80,14 @@ public class MediaBillingService {
             BigDecimal points = ratioService.toPoints(yuan);
             // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
             walletService.charge(userId, points, kind, refId, model);
+            // 8x Chunk7：taskId=refId（任务 id）落 usage 行，媒体审计两行 targetId=taskId 与此对齐做 drill-down
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, yuan, points, status, null);
+                    tokensInput, null, yuan, points, status, null, refId);
             return points;
         } catch (BusinessException e) {
             // 计费自身失败（价表缺/余额在生成期间被耗尽等）：视频已生成不可逆，记 FAILED usage 让 admin 可见缺口，不抛
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString());
+                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId);
             log.warn("媒体计费失败(已记FAILED,不阻塞媒体出口) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());
             return null;

@@ -27,4 +27,8 @@ public class UsageDetailVO {
     private BigDecimal pointsConsumed;
     private String status;
     private String errorMsg;
+    /** 8x Chunk7：请求 traceId（chat 路径关联键，与 audit_logs.trace_id 同值）。 */
+    private String traceId;
+    /** 8x Chunk7：媒体任务 id（媒体路径关联键，与 media 审计行 targetId 对齐）。 */
+    private Long taskId;
 }

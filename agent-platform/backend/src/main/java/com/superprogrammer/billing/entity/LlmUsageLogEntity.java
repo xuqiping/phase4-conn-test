@@ -65,4 +65,18 @@ public class LlmUsageLogEntity {
     private String status;
 
     private String errorMsg;
+
+    /**
+     * 请求 traceId（V95），与 {@code audit_logs.trace_id} 同值。
+     * <p>chat 路径关联键：同请求「send_message → chat_completed → 本表」三处 traceId 一致。
+     * media worker 无 MDC → null（媒体改用 {@link #taskId} 关联，坑点 #10）。
+     */
+    private String traceId;
+
+    /**
+     * 媒体任务 id（V95），与 media 审计行 {@code targetId} 对齐（{@code chargeMedia} 的 refId）。
+     * <p>媒体路径关联键：审计两行（submit + success）{@code targetId=taskId} → 与本表 {@code task_id} 对齐。
+     * chat/embed 无任务 → null。
+     */
+    private Long taskId;
 }
