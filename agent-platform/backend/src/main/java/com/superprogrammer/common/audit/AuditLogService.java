@@ -78,6 +78,34 @@ public class AuditLogService {
         return row;
     }
 
+    /**
+     * 显式上下文建行 + 落库（问题修复 #1 媒体终态 / #6 worker IP 缺口）。
+     *
+     * <p>用于<b>异步 worker 线程</b>（媒体生成终态等）：worker 无 web MDC（{@code fromMdc} 会落 null 身份/IP），
+     * 故身份与 IP 由调用方从任务行显式传入（submit 时盖戳到任务行的 clientIp/userId）。traceId 仍取 MDC
+     * （worker 经 {@code MdcContextTaskDecorator} 可能有，无则 null，可接受——媒体关联靠 targetId=taskId）。
+     *
+     * @param userId   操作人（任务行 user_id；系统调用 null）
+     * @param username 操作人登录名（任务行无则 null）
+     * @param clientIp 提交时盖戳的 IP（任务行 client_ip）
+     */
+    public void recordTask(String module, String action, String targetType, String targetId,
+                           Long userId, String username, String clientIp,
+                           String detailJson, String result) {
+        AuditLogEntity row = new AuditLogEntity();
+        row.setTraceId(MDC.get("traceId"));
+        row.setClientIp(clientIp);
+        row.setUserId(userId);
+        row.setUsername(username);
+        row.setModule(module);
+        row.setAction(action);
+        row.setTargetType(targetType == null || targetType.isEmpty() ? null : targetType);
+        row.setTargetId(targetId);
+        row.setDetailJson(detailJson);
+        row.setResult(result);
+        record(row);
+    }
+
     /** 审计线程池（独立小池，不与记忆/KB/媒体争用；AbortPolicy 由 record 捕获降级）。 */
     @Configuration
     static class AuditExecutorConfig {
