@@ -133,8 +133,9 @@ public class MediaGenController {
             @RequestParam(required = false) String q,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
-            @RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(R.ok(queryService.list(getCurrentUserId(), isAdmin(), q, from, to, limit)));
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String kind) {
+        return ResponseEntity.ok(R.ok(queryService.list(getCurrentUserId(), isAdmin(), q, from, to, limit, kind)));
     }
 
     @GetMapping("/tasks/{id}/download")

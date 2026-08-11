@@ -195,29 +195,29 @@ class MediaGenQueryServiceTest {
     void list_AC_V3_02_passesOwnershipTimeAndEscapedLiteralQueryToMapper() {
         OffsetDateTime from = OffsetDateTime.parse("2026-08-01T00:00:00+08:00");
         OffsetDateTime to = OffsetDateTime.parse("2026-08-11T00:00:00+08:00");
-        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt()))
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(List.of());
 
         queryService.list(100L, false, "50%_猫\\", from, to, 25);
 
-        verify(taskMapper).selectHistory(100L, false, "50\\%\\_猫\\\\", from, to, 25);
+        verify(taskMapper).selectHistory(100L, false, "50\\%\\_猫\\\\", from, to, 25, null);
     }
 
     @Test
     void list_AC_V3_02_blankQueryIsNormalizedAndAdminFlagPreserved() {
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt()))
+        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(List.of());
 
         queryService.list(999L, true, "   ", null, null, null);
 
-        verify(taskMapper).selectHistory(999L, true, null, null, null, 50);
+        verify(taskMapper).selectHistory(999L, true, null, null, null, 50, null);
     }
 
     @Test
     void list_AC_V3_07_omitsLargeRequestDetailsUntilUserOpensTask() {
         MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);
         task.setRequestConfig("{\"prompt\":\"p\",\"providerRequestSnapshot\":{\"provider\":\"ark-seedance\"}}");
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt()))
+        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(List.of(task));
 
         var result = queryService.list(100L, false, null, null, null, 50);
@@ -235,6 +235,46 @@ class MediaGenQueryServiceTest {
                 () -> queryService.list(100L, false, null, from, to, 50));
         assertThrows(BusinessException.class,
                 () -> queryService.list(100L, false, null, null, null, 101));
+        verifyNoInteractions(taskMapper);
+    }
+
+    // ---------- kind 大类过滤（图片第二轮：图片记录不混进视频历史） ----------
+
+    @Test
+    void list_kindImage_passesImageKindToMapper() {
+        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        queryService.list(100L, false, null, null, null, 30, "IMAGE");
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "IMAGE");
+    }
+
+    @Test
+    void list_kindVideo_passesVideoKindToMapper() {
+        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        queryService.list(100L, false, null, null, null, 30, "VIDEO");
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "VIDEO");
+    }
+
+    @Test
+    void list_kindLowercase_isNormalizedToUppercase() {
+        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        queryService.list(100L, false, null, null, null, 30, "image");
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "IMAGE");
+    }
+
+    @Test
+    void list_kindInvalid_rejectedBeforeMapper() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> queryService.list(100L, false, null, null, null, 30, "AUDIO"));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
         verifyNoInteractions(taskMapper);
     }
 

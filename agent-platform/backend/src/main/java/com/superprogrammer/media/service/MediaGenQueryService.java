@@ -42,8 +42,18 @@ public class MediaGenQueryService {
         return toVO(task, admin || owns(task, userId), true);
     }
 
+    /** 6 参兼容重载（视频第三轮测试契约）：kind=null 不过滤，视频/图片全量返回。 */
     public List<MediaTaskVO> list(Long userId, boolean admin, String query,
                                   OffsetDateTime from, OffsetDateTime to, Integer limit) {
+        return list(userId, admin, query, from, to, limit, null);
+    }
+
+    /**
+     * 历史列表（服务端筛选）。kind 白名单：IMAGE=仅图片任务、VIDEO=仅视频任务、null=全量。
+     * 过滤在 SQL 层完成——前端先 LIMIT 再内存过滤会行数不足/仍混杂。
+     */
+    public List<MediaTaskVO> list(Long userId, boolean admin, String query,
+                                  OffsetDateTime from, OffsetDateTime to, Integer limit, String kind) {
         if (limit != null && (limit < 1 || limit > 100)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "limit 必须在 1-100 之间");
         }
@@ -54,11 +64,24 @@ public class MediaGenQueryService {
         if (normalizedQuery != null && normalizedQuery.length() > 8000) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词筛选条件不能超过 8000 字符");
         }
+        String normalizedKind = normalizeKind(kind);
         String escapedQuery = normalizedQuery == null ? null : escapeLikeLiteral(normalizedQuery);
         int size = limit == null ? 50 : limit;
-        return taskMapper.selectHistory(userId, admin, escapedQuery, from, to, size).stream()
+        return taskMapper.selectHistory(userId, admin, escapedQuery, from, to, size, normalizedKind).stream()
                 .map(t -> toVO(t, admin || owns(t, userId), false))
                 .collect(Collectors.toList());
+    }
+
+    /** kind 白名单校验：null/空白→null；IMAGE/VIDEO（大小写不敏感）→大写归一；其余 400 不泄 SQL 细节。 */
+    private String normalizeKind(String kind) {
+        if (kind == null || kind.isBlank()) {
+            return null;
+        }
+        String k = kind.strip().toUpperCase();
+        if (!"IMAGE".equals(k) && !"VIDEO".equals(k)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 仅支持 IMAGE/VIDEO");
+        }
+        return k;
     }
 
     private String escapeLikeLiteral(String value) {
