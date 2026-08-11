@@ -54,7 +54,11 @@ public class AuditLogController {
                 .orderByDesc(AuditLogEntity::getId);
 
         Page<AuditLogEntity> entityPage = auditLogMapper.selectPage(new Page<>(page, safeSize), wrapper);
-        List<AuditLogVO> vos = entityPage.getRecords().stream().map(AuditLogVO::from).toList();
+        // withLabels() 填中文显示标签（module/action 码值不变，问题修复 #2 显示层）
+        List<AuditLogVO> vos = entityPage.getRecords().stream()
+                .map(AuditLogVO::from)
+                .map(AuditLogVO::withLabels)
+                .toList();
         return R.ok(PageResult.of(vos, entityPage.getTotal(), page, safeSize));
     }
 

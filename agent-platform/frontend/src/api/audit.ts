@@ -23,6 +23,10 @@ export interface AuditLogVO {
   clientIp: string | null
   userAgent: string | null
   result: 'SUCCESS' | 'FAIL'
+  /** 模块中文（后端 AuditLabelDictionary 翻译，显示用） */
+  moduleLabel: string | null
+  /** 动作中文（后端 AuditLabelDictionary 翻译，显示用） */
+  actionLabel: string | null
 }
 
 /** 查询筛选条件（全部可选；时间段为 ISO 字符串） */

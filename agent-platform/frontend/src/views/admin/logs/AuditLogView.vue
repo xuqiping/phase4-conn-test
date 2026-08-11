@@ -102,8 +102,10 @@ const columns: DataTableColumns<AuditLogVO> = [
   },
   { title: '用户', key: 'username', width: 110, ellipsis: { tooltip: true },
     render: (row) => row.username || '-' },
-  { title: '模块', key: 'module', width: 100 },
-  { title: '动作', key: 'action', width: 130, ellipsis: { tooltip: true } },
+  { title: '模块', key: 'module', width: 110,
+    render: (row) => row.moduleLabel || row.module || '-' },
+  { title: '动作', key: 'action', width: 130, ellipsis: { tooltip: true },
+    render: (row) => row.actionLabel || row.action || '-' },
   {
     title: '对象', key: 'target', width: 150, ellipsis: { tooltip: true },
     render: (row) => row.targetType ? `${row.targetType}#${row.targetId ?? '-'}` : '-'
