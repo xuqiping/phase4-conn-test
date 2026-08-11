@@ -4,7 +4,7 @@
   <n-modal
     v-model:show="show"
     preset="card"
-    title="视频生成请求参数"
+    :title="title"
     :style="{ width: 'min(920px, 92vw)' }"
   >
     <n-tabs v-model:value="activeTab" type="line" animated>
@@ -42,10 +42,12 @@ import { NAlert, NButton, NModal, NTabPane, NTabs } from 'naive-ui'
 
 type JsonObject = Record<string, unknown>
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   submittedRequest: JsonObject | null
   providerRequestSnapshot: JsonObject | null
-}>()
+  /** 弹窗标题（视频页默认；图片页传「图片生成请求参数」） */
+  title?: string
+}>(), { title: '视频生成请求参数' })
 
 const show = ref(false)
 const activeTab = ref<'submitted' | 'provider'>('submitted')

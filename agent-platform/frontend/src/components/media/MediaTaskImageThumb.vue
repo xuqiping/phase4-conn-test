@@ -7,7 +7,7 @@
   >
     <img v-if="objectUrl" :src="objectUrl" alt="首图缩略" />
     <span v-else-if="failed" class="task-image-thumb__ph">无预览</span>
-    <NSpin v-else size="tiny" />
+    <NSpin v-else size="small" />
   </div>
 </template>
 

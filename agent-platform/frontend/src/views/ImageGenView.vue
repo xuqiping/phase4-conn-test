@@ -14,6 +14,9 @@
                 @update:value="onModelChange"
               />
             </NFormItem>
+            <NAlert v-if="restoredOfflineModel" type="warning" :show-icon="false" class="form-item">
+              历史模型 {{ restoredOfflineModel }} 已下线，仅可回看参数，不能直接重新提交。
+            </NAlert>
             <div v-if="!form.model" class="hint">请先在「设置 → 全局模型供应商」建一条 IMAGE 类 provider 并配置模型。</div>
 
             <template v-if="cap">
@@ -165,6 +168,13 @@
             <span v-if="activeTask.status === 'RUNNING'" class="hint">同步生图中…（4K/组图可能需数十秒）</span>
             <span v-if="activeTask.generatedImages" class="hint">{{ activeTask.generatedImages }} 张</span>
             <span v-if="activeTask.errorMsg" class="error">{{ activeTask.errorMsg }}</span>
+            <!-- 问题5：核对当时实际提交参数（含参考图 refFileIds）；图片路径暂无 Provider 快照 -->
+            <MediaTaskRequestDetails
+              v-if="activeTask.submittedRequest"
+              title="图片生成请求参数"
+              :submitted-request="activeTask.submittedRequest"
+              :provider-request-snapshot="activeTask.providerRequestSnapshot"
+            />
           </div>
           <div v-if="images.length" class="result__grid">
             <div v-for="(img, i) in images" :key="i" class="result__cell">
@@ -180,15 +190,47 @@
         </div>
         <NEmpty v-else description="提交后将在此展示生成结果" />
 
-        <NDivider v-if="history.length" />
-        <div v-if="history.length" class="history">
+        <NDivider v-if="history.length || hasHistoryFilters" />
+        <div v-if="history.length || hasHistoryFilters" class="history">
           <div class="history__title">历史</div>
-          <div v-for="h in history" :key="h.id" class="history__row" @click="viewHistory(h)">
-            <NTag size="small" :type="MEDIA_STATUS_TYPE[h.status]">{{ MEDIA_STATUS_LABEL[h.status] }}</NTag>
-            <span class="history__model">{{ h.model }}</span>
-            <span class="history__prompt">{{ truncate(h.prompt) }}</span>
-            <span class="history__time">{{ fmtTime(h.createdAt) }}</span>
+          <!-- 问题4：提示词 + 时间范围筛选（服务端 SQL 过滤，300ms 防抖） -->
+          <div class="history__filters">
+            <NInput
+              v-model:value="historyQuery"
+              size="small"
+              clearable
+              placeholder="筛选提示词"
+              aria-label="筛选历史提示词"
+              class="history__filter-q"
+            />
+            <NDatePicker
+              v-model:value="historyTimeRange"
+              size="small"
+              type="daterange"
+              clearable
+              aria-label="筛选历史时间范围"
+              class="history__filter-range"
+            />
+            <NButton size="small" quaternary :disabled="!hasHistoryFilters" @click="clearHistoryFilters">
+              清空
+            </NButton>
           </div>
+          <NSpin :show="loadingHistory" size="small">
+            <NEmpty v-if="!history.length" description="无匹配的历史任务" />
+            <div v-for="h in history" :key="h.id" class="history__row" @click="viewHistory(h)">
+              <NTag size="small" :type="MEDIA_STATUS_TYPE[h.status]">{{ MEDIA_STATUS_LABEL[h.status] }}</NTag>
+              <span class="history__model">{{ h.model }}</span>
+              <span class="history__prompt">{{ truncate(h.prompt) }}</span>
+              <span class="history__time">{{ fmtTime(h.createdAt) }}</span>
+              <!-- 问题1：行右侧首图缩略（懒加载）；无图行占位 -->
+              <MediaTaskImageThumb
+                v-if="h.status === 'SUCCEEDED' && h.imageUrls?.length"
+                :download-path="h.imageUrls[0]"
+                @preview="previewSrc = $event"
+              />
+              <span v-else class="history__thumb-ph" aria-hidden="true">—</span>
+            </div>
+          </NSpin>
         </div>
       </NCard>
     </div>
@@ -223,9 +265,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
-  NButton, NCard, NDivider, NEmpty, NForm, NFormItem,
+  NAlert, NButton, NCard, NDatePicker, NDivider, NEmpty, NForm, NFormItem,
   NInput, NInputNumber, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, NUpload, useMessage
 } from 'naive-ui'
 import {
@@ -237,6 +279,9 @@ import {
 import { fetchFilePreview } from '@/api/file'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
+import MediaTaskImageThumb from '@/components/media/MediaTaskImageThumb.vue'
+import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
+import { parseImageRestore } from '@/utils/imageGenParams'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import type { AssetFilePicked } from '@/types/asset'
@@ -314,6 +359,7 @@ function syncCustomSize() {
 
 // 模型切换 → 按能力重置各字段默认值
 function onModelChange() {
+  restoredOfflineModel.value = ''
   const c = cap.value
   if (!c) return
   form.size = c.sizePresets[0] ?? ''
@@ -494,14 +540,43 @@ function onImported(payload: { assetId: number; name: string }) {
 
 // ---- 历史 ----
 const history = ref<MediaTaskVO[]>([])
+const loadingHistory = ref(false)
+const historyQuery = ref('')
+const historyTimeRange = ref<[number, number] | null>(null)
+const hasHistoryFilters = computed(() => !!historyQuery.value.trim() || !!historyTimeRange.value)
+let historyDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let historyRequestSeq = 0
+
 async function loadHistory() {
+  const requestSeq = ++historyRequestSeq
+  loadingHistory.value = true
   try {
-    const { data } = await mediaApi.listTasks(30)
-    // 仅图片任务
-    history.value = (data.data ?? []).filter(t =>
-      t.taskType === 'TEXT2IMAGE' || t.taskType === 'IMAGE2IMAGE')
-  } catch { /* ignore */ }
+    const range = historyTimeRange.value
+    const { data } = await mediaApi.listTasks({
+      q: historyQuery.value.trim() || undefined,
+      from: range ? new Date(range[0]).toISOString() : undefined,
+      to: range ? new Date(range[1]).toISOString() : undefined,
+      limit: 30,
+      kind: 'IMAGE' // 仅图片任务（SQL 层过滤，替代原前端 filter——先 LIMIT 再内存过滤会行数不足）
+    })
+    if (requestSeq === historyRequestSeq) history.value = data.data ?? []
+  } catch { /* 拦截器提示 */ } finally {
+    if (requestSeq === historyRequestSeq) loadingHistory.value = false
+  }
 }
+function scheduleHistoryLoad() {
+  if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
+  historyDebounceTimer = setTimeout(() => {
+    historyDebounceTimer = null
+    void loadHistory()
+  }, 300)
+}
+function clearHistoryFilters() {
+  historyQuery.value = ''
+  historyTimeRange.value = null
+}
+watch([historyQuery, historyTimeRange], scheduleHistoryLoad)
+
 function truncate(s: string | null) {
   if (!s) return ''
   return s.length > 24 ? s.slice(0, 24) + '…' : s
@@ -509,14 +584,64 @@ function truncate(s: string | null) {
 function fmtTime(t: string) {
   return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
+
+/** 历史模型已下线标记（非空=显示警告条，表单因 cap=null 自动隐藏提交控件）。 */
+const restoredOfflineModel = ref('')
+
 async function viewHistory(h: MediaTaskVO) {
-  activeTask.value = h
+  // 先拉详情：submittedRequest 仅详情透出（列表不带，防响应体膨胀）；还原/弹窗共用这次拉取
+  let detail = h
+  try {
+    const { data } = await mediaApi.getTask(h.id)
+    detail = data.data
+  } catch { /* 降级用列表行（无 submittedRequest 则跳过还原） */ }
+  activeTask.value = detail
   resetImages()
-  if (h.status === 'SUCCEEDED' && h.imageUrls?.length) {
-    await ensureImages(h)
-  } else if (!isTerminal(h.status)) {
+  restoreForm(detail)
+  if (detail.status === 'SUCCEEDED' && detail.imageUrls?.length) {
+    await ensureImages(detail)
+  } else if (!isTerminal(detail.status)) {
     startPolling(h.id)
   }
+}
+
+// 问题3：点历史记录还原左侧参数。铁律：逐项直赋 form，**不调 onModelChange**（它会重置其余字段吞掉还原）。
+function restoreForm(task: MediaTaskVO) {
+  restoredOfflineModel.value = ''
+  const patch = parseImageRestore(
+    { model: task.model, submittedRequest: task.submittedRequest ?? null },
+    models.value
+  )
+  if (!patch) return
+  form.model = patch.model
+  form.prompt = patch.prompt
+  form.size = patch.size
+  customSize.value = patch.customSize
+  form.outputFormat = patch.outputFormat
+  form.optimizeMode = patch.optimizeMode
+  form.guidanceScale = patch.guidanceScale
+  form.sequential = patch.sequential
+  form.maxImages = patch.maxImages
+  form.webSearch = patch.webSearch
+  form.watermark = patch.watermark
+  for (const w of patch.warnings) {
+    if (w.includes('已下线')) restoredOfflineModel.value = patch.model
+    message.warning(w)
+  }
+  void restoreRefs(patch.refFileIds)
+}
+
+/** 参考图回填：逐张带鉴权拉缩略；文件已删/失权跳过并汇总告警（后端提交时仍会再校验）。 */
+async function restoreRefs(fileIds: string[]) {
+  clearRefs()
+  let failed = 0
+  for (const [i, fid] of fileIds.entries()) {
+    try {
+      const url = await fetchFilePreview(fid)
+      refImages.value.push({ fileId: fid, name: `参考图${i + 1}`, url })
+    } catch { failed++ }
+  }
+  if (failed) message.warning(`${failed} 张参考图已失效（删除/无权），未还原`)
 }
 
 onMounted(async () => {
@@ -531,6 +656,7 @@ onMounted(async () => {
   void loadHistory()
 })
 onUnmounted(() => {
+  if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
   clearPolling()
   resetImages()
   clearRefs()
@@ -577,6 +703,9 @@ onUnmounted(() => {
 }
 .history {
   &__title { font-size: 13px; color: var(--text-color-3); margin-bottom: 8px; }
+  &__filters { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  &__filter-q { flex: 1; min-width: 120px; }
+  &__filter-range { width: 230px; }
   &__row {
     display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -585,5 +714,9 @@ onUnmounted(() => {
   &__model { color: var(--text-color-2); white-space: nowrap; }
   &__prompt { flex: 1; color: var(--text-color-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   &__time { color: var(--text-color-3); font-size: 12px; white-space: nowrap; }
+  &__thumb-ph {
+    width: 56px; height: 56px; flex: none; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; background: var(--bg-color-2, #1a1a1e); color: var(--text-color-3);
+  }
 }
 </style>
