@@ -4,9 +4,8 @@
       <h2>设置</h2>
     </div>
     <n-tabs type="line" animated>
-      <n-tab-pane name="my-models" tab="我的模型">
-        <UserProviderTab />
-      </n-tab-pane>
+      <!-- 10x-1：不再开放「我的模型」个人配置大模型，移除该 Tab 入口。
+           UserProviderTab.vue / UserLlmController / user_llm_providers 表保留不删（备用）。 -->
       <n-tab-pane v-if="authStore.isAdmin" name="global" tab="全局模型供应商">
         <ProviderManageTab />
       </n-tab-pane>
@@ -30,7 +29,6 @@
 <script setup lang="ts">
 import { NTabs, NTabPane } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import UserProviderTab from '@/components/settings/UserProviderTab.vue'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
 import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
 import BillingSettingsTab from '@/components/settings/BillingSettingsTab.vue'
