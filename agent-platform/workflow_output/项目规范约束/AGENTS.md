@@ -76,6 +76,13 @@
 
 ## 模块级约束（按需新增并在此索引）
 - [通用约束.md](通用约束.md) —— 跨所有模块的编码/命名/响应规范
+- **前端模块开关 + 权限显隐机制**（10x 沉淀）：控制某模块在前端是否展示，统一走 `frontend/src/config/modules.ts`：
+  - `ENABLED_MODULES`（项目级开关，false=对所有人隐藏含 admin）+ `MODULE_PERMISSION_MAP`（模块→权限码，叠加 RBAC）。
+  - 消费方三处：`Sidebar.canSeeModule`（菜单）、`router/accessGuard.resolveRouteAccess`（路由守卫）、入口组件 `v-if`。
+  - **加新模块**：① `modules.ts` 加 key+布尔+权限码；② Sidebar navItem 标 `module`；③ 路由 `meta.module`/`meta.requireAdmin`。改一处不生效=三处都漏。
+  - **隐藏存量模块**：把对应布尔改 false，菜单+路由+入口同步消失，后端代码不动。
+  - 路由守卫逻辑抽纯函数（`accessGuard.ts`），避开真实懒加载导航在 jsdom 测试超时；守卫读 localStorage 判角色（早于 Pinia）。
+  - 默认落地页用 `defaultLanding()` 动态选首个启用模块，**不要硬编码**（曾硬编码 `/agents`，关 /agents 后登录白屏）。
 
 ## 参考文档
 - 项目结构 → [workflow_output/docs/file_structure.md](../docs/file_structure.md)
