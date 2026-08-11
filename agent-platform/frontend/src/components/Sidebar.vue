@@ -77,6 +77,7 @@ import {
   DocumentTextOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { isModuleEnabled, getModulePermission, type ModuleKey } from '@/config/modules'
 
 defineProps<{
   collapsed: boolean
@@ -91,15 +92,17 @@ defineEmits<{
 const route = useRoute()
 const authStore = useAuthStore()
 
-const isAdmin = computed(() => authStore.userInfo?.roles?.includes('admin'))
-/** 4 层权限显隐①：菜单入口仅 media:gen 持有者可见（gated，admin 默认有，普通 user 须授权） */
-const canGenVideo = computed(() => authStore.hasPermission('media:gen'))
-/** 无限画布入口仅 canvas:write 持有者可见（gated，admin 默认有） */
-const canEditCanvas = computed(() => authStore.hasPermission('canvas:write'))
-/** 项目资产库入口仅 asset:write 持有者可见（gated，admin 默认有，同 canvas:write 范式） */
-const canEditAssets = computed(() => authStore.hasPermission('asset:write'))
-/** 视频剪辑入口仅 media:edit 持有者可见（gated，admin 默认有，同 media:gen 范式） */
-const canEditVideo = computed(() => authStore.hasPermission('media:edit'))
+/**
+ * 模块是否对当前用户可见（问题 10x-4/10x-5 统一闸）：
+ * ① 项目级开关（ENABLED_MODULES）：false → 对所有人隐藏含 admin（如 Agent大厅/工作流/执行监控本项目未启用）；
+ * ② RBAC 兜底：模块有权限码 → 用户须 hasPermission（admin 默认有全权限）。
+ * 两层叠加，任一不满足即隐藏。后端 @RequirePermission 仍是事实授权闸，菜单隐藏仅 UX 层。
+ */
+function canSeeModule(key: ModuleKey): boolean {
+  if (!isModuleEnabled(key)) return false
+  const perm = getModulePermission(key)
+  return !perm || authStore.hasPermission(perm)
+}
 /** 积分计费：价表配置 / 账单总览 / 积分充值（gated，admin 默认有） */
 const canManagePricing = computed(() => authStore.hasPermission('pricing:manage'))
 const canViewUsage = computed(() => authStore.hasPermission('usage:view'))
@@ -109,47 +112,52 @@ const canViewAudit = computed(() => authStore.hasPermission('system:audit:read')
 
 /** 导航项配置 */
 const navItems = computed(() => {
-  const items = [
-    { path: '/agents', label: 'Agent大厅', icon: GridOutline },
-    { path: '/chat', label: '智能对话', icon: ChatbubblesOutline },
-    { path: '/workflow', label: '工作流', icon: GitBranchOutline },
-    { path: '/executions', label: '执行监控', icon: PulseOutline },
-    { path: '/knowledge', label: '知识库', icon: BookOutline }
+  const items: Array<{ path: string; label: string; icon: typeof GridOutline; module: ModuleKey }> = [
+    { path: '/agents', label: 'Agent大厅', icon: GridOutline, module: 'agentHall' },
+    { path: '/chat', label: '智能对话', icon: ChatbubblesOutline, module: 'chat' },
+    { path: '/workflow', label: '工作流', icon: GitBranchOutline, module: 'workflow' },
+    { path: '/executions', label: '执行监控', icon: PulseOutline, module: 'execution' },
+    { path: '/knowledge', label: '知识库', icon: BookOutline, module: 'knowledge' }
   ]
-  if (canGenVideo.value) {
-    items.push({ path: '/video-gen', label: '视频生成', icon: VideocamOutline })
-    items.push({ path: '/image-gen', label: '图片生成', icon: ImageOutline })
+  if (canSeeModule('videoGen')) {
+    items.push({ path: '/video-gen', label: '视频生成', icon: VideocamOutline, module: 'videoGen' })
+    items.push({ path: '/image-gen', label: '图片生成', icon: ImageOutline, module: 'imageGen' })
   }
-  if (canEditVideo.value) {
-    items.push({ path: '/video-edit', label: '视频剪辑', icon: FilmOutline })
+  if (canSeeModule('videoEdit')) {
+    items.push({ path: '/video-edit', label: '视频剪辑', icon: FilmOutline, module: 'videoEdit' })
   }
-  if (canEditCanvas.value) {
-    items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline })
+  if (canSeeModule('canvas')) {
+    items.push({ path: '/canvas', label: '无限画布', icon: AppsOutline, module: 'canvas' })
   }
-  if (canEditAssets.value) {
-    items.push({ path: '/assets', label: '资产库', icon: AlbumsOutline })
+  if (canSeeModule('assets')) {
+    items.push({ path: '/assets', label: '资产库', icon: AlbumsOutline, module: 'assets' })
   }
-  if (isAdmin.value) {
+  if (authStore.isAdmin) {
     items.push(
-      { path: '/admin/users', label: '用户管理', icon: PeopleOutline },
-      { path: '/admin/roles', label: '角色权限', icon: ShieldCheckmarkOutline }
+      { path: '/admin/users', label: '用户管理', icon: PeopleOutline, module: 'settings' },
+      { path: '/admin/roles', label: '角色权限', icon: ShieldCheckmarkOutline, module: 'settings' }
     )
   }
   if (canManagePricing.value) {
-    items.push({ path: '/admin/billing-pricing', label: '价表配置', icon: CashOutline })
+    items.push({ path: '/admin/billing-pricing', label: '价表配置', icon: CashOutline, module: 'settings' })
   }
   if (canRecharge.value) {
-    items.push({ path: '/admin/billing-wallet', label: '积分充值', icon: WalletOutline })
+    items.push({ path: '/admin/billing-wallet', label: '积分充值', icon: WalletOutline, module: 'settings' })
   }
   if (canViewUsage.value) {
-    items.push({ path: '/admin/billing', label: '账单总览', icon: BarChartOutline })
+    items.push({ path: '/admin/billing', label: '账单总览', icon: BarChartOutline, module: 'settings' })
   }
   if (canViewAudit.value) {
-    items.push({ path: '/admin/logs/audit', label: '审计日志', icon: DocumentTextOutline })
+    items.push({ path: '/admin/logs/audit', label: '审计日志', icon: DocumentTextOutline, module: 'settings' })
   }
-  items.push({ path: '/wallet', label: '我的钱包', icon: CardOutline })
-  items.push({ path: '/settings', label: '设置', icon: SettingsOutline })
-  return items
+  items.push({ path: '/wallet', label: '我的钱包', icon: CardOutline, module: 'wallet' })
+  // 设置入口：开关 ON 且用户是 admin（10x-3：非 admin 不开放设置）
+  if (isModuleEnabled('settings') && authStore.isAdmin) {
+    items.push({ path: '/settings', label: '设置', icon: SettingsOutline, module: 'settings' })
+  }
+  // 统一闸：前5项（Agent大厅/对话/工作流/执行监控/知识库）也在这一关过滤，
+  // 确保关闭的模块（如 Agent大厅/工作流/执行监控）对所有人隐藏（10x-5）。
+  return items.filter((it) => canSeeModule(it.module))
 })
 
 /** 判断导航项是否处于激活状态 */

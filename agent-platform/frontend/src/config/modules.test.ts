@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENABLED_MODULES,
-  MODULE_PERMISSION_MAP,
   isModuleEnabled,
   getModulePermission
 } from './modules'
