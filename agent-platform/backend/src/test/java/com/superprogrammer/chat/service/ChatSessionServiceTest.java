@@ -21,12 +21,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,6 +55,9 @@ class ChatSessionServiceTest {
     @Mock private com.superprogrammer.system.service.SystemSettingService systemSettingService;
     // 聊天附件归属校验（V69 二期 P3）
     @Mock private com.superprogrammer.chat.service.internal.MemoryAssetUploadService memoryAssetUploadService;
+    // 8x Chunk4 对话审计
+    @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
+    @Mock private com.superprogrammer.common.audit.AuditLogEntity auditLogEntityStub;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
@@ -239,6 +245,40 @@ class ChatSessionServiceTest {
         assertEquals("Hi there!", response.getContent());
         assertEquals("CHAT", response.getMode());
         assertEquals(1L, response.getSessionId());
+    }
+
+    @Test
+    void sendMessage_auditsSendMessageRow() {
+        // 8x Chunk4 行1：发消息后落 send_message 审计行（targetId=sessionId，detail 无 prompt 原文）
+        ReflectionTestUtils.setField(chatSessionService, "chatAuditEnabled", true);
+        when(sessionMapper.insert(any(ChatSession.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatSession.class).setId(1L);
+            return 1;
+        });
+        when(sessionMapper.selectById(1L)).thenAnswer(inv -> {
+            ChatSession s = new ChatSession();
+            s.setId(1L);
+            s.setUserId(100L);
+            s.setMode("CHAT");
+            s.setStatus("ACTIVE");
+            s.setDeleted(0);
+            return s;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("Hi");
+
+        ChatRequest request = new ChatRequest();
+        request.setMessage("Hello");
+        chatSessionService.sendMessage(100L, request);
+
+        // fromMdc 被调：module=chat action=send_message targetType=chat_session targetId=1(会话id) SUCCESS
+        verify(auditLogService).fromMdc(eq("chat"), eq("send_message"), eq("chat_session"),
+                eq("1"), anyString(), eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
+        verify(auditLogService).record(any());
     }
 
     @Test

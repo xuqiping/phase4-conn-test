@@ -1,12 +1,17 @@
 package com.superprogrammer.billing.service;
 
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * LLM 出口计费编排（spec §4 计费链 + §5 两写路径）：算价 → 折算 → 同步扣 → 异步采。
@@ -29,6 +34,11 @@ public class LlmBillingService {
     private final PointsRatioService ratioService;
     private final PointsWalletService walletService;
     private final UsageCollector usageCollector;
+    /** 审计：对话完成行 chat_completed（8x Chunk4 行2）。 */
+    private final AuditLogService auditLogService;
+    /** 对话审计开关（audit.chat.enabled）。非 final，Spring @Value 字段注入。 */
+    @Value("${audit.chat.enabled:true}")
+    private boolean chatAuditEnabled;
 
     /**
      * LLM 调用成功：算价→折算→同步扣→异步采。全链吞异常。usage 状态记 SUCCESS。
@@ -60,6 +70,9 @@ public class LlmBillingService {
             BigDecimal after = walletService.charge(userId, points, kind, null, model);
             usageCollector.record(userId, providerId, providerScope, model, kind,
                     tokensInput, tokensOutput, yuan, points, status, null);
+            // 8x Chunk4 行2：对话完成审计（单一计算源——复用本帧 tokens/points，不二次算价，坑点 #11）
+            auditChatCompleted(userId, model, kind, tokensInput, tokensOutput, points,
+                    AuditLogEntity.RESULT_SUCCESS, null);
             return after;
         } catch (BusinessException e) {
             // 计费自身失败（PRICING_NOT_FOUND 等）：LLM 已答完不可逆，记 FAILED usage 让 admin 可见缺口，不抛
@@ -83,8 +96,49 @@ public class LlmBillingService {
         try {
             usageCollector.record(userId, providerId, providerScope, model, kind,
                     null, null, null, null, LlmUsageLogEntity.STATUS_FAILED, errorMsg);
+            // 8x Chunk4 行2 失败分支：模型调用失败也记 chat_completed(FAIL)
+            auditChatCompleted(userId, model, kind, null, null, null,
+                    AuditLogEntity.RESULT_FAIL, errorMsg);
         } catch (Exception e) {
             log.warn("失败 usage 采集异常(吞) : {}", e.toString());
+        }
+    }
+
+    /**
+     * 8x Chunk4 行2：对话完成审计（chat_completed）。detail 带 model/kind/tokens/积分——
+     * <b>tokens 与 points 复用本帧计费已算值（单一计算源，坑点 #11），禁二次算价</b>。
+     *
+     * <p>关联键：userId 显式传；traceId/clientIp/username 取 MDC（同步 chat 路径有；流式 reactor 线程暂空，
+     * Chunk7 启用 context-propagation 后自动补全，本处前向兼容无需改）。sessionId 不在本服务作用域，
+     * targetId 留 null（靠 traceId 串 send_message↔chat_completed↔llm_usage_logs，Chunk7 落地）。
+     * 仅 kind=CHAT 且 userId 非空（系统 embed 调用不记）且开关开时落。失败一律吞（计费旁路铁律）。
+     */
+    private void auditChatCompleted(Long userId, String model, String kind, Integer tokensInput,
+                                    Integer tokensOutput, BigDecimal pointsConsumed, String result, String reason) {
+        if (!chatAuditEnabled || !LlmUsageLogEntity.KIND_CHAT.equals(kind) || userId == null) {
+            return;
+        }
+        try {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("model", model);
+            detail.put("kind", "CHAT");
+            if (tokensInput != null) {
+                detail.put("tokensInput", tokensInput);
+            }
+            if (tokensOutput != null) {
+                detail.put("tokensOutput", tokensOutput);
+            }
+            if (pointsConsumed != null) {
+                detail.put("pointsConsumed", pointsConsumed);
+            }
+            if (reason != null) {
+                detail.put("reason", reason.length() > 200 ? reason.substring(0, 200) : reason);
+            }
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(detail);
+            auditLogService.recordTask("chat", "chat_completed", "chat_session",
+                    null, userId, null, null, json, result);
+        } catch (Exception e) {
+            log.warn("对话完成审计失败(已吞) userId={} model={} : {}", userId, model, e.toString());
         }
     }
 }

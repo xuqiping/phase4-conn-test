@@ -3,6 +3,8 @@ package com.superprogrammer.chat.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.agent.entity.Agent;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.agent.mapper.AgentMapper;
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
@@ -21,10 +23,12 @@ import com.superprogrammer.workflow.entity.Workflow;
 import com.superprogrammer.workflow.mapper.WorkflowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
@@ -71,6 +75,11 @@ public class ChatSessionService {
     private final com.superprogrammer.search.service.WebSearchService webSearchService;
     // 聊天附件归属校验（V69 二期 P3：消息体携带 file_ids，turn 提及「含附件《名》」）
     private final MemoryAssetUploadService memoryAssetUploadService;
+    /** 审计：对话两阶段（send_message + chat_completed），8x Chunk4。 */
+    private final AuditLogService auditLogService;
+    /** 对话审计开关（audit.chat.enabled，高频出问题可关）。非 final，Spring @Value 字段注入。 */
+    @Value("${audit.chat.enabled:true}")
+    private boolean chatAuditEnabled;
 
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
@@ -176,6 +185,10 @@ public class ChatSessionService {
         userMsg.setContent(request.getMessage());
         fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
+
+        // 8x Chunk4：send_message 审计行（用户消息持久化后，请求线程→MDC 有 traceId/IP/username）
+        auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
+                request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
 
         // Build execution context
         ExecutionContext context = new ExecutionContext(
@@ -318,6 +331,34 @@ public class ChatSessionService {
         return memoryAssetUploadService.resolveOwnedAttachmentNames(request.getAttachmentFileIds(), userId);
     }
 
+    /**
+     * 8x Chunk4 行1：用户发消息审计（send_message）。两咽喉（REST sendMessage + 流式 doSendMessageStream）共用。
+     * 请求线程→{@code fromMdc} 自带 traceId/userId/username/clientIp（无需显式覆盖）。
+     * detail 只带 agentId/model/attachmentCount——<b>严禁 prompt 原文</b>（隐私+体积，见 plan 坑点 #6）。
+     * 失败一律吞（对话主流程绝不被审计拖垮）。开关 audit.chat.enabled 关则不落。
+     */
+    private void auditSendMessage(Long sessionId, Long agentId, String model, Long userId, int attachmentCount) {
+        if (!chatAuditEnabled) {
+            return;
+        }
+        try {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            if (agentId != null) {
+                detail.put("agentId", agentId);
+            }
+            if (model != null) {
+                detail.put("model", model);
+            }
+            detail.put("attachmentCount", attachmentCount);
+            String detailJson = new ObjectMapper().writeValueAsString(detail);
+            AuditLogEntity row = auditLogService.fromMdc("chat", "send_message", "chat_session",
+                    String.valueOf(sessionId), detailJson, AuditLogEntity.RESULT_SUCCESS);
+            auditLogService.record(row);
+        } catch (Exception e) {
+            log.warn("对话发送审计失败(已吞) sessionId={} : {}", sessionId, e.toString());
+        }
+    }
+
     /** 消息 metadata 记 attachmentFileIds（前端渲染文件卡片用；无附件不写）。 */
     private void fillAttachmentMetadata(ChatMessage msg, List<String> attachmentFileIds) {
         if (attachmentFileIds == null || attachmentFileIds.isEmpty()) {
@@ -377,6 +418,10 @@ public class ChatSessionService {
         userMsg.setContent(request.getMessage());
         fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
+
+        // 8x Chunk4：send_message 审计行（流式咽喉，同 REST；请求线程→MDC 有 traceId/IP/username）
+        auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
+                request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
 
         ExecutionContext context = new ExecutionContext(
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());

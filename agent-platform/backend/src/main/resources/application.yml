@@ -86,6 +86,10 @@ jwt:
 # 生成方式: openssl rand -base64 48 | tr -d '\n'。入 G1 轮换清单（轮换后旧链重算必断，须配合全量校验+新锚定公告）。
 audit:
   hmac-key: ${AUDIT_HMAC_KEY:}
+  # 对话审计开关（8x Chunk4）：chat 两阶段审计（send_message + chat_completed）高频落库，
+  # 出问题（容量/性能/噪音）时可关，关后两行都不落（其它模块审计不受影响）。默认开。
+  chat:
+    enabled: ${AUDIT_CHAT_ENABLED:true}
 
 management:
   tracing:
