@@ -869,7 +869,8 @@ async function loadHistory() {
       q: historyQuery.value.trim() || undefined,
       from: range ? new Date(range[0]).toISOString() : undefined,
       to: range ? new Date(range[1]).toISOString() : undefined,
-      limit: 50
+      limit: 50,
+      kind: 'VIDEO' // 视频页只显视频任务（图片记录不混入，SQL 层过滤）
     })
     if (requestSeq === historyRequestSeq) history.value = data.data
   } catch {

@@ -233,6 +233,8 @@ export interface MediaTaskQuery {
   from?: string
   to?: string
   limit?: number
+  /** 任务大类过滤：IMAGE=仅图片任务、VIDEO=仅视频任务、缺省=全量（SQL 层过滤） */
+  kind?: 'IMAGE' | 'VIDEO'
 }
 
 /** /api/files/upload 返回（StoredFile 最小子集，前端只取 fileId） */
