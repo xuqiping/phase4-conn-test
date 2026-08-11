@@ -208,6 +208,9 @@
               size="small"
               type="daterange"
               clearable
+              :actions="['clear']"
+              close-on-select
+              update-value-on-close
               aria-label="筛选历史时间范围"
               class="history__filter-range"
             />
@@ -555,7 +558,8 @@ async function loadHistory() {
     const { data } = await mediaApi.listTasks({
       q: historyQuery.value.trim() || undefined,
       from: range ? new Date(range[0]).toISOString() : undefined,
-      to: range ? new Date(range[1]).toISOString() : undefined,
+      // daterange 结束日是当日 00:00 → +1天-1ms 含整天；否则同日区间 from==to 被后端 400
+      to: range ? new Date(range[1] + 24 * 3600 * 1000 - 1).toISOString() : undefined,
       limit: 30,
       kind: 'IMAGE' // 仅图片任务（SQL 层过滤，替代原前端 filter——先 LIMIT 再内存过滤会行数不足）
     })
