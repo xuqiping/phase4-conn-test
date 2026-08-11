@@ -2,6 +2,8 @@ package com.superprogrammer.media.edit.service.internal;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.media.edit.entity.MediaEditTask;
 import com.superprogrammer.media.edit.mapper.MediaEditTaskMapper;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 视频剪辑任务的全部 DB 写操作（独立 bean，@Transactional 经 Spring 代理生效）。
@@ -27,6 +31,8 @@ import java.util.List;
 public class MediaEditTaskTxService {
 
     private final MediaEditTaskMapper taskMapper;
+    /** 审计：剪辑终态失败落库（问题修复 #1，markFailed/markDownloadFailed 咽喉覆盖全部失败路径）。 */
+    private final AuditLogService auditLogService;
 
     /**
      * 认领一批待处理任务（PENDING 或 RUNNING 且锁过期）。认领即置 RUNNING + attempt+1 + lockedUntil。
@@ -78,6 +84,7 @@ public class MediaEditTaskTxService {
                 .set(MediaEditTask::getLockedUntil, null)
                 .set(MediaEditTask::getUpdatedAt, OffsetDateTime.now());
         taskMapper.update(null, u);
+        auditFail(taskId, "render_fail", truncate(errorMsg, 200));
     }
 
     /** 落盘失败（渲染成功但产物存盘失败）：保留 spec 便于人工/后续重试。 */
@@ -90,6 +97,28 @@ public class MediaEditTaskTxService {
                 .set(MediaEditTask::getLockedUntil, null)
                 .set(MediaEditTask::getUpdatedAt, OffsetDateTime.now());
         taskMapper.update(null, u);
+        auditFail(taskId, "download_failed", truncate(errorMsg, 200));
+    }
+
+    /**
+     * 问题修复 #1：剪辑终态失败审计。本地 FFmpeg 无 model，detail 仅 kind+reason（不泄露 OSS URL/spec）。
+     * task 不存在（已删）则跳过。审计异步 fire-and-forget，不影响本事务。
+     */
+    private void auditFail(Long taskId, String reasonPrefix, String reason) {
+        MediaEditTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            return;
+        }
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("kind", "EDIT");
+        detail.put("reason", reasonPrefix + ": " + reason);
+        try {
+            String detailJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(detail);
+            auditLogService.recordTask("media", "video_edit_fail", "media_edit_task", String.valueOf(taskId),
+                    task.getUserId(), null, task.getClientIp(), detailJson, AuditLogEntity.RESULT_FAIL);
+        } catch (Exception e) {
+            log.warn("剪辑失败审计序列化失败(已跳过) taskId={} : {}", taskId, e.toString());
+        }
     }
 
     private static String truncate(String s, int max) {

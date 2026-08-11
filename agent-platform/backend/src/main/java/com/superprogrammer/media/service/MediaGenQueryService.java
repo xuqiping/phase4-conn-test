@@ -247,6 +247,8 @@ public class MediaGenQueryService {
                 .watermark(watermark)
                 .generateAudio(generateAudio)
                 .inputAttachments(inputAttachments)
+                // 7x-4：按附件是否有 kind=="video" 算 hasReference（首尾帧图 kind=="image" 不算）
+                .hasReference(inputAttachments.stream().anyMatch(a -> "video".equals(a.getKind())))
                 .submittedRequest(submittedRequest)
                 .providerRequestSnapshot(providerRequestSnapshot)
                 .tokensCost(task.getTokensCost())

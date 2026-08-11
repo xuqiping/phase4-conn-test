@@ -1,6 +1,8 @@
 package com.superprogrammer.media.edit.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.media.edit.config.MediaEditProperties;
@@ -66,6 +68,8 @@ public class MediaEditTaskWorker {
     private final Executor executor;
     /** 剪辑终态/耗时指标（media.task.terminal/duration, kind=edit）。 */
     private final BizMetrics bizMetrics;
+    /** 审计：剪辑终态成功落库（问题修复 #1，本地 FFmpeg 无 model/token/积分，detail 仅 kind+mediaCount）。 */
+    private final AuditLogService auditLogService;
 
     public MediaEditTaskWorker(MediaEditTaskTxService txService,
                                MediaEditTaskMapper taskMapper,
@@ -75,7 +79,8 @@ public class MediaEditTaskWorker {
                                MediaEditProperties properties,
                                ObjectMapper objectMapper,
                                @Qualifier("mediaEditExecutor") Executor executor,
-                               BizMetrics bizMetrics) {
+                               BizMetrics bizMetrics,
+                               AuditLogService auditLogService) {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.provider = provider;
@@ -85,6 +90,7 @@ public class MediaEditTaskWorker {
         this.objectMapper = objectMapper;
         this.executor = executor;
         this.bizMetrics = bizMetrics;
+        this.auditLogService = auditLogService;
     }
 
     @Scheduled(fixedDelayString = "${media.edit.poll-ms:5000}")
@@ -181,7 +187,26 @@ public class MediaEditTaskWorker {
         }
         txService.markSucceeded(taskId, resultFileId);
         log.info("剪辑任务成功 taskId={} media={}", taskId, mediaByFileId.size());
+        auditEditSuccess(task, mediaByFileId.size());
         return true;
+    }
+
+    /**
+     * 问题修复 #1：剪辑终态成功审计。与 edit_submit 行通过 taskId 关联（同 targetId）。
+     * 本地 FFmpeg 渲染无 model/token/积分，detail 仅 kind+mediaCount。IP 取提交期盖戳。
+     */
+    private void auditEditSuccess(MediaEditTask task, int mediaCount) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("kind", "EDIT");
+        detail.put("mediaCount", mediaCount);
+        try {
+            String detailJson = objectMapper.writeValueAsString(detail);
+            auditLogService.recordTask("media", "video_edit_success", "media_edit_task",
+                    String.valueOf(task.getId()), task.getUserId(), null, task.getClientIp(),
+                    detailJson, AuditLogEntity.RESULT_SUCCESS);
+        } catch (Exception e) {
+            log.warn("剪辑成功审计失败(已跳过) taskId={} : {}", task.getId(), e.toString());
+        }
     }
 
     /** 兜底清理：worker 崩溃残留的 temp 目录（>2h）每日清一次，防磁盘涨爆。 */

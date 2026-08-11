@@ -1,6 +1,5 @@
 package com.superprogrammer.media.edit.controller;
 
-import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -68,7 +67,6 @@ public class MediaEditController {
     }
 
     /** 提交剪辑渲染任务：先校验素材（归属/格式/上限）并规范化成 V2，再建 PENDING 行。 */
-    @AuditLog(module = "media", action = "edit_submit", targetType = "media_edit_task")
     @PostMapping("/submit")
     @RequirePermission("media:edit")
     public ResponseEntity<R<Map<String, Object>>> submit(@Valid @RequestBody EditSpec spec) {

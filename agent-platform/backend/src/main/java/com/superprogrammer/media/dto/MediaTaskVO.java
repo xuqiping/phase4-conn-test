@@ -33,6 +33,12 @@ public class MediaTaskVO {
     private Boolean generateAudio;
     /** 输入附件摘要；不含文件正文，预览仍需文件接口鉴权。 */
     private List<InputAttachmentVO> inputAttachments;
+    /**
+     * 7x-4：是否带参考视频（按 inputAttachments 里是否有 kind=="video" 实时算）。
+     * <p>首尾帧参考图（kind=="image"）不算参考视频。list/detail 都返（计算廉价），
+     * 用于任务详情/历史/画布明确标注，供审查定价是否按「有参考」命中。
+     */
+    private Boolean hasReference;
     /** 平台收到并持久化的提交参数；已移除 Provider 快照及任何意外 data URI。 */
     private JsonNode submittedRequest;
     /** 实际 Provider POST body 的脱敏快照；旧任务未记录时为 null。 */

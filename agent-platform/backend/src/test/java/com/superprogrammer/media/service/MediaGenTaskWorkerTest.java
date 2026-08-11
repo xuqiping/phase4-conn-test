@@ -82,6 +82,10 @@ class MediaGenTaskWorkerTest {
         // 指标：成功终态正好一次（kind=video,result=success）+ 端到端耗时
         verify(bizMetrics).mediaTaskTerminal("video", "success");
         verify(bizMetrics).mediaTaskDuration(eq("video"), any());
+        // Chunk3 #1：成功终态二次审计 video_gen_success，detail 带 model+kind（与 video_submit 同 targetId=1 关联）
+        verify(auditLogService).recordTask(eq("media"), eq("video_gen_success"), eq("media_gen_task"),
+                eq("1"), eq(100L), isNull(), isNull(), contains("doubao-seedance-1-0"),
+                eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
     }
 
     @Test

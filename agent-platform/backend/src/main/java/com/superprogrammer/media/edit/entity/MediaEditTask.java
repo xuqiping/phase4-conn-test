@@ -48,4 +48,6 @@ public class MediaEditTask {
     private String errorMsg;
     private Integer attempt;
     private OffsetDateTime lockedUntil;
+    /** 提交者 IP（submit 时从 MDC 盖戳，worker 终态审计取用，问题修复 #6）。 */
+    private String clientIp;
 }

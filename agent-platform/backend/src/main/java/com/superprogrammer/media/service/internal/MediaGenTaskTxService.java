@@ -2,6 +2,8 @@ package com.superprogrammer.media.service.internal;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 媒体生成任务的全部 DB 写操作（独立 bean，@Transactional 经 Spring 代理生效）。
@@ -27,6 +31,8 @@ import java.util.List;
 public class MediaGenTaskTxService {
 
     private final MediaGenTaskMapper taskMapper;
+    /** 审计：媒体终态失败落库（问题修复 #1，markFailed/markDownloadFailed 咽喉覆盖全部失败路径）。 */
+    private final AuditLogService auditLogService;
 
     /**
      * 认领一批待处理任务（PENDING 或 RUNNING 且锁过期）。认领即置 RUNNING + attempt+1 + lockedUntil。
@@ -129,6 +135,7 @@ public class MediaGenTaskTxService {
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
         taskMapper.update(null, u);
+        auditFail(taskId, "gen_fail", truncate(errorMsg, 200));
     }
 
     /** 下载失败：保留 ark_task_id 便于人工/后续重试（worker 留重试入口）。 */
@@ -141,6 +148,32 @@ public class MediaGenTaskTxService {
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
         taskMapper.update(null, u);
+        auditFail(taskId, "download_failed", truncate(errorMsg, 200));
+    }
+
+    /**
+     * 问题修复 #1：媒体终态失败审计。按 taskType 判 image/video 选 action，detail 带 model+reason
+     * （不泄露 OSS URL/token）。task 不存在（已删）则跳过。审计异步 fire-and-forget，不影响本事务。
+     */
+    private void auditFail(Long taskId, String reasonPrefix, String reason) {
+        MediaGenTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            return;
+        }
+        boolean image = MediaGenTask.TYPE_TEXT2IMAGE.equals(task.getTaskType())
+                || MediaGenTask.TYPE_IMAGE2IMAGE.equals(task.getTaskType());
+        String action = (image ? "image_gen_fail" : "video_gen_fail");
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("model", task.getModel());
+        detail.put("kind", image ? "IMAGE" : "VIDEO");
+        detail.put("reason", reasonPrefix + ": " + reason);
+        try {
+            String detailJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(detail);
+            auditLogService.recordTask("media", action, "media_gen_task", String.valueOf(taskId),
+                    task.getUserId(), null, task.getClientIp(), detailJson, AuditLogEntity.RESULT_FAIL);
+        } catch (Exception e) {
+            log.warn("媒体失败审计序列化失败(已跳过) taskId={} : {}", taskId, e.toString());
+        }
     }
 
     private static String truncate(String s, int max) {

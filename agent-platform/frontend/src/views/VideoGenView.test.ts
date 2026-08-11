@@ -74,6 +74,7 @@ const historyTask: MediaTaskVO = {
   watermark: false,
   generateAudio: false,
   inputAttachments: [],
+  hasReference: false,
   submittedRequest: null,
   providerRequestSnapshot: null,
   tokensCost: null,

@@ -55,6 +55,8 @@ export interface MediaTaskVO {
   watermark: boolean | null
   generateAudio: boolean | null
   inputAttachments: InputAttachmentVO[]
+  /** 7x-4：是否带参考视频（按 inputAttachments 里是否有 kind=="video" 算）；list/detail 都返 */
+  hasReference: boolean | null
   /** 仅任务详情返回：平台持久化的提交参数（已剔除 Provider 快照）。 */
   submittedRequest: Record<string, unknown> | null
   /** 仅任务详情返回：实际 Provider 请求的脱敏快照；旧任务为 null。 */

@@ -1,6 +1,5 @@
 package com.superprogrammer.media.controller;
 
-import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -55,7 +54,6 @@ public class MediaGenController {
     private final com.superprogrammer.media.service.MediaModelService mediaModelService;
     private final com.superprogrammer.media.provider.ArkSeedanceProvider arkSeedanceProvider;
 
-    @AuditLog(module = "media", action = "video_submit", targetType = "media_gen_task")
     @PostMapping("/video")
     @RequirePermission("media:gen")
     public ResponseEntity<R<Map<String, Object>>> submit(@Valid @RequestBody MediaSubmitRequest request) {
@@ -88,7 +86,6 @@ public class MediaGenController {
      * 生图任务提交（Seedream 同步生图，按张计费）。
      * 参数按模型能力清单校验；参考图从资产库 file_id 选取。
      */
-    @AuditLog(module = "media", action = "image_submit", targetType = "media_gen_task")
     @PostMapping("/image")
     @RequirePermission("media:gen")
     public ResponseEntity<R<Map<String, Object>>> submitImage(@Valid @RequestBody ImageSubmitRequest request) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.billing.service.InflightGateService;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
@@ -20,10 +21,12 @@ import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -61,6 +64,8 @@ public class MediaGenTaskService {
     private final InflightGateService inflightGate;
     /** 媒体提交指标（media.task.submitted）。 */
     private final BizMetrics bizMetrics;
+    /** 审计：submit 编程式落库（关联键 targetId=taskId，问题修复 #8）。 */
+    private final AuditLogService auditLogService;
 
     /**
      * 提交生成任务。
@@ -200,7 +205,20 @@ public class MediaGenTaskService {
         task.setRequestConfig(toJson(config));
         task.setStatusFlag(MediaGenTask.FLAG_SUCCESS);
         task.setAttempt(0);
+        // 问题修复 #6：盖戳提交者 IP（worker 终态审计取用，worker 无 MDC）
+        task.setClientIp(MDC.get("clientIp"));
         taskMapper.insert(task);
+
+        // 问题修复 #8：submit 编程式落审计，targetId=taskId（与 worker 终态行关联）
+        Map<String, Object> submitDetail = new LinkedHashMap<>();
+        submitDetail.put("model", resolvedModel);
+        submitDetail.put("taskType", resolvedType);
+        submitDetail.put("ratio", ratio);
+        submitDetail.put("duration", duration);
+        submitDetail.put("resolution", resolution);
+        auditLogService.recordTask("media", "video_submit", "media_gen_task", String.valueOf(task.getId()),
+                userId, MDC.get("username"), task.getClientIp(), toJson(submitDetail),
+                com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS);
 
         log.info("提交视频生成任务 taskId={} userId={} type={} model={} ratio={} res={} audio={} 附件={}",
                 task.getId(), userId, resolvedType, resolvedModel, ratio, resolution, generateAudio,
@@ -273,7 +291,19 @@ public class MediaGenTaskService {
         task.setRequestConfig(toJson(config));
         task.setStatusFlag(MediaGenTask.FLAG_SUCCESS);
         task.setAttempt(0);
+        // 问题修复 #6：盖戳提交者 IP
+        task.setClientIp(MDC.get("clientIp"));
         taskMapper.insert(task);
+
+        // 问题修复 #8：submit 编程式落审计，targetId=taskId
+        Map<String, Object> submitDetail = new LinkedHashMap<>();
+        submitDetail.put("model", model);
+        submitDetail.put("taskType", resolvedType);
+        submitDetail.put("size", size);
+        submitDetail.put("refImageCount", refFileIds == null ? 0 : refFileIds.size());
+        auditLogService.recordTask("media", "image_submit", "media_gen_task", String.valueOf(task.getId()),
+                userId, MDC.get("username"), task.getClientIp(), toJson(submitDetail),
+                com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS);
 
         log.info("提交图片生成任务 taskId={} userId={} type={} model={} size={} 参考图={}",
                 task.getId(), userId, resolvedType, model, size, refFileIds == null ? 0 : refFileIds.size());

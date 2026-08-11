@@ -15,6 +15,8 @@ import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import com.superprogrammer.media.provider.ArkImageProvider;
 import com.superprogrammer.media.provider.ArkSeedanceProvider;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.media.service.internal.MediaGenTaskTxService;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +64,8 @@ public class MediaGenTaskWorker {
     private final InflightGateService inflightGate;
     /** 媒体终态/耗时指标（media.task.terminal/duration）。 */
     private final BizMetrics bizMetrics;
+    /** 审计：媒体终态成功落库（问题修复 #1 #7，带模型/积分快照）。 */
+    private final AuditLogService auditLogService;
 
     public MediaGenTaskWorker(MediaGenTaskTxService txService,
                               MediaGenTaskMapper taskMapper,
@@ -74,7 +78,8 @@ public class MediaGenTaskWorker {
                               @Qualifier("mediaTaskExecutor") Executor executor,
                               MediaBillingService mediaBillingService,
                               InflightGateService inflightGate,
-                              BizMetrics bizMetrics) {
+                              BizMetrics bizMetrics,
+                              AuditLogService auditLogService) {
         this.txService = txService;
         this.taskMapper = taskMapper;
         this.arkProvider = arkProvider;
@@ -87,6 +92,7 @@ public class MediaGenTaskWorker {
         this.mediaBillingService = mediaBillingService;
         this.inflightGate = inflightGate;
         this.bizMetrics = bizMetrics;
+        this.auditLogService = auditLogService;
     }
 
     @Scheduled(fixedDelayString = "${media.poll-ms:5000}")
@@ -225,6 +231,8 @@ public class MediaGenTaskWorker {
             mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId);
             throw e;
         }
+        // 问题修复 #1 #7：视频生成成功落审计，带模型+实扣积分（关联键 targetId=taskId，与 submit 行对应）
+        auditMediaSuccess(task, "video_gen_success", LlmUsageLogEntity.KIND_VIDEO, chargedPoints, null);
         return true;
     }
 
@@ -286,9 +294,35 @@ public class MediaGenTaskWorker {
             mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId);
             throw e;
         }
+        // 问题修复 #1 #7：图片生成成功落审计，带模型+实扣积分+张数
+        auditMediaSuccess(task, "image_gen_success", LlmUsageLogEntity.KIND_IMAGE, chargedPoints, imageCount);
         log.info("生图任务成功 taskId={} model={} 张数={} fileIds={}",
                 taskId, task.getModel(), imageCount, fileIds.size());
         return true;
+    }
+
+    /**
+     * 问题修复 #1 #7：媒体终态成功审计（worker 线程，显式传身份/IP——worker 无 MDC）。
+     * detail 走 LogMasker 不泄露 OSS URL/token；积分取 chargeMedia 实扣返回值（单一计算源，不重算）。
+     */
+    private void auditMediaSuccess(MediaGenTask task, String action, String kind,
+                                   java.math.BigDecimal pointsConsumed, Integer imageCount) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("model", task.getModel());
+        detail.put("kind", kind);
+        if (pointsConsumed != null) {
+            detail.put("pointsConsumed", pointsConsumed);
+        }
+        if (imageCount != null) {
+            detail.put("imageCount", imageCount);
+        }
+        try {
+            String detailJson = objectMapper.writeValueAsString(detail);
+            auditLogService.recordTask("media", action, "media_gen_task", String.valueOf(task.getId()),
+                    task.getUserId(), null, task.getClientIp(), detailJson, AuditLogEntity.RESULT_SUCCESS);
+        } catch (Exception e) {
+            log.warn("媒体终态审计序列化失败(已跳过) taskId={} action={} : {}", task.getId(), action, e.toString());
+        }
     }
 
     /** result_meta JSON：{imageFileIds:[], generatedImages, outputTokens}（前端列表展示 + 逐张下载/入库用）。 */

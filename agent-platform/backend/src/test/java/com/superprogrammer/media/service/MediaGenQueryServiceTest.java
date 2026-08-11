@@ -116,6 +116,51 @@ class MediaGenQueryServiceTest {
         assertEquals("last_frame", vo.getInputAttachments().get(0).getFrameRole());
     }
 
+    // ---------- 7x-4：hasReference 计算（首尾帧图不算参考视频） ----------
+
+    @Test
+    void get_hasReference_videoAttachmentPresent_isTrue() {
+        // 含 kind=video 附件 → hasReference=true
+        MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);
+        task.setRequestConfig("""
+                {"prompt":"带参考视频","attachments":[
+                   {"fileId":"vid-1","kind":"video","name":"动作.mp4"}
+                 ]}
+                """);
+        when(taskMapper.selectById(1L)).thenReturn(task);
+
+        var vo = queryService.get(1L, 100L, false);
+
+        assertTrue(vo.getHasReference(), "含 kind=video 附件应标 hasReference=true");
+    }
+
+    @Test
+    void get_hasReference_imageFirstFrameOnly_isFalse() {
+        // 仅首尾帧参考图（kind=image）→ hasReference=false（图不算参考视频）
+        MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);
+        task.setRequestConfig("""
+                {"prompt":"首帧图","attachments":[
+                   {"fileId":"img-1","kind":"image","frameRole":"first_frame","name":"首图.png"}
+                 ]}
+                """);
+        when(taskMapper.selectById(1L)).thenReturn(task);
+
+        var vo = queryService.get(1L, 100L, false);
+
+        assertFalse(vo.getHasReference(), "仅首尾帧图应标 hasReference=false");
+    }
+
+    @Test
+    void get_hasReference_noAttachments_isFalse() {
+        // 无附件（纯文生视频）→ hasReference=false
+        MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);
+        when(taskMapper.selectById(1L)).thenReturn(task);
+
+        var vo = queryService.get(1L, 100L, false);
+
+        assertFalse(vo.getHasReference(), "无附件应标 hasReference=false");
+    }
+
     @Test
     void get_AC_V3_07_returnsSubmittedAndRedactedProviderRequestsWithoutDataUri() throws Exception {
         MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);

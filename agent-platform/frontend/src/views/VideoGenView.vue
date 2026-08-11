@@ -251,6 +251,13 @@
               <n-tag v-if="activeTask?.statusFlag" size="small" type="warning" :bordered="false">
                 用量估算
               </n-tag>
+              <!-- 7x-4：明确标注是否有参考视频（供审查定价是否按「有参考」命中） -->
+              <n-tag v-if="activeTask?.hasReference" size="small" type="info" :bordered="false">
+                有参考视频
+              </n-tag>
+              <n-tag v-else-if="activeTask && activeTask.hasReference === false" size="small" :bordered="false" type="default">
+                无参考
+              </n-tag>
             </n-space>
           </template>
 
@@ -1016,6 +1023,13 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
   },
   { title: '时长', key: 'duration', width: 60, render: r => r.duration ? `${r.duration}s` : '-' },
   { title: '分辨率', key: 'resolution', width: 80, render: r => r.resolution || '-' },
+  {
+    // 7x-4：参考视频标志列（null 兼容旧任务）
+    title: '参考视频', key: 'hasReference', width: 90,
+    render: r => r.hasReference === true
+      ? h(NTag, { size: 'small', type: 'info', bordered: false }, () => '有')
+      : (r.hasReference === false ? h('span', { class: 'video-gen__preview-placeholder' }, '无') : '-')
+  },
   {
     title: '创建时间', key: 'createdAt', width: 150,
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
