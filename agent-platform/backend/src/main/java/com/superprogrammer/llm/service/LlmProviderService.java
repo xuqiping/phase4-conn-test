@@ -9,6 +9,7 @@ import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmProviderVO;
+import com.superprogrammer.llm.dto.LlmProviderExportItem;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -131,6 +132,43 @@ public class LlmProviderService {
             return null;
         }
         return aesEncryptService.decrypt(entity.getApiKeyEnc());
+    }
+
+    /**
+     * 导出全量供应商为明文 Key 列表（问题 10x-2）。
+     * <p>仅 admin 可调（Controller 层 @RequirePermission("role:manage")）。
+     * 解密 apiKeyEnc 填入 apiKey 明文——导出文件含明文密钥，调用方须妥善保管。
+     * 解密失败的条目 apiKey 置 null 并 warn（不中断整体导出）。
+     */
+    public List<LlmProviderExportItem> exportAll() {
+        LambdaQueryWrapper<LlmProviderEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(LlmProviderEntity::getDeleted, 0)
+               .orderByAsc(LlmProviderEntity::getSortOrder);
+        return mapper.selectList(wrapper).stream()
+                .map(this::toExportItem)
+                .collect(Collectors.toList());
+    }
+
+    private LlmProviderExportItem toExportItem(LlmProviderEntity e) {
+        LlmProviderExportItem item = new LlmProviderExportItem();
+        item.setName(e.getName());
+        item.setDisplayName(e.getDisplayName());
+        item.setProtocol(e.getProtocol());
+        item.setApiEndpoint(e.getApiEndpoint());
+        // 解密 key 填明文；失败不中断导出，置 null 并 warn
+        if (e.getApiKeyEnc() != null && !e.getApiKeyEnc().isBlank()) {
+            try {
+                item.setApiKey(aesEncryptService.decrypt(e.getApiKeyEnc()));
+            } catch (Exception ex) {
+                log.warn("导出供应商解密 key 失败 name={}: {}", e.getName(), ex.getMessage());
+            }
+        }
+        item.setModels(e.getModels());
+        item.setConfig(e.getConfig());
+        item.setSortOrder(e.getSortOrder());
+        item.setCategory(e.getCategory());
+        item.setStatus(e.getStatus());
+        return item;
     }
 
     public void delete(Long id) {

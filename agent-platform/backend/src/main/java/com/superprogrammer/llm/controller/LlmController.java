@@ -1,5 +1,7 @@
 package com.superprogrammer.llm.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.llm.dto.LlmProviderCreateRequest;
 import com.superprogrammer.llm.dto.LlmProviderVO;
@@ -9,12 +11,16 @@ import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.llm.config.LlmConfig;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 import java.util.List;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/llm")
 @RequiredArgsConstructor
@@ -22,6 +28,7 @@ public class LlmController {
 
     private final LlmProviderService providerService;
     private final LlmConfig llmConfig;
+    private final ObjectMapper objectMapper;
 
     @GetMapping("/providers")
     @RequirePermission("role:manage")
@@ -79,6 +86,32 @@ public class LlmController {
     public ResponseEntity<R<Void>> reloadProviders() {
         llmConfig.reload();
         return ResponseEntity.ok(R.ok());
+    }
+
+    /**
+     * 导出全量供应商为 JSON 文件下载（问题 10x-2）。
+     * <p>仅 admin（@RequirePermission role:manage）；导出文件含<b>明文 API Key</b>，
+     * 响应头 Content-Disposition 触发浏览器下载；@AuditLog 留痕（明文 key 外流必须可追溯）。
+     */
+    @GetMapping("/providers/export")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "llm", action = "provider_export", targetType = "llm_provider")
+    public ResponseEntity<byte[]> exportProviders() {
+        var items = providerService.exportAll();
+        byte[] body;
+        try {
+            body = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(items);
+        } catch (Exception e) {
+            log.error("导出供应商序列化失败", e);
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.INTERNAL_ERROR, "导出失败");
+        }
+        String filename = "llm-providers-" + java.time.LocalDate.now() + ".json";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body);
     }
 
     private LlmProviderEntity toEntity(LlmProviderCreateRequest request) {
