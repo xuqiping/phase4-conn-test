@@ -32,6 +32,7 @@ export interface AuditLogVO {
 /** 查询筛选条件（全部可选；时间段为 ISO 字符串） */
 export interface AuditLogQuery {
   userId?: number
+  username?: string
   module?: string
   action?: string
   result?: string

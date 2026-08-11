@@ -113,4 +113,15 @@ class AuditLogControllerTest {
         verify(auditLogMapper).selectPage(captor.capture(), any());
         assertEquals(100, captor.getValue().getSize());
     }
+
+    @Test
+    void list_usernameFilterAccepted_200() throws Exception {
+        // 问题修复 #4：username 参数被接受且不报错（LIKE 条件由 MyBatis-Plus 参数化生成）
+        loginAs("admin");
+        when(permissionEvaluator.hasPermission(any(), eq("system:audit:read"))).thenReturn(true);
+        stubEmptyPage();
+        mvc.perform(get("/api/audit/logs").param("username", "admin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+    }
 }

@@ -32,6 +32,7 @@ public class AuditLogController {
     @RequirePermission("system:audit:read")
     public R<PageResult<AuditLogVO>> list(
             @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String username,
             @RequestParam(required = false) String module,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String result,
@@ -42,8 +43,10 @@ public class AuditLogController {
             @RequestParam(defaultValue = "20") int size) {
         // size 上限 100：防拉全表（性能清单：禁全表扫）
         int safeSize = Math.min(Math.max(size, 1), 100);
+        // username 模糊匹配（参数化防注入；idx_audit_username 覆盖前缀，admin 低频双侧模糊可接受）
         LambdaQueryWrapper<AuditLogEntity> wrapper = new LambdaQueryWrapper<AuditLogEntity>()
                 .eq(userId != null, AuditLogEntity::getUserId, userId)
+                .like(username != null && !username.isBlank(), AuditLogEntity::getUsername, username)
                 .eq(module != null && !module.isBlank(), AuditLogEntity::getModule, module)
                 .eq(action != null && !action.isBlank(), AuditLogEntity::getAction, action)
                 .eq(result != null && !result.isBlank(), AuditLogEntity::getResult, result)

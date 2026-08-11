@@ -12,7 +12,8 @@
       <!-- 筛选栏 -->
       <div class="audit-log__filters">
         <n-input-number v-model:value="filters.userId" placeholder="用户ID" clearable :show-button="false" style="width:110px" />
-        <n-select v-model:value="filters.module" :options="moduleOptions" placeholder="模块" clearable style="width:130px" />
+        <n-input v-model:value="filters.username" placeholder="账号(模糊)" clearable style="width:130px" />
+        <n-select v-model:value="filters.module" :options="moduleOptions" placeholder="模块" clearable style="width:140px" />
         <n-input v-model:value="filters.action" placeholder="动作(如 login)" clearable style="width:130px" />
         <n-select v-model:value="filters.result" :options="resultOptions" placeholder="结果" clearable style="width:100px" />
         <n-input v-model:value="filters.traceId" placeholder="traceId" clearable style="width:200px" />
@@ -63,6 +64,7 @@ const timeRange = ref<[number, number] | null>(null)
 
 const filters = reactive({
   userId: null as number | null,
+  username: '',
   module: null as string | null,
   action: '',
   result: null as string | null,
@@ -71,14 +73,21 @@ const filters = reactive({
 
 const pagination = reactive({ page: 1, pageSize: 20, itemCount: 0 })
 
+// 模块下拉与后端实际 module 码对齐（修正旧 knowledge→kb 不匹配 bug，#3 补全）
 const moduleOptions = [
-  { label: '认证 auth', value: 'auth' },
-  { label: '用户 user', value: 'user' },
-  { label: '角色 role', value: 'role' },
-  { label: 'Agent agent', value: 'agent' },
-  { label: '知识库 knowledge', value: 'knowledge' },
-  { label: '计费 billing', value: 'billing' },
-  { label: '系统设置 system', value: 'system' }
+  { label: '认证', value: 'auth' },
+  { label: '用户', value: 'user' },
+  { label: '角色权限', value: 'role' },
+  { label: '智能体', value: 'agent' },
+  { label: '知识库', value: 'kb' },
+  { label: '积分计费', value: 'billing' },
+  { label: '系统设置', value: 'system' },
+  { label: '资产库', value: 'asset' },
+  { label: '记忆', value: 'memory' },
+  { label: '媒体生成', value: 'media' },
+  { label: '模型供应商', value: 'llm' },
+  { label: '智能对话', value: 'chat' },
+  { label: '无限画布', value: 'canvas' }
 ]
 
 const resultOptions = [
@@ -136,6 +145,7 @@ async function loadLogs(page = 1) {
   try {
     const res = await auditApi.list({
       userId: filters.userId ?? undefined,
+      username: filters.username || undefined,
       module: filters.module ?? undefined,
       action: filters.action || undefined,
       result: filters.result ?? undefined,
@@ -161,6 +171,7 @@ function search() {
 
 function reset() {
   filters.userId = null
+  filters.username = ''
   filters.module = null
   filters.action = ''
   filters.result = null
