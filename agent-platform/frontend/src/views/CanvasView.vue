@@ -574,7 +574,9 @@ async function onRunVideo(node: CanvasNode) {
     scheduleSave()
     await pollVideoTask(node.id, taskId)
   } catch (e: unknown) {
-    const msg = (e as { msg?: string })?.msg || '视频提交失败'
+    const msg = (e as { msg?: string; message?: string })?.msg
+      || (e as { message?: string })?.message
+      || '视频提交失败'
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {

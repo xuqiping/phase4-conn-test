@@ -72,10 +72,13 @@ class MediaGenTaskServiceTest {
         provider.setName("seedance");
         provider.setModels("[\"" + SEEDANCE_2 + "\"]");
 
+        MediaGenProperties properties = new MediaGenProperties();
+        properties.getReference().setPublicBaseUrl("https://media.example.com");
+        properties.getReference().setSigningKey("test-secret-at-least-32-bytes-long");
         service = new MediaGenTaskService(
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
-                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService,
+                fileStorageService, properties, new ObjectMapper(), assetService, walletService,
                 inflightGate, bizMetrics);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
@@ -160,20 +163,47 @@ class MediaGenTaskServiceTest {
     }
 
     @Test
-    void submit_firstFramePlusReferenceAccepted() {
-        // SeedDance 2.0 契约：first_frame + 参考图合法（last_frame 才与参考图互斥）。
+    void submit_firstFramePlusReferenceImage_400() {
         List<AttachmentRef> attachments = new ArrayList<>();
         attachments.add(att("first.png", "image", "first_frame"));
         attachments.add(att("ref.png", "image", null));
         attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
 
-        service.submit("首帧+参考图", "16:9", 5, "720p", false, false,
-                null, null, attachments, SEEDANCE_2, USER_ID, false);
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("首帧+参考图", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
+    }
 
-        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
-        verify(taskMapper).insert(captor.capture());
-        String cfg = captor.getValue().getRequestConfig();
-        assertTrue(cfg.contains("first_frame"), "首帧 frameRole 须落库");
+    @Test
+    void submit_firstFramePlusReferenceVideo_400() {
+        List<AttachmentRef> attachments = List.of(
+                att("first.png", "image", "first_frame"),
+                att("ref.mp4", "video"));
+        stubOwnedFile("first.png", "image/png");
+        stubOwnedFile("ref.mp4", "video/mp4");
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("首帧+参考视频", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submit_lastFramePlusReferenceAudio_400() {
+        List<AttachmentRef> attachments = List.of(
+                att("last.png", "image", "last_frame"),
+                att("ref.mp3", "audio"));
+        stubOwnedFile("last.png", "image/png");
+        stubOwnedFile("ref.mp3", "audio/mpeg");
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("尾帧+参考音频", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
     }
 
     @Test
@@ -189,7 +219,8 @@ class MediaGenTaskServiceTest {
         BusinessException e = assertThrows(BusinessException.class, () ->
                 service.submit("尾帧+参考图", "16:9", 5, "720p", false, false,
                         null, null, attachments, SEEDANCE_2, USER_ID, false));
-        assertTrue(e.getMessage().contains("互斥"), "须提示 last_frame 与参考图互斥，实际: " + e.getMessage());
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"),
+                "须提示帧模式与参考媒体互斥，实际: " + e.getMessage());
     }
 
     @Test

@@ -69,9 +69,9 @@
                   <template v-else>
                     <n-upload :show-file-list="false" accept="image/*"
                       :custom-request="(o: UploadCustomRequestOptions) => handleFrameUpload(o, 'first')">
-                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0">上传</n-button>
+                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0 || referenceMediaCount > 0">上传</n-button>
                     </n-upload>
-                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('first')">从资产库</n-button>
+                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0 || referenceMediaCount > 0" @click="openAssetPicker('first')">从资产库</n-button>
                   </template>
                 </div>
               </div>
@@ -88,19 +88,25 @@
                   <template v-else>
                     <n-upload :show-file-list="false" accept="image/*"
                       :custom-request="(o: UploadCustomRequestOptions) => handleFrameUpload(o, 'last')">
-                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0">上传</n-button>
+                      <n-button size="tiny" :disabled="imageSlotsLeft <= 0 || referenceMediaCount > 0">上传</n-button>
                     </n-upload>
-                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('last')">从资产库</n-button>
+                    <n-button size="tiny" quaternary :disabled="imageSlotsLeft <= 0 || referenceMediaCount > 0" @click="openAssetPicker('last')">从资产库</n-button>
                   </template>
                 </div>
               </div>
             </div>
+            <n-alert v-if="frameCount > 0" type="info" :show-icon="false" style="margin-bottom: 12px">
+              当前为首尾帧模式：参考图、参考视频和参考音频已禁用。
+            </n-alert>
+            <n-alert v-else-if="referenceMediaCount > 0" type="info" :show-icon="false" style="margin-bottom: 12px">
+              当前为参考媒体模式：首帧和尾帧已禁用。
+            </n-alert>
 
             <!-- 参考图（F1 统一横排瓦片：上传+资产库同源，序号图N，名称可改） -->
             <n-form-item v-if="capability.maxImages > 0">
               <template #label>
                 参考图
-                <span class="video-gen__hint">（{{ images.length }}/{{ capability.maxImages - frameCount }}，≤8MB/张）</span>
+                <span class="video-gen__hint">（{{ images.length }}/{{ frameCount > 0 ? 0 : capability.maxImages }}，≤8MB/张）</span>
               </template>
               <div class="video-gen__tiles">
                 <div v-for="(a, i) in images" :key="a.id" class="video-gen__tile">
@@ -111,16 +117,16 @@
                   <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
                     @update:value="(v: string) => { a.name = v }" />
                 </div>
-                <n-upload :show-file-list="false" accept="image/*"
+                <n-upload :show-file-list="false" accept="image/*" :disabled="referenceImageSlotsLeft <= 0"
                   :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'image')">
-                  <div class="video-gen__tile-add" :class="{ 'is-disabled': imageSlotsLeft <= 0 }">+</div>
+                  <div class="video-gen__tile-add" :class="{ 'is-disabled': referenceImageSlotsLeft <= 0 }">+</div>
                 </n-upload>
               </div>
-              <n-button quaternary size="small" :disabled="imageSlotsLeft <= 0" @click="openAssetPicker('image')">从资产库选</n-button>
+              <n-button quaternary size="small" :disabled="referenceImageSlotsLeft <= 0" @click="openAssetPicker('image')">从资产库选</n-button>
             </n-form-item>
 
             <!-- 参考视频（F1 统一瓦片） -->
-            <n-form-item v-if="capability.maxVideos > 0 && capability.videoDataUri">
+            <n-form-item v-if="capability.maxVideos > 0 && capability.referenceVideoEnabled">
               <template #label>
                 参考视频
                 <span class="video-gen__hint">（{{ videos.length }}/{{ capability.maxVideos }}，≤50MB/个，运镜/动作参考）</span>
@@ -134,7 +140,7 @@
                   <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
                     @update:value="(v: string) => { a.name = v }" />
                 </div>
-                <n-upload :show-file-list="false" accept="video/*"
+                <n-upload :show-file-list="false" accept="video/*" :disabled="videoSlotsLeft <= 0"
                   :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'video')">
                   <div class="video-gen__tile-add" :class="{ 'is-disabled': videoSlotsLeft <= 0 }">上传视频</div>
                 </n-upload>
@@ -157,7 +163,7 @@
                   <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
                     @update:value="(v: string) => { a.name = v }" />
                 </div>
-                <n-upload :show-file-list="false" accept="audio/*"
+                <n-upload :show-file-list="false" accept="audio/*" :disabled="audioSlotsLeft <= 0"
                   :custom-request="(o: UploadCustomRequestOptions) => handleUpload(o, 'audio')">
                   <div class="video-gen__tile-add" :class="{ 'is-disabled': audioSlotsLeft <= 0 }">上传音频</div>
                 </n-upload>
@@ -362,6 +368,7 @@ import type { MentionCandidate } from '@/types/canvas'
 import { fetchFilePreview } from '@/api/file'
 import { interpolateAttachmentPrompt } from '@/utils/attachmentMention'
 import { bucketRestoredAttachments } from '@/utils/mediaTaskRestore'
+import { canAddVideoAttachment, type VideoAttachmentTarget } from '@/utils/videoAttachmentMode'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -497,6 +504,20 @@ const uploadingCount = ref(0)
 
 /** F2 首尾帧已占名额（0/1/2）—— 参考图可用槽 = maxImages - frameCount。 */
 const frameCount = computed(() => (firstFrame.value ? 1 : 0) + (lastFrame.value ? 1 : 0))
+const referenceMediaCount = computed(() => images.value.length + videos.value.length + audios.value.length)
+
+function modeAllows(target: VideoAttachmentTarget, notify = false) {
+  const allowed = canAddVideoAttachment(target, {
+    frameCount: frameCount.value,
+    referenceMediaCount: referenceMediaCount.value
+  })
+  if (!allowed && notify) {
+    message.warning(target === 'first' || target === 'last'
+      ? '首帧/尾帧不能与参考图、参考视频或参考音频同时使用，请先清空参考媒体'
+      : '参考媒体不能与首帧/尾帧同时使用，请先清空首帧和尾帧')
+  }
+  return allowed
+}
 
 /** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
 const KIND_MAX_BYTES: Record<AttachmentKind, number> = {
@@ -545,6 +566,10 @@ function kindList(kind: AttachmentKind) {
 
 /** 附件上传：类型/大小预检 → /api/files/upload 拿 fileId。 */
 async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOptions, kind: AttachmentKind) {
+  if (!modeAllows(kind, true)) {
+    onError()
+    return
+  }
   const raw = file.file as File | null
   if (!raw) {
     onError()
@@ -581,10 +606,12 @@ const ASSET_MEDIATYPE: Record<AttachmentKind, string> = {
 }
 /** 参考图可用槽 = maxImages - 已用参考图 - 首尾帧已占名额。 */
 const imageSlotsLeft = computed(() => (capability.value?.maxImages ?? 0) - images.value.length - frameCount.value)
-const videoSlotsLeft = computed(() => (capability.value?.maxVideos ?? 0) - videos.value.length)
-const audioSlotsLeft = computed(() => (capability.value?.maxAudios ?? 0) - audios.value.length)
+const referenceImageSlotsLeft = computed(() => frameCount.value > 0 ? 0 : imageSlotsLeft.value)
+const videoSlotsLeft = computed(() => frameCount.value > 0 ? 0 : (capability.value?.maxVideos ?? 0) - videos.value.length)
+const audioSlotsLeft = computed(() => frameCount.value > 0 ? 0 : (capability.value?.maxAudios ?? 0) - audios.value.length)
 
 function openAssetPicker(target: PickerTarget) {
+  if (!modeAllows(target, true)) return
   pickerTarget.value = target
   showAssetPicker.value = true
 }
@@ -633,6 +660,7 @@ const assetPickerExcludeIds = computed<number[]>(() => {
 function onAssetPicked(payload: AssetFilePicked[]) {
   const t = pickerTarget.value
   if (!t) return
+  if (!modeAllows(t, true)) return
   // 首尾帧：单选（取首项），替换原帧槽
   if (t === 'first' || t === 'last') {
     const p = payload[0]
@@ -710,6 +738,7 @@ function removeAttachment(id: string, kind: AttachmentKind) {
 
 /** F2 首/尾帧上传：类型/大小预检 → /api/files/upload → 填帧槽（单选，替换旧值）。 */
 async function handleFrameUpload({ file, onFinish, onError }: UploadCustomRequestOptions, slot: 'first' | 'last') {
+  if (!modeAllows(slot, true)) { onError(); return }
   const raw = file.file as File | null
   if (!raw) { onError(); return }
   if (raw.size > KIND_MAX_BYTES.image) {
@@ -746,6 +775,7 @@ const canSubmit = computed(
     && uploadingCount.value === 0
     && !!form.model
     && !restoredUnavailableModel.value
+    && !(frameCount.value > 0 && referenceMediaCount.value > 0)
     && [...images.value, ...videos.value, ...audios.value, firstFrame.value, lastFrame.value]
       .filter((a): a is UploadedAttachment => a != null)
       .every(a => a.reusable !== false)

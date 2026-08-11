@@ -17,6 +17,38 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "media")
 public class MediaGenProperties {
 
+    /** Ark 拉取参考视频所需的短期签名公网地址配置。 */
+    private Reference reference = new Reference();
+
+    @Data
+    public static class Reference {
+        /** Ark 可访问的 HTTPS 应用根地址，例如 https://media.example.com。 */
+        private String publicBaseUrl = "";
+        /** HMAC-SHA256 签名密钥，只能由环境变量注入。 */
+        private String signingKey = "";
+        /** 单个参考视频 URL 的有效期，默认 15 分钟。 */
+        private long ttlSeconds = 900;
+    }
+
+    public boolean isReferenceVideoConfigured() {
+        String baseUrl = reference == null ? null : reference.getPublicBaseUrl();
+        String signingKey = reference == null ? null : reference.getSigningKey();
+        if (baseUrl == null || signingKey == null || signingKey.length() < 32
+                || reference.getTtlSeconds() <= 0) {
+            return false;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(baseUrl.strip());
+            String host = uri.getHost();
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && host != null && !host.isBlank()
+                    && !"localhost".equalsIgnoreCase(host)
+                    && !host.startsWith("127.") && !"::1".equals(host);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     /** 总开关。false 时 submit 直接拒绝（功能降级）。 */
     private boolean genEnabled = true;
 

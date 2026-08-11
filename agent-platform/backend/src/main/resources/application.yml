@@ -168,6 +168,11 @@ rag:
 
 # 视频剪辑（media.edit）FFmpeg 多轨渲染配置
 media:
+  reference:
+    # Ark 必须能从公网 HTTPS 拉取参考视频；localhost/内网地址不可用。密钥只从环境变量注入。
+    public-base-url: ${MEDIA_REFERENCE_PUBLIC_BASE_URL:}
+    signing-key: ${MEDIA_REFERENCE_SIGNING_KEY:}
+    ttl-seconds: ${MEDIA_REFERENCE_TTL_SECONDS:900}
   edit:
     enabled: true
     # FFmpeg 二进制：本机 PATH 已有（/d/ImageMagick-7.1.1-Q16-HDRI/ffmpeg、/c/ffmpeg-n7.1.1/bin）；

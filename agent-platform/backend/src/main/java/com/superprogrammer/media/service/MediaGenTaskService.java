@@ -489,14 +489,12 @@ public class MediaGenTaskService {
             }
             checkAttachmentOwnership(a.getFileId(), kind, userId, admin);
         }
-        // SeedDance 2.0 契约（Phase4 真跑确认）：last_frame 与 reference_image 互斥——
-        // 同请求含尾帧+参考图，ctaigw 返 400 "last frame image content cannot be mixed with
-        // reference image"。first_frame + 参考图允许；首尾帧（无参考图）允许。
-        // 在此前置拦截，给用户清晰中文提示，而非透传网关英文 400。
+        // Ark 契约：首/尾帧模式不能与任何 reference_image/video/audio 混用。
         int referenceImages = images - firstFrame - lastFrame;
-        if (lastFrame > 0 && referenceImages > 0) {
+        int referenceMedia = referenceImages + videos + audios;
+        if ((firstFrame > 0 || lastFrame > 0) && referenceMedia > 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "尾帧不能与参考图同时使用（SeedDance 2.0 限制：last_frame 与 reference_image 互斥，请二选一）");
+                    "首帧/尾帧不能与参考媒体同时使用（参考图、参考视频、参考音频），请选择一种生成模式");
         }
         if (images > cap.getMaxImages()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -512,8 +510,9 @@ public class MediaGenTaskService {
                     cap.getMaxAudios() == 0 ? "该模型不支持参考音频"
                             : "参考音频超限（该模型 ≤" + cap.getMaxAudios() + " 个，当前 " + audios + "）");
         }
-        if (videos > 0 && !cap.isVideoDataUri()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型暂不支持视频参考（data URI 通道关闭）");
+        if (videos > 0 && !properties.isReferenceVideoConfigured()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "参考视频功能未配置：需要 Ark 可访问的 HTTPS 公网地址和签名密钥");
         }
     }
 

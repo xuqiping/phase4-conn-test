@@ -39,6 +39,7 @@ class MediaGenTaskWorkerTest {
     @Mock private ArkSeedanceProvider arkProvider;
     @Mock private ArkImageProvider imageProvider;
     @Mock private MediaStorageService mediaStorageService;
+    @Mock private MediaReferenceUrlService mediaReferenceUrlService;
     @Mock private MediaBillingService mediaBillingService;
     @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
@@ -53,7 +54,7 @@ class MediaGenTaskWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
-                mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService,
+                mediaStorageService, mediaReferenceUrlService, properties, objectMapper, directExecutor, mediaBillingService,
                 inflightGate, bizMetrics);
     }
 
@@ -268,7 +269,7 @@ class MediaGenTaskWorkerTest {
     // ---------- buildRequest（附件分支，ReflectionTestUtils 直调私有方法） ----------
 
     @Test
-    void buildRequest_attachments_convertedToDataUriByKind() {
+    void buildRequest_videoUsesSignedHttpsUrl_otherMediaKeepDataUri() {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setProviderId(7L);
         task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
@@ -277,7 +278,8 @@ class MediaGenTaskWorkerTest {
                 + "{\"fileId\":\"v1.mp4\",\"kind\":\"video\"},"
                 + "{\"fileId\":\"a1.mp3\",\"kind\":\"audio\"}]}");
         when(mediaStorageService.readAsDataUri("i1.png", 100L, "image")).thenReturn("data:image/png;base64,I");
-        when(mediaStorageService.readAsDataUri("v1.mp4", 100L, "video")).thenReturn("data:video/mp4;base64,V");
+        when(mediaReferenceUrlService.createVideoUrl("v1.mp4")).thenReturn(
+                "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x");
         when(mediaStorageService.readAsDataUri("a1.mp3", 100L, "audio")).thenReturn("data:audio/mpeg;base64,A");
 
         com.superprogrammer.media.dto.MediaGenRequest req =
@@ -286,8 +288,9 @@ class MediaGenTaskWorkerTest {
         assert req != null;
         org.junit.jupiter.api.Assertions.assertEquals(3, req.getAttachments().size());
         org.junit.jupiter.api.Assertions.assertEquals("image", req.getAttachments().get(0).getKind());
-        org.junit.jupiter.api.Assertions.assertEquals("data:video/mp4;base64,V",
-                req.getAttachments().get(1).getDataUri());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x",
+                req.getAttachments().get(1).getUrl());
         org.junit.jupiter.api.Assertions.assertEquals("audio", req.getAttachments().get(2).getKind());
         // providerId 透传（多 MEDIA provider 路由）；attachments 分支不走旧首帧
         org.junit.jupiter.api.Assertions.assertEquals(7L, req.getProviderId());
@@ -313,8 +316,8 @@ class MediaGenTaskWorkerTest {
     void buildRequest_attachmentReadFailure_throws() {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setRequestConfig("{\"prompt\":\"p\",\"attachments\":[{\"fileId\":\"big.mp4\",\"kind\":\"video\"}]}");
-        when(mediaStorageService.readAsDataUri("big.mp4", 100L, "video"))
-                .thenThrow(new IllegalStateException("参考视频过大（>50MB）"));
+        when(mediaReferenceUrlService.createVideoUrl("big.mp4"))
+                .thenThrow(new IllegalStateException("参考视频公网地址未配置"));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task));

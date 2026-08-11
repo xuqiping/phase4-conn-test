@@ -83,14 +83,14 @@ public class MediaGenRequest {
     /** 所属 llm_providers.id（多 MEDIA provider 路由用：create/query 按任务落库时的 provider 走）。 */
     private Long providerId;
 
-    /** 已解析的参考附件（kind=image/video/audio，dataUri 可直接喂 Ark content 项）。 */
+    /** 已解析的参考附件（图片/音频可为 data URI；参考视频必须为 Ark 可访问的 HTTPS URL）。 */
     @Data
     @Builder
     public static class ResolvedAttachment {
         /** 原始 stored_files.file_id，仅用于脱敏快照追溯。 */
         private String fileId;
         private String kind;
-        private String dataUri;
+        private String url;
         /** 参考帧角色（仅 image）：first_frame/last_frame/null(=reference_image)。透传自 AttachmentRef。 */
         private String frameRole;
     }

@@ -5,6 +5,8 @@
 > **v2（2026-08-06）**：① 支持按次选择视频模型（模型目录来自 `llm_providers` 表 category=VIDEO 的 provider，新模型零代码接入）；② 图生视频升级为「图+视频+音频 多模态参考生视频」（SeedDance 2.0：9图/3视频/3音频/总≤12，按模型能力动态校验）。新增 `GET /api/media/models`；提交体加 `model` + `attachments[]`；request_config JSONB 原样扩展（无新迁移）。
 >
 > **v3（2026-08-11）**：历史服务端筛选/参数与附件恢复、历史和资产媒体懒预览、多次 `@`、非阻塞持续轮询，以及实际 Provider 请求脱敏快照。外部契约见 [媒体生成 API](../api/媒体生成.md)。
+>
+> **v4（2026-08-11）**：Ark 参考视频改为短期 HMAC 签名 HTTPS URL；首/尾帧与全部参考媒体互斥；签名 URL 在 Provider 快照中整体脱敏。
 
 ## 后端 `media/` 包（com.superprogrammer.media）
 
@@ -18,7 +20,7 @@
 | `service/MediaModelService.java` | 模型目录：聚合全部 ACTIVE VIDEO provider 的 models × 能力画像 → listModels；resolveProviderByModel（sortOrder 最小者优先） | 「菜单印刷机」：前端下拉和提交路由都从这里查哪个供应商供哪个模型 |
 | `dto/MediaModelVO.java` | GET /models 出参（模型 id + 能力画像全量） | 前端动态表单的「数据源」 |
 | `dto/AttachmentRef.java` | 参考附件入参（fileId + kind=image/video/audio） | 一张素材「提货单」 |
-| `dto/MediaGenRequest.java` | provider 入参（+attachments 已解析 data URI 列表 +providerId 路由上下文；refImageUrl 保留旧首帧通道） | 喂给厂商的「订单」 |
+| `dto/MediaGenRequest.java` | provider 入参（图片/音频为 data URI，参考视频为签名 HTTPS URL；refImageUrl 保留旧首帧通道） | 喂给厂商的「订单」 |
 | `dto/MediaGenResult.java` | provider 出参（status/resultUrl/usageTokens/errorMsg）统一状态机 | 厂商回的「回执」，屏蔽各厂商原生态差异；usage 兼容 completion_tokens\|\|total_tokens |
 | `dto/MediaSubmitRequest.java` | REST 提交入参（+model 指定模型 +attachments ≤12 参考附件；refFileId 与 attachments 互斥） | 前端 POST 的请求体 |
 | `dto/PreparedMediaRequest.java` | 实际 Provider body + 同源脱敏快照 | 防止事后重建的参数与真正发送内容不一致 |
@@ -26,12 +28,14 @@
 | `dto/MediaTaskVO.java` | REST 视图；详情含提交参数和 Provider 脱敏快照 | `videoUrl/imageUrls` 是成功输出，不是输入附件 |
 | `entity/MediaGenTask.java` | 任务实体（不继承 BaseEntity，append-only，带 locked_until/attempt） | 任务表的一行 |
 | `mapper/MediaGenTaskMapper.java` | MyBatis-Plus mapper | DB 读写 |
-| `config/MediaGenProperties.java` | `media.*` 配置（开关/上限/轮询/锁/退避；无业务任务总超时） | 网络单次可超时重试，但不会因生成太久把任务判失败 |
+| `config/MediaGenProperties.java` | `media.*` 配置（开关/轮询/锁/退避 + `reference` 公网地址/签名密钥/TTL） | 网络单次可超时重试；参考视频只有配好公网取件地址才开放 |
+| `service/MediaReferenceUrlService.java` | 生成与验证 HMAC-SHA256 短期参考视频 URL | 给 Ark 一张限时、不可篡改的取件码 |
+| `controller/MediaReferenceController.java` | 免 JWT 的签名视频回拉端点，只下发 `video/*` | 没有正确取件码或过期就拿不到文件 |
 | `config/MediaTaskExecutorConfig.java` | `mediaTaskExecutor` Bean（core2/max4/queue100/AbortPolicy） | 专门跑视频任务的「小工队」，不挤占 chat/RAG/memory 线程 |
 | `service/internal/MediaGenTaskTxService.java` | DB 写、请求快照保存、按 `locked_until` 安排下次查询 | 每次只查一下就把线程还回去，稍后再认领 |
 | `service/MediaGenTaskService.java` | submit：模型→provider 反查路由（跨全部 ACTIVE VIDEO provider，模型不在列表 400）+ 能力校验（分类/总数上限、比例/分辨率/时长、音频开关）+ 附件归属+MIME 校验（防 IDOR）+ taskType 派生（attachments 非空→IMAGE2VIDEO） | 用户提交入口 + 「检票口」：超量/错类型/拿别人的票当场拒 |
 | `service/MediaGenTaskWorker.java` | 每次认领只执行一次 create/query；RUNNING 或查询异常退避再入队；明确终态才结算 | 长任务不占死线程，服务重启后还能接着查 |
-| `service/MediaStorageService.java` | downloadAndStore（Ark URL→stored_files source=MEDIA）+ readAsDataUri(fileId, userId, kind)（按类型限：图 8MB/音频 15MB/视频 50MB） | 「搬运工」：Ark 临时链接一过期就没，趁热下载到本地；参考素材转 data URI 喂 Ark |
+| `service/MediaStorageService.java` | downloadAndStore + 图片/音频 readAsDataUri；视频大小/MIME 在提交时校验 | 「搬运工」：产物落本地，轻量参考媒体转 data URI |
 | `service/MediaGenQueryService.java` | 读侧：服务端提示词/时间筛选、详情参数/附件/快照、ownership 硬过滤 | 列表轻量，点详情才拿大 JSON；历史脏 data URI 也会再次脱敏 |
 | `controller/MediaGenController.java` | REST API + `GET /api/media/models` 模型目录（@RequirePermission 全端点）+ Content-Disposition 下载 | 前端接口入口 |
 
@@ -62,7 +66,7 @@
 
 **提交**：前端 `VideoGenView.onSubmit` → `mediaApi.submitVideo{prompt,...,model,attachments[]}` → `POST /api/media/video` → `MediaGenController.submit` → `MediaGenTaskService.submit`：model 非空→`resolveProviderByModel` 反查 provider（空→默认 provider 首模型）→ 能力校验 + 附件归属/MIME 校验 → attachments 非空派生 IMAGE2VIDEO → 建 PENDING 行（request_config 存 attachments JSON）。
 
-**异步生成**：Worker 认领 → 附件读取为 data URI → Provider 一次构建 body/脱敏快照 → POST 前把快照写入 `request_config.providerRequestSnapshot` → 发同一 body → 用 `locked_until` 安排下一次单次查询。RUNNING/网络异常继续退避；明确成功才下载、计费、释放 inflight，明确失败才写 FAILED。
+**异步生成**：Worker 认领 → 图片/音频读取为 data URI、视频生成短期签名 HTTPS URL → Provider 一次构建 body/脱敏快照 → POST 前把快照写入 `request_config.providerRequestSnapshot` → 发同一 body。RUNNING/网络异常继续退避；明确成功才下载、计费、释放 inflight。
 
 **历史/详情**：`GET /tasks?q&from&to&limit` 服务端过滤 → 点“查看”再调 `GET /tasks/{id}` → 恢复表单/附件并可查看两类请求 JSON。成功视频用鉴权 blob 播放；画布轮询不再按本地轮数误判超时。
 
@@ -94,4 +98,4 @@
 - **模型从哪来**：`llm_providers` 表 category=`VIDEO` 的 ACTIVE provider，其 `models` JSON 数组即可选模型；加新模型/新厂商 = 「全局模型供应商」页加/改一条 VIDEO provider，零代码。
 - **能力怎么配**：内置前缀默认（`MediaModelCapabilityService`）；需微调时在 provider 的 `config` JSON 写
   `{"capabilities":{"doubao-seedance-2-0-260128":{"maxVideos":3,"maxAudios":3,"maxImages":9,"maxAttachments":12,"videoDataUri":true}}}`（只覆盖出现的字段）。
-- **videoDataUri 风险开关**：官方 Ark 对 `video_url` 的 base64 data URI 支持未确认（部分渠道仅公网 URL）。若实测被拒，把该模型 config 里 `videoDataUri` 置 false——前端自动隐藏参考视频上传区，其余不受影响。
+- **参考视频部署开关**：Ark 已确认拒绝视频 data URI。模型 `maxVideos>0` 且 `MEDIA_REFERENCE_PUBLIC_BASE_URL` 为公网 HTTPS、`MEDIA_REFERENCE_SIGNING_KEY` 长度至少 32 时，模型目录才返回 `referenceVideoEnabled=true`；否则前端隐藏参考视频入口，后端 fail-closed。

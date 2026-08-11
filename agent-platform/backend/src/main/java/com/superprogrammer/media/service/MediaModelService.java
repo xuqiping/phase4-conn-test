@@ -55,7 +55,8 @@ public class MediaModelService {
                         .minDuration(cap.getMinDuration())
                         .maxDuration(cap.getMaxDuration())
                         .supportsGenerateAudio(cap.isSupportsGenerateAudio())
-                        .videoDataUri(cap.isVideoDataUri())
+                        .videoDataUri(false)
+                        .referenceVideoEnabled(cap.getMaxVideos() > 0 && properties.isReferenceVideoConfigured())
                         .build());
             }
         }

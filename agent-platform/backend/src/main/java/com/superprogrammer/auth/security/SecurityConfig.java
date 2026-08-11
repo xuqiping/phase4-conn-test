@@ -72,6 +72,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/login/dingtalk").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
+                        // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
+                        .requestMatchers("/api/media/reference/**").permitAll()
                         // WebSocket端点（通过拦截器认证）
                         .requestMatchers("/ws/chat").permitAll()
                         // 运维系统 OPS-FR-01：健康检查/指标端点 permitAll（Prometheus 抓取与部署探活无 JWT）。

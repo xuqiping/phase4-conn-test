@@ -21,24 +21,27 @@ const resolver: MentionResolver = (kind, id, ..._rest) => {
 }
 
 describe('resolveCanvasVideoAttachments', () => {
-  it('首尾帧显式 → 附件含 frameRole，且不计入图N序号', () => {
+  it('首尾帧与 @参考图混用时本地拒绝', () => {
     const nodes = [
       img('first', 'f.png', '首帧图'),
       img('last', 'l.png', '尾帧图'),
       img('ref1', 'r1.png', '参考1')
     ]
-    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+    expect(() => resolveCanvasVideoAttachments(
       { firstFrameNodeId: 'first', lastFrameNodeId: 'last' },
-      '参考 @{{node:ref1}} 生成',
-      nodes,
-      resolver
+      '参考 @{{node:ref1}} 生成', nodes, resolver
+    )).toThrow('首帧/尾帧不能与参考媒体同时使用')
+  })
+
+  it('首尾帧可以一起使用', () => {
+    const nodes = [img('first', 'f.png'), img('last', 'l.png')]
+    const { refs } = resolveCanvasVideoAttachments(
+      { firstFrameNodeId: 'first', lastFrameNodeId: 'last' }, '转场', nodes, resolver
     )
     expect(refs).toEqual([
       { fileId: 'f.png', kind: 'image', frameRole: 'first_frame' },
-      { fileId: 'l.png', kind: 'image', frameRole: 'last_frame' },
-      { fileId: 'r1.png', kind: 'image' }
+      { fileId: 'l.png', kind: 'image', frameRole: 'last_frame' }
     ])
-    expect(rewrittenPrompt).toBe('参考 图1 生成')
   })
 
   it('无首尾帧 → 仅参考图，图N从1起', () => {

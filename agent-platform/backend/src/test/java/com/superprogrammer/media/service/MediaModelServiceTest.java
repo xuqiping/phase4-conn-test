@@ -22,13 +22,14 @@ class MediaModelServiceTest {
 
     private LlmProviderService llmProviderService;
     private MediaModelService service;
+    private MediaGenProperties properties;
 
     @BeforeEach
     void setUp() {
         llmProviderService = mock(LlmProviderService.class);
         // 能力解析用真实实现（内置前缀默认 + config 覆盖是断言对象）
         MediaModelCapabilityService capabilityService = new MediaModelCapabilityService(new ObjectMapper());
-        MediaGenProperties properties = mock(MediaGenProperties.class);
+        properties = new MediaGenProperties();
         service = new MediaModelService(llmProviderService, capabilityService, properties, new ObjectMapper());
     }
 
@@ -66,6 +67,20 @@ class MediaModelServiceTest {
         assertEquals(12, vo.getMaxAttachments());
         assertTrue(vo.isSupportsGenerateAudio());
         assertTrue(vo.getSupportedResolutions().contains("4K"));
+        assertFalse(vo.isReferenceVideoEnabled(), "未配置公网签名地址时必须隐藏参考视频入口");
+    }
+
+    @Test
+    void listModels_referenceVideoEnabledOnlyWithHttpsSigningConfiguration() {
+        properties.getReference().setPublicBaseUrl("https://media.example.com");
+        properties.getReference().setSigningKey("test-secret-at-least-32-bytes-long");
+        when(llmProviderService.listActive()).thenReturn(List.of(
+                provider("seedance", "VIDEO", "[\"doubao-seedance-2-0-260128\"]", null)));
+
+        MediaModelVO vo = service.listModels().get(0);
+
+        assertTrue(vo.isReferenceVideoEnabled());
+        assertFalse(vo.isVideoDataUri(), "Ark 参考视频只允许 web URL，不应再宣称支持 data URI");
     }
 
     @Test

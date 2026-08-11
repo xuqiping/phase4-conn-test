@@ -31,7 +31,7 @@ const MENTION_RE = /@\{\{(node|asset):([^}]+)\}\}/g
  * @param nodes      画布全部节点（按 id 查图节点 fileId）
  * @param textResolve 非 image 节点 @ 的文本插值器（buildMentionResolver 产物）
  *
- * attachments 顺序：[首帧, 尾帧, 参考图...]。参考图按提示词里首次出现顺序，同 fileId 去重。
+ * attachments 顺序：[首帧, 尾帧] 或 [参考图...]；两种模式互斥。参考图按提示词里首次出现顺序，同 fileId 去重。
  * 首尾帧节点不参与「图N」序号；非图节点 @ 走文本插值（断链 → 「【断链】」）。
  */
 export function resolveCanvasVideoAttachments(
@@ -94,6 +94,10 @@ export function resolveCanvasVideoAttachments(
   // 参考图 attachments 追加在帧之后
   for (const fileId of refImageFileIds) {
     refs.push({ fileId, kind: 'image' })
+  }
+
+  if (frameNodeIds.size > 0 && refImageFileIds.length > 0) {
+    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图或清空首尾帧')
   }
 
   return { refs, rewrittenPrompt }

@@ -35,7 +35,9 @@ public final class SecurityEndpointRegistry {
             "/api/auth/refresh",
             "/api/auth/login/dingtalk",
             // sidecar 回调：独立 RuntimeCallbackSecurityFilter 持 token 校验（fail-closed）
-            "/api/runtime/callbacks/**"
+            "/api/runtime/callbacks/**",
+            // Ark 参考视频回拉：控制器内 HMAC + expires fail-closed。
+            "/api/media/reference/**"
     );
 
     /** 已评审「仅登录即可」端点（无方法级权限的依据见每条注释）。 */

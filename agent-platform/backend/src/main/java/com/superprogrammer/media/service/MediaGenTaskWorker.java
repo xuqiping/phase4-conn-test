@@ -53,6 +53,7 @@ public class MediaGenTaskWorker {
     private final ArkSeedanceProvider arkProvider;
     private final ArkImageProvider imageProvider;
     private final MediaStorageService mediaStorageService;
+    private final MediaReferenceUrlService mediaReferenceUrlService;
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
     private final Executor executor;
@@ -67,6 +68,7 @@ public class MediaGenTaskWorker {
                               ArkSeedanceProvider arkProvider,
                               ArkImageProvider imageProvider,
                               MediaStorageService mediaStorageService,
+                              MediaReferenceUrlService mediaReferenceUrlService,
                               MediaGenProperties properties,
                               ObjectMapper objectMapper,
                               @Qualifier("mediaTaskExecutor") Executor executor,
@@ -78,6 +80,7 @@ public class MediaGenTaskWorker {
         this.arkProvider = arkProvider;
         this.imageProvider = imageProvider;
         this.mediaStorageService = mediaStorageService;
+        this.mediaReferenceUrlService = mediaReferenceUrlService;
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.executor = executor;
@@ -434,7 +437,7 @@ public class MediaGenTaskWorker {
                 .watermark(watermark)
                 .generateAudio(generateAudio)
                 .taskType(task.getTaskType());
-        // 多模态参考附件：file_id → data URI（按类型限大小，Ark image_url/video_url/audio_url 入参）
+        // Ark 的 reference_video 只接受公网 URL；图片/音频仍沿用 data URI。
         if (resolveAttachments && !attachments.isEmpty() && task.getUserId() != null) {
             List<MediaGenRequest.ResolvedAttachment> resolved = new java.util.ArrayList<>(attachments.size());
             for (String[] pair : attachments) {
@@ -442,7 +445,9 @@ public class MediaGenTaskWorker {
                     resolved.add(MediaGenRequest.ResolvedAttachment.builder()
                             .kind(pair[1])
                             .fileId(pair[0])
-                            .dataUri(mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
+                            .url("video".equals(pair[1])
+                                    ? mediaReferenceUrlService.createVideoUrl(pair[0])
+                                    : mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
                             .frameRole(pair.length > 2 ? pair[2] : null)
                             .build());
                 } catch (Exception e) {

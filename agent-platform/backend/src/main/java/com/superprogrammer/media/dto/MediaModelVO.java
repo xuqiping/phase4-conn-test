@@ -38,4 +38,7 @@ public class MediaModelVO {
 
     /** 参考视频是否允许 data URI 直传（false 时前端隐藏视频上传区）。 */
     private boolean videoDataUri;
+
+    /** 当前部署是否已配置 Ark 可访问的短期签名 HTTPS 参考视频通道。 */
+    private boolean referenceVideoEnabled;
 }

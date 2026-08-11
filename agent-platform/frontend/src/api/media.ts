@@ -128,6 +128,8 @@ export interface MediaModelVO {
   supportsGenerateAudio: boolean
   /** 参考视频是否允许 data URI 直传（false → 前端隐藏视频上传区） */
   videoDataUri: boolean
+  /** 当前部署是否已配置 Ark 可访问的短期签名 HTTPS 参考视频通道 */
+  referenceVideoEnabled: boolean
 }
 
 // === 图片生成（Seedream lite/pro，GET /api/media/image/models） ===
