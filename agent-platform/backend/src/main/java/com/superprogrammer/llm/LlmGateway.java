@@ -262,37 +262,24 @@ public class LlmGateway {
     }
 
     /**
-     * chat 路由：用户级 override（CHAT-only）优先，回落全局 CHAT 注册表。
-     * EMBEDDING/VIDEO/IMAGE 行不在此处注册，故 chat 永远找不到它们（FR-003）。
+     * chat 路由（10x-1 起）：始终走全局 CHAT 注册表，不再读用户级 override。
+     * <p>原因：问题单 10x-1「不再开放我的模型由个人自己配置大模型」，前端已移除入口（SettingsView），
+     * 此处同步停用后端 override 路由，避免「有人配过历史 key 仍生效」的认知偏差。
+     * <p>用户级相关代码（{@link #getUserProviders} / {@link #createProviderInstance} /
+     * {@code UserLlmController} / {@code user_llm_providers} 表）全部保留不删，便于未来恢复：
+     * 恢复时把下面的 user-override 段取消注释即可。
+     * <p>EMBEDDING/VIDEO/IMAGE 行不在此处注册，故 chat 永远找不到它们（FR-003）。
      */
     private LlmProviderInterface findProvider(String model, Long userId) {
-        // Step 1: Check user provider overrides
-        if (userId != null) {
-            List<UserLlmProviderEntity> userProviders = getUserProviders(userId);
-            for (UserLlmProviderEntity up : userProviders) {
-                String apiKey = userLlmProviderService.getDecryptedApiKey(userId, up.getId());
-                String endpoint = up.getApiEndpoint();
-                LlmProviderEntity globalEntity = llmProviderService.getByName(up.getProviderName());
-                List<String> models = parseModels(up.getModels());
-                if (models.isEmpty() && globalEntity != null) {
-                    models = parseModels(globalEntity.getModels());
-                }
-                if (endpoint == null || endpoint.isBlank()) {
-                    // Inherit from global provider
-                    LlmProviderInterface global = findGlobalProvider(up.getProviderName());
-                    if (global == null) continue;
-                    return global; // use global provider directly
-                }
-                String protocol = globalEntity != null ? globalEntity.getProtocol() : null;
-                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), protocol, endpoint, apiKey, models, up.getId());
-                if (provider != null && provider.supports(model)) {
-                    log.debug("使用用户Provider: userId={}, provider={}", userId, up.getProviderName());
-                    return provider;
-                }
-            }
-        }
+        // ===== 10x-1：用户级 override 停用（原 Step 1 已移除路由，保留注释示意恢复点） =====
+        // 如需恢复个人模型配置，取消注释下面这段（并恢复 SettingsView 的 my-models Tab）：
+        // if (userId != null) {
+        //     List<UserLlmProviderEntity> userProviders = getUserProviders(userId);
+        //     ... 原 override 逻辑 ...
+        // }
+        // userId 参数保留不变（向后兼容调用方签名），当前仅作日志/计费归户用途。
 
-        // Step 2: Fall back to global providers
+        // 全局 CHAT 注册表路由（原 Step 2，现为主要且唯一路径）
         for (LlmProviderInterface provider : llmConfig.getProviders()) {
             if (provider.supports(model)) {
                 return provider;
