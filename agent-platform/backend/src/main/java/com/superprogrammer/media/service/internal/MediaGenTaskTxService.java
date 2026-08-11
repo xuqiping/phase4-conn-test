@@ -77,6 +77,22 @@ public class MediaGenTaskTxService {
         taskMapper.update(null, u);
     }
 
+    /** RUNNING/PENDING 仍未终态：把 locked_until 当作下一次可认领时间，当前 worker 立即归还线程。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void scheduleNextQuery(Long taskId, long delayMs) {
+        LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
+        u.eq(MediaGenTask::getId, taskId)
+                .set(MediaGenTask::getStatus, MediaGenTask.STATUS_RUNNING)
+                .set(MediaGenTask::getLockedUntil, OffsetDateTime.now().plusNanos(delayMs * 1_000_000L))
+                .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
+        taskMapper.update(null, u);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void saveProviderRequestSnapshot(Long taskId, String snapshot) {
+        taskMapper.saveProviderRequestSnapshot(taskId, snapshot, OffsetDateTime.now());
+    }
+
     /** 任务成功：写 result_file_id + tokens_cost + status_flag（Step4/5 填参）。 */
     @Transactional(rollbackFor = Exception.class)
     public void markSucceeded(Long taskId, String resultFileId, Integer tokensCost, String statusFlag) {

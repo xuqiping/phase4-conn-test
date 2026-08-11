@@ -62,6 +62,9 @@ public class MediaGenRequest {
     /** 图生视频首帧图（URL 或 data URI）。nullable：文生视频不带。 */
     private String refImageUrl;
 
+    /** 旧版参考图原始 fileId，仅用于脱敏快照追溯，不进入 Provider body。 */
+    private String refFileId;
+
     /**
      * 参考帧位置（仅 IMAGE2VIDEO + refImageUrl 通道用）：{@code "first"} 首帧 / {@code "last"} 尾帧。
      * nullable / "first" → Ark 裸 image_url（首帧语义，旧版默认，向后兼容）；
@@ -84,6 +87,8 @@ public class MediaGenRequest {
     @Data
     @Builder
     public static class ResolvedAttachment {
+        /** 原始 stored_files.file_id，仅用于脱敏快照追溯。 */
+        private String fileId;
         private String kind;
         private String dataUri;
         /** 参考帧角色（仅 image）：first_frame/last_frame/null(=reference_image)。透传自 AttachmentRef。 */

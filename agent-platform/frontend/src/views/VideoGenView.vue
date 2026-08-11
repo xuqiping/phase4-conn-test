@@ -30,6 +30,9 @@
               placeholder="选择视频生成模型"
               @update:value="onModelChange"
             />
+            <n-alert v-if="restoredUnavailableModel" type="warning" :show-icon="false" class="video-gen__model-warning">
+              历史模型 {{ restoredUnavailableModel }} 已下线，仅可回看参数，不能直接重新提交。
+            </n-alert>
           </n-form-item>
 
           <n-form-item label="提示词">
@@ -282,11 +285,33 @@
                 {{ activeTask.model || '-' }} · {{ activeTask.ratio || '-' }} · {{ activeTask.duration }}s · {{ activeTask.resolution }}
               </span>
             </div>
+            <div class="video-gen__request-actions">
+              <MediaTaskRequestDetails
+                :submitted-request="activeTask.submittedRequest"
+                :provider-request-snapshot="activeTask.providerRequestSnapshot"
+              />
+            </div>
           </template>
         </n-card>
 
         <!-- 历史列表 -->
         <n-card class="video-gen__history" title="历史任务" size="small">
+          <div class="video-gen__history-filters">
+            <n-input
+              v-model:value="historyQuery"
+              clearable
+              placeholder="筛选提示词"
+              aria-label="筛选历史提示词"
+            />
+            <n-date-picker
+              v-model:value="historyTimeRange"
+              type="datetimerange"
+              clearable
+              :actions="['clear', 'confirm']"
+              aria-label="筛选历史时间范围"
+            />
+            <n-button size="small" @click="clearHistoryFilters">清空筛选</n-button>
+          </div>
           <n-data-table
             :columns="historyColumns"
             :data="history"
@@ -312,9 +337,9 @@
 </template>
 
 <script setup lang="ts">
-import { h, computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
-  NButton, NCard, NDataTable, NEmpty, NForm, NFormItem,
+  NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
   NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useMessage
 } from 'naive-ui'
@@ -329,11 +354,14 @@ import {
   type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
+import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
+import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
 import { fetchFilePreview } from '@/api/file'
 import { interpolateAttachmentPrompt } from '@/utils/attachmentMention'
+import { bucketRestoredAttachments } from '@/utils/mediaTaskRestore'
 
 const authStore = useAuthStore()
 const message = useMessage()
@@ -345,6 +373,7 @@ const canGen = authStore.hasPermission('media:gen')
 // === 模型目录（模型驱动动态表单：能力画像决定上传区/选项/开关） ===
 const models = ref<MediaModelVO[]>([])
 const modelsLoaded = ref(false)
+const restoredUnavailableModel = ref<string | null>(null)
 
 const form = reactive({
   model: '' as string,
@@ -369,19 +398,26 @@ const modelOptions = computed<(SelectOption | SelectGroupOption)[]>(() => {
     list.push({ label: m.displayName, value: m.modelId })
     groups.set(m.providerName, list)
   }
-  if (groups.size === 1) {
-    return [...groups.values()][0]
-  }
-  return [...groups.entries()].map(([provider, children]) => ({
+  const options: (SelectOption | SelectGroupOption)[] = groups.size === 1
+    ? [...groups.values()][0]
+    : [...groups.entries()].map(([provider, children]) => ({
     type: 'group' as const, label: provider, key: provider, children
   }))
+  if (restoredUnavailableModel.value) {
+    options.unshift({
+      label: `${restoredUnavailableModel.value}（已下线，仅回看）`,
+      value: restoredUnavailableModel.value,
+      disabled: true
+    })
+  }
+  return options
 })
 
 async function loadModels() {
   try {
     const { data } = await mediaApi.listModels()
     models.value = data.data
-    if (models.value.length > 0) {
+    if (models.value.length > 0 && !form.model) {
       form.model = models.value[0].modelId
       applyCapabilityConstraints()
     }
@@ -394,6 +430,7 @@ async function loadModels() {
 
 /** 切换模型：能力可能变化 → 清空附件 + 收敛参数到新能力区间。释放资产预览 objectURL。 */
 function onModelChange() {
+  restoredUnavailableModel.value = null
   ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
   revokeFrame(firstFrame.value)
   revokeFrame(lastFrame.value)
@@ -444,7 +481,7 @@ const durationOptions = computed(() => {
 // === 多模态参考附件（复用 /api/files/upload 单一咽喉点） ===
 // F1 修复：n-upload 受控化（v-model:file-list），显示与提交载荷同源；
 // 关联键用 UploadFileInfo.id（上传期唯一），不用文件名（同名会错位）。
-interface UploadedAttachment { id: string; fileId: string; name: string; assetId?: number; url?: string }
+interface UploadedAttachment { id: string; fileId: string; name: string; assetId?: number; url?: string; reusable?: boolean }
 const images = ref<UploadedAttachment[]>([])
 const videos = ref<UploadedAttachment[]>([])
 const audios = ref<UploadedAttachment[]>([])
@@ -628,8 +665,10 @@ async function previewAsset(id: string, kind: AttachmentKind, fileId: string) {
     } else {
       URL.revokeObjectURL(objectUrl)
     }
+    return true
   } catch {
     /* 拉取失败保留文件名占位，不报错（无权限/已删走降级） */
+    return false
   }
 }
 
@@ -706,18 +745,22 @@ const canSubmit = computed(
   () => form.prompt.trim().length > 0
     && uploadingCount.value === 0
     && !!form.model
+    && !restoredUnavailableModel.value
+    && [...images.value, ...videos.value, ...audios.value, firstFrame.value, lastFrame.value]
+      .filter((a): a is UploadedAttachment => a != null)
+      .every(a => a.reusable !== false)
     && totalAttachments.value <= (capability.value?.maxAttachments ?? 0)
 )
 
 async function onSubmit() {
   // F2 首/尾帧作 image 附件带 frameRole（provider 路由 role:first_frame/last_frame）
   const attachments: AttachmentRef[] = []
-  if (firstFrame.value) attachments.push({ fileId: firstFrame.value.fileId, kind: 'image', frameRole: 'first_frame' })
-  if (lastFrame.value) attachments.push({ fileId: lastFrame.value.fileId, kind: 'image', frameRole: 'last_frame' })
+  if (firstFrame.value) attachments.push({ fileId: firstFrame.value.fileId, kind: 'image', frameRole: 'first_frame', name: firstFrame.value.name })
+  if (lastFrame.value) attachments.push({ fileId: lastFrame.value.fileId, kind: 'image', frameRole: 'last_frame', name: lastFrame.value.name })
   attachments.push(
-    ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const })),
-    ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const })),
-    ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const }))
+    ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const, name: a.name })),
+    ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const, name: a.name })),
+    ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const, name: a.name }))
   )
   submitting.value = true
   try {
@@ -812,18 +855,109 @@ function startPolling(taskId: number) {
 // === 历史 ===
 const history = ref<MediaTaskVO[]>([])
 const loadingHistory = ref(false)
+const historyQuery = ref('')
+const historyTimeRange = ref<[number, number] | null>(null)
+let historyDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let historyRequestSeq = 0
 
 async function loadHistory() {
+  const requestSeq = ++historyRequestSeq
   loadingHistory.value = true
   try {
-    const { data } = await mediaApi.listTasks(50)
-    history.value = data.data
+    const range = historyTimeRange.value
+    const { data } = await mediaApi.listTasks({
+      q: historyQuery.value.trim() || undefined,
+      from: range ? new Date(range[0]).toISOString() : undefined,
+      to: range ? new Date(range[1]).toISOString() : undefined,
+      limit: 50
+    })
+    if (requestSeq === historyRequestSeq) history.value = data.data
   } catch {
     /* 拦截器提示 */
   } finally {
-    loadingHistory.value = false
+    if (requestSeq === historyRequestSeq) loadingHistory.value = false
   }
 }
+
+async function openHistoryTask(summary: MediaTaskVO) {
+  try {
+    const { data } = await mediaApi.getTask(summary.id)
+    const task = data.data
+    setActiveTask(task)
+    restoreTaskForm(task)
+    if (!isTerminal(task.status)) startPolling(task.id)
+  } catch {
+    /* 拦截器提示 */
+  }
+}
+
+function restoreTaskForm(task: MediaTaskVO) {
+  ;[images, videos, audios].forEach(list => list.value.forEach(revokeAttachmentUrl))
+  revokeFrame(firstFrame.value)
+  revokeFrame(lastFrame.value)
+
+  const availableModel = task.model ? models.value.some(m => m.modelId === task.model) : false
+  restoredUnavailableModel.value = task.model && !availableModel ? task.model : null
+  if (task.model) form.model = task.model
+  form.prompt = task.prompt ?? ''
+  form.ratio = (task.ratio ?? '16:9') as MediaRatio
+  form.duration = task.duration ?? 5
+  form.resolution = (task.resolution ?? '720p') as MediaResolution
+  form.watermark = task.watermark ?? false
+  form.generateAudio = task.generateAudio ?? false
+
+  const restored = bucketRestoredAttachments(task.inputAttachments ?? [])
+  firstFrame.value = restored.firstFrame
+  lastFrame.value = restored.lastFrame
+  images.value = restored.images
+  videos.value = restored.videos
+  audios.value = restored.audios
+  ;[...images.value.map(a => [a, 'image'] as const),
+    ...videos.value.map(a => [a, 'video'] as const),
+    ...audios.value.map(a => [a, 'audio'] as const)]
+    .forEach(([attachment, kind]) => void previewRestoredAttachment(attachment.id, kind, attachment.fileId))
+  if (firstFrame.value) void previewRestoredFrame('first', firstFrame.value.id, firstFrame.value.fileId)
+  if (lastFrame.value) void previewRestoredFrame('last', lastFrame.value.id, lastFrame.value.fileId)
+}
+
+async function previewRestoredAttachment(id: string, kind: AttachmentKind, fileId: string) {
+  const ok = await previewAsset(id, kind, fileId)
+  if (!ok) markRestoredUnavailable(id, kind)
+}
+
+async function previewRestoredFrame(slot: 'first' | 'last', id: string, fileId: string) {
+  try {
+    const objectUrl = await fetchFilePreview(fileId)
+    const current = slot === 'first' ? firstFrame.value : lastFrame.value
+    if (!current || current.id !== id) return URL.revokeObjectURL(objectUrl)
+    const next = { ...current, url: objectUrl }
+    if (slot === 'first') firstFrame.value = next
+    else lastFrame.value = next
+  } catch {
+    const current = slot === 'first' ? firstFrame.value : lastFrame.value
+    if (current?.id === id) current.reusable = false
+  }
+}
+
+function markRestoredUnavailable(id: string, kind: AttachmentKind) {
+  const item = kindList(kind).value.find(a => a.id === id)
+  if (item) item.reusable = false
+}
+
+function scheduleHistoryLoad() {
+  if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
+  historyDebounceTimer = setTimeout(() => {
+    historyDebounceTimer = null
+    void loadHistory()
+  }, 300)
+}
+
+function clearHistoryFilters() {
+  historyQuery.value = ''
+  historyTimeRange.value = null
+}
+
+watch([historyQuery, historyTimeRange], scheduleHistoryLoad)
 
 const historyColumns: DataTableColumns<MediaTaskVO> = [
   { title: 'ID', key: 'id', width: 60 },
@@ -847,10 +981,16 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
+    title: '视频', key: 'videoPreview', width: 150,
+    render: r => r.status === 'SUCCEEDED' && r.videoUrl
+      ? h(MediaTaskVideoPreview, { downloadPath: r.videoUrl })
+      : h('span', { class: 'video-gen__preview-placeholder' }, '-')
+  },
+  {
     title: '操作', key: 'actions', width: 90,
     render: r => h(NButton, {
       size: 'small', quaternary: true,
-      onClick: () => setActiveTask(r)
+      onClick: () => void openHistoryTask(r)
     }, () => '查看')
   }
 ]
@@ -861,6 +1001,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
   clearPolling()
   revokeVideo()
   // 释放资产预览 objectURL（防内存泄漏）
@@ -1139,11 +1280,29 @@ onUnmounted(() => {
       cursor: not-allowed;
     }
   }
+
+  &__history-filters {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.4fr) auto;
+    gap: var(--spacing-2);
+    align-items: center;
+    margin-bottom: var(--spacing-2);
+  }
+
+  &__request-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--spacing-2);
+  }
 }
 
 @media (max-width: 768px) {
   .video-gen {
     padding: var(--spacing-3);
+
+    &__history-filters {
+      grid-template-columns: 1fr;
+    }
   }
   .video-gen__header {
     flex-wrap: wrap;

@@ -1,5 +1,6 @@
 package com.superprogrammer.media.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Builder;
 import lombok.Data;
 
@@ -25,8 +26,17 @@ public class MediaTaskVO {
     private String taskType;
     private String model;
     private String prompt;
+    private String ratio;
     private Integer duration;
     private String resolution;
+    private Boolean watermark;
+    private Boolean generateAudio;
+    /** 输入附件摘要；不含文件正文，预览仍需文件接口鉴权。 */
+    private List<InputAttachmentVO> inputAttachments;
+    /** 平台收到并持久化的提交参数；已移除 Provider 快照及任何意外 data URI。 */
+    private JsonNode submittedRequest;
+    /** 实际 Provider POST body 的脱敏快照；旧任务未记录时为 null。 */
+    private JsonNode providerRequestSnapshot;
     private Integer tokensCost;
     private String errorMsg;
     /** 下载端点（仅 SUCCEEDED 且有归属）。 */

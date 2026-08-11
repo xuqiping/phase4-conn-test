@@ -52,6 +52,13 @@ export interface MediaTaskVO {
   duration: number | null
   ratio: string | null
   resolution: string | null
+  watermark: boolean | null
+  generateAudio: boolean | null
+  inputAttachments: InputAttachmentVO[]
+  /** 仅任务详情返回：平台持久化的提交参数（已剔除 Provider 快照）。 */
+  submittedRequest: Record<string, unknown> | null
+  /** 仅任务详情返回：实际 Provider 请求的脱敏快照；旧任务为 null。 */
+  providerRequestSnapshot: Record<string, unknown> | null
   tokensCost: number | null
   errorMsg: string | null
   /** 下载端点相对路径（仅 SUCCEEDED 且有归属） */
@@ -87,6 +94,17 @@ export interface AttachmentRef {
    * 一次请求可含 1 首帧 + 1 尾帧 + N 参考图（后端校验全局各 ≤1）。
    */
   frameRole?: 'first_frame' | 'last_frame'
+  /** 仅用于历史回显，不进入 Provider 请求。 */
+  name?: string
+}
+
+/** 任务详情中的输入附件摘要；previewUrl 仍需鉴权请求。 */
+export interface InputAttachmentVO {
+  fileId: string
+  kind: AttachmentKind
+  frameRole: 'first_frame' | 'last_frame' | null
+  name: string | null
+  previewUrl: string
 }
 
 /**
@@ -209,6 +227,14 @@ export interface MediaSubmitResult {
   status: MediaStatus
 }
 
+/** 历史任务服务端筛选；时间范围采用 [from,to) ISO-8601。 */
+export interface MediaTaskQuery {
+  q?: string
+  from?: string
+  to?: string
+  limit?: number
+}
+
 /** /api/files/upload 返回（StoredFile 最小子集，前端只取 fileId） */
 export interface StoredFileRef {
   fileId: string
@@ -227,9 +253,10 @@ export const mediaApi = {
     return request.get<ApiResponse<MediaTaskVO>>(`/media/tasks/${id}`)
   },
 
-  /** GET /api/media/tasks?limit= — 历史列表（ownership 过滤；admin 看全量） */
-  listTasks(limit = 50) {
-    return request.get<ApiResponse<MediaTaskVO[]>>('/media/tasks', { params: { limit } })
+  /** GET /api/media/tasks — 历史列表（服务端筛选 + ownership；admin 看全量）。 */
+  listTasks(query: number | MediaTaskQuery = 50) {
+    const params = typeof query === 'number' ? { limit: query } : query
+    return request.get<ApiResponse<MediaTaskVO[]>>('/media/tasks', { params })
   },
 
   /** GET /api/media/models — 可选视频模型目录（含能力画像，media:gen） */

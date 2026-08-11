@@ -175,7 +175,7 @@ function emitValue(v: string) {
   emit('update:modelValue', v)
 }
 
-/** 取 contenteditable 当前字符光标偏移（用于 @唤起定位——回退计字符数，chip 按 token 长度计）。 */
+/** 取 contenteditable 当前序列化光标偏移（文本按字符、chip 按 token、br 按换行计）。 */
 function caretCharOffset(): number {
   const el = editRef.value
   if (!el) return 0
@@ -185,9 +185,9 @@ function caretCharOffset(): number {
   const pre = range.cloneRange()
   pre.selectNodeContents(el)
   pre.setEnd(range.startContainer, range.startOffset)
-  // pre.toString() 把 chip 的 textContent(label) 也算进去——需用 token 长度修正：
-  // 简化：用 toString 计字面可见字符，对 @唤起定位足够（只需 @ 到光标间无空白判定）。
-  return pre.toString().length
+  // cloneContents 会保留 chip 的 data-mention；交给同一序列化函数计算，避免
+  // 可见 label 长度与内部 token 长度不一致时把第二次 @ 的锚点算偏。
+  return serializeNode(pre.cloneContents()).length
 }
 
 /** 把字符偏移设回 contenteditable 光标（选中候选后定位）。 */

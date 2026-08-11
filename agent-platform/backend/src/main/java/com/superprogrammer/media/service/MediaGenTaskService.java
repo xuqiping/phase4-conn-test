@@ -185,6 +185,7 @@ public class MediaGenTaskService {
                 item.put("fileId", a.getFileId());
                 item.put("kind", kind);
                 if (role != null) item.put("frameRole", role);
+                if (a.getName() != null && !a.getName().isBlank()) item.put("name", a.getName().strip());
                 list.add(item);
             }
             config.put("attachments", list);
@@ -462,6 +463,9 @@ public class MediaGenTaskService {
         int images = 0, videos = 0, audios = 0;
         int firstFrame = 0, lastFrame = 0;
         for (AttachmentRef a : attachments) {
+            if (a.getName() != null && a.getName().length() > 255) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "附件名称不能超过 255 字符");
+            }
             String kind = a.getKind() == null ? "" : a.getKind().trim().toLowerCase();
             if (!ATTACHMENT_KINDS.contains(kind)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "附件类型非法: " + a.getKind() + "（image/video/audio）");

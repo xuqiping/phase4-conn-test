@@ -169,6 +169,25 @@ class ArkSeedanceProviderTest {
         assertEquals(false, body.get("watermark"));
     }
 
+    @Test
+    void prepare_AC_V3_06_snapshotUsesExactBodyButRedactsDataUri() {
+        var prepared = provider.prepareCreateRequest(MediaGenRequest.builder()
+                .model("m").prompt("最终提示词").ratio("9:16").duration(12).resolution("1080p")
+                .taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
+                        .fileId("img-1").kind("image").dataUri("data:image/png;base64,QQ==")
+                        .frameRole("first_frame").build()))
+                .build());
+
+        assertEquals(prepared.getBody().get("model"), prepared.getSnapshot().path("request").path("model").asText());
+        var redacted = prepared.getSnapshot().path("request").path("content").get(1).path("image_url");
+        assertTrue(redacted.path("redacted").asBoolean());
+        assertEquals("img-1", redacted.path("fileId").asText());
+        assertEquals("image/png", redacted.path("mime").asText());
+        assertEquals(1, redacted.path("bytes").asInt());
+        assertFalse(prepared.getSnapshot().toString().contains("data:"));
+    }
+
     // ---------- interpretProbe：MEDIA 连通探测状态码判定 ----------
 
     @Test

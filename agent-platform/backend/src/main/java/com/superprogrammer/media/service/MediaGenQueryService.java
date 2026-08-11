@@ -1,17 +1,21 @@
 package com.superprogrammer.media.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.media.dto.MediaTaskVO;
+import com.superprogrammer.media.dto.InputAttachmentVO;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -35,19 +39,32 @@ public class MediaGenQueryService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "任务不存在");
         }
         ensureOwnership(task, userId, admin);
-        return toVO(task, admin || owns(task, userId));
+        return toVO(task, admin || owns(task, userId), true);
     }
 
-    public List<MediaTaskVO> list(Long userId, boolean admin, Integer limit) {
-        int size = limit == null || limit < 1 || limit > 100 ? 50 : limit;
-        LambdaQueryWrapper<MediaGenTask> w = new LambdaQueryWrapper<>();
-        if (!admin) {
-            w.eq(MediaGenTask::getUserId, userId);
+    public List<MediaTaskVO> list(Long userId, boolean admin, String query,
+                                  OffsetDateTime from, OffsetDateTime to, Integer limit) {
+        if (limit != null && (limit < 1 || limit > 100)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "limit 必须在 1-100 之间");
         }
-        w.orderByDesc(MediaGenTask::getCreatedAt).last("LIMIT " + size);
-        return taskMapper.selectList(w).stream()
-                .map(t -> toVO(t, admin || owns(t, userId)))
+        if (from != null && to != null && !from.isBefore(to)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "开始时间必须早于结束时间");
+        }
+        String normalizedQuery = query == null || query.isBlank() ? null : query.strip();
+        if (normalizedQuery != null && normalizedQuery.length() > 8000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词筛选条件不能超过 8000 字符");
+        }
+        String escapedQuery = normalizedQuery == null ? null : escapeLikeLiteral(normalizedQuery);
+        int size = limit == null ? 50 : limit;
+        return taskMapper.selectHistory(userId, admin, escapedQuery, from, to, size).stream()
+                .map(t -> toVO(t, admin || owns(t, userId), false))
                 .collect(Collectors.toList());
+    }
+
+    private String escapeLikeLiteral(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 
     public MediaGenTask loadForDownload(Long id, Long userId, boolean admin) {
@@ -131,17 +148,35 @@ public class MediaGenQueryService {
         return userId != null && userId.equals(task.getUserId());
     }
 
-    private MediaTaskVO toVO(MediaGenTask task, boolean mayAccessFile) {
+    private MediaTaskVO toVO(MediaGenTask task, boolean mayAccessFile, boolean includeRequestDetails) {
         String prompt = null;
+        String ratio = null;
         Integer duration = null;
         String resolution = null;
+        Boolean watermark = false;
+        Boolean generateAudio = false;
+        List<InputAttachmentVO> inputAttachments = List.of();
+        JsonNode submittedRequest = null;
+        JsonNode providerRequestSnapshot = null;
         String size = null;
         String outputFormat = null;
         try {
             JsonNode cfg = objectMapper.readTree(task.getRequestConfig());
             prompt = cfg.path("prompt").asText(null);
+            ratio = cfg.path("ratio").asText(null);
             if (cfg.path("duration").isNumber()) duration = cfg.path("duration").asInt();
             resolution = cfg.path("resolution").asText(null);
+            watermark = cfg.path("watermark").asBoolean(false);
+            generateAudio = cfg.path("generateAudio").asBoolean(false);
+            inputAttachments = readInputAttachments(cfg);
+            if (includeRequestDetails) {
+                ObjectNode submitted = cfg.deepCopy();
+                JsonNode storedSnapshot = submitted.remove("providerRequestSnapshot");
+                submittedRequest = redactDataUris(submitted);
+                if (storedSnapshot != null && !storedSnapshot.isNull()) {
+                    providerRequestSnapshot = redactDataUris(storedSnapshot.deepCopy());
+                }
+            }
             size = cfg.path("size").asText(null);
             outputFormat = cfg.path("outputFormat").asText(null);
         } catch (Exception e) {
@@ -183,8 +218,14 @@ public class MediaGenQueryService {
                 .taskType(task.getTaskType())
                 .model(task.getModel())
                 .prompt(prompt)
+                .ratio(ratio)
                 .duration(duration)
                 .resolution(resolution)
+                .watermark(watermark)
+                .generateAudio(generateAudio)
+                .inputAttachments(inputAttachments)
+                .submittedRequest(submittedRequest)
+                .providerRequestSnapshot(providerRequestSnapshot)
                 .tokensCost(task.getTokensCost())
                 .errorMsg(task.getErrorMsg())
                 .videoUrl(videoUrl)
@@ -198,5 +239,55 @@ public class MediaGenQueryService {
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt())
                 .build();
+    }
+
+    /** 防御性脱敏：即使历史脏数据误存了 data URI，查询接口也不返回正文。 */
+    private JsonNode redactDataUris(JsonNode node) {
+        if (node == null || node.isNull()) return node;
+        if (node.isTextual()) {
+            String value = node.asText();
+            return value.startsWith("data:") ? TextNode.valueOf("[REDACTED_DATA_URI]") : node;
+        }
+        if (node.isObject()) {
+            ObjectNode object = (ObjectNode) node;
+            object.fields().forEachRemaining(entry -> object.set(entry.getKey(), redactDataUris(entry.getValue())));
+            return object;
+        }
+        if (node.isArray()) {
+            ArrayNode array = (ArrayNode) node;
+            for (int i = 0; i < array.size(); i++) array.set(i, redactDataUris(array.get(i)));
+        }
+        return node;
+    }
+
+    private List<InputAttachmentVO> readInputAttachments(JsonNode config) {
+        List<InputAttachmentVO> attachments = new java.util.ArrayList<>();
+        JsonNode arr = config.path("attachments");
+        if (arr.isArray()) {
+            for (JsonNode item : arr) {
+                String fileId = item.path("fileId").asText(null);
+                String kind = item.path("kind").asText(null);
+                if (fileId == null || fileId.isBlank() || kind == null || kind.isBlank()) continue;
+                attachments.add(InputAttachmentVO.builder()
+                        .fileId(fileId)
+                        .kind(kind)
+                        .frameRole(item.path("frameRole").asText(null))
+                        .name(item.path("name").asText(null))
+                        .previewUrl("/api/files/" + fileId)
+                        .build());
+            }
+        }
+        String legacyFileId = config.path("refFileId").asText(null);
+        if (attachments.isEmpty() && legacyFileId != null && !legacyFileId.isBlank()) {
+            String legacyRole = "last".equalsIgnoreCase(config.path("frameRole").asText())
+                    ? "last_frame" : "first_frame";
+            attachments.add(InputAttachmentVO.builder()
+                    .fileId(legacyFileId)
+                    .kind("image")
+                    .frameRole(legacyRole)
+                    .previewUrl("/api/files/" + legacyFileId)
+                    .build());
+        }
+        return attachments;
     }
 }

@@ -184,6 +184,28 @@ describe('MentionTextarea · @ 唤起与候选选择', () => {
     await typeInto(wrapper, '@')
     expect(wrapper.find('.mention-ta__empty').exists()).toBe(true)
   })
+
+  it('AC-V3-01 插入首个 chip 后继续输入 @ 仍唤起全部候选', async () => {
+    const wrapper = mountHost()
+    await typeInto(wrapper, '@')
+    await wrapper.findAll('.mention-ta__item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+
+    const editor = wrapper.find('.mention-ta__input').element as HTMLElement
+    const tail = editor.lastChild as Text
+    tail.nodeValue = `${tail.nodeValue ?? ''}@`
+    const range = document.createRange()
+    range.setStart(tail, tail.length)
+    range.collapse(true)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.mention-ta__popover').exists()).toBe(true)
+    expect(wrapper.findAll('.mention-ta__item')).toHaveLength(2)
+  })
 })
 
 describe('MentionTextarea · 序列化往返（存 token）', () => {

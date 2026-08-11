@@ -16,6 +16,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -127,8 +129,12 @@ public class MediaGenController {
 
     @GetMapping("/tasks")
     @RequirePermission("media:gen")
-    public ResponseEntity<R<List<MediaTaskVO>>> list(@RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(R.ok(queryService.list(getCurrentUserId(), isAdmin(), limit)));
+    public ResponseEntity<R<List<MediaTaskVO>>> list(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(R.ok(queryService.list(getCurrentUserId(), isAdmin(), q, from, to, limit)));
     }
 
     @GetMapping("/tasks/{id}/download")

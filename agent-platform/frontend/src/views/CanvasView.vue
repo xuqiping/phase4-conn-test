@@ -196,9 +196,10 @@ import {
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
-import { mediaApi, fetchVideoBlob, fetchMediaBlob, isTerminal } from '@/api/media'
-import type { MediaStatus, AttachmentRef } from '@/api/media'
+import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
+import type { AttachmentRef } from '@/api/media'
 import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
+import { pollMediaTask } from '@/utils/mediaTaskPolling'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
@@ -583,46 +584,38 @@ async function onRunVideo(node: CanvasNode) {
 
 /** 轮询视频任务至终态；成功 fetch blob 预览，失败标红。 */
 async function pollVideoTask(nodeId: string, taskId: number) {
-  const maxRounds = 120 // ~10min 上限（每 5s 一次）
-  for (let i = 0; i < maxRounds; i++) {
-    await new Promise<void>(r => setTimeout(r, 5000))
-    let status: MediaStatus
-    try {
-      const res = await mediaApi.getTask(taskId)
-      status = res.data.data.status
-    } catch {
-      continue // 瞬时网络错误继续轮询
-    }
-    if (!isTerminal(status)) {
-      boardRef.value?.updateNodeData(nodeId, { status: 'running' })
-      continue
-    }
-    if (status === 'SUCCEEDED') {
-      // 拉带鉴权的视频流 → objectURL（下载端点需 auth header，<video src> 无法带）
-      const detail = await mediaApi.getTask(taskId)
-      const url = detail.data.data.videoUrl
+  const detail = await pollMediaTask(
+    async () => (await mediaApi.getTask(taskId)).data.data,
+    () => !isCurrentNodeTask(nodeId, taskId),
+    { onPending: () => boardRef.value?.updateNodeData(nodeId, { status: 'running' }) }
+  )
+  if (!detail) return
+  if (detail.status === 'SUCCEEDED') {
+      const url = detail.videoUrl
       const objectUrl = url ? await fetchVideoBlob(url) : ''
       boardRef.value?.updateNodeData(nodeId, {
         status: 'success',
         mediaStatus: 'SUCCEEDED',
         previewUrl: objectUrl,
         // C11：存结果 fileId（stored_files），抽帧 loadPath 直读做 javacv seek
-        fileId: detail.data.data.resultFileId ?? undefined,
+        fileId: detail.resultFileId ?? undefined,
         errorMsg: ''
       })
       message.success('视频生成完成')
-    } else {
+  } else {
       boardRef.value?.updateNodeData(nodeId, {
         status: 'failed',
-        mediaStatus: status,
+        mediaStatus: detail.status,
         errorMsg: '视频生成失败'
       })
       message.error('视频生成失败')
-    }
-    scheduleSave()
-    return
   }
-  boardRef.value?.updateNodeData(nodeId, { status: 'failed', errorMsg: '生成超时' })
+  scheduleSave()
+}
+
+function isCurrentNodeTask(nodeId: string, taskId: number): boolean {
+  const node = boardRef.value?.getNode(nodeId)
+  return editingId.value != null && !!node && Number((node.data as Record<string, unknown>).taskId) === taskId
 }
 
 type MediaRatioArg = Parameters<typeof mediaApi.submitVideo>[0]['ratio']
@@ -708,24 +701,15 @@ function buildImageRefs(node: CanvasNode, rawPrompt: string): { fileIds: string[
 
 /** 轮询图片任务至终态；成功 fetch 首张 blob 预览 + 存首张 fileId（焦点编辑裁剪源），失败标红。 */
 async function pollImageTask(nodeId: string, taskId: number) {
-  const maxRounds = 48 // 图片同步生成，~4min 上限（每 5s 一次）
-  for (let i = 0; i < maxRounds; i++) {
-    await new Promise<void>(r => setTimeout(r, 5000))
-    let status: MediaStatus
-    try {
-      const res = await mediaApi.getTask(taskId)
-      status = res.data.data.status
-    } catch {
-      continue // 瞬时网络错误继续轮询
-    }
-    if (!isTerminal(status)) {
-      boardRef.value?.updateNodeData(nodeId, { status: 'running' })
-      continue
-    }
-    if (status === 'SUCCEEDED') {
-      const detail = await mediaApi.getTask(taskId)
-      const urls = detail.data.data.imageUrls ?? []
-      const fileIds = detail.data.data.imageFileIds ?? []
+  const detail = await pollMediaTask(
+    async () => (await mediaApi.getTask(taskId)).data.data,
+    () => !isCurrentNodeTask(nodeId, taskId),
+    { onPending: () => boardRef.value?.updateNodeData(nodeId, { status: 'running' }) }
+  )
+  if (!detail) return
+  if (detail.status === 'SUCCEEDED') {
+      const urls = detail.imageUrls ?? []
+      const fileIds = detail.imageFileIds ?? []
       // 首张下载端点带 auth → fetchMediaBlob 拉 blob 转 objectURL（<img src> 无法带 header）
       const objectUrl = urls[0] ? await fetchMediaBlob(urls[0]) : ''
       boardRef.value?.updateNodeData(nodeId, {
@@ -737,18 +721,15 @@ async function pollImageTask(nodeId: string, taskId: number) {
         errorMsg: ''
       })
       message.success('图片生成完成')
-    } else {
+  } else {
       boardRef.value?.updateNodeData(nodeId, {
         status: 'failed',
-        mediaStatus: status,
+        mediaStatus: detail.status,
         errorMsg: '图片生成失败'
       })
       message.error('图片生成失败')
-    }
-    scheduleSave()
-    return
   }
-  boardRef.value?.updateNodeData(nodeId, { status: 'failed', errorMsg: '生成超时' })
+  scheduleSave()
 }
 
 /** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。 */

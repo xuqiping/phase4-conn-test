@@ -1,6 +1,7 @@
 package com.superprogrammer.media.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -25,4 +26,8 @@ public class AttachmentRef {
      * video/audio 附件此字段忽略（恒为 reference_video/reference_audio）。
      */
     private String frameRole;
+
+    /** 仅用于历史回显的人类可读名称，不参与 Provider 请求。 */
+    @Size(max = 255, message = "附件名称不能超过 255 字符")
+    private String name;
 }

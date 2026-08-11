@@ -10,6 +10,7 @@ import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
 import com.superprogrammer.media.dto.MediaImageRequest;
 import com.superprogrammer.media.dto.MediaImageResult;
+import com.superprogrammer.media.dto.PreparedMediaRequest;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import com.superprogrammer.media.provider.ArkImageProvider;
@@ -35,8 +36,8 @@ import java.util.concurrent.Executor;
  * 服务重启后下次 poll 自动续跑未完任务（崩溃恢复免费，无需 @PostConstruct）。
  *
  * <p>process(task)：① 解析 requestConfig → {@link MediaGenRequest} ② 若无 arkTaskId →
- * {@link ArkSeedanceProvider#createTask} 落 arkTaskId ③ 退避轮询 queryTask（5s→30s 封顶，
- * 单任务 10min 超时 FAILED）至终态 ④ SUCCEEDED→markSucceeded / FAILED→markFailed。
+ * {@link ArkSeedanceProvider#createTask} 落 arkTaskId ③ 每次认领只调用一次 create/query，
+ * 非终态用 locked_until 安排退避后的下一次认领并立即释放线程 ④ 终态才落盘、计费和释放 inflight。
  *
  * <p>Ark 轮询阻塞（秒~分钟级）必须在事务外，故本类无 @Transactional，DB 写经 txService 代理。
  */
@@ -107,72 +108,76 @@ public class MediaGenTaskWorker {
             return;
         }
         String kind = isImageTask(task.getTaskType()) ? BizMetrics.MEDIA_IMAGE : BizMetrics.MEDIA_VIDEO;
-        // 终态结果（每次处理正好记一次；DOWNLOAD_FAILED 重试按次计）：成功路径置 true
+        boolean terminal = false;
         boolean succeeded = false;
         try {
             // 图片任务（Seedream）走同步生图路径，与视频异步轮询分流（video 路径零改动）。
             if (isImageTask(task.getTaskType())) {
+                terminal = true;
                 succeeded = processImage(task);
                 return;
             }
-            MediaGenRequest request = buildRequest(task);
             String arkTaskId = task.getArkTaskId();
             if (arkTaskId == null || arkTaskId.isBlank()) {
-                arkTaskId = arkProvider.createTask(request);
+                MediaGenRequest request = buildRequest(task, true);
+                PreparedMediaRequest prepared = arkProvider.prepareCreateRequest(request);
+                txService.saveProviderRequestSnapshot(taskId, objectMapper.writeValueAsString(prepared.getSnapshot()));
+                arkTaskId = arkProvider.createPreparedTask(request, prepared);
                 txService.setArkTaskId(taskId, arkTaskId);
+                long delayMs = nextBackoffMs(task);
+                txService.scheduleNextQuery(taskId, delayMs);
+                log.info("媒体任务已创建 taskId={} arkTaskId={} nextQueryMs={}", taskId, arkTaskId, delayMs);
+                return;
             }
-            succeeded = pollUntilTerminal(task, arkTaskId, request);
+            MediaGenResult result;
+            try {
+                result = arkProvider.queryTask(arkTaskId, task.getProviderId());
+            } catch (Exception queryError) {
+                long delayMs = nextBackoffMs(task);
+                txService.scheduleNextQuery(taskId, delayMs);
+                log.warn("媒体任务查询异常，将重试 taskId={} attempt={} nextQueryMs={} reason={}",
+                        taskId, task.getAttempt(), delayMs, rootMessage(queryError));
+                return;
+            }
+            String status = result.getStatus();
+            if (MediaGenResult.STATUS_SUCCEEDED.equals(status)) {
+                terminal = true;
+                succeeded = handleSucceeded(task, result, buildRequest(task, false));
+                log.info("媒体任务成功 taskId={} arkTaskId={} usageTokens={}",
+                        taskId, arkTaskId, result.getUsageTokens());
+            } else if (MediaGenResult.STATUS_FAILED.equals(status)) {
+                terminal = true;
+                txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "Ark 任务失败");
+                log.warn("媒体任务失败 taskId={} arkTaskId={} reason={}", taskId, arkTaskId, result.getErrorMsg());
+            } else {
+                long delayMs = nextBackoffMs(task);
+                txService.scheduleNextQuery(taskId, delayMs);
+                log.debug("媒体任务未完成 taskId={} arkTaskId={} status={} nextQueryMs={}",
+                        taskId, arkTaskId, status, delayMs);
+            }
         } catch (Exception e) {
+            terminal = true;
             log.error("媒体任务处理失败 taskId={}: {}", taskId, e.getMessage(), e);
             txService.markFailed(taskId, rootMessage(e));
         } finally {
-            // L7：任务离开本 worker（成功/失败/超时/下载失败均视为终态让位）→ 释放提交时占的槽位；
-            // 错配场景（submit 未计数）由 release 的负值清零兜底，方向 fail-open
-            inflightGate.release(task.getUserId());
-            // 指标：终态 + 端到端耗时（创建→终态含排队；createdAt 缺失跳过耗时）
-            bizMetrics.mediaTaskTerminal(kind, succeeded ? BizMetrics.RESULT_SUCCESS : BizMetrics.RESULT_FAIL);
-            if (task.getCreatedAt() != null) {
-                bizMetrics.mediaTaskDuration(kind,
-                        java.time.Duration.between(task.getCreatedAt(), java.time.OffsetDateTime.now()));
+            if (terminal) {
+                inflightGate.release(task.getUserId());
+                bizMetrics.mediaTaskTerminal(kind, succeeded ? BizMetrics.RESULT_SUCCESS : BizMetrics.RESULT_FAIL);
+                if (task.getCreatedAt() != null) {
+                    bizMetrics.mediaTaskDuration(kind,
+                            java.time.Duration.between(task.getCreatedAt(), java.time.OffsetDateTime.now()));
+                }
             }
         }
     }
 
-    /** 退避轮询 Ark 至终态；超时 → FAILED。返回 true 仅当 markSucceeded。 */
-    private boolean pollUntilTerminal(MediaGenTask task, String arkTaskId, MediaGenRequest request) {
-        Long taskId = task.getId();
-        long start = System.currentTimeMillis();
-        long backoff = properties.getBackoffStartMs();
-        int queryCount = 0;
-        while (true) {
-            MediaGenResult result = arkProvider.queryTask(arkTaskId, request.getProviderId());
-            queryCount++;
-            String status = result.getStatus();
-            if (MediaGenResult.STATUS_SUCCEEDED.equals(status)) {
-                boolean ok = handleSucceeded(task, result, request);
-                log.info("媒体任务成功 taskId={} arkTaskId={} queries={} usageTokens={}",
-                        taskId, arkTaskId, queryCount, result.getUsageTokens());
-                return ok;
-            }
-            if (MediaGenResult.STATUS_FAILED.equals(status)) {
-                txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "Ark 任务失败");
-                log.warn("媒体任务失败 taskId={} arkTaskId={} reason={}", taskId, arkTaskId, result.getErrorMsg());
-                return false;
-            }
-            // PENDING/RUNNING：超时判断 + 续锁 + 退避
-            long elapsed = System.currentTimeMillis() - start;
-            if (elapsed > properties.getTaskTimeoutSeconds() * 1000L) {
-                txService.markFailed(taskId, "任务超时（>" + properties.getTaskTimeoutSeconds() + "s）");
-                log.warn("媒体任务超时 taskId={} arkTaskId={} elapsedMs={}", taskId, arkTaskId, elapsed);
-                return false;
-            }
-            if (queryCount % 3 == 0) {
-                // 每 3 次查询续一次锁，防长轮询中被其他 worker 重认领
-                txService.renewLock(taskId, properties.getLockMinutes());
-            }
-            sleep(backoff);
-            backoff = Math.min(properties.getBackoffCapMs(), backoff * 2);
+    private long nextBackoffMs(MediaGenTask task) {
+        long delay = Math.max(1L, properties.getBackoffStartMs());
+        int attempt = Math.max(1, task.getAttempt() == null ? 1 : task.getAttempt());
+        for (int i = 1; i < attempt && delay < properties.getBackoffCapMs(); i++) {
+            delay = Math.min(properties.getBackoffCapMs(), delay * 2);
         }
+        return delay;
     }
 
     /**
@@ -385,6 +390,10 @@ public class MediaGenTaskWorker {
     }
 
     private MediaGenRequest buildRequest(MediaGenTask task) {
+        return buildRequest(task, true);
+    }
+
+    private MediaGenRequest buildRequest(MediaGenTask task, boolean resolveAttachments) {
         String prompt = null;
         String ratio = null;
         Integer duration = null;
@@ -426,12 +435,13 @@ public class MediaGenTaskWorker {
                 .generateAudio(generateAudio)
                 .taskType(task.getTaskType());
         // 多模态参考附件：file_id → data URI（按类型限大小，Ark image_url/video_url/audio_url 入参）
-        if (!attachments.isEmpty() && task.getUserId() != null) {
+        if (resolveAttachments && !attachments.isEmpty() && task.getUserId() != null) {
             List<MediaGenRequest.ResolvedAttachment> resolved = new java.util.ArrayList<>(attachments.size());
             for (String[] pair : attachments) {
                 try {
                     resolved.add(MediaGenRequest.ResolvedAttachment.builder()
                             .kind(pair[1])
+                            .fileId(pair[0])
                             .dataUri(mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
                             .frameRole(pair.length > 2 ? pair[2] : null)
                             .build());
@@ -445,9 +455,10 @@ public class MediaGenTaskWorker {
             return b.build();
         }
         // 旧版 IMAGE2VIDEO：单首帧参考图 file_id → data URI（无 role = 首帧语义）；TEXT2VIDEO 无需。
-        if (refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
+        if (resolveAttachments && refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
             try {
                 b.refImageUrl(mediaStorageService.readAsDataUri(refFileId, task.getUserId()));
+                b.refFileId(refFileId);
                 // C2：参考帧位置（last=尾帧 role:last_frame；first/默认=首帧裸 image_url）
                 b.frameRole(frameRole);
             } catch (Exception e) {
@@ -456,14 +467,6 @@ public class MediaGenTaskWorker {
             }
         }
         return b.build();
-    }
-
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private static String rootMessage(Throwable e) {

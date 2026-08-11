@@ -5,6 +5,7 @@ import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenResult;
+import com.superprogrammer.media.dto.PreparedMediaRequest;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import com.superprogrammer.media.provider.ArkImageProvider;
@@ -58,10 +59,9 @@ class MediaGenTaskWorkerTest {
 
     @Test
     void succeeded_withUsageTokens_marksSucceededWithRealValue() {
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(eq("https://ark/v.mp4"), eq(100L), anyString()))
@@ -69,7 +69,7 @@ class MediaGenTaskWorkerTest {
 
         worker.poll();
 
-        verify(txService).setArkTaskId(1L, "cct-1");
+        verify(txService, never()).setArkTaskId(anyLong(), anyString());
         verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
         verify(txService, never()).markFailed(anyLong(), anyString());
         // Chunk F：成功路径扣减计费（kind=VIDEO，refId=taskId，视频伪-token=200000）
@@ -84,10 +84,9 @@ class MediaGenTaskWorkerTest {
     @Test
     void succeeded_marksSucceededWhenBillingDisabled() {
         // 计费禁用/系统调用：chargeMedia 返 null（未扣），仍正常 markSucceeded，不退款
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
@@ -144,10 +143,9 @@ class MediaGenTaskWorkerTest {
     @Test
     void succeeded_noUsage_estimatesByRate() {
         // 720p=61760 token/秒 × 5s = 308800（spec 断言常量）
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", null, null)); // 无 usage → 估算
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
@@ -177,12 +175,69 @@ class MediaGenTaskWorkerTest {
         MediaGenTask task = pendingTask(1L, 100L, null);
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenThrow(new IllegalStateException("doubao 未配置 key"));
+        PreparedMediaRequest prepared = PreparedMediaRequest.builder().body(java.util.Map.of())
+                .snapshot(objectMapper.createObjectNode().put("provider", "ark-seedance")).build();
+        when(arkProvider.prepareCreateRequest(any())).thenReturn(prepared);
+        when(arkProvider.createPreparedTask(any(), eq(prepared))).thenThrow(new IllegalStateException("doubao 未配置 key"));
 
         worker.poll();
 
         verify(txService).markFailed(eq(1L), contains("key"));
+        org.mockito.InOrder order = inOrder(txService, arkProvider);
+        order.verify(txService).saveProviderRequestSnapshot(eq(1L), contains("ark-seedance"));
+        order.verify(arkProvider).createPreparedTask(any(), eq(prepared));
         verify(arkProvider, never()).queryTask(anyString(), any());
+    }
+
+    @Test
+    void createTask_AC_V3_05_schedulesNextClaimWithoutQueryingOrReleasingInflight() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        PreparedMediaRequest prepared = PreparedMediaRequest.builder().body(java.util.Map.of())
+                .snapshot(objectMapper.createObjectNode()).build();
+        when(arkProvider.prepareCreateRequest(any())).thenReturn(prepared);
+        when(arkProvider.createPreparedTask(any(), eq(prepared))).thenReturn("cct-1");
+
+        worker.poll();
+
+        verify(txService).setArkTaskId(1L, "cct-1");
+        org.mockito.InOrder order = inOrder(txService, arkProvider);
+        order.verify(txService).saveProviderRequestSnapshot(eq(1L), anyString());
+        order.verify(arkProvider).createPreparedTask(any(), eq(prepared));
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(arkProvider, never()).queryTask(anyString(), any());
+        verify(inflightGate, never()).release(anyLong());
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), anyString());
+    }
+
+    @Test
+    void running_AC_V3_05_schedulesNextClaimWithoutTerminalSideEffects() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask("cct-1", null)).thenReturn(result(MediaGenResult.STATUS_RUNNING, null, null, null));
+
+        worker.poll();
+
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(txService, never()).markFailed(anyLong(), anyString());
+        verify(inflightGate, never()).release(anyLong());
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), anyString());
+    }
+
+    @Test
+    void queryNetworkError_AC_V3_05_retriesInsteadOfFailing() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask("cct-1", null)).thenThrow(new IllegalStateException("read timed out"));
+
+        worker.poll();
+
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(txService, never()).markFailed(anyLong(), anyString());
+        verify(inflightGate, never()).release(anyLong());
     }
 
     @Test
