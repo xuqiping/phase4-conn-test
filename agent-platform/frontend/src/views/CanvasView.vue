@@ -601,14 +601,22 @@ async function pollVideoTask(nodeId: string, taskId: number) {
         previewUrl: objectUrl,
         // C11：存结果 fileId（stored_files），抽帧 loadPath 直读做 javacv seek
         fileId: detail.resultFileId ?? undefined,
-        errorMsg: ''
+        errorMsg: '',
+        // 7x-4：保留审计字段，供属性面板查看推送参数 + 参考视频标志
+        submittedRequest: detail.submittedRequest ?? undefined,
+        providerRequestSnapshot: detail.providerRequestSnapshot ?? undefined,
+        hasReference: detail.hasReference ?? undefined
       })
       message.success('视频生成完成')
   } else {
       boardRef.value?.updateNodeData(nodeId, {
         status: 'failed',
         mediaStatus: detail.status,
-        errorMsg: '视频生成失败'
+        errorMsg: '视频生成失败',
+        // 7x-4：失败也保留审计字段（排查失败原因时需看推送参数）
+        submittedRequest: detail.submittedRequest ?? undefined,
+        providerRequestSnapshot: detail.providerRequestSnapshot ?? undefined,
+        hasReference: detail.hasReference ?? undefined
       })
       message.error('视频生成失败')
   }
@@ -1214,7 +1222,11 @@ function hydrateVideoPreviews(nodes: CanvasNode[]) {
             boardRef.value?.updateNodeData(n.id, {
               previewUrl: obj,
               status: 'success',
-              fileId: r.data.data.resultFileId ?? undefined
+              fileId: r.data.data.resultFileId ?? undefined,
+              // 7x-4：hydrate 时也补审计字段（旧快照节点缺失时回填）
+              submittedRequest: r.data.data.submittedRequest ?? undefined,
+              providerRequestSnapshot: r.data.data.providerRequestSnapshot ?? undefined,
+              hasReference: r.data.data.hasReference ?? undefined
             })
           }
         })

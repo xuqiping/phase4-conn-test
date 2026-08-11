@@ -13,6 +13,9 @@
       <span v-if="data.ratio">{{ data.ratio }}</span>
       <span v-if="data.duration">{{ data.duration }}s</span>
       <span v-if="data.resolution">{{ data.resolution }}</span>
+      <!-- 7x-4：画布上一眼区分是否有参考视频（与计费/审查口径一致） -->
+      <span v-if="data.hasReference === true" class="video-node__ref-badge video-node__ref-badge--has">参考</span>
+      <span v-else-if="data.hasReference === false" class="video-node__ref-badge">无参考</span>
     </div>
   </CanvasNodeBase>
 </template>
@@ -68,5 +71,15 @@ const assetBadge = useNodeAssetBadge(props.data)
   margin-top: var(--spacing-1);
   font-size: 10px;
   color: var(--color-text-tertiary);
+}
+/* 7x-4：参考视频角标 */
+.video-node__ref-badge {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-fill-secondary);
+}
+.video-node__ref-badge--has {
+  background: var(--color-primary);
+  color: #fff;
 }
 </style>

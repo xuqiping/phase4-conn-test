@@ -292,7 +292,19 @@
           </n-button>
         </div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
-        <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
+        <div v-if="node.data.taskId" class="prop-panel__readonly">
+          taskId: {{ node.data.taskId }}
+          <!-- 7x-4：参考视频标志（供审查定价是否按「有参考」命中） -->
+          <n-tag v-if="node.data.hasReference === true" size="tiny" type="info" :bordered="false" style="margin-left: 8px">有参考视频</n-tag>
+          <n-tag v-else-if="node.data.hasReference === false" size="tiny" :bordered="false" style="margin-left: 8px">无参考</n-tag>
+        </div>
+        <!-- 7x-4：查看实际推送参数（submittedRequest + providerRequestSnapshot），供审查。
+             组件自带触发按钮 + modal，内部自管 show 状态。 -->
+        <MediaTaskRequestDetails
+          v-if="node.data.taskId"
+          :submitted-request="(node.data.submittedRequest as Record<string, unknown> | null) ?? null"
+          :provider-request-snapshot="(node.data.providerRequestSnapshot as Record<string, unknown> | null) ?? null"
+        />
       </template>
 
       <!-- 音频节点：上传（MVP）/ TTS / 音乐生成（待 provider） -->
@@ -411,7 +423,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NSelect, NUpload } from 'naive-ui'
+import { NButton, NIcon, NInput, NInputNumber, NSelect, NTag, NUpload } from 'naive-ui'
 import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
@@ -422,6 +434,7 @@ import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
 import type { ImageModelVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
+import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
 import { uniqueLabel } from '@/utils/interpolate'
 
 const props = withDefaults(defineProps<{
