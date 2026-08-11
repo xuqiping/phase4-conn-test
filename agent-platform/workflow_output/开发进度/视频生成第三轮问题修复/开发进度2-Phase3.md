@@ -19,6 +19,7 @@
 
 ## 验证记录
 
+- 功能存档提交：`55f2ed48`（`fix(media): complete video history and polling`）。
 - 后端全量：`mvn test` 共 1449 测试、0 failure、0 error；`mvn compile` 成功。
 - 前端全量：57 个测试文件、374 个测试全部通过；`npm run build` 成功。
 - `git diff --check` 通过；仅有仓库既有 LF→CRLF 提示。
