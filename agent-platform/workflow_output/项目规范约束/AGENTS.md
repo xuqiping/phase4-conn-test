@@ -83,6 +83,18 @@
   - **隐藏存量模块**：把对应布尔改 false，菜单+路由+入口同步消失，后端代码不动。
   - 路由守卫逻辑抽纯函数（`accessGuard.ts`），避开真实懒加载导航在 jsdom 测试超时；守卫读 localStorage 判角色（早于 Pinia）。
   - 默认落地页用 `defaultLanding()` 动态选首个启用模块，**不要硬编码**（曾硬编码 `/agents`，关 /agents 后登录白屏）。
+- **价表导入导出规范**（7x 沉淀）：镜像 LLM 供应商 export/import 那套（DTO + upsert + 200 上限 + 逐行容错）：
+  - upsert 业务键：`(providerId + model + kind + hasReference)`；存在覆盖价格刷新 `effective_from=now`，不存在新建。
+  - 模板复用 `availablePricingModels()`（已排除已配置模型），天然区分 LLM/图片/视频（kind 字段）。
+  - 三 endpoint 均 `@RequirePermission("pricing:manage")` + `@AuditLog`；价表无加密，导出无需二次确认。
+  - 导入逐行校验复用 `validatePricingRule` + provider/model/category 复核；非法行进 errors 不中断整体。
+  - **PG 软删列是 INTEGER**（`deleted`），SQL 里写 `= 0` 不能写 `= false`（`operator does not exist: integer = boolean` → 兜底 500，曾坑图片价表创建）。
+- **视频参考定价维度 has_reference**（7x 沉淀）：
+  - `pricing_rule.has_reference BOOLEAN NOT NULL DEFAULT FALSE`（V95）；VIDEO 同模型可配 false+true 两行。
+  - 查询 fallback 到 false 行（不区分的模型配 1 行 false 即可）；只配 true 没配 false → 无参考任务报「价表未配置」（不无限兜底）。
+  - **worker 算 hasReference 必须从 `request.getAttachments()` 的 `kind=="video"` 判**，不用 taskType（IMAGE2VIDEO 被重载用于 image/video/audio 参考，不可靠）；**首尾帧参考图（kind=="image"）不算参考视频**。
+  - `MediaTaskVO.hasReference` 是计算字段（按 inputAttachments 实时算），与定价维度 `pricing_rule.has_reference` 是不同字段——前者任务侧展示/审查，后者价表行配置/计费命中，口径一致（都按 kind=="video"）。
+- **视频任务推送参数审查**（7x 沉淀）：实际发给 Provider 的 body 已脱敏落库在 `media_gen_tasks.request_config` JSONB 的 `providerRequestSnapshot` 子键（媒体 URL→sha256/大小，无二进制）。新接入审查只需复用 `MediaTaskRequestDetails` 组件，**无需新 DB 列**；Canvas 路径需在 `pollVideoTask`/`hydrateVideoPreviews` 两处 `updateNodeData` 保留审计字段。
 
 ## 参考文档
 - 项目结构 → [workflow_output/docs/file_structure.md](../docs/file_structure.md)
