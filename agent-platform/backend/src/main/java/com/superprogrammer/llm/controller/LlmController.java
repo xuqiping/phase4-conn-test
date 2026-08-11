@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.llm.dto.LlmProviderCreateRequest;
+import com.superprogrammer.llm.dto.LlmProviderExportItem;
 import com.superprogrammer.llm.dto.LlmProviderVO;
+import com.superprogrammer.llm.dto.ProviderImportResult;
 import com.superprogrammer.llm.dto.TestConnectionResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
@@ -112,6 +114,18 @@ public class LlmController {
                 .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body);
+    }
+
+    /**
+     * 批量导入供应商（问题 10x-2）：按 name upsert，返回 created/updated/failed 统计。
+     * <p>仅 admin；非法行不中断整体导入；导入后自动 reload 让配置即时生效。
+     */
+    @PostMapping("/providers/import")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "llm", action = "provider_import", targetType = "llm_provider")
+    public ResponseEntity<R<ProviderImportResult>> importProviders(
+            @RequestBody List<LlmProviderExportItem> items) {
+        return ResponseEntity.ok(R.ok(providerService.importAll(items)));
     }
 
     private LlmProviderEntity toEntity(LlmProviderCreateRequest request) {

@@ -10,6 +10,7 @@ import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmProviderVO;
 import com.superprogrammer.llm.dto.LlmProviderExportItem;
+import com.superprogrammer.llm.dto.ProviderImportResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -169,6 +170,95 @@ public class LlmProviderService {
         item.setCategory(e.getCategory());
         item.setStatus(e.getStatus());
         return item;
+    }
+
+    /** 导入单批上限（防恶意巨大体导致 OOM/长事务）。 */
+    private static final int IMPORT_MAX_SIZE = 200;
+
+    /**
+     * 批量导入供应商（问题 10x-2）：按 name upsert，非法行跳过记入 errors。
+     * <p>规则：
+     * <ul>
+     *   <li>size > 200 → 抛 BAD_REQUEST（防滥用）；</li>
+     *   <li>逐条校验：name 非空、apiEndpoint 是 http(s) URL、category 白名单（normalizeCategory 容错）；</li>
+     *   <li>upsert by name：存在→更新非空字段（apiKey 空→保留原 key），不存在→新建；</li>
+     *   <li>导入完成后 {@link LlmConfig#reload()} 让新配置即时生效。</li>
+     * </ul>
+     */
+    public ProviderImportResult importAll(List<LlmProviderExportItem> items) {
+        if (items == null) {
+            items = List.of();
+        }
+        if (items.size() > IMPORT_MAX_SIZE) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "单次导入上限 " + IMPORT_MAX_SIZE + " 条，当前 " + items.size() + " 条");
+        }
+        ProviderImportResult result = ProviderImportResult.builder().build();
+        for (int i = 0; i < items.size(); i++) {
+            LlmProviderExportItem item = items.get(i);
+            int lineNo = i + 1;
+            try {
+                upsertByName(item, result);
+            } catch (Exception e) {
+                log.warn("导入第{}行失败 name={}: {}", lineNo, item.getName(), e.getMessage());
+                result.incFailed("第" + lineNo + "行 name=" + item.getName() + " 失败: " + e.getMessage());
+            }
+        }
+        llmConfig.reload();
+        return result;
+    }
+
+    private void upsertByName(LlmProviderExportItem item, ProviderImportResult result) {
+        // 校验：name 非空
+        if (item.getName() == null || item.getName().isBlank()) {
+            result.incFailed("name 为空");
+            return;
+        }
+        // 校验：apiEndpoint 非空且 http(s)
+        String endpoint = item.getApiEndpoint();
+        if (endpoint == null || endpoint.isBlank()) {
+            result.incFailed("apiEndpoint 为空");
+            return;
+        }
+        if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+            result.incFailed("apiEndpoint 非 http(s) URL");
+            return;
+        }
+
+        String category = normalizeCategory(item.getCategory());
+        LlmProviderEntity existing = getByName(item.getName());
+        if (existing != null) {
+            // 更新非空字段（apiKey 空→保留原 key，不覆盖）
+            if (item.getDisplayName() != null) existing.setDisplayName(item.getDisplayName());
+            if (item.getProtocol() != null) existing.setProtocol(item.getProtocol());
+            existing.setApiEndpoint(endpoint);
+            if (item.getApiKey() != null && !item.getApiKey().isBlank()) {
+                existing.setApiKeyEnc(aesEncryptService.encrypt(item.getApiKey()));
+            }
+            if (item.getModels() != null) existing.setModels(item.getModels());
+            if (item.getConfig() != null) existing.setConfig(item.getConfig());
+            if (item.getSortOrder() != null) existing.setSortOrder(item.getSortOrder());
+            existing.setCategory(category);
+            if (item.getStatus() != null) existing.setStatus(item.getStatus());
+            mapper.updateById(existing);
+            result.incUpdated();
+        } else {
+            LlmProviderEntity entity = new LlmProviderEntity();
+            entity.setName(item.getName());
+            entity.setDisplayName(item.getDisplayName());
+            entity.setProtocol(item.getProtocol() != null ? item.getProtocol() : "OPENAI_COMPATIBLE");
+            entity.setApiEndpoint(endpoint);
+            if (item.getApiKey() != null && !item.getApiKey().isBlank()) {
+                entity.setApiKeyEnc(aesEncryptService.encrypt(item.getApiKey()));
+            }
+            entity.setModels(item.getModels());
+            entity.setConfig(item.getConfig());
+            entity.setSortOrder(item.getSortOrder() != null ? item.getSortOrder() : 0);
+            entity.setCategory(category);
+            entity.setStatus(item.getStatus() != null ? item.getStatus() : "ACTIVE");
+            mapper.insert(entity);
+            result.incCreated();
+        }
     }
 
     public void delete(Long id) {
