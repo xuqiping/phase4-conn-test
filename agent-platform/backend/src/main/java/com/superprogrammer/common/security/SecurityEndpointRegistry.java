@@ -65,6 +65,7 @@ public final class SecurityEndpointRegistry {
             "/api/files/**",             // S1 文件 owner 校验咽喉（非 owner 非 admin → 403）
             "/api/projects/**",          // 项目创建者作用域
             "/api/billing/me/**",        // 本人钱包/用量只读视图（userId 取自 SecurityContext，无入参旁路）
+            "/api/me/**",                // 认证系统增强 Chunk G：本人凭证管理/改密（userId 取自 SecurityContext，无入参旁路；绑/解绑/改密均 @AuditLog 留痕）
             "/api/departments"           // 组织架构只读引用数据（VO 无敏感字段，内网常规语义；写操作均 role:manage）
     );
 

@@ -204,5 +204,53 @@ export const authApi = {
       channel,
       phone
     })
+  },
+
+  // ==================== 账号安全设置（Chunk G，需登录态） ====================
+
+  /**
+   * 当前登录用户凭证列表（identifier 脱敏）
+   * GET /api/me/credentials
+   */
+  getCredentials() {
+    return request.get<ApiResponse<CredentialItem[]>>('/me/credentials')
+  },
+
+  /**
+   * 绑定邮箱（建 EMAIL 凭证 verified=FALSE + 触发激活邮件）
+   * POST /api/me/credential/bind-email
+   */
+  bindEmail(email: string) {
+    return request.post<ApiResponse<void>>('/me/credential/bind-email', { email })
+  },
+
+  /**
+   * 解绑凭证（至少留一种，PASSWORD 不可解绑）
+   * POST /api/me/credential/unbind
+   * @param credentialType EMAIL/PHONE/WECHAT/DINGTALK
+   */
+  unbindCredential(credentialType: string) {
+    return request.post<ApiResponse<void>>('/me/credential/unbind', { credentialType })
+  },
+
+  /**
+   * 修改密码（验旧密码 + PasswordPolicy + 踢所有会话）
+   * POST /api/me/password/change
+   * 成功后当前 token 即刻失效，前端须登出跳登录页。
+   */
+  changePassword(oldPassword: string, newPassword: string) {
+    return request.post<ApiResponse<void>>('/me/password/change', { oldPassword, newPassword })
   }
+}
+
+/** 凭证列表项（设置页展示，identifier 已脱敏）。 */
+export interface CredentialItem {
+  /** 凭证类型：PASSWORD/EMAIL/PHONE/WECHAT/DINGTALK */
+  credentialType: string
+  /** 脱敏标识（手机 138****8000 / 邮箱 a***@x.com） */
+  identifier: string
+  /** 是否已验证（未验证邮箱不可用于找回密码） */
+  verified: boolean
+  /** 首次验证时间 */
+  verifiedAt: string | null
 }

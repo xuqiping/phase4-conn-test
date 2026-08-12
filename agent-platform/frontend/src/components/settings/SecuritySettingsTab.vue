@@ -1,22 +1,72 @@
 <template>
-  <!-- 安全设置页（骨架，Chunk G 填充实现）。
-       管理当前用户的多通道凭证：绑/解绑邮箱·手机·微信、修改密码。 -->
+  <!-- 安全设置页（Chunk G）：当前用户多通道凭证管理（绑/解绑邮箱）+ 修改密码。
+       手机/微信绑定需独立验证码/OAuth 回路，本期未实现，按钮置灰提示「即将上线」。 -->
   <div class="security-tab">
-    <!-- 凭证列表区（Chunk G：接 GET /api/me/credentials） -->
+    <!-- 凭证列表区 -->
     <n-card title="我的登录方式" size="small" class="security-tab__card">
       <template #header-extra>
-        <span class="security-tab__placeholder">凭证管理（即将上线）</span>
+        <span class="security-tab__hint">identifier 脱敏展示</span>
       </template>
-      <n-empty description="当前登录方式管理将在后续版本开放">
-        <template #extra>
-          <span class="security-tab__hint">
-            将支持：绑定/解绑邮箱·手机·微信、查看已验证状态、修改密码
-          </span>
-        </template>
-      </n-empty>
+      <div v-if="loading" class="security-tab__loading">
+        <n-spin size="small" />
+        <span>加载中…</span>
+      </div>
+      <n-empty v-else-if="credentials.length === 0" description="暂无凭证数据" />
+      <n-space v-else vertical :size="12">
+        <div
+          v-for="item in credentials"
+          :key="item.credentialType"
+          class="security-tab__cred-row"
+        >
+          <div class="security-tab__cred-info">
+            <span class="security-tab__cred-type">{{ typeLabel(item.credentialType) }}</span>
+            <span class="security-tab__cred-id">{{ item.identifier }}</span>
+            <n-tag
+              :type="item.verified ? 'success' : 'warning'"
+              size="small"
+              round
+              :bordered="false"
+            >
+              {{ item.verified ? '已验证' : '未验证' }}
+            </n-tag>
+          </div>
+          <n-button
+            v-if="item.credentialType !== 'PASSWORD'"
+            size="small"
+            :disabled="isLastUsable"
+            quaternary
+            type="error"
+            @click="handleUnbind(item.credentialType)"
+          >
+            {{ isLastUsable ? '不可解绑' : '解绑' }}
+          </n-button>
+        </div>
+      </n-space>
+
+      <n-alert v-if="isLastUsable" type="info" :show-icon="true" class="security-tab__alert">
+        仅剩一种登录方式时不可解绑，请先绑定其他登录方式以防账号失联。
+      </n-alert>
+
+      <!-- 绑定入口 -->
+      <div class="security-tab__bind-section">
+        <n-button
+          v-if="!hasEmail && channels.emailEnabled"
+          size="small"
+          tertiary
+          @click="showBindEmail = true"
+        >
+          + 绑定邮箱
+        </n-button>
+        <n-button size="small" tertiary disabled title="手机绑定即将上线">
+          + 绑定手机（即将上线）
+        </n-button>
+        <n-button size="small" tertiary disabled title="微信绑定即将上线">
+          + 绑定微信（即将上线）
+        </n-button>
+      </div>
     </n-card>
 
-    <!-- 修改密码区（Chunk G：接 POST /api/me/password/change） -->
+    <!-- 修改密码区 -->
     <n-card title="修改密码" size="small" class="security-tab__card">
       <n-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-placement="left" label-width="100">
         <n-form-item path="oldPassword" label="当前密码">
@@ -25,7 +75,6 @@
             type="password"
             show-password-on="click"
             placeholder="请输入当前密码"
-            :disabled="!credentialApiReady"
           />
         </n-form-item>
         <n-form-item path="newPassword" label="新密码">
@@ -33,8 +82,7 @@
             v-model:value="pwdForm.newPassword"
             type="password"
             show-password-on="click"
-            placeholder="请输入新密码（6-100个字符）"
-            :disabled="!credentialApiReady"
+            placeholder="6-100位，含大小写字母/数字/特殊字符"
           />
         </n-form-item>
         <n-form-item path="confirmPassword" label="确认新密码">
@@ -43,10 +91,9 @@
             type="password"
             show-password-on="click"
             placeholder="请再次输入新密码"
-            :disabled="!credentialApiReady"
           />
         </n-form-item>
-        <n-button type="primary" :disabled="!credentialApiReady" :loading="changing" @click="handleChangePassword">
+        <n-button type="primary" :loading="changing" @click="handleChangePassword">
           修改密码
         </n-button>
       </n-form>
@@ -54,19 +101,150 @@
         修改密码后将自动退出所有设备，需用新密码重新登录。
       </p>
     </n-card>
+
+    <!-- 绑定邮箱弹窗 -->
+    <n-modal
+      v-model:show="showBindEmail"
+      preset="dialog"
+      title="绑定邮箱"
+      :show-icon="false"
+      :mask-closable="false"
+      style="max-width: 420px"
+    >
+      <n-form ref="bindFormRef" :model="bindForm" :rules="bindRules" label-placement="top">
+        <n-form-item path="email" label="邮箱地址">
+          <n-input
+            v-model:value="bindForm.email"
+            placeholder="请输入要绑定的邮箱"
+            :input-props="{ autocomplete: 'email' }"
+          />
+        </n-form-item>
+        <n-alert type="info" :show-icon="true" style="margin-top: 4px">
+          绑定后将发送激活邮件，激活后该邮箱方可用于找回密码。
+        </n-alert>
+      </n-form>
+      <template #action>
+        <n-space>
+          <n-button @click="showBindEmail = false">取消</n-button>
+          <n-button type="primary" :loading="binding" @click="confirmBindEmail">确认绑定</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FormInst, FormRules } from 'naive-ui'
-import { NCard, NForm, NFormItem, NInput, NButton, NEmpty, useMessage } from 'naive-ui'
+import {
+  NCard, NForm, NFormItem, NInput, NButton, NEmpty, NTag,
+  NAlert, NSpace, NSpin, NModal, useMessage, useDialog
+} from 'naive-ui'
+import { authApi, type CredentialItem, type AuthChannels } from '@/api/auth'
+import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
+const dialog = useDialog()
+const router = useRouter()
+const authStore = useAuthStore()
 
-// Chunk G 前标记接口未就绪（禁用交互，防误触无响应）
-const credentialApiReady = false
+// 凭证列表
+const credentials = ref<CredentialItem[]>([])
+const channels = ref<AuthChannels>({ passwordEnabled: true, emailEnabled: false, smsEnabled: false, wechatEnabled: false })
+const loading = ref(false)
 
+const hasEmail = computed(() => credentials.value.some(c => c.credentialType === 'EMAIL'))
+/** 非密码凭证数 ≤1 → 解绑会归零，禁用解绑（防账号失联）。 */
+const isLastUsable = computed(() => {
+  const nonPassword = credentials.value.filter(c => c.credentialType !== 'PASSWORD')
+  return nonPassword.length <= 1
+})
+
+async function loadCredentials() {
+  loading.value = true
+  try {
+    const [credRes, chRes] = await Promise.all([authApi.getCredentials(), authApi.getChannels()])
+    credentials.value = credRes.data.data
+    channels.value = chRes.data.data
+  } catch {
+    message.error('加载凭证信息失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function typeLabel(type: string): string {
+  switch (type) {
+    case 'PASSWORD': return '账号密码'
+    case 'EMAIL': return '邮箱'
+    case 'PHONE': return '手机号'
+    case 'WECHAT': return '微信'
+    case 'DINGTALK': return '钉钉'
+    default: return type
+  }
+}
+
+// 解绑
+async function handleUnbind(credentialType: string) {
+  dialog.warning({
+    title: '确认解绑',
+    content: `确定要解绑「${typeLabel(credentialType)}」吗？解绑后该方式将无法用于登录。`,
+    positiveText: '确认解绑',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await authApi.unbindCredential(credentialType)
+        message.success('解绑成功')
+        await loadCredentials()
+      } catch {
+        // axios 拦截器已统一提示，此处仅兜底
+      }
+    }
+  })
+}
+
+// 绑定邮箱
+const showBindEmail = ref(false)
+const binding = ref(false)
+const bindFormRef = ref<FormInst | null>(null)
+const bindForm = reactive({ email: '' })
+const bindRules: FormRules = {
+  email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    {
+      validator: (_rule, value: string) => {
+        if (!/^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(value || '')) {
+          return new Error('邮箱格式不正确')
+        }
+        return true
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+
+async function confirmBindEmail() {
+  try {
+    await bindFormRef.value?.validate()
+  } catch {
+    return
+  }
+  binding.value = true
+  try {
+    await authApi.bindEmail(bindForm.email.trim())
+    message.success('绑定成功，请查收激活邮件完成验证')
+    showBindEmail.value = false
+    bindForm.email = ''
+    await loadCredentials()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    binding.value = false
+  }
+}
+
+// 修改密码
 const pwdFormRef = ref<FormInst | null>(null)
 const changing = ref(false)
 const pwdForm = reactive({
@@ -94,9 +272,26 @@ const pwdRules: FormRules = {
 }
 
 async function handleChangePassword() {
-  // Chunk G 实现：校验表单 → POST /api/me/password/change → 登出跳转登录
-  message.info('修改密码功能将在后续版本开放')
+  try {
+    await pwdFormRef.value?.validate()
+  } catch {
+    return
+  }
+  changing.value = true
+  try {
+    await authApi.changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    // 改密成功 → 后端已踢所有会话，当前 token 失效 → 本地登出 + 跳登录页
+    message.success('密码修改成功，请使用新密码重新登录')
+    await authStore.logout()
+    await router.push('/login')
+  } catch {
+    // 拦截器已提示（旧密码错/策略不过等）
+  } finally {
+    changing.value = false
+  }
 }
+
+onMounted(loadCredentials)
 </script>
 
 <style lang="scss" scoped>
@@ -109,13 +304,50 @@ async function handleChangePassword() {
 .security-tab__card {
   .n-card__content { padding: 16px; }
 }
-.security-tab__placeholder {
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
 .security-tab__hint {
   font-size: 12px;
   color: var(--color-text-tertiary);
+}
+.security-tab__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.security-tab__cred-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-fill-light, rgba(0, 0, 0, 0.03));
+}
+.security-tab__cred-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.security-tab__cred-type {
+  font-weight: 500;
+  min-width: 56px;
+}
+.security-tab__cred-id {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.security-tab__alert {
+  margin-top: 12px;
+}
+.security-tab__bind-section {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border, rgba(0, 0, 0, 0.09));
 }
 .security-tab__notice {
   margin: 12px 0 0;

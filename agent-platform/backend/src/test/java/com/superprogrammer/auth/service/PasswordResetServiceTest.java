@@ -35,6 +35,7 @@ class PasswordResetServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
+    @Mock private SessionService sessionService;
 
     private PasswordResetService service;
 
@@ -49,7 +50,7 @@ class PasswordResetServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new PasswordResetService(userMapper, credentialService, emailService,
-                smsService, passwordEncoder, redisTemplate);
+                smsService, passwordEncoder, redisTemplate, sessionService);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
     }
 
@@ -92,7 +93,8 @@ class PasswordResetServiceTest {
         service.reset("valid", "NewPass123!", "EMAIL", null);
 
         verify(userMapper).updateById(any(User.class));
-        verify(redisTemplate).delete("session:1");
+        // Chunk G：踢会话改走 SessionService.kickAllSessions（修原 session: 错前缀 bug）
+        verify(sessionService).kickAllSessions(1L);
         verify(redisTemplate).delete(EmailService.RESET_TOKEN_PREFIX + "valid");
     }
 

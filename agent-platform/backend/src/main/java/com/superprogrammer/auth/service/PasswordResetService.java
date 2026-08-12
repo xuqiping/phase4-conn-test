@@ -47,6 +47,7 @@ public class PasswordResetService {
     private final SmsService smsService;
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final SessionService sessionService;
 
     private static final String RESET_LIMIT_ACCOUNT_PREFIX = "reset:limit:account:";
     private static final String RESET_LIMIT_IP_PREFIX = "reset:limit:ip:";
@@ -128,7 +129,7 @@ public class PasswordResetService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userMapper.updateById(user);
 
-        // 更新 PASSWORD 凭证 secret
+        // 更新 PASSWORD 凭证 secret（镜像 users.password；通过 CredentialService 内 mapper 同步）
         UserCredential pwdCredential = credentialService.findForLogin(UserCredential.TYPE_PASSWORD, user.getUsername());
         if (pwdCredential != null) {
             pwdCredential.setSecret(user.getPassword());
@@ -136,15 +137,12 @@ public class PasswordResetService {
             updateCredentialSecret(pwdCredential);
         }
 
-        // 重置后踢该用户所有会话
-        // 沉淀约束 4 论证：重置密码是用户主动放弃所有会话的强语义动作，
-        // 此时直接 delete session:userId 是安全的（旧会话必须全部失效，无论哪个 sid）
-        try {
-            redisTemplate.delete("session:" + userId);
-            log.info("重置密码后踢所有会话 userId={}", userId);
-        } catch (Exception e) {
-            log.warn("踢会话 Redis 失败(已吞) userId={} : {}", userId, e.toString());
-        }
+        // 重置后踢该用户所有会话（沉淀约束 4：重置是主动放弃所有会话的强语义，无条件全删）
+        // Chunk G 修复：原直接 redisTemplate.delete("session:"+userId) 用错了键前缀
+        // （SessionService 实际键为 session:user:{userId}），导致重置后旧会话未失效。
+        // 改走 SessionService.kickAllSessions 统一正确的键前缀 + 降级范式。
+        sessionService.kickAllSessions(userId);
+        log.info("重置密码后踢所有会话 userId={}", userId);
     }
 
     // ==================== 内部方法 ====================

@@ -103,6 +103,30 @@ public class SessionService {
     }
 
     /**
+     * 强制踢掉该用户所有会话（修改密码 / 重置密码后调用）。
+     *
+     * <p>直接删 {@code session:user:{userId}} 键——与单点登录踢旧语义一致：键被删后，
+     * 持有旧 sid 的 token 下次请求比对时 {@code current=null ≠ sid} → 拒绝（40104 固定话术），
+     * 等效于「所有设备强制重登」。
+     *
+     * <p>与 {@link #clearSession} 的区别：clearSession 比对 sid 只删自己（防 logout-bomb）；
+     * 本方法是无条件全删——仅用于用户主动改/重置密码这种「主动放弃所有会话」的强语义场景
+     * （沉淀约束 4 论证）。
+     *
+     * <p>降级：Redis 故障 → WARN 不阻断业务（旧 token 残留至 access 自然过期，最长 15min）。
+     */
+    public void kickAllSessions(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            redisTemplate.delete(SESSION_PREFIX + userId);
+        } catch (Exception e) {
+            log.warn("踢所有会话失败(已吞,旧 token 残留至自然过期) userId={} : {}", userId, e.getMessage());
+        }
+    }
+
+    /**
      * 登出删会话键——**比对 sid 只删自己的会话**：旧（已被踢）会话登出时不得删掉新会话的键
      * （否则被踢者/15min 窗口内的 token 持有者可反复 logout 踢飞当前会话 = logout-bomb）。
      * GET-then-DEL 非原子，竞态良性：并发登录落在 GET 与 DEL 之间至多误删一次新键（该会话重登即愈）。
