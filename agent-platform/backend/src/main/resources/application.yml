@@ -243,3 +243,16 @@ app:
     geo-login-alert:
       enabled: ${APP_AUTH_GEO_ALERT_ENABLED:false}
       cross-province: true
+
+# AJ-Captcha 滑块验证码（认证系统增强 防短信轰炸/撞库闸门）
+# cache-type=redis 使 captcha token 跨实例共享 + 单次有效删除语义（防重放）
+captcha:
+  cache-type: redis
+  type: default
+  # 滑块图尺寸（与前端 SliderCaptcha width 对齐）
+  original:
+    width: 310
+    height: 160
+  # 滑块缺口容差（px）——用户拖动误差范围内判定通过
+  slip:
+    offset: 5

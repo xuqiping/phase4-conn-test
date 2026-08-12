@@ -144,6 +144,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * 把一组 token + 用户信息写入状态 + 持久化（多通道登录共用）。
+   */
+  function applyTokenPair(at: string, rt: string, info: UserInfo) {
+    accessToken.value = at
+    refreshToken.value = rt
+    userInfo.value = info
+    setStorage(STORAGE_KEYS.ACCESS_TOKEN, at)
+    setStorage(STORAGE_KEYS.REFRESH_TOKEN, rt)
+    setStorage(STORAGE_KEYS.USER_INFO, info)
+  }
+
+  /**
    * 钉钉免登：用 authCode 换 token
    * @param source 'jsapi'(容器内免登码,走 oapi 老链路) | 'oauth2'(网页授权码)
    */
@@ -152,14 +164,45 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await authApi.dingTalkLogin(authCode, source)
       const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
+      applyTokenPair(at, rt, info)
+    } finally {
+      loading.value = false
+    }
+  }
 
-      accessToken.value = at
-      refreshToken.value = rt
-      userInfo.value = info
+  /**
+   * 手机验证码登录（新号自动建号）。
+   */
+  async function loginBySms(phone: string, code: string) {
+    loading.value = true
+    try {
+      const res = await authApi.loginBySms(phone, code)
+      const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
+      applyTokenPair(at, rt, info)
+    } finally {
+      loading.value = false
+    }
+  }
 
-      setStorage(STORAGE_KEYS.ACCESS_TOKEN, at)
-      setStorage(STORAGE_KEYS.REFRESH_TOKEN, rt)
-      setStorage(STORAGE_KEYS.USER_INFO, info)
+  /**
+   * 微信扫码登录回调落地：后端回调已换好 JWT，前端用 token 落地。
+   * @param at 访问令牌
+   * @param rt 刷新令牌
+   * @param info 用户信息（可选；缺失时调 getMe 补全）
+   */
+  async function loginByWechatToken(at: string, rt: string, info?: UserInfo) {
+    loading.value = true
+    try {
+      if (!info) {
+        // 回调只给了 token，用户信息用 /me 补全
+        accessToken.value = at
+        refreshToken.value = rt
+        setStorage(STORAGE_KEYS.ACCESS_TOKEN, at)
+        setStorage(STORAGE_KEYS.REFRESH_TOKEN, rt)
+        await fetchUserInfo()
+      } else {
+        applyTokenPair(at, rt, info)
+      }
     } finally {
       loading.value = false
     }
@@ -189,6 +232,8 @@ export const useAuthStore = defineStore('auth', () => {
     fetchUserInfo,
     refreshAccessToken,
     loginByDingTalk,
+    loginBySms,
+    loginByWechatToken,
     hasPermission
   }
 })

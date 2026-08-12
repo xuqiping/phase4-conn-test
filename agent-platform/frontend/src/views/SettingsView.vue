@@ -4,6 +4,10 @@
       <h2>设置</h2>
     </div>
     <n-tabs type="line" animated>
+      <!-- 所有登录用户：安全设置（绑定/解绑凭证、修改密码），认证系统增强 Chunk F/G -->
+      <n-tab-pane name="security" tab="安全设置">
+        <SecuritySettingsTab />
+      </n-tab-pane>
       <!-- 10x-1：不再开放「我的模型」个人配置大模型，移除该 Tab 入口。
            UserProviderTab.vue / UserLlmController / user_llm_providers 表保留不删（备用）。 -->
       <n-tab-pane v-if="authStore.isAdmin" name="global" tab="全局模型供应商">
@@ -11,6 +15,9 @@
       </n-tab-pane>
       <n-tab-pane v-if="authStore.isAdmin" name="auth" tab="认证设置">
         <AuthSettingsTab />
+      </n-tab-pane>
+      <n-tab-pane v-if="authStore.isAdmin" name="auth-channels" tab="认证通道">
+        <AuthChannelSettingsTab />
       </n-tab-pane>
       <n-tab-pane v-if="authStore.isAdmin" name="billing" tab="计费设置">
         <BillingSettingsTab />
@@ -31,9 +38,11 @@ import { NTabs, NTabPane } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
 import AuthSettingsTab from '@/components/settings/AuthSettingsTab.vue'
+import AuthChannelSettingsTab from '@/components/settings/AuthChannelSettingsTab.vue'
 import BillingSettingsTab from '@/components/settings/BillingSettingsTab.vue'
 import RagRecallSettingsTab from '@/components/settings/RagRecallSettingsTab.vue'
 import WebSearchSettingsTab from '@/components/settings/WebSearchSettingsTab.vue'
+import SecuritySettingsTab from '@/components/settings/SecuritySettingsTab.vue'
 
 const authStore = useAuthStore()
 </script>

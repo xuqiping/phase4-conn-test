@@ -34,6 +34,8 @@ public final class SecurityEndpointRegistry {
             "/api/auth/register",
             "/api/auth/refresh",
             "/api/auth/login/dingtalk",
+            // 认证系统增强：通道开关公开查询（前端登录页渲染依赖，仅返布尔标志无密钥）
+            "/api/auth/channels",
             // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
             "/api/auth/verify/email",
             "/api/auth/resend/email",

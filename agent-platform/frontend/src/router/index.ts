@@ -58,6 +58,20 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false, title: '钉钉登录' }
   },
   {
+    // 认证系统增强：邮箱激活落地页（邮件链接 ?token=xxx）
+    path: '/verify-email',
+    name: 'VerifyEmail',
+    component: () => import('@/views/VerifyEmailView.vue'),
+    meta: { requiresAuth: false, layout: 'auth', title: '邮箱验证' }
+  },
+  {
+    // 认证系统增强：重置密码落地页（邮件链接 ?token=xxx 或短信 ?channel=sms）
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/ResetPasswordView.vue'),
+    meta: { requiresAuth: false, layout: 'auth', title: '重置密码' }
+  },
+  {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
     meta: { requiresAuth: true },

@@ -11,6 +11,9 @@ vi.mock('@/components/settings/ProviderManageTab.vue', () => ({
 vi.mock('@/components/settings/AuthSettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
+vi.mock('@/components/settings/AuthChannelSettingsTab.vue', () => ({
+  default: { template: '<div/>' }
+}))
 vi.mock('@/components/settings/BillingSettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
@@ -18,6 +21,9 @@ vi.mock('@/components/settings/RagRecallSettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
 vi.mock('@/components/settings/WebSearchSettingsTab.vue', () => ({
+  default: { template: '<div/>' }
+}))
+vi.mock('@/components/settings/SecuritySettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
 
@@ -36,5 +42,6 @@ describe('SettingsView（问题 10x-1）', () => {
     // admin 仍可见其余 Tab
     expect(html).toContain('全局模型供应商')
     expect(html).toContain('认证设置')
+    expect(html).toContain('认证通道')
   })
 })

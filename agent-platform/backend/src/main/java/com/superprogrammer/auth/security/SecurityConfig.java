@@ -74,6 +74,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/register").permitAll()
                         .requestMatchers("/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/login/dingtalk").permitAll()
+                        // 认证系统增强：通道开关公开查询（前端登录页渲染依赖，仅返布尔标志无密钥）
+                        .requestMatchers("/api/auth/channels").permitAll()
                         // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
                         .requestMatchers("/api/auth/verify/email").permitAll()
                         .requestMatchers("/api/auth/resend/email").permitAll()
