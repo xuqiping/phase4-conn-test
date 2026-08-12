@@ -25,20 +25,21 @@ class DefaultChatStrategyTest {
     void execute_shouldCallLlmAndReturnResponse() {
         LlmResponse mockResp = LlmResponse.builder()
                 .content("你好！有什么可以帮助你的？")
-                .model("doubao-seed-2.0-code")
+                .model("selected-chat-model")
                 .duration(500L)
                 .usage(TokenUsage.builder().promptTokens(10).completionTokens(20).totalTokens(30).build())
                 .build();
         when(llmGateway.chat(any(), any())).thenReturn(mockResp);
 
         ExecutionContext ctx = new ExecutionContext(1L, "CHAT", null, null);
+        ctx.setModel("selected-chat-model");
         ctx.addMessage("user", "你好");
 
         String result = strategy.execute(ctx, "你好");
 
         assertEquals("你好！有什么可以帮助你的？", result);
         verify(llmGateway).chat(argThat(req ->
-                req.getModel().equals("doubao-seed-2.0-code") &&
+                req.getModel().equals("selected-chat-model") &&
                 req.getMessages().stream().anyMatch(m -> "user".equals(m.getRole()) && "你好".equals(m.getContent()))
         ), any());
     }

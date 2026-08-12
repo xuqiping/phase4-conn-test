@@ -3,18 +3,24 @@ package com.superprogrammer.chat.service.internal;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
+import com.superprogrammer.chat.entity.MemoryEntryCoverage;
 import com.superprogrammer.chat.entity.MemoryProjectEntry;
+import com.superprogrammer.chat.entity.MemoryProjectLink;
 import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.entity.MemoryProjectRule;
 import com.superprogrammer.chat.entity.MemoryProjectSetting;
+import com.superprogrammer.chat.entity.MemoryProjectUserGrant;
 import com.superprogrammer.chat.entity.MemoryProjectUserSetting;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectLinkMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectRuleMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectSettingMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectUserGrantMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectUserSettingMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
@@ -71,6 +77,11 @@ public class MemoryLifecycleHookService {
     private final MemoryProjectUserSettingMapper projectUserSettingMapper;
     private final MemoryProjectRuleMapper projectRuleMapper;
     private final MemoryProjectEntryMapper projectEntryMapper;
+    // 5x #5：项目删除级联补——links/grants/entry_coverage 三表 V47/V73/V79 声明 ON DELETE CASCADE，
+    // 但 projects 软删→CASCADE 永不触发，须 app 层显式清（见类注释「为什么 app 层清」）。
+    private final MemoryProjectLinkMapper projectLinkMapper;
+    private final MemoryProjectUserGrantMapper projectUserGrantMapper;
+    private final MemoryEntryCoverageMapper entryCoverageMapper;
 
     /** 项目创建：owner 落新栈 ACTIVE 行。幂等（行已存在则仅确保 ACTIVE/角色）。 */
     @Transactional
@@ -146,9 +157,19 @@ public class MemoryLifecycleHookService {
                 .eq(MemoryProjectRule::getProjectId, projectId));
         int entriesCleared = projectEntryMapper.delete(new LambdaQueryWrapper<MemoryProjectEntry>()
                 .eq(MemoryProjectEntry::getProjectId, projectId));
-        log.info("项目删除 hook projectId={} summaries={} coverage={} members={} scopes={} settings={} rules={} entries={}",
+        // ⑦ 5x #5：清条目级覆盖（entry_coverage，按 projectId；须在 entries 软删后仍可按 projectId 关联）
+        int entryCoverageCleared = entryCoverageMapper.delete(new LambdaQueryWrapper<MemoryEntryCoverage>()
+                .eq(MemoryEntryCoverage::getProjectId, projectId));
+        // ⑧ 5x #5：清项目授权链（双向——parent 或 child 任一为本项目均清；V73 ON DELETE CASCADE 软删不触发）
+        int linksCleared = projectLinkMapper.delete(new LambdaQueryWrapper<MemoryProjectLink>()
+                .eq(MemoryProjectLink::getParentProjectId, projectId)
+                .or().eq(MemoryProjectLink::getChildProjectId, projectId));
+        // ⑨ 5x #5：清项目↔个人授权（V79 ON DELETE CASCADE 软删不触发；悬空 grant 会导致召回 scope 带已删项目）
+        int grantsCleared = projectUserGrantMapper.delete(new LambdaQueryWrapper<MemoryProjectUserGrant>()
+                .eq(MemoryProjectUserGrant::getProjectId, projectId));
+        log.info("项目删除 hook projectId={} summaries={} coverage={} members={} scopes={} settings={} rules={} entries={} entryCoverage={} links={} grants={}",
                 projectId, summariesCleared, coverageCleared, membersCleared, scopesCleared, settingsCleared,
-                rulesCleared, entriesCleared);
+                rulesCleared, entriesCleared, entryCoverageCleared, linksCleared, grantsCleared);
     }
 
     // ---- 内部 ----

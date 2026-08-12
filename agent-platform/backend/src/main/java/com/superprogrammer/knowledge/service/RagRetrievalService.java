@@ -54,7 +54,6 @@ public class RagRetrievalService {
 
     private static final Long TENANT_ID = 1L;
     private static final String IDENTITY_USER = "USER";
-    private static final String EMBED_MODEL_FALLBACK = "doubao-embedding-vision";
     private static final String DEFAULT_MODE = "BALANCED";
     private static final String ABSTAIN_MSG = "未找到可访问的相关知识。";
 
@@ -123,8 +122,7 @@ public class RagRetrievalService {
             if (!knowledgeBaseService.canRead(kb, userId, admin)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
             }
-            String embedModel = (kb.getEmbeddingModel() == null || kb.getEmbeddingModel().isBlank())
-                    ? EMBED_MODEL_FALLBACK : kb.getEmbeddingModel();
+            String embedModel = kb.getEmbeddingModel();
 
             // step1 可见集
             VisibleSet vs = step1VisibleSet(kb, userId, admin);
@@ -296,8 +294,7 @@ public class RagRetrievalService {
         try {
             // B4：query 多路扩展（同模型，组内可比；扩展 query 级，per-KB 循环复用 qHalfs）
             KnowledgeBase kb0 = knowledgeBaseService.ensure(effectiveKbs.get(0));
-            String embedModel = (kb0.getEmbeddingModel() == null || kb0.getEmbeddingModel().isBlank())
-                    ? EMBED_MODEL_FALLBACK : kb0.getEmbeddingModel();
+            String embedModel = kb0.getEmbeddingModel();
             QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(query, embedModel, userId);
             List<String> qHalfs = eq.qHalfs();
             if (qHalfs.isEmpty()) {
@@ -821,7 +818,6 @@ public class RagRetrievalService {
     private String generate(String query, EvidencePack pack, Long userId, boolean strict) {
         String system = strict ? systemPromptStrict(pack.injectedIndexes()) : systemPrompt();
         LlmRequest req = LlmRequest.builder()
-                .model(ragConfig.getChatModel())
                 .messages(List.of(
                         LlmMessage.builder().role("system").content(system).build(),
                         LlmMessage.builder().role("user").content(userMessage(query, pack.injected())).build()))

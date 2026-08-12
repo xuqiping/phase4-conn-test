@@ -3,9 +3,8 @@ import { ref, computed } from 'vue'
 import { chatApi } from '@/api/chat'
 import type { ChatSession, ChatMessage, ChatResponse, ChatAttachmentRef } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
-import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 
-const DEFAULT_CHAT_MODEL = 'doubao-seed-2.0-code'
 const DEFAULT_CHAT_TARGET = 'none'
 
 export const useChatStore = defineStore('chat', () => {
@@ -24,7 +23,7 @@ export const useChatStore = defineStore('chat', () => {
   const pendingInput = ref<Record<string, any> | null>(null)
   const wsConnected = ref(false)
   const selectedModel = ref<string | null>(
-    getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_MODEL) || DEFAULT_CHAT_MODEL
+    getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_MODEL) || null
   )
   const selectedTarget = ref<string>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_TARGET) || DEFAULT_CHAT_TARGET
@@ -462,10 +461,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function setSelectedModel(model: string | null) {
-    selectedModel.value = model
-    if (model) {
-      setStorage(STORAGE_KEYS.CHAT_SELECTED_MODEL, model)
-    }
+    selectedModel.value = model || null
+    if (model) setStorage(STORAGE_KEYS.CHAT_SELECTED_MODEL, model)
+    else removeStorage(STORAGE_KEYS.CHAT_SELECTED_MODEL)
   }
 
   function setSelectedTarget(target: string | null) {

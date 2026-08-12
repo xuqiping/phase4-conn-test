@@ -31,7 +31,8 @@ public class MemoryProjectEntry extends BaseEntity {
 
     private Long projectId;          // 条目归属项目（项目资产，随项目 CASCADE）
     private Long authorUserId;       // 溯源谁聊出来的（仅元数据展示）
-    private Long sourceTurnId;       // 回指个人流水账（软链，仅作者可顺藤）
+    private Long sourceTurnId;       // 回指个人流水账 OUTPUT turn（软链，仅作者可顺藤）
+    private Long sourceTurnInputId;  // 5x #2：配对 INPUT turn 软链（entry 覆盖整轮，两 turn 均可反查收录）
 
     /** 标签 id 集（作者个人标签库）。BIGINT[] 走 LongArrayTypeHandler。 */
     @TableField(typeHandler = LongArrayTypeHandler.class)

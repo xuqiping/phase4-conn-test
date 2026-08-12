@@ -10,6 +10,7 @@ import com.superprogrammer.llm.dto.*;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
+import com.superprogrammer.system.service.SystemSettingService;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +64,8 @@ class LlmGatewayTest {
     private PointsWalletService walletService;
     @Mock
     private InflightGateService inflightGate;
+    @Mock
+    private SystemSettingService systemSettingService;
 
     private LlmGateway gateway;
     private PrometheusMeterRegistry meterRegistry;
@@ -79,7 +82,7 @@ class LlmGatewayTest {
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService);
     }
 
     @Test
@@ -117,9 +120,49 @@ class LlmGatewayTest {
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
         LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate);
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
+    }
+
+    @Test
+    void chat_withBlankModel_shouldUseAdminDefault() {
+        when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider));
+        when(deepseekProvider.supports("doubao-seed-2.1-code")).thenReturn(true);
+        when(systemSettingService.getDefaultChatModel()).thenReturn("doubao-seed-2.1-code");
+        when(deepseekProvider.chat(any())).thenReturn(LlmResponse.builder().content("ok").build());
+
+        LlmRequest request = LlmRequest.builder()
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+
+        gateway.chat(request);
+
+        assertEquals("doubao-seed-2.1-code", request.getModel());
+        verify(deepseekProvider).chat(request);
+    }
+
+    @Test
+    void chat_withBlankModelAndNoAdminDefault_shouldFailClearly() {
+        when(systemSettingService.getDefaultChatModel()).thenReturn(null);
+        LlmRequest request = LlmRequest.builder().model(null).build();
+
+        RuntimeException error = assertThrows(RuntimeException.class, () -> gateway.chat(request));
+
+        assertTrue(error.getMessage().contains("管理员未配置默认对话模型"));
+        verifyNoInteractions(deepseekProvider, openaiProvider);
+    }
+
+    @Test
+    void chat_withExplicitUnavailableModel_shouldNotSilentlyReplaceIt() {
+        when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider));
+        when(deepseekProvider.supports("retired-model")).thenReturn(false);
+
+        RuntimeException error = assertThrows(RuntimeException.class,
+                () -> gateway.chat(LlmRequest.builder().model("retired-model").build()));
+
+        assertTrue(error.getMessage().contains("retired-model"));
+        verify(systemSettingService, never()).getDefaultChatModel();
     }
 
     // ===== Step12 计费出口接线 =====

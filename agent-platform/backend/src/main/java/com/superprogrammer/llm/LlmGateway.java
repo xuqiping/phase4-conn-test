@@ -8,6 +8,8 @@ import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.common.metrics.BizMetrics;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.EmbedResult;
 import com.superprogrammer.llm.dto.LlmMessage;
@@ -22,6 +24,7 @@ import com.superprogrammer.llm.provider.OpenAICompatibleProvider;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
 import com.superprogrammer.knowledge.util.TokenEstimator;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -48,6 +51,8 @@ public class LlmGateway {
     private final BizMetrics bizMetrics;
     /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：只挂 chat/chatStream 用户入口；embed 与系统调用不过闸。 */
     private final InflightGateService inflightGate;
+    /** 模型为空时只读管理员默认；没有默认则明确报错，绝不硬编码厂商模型。 */
+    private final SystemSettingService systemSettingService;
 
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
@@ -55,6 +60,7 @@ public class LlmGateway {
     }
 
     public LlmResponse chat(LlmRequest request, Long userId) {
+        resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
@@ -108,6 +114,7 @@ public class LlmGateway {
      * </ul>
      */
     public Flux<StreamEvent> chatStream(LlmRequest request, Long userId) {
+        resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
@@ -165,6 +172,7 @@ public class LlmGateway {
      * <p>embed 路由仍在全局 EMBEDDING 行找（FR-003，不吃用户级 override）；userId 仅透给计费。
      */
     public float[] embed(String text, String model, Long userId) {
+        model = resolveEmbeddingModel(model);
         Long uid = resolveBillingUser(userId, model);
         LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
@@ -258,7 +266,8 @@ public class LlmGateway {
                 return provider;
             }
         }
-        throw new RuntimeException("没有找到支持模型 '" + model + "' 的向量 Provider");
+        throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                "所选向量模型不可用或没有启用的向量 Provider: " + model);
     }
 
     /**
@@ -286,7 +295,39 @@ public class LlmGateway {
             }
         }
 
-        throw new RuntimeException("没有找到支持模型 '" + model + "' 的对话 Provider");
+        throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                "所选对话模型不可用或没有启用的对话 Provider: " + model);
+    }
+
+    private void resolveChatModel(LlmRequest request) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "LLM 请求不能为空");
+        }
+        String selected = request.getModel();
+        if (selected != null && !selected.isBlank()) {
+            request.setModel(selected.trim());
+            return;
+        }
+        String configured = systemSettingService.getDefaultChatModel();
+        if (configured == null || configured.isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "未选择模型，且管理员未配置默认对话模型");
+        }
+        request.setModel(configured.trim());
+        log.info("请求未指定对话模型，使用管理员默认 model={}", request.getModel());
+    }
+
+    private String resolveEmbeddingModel(String selected) {
+        if (selected != null && !selected.isBlank()) {
+            return selected.trim();
+        }
+        String configured = systemSettingService.getDefaultEmbeddingModel();
+        if (configured == null || configured.isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "未选择向量模型，且管理员未配置默认向量模型");
+        }
+        log.info("请求未指定向量模型，使用管理员默认 model={}", configured);
+        return configured.trim();
     }
 
     private List<UserLlmProviderEntity> getUserProviders(Long userId) {

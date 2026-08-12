@@ -15,6 +15,11 @@ export interface BillingSettings {
   lowBalanceMaxInflight?: number
 }
 
+export interface LlmModelDefaults {
+  chatModel?: string | null
+  embeddingModel?: string | null
+}
+
 export interface RagMemorySettings {
   enabled: boolean
   /** 记忆处理模式：ASYNC=全异步(答完即结束不卡,冲突走面板) / HYBRID=同步(即时冲突追问,答完略卡) */
@@ -58,6 +63,14 @@ export interface RagRecallSettings {
 }
 
 export const systemApi = {
+  getLlmModelDefaults() {
+    return request.get<ApiResponse<LlmModelDefaults>>('/system/settings/llm-model-defaults')
+  },
+
+  updateLlmModelDefaults(data: LlmModelDefaults) {
+    return request.put<ApiResponse<LlmModelDefaults>>('/system/settings/llm-model-defaults', data)
+  },
+
   getAuthSettings() {
     return request.get<ApiResponse<AuthSettings>>('/system/settings/auth')
   },

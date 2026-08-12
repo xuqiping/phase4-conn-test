@@ -14,6 +14,7 @@ import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -170,10 +171,16 @@ public class ChatController {
     private SseEmitter doStream(Long userId, ChatRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
         SecurityContext securityContext = SecurityContextHolder.getContext();
+        // 审计 #7：裸线程不继承 ThreadLocal，手工快照请求线程 MDC（traceId/userId/username/clientIp），
+        // 线程内恢复——否则流式审计 fromMdc 读 username/userId 全 null（REST 路径走 Tomcat 线程不受影响）。
+        java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
 
         new Thread(() -> {
             try {
                 SecurityContextHolder.setContext(securityContext);
+                if (mdcSnapshot != null) {
+                    MDC.setContextMap(mdcSnapshot);
+                }
                 // 计费归户：裸线程不继承 ThreadLocal，手工种 userId（流式链内 LLM 调用自动计费）
                 com.superprogrammer.billing.context.BillingContext.set(userId);
                 AtomicBoolean sentDone = new AtomicBoolean(false);
@@ -217,6 +224,7 @@ public class ChatController {
             } finally {
                 SecurityContextHolder.clearContext();
                 com.superprogrammer.billing.context.BillingContext.clear();
+                MDC.clear();
             }
         }).start();
 

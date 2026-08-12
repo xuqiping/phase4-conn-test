@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.entity.MemoryTurn;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;

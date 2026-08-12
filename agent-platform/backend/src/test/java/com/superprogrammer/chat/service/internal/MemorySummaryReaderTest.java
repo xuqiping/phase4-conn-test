@@ -135,6 +135,7 @@ class MemorySummaryReaderTest {
 
         // LLM 明确判无深读 → 全只读 L1
         assertTrue(r.stream().noneMatch(RecalledSummary::includeL2));
+        verify(llmGateway, times(1)).chat(any(), eq(1L));
     }
 
     @Test

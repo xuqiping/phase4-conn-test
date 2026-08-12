@@ -26,6 +26,10 @@ public class AgentRouter {
     private final ObjectMapper objectMapper;
 
     public RoutingResult route(Agent agent, String userMessage, Long userId) {
+        return route(agent, userMessage, userId, null);
+    }
+
+    public RoutingResult route(Agent agent, String userMessage, Long userId, String selectedModel) {
         List<Long> ruleMatched = matchByRules(agent, userMessage);
         if (!ruleMatched.isEmpty()) {
             log.info("Agent[{}] 规则匹配成功, skills={}", agent.getName(), ruleMatched);
@@ -33,7 +37,7 @@ public class AgentRouter {
         }
 
         log.info("Agent[{}] 规则未命中，使用LLM意图识别", agent.getName());
-        return matchByLlm(agent, userMessage, userId);
+        return matchByLlm(agent, userMessage, userId, selectedModel);
     }
 
     private List<Long> matchByRules(Agent agent, String userMessage) {
@@ -66,7 +70,7 @@ public class AgentRouter {
         return List.of();
     }
 
-    private RoutingResult matchByLlm(Agent agent, String userMessage, Long userId) {
+    private RoutingResult matchByLlm(Agent agent, String userMessage, Long userId, String selectedModel) {
         LambdaQueryWrapper<Skill> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Skill::getAgentId, agent.getId())
                .eq(Skill::getDeleted, 0)
@@ -88,7 +92,8 @@ public class AgentRouter {
                 agent.getName(), userMessage, catalog);
 
         LlmRequest request = LlmRequest.builder()
-                .model("doubao-seed-2.0-code")
+                .model(selectedModel != null && !selectedModel.isBlank()
+                        ? selectedModel.trim() : readConfiguredModel(agent))
                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                 .temperature(0.3)
                 .build();
@@ -100,6 +105,18 @@ public class AgentRouter {
                 .skillIds(skillIds)
                 .executionPlan(response.getContent())
                 .build();
+    }
+
+    /** Agent 可显式配置路由模型；为空时由 LlmGateway 使用管理员默认。 */
+    private String readConfiguredModel(Agent agent) {
+        try {
+            if (agent.getConfig() == null || agent.getConfig().isBlank()) return null;
+            String model = objectMapper.readTree(agent.getConfig()).at("/model").asText(null);
+            return model == null || model.isBlank() ? null : model.trim();
+        } catch (Exception e) {
+            log.warn("解析Agent[{}]模型配置失败，转交管理员默认模型解析", agent.getName());
+            return null;
+        }
     }
 
     private List<Long> parseSkillIds(String llmOutput) {

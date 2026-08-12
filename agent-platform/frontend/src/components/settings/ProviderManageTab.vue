@@ -1,5 +1,31 @@
 <template>
   <div class="provider-manage">
+    <n-card size="small" title="默认模型" class="provider-manage__defaults">
+      <n-form label-placement="left" label-width="120">
+        <n-form-item label="默认对话模型">
+          <n-select
+            v-model:value="modelDefaults.chatModel"
+            :options="chatModelOptions"
+            clearable
+            placeholder="未配置：调用方必须显式选择"
+            @update:value="saveModelDefaults"
+          />
+        </n-form-item>
+        <n-form-item label="默认向量模型">
+          <n-select
+            v-model:value="modelDefaults.embeddingModel"
+            :options="embeddingModelOptions"
+            clearable
+            placeholder="未配置：调用方必须显式选择"
+            @update:value="saveModelDefaults"
+          />
+        </n-form-item>
+      </n-form>
+      <div class="provider-manage__defaults-hint">
+        业务已显式选择模型时始终使用所选模型；仅未选择时使用这里的管理员默认。无默认且未选择会明确报错。
+      </div>
+    </n-card>
+
     <div class="provider-manage__actions">
       <n-button type="primary" @click="openCreate">
         <template #icon><n-icon :component="AddOutline" /></template>
@@ -65,12 +91,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, h } from 'vue'
-import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NTag, useMessage } from 'naive-ui'
+import { NButton, NIcon, NDataTable, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NTag, NCard, useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { CloudUploadOutline, DownloadOutline } from '@vicons/ionicons5'
 import { llmApi } from '@/api/llm'
 import type { LlmProvider, LlmProviderCreateRequest, ProviderCategory, LlmProviderExportItem } from '@/api/llm'
 import { useDialog } from 'naive-ui'
+import { systemApi, type LlmModelDefaults } from '@/api/system'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -84,6 +111,21 @@ const showModal = ref(false)
 const editingId = ref<number | null>(null)
 const testingId = ref<number | null>(null)
 const importInputRef = ref<HTMLInputElement | null>(null)
+const modelDefaults = ref<LlmModelDefaults>({ chatModel: null, embeddingModel: null })
+
+const modelsForCategory = (category: ProviderCategory) => providers.value
+  .filter(provider => provider.status === 'ACTIVE' && (provider.category ?? 'CHAT') === category)
+  .flatMap(provider => {
+    try {
+      const parsed = JSON.parse(provider.models || '[]')
+      return Array.isArray(parsed) ? parsed.map(model => ({ label: String(model), value: String(model) })) : []
+    } catch {
+      return []
+    }
+  })
+
+const chatModelOptions = computed(() => modelsForCategory('CHAT'))
+const embeddingModelOptions = computed(() => modelsForCategory('EMBEDDING'))
 
 const form = ref<LlmProviderCreateRequest>({
   name: '',
@@ -178,10 +220,24 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    const res = await llmApi.listProviders()
-    providers.value = res.data.data
+    const [providerRes, defaultsRes] = await Promise.all([
+      llmApi.listProviders(),
+      systemApi.getLlmModelDefaults()
+    ])
+    providers.value = providerRes.data.data
+    modelDefaults.value = defaultsRes.data.data
   } finally {
     loading.value = false
+  }
+}
+
+async function saveModelDefaults() {
+  try {
+    const res = await systemApi.updateLlmModelDefaults(modelDefaults.value)
+    modelDefaults.value = res.data.data
+    message.success('默认模型已更新')
+  } catch {
+    await load()
   }
 }
 
@@ -410,6 +466,16 @@ async function doImport(items: LlmProviderExportItem[]) {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.provider-manage__defaults {
+  margin-bottom: 16px;
+  max-width: 720px;
+}
+
+.provider-manage__defaults-hint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
 }
 
 @media (max-width: 768px) {

@@ -32,7 +32,7 @@ export const STEP_ACTION_OPTIONS = [
 export const DEFAULT_LLM_STEP_CONFIG: LlmStepConfigForm = {
   systemPrompt: '',
   promptTemplate: '',
-  model: 'doubao-seed-2.0-code',
+  model: '',
   temperature: 0.7,
   outputKey: 'output'
 }
@@ -80,7 +80,7 @@ export function buildStepConfig(config: LlmStepConfigForm) {
   return JSON.stringify({
     systemPrompt: config.systemPrompt || '',
     promptTemplate: config.promptTemplate || '',
-    model: config.model || DEFAULT_LLM_STEP_CONFIG.model,
+    model: config.model || '',
     temperature: config.temperature ?? DEFAULT_LLM_STEP_CONFIG.temperature,
     outputKey: config.outputKey || DEFAULT_LLM_STEP_CONFIG.outputKey
   })

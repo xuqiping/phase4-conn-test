@@ -32,8 +32,8 @@
                l.revoke_requested_at,
                l.status, l.created_at, l.approved_at
         FROM memory_project_links l
-        JOIN projects pp ON pp.id = l.parent_project_id
-        JOIN projects cp ON cp.id = l.child_project_id
+        JOIN projects pp ON pp.id = l.parent_project_id AND pp.deleted = 0
+        JOIN projects cp ON cp.id = l.child_project_id AND cp.deleted = 0
         LEFT JOIN users gu ON gu.id = l.granted_by
         LEFT JOIN users au ON au.id = l.approved_by
         LEFT JOIN users ru ON ru.id = l.revoke_requested_by
@@ -49,12 +49,15 @@
         LIMIT 100
     </select>
 
-    <!-- 召回合流（FR-102）：一批 parent 项目的 ACTIVE child 集。单级一跳，不递归传递。 -->
+    <!-- 召回合流（FR-102）：一批 parent 项目的 ACTIVE child 集。单级一跳，不递归传递。
+         5x #5：双保险判 parent/child projects.deleted——hook 清理漏或并发删项目时挡悬空链。 -->
     <select id="findActiveChildIds" resultType="java.lang.Long">
         SELECT child_project_id
-        FROM memory_project_links
-        WHERE deleted = 0 AND status = 'ACTIVE'
-          AND parent_project_id IN
+        FROM memory_project_links l
+        WHERE l.deleted = 0 AND l.status = 'ACTIVE'
+          AND EXISTS (SELECT 1 FROM projects p WHERE p.id = l.parent_project_id AND p.deleted = 0)
+          AND EXISTS (SELECT 1 FROM projects p WHERE p.id = l.child_project_id AND p.deleted = 0)
+          AND l.parent_project_id IN
           <foreach collection="parentIds" item="pid" open="(" separator="," close=")">
               #{pid}
           </foreach>

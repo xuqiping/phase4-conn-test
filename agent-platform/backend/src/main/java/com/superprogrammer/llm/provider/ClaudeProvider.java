@@ -150,8 +150,12 @@ public class ClaudeProvider implements LlmProviderInterface {
     @Override
     public boolean supports(String model) {
         if (model == null) return false;
-        if (!supportedModels.isEmpty()) return supportedModels.contains(model);
-        return model.startsWith("claude-") || model.startsWith("anthropic/");
+        return supportedModels.contains(model);
+    }
+
+    @Override
+    public List<String> getSupportedModels() {
+        return List.copyOf(supportedModels);
     }
 
     @Override

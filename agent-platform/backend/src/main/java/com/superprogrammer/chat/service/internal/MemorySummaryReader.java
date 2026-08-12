@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.RecalledSummary;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -57,6 +57,9 @@ public class MemorySummaryReader {
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** 记忆是对话前置增强，超时必须快速降级，不能占满主对话的时间预算。 */
+    @Value("${memory.recall.llm-timeout-ms:8000}")
+    private int llmTimeoutMs = 8000;
 
     /**
      * 读召回者本人总结 + reflect 判深读。
@@ -104,6 +107,7 @@ public class MemorySummaryReader {
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);
                 if (ids != null) {
@@ -112,7 +116,8 @@ public class MemorySummaryReader {
                 }
                 log.warn("reflect 解析失败(第{}/{}) userId={} → 重试", attempt, LLM_MAX_ATTEMPTS, userId);
             } catch (Exception e) {
-                log.warn("reflect LLM 异常(第{}/{}) userId={}: {}", attempt, LLM_MAX_ATTEMPTS, userId, e.getMessage());
+                log.warn("reflect LLM 异常 userId={} → 立即降级，不重试: {}", userId, e.getMessage());
+                return Set.of();
             }
         }
         log.warn("reflect {} 次均失败 userId={} summaryCount={} → 全只读 L1 降级",

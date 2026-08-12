@@ -137,7 +137,7 @@ public class RagScopeResolver {
 
     /**
      * 同 embedding_model 约束：多模型混合 → 限定首个模型组（kbId 升序确定），warn。
-     * Phase1 通常全 doubao-embedding-vision，不会触发。
+     * 通常同一批知识库使用同一管理员配置的向量模型，不会触发。
      */
     private List<Long> enforceSameEmbeddingModel(List<Long> kbIds) {
         if (kbIds.isEmpty()) {

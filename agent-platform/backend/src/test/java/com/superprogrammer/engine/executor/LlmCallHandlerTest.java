@@ -71,6 +71,18 @@ class LlmCallHandlerTest {
     }
 
     @Test
+    void execute_withoutStepModel_shouldUseConversationSelectedModel() {
+        ExecutionContext ctx = new ExecutionContext(1L, "AGENT", 1L, null);
+        ctx.setModel("conversation-model");
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("回复").usage(TokenUsage.builder().totalTokens(1).build()).build());
+
+        handler.execute("{\"promptTemplate\":\"hi\",\"outputKey\":\"result\"}", ctx);
+
+        verify(llmGateway).chat(argThat(req -> "conversation-model".equals(req.getModel())), any());
+    }
+
+    @Test
     void execute_withSystemPrompt_sendsSystemAndUserMessages() {
         ExecutionContext ctx = new ExecutionContext(1L, "AGENT", 1L, null);
         ctx.getVariableStore().set("input", "联调日志");

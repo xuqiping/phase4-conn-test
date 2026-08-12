@@ -113,6 +113,15 @@ agent-platform/login-page.png
 # backend JWT secret (local, do not commit)
 backend-run-secret.txt
 backend-run.log
+backend-run.err
+frontend-run.err
+backend-detached.err
+
+# 根目录临时调试产物（截图/状态探针 JSON）
+/modal-check.js
+/restore-check.js
+/state-check.js
+/summary-myproject-buttons.png
 
 # Claude Code 临时 worktree（基线对拍/隔离实验用，含 target 等构建产物，不入库）
 .claude/worktrees/

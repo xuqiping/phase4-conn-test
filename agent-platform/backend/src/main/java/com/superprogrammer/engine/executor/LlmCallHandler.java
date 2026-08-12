@@ -34,7 +34,10 @@ public class LlmCallHandler implements StepActionHandler {
 
             String systemPromptTemplate = config.at("/systemPrompt").asText("");
             String promptTemplate = config.at("/promptTemplate").asText("");
-            String model = config.at("/model").asText("doubao-seed-2.0-code");
+            String model = config.at("/model").asText(null);
+            if (model == null || model.isBlank()) {
+                model = context.getModel();
+            }
             String outputKey = config.at("/outputKey").asText("output");
             double temperature = config.at("/temperature").asDouble(0.7);
 

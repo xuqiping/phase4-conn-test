@@ -6,7 +6,6 @@ import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;

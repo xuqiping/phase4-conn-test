@@ -218,12 +218,10 @@ class SystemSettingServiceTest {
     }
 
     @Test
-    void getMemoryJudgeModel_shouldFallbackToDefaultWhenMissing() {
+    void getMemoryJudgeModel_shouldUseGlobalChatDefaultWhenSpecificSettingMissing() {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
-        // 缺失 → 回退 RagConfig.MEMORY_JUDGE_MODEL 常量（doubao-seed-2.0-code）
-        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL,
-                service.getMemoryJudgeModel());
+        assertEquals(null, service.getMemoryJudgeModel());
     }
 
     @Test
@@ -232,8 +230,15 @@ class SystemSettingServiceTest {
         setting.setSettingValue("   ");
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
 
-        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL,
-                service.getMemoryJudgeModel());
+        assertEquals(null, service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void globalDefaultModels_shouldBeNullableWhenAdminHasNotConfiguredThem() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(null, service.getDefaultChatModel());
+        assertEquals(null, service.getDefaultEmbeddingModel());
     }
 
     // ============================ V77 记忆标签大类词表 ============================

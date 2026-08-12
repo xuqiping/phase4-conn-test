@@ -85,6 +85,7 @@ export interface AvailableModel {
   displayName: string
   providerName: string
   source: 'global' | 'user'
+  defaultModel?: boolean
 }
 
 export const llmApi = {

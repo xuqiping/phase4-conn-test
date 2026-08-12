@@ -10,7 +10,6 @@ import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -40,10 +39,6 @@ public class CanvasNodeRunnerService {
 
     private final LlmGateway llmGateway;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
-
-    /** 文本节点默认模型（可被 node.data.model 覆盖；未配 provider 时走全局 doubao）。 */
-    @Value("${canvas.text-model:doubao-seed-2.0-code}")
-    private String defaultTextModel;
 
     /**
      * 运行单节点（无状态，不改 snapshot）。
@@ -88,9 +83,6 @@ public class CanvasNodeRunnerService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词长度超限（≤" + PROMPT_MAX_LEN + "）");
         }
         String model = readString(node, "model");
-        if (model == null || model.isBlank()) {
-            model = defaultTextModel;
-        }
 
         long started = System.currentTimeMillis();
         try {
@@ -100,6 +92,7 @@ public class CanvasNodeRunnerService {
                     .stream(false)
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(req) : llmGateway.chat(req, userId);
+            model = req.getModel();
             String output = resp == null ? "" : (resp.getContent() == null ? "" : resp.getContent());
             long cost = System.currentTimeMillis() - started;
             log.info("canvas text node done: nodeId={} model={} costMs={} outLen={}",
@@ -151,9 +144,6 @@ public class CanvasNodeRunnerService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本长度超限（≤" + PROMPT_MAX_LEN + "）");
         }
         String model = readString(node, "model");
-        if (model == null || model.isBlank()) {
-            model = defaultTextModel;
-        }
 
         // 拆分参数（前端脚本节点属性面板）：segmentCount=指定段数；storyboardSpec=拆分规范（空则 LLM 自由发挥）。
         Integer segmentCount = readInt(node, "segmentCount");
@@ -179,6 +169,7 @@ public class CanvasNodeRunnerService {
                     .stream(false)
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(req) : llmGateway.chat(req, userId);
+            model = req.getModel();
             String content = resp == null ? "" : (resp.getContent() == null ? "" : resp.getContent());
             List<Map<String, Object>> scenes = parseScenes(content);
             long cost = System.currentTimeMillis() - started;

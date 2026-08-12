@@ -3,6 +3,7 @@ package com.superprogrammer.system.controller;
 import com.superprogrammer.auth.security.JwtAuthenticationFilter;
 import com.superprogrammer.search.service.WebSearchService;
 import com.superprogrammer.system.service.SystemSettingService;
+import com.superprogrammer.llm.service.LlmProviderService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -37,6 +38,7 @@ class SystemSettingLegacyEndpoint404Test {
     @Autowired MockMvc mvc;
     @MockBean SystemSettingService service;
     @MockBean WebSearchService webSearchService;
+    @MockBean LlmProviderService llmProviderService;
 
     // ---- 已删的 MemoryController 全族（代表）→ 不再 2xx ----
 

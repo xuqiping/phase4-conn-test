@@ -10,4 +10,6 @@ public class AvailableModelVO {
     private String displayName;
     private String providerName;
     private String source;
+    /** 是否为管理员配置的该类型默认模型。 */
+    private Boolean defaultModel;
 }

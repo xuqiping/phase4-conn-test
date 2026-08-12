@@ -13,7 +13,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 
@@ -27,7 +26,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * CanvasNodeRunnerService 单测：文本节点走 LlmGateway + image/video 分发话术 + 输入校验。
- * LlmGateway 用 Mockito；defaultTextModel 用 ReflectionTestUtils 注入（绕 @Value）。
+ * LlmGateway 用 Mockito；缺省模型由网关解析管理员默认。
  */
 @ExtendWith(MockitoExtension.class)
 class CanvasNodeRunnerServiceTest {
@@ -40,7 +39,6 @@ class CanvasNodeRunnerServiceTest {
     @BeforeEach
     void setUp() {
         runner = new CanvasNodeRunnerService(llmGateway, new com.fasterxml.jackson.databind.ObjectMapper());
-        ReflectionTestUtils.setField(runner, "defaultTextModel", "doubao-seed-2.0-code");
     }
 
     @Test
@@ -66,13 +64,15 @@ class CanvasNodeRunnerServiceTest {
     }
 
     @Test
-    void run_text_usesDefaultModel_whenDataModelMissing() {
+    void run_text_usesGatewayResolvedAdminDefault_whenDataModelMissing() {
         CanvasNodeDTO node = nodeOf("n3", CanvasNodeDTO.TYPE_TEXT, Map.of("prompt", "hi"));
-        when(llmGateway.chat(any(), eq(7L))).thenReturn(
-                LlmResponse.builder().content("ok").build());
+        when(llmGateway.chat(any(), eq(7L))).thenAnswer(inv -> {
+            LlmRequest request = inv.getArgument(0);
+            request.setModel("admin-default");
+            return LlmResponse.builder().content("ok").build();
+        });
         NodeRunResult r = runner.run(node, 7L);
-        assertEquals("doubao-seed-2.0-code", r.getDataPatch().get("model"),
-                "缺省 model 应走 defaultTextModel");
+        assertEquals("admin-default", r.getDataPatch().get("model"));
     }
 
     @Test

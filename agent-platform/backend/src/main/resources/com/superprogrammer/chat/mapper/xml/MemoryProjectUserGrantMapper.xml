@@ -29,7 +29,7 @@
                g.approved_by, COALESCE(au.name, au.username) AS approved_by_name,
                g.status, g.created_at, g.approved_at
         FROM memory_project_user_grants g
-        JOIN projects p ON p.id = g.project_id
+        JOIN projects p ON p.id = g.project_id AND p.deleted = 0
         JOIN users u ON u.id = g.user_id
         LEFT JOIN users gu ON gu.id = g.granted_by
         LEFT JOIN users au ON au.id = g.approved_by
@@ -43,10 +43,12 @@
         LIMIT 100
     </select>
 
-    <!-- 召回取数（P1）：被授权个人可召回的 ACTIVE 项目 id 集。 -->
+    <!-- 召回取数（P1）：被授权个人可召回的 ACTIVE 项目 id 集。
+         5x #5：双保险判 projects.deleted——hook 清理漏或并发删项目时挡悬空授权。 -->
     <select id="findActiveGrantedProjectIds" resultType="java.lang.Long">
-        SELECT project_id
-        FROM memory_project_user_grants
-        WHERE deleted = 0 AND status = 'ACTIVE' AND user_id = #{userId}
+        SELECT g.project_id
+        FROM memory_project_user_grants g
+        WHERE g.deleted = 0 AND g.status = 'ACTIVE' AND g.user_id = #{userId}
+          AND EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted = 0)
     </select>
 </mapper>

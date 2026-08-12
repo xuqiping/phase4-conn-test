@@ -103,9 +103,10 @@
         <result property="usageCount" column="usage_count"/>
     </resultMap>
 
-    <!-- 个人 scope 聚合：本人 turns.tag_ids ∪ 本人个人总结(project_id IS NULL).tag_id。
+    <!-- 个人 scope 聚合：本人 turns.tag_ids ∪ 本人个人总结(project_id IS NULL).tag_id ∪ 本人 READY 文件记忆.tag_ids。
          gen_done=false raw 不参与（向量1）。timeWindow：relativeDays 优先（近N天），否则绝对时段。
-         二期 P1（V67）：turns 纯个人域，born_personal=true 限定随列 DROP 移除。 -->
+         二期 P1（V67）：turns 纯个人域，born_personal=true 限定随列 DROP 移除。
+         5x #3：补 memory_asset_memories 一路——否则文件标签不进聚合候选，collectFileCards 恒空召回。 -->
     <select id="findPersonalRecallTags" resultMap="RecallTagMetaMap">
         SELECT t.id, t.subject, t.topic, t.label, t.user_id AS owner_user_id, t.usage_count
         FROM memory_tags t
@@ -125,6 +126,14 @@
                 <if test="relativeDays != null"> AND summarized_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
                 <if test="twStart != null"> AND summarized_at &gt;= #{twStart} </if>
                 <if test="twEnd != null"> AND summarized_at &lt;= #{twEnd} </if>
+              UNION
+              SELECT unnest(tag_ids) FROM memory_asset_memories
+              WHERE deleted = 0 AND ingest_status = 'READY'
+                AND owner_user_id = #{userId}
+                AND tag_ids &lt;&gt; '{}'
+                <if test="relativeDays != null"> AND created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays}) </if>
+                <if test="twStart != null"> AND created_at &gt;= #{twStart} </if>
+                <if test="twEnd != null"> AND created_at &lt;= #{twEnd} </if>
           )
         ORDER BY t.usage_count DESC
     </select>

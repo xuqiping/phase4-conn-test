@@ -1,6 +1,5 @@
 package com.superprogrammer.chat.service.internal;
 
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.JiebaTokenizer;
 import com.superprogrammer.llm.LlmGateway;
@@ -16,7 +15,7 @@ import java.util.Set;
  * 计划12 B：标签 anchor 构建（语义向量 + BM25 词法双通道原料）。
  * <p>
  * anchor = label + subject + topic + aliases 拼串（V47 表注释约定）。语义向量走
- * {@link LlmGateway#embed}（doubao-embedding-vision 2048 维），词法走 {@link JiebaTokenizer}
+ * {@link LlmGateway#embed}（管理员配置的 2048 维向量模型），词法走 {@link JiebaTokenizer}
  * 分词空格串（DB 侧 to_tsvector('simple') 生成 anchor_tokens_tsv）。
  * <p>
  * <b>失败兜底</b>：embed 任一环异常 → 返 null（路径③自然跳过，标签仍可无 anchor 落库；
@@ -53,7 +52,7 @@ public class MemoryTagAnchorService {
             return null;
         }
         try {
-            float[] vec = llmGateway.embed(text, RagConfig.MEMORY_EMBED_MODEL, userId);
+            float[] vec = llmGateway.embed(text, null, userId);
             String halfvec = HalfVecUtil.toHalfVec(vec);
             String tokens = JiebaTokenizer.tokenize(text);
             return new AnchorPayload(halfvec, tokens);

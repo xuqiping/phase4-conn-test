@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import com.superprogrammer.billing.service.InflightGateService;
+import com.superprogrammer.system.service.SystemSettingService;
 
 /**
  * FR-003 网关按类型路由：CHAT 行只进 chat 路由，EMBEDDING 行只进 embed 路由，
@@ -61,6 +62,8 @@ class LlmGatewayRouteTest {
     private PointsWalletService walletService;
     @Mock
     private InflightGateService inflightGate;
+    @Mock
+    private SystemSettingService systemSettingService;
 
     private LlmGateway gateway;
 
@@ -79,7 +82,7 @@ class LlmGatewayRouteTest {
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
                 billingService, walletService,
                 new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
-                inflightGate);
+                inflightGate, systemSettingService);
     }
 
     @Test

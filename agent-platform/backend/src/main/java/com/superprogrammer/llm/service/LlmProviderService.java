@@ -117,6 +117,28 @@ public class LlmProviderService {
         return mapper.selectList(wrapper);
     }
 
+    /** 返回指定类型当前启用的明确模型列表，供管理员默认模型校验与下拉展示。 */
+    public List<String> listActiveModels(String category) {
+        return listActive().stream()
+                .filter(provider -> category.equalsIgnoreCase(provider.getCategory()))
+                .flatMap(provider -> parseModelList(provider.getModels()).stream())
+                .filter(model -> model != null && !model.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
+    private List<String> parseModelList(String modelsJson) {
+        if (modelsJson == null || modelsJson.isBlank()) return List.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(modelsJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.warn("供应商模型列表解析失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     public List<LlmProviderVO> listAll() {
         LambdaQueryWrapper<LlmProviderEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(LlmProviderEntity::getDeleted, 0)

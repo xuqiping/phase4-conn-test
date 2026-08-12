@@ -87,9 +87,12 @@ public class SystemSettingService {
     public static final String MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD = "memory.routing.auto-approve-threshold";
     /** 路由置信度 ≥ 此值且 < auto-approve 进 PENDING_REVIEW；低于此丢弃（D1 定案默认 0.5）。 */
     public static final String MEMORY_ROUTING_REVIEW_THRESHOLD = "memory.routing.review-threshold";
-    /** 记忆管线 LLM 默认 model（路由/蒸馏/生成/压缩/冲突/召回标签）。请求域被对话所选 model 覆盖，
-     *  后台域读源 chat_model，NULL/混合回退本值。默认 doubao-seed-2.0-code。 */
+    /** 旧记忆专用默认键（兼容迁移审计）；运行时已统一读取管理员全局默认对话模型。 */
     public static final String MEMORY_JUDGE_MODEL = "memory.judge.model";
+    /** 管理员配置的全局默认对话模型；未配置时返回 null，由调用咽喉明确报错。 */
+    public static final String LLM_DEFAULT_CHAT_MODEL = "llm.default.chat-model";
+    /** 管理员配置的全局默认向量模型；未配置时返回 null，由调用咽喉明确报错。 */
+    public static final String LLM_DEFAULT_EMBEDDING_MODEL = "llm.default.embedding-model";
     /** 个人记忆标签「大类」base vocab（JSON 数组，可热调）。有效词表 = 此 ∪ 用户 needs_review=false 的存量 topic。
      *  缺失/非法 JSON 回退 RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。 */
     public static final String MEMORY_TAG_VOCAB = "memory.tag.vocab";
@@ -471,11 +474,42 @@ public class SystemSettingService {
         return getDoubleInRange(MEMORY_ROUTING_REVIEW_THRESHOLD, 0.5, 0.0, 1.0);
     }
 
-    /** 记忆管线 LLM 默认 model：读 memory.judge.model，空/缺失回退 RagConfig.MEMORY_JUDGE_MODEL 常量。
-     *  请求域被对话所选 model 覆盖；后台域读源 chat_model，NULL/混合回退本值。 */
+    /** 管理员全局默认对话模型；不在代码里猜测任何具体模型。 */
+    public String getDefaultChatModel() {
+        return getNullableTrimmed(LLM_DEFAULT_CHAT_MODEL);
+    }
+
+    /** 管理员全局默认向量模型；不在代码里猜测任何具体模型。 */
+    public String getDefaultEmbeddingModel() {
+        return getNullableTrimmed(LLM_DEFAULT_EMBEDDING_MODEL);
+    }
+
+    public void updateDefaultModels(String chatModel, String embeddingModel) {
+        updateNullableModelSetting(LLM_DEFAULT_CHAT_MODEL, chatModel, "管理员配置的全局默认对话模型");
+        updateNullableModelSetting(LLM_DEFAULT_EMBEDDING_MODEL, embeddingModel, "管理员配置的全局默认向量模型");
+    }
+
+    /** 兼容旧记忆调用 API：统一使用管理员全局默认对话模型。 */
     public String getMemoryJudgeModel() {
-        String v = getValue(MEMORY_JUDGE_MODEL);
-        return (v == null || v.isBlank()) ? com.superprogrammer.knowledge.service.RagConfig.MEMORY_JUDGE_MODEL : v;
+        return getDefaultChatModel();
+    }
+
+    private String getNullableTrimmed(String key) {
+        String value = getValue(key);
+        return normalizeNullable(value);
+    }
+
+    private String normalizeNullable(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private void updateNullableModelSetting(String key, String value, String description) {
+        String normalized = normalizeNullable(value);
+        if (normalized == null) {
+            removeKey(key);
+        } else {
+            upsert(key, normalized, description);
+        }
     }
 
     /** 个人记忆标签「大类」base vocab：读 memory.tag.vocab（JSON 数组），缺失/非法 JSON 回退

@@ -36,8 +36,7 @@ const emit = defineEmits<{
   change: [model: string]
 }>()
 
-const preferredModel = 'doubao-seed-2.0-code'
-const selectedModel = ref<string | null>(props.modelValue || (props.optional ? null : preferredModel))
+const selectedModel = ref<string | null>(props.modelValue || null)
 const models = ref<AvailableModel[]>([])
 
 const placeholder = computed(() => (props.optional ? props.emptyLabel : '选择模型'))
@@ -72,18 +71,23 @@ onMounted(async () => {
   try {
     const res = await llmApi.listAvailableModels()
     models.value = res.data.data
-    // optional 模式不自动选中（留空=不覆盖默认模型）；已选值即使不在列表里也保留展示
+    // optional 模式不自动选中（留空=不覆盖默认模型）。普通模式仅自动选管理员默认；
+    // 管理员未设默认时保持空，让用户显式选择，避免把列表顺序当业务默认。
     if (!props.optional && models.value.length) {
       const availableModelIds = new Set(models.value.map(m => m.modelId))
       if (selectedModel.value && availableModelIds.has(selectedModel.value)) {
         return
       }
-      const nextModel = availableModelIds.has(preferredModel)
-        ? preferredModel
-        : models.value[0].modelId
-      selectedModel.value = nextModel
-      emit('update:modelValue', nextModel)
-      emit('change', nextModel)
+      const nextModel = models.value.find(model => model.defaultModel)?.modelId
+      if (nextModel) {
+        selectedModel.value = nextModel
+        emit('update:modelValue', nextModel)
+        emit('change', nextModel)
+      } else if (selectedModel.value) {
+        selectedModel.value = null
+        emit('update:modelValue', '')
+        emit('change', '')
+      }
     }
   } catch {
     // Silent fail — model selector is optional

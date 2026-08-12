@@ -14,6 +14,7 @@
 --      查询「WHERE trace_id = ?」语义不变（NULL 永不匹配等值，PostgreSQL 知 NULL 行不在索引内）。
 --      偏离 plan 原文「全索引」，理由：nullable 关联键列部分索引严格更优。
 -- ============================================================
+-- Migration version: V99 (V95 is already used by pricing_has_reference).
 ALTER TABLE llm_usage_logs ADD COLUMN trace_id VARCHAR(64);
 ALTER TABLE llm_usage_logs ADD COLUMN task_id  BIGINT;
 

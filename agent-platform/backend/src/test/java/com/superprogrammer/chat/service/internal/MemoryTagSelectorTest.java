@@ -110,6 +110,7 @@ class MemoryTagSelectorTest {
         List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
         // 降级：返 candidates 全集（5 条，未精筛）
         assertEquals(5, r.size());
+        verify(llmGateway, times(1)).chat(any(), eq(1L));
     }
 
     @Test
@@ -126,7 +127,7 @@ class MemoryTagSelectorTest {
     @Test
     void over30_rrfCoarsen_thenLlm() {
         List<RecallTagMeta> tags = metas(40);
-        when(llmGateway.embed(anyString(), eq(RagConfig.MEMORY_EMBED_MODEL), eq(1L)))
+        when(llmGateway.embed(anyString(), isNull(), eq(1L)))
                 .thenReturn(new float[]{0.1f, 0.2f});
         // 路 A 返前 30 id（按 id 升序模拟距离序）
         when(tagMapper.rankByAnchorHalfvec(anyList(), anyString(), anyInt()))
@@ -137,7 +138,7 @@ class MemoryTagSelectorTest {
 
         List<RecallTagMeta> r = selector.select("q", tags, 1L, null);
 
-        verify(llmGateway).embed(anyString(), eq(RagConfig.MEMORY_EMBED_MODEL), eq(1L));
+        verify(llmGateway).embed(anyString(), isNull(), eq(1L));
         verify(tagMapper).rankByAnchorHalfvec(anyList(), anyString(), anyInt());
         verify(tagMapper).rankByAnchorTsv(anyList(), anyString(), anyInt());
         assertEquals(List.of(1L, 2L), r.stream().map(RecallTagMeta::getId).toList());
@@ -146,7 +147,7 @@ class MemoryTagSelectorTest {
     @Test
     void over30_embedFails_bm25SinglePath() {
         List<RecallTagMeta> tags = metas(40);
-        when(llmGateway.embed(anyString(), anyString(), anyLong())).thenThrow(new RuntimeException("embed down"));
+        when(llmGateway.embed(anyString(), isNull(), anyLong())).thenThrow(new RuntimeException("embed down"));
         when(tagMapper.rankByAnchorTsv(anyList(), anyString(), anyInt()))
                 .thenReturn(metas(30).stream().map(RecallTagMeta::getId).toList());
         mockChatReturn("[5]");
@@ -161,7 +162,7 @@ class MemoryTagSelectorTest {
     @Test
     void over30_bothPathsFail_usageTopFeedLlm() {
         List<RecallTagMeta> tags = metas(40);
-        when(llmGateway.embed(anyString(), anyString(), anyLong())).thenThrow(new RuntimeException("embed down"));
+        when(llmGateway.embed(anyString(), isNull(), anyLong())).thenThrow(new RuntimeException("embed down"));
         // BM25 返空（无 token 命中）
         when(tagMapper.rankByAnchorTsv(anyList(), anyString(), anyInt())).thenReturn(List.of());
         mockChatReturn("[1]");

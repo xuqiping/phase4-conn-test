@@ -32,7 +32,7 @@
           <!-- 三期 req#4：被授权方读授权方共享总结时显式标注来源项目 -->
           <n-tag v-if="s.projectName" size="tiny" type="warning" :bordered="false">{{ s.projectName }}</n-tag>
           <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
-          <n-tag v-if="s.direction === 'INPUT' || s.direction === 'OUTPUT'" size="tiny" :type="s.direction === 'INPUT' ? 'info' : 'success'" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
+          <n-tag v-if="s.direction" size="tiny" :type="s.direction === 'INPUT' ? 'info' : (s.direction === 'OUTPUT' ? 'success' : 'default')" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
           <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
           <span class="memory-summary-section__time">{{ s.summarizedAt || s.createdAt }}</span>
         </div>
@@ -52,7 +52,7 @@
         <!-- 第二轮 #3：所属项目名（projectId 非空=该总结关联到某项目，直显归属） -->
         <n-tag v-if="s.projectName" size="tiny" type="info" :bordered="false">{{ s.projectName }}</n-tag>
         <n-tag size="tiny" :bordered="false">{{ s.subject }} : {{ s.topic }}</n-tag>
-        <n-tag v-if="s.direction === 'INPUT' || s.direction === 'OUTPUT'" size="tiny" :type="s.direction === 'INPUT' ? 'info' : 'success'" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
+        <n-tag v-if="s.direction" size="tiny" :type="s.direction === 'INPUT' ? 'info' : (s.direction === 'OUTPUT' ? 'success' : 'default')" :bordered="false">{{ directionLabel(s.direction) }}</n-tag>
         <n-tag size="tiny" :type="statusType(s.status)" :bordered="false">{{ statusLabel(s.status) }}</n-tag>
         <span class="memory-summary-section__time">{{ s.summarizedAt || s.createdAt }}</span>
       </div>

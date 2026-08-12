@@ -14,6 +14,11 @@ import com.superprogrammer.system.dto.RagRecallSettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagRecallSettingsVO;
 import com.superprogrammer.system.dto.WebSearchSettingsUpdateRequest;
 import com.superprogrammer.system.dto.WebSearchSettingsVO;
+import com.superprogrammer.system.dto.LlmModelDefaultsVO;
+import com.superprogrammer.system.dto.LlmModelDefaultsUpdateRequest;
+import com.superprogrammer.llm.service.LlmProviderService;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.system.service.SystemSettingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +31,39 @@ import org.springframework.web.bind.annotation.*;
 public class SystemSettingController {
     private final SystemSettingService service;
     private final WebSearchService webSearchService;
+    private final LlmProviderService llmProviderService;
+
+    @GetMapping("/llm-model-defaults")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<LlmModelDefaultsVO>> getLlmModelDefaults() {
+        return ResponseEntity.ok(R.ok(buildLlmModelDefaults()));
+    }
+
+    @PutMapping("/llm-model-defaults")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_llm_model_defaults", targetType = "setting")
+    public ResponseEntity<R<LlmModelDefaultsVO>> updateLlmModelDefaults(
+            @RequestBody LlmModelDefaultsUpdateRequest request) {
+        validateDefaultModel(request.getChatModel(), LlmProviderService.CATEGORY_CHAT, "对话");
+        validateDefaultModel(request.getEmbeddingModel(), LlmProviderService.CATEGORY_EMBEDDING, "向量");
+        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel());
+        return ResponseEntity.ok(R.ok("默认模型已更新", buildLlmModelDefaults()));
+    }
+
+    private void validateDefaultModel(String model, String category, String label) {
+        if (model == null || model.isBlank()) return;
+        if (!llmProviderService.listActiveModels(category).contains(model.trim())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    label + "默认模型不属于当前启用的 " + category + " 供应商: " + model);
+        }
+    }
+
+    private LlmModelDefaultsVO buildLlmModelDefaults() {
+        return LlmModelDefaultsVO.builder()
+                .chatModel(service.getDefaultChatModel())
+                .embeddingModel(service.getDefaultEmbeddingModel())
+                .build();
+    }
 
     @GetMapping("/auth")
     @RequirePermission("role:manage")

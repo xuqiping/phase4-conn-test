@@ -10,7 +10,6 @@ import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
@@ -174,7 +173,7 @@ public class MemoryAssetIngestService {
         for (MemoryAssetExtractor.ChunkDraft chunk : result.chunks()) {
             String halfvec = null;
             try {
-                float[] vector = llmGateway.embed(chunk.text(), RagConfig.MEMORY_EMBED_MODEL, userId);
+                float[] vector = llmGateway.embed(chunk.text(), null, userId);
                 if (vector != null && vector.length == HalfVecUtil.DIM) {
                     halfvec = HalfVecUtil.toHalfVec(vector);
                 }

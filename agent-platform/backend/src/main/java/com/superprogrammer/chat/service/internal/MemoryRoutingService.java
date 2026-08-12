@@ -64,25 +64,25 @@ public class MemoryRoutingService {
 
     /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目；
      *  originalName = 文件原名，文件名硬规则短路用）。 */
-    public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
+    public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId, Long sourceTurnInputId,
                                String l1, String l2, List<Long> tagIds, String fileId, String chatModel,
                                String originalName) {
-        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null，originalName=null）。 */
+        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null，originalName=null，inputTurn=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
                             String l1, String l2, List<Long> tagIds) {
-            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, null, null);
+            this(userId, sessionId, sourceTurnId, null, l1, l2, tagIds, null, null, null);
         }
 
-        /** 对话轮入参（带对话 model，fileId=null）。 */
-        public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
+        /** 对话轮入参（带对话 model + 配对 INPUT turn id，fileId=null）。 */
+        public RoutingInput(Long userId, Long sessionId, Long sourceTurnId, Long sourceTurnInputId,
                             String l1, String l2, List<Long> tagIds, String chatModel) {
-            this(userId, sessionId, sourceTurnId, l1, l2, tagIds, null, chatModel, null);
+            this(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2, tagIds, null, chatModel, null);
         }
 
         /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2 + 原名，无 sourceTurn，无对话 model。 */
         public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2,
                                           List<Long> tagIds, String originalName) {
-            return new RoutingInput(userId, null, null, l1, l2, tagIds, fileId, null, originalName);
+            return new RoutingInput(userId, null, null, null, l1, l2, tagIds, fileId, null, originalName);
         }
     }
 
@@ -205,6 +205,7 @@ public class MemoryRoutingService {
             entry.setProjectId(j.projectId());
             entry.setAuthorUserId(input.userId());
             entry.setSourceTurnId(input.sourceTurnId());
+            entry.setSourceTurnInputId(input.sourceTurnInputId());   // 5x #2 配对 INPUT
             entry.setTagIds(input.tagIds() != null ? input.tagIds() : List.of());
             entry.setL1Summary(j.distilledL1());
             entry.setL2Detail(j.distilledL2());

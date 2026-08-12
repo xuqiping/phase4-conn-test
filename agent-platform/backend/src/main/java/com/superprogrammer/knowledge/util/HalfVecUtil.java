@@ -4,7 +4,7 @@ import java.util.Locale;
 
 /**
  * pgvector halfvec 文本序列化：float[] → '[v0,v1,...]'。
- * Phase1 active 模型（doubao-embedding-vision）dim=2048。
+ * 当前向量表维度为 2048；具体调用模型由管理员配置决定。
  * 用 Locale.US 保证小数点为 '.'，避免某些 JVM 默认 ',' 导致 PG 解析失败。
  */
 public final class HalfVecUtil {

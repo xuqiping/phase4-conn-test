@@ -206,4 +206,26 @@ class MemoryDataLayerIT {
         assertFalse(nearest.isEmpty(), "halfvec &lt;=&gt; 查询应能命中已灌 embedding 的 tag");
         assertEquals(tagId, nearest.get(0).getId());
     }
+
+    // ---- 10. 5x #3：个人文件记忆标签纳入召回聚合 ------------------------
+    // memory_asset_memories(READY).tag_ids 须进 findPersonalRecallTags 候选——
+    // 否则文件标签永不进 ③ selector → collectFileCards 恒空召回（5x #3 主断点）。
+    @Test
+    void findPersonalRecallTagsIncludesFileMemoryTags() {
+        Long uid = createUser("it_file_" + System.nanoTime());
+        Long tagId = insertTag(uid, "文档", "课件");
+        // 插一个 READY 文件记忆挂该 tag（须先登记 stored_files 行满足 FK）
+        String fileId = "file-it-" + System.nanoTime();
+        jdbc.update("INSERT INTO stored_files(file_id, owner_user_id, source, original_name) VALUES(?,?,?,?)",
+                fileId, uid, "CHAT", "课件.pdf");
+        jdbc.update("INSERT INTO memory_asset_memories(owner_user_id, file_id, file_kind, original_name, " +
+                        "ingest_status, tag_ids) VALUES(?,?,?,?,'READY',?)",
+                uid, fileId, "PDF", "课件.pdf", new Long[]{tagId});
+        // 该用户无任何 turn/summary——聚合仅文件记忆一路，须仍命中 tag
+        java.time.OffsetDateTime now = java.time.OffsetDateTime.now();
+        List<com.superprogrammer.chat.dto.RecallTagMeta> tags =
+                tagMapper.findPersonalRecallTags(uid, "BOTH", null, null, null);
+        assertTrue(tags.stream().anyMatch(t -> t.getId().equals(tagId)),
+                "READY 文件记忆的标签须进入个人召回聚合候选（5x #3）");
+    }
 }

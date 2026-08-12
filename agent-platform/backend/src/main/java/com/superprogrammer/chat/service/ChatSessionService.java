@@ -24,6 +24,8 @@ import com.superprogrammer.workflow.mapper.WorkflowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -336,6 +338,10 @@ public class ChatSessionService {
      * 请求线程→{@code fromMdc} 自带 traceId/userId/username/clientIp（无需显式覆盖）。
      * detail 只带 agentId/model/attachmentCount——<b>严禁 prompt 原文</b>（隐私+体积，见 plan 坑点 #6）。
      * 失败一律吞（对话主流程绝不被审计拖垮）。开关 audit.chat.enabled 关则不落。
+     *
+     * <p><b>审计 #7 兜底</b>：流式路径若 MDC 未透传（历史裸线程漏搬），{@code fromMdc} 落 null 身份。
+     * 此处从入参 userId + SecurityContext credentials（=username，见 JwtAuthenticationFilter）显式盖戳补全，
+     * 与 {@code AuthService.auditAuth} 同范式——不依赖 MDC 单一路径。
      */
     private void auditSendMessage(Long sessionId, Long agentId, String model, Long userId, int attachmentCount) {
         if (!chatAuditEnabled) {
@@ -353,6 +359,18 @@ public class ChatSessionService {
             String detailJson = new ObjectMapper().writeValueAsString(detail);
             AuditLogEntity row = auditLogService.fromMdc("chat", "send_message", "chat_session",
                     String.valueOf(sessionId), detailJson, AuditLogEntity.RESULT_SUCCESS);
+            // #7 兜底：MDC 丢（裸线程未透传）时从入参/SecurityContext 补全身份，保审计行不空
+            if (row != null) {
+                if (row.getUserId() == null && userId != null) {
+                    row.setUserId(userId);
+                }
+                if (row.getUsername() == null) {
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    if (auth != null && auth.getCredentials() instanceof String username) {
+                        row.setUsername(username);
+                    }
+                }
+            }
             auditLogService.record(row);
         } catch (Exception e) {
             log.warn("对话发送审计失败(已吞) sessionId={} : {}", sessionId, e.toString());

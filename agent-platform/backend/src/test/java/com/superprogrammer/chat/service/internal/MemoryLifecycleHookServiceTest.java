@@ -3,18 +3,24 @@ package com.superprogrammer.chat.service.internal;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
+import com.superprogrammer.chat.entity.MemoryEntryCoverage;
 import com.superprogrammer.chat.entity.MemoryProjectEntry;
+import com.superprogrammer.chat.entity.MemoryProjectLink;
 import com.superprogrammer.chat.entity.MemoryProjectMember;
 import com.superprogrammer.chat.entity.MemoryProjectRule;
 import com.superprogrammer.chat.entity.MemoryProjectSetting;
+import com.superprogrammer.chat.entity.MemoryProjectUserGrant;
 import com.superprogrammer.chat.entity.MemoryProjectUserSetting;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectLinkMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectRuleMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectSettingMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectUserGrantMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectUserSettingMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
@@ -56,6 +62,10 @@ class MemoryLifecycleHookServiceTest {
     @Mock MemoryProjectUserSettingMapper projectUserSettingMapper;
     @Mock MemoryProjectRuleMapper projectRuleMapper;
     @Mock MemoryProjectEntryMapper projectEntryMapper;
+    // 5x #5：级联补全 3 mapper
+    @Mock MemoryProjectLinkMapper projectLinkMapper;
+    @Mock MemoryProjectUserGrantMapper projectUserGrantMapper;
+    @Mock MemoryEntryCoverageMapper entryCoverageMapper;
 
     private MemoryLifecycleHookService service;
 
@@ -72,13 +82,17 @@ class MemoryLifecycleHookServiceTest {
         TableInfoHelper.initTableInfo(assistant, MemoryProjectUserSetting.class);
         TableInfoHelper.initTableInfo(assistant, MemoryProjectRule.class);
         TableInfoHelper.initTableInfo(assistant, MemoryProjectEntry.class);
+        TableInfoHelper.initTableInfo(assistant, MemoryProjectLink.class);
+        TableInfoHelper.initTableInfo(assistant, MemoryProjectUserGrant.class);
+        TableInfoHelper.initTableInfo(assistant, MemoryEntryCoverage.class);
     }
 
     @BeforeEach
     void setUp() {
         service = new MemoryLifecycleHookService(memberMapper, summaryMapper, coverageMapper,
                 consolidationScopeMapper, projectSettingMapper, projectUserSettingMapper,
-                projectRuleMapper, projectEntryMapper);
+                projectRuleMapper, projectEntryMapper,
+                projectLinkMapper, projectUserGrantMapper, entryCoverageMapper);
     }
 
     private MemoryProjectMember memberRow(String role, String status) {

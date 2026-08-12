@@ -153,7 +153,9 @@ public class MemoryGenerationService {
             tagIds.addAll(outputTurn.getTagIds());
         }
         Long sourceTurnId = outputTurn != null ? outputTurn.getId() : (inputTurn != null ? inputTurn.getId() : null);
-        return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, l1, l2,
+        // 5x #2：配对 INPUT turn id——entry 覆盖整轮（双侧 L1 合并），INPUT turn 也能反查收录项目
+        Long sourceTurnInputId = (outputTurn != null && inputTurn != null) ? inputTurn.getId() : null;
+        return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2,
                 new ArrayList<>(tagIds), chatModel);
     }
 

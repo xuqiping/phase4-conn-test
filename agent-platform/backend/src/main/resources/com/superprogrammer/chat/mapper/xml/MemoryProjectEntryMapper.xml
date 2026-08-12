@@ -101,13 +101,20 @@
         <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
     </update>
 
-    <!-- 二期 P2：流水账「被哪个项目收录」批量查询（不依赖全局 mapUnderscoreToCamelCase，
-         列别名直接用 camelCase 匹配 TurnProjectIndexRow 属性）。未删条目均算收录（含待审）。 -->
+    <!-- 二期 P2 + 5x #2：流水账「被哪个项目收录」批量查询。entry 覆盖整轮（双侧 L1 合并），
+         source_turn_id 挂 OUTPUT / source_turn_input_id 挂同轮 INPUT——两列 UNION 使 INPUT/OUTPUT
+         turn 均可反查到收录项目（修前 INPUT turn 天然无收录链恒空）。列别名匹配 TurnProjectIndexRow。 -->
     <select id="findProjectIndexByTurnIds" resultType="com.superprogrammer.chat.dto.TurnProjectIndexRow">
         SELECT e.source_turn_id AS turnId, e.project_id AS projectId, p.name AS projectName
         FROM memory_project_entries e
         LEFT JOIN projects p ON p.id = e.project_id
         WHERE e.deleted = 0 AND e.source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        UNION ALL
+        SELECT e.source_turn_input_id AS turnId, e.project_id AS projectId, p.name AS projectName
+        FROM memory_project_entries e
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.deleted = 0 AND e.source_turn_input_id IS NOT NULL AND e.source_turn_input_id IN
         <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
     </select>
 </mapper>

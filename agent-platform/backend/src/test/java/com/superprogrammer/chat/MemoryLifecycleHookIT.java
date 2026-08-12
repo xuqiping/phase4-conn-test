@@ -189,6 +189,13 @@ class MemoryLifecycleHookIT {
         Long otherEntry = jdbc.queryForObject(
                 "INSERT INTO memory_project_entries(project_id, author_user_id, l1_summary, status) VALUES(?,?, 's', 'ACTIVE') RETURNING id",
                 Long.class, otherPid, owner);
+        // 5x #5：授权链（pid 作 parent）+ 项目↔个人授权 + 条目级覆盖（三表级联补全目标）
+        jdbc.update("INSERT INTO memory_project_links(parent_project_id, child_project_id, status, granted_by) VALUES(?,?, 'ACTIVE', ?)",
+                pid, otherPid, owner);
+        jdbc.update("INSERT INTO memory_project_user_grants(project_id, user_id, status, initiated_by) VALUES(?,?, 'ACTIVE','PROJECT')",
+                pid, member);
+        jdbc.update("INSERT INTO memory_entry_coverage(entry_id, summary_id, project_id, tag_id) VALUES(?,?,?,?)",
+                otherEntry, projSummary, pid, tag);
 
         projectService.delete(pid, owner, false);
 
@@ -209,6 +216,13 @@ class MemoryLifecycleHookIT {
         assertEquals(1, count("SELECT count(*) FROM memory_project_entries WHERE project_id=? AND deleted=1", pid));
         assertEquals(0, count("SELECT count(*) FROM memory_project_entries WHERE id=? AND deleted=1", otherEntry),
                 "他项目条目不动");
+        // 5x #5：授权链 / 个人授权 / 条目级覆盖 三表清（ON DELETE CASCADE 软删不触发，须 app 层）
+        assertEquals(0, count("SELECT count(*) FROM memory_project_links WHERE parent_project_id=? OR child_project_id=?", pid, pid),
+                "删项目须双向清授权链");
+        assertEquals(0, count("SELECT count(*) FROM memory_project_user_grants WHERE project_id=?", pid),
+                "删项目须清项目↔个人授权");
+        assertEquals(0, count("SELECT count(*) FROM memory_entry_coverage WHERE project_id=?", pid),
+                "删项目须清条目级覆盖");
     }
 
     // ---- 4. V52 回填 SQL（存量旧栈成员 → 新栈） ----

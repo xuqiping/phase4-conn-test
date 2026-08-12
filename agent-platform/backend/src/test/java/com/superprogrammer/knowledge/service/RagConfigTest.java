@@ -55,7 +55,6 @@ class RagConfigTest {
 
     @Test
     void memoryConflictDefaults() {
-        assertEquals("doubao-embedding-vision", RagConfig.MEMORY_EMBED_MODEL);
         assertEquals(0.6, RagConfig.MEMORY_BLOCK_SIM_THRESHOLD);
         assertEquals(10, RagConfig.MEMORY_CONFLICT_EXPIRE_MIN);
     }

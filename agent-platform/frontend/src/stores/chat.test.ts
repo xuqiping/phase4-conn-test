@@ -22,11 +22,12 @@ vi.mock('@/utils/storage', () => ({
     CHAT_SELECTED_TARGET: 'chatSelectedTarget'
   },
   getStorage: vi.fn((key: string) => key === 'accessToken' ? 'token' : null),
-  setStorage: vi.fn()
+  setStorage: vi.fn(),
+  removeStorage: vi.fn()
 }))
 
 import { chatApi } from '@/api/chat'
-import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 
 function streamResponse(lines: string[]) {
   const encoder = new TextEncoder()
@@ -79,6 +80,14 @@ describe('chat store', () => {
     expect(store.selectedModel).toBe('deepseek-chat')
   })
 
+  it('does not inject the retired doubao 2.0 model when storage is empty', () => {
+    vi.mocked(getStorage).mockReturnValue(null)
+
+    const store = useChatStore()
+
+    expect(store.selectedModel).toBeNull()
+  })
+
   it('persists selected model changes', () => {
     const store = useChatStore()
 
@@ -86,6 +95,14 @@ describe('chat store', () => {
 
     expect(store.selectedModel).toBe('kimi-k2')
     expect(setStorage).toHaveBeenCalledWith(STORAGE_KEYS.CHAT_SELECTED_MODEL, 'kimi-k2')
+  })
+
+  it('removes stale persisted model when selection is cleared', () => {
+    const store = useChatStore()
+    store.setSelectedModel('')
+
+    expect(store.selectedModel).toBeNull()
+    expect(removeStorage).toHaveBeenCalledWith(STORAGE_KEYS.CHAT_SELECTED_MODEL)
   })
 
   it('initializes selected target from local storage', () => {

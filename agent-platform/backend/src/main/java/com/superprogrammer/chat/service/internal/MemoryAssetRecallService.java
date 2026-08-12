@@ -10,7 +10,6 @@ import com.superprogrammer.chat.mapper.MemoryAssetChunkMapper;
 import com.superprogrammer.chat.mapper.MemoryAssetMemoryMapper;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.mapper.StoredFileMapper;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
 import lombok.RequiredArgsConstructor;
@@ -165,7 +164,7 @@ public class MemoryAssetRecallService {
         float[] vector;
         try {
             String q = query.length() > QUERY_CAP ? query.substring(0, QUERY_CAP) : query;
-            vector = llmGateway.embed(q, RagConfig.MEMORY_EMBED_MODEL, userId);
+            vector = llmGateway.embed(q, null, userId);
         } catch (Exception e) {
             log.warn("文件深读 query embed 失败 userId={}: {} → 降级不深读", userId, e.getMessage());
             return List.of();

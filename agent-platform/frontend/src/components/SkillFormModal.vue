@@ -115,7 +115,7 @@
             </n-form-item>
             <div class="skill-form__grid">
               <n-form-item label="模型（可选）">
-                <n-input v-model:value="step.configForm.model" placeholder="doubao-seed-2.0-code" />
+                <n-input v-model:value="step.configForm.model" placeholder="留空使用管理员默认对话模型" />
               </n-form-item>
               <n-form-item label="输出变量名（可选）">
                 <n-input v-model:value="step.configForm.outputKey" placeholder="summary" />

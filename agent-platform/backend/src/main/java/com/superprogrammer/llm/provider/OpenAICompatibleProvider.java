@@ -90,7 +90,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(RESPONSE_TIMEOUT);
+                    .block(resolveTimeout(request));
             return parseResponse(responseJson, System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("LLM调用失败 [provider={}]", name, e);
@@ -150,8 +150,19 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     @Override
     public boolean supports(String model) {
         if (model == null) return false;
-        if (supportedModels.isEmpty()) return true; // no model list = accept all (fallback)
         return supportedModels.contains(model);
+    }
+
+    @Override
+    public List<String> getSupportedModels() {
+        return List.copyOf(supportedModels);
+    }
+
+    private Duration resolveTimeout(LlmRequest request) {
+        if (request == null || request.getTimeoutMs() == null || request.getTimeoutMs() <= 0) {
+            return RESPONSE_TIMEOUT;
+        }
+        return Duration.ofMillis(request.getTimeoutMs());
     }
 
     @Override

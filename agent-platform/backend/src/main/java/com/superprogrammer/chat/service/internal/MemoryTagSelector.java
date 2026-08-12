@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.JiebaTokenizer;
@@ -13,6 +12,7 @@ import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -67,6 +67,9 @@ public class MemoryTagSelector {
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** 记忆精筛是可降级前置步骤，使用独立短超时。 */
+    @Value("${memory.recall.llm-timeout-ms:8000}")
+    private int llmTimeoutMs = 8000;
 
     /**
      * 选与 query 相关的标签子集。
@@ -89,8 +92,8 @@ public class MemoryTagSelector {
         List<RecallTagMeta> selected = llmSelect(query, candidates, userId, judgeModel);
         if (selected == null) {
             // LLM 全失败 → 降级用 candidates 全集（未精筛，不丢召回）
-            log.warn("选标签 LLM {} 次均失败 userId={} query.len={} → 降级用 {} 候选全集",
-                    LLM_MAX_ATTEMPTS, userId, query == null ? 0 : query.length(), candidates.size());
+            log.warn("选标签 LLM 调用异常或解析重试失败 userId={} query.len={} → 降级用 {} 候选全集",
+                    userId, query == null ? 0 : query.length(), candidates.size());
             return candidates;
         }
         return selected;
@@ -110,7 +113,7 @@ public class MemoryTagSelector {
 
         // 路 A：halfvec 近邻（embed 失败 → 空表，单路继续）
         try {
-            float[] vec = llmGateway.embed(query, RagConfig.MEMORY_EMBED_MODEL, userId);
+            float[] vec = llmGateway.embed(query, null, userId);
             String hv = HalfVecUtil.toHalfVec(vec);
             halfvecRank = tagMapper.rankByAnchorHalfvec(tagIds, hv, RRF_K);
         } catch (Exception e) {
@@ -158,6 +161,7 @@ public class MemoryTagSelector {
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);
                 if (ids != null) {
@@ -166,7 +170,8 @@ public class MemoryTagSelector {
                 }
                 log.warn("选标签 LLM 解析失败(第{}/{}) userId={} → 重试", attempt, LLM_MAX_ATTEMPTS, userId);
             } catch (Exception e) {
-                log.warn("选标签 LLM 异常(第{}/{}) userId={}: {}", attempt, LLM_MAX_ATTEMPTS, userId, e.getMessage());
+                log.warn("选标签 LLM 异常 userId={} → 立即降级，不重试: {}", userId, e.getMessage());
+                return null;
             }
         }
         return null;
