@@ -52,6 +52,8 @@ public class AuthService {
     private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
     /** 安全体系 S2 · A8（SEC-FR-008）：单点登录会话（sid 签发/比对/登出清除）。 */
     private final SessionService sessionService;
+    /** 认证系统增强 Chunk A/B：多凭证账号模型（注册时建 PASSWORD/EMAIL 凭证）。 */
+    private final CredentialService credentialService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -112,6 +114,28 @@ public class AuthService {
         if (defaultRole != null) {
             UserRole userRole = new UserRole(user.getId(), defaultRole.getId());
             userRoleMapper.insert(userRole);
+        }
+
+        // 认证系统增强 Chunk A/B：建多凭证（PASSWORD verified=TRUE，EMAIL verified=FALSE）。
+        // 注意：发验证邮件不放本事务（阿里云调用可能慢，拉长事务），由 Controller 层 register 成功后调用。
+        try {
+            credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_PASSWORD,
+                    user.getUsername(), user.getPassword(), true);
+        } catch (BusinessException e) {
+            // 并发注册同一用户名：DB 唯一约束兜底（users.uk_users_username），这里转 CONFLICT
+            log.warn("建 PASSWORD 凭证冲突 userId={} username={} : {}", user.getId(), user.getUsername(), e.toString());
+            throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
+        }
+
+        if (request.getEmail() != null && !request.getEmail().isBlank()) {
+            try {
+                credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
+                        request.getEmail(), null, false);
+            } catch (BusinessException e) {
+                // 邮箱已被他人使用（并发注册同邮箱）：users.uk_users_email 已兜底，这里不应触发；防御性转 CONFLICT
+                log.warn("建 EMAIL 凭证冲突 userId={} email={} : {}", user.getId(), request.getEmail(), e.toString());
+                throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被使用");
+            }
         }
 
         log.info("用户注册成功: {}", user.getUsername());
@@ -466,6 +490,12 @@ public class AuthService {
             auditAuth("refresh", null, "-", AuditLogEntity.RESULT_FAIL, "user_not_found");
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
+        // 11x 加固 P1-C3：refresh 兜底查 DB status——单点登录关/Redis 故障时封号用户不得换发新 access。
+        // 固定 SESSION_KICKED 话术（不透传「被封」防探测）。
+        if (!"ACTIVE".equals(user.getStatus())) {
+            auditAuth("refresh", userId, user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_active");
+            throw new BusinessException(ErrorCode.SESSION_KICKED);
+        }
 
         List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
         long accessExpirationMs = systemSettingService.getAccessTokenExpirationMs();
@@ -539,6 +569,8 @@ public class AuthService {
                 .email(user.getEmail())
                 .avatar(user.getAvatar())
                 .status(user.getStatus())
+                .banReason(user.getBanReason())
+                .lockedUntil(user.getLockedUntil())
                 .lastLoginAt(user.getLastLoginAt())
                 .createdAt(user.getCreatedAt())
                 .roles(roleCodes)

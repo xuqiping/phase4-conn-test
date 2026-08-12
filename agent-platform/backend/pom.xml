@@ -223,6 +223,19 @@
             <classifier>windows-x86_64</classifier>
         </dependency>
 
+        <!-- 阿里云邮件推送（认证系统增强 Chunk B 邮箱验证码/找回密码，EmailService 用）。
+             旧版 SDK（dm v20151123）：aliyun-java-sdk-core + aliyun-java-sdk-dm。官方商用 -->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>aliyun-java-sdk-core</artifactId>
+            <version>4.7.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>aliyun-java-sdk-dm</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -248,6 +261,12 @@
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
+        </dependency>
+        <!-- 阿里云邮件推送（DirectMail）：认证系统增强 通道A邮箱验证/通道D找回密码 -->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>dm20151123</artifactId>
+            <version>1.12.1</version>
         </dependency>
     </dependencies>
 

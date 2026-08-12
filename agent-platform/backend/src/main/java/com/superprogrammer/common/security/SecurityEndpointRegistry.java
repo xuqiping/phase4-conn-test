@@ -34,6 +34,9 @@ public final class SecurityEndpointRegistry {
             "/api/auth/register",
             "/api/auth/refresh",
             "/api/auth/login/dingtalk",
+            // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
+            "/api/auth/verify/email",
+            "/api/auth/resend/email",
             // sidecar 回调：独立 RuntimeCallbackSecurityFilter 持 token 校验（fail-closed）
             "/api/runtime/callbacks/**",
             // Ark 参考视频回拉：控制器内 HMAC + expires fail-closed。

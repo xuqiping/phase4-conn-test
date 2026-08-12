@@ -71,6 +71,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/register").permitAll()
                         .requestMatchers("/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/login/dingtalk").permitAll()
+                        // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
+                        .requestMatchers("/api/auth/verify/email").permitAll()
+                        .requestMatchers("/api/auth/resend/email").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()

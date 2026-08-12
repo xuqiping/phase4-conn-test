@@ -111,6 +111,15 @@ public class CredentialService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 内部反查：列出该用户所有凭证的明文实体（不脱敏）。
+     * 供 EmailService.verifyEmail 激活时用（激活需明文邮箱做 markVerifiedByIdentifier 匹配）。
+     * <b>仅限内部调用</b>，不得暴露给前端/Controller。
+     */
+    public List<UserCredential> findByUserIdRaw(Long userId) {
+        return credentialMapper.findByUserId(userId);
+    }
+
     /** 该用户当前可用的凭证数量（解绑时校验"至少留一种"用）。 */
     public long countAvailable(Long userId) {
         return credentialMapper.findByUserId(userId).size();

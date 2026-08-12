@@ -68,6 +68,9 @@ class AuthServiceTest {
     private SessionService sessionService;
 
     @Mock
+    private CredentialService credentialService;
+
+    @Mock
     private ValueOperations<String, String> valueOperations;
 
     @InjectMocks

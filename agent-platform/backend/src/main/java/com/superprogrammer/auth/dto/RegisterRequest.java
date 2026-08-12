@@ -1,6 +1,7 @@
 // agent-platform/backend/src/main/java/com/superprogrammer/auth/dto/RegisterRequest.java
 package com.superprogrammer.auth.dto;
 
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -19,4 +20,8 @@ public class RegisterRequest {
 
     @Email(message = "邮箱格式不正确")
     private String email;
+
+    /** 协议勾选（合规要求：注册前必须同意《用户协议》《隐私政策》）。 */
+    @AssertTrue(message = "请先阅读并同意《用户协议》和《隐私政策》")
+    private Boolean agreeTerms;
 }
