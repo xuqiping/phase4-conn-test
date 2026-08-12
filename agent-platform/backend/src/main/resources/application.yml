@@ -235,6 +235,7 @@ app:
       app-id: ${APP_WECHAT_APP_ID:}
       app-secret: ${APP_WECHAT_APP_SECRET:}
       redirect-uri: ${APP_WECHAT_REDIRECT_URI:}
+      frontend-base: ${APP_WECHAT_FRONTEND_BASE:http://localhost:5173}
     password-reset:
       token-ttl-minutes: 30
       limit-per-account-per-hour: 3

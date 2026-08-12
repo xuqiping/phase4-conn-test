@@ -34,6 +34,9 @@ public class SecurityConfig {
     private final com.superprogrammer.common.logging.MdcUserFilter mdcUserFilter;
     /** 日志系统 LOG-FR-06：每请求一行耗时摘要，排 MdcUserFilter 之后（MDC 字段已就位）。 */
     private final com.superprogrammer.common.logging.RequestLogFilter requestLogFilter;
+    /** 11x 加固 P2-C5：安全门（IP黑名单→全局限流→注入特征），排 MDC 之后（日志含 traceId）。
+     *  ObjectProvider：@WebMvcTest 切片不加载该 @Component 时优雅跳过。 */
+    private final org.springframework.beans.factory.ObjectProvider<com.superprogrammer.common.security.SecurityGateFilter> securityGateFilterProvider;
     private final ObjectMapper objectMapper;
 
     /** Sidecar 回调共享密钥（安全审计 #1）。env RUNTIME_CALLBACK_TOKEN。空 → fail-closed。 */
@@ -79,6 +82,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login/sms").permitAll()
                         .requestMatchers("/api/auth/captcha").permitAll()
                         .requestMatchers("/api/auth/captcha/verify").permitAll()
+                        // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
+                        .requestMatchers("/api/auth/login/wechat/redirect").permitAll()
+                        .requestMatchers("/api/auth/login/wechat/callback").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()
@@ -117,6 +123,13 @@ public class SecurityConfig {
                 .addFilterAfter(billingContextFilter, JwtAuthenticationFilter.class)
                 // 安全审计 #1：sidecar 回调端点共享密钥校验（permitAll 路径上的独立咽喉点）
                 .addFilterBefore(new RuntimeCallbackSecurityFilter(runtimeCallbackToken), JwtAuthenticationFilter.class);
+
+        // 11x 加固 P2-C5：安全门排 MDC 之后（事件日志含 traceId/userId）；切片缺 bean 时跳过
+        com.superprogrammer.common.security.SecurityGateFilter securityGateFilter =
+                securityGateFilterProvider.getIfAvailable();
+        if (securityGateFilter != null) {
+            http.addFilterAfter(securityGateFilter, com.superprogrammer.common.logging.MdcUserFilter.class);
+        }
 
         return http.build();
     }
