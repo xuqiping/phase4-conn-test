@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryProjectRuleMapper">
+
+    <resultMap id="MemoryProjectRuleMap" type="com.superprogrammer.chat.entity.MemoryProjectRule" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="positiveExamples" column="positive_examples" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+        <result property="negativeExamples" column="negative_examples" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+        <result property="filenamePatterns" column="filename_patterns" typeHandler="com.superprogrammer.common.typehandler.StringArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 新建规则（anchor 两列走自定义 SQL；实体不映射 halfvec/tsv 生成列）。
+         ⚠️ 软删部分唯一索引 uk_memory_project_rules_project 兜底并发——并发插入撞索引由 service 捕获改走更新。 -->
+    <insert id="insertWithAnchor" useGeneratedKeys="true" keyProperty="m.id">
+        INSERT INTO memory_project_rules
+            (project_id, rule_text, positive_examples, negative_examples, filename_patterns, enabled,
+             anchor_embedding, anchor_tokens,
+             deleted, created_by, created_at, updated_by, updated_at)
+        VALUES
+            (#{m.projectId}, #{m.ruleText},
+             COALESCE(#{m.positiveExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             COALESCE(#{m.negativeExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             COALESCE(#{m.filenamePatterns,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+             COALESCE(#{m.enabled}, true),
+             #{anchorHalfvec}::halfvec, #{m.anchorTokens},
+             0, #{m.createdBy}, now(), #{m.updatedBy}, now())
+    </insert>
+
+    <!-- 更新规则 + anchor 重生。anchorHalfvec null = embed 失败 → anchor 保留旧值、enabled 由 m.enabled 显式带（service 强制 false）。 -->
+    <update id="updateWithAnchor">
+        UPDATE memory_project_rules
+        SET rule_text         = #{m.ruleText},
+            positive_examples = COALESCE(#{m.positiveExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+            negative_examples = COALESCE(#{m.negativeExamples,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+            filename_patterns = COALESCE(#{m.filenamePatterns,typeHandler=com.superprogrammer.common.typehandler.StringArrayTypeHandler}, ARRAY[]::text[]),
+            enabled           = COALESCE(#{m.enabled}, false),
+            anchor_embedding  = COALESCE(#{anchorHalfvec}::halfvec, anchor_embedding),
+            anchor_tokens     = COALESCE(#{m.anchorTokens}, anchor_tokens),
+            updated_by        = #{m.updatedBy},
+            updated_at        = now()
+        WHERE id = #{m.id} AND deleted = 0
+    </update>
+
+    <!-- 路由候选：一批项目内 enabled=true 且 anchor 就绪的活规则（粗筛输入集）。 -->
+    <select id="findRoutingCandidates" resultMap="MemoryProjectRuleMap">
+        SELECT * FROM memory_project_rules
+        WHERE deleted = 0 AND enabled = true AND anchor_embedding IS NOT NULL
+          AND project_id IN
+          <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+    </select>
+
+    <!-- 粗筛路 A：anchor halfvec 距离升序（限定候选规则集内）。
+         ⚠️ halfvec 算子 &lt;=&gt; 须转义，裸 &lt; 致 Spring 启动 mapper 解析崩（V33 教训）。 -->
+    <select id="rankByAnchorHalfvec" resultType="long">
+        SELECT id FROM memory_project_rules
+        WHERE deleted = 0 AND anchor_embedding IS NOT NULL
+          AND id IN
+          <foreach collection="ruleIds" item="rid" open="(" separator="," close=")">
+              #{rid}
+          </foreach>
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 粗筛路 A 阈值版：anchor 距离 ≤ 阈值候选（FR-002 成本护栏：阈值外零 LLM）。
+         ⚠️ &lt;=&gt; 与 &lt;= 均须转义。 -->
+    <select id="findWithinAnchorThreshold" resultType="long">
+        SELECT id FROM memory_project_rules
+        WHERE deleted = 0 AND anchor_embedding IS NOT NULL
+          AND id IN
+          <foreach collection="ruleIds" item="rid" open="(" separator="," close=")">
+              #{rid}
+          </foreach>
+          AND (anchor_embedding &lt;=&gt; #{queryVec}::halfvec) &lt;= #{threshold}
+        ORDER BY anchor_embedding &lt;=&gt; #{queryVec}::halfvec
+        LIMIT #{limit}
+    </select>
+
+    <!-- 粗筛路 B：anchor BM25 tsv 相关度降序（限定候选规则集内）。
+         ⚠️ V77：to_tsquery OR 串（TsQueryUtil.toOrQuery）——plainto_tsquery 走 AND 多 token 永不命中（死路）。 -->
+    <select id="rankByAnchorTsv" resultType="long">
+        SELECT id FROM memory_project_rules
+        WHERE deleted = 0
+          AND id IN
+          <foreach collection="ruleIds" item="rid" open="(" separator="," close=")">
+              #{rid}
+          </foreach>
+          AND anchor_tokens_tsv @@ to_tsquery('simple', #{orQuery})
+        ORDER BY ts_rank(anchor_tokens_tsv, to_tsquery('simple', #{orQuery})) DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

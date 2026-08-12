@@ -14,7 +14,7 @@
         <n-select v-model:value="form.summaryStrategy" :options="strategyOptions" />
       </n-form-item>
       <n-form-item label="Embedding 模型" path="embeddingModel">
-        <n-input v-model:value="form.embeddingModel" placeholder="doubao-embedding-vision" />
+        <n-input v-model:value="form.embeddingModel" placeholder="留空使用管理员默认向量模型" />
       </n-form-item>
       <n-form-item label="Rerank 模型（可选）" path="rerankModel">
         <n-input v-model:value="form.rerankModel" placeholder="Phase2（如 bge-reranker-v2-m3）" />
@@ -62,14 +62,12 @@ const strategyOptions: SelectOption[] = [
   { label: '混合（HYBRID）', value: 'HYBRID' }
 ]
 
-const DEFAULT_EMBEDDING = 'doubao-embedding-vision'
-
 const form = ref<KnowledgeBaseRequest>({
   name: '',
   description: '',
   visibility: 'PRIVATE',
   summaryStrategy: 'PER_SECTION',
-  embeddingModel: DEFAULT_EMBEDDING,
+  embeddingModel: '',
   rerankModel: ''
 })
 
@@ -85,7 +83,7 @@ watch(visible, (val) => {
       description: props.editData.description || '',
       visibility: props.editData.visibility || 'PRIVATE',
       summaryStrategy: props.editData.summaryStrategy || 'PER_SECTION',
-      embeddingModel: props.editData.embeddingModel || DEFAULT_EMBEDDING,
+      embeddingModel: props.editData.embeddingModel || '',
       rerankModel: props.editData.rerankModel || ''
     }
   } else {
@@ -94,7 +92,7 @@ watch(visible, (val) => {
       description: '',
       visibility: 'PRIVATE',
       summaryStrategy: 'PER_SECTION',
-      embeddingModel: DEFAULT_EMBEDDING,
+      embeddingModel: '',
       rerankModel: ''
     }
   }

@@ -16,6 +16,8 @@ import java.util.List;
 public class MemorySummaryVO {
     private Long id;
     private Long projectId;
+    /** 第二轮 #3：所属项目名（projectId 非空时回填，前端卡片直显归属项目）。 */
+    private String projectName;
     private Long tagId;
     private String subject;
     private String topic;
@@ -24,6 +26,10 @@ public class MemorySummaryVO {
     private String l2Detail;
     private Long sourceSummaryId;
     private List<Long> sourceTurnIds;
+    /** V70 二期 P4：USER=个人总结 / PROJECT=项目共享总结（全员可读）。 */
+    private String scopeOwner;
+    /** 二期 P3c（V80）：方向 INPUT=输入 / OUTPUT=输出 / BOTH=综合。 */
+    private String direction;
     /** CLEAN / PENDING_CONFLICT / STALE */
     private String status;
     private OffsetDateTime summarizedAt;

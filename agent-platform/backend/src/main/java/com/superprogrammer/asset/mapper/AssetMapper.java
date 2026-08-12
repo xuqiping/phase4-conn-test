@@ -2,6 +2,7 @@ package com.superprogrammer.asset.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.superprogrammer.asset.dto.MatrixCountVO;
+import com.superprogrammer.asset.dto.ProjectAssetCountVO;
 import com.superprogrammer.asset.entity.Asset;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -18,6 +19,44 @@ import java.util.List;
  */
 @Mapper
 public interface AssetMapper extends BaseMapper<Asset> {
+
+    /**
+     * 文件共享读取裁决：只要 fileId 被请求者可读的存量资产项目引用，即允许文件咽喉点读取。
+     * 可读来源仅限 owner、项目成员、OPEN 公众池或仍为 APPROVED 的公众池申请。
+     */
+    @Select("""
+            SELECT COUNT(*)
+            FROM asset_versions av
+            JOIN assets a ON a.id = av.asset_id AND a.deleted = 0
+            JOIN asset_projects p ON p.id = a.project_id AND p.deleted = 0
+            WHERE av.file_id = #{fileId}
+              AND (
+                    p.owner_id = #{userId}
+                 OR EXISTS (
+                        SELECT 1 FROM asset_project_members m
+                        WHERE m.project_id = p.id AND m.user_id = #{userId} AND m.deleted = 0
+                    )
+                 OR (
+                        p.public_pool = TRUE
+                    AND (
+                           p.public_access_mode = 'OPEN'
+                        OR EXISTS (
+                               SELECT 1 FROM asset_public_access_requests r
+                               WHERE r.project_id = p.id
+                                 AND r.applicant_id = #{userId}
+                                 AND r.status = 'APPROVED'
+                                 AND r.deleted = 0
+                           )
+                    )
+                 )
+              )
+            """)
+    long countAccessibleFileReferences(@Param("fileId") String fileId,
+                                       @Param("userId") Long userId);
+
+    /** 复制当前版本时锁住源资产行，防止并发建版改变 current_version。 */
+    @Select("SELECT id FROM assets WHERE id = #{assetId} AND deleted = 0 FOR UPDATE")
+    Long lockByIdForUpdate(@Param("assetId") Long assetId);
 
     /**
      * 矩阵每格计数：按 (media_type, role_key) 聚合（单条 SQL，防 N+1）。
@@ -42,6 +81,15 @@ public interface AssetMapper extends BaseMapper<Asset> {
      */
     @Select("SELECT COUNT(*) FROM assets WHERE project_id = #{projectId} AND media_type = #{mediaType} AND deleted = 0")
     long countByMediaType(@Param("projectId") Long projectId, @Param("mediaType") String mediaType);
+
+    /** 公众池项目资产数一次 GROUP BY 批查，避免项目列表 N+1。 */
+    @Select({"<script>",
+            "SELECT project_id AS projectId, COUNT(*) AS assetCount FROM assets ",
+            "WHERE deleted = 0 AND project_id IN ",
+            "<foreach collection='projectIds' item='id' open='(' separator=',' close=')'>#{id}</foreach> ",
+            "GROUP BY project_id",
+            "</script>"})
+    List<ProjectAssetCountVO> countByProjectIds(@Param("projectIds") List<Long> projectIds);
 
     /**
      * 乐观锁并发建版（plan §S5 坑点预判：两人同时提交版本号撞车）。

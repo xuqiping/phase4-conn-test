@@ -9,6 +9,7 @@ import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgePermission;
 import com.superprogrammer.knowledge.mapper.KnowledgeBaseMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgePermissionMapper;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,8 +26,6 @@ public class KnowledgeBaseService {
 
     /** Phase1 单租户 */
     private static final Long TENANT_ID = 1L;
-    private static final String DEFAULT_EMBEDDING_MODEL = "doubao-embedding-vision";
-
     /** L0 摘要生成模式（v6 §3.1，阶段2 解析）。非法/空 → PER_SECTION。 */
     private static final String DEFAULT_SUMMARY_STRATEGY = "PER_SECTION";
     private static final Set<String> SUMMARY_STRATEGIES = Set.of("PER_SECTION", "BATCH", "HYBRID");
@@ -52,6 +51,7 @@ public class KnowledgeBaseService {
      * 无循环依赖（VisibilitySetService 仅依赖 mapper，不回调本 service）。
      */
     private final VisibilitySetService visibilitySetService;
+    private final SystemSettingService systemSettingService;
 
     public List<KnowledgeBaseVO> list(Long userId, boolean admin) {
         LambdaQueryWrapper<KnowledgeBase> wrapper = new LambdaQueryWrapper<>();
@@ -89,8 +89,15 @@ public class KnowledgeBaseService {
         kb.setDescription(request.getDescription());
         kb.setVisibility(request.getVisibility() == null || request.getVisibility().isBlank()
                 ? "PRIVATE" : request.getVisibility());
-        kb.setEmbeddingModel(request.getEmbeddingModel() == null || request.getEmbeddingModel().isBlank()
-                ? DEFAULT_EMBEDDING_MODEL : request.getEmbeddingModel());
+        String embeddingModel = request.getEmbeddingModel();
+        if (embeddingModel == null || embeddingModel.isBlank()) {
+            embeddingModel = systemSettingService.getDefaultEmbeddingModel();
+        }
+        if (embeddingModel == null || embeddingModel.isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "未选择向量模型，且管理员未配置默认向量模型");
+        }
+        kb.setEmbeddingModel(embeddingModel.trim());
         kb.setRerankModel(request.getRerankModel());
         kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
         kb.setStatus("ACTIVE");

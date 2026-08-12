@@ -9,13 +9,45 @@ import org.springframework.stereotype.Component;
  *
  * <p>用法：{@code media.gen-enabled}(默认 true) 总开关；{@code media.max-duration}(默认 15 秒，官方区间 4–15)、
  * {@code media.max-res}(默认 4K) 控盘与成本上限（capability 为逐模型真闸门，此为第二道全局兜底）；
- * {@code media.poll-ms}(默认 5000) worker 轮询间隔；
- * {@code media.lock-minutes}(默认 5) 认领锁时长；{@code media.task-timeout-seconds}(默认 600) 单任务最长等待。
+ * {@code media.poll-ms}(默认 5000) worker 轮询间隔；{@code media.lock-minutes}(默认 5) 认领锁时长。
+ * 业务任务不设总超时；单次 HTTP 连接/响应超时由 Provider 客户端负责。
  */
 @Data
 @Component
 @ConfigurationProperties(prefix = "media")
 public class MediaGenProperties {
+
+    /** Ark 拉取参考视频所需的短期签名公网地址配置。 */
+    private Reference reference = new Reference();
+
+    @Data
+    public static class Reference {
+        /** Ark 可访问的 HTTPS 应用根地址，例如 https://media.example.com。 */
+        private String publicBaseUrl = "";
+        /** HMAC-SHA256 签名密钥，只能由环境变量注入。 */
+        private String signingKey = "";
+        /** 单个参考视频 URL 的有效期，默认 15 分钟。 */
+        private long ttlSeconds = 900;
+    }
+
+    public boolean isReferenceVideoConfigured() {
+        String baseUrl = reference == null ? null : reference.getPublicBaseUrl();
+        String signingKey = reference == null ? null : reference.getSigningKey();
+        if (baseUrl == null || signingKey == null || signingKey.length() < 32
+                || reference.getTtlSeconds() <= 0) {
+            return false;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(baseUrl.strip());
+            String host = uri.getHost();
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && host != null && !host.isBlank()
+                    && !"localhost".equalsIgnoreCase(host)
+                    && !host.startsWith("127.") && !"::1".equals(host);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
 
     /** 总开关。false 时 submit 直接拒绝（功能降级）。 */
     private boolean genEnabled = true;
@@ -43,9 +75,6 @@ public class MediaGenProperties {
 
     /** 认领锁时长（分钟），过期后 RUNNING 行可被重新认领（崩溃恢复）。 */
     private int lockMinutes = 5;
-
-    /** 单任务最长等待（秒），超时置 FAILED。 */
-    private long taskTimeoutSeconds = 600;
 
     /** 退避轮询起始间隔（ms）。 */
     private long backoffStartMs = 5000;

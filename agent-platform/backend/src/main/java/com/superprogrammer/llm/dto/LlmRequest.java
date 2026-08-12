@@ -12,8 +12,8 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LlmRequest {
-    @Builder.Default
-    private String model = "doubao-seed-2.0-code";
+    /** 显式模型；为空时由 LlmGateway 使用管理员配置的默认对话模型。 */
+    private String model;
     private List<LlmMessage> messages;
     @Builder.Default
     private Double temperature = 0.7;
@@ -21,4 +21,6 @@ public class LlmRequest {
     private Integer maxTokens = 4096;
     @Builder.Default
     private Boolean stream = false;
+    /** 单次非流式请求的局部超时；null 表示使用 Provider 默认值。 */
+    private Integer timeoutMs;
 }

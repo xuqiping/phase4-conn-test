@@ -50,9 +50,9 @@ class ArkSeedanceProviderTest {
         Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
                 .model("m").prompt("以图1为产品参考").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
                 .attachments(List.of(
-                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,A").build(),
-                        MediaGenRequest.ResolvedAttachment.builder().kind("video").dataUri("data:video/mp4;base64,B").build(),
-                        MediaGenRequest.ResolvedAttachment.builder().kind("audio").dataUri("data:audio/mpeg;base64,C").build()))
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("data:image/png;base64,A").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("video").url("https://media.example.com/v.mp4?sig=secret").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("audio").url("data:audio/mpeg;base64,C").build()))
                 .generateAudio(true)
                 .build());
 
@@ -124,7 +124,7 @@ class ArkSeedanceProviderTest {
                 .model("m").prompt("p").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
                 .refImageUrl("data:image/png;base64,X")
                 .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
-                        .kind("image").dataUri("data:image/png;base64,Y").build()))
+                        .kind("image").url("data:image/png;base64,Y").build()))
                 .build());
         List<Map<String, Object>> content = contentOf(body);
         assertEquals(2, content.size());
@@ -137,9 +137,9 @@ class ArkSeedanceProviderTest {
         Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
                 .model("m").prompt("首尾帧+参考").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
                 .attachments(List.of(
-                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,F").frameRole("first_frame").build(),
-                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,L").frameRole("last_frame").build(),
-                        MediaGenRequest.ResolvedAttachment.builder().kind("image").dataUri("data:image/png;base64,R").build()))
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("data:image/png;base64,F").frameRole("first_frame").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("data:image/png;base64,L").frameRole("last_frame").build(),
+                        MediaGenRequest.ResolvedAttachment.builder().kind("image").url("data:image/png;base64,R").build()))
                 .build());
         List<Map<String, Object>> content = contentOf(body);
         // text + 3 images
@@ -155,7 +155,7 @@ class ArkSeedanceProviderTest {
         Map<String, Object> body = provider.buildCreateBody(MediaGenRequest.builder()
                 .model("m").prompt("p").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
                 .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
-                        .kind("video").dataUri("data:video/mp4;base64,V").frameRole("first_frame").build()))
+                        .kind("video").url("https://media.example.com/v.mp4").frameRole("first_frame").build()))
                 .build());
         Map<String, Object> vid = contentOf(body).get(1);
         assertEquals("reference_video", vid.get("role"), "video 附件的 frameRole 必须被忽略");
@@ -167,6 +167,43 @@ class ArkSeedanceProviderTest {
                 .model("m").prompt("p").taskType(MediaGenRequest.TYPE_TEXT2VIDEO).build());
         assertEquals("16:9", body.get("ratio"));
         assertEquals(false, body.get("watermark"));
+    }
+
+    @Test
+    void prepare_AC_V3_06_snapshotUsesExactBodyButRedactsDataUri() {
+        var prepared = provider.prepareCreateRequest(MediaGenRequest.builder()
+                .model("m").prompt("最终提示词").ratio("9:16").duration(12).resolution("1080p")
+                .taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
+                        .fileId("img-1").kind("image").url("data:image/png;base64,QQ==")
+                        .frameRole("first_frame").build()))
+                .build());
+
+        assertEquals(prepared.getBody().get("model"), prepared.getSnapshot().path("request").path("model").asText());
+        var redacted = prepared.getSnapshot().path("request").path("content").get(1).path("image_url");
+        assertTrue(redacted.path("redacted").asBoolean());
+        assertEquals("img-1", redacted.path("fileId").asText());
+        assertEquals("image/png", redacted.path("mime").asText());
+        assertEquals(1, redacted.path("bytes").asInt());
+        assertFalse(prepared.getSnapshot().toString().contains("data:"));
+    }
+
+    @Test
+    void prepare_snapshotRedactsSignedHttpsUrlAndQuery() {
+        var prepared = provider.prepareCreateRequest(MediaGenRequest.builder()
+                .model("m").prompt("p").taskType(MediaGenRequest.TYPE_IMAGE2VIDEO)
+                .attachments(List.of(MediaGenRequest.ResolvedAttachment.builder()
+                        .fileId("video-1.mp4").kind("video")
+                        .url("https://media.example.com/api/media/reference/video-1.mp4?expires=9&sig=top-secret")
+                        .build()))
+                .build());
+
+        var redacted = prepared.getSnapshot().path("request").path("content").get(1).path("video_url");
+        assertTrue(redacted.path("redacted").asBoolean());
+        assertEquals("https_url", redacted.path("transport").asText());
+        assertEquals("video-1.mp4", redacted.path("fileId").asText());
+        assertFalse(prepared.getSnapshot().toString().contains("top-secret"));
+        assertFalse(prepared.getSnapshot().toString().contains("expires=9"));
     }
 
     // ---------- interpretProbe：MEDIA 连通探测状态码判定 ----------

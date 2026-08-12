@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.RecalledSummary;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -22,8 +22,9 @@ import java.util.stream.Collectors;
 /**
  * 计划12 · D-4 · 召回 ④⑤ 读总结 + reflect（总体设计 §3.3 ④⑤ + §6 向量 12/14）。
  * <p>
- * 读召回者本人的总结（{@code user_id=self} 恒只读自己，向量 14 不受 ACL；他人总结不召回防污染），
- * 按 {@code includeL2} 标记决定拼 L1 还是 L1+L2：
+ * 读召回者本人的总结 + 项目共享总结（二期 P4 · FR-305：{@code scope_owner='PROJECT'} 且
+ * {@code user_id IS NULL} 的项目资产总结全员可召回——召回 scope 已经 resolver 验过 ACTIVE 成员；
+ * 他人个人总结仍不召回防污染），按 {@code includeL2} 标记决定拼 L1 还是 L1+L2：
  * <ol>
  *   <li><b>0 条</b> → 返空（D-6 走 turns 兜底）。</li>
  *   <li><b>≤5 条</b> → 全 {@code includeL2=true}（跳 reflect 省一次 LLM）。</li>
@@ -55,6 +56,10 @@ public class MemorySummaryReader {
     private final MemorySummaryMapper summaryMapper;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** 记忆是对话前置增强，超时必须快速降级，不能占满主对话的时间预算。 */
+    @Value("${memory.recall.llm-timeout-ms:8000}")
+    private int llmTimeoutMs = 8000;
 
     /**
      * 读召回者本人总结 + reflect 判深读。
@@ -63,9 +68,10 @@ public class MemorySummaryReader {
      * @param tagIds D-3 选中标签 id 集 T
      * @param scope  召回 scope（个人/项目 + timeWindow）
      * @param userId 召回者
+     * @param model  LLM model（跟随对话所选，null 回退 system_settings.memory.judge.model）
      * @return 带 includeL2 标记的总结清单；空 = 无总结走 turns
      */
-    public List<RecalledSummary> read(String query, List<Long> tagIds, RecallScope scope, Long userId) {
+    public List<RecalledSummary> read(String query, List<Long> tagIds, RecallScope scope, Long userId, String model) {
         if (tagIds == null || tagIds.isEmpty()) {
             return List.of();
         }
@@ -83,23 +89,25 @@ public class MemorySummaryReader {
         }
 
         // >5 → reflect 选深读子集
-        Set<Long> deepIds = reflectDeepReadIds(query, summaries, userId);
+        String judgeModel = (model != null && !model.isBlank()) ? model : systemSettingService.getMemoryJudgeModel();
+        Set<Long> deepIds = reflectDeepReadIds(query, summaries, userId, judgeModel);
         return summaries.stream()
                 .map(s -> new RecalledSummary(s, deepIds.contains(s.getId())))
                 .toList();
     }
 
     /** reflect 批量 LLM 选需深读 L2 的 summary id 集；失败 → 空集（全只读 L1 降级）。 */
-    private Set<Long> reflectDeepReadIds(String query, List<MemorySummary> summaries, Long userId) {
+    private Set<Long> reflectDeepReadIds(String query, List<MemorySummary> summaries, Long userId, String judgeModel) {
         String prompt = buildReflectPrompt(query, summaries);
         Set<Long> validIds = summaries.stream().map(MemorySummary::getId).collect(Collectors.toSet());
         for (int attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(judgeModel)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);
                 if (ids != null) {
@@ -108,7 +116,8 @@ public class MemorySummaryReader {
                 }
                 log.warn("reflect 解析失败(第{}/{}) userId={} → 重试", attempt, LLM_MAX_ATTEMPTS, userId);
             } catch (Exception e) {
-                log.warn("reflect LLM 异常(第{}/{}) userId={}: {}", attempt, LLM_MAX_ATTEMPTS, userId, e.getMessage());
+                log.warn("reflect LLM 异常 userId={} → 立即降级，不重试: {}", userId, e.getMessage());
+                return Set.of();
             }
         }
         log.warn("reflect {} 次均失败 userId={} summaryCount={} → 全只读 L1 降级",

@@ -12,18 +12,24 @@
  * - MemoryTagController           标签库
  * - MemoryRecallController        召回（preview / scope GET·PUT）
  * - MemoryConsolidationController 总结触发 / 自动勾选 / 冲突裁决
- * - MemoryRosterController        花名册 + ACL 配置（/projects/{pid}）
- * - MemoryLifecycleController     生命周期折叠板（departed/deleted list + copy-to/restore）
+ * - MemoryRosterController        花名册（/projects/{pid}）
+ * - MemoryProjectRuleController   二期 P1 收录规则（/projects/{pid}/rule，FR-001）
+ * - MemoryEntryController         二期 P1 条目审核（/projects/{pid}/entries + /entries/{id}，FR-005）
+ * - MemoryProjectLinkController   二期 P2 项目授权（/projects/{pid}/links + /links/{id}，FR-101/103）
+ *
+ * 二期 P1（FR-006，V67）：turns 纯个人域——一期「生命周期折叠板」（departed/deleted 拉取）随
+ * turns 四列下线，MemoryLifecycleController 已删；流水账 VO 去 projectIds/projectNames/bornPersonal；
+ * 召回结果去 departedAuthorNotes（项目 turns 召回消亡，条目合流取而代之）。
  */
 import request from './request'
 import type { ApiResponse } from './request'
 
 // ============================ 类型 ============================
 
-/** 波及通知（跨用户：他人撤回 turn 波及我的 summary / 项目删除影响）。 */
+/** 波及通知（跨用户：他人撤回 turn 波及我的 summary / 项目删除影响 / 二期 P2 授权申请与结果）。 */
 export interface MemoryNotificationVO {
   id: number
-  type: 'SUMMARY_AFFECTED_BY_RECALL' | 'PROJECT_DELETED_AFFECTED'
+  type: 'SUMMARY_AFFECTED_BY_RECALL' | 'PROJECT_DELETED_AFFECTED' | 'LINK_REQUEST' | 'LINK_RESULT'
   refId: number | null
   message: string | null
   createdAt: string
@@ -37,12 +43,16 @@ export interface MemoryGenMatrixItemVO {
   ownerEnabled: boolean
   memberEnabled: boolean
   effective: boolean
+  /** 第二轮 #5：是否已推入记忆公共池（授权面板 pool 开关初值）。 */
+  memoryPoolPublic?: boolean
 }
 
 /** 总结展示（只读自己，tag 信息回填，status 状态徽标）。 */
 export interface MemorySummaryVO {
   id: number
   projectId: number | null
+  /** 第二轮 #3：所属项目名（projectId 非空时回填，卡片直显归属项目）。 */
+  projectName?: string | null
   tagId: number | null
   subject: string | null
   topic: string | null
@@ -51,13 +61,19 @@ export interface MemorySummaryVO {
   l2Detail: string | null
   sourceSummaryId: number | null
   sourceTurnIds: number[]
+  /** 二期 P4（FR-301）：PROJECT=项目共享总结（项目资产全员可读）；USER/缺省=个人总结。 */
+  scopeOwner?: 'USER' | 'PROJECT'
+  /** 二期 P3c：方向 INPUT=输入 / OUTPUT=输出 / BOTH=综合（缺省）。 */
+  direction?: 'INPUT' | 'OUTPUT' | 'BOTH'
+  /** 二期 P4：条目级总结的 provenance（项目条目 id 集；turn 级总结为空）。 */
+  sourceEntryIds?: number[]
   status: 'CLEAN' | 'PENDING_CONFLICT' | 'STALE'
   summarizedAt: string | null
   createdAt: string | null
   updatedAt: string | null
 }
 
-/** 流水账展示（本人全量，tag label + 项目名回填）。 */
+/** 流水账展示（本人全量，tag label 回填；二期 P1 纯个人域，无项目挂载/出身标记）。 */
 export interface MemoryTurnVO {
   id: number
   sessionId: number | null
@@ -68,30 +84,29 @@ export interface MemoryTurnVO {
   l2Detail: string | null
   rawContent: string | null
   genDone: boolean
-  projectIds: number[]
-  projectNames: (string | null)[]
-  bornPersonal: boolean
   createdAt: string
+  /** 二期 P2：该流水账被收录到的项目（个人域 turn → memory_project_entries 反查，去重）。 */
+  indexedProjects?: { projectId: number; name: string }[]
 }
 
-/** raw 流水账（gen_done=false，在线查看无导出）。 */
+/** raw 流水账（gen_done=false，在线查看无导出；二期 P1 纯个人域）。 */
 export interface MemoryRawView {
   id: number
   sessionId: number | null
   direction: 'INPUT' | 'OUTPUT'
   rawContent: string | null
-  bornPersonal: boolean
-  projectIds: number[]
   createdAt: string
 }
 
-/** 标签库行（对外只露 label/subject/topic/usageCount，不露 aliases/anchor）。 */
+/** 标签库行（对外只露 label/subject/topic/usageCount/needsReview，不露 aliases/anchor）。 */
 export interface MemoryTagVO {
   id: number
   subject: string
   topic: string
   label: string
   usageCount: number
+  /** V77：大类词表外内容标记待裁决。 */
+  needsReview: boolean
 }
 
 /** 召回 scope 视图（底栏 + 召回预览用）。 */
@@ -103,7 +118,7 @@ export interface MemoryRecallScopeView {
   start: string | null
   end: string | null
   includeDeparted: boolean
-  availableProjects: { projectId: number; name: string }[]
+  availableProjects: { projectId: number; name: string; viaGrant?: boolean }[]
 }
 
 export interface MemoryRecallScopeRequest {
@@ -123,7 +138,6 @@ export interface MemoryRecallResult {
   degraded: boolean
   notes: string[]
   traceId: string | null
-  departedAuthorNotes: string[]
 }
 
 /** 总结入口弹框每行（{个人} ∪ 已加入项目，标未覆盖数 + 自动勾选）。 */
@@ -134,12 +148,19 @@ export interface MemoryConsolidationTargetView {
   hasChange: boolean
   uncoveredCount: number
   autoEnabled: boolean
+  /** 二期 P4（FR-302）：true=我是该项目 owner/admin，可写项目共享总结；false=仅可压到自己的总结。 */
+  canWriteShared?: boolean
+  /** 二期人工测试 Req1：当前用户可否对该 scope 触发总结。PROJECT=是否创始人(OWNER)；非创始人仅查看+召回。 */
+  canSummarize?: boolean
 }
 
 export interface MemoryConsolidationScopeRequest {
   scopeKind: 'PERSONAL' | 'PROJECT'
   projectId?: number | null
   autoEnabled?: boolean
+  /** 二期 P4（FR-302）：true=项目条目压到「我自己的总结」（成员个人通道，仅自己可见）；
+   *  缺省/false=项目共享总结（owner/admin 才允许，后端判）。 */
+  toPersonal?: boolean
   /** I4-3 项目总结取数范围：SELF（仅自己，默认）/ SPECIFIC（authorIds）/ ALL（全部可召回人员）。 */
   authorFilter?: 'SELF' | 'SPECIFIC' | 'ALL'
   /** SPECIFIC 时的人员集；后端 ∩ readableAuthors 校验（向量 14 防越权读他人）。 */
@@ -148,6 +169,16 @@ export interface MemoryConsolidationScopeRequest {
   direction?: 'INPUT' | 'OUTPUT' | 'BOTH'
   /** L10「同步已离开人员」开关；false → 候选剔 DEPARTED（优先级高于人员多选）。 */
   includeDeparted?: boolean
+  /** 二期 P3b：只总结这些标签（null/空 = 全部）。PERSONAL 过滤本人标签；PROJECT 过滤条目 tag_ids。 */
+  tagIds?: number[]
+  /** 二期 P3b：取数时间窗下界（按 turn/entry 创建时间，ISO）。 */
+  start?: string
+  /** 二期 P3b：取数时间窗上界（ISO）。 */
+  end?: string
+  /** 二期 P3b：近 N 天（非空优先于 start/end）。 */
+  relativeDays?: number
+  /** 二期人工测试 Req2：true=「重新总结」模式，跳过「无变化/未覆盖」幂等闸强制重压；缺省=「立即总结」仅压新增。 */
+  force?: boolean
 }
 
 export interface MemorySummarizeResult {
@@ -168,6 +199,8 @@ export interface MemoryPendingConflictVO {
   status: string
   askText: string | null
   createdAt: string | null
+  /** 二期 P4（FR-303）：true=项目共享总结冲突（裁决权=项目 owner/admin，我因管理身份可见）。 */
+  projectShared?: boolean
 }
 
 /** 花名册行（含 DEPARTED 已离开，保交接）。 */
@@ -181,34 +214,150 @@ export interface MemoryRosterVO {
   departedAt: string | null
 }
 
-/** ACL 矩阵行（reader→target 授权，带 username 回显）。 */
-export interface MemoryRecallAclVO {
-  readerUserId: number
-  readerUsername: string
-  targetUserId: number
-  targetUsername: string
-  createdBy: number
-}
+// ============================ 二期 P1 · 收录规则 + 条目审核 ============================
 
-export interface MemoryRecallAclRequest {
-  readerUserId: number
-  targetUserIds: number[]
-}
-
-/** 生命周期折叠板行（已离开/已删除项目 + 本人可拉取流水账数，§3.7）。 */
-export interface MemoryLifecycleProjectVO {
+/**
+ * 项目收录规则视图（二期 P1 · FR-001）。
+ * negativeExamples 仅 owner/admin 可见（成员恒 null）；
+ * anchorReady=false = embed 失败规则未生效（enabled 强制 false）。
+ */
+export interface MemoryProjectRuleVO {
+  id: number | null
   projectId: number
-  projectName: string
-  /** 仅 departed 列表有值。 */
-  departedAt: string | null
-  turnCount: number
+  ruleText: string | null
+  positiveExamples: string[] | null
+  negativeExamples: string[] | null
+  filenamePatterns: string[] | null
+  enabled: boolean
+  anchorReady: boolean
+  updatedAt: string | null
 }
 
-/** copy-to / restore 结果（自建新项目 id/名 + 实际拉取条数）。 */
-export interface MemoryLifecycleActionVO {
-  newProjectId: number
-  newProjectName: string
-  affectedTurns: number
+/** 收录规则保存请求（ruleText ≤2000 字；正/负例各 ≤5 条、单条 ≤500 字；文件名规则 ≤10 条、单条 ≤100 字）。 */
+export interface MemoryProjectRuleRequest {
+  ruleText: string
+  positiveExamples?: string[]
+  negativeExamples?: string[]
+  filenamePatterns?: string[]
+  enabled: boolean
+}
+
+/**
+ * 项目记忆条目（二期 P1 · FR-005）。
+ * 「为何被收录」= ruleText + confidence；脱敏蒸馏产物，不含原文。
+ */
+export interface MemoryProjectEntryVO {
+  id: number
+  projectId: number
+  authorUserId: number
+  authorName: string | null
+  l1Summary: string | null
+  l2Detail: string | null
+  confidence: number | null
+  status: 'ACTIVE' | 'PENDING_REVIEW'
+  contentType: 'TEXT' | 'FILE'
+  ruleText: string | null
+  createdAt: string | null
+}
+
+// ============================ 二期 P2 · 项目授权 ============================
+
+/** 项目授权链（二期 P2 · FR-101；带双方项目名+发起/审批人名，列表直显）。 */
+export interface MemoryProjectLinkVO {
+  id: number
+  parentProjectId: number
+  parentProjectName: string | null
+  childProjectId: number
+  childProjectName: string | null
+  grantedBy: number
+  grantedByName: string | null
+  approvedBy: number | null
+  approvedByName: string | null
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED'
+  createdAt: string | null
+  approvedAt: string | null
+  /** 三期非对称撤销：非空=child owner 已申请撤销，待 parent 审批（status 仍 ACTIVE）。 */
+  revokeRequestedBy?: number | null
+  revokeRequestedByName?: string | null
+  revokeRequestedAt?: string | null
+}
+
+/** 项目↔个人授权视图（二期 P1 · 只读召回）。 */
+export interface MemoryProjectUserGrantVO {
+  id: number
+  projectId: number
+  projectName: string | null
+  userId: number
+  userName: string | null
+  initiatedBy: 'PROJECT' | 'USER'   // PROJECT=项目主动授权 / USER=个人申请
+  grantedBy: number | null
+  grantedByName: string | null
+  approvedBy: number | null
+  approvedByName: string | null
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED'
+  createdAt: string | null
+  approvedAt: string | null
+}
+
+// ============================ 二期 P3 · 文件记忆（FR-201~205）============================
+
+/** 聊天附件上传结果（FR-201；一文件一记忆，PROCESSING → worker 异步 READY/FAILED）。 */
+export interface MemoryAssetUploadVO {
+  memoryId: number
+  fileId: string
+  originalName: string
+  fileKind: string
+  size: number
+  ingestStatus: string
+}
+
+/** 文件记忆行（记忆面板「文件记忆」页签列表数据源，对应 memory_asset_memories）。 */
+export interface MemoryAssetMemoryVO {
+  id: number
+  fileId: string | null
+  fileKind: 'IMAGE' | 'DOC' | 'PPT' | 'PDF' | 'AUDIO' | 'VIDEO' | 'OTHER'
+  originalName: string | null
+  l1Summary: string | null
+  l2Detail: string | null
+  ingestStatus: 'PROCESSING' | 'READY' | 'FAILED'
+  ingestError: string | null
+  retryCount: number | null
+  weakMemory: boolean | null
+  createdAt: string | null
+}
+
+/** 文件分块视图（FR-203 文件卡片「展开分块」；pageRef 页码锚点，仅 owner 可读）。 */
+export interface FileChunkView {
+  chunkNo: number
+  pageRef: string | null
+  chunkText: string | null
+}
+
+/** 召回命中的文件卡片（FR-203；FILE_CARDS 流帧 / 助手消息 metadata.fileCards）。 */
+export interface RecalledFileCard {
+  memoryId: number | null  // null = 项目收录附件下载卡（跨用户，仅下载不展开分块）
+  fileId: string
+  originalName: string
+  fileKind: string
+  chunkCount: number
+  weakMemory: boolean
+  fileCleaned: boolean
+  downloadable: boolean
+  l1: string | null
+  l2: string | null
+}
+
+/** 文件类型中文标签（与后端 MemoryAssetMemory.kindLabel 同源）。 */
+export function fileKindLabel(fileKind: string | null | undefined): string {
+  switch (fileKind) {
+    case 'IMAGE': return '图片'
+    case 'PDF': return 'PDF 文档'
+    case 'PPT': return 'PPT 演示文稿'
+    case 'DOC': return '文档'
+    case 'AUDIO': return '音频'
+    case 'VIDEO': return '视频'
+    default: return '文件'
+  }
 }
 
 // ============================ 客户端 ============================
@@ -242,6 +391,10 @@ export const memoryApi = {
       params: projectId != null ? { projectId } : {}
     })
   },
+  /** 二期 P4（FR-301）：项目共享总结（scope_owner=PROJECT，成员咽喉在后端 service 层）。 */
+  listProjectSharedSummaries(projectId: number) {
+    return request.get<ApiResponse<MemorySummaryVO[]>>(`/chat/memory/summaries/project/${projectId}`)
+  },
 
   // ---- 流水账 ----
   listTurns() {
@@ -261,8 +414,12 @@ export const memoryApi = {
   listTags() {
     return request.get<ApiResponse<MemoryTagVO[]>>('/chat/memory/tags')
   },
-  editTag(id: number, data: { label?: string; addAliases?: string[] }) {
+  editTag(id: number, data: { label?: string; addAliases?: string[]; accept?: boolean }) {
     return request.put<ApiResponse<MemoryTagVO>>(`/chat/memory/tags/${id}`, data)
+  },
+  /** P3a：主动新建标签（选定大类 topic + 自填 label + 可选别名；needs_review=false）。 */
+  createTag(data: { subject?: string; topic: string; label: string; aliases?: string[] }) {
+    return request.post<ApiResponse<MemoryTagVO>>('/chat/memory/tags', data)
   },
 
   // ---- 召回 scope（底栏持久化 + 预览）----
@@ -281,7 +438,11 @@ export const memoryApi = {
     return request.get<ApiResponse<MemoryConsolidationTargetView[]>>('/chat/memory/consolidation/targets')
   },
   triggerConsolidation(scopes: MemoryConsolidationScopeRequest[]) {
-    return request.post<ApiResponse<MemorySummarizeResult>>('/chat/memory/consolidation/trigger', { scopes })
+    // 第二轮 #2：总结同步跑多 scope LLM 压缩，常 > 全局 15s timeout → 前端误报「服务暂不可达」但后端继续。
+    // 单独放宽至 3min，覆盖最慢路径；UX 由 Dialog 的 loading 提示承接。
+    return request.post<ApiResponse<MemorySummarizeResult>>('/chat/memory/consolidation/trigger', { scopes }, {
+      timeout: 180000
+    })
   },
   getAutoScopes() {
     return request.get<ApiResponse<MemoryScopeAutoView[]>>('/chat/memory/consolidation/auto')
@@ -301,34 +462,123 @@ export const memoryApi = {
     return request.post<ApiResponse<boolean>>(`/chat/memory/conflicts/${id}/resolve`, { decision })
   },
 
-  // ---- 花名册 + ACL 配置（I4）----
+  // ---- 花名册（I4；recall-acl 二期 P1 下线——一期 ACL 矩阵废弃，FR-006）----
   getRoster(projectId: number) {
     return request.get<ApiResponse<MemoryRosterVO[]>>(`/chat/memory/projects/${projectId}/roster`)
   },
-  getRecallAcl(projectId: number) {
-    return request.get<ApiResponse<MemoryRecallAclVO[]>>(`/chat/memory/projects/${projectId}/recall-acl`)
+
+  // ---- 二期 P1 · 收录规则（FR-001；GET 成员可读，PUT 仅 owner/admin）----
+  getProjectRule(projectId: number) {
+    return request.get<ApiResponse<MemoryProjectRuleVO | null>>(`/chat/memory/projects/${projectId}/rule`)
   },
-  putRecallAcl(projectId: number, data: MemoryRecallAclRequest) {
-    return request.put<ApiResponse<number>>(`/chat/memory/projects/${projectId}/recall-acl`, data)
+  putProjectRule(projectId: number, data: MemoryProjectRuleRequest) {
+    return request.put<ApiResponse<MemoryProjectRuleVO>>(`/chat/memory/projects/${projectId}/rule`, data)
   },
 
-  // ---- 生命周期折叠板（F-4b：已离开 copy-to / 已删除 restore）----
-  listDepartedProjects() {
-    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/departed-projects')
+  // ---- 二期 P1 · 收录条目审核（FR-005；list 成员可见自己产生的，review 仅 owner/admin）----
+  listEntries(projectId: number, status?: string) {
+    return request.get<ApiResponse<MemoryProjectEntryVO[]>>(`/chat/memory/projects/${projectId}/entries`, {
+      params: status ? { status } : {}
+    })
   },
-  copyDepartedProjectTo(projectId: number, projectName?: string) {
-    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
-      `/chat/memory/departed-projects/${projectId}/copy-to`,
-      projectName ? { projectName } : {}
-    )
+  reviewEntry(entryId: number, action: 'approve' | 'reject') {
+    return request.post<ApiResponse<void>>(`/chat/memory/entries/${entryId}/review`, { action })
   },
-  listDeletedProjects() {
-    return request.get<ApiResponse<MemoryLifecycleProjectVO[]>>('/chat/memory/deleted-projects')
+  withdrawEntry(entryId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/entries/${entryId}`)
   },
-  restoreDeletedProject(projectId: number, projectName?: string) {
-    return request.post<ApiResponse<MemoryLifecycleActionVO>>(
-      `/chat/memory/deleted-projects/${projectId}/restore`,
-      projectName ? { projectName } : {}
-    )
+
+  // ---- 二期 P2 · 项目授权（FR-101/103；发起=child owner，审批=parent owner/admin）----
+  createLink(childProjectId: number, parentProjectId: number) {
+    return request.post<ApiResponse<MemoryProjectLinkVO>>(`/chat/memory/projects/${childProjectId}/links`, { parentProjectId })
+  },
+  listMyLinks() {
+    return request.get<ApiResponse<MemoryProjectLinkVO[]>>('/chat/memory/links/mine')
+  },
+  approveLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/approve`)
+  },
+  rejectLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/reject`)
+  },
+  revokeLink(linkId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/links/${linkId}`)
+  },
+  /** 三期非对称撤销：parent owner/admin 通过 child 的撤销申请（ACTIVE→REVOKED）。 */
+  approveRevokeLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/approve-revoke`)
+  },
+  /** 三期非对称撤销：parent owner/admin 拒绝 child 的撤销申请（status 留 ACTIVE）。 */
+  rejectRevokeLink(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/reject-revoke`)
+  },
+  /** 三期非对称撤销：child owner 撤回自己挂起的撤销申请（status 留 ACTIVE）。 */
+  withdrawRevokeRequest(linkId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/links/${linkId}/withdraw-revoke`)
+  },
+
+  // ---- 二期 P1 · 项目↔个人授权（只读召回；双向发起，落同一 ACTIVE 授权）----
+  /** 项目主动授权个人（项目 owner/admin；立即 ACTIVE）。 */
+  grantUserByProject(projectId: number, userId: number) {
+    return request.post<ApiResponse<MemoryProjectUserGrantVO>>(`/chat/memory/projects/${projectId}/user-grants`, { userId })
+  },
+  /** 个人申请召回某项目（本人 → PENDING 待项目 owner/admin 审批）。 */
+  applyUserGrant(projectId: number) {
+    return request.post<ApiResponse<MemoryProjectUserGrantVO>>('/chat/memory/user-grants/apply', { projectId })
+  },
+  listMyUserGrants() {
+    return request.get<ApiResponse<MemoryProjectUserGrantVO[]>>('/chat/memory/user-grants/mine')
+  },
+  approveUserGrant(grantId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}/approve`)
+  },
+  rejectUserGrant(grantId: number) {
+    return request.post<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}/reject`)
+  },
+  revokeUserGrant(grantId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/memory/user-grants/${grantId}`)
+  },
+  /** 关键词检索用户（项目授权个人的被授权人选择；仅 id+name）。 */
+  searchGrantUsers(q: string) {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>('/chat/memory/user-grants/search-users', { params: { q } })
+  },
+  /** 关键词检索项目（个人申请召回的目标项目选择；仅 id+name）。 */
+  searchGrantProjects(q: string) {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>('/chat/memory/user-grants/search-projects', { params: { q } })
+  },
+  /** 第二轮 #5：切换项目记忆公共池可见性（owner/admin；true=推入，所有人可申请召回）。 */
+  toggleProjectPool(projectId: number, publicPool: boolean) {
+    return request.put<ApiResponse<void>>(`/chat/memory/projects/${projectId}/pool`, { public: publicPool })
+  },
+  /** 第二轮 #5：公共池候选项目（排除自建，所有人可申请）。 */
+  listPoolProjects() {
+    return request.get<ApiResponse<{ id: number; name: string }[]>>(`/chat/memory/pool-projects`)
+  },
+
+  // ---- 二期 P3 · 文件记忆（FR-201~205；端点挂在 ChatController /chat/attachments 下）----
+  /** 聊天附件上传（multipart；一文件一记忆 PROCESSING，worker 异步 ingestion）。 */
+  uploadAttachment(file: File) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request.post<ApiResponse<MemoryAssetUploadVO>>('/chat/attachments', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000 // 单文件上限 50MB，放宽上传超时
+    })
+  },
+  /** 我的文件记忆列表（「文件记忆」页签）。 */
+  listAttachments() {
+    return request.get<ApiResponse<MemoryAssetMemoryVO[]>>('/chat/attachments')
+  },
+  /** FAILED 手动重试（retry_count 硬卡上限）。 */
+  retryAttachment(memoryId: number) {
+    return request.post<ApiResponse<void>>(`/chat/attachments/${memoryId}/retry`)
+  },
+  /** 删除文件记忆（项目 FILE 条目同步失效 + 原文件硬删，FR-204）。 */
+  deleteAttachment(memoryId: number) {
+    return request.delete<ApiResponse<void>>(`/chat/attachments/${memoryId}`)
+  },
+  /** 文件分块列表（文件卡片「展开分块」；仅 owner，页码锚点随块返回）。 */
+  listAttachmentChunks(memoryId: number) {
+    return request.get<ApiResponse<FileChunkView[]>>(`/chat/attachments/${memoryId}/chunks`)
   }
 }

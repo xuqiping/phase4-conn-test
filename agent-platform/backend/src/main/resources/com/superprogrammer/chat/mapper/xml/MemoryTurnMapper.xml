@@ -2,64 +2,22 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.superprogrammer.chat.mapper.MemoryTurnMapper">
 
-    <!-- 流水账可见范围过滤（向量 1/2）：
-         自己的（user_id=self，含个人出身 + 后共享给项目的）OR 挂在 accessible 项目集内的（经 ACL，accessible 由 service 按 readableAuthors 算）。
-         accessibleProjectIds 空集 → project_ids && '{}' = false → 只剩自己的。
-         ⚠️ 数组重叠算子 && 在 XML 须转义为 &amp;&amp;，否则 mapper 解析崩。 -->
-    <sql id="SCOPE_FILTER">
-        AND (t.user_id = #{userId}
-             OR t.project_ids &amp;&amp; #{accessibleProjectIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler})
-    </sql>
+    <!-- 二期 P1（V67，FR-006）：turns 纯个人域——取数恒 user_id=self。
+         一期 project_ids/born_personal/departed_project_ids/deleted_project_ids 四列已 DROP，
+         项目记忆取数走 MemoryProjectEntryMapper（收录条目）。 -->
 
     <resultMap id="MemoryTurnMap" type="com.superprogrammer.chat.entity.MemoryTurn" autoMapping="true">
         <id property="id" column="id"/>
-        <result property="tagIds"             column="tag_ids"              typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
-        <result property="projectIds"         column="project_ids"          typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
-        <result property="departedProjectIds" column="departed_project_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
-        <result property="deletedProjectIds"  column="deleted_project_ids"  typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+        <result property="tagIds" column="tag_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
     </resultMap>
-
-    <!-- 当前用户可见的流水账。 -->
-    <select id="findVisibleTurns" resultMap="MemoryTurnMap">
-        SELECT t.* FROM memory_turns t
-        WHERE t.deleted = 0
-        <include refid="SCOPE_FILTER"/>
-        ORDER BY t.created_at DESC
-    </select>
-
-    <!-- 挂载项目（L11 多挂/卸用）。显式 typeHandler 绕开 LambdaUpdateWrapper 不读 typeHandler 的坑（V33 教训）。 -->
-    <update id="updateProjectIds">
-        UPDATE memory_turns
-        SET project_ids = #{projectIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler},
-            updated_at  = NOW()
-        WHERE id = #{id} AND deleted = 0
-    </update>
 
     <!-- ============================ 计划12 · D-5 拼流水账 ⑥ ============================ -->
 
-    <!-- 个人 scope 可召回 turns：本人 born_personal=true AND gen_done=true（项目出身/ raw 不进）。
-         ⚠️ born_personal=true 限定（设计§3.3 line114）；direction/timeWindow 过滤 created_at。 -->
+    <!-- 个人可召回 turns：本人 gen_done=true（raw 不进）。direction/timeWindow 过滤 created_at。 -->
     <select id="findPersonalRecallableTurns" resultMap="MemoryTurnMap">
         SELECT t.* FROM memory_turns t
         WHERE t.deleted = 0 AND t.gen_done = true
-          AND t.user_id = #{userId} AND t.born_personal = true
-          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
-          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
-          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
-          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
-        ORDER BY t.created_at DESC
-    </select>
-
-    <!-- 项目 scope 可召回 turns：project_ids 含 X 且 user_id ∈ readableAuthors AND gen_done=true。
-         readableAuthorIds 须非空（Patcher 空集 skip）；&& 转义 &amp;&amp;。 -->
-    <select id="findProjectRecallableTurns" resultMap="MemoryTurnMap">
-        SELECT t.* FROM memory_turns t
-        WHERE t.deleted = 0 AND t.gen_done = true
-          AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
-          AND t.user_id IN
-          <foreach collection="readableAuthorIds" item="aid" open="(" separator="," close=")">
-              #{aid}
-          </foreach>
+          AND t.user_id = #{userId}
           <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
           <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
           <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
@@ -69,32 +27,12 @@
 
     <!-- ============================ 计划12 · E 总结取数 + backfill + DISCARD 级联 ============================ -->
 
-    <!-- E-3 个人总结取数：born_personal=true AND gen_done=true AND tag_ids 含任一 tagId。
-         tag_ids && 是数组重叠（须 &amp;&amp; 转义）；direction/timeWindow 过滤 created_at。 -->
+    <!-- E-3 个人总结取数：本人 gen_done=true AND tag_ids 含任一 tagId。
+         tag_ids &amp;&amp; 是数组重叠（须转义）；direction/timeWindow 过滤 created_at。 -->
     <select id="findPersonalTurnsForConsolidation" resultMap="MemoryTurnMap">
         SELECT t.* FROM memory_turns t
         WHERE t.deleted = 0 AND t.gen_done = true
-          AND t.user_id = #{userId} AND t.born_personal = true
-          AND t.tag_ids &amp;&amp;
-              <foreach collection="tagIds" item="tid" open="ARRAY[" separator="," close="]::bigint[]">
-                  #{tid}
-              </foreach>
-          <if test="direction != null and direction != 'BOTH'">AND t.direction = #{direction}</if>
-          <if test="relativeDays != null">AND t.created_at &gt;= NOW() - make_interval(days =&gt; #{relativeDays})</if>
-          <if test="twStart != null">AND t.created_at &gt;= #{twStart}</if>
-          <if test="twEnd != null">AND t.created_at &lt;= #{twEnd}</if>
-        ORDER BY t.created_at ASC
-    </select>
-
-    <!-- E-3 项目总结取数：project_ids 含 X AND user_id ∈ authorIds AND gen_done=true AND tag_ids 含任一 tagId。 -->
-    <select id="findProjectTurnsForConsolidation" resultMap="MemoryTurnMap">
-        SELECT t.* FROM memory_turns t
-        WHERE t.deleted = 0 AND t.gen_done = true
-          AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]
-          AND t.user_id IN
-          <foreach collection="authorIds" item="aid" open="(" separator="," close=")">
-              #{aid}
-          </foreach>
+          AND t.user_id = #{userId}
           AND t.tag_ids &amp;&amp;
               <foreach collection="tagIds" item="tid" open="ARRAY[" separator="," close="]::bigint[]">
                   #{tid}
@@ -118,15 +56,10 @@
         ORDER BY t.created_at ASC
     </select>
 
-    <!-- E-2 backfill 取数：scope 内 gen_done=false 的 raw turn，LIMIT ≤20/批。
-         bornPersonal=true → 个人 raw（born_personal=true）；否则项目 raw（project_ids 含 X）。 -->
+    <!-- E-2 backfill 取数：本人 gen_done=false 的 raw turn，LIMIT ≤20/批。 -->
     <select id="findRawTurnsForBackfill" resultMap="MemoryTurnMap">
         SELECT t.* FROM memory_turns t
         WHERE t.deleted = 0 AND t.gen_done = false AND t.user_id = #{userId}
-        <choose>
-            <when test="bornPersonal">AND t.born_personal = true</when>
-            <otherwise>AND t.project_ids &amp;&amp; ARRAY[#{projectId}]::bigint[]</otherwise>
-        </choose>
         ORDER BY t.created_at ASC
         LIMIT #{limit}
     </select>
@@ -156,10 +89,10 @@
 
     <!-- ============================ 计划12 · E-7 总结入口未覆盖计数（§3.9 告警）============================ -->
 
-    <!-- 个人 scope 未总结 turn 计数：gen_done=true born_personal=true AND 无 coverage(user_id=self) 行。 -->
+    <!-- 个人 scope 未总结 turn 计数：gen_done=true AND 无 coverage(user_id=self) 行。 -->
     <select id="countUncoveredPersonalTurns" resultType="int">
         SELECT COUNT(*) FROM memory_turns t
-        WHERE t.deleted = 0 AND t.gen_done = true AND t.born_personal = true AND t.user_id = #{userId}
+        WHERE t.deleted = 0 AND t.gen_done = true AND t.user_id = #{userId}
           AND NOT EXISTS (
               SELECT 1 FROM memory_summary_coverage c
               WHERE c.user_id = #{userId} AND c.turn_id = t.id
@@ -169,93 +102,6 @@
     <!-- 个人 scope raw turn 计数（gen_done=false，hasChange 判据）。 -->
     <select id="countRawPersonalTurns" resultType="int">
         SELECT COUNT(*) FROM memory_turns t
-        WHERE t.deleted = 0 AND t.gen_done = false AND t.born_personal = true AND t.user_id = #{userId}
-    </select>
-
-    <!-- ============================ 计划12 · F-4b 前置 · 生命周期折叠板（§3.7）============================ -->
-
-    <!-- 本人已删项目折叠板列表：unnest deleted_project_ids 去重，join projects 取名
-         （XML 不走 MP @TableLogic 软删过滤——项目已软删仍要显示名）；turnCount = 引用该项目的本人未软删 turn 数。
-         @> 包含算子 XML 无需转义（E 迭代实跑验证）。 -->
-    <select id="findMyDeletedProjects" resultType="com.superprogrammer.chat.dto.MemoryLifecycleProjectVO">
-        SELECT d.pid  AS projectId,
-               p.name AS projectName,
-               (SELECT COUNT(*) FROM memory_turns t
-                 WHERE t.user_id = #{userId} AND t.deleted = 0
-                   AND t.deleted_project_ids @> ARRAY[d.pid]::bigint[]) AS turnCount
-        FROM (SELECT DISTINCT unnest(t.deleted_project_ids) AS pid
-              FROM memory_turns t
-              WHERE t.user_id = #{userId} AND t.deleted = 0) d
-        LEFT JOIN projects p ON p.id = d.pid
-        ORDER BY d.pid ASC
-    </select>
-
-    <!-- restore 前置校验：本人 deleted_project_ids 含该项目的未软删 turn 计数（0 = 无待拉取 → 404）。 -->
-    <select id="countMyTurnsInDeletedProject" resultType="int">
-        SELECT COUNT(*) FROM memory_turns t
-        WHERE t.user_id = #{userId} AND t.deleted = 0
-          AND t.deleted_project_ids @> ARRAY[#{projectId}]::bigint[]
-    </select>
-
-    <!-- copy-to：本人在 fromProjectId 的 turns 追加挂 newProjectId（copy 非 move：
-         原 fromProjectId 挂载保留、departed_project_ids 不动、原项目数据零改动，§3.7）。
-         NOT 已挂防重复追加（幂等）。 -->
-    <update id="appendProjectToMyTurns">
-        UPDATE memory_turns
-        SET project_ids = array_append(project_ids, #{newProjectId}),
-            updated_at  = NOW()
-        WHERE user_id = #{userId} AND deleted = 0
-          AND project_ids @> ARRAY[#{fromProjectId}]::bigint[]
-          AND NOT (project_ids @> ARRAY[#{newProjectId}]::bigint[])
-    </update>
-
-    <!-- restore：移出 deleted_project_ids 的该项目 + 重挂 newProjectId（仅拉 turn 不拉 summary，§3.7）。
-         project_ids 已含 newProjectId 时不重复追加（幂等）。 -->
-    <update id="restoreMyTurnsFromDeletedProject">
-        UPDATE memory_turns
-        SET project_ids         = CASE WHEN project_ids @> ARRAY[#{newProjectId}]::bigint[]
-                                       THEN project_ids
-                                       ELSE array_append(project_ids, #{newProjectId}) END,
-            deleted_project_ids = array_remove(deleted_project_ids, #{deletedProjectId}),
-            updated_at          = NOW()
-        WHERE user_id = #{userId} AND deleted = 0
-          AND deleted_project_ids @> ARRAY[#{deletedProjectId}]::bigint[]
-    </update>
-
-    <!-- 项目名查询（XML 不走 MP @TableLogic 软删过滤——已删项目也要取名做默认命名）。 -->
-    <select id="findProjectNameAnyState" resultType="string">
-        SELECT name FROM projects WHERE id = #{projectId}
-    </select>
-
-    <!-- 写侧 hook · 成员离职：本人挂在该项目的 turns 追加 departed_project_ids（不卸载不删数据，§3.7）。
-         NOT 已标防重复追加（幂等）。数组写入必须走 XML（LambdaUpdateWrapper 不读 typeHandler，V33 教训）。 -->
-    <update id="appendDepartedProjectToMyTurns">
-        UPDATE memory_turns
-        SET departed_project_ids = array_append(departed_project_ids, #{projectId}),
-            updated_at           = NOW()
-        WHERE user_id = #{userId} AND deleted = 0
-          AND project_ids @> ARRAY[#{projectId}]::bigint[]
-          AND NOT (departed_project_ids @> ARRAY[#{projectId}]::bigint[])
-    </update>
-
-    <!-- 写侧 hook · 项目删除：全部作者挂在该项目的 turns 追加 deleted_project_ids
-         （不从 project_ids 移除——保留挂载，scope 召回自然排除；个人 scope 按 born_personal 不受影响，§3.7）。幂等。 -->
-    <update id="markProjectDeletedForAllTurns">
-        UPDATE memory_turns
-        SET deleted_project_ids = array_append(deleted_project_ids, #{projectId}),
-            updated_at          = NOW()
-        WHERE deleted = 0
-          AND project_ids @> ARRAY[#{projectId}]::bigint[]
-          AND NOT (deleted_project_ids @> ARRAY[#{projectId}]::bigint[])
-    </update>
-
-    <!-- 写侧 hook · 项目删除：曾写记忆的成员 + 各自未软删 turn 数（§3.7 M1 通知接收者 + 文案计数）。 -->
-    <select id="findAuthorsWithTurnsInProject" resultType="com.superprogrammer.chat.dto.MemoryProjectAffectedAuthorVO">
-        SELECT user_id AS userId, COUNT(*) AS turnCount
-        FROM memory_turns
-        WHERE deleted = 0
-          AND project_ids @> ARRAY[#{projectId}]::bigint[]
-        GROUP BY user_id
-        ORDER BY user_id ASC
+        WHERE t.deleted = 0 AND t.gen_done = false AND t.user_id = #{userId}
     </select>
 </mapper>

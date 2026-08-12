@@ -20,7 +20,7 @@ import java.time.OffsetDateTime;
 @TableName("stored_files")
 public class StoredFileEntity {
 
-    /** 来源：KB / WORKFLOW / CHAT / PREVIEW / MEDIA / CANVAS / ASSET */
+    /** 来源：KB / WORKFLOW / CHAT / PREVIEW / MEDIA / CANVAS / ASSET / EDIT */
     public static final String SOURCE_KB = "KB";
     public static final String SOURCE_WORKFLOW = "WORKFLOW";
     public static final String SOURCE_CHAT = "CHAT";
@@ -31,6 +31,8 @@ public class StoredFileEntity {
     public static final String SOURCE_CANVAS = "CANVAS";
     /** 项目资产库文件（上传入库/画布入库复用），owner=入库用户。复用原 file_id 不复制文件。 */
     public static final String SOURCE_ASSET = "ASSET";
+    /** 视频剪辑渲染产物（media.edit FFmpeg 多轨合成输出），owner=提交用户。 */
+    public static final String SOURCE_EDIT = "EDIT";
 
     /** 生命周期：ACTIVE（落盘在用）/ CLEANED（已删字节）/ EXPIRED（PREVIEW 过期） */
     public static final String STATUS_ACTIVE = "ACTIVE";

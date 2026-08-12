@@ -1,5 +1,6 @@
 package com.superprogrammer.billing.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.RechargeRequest;
 import com.superprogrammer.billing.entity.PaymentOrderEntity;
@@ -39,13 +40,16 @@ public class WalletAdminController {
      */
     @PostMapping("/recharge")
     @RequirePermission("points:recharge")
+    @AuditLog(module = "billing", action = "admin_recharge", targetType = "wallet")
     public ResponseEntity<R<Map<String, Object>>> recharge(@Valid @RequestBody RechargeRequest req) {
-        BigDecimal after = walletService.grant(
+        BigDecimal after = walletService.grantIdempotent(
                 req.getUserId(),
                 req.getPoints(),
                 null, // MVP 纯发放，不挂金额
                 PaymentOrderEntity.CHANNEL_ADMIN,
-                null);
+                null,
+                req.getIdempotencyKey(), // SEC-FR-121：可空，空则普通充值
+                req.getRemark()); // 备注落 ledger.remark（可空走默认文案）
         log.info("admin 充值 userId={} points={} balanceAfter={}", req.getUserId(), req.getPoints(), after);
         return ResponseEntity.ok(R.ok("充值成功",
                 Map.of("userId", req.getUserId(), "balanceAfter", after)));

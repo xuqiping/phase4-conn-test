@@ -71,6 +71,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                     } else if ("CITATION".equals(type)) {
                                         // P3：转发 citations（content 为 JSON 串），与 SSE 一致，前端聊天 [n] 回显
                                         sendMessage(session, toJson("CITATION", Map.of("content", evt.getContent())));
+                                    } else if ("FILE_CARDS".equals(type)) {
+                                        // 二期 P3（FR-203）：转发文件记忆卡片（content 为 JSON 串），与 SSE 一致
+                                        sendMessage(session, toJson("FILE_CARDS", Map.of("content", evt.getContent())));
                                     }
                                 } catch (IOException e) {
                                     log.error("发送流式事件失败: {}", e.getMessage());

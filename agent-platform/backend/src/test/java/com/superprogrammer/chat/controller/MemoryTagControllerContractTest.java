@@ -39,9 +39,10 @@ class MemoryTagControllerContractTest {
                             || lower.contains("reextract") || lower.contains("retag"),
                     () -> "禁止 re-extract/重抽 端点（保护已生成 summary 的 tag_id）: " + name);
         }
-        // 至少有 list + edit 两个端点（契约存在性）
+        // 至少有 list + edit + create 三个端点（契约存在性；P3a 新增主动建标签 create）
         assertTrue(methodNames.contains("list"), "应有 list 端点");
         assertTrue(methodNames.contains("edit"), "应有 edit 端点");
+        assertTrue(methodNames.contains("create"), "应有 create 端点（P3a 主动建标签）");
     }
 
     /** VO 字段集 = {id, subject, topic, label, usageCount}——无 aliases / anchor。 */

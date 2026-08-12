@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -33,6 +34,7 @@ import java.util.Set;
 public class MemoryRecallScopeResolver {
 
     private final ProjectService projectService;
+    private final MemoryProjectUserGrantService grantService;
 
     /**
      * 解析用户勾选为召回 scope。
@@ -63,13 +65,19 @@ public class MemoryRecallScopeResolver {
         return new RecallScope(personalOn, projects, direction, timeWindow, includeDeparted);
     }
 
-    /** 勾选项目 ∩ 用户可访问项目集；userId null 或空勾选 → 空集（不调 ProjectService）。 */
+    /**
+     * 勾选项目 ∩ (用户可访问项目 ∪ 被授权召回项目)；userId null 或空勾选 → 空集（不调 ProjectService）。
+     * <p>
+     * 记忆二期 P1：被授权召回的项目（ACTIVE 个人授权）一并保留——否则用户在召回范围勾选了授权项目，
+     * 这里会被当成「不可访问」过滤掉，授权形同虚设。
+     */
     private List<Long> filterAccessible(List<Long> rawProjects, Long userId) {
         if (userId == null || rawProjects.isEmpty()) {
             return List.of();
         }
         Set<Long> accessible = projectService.listAccessibleProjectIds(userId);
-        // 保留用户勾选顺序（前端展示稳定），仅保留可访问项
-        return rawProjects.stream().filter(accessible::contains).toList();
+        Set<Long> granted = new HashSet<>(grantService.findActiveGrantedProjectIds(userId));
+        // 保留用户勾选顺序（前端展示稳定），仅保留 可访问 ∪ 已授权 项
+        return rawProjects.stream().filter(pid -> accessible.contains(pid) || granted.contains(pid)).toList();
     }
 }

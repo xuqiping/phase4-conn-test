@@ -29,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.time.OffsetDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -131,6 +132,27 @@ class AssetProjectServiceTest {
         List<ProjectVO> vos = service.list(OWNER_ID, true);
         assertEquals(1, vos.size());
         assertEquals(AssetRole.OWNER, vos.get(0).getRole());
+    }
+
+    @Test
+    void list_returnsPublicationSnapshotFields() {
+        AssetProject published = project(PROJECT_ID, OWNER_ID, "[\"人物\"]");
+        OffsetDateTime publishedAt = OffsetDateTime.parse("2026-08-10T10:00:00+08:00");
+        published.setPublicPool(true);
+        published.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED);
+        published.setPublishedBy(99L);
+        published.setPublishedAt(publishedAt);
+        published.setPublishedByAdmin(true);
+        when(projectMapper.selectList(any())).thenReturn(List.of(published), List.of());
+        when(memberMapper.selectList(any())).thenReturn(List.of());
+
+        ProjectVO result = service.list(OWNER_ID, false).get(0);
+
+        assertEquals(true, result.getPublicPool());
+        assertEquals(AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED, result.getPublicAccessMode());
+        assertEquals(99L, result.getPublishedBy());
+        assertEquals(publishedAt, result.getPublishedAt());
+        assertEquals(true, result.getPublishedByAdmin());
     }
 
     @Test

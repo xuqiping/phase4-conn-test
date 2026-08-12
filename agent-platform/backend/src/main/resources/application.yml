@@ -63,9 +63,10 @@ mybatis-plus:
   type-aliases-package: com.superprogrammer.**.entity
   configuration:
     map-underscore-to-camel-case: true
-    # SQL 走 slf4j（按 mapper 包名分级），不再 StdOutImpl 裸打 stdout 刷屏。
-    # 调试单 mapper SQL：把 logging.level 下对应 mapper 包降到 DEBUG。
+    # SQL 走 slf4j；log-prefix=sql. 使全部 mapper SQL logger 统一挂 "sql" 前缀下
+    #（logback 里单条 logger name="sql" 即可覆盖所有现存/未来 mapper 包，免登记）。
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+    log-prefix: sql.
   global-config:
     db-config:
       id-type: auto
@@ -81,6 +82,40 @@ jwt:
   access-expiration: 900000
   refresh-expiration: 604800000
 
+# 安全体系 S2（SEC-FR-040）：审计哈希链 HMAC 密钥——仅环境变量注入，缺失/过短(<32)拒绝启动（fail-fast 同 JWT_SECRET）。
+# 生成方式: openssl rand -base64 48 | tr -d '\n'。入 G1 轮换清单（轮换后旧链重算必断，须配合全量校验+新锚定公告）。
+audit:
+  hmac-key: ${AUDIT_HMAC_KEY:}
+  # 对话审计开关（8x Chunk4）：chat 两阶段审计（send_message + chat_completed）高频落库，
+  # 出问题（容量/性能/噪音）时可关，关后两行都不落（其它模块审计不受影响）。默认开。
+  chat:
+    enabled: ${AUDIT_CHAT_ENABLED:true}
+
+management:
+  tracing:
+    sampling:
+      # 全采样：日志关联要求每条请求都有 traceId（日志系统 LOG-FR-01）。生产量大可降（如 0.1）。
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  endpoints:
+    web:
+      exposure:
+        # 运维系统 OPS-FR-01：health(探活/发布门禁) + info + prometheus(指标抓取)。
+        # 安全红线：Nginx 不反代 /actuator，防火墙仅放行内网/localhost → 外网不可达；
+        # 应用层这三个端点 permitAll（Prometheus 抓取无 JWT），其余端点一律不暴露。
+        include: health,info,prometheus
+  endpoint:
+    health:
+      # 健康细节只在已认证时展示（防泄露连接串/凭证）；匿名探活只见 {"status":"UP"}。
+      show-details: when-authorized
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # HTTP 延迟直方图（运维系统 OPS-FR-02）：接口质量看板 P95/P99 依赖 bucket 序列。
+        # Boot3 已无 web.server.request.autotime 属性，等效开关即本项。uri 默认按模板聚合（防高基数）。
+        http:
+          server:
+            requests: true
+
 logging:
   # 日志输出文件（控制台照常输出，文件供后续审查）。路径相对工作目录，云上即 jar 同级 logs/。
   # 可用环境变量 LOG_FILE 覆盖（如 Docker 挂卷 /var/log/agent-platform/agent-platform.log）。
@@ -95,12 +130,10 @@ logging:
     # 业务 INFO：保留记忆管线关键日志（processMemory / 记忆注入 / LLM调用 / applyClean 等），
     # 砍掉 DEBUG 噪声（JwtAuthenticationFilter 逐请求认证、内部细节）。
     com.superprogrammer: INFO
-    # mapper 全 WARN：SQL（DEBUG）不再刷屏。需调试某 mapper SQL 时单降该包到 DEBUG。
-    com.superprogrammer.knowledge.mapper: WARN
-    com.superprogrammer.chat.mapper: WARN
-    com.superprogrammer.auth.mapper: WARN
-    com.superprogrammer.system.mapper: WARN
-    com.superprogrammer.project.mapper: WARN
+    # SQL 独立通道（LOG-FR-04）：logger 名="sql."+mapper 全类名（mybatis log-prefix），
+    # 默认 OFF 静默（无 sql.log 产出）；开 SQL 排障设环境变量 LOG_SQL_ENABLED=DEBUG。
+    # 只进 logs/sql.log（logback additivity=false），不污染 app.log。
+    sql: ${LOG_SQL_ENABLED:OFF}
     org.apache.ibatis: WARN
     # security 降 INFO：砍掉「Securing GET ...」「Set SecurityContextHolder」每请求一行。
     org.springframework.security: INFO
@@ -137,9 +170,33 @@ rag:
     kb-batch: 20
     auto-repair: false      # drift → REINDEX：claimBatch 已消费 REINDEX，翻 true 即修复（承担 re-embed 计费）
 
+# 视频剪辑（media.edit）FFmpeg 多轨渲染配置
+media:
+  reference:
+    # Ark 必须能从公网 HTTPS 拉取参考视频；localhost/内网地址不可用。密钥只从环境变量注入。
+    public-base-url: ${MEDIA_REFERENCE_PUBLIC_BASE_URL:}
+    signing-key: ${MEDIA_REFERENCE_SIGNING_KEY:}
+    ttl-seconds: ${MEDIA_REFERENCE_TTL_SECONDS:900}
+  edit:
+    enabled: true
+    # FFmpeg 二进制：本机 PATH 已有（/d/ImageMagick-7.1.1-Q16-HDRI/ffmpeg、/c/ffmpeg-n7.1.1/bin）；
+    # Linux 生产机须装 ffmpeg（libx264 + aac）。可绝对路径或环境变量 MEDIA_EDIT_FFMPEG_PATH 覆盖。
+    ffmpeg-path: ${MEDIA_EDIT_FFMPEG_PATH:ffmpeg}
+    # drawtext 字体：逗号分隔候选，MediaEditProperties.resolveFontFile() 按序取第一个存在文件（跨平台 CJK）。
+    # ffmpeg 4.4 不收 .ttc 须 .ttf/.otf，故优先 .ttf（simhei）；msyh.ttc 兜底（ffmpeg 7+ 收）。
+    # 全部不存在 + 有字幕 → 渲染 fail-fast（不静默跳过）。可被环境变量 MEDIA_EDIT_FONT_FILE 整体覆盖（单路径）。
+    font-file: "${MEDIA_EDIT_FONT_FILE:/System/Library/Fonts/Supplemental/Arial Unicode.ttf, /Library/Fonts/Arial Unicode.ttf, /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf, C:/Windows/Fonts/simhei.ttf, C:/Windows/Fonts/msyh.ttc}"
+
 # 钉钉 H5 微应用免登（默认关，配齐 AppKey/AppSecret 再开）
 dingtalk:
   enabled: ${DINGTALK_ENABLED:false}
   app-key: ${DINGTALK_APP_KEY:}
   app-secret: ${DINGTALK_APP_SECRET:}
   agent-id: ${DINGTALK_AGENT_ID:}
+
+# 应用级安全项（安全体系 S1）
+app:
+  cors:
+    # SEC-FR-003：生产必须配精确 Origin 白名单（逗号分隔，含前端域 + 钉钉 H5 回调域），禁 *；
+    # 留空 = dev 宽松模式（originPattern=*），仅本地联调用。
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}

@@ -18,6 +18,14 @@ import type { PageResult } from './admin'
 export type BillingKind = 'CHAT' | 'EMBED' | 'IMAGE' | 'VIDEO'
 export type VideoBillingMode = 'TOKEN' | 'SECOND'
 
+/** 新增价表时可选择的 ACTIVE 全局模型。 */
+export interface AvailablePricingModelVO {
+  providerId: number
+  providerName: string
+  model: string
+  kind: BillingKind
+}
+
 /** 价表行（GET /billing/pricing） */
 export interface PricingRuleVO {
   id: number
@@ -29,6 +37,8 @@ export interface PricingRuleVO {
   videoBillingMode: VideoBillingMode | null
   pricePerSecond: number | null
   pricePerImage: number | null
+  /** 7x-3：VIDEO 行才有意义（true=有参考视频价），其他 kind 始终 false */
+  hasReference: boolean
   effectiveFrom: string
 }
 
@@ -42,6 +52,8 @@ export interface PricingRuleRequest {
   videoBillingMode?: VideoBillingMode | null
   pricePerSecond?: number | null
   pricePerImage?: number | null
+  /** 7x-3：视频任务「是否带参考视频」的定价维度（仅 VIDEO kind 有效，其他强制 false） */
+  hasReference?: boolean | null
   effectiveFrom?: string | null
 }
 
@@ -52,6 +64,30 @@ export interface RatioTierVO {
   maxAmount: number | null
   ratio: number
   effectiveFrom: string
+}
+
+/** 7x-2：价表导出/导入行（镜像后端 PricingRuleExportItem） */
+export interface PricingRuleExportItem {
+  kind: BillingKind
+  providerId: number
+  /** 仅模板/可读性用，导入时忽略 */
+  providerName?: string
+  model: string
+  /** 仅 VIDEO 有意义；true=带参考视频价，false=无参考/兜底 */
+  hasReference?: boolean | null
+  priceInputPerMillion?: number | null
+  priceOutputPerMillion?: number | null
+  videoBillingMode?: VideoBillingMode | null
+  pricePerSecond?: number | null
+  pricePerImage?: number | null
+}
+
+/** 7x-2：价表批量导入结果 */
+export interface PricingImportResult {
+  created: number
+  updated: number
+  failed: number
+  errors: string[]
 }
 
 export interface RatioTierRequest {
@@ -65,6 +101,8 @@ export interface RechargeRequest {
   userId: number
   points: number
   remark?: string
+  /** 安全体系 S1 · SEC-FR-121：同一笔表单提交生成一次 UUID，双击/重试同键只到账一次 */
+  idempotencyKey?: string
 }
 
 /** admin 账单总览 */
@@ -131,9 +169,13 @@ export interface UsageDetailVO {
   pointsConsumed: number
   status: string
   errorMsg: string | null
+  /** 8x Chunk7：请求 traceId（chat 路径关联键，与 audit_logs.trace_id 同值） */
+  traceId: string | null
+  /** 8x Chunk7：媒体任务 id（媒体路径关联键，与 media 审计行 targetId 对齐） */
+  taskId: number | null
 }
 
-/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to） */
+/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to + 8x Chunk7 traceId/taskId drill-down） */
 export interface UsageDetailQuery {
   page?: number
   size?: number
@@ -141,6 +183,10 @@ export interface UsageDetailQuery {
   model?: string
   kind?: BillingKind
   status?: string
+  /** chat 路径 drill-down 反查键（与审计行 traceId 对齐） */
+  traceId?: string
+  /** 媒体路径 drill-down 反查键（与审计行 targetId=taskId 对齐） */
+  taskId?: number
   from?: string
   to?: string
 }
@@ -152,11 +198,26 @@ export const billingApi = {
   listPricingRules() {
     return request.get<ApiResponse<PricingRuleVO[]>>('/billing/pricing')
   },
+  availablePricingModels() {
+    return request.get<ApiResponse<AvailablePricingModelVO[]>>('/billing/pricing/available-models')
+  },
   createPricingRule(data: PricingRuleRequest) {
     return request.post<ApiResponse<PricingRuleVO>>('/billing/pricing', data)
   },
   updatePricingRule(id: number, data: PricingRuleRequest) {
     return request.put<ApiResponse<PricingRuleVO>>(`/billing/pricing/${id}`, data)
+  },
+  // 7x-2：导出当前全量价表（blob 触发下载）
+  exportPricingRules() {
+    return request.get<Blob>('/billing/pricing/export', { responseType: 'blob' })
+  },
+  // 7x-2：下载填充模板（联动全局供应商未配置模型）
+  downloadPricingTemplate() {
+    return request.get<Blob>('/billing/pricing/template', { responseType: 'blob' })
+  },
+  // 7x-2：批量导入价表（upsert，返 created/updated/failed）
+  importPricingRules(items: PricingRuleExportItem[]) {
+    return request.post<ApiResponse<PricingImportResult>>('/billing/pricing/import', items)
   },
   // 阶梯比例
   listRatioTiers() {

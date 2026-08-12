@@ -1,5 +1,6 @@
 package com.superprogrammer.knowledge.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
@@ -40,6 +41,7 @@ public class KnowledgeDocumentController {
     /** 阶段2：上传。Excel 可带 tempFileRef + selectedSheets；其他类型走原 file 路径。
      *  docType/indexMode/manualIndexText/visionModel 为图片/文件知识库扩展（空=后端按后缀推断 + AUTO 默认）。 */
     @PostMapping("/upload")
+    @AuditLog(module = "kb", action = "document_upload", targetType = "document")
     @RequirePermission("knowledge:write")
     public ResponseEntity<R<KnowledgeDocumentVO>> upload(
             @RequestParam("kbId") Long kbId,
@@ -78,6 +80,7 @@ public class KnowledgeDocumentController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_delete", targetType = "document")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         knowledgeDocumentService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("删除成功", null));

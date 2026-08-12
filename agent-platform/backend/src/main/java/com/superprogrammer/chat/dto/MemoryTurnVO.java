@@ -8,8 +8,9 @@ import java.util.List;
 /**
  * 计划12 · F · 流水账展示 VO（总体设计 §3.1）。
  * <p>
- * 前端「流水账」页签列表用。<b>仅本人流水账</b>（向量 7/13 ownership），含 tag label 回填 + 挂载项目名。
- * {@code genDone}=false → raw 未生成（前端标 raw 徽标）；{@code bornPersonal} 出身标记（个人/项目出身）。
+ * 前端「流水账」页签列表用。<b>仅本人流水账</b>（向量 7/13 ownership），含 tag label 回填。
+ * {@code genDone}=false → raw 未生成（前端标 raw 徽标）。
+ * 二期 P1（V67）：turns 纯个人域——projectIds/projectNames/bornPersonal 随一期项目挂载/出身标记下线。
  */
 @Data
 public class MemoryTurnVO {
@@ -24,9 +25,14 @@ public class MemoryTurnVO {
     private String l2Detail;
     private String rawContent;
     private Boolean genDone;
-    private List<Long> projectIds;
-    /** projectIds 对应的项目名集（batch 回填）。 */
-    private List<String> projectNames;
-    private Boolean bornPersonal;
     private OffsetDateTime createdAt;
+    /** 二期 P2：该流水账被收录到的项目（个人域 turn → memory_project_entries 反查；按 projectId 去重）。 */
+    private List<IndexedProject> indexedProjects;
+
+    /** 流水账收录项目缩略（流水账列表「收录于: X」徽标用）。 */
+    @Data
+    public static class IndexedProject {
+        private Long projectId;
+        private String name;
+    }
 }

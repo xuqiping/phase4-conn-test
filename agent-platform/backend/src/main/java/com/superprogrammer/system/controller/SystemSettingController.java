@@ -1,16 +1,24 @@
 package com.superprogrammer.system.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.search.service.WebSearchService;
 import com.superprogrammer.system.dto.AuthSettingsUpdateRequest;
 import com.superprogrammer.system.dto.AuthSettingsVO;
+import com.superprogrammer.system.dto.BillingSettingsUpdateRequest;
+import com.superprogrammer.system.dto.BillingSettingsVO;
 import com.superprogrammer.system.dto.RagMemorySettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagMemorySettingsVO;
 import com.superprogrammer.system.dto.RagRecallSettingsUpdateRequest;
 import com.superprogrammer.system.dto.RagRecallSettingsVO;
 import com.superprogrammer.system.dto.WebSearchSettingsUpdateRequest;
 import com.superprogrammer.system.dto.WebSearchSettingsVO;
+import com.superprogrammer.system.dto.LlmModelDefaultsVO;
+import com.superprogrammer.system.dto.LlmModelDefaultsUpdateRequest;
+import com.superprogrammer.llm.service.LlmProviderService;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.system.service.SystemSettingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +31,39 @@ import org.springframework.web.bind.annotation.*;
 public class SystemSettingController {
     private final SystemSettingService service;
     private final WebSearchService webSearchService;
+    private final LlmProviderService llmProviderService;
+
+    @GetMapping("/llm-model-defaults")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<LlmModelDefaultsVO>> getLlmModelDefaults() {
+        return ResponseEntity.ok(R.ok(buildLlmModelDefaults()));
+    }
+
+    @PutMapping("/llm-model-defaults")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_llm_model_defaults", targetType = "setting")
+    public ResponseEntity<R<LlmModelDefaultsVO>> updateLlmModelDefaults(
+            @RequestBody LlmModelDefaultsUpdateRequest request) {
+        validateDefaultModel(request.getChatModel(), LlmProviderService.CATEGORY_CHAT, "对话");
+        validateDefaultModel(request.getEmbeddingModel(), LlmProviderService.CATEGORY_EMBEDDING, "向量");
+        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel());
+        return ResponseEntity.ok(R.ok("默认模型已更新", buildLlmModelDefaults()));
+    }
+
+    private void validateDefaultModel(String model, String category, String label) {
+        if (model == null || model.isBlank()) return;
+        if (!llmProviderService.listActiveModels(category).contains(model.trim())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    label + "默认模型不属于当前启用的 " + category + " 供应商: " + model);
+        }
+    }
+
+    private LlmModelDefaultsVO buildLlmModelDefaults() {
+        return LlmModelDefaultsVO.builder()
+                .chatModel(service.getDefaultChatModel())
+                .embeddingModel(service.getDefaultEmbeddingModel())
+                .build();
+    }
 
     @GetMapping("/auth")
     @RequirePermission("role:manage")
@@ -32,9 +73,27 @@ public class SystemSettingController {
 
     @PutMapping("/auth")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_auth_settings", targetType = "setting")
     public ResponseEntity<R<AuthSettingsVO>> updateAuthSettings(
             @Valid @RequestBody AuthSettingsUpdateRequest request) {
-        return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs())));
+        return ResponseEntity.ok(R.ok(service.updateAuthSettings(request.getAccessTokenExpirationMs(), request.getSingleSessionEnabled())));
+    }
+
+    // ---- 计费设置（安全体系 S2 · L7 低余额并行闸门，SEC-FR-126）----
+
+    @GetMapping("/billing")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<BillingSettingsVO>> getBillingSettings() {
+        return ResponseEntity.ok(R.ok(service.getBillingSettings()));
+    }
+
+    @PutMapping("/billing")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_billing_settings", targetType = "setting")
+    public ResponseEntity<R<BillingSettingsVO>> updateBillingSettings(
+            @Valid @RequestBody BillingSettingsUpdateRequest request) {
+        return ResponseEntity.ok(R.ok(service.updateBillingSettings(
+                request.getLowBalanceThreshold(), request.getLowBalanceMaxInflight())));
     }
 
     // ---- RAG/记忆模式全局开关（V26）----
@@ -58,6 +117,7 @@ public class SystemSettingController {
 
     @PutMapping("/rag-memory")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_rag_memory_settings", targetType = "setting")
     public ResponseEntity<R<RagMemorySettingsVO>> updateRagMemorySettings(
             @Valid @RequestBody RagMemorySettingsUpdateRequest request) {
         service.updateRagMemoryEnabled(request.getEnabled());
@@ -112,6 +172,7 @@ public class SystemSettingController {
 
     @PutMapping("/rag-recall")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_rag_recall_settings", targetType = "setting")
     public ResponseEntity<R<RagRecallSettingsVO>> updateRagRecallSettings(
             @Valid @RequestBody RagRecallSettingsUpdateRequest request) {
         service.updateRagRecallExpansionEnabled(request.getEnabled());
@@ -134,6 +195,7 @@ public class SystemSettingController {
 
     @PutMapping("/web-search")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_web_search_settings", targetType = "setting")
     public ResponseEntity<R<WebSearchSettingsVO>> updateWebSearchSettings(
             @Valid @RequestBody WebSearchSettingsUpdateRequest req) {
         if (req.getEnabled() != null) {

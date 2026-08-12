@@ -3,6 +3,21 @@ import type { ApiResponse } from './request'
 
 export interface AuthSettings {
   accessTokenExpirationMs: number
+  /** A8 单点登录开关（SEC-FR-008）：同账号仅一处在线，新登录踢旧会话 */
+  singleSessionEnabled?: boolean
+}
+
+/** L7 低余额并行闸门设置（SEC-FR-126） */
+export interface BillingSettings {
+  /** 低余额阈值：余额低于此值禁多任务并行，默认 100 */
+  lowBalanceThreshold?: number
+  /** 低余额最大在途任务数，默认 1 */
+  lowBalanceMaxInflight?: number
+}
+
+export interface LlmModelDefaults {
+  chatModel?: string | null
+  embeddingModel?: string | null
 }
 
 export interface RagMemorySettings {
@@ -48,12 +63,29 @@ export interface RagRecallSettings {
 }
 
 export const systemApi = {
+  getLlmModelDefaults() {
+    return request.get<ApiResponse<LlmModelDefaults>>('/system/settings/llm-model-defaults')
+  },
+
+  updateLlmModelDefaults(data: LlmModelDefaults) {
+    return request.put<ApiResponse<LlmModelDefaults>>('/system/settings/llm-model-defaults', data)
+  },
+
   getAuthSettings() {
     return request.get<ApiResponse<AuthSettings>>('/system/settings/auth')
   },
 
   updateAuthSettings(data: AuthSettings) {
     return request.put<ApiResponse<AuthSettings>>('/system/settings/auth', data)
+  },
+
+  // L7 低余额并行闸门（SEC-FR-126）
+  getBillingSettings() {
+    return request.get<ApiResponse<BillingSettings>>('/system/settings/billing')
+  },
+
+  updateBillingSettings(data: BillingSettings) {
+    return request.put<ApiResponse<BillingSettings>>('/system/settings/billing', data)
   },
 
   // RAG/记忆模式全局开关（V26）

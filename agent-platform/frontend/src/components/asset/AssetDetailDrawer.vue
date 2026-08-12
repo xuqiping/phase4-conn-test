@@ -42,7 +42,7 @@
                 :readonly="!canEdit"
                 placeholder="剧本正文（≤8000 字）；EDITOR 可编辑，保存后点「AI 分场」"
               />
-              <!-- 拆解模型选择（AI 分场/一键分镜共用，默认空=后端 asset.script-model） -->
+              <!-- 拆解模型选择（AI 分场/一键分镜共用，默认空=管理员默认对话模型） -->
               <div v-if="canEdit" class="asset-detail__model-row">
                 <span class="asset-detail__model-label">拆解模型</span>
                 <n-select
@@ -51,7 +51,7 @@
                   size="small"
                   clearable
                   filterable
-                  placeholder="默认（asset.script-model）"
+                  placeholder="默认（管理员默认对话模型）"
                   style="flex: 1"
                 />
               </div>
@@ -305,7 +305,7 @@ const originalTemplate = ref('')
 const savingTemplate = ref(false)
 const breakingStoryboard = ref(false)
 const templateDirty = computed(() => templateDraft.value !== originalTemplate.value)
-/** AI 分场/一键分镜 模型选择（默认空=后端 asset.script-model；列表来自可用文本模型）。 */
+/** AI 分场/一键分镜模型选择（默认空=管理员默认对话模型；列表来自可用文本模型）。 */
 const scriptModel = ref<string | null>(null)
 const modelOptions = ref<{ label: string; value: string }[]>([])
 

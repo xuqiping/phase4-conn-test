@@ -92,14 +92,16 @@ public class BillingQueryService {
      */
     public PageResult<UsageDetailVO> pageDetail(OffsetDateTime from, OffsetDateTime to,
                                                 Long userId, String model, String kind, String status,
+                                                String traceId, Long taskId,
                                                 long page, long size) {
         Window w = clamp(from, to);
         long sz = size <= 0 ? DETAIL_PAGE_SIZE : Math.min(size, DETAIL_MAX_SIZE);
         long pg = Math.max(page, 1);
-        long total = usageLogMapper.countDetail(w.from(), w.to(), userId, model, kind, status);
+        long total = usageLogMapper.countDetail(w.from(), w.to(), userId, model, kind, status, traceId, taskId);
         List<UsageDetailVO> records = total == 0
                 ? List.of()
-                : usageLogMapper.pageDetail(w.from(), w.to(), userId, model, kind, status, (pg - 1) * sz, sz);
+                : usageLogMapper.pageDetail(w.from(), w.to(), userId, model, kind, status, traceId, taskId,
+                        (pg - 1) * sz, sz);
         return PageResult.of(records, total, pg, sz);
     }
 

@@ -355,7 +355,7 @@
           <n-input
             :value="selectedNode.data.model || ''"
             size="small"
-            placeholder="doubao-seed-2.0-code"
+            placeholder="留空使用管理员默认对话模型"
             :disabled="!promptConfigEditable"
             @update:value="(val: string) => updateNodeData('model', val)"
           />

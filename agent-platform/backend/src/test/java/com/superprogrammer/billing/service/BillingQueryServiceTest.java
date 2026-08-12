@@ -144,11 +144,11 @@ class BillingQueryServiceTest {
         row.setTokensInput(496);
         row.setTokensOutput(36);
         row.setPointsConsumed(new BigDecimal("0.57"));
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(17L);
-        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), anyLong(), eq((long) BillingQueryService.DETAIL_PAGE_SIZE)))
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(17L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), eq((long) BillingQueryService.DETAIL_PAGE_SIZE)))
                 .thenReturn(List.of(row));
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 1, 0);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 1, 0);
 
         assertEquals(17L, pr.getTotal());
         assertEquals(1, pr.getRecords().size());
@@ -160,28 +160,52 @@ class BillingQueryServiceTest {
     @Test
     void pageDetail_sizeCappedToMax_andOffsetComputed() {
         // size=999（恶意大）→ 截到 DETAIL_MAX_SIZE(100)；page=3 → offset=(3-1)*100=200
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(500L);
-        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), eq(200L), eq((long) BillingQueryService.DETAIL_MAX_SIZE)))
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(500L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), eq(200L), eq((long) BillingQueryService.DETAIL_MAX_SIZE)))
                 .thenReturn(List.of());
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 3, 999);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 3, 999);
 
         assertEquals((long) BillingQueryService.DETAIL_MAX_SIZE, pr.getSize());
         assertEquals(3L, pr.getPage());
         org.mockito.ArgumentCaptor<Long> offsetCap = org.mockito.ArgumentCaptor.forClass(Long.class);
-        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), offsetCap.capture(), eq((long) BillingQueryService.DETAIL_MAX_SIZE));
+        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), offsetCap.capture(), eq((long) BillingQueryService.DETAIL_MAX_SIZE));
         assertEquals(200L, offsetCap.getValue());
     }
 
     @Test
     void pageDetail_totalZero_shortCircuitsPageQuery() {
         // total=0 → 不调 pageDetail（短路免空查询），返空 records
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any())).thenReturn(0L);
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0L);
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, 1, 20);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 1, 20);
 
         assertTrue(pr.getRecords().isEmpty());
         assertEquals(0L, pr.getTotal());
-        verify(usageLogMapper, never()).pageDetail(any(), any(), any(), any(), any(), any(), anyLong(), anyLong());
+        verify(usageLogMapper, never()).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), anyLong());
+    }
+
+    // ---------- 8x Chunk7：drill-down 反查键 traceId/taskId 透传 ----------
+
+    @Test
+    void pageDetail_traceIdAndTaskIdThreadedToMapper() {
+        // admin 从审计行 drill-down：chat 行按 traceId 过滤、媒体行按 taskId 过滤 → 必须原样透传到 mapper
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(),
+                eq("trace-abc"), eq(9L))).thenReturn(1L);
+        UsageDetailVO row = new UsageDetailVO();
+        row.setTraceId("trace-abc");
+        row.setTaskId(9L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(),
+                eq("trace-abc"), eq(9L), anyLong(), anyLong())).thenReturn(List.of(row));
+
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null,
+                "trace-abc", 9L, 1, 20);
+
+        assertEquals(1L, pr.getTotal());
+        assertEquals("trace-abc", pr.getRecords().get(0).getTraceId());
+        assertEquals(9L, pr.getRecords().get(0).getTaskId());
+        verify(usageLogMapper).countDetail(any(), any(), any(), any(), any(), any(), eq("trace-abc"), eq(9L));
+        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(),
+                eq("trace-abc"), eq(9L), eq(0L), eq(20L));
     }
 }

@@ -22,5 +22,7 @@ public class PricingRuleVO {
     private String videoBillingMode;
     private BigDecimal pricePerSecond;
     private BigDecimal pricePerImage;
+    /** 7x-3：VIDEO 行才有意义（true=带参考视频价）；其他 kind 始终 false。 */
+    private Boolean hasReference;
     private OffsetDateTime effectiveFrom;
 }

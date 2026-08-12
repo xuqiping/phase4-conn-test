@@ -1,27 +1,39 @@
 <!--
   项目资产库·分享/成员管理弹窗  plan §S9 / 设计 §七 7.2 / L1
   - 成员表：owner 行角色锁定（NTag 所有者）+ 不可移除；成员行可改角色(VIEWER/EDITOR) + 移除 + 转让 owner
-  - 邀请：多选用户（filterable，已成员过滤）+ 角色选择（默认 VIEWER）→ 逐个 invite
+  - 邀请：资产域远程搜索最小候选（不读取管理员全量用户）+ 角色选择（默认 VIEWER）→ 逐个 invite
   - 移除成员（L1）：移除后列表即刻消失；移除自己=退出（owner 不可移除）
   - 转让 owner：二次确认 → projectApi.transfer → 旧 owner 降 editor（emit changed 触发父列表重载，项目可能从「我的」迁「共享」）
   - 逐操作即时调 API + reload，非批量保存（设计 §七 成员操作为离散 owner 操作）
-  - MemberVO 无 username 字段，靠 adminApi.listUsers 建 userId→username 映射联显
+  - MemberVO 直接返回 username；成员加载与候选搜索错误互不影响
 -->
 <template>
   <n-modal :show="show" preset="card" :title="`分享 · ${projectName}`" style="max-width:680px" @update:show="emit('update:show', $event)">
     <div class="share-dialog">
       <!-- 邀请栏 -->
       <div class="share-dialog__invite">
-        <n-select
-          v-model:value="selectedUserIds"
-          class="share-dialog__user-select"
-          :options="userOptions"
-          :loading="loadingUsers"
-          multiple
-          filterable
-          clearable
-          placeholder="选择用户"
-        />
+        <div class="share-dialog__candidate-search">
+          <n-select
+            v-model:value="selectedUserIds"
+            class="share-dialog__user-select"
+            :options="candidateOptions"
+            :loading="loadingCandidates"
+            multiple
+            remote
+            filterable
+            clearable
+            aria-label="搜索可邀请的项目成员"
+            placeholder="输入用户名搜索"
+            @search="searchCandidates"
+          />
+          <div
+            class="share-dialog__candidate-status"
+            :class="{ 'share-dialog__candidate-status--error': candidateError }"
+            role="status"
+          >
+            {{ candidateStatusText }}
+          </div>
+        </div>
         <n-select
           v-model:value="inviteRole"
           class="share-dialog__role-select"
@@ -34,6 +46,7 @@
       </div>
 
       <!-- 成员表 -->
+      <div v-if="memberError" class="share-dialog__member-error" role="alert">{{ memberError }}</div>
       <n-data-table
         :columns="columns"
         :data="rows"
@@ -68,8 +81,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import { memberApi, projectApi } from '@/api/assets'
-import { adminApi, type UserVO } from '@/api/admin'
-import type { MemberVO, ProjectRole } from '@/types/asset'
+import type { MemberCandidateVO, MemberVO, ProjectRole } from '@/types/asset'
 
 const props = defineProps<{
   show: boolean
@@ -86,12 +98,22 @@ const emit = defineEmits<{
 const message = useMessage()
 const dialog = useDialog()
 
-const users = ref<UserVO[]>([])
 const members = ref<MemberVO[]>([])
+const candidates = ref<MemberCandidateVO[]>([])
 const selectedUserIds = ref<number[]>([])
 const inviteRole = ref<'VIEWER' | 'EDITOR'>('VIEWER')
-const loadingUsers = ref(false)
 const loadingMembers = ref(false)
+const loadingCandidates = ref(false)
+const memberError = ref('')
+const candidateError = ref('')
+const candidateKeyword = ref('')
+let candidateSearchVersion = 0
+let contextVersion = 0
+
+interface DialogContext {
+  projectId: number
+  version: number
+}
 
 /** 角色 label/type（owner 锁定；成员可选 VIEWER/EDITOR，设计 §七 7.2） */
 const ROLE_LABEL: Record<ProjectRole, string> = { OWNER: '所有者', EDITOR: '编辑者', VIEWER: '浏览者' }
@@ -105,31 +127,25 @@ const MEMBER_ROLE_OPTIONS: SelectOption[] = [
   { label: '编辑者', value: 'EDITOR' }
 ]
 
-const usernameMap = computed(() => {
-  const m = new Map<number, string>()
-  users.value.forEach((u) => m.set(u.id, u.username))
-  return m
-})
-
-function displayName(userId: number): string {
-  return usernameMap.value.get(userId) || `用户 ${userId}`
-}
-
 const rows = computed(() =>
   members.value.map((m) => ({
     userId: m.userId,
-    username: displayName(m.userId),
+    username: m.username,
     role: m.role,
     isOwner: m.isOwner
   }))
 )
 
-/** 候选用户 = 全量用户 - 已成员 */
-const userOptions = computed<SelectOption[]>(() =>
-  users.value
-    .filter((u) => !members.value.some((m) => m.userId === u.id))
-    .map((u) => ({ label: u.username, value: u.id }))
+const candidateOptions = computed<SelectOption[]>(() =>
+  candidates.value.map((candidate) => ({ label: candidate.username, value: candidate.id }))
 )
+
+const candidateStatusText = computed(() => {
+  if (candidateError.value) return candidateError.value
+  if (!candidateKeyword.value) return '输入用户名搜索候选成员'
+  if (!loadingCandidates.value && candidateOptions.value.length === 0) return '未找到匹配的候选成员'
+  return ''
+})
 
 const columns = computed<DataTableColumns<(typeof rows.value)[number]>>(() => [
   {
@@ -185,106 +201,165 @@ const columns = computed<DataTableColumns<(typeof rows.value)[number]>>(() => [
   }
 ])
 
+function captureContext(): DialogContext {
+  return { projectId: props.projectId, version: contextVersion }
+}
+
+function isCurrentContext(context: DialogContext): boolean {
+  return props.show && props.projectId === context.projectId && contextVersion === context.version
+}
+
+function resetDialogState() {
+  members.value = []
+  memberError.value = ''
+  loadingMembers.value = false
+  selectedUserIds.value = []
+  inviteRole.value = 'VIEWER'
+  clearCandidateSearch()
+}
+
 watch(
-  () => props.show,
-  (show) => {
-    if (show && props.projectId) void loadAll()
+  [() => props.show, () => props.projectId],
+  ([show, projectId]) => {
+    contextVersion += 1
+    resetDialogState()
+    if (show && projectId) void reloadMembers({ projectId, version: contextVersion })
   },
   { immediate: true }
 )
 
-async function loadAll() {
-  loadingUsers.value = true
+async function reloadMembers(context: DialogContext = captureContext()) {
+  if (!isCurrentContext(context)) return
   loadingMembers.value = true
+  memberError.value = ''
   try {
-    const [usersRes, membersRes] = await Promise.all([
-      adminApi.listUsers(1, 200),
-      memberApi.list(props.projectId)
-    ])
-    users.value = usersRes.data.data.records || []
-    members.value = membersRes.data.data || []
+    const res = await memberApi.list(context.projectId)
+    if (!isCurrentContext(context)) return
+    members.value = res.data.data || []
   } catch {
-    message.error('加载成员数据失败')
+    if (!isCurrentContext(context)) return
+    memberError.value = '成员列表加载失败，请重试'
+    message.error('刷新成员列表失败')
   } finally {
-    loadingUsers.value = false
-    loadingMembers.value = false
+    if (isCurrentContext(context)) loadingMembers.value = false
   }
 }
 
-async function reloadMembers() {
-  loadingMembers.value = true
+function clearCandidateSearch() {
+  candidateSearchVersion += 1
+  candidateKeyword.value = ''
+  candidates.value = []
+  candidateError.value = ''
+  loadingCandidates.value = false
+}
+
+/** 空关键词本地清空；非空关键词只从资产成员候选端点取最小字段。 */
+async function searchCandidates(rawKeyword: string) {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
+  const keyword = rawKeyword.trim()
+  candidateKeyword.value = keyword
+  candidateError.value = ''
+  const searchVersion = ++candidateSearchVersion
+  if (!keyword) {
+    candidates.value = []
+    loadingCandidates.value = false
+    return
+  }
+
+  loadingCandidates.value = true
   try {
-    const res = await memberApi.list(props.projectId)
-    members.value = res.data.data || []
+    const res = await memberApi.searchCandidates(context.projectId, keyword)
+    if (searchVersion !== candidateSearchVersion || !isCurrentContext(context)) return
+    candidates.value = (res.data.data || []).map(({ id, username }) => ({ id, username }))
   } catch {
-    message.error('刷新成员列表失败')
+    if (searchVersion !== candidateSearchVersion || !isCurrentContext(context)) return
+    candidates.value = []
+    candidateError.value = '候选成员搜索失败，请重试'
   } finally {
-    loadingMembers.value = false
+    if (searchVersion === candidateSearchVersion && isCurrentContext(context)) loadingCandidates.value = false
   }
 }
 
 /** 邀请选中用户（逐个 invite；空角色默认 VIEWER） */
 async function inviteSelected() {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
   const ids = [...selectedUserIds.value]
+  const role = inviteRole.value
   if (ids.length === 0) return
   try {
     for (const userId of ids) {
-      await memberApi.invite(props.projectId, { userId, role: inviteRole.value })
+      if (!isCurrentContext(context)) return
+      await memberApi.invite(context.projectId, { userId, role })
+      if (!isCurrentContext(context)) return
     }
     message.success(`已邀请 ${ids.length} 位用户`)
     selectedUserIds.value = []
-    await reloadMembers()
-    emit('changed')
+    clearCandidateSearch()
+    await reloadMembers(context)
+    if (isCurrentContext(context)) emit('changed')
   } catch {
-    message.error('邀请失败')
+    if (isCurrentContext(context)) message.error('邀请失败')
   }
 }
 
 async function changeRole(userId: number, role: 'VIEWER' | 'EDITOR') {
+  const context = captureContext()
+  if (!isCurrentContext(context)) return
   try {
-    await memberApi.changeRole(props.projectId, userId, { role })
+    await memberApi.changeRole(context.projectId, userId, { role })
+    if (!isCurrentContext(context)) return
     message.success('角色已更新')
-    await reloadMembers()
-    emit('changed')
+    await reloadMembers(context)
+    if (isCurrentContext(context)) emit('changed')
   } catch {
-    message.error('更新角色失败')
+    if (isCurrentContext(context)) message.error('更新角色失败')
   }
 }
 
 function confirmRemove(userId: number, name: string) {
+  const context = captureContext()
   dialog.warning({
     title: '确认移除成员',
     content: `确定将「${name}」移出本项目？其将立即失去访问权（L1）。`,
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {
+      if (!isCurrentContext(context)) return
       try {
-        await memberApi.remove(props.projectId, userId)
+        await memberApi.remove(context.projectId, userId)
+        if (!isCurrentContext(context)) return
         message.success('已移除')
-        await reloadMembers()
-        emit('changed')
+        await reloadMembers(context)
+        if (isCurrentContext(context)) emit('changed')
       } catch {
-        message.error('移除失败')
+        if (isCurrentContext(context)) message.error('移除失败')
       }
     }
   })
 }
 
 function confirmTransfer(toUserId: number, name: string) {
+  const context = captureContext()
   dialog.warning({
     title: '确认转让所有者',
     content: `将本项目所有者转让给「${name}」？你将降级为编辑者。此操作不可撤销。`,
     positiveText: '转让',
     negativeText: '取消',
     onPositiveClick: async () => {
+      if (!isCurrentContext(context)) return
       try {
-        await projectApi.transfer(props.projectId, { toUserId })
+        await projectApi.transfer(context.projectId, { toUserId })
+        if (!isCurrentContext(context)) return
         message.success('已转让所有者')
-        await reloadMembers()
-        emit('changed')
-        emit('update:show', false)
+        await reloadMembers(context)
+        if (isCurrentContext(context)) {
+          emit('changed')
+          emit('update:show', false)
+        }
       } catch {
-        message.error('转让失败')
+        if (isCurrentContext(context)) message.error('转让失败')
       }
     }
   })
@@ -294,6 +369,9 @@ defineExpose({
   rows,
   selectedUserIds,
   inviteRole,
+  candidateKeyword,
+  candidateOptions,
+  searchCandidates,
   inviteSelected,
   changeRole,
   confirmRemove,
@@ -315,8 +393,25 @@ defineExpose({
   align-items: center;
 }
 
-.share-dialog__user-select {
+.share-dialog__candidate-search {
   flex: 1;
+  min-width: 0;
+}
+
+.share-dialog__user-select {
+  width: 100%;
+}
+
+.share-dialog__candidate-status,
+.share-dialog__member-error {
+  margin-top: var(--spacing-1);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.share-dialog__candidate-status--error,
+.share-dialog__member-error {
+  color: var(--color-error);
 }
 
 @media (max-width: 768px) {
@@ -324,7 +419,7 @@ defineExpose({
     flex-wrap: wrap;
   }
 
-  .share-dialog__user-select {
+  .share-dialog__candidate-search {
     flex: 1 1 100%;
   }
 }

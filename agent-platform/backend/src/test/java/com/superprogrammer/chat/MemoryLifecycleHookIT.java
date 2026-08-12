@@ -1,8 +1,5 @@
 package com.superprogrammer.chat;
 
-import com.superprogrammer.chat.dto.MemoryLifecycleActionVO;
-import com.superprogrammer.chat.dto.MemoryLifecycleProjectVO;
-import com.superprogrammer.chat.service.internal.MemoryLifecycleService;
 import com.superprogrammer.project.dto.ProjectCreateRequest;
 import com.superprogrammer.project.dto.ProjectMemberVO;
 import com.superprogrammer.project.dto.ProjectShareRequest;
@@ -17,21 +14,20 @@ import org.springframework.test.annotation.Rollback;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 计划12 · 生命周期写侧 hook IT（@SpringBootTest + PG16，总体设计 §3.7）。
+ * <p>
+ * 二期 P1（V67）改写：turns 纯个人域——离职/删项目不再碰 turns（一期 departed/deleted_project_ids
+ * 标记、波及通知、F-4b 拉取折叠板随四列下线）；项目删除级联新增 <b>收录规则 + 收录条目软删</b>。
  *
- * <p>聚焦 Mockito 测不了的（XML 数组算子 + 多表级联 + ProjectService 真实接线 + V52 回填 SQL）：
+ * <p>聚焦 Mockito 测不了的（多表级联 + ProjectService 真实接线 + V52 回填 SQL）：
  * <ul>
  *   <li><b>create/addMember</b>：新栈成员行同步落（OWNER/MEMBER ACTIVE）；角色变更 upsert 不重复行。</li>
- *   <li><b>removeMember</b>：置 DEPARTED + departed_at + 本人 turns 追加 departed_project_ids（他人/个人不动）；
- *       重加入回 ACTIVE 清 departed_at。</li>
- *   <li><b>delete</b>：全作者 turns 追加 deleted_project_ids（不移除 project_ids）+ 波及通知 +
- *       项目总结软删（个人不动）+ coverage/成员行/总结 scope/ACL/gen 开关清（个人 scope 不动）。</li>
- *   <li><b>写读闭环</b>：真实删除后 F-4b 折叠板 listDeletedProjects + restore 全链可用。</li>
+ *   <li><b>removeMember</b>：置 DEPARTED + departed_at；重加入回 ACTIVE 清 departed_at。turns 无动作。</li>
+ *   <li><b>delete</b>：项目总结软删（个人不动）+ coverage/成员行/总结 scope/gen 开关清 +
+ *       <b>收录规则/条目软删</b>（个人 scope 与他项目条目不动）。</li>
  *   <li><b>V52 回填</b>：旧栈存量成员 → 新栈 ACTIVE 行，ON CONFLICT 幂等。</li>
  * </ul>
  *
@@ -48,7 +44,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class MemoryLifecycleHookIT {
 
     @Autowired ProjectService projectService;
-    @Autowired MemoryLifecycleService lifecycleService;
     @Autowired JdbcTemplate jdbc;
 
     private long uniq() {
@@ -68,21 +63,11 @@ class MemoryLifecycleHookIT {
                 Long.class, name);
     }
 
-    private Long insertTurn(Long userId, String projectIds) {
+    /** 二期 P1：turns 纯个人域（V67 已删四列）——插个人 turn 仅为 coverage 提供合法 turn_id。 */
+    private Long insertTurn(Long userId) {
         return jdbc.queryForObject(
-                "INSERT INTO memory_turns(user_id, direction, project_ids, born_personal, gen_done) " +
-                        "VALUES(?, 'INPUT', ?::bigint[], true, true) RETURNING id",
-                Long.class, userId, projectIds);
-    }
-
-    private List<Long> longArrayOf(Long turnId, String column) {
-        return jdbc.queryForObject(
-                "SELECT " + column + " FROM memory_turns WHERE id = ?",
-                (rs, i) -> {
-                    java.sql.Array arr = rs.getArray(1);
-                    Long[] ids = (Long[]) arr.getArray();
-                    return List.of(ids);
-                }, turnId);
+                "INSERT INTO memory_turns(user_id, direction, gen_done) VALUES(?, 'INPUT', true) RETURNING id",
+                Long.class, userId);
     }
 
     private int count(String sql, Object... args) {
@@ -126,10 +111,10 @@ class MemoryLifecycleHookIT {
                 project.getId(), member), "角色变更 upsert 不重复行");
     }
 
-    // ---- 2. removeMember → DEPARTED + turns 标记；重加入回 ACTIVE ----
+    // ---- 2. removeMember → DEPARTED；重加入回 ACTIVE（二期 P1：turns 无动作） ----
 
     @Test
-    void removeMember_marksDepartedAndAppendsTurns_rejoinReactivates() {
+    void removeMember_marksDeparted_rejoinReactivates() {
         long u = uniq();
         Long owner = createUser("it_hk_d_own_" + u);
         Long member = createUser("it_hk_d_mem_" + u);
@@ -141,19 +126,11 @@ class MemoryLifecycleHookIT {
         share.setRole("VIEWER");
         ProjectMemberVO memberRow = projectService.addMember(project.getId(), share, owner, false);
 
-        Long tMember = insertTurn(member, "{" + project.getId() + "}");
-        Long tOwner = insertTurn(owner, "{" + project.getId() + "}");
-        Long tPersonal = insertTurn(member, "{}");
-
         projectService.removeMember(project.getId(), memberRow.getId(), owner, false);
 
         assertEquals("DEPARTED", memberStatus(project.getId(), member), "置 DEPARTED 不删行");
         assertEquals(1, count("SELECT count(*) FROM memory_project_members WHERE project_id=? AND user_id=? AND departed_at IS NOT NULL",
                 project.getId(), member), "departed_at 已记");
-        assertTrue(longArrayOf(tMember, "departed_project_ids").contains(project.getId()),
-                "本人挂在该项目的 turns 追加 departed_project_ids");
-        assertTrue(longArrayOf(tOwner, "departed_project_ids").isEmpty(), "他人 turns 不动");
-        assertTrue(longArrayOf(tPersonal, "departed_project_ids").isEmpty(), "个人 turns 不动");
 
         // 重加入 → 回 ACTIVE + 清 departed_at（行不重复）
         projectService.addMember(project.getId(), share, owner, false);
@@ -164,10 +141,10 @@ class MemoryLifecycleHookIT {
                 project.getId(), member));
     }
 
-    // ---- 3. 项目删除全级联 ----
+    // ---- 3. 项目删除全级联（二期 P1：含收录规则/条目软删；turns/通知随 V67 下线） ----
 
     @Test
-    void deleteProject_marksTurnsNotifiesAuthors_clearsProjectScopedRows() {
+    void deleteProject_clearsProjectScopedRows_includingEntriesAndRules() {
         long u = uniq();
         Long owner = createUser("it_hk_x_own_" + u);
         Long member = createUser("it_hk_x_mem_" + u);
@@ -176,14 +153,11 @@ class MemoryLifecycleHookIT {
         ProjectVO project = projectService.create(req, owner);
         ProjectShareRequest share = new ProjectShareRequest();
         share.setUserId(member);
-        ProjectMemberVO memberRow = projectService.addMember(project.getId(), share, owner, false);
+        projectService.addMember(project.getId(), share, owner, false);
         Long pid = project.getId();
 
-        Long tOwner = insertTurn(owner, "{" + pid + "}");
-        Long tMember = insertTurn(member, "{" + pid + "}");
-        Long tPersonal = insertTurn(member, "{}");
-        Long otherPid = createProjectRaw("it_hk_x_other_" + u);
-        Long tOther = insertTurn(member, "{" + otherPid + "}");
+        Long tOwner = insertTurn(owner);
+        Long tPersonal = insertTurn(member);
 
         // 项目总结（软删目标）+ 个人总结（不动）
         Long tag = jdbc.queryForObject(
@@ -203,74 +177,55 @@ class MemoryLifecycleHookIT {
         // 总结 scope：PROJECT 行（清，防 worker 复活）；PERSONAL 行 V47 trigger 已建（不动）
         jdbc.update("INSERT INTO memory_consolidation_scopes(user_id, scope_kind, project_id) VALUES(?, 'PROJECT', ?)",
                 owner, pid);
-        // ACL + gen 开关（死行清）
-        jdbc.update("INSERT INTO memory_recall_acl(project_id, reader_user_id, target_user_id, created_by) VALUES(?,?,?,?)",
-                pid, member, owner, owner);
+        // gen 开关（死行清）
         jdbc.update("INSERT INTO memory_project_settings(project_id, gen_enabled) VALUES(?, true)", pid);
         jdbc.update("INSERT INTO memory_project_user_settings(project_id, user_id, gen_enabled) VALUES(?,?, true)",
                 pid, member);
+        // 二期 P1：收录规则 + 收录条目（项目资产随项目走）；他项目条目对照组（不动）
+        jdbc.update("INSERT INTO memory_project_rules(project_id, rule_text) VALUES(?, '收录本系统相关内容')", pid);
+        Long otherPid = createProjectRaw("it_hk_x_other_" + u);
+        jdbc.update("INSERT INTO memory_project_entries(project_id, author_user_id, l1_summary, status) VALUES(?,?, 's', 'ACTIVE')",
+                pid, owner);
+        Long otherEntry = jdbc.queryForObject(
+                "INSERT INTO memory_project_entries(project_id, author_user_id, l1_summary, status) VALUES(?,?, 's', 'ACTIVE') RETURNING id",
+                Long.class, otherPid, owner);
+        // 5x #5：授权链（pid 作 parent）+ 项目↔个人授权 + 条目级覆盖（三表级联补全目标）
+        jdbc.update("INSERT INTO memory_project_links(parent_project_id, child_project_id, status, granted_by) VALUES(?,?, 'ACTIVE', ?)",
+                pid, otherPid, owner);
+        jdbc.update("INSERT INTO memory_project_user_grants(project_id, user_id, status, initiated_by) VALUES(?,?, 'ACTIVE','PROJECT')",
+                pid, member);
+        jdbc.update("INSERT INTO memory_entry_coverage(entry_id, summary_id, project_id, tag_id) VALUES(?,?,?,?)",
+                otherEntry, projSummary, pid, tag);
 
         projectService.delete(pid, owner, false);
 
-        // turns：追加 deleted_project_ids，不移除 project_ids；个人/他项目不动
-        assertTrue(longArrayOf(tOwner, "deleted_project_ids").contains(pid));
-        assertTrue(longArrayOf(tMember, "deleted_project_ids").contains(pid));
-        assertTrue(longArrayOf(tOwner, "project_ids").contains(pid), "不从 project_ids 移除（§3.7）");
-        assertTrue(longArrayOf(tPersonal, "deleted_project_ids").isEmpty(), "个人 turn 不动");
-        assertTrue(longArrayOf(tOther, "deleted_project_ids").isEmpty(), "他项目 turn 不动");
-        // 波及通知：两位作者各一条，文案带项目名
-        assertEquals(1, count("SELECT count(*) FROM memory_notifications WHERE user_id=? AND type='PROJECT_DELETED_AFFECTED' AND ref_id=? AND message LIKE '%it_hk_x_proj_%'",
-                owner, pid));
-        assertEquals(1, count("SELECT count(*) FROM memory_notifications WHERE user_id=? AND type='PROJECT_DELETED_AFFECTED' AND ref_id=?",
-                member, pid));
         // 项目总结软删 + 个人总结不动
         assertEquals(1, count("SELECT count(*) FROM memory_summaries WHERE id=? AND deleted=1", projSummary));
         assertEquals(0, count("SELECT count(*) FROM memory_summaries WHERE id=? AND deleted=1", personalSummary));
         // coverage：项目 scope 清 + 个人 scope 不动
         assertEquals(0, count("SELECT count(*) FROM memory_summary_coverage WHERE project_id=?", pid));
         assertEquals(1, count("SELECT count(*) FROM memory_summary_coverage WHERE summary_id=?", personalSummary));
-        // 成员行 / PROJECT scope / ACL / gen 开关清；PERSONAL scope（trigger 建）不动
+        // 成员行 / PROJECT scope / gen 开关清；PERSONAL scope（trigger 建）不动
         assertEquals(0, count("SELECT count(*) FROM memory_project_members WHERE project_id=?", pid));
         assertEquals(0, count("SELECT count(*) FROM memory_consolidation_scopes WHERE project_id=?", pid));
         assertEquals(1, count("SELECT count(*) FROM memory_consolidation_scopes WHERE user_id=? AND scope_kind='PERSONAL'", owner));
-        assertEquals(0, count("SELECT count(*) FROM memory_recall_acl WHERE project_id=?", pid));
         assertEquals(0, count("SELECT count(*) FROM memory_project_settings WHERE project_id=?", pid));
         assertEquals(0, count("SELECT count(*) FROM memory_project_user_settings WHERE project_id=?", pid));
+        // 二期 P1：收录规则 + 收录条目软删；他项目条目不动
+        assertEquals(1, count("SELECT count(*) FROM memory_project_rules WHERE project_id=? AND deleted=1", pid));
+        assertEquals(1, count("SELECT count(*) FROM memory_project_entries WHERE project_id=? AND deleted=1", pid));
+        assertEquals(0, count("SELECT count(*) FROM memory_project_entries WHERE id=? AND deleted=1", otherEntry),
+                "他项目条目不动");
+        // 5x #5：授权链 / 个人授权 / 条目级覆盖 三表清（ON DELETE CASCADE 软删不触发，须 app 层）
+        assertEquals(0, count("SELECT count(*) FROM memory_project_links WHERE parent_project_id=? OR child_project_id=?", pid, pid),
+                "删项目须双向清授权链");
+        assertEquals(0, count("SELECT count(*) FROM memory_project_user_grants WHERE project_id=?", pid),
+                "删项目须清项目↔个人授权");
+        assertEquals(0, count("SELECT count(*) FROM memory_entry_coverage WHERE project_id=?", pid),
+                "删项目须清条目级覆盖");
     }
 
-    // ---- 4. 写读闭环：真实删除 → F-4b 折叠板 + restore ----
-
-    @Test
-    void deleteProject_thenLifecyclePanelRestoreWorks() {
-        long u = uniq();
-        Long owner = createUser("it_hk_r_own_" + u);
-        Long member = createUser("it_hk_r_mem_" + u);
-        ProjectCreateRequest req = new ProjectCreateRequest();
-        req.setName("it_hk_r_proj_" + u);
-        ProjectVO project = projectService.create(req, owner);
-        ProjectShareRequest share = new ProjectShareRequest();
-        share.setUserId(member);
-        projectService.addMember(project.getId(), share, owner, false);
-        insertTurn(member, "{" + project.getId() + "}");
-        insertTurn(member, "{" + project.getId() + "}");
-
-        projectService.delete(project.getId(), owner, false);
-
-        // 折叠板列表（写侧 hook 造的 deleted_project_ids + 通知）
-        List<MemoryLifecycleProjectVO> deleted = lifecycleService.listDeletedProjects(member);
-        assertEquals(1, deleted.size());
-        assertEquals(2, deleted.get(0).getTurnCount());
-        assertEquals("it_hk_r_proj_" + u, deleted.get(0).getProjectName(), "软删项目名仍取到");
-
-        // restore 全链：拉取到自建新项目 + 通知 resolved
-        MemoryLifecycleActionVO vo = lifecycleService.restoreDeletedProject(member, project.getId(), null);
-        assertEquals(2, vo.getAffectedTurns());
-        assertEquals(1, count("SELECT count(*) FROM memory_notifications WHERE user_id=? AND ref_id=? AND resolved_at IS NOT NULL",
-                member, project.getId()), "restore 后本人波及通知 resolved");
-        assertEquals("ACTIVE", memberStatus(vo.getNewProjectId(), member), "新项目新栈 OWNER 行（hook 落）");
-    }
-
-    // ---- 5. V52 回填 SQL（存量旧栈成员 → 新栈） ----
+    // ---- 4. V52 回填 SQL（存量旧栈成员 → 新栈） ----
 
     @Test
     void v52BackfillSql_syncsLegacyMembers_idempotent() {

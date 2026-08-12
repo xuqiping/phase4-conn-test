@@ -2,12 +2,14 @@ package com.superprogrammer.billing.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.DailyTrendVO;
+import com.superprogrammer.billing.dto.ReconcileDiffVO;
 import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
 import com.superprogrammer.billing.dto.UserUsageVO;
 import com.superprogrammer.billing.dto.UserWalletVO;
 import com.superprogrammer.billing.service.BillingQueryService;
+import com.superprogrammer.billing.service.BillingReconcileService;
 import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,7 @@ import java.util.List;
 public class BillingController {
 
     private final BillingQueryService queryService;
+    private final BillingReconcileService reconcileService;
 
     // ---------- admin（usage:view） ----------
 
@@ -101,9 +104,23 @@ public class BillingController {
             @RequestParam(required = false) String model,
             @RequestParam(required = false) String kind,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String traceId,
+            @RequestParam(required = false) Long taskId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
-        return ResponseEntity.ok(R.ok(queryService.pageDetail(from, to, userId, model, kind, status, page, size)));
+        return ResponseEntity.ok(R.ok(queryService.pageDetail(
+                from, to, userId, model, kind, status, traceId, taskId, page, size)));
+    }
+
+    /**
+     * admin 计费对账（安全体系 S1 · SEC-FR-123）：手动触发一次「余额 vs Σ流水」全量对账。
+     * <p>返回差异行（空=全平）；差异行同时写安全审计 + ERROR 日志（与每日定时任务同路径）。
+     * 只读，不自动修账。
+     */
+    @GetMapping("/admin/reconcile")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<ReconcileDiffVO>>> reconcile() {
+        return ResponseEntity.ok(R.ok(reconcileService.reconcile()));
     }
 
     // ---------- user（ownership = current userId，无外部旁路） ----------

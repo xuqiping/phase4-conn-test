@@ -10,6 +10,7 @@ import type { ApiResponse } from './request'
 import type { PageResult } from '@/api/admin'
 import type {
   AssetCreateRequest,
+  AssetCopyRequest,
   AssetProjectVO,
   AssetUpdateRequest,
   AssetUsageVO,
@@ -18,11 +19,18 @@ import type {
   CanvasImportVO,
   ConsistencyPackRequest,
   MatrixCountVO,
+  MediaImportRequest,
+  MediaImportVO,
   MemberAddRequest,
+  MemberCandidateVO,
   MemberRoleUpdateRequest,
   MemberVO,
   ProjectCreateRequest,
   ProjectUpdateRequest,
+  PublicAccessDecisionRequest,
+  PublicAccessRequestVO,
+  PublicProjectSummaryVO,
+  PublicPublishRequest,
   ResolveRequest,
   ResolveVO,
   ScriptBreakdownVO,
@@ -68,6 +76,12 @@ export const memberApi = {
   /** GET /assets/projects/{id}/members — 成员列表（owner 行合成居首） */
   list(projectId: number) {
     return request.get<ApiResponse<MemberVO[]>>(`/assets/projects/${projectId}/members`)
+  },
+  /** GET /assets/projects/{id}/members/candidates — 按关键词返回最小候选字段。 */
+  searchCandidates(projectId: number, keyword: string) {
+    return request.get<ApiResponse<MemberCandidateVO[]>>(`/assets/projects/${projectId}/members/candidates`, {
+      params: { keyword }
+    })
   },
   /** POST /assets/projects/{id}/members — 邀请成员（owner） */
   invite(projectId: number, data: MemberAddRequest) {
@@ -133,6 +147,10 @@ export const assetApi = {
   get(assetId: number) {
     return request.get<ApiResponse<AssetVO>>(`/assets/assets/${assetId}`)
   },
+  /** POST /assets/assets/{id}/copy — 将可用公众池资产复制到有写权限的目标项目。 */
+  copy(assetId: number, data: AssetCopyRequest) {
+    return request.post<ApiResponse<AssetVO>>(`/assets/assets/${assetId}/copy`, data)
+  },
   /** PUT /assets/assets/{id} — 更新 meta+分类（正文改版走版本端点） */
   update(assetId: number, data: AssetUpdateRequest) {
     return request.put<ApiResponse<AssetVO>>(`/assets/assets/${assetId}`, data)
@@ -144,6 +162,35 @@ export const assetApi = {
   /** PUT /assets/assets/{id}/storyboard — 保存分镜字段(字段1/2/4，S18)。requireWrite + 须分镜类型。 */
   saveStoryboard(assetId: number, data: StoryboardSaveRequest) {
     return request.put<ApiResponse<AssetVO>>(`/assets/assets/${assetId}/storyboard`, data)
+  }
+}
+
+// === 公众池发布、申请与审批（FR-F19-03/04） ===
+
+export const publicPoolApi = {
+  list() {
+    return request.get<ApiResponse<PublicProjectSummaryVO[]>>('/assets/public-pool')
+  },
+  publish(projectId: number, data: PublicPublishRequest) {
+    return request.post<ApiResponse<void>>(`/assets/public-pool/${projectId}/publish`, data)
+  },
+  unpublish(projectId: number) {
+    return request.delete<ApiResponse<void>>(`/assets/public-pool/${projectId}/publish`)
+  },
+  requestAccess(projectId: number) {
+    return request.post<ApiResponse<PublicAccessRequestVO>>(`/assets/public-pool/${projectId}/requests`)
+  },
+  getMyRequest(projectId: number) {
+    return request.get<ApiResponse<PublicAccessRequestVO | null>>(`/assets/public-pool/${projectId}/requests/mine`)
+  },
+  listRequests(projectId: number) {
+    return request.get<ApiResponse<PublicAccessRequestVO[]>>(`/assets/public-pool/${projectId}/requests`)
+  },
+  decideRequest(projectId: number, requestId: number, data: PublicAccessDecisionRequest) {
+    return request.put<ApiResponse<void>>(`/assets/public-pool/${projectId}/requests/${requestId}/decision`, data)
+  },
+  revokeApproval(projectId: number, requestId: number) {
+    return request.delete<ApiResponse<void>>(`/assets/public-pool/${projectId}/requests/${requestId}/approval`)
   }
 }
 
@@ -221,5 +268,14 @@ export const assetBridgeApi = {
   /** GET /assets/assets/{id}/usages — 使用记录（双向追溯；viewer 可读） */
   usages(assetId: number) {
     return request.get<ApiResponse<AssetUsageVO[]>>(`/assets/assets/${assetId}/usages`)
+  },
+
+  /**
+   * POST /assets/from-media — 生图结果某张图入库（生成→库）。
+   * 复用 SOURCE_MEDIA fileId（不拷贝）；genMeta.source=MEDIA 标来源。
+   * requireWrite（viewer 不可入库）。无画布节点 → 无重复检测三态，created 恒 true。
+   */
+  importFromMedia(data: MediaImportRequest) {
+    return request.post<ApiResponse<MediaImportVO>>('/assets/from-media', data)
   }
 }

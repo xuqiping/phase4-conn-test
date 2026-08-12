@@ -5,8 +5,10 @@ import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenResult;
+import com.superprogrammer.media.dto.PreparedMediaRequest;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
+import com.superprogrammer.media.provider.ArkImageProvider;
 import com.superprogrammer.media.provider.ArkSeedanceProvider;
 import com.superprogrammer.media.service.internal.MediaGenTaskTxService;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,8 +37,13 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaGenTaskTxService txService;
     @Mock private MediaGenTaskMapper taskMapper;
     @Mock private ArkSeedanceProvider arkProvider;
+    @Mock private ArkImageProvider imageProvider;
     @Mock private MediaStorageService mediaStorageService;
+    @Mock private MediaReferenceUrlService mediaReferenceUrlService;
     @Mock private MediaBillingService mediaBillingService;
+    @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
+    @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MediaGenProperties properties = new MediaGenProperties();
@@ -47,16 +54,16 @@ class MediaGenTaskWorkerTest {
 
     @BeforeEach
     void setUp() {
-        worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider,
-                mediaStorageService, properties, objectMapper, directExecutor, mediaBillingService);
+        worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
+                mediaStorageService, mediaReferenceUrlService, properties, objectMapper, directExecutor, mediaBillingService,
+                inflightGate, bizMetrics, auditLogService);
     }
 
     @Test
     void succeeded_withUsageTokens_marksSucceededWithRealValue() {
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(eq("https://ark/v.mp4"), eq(100L), anyString()))
@@ -64,27 +71,34 @@ class MediaGenTaskWorkerTest {
 
         worker.poll();
 
-        verify(txService).setArkTaskId(1L, "cct-1");
+        verify(txService, never()).setArkTaskId(anyLong(), anyString());
         verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
         verify(txService, never()).markFailed(anyLong(), anyString());
         // Chunk F：成功路径扣减计费（kind=VIDEO，refId=taskId，视频伪-token=200000）
+        // 7x-3：chargeMedia 现为 10 参（带 hasReference），verify 用 anyBoolean()
         verify(mediaBillingService).chargeMedia(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
-                eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L));
+                eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L), anyBoolean());
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
+        // 指标：成功终态正好一次（kind=video,result=success）+ 端到端耗时
+        verify(bizMetrics).mediaTaskTerminal("video", "success");
+        verify(bizMetrics).mediaTaskDuration(eq("video"), any());
+        // Chunk3 #1：成功终态二次审计 video_gen_success，detail 带 model+kind（与 video_submit 同 targetId=1 关联）
+        verify(auditLogService).recordTask(eq("media"), eq("video_gen_success"), eq("media_gen_task"),
+                eq("1"), eq(100L), isNull(), isNull(), contains("doubao-seedance-1-0"),
+                eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
     }
 
     @Test
     void succeeded_marksSucceededWhenBillingDisabled() {
         // 计费禁用/系统调用：chargeMedia 返 null（未扣），仍正常 markSucceeded，不退款
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
         when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(null);
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn(null);
 
         worker.poll();
 
@@ -102,7 +116,7 @@ class MediaGenTaskWorkerTest {
                 "https://ark/v.mp4", 1000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
         when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong())).thenReturn(new BigDecimal("50"));
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn(new BigDecimal("50"));
         doThrow(new IllegalStateException("DB 抖动")).when(txService)
                 .markSucceeded(anyLong(), anyString(), anyInt(), anyString());
 
@@ -125,18 +139,20 @@ class MediaGenTaskWorkerTest {
         worker.poll();
 
         verify(txService).markFailed(eq(1L), contains("500"));
+        // 指标：失败终态正好一次（result=fail），不记成功
+        verify(bizMetrics).mediaTaskTerminal("video", "fail");
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), eq("success"));
         verify(mediaBillingService, never()).chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong());
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
         verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong());
     }
 
     @Test
     void succeeded_noUsage_estimatesByRate() {
         // 720p=61760 token/秒 × 5s = 308800（spec 断言常量）
-        MediaGenTask task = pendingTask(1L, 100L, null);
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenReturn("cct-1");
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", null, null)); // 无 usage → 估算
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
@@ -166,12 +182,69 @@ class MediaGenTaskWorkerTest {
         MediaGenTask task = pendingTask(1L, 100L, null);
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
-        when(arkProvider.createTask(any())).thenThrow(new IllegalStateException("doubao 未配置 key"));
+        PreparedMediaRequest prepared = PreparedMediaRequest.builder().body(java.util.Map.of())
+                .snapshot(objectMapper.createObjectNode().put("provider", "ark-seedance")).build();
+        when(arkProvider.prepareCreateRequest(any())).thenReturn(prepared);
+        when(arkProvider.createPreparedTask(any(), eq(prepared))).thenThrow(new IllegalStateException("doubao 未配置 key"));
 
         worker.poll();
 
         verify(txService).markFailed(eq(1L), contains("key"));
+        org.mockito.InOrder order = inOrder(txService, arkProvider);
+        order.verify(txService).saveProviderRequestSnapshot(eq(1L), contains("ark-seedance"));
+        order.verify(arkProvider).createPreparedTask(any(), eq(prepared));
         verify(arkProvider, never()).queryTask(anyString(), any());
+    }
+
+    @Test
+    void createTask_AC_V3_05_schedulesNextClaimWithoutQueryingOrReleasingInflight() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        PreparedMediaRequest prepared = PreparedMediaRequest.builder().body(java.util.Map.of())
+                .snapshot(objectMapper.createObjectNode()).build();
+        when(arkProvider.prepareCreateRequest(any())).thenReturn(prepared);
+        when(arkProvider.createPreparedTask(any(), eq(prepared))).thenReturn("cct-1");
+
+        worker.poll();
+
+        verify(txService).setArkTaskId(1L, "cct-1");
+        org.mockito.InOrder order = inOrder(txService, arkProvider);
+        order.verify(txService).saveProviderRequestSnapshot(eq(1L), anyString());
+        order.verify(arkProvider).createPreparedTask(any(), eq(prepared));
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(arkProvider, never()).queryTask(anyString(), any());
+        verify(inflightGate, never()).release(anyLong());
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), anyString());
+    }
+
+    @Test
+    void running_AC_V3_05_schedulesNextClaimWithoutTerminalSideEffects() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask("cct-1", null)).thenReturn(result(MediaGenResult.STATUS_RUNNING, null, null, null));
+
+        worker.poll();
+
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(txService, never()).markFailed(anyLong(), anyString());
+        verify(inflightGate, never()).release(anyLong());
+        verify(bizMetrics, never()).mediaTaskTerminal(anyString(), anyString());
+    }
+
+    @Test
+    void queryNetworkError_AC_V3_05_retriesInsteadOfFailing() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask("cct-1", null)).thenThrow(new IllegalStateException("read timed out"));
+
+        worker.poll();
+
+        verify(txService).scheduleNextQuery(eq(1L), eq(properties.getBackoffStartMs()));
+        verify(txService, never()).markFailed(anyLong(), anyString());
+        verify(inflightGate, never()).release(anyLong());
     }
 
     @Test
@@ -202,7 +275,7 @@ class MediaGenTaskWorkerTest {
     // ---------- buildRequest（附件分支，ReflectionTestUtils 直调私有方法） ----------
 
     @Test
-    void buildRequest_attachments_convertedToDataUriByKind() {
+    void buildRequest_videoUsesSignedHttpsUrl_otherMediaKeepDataUri() {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setProviderId(7L);
         task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
@@ -211,7 +284,8 @@ class MediaGenTaskWorkerTest {
                 + "{\"fileId\":\"v1.mp4\",\"kind\":\"video\"},"
                 + "{\"fileId\":\"a1.mp3\",\"kind\":\"audio\"}]}");
         when(mediaStorageService.readAsDataUri("i1.png", 100L, "image")).thenReturn("data:image/png;base64,I");
-        when(mediaStorageService.readAsDataUri("v1.mp4", 100L, "video")).thenReturn("data:video/mp4;base64,V");
+        when(mediaReferenceUrlService.createVideoUrl("v1.mp4")).thenReturn(
+                "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x");
         when(mediaStorageService.readAsDataUri("a1.mp3", 100L, "audio")).thenReturn("data:audio/mpeg;base64,A");
 
         com.superprogrammer.media.dto.MediaGenRequest req =
@@ -220,8 +294,9 @@ class MediaGenTaskWorkerTest {
         assert req != null;
         org.junit.jupiter.api.Assertions.assertEquals(3, req.getAttachments().size());
         org.junit.jupiter.api.Assertions.assertEquals("image", req.getAttachments().get(0).getKind());
-        org.junit.jupiter.api.Assertions.assertEquals("data:video/mp4;base64,V",
-                req.getAttachments().get(1).getDataUri());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x",
+                req.getAttachments().get(1).getUrl());
         org.junit.jupiter.api.Assertions.assertEquals("audio", req.getAttachments().get(2).getKind());
         // providerId 透传（多 MEDIA provider 路由）；attachments 分支不走旧首帧
         org.junit.jupiter.api.Assertions.assertEquals(7L, req.getProviderId());
@@ -247,8 +322,8 @@ class MediaGenTaskWorkerTest {
     void buildRequest_attachmentReadFailure_throws() {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setRequestConfig("{\"prompt\":\"p\",\"attachments\":[{\"fileId\":\"big.mp4\",\"kind\":\"video\"}]}");
-        when(mediaStorageService.readAsDataUri("big.mp4", 100L, "video"))
-                .thenThrow(new IllegalStateException("参考视频过大（>50MB）"));
+        when(mediaReferenceUrlService.createVideoUrl("big.mp4"))
+                .thenThrow(new IllegalStateException("参考视频公网地址未配置"));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task));
@@ -266,6 +341,7 @@ class MediaGenTaskWorkerTest {
         t.setTaskType(MediaGenTask.TYPE_TEXT2VIDEO);
         t.setModel("doubao-seedance-1-0");
         t.setRequestConfig("{\"prompt\":\"一只橘猫晒太阳\",\"duration\":5,\"resolution\":\"720p\"}");
+        t.setCreatedAt(java.time.OffsetDateTime.now().minusSeconds(5));
         return t;
     }
 

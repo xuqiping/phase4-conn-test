@@ -7,6 +7,7 @@ import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
+import com.superprogrammer.media.dto.PreparedMediaRequest;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +18,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -78,14 +82,27 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     @Override
     public String createTask(MediaGenRequest request) {
-        ResolvedArk ark = resolveArk(request.getProviderId());
+        return createPreparedTask(request, prepareCreateRequest(request));
+    }
+
+    /** 发送前只构建一次实际 body，并由它派生不含 data URI 的审计快照。 */
+    public PreparedMediaRequest prepareCreateRequest(MediaGenRequest request) {
         Map<String, Object> body = buildCreateBody(request);
+        return PreparedMediaRequest.builder()
+                .body(body)
+                .snapshot(buildRedactedSnapshot(body, request))
+                .build();
+    }
+
+    /** 使用已准备的同一个 body 发 POST，避免保存快照后又重新推导请求。 */
+    public String createPreparedTask(MediaGenRequest request, PreparedMediaRequest prepared) {
+        ResolvedArk ark = resolveArk(request.getProviderId());
         try {
             // 全 URL 直发（FR-001）：endpoint 即任务端点完整 URL，原样 POST
             String resp = ark.client.post()
                     .uri(ark.endpoint)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
+                    .bodyValue(prepared.getBody())
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(RESPONSE_TIMEOUT);
@@ -150,7 +167,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
         if (request.getAttachments() != null && !request.getAttachments().isEmpty()) {
             // 多模态参考（SeedDance 2.0）：图/视频/音频按 role 标注，positional 引用（图1/视频1/音频1）
             // image 附件：frameRole=first_frame/last_frame → 对应帧 role；否则 reference_image。
-            // 一次请求可含 1 首帧 + 1 尾帧 + N 参考图（service 已校验全局各 ≤1）。
+            // 首/尾帧模式与参考媒体模式由 service 前置互斥校验；同一模式内保持附件顺序。
             for (MediaGenRequest.ResolvedAttachment a : request.getAttachments()) {
                 String type = KIND_TYPE.getOrDefault(a.getKind(), "image_url");
                 String role = KIND_ROLE.getOrDefault(a.getKind(), "reference_image");
@@ -161,7 +178,7 @@ public class ArkSeedanceProvider implements MediaGenProvider {
                 }
                 content.add(Map.of(
                         "type", type,
-                        type, Map.of("url", a.getDataUri()),
+                        type, Map.of("url", a.getUrl()),
                         "role", role));
             }
         } else if (MediaGenRequest.TYPE_IMAGE2VIDEO.equals(request.getTaskType())
@@ -191,6 +208,51 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             body.put("generate_audio", true);
         }
         return body;
+    }
+
+    private JsonNode buildRedactedSnapshot(Map<String, Object> body, MediaGenRequest request) {
+        com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+        root.put("provider", ID);
+        root.put("capturedAt", OffsetDateTime.now().toString());
+        com.fasterxml.jackson.databind.node.ObjectNode redacted = objectMapper.valueToTree(body);
+        JsonNode content = redacted.path("content");
+        for (int i = 1; i < content.size(); i++) {
+            com.fasterxml.jackson.databind.node.ObjectNode item = (com.fasterxml.jackson.databind.node.ObjectNode) content.get(i);
+            String type = item.path("type").asText();
+            JsonNode media = item.path(type);
+            String mediaUrl = media.path("url").asText(null);
+            String fileId = request.getAttachments() != null && i - 1 < request.getAttachments().size()
+                    ? request.getAttachments().get(i - 1).getFileId()
+                    : request.getRefFileId();
+            item.set(type, redactedMediaUrl(mediaUrl, fileId));
+        }
+        root.set("request", redacted);
+        return root;
+    }
+
+    private JsonNode redactedMediaUrl(String mediaUrl, String fileId) {
+        com.fasterxml.jackson.databind.node.ObjectNode meta = objectMapper.createObjectNode();
+        meta.put("redacted", true);
+        if (fileId != null) meta.put("fileId", fileId);
+        if (mediaUrl != null && mediaUrl.startsWith("https://")) {
+            meta.put("transport", "https_url");
+            return meta;
+        }
+        meta.put("transport", "data_uri");
+        if (mediaUrl == null || !mediaUrl.startsWith("data:") || !mediaUrl.contains(",")) return meta;
+        int comma = mediaUrl.indexOf(',');
+        String header = mediaUrl.substring(5, comma);
+        String mime = header.split(";", 2)[0];
+        if (!mime.isBlank()) meta.put("mime", mime);
+        try {
+            byte[] bytes = Base64.getDecoder().decode(mediaUrl.substring(comma + 1));
+            meta.put("bytes", bytes.length);
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+            meta.put("sha256", HexFormat.of().formatHex(hash));
+        } catch (Exception ignored) {
+            meta.put("invalid", true);
+        }
+        return meta;
     }
 
     // ---------- 响应解析 ----------
@@ -230,11 +292,8 @@ public class ArkSeedanceProvider implements MediaGenProvider {
             }
             return b.build();
         } catch (Exception e) {
-            // 解析失败按 FAILED 兜底（不卡 RUNNING 死轮询；worker 会把任务置 FAILED + errorMsg）
-            return MediaGenResult.builder()
-                    .status(MediaGenResult.STATUS_FAILED)
-                    .errorMsg("Ark 查询响应解析失败")
-                    .build();
+            // 响应解析异常不等于 Provider 明确失败；抛给 worker 退避重试，避免误写 FAILED。
+            throw new IllegalStateException("Ark 查询响应解析失败", e);
         }
     }
 

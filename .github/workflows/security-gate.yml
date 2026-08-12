@@ -1,0 +1,51 @@
+# 安全体系 S1 · SEC-FR-071 + SEC-FR-020：CI 安全门禁。
+# - gitleaks：密钥进仓库即红（防第二次 #2 密钥泄露事件）。
+#   Phase4 审查修正：gitleaks-action@v2 不支持 baseline，而 git 历史仍含已泄明文密钥（待 G1 轮换 +
+#   H1 人工 baseline），全量扫 = 首跑永红 → 门禁被人肉无视。故 CI 改为「只扫本次 push/PR 的提交」
+#   （--log-opts 增量，拦新增语义不变）；全量+baseline 首扫待 H1 闭环后恢复 fetch-depth:0 全量。
+# - mybatis-dollar-check：Mapper ${} 拼接即红（SQL 注入防回潮）。
+# 本地同款：agent-platform/scripts/security/*.sh（Git Bash 可跑）。
+name: security-gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: SEC-FR-071 密钥扫描（增量：本次提交）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 增量扫需要比 base 多取一层父提交；PR 场景用 merge-base 区间
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.24.3
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+      - name: gitleaks scan（只扫本次提交，拦新增）
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            LOG_OPTS="origin/${{ github.base_ref }}..HEAD"
+          else
+            LOG_OPTS="${{ github.event.before }}..${{ github.sha }}"
+            # 新建分支/强制推送时 before 全零 → 退化为只扫 HEAD 一个提交
+            if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+              LOG_OPTS="HEAD~1..HEAD"
+            fi
+          fi
+          echo "scan range: $LOG_OPTS"
+          /tmp/gitleaks git --config agent-platform/.gitleaks.toml --log-opts="$LOG_OPTS" --verbose .
+
+  mybatis-dollar-check:
+    name: SEC-FR-020 SQL 注入门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mapper ${} 拼接扫描
+        run: bash agent-platform/scripts/security/mybatis-dollar-check.sh

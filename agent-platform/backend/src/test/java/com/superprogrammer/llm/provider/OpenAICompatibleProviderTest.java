@@ -8,6 +8,7 @@ import org.junit.jupiter.api.*;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -60,6 +61,23 @@ class OpenAICompatibleProviderTest {
         assertNotNull(response.getDuration());
         // FR-001：发出的请求路径 == 配置的 endpoint 原样（零拼接）
         assertEquals("/v1/chat/completions", server.takeRequest().getPath());
+    }
+
+    @Test
+    void chat_shouldHonorPerRequestTimeout() {
+        server.enqueue(new MockResponse()
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"late\"}}]}")
+                .setBodyDelay(500, TimeUnit.MILLISECONDS)
+                .setHeader("Content-Type", "application/json"));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .timeoutMs(50)
+                .build();
+
+        RuntimeException error = assertThrows(RuntimeException.class, () -> provider.chat(request));
+        assertTrue(error.getMessage().contains("LLM"));
     }
 
     @Test
@@ -118,6 +136,15 @@ class OpenAICompatibleProviderTest {
         assertTrue(provider.supports("deepseek-chat"));
         assertFalse(provider.supports("gpt-4"));
         assertFalse(provider.supports("any-model"));
+    }
+
+    @Test
+    void supports_emptyModelList_shouldNotHijackExplicitModel() {
+        OpenAICompatibleProvider unconfiguredProvider = new OpenAICompatibleProvider(
+                "unconfigured", server.url("/v1/chat/completions").toString(), "k", List.of(), mapper);
+
+        assertFalse(unconfiguredProvider.supports("doubao-seed-2.1-code"),
+                "未配置模型列表的 Provider 不得宣称支持所有模型并抢占显式选择");
     }
 
     @Test

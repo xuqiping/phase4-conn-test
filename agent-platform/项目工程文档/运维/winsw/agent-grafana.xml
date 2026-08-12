@@ -1,0 +1,22 @@
+<!--
+  运维系统 Step 8：Grafana WinSW 服务定义（WinSW v2.12.0）
+  用法：本文件与 WinSW.NET461.x64.exe（重命名为 agent-grafana.exe）放同目录，
+        管理员执行 agent-grafana.exe install && agent-grafana.exe start
+  注意：Grafana 监听地址在 conf\custom.ini 配（http_addr=127.0.0.1，仅本机可达）；
+        默认 admin/admin，首登必须改密（见运维手册）。看板 JSON provisioning 属 Step 9。
+-->
+<service>
+  <id>agent-grafana</id>
+  <name>agent-grafana</name>
+  <description>Agent Platform 运维系统：Grafana 看板（四预置看板 provisioning，127.0.0.1:3000）</description>
+  <executable>D:\IT\ops\grafana\bin\grafana-server.exe</executable>
+  <arguments>--homepath=D:\IT\ops\grafana</arguments>
+  <workingdirectory>D:\IT\ops\grafana</workingdirectory>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <logpath>D:\IT\ops\grafana\data\log</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

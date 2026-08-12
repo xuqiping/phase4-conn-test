@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class ClaudeProviderTest {
@@ -39,6 +40,15 @@ class ClaudeProviderTest {
     @AfterEach
     void tearDown() throws IOException {
         server.shutdown();
+    }
+
+    @Test
+    void supports_emptyModelList_shouldNotInferModelsFromNamePrefix() {
+        ClaudeProvider unconfiguredProvider = new ClaudeProvider(
+                server.url("/v1/messages").toString(), "test-key", List.of(), new ObjectMapper());
+
+        assertFalse(unconfiguredProvider.supports("claude-3-5-sonnet"),
+                "未配置模型列表时不得通过名称前缀隐式认领模型");
     }
 
     @Test

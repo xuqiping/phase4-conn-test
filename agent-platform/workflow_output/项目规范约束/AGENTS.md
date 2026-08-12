@@ -63,11 +63,48 @@
 - **admin 诊断调用**（测试连通等须直调特定 provider 实例、不能走 gateway 按 model 路由）：直调 provider 后手动 `billingService.onSuccess(uid, providerId, "GLOBAL", model, kind, in, out)` 归户扣费，全链吞异常（诊断计费失败不得报错）。
 - **铁律不变**：计费是 side-channel——`LlmBillingService`/`MediaBillingService` 全链 try/catch 吞异常，**绝不回归成功的 LLM/媒体响应**；`userId=null` → 仅采不扣；`billing.enabled=false` → 扣/退短路。
 
+## 运维/脚本约束（运维系统沉淀）
+
+- **Windows .bat 红线**：含中文的 .bat 必须 **GBK + CRLF + 无 BOM、禁止 chcp 65001**（UTF-8/65001 多字节错位致 REM 行被当命令执行；BOM 炸 `@echo off`；LF 致 REM 保护失效）。
+- **改 GBK bat 禁用 git-bash sed**——sed 输出会丢 `\r` 触发上一条全炸。一律 PowerShell 字节级：`[IO.File]::ReadAllBytes` + `[Text.Encoding]::GetEncoding('GBK')` 改写。
+- bat 子例程末尾显式 `exit /b 0`（cmd 的 echo 不复位 errorlevel，错误码会泄漏给调用方）。
+- **可执行 bat 一律放仓库英文目录 `scripts/ops/`**：SYSTEM 计划任务解析不了中文路径（实测报「系统找不到指定的路径」，同脚本提权 cmd 直跑却正常）；`项目工程文档/运维/` 只放模板与文档。
+- bat 发往 webhook 的 JSON 一律 ASCII（GBK 字节钉钉乱码）；生成的 yml 注释也 ASCII。
+- **监控红线**：userId/traceId/agentId/IP 等高基数值永远不进 metric tag 和 alert label；指标埋点 O(1)、禁 IO/查库（Gauge 回调除外）；告警 annotations 中文大白话+处置入口，不含敏感数据。
+- **监控组件安全策略**：Prometheus/Grafana/Alertmanager/适配器全部只绑 127.0.0.1，不经 Nginx 反代（与 /actuator 同策略）。
+- **密钥**：webhook/SMTP/DB 密码等只存服务器本地文件，仓库只存 .example 模板；钉钉机器人须经转译适配器（拒收 Alertmanager 原生报文）。
+
 ## 模块级约束（按需新增并在此索引）
 - [通用约束.md](通用约束.md) —— 跨所有模块的编码/命名/响应规范
+- **前端模块开关 + 权限显隐机制**（10x 沉淀）：控制某模块在前端是否展示，统一走 `frontend/src/config/modules.ts`：
+  - `ENABLED_MODULES`（项目级开关，false=对所有人隐藏含 admin）+ `MODULE_PERMISSION_MAP`（模块→权限码，叠加 RBAC）。
+  - 消费方三处：`Sidebar.canSeeModule`（菜单）、`router/accessGuard.resolveRouteAccess`（路由守卫）、入口组件 `v-if`。
+  - **加新模块**：① `modules.ts` 加 key+布尔+权限码；② Sidebar navItem 标 `module`；③ 路由 `meta.module`/`meta.requireAdmin`。改一处不生效=三处都漏。
+  - **隐藏存量模块**：把对应布尔改 false，菜单+路由+入口同步消失，后端代码不动。
+  - 路由守卫逻辑抽纯函数（`accessGuard.ts`），避开真实懒加载导航在 jsdom 测试超时；守卫读 localStorage 判角色（早于 Pinia）。
+  - 默认落地页用 `defaultLanding()` 动态选首个启用模块，**不要硬编码**（曾硬编码 `/agents`，关 /agents 后登录白屏）。
+- **价表导入导出规范**（7x 沉淀）：镜像 LLM 供应商 export/import 那套（DTO + upsert + 200 上限 + 逐行容错）：
+  - upsert 业务键：`(providerId + model + kind + hasReference)`；存在覆盖价格刷新 `effective_from=now`，不存在新建。
+  - 模板复用 `availablePricingModels()`（已排除已配置模型），天然区分 LLM/图片/视频（kind 字段）。
+  - 三 endpoint 均 `@RequirePermission("pricing:manage")` + `@AuditLog`；价表无加密，导出无需二次确认。
+  - 导入逐行校验复用 `validatePricingRule` + provider/model/category 复核；非法行进 errors 不中断整体。
+  - **PG 软删列是 INTEGER**（`deleted`），SQL 里写 `= 0` 不能写 `= false`（`operator does not exist: integer = boolean` → 兜底 500，曾坑图片价表创建）。
+- **视频参考定价维度 has_reference**（7x 沉淀）：
+  - `pricing_rule.has_reference BOOLEAN NOT NULL DEFAULT FALSE`（V95）；VIDEO 同模型可配 false+true 两行。
+  - 查询 fallback 到 false 行（不区分的模型配 1 行 false 即可）；只配 true 没配 false → 无参考任务报「价表未配置」（不无限兜底）。
+  - **worker 算 hasReference 必须从 `request.getAttachments()` 的 `kind=="video"` 判**，不用 taskType（IMAGE2VIDEO 被重载用于 image/video/audio 参考，不可靠）；**首尾帧参考图（kind=="image"）不算参考视频**。
+  - `MediaTaskVO.hasReference` 是计算字段（按 inputAttachments 实时算），与定价维度 `pricing_rule.has_reference` 是不同字段——前者任务侧展示/审查，后者价表行配置/计费命中，口径一致（都按 kind=="video"）。
+- **视频任务推送参数审查**（7x 沉淀）：实际发给 Provider 的 body 已脱敏落库在 `media_gen_tasks.request_config` JSONB 的 `providerRequestSnapshot` 子键（媒体 URL→sha256/大小，无二进制）。新接入审查只需复用 `MediaTaskRequestDetails` 组件，**无需新 DB 列**；Canvas 路径需在 `pollVideoTask`/`hydrateVideoPreviews` 两处 `updateNodeData` 保留审计字段。
 
 ## 参考文档
 - 项目结构 → [workflow_output/docs/file_structure.md](../docs/file_structure.md)
 - 需求规格 → [workflow_output/docs/specs/PRD.md](../docs/specs/PRD.md)
 - 既有中文文档（真相源）→ `项目工程文档/`（需求/设计/ADR/计划/速查表/数据库设计）
 - 快速启动 → [workflow_output/docs/run-guide/快速启动速查表.md](../docs/run-guide/快速启动速查表.md)
+
+## 模型解析约束
+
+- 运行时代码禁止硬编码具体模型 ID，也禁止用供应商模型列表第一项作为隐式默认值。
+- 文本与向量调用统一遵循：显式选择 → 管理员对应类别默认值 → 明确业务错误。
+- 显式模型不可用时直接报错，不得静默替换成其他模型。
+- 历史 Flyway 迁移和测试数据可以保留具体模型 ID，但不得作为新运行时默认来源。

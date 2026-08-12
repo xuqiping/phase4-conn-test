@@ -9,7 +9,7 @@
 **发现日期**：2026-06-30
 **环境**：云服务器部署（`117.72.25.74`），后端 Spring Boot 单实例
 **严重级别**：P0（服务可用性致命——单次网络抖动即可拖垮整个 JVM）
-**状态**：⏳ 待修复（根因已定位，待上云验证 + 改 P0 项）
+**状态**：🔧 修复已入码，待上云验证（2026-08-08 核：P0 WebClient 超时已落地——`OpenAICompatibleProvider`/`ClaudeProvider` 均配 10s connect + 30s response + `.block(Duration)`；P1 前端 request.ts 连续网络错误计数跳出亦已落地。残留：LlmGateway 有界重试/熔断未做。另注：当时超时的 `/api/chat/memories/*` 轮询端点已随记忆二期整栈删除。）
 
 ### 现象
 

@@ -66,10 +66,10 @@ class AgentRouterTest {
         LlmResponse llmResp = LlmResponse.builder().content("[2]").build();
         when(llmGateway.chat(any(), any())).thenReturn(llmResp);
 
-        RoutingResult result = router.route(agent, "帮我写个文档", 7L);
+        RoutingResult result = router.route(agent, "帮我写个文档", 7L, "selected-chat-model");
 
         assertFalse(result.getSkillIds().isEmpty());
-        verify(llmGateway).chat(any(), any());
+        verify(llmGateway).chat(argThat(req -> "selected-chat-model".equals(req.getModel())), any());
     }
 
     @Test

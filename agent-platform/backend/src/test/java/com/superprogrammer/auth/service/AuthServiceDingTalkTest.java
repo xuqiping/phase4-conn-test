@@ -35,6 +35,8 @@ class AuthServiceDingTalkTest {
     @Mock StringRedisTemplate redisTemplate;
     @Mock SystemSettingService systemSettingService;
     @Mock DepartmentService departmentService;
+    @Mock com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    @Mock SessionService sessionService;
 
     @InjectMocks AuthService authService;
 
@@ -55,8 +57,8 @@ class AuthServiceDingTalkTest {
         exist.setStatus("ACTIVE");
         when(userMapper.selectOne(any())).thenReturn(exist);
         when(userMapper.selectRoleCodesByUsername(anyString())).thenReturn(java.util.List.of("user"));
-        when(jwtUtil.generateAccessToken(eq(7L), anyString(), any(), anyLong())).thenReturn("access");
-        when(jwtUtil.generateRefreshToken(7L)).thenReturn("refresh");
+        when(jwtUtil.generateAccessToken(eq(7L), anyString(), any(), anyLong(), any())).thenReturn("access");
+        when(jwtUtil.generateRefreshToken(eq(7L), any())).thenReturn("refresh");
 
         TokenResponse resp = authService.loginByDingTalk(info);
 
@@ -76,8 +78,8 @@ class AuthServiceDingTalkTest {
         Role role = new Role(); role.setId(2L); role.setCode("user");
         when(roleMapper.selectOne(any())).thenReturn(role);
         when(userMapper.selectRoleCodesByUsername(anyString())).thenReturn(java.util.List.of("user"));
-        when(jwtUtil.generateAccessToken(eq(9L), anyString(), any(), anyLong())).thenReturn("access");
-        when(jwtUtil.generateRefreshToken(9L)).thenReturn("refresh");
+        when(jwtUtil.generateAccessToken(eq(9L), anyString(), any(), anyLong(), any())).thenReturn("access");
+        when(jwtUtil.generateRefreshToken(eq(9L), any())).thenReturn("refresh");
 
         TokenResponse resp = authService.loginByDingTalk(info);
 

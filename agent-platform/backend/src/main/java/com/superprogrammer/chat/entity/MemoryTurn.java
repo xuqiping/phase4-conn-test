@@ -10,12 +10,14 @@ import lombok.EqualsAndHashCode;
 import java.util.List;
 
 /**
- * 记忆流水账（V47 计划12）。表走 BaseEntity 软删。
+ * 记忆流水账（V47 计划12；V67 二期 P1 纯个人域化）。表走 BaseEntity 软删。
  * 一轮对话 = 1 INPUT + 1 OUTPUT 各一条；记忆主体表。
  * L0 = tag_ids（指向 memory_tags）；L1 = l1_summary；L2 = l2_detail；raw_content = gen 关态原文。
  * gen_done=false 的 raw turn 不参与召回（不进聚合也不兜底）。
- * project_ids 多挂共享（经 ACL 只读）；born_personal 出身标记（写入定死，卸空转 true）。
- * ⚠️ BIGINT[] 写入：LambdaUpdateWrapper 不读 @TableField typeHandler（V33 教训）→ 更新走 Mapper 显式 set 带 typeHandler。
+ * <p>
+ * <b>二期 P1 定案（FR-006，V67）</b>：turns <b>纯个人域</b>——个人对话全量进个人流水账，
+ * 原文不出个人域；项目记忆改走 {@code memory_project_entries}（收录规则路由蒸馏）。
+ * 一期四列（project_ids/born_personal/departed_project_ids/deleted_project_ids）已随 V67 DROP。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -35,18 +37,6 @@ public class MemoryTurn extends BaseEntity {
     private String rawContent;
     private Boolean genDone;
 
-    /** 项目挂载槽（空=个人私有）。BIGINT[]。 */
-    @TableField(typeHandler = LongArrayTypeHandler.class)
-    private List<Long> projectIds;
-
-    /** 出身标记，写入定死。 */
-    private Boolean bornPersonal;
-
-    /** 作者已离职项目 id（追加不改 project_ids）。BIGINT[]。 */
-    @TableField(typeHandler = LongArrayTypeHandler.class)
-    private List<Long> departedProjectIds;
-
-    /** 被删项目 id（保留挂载，scope 召回自然排除）。BIGINT[]。 */
-    @TableField(typeHandler = LongArrayTypeHandler.class)
-    private List<Long> deletedProjectIds;
+    /** 该轮对话所用的对话 model（ChatRequest.model 落库）；后台压缩按此取，NULL 回退 memory.judge.model 默认。 */
+    private String chatModel;
 }

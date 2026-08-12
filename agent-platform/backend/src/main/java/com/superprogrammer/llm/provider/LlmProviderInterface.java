@@ -7,6 +7,7 @@ import com.superprogrammer.llm.dto.TokenUsage;
 import com.superprogrammer.llm.dto.EmbedResult;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 public interface LlmProviderInterface {
@@ -14,6 +15,11 @@ public interface LlmProviderInterface {
     LlmResponse chat(LlmRequest request);
     Flux<StreamEvent> chatStream(LlmRequest request);
     boolean supports(String model);
+
+    /** Provider 明确声明的模型列表；空表表示通配/未声明。 */
+    default List<String> getSupportedModels() {
+        return List.of();
+    }
 
     /**
      * 流式 usage side-channel（计费用）：解析流末 usage 写入 {@code usageSink}，

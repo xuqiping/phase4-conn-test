@@ -7,6 +7,8 @@ import com.superprogrammer.canvas.dto.CanvasSaveRequest;
 import com.superprogrammer.canvas.dto.CanvasVO;
 import com.superprogrammer.canvas.dto.FrameExtractRequest;
 import com.superprogrammer.canvas.dto.FrameExtractVO;
+import com.superprogrammer.canvas.dto.ImageCropRequest;
+import com.superprogrammer.canvas.dto.ImageCropVO;
 import com.superprogrammer.canvas.dto.NodeRunResult;
 import com.superprogrammer.canvas.dto.StoryboardConcatRequest;
 import com.superprogrammer.canvas.dto.StoryboardConcatVO;
@@ -16,6 +18,7 @@ import com.superprogrammer.canvas.entity.Canvas;
 import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
 import com.superprogrammer.canvas.service.VideoFrameService;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
@@ -137,6 +140,7 @@ public class CanvasController {
      * 衍生/生图不覆盖原图：每次上传产新 fileId（plan R-5 只存引用不嵌 base64）。
      */
     @PostMapping("/{id}/upload")
+    @AuditLog(module = "canvas", action = "canvas_upload")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<StoredFile>> upload(@PathVariable Long id,
                                                 @RequestParam("file") MultipartFile file) {
@@ -183,6 +187,52 @@ public class CanvasController {
                 .url("/api/files/" + newFileId)
                 .mime(ef.mimeType())
                 .size(ef.size())
+                .sourceNodeId(nodeId)
+                .build()));
+    }
+
+    // ==================== C10 增强：焦点编辑图片裁剪（框选区 → 新图）====================
+
+    /**
+     * 焦点编辑裁剪：从图片节点按归一化框选区裁剪 → 新图片文件（SOURCE_CANVAS）→ 前端建图节点 + 自动连边。
+     *
+     * <p>原 C10 仅记录 cropRect+描述不产真图（衍生节点无内容）；现按归一化坐标真裁剪源图（VideoFrameService.cropImage，
+     * 纯像素非 AI，确定性产物）。源图 fileId 从快照节点 data.fileId 解析（同抽帧 resolveVideoFileId 范式，不信任客户端传入 fileId）。
+     *
+     * <p>归属咽喉点：loadOwned（画布）+ loadPath（源图文件 ownership 复检，防借他人 fileId 裁剪）。
+     * 失败不产空文件（plan 边界）：service 抛 → 端点直接返错误，不落 stored_files。
+     */
+    @PostMapping("/{id}/nodes/{nodeId}/crop-image")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<ImageCropVO>> cropImage(@PathVariable Long id,
+                                                    @PathVariable String nodeId,
+                                                    @RequestBody ImageCropRequest req) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        Canvas c = canvasService.loadOwned(id, userId, isAdmin());
+
+        if (req == null || req.getX() == null || req.getY() == null
+                || req.getW() == null || req.getH() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "裁剪区域参数缺失");
+        }
+        String sourceFileId = resolveImageFileId(c.getSnapshot(), nodeId);
+
+        Path srcPath = fileStorageService.loadPath(sourceFileId, userId, admin);
+        VideoFrameService.ExtractedFrame crop = videoFrameService.cropImage(
+                srcPath, req.getX(), req.getY(), req.getW(), req.getH());
+
+        String fileName = "crop_" + nodeId + ".png";
+        String newFileId = fileStorageService.storeStream(
+                new ByteArrayInputStream(crop.bytes()), fileName, crop.mimeType(), crop.size(),
+                userId, StoredFileEntity.SOURCE_CANVAS);
+        log.info("canvas image cropped: canvasId={} sourceNodeId={} newFileId={} bytes={}",
+                id, nodeId, newFileId, crop.size());
+
+        return ResponseEntity.ok(R.ok("已裁剪", ImageCropVO.builder()
+                .fileId(newFileId)
+                .url("/api/files/" + newFileId)
+                .mime(crop.mimeType())
+                .size(crop.size())
                 .sourceNodeId(nodeId)
                 .build()));
     }
@@ -335,6 +385,42 @@ public class CanvasController {
         String fileId = target.path("data").path("fileId").asText(null);
         if (fileId == null || fileId.isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "视频节点无源文件，无法抽帧");
+        }
+        return fileId;
+    }
+
+    /**
+     * 从快照定位图片节点 + 取 data.fileId；非图片节点 / 无源文件 / 节点不存在 → 业务异常。
+     * （同 resolveVideoFileId 范式，焦点编辑裁剪用——源图 fileId 从快照解析，不信任客户端传入。）
+     */
+    private String resolveImageFileId(String snapshot, String nodeId) {
+        if (nodeId == null || nodeId.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "节点 id 缺失");
+        }
+        JsonNode target = null;
+        try {
+            JsonNode root = objectMapper.readTree(snapshot == null ? "{}" : snapshot);
+            JsonNode nodes = root.path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode n : nodes) {
+                    if (nodeId.equals(n.path("id").asText())) {
+                        target = n;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "画布快照解析失败");
+        }
+        if (target == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "节点不存在: " + nodeId);
+        }
+        if (!CanvasNodeDTO.TYPE_IMAGE.equals(target.path("type").asText())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅图片节点可裁剪");
+        }
+        String fileId = target.path("data").path("fileId").asText(null);
+        if (fileId == null || fileId.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片节点无源文件，无法裁剪");
         }
         return fileId;
     }

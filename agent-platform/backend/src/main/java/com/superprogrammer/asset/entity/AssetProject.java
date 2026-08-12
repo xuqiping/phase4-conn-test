@@ -7,6 +7,8 @@ import com.superprogrammer.common.typehandler.JsonbStringTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.OffsetDateTime;
+
 /**
  * 项目资产库·项目（asset_projects，V56）。
  *
@@ -22,6 +24,9 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 @TableName(value = "asset_projects", autoResultMap = true)
 public class AssetProject extends BaseEntity {
+
+    public static final String PUBLIC_ACCESS_OPEN = "OPEN";
+    public static final String PUBLIC_ACCESS_APPROVAL_REQUIRED = "APPROVAL_REQUIRED";
 
     /** 项目所有者（唯一所有者，与 createdBy 解耦便于转让）。 */
     private Long ownerId;
@@ -48,4 +53,19 @@ public class AssetProject extends BaseEntity {
      */
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String mediaTypes;
+
+    /** 是否已发布到公众池；旧项目由 V87 默认 false。 */
+    private Boolean publicPool;
+
+    /** OPEN / APPROVAL_REQUIRED；未发布时为空。 */
+    private String publicAccessMode;
+
+    /** 本次发布人快照；转让项目不会改变。 */
+    private Long publishedBy;
+
+    /** 本次发布时间快照。 */
+    private OffsetDateTime publishedAt;
+
+    /** 本次是否由管理员发布，决定“官方发布”标记。 */
+    private Boolean publishedByAdmin;
 }

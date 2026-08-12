@@ -33,6 +33,7 @@ import static org.mockito.Mockito.when;
 class MemoryTurnControllerTest {
 
     @Mock private MemoryTurnMapper turnMapper;
+    @Mock private com.superprogrammer.chat.service.internal.MemoryTurnDeleteCascadeService cascadeService;
 
     @InjectMocks private MemoryTurnController controller;
 

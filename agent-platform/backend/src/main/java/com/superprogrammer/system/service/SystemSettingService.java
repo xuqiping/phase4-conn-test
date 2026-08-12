@@ -20,6 +20,12 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SystemSettingService {
     public static final String ACCESS_TOKEN_EXPIRATION_MS = "auth.access_token_expiration_ms";
+    /** 安全体系 S2 · A8（SEC-FR-008）：单点登录开关（默认开；关=恢复多会话，秒级回滚）。 */
+    public static final String AUTH_SINGLE_SESSION_ENABLED = "auth.single_session.enabled";
+    /** 安全体系 S2 · L7（SEC-FR-126）：低余额并行闸门阈值（积分，默认 100；0=关闭闸门）。 */
+    public static final String BILLING_LOW_BALANCE_THRESHOLD = "billing.low-balance.threshold";
+    /** 安全体系 S2 · L7（SEC-FR-126）：低余额时允许的最大在途任务数（默认 1）。 */
+    public static final String BILLING_LOW_BALANCE_MAX_INFLIGHT = "billing.low-balance.max-inflight";
     /** RAG/记忆模式总开关（false=opt-in）。4 层优先级：session>agent/workflow>global。 */
     public static final String RAG_MEMORY_ENABLED = "rag.memory.enabled";
     /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */
@@ -72,6 +78,25 @@ public class SystemSettingService {
      *  命中即跳该侧生成（不写 raw 也不调 LLM）。默认空（核心项已预置开箱即用）。 */
     public static final String MEMORY_PREFILTER_BLACKLIST_EXTRA = "memory.prefilter.blacklist-extra";
 
+    // ============================ 记忆二期 P1 路由 memory.routing.* ============================
+    /** 路由总开关：false=全停自动收录（不影响个人流水账写入）。默认 true。 */
+    public static final String MEMORY_ROUTING_ENABLED = "memory.routing.enabled";
+    /** 路由粗筛 anchor 余弦距离阈值（0=完全相同，2=相反）。低于粗筛阈值 → 零 LLM 调用。默认 0.35（严于标签归一 0.25）。 */
+    public static final String MEMORY_ROUTING_COARSE_THRESHOLD = "memory.routing.coarse-threshold";
+    /** 路由置信度 ≥ 此值条目直接 ACTIVE（D1 定案默认 0.8）。 */
+    public static final String MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD = "memory.routing.auto-approve-threshold";
+    /** 路由置信度 ≥ 此值且 < auto-approve 进 PENDING_REVIEW；低于此丢弃（D1 定案默认 0.5）。 */
+    public static final String MEMORY_ROUTING_REVIEW_THRESHOLD = "memory.routing.review-threshold";
+    /** 旧记忆专用默认键（兼容迁移审计）；运行时已统一读取管理员全局默认对话模型。 */
+    public static final String MEMORY_JUDGE_MODEL = "memory.judge.model";
+    /** 管理员配置的全局默认对话模型；未配置时返回 null，由调用咽喉明确报错。 */
+    public static final String LLM_DEFAULT_CHAT_MODEL = "llm.default.chat-model";
+    /** 管理员配置的全局默认向量模型；未配置时返回 null，由调用咽喉明确报错。 */
+    public static final String LLM_DEFAULT_EMBEDDING_MODEL = "llm.default.embedding-model";
+    /** 个人记忆标签「大类」base vocab（JSON 数组，可热调）。有效词表 = 此 ∪ 用户 needs_review=false 的存量 topic。
+     *  缺失/非法 JSON 回退 RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。 */
+    public static final String MEMORY_TAG_VOCAB = "memory.tag.vocab";
+
     // ============================ 联网搜索 search.* ============================
     /** 联网搜索全局总开关（false=禁用，开关前端也读不到结果）。默认 false。 */
     public static final String SEARCH_ENABLED = "search.enabled";
@@ -110,11 +135,16 @@ public class SystemSettingService {
     public AuthSettingsVO getAuthSettings() {
         return AuthSettingsVO.builder()
                 .accessTokenExpirationMs(getAccessTokenExpirationMs())
+                .singleSessionEnabled(getBoolean(AUTH_SINGLE_SESSION_ENABLED, true))
                 .build();
     }
 
-    public AuthSettingsVO updateAuthSettings(long accessTokenExpirationMs) {
+    public AuthSettingsVO updateAuthSettings(long accessTokenExpirationMs, Boolean singleSessionEnabled) {
         upsert(ACCESS_TOKEN_EXPIRATION_MS, String.valueOf(accessTokenExpirationMs), "Access Token有效期(毫秒)");
+        if (singleSessionEnabled != null) {
+            upsert(AUTH_SINGLE_SESSION_ENABLED, String.valueOf(singleSessionEnabled),
+                    "A8 单点登录开关（SEC-FR-008）：同账号仅一处在线，新登录踢旧会话");
+        }
         return getAuthSettings();
     }
 
@@ -132,6 +162,51 @@ public class SystemSettingService {
     /** 通用写 boolean。 */
     public void setBoolean(String key, boolean val, String description) {
         upsert(key, String.valueOf(val), description);
+    }
+
+    // ============================ 通用 long get/set ============================
+
+    /** 通用读 long；缺失/非法 → def（实时查库，管理员页面改即生效）。 */
+    public long getLong(String key, long def) {
+        String value = getValue(key);
+        if (value == null || value.isBlank()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
+    }
+
+    // ============================ 计费（安全体系 S2 · L7 低余额并行闸门，SEC-FR-126）============================
+
+    public long getLowBalanceThreshold() {
+        return getLong(BILLING_LOW_BALANCE_THRESHOLD, 100);
+    }
+
+    public long getLowBalanceMaxInflight() {
+        return getLong(BILLING_LOW_BALANCE_MAX_INFLIGHT, 1);
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO getBillingSettings() {
+        return com.superprogrammer.system.dto.BillingSettingsVO.builder()
+                .lowBalanceThreshold(getLowBalanceThreshold())
+                .lowBalanceMaxInflight(getLowBalanceMaxInflight())
+                .build();
+    }
+
+    public com.superprogrammer.system.dto.BillingSettingsVO updateBillingSettings(
+            Long lowBalanceThreshold, Long lowBalanceMaxInflight) {
+        if (lowBalanceThreshold != null) {
+            upsert(BILLING_LOW_BALANCE_THRESHOLD, String.valueOf(lowBalanceThreshold),
+                    "L7 低余额并行闸门阈值（SEC-FR-126）：余额低于此值禁多任务并行");
+        }
+        if (lowBalanceMaxInflight != null) {
+            upsert(BILLING_LOW_BALANCE_MAX_INFLIGHT, String.valueOf(lowBalanceMaxInflight),
+                    "L7 低余额最大在途任务数（SEC-FR-126），默认 1");
+        }
+        return getBillingSettings();
     }
 
     // ============================ RAG/记忆模式 ============================
@@ -375,6 +450,98 @@ public class SystemSettingService {
         if (threshold < 0.0 || threshold > 2.0) threshold = 0.25;
         upsert(MEMORY_TAG_ANCHOR_THRESHOLD, String.valueOf(threshold),
                 "标签归一anchor余弦距离阈值（路径③粗筛门槛，0=完全相同2=相反，默认0.25保守）");
+    }
+
+    // ============================ 记忆二期 P1 路由 ============================
+
+    /** 路由总开关（false=全停自动收录，不影响个人流水账）。默认 true。 */
+    public boolean getMemoryRoutingEnabled() {
+        return getBoolean(MEMORY_ROUTING_ENABLED, true);
+    }
+
+    /** 路由粗筛 anchor 余弦距离阈值（距离语义：0=同，2=反），默认 0.35。非法/越界 → 0.35。 */
+    public double getMemoryRoutingCoarseThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_COARSE_THRESHOLD, 0.35, 0.0, 2.0);
+    }
+
+    /** 路由置信度直接收录阈值（0~1），默认 0.8。 */
+    public double getMemoryRoutingAutoApproveThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_AUTO_APPROVE_THRESHOLD, 0.8, 0.0, 1.0);
+    }
+
+    /** 路由置信度待审核阈值（0~1），默认 0.5。 */
+    public double getMemoryRoutingReviewThreshold() {
+        return getDoubleInRange(MEMORY_ROUTING_REVIEW_THRESHOLD, 0.5, 0.0, 1.0);
+    }
+
+    /** 管理员全局默认对话模型；不在代码里猜测任何具体模型。 */
+    public String getDefaultChatModel() {
+        return getNullableTrimmed(LLM_DEFAULT_CHAT_MODEL);
+    }
+
+    /** 管理员全局默认向量模型；不在代码里猜测任何具体模型。 */
+    public String getDefaultEmbeddingModel() {
+        return getNullableTrimmed(LLM_DEFAULT_EMBEDDING_MODEL);
+    }
+
+    public void updateDefaultModels(String chatModel, String embeddingModel) {
+        updateNullableModelSetting(LLM_DEFAULT_CHAT_MODEL, chatModel, "管理员配置的全局默认对话模型");
+        updateNullableModelSetting(LLM_DEFAULT_EMBEDDING_MODEL, embeddingModel, "管理员配置的全局默认向量模型");
+    }
+
+    /** 兼容旧记忆调用 API：统一使用管理员全局默认对话模型。 */
+    public String getMemoryJudgeModel() {
+        return getDefaultChatModel();
+    }
+
+    private String getNullableTrimmed(String key) {
+        String value = getValue(key);
+        return normalizeNullable(value);
+    }
+
+    private String normalizeNullable(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private void updateNullableModelSetting(String key, String value, String description) {
+        String normalized = normalizeNullable(value);
+        if (normalized == null) {
+            removeKey(key);
+        } else {
+            upsert(key, normalized, description);
+        }
+    }
+
+    /** 个人记忆标签「大类」base vocab：读 memory.tag.vocab（JSON 数组），缺失/非法 JSON 回退
+     *  RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。调用方应再 ∪ 用户已批准 topic 得有效词表。 */
+    public java.util.List<String> getMemoryTagVocab() {
+        String v = getValue(MEMORY_TAG_VOCAB);
+        if (v == null || v.isBlank()) {
+            return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+        }
+        try {
+            java.util.List<String> parsed = objectMapper.readValue(v,
+                    objectMapper.getTypeFactory().constructCollectionType(java.util.List.class, String.class));
+            if (parsed == null || parsed.isEmpty()) {
+                return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+            }
+            return parsed;
+        } catch (Exception e) {
+            log.warn("memory.tag.vocab 解析失败，回退默认词表：{}", e.getMessage());
+            return com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT;
+        }
+    }
+
+    /** 通用读 double（范围校验，非法/越界 → def）。 */
+    private double getDoubleInRange(String key, double def, double min, double max) {
+        String v = getValue(key);
+        if (v == null || v.isBlank()) return def;
+        try {
+            double d = Double.parseDouble(v.trim());
+            return (d < min || d > max) ? def : d;
+        } catch (NumberFormatException ignored) {
+            return def;
+        }
     }
 
     /** 前置过滤用户加项敏感黑名单（逗号分隔解析为 List，trim + 去空）。

@@ -62,6 +62,8 @@ docs/
 # 日志和临时文件
 *.log
 logs/
+# 例外：前端审计日志中心源码目录（非运行时日志输出）
+!agent-platform/frontend/src/views/admin/logs/
 *.tmp
 *.temp
 *.bak
@@ -107,3 +109,22 @@ agent-platform/login-page.png
 # 覆盖上面的全局 docs/ 规则
 !coze项目引入/docs/
 !coze项目引入/docs/**
+
+# backend JWT secret (local, do not commit)
+backend-run-secret.txt
+backend-run.log
+backend-run.err
+frontend-run.err
+backend-detached.err
+
+# 根目录临时调试产物（截图/状态探针 JSON）
+/modal-check.js
+/restore-check.js
+/state-check.js
+/summary-myproject-buttons.png
+
+# Claude Code 临时 worktree（基线对拍/隔离实验用，含 target 等构建产物，不入库）
+.claude/worktrees/
+
+# 运维备份本地机密（backup-env.bat 只存在服务器本地；模板 backup-env.example.bat 入库）
+agent-platform/scripts/ops/backup/backup-env.bat

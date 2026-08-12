@@ -1,12 +1,15 @@
 package com.superprogrammer.asset.service;
 
 import com.superprogrammer.asset.dto.MemberAddRequest;
+import com.superprogrammer.asset.dto.MemberCandidateVO;
 import com.superprogrammer.asset.dto.MemberVO;
 import com.superprogrammer.asset.dto.TransferRequest;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetProjectMember;
 import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetProjectMemberMapper;
+import com.superprogrammer.auth.entity.User;
+import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
@@ -20,11 +23,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,6 +53,7 @@ class AssetMemberServiceTest {
     @Mock private AssetProjectMapper projectMapper;
     @Mock private AssetProjectMemberMapper memberMapper;
     @Mock private AssetAclService aclService;
+    @Mock private UserMapper userMapper;
 
     private AssetMemberService service;
 
@@ -58,7 +67,7 @@ class AssetMemberServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AssetMemberService(projectMapper, memberMapper, aclService);
+        service = new AssetMemberService(projectMapper, memberMapper, aclService, userMapper);
     }
 
     @Test
@@ -66,11 +75,62 @@ class AssetMemberServiceTest {
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(OWNER_ID));
         AssetProjectMember m = member(EDITOR_ID, "EDITOR");
         when(memberMapper.selectList(any())).thenReturn(List.of(m));
+        when(userMapper.selectBatchIds(anyList())).thenReturn(List.of(
+                user(OWNER_ID, "owner"), user(EDITOR_ID, "editor")));
         List<MemberVO> vos = service.list(PROJECT_ID, OWNER_ID, false);
         assertEquals(2, vos.size());
         assertTrue(vos.get(0).isOwner(), "首行须为 owner 合成行");
         assertEquals("OWNER", vos.get(0).getRole());
+        assertEquals("owner", vos.get(0).getUsername());
         assertEquals(EDITOR_ID, vos.get(1).getUserId());
+        assertEquals("editor", vos.get(1).getUsername());
+    }
+
+    @Test
+    void searchCandidates_ownerGetsMinimalActiveUsersWithExclusionsAndLimit() {
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(OWNER_ID));
+        when(memberMapper.selectList(any())).thenReturn(List.of(member(EDITOR_ID, "EDITOR")));
+        List<User> rows = java.util.stream.LongStream.rangeClosed(100, 120)
+                .mapToObj(id -> user(id, "user-" + id)).toList();
+        when(userMapper.searchActiveCandidates(anyString(), anyList(), eq(20))).thenReturn(rows);
+
+        List<MemberCandidateVO> result = service.searchCandidates(
+                PROJECT_ID, OWNER_ID, false, "  a%_" + "x".repeat(80));
+
+        assertEquals(20, result.size());
+        assertEquals(Set.of("id", "username"), java.util.Arrays.stream(MemberCandidateVO.class.getDeclaredFields())
+                .map(java.lang.reflect.Field::getName).collect(java.util.stream.Collectors.toSet()));
+        ArgumentCaptor<String> keyword = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Long>> excluded = ArgumentCaptor.forClass(List.class);
+        verify(userMapper).searchActiveCandidates(keyword.capture(), excluded.capture(), eq(20));
+        assertTrue(keyword.getValue().startsWith("a\\%\\_"));
+        assertTrue(keyword.getValue().length() <= 52, "原始关键词截断 50 后只允许通配符转义增长");
+        assertTrue(excluded.getValue().containsAll(List.of(OWNER_ID, EDITOR_ID)));
+    }
+
+    @Test
+    void searchCandidates_viewerDeniedWithoutUserLookup() {
+        when(aclService.requireManage(PROJECT_ID, VIEWER_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "仅所有者"));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.searchCandidates(PROJECT_ID, VIEWER_ID, false, "alice"));
+
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), error.getCode());
+        verify(userMapper, never()).searchActiveCandidates(anyString(), anyList(), anyInt());
+    }
+
+    @Test
+    void searchCandidates_emptyKeywordUsesBoundedActiveQuery() {
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(OWNER_ID));
+        when(memberMapper.selectList(any())).thenReturn(List.of());
+        when(userMapper.searchActiveCandidates("", List.of(OWNER_ID), 20)).thenReturn(List.of());
+
+        assertTrue(service.searchCandidates(PROJECT_ID, OWNER_ID, false, "   ").isEmpty());
+        verify(userMapper).searchActiveCandidates("", List.of(OWNER_ID), 20);
     }
 
     @Test
@@ -161,6 +221,10 @@ class AssetMemberServiceTest {
     void transfer_oldOwnerDowngradedToEditor() {
         when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
         AssetProject p = project(OWNER_ID);
+        p.setPublicPool(true);
+        p.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        p.setPublishedBy(1L);
+        p.setPublishedByAdmin(true);
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
         TransferRequest req = new TransferRequest();
         req.setToUserId(NEW_OWNER_ID);
@@ -175,6 +239,10 @@ class AssetMemberServiceTest {
         assertEquals("EDITOR", captor.getValue().getRole());
         // 项目 owner 更新为新 owner
         assertEquals(NEW_OWNER_ID, p.getOwnerId());
+        assertEquals(true, p.getPublicPool());
+        assertEquals(AssetProject.PUBLIC_ACCESS_OPEN, p.getPublicAccessMode());
+        assertEquals(1L, p.getPublishedBy());
+        assertEquals(true, p.getPublishedByAdmin());
         verify(projectMapper).updateById(p);
     }
 
@@ -202,5 +270,13 @@ class AssetMemberServiceTest {
         m.setUserId(userId);
         m.setRole(role);
         return m;
+    }
+
+    private User user(Long id, String username) {
+        User user = new User();
+        user.setId(id);
+        user.setUsername(username);
+        user.setStatus("ACTIVE");
+        return user;
     }
 }

@@ -1,6 +1,7 @@
 // agent-platform/backend/src/main/java/com/superprogrammer/auth/controller/UserController.java
 package com.superprogrammer.auth.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.superprogrammer.auth.dto.UserVO;
@@ -57,6 +58,7 @@ public class UserController {
     @PutMapping("/{id}/status")
     @PreAuthorize("hasAuthority('user:manage')")
     @Transactional
+    @AuditLog(module = "user", action = "update_status", targetType = "user")
     public ResponseEntity<R<Void>> updateUserStatus(
             @PathVariable Long id,
             @RequestBody java.util.Map<String, String> body) {
@@ -72,6 +74,7 @@ public class UserController {
     @PutMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('user:manage')")
     @Transactional
+    @AuditLog(module = "user", action = "assign_roles", targetType = "user")
     public ResponseEntity<R<Void>> assignRoles(
             @PathVariable Long id,
             @RequestBody List<Long> roleIds) {

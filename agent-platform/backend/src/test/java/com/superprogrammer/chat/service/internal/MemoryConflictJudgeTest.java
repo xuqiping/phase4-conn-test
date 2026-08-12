@@ -3,6 +3,7 @@ package com.superprogrammer.chat.service.internal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,13 +24,15 @@ import static org.mockito.Mockito.*;
 class MemoryConflictJudgeTest {
 
     @Mock private LlmGateway llmGateway;
+    @Mock private SystemSettingService systemSettingService;
 
     private MemoryConflictJudge judge;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        judge = new MemoryConflictJudge(llmGateway, objectMapper);
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        judge = new MemoryConflictJudge(llmGateway, objectMapper, systemSettingService);
     }
 
     private com.superprogrammer.chat.entity.MemorySummary summary(Long id, String l1) {

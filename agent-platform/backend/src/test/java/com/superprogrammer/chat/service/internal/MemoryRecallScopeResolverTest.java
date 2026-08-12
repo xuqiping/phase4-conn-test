@@ -37,12 +37,14 @@ class MemoryRecallScopeResolverTest {
 
     @Mock
     ProjectService projectService;
+    @Mock
+    MemoryProjectUserGrantService grantService;
 
     private MemoryRecallScopeResolver resolver;
 
     @BeforeEach
     void setUp() {
-        resolver = new MemoryRecallScopeResolver(projectService);
+        resolver = new MemoryRecallScopeResolver(projectService, grantService);
     }
 
     private static MemoryRecallScopeRequest req() {
@@ -118,6 +120,19 @@ class MemoryRecallScopeResolverTest {
         r.setProjectIds(List.of(10L, 30L));  // 30 不可访问
         RecallScope s = resolver.resolve(r, 1L);
         assertEquals(List.of(10L), s.projectIds());
+    }
+
+    // ===== 记忆二期 P1：个人授权项目即使「不可访问」也保留（防授权形同虚设）=====
+
+    @Test
+    void grantedProject_keptEvenIfInaccessible() {
+        when(projectService.listAccessibleProjectIds(1L)).thenReturn(Set.of(10L));
+        when(grantService.findActiveGrantedProjectIds(1L)).thenReturn(List.of(30L));  // 30 非成员但有授权
+        MemoryRecallScopeRequest r = req();
+        r.setPersonalOn(false);
+        r.setProjectIds(List.of(10L, 30L));
+        RecallScope s = resolver.resolve(r, 1L);
+        assertEquals(List.of(10L, 30L), s.projectIds(), "可访问 ∪ 已授权均保留");
     }
 
     // ===== 参数解析 =====

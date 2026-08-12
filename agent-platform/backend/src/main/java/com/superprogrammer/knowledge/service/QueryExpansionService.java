@@ -29,7 +29,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class QueryExpansionService {
 
-    private static final String CHAT_MODEL = "doubao-seed-2.0-code";
     /** 切块多路召回的块数上限（最坏 8 次 embed，可控）。 */
     private static final int MAX_CHUNKS = 8;
 
@@ -179,7 +178,6 @@ public class QueryExpansionService {
                 ? "并写一句'假设知识库里已有一段直接回答该问题的文档'，那段文档大概会说什么（用于 HyDE 向量匹配）。"
                 : "hyde 留空字符串。");
         LlmRequest req = LlmRequest.builder()
-                .model(CHAT_MODEL)
                 .messages(List.of(
                         LlmMessage.builder().role("system").content(
                                 "你是查询改写助手，只输出合法 JSON，不要 markdown 代码围栏。").build(),

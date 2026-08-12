@@ -46,11 +46,14 @@
             :focusable="false"
             class="picker__check"
           >
-            <div class="picker__row-main">
-              <div class="picker__row-name">{{ a.name }}</div>
-              <div class="picker__row-meta">
-                v{{ a.currentVersion }} · {{ statusLabel(a.status) }}
-                <span v-if="excludedSet.has(a.id)"> · 已添加</span>
+            <div class="picker__row-content">
+              <AssetPickerMediaPreview :file-id="a.fileId" :media-type="mediaType" :name="a.name" />
+              <div class="picker__row-main">
+                <div class="picker__row-name">{{ a.name }}</div>
+                <div class="picker__row-meta">
+                  v{{ a.currentVersion }} · {{ statusLabel(a.status) }}
+                  <span v-if="excludedSet.has(a.id)"> · 已添加</span>
+                </div>
               </div>
             </div>
           </n-checkbox>
@@ -82,6 +85,7 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NCheckbox, NCheckboxGroup, NInput, NModal, NSelect, NSpace, NSpin, useMessage } from 'naive-ui'
 import { assetApi, assetBridgeApi, projectApi } from '@/api/assets'
 import type { AssetFilePicked, AssetMediaType, AssetProjectVO, AssetStatus, AssetVO } from '@/types/asset'
+import AssetPickerMediaPreview from './AssetPickerMediaPreview.vue'
 
 /** 中文 mediaType → 显示标签（与 MEDIA_TYPE 取值对齐）。 */
 const KIND_LABEL: Record<string, string> = { 图片: '图片', 视频: '视频', 音频: '音频' }
@@ -274,6 +278,13 @@ async function onConfirm() {
 
 .picker__row-main {
   flex: 1;
+  min-width: 0;
+}
+
+.picker__row-content {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
   min-width: 0;
 }
 

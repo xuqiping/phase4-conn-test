@@ -57,11 +57,56 @@ class SystemSettingServiceTest {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
 
-        service.updateAuthSettings(600000L);
+        service.updateAuthSettings(600000L, null);
 
         verify(mapper).insert(argThat(s ->
                 SystemSettingService.ACCESS_TOKEN_EXPIRATION_MS.equals(s.getSettingKey())
                         && "600000".equals(s.getSettingValue())));
+    }
+
+    // AC-SEC-FR-008：单点登录开关 upsert + 默认开；传 null = 不改动
+    @Test
+    void updateAuthSettings_singleSessionFlag_upsertsWhenProvided() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+
+        service.updateAuthSettings(600000L, false);
+
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.AUTH_SINGLE_SESSION_ENABLED.equals(s.getSettingKey())
+                        && "false".equals(s.getSettingValue())));
+    }
+
+    @Test
+    void getBoolean_singleSession_defaultsTrueWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertTrue(service.getBoolean(SystemSettingService.AUTH_SINGLE_SESSION_ENABLED, true));
+    }
+
+    // AC-SEC-FR-126：L7 阈值/在途上限 upsert + 非法值回退默认
+    @Test
+    void updateBillingSettings_upsertsBothKeys() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+
+        service.updateBillingSettings(50L, 2L);
+
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD.equals(s.getSettingKey())
+                        && "50".equals(s.getSettingValue())));
+        verify(mapper).insert(argThat(s ->
+                SystemSettingService.BILLING_LOW_BALANCE_MAX_INFLIGHT.equals(s.getSettingKey())
+                        && "2".equals(s.getSettingValue())));
+    }
+
+    @Test
+    void getLong_invalidValue_fallsBackToDefault() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("not-a-number");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(100L, service.getLong(SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, 100L));
     }
 
     // ============================ V38 LLM_KEY 检索模式 + BOTH 标签语言 ============================
@@ -159,5 +204,80 @@ class SystemSettingServiceTest {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
 
         assertEquals(12, service.getKeywordMax());
+    }
+
+    // ============================ 记忆管线 LLM 默认 model（V76）============================
+
+    @Test
+    void getMemoryJudgeModel_shouldReturnStoredValue() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("glm-4.5");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals("glm-4.5", service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void getMemoryJudgeModel_shouldUseGlobalChatDefaultWhenSpecificSettingMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(null, service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void getMemoryJudgeModel_shouldFallbackOnBlank() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("   ");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(null, service.getMemoryJudgeModel());
+    }
+
+    @Test
+    void globalDefaultModels_shouldBeNullableWhenAdminHasNotConfiguredThem() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(null, service.getDefaultChatModel());
+        assertEquals(null, service.getDefaultEmbeddingModel());
+    }
+
+    // ============================ V77 记忆标签大类词表 ============================
+
+    @Test
+    void getMemoryTagVocab_shouldReturnStoredArray() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("[\"旅行出行\",\"技术技能\"]");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(java.util.List.of("旅行出行", "技术技能"), service.getMemoryTagVocab());
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackToDefault13WhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        java.util.List<String> v = service.getMemoryTagVocab();
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT, v);
+        assertEquals(13, v.size(), "内置大类词表 13 类");
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackOnIllegalJson() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("不是JSON");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT,
+                service.getMemoryTagVocab());
+    }
+
+    @Test
+    void getMemoryTagVocab_shouldFallbackOnEmptyArray() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("[]");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT,
+                service.getMemoryTagVocab());
     }
 }

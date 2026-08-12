@@ -1,6 +1,7 @@
 package com.superprogrammer.asset.controller;
 
 import com.superprogrammer.asset.dto.MemberAddRequest;
+import com.superprogrammer.asset.dto.MemberCandidateVO;
 import com.superprogrammer.asset.dto.MemberRoleUpdateRequest;
 import com.superprogrammer.asset.dto.MemberVO;
 import com.superprogrammer.asset.dto.TransferRequest;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
@@ -51,6 +53,15 @@ public class AssetMemberController {
     @RequirePermission("asset:write")
     public ResponseEntity<R<List<MemberVO>>> list(@PathVariable("id") Long id) {
         return ResponseEntity.ok(R.ok(memberService.list(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @GetMapping("/candidates")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<List<MemberCandidateVO>>> searchCandidates(
+            @PathVariable("id") Long id,
+            @RequestParam(defaultValue = "") String keyword) {
+        return ResponseEntity.ok(R.ok(memberService.searchCandidates(
+                id, getCurrentUserId(), isAdmin(), keyword)));
     }
 
     @PostMapping

@@ -1,14 +1,18 @@
 package com.superprogrammer.chat.service.internal;
 
+import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
 import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryConsolidationScopeMapper;
+import com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper;
+import com.superprogrammer.chat.mapper.MemoryProjectEntryMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryCoverageMapper;
 import com.superprogrammer.chat.mapper.MemorySummaryMapper;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
+import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedEntrySummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationCompressor.CompressedSummary;
 import com.superprogrammer.chat.service.internal.MemoryConsolidationService.SummarizeResult;
 import org.junit.jupiter.api.Test;
@@ -43,6 +47,10 @@ class MemoryConsolidationWorkerTest {
     @Mock MemoryTurnMapper turnMapper;
     @Mock MemoryTagMapper tagMapper;
     @Mock MemorySummaryCoverageMapper coverageMapper;
+    @Mock MemoryProjectEntryMapper entryMapper;
+    @Mock MemoryEntryCoverageMapper entryCoverageMapper;
+    @Mock MemoryProjectLinkService linkService;
+    @Mock com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     @InjectMocks MemoryConsolidationWorker worker;
 
@@ -103,6 +111,36 @@ class MemoryConsolidationWorkerTest {
 
         verify(scopeMapper).releaseLockFailure(1L);
         verify(scopeMapper, never()).releaseLockSuccess(anyLong(), any());
+    }
+
+    // ---- 3b. OPS-FR-06：失败记 incident + 耗时必记 ----
+
+    @Test
+    void pollAutoFailure_recordsIncidentAndDuration() {
+        when(txService.claimAutoScopes(anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(personalScope(1L, 10L)));
+        when(consolidationService.summarizeScope(anyLong(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenThrow(new RuntimeException("LLM 宕机"));
+        when(summaryMapper.findStaleByUser(anyLong())).thenReturn(List.of());
+
+        worker.pollAuto();
+
+        verify(bizMetrics).memoryIncident();
+        verify(bizMetrics).memoryPipelineDuration(any());
+    }
+
+    @Test
+    void pollAutoSuccess_recordsDurationNoIncident() {
+        when(txService.claimAutoScopes(anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(personalScope(1L, 10L)));
+        when(consolidationService.summarizeScope(anyLong(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(null);
+        when(summaryMapper.findStaleByUser(anyLong())).thenReturn(List.of());
+
+        worker.pollAuto();
+
+        verify(bizMetrics).memoryPipelineDuration(any());
+        verify(bizMetrics, never()).memoryIncident();
     }
 
     // ---- 4. STALE 重生：剩余 turn → 压缩 → updateTextAndStatus CLEAN + coverage 重建 ----
@@ -181,5 +219,91 @@ class MemoryConsolidationWorkerTest {
 
         verify(compressor, never()).compress(anyLong(), any(), any());
         verify(turnMapper, never()).findTurnsByIds(any());
+    }
+
+    // ============================ 二期 P4 · 条目级 STALE 重生（FR-303/304/305）============================
+
+    private static MemorySummary staleProjectShared() {
+        MemorySummary s = new MemorySummary();
+        s.setId(600L);
+        s.setUserId(null);                 // 项目资产
+        s.setCreatedBy(10L);               // 触发者留痕 → LLM 计费
+        s.setProjectId(99L);
+        s.setTagId(7L);
+        s.setScopeOwner("PROJECT");
+        s.setStatus("STALE");
+        s.setSourceTurnIds(List.of());
+        s.setSourceEntryIds(List.of(201L));
+        return s;
+    }
+
+    // ---- 8. P4 项目共享 STALE 重生：取数=当前 ACTIVE 链（child 77 合流）→ 重压 → CLEAN + 条目 coverage 重建（user_id NULL）----
+
+    @Test
+    void regenStaleProjectSharedHappyPath() {
+        MemorySummary stale = staleProjectShared();
+        when(summaryMapper.findStaleProjectShared()).thenReturn(List.of(stale));
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of(77L));
+        MemoryProjectEntryVO e1 = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(7L))
+                .createdAt(OffsetDateTime.now().minusDays(2)).build();
+        MemoryProjectEntryVO e2 = MemoryProjectEntryVO.builder()
+                .id(202L).projectId(77L).tagIds(List.of(8L))   // 别的 tag → 过滤掉
+                .createdAt(OffsetDateTime.now().minusDays(1)).build();
+        when(entryMapper.listActiveForRecall(List.of(99L, 77L))).thenReturn(List.of(e1, e2));
+        MemoryTag tag = new MemoryTag(); tag.setLabel("工作");
+        when(tagMapper.selectById(7L)).thenReturn(tag);
+        when(compressor.compressEntries(eq(10L), eq("工作"), any()))
+                .thenReturn(new CompressedEntrySummary("新L1", "新L2", List.of(201L)));
+
+        worker.regenStaleProjectShared();
+
+        verify(summaryMapper).updateTextStatusAndEntries(eq(600L), eq("新L1"), eq("新L2"), eq("CLEAN"), eq(List.of(201L)));
+        verify(entryCoverageMapper).deleteBySummaryId(600L);
+        org.mockito.ArgumentCaptor<List<com.superprogrammer.chat.entity.MemoryEntryCoverage>> cap =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(entryCoverageMapper).batchInsert(cap.capture());
+        org.junit.jupiter.api.Assertions.assertNull(cap.getValue().get(0).getUserId(),
+                "共享总结 coverage user_id 须 NULL");
+    }
+
+    // ---- 9. P4 项目共享 STALE 重生：当前链条目空（授权全撤/条目全删）→ 软删 + 清条目 coverage ----
+
+    @Test
+    void regenStaleProjectSharedEmptyChainSoftDeletes() {
+        MemorySummary stale = staleProjectShared();
+        when(summaryMapper.findStaleProjectShared()).thenReturn(List.of(stale));
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
+        when(entryMapper.listActiveForRecall(List.of(99L))).thenReturn(List.of());
+
+        worker.regenStaleProjectShared();
+
+        verify(summaryMapper).softDeleteByIds(eq(List.of(600L)));
+        verify(entryCoverageMapper).deleteBySummaryId(600L);
+        verify(compressor, never()).compressEntries(anyLong(), any(), any());
+    }
+
+    // ---- 10. P4 成员个人压缩 STALE 重生：作者已非 ACTIVE 成员 → 软删（离职失读权），不重压 ----
+
+    @Test
+    void regenStaleMemberPersonalNonMemberSoftDeletes() {
+        MemorySummary stale = new MemorySummary();
+        stale.setId(601L);
+        stale.setUserId(10L);
+        stale.setProjectId(99L);
+        stale.setTagId(7L);
+        stale.setScopeOwner("USER");
+        stale.setStatus("STALE");
+        stale.setSourceTurnIds(List.of());
+        stale.setSourceEntryIds(List.of(201L));
+        when(summaryMapper.findStaleByUser(10L)).thenReturn(List.of(stale));
+        when(linkService.isActiveMember(99L, 10L)).thenReturn(false);
+
+        worker.regenStaleSummaries(10L);
+
+        verify(summaryMapper).softDeleteByIds(eq(List.of(601L)));
+        verify(entryCoverageMapper).deleteBySummaryId(601L);
+        verify(compressor, never()).compressEntries(anyLong(), any(), any());
+        verify(entryMapper, never()).listActiveForRecall(any());
     }
 }

@@ -1,0 +1,23 @@
+<!--
+  运维系统 Step 8：windows_exporter WinSW 服务定义（WinSW v2.12.0）
+  用法：本文件与 WinSW.NET461.x64.exe（重命名为 agent-windows-exporter.exe）放同目录，
+        管理员执行 agent-windows-exporter.exe install && agent-windows-exporter.exe start
+  说明：不走 msi 自带服务注册，统一 WinSW 管理（崩溃自启策略一致），直接用官网 zip 里的 exe。
+        collectors 取 cpu/memory/logical_disk/os/net，够用且不臃肿；监听仅本机。
+        红线：cs 采集器 0.31 已移除（实测 unknown collector 起不来），勿加回。
+-->
+<service>
+  <id>agent-windows-exporter</id>
+  <name>agent-windows-exporter</name>
+  <description>Agent Platform 运维系统：windows_exporter 主机指标（cpu/mem/disk/os/net，127.0.0.1:9182）</description>
+  <executable>D:\IT\ops\windows_exporter\windows_exporter.exe</executable>
+  <arguments>--collectors.enabled=cpu,memory,logical_disk,os,net --web.listen-address=127.0.0.1:9182</arguments>
+  <workingdirectory>D:\IT\ops\windows_exporter</workingdirectory>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <logpath>D:\IT\ops\windows_exporter\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

@@ -108,6 +108,16 @@ public class MemoryPrefilter {
     }
 
     /**
+     * 敏感黑名单专扫（记忆二期 P1 路由蒸馏二次扫描用，设计 §9-16）。
+     * 只跑核心六类 + 用户加项，不跑 INPUT/OUTPUT 侧规则（过短/语气词等不是敏感信号）。
+     *
+     * @return true = 命中黑名单（调用方按场景降级，如条目降 PENDING_REVIEW）
+     */
+    public boolean hitsBlacklist(String text) {
+        return blacklistReason(text) != null;
+    }
+
+    /**
      * 按 INPUT/OUTPUT 各自规则独立过滤。
      *
      * @param userInput       用户本轮输入（null → 视为空，跳 INPUT）

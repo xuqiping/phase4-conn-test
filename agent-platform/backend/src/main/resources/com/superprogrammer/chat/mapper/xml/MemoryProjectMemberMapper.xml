@@ -26,7 +26,8 @@
                p.name           AS projectName,
                m.role           AS role,
                ps.gen_enabled   AS ownerEnabled,
-               us.gen_enabled   AS memberEnabled
+               us.gen_enabled   AS memberEnabled,
+               p.memory_pool_public AS memoryPoolPublic
         FROM memory_project_members m
         JOIN projects p ON p.id = m.project_id
         LEFT JOIN memory_project_settings ps ON ps.project_id = m.project_id
@@ -36,21 +37,5 @@
           AND m.status = 'ACTIVE'
         ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END,
                  m.project_id ASC
-    </select>
-
-    <!-- F-4b 前置：本人 DEPARTED 项目折叠板列表（§3.7）。join projects 取名（XML 不走 MP 软删过滤）；
-         turnCount = 本人 project_ids 含该项目且未软删的 turn 数（copy-to 可拉取量）。@> 无需转义。 -->
-    <select id="findMyDepartedProjects" resultType="com.superprogrammer.chat.dto.MemoryLifecycleProjectVO">
-        SELECT m.project_id  AS projectId,
-               p.name        AS projectName,
-               m.departed_at AS departedAt,
-               (SELECT COUNT(*) FROM memory_turns t
-                 WHERE t.user_id = #{userId} AND t.deleted = 0
-                   AND t.project_ids @> ARRAY[m.project_id]::bigint[]) AS turnCount
-        FROM memory_project_members m
-        JOIN projects p ON p.id = m.project_id
-        WHERE m.user_id = #{userId}
-          AND m.status = 'DEPARTED'
-        ORDER BY m.departed_at DESC NULLS LAST, m.project_id ASC
     </select>
 </mapper>

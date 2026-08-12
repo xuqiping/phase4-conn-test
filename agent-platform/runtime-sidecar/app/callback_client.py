@@ -6,6 +6,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field, field_validator
 
+from app.logging_config import TRACEPARENT_HEADER, current_traceparent
+
 # 安全审计 #1：sidecar→Java 回调共享密钥，与后端 runtime.callback.token (env RUNTIME_CALLBACK_TOKEN) 同值。
 TOKEN_HEADER = "X-Runtime-Token"
 
@@ -54,6 +56,10 @@ def execute_runtime_callback(
     token = _callback_token()
     if token:
         headers[TOKEN_HEADER] = token
+    # 日志系统 LOG-FR-08：回注 traceparent，Java 回调侧日志接入同一 trace（跨语言一条链）
+    traceparent = current_traceparent()
+    if traceparent:
+        headers[TRACEPARENT_HEADER] = traceparent
     try:
         # trust_env=False：回调永远直连 Java，不读系统/环境代理（HTTP_PROXY/HTTPS_PROXY）。
         # 否则本机开了代理（如 Clash 127.0.0.1:7892）时，localhost 回调被代理拦截 → 502。

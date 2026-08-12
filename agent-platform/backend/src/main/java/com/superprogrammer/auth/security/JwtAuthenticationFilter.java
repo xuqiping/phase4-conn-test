@@ -2,12 +2,17 @@
 package com.superprogrammer.auth.security;
 
 import com.superprogrammer.auth.service.AuthService;
+import com.superprogrammer.auth.service.SessionService;
+import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.result.R;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,6 +21,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.stream.Collectors;
@@ -27,6 +33,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final AuthService authService;
+    private final SessionService sessionService;
+    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -54,6 +62,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             // 提取用户信息
             Long userId = jwtUtil.getUserIdFromToken(token);
+
+            // 安全体系 S2 · A8 单点登录（SEC-FR-008）：sid 比对在黑名单之后；
+            // 被踢/旧无 sid token → 401 + 40104 固定话术（不透传额外信息）。
+            // 开关关闭或 Redis 故障 → isCurrent 降级放行（可用性 > 强制力，与 S1 一致）。
+            String sid = jwtUtil.getSidFromToken(token);
+            if (!sessionService.isCurrent(userId, sid)) {
+                log.warn("会话已被踢出(单点登录) userId={} uri={}", userId, request.getRequestURI());
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                response.getWriter().write(objectMapper.writeValueAsString(R.fail(ErrorCode.SESSION_KICKED)));
+                return;
+            }
+
             String username = jwtUtil.getUsernameFromToken(token);
             List<String> roles = jwtUtil.getRolesFromToken(token);
 

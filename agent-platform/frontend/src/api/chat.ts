@@ -41,12 +41,10 @@ export interface ChatSendRequest {
   ragEnabled?: boolean
   /** 联网搜索开关（CHAT 模式，非 null 持久化到会话；ON→生成前联网检索注入）。 */
   webSearchEnabled?: boolean
-  /** 项目记忆写目标（V33，null=总记忆会话）。 */
-  projectId?: number | null
-  /** 读开关：是否注入总记忆（V33，非 null 时持久化 = scope 更新标记）。 */
-  memIncludeGlobal?: boolean
-  /** 读开关：开启读取的项目集合（V33）。 */
-  memReadProjectIds?: number[]
+  /** 二期 P3（FR-201）：聊天附件 fileId 集（≤5，后端归属校验；消息 metadata 记录供文件卡片回显）。 */
+  attachmentFileIds?: string[]
+  // 二期 P1（FR-006）：V33 写目标/读开关三字段（projectId/memIncludeGlobal/memReadProjectIds）已下线——
+  // turns 纯个人域，召回范围走 /api/chat/memory/recall-scope 持久化偏好（MemoryRecallScopePopover）
 }
 
 // ---- 计划12 H'-4：legacy /chat/memories/* 全族客户端方法已删 ----
@@ -94,6 +92,12 @@ export interface MemoryConflict {
   createdAt: string
 }
 
+/** 二期 P3（FR-201）：发送时携带的附件引用（fileId + 展示名；后端只需 fileId 集，名用于本地回显）。 */
+export interface ChatAttachmentRef {
+  fileId: string
+  name: string
+}
+
 export const chatApi = {
   createSession(data: ChatSendRequest) {
     return request.post<ApiResponse<ChatSession>>('/chat/sessions', data)
@@ -123,7 +127,7 @@ export const chatApi = {
     return request.get<ApiResponse<ChatMessage[]>>(`/chat/sessions/${sessionId}/messages`)
   },
 
-  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean }) {
+  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[] }) {
     return request.post<ApiResponse<ChatResponse>>(`/chat/sessions/${sessionId}/messages`, data)
   },
 
@@ -132,7 +136,7 @@ export const chatApi = {
   },
 
   // Streaming (SSE)
-  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean }) {
+  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[] }) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',

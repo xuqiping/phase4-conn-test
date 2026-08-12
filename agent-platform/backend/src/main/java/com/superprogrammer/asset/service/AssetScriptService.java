@@ -20,7 +20,6 @@ import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,9 +61,6 @@ public class AssetScriptService {
     private final AssetService assetService;
     private final AssetProjectService assetProjectService;
 
-    @Value("${asset.script-model:doubao-seed-2.0-code}")
-    private String defaultModel;
-
     /**
      * 拆分场。
      *
@@ -87,8 +83,7 @@ public class AssetScriptService {
         if (body.length() > SCRIPT_MAX_LEN) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本长度超限（≤" + SCRIPT_MAX_LEN + "）");
         }
-        String model = (req != null && req.getModel() != null && !req.getModel().isBlank())
-                ? req.getModel() : defaultModel;
+        String model = req == null ? null : req.getModel();
 
         String instruction = """
                 你是影视分镜师。把下面剧本拆成 3-10 个分场，严格只输出 JSON 数组，不要任何解释或 markdown 代码块：
@@ -106,6 +101,7 @@ public class AssetScriptService {
                     .stream(false)
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(llmReq) : llmGateway.chat(llmReq, userId);
+            model = llmReq.getModel();
             String content = resp == null ? "" : (resp.getContent() == null ? "" : resp.getContent());
             scenes = parseScenes(content);
         } catch (BusinessException e) {
@@ -164,8 +160,7 @@ public class AssetScriptService {
         if (template.length() > TEMPLATE_MAX_LEN) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "拆解模板超限（≤" + TEMPLATE_MAX_LEN + "）");
         }
-        String model = (req != null && req.getModel() != null && !req.getModel().isBlank())
-                ? req.getModel() : defaultModel;
+        String model = req == null ? null : req.getModel();
 
         // ① 确保 vocab 含分镜（自定义 vocab 删分镜后自动补，L13 边界）
         assetProjectService.ensureMediaType(asset.getProjectId(), Asset.MEDIA_STORYBOARD, Asset.CATEGORY_TEXT);
@@ -190,6 +185,7 @@ public class AssetScriptService {
                     .stream(false)
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(llmReq) : llmGateway.chat(llmReq, userId);
+            model = llmReq.getModel();
             String content = resp == null ? "" : (resp.getContent() == null ? "" : resp.getContent());
             shots = parseShots(content, body);
         } catch (BusinessException e) {

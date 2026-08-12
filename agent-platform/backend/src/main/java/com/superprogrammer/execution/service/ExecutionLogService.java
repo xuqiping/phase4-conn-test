@@ -9,6 +9,7 @@ import com.superprogrammer.execution.mapper.ExecutionLogMapper;
 import com.superprogrammer.execution.vo.ExecutionRecoveryInfoVO;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.metrics.BizMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,8 @@ public class ExecutionLogService {
 
     private final ExecutionLogMapper executionLogMapper;
     private final ObjectMapper objectMapper;
+    /** 运维系统 OPS-FR-04：工作流终态/耗时指标（status 仅 SUCCESS/FAILED 终态枚举）。 */
+    private final BizMetrics bizMetrics;
 
     /**
      * 开始执行 - 记录日志
@@ -122,6 +125,7 @@ public class ExecutionLogService {
         }
         executionLogMapper.updateById(executionLog);
 
+        recordTerminal("SUCCESS", executionLog.getDuration());
         log.info("执行完成: id={}, duration={}ms", executionId, executionLog.getDuration());
     }
 
@@ -142,7 +146,18 @@ public class ExecutionLogService {
         executionLog.setErrorMessage(errorMessage);
         executionLogMapper.updateById(executionLog);
 
+        recordTerminal("FAILED", executionLog.getDuration());
         log.error("执行失败: id={}, error={}", executionId, errorMessage);
+    }
+
+    /** OPS-FR-04：终态计数 + 耗时直方图。指标绝不阻断主流程，duration null 兜底 0。 */
+    private void recordTerminal(String status, Long durationMs) {
+        try {
+            bizMetrics.workflowExecution(status);
+            bizMetrics.workflowDuration(java.time.Duration.ofMillis(durationMs == null ? 0 : durationMs));
+        } catch (Exception e) {
+            log.warn("工作流指标记录失败(已吞): status={} : {}", status, e.toString());
+        }
     }
 
     public void waitForApproval(Long executionId, String nodeId, String approvalKey) {

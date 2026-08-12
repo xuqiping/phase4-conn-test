@@ -1,7 +1,9 @@
 package com.superprogrammer.billing.dto;
 
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -10,6 +12,7 @@ import java.math.BigDecimal;
  * admin 充值/发放请求（Chunk H Step 15）。MVP：admin 直接填到账积分，不走阶梯折算
  * （阶梯折算属 Phase2 支付回调链路）。
  * <p>权限 {@code points:recharge}（仅 admin 默认有）。
+ * <p>安全体系 S1 · SEC-FR-122：范围注解挡负数/零/超上限（上限 1 亿积分，防误填天文数字）。
  */
 @Data
 public class RechargeRequest {
@@ -18,11 +21,20 @@ public class RechargeRequest {
     @NotNull(message = "userId 不能为空")
     private Long userId;
 
-    /** 到账积分（正数）。 */
+    /** 到账积分（正数，≤1 亿）。 */
     @NotNull(message = "points 不能为空")
     @DecimalMin(value = "0.01", message = "points 必须大于 0")
+    @DecimalMax(value = "100000000", message = "points 超出单次充值上限(1 亿)")
     private BigDecimal points;
 
-    /** 备注（落 ledger.remark，可空）。 */
+    /** 备注（落 ledger.remark，可空；上限对齐 ledger.remark VARCHAR(256)）。 */
+    @Size(max = 256, message = "remark 超长（≤256）")
     private String remark;
+
+    /**
+     * 幂等键（可空，安全体系 S1 · SEC-FR-121）：admin 重复提交/网络重试同键只充一次，
+     * 返回首次结果。空则退化为普通充值。上限对齐 idempotency_keys.idem_key VARCHAR(128)。
+     */
+    @Size(max = 128, message = "idempotencyKey 超长（≤128）")
+    private String idempotencyKey;
 }

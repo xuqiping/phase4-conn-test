@@ -1,5 +1,6 @@
 package com.superprogrammer.media.service;
 
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.billing.service.PointsWalletService;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.superprogrammer.billing.service.InflightGateService;
 
 /**
  * MediaGenTaskService 单测：模型路由 + 能力校验 + 附件归属校验 + taskType 派生。
@@ -55,6 +57,12 @@ class MediaGenTaskServiceTest {
     private AssetService assetService;
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
+    @Mock
+    private BizMetrics bizMetrics;
+    @Mock
+    private com.superprogrammer.common.audit.AuditLogService auditLogService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -66,10 +74,14 @@ class MediaGenTaskServiceTest {
         provider.setName("seedance");
         provider.setModels("[\"" + SEEDANCE_2 + "\"]");
 
+        MediaGenProperties properties = new MediaGenProperties();
+        properties.getReference().setPublicBaseUrl("https://media.example.com");
+        properties.getReference().setSigningKey("test-secret-at-least-32-bytes-long");
         service = new MediaGenTaskService(
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
-                fileStorageService, new MediaGenProperties(), new ObjectMapper(), assetService, walletService);
+                fileStorageService, properties, new ObjectMapper(), assetService, walletService,
+                inflightGate, bizMetrics, auditLogService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -153,20 +165,47 @@ class MediaGenTaskServiceTest {
     }
 
     @Test
-    void submit_firstFramePlusReferenceAccepted() {
-        // SeedDance 2.0 契约：first_frame + 参考图合法（last_frame 才与参考图互斥）。
+    void submit_firstFramePlusReferenceImage_400() {
         List<AttachmentRef> attachments = new ArrayList<>();
         attachments.add(att("first.png", "image", "first_frame"));
         attachments.add(att("ref.png", "image", null));
         attachments.forEach(a -> stubOwnedFile(a.getFileId(), "image/png"));
 
-        service.submit("首帧+参考图", "16:9", 5, "720p", false, false,
-                null, null, attachments, SEEDANCE_2, USER_ID, false);
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("首帧+参考图", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
+    }
 
-        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
-        verify(taskMapper).insert(captor.capture());
-        String cfg = captor.getValue().getRequestConfig();
-        assertTrue(cfg.contains("first_frame"), "首帧 frameRole 须落库");
+    @Test
+    void submit_firstFramePlusReferenceVideo_400() {
+        List<AttachmentRef> attachments = List.of(
+                att("first.png", "image", "first_frame"),
+                att("ref.mp4", "video"));
+        stubOwnedFile("first.png", "image/png");
+        stubOwnedFile("ref.mp4", "video/mp4");
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("首帧+参考视频", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submit_lastFramePlusReferenceAudio_400() {
+        List<AttachmentRef> attachments = List.of(
+                att("last.png", "image", "last_frame"),
+                att("ref.mp3", "audio"));
+        stubOwnedFile("last.png", "image/png");
+        stubOwnedFile("ref.mp3", "audio/mpeg");
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("尾帧+参考音频", "16:9", 5, "720p", false, false,
+                        null, null, attachments, SEEDANCE_2, USER_ID, false));
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"));
+        verify(taskMapper, never()).insert(any());
     }
 
     @Test
@@ -182,7 +221,8 @@ class MediaGenTaskServiceTest {
         BusinessException e = assertThrows(BusinessException.class, () ->
                 service.submit("尾帧+参考图", "16:9", 5, "720p", false, false,
                         null, null, attachments, SEEDANCE_2, USER_ID, false));
-        assertTrue(e.getMessage().contains("互斥"), "须提示 last_frame 与参考图互斥，实际: " + e.getMessage());
+        assertTrue(e.getMessage().contains("参考媒体") || e.getMessage().contains("互斥"),
+                "须提示帧模式与参考媒体互斥，实际: " + e.getMessage());
     }
 
     @Test
@@ -391,5 +431,14 @@ class MediaGenTaskServiceTest {
                 service.submit("p", "16:9", 5, "4K", false, false,
                         null, null, null, fast, USER_ID, false));
         assertTrue(e.getMessage().contains("不支持分辨率"));
+    }
+
+    @Test
+    void submit_success_recordsSubmittedMetric() {
+        // 指标：落库成功计 mediaSubmit(video)；acquire/校验失败不计（由既有失败用例覆盖）
+        service.submit("p", "16:9", 5, "720p", null, null, MediaGenTask.TYPE_TEXT2VIDEO,
+                null, null, SEEDANCE_2, 100L, false, null);
+
+        verify(bizMetrics).mediaSubmit("video");
     }
 }

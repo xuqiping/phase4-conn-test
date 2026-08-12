@@ -3,9 +3,13 @@ package com.superprogrammer.llm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.InflightGateService;
 import com.superprogrammer.billing.service.LlmBillingService;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.chat.dto.StreamEvent;
+import com.superprogrammer.common.metrics.BizMetrics;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.EmbedResult;
 import com.superprogrammer.llm.dto.LlmMessage;
@@ -20,6 +24,7 @@ import com.superprogrammer.llm.provider.OpenAICompatibleProvider;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
 import com.superprogrammer.knowledge.util.TokenEstimator;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -42,6 +47,12 @@ public class LlmGateway {
     private final LlmBillingService billingService;
     /** 钱包：入口预检 requireAffordable（≤0 抛 INSUFFICIENT_POINTS）。 */
     private final PointsWalletService walletService;
+    /** 运维系统 OPS-FR-03：LLM 指标统一出口埋点（calls/tokens/latency，tag 仅 provider/model/result/direction）。 */
+    private final BizMetrics bizMetrics;
+    /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：只挂 chat/chatStream 用户入口；embed 与系统调用不过闸。 */
+    private final InflightGateService inflightGate;
+    /** 模型为空时只读管理员默认；没有默认则明确报错，绝不硬编码厂商模型。 */
+    private final SystemSettingService systemSettingService;
 
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
@@ -49,11 +60,16 @@ public class LlmGateway {
     }
 
     public LlmResponse chat(LlmRequest request, Long userId) {
+        resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
-        walletService.requireAffordable(uid);
+        // 余额复用：返回值直接喂给闸门，省一次重复查库
+        java.math.BigDecimal balance = walletService.requireAffordable(uid);
+        // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
+        boolean held = inflightGate.acquire(uid, balance);
+        long startNanos = System.nanoTime();
         try {
             LlmResponse response = provider.chat(request);
             TokenUsage usage = response.getUsage();
@@ -68,11 +84,17 @@ public class LlmGateway {
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
+            recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             return response;
         } catch (RuntimeException e) {
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
+            recordLlmTerminal(provider.getName(), request.getModel(), BizMetrics.RESULT_FAIL, startNanos);
             throw e;
+        } finally {
+            if (held) {
+                inflightGate.release(uid);
+            }
         }
     }
 
@@ -92,17 +114,52 @@ public class LlmGateway {
      * </ul>
      */
     public Flux<StreamEvent> chatStream(LlmRequest request, Long userId) {
+        resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
-        walletService.requireAffordable(uid);
+        java.math.BigDecimal balance = walletService.requireAffordable(uid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
+        String providerName = provider.getName();
         String model = request.getModel();
-        return provider.chatStream(request, usage -> billingService.onSuccess(uid, providerId, providerScope,
-                model, LlmUsageLogEntity.KIND_CHAT,
-                usage.getPromptTokens(), usage.getCompletionTokens()))
-                .publishOn(Schedulers.boundedElastic());
+        long startNanos = System.nanoTime();
+        // OPS-FR-03 流式正好一次：doOnComplete/doOnError/doOnCancel 三分支互斥，各记一次终态；
+        // tokens 在 usage sink 回灌时记（provider 不回 usage → 不记，与计费同口径宁少不误）。
+        //
+        // L7 槽位生命周期=订阅生命周期：acquire 推迟到 Flux.defer 订阅期（组装期 acquire 的话
+        // 「Flux 从未被订阅」与「provider.chatStream 组装期抛异常」两条路径都会泄漏槽位）；
+        // 订阅后终结三态互斥必走 doFinally，acquire/release 正好一次配对。
+        return Flux.defer(() -> {
+            boolean held = inflightGate.acquire(uid, balance);
+            final Flux<StreamEvent> inner;
+            try {
+                inner = provider.chatStream(request, usage -> {
+                            billingService.onSuccess(uid, providerId, providerScope,
+                                    model, LlmUsageLogEntity.KIND_CHAT,
+                                    usage.getPromptTokens(), usage.getCompletionTokens());
+                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
+                                    usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
+                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
+                                    usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
+                        })
+                        .publishOn(Schedulers.boundedElastic())
+                        .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
+                        .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
+                        .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos));
+            } catch (RuntimeException e) {
+                // 组装期抛异常 → doFinally 尚未注册，此处配对释放
+                if (held) {
+                    inflightGate.release(uid);
+                }
+                throw e;
+            }
+            return inner.doFinally(signal -> {
+                if (held) {
+                    inflightGate.release(uid);
+                }
+            });
+        });
     }
 
     public float[] embed(String text, String model) {
@@ -115,10 +172,12 @@ public class LlmGateway {
      * <p>embed 路由仍在全局 EMBEDDING 行找（FR-003，不吃用户级 override）；userId 仅透给计费。
      */
     public float[] embed(String text, String model, Long userId) {
+        model = resolveEmbeddingModel(model);
         Long uid = resolveBillingUser(userId, model);
         LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
         walletService.requireAffordable(uid);
+        long startNanos = System.nanoTime();
         try {
             EmbedResult res = provider.embedWithUsage(text, model);
             TokenUsage usage = res.getUsage();
@@ -137,10 +196,12 @@ public class LlmGateway {
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, in, out, status);
+            recordLlmSuccess(provider.getName(), model, in, out, startNanos);
             return res.getEmbedding();
         } catch (RuntimeException e) {
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, e.getMessage());
+            recordLlmTerminal(provider.getName(), model, BizMetrics.RESULT_FAIL, startNanos);
             throw e;
         }
     }
@@ -161,6 +222,27 @@ public class LlmGateway {
         }
         log.warn("LLM 调用无用户上下文，仅采集不扣费 model={}", model);
         return null;
+    }
+
+    /**
+     * OPS-FR-03 成功终态：calls +1（success）+ tokens in/out（估算兜底也记，口径与计费一致）+ latency。
+     * Micrometer 纯内存 O(1)，绝不拖垮主链路；tag 仅 provider/model（有界枚举，红线见 BizMetrics）。
+     */
+    private void recordLlmSuccess(String providerName, String model, Integer in, Integer out, long startNanos) {
+        bizMetrics.llmCall(providerName, model, BizMetrics.RESULT_SUCCESS);
+        bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN, in == null ? 0 : in);
+        bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT, out == null ? 0 : out);
+        bizMetrics.llmLatency(providerName, model, elapsedSince(startNanos));
+    }
+
+    /** OPS-FR-03 终态计数 + latency（success/fail/cancel 三态互斥正好一次）。 */
+    private void recordLlmTerminal(String providerName, String model, String result, long startNanos) {
+        bizMetrics.llmCall(providerName, model, result);
+        bizMetrics.llmLatency(providerName, model, elapsedSince(startNanos));
+    }
+
+    private static java.time.Duration elapsedSince(long startNanos) {
+        return java.time.Duration.ofNanos(System.nanoTime() - startNanos);
     }
 
     /** 估算请求 input token（chars/4 启发式，求和各 message content）。仅 usage 缺失兜底用。 */
@@ -184,48 +266,68 @@ public class LlmGateway {
                 return provider;
             }
         }
-        throw new RuntimeException("没有找到支持模型 '" + model + "' 的向量 Provider");
+        throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                "所选向量模型不可用或没有启用的向量 Provider: " + model);
     }
 
     /**
-     * chat 路由：用户级 override（CHAT-only）优先，回落全局 CHAT 注册表。
-     * EMBEDDING/VIDEO/IMAGE 行不在此处注册，故 chat 永远找不到它们（FR-003）。
+     * chat 路由（10x-1 起）：始终走全局 CHAT 注册表，不再读用户级 override。
+     * <p>原因：问题单 10x-1「不再开放我的模型由个人自己配置大模型」，前端已移除入口（SettingsView），
+     * 此处同步停用后端 override 路由，避免「有人配过历史 key 仍生效」的认知偏差。
+     * <p>用户级相关代码（{@link #getUserProviders} / {@link #createProviderInstance} /
+     * {@code UserLlmController} / {@code user_llm_providers} 表）全部保留不删，便于未来恢复：
+     * 恢复时把下面的 user-override 段取消注释即可。
+     * <p>EMBEDDING/VIDEO/IMAGE 行不在此处注册，故 chat 永远找不到它们（FR-003）。
      */
     private LlmProviderInterface findProvider(String model, Long userId) {
-        // Step 1: Check user provider overrides
-        if (userId != null) {
-            List<UserLlmProviderEntity> userProviders = getUserProviders(userId);
-            for (UserLlmProviderEntity up : userProviders) {
-                String apiKey = userLlmProviderService.getDecryptedApiKey(userId, up.getId());
-                String endpoint = up.getApiEndpoint();
-                LlmProviderEntity globalEntity = llmProviderService.getByName(up.getProviderName());
-                List<String> models = parseModels(up.getModels());
-                if (models.isEmpty() && globalEntity != null) {
-                    models = parseModels(globalEntity.getModels());
-                }
-                if (endpoint == null || endpoint.isBlank()) {
-                    // Inherit from global provider
-                    LlmProviderInterface global = findGlobalProvider(up.getProviderName());
-                    if (global == null) continue;
-                    return global; // use global provider directly
-                }
-                String protocol = globalEntity != null ? globalEntity.getProtocol() : null;
-                LlmProviderInterface provider = createProviderInstance(up.getProviderName(), protocol, endpoint, apiKey, models, up.getId());
-                if (provider != null && provider.supports(model)) {
-                    log.debug("使用用户Provider: userId={}, provider={}", userId, up.getProviderName());
-                    return provider;
-                }
-            }
-        }
+        // ===== 10x-1：用户级 override 停用（原 Step 1 已移除路由，保留注释示意恢复点） =====
+        // 如需恢复个人模型配置，取消注释下面这段（并恢复 SettingsView 的 my-models Tab）：
+        // if (userId != null) {
+        //     List<UserLlmProviderEntity> userProviders = getUserProviders(userId);
+        //     ... 原 override 逻辑 ...
+        // }
+        // userId 参数保留不变（向后兼容调用方签名），当前仅作日志/计费归户用途。
 
-        // Step 2: Fall back to global providers
+        // 全局 CHAT 注册表路由（原 Step 2，现为主要且唯一路径）
         for (LlmProviderInterface provider : llmConfig.getProviders()) {
             if (provider.supports(model)) {
                 return provider;
             }
         }
 
-        throw new RuntimeException("没有找到支持模型 '" + model + "' 的对话 Provider");
+        throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                "所选对话模型不可用或没有启用的对话 Provider: " + model);
+    }
+
+    private void resolveChatModel(LlmRequest request) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "LLM 请求不能为空");
+        }
+        String selected = request.getModel();
+        if (selected != null && !selected.isBlank()) {
+            request.setModel(selected.trim());
+            return;
+        }
+        String configured = systemSettingService.getDefaultChatModel();
+        if (configured == null || configured.isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "未选择模型，且管理员未配置默认对话模型");
+        }
+        request.setModel(configured.trim());
+        log.info("请求未指定对话模型，使用管理员默认 model={}", request.getModel());
+    }
+
+    private String resolveEmbeddingModel(String selected) {
+        if (selected != null && !selected.isBlank()) {
+            return selected.trim();
+        }
+        String configured = systemSettingService.getDefaultEmbeddingModel();
+        if (configured == null || configured.isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                    "未选择向量模型，且管理员未配置默认向量模型");
+        }
+        log.info("请求未指定向量模型，使用管理员默认 model={}", configured);
+        return configured.trim();
     }
 
     private List<UserLlmProviderEntity> getUserProviders(Long userId) {

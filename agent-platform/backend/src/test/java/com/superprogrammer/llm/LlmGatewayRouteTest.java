@@ -26,6 +26,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import com.superprogrammer.billing.service.InflightGateService;
+import com.superprogrammer.system.service.SystemSettingService;
 
 /**
  * FR-003 网关按类型路由：CHAT 行只进 chat 路由，EMBEDDING 行只进 embed 路由，
@@ -58,6 +60,10 @@ class LlmGatewayRouteTest {
 
     @Mock
     private PointsWalletService walletService;
+    @Mock
+    private InflightGateService inflightGate;
+    @Mock
+    private SystemSettingService systemSettingService;
 
     private LlmGateway gateway;
 
@@ -73,7 +79,10 @@ class LlmGatewayRouteTest {
         when(llmConfig.getProviders()).thenReturn(List.of(chatProvider));
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(embedProvider));
 
-        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper, billingService, walletService);
+        gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
+                billingService, walletService,
+                new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+                inflightGate, systemSettingService);
     }
 
     @Test
@@ -138,6 +147,26 @@ class LlmGatewayRouteTest {
         verify(embedProvider).embedWithUsage("hello", "text-embedding-3");
         // 不查用户级 provider 列表
         verify(userLlmProviderService, never()).listByUser(any());
+    }
+
+    @Test
+    void chat_withUserId_shouldNotQueryUserOverride_10x1() {
+        // 10x-1：不再开放「我的模型」，chat 路由停用用户级 override。
+        // 即便传 userId，也不查 user_llm_providers，始终走全局 CHAT 行。
+        LlmResponse mockResp = LlmResponse.builder()
+                .content("全局回").model("gpt-4o").duration(50L).build();
+        when(chatProvider.chat(any())).thenReturn(mockResp);
+
+        LlmRequest request = LlmRequest.builder().model("gpt-4o")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        LlmResponse resp = gateway.chat(request, 42L);
+
+        assertEquals("全局回", resp.getContent());
+        verify(chatProvider).chat(any());
+        // 关键断言：用户级 provider 列表从未被查询
+        verify(userLlmProviderService, never()).listByUser(any());
+        verify(userLlmProviderService, never()).getDecryptedApiKey(any(), any());
     }
 
     // ===== Step12 embed 计费出口接线 =====

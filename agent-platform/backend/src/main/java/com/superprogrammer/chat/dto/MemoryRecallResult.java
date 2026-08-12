@@ -20,11 +20,11 @@ import java.util.List;
  * @param selectedTags  D-3 选中标签（展示/debug）
  * @param summaryCount  召回总结条数
  * @param turnCount     拼入未覆盖流水账条数
+ * @param fileCards     二期 P3 ⑥.5 命中的文件记忆卡片（可 null）
  * @param degraded      是否走过降级
  * @param notes         降级/告警明细（空表 = 全程正常）
  * @param traceId       本次召回 trace id
  * @param steps         每步打点
- * @param departedAuthorNotes I3「已离开人员·{用户名}·{date}」标注（includeDeparted=true 且召回含 DEPARTED 作者时附）
  */
 @Data
 @Builder
@@ -34,10 +34,10 @@ public class MemoryRecallResult {
     private List<RecallTagMeta> selectedTags;
     private int summaryCount;
     private int turnCount;
+    /** 二期 P3 · Step 3（FR-203）：⑥.5 命中的文件记忆卡片（前端渲染/下载回链用；无命中为 null）。 */
+    private List<RecalledFileCard> fileCards;
     private boolean degraded;
     private List<String> notes;
     private String traceId;
     private List<RecallTraceStep> steps;
-    /** I3 已离开人员标注（开时附，前端展示「该记忆来自已离开成员」）。 */
-    private List<String> departedAuthorNotes;
 }

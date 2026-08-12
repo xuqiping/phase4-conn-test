@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.superprogrammer.chat.mapper.MemoryProjectEntryMapper">
+
+    <!-- 显式 resultMap：不依赖全局 mapUnderscoreToCamelCase（承 MemoryTagMapper 范式）。 -->
+    <resultMap id="EntryVOMap" type="com.superprogrammer.chat.dto.MemoryProjectEntryVO">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="authorUserId" column="author_user_id"/>
+        <result property="authorName" column="author_name"/>
+        <result property="l1Summary" column="l1_summary"/>
+        <result property="l2Detail" column="l2_detail"/>
+        <result property="confidence" column="confidence"/>
+        <result property="status" column="status"/>
+        <result property="contentType" column="content_type"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <!-- 项目条目列表：status 过滤；authorUserId 非空时收窄（成员仅看自己产生的，FR-005）。
+         ⚠️ 永不 select raw_content（本表就没有原文字段，原文不出个人域）。 -->
+    <select id="listByProject" resultMap="EntryVOMap">
+        SELECT e.id, e.project_id, e.author_user_id,
+               COALESCE(u.name, u.username) AS author_name,
+               e.l1_summary, e.l2_detail, e.confidence, e.status, e.content_type, e.created_at
+        FROM memory_project_entries e
+        LEFT JOIN users u ON u.id = e.author_user_id
+        WHERE e.deleted = 0 AND e.project_id = #{projectId}
+        <if test="status != null and status != ''"> AND e.status = #{status} </if>
+        <if test="authorUserId != null"> AND e.author_user_id = #{authorUserId} </if>
+        ORDER BY e.created_at DESC
+        LIMIT 200
+    </select>
+    <!-- 召回合流 VO 映射（多 tag_ids，走 LongArrayTypeHandler）。 -->
+    <resultMap id="EntryRecallVOMap" type="com.superprogrammer.chat.dto.MemoryProjectEntryVO">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="authorUserId" column="author_user_id"/>
+        <result property="authorName" column="author_name"/>
+        <result property="l1Summary" column="l1_summary"/>
+        <result property="l2Detail" column="l2_detail"/>
+        <result property="confidence" column="confidence"/>
+        <result property="status" column="status"/>
+        <result property="contentType" column="content_type"/>
+        <result property="fileId" column="file_id"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="projectName" column="project_name"/>
+        <result property="tagIds" column="tag_ids" typeHandler="com.superprogrammer.common.typehandler.LongArrayTypeHandler"/>
+    </resultMap>
+
+    <!-- 召回合流（FR-007 ①.5 + 二期 P2 FR-102）：一批项目内全部 ACTIVE 条目。
+         projectIds 已由 service 层过滤为读者可读集（成员项目 ∪ ACTIVE 授权 child，单级一跳）。
+         join projects 取项目名 → 授权条目装配「来自授权项目·X」标注。
+         file_id 透出（FILE 条目召回下载回链用，记忆二期 P3 扩展）。 -->
+    <select id="listActiveForRecall" resultMap="EntryRecallVOMap">
+        SELECT e.id, e.project_id, e.author_user_id,
+               COALESCE(u.name, u.username) AS author_name,
+               e.l1_summary, e.l2_detail, e.confidence, e.status, e.content_type, e.file_id, e.created_at, e.tag_ids,
+               p.name AS project_name
+        FROM memory_project_entries e
+        LEFT JOIN users u ON u.id = e.author_user_id
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.deleted = 0 AND e.status = 'ACTIVE'
+          AND e.project_id IN
+          <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+        ORDER BY e.created_at DESC
+        LIMIT 200
+    </select>
+
+    <!-- P4（FR-301/302/305）总结入口未覆盖计数：sourceProjectIds 内 ACTIVE 条目中，
+         在 (scope 项目, 主体=userId[null=共享]) 下无 entry_coverage 行的条数。 -->
+    <select id="countUncoveredEntries" resultType="int">
+        SELECT COUNT(*) FROM memory_project_entries e
+        WHERE e.deleted = 0 AND e.status = 'ACTIVE'
+          AND e.project_id IN
+          <foreach collection="sourceProjectIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_entry_coverage c
+              WHERE c.entry_id = e.id AND c.project_id = #{scopeProjectId}
+              <choose>
+                  <when test="userId != null">AND c.user_id = #{userId}</when>
+                  <otherwise>AND c.user_id IS NULL</otherwise>
+              </choose>
+          )
+    </select>
+
+    <!-- P4（FR-304）turn 删除级联：引用这些 turn 的未删条目 id。 -->
+    <select id="findActiveIdsBySourceTurnIds" resultType="long">
+        SELECT id FROM memory_project_entries
+        WHERE deleted = 0 AND source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </select>
+
+    <!-- P4（FR-304）turn 删除级联：引用这些 turn 的条目全软删。 -->
+    <update id="softDeleteBySourceTurnIds">
+        UPDATE memory_project_entries SET deleted = 1, updated_at = NOW()
+        WHERE deleted = 0 AND source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </update>
+
+    <!-- 二期 P2 + 5x #2：流水账「被哪个项目收录」批量查询。entry 覆盖整轮（双侧 L1 合并），
+         source_turn_id 挂 OUTPUT / source_turn_input_id 挂同轮 INPUT——两列 UNION 使 INPUT/OUTPUT
+         turn 均可反查到收录项目（修前 INPUT turn 天然无收录链恒空）。列别名匹配 TurnProjectIndexRow。 -->
+    <select id="findProjectIndexByTurnIds" resultType="com.superprogrammer.chat.dto.TurnProjectIndexRow">
+        SELECT e.source_turn_id AS turnId, e.project_id AS projectId, p.name AS projectName
+        FROM memory_project_entries e
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.deleted = 0 AND e.source_turn_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+        UNION ALL
+        SELECT e.source_turn_input_id AS turnId, e.project_id AS projectId, p.name AS projectName
+        FROM memory_project_entries e
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.deleted = 0 AND e.source_turn_input_id IS NOT NULL AND e.source_turn_input_id IN
+        <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
+    </select>
+</mapper>

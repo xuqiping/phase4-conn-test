@@ -46,6 +46,13 @@
 
           <!-- 调用明细：逐条 llm_usage_logs（时间/用户/模型/类型/token/¥/积分/状态），服务端分页 + 筛选 -->
           <n-tab-pane name="detail" tab="调用明细">
+            <!-- 8x Chunk7：drill-down 激活时顶部提示反查键 + 清除按钮 -->
+            <div v-if="drillActive" class="billing-admin__drill-banner">
+              <span>关联筛选：</span>
+              <n-tag v-if="traceIdDrill" size="small" type="info" round>traceId: {{ traceIdDrill }}</n-tag>
+              <n-tag v-if="taskIdDrill != null" size="small" type="warning" round>taskId: {{ taskIdDrill }}</n-tag>
+              <n-button size="small" quaternary @click="clearDrill">清除</n-button>
+            </div>
             <div class="billing-admin__detail-filter">
               <n-select
                 v-model:value="userFilter"
@@ -110,8 +117,10 @@ import type {
 } from '@/api/billing'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
+import { useRoute } from 'vue-router'
 
 const authStore = useAuthStore()
+const route = useRoute()
 const canView = computed(() => authStore.hasPermission('usage:view'))
 
 const overview = ref<UsageOverviewVO | null>(null)
@@ -137,6 +146,12 @@ const kindFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null)
 const modelFilter = ref('')
 const userOptions = ref<{ label: string; value: number }[]>([])
+
+// ---------- 8x Chunk7：审计行 drill-down 反查键（从 url query ?traceId= / ?taskId= 预填） ----------
+const traceIdDrill = ref('')
+const taskIdDrill = ref<number | null>(null)
+/** drill-down 是否激活（来自审计行跳转，非用户手筛） */
+const drillActive = computed(() => !!traceIdDrill.value || taskIdDrill.value != null)
 
 // 全部=空（clearable 清空 / 不选）；下拉只列具体值。placeholder 文案给「全部」语义。
 const kindOptions: SelectOption[] =
@@ -205,6 +220,11 @@ const detailColumns: DataTableColumns<UsageDetailVO> = [
       type: USAGE_STATUS_TAG_TYPE[r.status] || 'default'
     }, { default: () => USAGE_STATUS_LABEL[r.status] ?? r.status })
   },
+  // 8x Chunk7：关联键（chat→traceId / 媒体→taskId），drill-down 落地页核对用
+  {
+    title: '关联', key: 'link', width: 150, ellipsis: { tooltip: true },
+    render: r => r.traceId ? `trace:${r.traceId}` : (r.taskId != null ? `task:${r.taskId}` : '—')
+  },
   { title: '错误信息', key: 'errorMsg', ellipsis: { tooltip: true }, render: r => r.errorMsg || '—' }
 ]
 
@@ -249,6 +269,9 @@ async function loadDetail(page = 1) {
     if (m) q.model = m
     if (kindFilter.value) q.kind = kindFilter.value as BillingKind
     if (statusFilter.value) q.status = statusFilter.value
+    // 8x Chunk7：drill-down 反查键（chat→traceId / 媒体→taskId）
+    if (traceIdDrill.value) q.traceId = traceIdDrill.value
+    if (taskIdDrill.value != null) q.taskId = taskIdDrill.value
     const res = await billingApi.listUsageDetail(q)
     detail.value = res.data.data.records
     detailPagination.itemCount = res.data.data.total
@@ -266,6 +289,13 @@ function onDetailPage(page: number) {
 }
 function onDetailPageSize(pageSize: number) {
   detailPagination.pageSize = pageSize
+  loadDetail(1)
+}
+
+/** 8x Chunk7：清除 drill-down 反查键（回到全量明细）。 */
+function clearDrill() {
+  traceIdDrill.value = ''
+  taskIdDrill.value = null
   loadDetail(1)
 }
 
@@ -297,6 +327,15 @@ watch([userFilter, kindFilter, statusFilter], () => {
 onMounted(() => {
   loadAll()
   loadUserOptions()
+  // 8x Chunk7：审计行 drill-down 跳转带 ?traceId= / ?taskId= → 预填 + 直跳调用明细 tab
+  const qt = route.query.traceId
+  const qtask = route.query.taskId
+  if (typeof qt === 'string' && qt) traceIdDrill.value = qt
+  if (typeof qtask === 'string' && qtask) taskIdDrill.value = Number(qtask)
+  if (drillActive.value) {
+    activeTab.value = 'detail'
+    loadDetail(1)
+  }
 })
 </script>
 
@@ -312,5 +351,15 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+.billing-admin__drill-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
+  border-radius: 6px;
+  font-size: 13px;
 }
 </style>

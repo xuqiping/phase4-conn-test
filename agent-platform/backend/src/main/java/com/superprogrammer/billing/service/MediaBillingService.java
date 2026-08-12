@@ -51,27 +51,50 @@ public class MediaBillingService {
      * @param status       {@link LlmUsageLogEntity#STATUS_SUCCESS}/ESTIMATED（估算口径仍计费）
      * @param refId        任务 id（落 ledger/usage 引用，便于对账追溯）
      * @return 实际扣减的积分（正数，供 worker 在 markSucceeded 失败时退款）；未扣返 null
+     * @deprecated 使用 {@link #chargeMedia(Long, Long, String, String, Integer, Integer, Integer, String, Long, boolean)}
+     *             传 hasReference。本重载恒按无参考计价，仅向后兼容。
      */
+    @Deprecated
     public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
                                   Integer tokensInput, Integer videoSeconds, Integer imageCount,
                                   String status, Long refId) {
+        return chargeMedia(userId, providerId, model, kind, tokensInput, videoSeconds, imageCount,
+                status, refId, false);
+    }
+
+    /**
+     * 媒体调用成功计费：算价→折算→同步扣→异步采。全链吞异常。
+     *
+     * @param hasReference 7x-3：VIDEO 任务是否带参考视频（worker 从 attachments kind=="video" 算）。
+     *                     IMAGE/其他 kind 忽略，恒按 false 计价。
+     */
+    public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
+                                  Integer tokensInput, Integer videoSeconds, Integer imageCount,
+                                  String status, Long refId, boolean hasReference) {
         if (!walletService.isEnabled()) {
             return null;
         }
         try {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
-                    tokensInput, null, videoSeconds, imageCount);
+                    tokensInput, null, videoSeconds, imageCount, hasReference);
             BigDecimal points = ratioService.toPoints(yuan);
             // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
             walletService.charge(userId, points, kind, refId, model);
+            // 8x Chunk7：taskId=refId（任务 id）落 usage 行，媒体审计两行 targetId=taskId 与此对齐做 drill-down
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, yuan, points, status, null);
+                    tokensInput, null, yuan, points, status, null, refId);
             return points;
         } catch (BusinessException e) {
             // 计费自身失败（价表缺/余额在生成期间被耗尽等）：视频已生成不可逆，记 FAILED usage 让 admin 可见缺口，不抛
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString());
+                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId);
             log.warn("媒体计费失败(已记FAILED,不阻塞媒体出口) userId={} model={} kind={} refId={} : {}",
+                    userId, model, kind, refId, e.toString());
+            return null;
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Phase4 审查修正：refId=任务 id 锚定 uq_ledger_ref，重复扣减被唯一约束拦下会落进这里——
+            // 这不是失败而是「恰好一次」语义生效，单列日志不与真实失败混淆（对账时不计缺口）。
+            log.info("媒体计费疑似重复扣减被唯一约束拦截(恰好一次生效,非失败) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());
             return null;
         } catch (Exception e) {

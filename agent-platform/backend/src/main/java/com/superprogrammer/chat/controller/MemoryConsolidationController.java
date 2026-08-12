@@ -128,6 +128,7 @@ public class MemoryConsolidationController {
             vo.setStatus(c.getStatus());
             vo.setAskText(c.getAskText());
             vo.setCreatedAt(c.getCreatedAt() == null ? null : c.getCreatedAt().toString());
+            vo.setProjectShared(Boolean.TRUE.equals(c.getProjectShared()));
             out.add(vo);
         }
         return ResponseEntity.ok(R.ok(out));

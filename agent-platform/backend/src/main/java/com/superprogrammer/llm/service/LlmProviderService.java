@@ -9,6 +9,8 @@ import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmProviderVO;
+import com.superprogrammer.llm.dto.LlmProviderExportItem;
+import com.superprogrammer.llm.dto.ProviderImportResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -115,6 +117,28 @@ public class LlmProviderService {
         return mapper.selectList(wrapper);
     }
 
+    /** 返回指定类型当前启用的明确模型列表，供管理员默认模型校验与下拉展示。 */
+    public List<String> listActiveModels(String category) {
+        return listActive().stream()
+                .filter(provider -> category.equalsIgnoreCase(provider.getCategory()))
+                .flatMap(provider -> parseModelList(provider.getModels()).stream())
+                .filter(model -> model != null && !model.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
+    private List<String> parseModelList(String modelsJson) {
+        if (modelsJson == null || modelsJson.isBlank()) return List.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(modelsJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.warn("供应商模型列表解析失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     public List<LlmProviderVO> listAll() {
         LambdaQueryWrapper<LlmProviderEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(LlmProviderEntity::getDeleted, 0)
@@ -131,6 +155,132 @@ public class LlmProviderService {
             return null;
         }
         return aesEncryptService.decrypt(entity.getApiKeyEnc());
+    }
+
+    /**
+     * 导出全量供应商为明文 Key 列表（问题 10x-2）。
+     * <p>仅 admin 可调（Controller 层 @RequirePermission("role:manage")）。
+     * 解密 apiKeyEnc 填入 apiKey 明文——导出文件含明文密钥，调用方须妥善保管。
+     * 解密失败的条目 apiKey 置 null 并 warn（不中断整体导出）。
+     */
+    public List<LlmProviderExportItem> exportAll() {
+        LambdaQueryWrapper<LlmProviderEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(LlmProviderEntity::getDeleted, 0)
+               .orderByAsc(LlmProviderEntity::getSortOrder);
+        return mapper.selectList(wrapper).stream()
+                .map(this::toExportItem)
+                .collect(Collectors.toList());
+    }
+
+    private LlmProviderExportItem toExportItem(LlmProviderEntity e) {
+        LlmProviderExportItem item = new LlmProviderExportItem();
+        item.setName(e.getName());
+        item.setDisplayName(e.getDisplayName());
+        item.setProtocol(e.getProtocol());
+        item.setApiEndpoint(e.getApiEndpoint());
+        // 解密 key 填明文；失败不中断导出，置 null 并 warn
+        if (e.getApiKeyEnc() != null && !e.getApiKeyEnc().isBlank()) {
+            try {
+                item.setApiKey(aesEncryptService.decrypt(e.getApiKeyEnc()));
+            } catch (Exception ex) {
+                log.warn("导出供应商解密 key 失败 name={}: {}", e.getName(), ex.getMessage());
+            }
+        }
+        item.setModels(e.getModels());
+        item.setConfig(e.getConfig());
+        item.setSortOrder(e.getSortOrder());
+        item.setCategory(e.getCategory());
+        item.setStatus(e.getStatus());
+        return item;
+    }
+
+    /** 导入单批上限（防恶意巨大体导致 OOM/长事务）。 */
+    private static final int IMPORT_MAX_SIZE = 200;
+
+    /**
+     * 批量导入供应商（问题 10x-2）：按 name upsert，非法行跳过记入 errors。
+     * <p>规则：
+     * <ul>
+     *   <li>size > 200 → 抛 BAD_REQUEST（防滥用）；</li>
+     *   <li>逐条校验：name 非空、apiEndpoint 是 http(s) URL、category 白名单（normalizeCategory 容错）；</li>
+     *   <li>upsert by name：存在→更新非空字段（apiKey 空→保留原 key），不存在→新建；</li>
+     *   <li>导入完成后 {@link LlmConfig#reload()} 让新配置即时生效。</li>
+     * </ul>
+     */
+    public ProviderImportResult importAll(List<LlmProviderExportItem> items) {
+        if (items == null) {
+            items = List.of();
+        }
+        if (items.size() > IMPORT_MAX_SIZE) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "单次导入上限 " + IMPORT_MAX_SIZE + " 条，当前 " + items.size() + " 条");
+        }
+        ProviderImportResult result = ProviderImportResult.builder().build();
+        for (int i = 0; i < items.size(); i++) {
+            LlmProviderExportItem item = items.get(i);
+            int lineNo = i + 1;
+            try {
+                upsertByName(item, result);
+            } catch (Exception e) {
+                log.warn("导入第{}行失败 name={}: {}", lineNo, item.getName(), e.getMessage());
+                result.incFailed("第" + lineNo + "行 name=" + item.getName() + " 失败: " + e.getMessage());
+            }
+        }
+        llmConfig.reload();
+        return result;
+    }
+
+    private void upsertByName(LlmProviderExportItem item, ProviderImportResult result) {
+        // 校验：name 非空
+        if (item.getName() == null || item.getName().isBlank()) {
+            result.incFailed("name 为空");
+            return;
+        }
+        // 校验：apiEndpoint 非空且 http(s)
+        String endpoint = item.getApiEndpoint();
+        if (endpoint == null || endpoint.isBlank()) {
+            result.incFailed("apiEndpoint 为空");
+            return;
+        }
+        if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+            result.incFailed("apiEndpoint 非 http(s) URL");
+            return;
+        }
+
+        String category = normalizeCategory(item.getCategory());
+        LlmProviderEntity existing = getByName(item.getName());
+        if (existing != null) {
+            // 更新非空字段（apiKey 空→保留原 key，不覆盖）
+            if (item.getDisplayName() != null) existing.setDisplayName(item.getDisplayName());
+            if (item.getProtocol() != null) existing.setProtocol(item.getProtocol());
+            existing.setApiEndpoint(endpoint);
+            if (item.getApiKey() != null && !item.getApiKey().isBlank()) {
+                existing.setApiKeyEnc(aesEncryptService.encrypt(item.getApiKey()));
+            }
+            if (item.getModels() != null) existing.setModels(item.getModels());
+            if (item.getConfig() != null) existing.setConfig(item.getConfig());
+            if (item.getSortOrder() != null) existing.setSortOrder(item.getSortOrder());
+            existing.setCategory(category);
+            if (item.getStatus() != null) existing.setStatus(item.getStatus());
+            mapper.updateById(existing);
+            result.incUpdated();
+        } else {
+            LlmProviderEntity entity = new LlmProviderEntity();
+            entity.setName(item.getName());
+            entity.setDisplayName(item.getDisplayName());
+            entity.setProtocol(item.getProtocol() != null ? item.getProtocol() : "OPENAI_COMPATIBLE");
+            entity.setApiEndpoint(endpoint);
+            if (item.getApiKey() != null && !item.getApiKey().isBlank()) {
+                entity.setApiKeyEnc(aesEncryptService.encrypt(item.getApiKey()));
+            }
+            entity.setModels(item.getModels());
+            entity.setConfig(item.getConfig());
+            entity.setSortOrder(item.getSortOrder() != null ? item.getSortOrder() : 0);
+            entity.setCategory(category);
+            entity.setStatus(item.getStatus() != null ? item.getStatus() : "ACTIVE");
+            mapper.insert(entity);
+            result.incCreated();
+        }
     }
 
     public void delete(Long id) {

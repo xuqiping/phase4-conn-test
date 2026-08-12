@@ -21,12 +21,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,10 +51,13 @@ class ChatSessionServiceTest {
     @Mock private com.superprogrammer.knowledge.service.RagRetrievalService ragRetrievalService;
     @Mock private com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     @Mock private com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
-    // V33 写 scope 解析（mock 返回 globalOnly，避免碰 projectService）；召回 scope 走 prefService 不经此
-    @Mock private MemoryScopeResolver memoryScopeResolver;
     // 联网搜索总开关等系统设置
     @Mock private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    // 聊天附件归属校验（V69 二期 P3）
+    @Mock private com.superprogrammer.chat.service.internal.MemoryAssetUploadService memoryAssetUploadService;
+    // 8x Chunk4 对话审计
+    @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
+    @Mock private com.superprogrammer.common.audit.AuditLogEntity auditLogEntityStub;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
@@ -63,10 +69,6 @@ class ChatSessionServiceTest {
         testSession = new ChatSession();
         testSession.setId(1L);
         testSession.setUserId(100L);
-        // V33：写 scope resolver 默认返 globalOnly（ragOn=false 也会解析写 scope，须非 null）；召回 scope 走 prefService
-        com.superprogrammer.chat.service.internal.MemoryScope global =
-                com.superprogrammer.chat.service.internal.MemoryScope.globalOnly(100L);
-        org.mockito.Mockito.lenient().when(memoryScopeResolver.resolveWriteScope(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(global);
         testSession.setMode("CHAT");
         testSession.setStatus("ACTIVE");
         testSession.setDeleted(0);
@@ -246,6 +248,40 @@ class ChatSessionServiceTest {
     }
 
     @Test
+    void sendMessage_auditsSendMessageRow() {
+        // 8x Chunk4 行1：发消息后落 send_message 审计行（targetId=sessionId，detail 无 prompt 原文）
+        ReflectionTestUtils.setField(chatSessionService, "chatAuditEnabled", true);
+        when(sessionMapper.insert(any(ChatSession.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatSession.class).setId(1L);
+            return 1;
+        });
+        when(sessionMapper.selectById(1L)).thenAnswer(inv -> {
+            ChatSession s = new ChatSession();
+            s.setId(1L);
+            s.setUserId(100L);
+            s.setMode("CHAT");
+            s.setStatus("ACTIVE");
+            s.setDeleted(0);
+            return s;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("Hi");
+
+        ChatRequest request = new ChatRequest();
+        request.setMessage("Hello");
+        chatSessionService.sendMessage(100L, request);
+
+        // fromMdc 被调：module=chat action=send_message targetType=chat_session targetId=1(会话id) SUCCESS
+        verify(auditLogService).fromMdc(eq("chat"), eq("send_message"), eq("chat_session"),
+                eq("1"), anyString(), eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
+        verify(auditLogService).record(any());
+    }
+
+    @Test
     void sendMessage_existingSession() {
         when(sessionMapper.selectById(1L)).thenReturn(testSession);
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
@@ -280,7 +316,7 @@ class ChatSessionServiceTest {
         com.superprogrammer.chat.dto.MemoryRecallScopeRequest pref = new com.superprogrammer.chat.dto.MemoryRecallScopeRequest();
         pref.setPersonalOn(true);
         when(memoryRecallPrefService.getScope(100L)).thenReturn(pref);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L))).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("用户偏好深空主题").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 
@@ -290,8 +326,8 @@ class ChatSessionServiceTest {
         ChatResponse response = chatSessionService.sendMessage(100L, request);
 
         // 召回文本随 LLM 上下文进引擎；新栈写入提交一次
-        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L));
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), any(), anyBoolean(), any(), eq("Hello"), eq("回复"));
+        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L), any());
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"), any());
         assertEquals("回复", response.getContent());
     }
 
@@ -307,7 +343,7 @@ class ChatSessionServiceTest {
         when(ragScopeResolver.resolveEffectiveKbs(any(), any(), any(), any(), eq(100L), anyBoolean())).thenReturn(List.of());
         // 召回装配空串
         when(memoryRecallPrefService.getScope(100L)).thenReturn(null);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L))).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 
@@ -318,7 +354,7 @@ class ChatSessionServiceTest {
 
         // 空召回不崩，写入仍提交
         assertEquals("回复", response.getContent());
-        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), any(), anyBoolean(), any(), eq("Hello"), eq("回复"));
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"), any());
     }
 
     @Test

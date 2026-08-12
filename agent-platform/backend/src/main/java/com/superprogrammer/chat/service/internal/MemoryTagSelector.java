@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
-import com.superprogrammer.knowledge.service.RagConfig;
 import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.util.JiebaTokenizer;
@@ -13,6 +12,7 @@ import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -66,6 +66,10 @@ public class MemoryTagSelector {
     private final MemoryTagMapper tagMapper;
     private final LlmGateway llmGateway;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** 记忆精筛是可降级前置步骤，使用独立短超时。 */
+    @Value("${memory.recall.llm-timeout-ms:8000}")
+    private int llmTimeoutMs = 8000;
 
     /**
      * 选与 query 相关的标签子集。
@@ -73,21 +77,23 @@ public class MemoryTagSelector {
      * @param query 用户当前问题（召回 query）
      * @param tags  D-2 聚合标签清单（usage 倒序）
      * @param userId 召回者（embed/chat 走用户 provider）
+     * @param model  LLM model（跟随对话所选，null 回退 system_settings.memory.judge.model）
      * @return 选中标签（保候选顺序）；空表 = 无相关；tags 空 → 空
      */
-    public List<RecallTagMeta> select(String query, List<RecallTagMeta> tags, Long userId) {
+    public List<RecallTagMeta> select(String query, List<RecallTagMeta> tags, Long userId, String model) {
         if (tags == null || tags.isEmpty()) {
             return List.of();
         }
+        String judgeModel = (model != null && !model.isBlank()) ? model : systemSettingService.getMemoryJudgeModel();
         List<RecallTagMeta> candidates = tags.size() <= COARSE_TOP ? tags : coarsen(query, tags, userId);
         if (candidates.isEmpty()) {
             return List.of();
         }
-        List<RecallTagMeta> selected = llmSelect(query, candidates, userId);
+        List<RecallTagMeta> selected = llmSelect(query, candidates, userId, judgeModel);
         if (selected == null) {
             // LLM 全失败 → 降级用 candidates 全集（未精筛，不丢召回）
-            log.warn("选标签 LLM {} 次均失败 userId={} query.len={} → 降级用 {} 候选全集",
-                    LLM_MAX_ATTEMPTS, userId, query == null ? 0 : query.length(), candidates.size());
+            log.warn("选标签 LLM 调用异常或解析重试失败 userId={} query.len={} → 降级用 {} 候选全集",
+                    userId, query == null ? 0 : query.length(), candidates.size());
             return candidates;
         }
         return selected;
@@ -107,17 +113,17 @@ public class MemoryTagSelector {
 
         // 路 A：halfvec 近邻（embed 失败 → 空表，单路继续）
         try {
-            float[] vec = llmGateway.embed(query, RagConfig.MEMORY_EMBED_MODEL, userId);
+            float[] vec = llmGateway.embed(query, null, userId);
             String hv = HalfVecUtil.toHalfVec(vec);
             halfvecRank = tagMapper.rankByAnchorHalfvec(tagIds, hv, RRF_K);
         } catch (Exception e) {
             log.warn("选标签 halfvec 粗筛失败 userId={}: {}", userId, e.getMessage());
         }
-        // 路 B：BM25 tsv（query 空白 → 跳过）
+        // 路 B：BM25 tsv（query 空白 → 跳过）。V77：to_tsquery OR 串（plainto AND 死路）
         try {
-            String tokens = JiebaTokenizer.tokenize(query);
-            if (tokens != null && !tokens.isBlank()) {
-                tsvRank = tagMapper.rankByAnchorTsv(tagIds, tokens, RRF_K);
+            String orQuery = com.superprogrammer.knowledge.util.TsQueryUtil.toOrQuery(JiebaTokenizer.tokenize(query));
+            if (!orQuery.isBlank()) {
+                tsvRank = tagMapper.rankByAnchorTsv(tagIds, orQuery, RRF_K);
             }
         } catch (Exception e) {
             log.warn("选标签 BM25 粗筛失败 userId={}: {}", userId, e.getMessage());
@@ -142,7 +148,7 @@ public class MemoryTagSelector {
     // ---------- LLM 精选 ----------
 
     /** LLM 精选相关标签；解析失败重试；全失败 → null（调用方降级用 candidates）。 */
-    private List<RecallTagMeta> llmSelect(String query, List<RecallTagMeta> candidates, Long userId) {
+    private List<RecallTagMeta> llmSelect(String query, List<RecallTagMeta> candidates, Long userId, String judgeModel) {
         String prompt = buildPrompt(query, candidates);
         Set<Long> validIds = candidates.stream().map(RecallTagMeta::getId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, RecallTagMeta> byId = candidates.stream()
@@ -151,10 +157,11 @@ public class MemoryTagSelector {
         for (int attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = llmGateway.chat(LlmRequest.builder()
-                        .model(RagConfig.MEMORY_JUDGE_MODEL)
+                        .model(judgeModel)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);
                 if (ids != null) {
@@ -163,7 +170,8 @@ public class MemoryTagSelector {
                 }
                 log.warn("选标签 LLM 解析失败(第{}/{}) userId={} → 重试", attempt, LLM_MAX_ATTEMPTS, userId);
             } catch (Exception e) {
-                log.warn("选标签 LLM 异常(第{}/{}) userId={}: {}", attempt, LLM_MAX_ATTEMPTS, userId, e.getMessage());
+                log.warn("选标签 LLM 异常 userId={} → 立即降级，不重试: {}", userId, e.getMessage());
+                return null;
             }
         }
         return null;

@@ -1,0 +1,16 @@
+# 运维系统 Step 9：看板 provisioning（部署拷到 D:\IT\ops\grafana\conf\provisioning\dashboards\）
+# 指向 dashboards 目录（放四个看板 JSON）；30s 扫一次变更，UI 改动允许但下次同步以 JSON 为准
+apiVersion: 1
+
+providers:
+  - name: agent-platform
+    orgId: 1
+    folder: 运维监控
+    folderUid: ops-monitoring
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: D:\IT\ops\grafana\dashboards
+      foldersFromFilesStructure: false

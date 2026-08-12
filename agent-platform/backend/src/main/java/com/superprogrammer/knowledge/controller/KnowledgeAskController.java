@@ -101,7 +101,6 @@ public class KnowledgeAskController {
             return Flux.just(StreamEvent.chunk(ev.getAnswer()), StreamEvent.done());
         }
         LlmRequest llmReq = LlmRequest.builder()
-                .model(ragConfig.getChatModel())
                 .messages(List.of(
                         LlmMessage.builder().role("system").content(ev.getSystemPrompt()).build(),
                         LlmMessage.builder().role("user").content(request.getQuery()).build()))

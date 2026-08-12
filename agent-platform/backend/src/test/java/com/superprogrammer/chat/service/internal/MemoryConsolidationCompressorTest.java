@@ -17,6 +17,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -28,11 +29,15 @@ class MemoryConsolidationCompressorTest {
 
     @Mock LlmGateway llmGateway;
 
+    @Mock
+    com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     private MemoryConsolidationCompressor compressor;
 
     @BeforeEach
     void setUp() {
-        compressor = new MemoryConsolidationCompressor(llmGateway, new ObjectMapper());
+        lenient().when(systemSettingService.getMemoryJudgeModel()).thenReturn("doubao-seed-2.0-code");
+        compressor = new MemoryConsolidationCompressor(llmGateway, new ObjectMapper(), systemSettingService);
     }
 
     private static MemoryTurn turn(Long id, String l1, String year) {

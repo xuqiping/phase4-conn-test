@@ -3,16 +3,47 @@
     :show="show"
     preset="card"
     :title="`从资产库选择 · ${kindLabel}`"
-    style="max-width: 640px"
+    style="max-width: 680px"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
+    <div class="picker__source" aria-label="资产来源">
+      <n-button-group>
+        <n-button
+          size="small"
+          :type="source === 'local' ? 'primary' : 'default'"
+          :secondary="source !== 'local'"
+          :aria-pressed="source === 'local'"
+          @click="switchSource('local')"
+        >
+          我的/共享项目
+        </n-button>
+        <n-button
+          size="small"
+          :type="source === 'public' ? 'primary' : 'default'"
+          :secondary="source !== 'public'"
+          :aria-pressed="source === 'public'"
+          @click="switchSource('public')"
+        >
+          公共池
+        </n-button>
+      </n-button-group>
+      <span class="picker__source-status">
+        本地 {{ loadingProjects ? '加载中' : `${projects.length} 项` }} ·
+        公共 {{ loadingPublicProjects ? '加载中' : `${publicProjects.length} 项` }}
+      </span>
+    </div>
+
+    <div v-if="activeProjectError" class="picker__error" role="alert">
+      {{ activeProjectError }}
+    </div>
+
     <div class="picker__bar">
       <n-select
-        v-model:value="projectId"
+        :value="projectId"
         :options="projectOptions"
-        placeholder="选择项目"
-        :loading="loadingProjects"
-        style="width: 240px"
+        :placeholder="source === 'public' ? '选择可用公共项目' : '选择项目'"
+        :loading="activeProjectsLoading"
+        style="width: 320px"
         @update:value="onProjectChange"
       />
       <n-input
@@ -27,8 +58,8 @@
     </div>
 
     <n-spin :show="loadingAssets">
-      <div v-if="!assets.length && !loadingAssets" class="picker__empty">
-        {{ projectId == null ? '请先选择项目' : '该项目下无此类资产' }}
+      <div v-if="!assets.length && !loadingAssets" class="picker__empty" :class="{ 'picker__empty--error': assetError }">
+        {{ emptyText }}
       </div>
       <div v-else class="picker__list">
         <div
@@ -54,14 +85,16 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NSelect, NSpin, useMessage } from 'naive-ui'
-import { projectApi, assetApi, assetBridgeApi } from '@/api/assets'
+import { NButton, NButtonGroup, NInput, NModal, NSelect, NSpin, useMessage } from 'naive-ui'
+import { projectApi, publicPoolApi, assetApi, assetBridgeApi } from '@/api/assets'
 import type { PageResult } from '@/api/admin'
 import type { AxiosResponse } from 'axios'
 import type {
-  AssetMediaType, AssetProjectVO, AssetStatus, AssetVO, ResolveVO
+  AssetMediaType, AssetProjectVO, AssetStatus, AssetVO, PublicProjectSummaryVO, ResolveVO
 } from '@/types/asset'
 import type { CanvasNode } from '@/types/canvas'
+
+type PickerSource = 'local' | 'public'
 
 const props = defineProps<{
   show: boolean
@@ -73,13 +106,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
-  /** 选定资产解析完成：父据 resolve 写 node.data（fileId/outputText/synopsis + 徽标）。 */
+  /** 选定资产解析完成：父组件按 resolve 写 node.data，并锁定 resolve.version 快照。 */
   (e: 'picked', payload: { node: CanvasNode; resolve: ResolveVO }): void
 }>()
 
 const message = useMessage()
 
-/** 节点类型 → 资产内容类型（与后端 mapNodeType 对齐，决定列表过滤）。 */
+/** 节点类型 → 资产内容类型（与后端 mapNodeType 对齐）。 */
 const NODE_TO_MEDIA: Record<string, AssetMediaType> = {
   text: '提示词',
   script: '剧本',
@@ -99,75 +132,198 @@ const kindLabel = computed(() => (props.node?.type ? KIND_LABEL[props.node.type]
 const STATUS_LABEL: Record<AssetStatus, string> = { DRAFT: '草稿', LOCKED: '已定稿', ARCHIVED: '已归档' }
 function statusLabel(s: AssetStatus) { return STATUS_LABEL[s] ?? s }
 
+const source = ref<PickerSource>('local')
 const projects = ref<AssetProjectVO[]>([])
+const publicProjects = ref<PublicProjectSummaryVO[]>([])
 const projectId = ref<number | null>(null)
 const keyword = ref('')
 const assets = ref<AssetVO[]>([])
 const loadingProjects = ref(false)
+const loadingPublicProjects = ref(false)
 const loadingAssets = ref(false)
+const localError = ref('')
+const publicError = ref('')
+const assetError = ref('')
 /** 正在 resolve 的资产 id（按钮 loading + 防重入）。 */
 const pickingId = ref<number | null>(null)
 
-/** 项目下拉：viewer 也可读引用（设计 §7.2），故全列。 */
-const projectOptions = computed(() =>
-  projects.value.map(p => ({ label: p.name, value: p.id }))
-)
+function publicAvailabilityLabel(p: PublicProjectSummaryVO) {
+  if (p.usable) return p.publicAccessMode === 'OPEN' ? '直接使用' : '需审批 · 已获批'
+  if (p.publicAccessMode !== 'APPROVAL_REQUIRED') return '直接使用 · 当前不可用'
+  if (p.myRequestStatus === 'PENDING') return '需审批 · 等待审批'
+  if (p.myRequestStatus === 'REJECTED') return '需审批 · 被拒绝'
+  if (p.myRequestStatus === 'REVOKED') return '需审批 · 已撤销'
+  return '需审批 · 尚未获批'
+}
 
-/** 弹窗打开：拉项目列表（资产列表待选项目后拉）。immediate 覆盖首挂 show=true。 */
+/** 本地含 owner/editor/viewer 全部可读项目；公共摘要只用于展示与可用性判断。 */
+const projectOptions = computed(() => {
+  if (source.value === 'local') {
+    return projects.value.map((p) => ({ label: p.name, value: p.id }))
+  }
+  return publicProjects.value.map((p) => ({
+    label: [p.name, p.publishedByAdmin ? '官方发布' : null, publicAvailabilityLabel(p)]
+      .filter(Boolean)
+      .join(' · '),
+    value: p.id,
+    disabled: !p.usable
+  }))
+})
+
+const activeProjectsLoading = computed(() =>
+  source.value === 'local' ? loadingProjects.value : loadingPublicProjects.value
+)
+const activeProjectError = computed(() => source.value === 'local' ? localError.value : publicError.value)
+const emptyText = computed(() => {
+  if (assetError.value) return assetError.value
+  if (projectId.value == null) {
+    if (source.value === 'public' && publicProjects.value.length > 0 && !publicProjects.value.some((p) => p.usable)) {
+      return '公共项目当前不可用（等待审批、被拒绝或已撤销）'
+    }
+    return source.value === 'public'
+      ? '请先选择可用的公共项目（不可用项目已禁用）'
+      : '请先选择项目'
+  }
+  return `该项目下无${kindLabel.value}资产`
+})
+
+let sessionId = 0
+let assetRequestId = 0
+let kwTimer: ReturnType<typeof setTimeout> | null = null
+
+function resetSelection() {
+  projectId.value = null
+  keyword.value = ''
+  assets.value = []
+  assetError.value = ''
+  loadingAssets.value = false
+  assetRequestId += 1
+  if (kwTimer) {
+    clearTimeout(kwTimer)
+    kwTimer = null
+  }
+}
+
+async function loadLocalProjects(session: number) {
+  loadingProjects.value = true
+  localError.value = ''
+  try {
+    const res = await projectApi.list()
+    if (session !== sessionId || !props.show) return
+    projects.value = res.data.data ?? []
+  } catch {
+    if (session !== sessionId || !props.show) return
+    localError.value = '本地项目列表加载失败'
+    message.error(localError.value)
+  } finally {
+    if (session === sessionId && props.show) loadingProjects.value = false
+  }
+}
+
+async function loadPublicProjects(session: number) {
+  loadingPublicProjects.value = true
+  publicError.value = ''
+  try {
+    const res = await publicPoolApi.list()
+    if (session !== sessionId || !props.show) return
+    publicProjects.value = res.data.data ?? []
+  } catch {
+    if (session !== sessionId || !props.show) return
+    publicError.value = '公共池项目列表加载失败'
+    message.error(publicError.value)
+  } finally {
+    if (session === sessionId && props.show) loadingPublicProjects.value = false
+  }
+}
+
+/** 每次打开均并行刷新两种来源；sessionId 阻止旧弹窗响应回写新会话。 */
 watch(
   () => props.show,
-  async (open) => {
-    if (!open) return
-    projectId.value = null
-    keyword.value = ''
-    assets.value = []
-    if (!projects.value.length) {
-      loadingProjects.value = true
-      try {
-        const res = await projectApi.list()
-        projects.value = res.data.data ?? []
-      } catch {
-        message.error('项目列表加载失败')
-      } finally {
-        loadingProjects.value = false
-      }
+  (open) => {
+    const session = ++sessionId
+    assetRequestId += 1
+    if (!open) {
+      if (kwTimer) clearTimeout(kwTimer)
+      kwTimer = null
+      return
     }
+    source.value = 'local'
+    resetSelection()
+    void loadLocalProjects(session)
+    void loadPublicProjects(session)
   },
   { immediate: true }
 )
 
-function onProjectChange() {
-  keyword.value = ''
-  loadAssets()
+function switchSource(next: PickerSource) {
+  if (source.value === next) return
+  source.value = next
+  resetSelection()
 }
 
-let kwTimer: ReturnType<typeof setTimeout> | null = null
+async function onProjectChange(value: number | null) {
+  assetRequestId += 1
+  assets.value = []
+  assetError.value = ''
+  keyword.value = ''
+
+  if (value == null) {
+    projectId.value = null
+    return
+  }
+  if (source.value === 'public') {
+    const selected = publicProjects.value.find((p) => p.id === value)
+    if (!selected?.usable) {
+      projectId.value = null
+      return
+    }
+  }
+  projectId.value = value
+  await loadAssets()
+}
+
 function onKeywordChange() {
   if (kwTimer) clearTimeout(kwTimer)
-  kwTimer = setTimeout(() => loadAssets(), 300)
+  kwTimer = setTimeout(() => { void loadAssets() }, 300)
 }
 
-/** 拉资产列表：按节点对应 mediaType 过滤 + 关键词（默认隐藏归档，L3）。 */
+/** 按节点 mediaType 与关键词加载；requestId/source/session 三重隔离旧响应。 */
 async function loadAssets() {
   if (projectId.value == null || !mediaType.value) return
+  const request = ++assetRequestId
+  const session = sessionId
+  const requestSource = source.value
+  const requestProjectId = projectId.value
   loadingAssets.value = true
+  assetError.value = ''
+  assets.value = []
   try {
-    const res = await assetApi.list(projectId.value, {
+    const res = await assetApi.list(requestProjectId, {
       type: mediaType.value,
       q: keyword.value.trim() || undefined,
       page: 1,
       size: 100
     })
+    if (
+      request !== assetRequestId || session !== sessionId || !props.show ||
+      requestSource !== source.value || requestProjectId !== projectId.value
+    ) return
     const page = (res as AxiosResponse<{ code: number; data: PageResult<AssetVO> }>).data.data
     assets.value = page?.records ?? []
   } catch {
-    message.error('资产列表加载失败')
+    if (
+      request !== assetRequestId || session !== sessionId || !props.show ||
+      requestSource !== source.value || requestProjectId !== projectId.value
+    ) return
+    assets.value = []
+    assetError.value = '资产列表加载失败'
+    message.error(assetError.value)
   } finally {
-    loadingAssets.value = false
+    if (request === assetRequestId && session === sessionId && props.show) loadingAssets.value = false
   }
 }
 
-/** 选定资产 → resolve 当前版本快照 → 抛给父写回节点。 */
+/** 解析当前版本快照；不传 version，且原样向父组件透传后端 resolve.version。 */
 async function onPick(a: AssetVO) {
   if (pickingId.value !== null) return
   if (!props.node) return
@@ -175,7 +331,7 @@ async function onPick(a: AssetVO) {
   try {
     const res = await assetBridgeApi.resolve(a.id, {
       canvasId: props.canvasId,
-      nodeId: props.node?.id
+      nodeId: props.node.id
     })
     const resolve: ResolveVO = res.data.data
     emit('picked', { node: props.node, resolve })
@@ -188,10 +344,37 @@ async function onPick(a: AssetVO) {
   }
 }
 
-defineExpose({ mediaType, projectId, assets, loadAssets, onPick })
+defineExpose({
+  mediaType, source, projects, publicProjects, projectOptions, projectId, keyword, assets,
+  localError, publicError, assetError, switchSource, onProjectChange, loadAssets, onPick
+})
 </script>
 
 <style lang="scss" scoped>
+.picker__source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+}
+
+.picker__source-status,
+.picker__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.picker__error {
+  margin-bottom: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-base);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  font-size: var(--font-size-sm);
+}
+
 .picker__bar {
   display: flex;
   align-items: center;
@@ -200,16 +383,15 @@ defineExpose({ mediaType, projectId, assets, loadAssets, onPick })
   flex-wrap: wrap;
 }
 
-.picker__hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-}
-
 .picker__empty {
   padding: var(--spacing-4);
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
+
+  &--error {
+    color: var(--color-error);
+  }
 }
 
 .picker__list {

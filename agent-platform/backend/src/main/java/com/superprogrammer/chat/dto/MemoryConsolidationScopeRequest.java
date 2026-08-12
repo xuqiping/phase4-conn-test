@@ -2,6 +2,7 @@ package com.superprogrammer.chat.dto;
 
 import lombok.Data;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -42,4 +43,28 @@ public class MemoryConsolidationScopeRequest {
     /** L10「同步已离开人员」开关（§3.7 line158，同时控总结取数），null → 默认 true（不过滤）。
      *  false → 项目候选剔 DEPARTED（优先级高于人员多选，即便 SPECIFIC 勾了离职人员也剔）。 */
     private Boolean includeDeparted;
+
+    /** 二期 P4（FR-302）：PROJECT scope 专用。true=「压到我自己的总结」（成员个人压缩通道：
+     *  产出 user_id=自己、scope_owner=USER、project_id=该项目，对项目共享总结零写）；
+     *  null/false=项目共享总结（scope_owner=PROJECT，仅 owner/admin 可写，FR-301）。 */
+    private Boolean toPersonal;
+
+    /** 二期 P3b：只总结这些标签（null/空 = 该 scope 全部标签）。PERSONAL 枚举标签后过滤交集；
+     *  PROJECT byTag 分组后过滤交集。 */
+    private List<Long> tagIds;
+
+    /** 二期 P3b：取数时间窗下界（含），按 turn/entry 创建时间过滤；null = 不限下界。 */
+    private OffsetDateTime start;
+
+    /** 二期 P3b：取数时间窗上界（含），null = 不限上界。 */
+    private OffsetDateTime end;
+
+    /** 二期 P3b：近 N 天（按创建时间）；非空时优先于 start/end（PERSONAL 走 mapper，
+     *  PROJECT 在 service 内折算为 [now-N, now] 过滤 entry.created_at）。 */
+    private Integer relativeDays;
+
+    /** 二期人工测试 Req2：「重新总结」模式 = true 时跳过「未覆盖/无变化」幂等闸，对（已按标签/时间/方向
+     *  过滤的）取数强制重压（写新 summary 行，旧 summary 命中冲突走裁决）。false（默认）=「立即总结」，
+     *  仅压未覆盖的新增，无新增空跳过不耗 token。 */
+    private Boolean force;
 }

@@ -26,7 +26,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void startRuntimeExecution_createsRootExecutionWithTraceAndSource() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         when(executionLogMapper.insert(any(ExecutionLog.class))).thenAnswer(invocation -> {
             ExecutionLog log = invocation.getArgument(0);
             log.setId(100L);
@@ -47,7 +47,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void startRuntimeExecution_createsChildExecutionWithRootAndParent() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         when(executionLogMapper.insert(any(ExecutionLog.class))).thenAnswer(invocation -> {
             ExecutionLog log = invocation.getArgument(0);
             log.setId(101L);
@@ -66,7 +66,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void updateRuntimeRefs_persistsExternalThreadAndCheckpoint() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         when(executionLogMapper.selectById(100L)).thenReturn(existing);
@@ -81,7 +81,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void updateRuntimeRefs_preservesExistingValuesWhenPartialUpdateArrives() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setExternalThreadId("thread-1");
@@ -98,7 +98,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void updateRuntimeRefs_canPersistRecoveryCheckpointWithoutChangingThread() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setExternalThreadId("thread-1");
@@ -114,7 +114,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void appendRuntimeEventSnapshot_storesEventJsonInNodeLogs() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setNodeLogs("[{\"type\":\"EXECUTION_STARTED\"}]");
@@ -129,7 +129,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void finishExecution_preservesExistingRuntimeEventArrayWhenNoReplacementLogsProvided() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setStartedAt(java.time.OffsetDateTime.now().minusSeconds(1));
@@ -145,7 +145,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void findByCheckpointRef_returnsExecutionWithMatchingCheckpoint() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setCheckpointRef("checkpoint-100");
@@ -159,7 +159,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void listPendingApprovals_returnsWaitingApprovalExecutions() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setStatus("WAITING_APPROVAL");
@@ -176,7 +176,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void listVisibleExecutions_withoutUserScopeReturnsAllExecutions() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog first = new ExecutionLog();
         first.setId(100L);
         first.setTriggeredBy(1L);
@@ -192,7 +192,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void listVisibleExecutions_withUserScopeReturnsUserExecutions() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setTriggeredBy(7L);
@@ -206,7 +206,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void getVisibleExecutionLog_rejectsOtherUsersExecution() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setTriggeredBy(7L);
@@ -219,7 +219,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void getRecoveryInfo_extractsFailureMetadataFromRuntimeEvents() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(100L);
         existing.setStatus("FAILED");
@@ -254,7 +254,7 @@ class ExecutionLogServiceTest {
 
     @Test
     void getRecoveryInfo_marksFailedExecutionWithoutCheckpointAsNotRecoverable() {
-        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper());
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper, new com.fasterxml.jackson.databind.ObjectMapper(), new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ExecutionLog existing = new ExecutionLog();
         existing.setId(101L);
         existing.setStatus("FAILED");
@@ -280,5 +280,46 @@ class ExecutionLogServiceTest {
         assertThat(result.getCheckpointRef()).isNull();
         assertThat(result.isRecoverable()).isFalse();
         assertThat(result.getRecoverySuggestion()).isEqualTo("缺少可用 checkpoint，无法恢复执行");
+    }
+
+    // ===== OPS-FR-04 工作流终态指标 =====
+
+    @Test
+    void finishExecution_recordsSuccessMetricAndDuration() {
+        io.micrometer.prometheus.PrometheusMeterRegistry registry =
+                new io.micrometer.prometheus.PrometheusMeterRegistry(io.micrometer.prometheus.PrometheusConfig.DEFAULT);
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper,
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                new com.superprogrammer.common.metrics.BizMetrics(registry));
+        ExecutionLog existing = new ExecutionLog();
+        existing.setId(100L);
+        existing.setStartedAt(java.time.OffsetDateTime.now().minusSeconds(5));
+        when(executionLogMapper.selectById(100L)).thenReturn(existing);
+
+        executionLogService.finishExecution(100L, null);
+
+        String out = registry.scrape();
+        assertThat(out).contains("workflow_executions_total{status=\"SUCCESS\",} 1.0");
+        assertThat(out).contains("workflow_duration_seconds_count 1.0");
+        assertThat(out).doesNotContain("status=\"FAILED\"");
+    }
+
+    @Test
+    void failExecution_recordsFailedMetric() {
+        io.micrometer.prometheus.PrometheusMeterRegistry registry =
+                new io.micrometer.prometheus.PrometheusMeterRegistry(io.micrometer.prometheus.PrometheusConfig.DEFAULT);
+        ExecutionLogService executionLogService = new ExecutionLogService(executionLogMapper,
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                new com.superprogrammer.common.metrics.BizMetrics(registry));
+        ExecutionLog existing = new ExecutionLog();
+        existing.setId(100L);
+        existing.setStartedAt(java.time.OffsetDateTime.now().minusSeconds(2));
+        when(executionLogMapper.selectById(100L)).thenReturn(existing);
+
+        executionLogService.failExecution(100L, "boom");
+
+        String out = registry.scrape();
+        assertThat(out).contains("workflow_executions_total{status=\"FAILED\",} 1.0");
+        assertThat(out).doesNotContain("status=\"SUCCESS\"");
     }
 }

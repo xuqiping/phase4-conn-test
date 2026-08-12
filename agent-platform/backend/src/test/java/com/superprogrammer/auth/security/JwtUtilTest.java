@@ -103,4 +103,20 @@ class JwtUtilTest {
     void isTokenValid_shouldReturnFalseForMalformedToken() {
         assertFalse(jwtUtil.isTokenValid("this.is.not-a-valid-token"));
     }
+
+    // 安全体系 S2 · A8（SEC-FR-008）：sid claim 签发/读取回环；旧签名（无 sid）→ null
+    @Test
+    void sidClaim_roundTrip_oldSignatureHasNullSid() {
+        String withSid = jwtUtil.generateAccessToken(1L, "admin", Arrays.asList("admin"), 60000L, "sid-1");
+        assertEquals("sid-1", jwtUtil.getSidFromToken(withSid));
+
+        String refreshWithSid = jwtUtil.generateRefreshToken(1L, "sid-1");
+        assertEquals("sid-1", jwtUtil.getSidFromToken(refreshWithSid));
+
+        String legacy = jwtUtil.generateAccessToken(1L, "admin", Arrays.asList("admin"));
+        assertNull(jwtUtil.getSidFromToken(legacy));
+
+        String legacyRefresh = jwtUtil.generateRefreshToken(1L);
+        assertNull(jwtUtil.getSidFromToken(legacyRefresh));
+    }
 }

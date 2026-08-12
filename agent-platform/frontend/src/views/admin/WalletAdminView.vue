@@ -50,6 +50,8 @@ const rules: FormRules = {
 }
 const saving = ref(false)
 const lastResult = ref<{ userId: number; balanceAfter: number } | null>(null)
+// SEC-FR-121：每开一轮表单生成一把幂等键——双击/网络重试同键只到账一次；成功后换键开新一笔
+const idemKey = ref<string>(crypto.randomUUID())
 
 async function submit() {
   try {
@@ -62,12 +64,14 @@ async function submit() {
     const res = await billingApi.recharge({
       userId: form.userId!,
       points: form.points!,
-      remark: form.remark || undefined
+      remark: form.remark || undefined,
+      idempotencyKey: idemKey.value
     })
     lastResult.value = res.data.data
     message.success('充值成功')
     form.points = null
     form.remark = null
+    idemKey.value = crypto.randomUUID()
   } finally {
     saving.value = false
   }

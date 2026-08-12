@@ -3,6 +3,8 @@ package com.superprogrammer.chat.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.agent.entity.Agent;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.agent.mapper.AgentMapper;
 import com.superprogrammer.chat.dto.ChatRequest;
 import com.superprogrammer.chat.dto.ChatResponse;
@@ -21,10 +23,14 @@ import com.superprogrammer.workflow.entity.Workflow;
 import com.superprogrammer.workflow.mapper.WorkflowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
@@ -35,6 +41,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.superprogrammer.chat.dto.MemoryRecallResult;
 import com.superprogrammer.chat.dto.MemoryRecallScopeRequest;
 import com.superprogrammer.chat.dto.StreamEvent;
+import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
 import com.superprogrammer.chat.service.internal.MemoryGenerationService;
 import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
 import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
@@ -64,12 +71,17 @@ public class ChatSessionService {
     private final com.superprogrammer.knowledge.service.internal.CitationChecker citationChecker;
     // 记忆模式开关解析（V26，session>agent/workflow>global，门控 RAG+记忆）
     private final com.superprogrammer.knowledge.service.RagModeResolver ragModeResolver;
-    // 记忆项目 scope 解析（V33，写 scope 从 session 解析 + canAccess 守卫；召回 scope 走持久化偏好）
-    private final MemoryScopeResolver memoryScopeResolver;
     // 系统设置（联网搜索总开关等；记忆写入 HYBRID/ASYNC 模式随 H' 切流废弃）
     private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
     // 联网搜索（CHAT 模式生成前检索注入；开关门控由 session.webSearchEnabled + 全局 search.enabled）
     private final com.superprogrammer.search.service.WebSearchService webSearchService;
+    // 聊天附件归属校验（V69 二期 P3：消息体携带 file_ids，turn 提及「含附件《名》」）
+    private final MemoryAssetUploadService memoryAssetUploadService;
+    /** 审计：对话两阶段（send_message + chat_completed），8x Chunk4。 */
+    private final AuditLogService auditLogService;
+    /** 对话审计开关（audit.chat.enabled，高频出问题可关）。非 final，Spring @Value 字段注入。 */
+    @Value("${audit.chat.enabled:true}")
+    private boolean chatAuditEnabled;
 
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
@@ -92,10 +104,7 @@ public class ChatSessionService {
         if (request.getKbIds() != null && !request.getKbIds().isEmpty()) {
             session.setKbIds(request.getKbIds());   // CHAT 模式检索 scope（阶段5 RAG 绑定）
         }
-        // 项目记忆 scope（V33）：建会话时带上写目标 + 读开关
-        session.setProjectId(request.getProjectId());
-        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
-        session.setMemReadProjectIds(request.getMemReadProjectIds());
+        // 二期 P1：V33 记忆写目标/读开关三列随「取消手动写入目标」废弃，不再从请求写入
         // 联网搜索开关（V44，CHAT 模式会话级）
         session.setWebSearchEnabled(request.getWebSearchEnabled());
         sessionMapper.insert(session);
@@ -125,27 +134,7 @@ public class ChatSessionService {
         session.setAgentId(request.getAgentId());
         session.setWorkflowId(request.getWorkflowId());
         sessionMapper.updateById(session);
-        // 项目记忆 scope（V33）：切 target 时若前端带 scope 标记则一并持久化
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
         return toSessionVO(session);
-    }
-
-    /** 显式写 project scope 三列（projectId null=回总记忆，须显式 set 才能清，updateById 会跳过 null）。 */
-    private void persistMemoryScope(ChatSession session, ChatRequest request) {
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ChatSession> uw =
-                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
-        uw.eq(ChatSession::getId, session.getId())
-                .set(ChatSession::getProjectId, request.getProjectId())
-                .set(ChatSession::getMemIncludeGlobal, request.getMemIncludeGlobal())
-                // BIGINT[] 列须显式带 typeHandler：LambdaUpdateWrapper.set 不读实体 @TableField，裸 List 进 PG cast 失败
-                .set(ChatSession::getMemReadProjectIds, request.getMemReadProjectIds(),
-                        "typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler");
-        sessionMapper.update(null, uw);
-        session.setProjectId(request.getProjectId());
-        session.setMemIncludeGlobal(request.getMemIncludeGlobal());
-        session.setMemReadProjectIds(request.getMemReadProjectIds());
     }
 
     public List<ChatMessage> getSessionMessages(Long userId, Long sessionId) {
@@ -190,12 +179,18 @@ public class ChatSessionService {
             session = getSessionOrFail(userId, request.getSessionId());
         }
 
-        // Save user message
+        // Save user message（P3 附件：落消息前校验归属，metadata 记 file_ids）
+        List<String> attachmentNames = resolveAttachmentNames(userId, request);
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
         userMsg.setContent(request.getMessage());
+        fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
+
+        // 8x Chunk4：send_message 审计行（用户消息持久化后，请求线程→MDC 有 traceId/IP/username）
+        auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
+                request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
 
         // Build execution context
         ExecutionContext context = new ExecutionContext(
@@ -212,13 +207,6 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
-        // 项目记忆 scope（V33）：前端发 memIncludeGlobal（scope 更新标记）→ 显式写三列（projectId null=回总记忆，须显式 set 才能清）
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
-        // 写 scope 解析（admin=false；召回 scope 走用户持久化偏好，见 recallMemoryContext）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
         boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -230,8 +218,10 @@ public class ChatSessionService {
         }
 
         // Load long-term memories（仅记忆模式开启；新栈召回 pipeline，scope 走用户持久化偏好）
+        MemoryRecallResult recallResult = null;
         if (ragOn) {
-            String memoryContext = recallMemoryContext(userId, request.getMessage());
+            recallResult = recallMemory(userId, request.getMessage(), request.getModel());
+            String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("SYSTEM", "用户记忆:\n" + memoryContext);
             }
@@ -263,16 +253,24 @@ public class ChatSessionService {
             response = response + "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
         }
 
-        // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident 随旧栈废弃，冲突走总结 worker→面板）
+        // 记忆写入（H' 切流：新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标概念）
         if (ragOn) {
-            dispatchMemoryWrite(userId, session.getId(), session, writeScope, request.getMessage(), response);
+            dispatchMemoryWrite(userId, session.getId(),
+                    withAttachmentMention(request.getMessage(), attachmentNames), response, request.getModel());
         }
 
-        // Save assistant message
+        // Save assistant message（二期 P3：召回命中的文件卡片随 metadata 落库，历史消息回显文件卡片）
         ChatMessage assistantMsg = new ChatMessage();
         assistantMsg.setSessionId(session.getId());
         assistantMsg.setRole("ASSISTANT");
         assistantMsg.setContent(response);
+        if (recallResult != null && recallResult.getFileCards() != null
+                && !recallResult.getFileCards().isEmpty()) {
+            try {
+                assistantMsg.setMetadata(new ObjectMapper().writeValueAsString(
+                        Map.of("fileCards", recallResult.getFileCards())));
+            } catch (Exception ignored) {}
+        }
         messageMapper.insert(assistantMsg);
 
         // Update session title on first exchange
@@ -294,39 +292,109 @@ public class ChatSessionService {
     // ============================ 记忆（H' 切流：新栈召回/写入）============================
 
     /**
-     * 召回长期记忆装配文本（注入对话 SYSTEM）。scope 走用户持久化偏好（F-6 底栏 popover），
-     * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返空串不崩聊天。
+     * 召回长期记忆（结果含装配文本 + 二期 P3 文件卡片）。scope 走用户持久化偏好（F-6 底栏 popover），
+     * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返 null 不崩聊天。
      */
-    private String recallMemoryContext(Long userId, String query) {
-        if (userId == null || query == null || query.isBlank()) return "";
+    private MemoryRecallResult recallMemory(Long userId, String query, String model) {
+        if (userId == null || query == null || query.isBlank()) return null;
         try {
             MemoryRecallScopeRequest scopeReq = memoryRecallPrefService.getScope(userId);
             if (scopeReq == null) {
                 scopeReq = new MemoryRecallScopeRequest();
                 scopeReq.setPersonalOn(true);
             }
-            MemoryRecallResult result = memoryRecallPipeline.recall(query, scopeReq, userId);
-            return result == null ? "" : result.getAssembledText();
+            return memoryRecallPipeline.recall(query, scopeReq, userId, model);
         } catch (Exception e) {
             log.warn("记忆召回失败 userId={} query.len={}: {}", userId, query.length(), e.getMessage());
-            return "";
+            return null;
         }
     }
 
     /**
-     * 异步写入一轮记忆（新栈 fire-and-forget）。sessionProjectId 来自会话；
-     * writeScope.includeGlobal/safeProjectIds 由 MemoryScopeResolver 经 canAccess 守卫（防越权写他人项目）。
+     * 异步写入一轮记忆（新栈 fire-and-forget；二期 P1 turns 纯个人域，无写入目标参数）。
      * RejectedExecution 已在 processTurnAsync 内兜底，此处仅兜意外异常不崩主流程。
      */
-    private void dispatchMemoryWrite(Long userId, Long sessionId, ChatSession session,
-                                     com.superprogrammer.chat.service.internal.MemoryScope writeScope,
-                                     String userInput, String assistantOutput) {
+    private void dispatchMemoryWrite(Long userId, Long sessionId,
+                                     String userInput, String assistantOutput, String chatModel) {
         try {
-            memoryGenerationService.processTurnAsync(userId, sessionId, session.getProjectId(),
-                    writeScope.includeGlobal(), writeScope.safeProjectIds(), userInput, assistantOutput);
+            memoryGenerationService.processTurnAsync(userId, sessionId, userInput, assistantOutput, chatModel);
         } catch (Exception e) {
             log.warn("记忆写入提交失败 userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
         }
+    }
+
+    // ============================ 二期 P3 · 聊天附件（V69）============================
+
+    /** 附件归属校验（落消息前拦）：任一 fileId 非本人 CHAT ACTIVE → BAD_REQUEST。无附件返空列表。 */
+    private List<String> resolveAttachmentNames(Long userId, ChatRequest request) {
+        if (request.getAttachmentFileIds() == null || request.getAttachmentFileIds().isEmpty()) {
+            return List.of();
+        }
+        return memoryAssetUploadService.resolveOwnedAttachmentNames(request.getAttachmentFileIds(), userId);
+    }
+
+    /**
+     * 8x Chunk4 行1：用户发消息审计（send_message）。两咽喉（REST sendMessage + 流式 doSendMessageStream）共用。
+     * 请求线程→{@code fromMdc} 自带 traceId/userId/username/clientIp（无需显式覆盖）。
+     * detail 只带 agentId/model/attachmentCount——<b>严禁 prompt 原文</b>（隐私+体积，见 plan 坑点 #6）。
+     * 失败一律吞（对话主流程绝不被审计拖垮）。开关 audit.chat.enabled 关则不落。
+     *
+     * <p><b>审计 #7 兜底</b>：流式路径若 MDC 未透传（历史裸线程漏搬），{@code fromMdc} 落 null 身份。
+     * 此处从入参 userId + SecurityContext credentials（=username，见 JwtAuthenticationFilter）显式盖戳补全，
+     * 与 {@code AuthService.auditAuth} 同范式——不依赖 MDC 单一路径。
+     */
+    private void auditSendMessage(Long sessionId, Long agentId, String model, Long userId, int attachmentCount) {
+        if (!chatAuditEnabled) {
+            return;
+        }
+        try {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            if (agentId != null) {
+                detail.put("agentId", agentId);
+            }
+            if (model != null) {
+                detail.put("model", model);
+            }
+            detail.put("attachmentCount", attachmentCount);
+            String detailJson = new ObjectMapper().writeValueAsString(detail);
+            AuditLogEntity row = auditLogService.fromMdc("chat", "send_message", "chat_session",
+                    String.valueOf(sessionId), detailJson, AuditLogEntity.RESULT_SUCCESS);
+            // #7 兜底：MDC 丢（裸线程未透传）时从入参/SecurityContext 补全身份，保审计行不空
+            if (row != null) {
+                if (row.getUserId() == null && userId != null) {
+                    row.setUserId(userId);
+                }
+                if (row.getUsername() == null) {
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    if (auth != null && auth.getCredentials() instanceof String username) {
+                        row.setUsername(username);
+                    }
+                }
+            }
+            auditLogService.record(row);
+        } catch (Exception e) {
+            log.warn("对话发送审计失败(已吞) sessionId={} : {}", sessionId, e.toString());
+        }
+    }
+
+    /** 消息 metadata 记 attachmentFileIds（前端渲染文件卡片用；无附件不写）。 */
+    private void fillAttachmentMetadata(ChatMessage msg, List<String> attachmentFileIds) {
+        if (attachmentFileIds == null || attachmentFileIds.isEmpty()) {
+            return;
+        }
+        try {
+            msg.setMetadata(new ObjectMapper().writeValueAsString(
+                    Map.of("attachmentFileIds", attachmentFileIds)));
+        } catch (Exception ignored) {}
+    }
+
+    /** 记忆写入文本带附件提及（P3 坑表：turn 的 raw/L2 记录「含附件《名》」，可回溯文件）。 */
+    private String withAttachmentMention(String message, List<String> attachmentNames) {
+        if (attachmentNames == null || attachmentNames.isEmpty()) {
+            return message;
+        }
+        String mention = attachmentNames.stream().map(n -> "《" + n + "》").collect(Collectors.joining());
+        return (message == null ? "" : message) + "\n（附件：" + mention + "）";
     }
 
     private List<ChatMessage> loadContextWindow(Long sessionId) {
@@ -360,11 +428,18 @@ public class ChatSessionService {
     }
 
     private Flux<StreamEvent> doSendMessageStream(Long userId, ChatRequest request, ChatSession session) {
+        // P3 附件：落消息前校验归属，metadata 记 file_ids（流式路径与 REST 同一咽喉）
+        List<String> attachmentNames = resolveAttachmentNames(userId, request);
         ChatMessage userMsg = new ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
         userMsg.setContent(request.getMessage());
+        fillAttachmentMetadata(userMsg, request.getAttachmentFileIds());
         messageMapper.insert(userMsg);
+
+        // 8x Chunk4：send_message 审计行（流式咽喉，同 REST；请求线程→MDC 有 traceId/IP/username）
+        auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
+                request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
 
         ExecutionContext context = new ExecutionContext(
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
@@ -380,12 +455,6 @@ public class ChatSessionService {
             session.setKbIds(request.getKbIds());   // 阶段5 RAG：消息级更新检索 scope
             sessionMapper.updateById(session);
         }
-        if (request.getMemIncludeGlobal() != null) {
-            persistMemoryScope(session, request);
-        }
-        // 写 scope 在 lambda 外解析（reactor 闭包安全；召回 scope 走用户持久化偏好）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
         final boolean ragOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                 session.getAgentId(), session.getWorkflowId());
         context.setRagEnabled(ragOn);
@@ -395,11 +464,15 @@ public class ChatSessionService {
             context.addMessage(msg.getRole(), msg.getContent());
         }
 
+        final java.util.concurrent.atomic.AtomicReference<java.util.List<com.superprogrammer.chat.dto.RecalledFileCard>> recalledFileCards =
+                new java.util.concurrent.atomic.AtomicReference<>();
         if (ragOn) {
-            String memoryContext = recallMemoryContext(userId, request.getMessage());
+            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage(), request.getModel());
+            String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 context.addMessage("system", "用户记忆:\n" + memoryContext);
             }
+            recalledFileCards.set(recallResult == null ? null : recallResult.getFileCards());
         }
 
         // 阶段5 RAG（CHAT 模式证据注入；WORKFLOW 走检索节点回调，此处不注入）— 受记忆模式门控
@@ -424,9 +497,9 @@ public class ChatSessionService {
             Flux<ExecutionEvent> resumeFlux = runtimeExecutionService.resumeWorkflowFromChatAnswer(
                     session.getId(), request.getMessage(), userId);
             if (resumeFlux != null) {
-                return streamWorkflowFlux(userId, session, request, resumeFlux);
+                return streamWorkflowFlux(userId, session, request, resumeFlux, attachmentNames);
             }
-            return streamWorkflow(userId, session, request);
+            return streamWorkflow(userId, session, request, attachmentNames);
         }
 
         Long sessionId = session.getId();
@@ -457,19 +530,26 @@ public class ChatSessionService {
                         disclaimer = "\n\n（注：回答中存在未经证据支持的引用编号，请核实原始知识库。）";
                         responseText = responseText + disclaimer;
                     }
-                    // 记忆写入（H' 切流：新栈 fire-and-forget；HYBRID/ASYNC/incident/askText 随旧栈废弃）
+                    // 记忆写入（二期 P1 turns 纯个人域；HYBRID/ASYNC/incident/askText 随旧栈废弃）
                     if (ragOn) {
-                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId,
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText, request.getModel());
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);
                     assistantMsg.setRole("ASSISTANT");
                     assistantMsg.setContent(responseText);
+                    // metadata：thinking + 二期 P3 文件卡片（召回命中随消息落库，历史回显文件卡片）
+                    java.util.Map<String, Object> metaMap = new java.util.LinkedHashMap<>();
                     if (fullThinking.length() > 0) {
+                        metaMap.put("thinking", fullThinking.toString());
+                    }
+                    if (recalledFileCards.get() != null && !recalledFileCards.get().isEmpty()) {
+                        metaMap.put("fileCards", recalledFileCards.get());
+                    }
+                    if (!metaMap.isEmpty()) {
                         try {
-                            assistantMsg.setMetadata(
-                                    new ObjectMapper().writeValueAsString(
-                                            Map.of("thinking", fullThinking.toString())));
+                            assistantMsg.setMetadata(new ObjectMapper().writeValueAsString(metaMap));
                         } catch (Exception ignored) {}
                     }
                     messageMapper.insert(assistantMsg);
@@ -491,6 +571,15 @@ public class ChatSessionService {
                         } catch (Exception ignored) {}
                     }
 
+                    // 二期 P3（FR-203）：文件记忆卡片事件（DONE 前发，前端渲染文件卡片；仅召回命中时）
+                    StreamEvent fileCardsEvt = null;
+                    if (recalledFileCards.get() != null && !recalledFileCards.get().isEmpty()) {
+                        try {
+                            fileCardsEvt = StreamEvent.fileCards(
+                                    new ObjectMapper().writeValueAsString(recalledFileCards.get()));
+                        } catch (Exception ignored) {}
+                    }
+
                     java.util.List<StreamEvent> tail = new java.util.ArrayList<>();
                     if (disclaimer != null) {
                         tail.add(StreamEvent.chunk(disclaimer));
@@ -501,27 +590,29 @@ public class ChatSessionService {
                     if (webCitationEvt != null) {
                         tail.add(webCitationEvt);
                     }
+                    if (fileCardsEvt != null) {
+                        tail.add(fileCardsEvt);
+                    }
                     tail.add(StreamEvent.done());
                     return Flux.fromIterable(tail);
                 }).subscribeOn(Schedulers.boundedElastic()))
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
 
-    private Flux<StreamEvent> streamWorkflow(Long userId, ChatSession session, ChatRequest request) {
+    private Flux<StreamEvent> streamWorkflow(Long userId, ChatSession session, ChatRequest request,
+                                             List<String> attachmentNames) {
         return streamWorkflowFlux(userId, session, request,
-                runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, session.getId(), request.getMessage()));
+                runtimeExecutionService.runWorkflowFromChat(session.getWorkflowId(), userId, session.getId(), request.getMessage()),
+                attachmentNames);
     }
 
     /** 工作流事件流 → 对话流式事件的统一映射（首次执行与人机输入恢复复用）。 */
     private Flux<StreamEvent> streamWorkflowFlux(Long userId, ChatSession session, ChatRequest request,
-                                                 Flux<ExecutionEvent> source) {
+                                                 Flux<ExecutionEvent> source, List<String> attachmentNames) {
         Long sessionId = session.getId();
         StringBuilder fullThinking = new StringBuilder();
         AtomicReference<String> finalResponse = new AtomicReference<>("");
         AtomicBoolean hasError = new AtomicBoolean(false);
-        // 写 scope（streamWorkflow 不经 doSendMessageStream，独立解析；召回在 WORKFLOW 模式不注入）
-        com.superprogrammer.chat.service.internal.MemoryScope writeScope =
-                memoryScopeResolver.resolveWriteScope(session, userId, false);
 
         return source
                 .flatMapIterable(event -> workflowStreamEvents(event, fullThinking, finalResponse, hasError))
@@ -535,7 +626,8 @@ public class ChatSessionService {
                     boolean wfRagOn = ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
                             session.getAgentId(), session.getWorkflowId());
                     if (wfRagOn) {
-                        dispatchMemoryWrite(userId, sessionId, session, writeScope, request.getMessage(), responseText);
+                        dispatchMemoryWrite(userId, sessionId,
+                                withAttachmentMention(request.getMessage(), attachmentNames), responseText, request.getModel());
                     }
                     ChatMessage assistantMsg = new ChatMessage();
                     assistantMsg.setSessionId(sessionId);

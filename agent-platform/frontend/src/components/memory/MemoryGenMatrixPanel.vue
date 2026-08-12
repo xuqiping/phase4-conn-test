@@ -9,7 +9,8 @@
   <div class="memory-gen-matrix">
     <n-alert type="info" :bordered="false" size="small" class="memory-gen-matrix__top">
       项目记忆生成开关：owner 项目级 与 本人会员覆写 皆开才生成 L0/L1/L2（任一关仅写 raw 流水账）。
-      关掉 = 该项目不再为你提炼总结，原 raw 仍保留。
+      关掉 = 该项目不再为你提炼总结，原 raw 仍保留，<b>但 raw 不会自动总结</b>（自动总结只处理已生成的 turn）——
+      想要总结请开启生成，或在「总结」面板点「立即总结」手动压。
     </n-alert>
 
     <n-space :size="8" align="center" class="memory-gen-matrix__toolbar">

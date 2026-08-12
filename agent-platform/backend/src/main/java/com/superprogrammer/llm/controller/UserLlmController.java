@@ -10,6 +10,7 @@ import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.entity.UserLlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
+import com.superprogrammer.system.service.SystemSettingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +29,7 @@ public class UserLlmController {
     private final UserLlmProviderService userLlmProviderService;
     private final LlmProviderService llmProviderService;
     private final ObjectMapper objectMapper;
+    private final SystemSettingService systemSettingService;
 
     @GetMapping("/providers")
     public ResponseEntity<R<List<UserLlmProviderVO>>> listProviders() {
@@ -98,6 +100,7 @@ public class UserLlmController {
     public ResponseEntity<R<List<AvailableModelVO>>> listAvailableModels() {
         Long userId = getCurrentUserId();
         List<AvailableModelVO> models = new ArrayList<>();
+        String defaultModel = systemSettingService.getDefaultChatModel();
 
         // Global providers（仅 CHAT 进 chat 模型列表；EMBEDDING/VIDEO/IMAGE 均不进——
         // 顺带修掉 EMBEDDING 模型混进 chat 选择器的旧缺陷，FR-003）
@@ -114,6 +117,7 @@ public class UserLlmController {
                                 .displayName(m.toString())
                                 .providerName(p.getName())
                                 .source("global")
+                                .defaultModel(m.toString().equals(defaultModel))
                                 .build());
                     }
                 } catch (Exception ignored) {}
@@ -131,6 +135,7 @@ public class UserLlmController {
                                 .displayName(m.toString() + " (我的)")
                                 .providerName(up.getProviderName())
                                 .source("user")
+                                .defaultModel(false)
                                 .build());
                     }
                 } catch (Exception ignored) {}
@@ -162,6 +167,7 @@ public class UserLlmController {
                                 .displayName(m.toString())
                                 .providerName(p.getName())
                                 .source("global")
+                                .defaultModel(false)
                                 .build());
                     }
                 } catch (Exception ignored) {

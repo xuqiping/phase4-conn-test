@@ -50,7 +50,7 @@ public class AgentRoutingStrategy implements ExecutionStrategy {
             evidence = null;
         }
 
-        RoutingResult routing = agentRouter.route(agent, userMessage, context.getUserId());
+        RoutingResult routing = agentRouter.route(agent, userMessage, context.getUserId(), context.getModel());
         if (routing.getSkillIds().isEmpty()) {
             return "未找到匹配的技能来处理您的请求";
         }

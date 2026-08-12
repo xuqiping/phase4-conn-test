@@ -19,7 +19,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -56,7 +55,6 @@ class AssetScriptServiceTest {
     void setUp() {
         service = new AssetScriptService(assetMapper, aclService, versionService, llmGateway,
                 new ObjectMapper(), assetService, assetProjectService);
-        ReflectionTestUtils.setField(service, "defaultModel", "doubao-seed-2.0-code");
     }
 
     @Test
@@ -145,7 +143,7 @@ class AssetScriptServiceTest {
     }
 
     @Test
-    void breakdown_usesDefaultModelWhenAbsent() {
+    void breakdown_leavesModelBlankForGatewayAdminDefaultWhenAbsent() {
         scriptAsset("{\"synopsis\":\"剧本\"}");
         when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
@@ -156,7 +154,7 @@ class AssetScriptServiceTest {
 
         ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
         verify(llmGateway).chat(cap.capture(), eq(OWNER_ID));
-        assertEquals("doubao-seed-2.0-code", cap.getValue().getModel());
+        assertEquals(null, cap.getValue().getModel());
     }
 
     // ==================== 一键分镜（S19） ====================

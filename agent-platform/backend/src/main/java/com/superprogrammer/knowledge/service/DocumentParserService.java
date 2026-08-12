@@ -54,7 +54,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class DocumentParserService {
 
-    private static final String CHAT_MODEL = "doubao-seed-2.0-code";
     private static final String DEFAULT_STRATEGY = "PER_SECTION";
 
     /** 图片 AUTO 索引：视觉模型识图提示词。要求提取可见文字+图表结构，输出简洁中文供检索向量化。 */
@@ -559,7 +558,6 @@ public class DocumentParserService {
 
     private String chatJson(String system, String user, int maxTokens) {
         LlmRequest req = LlmRequest.builder()
-                .model(CHAT_MODEL)
                 .messages(List.of(
                         LlmMessage.builder().role("system").content(system).build(),
                         LlmMessage.builder().role("user").content(user).build()))

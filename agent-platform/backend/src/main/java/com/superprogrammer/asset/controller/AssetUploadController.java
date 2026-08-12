@@ -3,6 +3,7 @@ package com.superprogrammer.asset.controller;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,7 @@ public class AssetUploadController {
     private final AssetService assetService;
 
     @PostMapping
+    @AuditLog(module = "asset", action = "asset_upload", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> upload(@PathVariable("id") Long id,
                                              @RequestParam("file") MultipartFile file,

@@ -37,13 +37,13 @@ describe('skillConfigForm', () => {
     expect(form).toEqual({
       systemPrompt: '',
       promptTemplate: '请总结 {{input}}',
-      model: 'doubao-seed-2.0-code',
+      model: '',
       temperature: 0.7,
       outputKey: 'summary'
     })
     expect(JSON.parse(buildStepConfig(form))).toMatchObject({
       promptTemplate: '请总结 {{input}}',
-      model: 'doubao-seed-2.0-code',
+      model: '',
       temperature: 0.7,
       outputKey: 'summary'
     })

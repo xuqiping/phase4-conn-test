@@ -21,14 +21,16 @@ public class MemoryRecallScopeView {
     private OffsetDateTime start;
     private OffsetDateTime end;
     private boolean includeDeparted;
-    /** 用户可勾选的项目集（经 listAccessibleProjectIds 权限过滤后的本人可用项目）。 */
+    /** 用户可勾选的项目集（本人可访问项目 ∪ 被授权召回项目）。 */
     private List<ProjectOption> availableProjects;
 
-    /** 可勾选项目项（id + 展示名）。 */
+    /** 可勾选项目项（id + 展示名 + 是否经个人授权获得读权）。 */
     @Data
     @Builder
     public static class ProjectOption {
         private Long projectId;
         private String name;
+        /** true=经 P1 个人授权获得的只读召回权（非项目成员）；false=本人可访问项目（成员/owner）。 */
+        private boolean viaGrant;
     }
 }

@@ -431,6 +431,11 @@ public class AssetProjectService {
                 .narrativeRoles(Collections.unmodifiableList(parseRoles(p.getNarrativeRoles())))
                 .mediaTypes(Collections.unmodifiableList(parseMediaTypes(p.getMediaTypes())))
                 .role(role)
+                .publicPool(Boolean.TRUE.equals(p.getPublicPool()))
+                .publicAccessMode(p.getPublicAccessMode())
+                .publishedBy(p.getPublishedBy())
+                .publishedAt(p.getPublishedAt())
+                .publishedByAdmin(Boolean.TRUE.equals(p.getPublishedByAdmin()))
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
                 .build();

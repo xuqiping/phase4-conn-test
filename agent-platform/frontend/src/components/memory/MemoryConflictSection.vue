@@ -26,6 +26,7 @@
           <n-button size="small" type="primary" @click="open(c)">裁决</n-button>
         </div>
         <div class="memory-conflict-section__meta">
+          <n-tag v-if="c.projectShared" size="tiny" type="info" :bordered="false">项目共享</n-tag>
           <n-tag size="tiny" :bordered="false">{{ c.status }}</n-tag>
           <span v-if="c.createdAt">{{ c.createdAt }}</span>
         </div>

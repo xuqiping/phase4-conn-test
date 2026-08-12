@@ -39,7 +39,6 @@
               {{ t.direction === 'INPUT' ? '我说' : '回答' }}
             </n-tag>
             <n-tag v-if="!t.genDone" size="tiny" type="warning" :bordered="false">raw 未生成</n-tag>
-            <span v-if="!t.bornPersonal" class="memory-turn-section__born">项目出身</span>
             <span class="memory-turn-section__time">{{ t.createdAt }}</span>
           </div>
           <div v-if="t.l1Summary" class="memory-turn-section__l1">{{ t.l1Summary }}</div>
@@ -47,7 +46,16 @@
           <div v-if="t.rawContent" class="memory-turn-section__raw">{{ t.rawContent }}</div>
           <div class="memory-turn-section__tags">
             <n-tag v-for="(label, i) in t.tagLabels" :key="i" size="tiny" :bordered="false">{{ label }}</n-tag>
-            <n-tag v-for="(name, i) in t.projectNames" :key="`p${i}`" size="tiny" type="info" :bordered="false">{{ name }}</n-tag>
+          </div>
+          <div v-if="t.indexedProjects?.length" class="memory-turn-section__indexed">
+            <span class="memory-turn-section__indexed-label">收录于：</span>
+            <n-tag
+              v-for="p in t.indexedProjects"
+              :key="p.projectId"
+              size="tiny"
+              type="primary"
+              :bordered="false"
+            >{{ p.name }}</n-tag>
           </div>
         </div>
       </div>
@@ -155,10 +163,6 @@ defineExpose({ refresh: load })
     opacity: 0.5;
     margin-left: auto;
   }
-  &__born {
-    font-size: 11px;
-    opacity: 0.6;
-  }
   &__l1 {
     font-size: 13px;
     line-height: 1.5;
@@ -183,6 +187,17 @@ defineExpose({ refresh: load })
     gap: 4px;
     flex-wrap: wrap;
     margin-top: 6px;
+  }
+  &__indexed {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  &__indexed-label {
+    font-size: 11px;
+    opacity: 0.55;
   }
 }
 </style>

@@ -3,6 +3,9 @@ package com.superprogrammer.media.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.asset.service.AssetService;
+import com.superprogrammer.billing.service.InflightGateService;
+import com.superprogrammer.common.audit.AuditLogService;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.billing.service.PointsWalletService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -11,16 +14,19 @@ import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.config.MediaModelCapability;
+import com.superprogrammer.media.config.ImageModelCapability;
 import com.superprogrammer.media.config.MediaModelCapabilityService;
 import com.superprogrammer.media.dto.AttachmentRef;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,6 +60,12 @@ public class MediaGenTaskService {
     private final ObjectMapper objectMapper;
     private final AssetService assetService;
     private final PointsWalletService walletService;
+    /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：提交时 acquire，worker 终态 release。 */
+    private final InflightGateService inflightGate;
+    /** 媒体提交指标（media.task.submitted）。 */
+    private final BizMetrics bizMetrics;
+    /** 审计：submit 编程式落库（关联键 targetId=taskId，问题修复 #8）。 */
+    private final AuditLogService auditLogService;
 
     /**
      * 提交生成任务。
@@ -95,7 +107,32 @@ public class MediaGenTaskService {
 
         // 0) 余额预检（Chunk F 联动）：余额>0 才允许提交生成任务，≤0 拒（task 不建）。
         // userId=null（系统调用）/billing.enabled=false → requireAffordable 内部跳过（放行）。
-        walletService.requireAffordable(userId);
+        // 余额复用：返回值直接喂给闸门，省一次重复查库
+        java.math.BigDecimal balance = walletService.requireAffordable(userId);
+        // L7：低余额用户超在途上限 → 42902（计数由 worker 终态 release 配对释放）；
+        // 但 acquire 之后、task 落库之前的任何异常（provider 缺失/参数校验/DB 异常）都不会有 worker
+        // 接手 → 此处配对释放，否则低余额用户一次失败提交即自我锁死至 TTL（30min）
+        boolean held = inflightGate.acquire(userId, balance);
+        try {
+            Long taskId = doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
+                    refFileId, attachments, model, userId, admin, frameRole);
+            // 指标：落库成功才计提交（acquire 失败/参数校验失败不计）
+            bizMetrics.mediaSubmit(MediaGenTask.TYPE_TEXT2IMAGE.equals(taskType)
+                    || MediaGenTask.TYPE_IMAGE2IMAGE.equals(taskType)
+                    ? BizMetrics.MEDIA_IMAGE : BizMetrics.MEDIA_VIDEO);
+            return taskId;
+        } catch (RuntimeException e) {
+            if (held) {
+                inflightGate.release(userId);
+            }
+            throw e;
+        }
+    }
+
+    private Long doSubmit(String prompt, String ratio, Integer duration, String resolution,
+                          Boolean watermark, Boolean generateAudio, String taskType,
+                          String refFileId, List<AttachmentRef> attachments,
+                          String model, Long userId, boolean admin, String frameRole) {
 
         // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;
@@ -153,6 +190,7 @@ public class MediaGenTaskService {
                 item.put("fileId", a.getFileId());
                 item.put("kind", kind);
                 if (role != null) item.put("frameRole", role);
+                if (a.getName() != null && !a.getName().isBlank()) item.put("name", a.getName().strip());
                 list.add(item);
             }
             config.put("attachments", list);
@@ -167,12 +205,228 @@ public class MediaGenTaskService {
         task.setRequestConfig(toJson(config));
         task.setStatusFlag(MediaGenTask.FLAG_SUCCESS);
         task.setAttempt(0);
+        // 问题修复 #6：盖戳提交者 IP（worker 终态审计取用，worker 无 MDC）
+        task.setClientIp(MDC.get("clientIp"));
         taskMapper.insert(task);
+
+        // 问题修复 #8：submit 编程式落审计，targetId=taskId（与 worker 终态行关联）
+        Map<String, Object> submitDetail = new LinkedHashMap<>();
+        submitDetail.put("model", resolvedModel);
+        submitDetail.put("taskType", resolvedType);
+        submitDetail.put("ratio", ratio);
+        submitDetail.put("duration", duration);
+        submitDetail.put("resolution", resolution);
+        auditLogService.recordTask("media", "video_submit", "media_gen_task", String.valueOf(task.getId()),
+                userId, MDC.get("username"), task.getClientIp(), toJson(submitDetail),
+                com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS);
 
         log.info("提交视频生成任务 taskId={} userId={} type={} model={} ratio={} res={} audio={} 附件={}",
                 task.getId(), userId, resolvedType, resolvedModel, ratio, resolution, generateAudio,
                 attachments == null ? 0 : attachments.size());
         return task.getId();
+    }
+
+    // ---------- 图片任务提交（Seedream 同步生图，与视频提交并列） ----------
+
+    /**
+     * 提交生图任务。参数按模型实际能力校验（{@link ImageModelCapability}），不支持的字段直接拒。
+     * 参考图按张归属+大小+格式校验（复用 {@link #checkAttachmentOwnership}，kind=image）。
+     * 提示词与参考图二选一驱动任务类型：有参考图→IMAGE2IMAGE，无→TEXT2IMAGE。
+     *
+     * @param refFileIds 参考图 file_id 列表（资产库选取；纯文生图传 null/空）
+     * @param size       "2K"/"3K"/"4K" 预设 或 自定义"宽x高"（须 supportsWhSize）
+     * @param outputFormat jpeg/png（须在 outputFormats）
+     * @param optimizeMode standard/fast（须在 optimizeModes）
+     * @param sequential  组图 auto/disabled（须 supportsSequential）
+     * @param maxImages   组图最大数（≤ maxSequentialImages）
+     * @param guidanceScale 引导尺度（须 supportsGuidanceScale，∈[min,max]）
+     * @param webSearch   联网搜索（须 supportsWebSearch）
+     * @return 任务 id
+     */
+    public Long submitImage(String prompt, List<String> refFileIds, String size, String outputFormat,
+                            Boolean watermark, Double guidanceScale, String optimizeMode,
+                            String sequential, Integer maxImages, Boolean webSearch,
+                            String model, Long userId, boolean admin) {
+        if (!properties.isGenEnabled()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "图片生成功能未开启");
+        }
+        // 余额预检（与视频同一咽喉）：≤0 拒；系统调用/billing 关则放行
+        walletService.requireAffordable(userId);
+
+        // 解析 IMAGE provider（指定 model 跨 IMAGE provider 反查；图片任务无默认 provider 回退）
+        LlmProviderEntity provider = mediaModelService.resolveImageProviderByModel(model);
+        if (provider == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "生图模型不可用: " + model + "（不在任何 ACTIVE IMAGE provider 的 models 列表中，"
+                            + "请先在「全局模型供应商」建一条 IMAGE 类 provider 并配置该模型）");
+        }
+        ImageModelCapability cap = capabilityService.resolveImage(model, provider.getConfig());
+
+        // 参数校验（提示词 + 参考图 + 各模型特性字段）
+        validateImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale, optimizeMode,
+                sequential, maxImages, webSearch, cap, userId, admin);
+
+        String resolvedType = (refFileIds != null && !refFileIds.isEmpty())
+                ? MediaGenTask.TYPE_IMAGE2IMAGE
+                : MediaGenTask.TYPE_TEXT2IMAGE;
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("prompt", prompt == null ? "" : prompt);
+        if (size != null && !size.isBlank()) config.put("size", size);
+        if (outputFormat != null && !outputFormat.isBlank()) config.put("outputFormat", outputFormat);
+        config.put("watermark", watermark == null ? cap.isWatermarkDefault() : watermark);
+        if (guidanceScale != null) config.put("guidanceScale", guidanceScale);
+        if (optimizeMode != null && !optimizeMode.isBlank()) config.put("optimizeMode", optimizeMode);
+        if (sequential != null && !sequential.isBlank()) config.put("sequential", sequential);
+        if (maxImages != null) config.put("maxImages", maxImages);
+        if (Boolean.TRUE.equals(webSearch)) config.put("webSearch", true);
+        if (refFileIds != null && !refFileIds.isEmpty()) config.put("refFileIds", refFileIds);
+
+        MediaGenTask task = new MediaGenTask();
+        task.setUserId(userId);
+        task.setProviderId(provider.getId());
+        task.setModel(model);
+        task.setTaskType(resolvedType);
+        task.setStatus(MediaGenTask.STATUS_PENDING);
+        task.setRequestConfig(toJson(config));
+        task.setStatusFlag(MediaGenTask.FLAG_SUCCESS);
+        task.setAttempt(0);
+        // 问题修复 #6：盖戳提交者 IP
+        task.setClientIp(MDC.get("clientIp"));
+        taskMapper.insert(task);
+
+        // 问题修复 #8：submit 编程式落审计，targetId=taskId
+        Map<String, Object> submitDetail = new LinkedHashMap<>();
+        submitDetail.put("model", model);
+        submitDetail.put("taskType", resolvedType);
+        submitDetail.put("size", size);
+        submitDetail.put("refImageCount", refFileIds == null ? 0 : refFileIds.size());
+        auditLogService.recordTask("media", "image_submit", "media_gen_task", String.valueOf(task.getId()),
+                userId, MDC.get("username"), task.getClientIp(), toJson(submitDetail),
+                com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS);
+
+        log.info("提交图片生成任务 taskId={} userId={} type={} model={} size={} 参考图={}",
+                task.getId(), userId, resolvedType, model, size, refFileIds == null ? 0 : refFileIds.size());
+        return task.getId();
+    }
+
+    /**
+     * 图片参数校验：提示词 + 参考图（数量/格式/归属/大小）+ size + 输出格式 + 优化模式 +
+     * 组图 + 引导尺度 + 联网搜索，逐项对照 {@link ImageModelCapability} 拒非法。
+     * 「不支持的参数传了值即拒」——提交侧挡死，worker/provider 不再二次处理。
+     */
+    private void validateImage(String prompt, List<String> refFileIds, String size, String outputFormat,
+                               Boolean watermark, Double guidanceScale, String optimizeMode,
+                               String sequential, Integer maxImages, Boolean webSearch,
+                               ImageModelCapability cap, Long userId, boolean admin) {
+        // Seedream 允许纯图（无 prompt）？官方 prompt 必填，但空 prompt 也兜底放行（provider 传空串）。
+        if (prompt != null && prompt.length() > PROMPT_MAX_LEN) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "提示词长度超限（≤" + PROMPT_MAX_LEN + "）");
+        }
+        // 参考图：纯文生图允许空；非空则按张校验（数量/格式/归属/大小）。
+        int refCount = refFileIds == null ? 0 : refFileIds.size();
+        if (refCount > 0) {
+            if (cap.getRefImageMax() <= 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型不支持参考图");
+            }
+            if (refCount > cap.getRefImageMax()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "参考图超限（该模型 ≤" + cap.getRefImageMax() + " 张，当前 " + refCount + "）");
+            }
+            for (String fid : refFileIds) {
+                checkImageRef(fid, cap, userId, admin);
+            }
+        }
+        // size：预设枚举 或 自定义宽x高
+        if (size != null && !size.isBlank() && !isValidSize(size, cap)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "尺寸非法: " + size + "（可选预设 " + cap.getSizePresets()
+                            + (cap.isSupportsWhSize() ? " 或自定义「宽x高」" : "") + "）");
+        }
+        // 输出格式枚举
+        if (outputFormat != null && !outputFormat.isBlank()
+                && !cap.getOutputFormats().contains(outputFormat)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "输出格式非法: " + outputFormat + "（可选 " + cap.getOutputFormats() + "）");
+        }
+        // 提示词优化模式枚举
+        if (optimizeMode != null && !optimizeMode.isBlank()
+                && !cap.getOptimizeModes().contains(optimizeMode)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "优化模式非法: " + optimizeMode + "（该模型可选 " + cap.getOptimizeModes() + "）");
+        }
+        // 引导尺度（pro 独有）
+        if (guidanceScale != null) {
+            if (!cap.isSupportsGuidanceScale()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型不支持引导尺度（guidance_scale）");
+            }
+            if (guidanceScale < cap.getGuidanceMin() || guidanceScale > cap.getGuidanceMax()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "引导尺度须 ∈ [" + cap.getGuidanceMin() + ", " + cap.getGuidanceMax() + "]");
+            }
+        }
+        // 组图（lite 独有）
+        if (sequential != null && !sequential.isBlank()) {
+            if (!cap.isSupportsSequential()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型不支持组图（sequential_image_generation）");
+            }
+            if (!"auto".equalsIgnoreCase(sequential) && !"disabled".equalsIgnoreCase(sequential)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "组图模式非法: " + sequential + "（auto/disabled）");
+            }
+        }
+        if (maxImages != null && (maxImages < 1 || maxImages > cap.getMaxSequentialImages())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "组图张数须 ∈ [1, " + cap.getMaxSequentialImages() + "]");
+        }
+        // 联网搜索（lite 独有）
+        if (Boolean.TRUE.equals(webSearch) && !cap.isSupportsWebSearch()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型不支持联网搜索");
+        }
+    }
+
+    /** size 合法性：命预设枚举，或（支持自定义宽x高时）匹配「宽x高」数字模式。 */
+    private boolean isValidSize(String size, ImageModelCapability cap) {
+        if (cap.getSizePresets().contains(size)) {
+            return true;
+        }
+        return cap.isSupportsWhSize() && size.matches("\\d+\\s*[xX×]\\s*\\d+");
+    }
+
+    /** 参考图校验：归属 + 大小 + MIME 粗匹配 + 扩展名格式白名单（lite 含 webp 等多格式，pro 仅 jpeg/png）。 */
+    private void checkImageRef(String fileId, ImageModelCapability cap, Long userId, boolean admin) {
+        StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        if (meta == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "参考图不存在: " + fileId);
+        }
+        if (!admin && userId != null && !userId.equals(meta.getOwnerUserId())) {
+            if (!assetService.isAttachmentFileAccessible(fileId, userId, admin)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用该参考图: " + fileId);
+            }
+        }
+        long maxBytes = MediaStorageService.KIND_MAX_BYTES.getOrDefault("image", 8L * 1024 * 1024);
+        if (meta.getSize() != null && meta.getSize() > maxBytes) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "参考图过大: " + meta.getOriginalName() + "（≤" + (maxBytes / 1024 / 1024) + "MB）");
+        }
+        // MIME 粗匹配：mime 非 image/* 拒（无 mime 放行，落 provider 报错兜底）
+        String mime = meta.getMime();
+        if (mime != null && !mime.isBlank() && !mime.startsWith("image/")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "参考图类型不符: " + meta.getOriginalName() + "（" + mime + "）");
+        }
+        // 扩展名格式白名单（模型差异：lite 多格式，pro 仅 jpeg/png；jpg/jpeg 互通）
+        String name = meta.getOriginalName() == null ? "" : meta.getOriginalName().toLowerCase();
+        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : "";
+        if (!ext.isBlank() && !cap.getRefImageFormats().isEmpty()) {
+            List<String> allowed = cap.getRefImageFormats();
+            boolean ok = allowed.contains(ext)
+                    || ("jpg".equals(ext) && allowed.contains("jpeg"))
+                    || ("jpeg".equals(ext) && allowed.contains("jpg"));
+            if (!ok) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "参考图格式不支持: " + meta.getOriginalName() + "（该模型允许 " + allowed + "）");
+            }
+        }
     }
 
     private void validate(String prompt, String ratio, Integer duration, String resolution,
@@ -239,6 +493,9 @@ public class MediaGenTaskService {
         int images = 0, videos = 0, audios = 0;
         int firstFrame = 0, lastFrame = 0;
         for (AttachmentRef a : attachments) {
+            if (a.getName() != null && a.getName().length() > 255) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "附件名称不能超过 255 字符");
+            }
             String kind = a.getKind() == null ? "" : a.getKind().trim().toLowerCase();
             if (!ATTACHMENT_KINDS.contains(kind)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "附件类型非法: " + a.getKind() + "（image/video/audio）");
@@ -262,14 +519,12 @@ public class MediaGenTaskService {
             }
             checkAttachmentOwnership(a.getFileId(), kind, userId, admin);
         }
-        // SeedDance 2.0 契约（Phase4 真跑确认）：last_frame 与 reference_image 互斥——
-        // 同请求含尾帧+参考图，ctaigw 返 400 "last frame image content cannot be mixed with
-        // reference image"。first_frame + 参考图允许；首尾帧（无参考图）允许。
-        // 在此前置拦截，给用户清晰中文提示，而非透传网关英文 400。
+        // Ark 契约：首/尾帧模式不能与任何 reference_image/video/audio 混用。
         int referenceImages = images - firstFrame - lastFrame;
-        if (lastFrame > 0 && referenceImages > 0) {
+        int referenceMedia = referenceImages + videos + audios;
+        if ((firstFrame > 0 || lastFrame > 0) && referenceMedia > 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "尾帧不能与参考图同时使用（SeedDance 2.0 限制：last_frame 与 reference_image 互斥，请二选一）");
+                    "首帧/尾帧不能与参考媒体同时使用（参考图、参考视频、参考音频），请选择一种生成模式");
         }
         if (images > cap.getMaxImages()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -285,8 +540,9 @@ public class MediaGenTaskService {
                     cap.getMaxAudios() == 0 ? "该模型不支持参考音频"
                             : "参考音频超限（该模型 ≤" + cap.getMaxAudios() + " 个，当前 " + audios + "）");
         }
-        if (videos > 0 && !cap.isVideoDataUri()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "该模型暂不支持视频参考（data URI 通道关闭）");
+        if (videos > 0 && !properties.isReferenceVideoConfigured()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "参考视频功能未配置：需要 Ark 可访问的 HTTPS 公网地址和签名密钥");
         }
     }
 

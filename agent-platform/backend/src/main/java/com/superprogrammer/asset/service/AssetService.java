@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.superprogrammer.asset.dto.AssetCreateRequest;
+import com.superprogrammer.asset.dto.AssetCopyRequest;
 import com.superprogrammer.asset.dto.AssetUpdateRequest;
 import com.superprogrammer.asset.dto.AssetVO;
 import com.superprogrammer.asset.dto.MatrixCountVO;
@@ -129,6 +130,81 @@ public class AssetService {
         log.info("asset created: id={} projectId={} mediaType={} userId={}",
                 asset.getId(), projectId, req.getMediaType(), userId);
         return toVO(asset, false);
+    }
+
+    /**
+     * 将源资产当前版本复制成目标项目内的独立资产。
+     * 只复用版本中的 fileId 引用，不复制物理文件、历史版本或画布绑定。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public AssetVO copyCurrent(Long sourceAssetId, Long userId, boolean admin, AssetCopyRequest request) {
+        Asset source = loadAsset(sourceAssetId);
+        aclService.loadAccessible(source.getProjectId(), userId, admin);
+        Long targetProjectId = request == null ? null : request.getTargetProjectId();
+        if (targetProjectId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "目标项目不能为空");
+        }
+        aclService.requireWrite(targetProjectId, userId, admin);
+
+        if (assetMapper.lockByIdForUpdate(sourceAssetId) == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "源资产不存在");
+        }
+
+        AssetVersion current = versionMapper.selectOne(new LambdaQueryWrapper<AssetVersion>()
+                .eq(AssetVersion::getAssetId, sourceAssetId)
+                .eq(AssetVersion::getVersion, source.getCurrentVersion()));
+        if (current == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "源资产当前版本不存在");
+        }
+        AssetProject target = projectMapper.selectById(targetProjectId);
+        if (target == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "目标项目不存在");
+        }
+        ensureTargetMediaType(target, source.getMediaType(), source.getMediaCategory());
+
+        Set<String> targetRoles = new LinkedHashSet<>(loadNarrativeRoles(targetProjectId));
+        List<String> copiedRoles = roleLinkMapper.selectList(new LambdaQueryWrapper<AssetRoleLink>()
+                        .eq(AssetRoleLink::getAssetId, sourceAssetId))
+                .stream()
+                .map(AssetRoleLink::getRoleKey)
+                .filter(targetRoles::contains)
+                .distinct()
+                .toList();
+
+        Asset copy = new Asset();
+        copy.setProjectId(targetProjectId);
+        copy.setMediaType(source.getMediaType());
+        copy.setMediaCategory(source.getMediaCategory());
+        copy.setName(source.getName());
+        copy.setDescription(source.getDescription());
+        copy.setTags(source.getTags());
+        copy.setStatus(Asset.STATUS_DRAFT);
+        copy.setContent(current.getContent());
+        copy.setGenMeta(source.getGenMeta());
+        copy.setCurrentVersion(1);
+        assetMapper.insert(copy);
+
+        AssetVersion firstVersion = new AssetVersion();
+        firstVersion.setAssetId(copy.getId());
+        firstVersion.setVersion(1);
+        firstVersion.setFileId(current.getFileId());
+        firstVersion.setContent(current.getContent());
+        firstVersion.setChangeNote("复制自公共资产 " + sourceAssetId + " 当前版本 v" + source.getCurrentVersion());
+        versionMapper.insert(firstVersion);
+
+        for (String roleKey : copiedRoles) {
+            AssetRoleLink link = new AssetRoleLink();
+            link.setAssetId(copy.getId());
+            link.setRoleKey(roleKey);
+            roleLinkMapper.insert(link);
+        }
+        log.info("asset copied: action=copy sourceProjectId={} targetProjectId={} sourceAssetId={} targetAssetId={} userId={}",
+                source.getProjectId(), targetProjectId, sourceAssetId, copy.getId(), userId);
+
+        AssetVO result = toVO(copy, true);
+        result.setFileId(current.getFileId());
+        result.setRoleKeys(copiedRoles);
+        return result;
     }
 
     /**
@@ -720,6 +796,25 @@ public class AssetService {
             }
         }
         return m;
+    }
+
+    /** 复制时按源类型补齐目标项目媒体词汇；同名类型若类别冲突则拒绝，避免错误编辑器接管。 */
+    private void ensureTargetMediaType(AssetProject target, String mediaType, String mediaCategory) {
+        Map<String, MediaTypeDef> vocab = loadMediaTypeVocab(target.getId());
+        MediaTypeDef existing = vocab.get(mediaType);
+        if (existing != null) {
+            if (!java.util.Objects.equals(existing.getCategory(), mediaCategory)) {
+                throw new BusinessException(ErrorCode.CONFLICT, "目标项目存在同名但类别不同的媒体类型");
+            }
+            return;
+        }
+        vocab.put(mediaType, new MediaTypeDef(mediaType, mediaCategory));
+        try {
+            target.setMediaTypes(objectMapper.writeValueAsString(new ArrayList<>(vocab.values())));
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "目标项目媒体类型更新失败");
+        }
+        projectMapper.updateById(target);
     }
 
     private String serializeList(List<String> list) {
