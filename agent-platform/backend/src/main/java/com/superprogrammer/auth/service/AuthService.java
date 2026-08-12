@@ -54,6 +54,8 @@ public class AuthService {
     private final SessionService sessionService;
     /** 认证系统增强 Chunk A/B：多凭证账号模型（注册时建 PASSWORD/EMAIL 凭证）。 */
     private final CredentialService credentialService;
+    /** 认证系统增强 Chunk E：异地登录提醒（登录成功后异步比对省份）。 */
+    private final LoginAlertService loginAlertService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
 
@@ -254,6 +256,14 @@ public class AuthService {
         log.info("用户登录成功: {}", user.getUsername());
         auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_SUCCESS);
+
+        // 认证系统增强 Chunk E：异地登录提醒（异步，不阻塞发 token）
+        try {
+            loginAlertService.maybeAlert(user, user.getUsername(), clientIp);
+        } catch (Exception e) {
+            log.warn("异地登录提醒调度失败(已吞) : {}", e.toString());
+        }
+
         return issueTokens(user, roleCodes, permissionCodes);
     }
 

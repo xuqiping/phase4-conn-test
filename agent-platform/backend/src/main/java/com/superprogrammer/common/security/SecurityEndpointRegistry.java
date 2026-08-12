@@ -45,6 +45,9 @@ public final class SecurityEndpointRegistry {
             // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
             "/api/auth/login/wechat/redirect",
             "/api/auth/login/wechat/callback",
+            // 认证系统增强：找回密码（公开端点）
+            "/api/auth/password/forgot",
+            "/api/auth/password/reset",
             // sidecar 回调：独立 RuntimeCallbackSecurityFilter 持 token 校验（fail-closed）
             "/api/runtime/callbacks/**",
             // Ark 参考视频回拉：控制器内 HMAC + expires fail-closed。

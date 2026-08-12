@@ -294,6 +294,12 @@
             <artifactId>weixin-java-mp</artifactId>
             <version>4.8.0</version>
         </dependency>
+        <!-- ip2region 离线 IP 归属地库：认证系统增强 异地登录提醒（Apache 2.0） -->
+        <dependency>
+            <groupId>org.lionsoul</groupId>
+            <artifactId>ip2region</artifactId>
+            <version>2.7.0</version>
+        </dependency>
     </dependencies>
 
     <build>

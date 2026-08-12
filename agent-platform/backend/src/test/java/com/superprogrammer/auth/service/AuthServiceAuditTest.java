@@ -50,6 +50,7 @@ class AuthServiceAuditTest {
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
     @Mock private SessionService sessionService;
     @Mock private CredentialService credentialService;
+    @Mock private LoginAlertService loginAlertService;
 
     @InjectMocks
     private AuthService authService;

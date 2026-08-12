@@ -85,6 +85,9 @@ public class SecurityConfig {
                         // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
                         .requestMatchers("/api/auth/login/wechat/redirect").permitAll()
                         .requestMatchers("/api/auth/login/wechat/callback").permitAll()
+                        // 认证系统增强：找回密码（公开端点）
+                        .requestMatchers("/api/auth/password/forgot").permitAll()
+                        .requestMatchers("/api/auth/password/reset").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()
