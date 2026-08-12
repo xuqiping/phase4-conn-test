@@ -394,6 +394,16 @@ public class AuthService {
     }
 
     /**
+     * 手机验证码登录发 token（SmsService 用）。
+     * 复用 issueTokens 核心逻辑，但角色/权限由手机号登录路径现查。
+     */
+    public TokenResponse issueTokensForSms(User user) {
+        List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
+        List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
+        return issueTokens(user, roleCodes, permissionCodes);
+    }
+
+    /**
      * 钉钉免登登录：按 unionId 查找或自动建号，签发本平台 JWT。
      */
     @Transactional

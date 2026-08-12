@@ -74,6 +74,11 @@ public class SecurityConfig {
                         // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
                         .requestMatchers("/api/auth/verify/email").permitAll()
                         .requestMatchers("/api/auth/resend/email").permitAll()
+                        // 认证系统增强：手机验证码登录/发码 + 滑块验证码（公开端点）
+                        .requestMatchers("/api/auth/sms/code").permitAll()
+                        .requestMatchers("/api/auth/login/sms").permitAll()
+                        .requestMatchers("/api/auth/captcha").permitAll()
+                        .requestMatchers("/api/auth/captcha/verify").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()
