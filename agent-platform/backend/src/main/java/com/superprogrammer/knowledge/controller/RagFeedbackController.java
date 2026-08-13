@@ -5,6 +5,7 @@ import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.RagFeedbackRequest;
 import com.superprogrammer.knowledge.evaluation.FeedbackReviewService;
+import com.superprogrammer.knowledge.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class RagFeedbackController {
     private final FeedbackReviewService feedbackReviewService;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     @PostMapping
     @RequirePermission("knowledge:read")
@@ -26,8 +28,10 @@ public class RagFeedbackController {
     public ResponseEntity<R<FeedbackReviewService.Feedback>> submit(@RequestBody RagFeedbackRequest request) {
         if (request.knowledgeBaseId() == null) throw new IllegalArgumentException("knowledgeBaseId 不能为空");
         long userId = currentUserId();
+        Long tenantId = knowledgeBaseService.ensure(request.knowledgeBaseId()).getTenantId();
+        if (tenantId == null) throw new IllegalStateException("知识库缺少租户归属");
         return ResponseEntity.ok(R.ok("反馈已进入待审核队列", feedbackReviewService.submit(
-                0L, request.knowledgeBaseId(), request.evaluationResultId(),
+                tenantId, request.knowledgeBaseId(), request.evaluationResultId(),
                 request.category(), request.comment(), userId)));
     }
 
