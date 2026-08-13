@@ -66,6 +66,15 @@ export interface RankingConfigUpdate {
   highAccuracyEnabled?: boolean
 }
 
+export interface KnowledgeIndexStatus {
+  knowledgeBaseId: number
+  state: string
+  readAlias: string
+  writeAlias: string
+  activeSnapshotId?: string | null
+  previousSnapshotId?: string | null
+}
+
 /** 文档（对应后端 KnowledgeDocumentVO） */
 export interface KnowledgeDocument {
   id: number
@@ -344,6 +353,18 @@ export const knowledgeApi = {
   },
   updateDefaultRankingConfig(data: RankingConfigUpdate) {
     return request.put<ApiResponse<RankingConfig>>('/knowledge/admin/ranking-config', data)
+  },
+  getIndexStatus(kbId: number) {
+    return request.get<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}`)
+  },
+  rebuildIndex(kbId: number, snapshotId: string, dryRun = true) {
+    return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rebuild`, { snapshotId, dryRun, confirmed: false })
+  },
+  switchIndex(kbId: number, snapshotId: string) {
+    return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/switch`, { snapshotId, confirmed: true, dryRun: false })
+  },
+  rollbackIndex(kbId: number) {
+    return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rollback`, { snapshotId: 'rollback', confirmed: true, dryRun: false })
   },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)

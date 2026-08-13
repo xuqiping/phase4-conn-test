@@ -53,6 +53,9 @@
       <n-tab-pane v-if="canManage" name="audit" tab="检索审计">
         <RetrievalAuditPanel />
       </n-tab-pane>
+      <n-tab-pane v-if="canManage" name="index-ops" tab="索引运维">
+        <IndexOperationsPanel :bases="store.bases" />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -74,6 +77,7 @@ import DocumentManager from '@/components/knowledge/DocumentManager.vue'
 import RetrievalDebugPanel from '@/components/knowledge/RetrievalDebugPanel.vue'
 import RetrievalAuditPanel from '@/components/knowledge/RetrievalAuditPanel.vue'
 import RagAskPanel from '@/components/knowledge/RagAskPanel.vue'
+import IndexOperationsPanel from '@/components/knowledge/IndexOperationsPanel.vue'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const authStore = useAuthStore()

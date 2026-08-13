@@ -30,6 +30,7 @@
 | 索引与 Alias | `KnowledgeIndexManager.java`、`IndexAliasService.java` | 创建物理索引并原子切换/回滚 read/write alias |
 | OpenSearch 双写 | `OpenSearchChunkDocument.java`、`OpenSearchChunkWriter.java` | C2 Dense/Sparse/ACL/版本副本、bulk 逐项失败识别 |
 | OpenSearch 对账 | `OpenSearchReconciliationService.java`、`ReconciliationWorker.java` | 缺失/孤儿/Hash/ACL 漂移、dry-run 修复与删除传播 |
+| 索引控制面 | `KnowledgeIndexOperationsService.java`、`KnowledgeAdminController.java`、`frontend/src/components/knowledge/IndexOperationsPanel.vue` | 状态、预检、切换和回滚 |
 
 ## 关键调用链路
 
@@ -108,6 +109,13 @@
 - **大白话案例**：像仓库盘点，用总账逐项核对货架：少的补、错标签的重贴、多出来的清走。
 > 批注：ACL 或可见性变化优先清除整个 KB 检索副本，宁可短暂缺结果也不能返回旧权限内容。
 
+### 10. 管理员蓝绿控制面
+
+- **采用技术**：权限注解、登记 snapshot、二次确认、Vue 管理 Tab。
+- **一句话原理**：管理员只操作系统登记的快照编号，由服务生成真实索引动作，不能把任意物理索引名传给后端。
+- **大白话案例**：像机房切换只能选资产系统里的已验收服务器，不能在输入框里随便敲一个地址接管流量。
+> 批注：所有写操作要求 `knowledge:manage`；切换和回滚必须明确确认，后续审计沿用平台操作日志体系。
+
 ## 数据库迁移速查
 
 - `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
@@ -134,3 +142,4 @@
 | 2026-08-13 | 增加版本化索引规格、严格 mapping 与 read/write alias 原子切换 | P2 Step 2 完成 |
 | 2026-08-13 | 增加 C2 Dense/Sparse 双写与 bulk 部分失败重试 | P2 Step 3 完成 |
 | 2026-08-13 | 增加 PG/OpenSearch 差异分类、dry-run 修复与删除传播 | P2 Step 4 完成 |
+| 2026-08-13 | 增加管理员索引状态、预检、切换与回滚控制面 | P2 Step 5 完成，P2 收口 |
