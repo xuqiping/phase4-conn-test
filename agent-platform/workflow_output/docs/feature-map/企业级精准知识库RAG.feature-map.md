@@ -40,6 +40,7 @@
 | 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
 | 上下文组装 | `ContextBuilder.java`、`NeighborExpander.java` | PG 复核结果、Hash 去重、授权邻居和 token 硬预算 |
 | 引用校验 | `citation/CitationVerifier.java`、`service/internal/CitationChecker.java`、`RagRetrieveVO.java` | locator、权限/版本/Hash、Claim 支持度 |
+| Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
 
 ## 关键调用链路
 
@@ -161,3 +162,4 @@
 | 2026-08-13 | 增加缺项检测与最多两轮同范围补检索 | P4 Step 2 完成 |
 | 2026-08-13 | 增加最终复核、邻居扩展、去重与 token 裁剪 | P4 Step 3 完成 |
 | 2026-08-13 | 增加精确 locator Citation 与 Claim 支持校验 | P4 Step 4 完成 |
+| 2026-08-13 | 增加分批事实归纳与六态置信状态机 | P4 Step 5 完成，P4 收口 |
