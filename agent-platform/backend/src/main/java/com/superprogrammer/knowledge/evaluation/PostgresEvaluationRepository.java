@@ -10,7 +10,7 @@ import java.util.Map;
 
 @Repository
 @RequiredArgsConstructor
-public class PostgresEvaluationRepository implements EvaluationService.Repository {
+public class PostgresEvaluationRepository implements EvaluationService.Repository, EvaluationRunService.Repository {
     private final EvaluationMapper mapper;
     private final ObjectMapper objectMapper;
 
@@ -29,6 +29,22 @@ public class PostgresEvaluationRepository implements EvaluationService.Repositor
     }
     public List<EvaluationService.EvalCase> listCases(long tenantId,long datasetId) {
         return mapper.listCases(tenantId,datasetId).stream().map(this::fromRow).toList();
+    }
+    public EvaluationRunService.Run insertRun(EvaluationRunService.Run value) {
+        EvaluationMapper.RunRow row=runRow(value); mapper.insertRun(row);
+        return value.withId(row.id);
+    }
+    public void updateRun(EvaluationRunService.Run value) { mapper.updateRun(runRow(value)); }
+    public void insertResult(EvaluationRunService.Result value) {
+        EvaluationMapper.ResultRow row=new EvaluationMapper.ResultRow(); row.id=value.id(); row.runId=value.runId();
+        row.caseId=value.caseId(); row.traceId=value.traceId(); row.metrics=json(value.metrics()); row.verdict=value.verdict();
+        mapper.insertResult(row);
+    }
+    private EvaluationMapper.RunRow runRow(EvaluationRunService.Run value) {
+        EvaluationMapper.RunRow row=new EvaluationMapper.RunRow(); row.id=value.id(); row.datasetId=value.datasetId();
+        row.pipelineVersion=value.pipelineVersion(); row.status=value.status(); row.startedBy=value.startedBy();
+        row.startedAt=value.startedAt(); row.finishedAt=value.finishedAt(); row.summaryMetrics=json(value.summaryMetrics());
+        row.errorSummary=value.errorSummary(); return row;
     }
     private EvaluationMapper.CaseRow toRow(EvaluationService.EvalCase value){
         EvaluationMapper.CaseRow row=new EvaluationMapper.CaseRow(); row.datasetId=value.datasetId();

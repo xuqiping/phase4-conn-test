@@ -5,7 +5,9 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Mapper
@@ -40,6 +42,27 @@ public interface EvaluationMapper {
             """)
     List<CaseRow> listCases(@Param("tenantId") long tenantId, @Param("datasetId") long datasetId);
 
+    @Insert("""
+            INSERT INTO rag_eval_runs(dataset_id,pipeline_version,status,started_by,started_at,summary_metrics,error_summary)
+            VALUES(#{datasetId},#{pipelineVersion},#{status},#{startedBy},#{startedAt},#{summaryMetrics}::jsonb,#{errorSummary})
+            """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    void insertRun(RunRow row);
+
+    @Update("""
+            UPDATE rag_eval_runs SET status=#{status},finished_at=#{finishedAt},
+              summary_metrics=#{summaryMetrics}::jsonb,error_summary=#{errorSummary}
+            WHERE id=#{id}
+            """)
+    void updateRun(RunRow row);
+
+    @Insert("""
+            INSERT INTO rag_eval_results(run_id,case_id,trace_id,metrics,verdict)
+            VALUES(#{runId},#{caseId},#{traceId},#{metrics}::jsonb,#{verdict})
+            """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    void insertResult(ResultRow row);
+
     class DatasetRow {
         public Long id; public Long tenantId; public Long kbId; public String name;
         public String description; public Long createdBy;
@@ -48,5 +71,14 @@ public interface EvaluationMapper {
         public Long id; public Long datasetId; public String queryType; public String question;
         public String expectedChunkIds; public String forbiddenChunkIds; public Boolean answerable;
         public String metadata;
+    }
+    class RunRow {
+        public Long id; public Long datasetId; public String pipelineVersion; public String status;
+        public Long startedBy; public OffsetDateTime startedAt; public OffsetDateTime finishedAt;
+        public String summaryMetrics; public String errorSummary;
+    }
+    class ResultRow {
+        public Long id; public Long runId; public Long caseId; public String traceId;
+        public String metrics; public String verdict;
     }
 }
