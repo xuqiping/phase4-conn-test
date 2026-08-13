@@ -341,6 +341,31 @@ export interface RagTraceDetail {
   audits: Array<Record<string, unknown>>
 }
 
+export interface EvaluationDataset {
+  id: number
+  tenantId: number
+  kbId: number
+  name: string
+  description?: string | null
+  createdBy: number
+}
+
+export interface EvaluationCase {
+  id: number
+  datasetId: number
+  queryType: string
+  question: string
+  expectedChunkIds: string[]
+  forbiddenChunkIds: string[]
+  answerable: boolean
+  metadata: Record<string, unknown>
+}
+
+export interface EvaluationImportResult {
+  imported: number
+  errors: Array<{ line: number; message: string }>
+}
+
 // === API 函数 ===
 
 /** FormData 追加图片/文件上传选项（非空字段才追加，空=后端按后缀推断 + AUTO 默认）。 */
@@ -405,6 +430,25 @@ export const knowledgeApi = {
   },
   submitRagFeedback(data: { knowledgeBaseId: number; evaluationResultId?: number; category: string; comment?: string }) {
     return request.post<ApiResponse<{ id: number; status: string }>>('/knowledge/feedback', data)
+  },
+  createEvaluationDataset(data: { kbId: number; name: string; description?: string }) {
+    return request.post<ApiResponse<EvaluationDataset>>('/knowledge/admin/evaluation/datasets', data)
+  },
+  importEvaluationJsonl(datasetId: number, jsonl: string) {
+    return request.post<ApiResponse<EvaluationImportResult>>(
+      `/knowledge/admin/evaluation/datasets/${datasetId}/cases/import`, jsonl,
+      { headers: { 'Content-Type': 'application/x-ndjson' } }
+    )
+  },
+  listEvaluationCases(datasetId: number) {
+    return request.get<ApiResponse<EvaluationCase[]>>(
+      `/knowledge/admin/evaluation/datasets/${datasetId}/cases`
+    )
+  },
+  exportEvaluationJsonl(datasetId: number) {
+    return request.get<string>(`/knowledge/admin/evaluation/datasets/${datasetId}/cases/export`, {
+      responseType: 'text'
+    })
   },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)

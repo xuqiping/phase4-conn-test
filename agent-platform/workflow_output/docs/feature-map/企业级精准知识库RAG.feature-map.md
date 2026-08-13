@@ -156,6 +156,18 @@
 
 ## 相关文档
 
+## P5 评测数据集真实链路
+
+- `V115__rag_evaluation_center.sql`：建立 Dataset、Case、Run、Result 四张表；Dataset 按 tenant/KB/name 唯一，Run/Result 预留汇总指标和 trace。
+- `EvaluationMapper` + `PostgresEvaluationRepository`：把领域对象持久化到 PostgreSQL，读取通过 tenant 与 dataset 联合校验。
+- `EvaluationService`：负责数据集校验、JSONL 逐行容错导入、无 Chunk 正文导出。
+- `KnowledgeEvaluationController`：提供 `/api/knowledge/admin/evaluation/**`，统一要求 `knowledge:manage`，写操作进入审计日志。
+- `knowledge.ts` + `EvaluationRunPanel.vue`：调用真实创建、导入和列表接口；尚未实现的异步运行不再用本地状态冒充。
+
+大白话：Dataset 像一本固定试卷，Case 是每道题；现在已经能把试卷和题目真实存进数据库，后续 Run 才是拿某个 Pipeline 真正答卷并计算成绩。
+
+> 导出只含评测字段，不携带知识 Chunk 正文；接口不把完整问题写入 Java 日志。
+
 - [规格总览](../specs/企业级精准知识库RAG-总览.md)
 - [架构与数据](../specs/企业级精准知识库RAG-架构与数据.md)
 - [质量、安全与迁移](../specs/企业级精准知识库RAG-质量安全与迁移.md)
