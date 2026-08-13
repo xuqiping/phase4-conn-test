@@ -882,6 +882,57 @@ public class RagRetrievalService {
         return pool.subList(0, Math.min(k, pool.size()));
     }
 
+    public GroundedAskResult retrieveGroundedAnswer(List<Long> effectiveKbs, String query,
+                                                     Long userId, boolean admin) {
+        com.superprogrammer.knowledge.dto.EvidenceResult evidence =
+                retrieveEvidence(effectiveKbs, query, userId, admin);
+        if (evidence.isAbstained()) {
+            return new GroundedAskResult(evidence, evidence.getAnswer(), stateForAbstain(evidence.getAbstainReason()));
+        }
+        List<Evidence> parsed = parseEvidencePrompt(evidence.getSystemPrompt());
+        com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded =
+                groundedAnswerService.synthesize(parsed.stream()
+                                .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
+                                        e.citationIndex(), e.content())).toList(),
+                        Math.max(1, Math.min(5, parsed.size())), batch -> extractGroundedFacts(batch, userId));
+        if (grounded.facts().isEmpty()) {
+            return new GroundedAskResult(evidence, ABSTAIN_MSG, "INSUFFICIENT");
+        }
+        String answer = composeGroundedAnswer(query, grounded, userId, false);
+        List<Integer> cited = citationChecker.extractAndCheck(answer, evidence.getInjectedIndexes());
+        if (cited == null) {
+            answer = composeGroundedAnswer(query, grounded, userId, true);
+            cited = citationChecker.extractAndCheck(answer, evidence.getInjectedIndexes());
+        }
+        if (cited == null) {
+            return new GroundedAskResult(evidence, ABSTAIN_MSG, "INSUFFICIENT");
+        }
+        return new GroundedAskResult(evidence, answer, grounded.conflict() ? "CONFLICT" : "SUPPORTED");
+    }
+
+    private List<Evidence> parseEvidencePrompt(String prompt) {
+        if (prompt == null || prompt.isBlank()) return List.of();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "(?ms)^\\[(\\d{1,2})]\\s*(.*?)\\R(.*?)(?=^\\[\\d{1,2}]|\\z)").matcher(prompt);
+        List<Evidence> result = new ArrayList<>();
+        while (matcher.find()) {
+            int index = Integer.parseInt(matcher.group(1));
+            result.add(new Evidence(null, null, matcher.group(2).trim(), matcher.group(3).trim(),
+                    null, null, null, null, null, null, null, index, 0, null));
+        }
+        return result;
+    }
+
+    private String stateForAbstain(String reason) {
+        if ("NO_SCOPE".equals(reason) || "NO_VISIBLE_DOCS".equals(reason)) return "OUT_OF_SCOPE";
+        if ("ERROR".equals(reason)) return "RETRIEVAL_FAILED";
+        return "INSUFFICIENT";
+    }
+
+    public record GroundedAskResult(com.superprogrammer.knowledge.dto.EvidenceResult evidence,
+                                    String answer, String confidenceState) {
+    }
+
     private List<L2Candidate> mergeProductionCandidates(
             List<L2Candidate> pgCandidates,
             List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> productionHits) {

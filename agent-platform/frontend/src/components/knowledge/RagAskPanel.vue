@@ -71,6 +71,7 @@ const kbOptions = ref<{ label: string; value: number }[]>([])
 const query = ref('')
 const answer = ref('')
 const citations = ref<RagCitation[]>([])
+const confidenceState = ref('')
 const asking = ref(false)
 const error = ref('')
 const feedbackCategory = ref<string | null>(null)
@@ -109,6 +110,9 @@ async function ask() {
           break
         case 'CITATION':
           citations.value = parseCitations(evt.content)
+          break
+        case 'RAG_STATE':
+          confidenceState.value = evt.content || ''
           break
         case 'ERROR':
           error.value = evt.content || '生成失败'

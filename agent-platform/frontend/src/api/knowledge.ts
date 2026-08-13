@@ -259,6 +259,7 @@ export interface RagRetrieveVO {
   traceId: string
   abstained: boolean
   abstainReason: string | null
+  confidenceState?: 'SUPPORTED' | 'PARTIAL' | 'CONFLICT' | 'INSUFFICIENT' | 'OUT_OF_SCOPE' | 'RETRIEVAL_FAILED'
   answer: string
   citations: RagCitation[]
   candidatesL0: RagRecallHit[]
@@ -533,7 +534,7 @@ export const knowledgeApi = {
 
 /** /ask SSE 流事件（对应后端 StreamEvent：CHUNK/THINKING/CITATION/DONE/ERROR）。 */
 export interface AskStreamEvent {
-  type: 'CHUNK' | 'THINKING' | 'CITATION' | 'DONE' | 'ERROR' | string
+  type: 'CHUNK' | 'THINKING' | 'CITATION' | 'RAG_STATE' | 'DONE' | 'ERROR' | string
   content?: string
 }
 

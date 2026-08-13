@@ -29,6 +29,9 @@ public class StreamEvent {
     public static StreamEvent citation(String citationsJson) {
         return StreamEvent.builder().type("CITATION").content(citationsJson).build();
     }
+    public static StreamEvent ragState(String state) {
+        return StreamEvent.builder().type("RAG_STATE").content(state).build();
+    }
     /** 二期 P3（FR-203）：召回命中的文件记忆卡片（RecalledFileCard 列表 JSON 串），DONE 前发，前端渲染文件卡片。 */
     public static StreamEvent fileCards(String fileCardsJson) {
         return StreamEvent.builder().type("FILE_CARDS").content(fileCardsJson).build();

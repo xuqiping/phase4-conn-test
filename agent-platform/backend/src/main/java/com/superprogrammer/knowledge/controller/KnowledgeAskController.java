@@ -94,28 +94,22 @@ public class KnowledgeAskController {
         return emitter;
     }
 
-    private Flux<StreamEvent> buildAskFlux(AskRequest request, Long userId, boolean admin) {
+    Flux<StreamEvent> buildAskFlux(AskRequest request, Long userId, boolean admin) {
         List<Long> effective = ragScopeResolver.resolveEffectiveKbs(
                 "CHAT", request.getKbIds(), null, null, userId, admin);
         if (effective.isEmpty()) {
             return Flux.just(StreamEvent.chunk("未配置可访问的知识库范围。"), StreamEvent.done());
         }
-        EvidenceResult ev = ragRetrievalService.retrieveEvidence(effective, request.getQuery(), userId, admin);
+        RagRetrievalService.GroundedAskResult grounded =
+                ragRetrievalService.retrieveGroundedAnswer(effective, request.getQuery(), userId, admin);
+        EvidenceResult ev = grounded.evidence();
         if (ev.isAbstained()) {
-            return Flux.just(StreamEvent.chunk(ev.getAnswer()), StreamEvent.done());
+            return Flux.just(StreamEvent.chunk(grounded.answer()), StreamEvent.ragState(grounded.confidenceState()),
+                    StreamEvent.done());
         }
-        LlmRequest llmReq = LlmRequest.builder()
-                .messages(List.of(
-                        LlmMessage.builder().role("system").content(ev.getSystemPrompt()).build(),
-                        LlmMessage.builder().role("user").content(request.getQuery()).build()))
-                .temperature(ragConfig.getChatTemperature())
-                .maxTokens(ragConfig.getChatMaxTokens())
-                .stream(true)
-                .build();
         String citationJson = toJson(ev);
-        // CITATION 必须在 DONE 前
-        return llmGateway.chatStream(llmReq, userId)
-                .concatWith(Flux.just(StreamEvent.citation(citationJson), StreamEvent.done()));
+        return Flux.just(StreamEvent.chunk(grounded.answer()), StreamEvent.citation(citationJson),
+                StreamEvent.ragState(grounded.confidenceState()), StreamEvent.done());
     }
 
     private String toJson(EvidenceResult ev) {
