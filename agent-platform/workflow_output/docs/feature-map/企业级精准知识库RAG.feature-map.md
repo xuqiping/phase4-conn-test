@@ -31,6 +31,7 @@
 | OpenSearch 双写 | `OpenSearchChunkDocument.java`、`OpenSearchChunkWriter.java` | C2 Dense/Sparse/ACL/版本副本、bulk 逐项失败识别 |
 | OpenSearch 对账 | `OpenSearchReconciliationService.java`、`ReconciliationWorker.java` | 缺失/孤儿/Hash/ACL 漂移、dry-run 修复与删除传播 |
 | 索引控制面 | `KnowledgeIndexOperationsService.java`、`KnowledgeAdminController.java`、`frontend/src/components/knowledge/IndexOperationsPanel.vue` | 状态、预检、切换和回滚 |
+| 索引快照持久化 | `V112__rag_index_snapshot_registry.sql`、`KnowledgeIndexSnapshotMapper.java`、`DatabaseSnapshotStore.java` | snapshot 登记与 active/previous route 以 PG 为真相源，服务重启不丢失 |
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 | 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
@@ -173,3 +174,4 @@
 | 2026-08-13 | 增加管理员 RAG 评测 Tab、异步运行状态与 Champion/Challenger 对比卡片 | P5 Step 3 完成 |
 | 2026-08-13 | 增加 5/20/50/100 稳定灰度、后端发布前检查、操作者审计与缓存失效回滚 | P5 Step 4 完成 |
 | 2026-08-13 | 增加在线反馈待审核队列、低基数 RAG 指标、测试方案/README/旧文档导航 | P5 Step 5 完成，P0–P5 收口 |
+| 2026-08-13 | 完成审计后修正索引控制面：快照/路由持久化、未登记目标拦截、首快照 Alias 激活 | P2 Step 5 真实性修复 |

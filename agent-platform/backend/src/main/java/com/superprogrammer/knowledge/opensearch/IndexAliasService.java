@@ -31,6 +31,12 @@ public class IndexAliasService {
                 new AliasAction("ADD", toIndex, write, true));
     }
 
+    public List<AliasAction> activatePlan(long knowledgeBaseId, String toIndex) {
+        return List.of(
+                new AliasAction("ADD", toIndex, readAlias(knowledgeBaseId), false),
+                new AliasAction("ADD", toIndex, writeAlias(knowledgeBaseId), true));
+    }
+
     public List<AliasAction> rollbackPlan(long knowledgeBaseId, String currentIndex, String previousIndex) {
         return switchPlan(knowledgeBaseId, currentIndex, previousIndex);
     }
