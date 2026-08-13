@@ -27,7 +27,7 @@
   - **安全检查**：query LLM 仅接用户问题和允许元数据；Prompt Injection 文本不提升为系统指令。
   - **验证**：12 类 query、规则优先、历史版本过滤、HyDE 禁用边界、模型缺失报错。
 
-- [ ] **Step 2：OpenSearch ACL/版本 Pre-filter 构造器**
+- [x] **Step 2：OpenSearch ACL/版本 Pre-filter 构造器**
   - **对应需求**：RAG-FR-03
   - **目标**：所有通道在搜索阶段过滤 tenant/KB/ACL/status/effective/version/metadata。
   - **动作**：把 QueryPlan filter 和用户权限版本编译为 bool filter；拒绝无 tenant/KB 范围请求；输出过滤摘要供 Trace。

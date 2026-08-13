@@ -32,6 +32,7 @@
 | OpenSearch 对账 | `OpenSearchReconciliationService.java`、`ReconciliationWorker.java` | 缺失/孤儿/Hash/ACL 漂移、dry-run 修复与删除传播 |
 | 索引控制面 | `KnowledgeIndexOperationsService.java`、`KnowledgeAdminController.java`、`frontend/src/components/knowledge/IndexOperationsPanel.vue` | 状态、预检、切换和回滚 |
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
+| 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 
 ## 关键调用链路
 
@@ -145,3 +146,4 @@
 | 2026-08-13 | 增加 PG/OpenSearch 差异分类、dry-run 修复与删除传播 | P2 Step 4 完成 |
 | 2026-08-13 | 增加管理员索引状态、预检、切换与回滚控制面 | P2 Step 5 完成，P2 收口 |
 | 2026-08-13 | 增加规则优先 QueryPlan 与可选 LLM 分析标记 | P3 Step 1 完成 |
+| 2026-08-13 | 增加 OpenSearch ACL/版本强制 Pre-filter | P3 Step 2 完成 |
