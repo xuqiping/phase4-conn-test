@@ -15,16 +15,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RagRolloutService {
     private static final Set<Integer> ALLOWED_PERCENTAGES = Set.of(5, 20, 50, 100);
     private final CacheInvalidator cacheInvalidator;
-    private final Map<Long, RolloutHistory> states = new ConcurrentHashMap<>();
+    private final Repository repository;
     private final Map<Long, Integer> invalidations = new ConcurrentHashMap<>();
 
     @Autowired
-    public RagRolloutService(RagAnswerCacheMapper cacheMapper) {
-        this(cacheMapper::invalidateByKb);
+    public RagRolloutService(RagAnswerCacheMapper cacheMapper, PostgresRagRolloutRepository repository) {
+        this(cacheMapper::invalidateByKb, repository);
     }
 
     public RagRolloutService(CacheInvalidator cacheInvalidator) {
+        this(cacheInvalidator, new InMemoryRepository());
+    }
+    public RagRolloutService(CacheInvalidator cacheInvalidator, Repository repository) {
         this.cacheInvalidator = cacheInvalidator;
+        this.repository = repository;
     }
 
     public RolloutState configure(long kbId, int percentage, String configVersion, long operatorId,
@@ -41,26 +45,27 @@ public class RagRolloutService {
             throw new IllegalStateException("发布门禁、索引健康和对账必须全部通过");
         }
         RolloutState next = new RolloutState(kbId, percentage, configVersion, operatorId);
-        states.compute(kbId, (ignored, current) -> new RolloutHistory(next, current == null ? null : current.current()));
+        RolloutHistory current=repository.find(kbId);
+        repository.save(next,current==null?null:current.current());
         return next;
     }
 
     public RolloutState rollback(long kbId, long operatorId, boolean confirmed) {
         requireConfirmed(confirmed);
-        RolloutHistory history = states.get(kbId);
+        RolloutHistory history = repository.find(kbId);
         if (history == null || history.previous() == null) {
             throw new IllegalStateException("没有可回滚的灰度配置");
         }
         RolloutState previous = history.previous();
         RolloutState restored = new RolloutState(kbId, previous.percentage(), previous.configVersion(), operatorId);
-        states.put(kbId, new RolloutHistory(restored, history.current()));
+        repository.save(restored, history.current());
         cacheInvalidator.invalidate(kbId);
         invalidations.merge(kbId, 1, Integer::sum);
         return restored;
     }
 
     public RolloutState status(long kbId) {
-        RolloutHistory history = states.get(kbId);
+        RolloutHistory history = repository.find(kbId);
         return history == null ? new RolloutState(kbId, 0, "champion", 0) : history.current();
     }
 
@@ -97,5 +102,11 @@ public class RagRolloutService {
         }
     }
 
-    private record RolloutHistory(RolloutState current, RolloutState previous) {}
+    public record RolloutHistory(RolloutState current, RolloutState previous) {}
+    public interface Repository { void save(RolloutState current, RolloutState previous); RolloutHistory find(long kbId); }
+    private static final class InMemoryRepository implements Repository {
+        private final Map<Long,RolloutHistory> states=new ConcurrentHashMap<>();
+        public void save(RolloutState current,RolloutState previous){states.put(current.knowledgeBaseId(),new RolloutHistory(current,previous));}
+        public RolloutHistory find(long kbId){return states.get(kbId);}
+    }
 }

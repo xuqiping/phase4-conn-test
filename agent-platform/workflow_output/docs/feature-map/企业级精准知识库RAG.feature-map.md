@@ -173,6 +173,7 @@
 - `EvaluationRunConfiguration`：专用有界线程池隔离离线评测，防止大量黄金集任务占满在线请求线程。
 - `KnowledgeEvaluationController` 的 Run 端点：启动异步评测、按 tenant 查询状态；`EvaluationRunPanel.vue` 展示真实汇总指标，不用浏览器本地变量冒充任务进度。
 - `RagFeedbackController`：提交前从 KnowledgeBase 读取真实 tenantId，不再固定写入 0；缺少租户归属时拒绝生成反馈记录。
+- `V116__rag_rollout_state.sql` + `PostgresRagRolloutRepository`：每个 KB 保存当前灰度与上一可回滚版本；服务重启后状态不丢，upsert 同步更新两代配置。
 
 - [规格总览](../specs/企业级精准知识库RAG-总览.md)
 - [架构与数据](../specs/企业级精准知识库RAG-架构与数据.md)
