@@ -38,6 +38,7 @@
 | Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 | 动态证据覆盖 | `backend/src/main/java/com/superprogrammer/knowledge/context/CoverageSelector.java`、`EvidenceBudget.java` | 按问题类型选择 2～20 条并限制单文档挤占 |
 | 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
+| 上下文组装 | `ContextBuilder.java`、`NeighborExpander.java` | PG 复核结果、Hash 去重、授权邻居和 token 硬预算 |
 
 ## 关键调用链路
 
@@ -157,3 +158,4 @@
 | 2026-08-13 | 增加专用 Rerank SPI、能力校验与调试时间线 | P3 Step 5 完成，P3 收口 |
 | 2026-08-13 | 增加 2～20 条动态证据预算与来源多样性 | P4 Step 1 完成 |
 | 2026-08-13 | 增加缺项检测与最多两轮同范围补检索 | P4 Step 2 完成 |
+| 2026-08-13 | 增加最终复核、邻居扩展、去重与 token 裁剪 | P4 Step 3 完成 |
