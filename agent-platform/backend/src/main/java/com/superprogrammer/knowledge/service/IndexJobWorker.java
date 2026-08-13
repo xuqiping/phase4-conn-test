@@ -17,6 +17,7 @@ import com.superprogrammer.llm.LlmGateway;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -57,6 +58,8 @@ public class IndexJobWorker {
     /** 运维系统 OPS-FR-05：queue.depth Gauge + indexed.total 指标。 */
     private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
     private final Contextualizer contextualizer;
+    @Autowired(required = false)
+    private com.superprogrammer.knowledge.opensearch.OpenSearchChunkWriter openSearchChunkWriter;
 
     public IndexJobWorker(IndexJobTxService txService,
                           KnowledgeNodeMapper nodeMapper,
@@ -153,6 +156,15 @@ public class IndexJobWorker {
                         + " actual=" + vector.length);
             }
             String halfvec = HalfVecUtil.toHalfVec(vector);
+
+            if (openSearchChunkWriter != null) {
+                openSearchChunkWriter.write(
+                        com.superprogrammer.knowledge.opensearch.IndexAliasService.writeAlias(job.getKbId()),
+                        List.of(new com.superprogrammer.knowledge.opensearch.OpenSearchChunkDocument(
+                                node.getTenantId(), job.getKbId(), node.getDocumentId(), node.getVersionId(), node.getId(),
+                                List.of("tenant:" + node.getTenantId(), "kb:" + job.getKbId()), node.getStatus(),
+                                node.getContentHash(), contextHash, job.getPipelineVersion(), embedText, vector)));
+            }
 
             IndexJobTxService.IndexedDoc indexed = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
                     job.getKbId(), embeddingModel, halfvec, node.getContentHash(), contextHash);

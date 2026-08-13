@@ -28,6 +28,7 @@
 | OpenSearch 健康检查 | `backend/src/main/java/com/superprogrammer/knowledge/config/OpenSearchHealthIndicator.java` | 区分 disabled/up/down，诊断信息不暴露认证信息 |
 | 索引规格 | `backend/src/main/java/com/superprogrammer/knowledge/opensearch/KnowledgeIndexSchema.java` | 版本化物理索引名、向量维度校验、严格 mapping |
 | 索引与 Alias | `KnowledgeIndexManager.java`、`IndexAliasService.java` | 创建物理索引并原子切换/回滚 read/write alias |
+| OpenSearch 双写 | `OpenSearchChunkDocument.java`、`OpenSearchChunkWriter.java` | C2 Dense/Sparse/ACL/版本副本、bulk 逐项失败识别 |
 
 ## 关键调用链路
 
@@ -92,6 +93,13 @@
 - **大白话案例**：像搬仓库先把新仓库装满并验货，最后一次性更换导航牌，而不是边搬边让客户找不到货。
 > 批注：物理索引名不得包含模型昵称；不同向量维度禁止混入同一索引；mapping 强制包含 tenant/KB/ACL/status/version/hash。
 
+### 8. 一次向量化、PG + OpenSearch 双写
+
+- **采用技术**：稳定 node ID 幂等 upsert、NDJSON Bulk API、逐项响应解析、可选 Spring sink。
+- **一句话原理**：同一向量同时服务旧 PG 与新检索副本，OpenSearch 任一条失败都不把任务标成完成。
+- **大白话案例**：像一张入库单要同时登记总账和货架系统；货架登记失败就保留工单重做，重做仍覆盖同一货位，不多出一箱。
+> 批注：OpenSearch 文档只保存检索必要 ACL token 和治理字段；失败日志只写 node ID，不写 Chunk 正文。
+
 ## 数据库迁移速查
 
 - `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
@@ -116,3 +124,4 @@
 | 2026-08-13 | 补充 P1 Step 5 Contextual Content 与幂等索引任务 | P1 完成 |
 | 2026-08-13 | 增加 OpenSearch 官方客户端、环境变量配置与三态健康检查 | P2 Step 1 完成 |
 | 2026-08-13 | 增加版本化索引规格、严格 mapping 与 read/write alias 原子切换 | P2 Step 2 完成 |
+| 2026-08-13 | 增加 C2 Dense/Sparse 双写与 bulk 部分失败重试 | P2 Step 3 完成 |

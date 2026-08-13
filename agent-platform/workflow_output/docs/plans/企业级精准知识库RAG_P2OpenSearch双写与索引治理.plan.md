@@ -42,7 +42,7 @@
   - **安全检查**：索引 mapping 强制 tenant/kb/acl/status/version 字段；管理 API 不直接暴露凭证。
   - **验证**：mapping、维度、别名原子切换、回滚、不同 embedding 空间不混用。
 
-- [ ] **Step 3：C2 Dense/Sparse 双写与批量消费**
+- [x] **Step 3：C2 Dense/Sparse 双写与批量消费**
   - **对应需求**：RAG-FR-02、RAG-FR-03
   - **目标**：索引任务一次生成 embedding，并把权威元数据写入 OpenSearch 检索副本。
   - **动作**：扩展 IndexJob 为 PG legacy + OpenSearch sink 状态；批量 embed 和 bulk upsert；逐项确认；旧链路继续写入直到灰度结束。

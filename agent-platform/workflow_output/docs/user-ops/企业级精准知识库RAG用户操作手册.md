@@ -27,3 +27,10 @@
 - P2 Step 2 已具备版本化物理索引和 read/write alias 基座，但管理页面尚未开放。
 - 索引名由系统根据 KB、snapshot、pipeline 生成，管理员不能输入物理索引名，也不应直接在 OpenSearch 中手工切换 Alias。
 - 双写、重建和管理控制面将在后续 Step 中依次开放。
+
+## 管理员：理解双写状态
+
+- `RAG_OPENSEARCH_ENABLED=false`：文档继续只写旧 PG 索引链路，适合尚未部署 OpenSearch 的环境。
+- 启用后：每个 C2 节点生成一次向量，先写 OpenSearch 检索副本，再完成 PG 索引任务。
+- Bulk 中任一节点失败：任务进入既有退避重试，不会把文档误标为全部索引完成。
+- 重试使用稳定 node ID，因此不会产生重复检索文档。
