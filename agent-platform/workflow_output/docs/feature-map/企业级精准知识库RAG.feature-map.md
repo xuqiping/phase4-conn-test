@@ -41,6 +41,7 @@
 | 上下文组装 | `ContextBuilder.java`、`NeighborExpander.java` | PG 复核结果、Hash 去重、授权邻居和 token 硬预算 |
 | 引用校验 | `citation/CitationVerifier.java`、`service/internal/CitationChecker.java`、`RagRetrieveVO.java` | locator、权限/版本/Hash、Claim 支持度 |
 | Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
+| RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V110__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标 |
 
 ## 关键调用链路
 
@@ -163,3 +164,4 @@
 | 2026-08-13 | 增加最终复核、邻居扩展、去重与 token 裁剪 | P4 Step 3 完成 |
 | 2026-08-13 | 增加精确 locator Citation 与 Claim 支持校验 | P4 Step 4 完成 |
 | 2026-08-13 | 增加分批事实归纳与六态置信状态机 | P4 Step 5 完成，P4 收口 |
+| 2026-08-13 | 增加黄金集数据结构与检索指标引擎 | P5 Step 1 完成 |

@@ -13,7 +13,7 @@
 
 ## 实现步骤
 
-- [ ] **Step 1：黄金问题集、样本导入和指标引擎**
+- [x] **Step 1：黄金问题集、样本导入和指标引擎**
   - **对应需求**：RAG-FR-07
   - **目标**：覆盖精确、版本、多证据、比较、表格/视觉、无答案、无权限和 Hard Negative。
   - **动作**：新增 dataset/case/run/result 表；支持 JSONL 导入导出；计算 Recall@K、MRR、nDCG、Version/Coverage/Citation/Faithfulness/Abstention 等。
