@@ -182,6 +182,11 @@ export interface RagCitation {
   fileRef?: string | null
   mime?: string | null
   originalName?: string | null
+  page?: string | null
+  article?: string | null
+  sheet?: string | null
+  cellRange?: string | null
+  bbox?: string | null
 }
 
 export interface RagRecallHit {

@@ -52,7 +52,7 @@
   - **安全检查**：PG 最终复核权限、版本、Hash、撤销状态；竞态失败即剔除。
   - **验证**：条款条件/例外、流程邻步、表头、跨权限、跨版本、token 超限和比较配额。
 
-- [ ] **Step 4：精确 Citation 与 Claim 校验**
+- [x] **Step 4：精确 Citation 与 Claim 校验**
   - **对应需求**：RAG-FR-06
   - **目标**：每个事实 Claim 绑定页码/条款/Sheet/Cell/bbox 等可定位 Citation。
   - **动作**：扩展 Citation DTO；答案先输出结构化 claim+citation；Verifier 检查引用存在、Hash/权限/版本一致和文本支持，不支持则删除或降为不确定。

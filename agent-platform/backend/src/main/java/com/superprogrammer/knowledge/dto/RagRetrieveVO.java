@@ -59,6 +59,11 @@ public class RagRetrieveVO {
         private String url;
         /** 联网搜索来源摘要（snippet），web citation 卡片副标题用。KB 引用为 null。 */
         private String snippet;
+        private String page;
+        private String article;
+        private String sheet;
+        private String cellRange;
+        private String bbox;
     }
 
     @Data
