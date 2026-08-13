@@ -14,6 +14,8 @@
 
 发布采用黄金集、Champion/Challenger、影子检索和 5/20/50/100 稳定灰度。反馈只进入待审核队列，禁止直接改变排序。关键调用与平台审计/Java 日志通过 trace 关联，但日志不记录完整 Prompt、Query、Chunk、密钥或完整模型输出。
 
+P5 已完成：评测 Dataset/Case/Run/Result 真实持久化，发布门禁读取真实指标；Shadow 已接入生产稳定采样并提供 tenant 隔离查询；灰度回滚可同时恢复 Ranking 配置、OpenSearch read alias 和答案缓存。当前停留在 Phase 3，未执行浏览器或真实外部模型验收。
+
 ## 文档入口
 
 - 规格：`workflow_output/docs/specs/企业级精准知识库RAG-总览.md`
