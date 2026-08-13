@@ -15,6 +15,8 @@ public class RagRetrieveVO {
     private String abstainReason;
     /** 灰区（hard≤sim<soft）回答但低置信；true=证据边缘、答案仅供参考。仅 SUPPORTED 类路径可能置 true。 */
     private boolean lowConfidence;
+    /** SUPPORTED/PARTIAL/CONFLICT/INSUFFICIENT/OUT_OF_SCOPE/RETRIEVAL_FAILED. */
+    private String confidenceState;
     private String answer;
     private List<CitationVO> citations;
     private List<RecallHitVO> candidatesL0;

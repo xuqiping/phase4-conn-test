@@ -39,6 +39,7 @@
 | Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/`、`RagRetrievalService.java` | LLM/RERANK/DISABLED Provider 已接生产链路；候选白名单、正文相关性、严格 JSON 与显式模型 |
 | Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 | 动态证据覆盖 | `backend/src/main/java/com/superprogrammer/knowledge/context/CoverageSelector.java`、`EvidenceBudget.java` | 按问题类型选择 2～20 条并限制单文档挤占 |
+| 证据策略真实接线 | `backend/src/main/java/com/superprogrammer/knowledge/context/EvidencePolicyService.java`、`service/RagRetrievalService.java`、`dto/RagRetrieveVO.java` | PG 最终复核后统一执行动态预算、Hash 去重、来源多样性、token 上限，并返回六态置信字段 |
 | 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
 | 上下文组装 | `ContextBuilder.java`、`NeighborExpander.java` | PG 复核结果、Hash 去重、授权邻居和 token 硬预算 |
 | 引用校验 | `citation/CitationVerifier.java`、`service/internal/CitationChecker.java`、`RagRetrieveVO.java` | locator、权限/版本/Hash、Claim 支持度 |

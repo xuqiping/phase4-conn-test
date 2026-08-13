@@ -75,6 +75,7 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
+    private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
 
     // ============================ 内部 record ============================
 
@@ -243,6 +244,23 @@ public class RagRetrievalService {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, List.of());
             }
+            com.superprogrammer.knowledge.context.EvidencePolicyService.PolicyResult evidencePolicy =
+                    evidencePolicyService.apply(queryPlan.queryType(), ragConfig.getMaxL2Read(),
+                            evidence.stream().map(e ->
+                                    new com.superprogrammer.knowledge.context.EvidencePolicyService.EvidenceItem(
+                                            e.nodeId(), e.documentId(), e.content(), e.contentHash(),
+                                            e.rerankScore(), true, true)).toList(),
+                            cap, bestSim, false);
+            Set<Long> selectedNodeIds = evidencePolicy.evidence().stream()
+                    .map(com.superprogrammer.knowledge.context.EvidencePolicyService.EvidenceItem::nodeId)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            evidence = renumberEvidence(evidence.stream()
+                    .filter(e -> selectedNodeIds.contains(e.nodeId()))
+                    .toList());
+            if (evidence.isEmpty()) {
+                return finishAbstain(trace, budget, t0, "NO_VALID_EVIDENCE", req, l0, l1,
+                        bm25Fallback[0], bm25OnlyCands, List.of());
+            }
             EvidencePack pack = fitToBudget(evidence, cap);
             budget.setPromptTokens(TokenEstimator.estimate(pack.prompt()));
 
@@ -254,6 +272,7 @@ public class RagRetrievalService {
                 RagRetrieveVO retrieveOnlyVo = buildVo(traceId, false, null, "", List.of(), evidence,
                         pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
                 retrieveOnlyVo.setLowConfidence(grayZone);
+                retrieveOnlyVo.setConfidenceState(evidencePolicy.confidenceState());
                 writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
                 return retrieveOnlyVo;
             }
@@ -273,6 +292,7 @@ public class RagRetrievalService {
             RagRetrieveVO vo = buildVo(traceId, false, null, answer, cited, evidence,
                     pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
             vo.setLowConfidence(grayZone);
+            vo.setConfidenceState(evidencePolicy.confidenceState());
             writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
             // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
             if (!grayZone && answerCacheProps.isEnabled()) {
@@ -873,6 +893,17 @@ public class RagRetrievalService {
             idx++;
         }
         return out;
+    }
+
+    private List<Evidence> renumberEvidence(List<Evidence> evidence) {
+        List<Evidence> result = new ArrayList<>(evidence.size());
+        int citationIndex = 1;
+        for (Evidence e : evidence) {
+            result.add(new Evidence(e.nodeId(), e.documentId(), e.title(), e.content(),
+                    e.contentHash(), e.docType(), e.fileRef(), e.mime(), e.originalName(),
+                    e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore()));
+        }
+        return result;
     }
 
     // ============================ 生成 + Citation ============================

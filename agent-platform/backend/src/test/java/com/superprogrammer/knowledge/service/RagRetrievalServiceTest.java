@@ -46,6 +46,7 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
+    @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -63,7 +64,8 @@ class RagRetrievalServiceTest {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
-                ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway);
+                ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
+                evidencePolicyService);
         lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
                 .thenReturn(retrievalScope);
         lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(
@@ -79,6 +81,9 @@ class RagRetrievalServiceTest {
             return candidates.stream().map(c -> new com.superprogrammer.knowledge.ranking.RankingResult(
                     c.id(), c.rawScore(), invocation.getArgument(0), invocation.getArgument(3))).toList();
         });
+        lenient().when(evidencePolicyService.apply(anyString(), anyInt(), anyList(), anyInt(), anyDouble(), anyBoolean()))
+                .thenAnswer(invocation -> new com.superprogrammer.knowledge.context.EvidencePolicyService.PolicyResult(
+                        invocation.getArgument(2), "SUPPORTED"));
     }
 
     @Test
@@ -185,6 +190,9 @@ class RagRetrievalServiceTest {
         KnowledgeBase kb = kb(1L);
         stubReadableAll(kb);
         stubExpandSingle();
+        when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "PROCEDURE", "ORDERED_STEPS", java.util.Map.of(),
+                List.of("SPARSE", "DENSE", "NEIGHBOR"), true, true, false));
         // 距离 0.6 → sim 0.40 ∈ [hard 0.30, soft 0.45) → 灰区回答 + lowConfidence
         RagQueryRow.DenseRecallRow dense = denseRow(10L, 99L, "安装步骤", 0.6);
         when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
@@ -201,6 +209,8 @@ class RagRetrievalServiceTest {
         assertFalse(vo.isAbstained());
         assertTrue(vo.isLowConfidence());   // 灰区标低置信
         assertNotNull(vo.getAnswer());
+        verify(evidencePolicyService).apply(eq("PROCEDURE"), anyInt(), anyList(), anyInt(), anyDouble(), eq(false));
+        assertEquals("SUPPORTED", vo.getConfidenceState());
     }
 
     @Test
