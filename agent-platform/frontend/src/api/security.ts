@@ -119,3 +119,12 @@ export const SEVERITY_CN: Record<string, string> = {
   HIGH: '高危',
   CRITICAL: '危急',
 }
+
+/** 自动处置动作中文（13x-1：原 autoAction 裸英文码 → 中文）。 */
+export const AUTO_ACTION_CN: Record<string, string> = {
+  NONE: '仅记录告警',
+  IP_BLOCKED: '封禁来源IP',
+  ACCOUNT_LOCKED: '锁定账号',
+  ACCOUNT_BANNED: '封禁账号',
+  TOKEN_REVOKED: '吊销登录凭证',
+}
