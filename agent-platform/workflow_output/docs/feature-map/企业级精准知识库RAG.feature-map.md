@@ -29,6 +29,7 @@
 | 索引规格 | `backend/src/main/java/com/superprogrammer/knowledge/opensearch/KnowledgeIndexSchema.java` | 版本化物理索引名、向量维度校验、严格 mapping |
 | 索引与 Alias | `KnowledgeIndexManager.java`、`IndexAliasService.java` | 创建物理索引并原子切换/回滚 read/write alias |
 | OpenSearch 双写 | `OpenSearchChunkDocument.java`、`OpenSearchChunkWriter.java` | C2 Dense/Sparse/ACL/版本副本、bulk 逐项失败识别 |
+| OpenSearch 对账 | `OpenSearchReconciliationService.java`、`ReconciliationWorker.java` | 缺失/孤儿/Hash/ACL 漂移、dry-run 修复与删除传播 |
 
 ## 关键调用链路
 
@@ -100,6 +101,13 @@
 - **大白话案例**：像一张入库单要同时登记总账和货架系统；货架登记失败就保留工单重做，重做仍覆盖同一货位，不多出一箱。
 > 批注：OpenSearch 文档只保存检索必要 ACL token 和治理字段；失败日志只写 node ID，不写 Chunk 正文。
 
+### 9. 权威 PG 与检索副本对账
+
+- **采用技术**：快照集合比较、确定性修复计划、REINDEX Outbox、delete-by-query。
+- **一句话原理**：PG 是总账，OpenSearch 是可重建副本；缺失和漂移重建，孤儿删除，先 dry-run 再执行。
+- **大白话案例**：像仓库盘点，用总账逐项核对货架：少的补、错标签的重贴、多出来的清走。
+> 批注：ACL 或可见性变化优先清除整个 KB 检索副本，宁可短暂缺结果也不能返回旧权限内容。
+
 ## 数据库迁移速查
 
 - `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
@@ -125,3 +133,4 @@
 | 2026-08-13 | 增加 OpenSearch 官方客户端、环境变量配置与三态健康检查 | P2 Step 1 完成 |
 | 2026-08-13 | 增加版本化索引规格、严格 mapping 与 read/write alias 原子切换 | P2 Step 2 完成 |
 | 2026-08-13 | 增加 C2 Dense/Sparse 双写与 bulk 部分失败重试 | P2 Step 3 完成 |
+| 2026-08-13 | 增加 PG/OpenSearch 差异分类、dry-run 修复与删除传播 | P2 Step 4 完成 |

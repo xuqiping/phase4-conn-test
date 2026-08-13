@@ -34,6 +34,8 @@ public class VisibilityInvalidationListener {
     private final StringRedisTemplate redisTemplate;
     private final VisibilityCacheProperties props;
     private final RagAnswerCacheMapper answerCacheMapper;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.knowledge.opensearch.OpenSearchReconciliationService openSearchReconciliationService;
 
     @Async("knowledgeTaskExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -47,6 +49,15 @@ public class VisibilityInvalidationListener {
             log.info("答案缓存主动失效 kbId={} rows={}", event.getKbId(), invalidated);
         } catch (RuntimeException e) {
             log.warn("答案缓存主动失效失败 kbId={}: {}", event.getKbId(), e.getMessage());
+        }
+        if (openSearchReconciliationService != null) {
+            try {
+                openSearchReconciliationService.deleteKnowledgeBase(event.getKbId());
+                log.info("OpenSearch 可见性副本已清除并等待重建 kbId={}", event.getKbId());
+            } catch (Exception e) {
+                log.warn("OpenSearch 可见性副本清除失败 kbId={} errorType={}",
+                        event.getKbId(), e.getClass().getSimpleName());
+            }
         }
     }
 
