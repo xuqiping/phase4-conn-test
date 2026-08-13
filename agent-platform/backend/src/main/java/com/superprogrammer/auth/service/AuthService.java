@@ -572,12 +572,13 @@ public class AuthService {
         // A8：refresh 须带 sid 且匹配当前会话（被踢会话的 refresh 同样拒绝，固定话术）
         String sid = jwtUtil.getSidFromToken(refreshToken);
         if (!sessionService.isCurrent(userId, sid)) {
-            auditAuth("refresh", userId, "-", AuditLogEntity.RESULT_FAIL, "session_kicked");
+            // 8x-1：username 传 null（查询侧按 userId 回填），不再写入"-"占位
+            auditAuth("refresh", userId, null, AuditLogEntity.RESULT_FAIL, "session_kicked");
             throw new BusinessException(ErrorCode.SESSION_KICKED);
         }
         User user = userMapper.selectById(userId);
         if (user == null) {
-            auditAuth("refresh", null, "-", AuditLogEntity.RESULT_FAIL, "user_not_found");
+            auditAuth("refresh", null, null, AuditLogEntity.RESULT_FAIL, "user_not_found");
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
         // 11x 加固 P1-C3：refresh 兜底查 DB status——单点登录关/Redis 故障时封号用户不得换发新 access。

@@ -63,10 +63,14 @@ public class SessionService {
             redisTemplate.opsForValue().set(key, sid,
                     jwtUtil.getRefreshExpiration(), TimeUnit.MILLISECONDS);
             if (previous != null && !previous.equals(sid)) {
-                // 踢旧留痕（踢的瞬间记一次，而非旧 token 每次请求都记——防审计刷量）
-                auditLogService.record(auditLogService.fromMdc("auth", "session_kicked", "user",
+                // 踢旧留痕（踢的瞬间记一次，而非旧 token 每次请求都记——防审计刷量）。
+                // 8x-1：登录请求无 JWT，fromMdc 取不到身份——显式盖戳 userId/username，不留空给"-"兜底
+                AuditLogEntity kickRow = auditLogService.fromMdc("auth", "session_kicked", "user",
                         String.valueOf(userId), "{\"username\":\"" + username + "\"}",
-                        AuditLogEntity.RESULT_SUCCESS));
+                        AuditLogEntity.RESULT_SUCCESS);
+                kickRow.setUserId(userId);
+                kickRow.setUsername(username);
+                auditLogService.record(kickRow);
             }
         } catch (Exception e) {
             log.warn("会话写入失败(降级放行,单点登录本轮不生效;Redis 恢复后该用户须重新登录一次) userId={} : {}", userId, e.getMessage());

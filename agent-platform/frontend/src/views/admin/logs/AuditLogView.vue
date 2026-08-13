@@ -34,9 +34,9 @@
         @update:page="loadLogs"
       />
 
-      <!-- detailJson 查看弹窗 -->
+      <!-- detailJson 查看弹窗（8x-2：键值中文渲染，不再堆原始 JSON） -->
       <n-modal v-model:show="showDetail" preset="card" title="审计详情" style="max-width:640px">
-        <pre class="audit-log__detail">{{ prettyDetail }}</pre>
+        <DetailKvView :raw="detailText" />
         <!-- 8x Chunk7：模型调用动作 → 一键跳「账单总览·调用明细」查同请求模型/token/积分明细 -->
         <div v-if="drillUrl" class="audit-log__drill">
           <n-button size="small" type="primary" @click="openDrill">查看调用明细</n-button>
@@ -56,6 +56,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { auditApi, type AuditLogVO } from '@/api/audit'
+import DetailKvView from '@/components/DetailKvView.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -131,14 +132,6 @@ const resultOptions = [
   { label: '失败', value: 'FAIL' }
 ]
 
-const prettyDetail = computed(() => {
-  try {
-    return JSON.stringify(JSON.parse(detailText.value), null, 2)
-  } catch {
-    return detailText.value || '(无详情)'
-  }
-})
-
 const columns: DataTableColumns<AuditLogVO> = [
   { title: 'ID', key: 'id', width: 70 },
   {
@@ -146,7 +139,8 @@ const columns: DataTableColumns<AuditLogVO> = [
     render: (row) => row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN') : '-'
   },
   { title: '用户', key: 'username', width: 110, ellipsis: { tooltip: true },
-    render: (row) => row.username || '-' },
+    // 8x-1：后端已按 userId 回填，双空（系统级操作）兜底「系统」，不再显示"-"
+    render: (row) => row.username || (row.userId ? `用户#${row.userId}` : '系统') },
   { title: '模块', key: 'module', width: 110,
     render: (row) => row.moduleLabel || row.module || '-' },
   { title: '动作', key: 'action', width: 130, ellipsis: { tooltip: true },
@@ -244,18 +238,6 @@ onMounted(() => {
     flex-wrap: wrap;
     gap: 10px;
     margin-bottom: 16px;
-  }
-
-  &__detail {
-    margin: 0;
-    padding: 12px;
-    background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
-    border-radius: 6px;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 50vh;
-    overflow: auto;
   }
 
   &__drill {

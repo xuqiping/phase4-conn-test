@@ -2,6 +2,8 @@ package com.superprogrammer.common.audit;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.superprogrammer.auth.entity.User;
+import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
@@ -14,6 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 审计日志查询 API（日志系统 LOG-FR-12）：管理员日志中心数据源。
@@ -27,6 +32,8 @@ public class AuditLogController {
 
     private final AuditLogMapper auditLogMapper;
     private final AuditChainVerifyService chainVerifyService;
+    private final UserMapper userMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @GetMapping
     @RequirePermission("system:audit:read")
@@ -62,7 +69,58 @@ public class AuditLogController {
                 .map(AuditLogVO::from)
                 .map(AuditLogVO::withLabels)
                 .toList();
+        // 8x-1：username 写入侧快照缺失（worker/异步线程审计、refresh 早期写入"-"占位）时，
+        // 查询侧按 userId 批量回填——每页最多 100 行一次 in 查询，不逐行回查 users 表
+        backfillUsernames(vos);
         return R.ok(PageResult.of(vos, entityPage.getTotal(), page, safeSize));
+    }
+
+    /**
+     * 8x-1：回填缺失的 username（仅显示层 VO，不回写 DB——写入侧冗余快照设计不变）。
+     * 用户已删时回退「用户#id」，保证用户列不再出现"-"；userId 与 username 双空（系统级操作）
+     * 交由前端兜底显示「系统」。
+     */
+    private void backfillUsernames(List<AuditLogVO> vos) {
+        Set<Long> missing = vos.stream()
+                .filter(vo -> vo.getUserId() != null && isBlankUsername(vo.getUsername()))
+                .map(AuditLogVO::getUserId)
+                .collect(Collectors.toSet());
+        if (missing.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names = userMapper.selectBatchIds(missing).stream()
+                .collect(Collectors.toMap(User::getId, User::getUsername, (a, b) -> a));
+        for (AuditLogVO vo : vos) {
+            if (vo.getUserId() != null && isBlankUsername(vo.getUsername())) {
+                String name = names.get(vo.getUserId());
+                vo.setUsername(name != null ? name : "用户#" + vo.getUserId());
+            } else if (vo.getUserId() == null && isBlankUsername(vo.getUsername())) {
+                vo.setUsername(usernameFromDetail(vo.getDetailJson()));
+            }
+        }
+    }
+
+    /** 空串/null/早期 refresh 审计写入的"-"占位都视为缺失。 */
+    private boolean isBlankUsername(String username) {
+        return username == null || username.isBlank() || "-".equals(username);
+    }
+
+    /**
+     * 8x-1 第二档：userId 与 username 双空的历史行（旧版 SessionService 踢会话留痕未盖戳），
+     * 从 detailJson 的 username 键恢复显示名。与 login 失败行显示请求账号的既有口径一致；
+     * 无该键或解析失败 → 返回 null（前端兜底「系统」）。
+     */
+    private String usernameFromDetail(String detailJson) {
+        if (detailJson == null || detailJson.isBlank()) {
+            return null;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(detailJson);
+            String name = node.path("username").asText(null);
+            return (name != null && !name.isBlank() && !"-".equals(name)) ? name : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
