@@ -13,7 +13,7 @@
 
 ## 实现步骤
 
-- [ ] **Step 1：QueryPlan 规则分类与可选 LLM 分析**
+- [x] **Step 1：QueryPlan 规则分类与可选 LLM 分析**
   - **对应需求**：RAG-FR-03、RAG-FR-05
   - **目标**：生成 queryType、answerShape、filter、strategies、exhaustive/multiHop 等结构化计划。
   - **动作**：先提取编号/日期/版本/引号短语；不确定时通过 KB 显式选择的 LLM；HyDE 仅语义低召回补强且永不作证据。
