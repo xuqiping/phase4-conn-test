@@ -49,6 +49,7 @@
 | Grounded Answer 真实生成 | `service/RagRetrievalService.java`、`llm/dto/LlmRequest.java`、`llm/LlmGateway.java` | `/retrieve` 先事实提炼再答案合成；调用用途分别写入同一 RAG trace、模型日志和计费链路 |
 | `/ask` Grounded SSE | `controller/KnowledgeAskController.java`、`chat/dto/StreamEvent.java`、`frontend/src/api/knowledge.ts`、`RagAskPanel.vue` | 完成校验后按 CHUNK→CITATION→RAG_STATE→DONE 输出，禁止未校验 token 提前泄露 |
 | RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V115__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标；V110 已被认证迁移占用 |
+| 评测 Dataset/Case 领域服务 | `evaluation/EvaluationService.java` | tenant/KB 归属、逐行容错 JSONL 导入、脱敏结构导出、Repository 边界 |
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
 | 评测管理界面 | `KnowledgeEvaluationView.vue`、`EvaluationRunPanel.vue`、`ShadowComparisonPanel.vue`、`KnowledgeView.vue` | 管理员启动异步评测、查看 Champion/Challenger 与发布门禁状态 |
 | 稳定灰度与回滚 | `migration/RagRolloutService.java`、`RagRolloutReadinessService.java`、`RagModeResolver.java`、`KnowledgeAdminController.java`、`IndexOperationsPanel.vue` | 按 KB/用户稳定分桶，后端权威门禁，回滚时恢复路由并失效答案缓存 |

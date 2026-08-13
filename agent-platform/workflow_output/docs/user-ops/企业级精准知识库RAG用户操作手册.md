@@ -87,6 +87,7 @@ LLM 重排只使用知识库调用模块中明确选择的模型，并实际读�
 ## 管理员：评测数据基础
 
 黄金集按租户和知识库隔离，样本可记录相关/禁止 Chunk、版本、主题和期望 Claim。每次 Pipeline 评测单独产生 run/result，可计算 Recall@K、MRR、nDCG，并为后续 Citation、Faithfulness、Abstention 指标保留结构。
+JSONL 导入按行处理：合法行立即入库，单行格式错误会返回行号和错误摘要，不会让整批回滚；导出前必须通过当前租户的 Dataset 归属校验，导出内容只包含评测字段，不包含知识库 Chunk 正文。
 
 新 Pipeline 是 Challenger，当前线上是 Champion。任何必需指标未达门槛都不能切生产；影子检索只保存对比结果，超时或预算耗尽会停止，不影响用户收到的 Champion 答案。
 
