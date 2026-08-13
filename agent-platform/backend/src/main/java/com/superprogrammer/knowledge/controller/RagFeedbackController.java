@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PathVariable;
 
 @RestController
 @RequestMapping("/api/knowledge/feedback")
@@ -33,6 +34,20 @@ public class RagFeedbackController {
         return ResponseEntity.ok(R.ok("反馈已进入待审核队列", feedbackReviewService.submit(
                 tenantId, request.knowledgeBaseId(), request.evaluationResultId(),
                 request.category(), request.comment(), userId)));
+    }
+
+    @PostMapping("/{feedbackId}/approve")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_feedback_approve", targetType = "rag_feedback")
+    public ResponseEntity<R<FeedbackReviewService.Feedback>> approve(@PathVariable long feedbackId) {
+        return ResponseEntity.ok(R.ok(feedbackReviewService.review(1L,feedbackId,true,currentUserId())));
+    }
+
+    @PostMapping("/{feedbackId}/reject")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_feedback_reject", targetType = "rag_feedback")
+    public ResponseEntity<R<FeedbackReviewService.Feedback>> reject(@PathVariable long feedbackId) {
+        return ResponseEntity.ok(R.ok(feedbackReviewService.review(1L,feedbackId,false,currentUserId())));
     }
 
     private long currentUserId() {

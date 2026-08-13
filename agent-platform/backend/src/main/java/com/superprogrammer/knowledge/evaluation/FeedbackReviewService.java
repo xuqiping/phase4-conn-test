@@ -11,21 +11,21 @@ import java.util.concurrent.atomic.AtomicLong;
 public class FeedbackReviewService {
     private static final Set<String> CATEGORIES = Set.of(
             "NOT_RELEVANT", "OUTDATED", "WRONG_CITATION", "INCOMPLETE");
-    private final FeedbackSink sink;
+    private final FeedbackStore store;
     private final BizMetrics metrics;
     private final AtomicLong ids = new AtomicLong();
 
     public FeedbackReviewService() {
-        this((FeedbackSink) feedback -> {}, null);
+        this(new FeedbackStore(){public void save(Feedback feedback){} public Feedback find(long tenantId,long id){return null;} public void update(Feedback feedback){}}, null);
     }
 
     @Autowired
     public FeedbackReviewService(FeedbackReviewMapper mapper, BizMetrics metrics) {
-        this((FeedbackSink) mapper::insert, metrics);
+        this(new FeedbackStore(){public void save(Feedback f){mapper.insert(f);} public Feedback find(long t,long id){return mapper.find(t,id);} public void update(Feedback f){if(mapper.updateReview(f)!=1)throw new IllegalStateException("反馈已审核或不存在");}}, metrics);
     }
 
-    FeedbackReviewService(FeedbackSink sink, BizMetrics metrics) {
-        this.sink = sink;
+    FeedbackReviewService(FeedbackStore store, BizMetrics metrics) {
+        this.store = store;
         this.metrics = metrics;
     }
 
@@ -46,7 +46,7 @@ public class FeedbackReviewService {
         }
         Feedback feedback = new Feedback(ids.incrementAndGet(), tenantId, knowledgeBaseId,
                 evaluationResultId, normalizedCategory, normalizedComment, "PENDING", submittedBy);
-        sink.save(feedback);
+        store.save(feedback);
         if (metrics != null) metrics.ragFeedback(normalizedCategory, "pending");
         return feedback;
     }
@@ -55,8 +55,18 @@ public class FeedbackReviewService {
         return false;
     }
 
-    @FunctionalInterface
-    interface FeedbackSink { void save(Feedback feedback); }
+    public Feedback review(long tenantId,long feedbackId,boolean approved,long reviewedBy) {
+        Feedback current=store.find(tenantId,feedbackId);
+        if(current==null)throw new IllegalArgumentException("反馈不存在");
+        if(!"PENDING".equals(current.status()))throw new IllegalStateException("反馈已审核");
+        Feedback reviewed=current.reviewed(approved?"APPROVED":"REJECTED",reviewedBy,java.time.OffsetDateTime.now());
+        store.update(reviewed);
+        if(metrics!=null)metrics.ragFeedback(reviewed.category(),reviewed.status().toLowerCase());
+        return reviewed;
+    }
+    public boolean canEnterGoldenSet(Feedback feedback){return feedback!=null && "APPROVED".equals(feedback.status());}
+
+    interface FeedbackStore { void save(Feedback feedback); Feedback find(long tenantId,long id); void update(Feedback feedback); }
 
     public static final class Feedback {
         private Long id;
@@ -67,9 +77,15 @@ public class FeedbackReviewService {
         private final String comment;
         private final String status;
         private final long submittedBy;
+        private final Long reviewedBy;
+        private final java.time.OffsetDateTime reviewedAt;
 
         Feedback(Long id, long tenantId, long knowledgeBaseId, Long evaluationResultId,
                  String category, String comment, String status, long submittedBy) {
+            this(id,tenantId,knowledgeBaseId,evaluationResultId,category,comment,status,submittedBy,null,null);
+        }
+        Feedback(Long id, long tenantId, long knowledgeBaseId, Long evaluationResultId,
+                 String category, String comment, String status, long submittedBy,Long reviewedBy,java.time.OffsetDateTime reviewedAt) {
             this.id = id;
             this.tenantId = tenantId;
             this.knowledgeBaseId = knowledgeBaseId;
@@ -78,6 +94,7 @@ public class FeedbackReviewService {
             this.comment = comment;
             this.status = status;
             this.submittedBy = submittedBy;
+            this.reviewedBy=reviewedBy; this.reviewedAt=reviewedAt;
         }
 
         public Long id() { return id; }
@@ -88,6 +105,8 @@ public class FeedbackReviewService {
         public String comment() { return comment; }
         public String status() { return status; }
         public long submittedBy() { return submittedBy; }
+        public Long reviewedBy(){return reviewedBy;} public java.time.OffsetDateTime reviewedAt(){return reviewedAt;}
+        Feedback reviewed(String status,long reviewedBy,java.time.OffsetDateTime reviewedAt){return new Feedback(id,tenantId,knowledgeBaseId,evaluationResultId,category,comment,status,submittedBy,reviewedBy,reviewedAt);}
         public Long getId() { return id; }
         public void setId(Long id) { this.id = id; }
         public long getTenantId() { return tenantId; }
@@ -97,5 +116,6 @@ public class FeedbackReviewService {
         public String getComment() { return comment; }
         public String getStatus() { return status; }
         public long getSubmittedBy() { return submittedBy; }
+        public Long getReviewedBy(){return reviewedBy;} public java.time.OffsetDateTime getReviewedAt(){return reviewedAt;}
     }
 }
