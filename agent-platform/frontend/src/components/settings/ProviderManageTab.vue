@@ -138,14 +138,18 @@ const form = ref<LlmProviderCreateRequest>({
   category: 'CHAT'
 })
 
-/** 协议仅对 CHAT/EMBEDDING 有意义（VIDEO/IMAGE 是任务型协议，走媒体包）；EMBEDDING 禁选 ANTHROPIC（Claude 无 embed 接口）。 */
-const showProtocol = computed(() => form.value.category === 'CHAT' || form.value.category === 'EMBEDDING')
+/** 协议仅对 CHAT/EMBEDDING/RERANK 有意义（VIDEO/IMAGE 是任务型协议，走媒体包）；
+ * EMBEDDING/RERANK 禁选 ANTHROPIC（Claude 无 embed / rerank 接口）。 */
+const showProtocol = computed(() =>
+  form.value.category === 'CHAT' || form.value.category === 'EMBEDDING' || form.value.category === 'RERANK')
+const noAnthropic = computed(() =>
+  form.value.category === 'EMBEDDING' || form.value.category === 'RERANK')
 const protocolOptions = computed(() => [
   { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
-  { label: 'Anthropic / Claude', value: 'ANTHROPIC', disabled: form.value.category === 'EMBEDDING' }
+  { label: 'Anthropic / Claude', value: 'ANTHROPIC', disabled: noAnthropic.value }
 ])
 watch(() => form.value.category, (cat) => {
-  if (cat === 'EMBEDDING' && form.value.protocol === 'ANTHROPIC') {
+  if ((cat === 'EMBEDDING' || cat === 'RERANK') && form.value.protocol === 'ANTHROPIC') {
     form.value.protocol = 'OPENAI_COMPATIBLE'
   }
 })
@@ -155,15 +159,19 @@ const endpointPlaceholder = computed(() => {
   switch (form.value.category) {
     case 'EMBEDDING': return 'https://api.openai.com/v1/embeddings'
     case 'VIDEO': return 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks'
-    case 'IMAGE': return '生图任务端点完整 URL（生图 provider 尚未接入，先占位）'
+    case 'IMAGE': return 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
+    case 'RERANK': return 'https://api.jina.ai/v1/rerank'
     default: return 'https://api.openai.com/v1/chat/completions'
   }
 })
 
-/** CHAT/EMBEDDING 软校验：URL 以 base 形态（/v1、/api/v3…）结尾时警告不拦截（大概率漏填 API 路径）。 */
+/** CHAT/EMBEDDING/RERANK 软校验：URL 以 base 形态（/v1、/api/v3…）结尾时警告不拦截（大概率漏填 API 路径）。 */
 function warnIfBaseUrl() {
   const url = (form.value.apiEndpoint ?? '').trim()
-  if ((form.value.category === 'CHAT' || form.value.category === 'EMBEDDING') && /\/(api\/)?v\d+\/?$/i.test(url)) {
+  const fullUrlCategory = form.value.category === 'CHAT'
+    || form.value.category === 'EMBEDDING'
+    || form.value.category === 'RERANK'
+  if (fullUrlCategory && /\/(api\/)?v\d+\/?$/i.test(url)) {
     message.warning('端点疑似 base URL（缺 API 路径）：全 URL 直发后运行时将原样请求该地址，建议补全如 /chat/completions')
   }
 }
@@ -171,14 +179,16 @@ function warnIfBaseUrl() {
 const categoryOptions = [
   { label: '对话 (CHAT)', value: 'CHAT' },
   { label: '向量 (EMBEDDING)', value: 'EMBEDDING' },
+  { label: '重排 (RERANK)', value: 'RERANK' },
   { label: '视频 (VIDEO)', value: 'VIDEO' },
-  { label: '生图 (IMAGE·预留)', value: 'IMAGE' }
+  { label: '生图 (IMAGE)', value: 'IMAGE' }
 ]
 
-/** category badge 配色：对话=蓝，向量=绿，视频=红，生图=橙（预留）。 */
-const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'error' }> = {
+/** category badge 配色：对话=蓝，向量=绿，重排=紫，视频=红，生图=橙。 */
+const CATEGORY_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'error' | 'primary' }> = {
   CHAT: { label: '对话', type: 'info' },
   EMBEDDING: { label: '向量', type: 'success' },
+  RERANK: { label: '重排', type: 'primary' },
   VIDEO: { label: '视频', type: 'error' },
   IMAGE: { label: '生图', type: 'warning' }
 }
@@ -288,20 +298,27 @@ async function handleDelete(id: number) {
   await load()
 }
 
-/** 测试类型四分：EMBEDDING→embed 取维度；VIDEO→任务端点零成本探测；IMAGE→预留不发请求；CHAT→chat 短对话。 */
-type TestKind = 'chat' | 'embed' | 'video' | 'image'
+/** 测试类型五分：EMBEDDING→embed 取维度；VIDEO→任务端点零成本探测；
+ * IMAGE→同步生图端点无统一零成本探测（提示去生图页实测）；RERANK→暂无专用探测；CHAT→chat 短对话。 */
+type TestKind = 'chat' | 'embed' | 'video' | 'image' | 'rerank'
 
 function testKindOf(category: string | undefined): TestKind {
   if (category === 'EMBEDDING') return 'embed'
   if (category === 'VIDEO') return 'video'
   if (category === 'IMAGE') return 'image'
+  if (category === 'RERANK') return 'rerank'
   return 'chat'
 }
 
-/** 按行分流测试。IMAGE 尚未接入生图 provider，直接提示不发请求。 */
+/** 按行分流测试。IMAGE 是同步生图端点（无 Ark 式任务查询可零成本探测）；
+ * RERANK 暂无专用探测端点——两者给指引不发请求。 */
 async function runTest(id: number, kind: TestKind) {
   if (kind === 'image') {
-    message.info('生图 provider 尚未接入，配置已保存（测试将在接入后开放）')
+    message.info('生图为同步任务端点，无统一零成本探测：请保存后到「图片生成」页实际生成一张验证连通与计费')
+    return
+  }
+  if (kind === 'rerank') {
+    message.info('重排模型暂无专用连通测试：请保存后在知识库「重排配置」选它并实际检索验证')
     return
   }
   const res = kind === 'embed'
@@ -339,9 +356,13 @@ async function handleTestInModal() {
     return
   }
   const kind = testKindOf(form.value.category)
-  // IMAGE 预留：无需保存即可提示（不发请求）
+  // IMAGE/RERANK 无专用探测端点：无需保存即可提示（不发请求）
   if (kind === 'image') {
-    message.info('生图 provider 尚未接入，配置已保存（测试将在接入后开放）')
+    message.info('生图为同步任务端点，无统一零成本探测：请保存后到「图片生成」页实际生成一张验证连通与计费')
+    return
+  }
+  if (kind === 'rerank') {
+    message.info('重排模型暂无专用连通测试：请保存后在知识库「重排配置」选它并实际检索验证')
     return
   }
   testing.value = true
@@ -381,8 +402,10 @@ async function doExport() {
   exporting.value = true
   try {
     const res = await llmApi.exportProviders()
-    // responseType: 'blob' → res 是 Blob；触发浏览器下载
-    const blob = res as unknown as Blob
+    // 响应拦截器对 responseType: 'blob' 原样返回 AxiosResponse（跳过业务码解包），
+    // 真正的 Blob 在 .data —— 直接把 AxiosResponse 传 createObjectURL 会 TypeError
+    // 被下方 catch 静默吞掉，表现为「导出按钮点了但文件永远不下载」（10x 未解决项 1 根因）。
+    const blob = (res as unknown as { data: Blob }).data ?? (res as unknown as Blob)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
