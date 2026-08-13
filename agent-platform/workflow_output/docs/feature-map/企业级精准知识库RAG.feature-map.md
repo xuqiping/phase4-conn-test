@@ -36,7 +36,7 @@
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 | 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
-| Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/` | LLM/DISABLED Provider、候选白名单、严格 JSON 与显式模型 |
+| Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/`、`RagRetrievalService.java` | LLM/RERANK/DISABLED Provider 已接生产链路；候选白名单、正文相关性、严格 JSON 与显式模型 |
 | Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 | 动态证据覆盖 | `backend/src/main/java/com/superprogrammer/knowledge/context/CoverageSelector.java`、`EvidenceBudget.java` | 按问题类型选择 2～20 条并限制单文档挤占 |
 | 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
@@ -184,3 +184,4 @@
 | 2026-08-13 | 增加在线反馈待审核队列、低基数 RAG 指标、测试方案/README/旧文档导航 | P5 Step 5 完成，P0–P5 收口 |
 | 2026-08-13 | 完成审计后修正索引控制面：快照/路由持久化、未登记目标拦截、首快照 Alias 激活 | P2 Step 5 真实性修复 |
 | 2026-08-13 | 接通实际物理索引创建、快照任务、进度恢复、取消、READY 门禁与前端操作 | P2 重建闭环真实性修复 |
+| 2026-08-13 | QueryPlan 与真实 Ranking Engine 接入 RagRetrievalService，移除启发式代理伪标 | P3 生产链路修复 1 |

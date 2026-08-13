@@ -72,6 +72,8 @@ public class RagRetrievalService {
     private final RagRecallProperties recallProps;
     private final RagTraceService ragTraceService;
     private final RankingConfigService rankingConfigService;
+    private final com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
+    private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
 
     // ============================ 内部 record ============================
 
@@ -135,6 +137,7 @@ public class RagRetrievalService {
         RagRetrievalLog trace = newLog(traceId, userId, req, mode);
         try {
             KnowledgeBase kb = knowledgeBaseService.ensure(req.getKbId());
+            com.superprogrammer.knowledge.query.QueryPlan queryPlan = queryPlanner.plan(req.getQuery());
             boolean admin = req.isAdminHint();
             if (!knowledgeBaseService.canRead(kb, userId, admin)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
@@ -210,8 +213,8 @@ public class RagRetrievalService {
                 throw new IllegalStateException("B3 违规: rerank pool=" + pool.size()
                         + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
             }
-            List<L2Candidate> topK = rankWithTrace(req.getKbId(), pool, ragConfig.getMaxL2Read(),
-                    "P0_PROXY_NOT_YET_ENABLED");
+            List<L2Candidate> topK = rankWithTrace(req.getKbId(), req.getQuery(), pool,
+                    ragConfig.getMaxL2Read());
             List<L2Candidate> bm25OnlyCands = topK.stream().filter(L2Candidate::bm25Only).toList();
             trace.setL2LexicalFallback(bm25Fallback[0]);
 
@@ -422,8 +425,8 @@ public class RagRetrievalService {
             double globalMaxBm = allPool.stream().map(L2Candidate::bm25Rank)
                     .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
             List<L2Candidate> ranked = rerankWithBoost(allPool, globalMaxBm);
-            List<L2Candidate> topK = rankWithTrace(validScopes.get(0).kbId, ranked,
-                    ragConfig.getMaxL2Read(), "P0_PROXY_NOT_YET_ENABLED_MULTI_KB_PRIMARY_CONFIG");
+            List<L2Candidate> topK = rankWithTrace(validScopes.get(0).kbId, query, ranked,
+                    ragConfig.getMaxL2Read());
 
             // 软拒答（hard 阈；灰区 bestSim∈[hard,soft) 照注入证据，不 abstain——注入优于拒答）
             // best sim 取 L0 父 sim 与 L1 doc sim 较大者（Phase3：L1 可救 L0 漏召回）
@@ -778,19 +781,45 @@ public class RagRetrievalService {
     /**
      * P0 只建立可观测契约，当前实际排序仍是启发式代理，不能伪记为已经调用 LLM/Rerank。
      */
-    private List<L2Candidate> rankWithTrace(Long kbId, List<L2Candidate> rankedPool, int limit,
-                                            String fallbackReason) {
+    private List<L2Candidate> rankWithTrace(Long kbId, String query, List<L2Candidate> rankedPool, int limit) {
         RankingConfigService.ResolvedRankingConfig config = rankingConfigService.resolve(kbId);
         String candidateSummary = rankedPool.stream()
                 .map(c -> String.valueOf(c.nodeId()))
                 .collect(java.util.stream.Collectors.joining(","));
-        try (var ranking = ragTraceService.beginRanking(config.mode(), "HEURISTIC_PROXY",
-                config.configId(), config.configVersion(), rankedPool.size(), candidateSummary, fallbackReason)) {
+        try (var ranking = ragTraceService.beginRanking(config.mode(), config.mode(),
+                config.configId(), config.configVersion(), rankedPool.size(), candidateSummary, null)) {
             try {
-                List<L2Candidate> topK = pickTopK(rankedPool, Math.min(limit, config.finalLimit()));
+                List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> candidates = rankedPool.stream()
+                        .limit(config.candidateLimit())
+                        .map(c -> new com.superprogrammer.knowledge.retrieval.RetrievalCandidate(
+                                String.valueOf(c.nodeId()), c.nodeId(), c.documentId(), "FUSED", c.rerankScore(),
+                                c.title(), c.content()))
+                        .toList();
+                List<com.superprogrammer.knowledge.ranking.RankingResult> results =
+                        rankingEngine.rank(config.mode(), query, candidates, config.model());
+                Map<Long, L2Candidate> remaining = rankedPool.stream().collect(java.util.stream.Collectors.toMap(
+                        L2Candidate::nodeId, c -> c, (a, b) -> a, LinkedHashMap::new));
+                List<L2Candidate> ordered = new ArrayList<>();
+                for (com.superprogrammer.knowledge.ranking.RankingResult result : results) {
+                    Long nodeId;
+                    try { nodeId = Long.valueOf(result.candidateId()); }
+                    catch (NumberFormatException e) { throw new IllegalArgumentException("ranking candidate id invalid"); }
+                    L2Candidate original = remaining.remove(nodeId);
+                    if (original == null) throw new IllegalArgumentException("ranking candidate id invalid: " + nodeId);
+                    ordered.add(new L2Candidate(original.nodeId(), original.documentId(), original.parentId(),
+                            original.title(), original.content(), original.contentHash(), original.parentL0Sim(),
+                            original.bm25Rank(), result.score(), original.bm25Only(), original.docL1Sim()));
+                }
+                if ("DISABLED".equals(config.mode())) ordered.addAll(remaining.values());
+                List<L2Candidate> topK = pickTopK(ordered, Math.min(limit, config.finalLimit()));
                 ranking.succeed(topK.size());
                 return topK;
             } catch (RuntimeException e) {
+                if ("FALLBACK_RRF".equalsIgnoreCase(config.fallbackPolicy())) {
+                    List<L2Candidate> fallback = pickTopK(rankedPool, Math.min(limit, config.finalLimit()));
+                    ranking.succeed(fallback.size());
+                    return fallback;
+                }
                 ranking.fail(e.getMessage());
                 throw e;
             }

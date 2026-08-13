@@ -43,6 +43,8 @@ class RagRetrievalServiceTest {
     @Mock private AnswerCacheService answerCacheService;
     @Mock private QueryExpansionService queryExpansionService;
     @Mock private RankingConfigService rankingConfigService;
+    @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
+    @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -60,7 +62,7 @@ class RagRetrievalServiceTest {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
-                ragTraceService, rankingConfigService);
+                ragTraceService, rankingConfigService, queryPlanner, rankingEngine);
         lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
                 .thenReturn(retrievalScope);
         lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(
@@ -68,7 +70,14 @@ class RagRetrievalServiceTest {
                         30, 10, 10, 4000, "FAIL_CLOSED", false,
                         RankingConfigService.Source.ADMIN_DEFAULT));
         lenient().when(ragTraceService.beginRanking(anyString(), anyString(), any(), anyString(),
-                anyInt(), anyString(), anyString())).thenReturn(rankingScope);
+                anyInt(), anyString(), nullable(String.class))).thenReturn(rankingScope);
+        lenient().when(queryPlanner.plan(anyString())).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "SEMANTIC", "DIRECT", java.util.Map.of(), List.of("DENSE", "SPARSE"), false, false, true));
+        lenient().when(rankingEngine.rank(anyString(), anyString(), anyList(), any())).thenAnswer(invocation -> {
+            List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> candidates = invocation.getArgument(2);
+            return candidates.stream().map(c -> new com.superprogrammer.knowledge.ranking.RankingResult(
+                    c.id(), c.rawScore(), invocation.getArgument(0), invocation.getArgument(3))).toList();
+        });
     }
 
     @Test
@@ -125,6 +134,7 @@ class RagRetrievalServiceTest {
         // B4 精神：每个逻辑 query 一轮扩展；service 不再直调 embed（embed 在 QueryExpansionService 内）
         verify(queryExpansionService, times(1)).expand(anyString(), anyString(), any());
         verify(llmGateway, never()).embed(anyString(), anyString());
+        verify(queryPlanner).plan("如何安装");
     }
 
     @Test
@@ -171,7 +181,7 @@ class RagRetrievalServiceTest {
     }
 
     @Test
-    void rankingProxy_recordsConfiguredAndEffectiveMode() {
+    void configuredRankingEngineActuallyReordersCandidates() {
         KnowledgeBase kb = kb(1L);
         stubReadableAll(kb);
         stubExpandSingle();
@@ -184,8 +194,11 @@ class RagRetrievalServiceTest {
                 .thenReturn(List.of(l2Row(11L, 99L, 10L, "安装步骤", "PostgreSQL16 安装", "hash11")));
         when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
         when(queryMapper.reverifyNode(11L)).thenReturn(hashRow("hash11"));
-        when(ragTraceService.beginRanking(eq("LLM"), eq("HEURISTIC_PROXY"), eq(12L), eq("rc-1"),
-                eq(1), anyString(), eq("P0_PROXY_NOT_YET_ENABLED"))).thenReturn(rankingScope);
+        when(ragTraceService.beginRanking(eq("LLM"), eq("LLM"), eq(12L), eq("rc-1"),
+                eq(1), anyString(), isNull())).thenReturn(rankingScope);
+        when(rankingEngine.rank(eq("LLM"), eq("如何安装"), anyList(), eq("ranking-chat")))
+                .thenReturn(List.of(new com.superprogrammer.knowledge.ranking.RankingResult(
+                        "11", 0.99, "LLM", "ranking-chat")));
         lenient().when(llmGateway.chat(any(), any()))
                 .thenReturn(LlmResponse.builder().content("[1] 安装步骤说明").build());
 
@@ -193,6 +206,9 @@ class RagRetrievalServiceTest {
 
         assertFalse(vo.isAbstained());
         verify(rankingScope).succeed(1);
+        verify(rankingEngine).rank(eq("LLM"), eq("如何安装"), anyList(), eq("ranking-chat"));
+        verify(rankingEngine).rank(eq("LLM"), eq("如何安装"), argThat(candidates ->
+                candidates.size() == 1 && "PostgreSQL16 安装".equals(candidates.get(0).content())), eq("ranking-chat"));
     }
 
     // ============================ helpers ============================
