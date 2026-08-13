@@ -225,7 +225,8 @@ public interface RagRetrievalQueryMapper {
 
     /** step8 I3：evidence 装载前 content_hash 复校（node 现值 vs 捕获值）。 */
     @Select("""
-            SELECT n.id, n.content_hash AS node_hash, e.content_hash AS embed_hash
+            SELECT n.id, n.content_hash AS node_hash, e.content_hash AS embed_hash,
+                   n.metadata AS metadata
             FROM knowledge_nodes n
             LEFT JOIN knowledge_embeddings_doubao e ON e.node_id = n.id
             WHERE n.id = #{nodeId} AND n.deleted = 0

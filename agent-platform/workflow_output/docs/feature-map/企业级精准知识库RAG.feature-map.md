@@ -43,6 +43,7 @@
 | 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
 | 上下文组装 | `ContextBuilder.java`、`NeighborExpander.java` | PG 复核结果、Hash 去重、授权邻居和 token 硬预算 |
 | 引用校验 | `citation/CitationVerifier.java`、`service/internal/CitationChecker.java`、`RagRetrieveVO.java` | locator、权限/版本/Hash、Claim 支持度 |
+| Citation locator 真实接线 | `mapper/RagRetrievalQueryMapper.java`、`dto/RagQueryRow.java`、`service/RagRetrievalService.java` | PG 最终复核同时读取节点 metadata，解析 page/article/sheet/cellRange/bbox，经 CitationVerifier 后写入响应 |
 | Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
 | RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V110__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标 |
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |

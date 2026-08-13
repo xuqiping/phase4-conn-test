@@ -47,6 +47,7 @@ public class RagQueryRow {
         private Long id;
         private String nodeHash;
         private String embedHash;
+        private String metadata;
     }
 
     /** L1 文档元数据行（含 IMAGE/FILE 原件回显字段 file_ref/mime/original_name，LEFT JOIN stored_files）。 */

@@ -201,16 +201,21 @@ class RagRetrievalServiceTest {
                 .thenReturn(List.of(l2Row(11L, 99L, 10L, "安装步骤", "PostgreSQL16 安装", "hash11")));
         when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
         when(queryMapper.reverifyNode(eq(11L))).thenReturn(hashRow("hash11"));
+        RagRetrieveRequest request = req(1L, "如何安装");
+        request.setGenerateAnswer(true);
         // generate 调 chat(req, userId) 两参重载（lenient：流程短路时不触达，防误报）
         lenient().when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder().content("[1] 安装步骤说明").build());
 
-        RagRetrieveVO vo = service.retrieve(req(1L, "如何安装"), 7L);
+        RagRetrieveVO vo = service.retrieve(request, 7L);
 
         assertFalse(vo.isAbstained());
         assertTrue(vo.isLowConfidence());   // 灰区标低置信
         assertNotNull(vo.getAnswer());
         verify(evidencePolicyService).apply(eq("PROCEDURE"), anyInt(), anyList(), anyInt(), anyDouble(), eq(false));
         assertEquals("SUPPORTED", vo.getConfidenceState());
+        assertFalse(vo.getCitations().isEmpty(), vo.toString());
+        assertEquals("3", vo.getCitations().get(0).getPage());
+        assertEquals("安装", vo.getCitations().get(0).getArticle());
     }
 
     @Test
@@ -298,6 +303,7 @@ class RagRetrievalServiceTest {
         RagQueryRow.HashVerifyRow r = new RagQueryRow.HashVerifyRow();
         r.setNodeHash(hash);
         r.setEmbedHash(hash);
+        r.setMetadata("{\"titlePath\":[\"安装\"],\"locator\":{\"pageStart\":3,\"pageEnd\":3}}");
         return r;
     }
 }

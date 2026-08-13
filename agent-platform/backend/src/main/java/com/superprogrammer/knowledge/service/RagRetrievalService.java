@@ -76,6 +76,8 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
+    private final com.superprogrammer.knowledge.citation.CitationVerifier citationVerifier =
+            new com.superprogrammer.knowledge.citation.CitationVerifier();
 
     // ============================ 内部 record ============================
 
@@ -100,7 +102,11 @@ public class RagRetrievalService {
                             String contentHash, String docType,
                             String fileRef, String mime, String originalName,
                             String l1Outline, String l1Rules,
-                            int citationIndex, double rerankScore) {
+                            int citationIndex, double rerankScore, LocatorData locator) {
+    }
+
+    private record LocatorData(String canonical, String page, String article,
+                               String sheet, String cellRange, String bbox) {
     }
 
     private record EvidencePack(String prompt, Set<Integer> injectedIndexes,
@@ -482,11 +488,15 @@ public class RagRetrievalService {
             String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
             writeTraceMerged(trace, allL0, pack.injected(), budget, verdict, t0, effectiveKbs, query, userId);
             List<com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO> citations = pack.injected().stream()
+                    .filter(this::hasValidLocator)
                     .map(e -> com.superprogrammer.knowledge.dto.RagRetrieveVO.CitationVO.builder()
                             .index(e.citationIndex()).documentId(e.documentId())
                             .title(e.title()).nodeId(e.nodeId())
                             .docType(e.docType()).fileRef(e.fileRef())
-                            .mime(e.mime()).originalName(e.originalName()).build())
+                            .mime(e.mime()).originalName(e.originalName())
+                            .page(e.locator().page()).article(e.locator().article())
+                            .sheet(e.locator().sheet()).cellRange(e.locator().cellRange())
+                            .bbox(e.locator().bbox()).build())
                     .toList();
             // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
             if (!grayZone && answerCacheProps.isEnabled()) {
@@ -889,7 +899,7 @@ public class RagRetrievalService {
             L1Outline l1 = loadL1(c.documentId());
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
                     c.contentHash(), l1.docType, l1.fileRef, l1.mime, l1.originalName,
-                    l1.outline, l1.rules, idx, c.rerankScore()));
+                    l1.outline, l1.rules, idx, c.rerankScore(), parseLocator(hv.getMetadata())));
             idx++;
         }
         return out;
@@ -901,7 +911,7 @@ public class RagRetrievalService {
         for (Evidence e : evidence) {
             result.add(new Evidence(e.nodeId(), e.documentId(), e.title(), e.content(),
                     e.contentHash(), e.docType(), e.fileRef(), e.mime(), e.originalName(),
-                    e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore()));
+                    e.l1Outline(), e.l1Rules(), citationIndex++, e.rerankScore(), e.locator()));
         }
         return result;
     }
@@ -1041,10 +1051,13 @@ public class RagRetrievalService {
         List<RagRetrieveVO.CitationVO> citations = new ArrayList<>();
         for (Integer i : cited) {
             Evidence e = byIdx.get(i);
-            if (e != null) {
+            if (e != null && hasValidLocator(e)) {
                 citations.add(RagRetrieveVO.CitationVO.builder()
                         .index(i).documentId(e.documentId()).title(e.title()).nodeId(e.nodeId())
                         .docType(e.docType()).fileRef(e.fileRef()).mime(e.mime()).originalName(e.originalName())
+                        .page(e.locator().page()).article(e.locator().article())
+                        .sheet(e.locator().sheet()).cellRange(e.locator().cellRange())
+                        .bbox(e.locator().bbox())
                         .build());
             }
         }
@@ -1059,6 +1072,52 @@ public class RagRetrievalService {
                 .tokenBudget(budget)
                 .latencyMs(System.currentTimeMillis() - t0)
                 .build();
+    }
+
+    private boolean hasValidLocator(Evidence evidence) {
+        LocatorData locator = evidence.locator();
+        return locator != null && citationVerifier.verify(
+                new com.superprogrammer.knowledge.citation.CitationVerifier.Citation(
+                        evidence.nodeId(), locator.canonical(), evidence.contentHash(), true, true),
+                evidence.content(), ignored -> true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private LocatorData parseLocator(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) return null;
+        try {
+            Map<String, Object> metadata = objectMapper.readValue(metadataJson, Map.class);
+            Object locatorRaw = metadata.get("locator");
+            if (!(locatorRaw instanceof Map<?, ?> locator) || locator.isEmpty()) return null;
+            String page = range(locator.get("pageStart"), locator.get("pageEnd"));
+            String sheet = stringValue(locator.get("sheetName"));
+            String cellRange = range(locator.get("cellStart"), locator.get("cellEnd"));
+            String article = null;
+            Object titlePath = metadata.get("titlePath");
+            if (titlePath instanceof List<?> path && !path.isEmpty()) {
+                article = path.stream().map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(" / "));
+            }
+            String bbox = locator.get("boundingBoxes") == null ? null
+                    : objectMapper.writeValueAsString(locator.get("boundingBoxes"));
+            String canonical = objectMapper.writeValueAsString(locator);
+            return new LocatorData(canonical, page, article, sheet, cellRange, bbox);
+        } catch (Exception e) {
+            log.warn("RAG citation locator metadata invalid node metadata ignored");
+            return null;
+        }
+    }
+
+    private String range(Object start, Object end) {
+        String from = stringValue(start);
+        String to = stringValue(end);
+        if (from == null) return to;
+        if (to == null || from.equals(to)) return from;
+        return from + "-" + to;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 
     private void writeTrace(RagRetrievalLog trace, List<RecallHit> l0, List<Evidence> evidence,
@@ -1122,7 +1181,7 @@ public class RagRetrievalService {
         int idx = 1;
         for (L2Candidate c : topK) {
             out.add(new Evidence(c.nodeId(), c.documentId(), c.title(), c.content(),
-                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore()));
+                    c.contentHash(), null, null, null, null, null, null, idx, c.rerankScore(), null));
             idx++;
         }
         return out;
