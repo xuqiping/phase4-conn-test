@@ -17,6 +17,7 @@ describe('knowledge evaluation api', () => {
     await knowledgeApi.exportEvaluationJsonl(3)
     await knowledgeApi.startEvaluationRun(3, 'pipeline-v2')
     await knowledgeApi.getEvaluationRun(5)
+    await knowledgeApi.listShadowComparisons(9, 'FAILED', 25)
 
     expect(request.post).toHaveBeenCalledWith('/knowledge/admin/evaluation/datasets', {
       kbId: 9, name: '回归集', description: '说明'
@@ -34,5 +35,8 @@ describe('knowledge evaluation api', () => {
       pipelineVersion: 'pipeline-v2'
     })
     expect(request.get).toHaveBeenCalledWith('/knowledge/admin/evaluation/runs/5')
+    expect(request.get).toHaveBeenCalledWith('/knowledge/admin/shadow-comparisons', {
+      params: { kbId: 9, status: 'FAILED', limit: 25 }
+    })
   })
 })

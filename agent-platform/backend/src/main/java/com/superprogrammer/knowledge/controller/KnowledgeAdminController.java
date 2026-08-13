@@ -31,6 +31,8 @@ public class KnowledgeAdminController {
     private final com.superprogrammer.knowledge.opensearch.KnowledgeIndexRebuildService indexRebuildService;
     private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
     private final com.superprogrammer.knowledge.migration.RagRolloutReadinessService rolloutReadinessService;
+    private final com.superprogrammer.knowledge.retrieval.ShadowComparisonQueryService shadowComparisonQueryService;
+    private final com.superprogrammer.knowledge.service.KnowledgeBaseService knowledgeBaseService;
 
     @PostMapping("/backfill-tokens")
     @RequirePermission("knowledge:manage")
@@ -110,6 +112,15 @@ public class KnowledgeAdminController {
     public ResponseEntity<R<com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState>> rollbackRollout(
             @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.RagRolloutRequest request) {
         return ResponseEntity.ok(R.ok(ragRolloutService.rollback(kbId, currentUserId(), request.confirmed())));
+    }
+
+    @GetMapping("/shadow-comparisons")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.knowledge.retrieval.ShadowComparisonQueryService.ShadowComparison>>>
+    shadowComparisons(Long kbId, String status, Integer limit) {
+        com.superprogrammer.knowledge.entity.KnowledgeBase kb = knowledgeBaseService.ensure(kbId);
+        return ResponseEntity.ok(R.ok(shadowComparisonQueryService.findRecent(
+                kb.getTenantId(), kbId, status, limit == null ? 50 : limit)));
     }
 
     private long currentUserId() {

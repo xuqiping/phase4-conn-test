@@ -52,6 +52,7 @@
 | 评测 Dataset/Case 领域服务 | `evaluation/EvaluationService.java` | tenant/KB 归属、逐行容错 JSONL 导入、脱敏结构导出、Repository 边界 |
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
 | 评测管理界面 | `KnowledgeEvaluationView.vue`、`EvaluationRunPanel.vue`、`ShadowComparisonPanel.vue`、`KnowledgeView.vue` | 管理员启动异步评测、查看 Champion/Challenger 与发布门禁状态 |
+| Shadow 查询 | `retrieval/ShadowComparisonQueryService.java`、`ShadowRetrievalMapper.java`、`KnowledgeAdminController.java`、`ShadowComparisonPanel.vue` | 按真实 tenant/KB/status 查询 Trace、版本、证据 ID、成本和安全摘要，不返回敏感正文 |
 | 稳定灰度与回滚 | `migration/RagRolloutService.java`、`RagRolloutReadinessService.java`、`RagModeResolver.java`、`KnowledgeAdminController.java`、`IndexOperationsPanel.vue` | 按 KB/用户稳定分桶，后端权威门禁，回滚时恢复路由并失效答案缓存 |
 | 反馈与运维指标 | `evaluation/FeedbackReviewService.java`、`FeedbackReviewMapper.java`、`RagFeedbackController.java`、`BizMetrics.java`、`RagAskPanel.vue`、`V111__rag_feedback_review_queue.sql` | 反馈只进待审核队列；召回/重排/覆盖/降级/删除 SLA 使用低基数指标 |
 

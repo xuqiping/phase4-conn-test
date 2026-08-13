@@ -379,6 +379,20 @@ export interface EvaluationRun {
   errorSummary?: string | null
 }
 
+export interface ShadowComparison {
+  id: number
+  kbId: number
+  championTraceId?: string | null
+  challengerTraceId?: string | null
+  championVersion: string
+  challengerVersion: string
+  status: string
+  rankedChunkIds: string[]
+  cost: number
+  errorSummary?: string | null
+  createdAt: string
+}
+
 // === API 函数 ===
 
 /** FormData 追加图片/文件上传选项（非空字段才追加，空=后端按后缀推断 + AUTO 默认）。 */
@@ -470,6 +484,11 @@ export const knowledgeApi = {
   },
   getEvaluationRun(runId: number) {
     return request.get<ApiResponse<EvaluationRun>>(`/knowledge/admin/evaluation/runs/${runId}`)
+  },
+  listShadowComparisons(kbId: number, status?: string, limit = 50) {
+    return request.get<ApiResponse<ShadowComparison[]>>('/knowledge/admin/shadow-comparisons', {
+      params: { kbId, status, limit }
+    })
   },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)
