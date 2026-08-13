@@ -73,7 +73,7 @@
   - **安全检查**：候选 ID 白名单；文档内容作为 data，不得覆盖 system prompt；不向模型发送无权候选。
   - **验证**：有效/无效 JSON、未知 ID、重复 ID、超时、重试、三种 fallback、计费归户。
 
-- [ ] **Step 5：预留专用 Rerank Provider 并完善 Trace/调试面板**
+- [x] **Step 5：预留专用 Rerank Provider 并完善 Trace/调试面板**
   - **对应需求**：RAG-FR-04、RAG-FR-08
   - **目标**：未来接入专用模型只新增 Provider；当前未配置时页面不可误选。
   - **动作**：实现 provider SPI 和 capability 校验，不接真实外部模型；记录 configured/effective mode、前后排序、批次、耗时、token/费用；前端显示 QueryPlan/RRF/Ranking 时间线。

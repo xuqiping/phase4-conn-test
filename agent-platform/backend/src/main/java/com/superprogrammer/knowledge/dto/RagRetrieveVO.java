@@ -27,6 +27,20 @@ public class RagRetrieveVO {
     private List<EvidenceVO> evidenceL2;
     private TokenBudgetVO tokenBudget;
     private long latencyMs;
+    /** QueryPlan → RRF → Ranking 调试时间线；不含 Query/Chunk 正文。 */
+    private List<RetrievalStageVO> retrievalTimeline;
+
+    @Data
+    @Builder
+    public static class RetrievalStageVO {
+        private String stage;
+        private String configuredMode;
+        private String effectiveMode;
+        private String model;
+        private int candidateCount;
+        private long latencyMs;
+        private String status;
+    }
 
     @Data
     @Builder

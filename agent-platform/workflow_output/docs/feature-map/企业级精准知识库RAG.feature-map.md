@@ -35,6 +35,7 @@
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 | 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
 | Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/` | LLM/DISABLED Provider、候选白名单、严格 JSON 与显式模型 |
+| Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 
 ## 关键调用链路
 
@@ -151,3 +152,4 @@
 | 2026-08-13 | 增加 OpenSearch ACL/版本强制 Pre-filter | P3 Step 2 完成 |
 | 2026-08-13 | 增加统一候选协议、多通道降级与加权 RRF | P3 Step 3 完成 |
 | 2026-08-13 | 增加统一 Ranking Engine 与严格 LLM 重排协议 | P3 Step 4 完成 |
+| 2026-08-13 | 增加专用 Rerank SPI、能力校验与调试时间线 | P3 Step 5 完成，P3 收口 |

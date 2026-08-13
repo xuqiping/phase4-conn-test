@@ -56,6 +56,14 @@
         <div v-if="result.bm25Fallback" class="rag-debug__fallback-hint">
           ⚠ BM25 词法兜底触发：有候选无向量父锚，纯词法命中进入 pool（见下「候选 BM25」）
         </div>
+        <div v-if="result.retrievalTimeline?.length" class="rag-debug__section">
+          <h4 class="rag-debug__section-title">QueryPlan / RRF / Ranking 时间线</h4>
+          <div class="rag-debug__budget">
+            <span v-for="stage in result.retrievalTimeline" :key="stage.stage">
+              {{ stage.stage }}：{{ stage.effectiveMode || stage.configuredMode || '-' }} · {{ stage.candidateCount }} 条 · {{ stage.latencyMs }}ms · {{ stage.status }}
+            </span>
+          </div>
+        </div>
 
         <div v-if="lastGen" class="rag-debug__section">
           <h4 class="rag-debug__section-title">回答</h4>

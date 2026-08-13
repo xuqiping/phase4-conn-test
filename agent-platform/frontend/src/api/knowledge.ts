@@ -254,6 +254,7 @@ export interface RagRetrieveVO {
   evidenceL2: RagEvidence[]
   tokenBudget: RagTokenBudget
   latencyMs: number
+  retrievalTimeline?: Array<{ stage: string; configuredMode?: string; effectiveMode?: string; model?: string | null; candidateCount: number; latencyMs: number; status: string }>
 }
 
 /** 检索审计记录（对应后端 RagRetrievalLogVO，大 JSON 字段原样透传） */
