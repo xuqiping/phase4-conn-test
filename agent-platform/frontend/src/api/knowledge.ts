@@ -366,6 +366,19 @@ export interface EvaluationImportResult {
   errors: Array<{ line: number; message: string }>
 }
 
+export interface EvaluationRun {
+  id: number
+  tenantId: number
+  datasetId: number
+  pipelineVersion: string
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+  startedBy: number
+  startedAt: string
+  finishedAt?: string | null
+  summaryMetrics: Record<string, number>
+  errorSummary?: string | null
+}
+
 // === API 函数 ===
 
 /** FormData 追加图片/文件上传选项（非空字段才追加，空=后端按后缀推断 + AUTO 默认）。 */
@@ -449,6 +462,14 @@ export const knowledgeApi = {
     return request.get<string>(`/knowledge/admin/evaluation/datasets/${datasetId}/cases/export`, {
       responseType: 'text'
     })
+  },
+  startEvaluationRun(datasetId: number, pipelineVersion: string) {
+    return request.post<ApiResponse<EvaluationRun>>(
+      `/knowledge/admin/evaluation/datasets/${datasetId}/runs`, { pipelineVersion }
+    )
+  },
+  getEvaluationRun(runId: number) {
+    return request.get<ApiResponse<EvaluationRun>>(`/knowledge/admin/evaluation/runs/${runId}`)
   },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)

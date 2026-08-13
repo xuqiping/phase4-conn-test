@@ -15,6 +15,8 @@ describe('knowledge evaluation api', () => {
     await knowledgeApi.importEvaluationJsonl(3, '{"question":"问题"}')
     await knowledgeApi.listEvaluationCases(3)
     await knowledgeApi.exportEvaluationJsonl(3)
+    await knowledgeApi.startEvaluationRun(3, 'pipeline-v2')
+    await knowledgeApi.getEvaluationRun(5)
 
     expect(request.post).toHaveBeenCalledWith('/knowledge/admin/evaluation/datasets', {
       kbId: 9, name: '回归集', description: '说明'
@@ -28,5 +30,9 @@ describe('knowledge evaluation api', () => {
     expect(request.get).toHaveBeenCalledWith('/knowledge/admin/evaluation/datasets/3/cases/export', {
       responseType: 'text'
     })
+    expect(request.post).toHaveBeenCalledWith('/knowledge/admin/evaluation/datasets/3/runs', {
+      pipelineVersion: 'pipeline-v2'
+    })
+    expect(request.get).toHaveBeenCalledWith('/knowledge/admin/evaluation/runs/5')
   })
 })

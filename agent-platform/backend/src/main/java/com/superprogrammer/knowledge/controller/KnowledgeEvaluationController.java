@@ -4,6 +4,7 @@ import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.evaluation.EvaluationService;
+import com.superprogrammer.knowledge.evaluation.EvaluationRunService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +27,7 @@ public class KnowledgeEvaluationController {
     private static final long CURRENT_TENANT_ID = 1L;
 
     private final EvaluationService evaluationService;
+    private final EvaluationRunService evaluationRunService;
 
     @PostMapping("/datasets")
     @RequirePermission("knowledge:manage")
@@ -60,6 +62,21 @@ public class KnowledgeEvaluationController {
                 .body(evaluationService.exportJsonl(CURRENT_TENANT_ID, datasetId));
     }
 
+    @PostMapping("/datasets/{datasetId}/runs")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_eval_run_start", targetType = "rag_eval_run")
+    public ResponseEntity<R<EvaluationRunService.Run>> startRun(
+            @PathVariable long datasetId, @RequestBody RunRequest request) {
+        return ResponseEntity.ok(R.ok(evaluationRunService.start(
+                CURRENT_TENANT_ID, datasetId, request.pipelineVersion(), currentUserId())));
+    }
+
+    @GetMapping("/runs/{runId}")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<EvaluationRunService.Run>> getRun(@PathVariable long runId) {
+        return ResponseEntity.ok(R.ok(evaluationRunService.get(CURRENT_TENANT_ID, runId)));
+    }
+
     private long currentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof Long id)) {
@@ -69,4 +86,5 @@ public class KnowledgeEvaluationController {
     }
 
     public record DatasetRequest(long kbId, String name, String description) {}
+    public record RunRequest(String pipelineVersion) {}
 }

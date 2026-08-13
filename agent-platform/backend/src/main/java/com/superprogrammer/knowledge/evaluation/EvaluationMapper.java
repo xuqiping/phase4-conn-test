@@ -49,6 +49,14 @@ public interface EvaluationMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insertRun(RunRow row);
 
+    @Select("""
+            SELECT r.id,d.tenant_id,r.dataset_id,r.pipeline_version,r.status,r.started_by,
+                   r.started_at,r.finished_at,r.summary_metrics::text,r.error_summary
+            FROM rag_eval_runs r JOIN rag_eval_datasets d ON d.id=r.dataset_id
+            WHERE d.tenant_id=#{tenantId} AND r.id=#{runId}
+            """)
+    RunRow findRun(@Param("tenantId") long tenantId, @Param("runId") long runId);
+
     @Update("""
             UPDATE rag_eval_runs SET status=#{status},finished_at=#{finishedAt},
               summary_metrics=#{summaryMetrics}::jsonb,error_summary=#{errorSummary}
@@ -73,7 +81,7 @@ public interface EvaluationMapper {
         public String metadata;
     }
     class RunRow {
-        public Long id; public Long datasetId; public String pipelineVersion; public String status;
+        public Long id; public Long tenantId; public Long datasetId; public String pipelineVersion; public String status;
         public Long startedBy; public OffsetDateTime startedAt; public OffsetDateTime finishedAt;
         public String summaryMetrics; public String errorSummary;
     }

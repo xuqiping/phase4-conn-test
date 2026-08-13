@@ -33,6 +33,12 @@ public class EvaluationRunService {
         return run;
     }
 
+    public Run get(long tenantId, long runId) {
+        Run run = repository.findRun(tenantId, runId);
+        if (run == null) throw new IllegalArgumentException("evaluation run not found");
+        return run;
+    }
+
     private void execute(Run queued, EvaluationService.Dataset dataset) {
         Run running = queued.withStatus("RUNNING", null, Map.of(), null);
         repository.updateRun(running);
@@ -94,6 +100,7 @@ public class EvaluationRunService {
         EvaluationService.Dataset findDataset(long tenantId, long datasetId);
         List<EvaluationService.EvalCase> listCases(long tenantId, long datasetId);
         Run insertRun(Run value);
+        Run findRun(long tenantId, long runId);
         void updateRun(Run value);
         void insertResult(Result value);
     }

@@ -34,6 +34,11 @@ public class PostgresEvaluationRepository implements EvaluationService.Repositor
         EvaluationMapper.RunRow row=runRow(value); mapper.insertRun(row);
         return value.withId(row.id);
     }
+    public EvaluationRunService.Run findRun(long tenantId, long runId) {
+        EvaluationMapper.RunRow row=mapper.findRun(tenantId,runId); if(row==null)return null;
+        return new EvaluationRunService.Run(row.id,row.tenantId,row.datasetId,row.pipelineVersion,row.status,
+                row.startedBy,row.startedAt,row.finishedAt,doubleMap(row.summaryMetrics),row.errorSummary);
+    }
     public void updateRun(EvaluationRunService.Run value) { mapper.updateRun(runRow(value)); }
     public void insertResult(EvaluationRunService.Result value) {
         EvaluationMapper.ResultRow row=new EvaluationMapper.ResultRow(); row.id=value.id(); row.runId=value.runId();
@@ -60,4 +65,5 @@ public class PostgresEvaluationRepository implements EvaluationService.Repositor
     private String json(Object value){try{return objectMapper.writeValueAsString(value);}catch(Exception e){throw new IllegalArgumentException("invalid evaluation json",e);}}
     private List<String> strings(String value){try{return objectMapper.readValue(value,new TypeReference<>(){});}catch(Exception e){return List.of();}}
     private Map<String,Object> map(String value){try{return objectMapper.readValue(value,new TypeReference<>(){});}catch(Exception e){return Map.of();}}
+    private Map<String,Double> doubleMap(String value){try{return objectMapper.readValue(value,new TypeReference<>(){});}catch(Exception e){return Map.of();}}
 }

@@ -39,6 +39,7 @@ class EvaluationRunServiceTest {
         public EvaluationRunService.Run insertRun(EvaluationRunService.Run value) {
             run = value.withId(5L); return run;
         }
+        public EvaluationRunService.Run findRun(long tenantId, long runId) { return run; }
         public void updateRun(EvaluationRunService.Run value) { run = value; }
         public void insertResult(EvaluationRunService.Result value) { result = value; }
     }

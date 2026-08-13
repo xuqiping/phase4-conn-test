@@ -9,6 +9,8 @@ vi.mock('@/api/knowledge', () => ({
     createEvaluationDataset: vi.fn(),
     importEvaluationJsonl: vi.fn(),
     listEvaluationCases: vi.fn()
+    ,startEvaluationRun: vi.fn()
+    ,getEvaluationRun: vi.fn()
   }
 }))
 
@@ -42,5 +44,16 @@ describe('EvaluationRunPanel', () => {
       3, '{"queryType":"FACT","question":"问题"}'
     ))
     expect(wrapper.text()).toContain('已导入 1 条')
+
+    vi.mocked(knowledgeApi.startEvaluationRun).mockResolvedValue({
+      data: { code: 200, data: { id: 5, status: 'QUEUED', summaryMetrics: {} } }
+    } as never)
+    vi.mocked(knowledgeApi.getEvaluationRun).mockResolvedValue({
+      data: { code: 200, data: { id: 5, status: 'COMPLETED', summaryMetrics: { recall: 1 } } }
+    } as never)
+    await wrapper.get('[data-test="pipeline-version"] input').setValue('pipeline-v2')
+    await wrapper.get('[data-test="start-run"]').trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('COMPLETED'))
+    expect(wrapper.text()).toContain('100.0%')
   })
 })

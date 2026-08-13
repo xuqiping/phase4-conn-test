@@ -171,6 +171,7 @@
 - `EvaluationRunService`：异步执行固定 Case，状态为 QUEUED/RUNNING/COMPLETED/FAILED；逐题关联 trace，汇总检索、引用、忠实度和拒答指标。它当前是显式装配的领域类，待 PostgreSQL 与生产 Pipeline 适配器完成后再注册运行时 Bean。
 - `RagEvaluationPipeline`：调用生产 `RagRetrievalService` 的 PRECISION 链路，把真实 traceId、Evidence nodeId、置信状态和引用校验结果转换成评测 Outcome；模型解析仍遵循显式选择和管理员默认规则。
 - `EvaluationRunConfiguration`：专用有界线程池隔离离线评测，防止大量黄金集任务占满在线请求线程。
+- `KnowledgeEvaluationController` 的 Run 端点：启动异步评测、按 tenant 查询状态；`EvaluationRunPanel.vue` 展示真实汇总指标，不用浏览器本地变量冒充任务进度。
 
 - [规格总览](../specs/企业级精准知识库RAG-总览.md)
 - [架构与数据](../specs/企业级精准知识库RAG-架构与数据.md)
