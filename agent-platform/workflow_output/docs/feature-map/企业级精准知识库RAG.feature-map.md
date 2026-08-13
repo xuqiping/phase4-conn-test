@@ -178,6 +178,7 @@
 - `RagRolloutReadinessService` + `ReleaseGateConfiguration`：查询最近已完成 Evaluation Run 的持久化指标，按可配置阈值判定发布门禁；不接受页面传入“已通过”布尔值。
 - `ShadowRetrievalService` + V117：Challenger 在独立线程池按采样、预算和超时执行；只持久化 trace、版本、状态、证据 ID 和成本，不保存用户 Query/Chunk 正文。
 - `RagShadowCoordinator` + `RagRankingRouteContext`：生产请求按灰度稳定分桶选择不可变 Ranking 配置版本；Champion 返回后再异步采样 Challenger，失败与计费/MDC 上下文均在隔离边界内处理。
+- `RagRolloutService` + V118：灰度状态分别保存 Ranking 配置版本和 OpenSearch 快照；回滚先切回上一 read alias，再恢复上一稳定分桶配置并失效答案缓存。
 - `FeedbackReviewService`：反馈一次性从 PENDING 审核为 APPROVED/REJECTED；只有 APPROVED 可成为黄金集候选，审核人和时间持久化并写审计。
 
 - [规格总览](../specs/企业级精准知识库RAG-总览.md)

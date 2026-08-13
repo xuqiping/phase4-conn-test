@@ -12,8 +12,8 @@ public class PostgresRagRolloutRepository implements RagRolloutService.Repositor
     }
     public RagRolloutService.RolloutHistory find(long kbId) {
         RagRolloutMapper.RolloutRow row=mapper.find(kbId); if(row==null)return null;
-        var current=new RagRolloutService.RolloutState(row.kbId,row.currentPercentage,row.currentConfigVersion,row.currentOperatorId);
-        var previous=row.previousPercentage==null?null:new RagRolloutService.RolloutState(row.kbId,row.previousPercentage,row.previousConfigVersion,row.previousOperatorId);
+        var current=new RagRolloutService.RolloutState(row.kbId,row.currentPercentage,row.currentConfigVersion,row.currentOperatorId,row.currentSnapshotId);
+        var previous=row.previousPercentage==null?null:new RagRolloutService.RolloutState(row.kbId,row.previousPercentage,row.previousConfigVersion,row.previousOperatorId,row.previousSnapshotId);
         return new RagRolloutService.RolloutHistory(current,previous);
     }
 }
