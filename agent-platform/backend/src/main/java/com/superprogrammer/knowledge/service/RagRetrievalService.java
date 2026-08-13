@@ -76,6 +76,7 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
+    private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     private final com.superprogrammer.knowledge.citation.CitationVerifier citationVerifier =
             new com.superprogrammer.knowledge.citation.CitationVerifier();
 
@@ -283,11 +284,21 @@ public class RagRetrievalService {
                 return retrieveOnlyVo;
             }
 
-            // 生成答案 + Citation 校验（generateAnswer=true 才走）
-            String answer = generate(req.getQuery(), pack, userId, false);
+            // Grounded Answer：分批提炼 citation-bound facts，再基于事实合并最终答案。
+            com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded =
+                    groundedAnswerService.synthesize(pack.injected().stream()
+                                    .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
+                                            e.citationIndex(), e.content())).toList(),
+                            Math.max(1, Math.min(5, pack.injected().size())),
+                            batch -> extractGroundedFacts(batch, userId));
+            if (grounded.facts().isEmpty()) {
+                return finishAbstain(trace, budget, t0, "INSUFFICIENT", req, l0, l1,
+                        bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
+            }
+            String answer = composeGroundedAnswer(req.getQuery(), grounded, userId, false);
             List<Integer> cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
             if (cited == null) {
-                answer = generate(req.getQuery(), pack, userId, true);   // A1 重试一次
+                answer = composeGroundedAnswer(req.getQuery(), grounded, userId, true);
                 cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
                 if (cited == null) {
                     return finishAbstain(trace, budget, t0, "CITATION_CHECK_FAIL", req, l0, l1,
@@ -298,7 +309,7 @@ public class RagRetrievalService {
             RagRetrieveVO vo = buildVo(traceId, false, null, answer, cited, evidence,
                     pack.injected(), l0, l1, bm25Fallback[0], bm25OnlyCands, budget, t0);
             vo.setLowConfidence(grayZone);
-            vo.setConfidenceState(evidencePolicy.confidenceState());
+            vo.setConfidenceState(grounded.conflict() ? "CONFLICT" : evidencePolicy.confidenceState());
             writeTrace(trace, l0, pack.injected(), budget, verdict, t0, req);
             // 缓存写入（仅非灰区 SUPPORTED；灰区/abstain 不写，保不变量）
             if (!grayZone && answerCacheProps.isEnabled()) {
@@ -1072,6 +1083,47 @@ public class RagRetrievalService {
                 .tokenBudget(budget)
                 .latencyMs(System.currentTimeMillis() - t0)
                 .build();
+    }
+
+    private List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact> extractGroundedFacts(
+            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> evidence, Long userId) {
+        String evidenceJson;
+        try {
+            evidenceJson = objectMapper.writeValueAsString(evidence);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "证据批次序列化失败");
+        }
+        LlmRequest request = LlmRequest.builder()
+                .messages(List.of(
+                        LlmMessage.builder().role("system").content(
+                                "仅从证据提炼事实。返回 JSON 数组，每项字段 subject、value、citationIds；禁止使用证据外知识。")
+                                .build(),
+                        LlmMessage.builder().role("user").content(evidenceJson).build()))
+                .temperature(0.0).maxTokens(ragConfig.getChatMaxTokens()).stream(false)
+                .callPurpose("GROUNDING_FACT_EXTRACTION").build();
+        String content = llmGateway.chat(request, userId).getContent();
+        try {
+            return objectMapper.readValue(content, objectMapper.getTypeFactory().constructCollectionType(
+                    List.class, com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact.class));
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "事实提炼模型未返回合法 JSON");
+        }
+    }
+
+    private String composeGroundedAnswer(String query,
+                                         com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded,
+                                         Long userId, boolean strict) {
+        String rule = strict
+                ? "必须仅使用下列事实，每句话至少带一个已有 [n] 引用，不得新增编号。"
+                : "仅使用下列事实回答，并保留对应 [n] 引用；冲突时明确列出不同说法。";
+        LlmRequest request = LlmRequest.builder()
+                .messages(List.of(
+                        LlmMessage.builder().role("system").content(rule).build(),
+                        LlmMessage.builder().role("user").content("问题：" + query + "\n事实：\n"
+                                + groundedAnswerService.renderFacts(grounded.facts())).build()))
+                .temperature(ragConfig.getChatTemperature()).maxTokens(ragConfig.getChatMaxTokens())
+                .stream(false).callPurpose("GROUNDED_ANSWER_COMPOSITION").build();
+        return llmGateway.chat(request, userId).getContent();
     }
 
     private boolean hasValidLocator(Evidence evidence) {

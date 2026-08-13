@@ -23,4 +23,6 @@ public class LlmRequest {
     private Boolean stream = false;
     /** 单次非流式请求的局部超时；null 表示使用 Provider 默认值。 */
     private Integer timeoutMs;
+    /** RAG trace purpose; null uses the gateway's endpoint default. */
+    private String callPurpose;
 }

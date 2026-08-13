@@ -47,6 +47,7 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
     @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
+    @Mock private com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -65,7 +66,7 @@ class RagRetrievalServiceTest {
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
-                evidencePolicyService);
+                evidencePolicyService, groundedAnswerService);
         lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
                 .thenReturn(retrievalScope);
         lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(
@@ -84,6 +85,11 @@ class RagRetrievalServiceTest {
         lenient().when(evidencePolicyService.apply(anyString(), anyInt(), anyList(), anyInt(), anyDouble(), anyBoolean()))
                 .thenAnswer(invocation -> new com.superprogrammer.knowledge.context.EvidencePolicyService.PolicyResult(
                         invocation.getArgument(2), "SUPPORTED"));
+        lenient().when(groundedAnswerService.synthesize(anyList(), anyInt(), any())).thenReturn(
+                new com.superprogrammer.knowledge.answer.GroundedAnswerService.Result(
+                        List.of(new com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact(
+                                "安装", "安装步骤说明", List.of(1))), false));
+        lenient().when(groundedAnswerService.renderFacts(anyList())).thenReturn("安装：安装步骤说明 [1]");
     }
 
     @Test
@@ -216,6 +222,7 @@ class RagRetrievalServiceTest {
         assertFalse(vo.getCitations().isEmpty(), vo.toString());
         assertEquals("3", vo.getCitations().get(0).getPage());
         assertEquals("安装", vo.getCitations().get(0).getArticle());
+        verify(groundedAnswerService).synthesize(anyList(), anyInt(), any());
     }
 
     @Test

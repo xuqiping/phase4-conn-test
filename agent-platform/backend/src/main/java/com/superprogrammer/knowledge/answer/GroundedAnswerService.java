@@ -53,6 +53,16 @@ public class GroundedAnswerService {
         return values.values().stream().anyMatch(subjectValues -> subjectValues.size() > 1);
     }
 
+    public String renderFacts(List<Fact> facts) {
+        StringBuilder result = new StringBuilder();
+        for (Fact fact : facts) {
+            result.append("- ").append(fact.subject()).append("：").append(fact.value()).append(' ');
+            fact.citationIds().forEach(id -> result.append('[').append(id).append(']'));
+            result.append('\n');
+        }
+        return result.toString();
+    }
+
     public record Evidence(int citationId, String content) {
     }
 

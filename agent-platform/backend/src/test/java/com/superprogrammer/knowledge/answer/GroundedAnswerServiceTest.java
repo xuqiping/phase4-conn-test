@@ -33,4 +33,15 @@ class GroundedAnswerServiceTest {
                 .flatMap(f -> f.citationIds().stream()).collect(java.util.stream.Collectors.toSet()));
         assertTrue(result.conflict());
     }
+
+    @Test
+    void rendersFactsForFinalCompositionWithoutLosingCitationIds() {
+        GroundedAnswerService service = new GroundedAnswerService();
+        String prompt = service.renderFacts(List.of(
+                new GroundedAnswerService.Fact("申请材料", "订单号", List.of(2, 3))));
+
+        assertTrue(prompt.contains("申请材料"));
+        assertTrue(prompt.contains("订单号"));
+        assertTrue(prompt.contains("[2][3]"));
+    }
 }

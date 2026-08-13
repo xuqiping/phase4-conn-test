@@ -73,7 +73,7 @@ public class LlmGateway {
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
         var ragCall = ragTraceService.beginModelCall(request.getModel(), provider.getName(),
-                summarizeInput(request), "ANSWER_GENERATION");
+                summarizeInput(request), firstText(request.getCallPurpose(), "ANSWER_GENERATION"));
         try (ragCall) {
             LlmResponse response = provider.chat(request);
             TokenUsage usage = response.getUsage();
@@ -139,7 +139,7 @@ public class LlmGateway {
         return Flux.defer(() -> {
             boolean held = inflightGate.acquire(uid, balance);
             RagTraceService.ModelCallScope ragCall = ragTraceService.beginModelCall(model, providerName,
-                    summarizeInput(request), "ANSWER_GENERATION_STREAM");
+                    summarizeInput(request), firstText(request.getCallPurpose(), "ANSWER_GENERATION_STREAM"));
             // Flux 生命周期可能跨 Reactor 线程；不能把创建线程的 ThreadLocal/MDC scope 长期挂到流结束。
             // 立即恢复订阅线程，后续每个 usage/terminal 回调按快照短暂恢复同一 RAG Trace。
             ragCall.detach();
@@ -300,6 +300,10 @@ public class LlmGateway {
             value.append(message.getRole()).append(':').append(message.getContent()).append('\n');
         }
         return value.toString();
+    }
+
+    private String firstText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     /** embed 路由：只在 EMBEDDING 行注册表里按 model 找，找不到报「向量 Provider」话术（与 chat 区分）。 */

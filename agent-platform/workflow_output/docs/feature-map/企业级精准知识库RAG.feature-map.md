@@ -46,6 +46,7 @@
 | Citation locator 真实接线 | `mapper/RagRetrievalQueryMapper.java`、`dto/RagQueryRow.java`、`service/RagRetrievalService.java` | PG 最终复核同时读取节点 metadata，解析 page/article/sheet/cellRange/bbox，经 CitationVerifier 后写入响应 |
 | Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
 | Grounded Fact 编排 | `answer/GroundedAnswerService.java` | 有界分批、Citation 白名单、事实去重合并与同主题多值冲突检测 |
+| Grounded Answer 真实生成 | `service/RagRetrievalService.java`、`llm/dto/LlmRequest.java`、`llm/LlmGateway.java` | `/retrieve` 先事实提炼再答案合成；调用用途分别写入同一 RAG trace、模型日志和计费链路 |
 | RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V110__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标 |
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
 | 评测管理界面 | `KnowledgeEvaluationView.vue`、`EvaluationRunPanel.vue`、`ShadowComparisonPanel.vue`、`KnowledgeView.vue` | 管理员启动异步评测、查看 Champion/Challenger 与发布门禁状态 |
