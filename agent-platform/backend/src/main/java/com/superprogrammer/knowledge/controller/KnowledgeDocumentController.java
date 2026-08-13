@@ -5,7 +5,11 @@ import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
 import com.superprogrammer.knowledge.dto.SheetPreviewVO;
+import com.superprogrammer.knowledge.dto.KnowledgeDocumentVersionVO;
+import com.superprogrammer.knowledge.dto.KnowledgeDocumentVersionActivateRequest;
+import com.superprogrammer.knowledge.dto.KnowledgeDocumentUpdateRequest;
 import com.superprogrammer.knowledge.service.KnowledgeDocumentService;
+import com.superprogrammer.knowledge.service.KnowledgeDocumentVersionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -17,6 +21,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,6 +34,7 @@ import java.util.List;
 public class KnowledgeDocumentController {
 
     private final KnowledgeDocumentService knowledgeDocumentService;
+    private final KnowledgeDocumentVersionService versionService;
 
     /** 阶段1：预读 Excel sheet 名（picker）。存文件 + POI 只读名，不建文档行。 */
     @PostMapping("/sheets/preview")
@@ -76,6 +83,50 @@ public class KnowledgeDocumentController {
     @RequirePermission("knowledge:read")
     public ResponseEntity<R<KnowledgeDocumentVO>> get(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok(knowledgeDocumentService.get(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PutMapping("/{id}/metadata")
+    @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_metadata_update", targetType = "document")
+    public ResponseEntity<R<KnowledgeDocumentVO>> updateMetadata(
+            @PathVariable Long id, @RequestBody KnowledgeDocumentUpdateRequest request) {
+        return ResponseEntity.ok(R.ok(knowledgeDocumentService.updateMetadata(
+                id, request, getCurrentUserId(), isAdmin())));
+    }
+
+    @GetMapping("/{id}/versions")
+    @RequirePermission("knowledge:read")
+    public ResponseEntity<R<List<KnowledgeDocumentVersionVO>>> versions(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(versionService.listHistoryVO(id, getCurrentUserId(), isAdmin())));
+    }
+
+    @PostMapping("/{id}/versions")
+    @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_version_create", targetType = "document")
+    public ResponseEntity<R<KnowledgeDocumentVersionVO>> createVersion(
+            @PathVariable Long id,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("expectedCurrentVersionId") Long expectedCurrentVersionId,
+            @RequestParam(value = "changeNote", required = false) String changeNote) {
+        return ResponseEntity.ok(R.ok(knowledgeDocumentService.createVersion(
+                id, file, expectedCurrentVersionId, changeNote, getCurrentUserId(), isAdmin())));
+    }
+
+    @PutMapping("/{id}/versions/{versionId}/activate")
+    @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_version_activate", targetType = "document_version")
+    public ResponseEntity<R<Void>> activateVersion(@PathVariable Long id, @PathVariable Long versionId,
+                                                    @RequestBody KnowledgeDocumentVersionActivateRequest request) {
+        versionService.activate(id, versionId, request.getExpectedCurrentVersionId(), getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("版本已生效", null));
+    }
+
+    @PutMapping("/{id}/versions/{versionId}/revoke")
+    @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "document_version_revoke", targetType = "document_version")
+    public ResponseEntity<R<Void>> revokeVersion(@PathVariable Long id, @PathVariable Long versionId) {
+        versionService.revoke(id, versionId, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("版本已撤销", null));
     }
 
     @DeleteMapping("/{id}")

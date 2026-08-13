@@ -7,11 +7,9 @@ import com.aliyuncs.dm.model.v20151123.SingleSendMailRequest;
 import com.aliyuncs.dm.model.v20151123.SingleSendMailResponse;
 import com.aliyuncs.profile.DefaultProfile;
 import com.aliyuncs.profile.IClientProfile;
-import com.superprogrammer.auth.config.AliyunMailConfig;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -30,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class EmailService {
 
-    private final AliyunMailConfig mailConfig;
+    private final AuthChannelSettingService channelSettings;
     private final StringRedisTemplate redisTemplate;
     private final CredentialService credentialService;
 
@@ -41,27 +39,19 @@ public class EmailService {
     public static final long RESET_TOKEN_TTL_SECONDS = 30 * 60;
     private static final long RESEND_WINDOW_SECONDS = 60;
 
-    @Value("${app.auth.email.verify-url:}")
-    private String verifyUrl;
-
-    @Value("${app.auth.email.reset-url:}")
-    private String resetUrl;
-
-    @Value("${app.auth.email.enabled:false}")
-    private boolean emailEnabled;
-
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public EmailService(AliyunMailConfig mailConfig, StringRedisTemplate redisTemplate,
+    public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
                         CredentialService credentialService) {
-        this.mailConfig = mailConfig;
+        this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
     }
 
     /** 发验证邮件（注册时调用）。 */
     public boolean sendVerifyEmail(Long userId, String email) {
-        if (!emailEnabled || mailConfig.getAccessKeyId() == null || mailConfig.getAccessKeyId().isBlank()) {
+        var config = channelSettings.mailSnapshot();
+        if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
             log.warn("邮件推送未开启或未配置，跳过发验证邮件 userId={}", userId);
             return false;
         }
@@ -75,16 +65,17 @@ public class EmailService {
             return false;
         }
 
-        String verifyLink = verifyUrl + "?token=" + token;
+        String verifyLink = config.verifyUrl() + "?token=" + token;
         String subject = "【多Agent智能体平台】请验证您的邮箱";
         String htmlBody = buildVerifyEmailHtml(verifyLink);
 
-        return sendMail(email, subject, htmlBody);
+        return sendMail(config, email, subject, htmlBody);
     }
 
     /** 发重置密码邮件（通道 D 用）。 */
     public boolean sendResetEmail(Long userId, String email) {
-        if (!emailEnabled || mailConfig.getAccessKeyId() == null || mailConfig.getAccessKeyId().isBlank()) {
+        var config = channelSettings.mailSnapshot();
+        if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
             log.warn("邮件推送未开启，跳过发重置邮件 userId={}", userId);
             return false;
         }
@@ -98,11 +89,11 @@ public class EmailService {
             return false;
         }
 
-        String resetLink = resetUrl + "?token=" + token;
+        String resetLink = config.resetUrl() + "?token=" + token;
         String subject = "【多Agent智能体平台】重置密码";
         String htmlBody = buildResetEmailHtml(resetLink);
 
-        return sendMail(email, subject, htmlBody);
+        return sendMail(config, email, subject, htmlBody);
     }
 
     /** 校验验证邮件 token（激活链接落地页调）。 */
@@ -181,20 +172,21 @@ public class EmailService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private boolean sendMail(String toEmail, String subject, String htmlBody) {
+    private boolean sendMail(AuthChannelSettingService.MailSnapshot config,
+                             String toEmail, String subject, String htmlBody) {
         try {
-            IClientProfile profile = DefaultProfile.getProfile(mailConfig.getRegion(),
-                    mailConfig.getAccessKeyId(), mailConfig.getAccessKeySecret());
+            IClientProfile profile = DefaultProfile.getProfile(config.region(),
+                    config.accessKeyId(), config.accessKeySecret());
             IAcsClient client = new DefaultAcsClient(profile);
 
             SingleSendMailRequest request = new SingleSendMailRequest();
-            request.setAccountName(mailConfig.getAccountName());
-            request.setAddressType(mailConfig.getAddressType());
-            request.setReplyToAddress(mailConfig.getReplyToAddress() != null);
+            request.setAccountName(config.accountName());
+            request.setAddressType(1);
+            request.setReplyToAddress(config.replyToAddress() != null && !config.replyToAddress().isBlank());
             request.setToAddress(toEmail);
             request.setSubject(subject);
             request.setHtmlBody(htmlBody);
-            request.setFromAlias(mailConfig.getFromAlias());
+            request.setFromAlias(config.fromAlias());
 
             SingleSendMailResponse response = client.getAcsResponse(request);
             log.info("邮件发送成功 to={} subject={} requestId={}", maskEmail(toEmail), subject, response.getRequestId());

@@ -79,6 +79,14 @@ export const systemApi = {
     return request.put<ApiResponse<AuthSettings>>('/system/settings/auth', data)
   },
 
+  getAuthChannelSettings() {
+    return request.get<ApiResponse<AuthChannelSettings>>('/system/settings/auth-channels')
+  },
+
+  updateAuthChannelSettings(data: AuthChannelSettingsUpdate) {
+    return request.put<ApiResponse<AuthChannelSettings>>('/system/settings/auth-channels', data)
+  },
+
   // L7 低余额并行闸门（SEC-FR-126）
   getBillingSettings() {
     return request.get<ApiResponse<BillingSettings>>('/system/settings/billing')
@@ -133,6 +141,23 @@ export const systemApi = {
   testWebSearch() {
     return request.post<ApiResponse<WebSearchTestResult>>('/system/settings/web-search/test')
   }
+}
+
+export interface AuthChannelSettings {
+  mail: {
+    enabled: boolean; region?: string; accessKeyId?: string; secretConfigured: boolean
+    accountName?: string; fromAlias?: string; replyToAddress?: string; verifyUrl?: string; resetUrl?: string
+  }
+  sms: {
+    enabled: boolean; region?: string; accessKeyId?: string; secretConfigured: boolean
+    signName?: string; templateCodeVerify?: string; templateCodeReset?: string
+    codeTtlMinutes: number; limitPerPhonePerDay: number; limitPerIpPerDay: number
+  }
+}
+
+export interface AuthChannelSettingsUpdate {
+  mail?: Partial<AuthChannelSettings['mail']> & { accessKeySecret?: string }
+  sms?: Partial<AuthChannelSettings['sms']> & { accessKeySecret?: string }
 }
 
 /** 联网搜索配置回显（key 不回显明文，仅 hasXxxKey 布尔）。 */

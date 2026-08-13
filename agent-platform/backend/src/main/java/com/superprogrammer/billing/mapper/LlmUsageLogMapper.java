@@ -9,6 +9,7 @@ import com.superprogrammer.billing.dto.UserUsageVO;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -86,4 +87,10 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                                    @Param("taskId") Long taskId,
                                    @Param("offset") long offset,
                                    @Param("size") long size);
+
+    @Select("SELECT * FROM llm_usage_logs WHERE trace_id=#{traceId} ORDER BY created_at")
+    List<LlmUsageLogEntity> findByTraceId(String traceId);
+
+    @Select("SELECT trace_id FROM llm_usage_logs WHERE id=#{id}")
+    String findTraceIdById(Long id);
 }

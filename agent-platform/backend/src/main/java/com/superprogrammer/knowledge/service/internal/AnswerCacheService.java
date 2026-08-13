@@ -55,6 +55,20 @@ public class AnswerCacheService {
     public record KbScope(Long kbId, boolean allDocs, List<Long> docIds) {
     }
 
+    /** 一次缓存读写必须携带的完整、不可变协议。 */
+    public record CacheProtocol(String embeddingModel, String rankingConfigVersion,
+                                String pipelineVersion, String promptVersion,
+                                String knowledgeSnapshot) {
+    }
+
+    public CacheProtocol protocol(List<Long> kbIds, String embeddingModel, String rankingConfigVersion) {
+        List<Long> normalizedKbIds = kbIds == null ? List.of() : kbIds.stream().sorted().toList();
+        String snapshot = normalizedKbIds.isEmpty() ? HashUtil.sha256("")
+                : queryMapper.computeKnowledgeSnapshot(normalizedKbIds);
+        return new CacheProtocol(required(embeddingModel), required(rankingConfigVersion),
+                required(props.getPipelineVersion()), required(props.getPromptVersion()), required(snapshot));
+    }
+
     // ============================ 签名 ============================
 
     /**
@@ -94,12 +108,14 @@ public class AnswerCacheService {
      * @param sig    调用方按当前可见集算的 permission_signature（P3 比对）
      * @return 命中 → CachedPayload（反序列化自 answer 列）；miss → empty
      */
-    public Optional<CachedPayload> lookup(String qHalf, Long userId, String sig) {
+    public Optional<CachedPayload> lookup(String qHalf, Long userId, String sig, CacheProtocol protocol) {
         if (!props.isEnabled()) {
             return Optional.empty();
         }
         try {
-            List<CacheCandidateRow> candidates = answerCacheMapper.searchCandidates(userId, qHalf, props.getTopN());
+            List<CacheCandidateRow> candidates = answerCacheMapper.searchCandidates(
+                    userId, qHalf, protocol.embeddingModel(), protocol.rankingConfigVersion(),
+                    protocol.pipelineVersion(), protocol.promptVersion(), protocol.knowledgeSnapshot(), props.getTopN());
             for (CacheCandidateRow c : candidates) {   // distance 升序 = sim 降序
                 double distance = c.getCosineDistance() == null ? 2.0 : c.getCosineDistance();
                 double sim = 1.0 - distance;
@@ -163,7 +179,7 @@ public class AnswerCacheService {
      */
     public void store(String query, String qHalf, Long userId, List<Long> kbIds, String sig,
                       CachedPayload payload, List<Long> nodeIds, List<String> hashes,
-                      double confidence, String embedModel) {
+                      double confidence, CacheProtocol protocol) {
         if (!props.isEnabled() || nodeIds == null || nodeIds.isEmpty() || payload == null) {
             return;
         }
@@ -173,7 +189,11 @@ public class AnswerCacheService {
             c.setScopeUserId(userId);
             c.setKbIds(objectMapper.writeValueAsString(kbIds == null ? List.of() : kbIds));
             c.setQueryCanonical(query);
-            c.setKeyEmbeddingModel(embedModel);
+            c.setKeyEmbeddingModel(protocol.embeddingModel());
+            c.setRankingConfigVersion(protocol.rankingConfigVersion());
+            c.setPipelineVersion(protocol.pipelineVersion());
+            c.setPromptVersion(protocol.promptVersion());
+            c.setKnowledgeSnapshot(protocol.knowledgeSnapshot());
             c.setAnswer(objectMapper.writeValueAsString(payload));
             c.setProvenanceNodeIds(objectMapper.writeValueAsString(nodeIds));
             c.setEvidenceHashes(objectMapper.writeValueAsString(hashes));
@@ -222,5 +242,12 @@ public class AnswerCacheService {
         } catch (Exception e) {
             return new ArrayList<>();
         }
+    }
+
+    private String required(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("答案缓存版本协议字段不能为空");
+        }
+        return value.trim();
     }
 }

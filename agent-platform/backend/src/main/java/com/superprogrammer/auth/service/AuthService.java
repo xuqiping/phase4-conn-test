@@ -54,6 +54,14 @@ public class AuthService {
     private final SessionService sessionService;
     /** 认证系统增强 Chunk A/B：多凭证账号模型（注册时建 PASSWORD/EMAIL 凭证）。 */
     private final CredentialService credentialService;
+    /** 11x 加固 P2-C7：登录尝试取证（异步，不阻主链）。 */
+    private final com.superprogrammer.common.security.LoginAttemptsService loginAttemptsService;
+    /** 11x 加固 P2-C7：撞库自动封 IP。 */
+    private final com.superprogrammer.common.security.IpBlacklistService ipBlacklistService;
+    /** 11x 加固 P2-C7：安全事件落库（暴破/撞库）。 */
+    private final com.superprogrammer.common.security.SecurityEventService securityEventService;
+    /** 11x 加固 P1-C3：暴破锁号即时踢下线。 */
+    private final com.superprogrammer.common.security.BanService banService;
     /** 认证系统增强 Chunk E：异地登录提醒（登录成功后异步比对省份）。 */
     private final LoginAlertService loginAlertService;
 
@@ -225,6 +233,7 @@ public class AuthService {
             // 即账号存在性 oracle（40103 统一话术堵了内容侧，时间侧也得堵）。
             passwordEncoder.matches(request.getPassword(), DUMMY_BCRYPT_HASH);
             recordLoginFailure(usernameKey, clientIp, null, request.getUsername());
+            loginAttemptsService.recordAsync(usernameKey, null, clientIp, false, "no_such_user");
             auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
@@ -233,6 +242,7 @@ public class AuthService {
         // 验证密码
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             recordLoginFailure(usernameKey, clientIp, user.getId(), user.getUsername());
+            loginAttemptsService.recordAsync(usernameKey, user.getId(), clientIp, false, "bad_password");
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "bad_password");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
@@ -251,6 +261,7 @@ public class AuthService {
 
         // 登录成功清账号失败计数（IP 计数保留：防多账号轮试）
         clearLoginFailure(usernameKey);
+        loginAttemptsService.recordAsync(usernameKey, user.getId(), clientIp, true, null);
 
         // 生成JWT Token（走公共方法）
         log.info("用户登录成功: {}", user.getUsername());
@@ -297,6 +308,13 @@ public class AuthService {
     /**
      * 登录失败计数（user-not-found / bad_password 两分支调用）。越过阈值瞬间写安全审计
      * （login_locked / ip_banned，仅跃迁写一次防刷屏）+ ERROR 级日志供锁定风暴排查。
+     *
+     * <p>11x 加固 P2-C7 扩展（阈值跃迁瞬间追加）：
+     * ① 账号 5 次/15min → DB 锁号（status=LOCKED + locked_until=+15min）+ ban 标记踢下线
+     *    + LOGIN_BRUTE_FORCE HIGH 事件（auto_action=ACCOUNT_LOCKED）——原来只 Redis 计数，
+     *    Redis 故障即归零，升级后 DB 持久且即时踢；P3 AccountUnlockScheduler 到期自动解锁；
+     * ② 同 IP 5min 内试 ≥20 个不同账号 → 撞库判定：CREDENTIAL_STUFFING HIGH 事件
+     *    + ipBlacklistService.autoBlock(60min)（撞库封 IP 而非锁每个号——防账号枚举 DoS）。</p>
      */
     private void recordLoginFailure(String usernameKey, String ip, Long userId, String username) {
         try {
@@ -306,6 +324,7 @@ public class AuthService {
                     bizMetrics.authLoginLocked("account");
                     auditAuth("login_locked", userId, username, AuditLogEntity.RESULT_FAIL, "fail_count_" + n);
                     log.error("账号登录失败达阈值锁定 15min: username={} ip={}", username, ip);
+                    onBruteForceLocked(userId, username, ip, n);
                 }
             }
             if (ip != null && !ip.isBlank()) {
@@ -315,9 +334,60 @@ public class AuthService {
                     auditAuth("ip_banned", userId, username, AuditLogEntity.RESULT_FAIL, "ip_fail_count_" + n);
                     log.error("IP 登录失败达阈值封禁 1h: ip={} lastUsername={}", ip, username);
                 }
+                checkCredentialStuffing(ip, usernameKey);
             }
         } catch (Exception e) {
             log.warn("登录失败计数 Redis 失败(已吞，不阻断登录): {}", e.getMessage());
+        }
+    }
+
+    /** 暴破锁号（11x C7）：DB LOCKED + locked_until + ban 标记 + HIGH 事件。全程 try 吞——不阻登录主链。 */
+    private void onBruteForceLocked(Long userId, String username, String ip, Long failCount) {
+        try {
+            securityEventService.record(
+                    com.superprogrammer.common.security.SecurityEventTypes.LOGIN_BRUTE_FORCE,
+                    com.superprogrammer.common.security.SecurityEventTypes.SEV_HIGH,
+                    userId, ip, null,
+                    "{\"username\":\"" + username + "\",\"fails\":" + failCount + "}",
+                    userId != null
+                            ? com.superprogrammer.common.security.SecurityEventTypes.ACT_ACCOUNT_LOCKED
+                            : com.superprogrammer.common.security.SecurityEventTypes.ACT_NONE);
+            if (userId != null) {
+                User target = userMapper.selectById(userId);
+                if (target != null && "ACTIVE".equals(target.getStatus())) {
+                    target.setStatus("LOCKED");
+                    target.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+                    target.setBanReason("LOGIN_BRUTE_FORCE");
+                    userMapper.updateById(target);
+                    banService.revoke(userId, "LOCKED");
+                    bizMetrics.accountLocked("brute_force");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("暴破锁号执行失败(已吞,Redis 计数闸仍在) userId={} : {}", userId, e.getMessage());
+        }
+    }
+
+    /** 撞库检测（11x C7）：同 IP 5min 窗内 ≥20 个不同账号 → 封 IP 1h + HIGH 事件。 */
+    private void checkCredentialStuffing(String ip, String usernameKey) {
+        try {
+            String key = "login:ids:" + ip;
+            redisTemplate.opsForSet().add(key, usernameKey);
+            redisTemplate.expire(key, 300, TimeUnit.SECONDS);
+            Long distinct = redisTemplate.opsForSet().size(key);
+            if (distinct != null && distinct == 20L) {
+                ipBlacklistService.autoBlock(ip,
+                        com.superprogrammer.common.security.SecurityEventTypes.CREDENTIAL_STUFFING, 60);
+                securityEventService.record(
+                        com.superprogrammer.common.security.SecurityEventTypes.CREDENTIAL_STUFFING,
+                        com.superprogrammer.common.security.SecurityEventTypes.SEV_HIGH,
+                        null, ip, null,
+                        "{\"distinctAccounts\":" + distinct + "}",
+                        com.superprogrammer.common.security.SecurityEventTypes.ACT_IP_BLOCKED);
+                log.error("撞库判定封 IP 1h: ip={} distinctAccounts={}", ip, distinct);
+            }
+        } catch (Exception e) {
+            log.warn("撞库检测失败(已吞，不阻断登录) ip={} : {}", ip, e.getMessage());
         }
     }
 

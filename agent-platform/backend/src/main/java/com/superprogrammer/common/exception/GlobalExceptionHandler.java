@@ -2,14 +2,20 @@
 package com.superprogrammer.common.exception;
 
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.common.security.event.ApplicationSecurityEvent;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -23,6 +29,16 @@ import java.util.regex.Pattern;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * 11x 加固 P3-C9：403 咽喉发 KIND_AUTHZ_DENIED（IDOR 探测规则消费）。
+     * ObjectProvider 延迟解析——@WebMvcTest 切片不加载普通 Bean 时 null → 跳过发事件（切片兼容红线）。
+     */
+    private final ObjectProvider<ApplicationEventPublisher> eventPublisherProvider;
+
+    public GlobalExceptionHandler(ObjectProvider<ApplicationEventPublisher> eventPublisherProvider) {
+        this.eventPublisherProvider = eventPublisherProvider;
+    }
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<R<Void>> handleBusinessException(BusinessException e) {
@@ -59,10 +75,34 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<R<Void>> handleAccessDeniedException(AccessDeniedException e) {
+    public ResponseEntity<R<Void>> handleAccessDeniedException(AccessDeniedException e,
+                                                               HttpServletRequest request) {
         log.warn("权限不足: {}", e.getMessage());
+        publishAuthzDenied(request);
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(R.fail(ErrorCode.FORBIDDEN));
+    }
+
+    /** 11x 加固 P3-C9：403 发 KIND_AUTHZ_DENIED（payload: uri/method）。发事件失败吞，不阻 403 响应。 */
+    private void publishAuthzDenied(HttpServletRequest request) {
+        try {
+            ApplicationEventPublisher publisher = eventPublisherProvider.getIfAvailable();
+            if (publisher == null) {
+                return;
+            }
+            Long userId = null;
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getPrincipal() instanceof Long uid) {
+                userId = uid;
+            }
+            publisher.publishEvent(ApplicationSecurityEvent.of(this,
+                    ApplicationSecurityEvent.KIND_AUTHZ_DENIED, userId,
+                    request == null ? null : request.getRemoteAddr(),
+                    Map.of("uri", request == null ? "" : request.getRequestURI(),
+                            "method", request == null ? "" : request.getMethod())));
+        } catch (Exception ex) {
+            log.warn("403 安全事件发布失败(已吞) : {}", ex.getMessage());
+        }
     }
 
     /**

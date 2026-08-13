@@ -16,8 +16,11 @@
       <n-form-item label="Embedding 模型" path="embeddingModel">
         <n-input v-model:value="form.embeddingModel" placeholder="留空使用管理员默认向量模型" />
       </n-form-item>
-      <n-form-item label="Rerank 模型（可选）" path="rerankModel">
-        <n-input v-model:value="form.rerankModel" placeholder="Phase2（如 bge-reranker-v2-m3）" />
+      <n-form-item label="重排方式">
+        <n-select v-model:value="ranking.rankingMode" :options="rankingModeOptions" @update:value="loadRankingModels" />
+      </n-form-item>
+      <n-form-item v-if="ranking.rankingMode !== 'DISABLED'" label="重排模型">
+        <n-select v-model:value="ranking.model" :options="rankingModelOptions" placeholder="请选择启用模型" />
       </n-form-item>
     </n-form>
     <template #action>
@@ -33,7 +36,8 @@
 import { ref, computed, watch } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NSelect, NButton, useMessage } from 'naive-ui'
 import type { FormInst, FormRules, SelectOption } from 'naive-ui'
-import { knowledgeApi, type KnowledgeBase, type KnowledgeBaseRequest } from '@/api/knowledge'
+import { knowledgeApi, type KnowledgeBase, type KnowledgeBaseRequest, type RankingConfigUpdate, type RankingMode } from '@/api/knowledge'
+import { llmApi } from '@/api/llm'
 
 const props = defineProps<{
   editData?: KnowledgeBase | null
@@ -47,6 +51,11 @@ const message = useMessage()
 const visible = defineModel<boolean>('show', { default: false })
 const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
+const ranking = ref<RankingConfigUpdate>({ rankingMode: 'LLM', candidateLimit: 30, finalLimit: 10, batchSize: 10, timeoutMs: 4000, fallbackPolicy: 'FAIL_CLOSED', highAccuracyEnabled: false })
+const rankingModelOptions = ref<{ label: string; value: string }[]>([])
+const rankingModeOptions = [
+  { label: 'LLM 重排', value: 'LLM' }, { label: '专用 Rerank', value: 'RERANK' }, { label: '关闭重排', value: 'DISABLED' }
+]
 
 const isEdit = computed(() => !!props.editData)
 const modalTitle = computed(() => (isEdit.value ? '编辑知识库' : '新建知识库'))
@@ -75,7 +84,7 @@ const rules: FormRules = {
   name: [{ required: true, message: '请输入知识库名称', trigger: 'blur' }]
 }
 
-watch(visible, (val) => {
+watch(visible, async (val) => {
   if (!val) return
   if (props.editData) {
     form.value = {
@@ -86,6 +95,10 @@ watch(visible, (val) => {
       embeddingModel: props.editData.embeddingModel || '',
       rerankModel: props.editData.rerankModel || ''
     }
+    try {
+      const cfg = (await knowledgeApi.getRankingConfig(props.editData.id)).data.data
+      ranking.value = { rankingMode: cfg.mode, model: cfg.model, candidateLimit: cfg.candidateLimit, finalLimit: cfg.finalLimit, batchSize: cfg.batchSize, timeoutMs: cfg.timeoutMs, fallbackPolicy: cfg.fallbackPolicy, highAccuracyEnabled: cfg.highAccuracyEnabled }
+    } catch { /* 无 KB 覆盖时使用管理员默认的表单值 */ }
   } else {
     form.value = {
       name: '',
@@ -96,7 +109,16 @@ watch(visible, (val) => {
       rerankModel: ''
     }
   }
+  await loadRankingModels(ranking.value.rankingMode)
 }, { immediate: true })
+
+async function loadRankingModels(mode: RankingMode) {
+  ranking.value.rankingMode = mode
+  if (mode === 'DISABLED') { ranking.value.model = null; rankingModelOptions.value = []; return }
+  const models = (await llmApi.listActiveModels(mode === 'LLM' ? 'CHAT' : 'RERANK')).data.data
+  rankingModelOptions.value = models.map(model => ({ label: model, value: model }))
+  if (ranking.value.model && !models.includes(ranking.value.model)) ranking.value.model = null
+}
 
 async function handleSubmit() {
   try { await formRef.value?.validate() } catch { return }
@@ -110,13 +132,17 @@ async function handleSubmit() {
       embeddingModel: form.value.embeddingModel || undefined,
       rerankModel: form.value.rerankModel || undefined
     }
+    let kbId: number
     if (isEdit.value && props.editData) {
       await knowledgeApi.updateBase(props.editData.id, payload)
+      kbId = props.editData.id
       message.success('更新成功')
     } else {
-      await knowledgeApi.createBase(payload)
+      const created = await knowledgeApi.createBase(payload)
+      kbId = created.data.data.id
       message.success('创建成功')
     }
+    await knowledgeApi.updateRankingConfig(kbId, ranking.value)
     emit('saved')
     visible.value = false
   } catch {

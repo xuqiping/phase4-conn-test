@@ -2,6 +2,7 @@ package com.superprogrammer.knowledge.event;
 
 import com.superprogrammer.knowledge.config.VisibilityCacheProperties;
 import com.superprogrammer.knowledge.service.VisibilitySetService;
+import com.superprogrammer.knowledge.mapper.RagAnswerCacheMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.Cursor;
@@ -32,11 +33,21 @@ public class VisibilityInvalidationListener {
 
     private final StringRedisTemplate redisTemplate;
     private final VisibilityCacheProperties props;
+    private final RagAnswerCacheMapper answerCacheMapper;
 
     @Async("knowledgeTaskExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onInvalidate(VisibilityInvalidationEvent event) {
+        if (event == null || event.getKbId() == null) {
+            return;
+        }
         invalidateKb(event.getKbId());
+        try {
+            int invalidated = answerCacheMapper.invalidateByKb(event.getKbId());
+            log.info("答案缓存主动失效 kbId={} rows={}", event.getKbId(), invalidated);
+        } catch (RuntimeException e) {
+            log.warn("答案缓存主动失效失败 kbId={}: {}", event.getKbId(), e.getMessage());
+        }
     }
 
     public void invalidateKb(Long kbId) {

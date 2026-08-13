@@ -1,7 +1,9 @@
 package com.superprogrammer.knowledge.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.superprogrammer.common.entity.BaseEntity;
+import com.superprogrammer.common.typehandler.JsonbStringTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -9,7 +11,7 @@ import java.time.OffsetDateTime;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
-@TableName("knowledge_documents")
+@TableName(value = "knowledge_documents", autoResultMap = true)
 public class KnowledgeDocument extends BaseEntity {
 
     private Long kbId;
@@ -44,5 +46,28 @@ public class KnowledgeDocument extends BaseEntity {
 
     private OffsetDateTime effectiveAt;
 
+    /** 失效时间；历史 deadline 字段由 V107 迁移到此语义明确的字段。 */
+    private OffsetDateTime expiredAt;
+
+    private Long ownerId;
+
+    private String sourceType;
+
+    private String sourceUri;
+
+    private OffsetDateTime sourceUpdatedAt;
+
+    /** OFFICIAL / APPROVED / REFERENCE / UNVERIFIED */
+    private String authorityLevel;
+
+    /** PUBLIC / INTERNAL / CONFIDENTIAL / RESTRICTED */
+    private String confidentialityLevel;
+
+    /** JSON 字符串数组，最多 20 个标签，每个最多 64 字符。 */
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String tags;
+
+    /** @deprecated 使用 expiredAt；保留兼容旧列，V107 后不再写入。 */
+    @Deprecated
     private OffsetDateTime deadline;
 }

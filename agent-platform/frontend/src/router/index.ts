@@ -230,6 +230,31 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/logs/AuditLogView.vue'),
         // system:audit:read 三重兜底（菜单隐藏 + 页内 canView + API 403）
         meta: { title: '审计日志' }
+      },
+      // 11x 加固 P4-C12：安全管理 4 页（security:* 权限三重兜底：菜单隐藏 + API 403 + 后端 @RequirePermission）
+      {
+        path: 'admin/security/dashboard',
+        name: 'RiskDashboard',
+        component: () => import('@/views/admin/security/RiskDashboardView.vue'),
+        meta: { title: '风险大盘' }
+      },
+      {
+        path: 'admin/security/events',
+        name: 'SecurityEvent',
+        component: () => import('@/views/admin/security/SecurityEventView.vue'),
+        meta: { title: '安全事件中心' }
+      },
+      {
+        path: 'admin/security/ban',
+        name: 'BanManage',
+        component: () => import('@/views/admin/security/BanManageView.vue'),
+        meta: { title: '封禁管理' }
+      },
+      {
+        path: 'admin/security/rules',
+        name: 'RuleConfig',
+        component: () => import('@/views/admin/security/RuleConfigView.vue'),
+        meta: { title: '安全规则配置' }
       }
     ]
   },

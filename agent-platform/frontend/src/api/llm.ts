@@ -2,7 +2,7 @@ import request from './request'
 import type { ApiResponse } from './request'
 
 // 类型四分（V60 起，FR-002）：CHAT 对话 / EMBEDDING 向量 / VIDEO 视频 / IMAGE 生图（预留）
-export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'VIDEO' | 'IMAGE'
+export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'VIDEO' | 'IMAGE' | 'RERANK'
 
 export interface LlmProvider {
   id: number
@@ -154,6 +154,10 @@ export const llmApi = {
   // Available models
   listAvailableModels() {
     return request.get<ApiResponse<AvailableModel[]>>('/llm/user/models/available')
+  },
+
+  listActiveModels(category: ProviderCategory) {
+    return request.get<ApiResponse<string[]>>('/llm/models/active', { params: { category } })
   },
 
   // C5/D2：视频模型（仅 MEDIA 类 provider，如 Seedance）

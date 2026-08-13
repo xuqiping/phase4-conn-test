@@ -117,10 +117,26 @@ public class ExcelSheetExtractor {
             }
             String title = sheetTitle + ":行" + (r + 1);   // 行号 1-based（表头=行1）
             String content = body.toString();
+            int ordinal = sections.size();
+            int rowNumber = r + 1;
             Section s = Section.builder()
+                    .sectionId("excel-row-" + ordinal)
+                    .nodeType("TABLE_ROW")
                     .title(title)
+                    .titlePath(List.of(sheetTitle, title))
+                    .ordinal(ordinal)
                     .content(content)
                     .tokenCount(TokenEstimator.estimate(content))
+                    .locator(SectionLocator.builder()
+                            .sheetName(sh.getSheetName())
+                            .rowStart(rowNumber)
+                            .rowEnd(rowNumber)
+                            .cellStart("A" + rowNumber)
+                            .cellEnd(colLetter(Math.max(0, cols - 1)) + rowNumber)
+                            .readingOrder(ordinal)
+                            .regionType("TABLE_ROW")
+                            .crossPage(false)
+                            .build())
                     .build();
             sections.add(s);
             plain.append(title).append('\n').append(content).append("\n\n");

@@ -27,4 +27,10 @@ public class AnswerCacheProperties {
 
     /** 缓存 TTL（天），写 decay_at = now + ttl，供阶段7 ReconciliationJob 清理 stale 行。 */
     private int ttlDays = 7;
+
+    /** 检索编排协议版本；发布改变检索语义的代码时递增。 */
+    private String pipelineVersion = "rag-pipeline-v1";
+
+    /** 缓存载荷 Prompt 协议版本；修改生成/证据 Prompt 时递增。 */
+    private String promptVersion = "rag-prompt-v1";
 }

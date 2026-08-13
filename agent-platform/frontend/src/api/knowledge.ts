@@ -40,6 +40,32 @@ export interface KnowledgeBaseRequest {
   summaryStrategy?: string
 }
 
+export type RankingMode = 'LLM' | 'RERANK' | 'DISABLED'
+export interface RankingConfig {
+  configId?: number | null
+  mode: RankingMode
+  model?: string | null
+  configVersion?: string
+  candidateLimit: number
+  finalLimit: number
+  batchSize: number
+  timeoutMs: number
+  fallbackPolicy: string
+  highAccuracyEnabled: boolean
+  source?: 'KNOWLEDGE_BASE' | 'ADMIN_DEFAULT'
+}
+
+export interface RankingConfigUpdate {
+  rankingMode: RankingMode
+  model?: string | null
+  candidateLimit?: number
+  finalLimit?: number
+  batchSize?: number
+  timeoutMs?: number
+  fallbackPolicy?: string
+  highAccuracyEnabled?: boolean
+}
+
 /** 文档（对应后端 KnowledgeDocumentVO） */
 export interface KnowledgeDocument {
   id: number
@@ -47,6 +73,7 @@ export interface KnowledgeDocument {
   title: string
   docType: string | null
   status: string                  // PENDING/PARSING/SUMMARIZING/EMBEDDING/INDEXED/FAILED
+  currentVersionId: number | null
   fileRef: string | null
   fileHash: string | null
   /** IMAGE/FILE 原件回显（mime 决定缩略图/下载；originalName 展示文件名） */
@@ -59,6 +86,15 @@ export interface KnowledgeDocument {
   parseOptions: string | null
   /** 非致命解析告警（Excel 截断/降级），前端黄色徽章（V39） */
   parseWarning: string | null
+  ownerId: number | null
+  sourceType: string | null
+  sourceUri: string | null
+  sourceUpdatedAt: string | null
+  authorityLevel: 'OFFICIAL' | 'APPROVED' | 'REFERENCE' | 'UNVERIFIED'
+  confidentialityLevel: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED'
+  tags: string[]
+  effectiveAt: string | null
+  expiredAt: string | null
   createdAt: string
   updatedAt: string | null
 }
@@ -241,6 +277,42 @@ export interface RetrievalLogPageQuery {
   to?: string
 }
 
+export interface KnowledgeDocumentMetadataUpdate {
+  ownerId?: number | null
+  sourceType?: string | null
+  sourceUri?: string | null
+  sourceUpdatedAt?: string | null
+  authorityLevel: KnowledgeDocument['authorityLevel']
+  confidentialityLevel: KnowledgeDocument['confidentialityLevel']
+  tags: string[]
+  effectiveAt?: string | null
+  expiredAt?: string | null
+}
+
+export interface KnowledgeDocumentVersion {
+  id: number
+  documentId: number
+  versionNo: number
+  parentVersionId: number | null
+  sourceHash: string | null
+  fileRef: string | null
+  changeNote: string | null
+  status: 'DRAFT' | 'EFFECTIVE' | 'ARCHIVED' | 'REVOKED' | 'SUPERSEDED'
+  effectiveAt: string | null
+  revokedAt: string | null
+  replacedByVersionId: number | null
+  createdAt: string
+}
+
+export interface RagTraceDetail {
+  traceId: string
+  retrievals: Array<Record<string, unknown>>
+  rankings: Array<Record<string, unknown>>
+  modelCalls: Array<Record<string, unknown>>
+  usages: Array<Record<string, unknown>>
+  audits: Array<Record<string, unknown>>
+}
+
 // === API 函数 ===
 
 /** FormData 追加图片/文件上传选项（非空字段才追加，空=后端按后缀推断 + AUTO 默认）。 */
@@ -267,6 +339,18 @@ export const knowledgeApi = {
   updateBase(id: number, data: KnowledgeBaseRequest) {
     return request.put<ApiResponse<KnowledgeBase>>(`/knowledge/bases/${id}`, data)
   },
+  getDefaultRankingConfig() {
+    return request.get<ApiResponse<RankingConfig>>('/knowledge/admin/ranking-config')
+  },
+  updateDefaultRankingConfig(data: RankingConfigUpdate) {
+    return request.put<ApiResponse<RankingConfig>>('/knowledge/admin/ranking-config', data)
+  },
+  getRankingConfig(kbId: number) {
+    return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)
+  },
+  updateRankingConfig(kbId: number, data: RankingConfigUpdate) {
+    return request.put<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`, data)
+  },
   deleteBase(id: number) {
     return request.delete<ApiResponse<void>>(`/knowledge/bases/${id}`)
   },
@@ -278,6 +362,29 @@ export const knowledgeApi = {
   },
   getDocument(id: number) {
     return request.get<ApiResponse<KnowledgeDocument>>(`/knowledge/documents/${id}`)
+  },
+  updateDocumentMetadata(id: number, data: KnowledgeDocumentMetadataUpdate) {
+    return request.put<ApiResponse<KnowledgeDocument>>(`/knowledge/documents/${id}/metadata`, data)
+  },
+  listDocumentVersions(id: number) {
+    return request.get<ApiResponse<KnowledgeDocumentVersion[]>>(`/knowledge/documents/${id}/versions`)
+  },
+  createDocumentVersion(id: number, file: File, expectedCurrentVersionId: number, changeNote?: string) {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('expectedCurrentVersionId', String(expectedCurrentVersionId))
+    if (changeNote?.trim()) fd.append('changeNote', changeNote.trim())
+    return request.post<ApiResponse<KnowledgeDocumentVersion>>(`/knowledge/documents/${id}/versions`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+  activateDocumentVersion(id: number, versionId: number, expectedCurrentVersionId: number | null) {
+    return request.put<ApiResponse<void>>(`/knowledge/documents/${id}/versions/${versionId}/activate`, {
+      expectedCurrentVersionId
+    })
+  },
+  revokeDocumentVersion(id: number, versionId: number) {
+    return request.put<ApiResponse<void>>(`/knowledge/documents/${id}/versions/${versionId}/revoke`)
   },
   /** POST /api/knowledge/documents/upload — multipart 上传（knowledge:write）。
    *  opts 为图片/文件知识库扩展（docType/indexMode/manualIndexText/visionModel）；空=后端推断。 */
@@ -347,6 +454,12 @@ export const knowledgeApi = {
   /** GET /api/knowledge/retrieval-logs — 审计分页（按 userId/kbId/mode/时间范围过滤） */
   pageRetrievalLogs(q: RetrievalLogPageQuery) {
     return request.get<ApiResponse<PageResult<RagRetrievalLog>>>('/knowledge/retrieval-logs', { params: q })
+  },
+  getRagTraceDetail(traceId: string) {
+    return request.get<ApiResponse<RagTraceDetail>>(`/knowledge/retrieval-logs/traces/${traceId}`)
+  },
+  resolveRagTrace(q: { modelRequestId?: string; usageLogId?: number; auditLogId?: number }) {
+    return request.get<ApiResponse<string>>('/knowledge/retrieval-logs/traces/resolve', { params: q })
   },
   /** DELETE /api/knowledge/retrieval-logs/{id} — 删单条 */
   deleteRetrievalLog(id: number) {

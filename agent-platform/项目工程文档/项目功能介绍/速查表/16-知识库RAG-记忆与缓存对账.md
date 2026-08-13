@@ -11,6 +11,10 @@
   - 实体：`knowledge/entity/` RagAnswerCache
   - Mapper：RagAnswerCacheMapper
   - 配置：AnswerCacheProperties
+  - 版本协议：`embeddingModel + rankingConfigVersion + pipelineVersion + promptVersion + knowledgeSnapshot + permissionSignature`
+  - 命中复核：候选必须匹配完整版本协议，随后逐条复核证据节点状态和 `content_hash`
+  - 主动失效：权限/文档撤销、KB Ranking 配置变化按 KB 停用；管理员默认 Ranking 变化停用全部活动缓存
+  - 部署可调版本：环境变量 `RAG_CACHE_PIPELINE_VERSION`、`RAG_CACHE_PROMPT_VERSION`
 - RAG 记忆事实：
   - 实体：`knowledge/entity/` RagMemoryFact
   - Mapper：RagMemoryFactMapper
@@ -32,4 +36,4 @@
 孤儿清理（删文档同步软删 nodes + 硬删向量）见 commit `80240ee`，见 [14-知识库RAG-基础](14-知识库RAG-基础.md)。
 
 ## 数据表
-`rag_memory_facts`、`rag_answer_cache`、`knowledge_reconciliation_reports`
+`rag_memory_facts`、`rag_answer_cache`（V105 增加 ranking/pipeline/prompt/knowledge snapshot）、`knowledge_reconciliation_reports`

@@ -64,6 +64,10 @@ class LlmGatewayRouteTest {
     private InflightGateService inflightGate;
     @Mock
     private SystemSettingService systemSettingService;
+    @Mock
+    private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
+    @Mock
+    private com.superprogrammer.knowledge.trace.RagTraceService.ModelCallScope modelCallScope;
 
     private LlmGateway gateway;
 
@@ -82,7 +86,9 @@ class LlmGatewayRouteTest {
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
                 billingService, walletService,
                 new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
-                inflightGate, systemSettingService);
+                inflightGate, systemSettingService, ragTraceService);
+        lenient().when(ragTraceService.beginModelCall(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(modelCallScope);
     }
 
     @Test

@@ -5,6 +5,8 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.util.List;
+
 /**
  * audit_logs Mapper（日志系统 LOG-FR-09）。append-only：仅 insert/select（V78 REVOKE 后 DB 层强制）。
  * detailJson 为 JSONB 列，String↔jsonb 转换由实体字段上的 JsonbStringTypeHandler 承担。
@@ -22,4 +24,10 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
     /** 安全体系 S2 D1：取当前链末行 record_hash；无行或末行为存量链外行 → null（新行 prev=GENESIS）。 */
     @Select("SELECT record_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
     String selectLastRecordHash();
+
+    @Select("SELECT * FROM audit_logs WHERE trace_id=#{traceId} ORDER BY created_at")
+    List<AuditLogEntity> findByTraceId(String traceId);
+
+    @Select("SELECT trace_id FROM audit_logs WHERE id=#{id}")
+    String findTraceIdById(Long id);
 }

@@ -14,6 +14,18 @@ import java.util.List;
 @AllArgsConstructor
 public class ExtractedDocument {
 
+    private String schemaVersion;
+
+    private String parserName;
+
+    private String parserVersion;
+
+    private String sourceHash;
+
+    private String documentType;
+
+    private String artifactRef;
+
     private String plainText;
 
     private List<Section> sections;

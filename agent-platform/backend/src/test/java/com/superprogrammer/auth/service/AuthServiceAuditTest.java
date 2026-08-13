@@ -51,6 +51,11 @@ class AuthServiceAuditTest {
     @Mock private SessionService sessionService;
     @Mock private CredentialService credentialService;
     @Mock private LoginAlertService loginAlertService;
+    // 11x 加固 P2-C7 新增依赖（不 stub=默认 no-op）
+    @Mock private com.superprogrammer.common.security.LoginAttemptsService loginAttemptsService;
+    @Mock private com.superprogrammer.common.security.IpBlacklistService ipBlacklistService;
+    @Mock private com.superprogrammer.common.security.SecurityEventService securityEventService;
+    @Mock private com.superprogrammer.common.security.BanService banService;
 
     @InjectMocks
     private AuthService authService;

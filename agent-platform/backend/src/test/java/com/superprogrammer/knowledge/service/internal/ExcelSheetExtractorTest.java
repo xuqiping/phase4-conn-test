@@ -47,6 +47,26 @@ class ExcelSheetExtractorTest {
     }
 
     @Test
+    void eachDataRowCarriesStableSheetAndCellLocator() {
+        Workbook wb = new XSSFWorkbook();
+        sheet(wb, "销售", new String[]{"品名", "销量"},
+                new String[]{"苹果", "10"}, new String[]{"梨", "20"});
+
+        List<Section> sections = extractor.extract(asStream(wb), Set.of(), COL, CHUNK, CELL, MAX_ROWS)
+                .document().getSections();
+
+        assertThat(sections).extracting(Section::getOrdinal).containsExactly(0, 1);
+        assertThat(sections).extracting(s -> s.getLocator().getReadingOrder()).containsExactly(0, 1);
+        assertThat(sections.get(0).getLocator()).satisfies(locator -> {
+            assertThat(locator.getSheetName()).isEqualTo("销售");
+            assertThat(locator.getRowStart()).isEqualTo(2);
+            assertThat(locator.getRowEnd()).isEqualTo(2);
+            assertThat(locator.getCellStart()).isEqualTo("A2");
+            assertThat(locator.getCellEnd()).isEqualTo("B2");
+        });
+    }
+
+    @Test
     void selectedSheetsFiltersToChosenOnly() {
         Workbook wb = new XSSFWorkbook();
         sheet(wb, "销售", new String[]{"a"}, new String[]{"1"});

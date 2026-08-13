@@ -57,6 +57,8 @@ public class MediaGenController {
 
     @PostMapping("/video")
     @RequirePermission("media:gen")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "media_submit", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<Map<String, Object>>> submit(@Valid @RequestBody MediaSubmitRequest request) {
         String taskType = request.getTaskType() == null || request.getTaskType().isBlank()
                 ? MediaGenTask.TYPE_TEXT2VIDEO : request.getTaskType();
@@ -89,6 +91,8 @@ public class MediaGenController {
      */
     @PostMapping("/image")
     @RequirePermission("media:gen")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "media_submit", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<Map<String, Object>>> submitImage(@Valid @RequestBody ImageSubmitRequest request) {
         Long taskId = taskService.submitImage(
                 request.getPrompt(), request.getRefFileIds(), request.getSize(), request.getOutputFormat(),

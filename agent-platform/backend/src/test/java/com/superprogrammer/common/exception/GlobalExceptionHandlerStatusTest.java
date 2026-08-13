@@ -13,7 +13,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class GlobalExceptionHandlerStatusTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    // P3-C9：本类只测业务码映射，使用 Spring 提供的空 ObjectProvider。
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler(
+            new org.springframework.beans.factory.support.DefaultListableBeanFactory()
+                    .getBeanProvider(org.springframework.context.ApplicationEventPublisher.class));
 
     private HttpStatus statusOf(ErrorCode code) {
         ResponseEntity<R<Void>> resp = handler.handleBusinessException(new BusinessException(code));

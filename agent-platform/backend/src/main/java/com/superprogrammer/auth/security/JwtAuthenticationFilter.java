@@ -5,6 +5,7 @@ import com.superprogrammer.auth.service.AuthService;
 import com.superprogrammer.auth.service.SessionService;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.common.security.BanService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -34,6 +35,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtUtil jwtUtil;
     private final AuthService authService;
     private final SessionService sessionService;
+    /** ObjectProvider 延迟取：@WebMvcTest 切片不加载 BanService（common.security 包），
+     *  强依赖会让全部 web 切片测试崩上下文；生产全量扫描必有该 bean。 */
+    private final org.springframework.beans.factory.ObjectProvider<BanService> banServiceProvider;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -69,10 +73,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String sid = jwtUtil.getSidFromToken(token);
             if (!sessionService.isCurrent(userId, sid)) {
                 log.warn("会话已被踢出(单点登录) userId={} uri={}", userId, request.getRequestURI());
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-                response.getWriter().write(objectMapper.writeValueAsString(R.fail(ErrorCode.SESSION_KICKED)));
+                writeSessionKicked(response);
+                return;
+            }
+
+            // 11x 加固 P1-C3：ban 标记兜底（单点登录关时 isCurrent 恒 true，靠它即时踢封号用户）。
+            // 固定 SESSION_KICKED 话术——不透传「被封」防探测枚举。
+            BanService banService = banServiceProvider.getIfAvailable();
+            if (banService != null && banService.isBanned(userId)) {
+                log.warn("请求命中 ban 标记(已封号/禁用/锁定) userId={} uri={}", userId, request.getRequestURI());
+                writeSessionKicked(response);
                 return;
             }
 
@@ -102,6 +112,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /** 401 SESSION_KICKED 固定话术（单点踢出与 ban 标记共用，不透传原因防探测）。 */
+    private void writeSessionKicked(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.getWriter().write(objectMapper.writeValueAsString(R.fail(ErrorCode.SESSION_KICKED)));
     }
 
     private String extractToken(HttpServletRequest request) {

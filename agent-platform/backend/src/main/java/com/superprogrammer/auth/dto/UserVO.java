@@ -22,6 +22,10 @@ public class UserVO {
     private String email;
     private String avatar;
     private String status;
+    /** 封禁/禁用/锁定原因（11x 加固 V104，仅管理端列表展示用） */
+    private String banReason;
+    /** 自动锁定到期时间（11x 加固 V104） */
+    private OffsetDateTime lockedUntil;
     private OffsetDateTime lastLoginAt;
     private OffsetDateTime createdAt;
     private List<String> roles;

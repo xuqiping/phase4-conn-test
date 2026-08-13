@@ -42,6 +42,7 @@ class KnowledgeDocumentServiceTest {
     @Mock private KnowledgeDocEmbeddingMapper docEmbeddingMapper;
     @Mock private KnowledgeBaseService knowledgeBaseService;
     @Mock private ApplicationEventPublisher applicationEventPublisher;
+    @Mock private KnowledgeDocumentVersionService versionService;
 
     @InjectMocks private KnowledgeDocumentService service;
 

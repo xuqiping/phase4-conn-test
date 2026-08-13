@@ -82,6 +82,12 @@ public class ChatSessionService {
     /** 对话审计开关（audit.chat.enabled，高频出问题可关）。非 final，Spring @Value 字段注入。 */
     @Value("${audit.chat.enabled:true}")
     private boolean chatAuditEnabled;
+    /**
+     * 11x 加固 P3-C9：chat 消息咽喉发 KIND_CHAT_MESSAGE（Prompt 注入规则消费）。
+     * 字段注入 required=false——横切可选依赖，既有 @InjectMocks 单测无此 Bean 时跳过（防构造参涟漪）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
 
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
@@ -191,6 +197,13 @@ public class ChatSessionService {
         // 8x Chunk4：send_message 审计行（用户消息持久化后，请求线程→MDC 有 traceId/IP/username）
         auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
                 request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
+
+        // 11x P3-C9：Prompt 注入扫描事件（异步冷路径，不阻主链；content 仅规则匹配不落地明文）
+        if (securityEventPublisher != null) {
+            securityEventPublisher.publish(
+                    com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_CHAT_MESSAGE,
+                    userId, java.util.Map.of("content", request.getMessage() == null ? "" : request.getMessage()));
+        }
 
         // Build execution context
         ExecutionContext context = new ExecutionContext(

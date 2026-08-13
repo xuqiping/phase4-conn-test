@@ -42,6 +42,10 @@ class RagRetrievalServiceTest {
     @Mock private VisibilitySetService visibilitySetService;
     @Mock private AnswerCacheService answerCacheService;
     @Mock private QueryExpansionService queryExpansionService;
+    @Mock private RankingConfigService rankingConfigService;
+    @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
+    @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
+    @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
 
     private final RagConfig ragConfig = new RagConfig();
     private final CitationChecker citationChecker = new CitationChecker();
@@ -55,7 +59,16 @@ class RagRetrievalServiceTest {
     void setUp() {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
-                answerCacheService, answerCacheProps, queryExpansionService, recallProps);
+                answerCacheService, answerCacheProps, queryExpansionService, recallProps,
+                ragTraceService, rankingConfigService);
+        lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
+                .thenReturn(retrievalScope);
+        lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(
+                new RankingConfigService.ResolvedRankingConfig(null, "DISABLED", null, "test-disabled",
+                        30, 10, 10, 4000, "FAIL_CLOSED", false,
+                        RankingConfigService.Source.ADMIN_DEFAULT));
+        lenient().when(ragTraceService.beginRanking(anyString(), anyString(), any(), anyString(),
+                anyInt(), anyString(), anyString())).thenReturn(rankingScope);
     }
 
     @Test
@@ -155,6 +168,31 @@ class RagRetrievalServiceTest {
         assertFalse(vo.isAbstained());
         assertTrue(vo.isLowConfidence());   // 灰区标低置信
         assertNotNull(vo.getAnswer());
+    }
+
+    @Test
+    void rankingProxy_recordsConfiguredAndEffectiveMode() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        stubExpandSingle();
+        when(rankingConfigService.resolve(1L)).thenReturn(new RankingConfigService.ResolvedRankingConfig(
+                12L, "LLM", "ranking-chat", "rc-1", 30, 10, 10, 4000,
+                "FALLBACK_RRF", false, RankingConfigService.Source.KNOWLEDGE_BASE));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of(denseRow(10L, 99L, "安装步骤", 0.6)));
+        when(queryMapper.fetchL2Children(anyLong(), anyList(), anyList()))
+                .thenReturn(List.of(l2Row(11L, 99L, 10L, "安装步骤", "PostgreSQL16 安装", "hash11")));
+        when(queryMapper.bm25HitsJieba(anyLong(), anyString(), anyList())).thenReturn(List.of());
+        when(queryMapper.reverifyNode(11L)).thenReturn(hashRow("hash11"));
+        when(ragTraceService.beginRanking(eq("LLM"), eq("HEURISTIC_PROXY"), eq(12L), eq("rc-1"),
+                eq(1), anyString(), eq("P0_PROXY_NOT_YET_ENABLED"))).thenReturn(rankingScope);
+        lenient().when(llmGateway.chat(any(), any()))
+                .thenReturn(LlmResponse.builder().content("[1] 安装步骤说明").build());
+
+        RagRetrieveVO vo = service.retrieve(req(1L, "如何安装"), 7L);
+
+        assertFalse(vo.isAbstained());
+        verify(rankingScope).succeed(1);
     }
 
     // ============================ helpers ============================

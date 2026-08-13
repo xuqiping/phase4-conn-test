@@ -38,6 +38,13 @@ public class MediaBillingService {
     private final UsageCollector usageCollector;
 
     /**
+     * 11x 加固 P3-C9：媒体扣费成功发 KIND_MEDIA_SUBMIT（媒体滥用规则消费，cost=实扣积分）。
+     * 字段注入 required=false——横切可选依赖，既有 @InjectMocks 单测无此 Bean 时跳过（防构造参涟漪）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
+
+    /**
      * 媒体调用成功计费：算价→折算→同步扣→异步采。全链吞异常。
      *
      * <p>VIDEO：{@code tokensInput} 传 Ark 真值/费率估算的视频伪-token，{@code videoSeconds} 传时长；
@@ -80,6 +87,12 @@ public class MediaBillingService {
             BigDecimal points = ratioService.toPoints(yuan);
             // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
             walletService.charge(userId, points, kind, refId, model);
+            // 11x P3-C9：扣费成功发媒体滥用事件（worker 线程无 request → ip=null，按用户维度计数）
+            if (securityEventPublisher != null && userId != null && points != null && points.signum() > 0) {
+                securityEventPublisher.publish(
+                        com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_MEDIA_SUBMIT,
+                        userId, java.util.Map.of("estimatedCostFen", points.longValue(), "taskCount", 1));
+            }
             // 8x Chunk7：taskId=refId（任务 id）落 usage 行，媒体审计两行 targetId=taskId 与此对齐做 drill-down
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
                     tokensInput, null, yuan, points, status, null, refId);

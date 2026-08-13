@@ -38,6 +38,12 @@ public class LlmController {
         return ResponseEntity.ok(R.ok(providerService.listAll()));
     }
 
+    /** 按能力返回当前启用模型，供业务页面下拉选择；不暴露供应商密钥。 */
+    @GetMapping("/models/active")
+    public ResponseEntity<R<List<String>>> listActiveModels(@RequestParam String category) {
+        return ResponseEntity.ok(R.ok(providerService.listActiveModels(category)));
+    }
+
     @PostMapping("/providers")
     @RequirePermission("role:manage")
     public ResponseEntity<R<LlmProviderVO>> createProvider(

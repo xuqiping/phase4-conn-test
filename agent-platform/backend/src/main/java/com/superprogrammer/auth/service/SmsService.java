@@ -7,14 +7,12 @@ import com.aliyuncs.dysmsapi.model.v20170525.SendSmsRequest;
 import com.aliyuncs.dysmsapi.model.v20170525.SendSmsResponse;
 import com.aliyuncs.profile.DefaultProfile;
 import com.aliyuncs.profile.IClientProfile;
-import com.superprogrammer.auth.config.AliyunSmsConfig;
 import com.superprogrammer.auth.dto.TokenResponse;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -45,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class SmsService {
 
-    private final AliyunSmsConfig smsConfig;
+    private final AuthChannelSettingService channelSettings;
     private final StringRedisTemplate redisTemplate;
     private final CredentialService credentialService;
     private final CaptchaService captchaService;
@@ -73,31 +71,15 @@ public class SmsService {
     /** 验证码错误上限：5 次作废。 */
     private static final int CODE_MAX_FAILS = 5;
 
-    /** 是否启用（开关）。 */
-    @Value("${app.auth.sms.enabled:false}")
-    private boolean smsEnabled;
-
-    /** 验证码有效期（分钟，配置覆盖默认值）。 */
-    @Value("${app.auth.sms.code-ttl-minutes:5}")
-    private int codeTtlMinutes;
-
-    /** 同号每天限流次数（配置覆盖默认值）。 */
-    @Value("${app.auth.sms.limit-per-phone-per-day:10}")
-    private int limitPerPhonePerDay;
-
-    /** 同 IP 每天限流次数（配置覆盖默认值）。 */
-    @Value("${app.auth.sms.limit-per-ip-per-day:30}")
-    private int limitPerIpPerDay;
-
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public SmsService(AliyunSmsConfig smsConfig, StringRedisTemplate redisTemplate,
+    public SmsService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
                       CredentialService credentialService, CaptchaService captchaService,
                       AuthService authService, PasswordEncoder passwordEncoder,
                       com.superprogrammer.auth.mapper.UserMapper userMapper,
                       com.superprogrammer.auth.mapper.RoleMapper roleMapper,
                       com.superprogrammer.auth.mapper.UserRoleMapper userRoleMapper) {
-        this.smsConfig = smsConfig;
+        this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
         this.captchaService = captchaService;
@@ -117,7 +99,8 @@ public class SmsService {
      * @return 统一话术（"验证码已发送"），不泄露手机号是否注册
      */
     public String sendCode(String phone, String captchaToken, String clientIp) {
-        if (!smsEnabled || smsConfig.getAccessKeyId() == null || smsConfig.getAccessKeyId().isBlank()) {
+        var config = channelSettings.smsSnapshot();
+        if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "短信服务未开启");
         }
 
@@ -130,7 +113,7 @@ public class SmsService {
         }
 
         // 限流三档
-        checkRateLimit(phone, clientIp);
+        checkRateLimit(phone, clientIp, config);
 
         // 同号 5min 内已发未用 → 拒重发（防刷量）
         String codeKey = SMS_CODE_PREFIX + phone;
@@ -145,7 +128,7 @@ public class SmsService {
         // 生成 6 位码
         String code = generateCode();
         try {
-            redisTemplate.opsForValue().set(codeKey, code, codeTtlMinutes * 60L, TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(codeKey, code, config.codeTtlMinutes() * 60L, TimeUnit.SECONDS);
             redisTemplate.delete(SMS_CODE_FAIL_PREFIX + phone); // 清错误计数
         } catch (Exception e) {
             log.error("验证码存 Redis 失败 phone={} : {}", phone, e.toString());
@@ -153,7 +136,7 @@ public class SmsService {
         }
 
         // 阿里云 SMS 发送
-        boolean sent = sendSms(phone, smsConfig.getTemplateCodeVerify(), "{\"code\":\"" + code + "\"}");
+        boolean sent = sendSms(config, phone, config.templateCodeVerify(), "{\"code\":\"" + code + "\"}");
         if (!sent) {
             // 发送失败 → 删 Redis 里的码（用户没收到，不能留着）
             try {
@@ -213,18 +196,18 @@ public class SmsService {
     // ==================== 内部方法 ====================
 
     /** 限流三档：同号 60s / 同号每天 10 次 / 同 IP 每天 30 次。 */
-    private void checkRateLimit(String phone, String clientIp) {
+    private void checkRateLimit(String phone, String clientIp, AuthChannelSettingService.SmsSnapshot config) {
         // 同号 60s
         checkWindow(SMS_LIMIT_PHONE_PREFIX + phone, 1, PHONE_WINDOW_SECONDS, "发送过于频繁，请 60 秒后再试");
 
         // 同号每天
         String phoneDailyKey = SMS_LIMIT_PHONE_DAILY_PREFIX + phone;
-        checkDailyLimit(phoneDailyKey, limitPerPhonePerDay, "该手机号今日发送次数已达上限");
+        checkDailyLimit(phoneDailyKey, config.limitPerPhonePerDay(), "该手机号今日发送次数已达上限");
 
         // 同 IP 每天
         if (clientIp != null && !clientIp.isBlank()) {
             String ipDailyKey = SMS_LIMIT_IP_DAILY_PREFIX + clientIp;
-            checkDailyLimit(ipDailyKey, limitPerIpPerDay, "该 IP 今日发送次数已达上限");
+            checkDailyLimit(ipDailyKey, config.limitPerIpPerDay(), "该 IP 今日发送次数已达上限");
         }
     }
 
@@ -350,15 +333,16 @@ public class SmsService {
     }
 
     /** 阿里云 SMS 发送。超时降级。 */
-    private boolean sendSms(String phone, String templateCode, String templateParam) {
+    private boolean sendSms(AuthChannelSettingService.SmsSnapshot config,
+                            String phone, String templateCode, String templateParam) {
         try {
-            IClientProfile profile = DefaultProfile.getProfile(smsConfig.getRegion(),
-                    smsConfig.getAccessKeyId(), smsConfig.getAccessKeySecret());
+            IClientProfile profile = DefaultProfile.getProfile(config.region(),
+                    config.accessKeyId(), config.accessKeySecret());
             IAcsClient client = new DefaultAcsClient(profile);
 
             SendSmsRequest request = new SendSmsRequest();
             request.setPhoneNumbers(phone);
-            request.setSignName(smsConfig.getSignName());
+            request.setSignName(config.signName());
             request.setTemplateCode(templateCode);
             request.setTemplateParam(templateParam);
 

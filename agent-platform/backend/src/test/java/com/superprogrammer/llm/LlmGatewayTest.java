@@ -66,6 +66,10 @@ class LlmGatewayTest {
     private InflightGateService inflightGate;
     @Mock
     private SystemSettingService systemSettingService;
+    @Mock
+    private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
+    @Mock
+    private com.superprogrammer.knowledge.trace.RagTraceService.ModelCallScope modelCallScope;
 
     private LlmGateway gateway;
     private PrometheusMeterRegistry meterRegistry;
@@ -82,7 +86,13 @@ class LlmGatewayTest {
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService);
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
+        lenient().when(ragTraceService.beginModelCall(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(modelCallScope);
+        lenient().doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(modelCallScope).runWithContext(any(Runnable.class));
     }
 
     @Test
@@ -120,7 +130,7 @@ class LlmGatewayTest {
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
         LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService);
+                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
     }
@@ -215,6 +225,7 @@ class LlmGatewayTest {
 
         verify(billingService).onFailure(eq(42L), eq(7L), any(), eq("deepseek-chat"),
                 eq("CHAT"), contains("boom"));
+        verify(modelCallScope).fail(contains("boom"));
     }
 
     @Test
@@ -235,6 +246,8 @@ class LlmGatewayTest {
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
                 eq("CHAT"), eq(20), eq(10));
+        verify(modelCallScope).detach();
+        verify(modelCallScope, atLeast(2)).runWithContext(any(Runnable.class));
     }
 
     // ===== 归户兜底（层1 咽喉）：忘传 userId → 自动从 BillingContext 归户；无上下文 → 仅采不扣 =====

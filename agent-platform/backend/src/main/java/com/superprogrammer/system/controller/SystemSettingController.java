@@ -16,6 +16,9 @@ import com.superprogrammer.system.dto.WebSearchSettingsUpdateRequest;
 import com.superprogrammer.system.dto.WebSearchSettingsVO;
 import com.superprogrammer.system.dto.LlmModelDefaultsVO;
 import com.superprogrammer.system.dto.LlmModelDefaultsUpdateRequest;
+import com.superprogrammer.system.dto.AuthChannelSettingsUpdateRequest;
+import com.superprogrammer.system.dto.AuthChannelSettingsVO;
+import com.superprogrammer.auth.service.AuthChannelSettingService;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -32,6 +35,21 @@ public class SystemSettingController {
     private final SystemSettingService service;
     private final WebSearchService webSearchService;
     private final LlmProviderService llmProviderService;
+    private final AuthChannelSettingService authChannelSettingService;
+
+    @GetMapping("/auth-channels")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<AuthChannelSettingsVO>> getAuthChannels() {
+        return ResponseEntity.ok(R.ok(authChannelSettingService.getSettings()));
+    }
+
+    @PutMapping("/auth-channels")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "update_auth_channels", targetType = "setting")
+    public ResponseEntity<R<AuthChannelSettingsVO>> updateAuthChannels(
+            @Valid @RequestBody AuthChannelSettingsUpdateRequest request) {
+        return ResponseEntity.ok(R.ok("认证通道配置已更新", authChannelSettingService.update(request)));
+    }
 
     @GetMapping("/llm-model-defaults")
     @RequirePermission("role:manage")

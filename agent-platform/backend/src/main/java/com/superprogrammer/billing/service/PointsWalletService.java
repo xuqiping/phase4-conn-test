@@ -51,6 +51,13 @@ public class PointsWalletService {
     private boolean refundOnFail;
 
     /**
+     * 11x 加固 P3-C9：扣点咽喉发 KIND_POINTS_USAGE（积分滥用规则消费）。
+     * 字段注入 required=false——横切可选依赖，既有 @InjectMocks 单测无此 Bean 时跳过（防构造参涟漪）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
+
+    /**
      * 预检：余额&gt;0 放行，≤0（含负数欠款）抛 {@link ErrorCode#INSUFFICIENT_POINTS}。
      * <p>enabled=false 或 userId=null（系统调用）跳过。
      *
@@ -80,8 +87,11 @@ public class PointsWalletService {
         if (!enabled || userId == null || points == null || points.signum() <= 0) {
             return null;
         }
-        return adjust(userId, points.negate(), PointsLedgerEntity.TYPE_CONSUME, null, refType, refId, remark, "积分扣减")
+        BigDecimal balanceAfter = adjust(userId, points.negate(), PointsLedgerEntity.TYPE_CONSUME, null, refType, refId, remark, "积分扣减")
                 .getBalanceAfter();
+        // 11x P3-C9：扣减成功发事件（事务内发、Worker 异步消费；回滚误报可接受——滥用窗口计数非精确账本）
+        publishPointsUsage(userId, points, balanceAfter);
+        return balanceAfter;
     }
 
     /**
@@ -97,8 +107,25 @@ public class PointsWalletService {
         if (idemKey == null || idemKey.isBlank()) {
             return charge(userId, points, refType, refId, remark);
         }
+        // 11x P3-C9：事件发在 supplier 内——幂等重放（命中既有键）不执行 adjust，不重发防双计
         return runIdempotent(idemKey, userId, "billing.charge", points,
-                () -> adjust(userId, points.negate(), PointsLedgerEntity.TYPE_CONSUME, null, refType, refId, remark, "积分扣减"));
+                () -> {
+                    PointsLedgerEntity row = adjust(userId, points.negate(), PointsLedgerEntity.TYPE_CONSUME,
+                            null, refType, refId, remark, "积分扣减");
+                    publishPointsUsage(userId, points, row.getBalanceAfter());
+                    return row;
+                });
+    }
+
+    /** 11x P3-C9：扣点事件发布（null 安全 + 内嵌吞异常在 SecurityEventPublisher）。 */
+    private void publishPointsUsage(Long userId, BigDecimal points, BigDecimal balanceAfter) {
+        if (securityEventPublisher != null) {
+            securityEventPublisher.publish(
+                    com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_POINTS_USAGE,
+                    userId, java.util.Map.of(
+                            "delta", points.longValue(),
+                            "balanceAfter", balanceAfter == null ? -1 : balanceAfter.longValue()));
+        }
     }
 
     /**

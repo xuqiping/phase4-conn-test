@@ -27,6 +27,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.MDC;
 
 /**
  * /api/knowledge/ask — RAG 流式问答（阶段5）。
@@ -51,11 +52,13 @@ public class KnowledgeAskController {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         SecurityContext securityContext = SecurityContextHolder.getContext();
+        java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
         SseEmitter emitter = new SseEmitter(120_000L);
 
         new Thread(() -> {
             try {
                 SecurityContextHolder.setContext(securityContext);
+                if (mdcSnapshot != null) MDC.setContextMap(mdcSnapshot);
                 // 计费归户：裸线程不继承 ThreadLocal，手工种 userId（RAG 流式生成段 + 查询扩展 LLM 调用自动计费）
                 com.superprogrammer.billing.context.BillingContext.set(userId);
                 Flux<StreamEvent> flux = buildAskFlux(request, userId, admin);
@@ -84,6 +87,7 @@ public class KnowledgeAskController {
             } finally {
                 SecurityContextHolder.clearContext();
                 com.superprogrammer.billing.context.BillingContext.clear();
+                MDC.clear();
             }
         }).start();
 

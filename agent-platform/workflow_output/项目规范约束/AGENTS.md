@@ -108,3 +108,34 @@
 - 文本与向量调用统一遵循：显式选择 → 管理员对应类别默认值 → 明确业务错误。
 - 显式模型不可用时直接报错，不得静默替换成其他模型。
 - 历史 Flyway 迁移和测试数据可以保留具体模型 ID，但不得作为新运行时默认来源。
+
+## RAG Trace 与日志约束
+
+- RAG 检索、重排、模型调用、计费、审计和 Java 日志必须共用同一个 `traceId`，并按需携带 `retrievalRunId`、`rankingRunId`、`modelRequestId`、`callPurpose`。
+- MDC 只允许放关联 ID、用户 ID、知识库 ID 摘要和调用用途；禁止放 Query、Prompt、Chunk 正文、附件内容、密钥或令牌。
+- Query Rewrite/HyDE、Embedding、答案生成等模型调用必须记录真实用途；不得全部笼统标成答案生成。
+- 裸线程、线程池和 Reactor/SSE 回调必须显式传播上下文，并在回调结束后立即恢复/清理，禁止 ThreadLocal/MDC 串请求。
+- 配置的 Ranking 模式和实际执行模式必须分开记录；启发式代理不得伪装成已经调用 LLM 或专用 Rerank 模型。
+
+## RAG 答案缓存协议约束
+
+- 缓存查询必须同时隔离 `scopeUserId/embeddingModel/rankingConfigVersion/pipelineVersion/promptVersion/knowledgeSnapshot`，禁止只按用户和向量近邻查询。
+- 命中候选后仍必须复核当前权限签名、节点 ACTIVE/未删除状态和 evidence `content_hash`；缓存只做优化，不可成为权限或正确性依据。
+- 权限、文档撤销和 Ranking 配置变化必须主动停用受影响缓存；Embedding、Pipeline、Prompt、知识快照变化至少通过版本 Key 保证零误命中。
+- Pipeline/Prompt 协议版本必须来自可配置项，不得散落硬编码；升级检索或 Prompt 语义时同步递增版本。
+
+## 知识库文档版本治理约束
+
+- `knowledge_documents` 是 Canonical Document，`knowledge_document_versions` 保存不可变历史；禁止用覆盖旧版本文件或 Hash 的方式“更新文档”。
+- 版本切换必须在事务内锁主文档，并用 `expectedCurrentVersionId` 检查并发；过期提交明确报冲突，不得静默覆盖。
+- 新版本文件和 `sourceHash` 必须由后端存储/计算，禁止信任客户端传入 `fileRef` 或 Hash。
+- 每个文档最多一个 `EFFECTIVE` 版本；撤销当前版本必须清空 `current_version_id`，检索只允许当前指针非空的文档。
+- 生效、替代、撤销必须写审计并发布缓存/索引失效事件；历史版本查询只返回有 KB 读权限的数据。
+
+## 知识库文档元数据治理约束
+
+- Canonical Document 的 `owner/source/sourceUpdatedAt/authority/confidentiality/tags/effectiveAt/expiredAt` 必须经治理 API 修改；文件引用和内容 Hash 仍只允许后端生成。
+- 权威等级仅允许 `OFFICIAL/APPROVED/REFERENCE/UNVERIFIED`；密级仅允许 `PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED`，禁止自由字符串导致过滤口径漂移。
+- 密级变更仅管理员可执行；知识库管理员可维护其他治理字段。所有更新写审计并主动失效该 KB 的答案缓存。
+- 有效区间使用 `TIMESTAMPTZ`，规则为 `effectiveAt < expiredAt`；默认检索排除尚未生效和已经失效的文档，边界统一以数据库 `now()` 判断。
+- 标签最多 20 个、单标签最多 64 字符，写入前去空白、去重；JSONB 更新必须显式 `::jsonb`，不得依赖通用更新器猜 JDBC 类型。

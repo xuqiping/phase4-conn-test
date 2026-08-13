@@ -31,7 +31,7 @@ import static org.mockito.Mockito.lenient;
 class EmailServiceTest {
 
     @Mock
-    private AliyunMailConfig mailConfig;
+    private AuthChannelSettingService channelSettings;
     @Mock
     private StringRedisTemplate redisTemplate;
     @Mock
@@ -50,17 +50,18 @@ class EmailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new EmailService(mailConfig, redisTemplate, credentialService);
-        ReflectionTestUtils.setField(service, "emailEnabled", true);
-        ReflectionTestUtils.setField(service, "verifyUrl", "https://test.com/verify-email");
-        ReflectionTestUtils.setField(service, "resetUrl", "https://test.com/reset-password");
+        service = new EmailService(channelSettings, redisTemplate, credentialService);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        lenient().when(mailConfig.getAccessKeyId()).thenReturn("test-ak");
+        lenient().when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
+                true, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
+                null, "https://test.com/verify-email", "https://test.com/reset-password"));
     }
 
     @Test
     void sendVerifyEmail_notEnabled_returnsFalse() {
-        ReflectionTestUtils.setField(service, "emailEnabled", false);
+        when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
+                false, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
+                null, "https://test.com/verify-email", "https://test.com/reset-password"));
         assertFalse(service.sendVerifyEmail(1L, "a@b.com"));
         verifyNoInteractions(valueOps);
     }

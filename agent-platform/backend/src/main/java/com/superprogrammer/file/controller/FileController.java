@@ -2,11 +2,14 @@ package com.superprogrammer.file.controller;
 
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.common.security.SecurityEventPublisher;
+import com.superprogrammer.common.security.event.ApplicationSecurityEvent;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileSecurityPolicy;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.file.service.StoredFile;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -22,12 +25,21 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/files")
 @RequiredArgsConstructor
 public class FileController {
 
     private final FileStorageService fileStorageService;
+
+    /**
+     * 11x 加固 P3-C9：下载咽喉发 KIND_DATA_EXFIL（数据外带规则消费，count=1/次）。
+     * 字段注入 required=false——横切可选依赖，@WebMvcTest 切片/单测无此 Bean 时静默跳过（不破坏既有测试）。
+     */
+    @Autowired(required = false)
+    private SecurityEventPublisher securityEventPublisher;
 
     @PostMapping("/upload")
     @AuditLog(module = "system", action = "upload_file", targetType = "file")
@@ -46,7 +58,13 @@ public class FileController {
      */
     @GetMapping("/{fileId}")
     public ResponseEntity<Resource> get(@PathVariable String fileId) {
-        Resource resource = fileStorageService.load(fileId, getCurrentUserId(), isAdmin());
+        Long userId = getCurrentUserId();
+        Resource resource = fileStorageService.load(fileId, userId, isAdmin());
+        // 11x P3-C9：下载成功才计数（load 抛异常=未外带），单文件 count=1
+        if (securityEventPublisher != null) {
+            securityEventPublisher.publish(ApplicationSecurityEvent.KIND_DATA_EXFIL, userId,
+                    Map.of("resourceType", "file", "count", 1));
+        }
         boolean inlineSafe = FileSecurityPolicy.isInlineSafe(fileId);
         MediaType contentType = inlineSafe
                 ? MediaType.parseMediaType(fileStorageService.detectMimeType(fileId))

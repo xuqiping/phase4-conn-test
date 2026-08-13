@@ -56,6 +56,10 @@ public class RagQueryRow {
         private String title;
         private String docType;
         private String l1Metadata;
+        private String authorityLevel;
+        private String confidentialityLevel;
+        private java.time.OffsetDateTime effectiveAt;
+        private java.time.OffsetDateTime expiredAt;
         /** IMAGE/FILE 原件引用（/api/files/{fileId}），回显用；普通文档也可能有但回显时按 docType 判断。 */
         private String fileRef;
         private String mime;

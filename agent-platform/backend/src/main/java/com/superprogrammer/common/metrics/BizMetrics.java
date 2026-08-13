@@ -179,6 +179,68 @@ public class BizMetrics {
                 .increment();
     }
 
+    // ---------- 安全加固（11x · security domain） ----------
+
+    /** API 限流触发：api_rate_limited_total{action}。action=有界注解枚举（非 URL 路径，防高基数）。 */
+    public void apiRateLimited(String action) {
+        Counter.builder("api.rate.limited")
+                .description("API 限流触发次数（按动作）")
+                .tags("action", safe(action))
+                .register(registry)
+                .increment();
+    }
+
+    /** 安全事件入库：security_events_raised_total{type,severity}。type=规则码（有界），severity=LOW/MEDIUM/HIGH/CRITICAL。 */
+    public void securityEventRaised(String eventType, String severity) {
+        Counter.builder("security.events.raised")
+                .description("安全事件入库次数（按类型与严重度）")
+                .tags("type", safe(eventType), "severity", safe(severity))
+                .register(registry)
+                .increment();
+    }
+
+    /** IP 封禁：security_ip_blocked_total{source=AUTO|MANUAL}。 */
+    public void ipBlocked(String source) {
+        Counter.builder("security.ip.blocked")
+                .description("IP 封禁次数（按来源）")
+                .tags("source", safe(source))
+                .register(registry)
+                .increment();
+    }
+
+    /** 账号锁定/封号：security_account_locked_total{action=lock|ban}。 */
+    public void accountLocked(String action) {
+        Counter.builder("security.account.locked")
+                .description("账号锁定/封号次数（按动作）")
+                .tags("action", safe(action))
+                .register(registry)
+                .increment();
+    }
+
+    /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
+    public void securityEventDropped() {
+        Counter.builder("security.event.dropped")
+                .description("安全事件队列满被丢弃次数")
+                .register(registry)
+                .increment();
+    }
+
+    /** 11x 加固 P4-C11：钉钉告警发送成功（无 tag）。 */
+    public void alertSent() {
+        Counter.builder("security.alert.sent")
+                .description("钉钉告警发送成功次数")
+                .register(registry)
+                .increment();
+    }
+
+    /** 11x 加固 P4-C11：钉钉告警发送失败（持续上涨 → meta 告警盯此指标）。 */
+    public void alertSendFailed() {
+        Counter.builder("security.alert.send_failed")
+                .description("钉钉告警发送失败次数")
+                .register(registry)
+                .increment();
+    }
+
     // ---------- 媒体生成/剪辑（合并收尾项 6：beifen 媒体域接入统一指标） ----------
 
     /** 媒体任务提交：media_task_submitted_total{kind=video|image|edit}。落库成功后记。 */

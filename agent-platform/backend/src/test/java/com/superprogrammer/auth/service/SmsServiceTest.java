@@ -34,7 +34,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class SmsServiceTest {
 
-    @Mock private AliyunSmsConfig smsConfig;
+    @Mock private AuthChannelSettingService channelSettings;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
     @Mock private CredentialService credentialService;
@@ -59,22 +59,17 @@ class SmsServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SmsService(smsConfig, redisTemplate, credentialService, captchaService,
+        service = new SmsService(channelSettings, redisTemplate, credentialService, captchaService,
                 authService, passwordEncoder, userMapper, roleMapper, userRoleMapper);
-        ReflectionTestUtils.setField(service, "smsEnabled", true);
-        ReflectionTestUtils.setField(service, "codeTtlMinutes", 5);
-        ReflectionTestUtils.setField(service, "limitPerPhonePerDay", 10);
-        ReflectionTestUtils.setField(service, "limitPerIpPerDay", 30);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        lenient().when(smsConfig.getAccessKeyId()).thenReturn("test-ak");
-        lenient().when(smsConfig.getRegion()).thenReturn("cn-hangzhou");
-        lenient().when(smsConfig.getSignName()).thenReturn("测试签名");
-        lenient().when(smsConfig.getTemplateCodeVerify()).thenReturn("SMS_TEST");
+        lenient().when(channelSettings.smsSnapshot()).thenReturn(new AuthChannelSettingService.SmsSnapshot(
+                true, "cn-hangzhou", "test-ak", "test-sk", "测试签名", "SMS_TEST", "SMS_RESET", 5, 10, 30));
     }
 
     @Test
     void sendCode_notEnabled_throws() {
-        ReflectionTestUtils.setField(service, "smsEnabled", false);
+        when(channelSettings.smsSnapshot()).thenReturn(new AuthChannelSettingService.SmsSnapshot(
+                false, "cn-hangzhou", "test-ak", "test-sk", "测试签名", "SMS_TEST", "SMS_RESET", 5, 10, 30));
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.sendCode("13800138000", "captcha-token", "127.0.0.1"));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());

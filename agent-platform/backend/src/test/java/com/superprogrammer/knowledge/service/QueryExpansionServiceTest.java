@@ -3,6 +3,7 @@ package com.superprogrammer.knowledge.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.config.RagRecallProperties;
 import com.superprogrammer.knowledge.service.QueryExpansionService.ExpandedQuery;
+import com.superprogrammer.knowledge.trace.RagTraceContext;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmResponse;
@@ -112,5 +113,25 @@ class QueryExpansionServiceTest {
         ExpandedQuery eq = service.expand("q", "m", 7L);
 
         assertTrue(eq.qHalfs().isEmpty());
+    }
+
+    @Test
+    void rewriteAndHyde_useDedicatedModelCallPurpose() {
+        when(systemSettingService.getRagRecallExpansionEnabled()).thenReturn(true);
+        when(systemSettingService.getRagRecallExpansionThreshold()).thenReturn(200);
+        when(llmGateway.embed(anyString(), anyString(), any())).thenReturn(new float[HalfVecUtil.DIM]);
+        final String[] observedPurpose = {null};
+        when(llmGateway.chat(any(), any())).thenAnswer(inv -> {
+            observedPurpose[0] = RagTraceContext.current().callPurpose();
+            return LlmResponse.builder().content("{\"paraphrases\":[],\"hyde\":\"\"}").build();
+        });
+
+        try (var ignored = RagTraceContext.open(new RagTraceContext.State(
+                "trace-1", "retrieval-1", null, null, null, 7L, "[1]"))) {
+            service.expand("如何安装", "m", 7L);
+        }
+
+        assertEquals("QUERY_REWRITE_AND_HYDE", observedPurpose[0]);
+        assertNull(RagTraceContext.current());
     }
 }

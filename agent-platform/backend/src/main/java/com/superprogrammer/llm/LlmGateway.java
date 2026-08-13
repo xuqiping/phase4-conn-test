@@ -24,6 +24,7 @@ import com.superprogrammer.llm.provider.OpenAICompatibleProvider;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.llm.service.UserLlmProviderService;
 import com.superprogrammer.knowledge.util.TokenEstimator;
+import com.superprogrammer.knowledge.trace.RagTraceService;
 import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +54,7 @@ public class LlmGateway {
     private final InflightGateService inflightGate;
     /** 模型为空时只读管理员默认；没有默认则明确报错，绝不硬编码厂商模型。 */
     private final SystemSettingService systemSettingService;
+    private final RagTraceService ragTraceService;
 
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
@@ -70,7 +72,9 @@ public class LlmGateway {
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
-        try {
+        var ragCall = ragTraceService.beginModelCall(request.getModel(), provider.getName(),
+                summarizeInput(request), "ANSWER_GENERATION");
+        try (ragCall) {
             LlmResponse response = provider.chat(request);
             TokenUsage usage = response.getUsage();
             Integer in = usage != null ? usage.getPromptTokens() : null;
@@ -85,8 +89,10 @@ public class LlmGateway {
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
+            ragCall.succeed(response.getContent(), in, out);
             return response;
         } catch (RuntimeException e) {
+            ragCall.fail(e.getMessage());
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
             recordLlmTerminal(provider.getName(), request.getModel(), BizMetrics.RESULT_FAIL, startNanos);
@@ -132,32 +138,57 @@ public class LlmGateway {
         // 订阅后终结三态互斥必走 doFinally，acquire/release 正好一次配对。
         return Flux.defer(() -> {
             boolean held = inflightGate.acquire(uid, balance);
+            RagTraceService.ModelCallScope ragCall = ragTraceService.beginModelCall(model, providerName,
+                    summarizeInput(request), "ANSWER_GENERATION_STREAM");
+            // Flux 生命周期可能跨 Reactor 线程；不能把创建线程的 ThreadLocal/MDC scope 长期挂到流结束。
+            // 立即恢复订阅线程，后续每个 usage/terminal 回调按快照短暂恢复同一 RAG Trace。
+            ragCall.detach();
+            java.util.concurrent.atomic.AtomicReference<TokenUsage> ragUsage = new java.util.concurrent.atomic.AtomicReference<>();
             final Flux<StreamEvent> inner;
             try {
                 inner = provider.chatStream(request, usage -> {
-                            billingService.onSuccess(uid, providerId, providerScope,
-                                    model, LlmUsageLogEntity.KIND_CHAT,
-                                    usage.getPromptTokens(), usage.getCompletionTokens());
-                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
-                                    usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
-                            bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
-                                    usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
+                            ragCall.runWithContext(() -> {
+                                ragUsage.set(usage);
+                                billingService.onSuccess(uid, providerId, providerScope,
+                                        model, LlmUsageLogEntity.KIND_CHAT,
+                                        usage.getPromptTokens(), usage.getCompletionTokens());
+                                bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
+                                        usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
+                                bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
+                                        usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
+                            });
                         })
                         .publishOn(Schedulers.boundedElastic())
-                        .doOnComplete(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos))
-                        .doOnError(e -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos))
-                        .doOnCancel(() -> recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos));
+                        .doOnComplete(() -> {
+                            ragCall.runWithContext(() -> {
+                                recordLlmTerminal(providerName, model, BizMetrics.RESULT_SUCCESS, startNanos);
+                                TokenUsage usage = ragUsage.get();
+                                ragCall.succeed(null, usage == null ? null : usage.getPromptTokens(),
+                                        usage == null ? null : usage.getCompletionTokens());
+                            });
+                        })
+                        .doOnError(e -> ragCall.runWithContext(() -> {
+                            recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos);
+                            ragCall.fail(e.getMessage());
+                        }))
+                        .doOnCancel(() -> ragCall.runWithContext(() -> {
+                            recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos);
+                            ragCall.cancel();
+                        }));
             } catch (RuntimeException e) {
                 // 组装期抛异常 → doFinally 尚未注册，此处配对释放
                 if (held) {
                     inflightGate.release(uid);
                 }
+                ragCall.runWithContext(() -> ragCall.fail(e.getMessage()));
+                ragCall.close();
                 throw e;
             }
             return inner.doFinally(signal -> {
                 if (held) {
                     inflightGate.release(uid);
                 }
+                ragCall.close();
             });
         });
     }
@@ -178,7 +209,8 @@ public class LlmGateway {
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
         walletService.requireAffordable(uid);
         long startNanos = System.nanoTime();
-        try {
+        var ragCall = ragTraceService.beginModelCall(model, provider.getName(), text, "QUERY_EMBEDDING");
+        try (ragCall) {
             EmbedResult res = provider.embedWithUsage(text, model);
             TokenUsage usage = res.getUsage();
             Integer in;
@@ -197,8 +229,10 @@ public class LlmGateway {
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, in, out, status);
             recordLlmSuccess(provider.getName(), model, in, out, startNanos);
+            ragCall.succeed(null, in, out);
             return res.getEmbedding();
         } catch (RuntimeException e) {
+            ragCall.fail(e.getMessage());
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     model, LlmUsageLogEntity.KIND_EMBED, e.getMessage());
             recordLlmTerminal(provider.getName(), model, BizMetrics.RESULT_FAIL, startNanos);
@@ -257,6 +291,15 @@ public class LlmGateway {
             }
         }
         return sum;
+    }
+
+    private String summarizeInput(LlmRequest request) {
+        if (request == null || request.getMessages() == null) return "";
+        StringBuilder value = new StringBuilder();
+        for (LlmMessage message : request.getMessages()) {
+            value.append(message.getRole()).append(':').append(message.getContent()).append('\n');
+        }
+        return value.toString();
     }
 
     /** embed 路由：只在 EMBEDDING 行注册表里按 model 找，找不到报「向量 Provider」话术（与 chat 区分）。 */

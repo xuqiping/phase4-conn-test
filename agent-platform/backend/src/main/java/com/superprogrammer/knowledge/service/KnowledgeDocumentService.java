@@ -7,6 +7,7 @@ import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.file.service.StoredFile;
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentVO;
+import com.superprogrammer.knowledge.dto.KnowledgeDocumentUpdateRequest;
 import com.superprogrammer.knowledge.dto.SheetPreviewVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
@@ -34,10 +35,19 @@ import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class KnowledgeDocumentService {
+
+    private static final Set<String> AUTHORITY_LEVELS = Set.of(
+            "OFFICIAL", "APPROVED", "REFERENCE", "UNVERIFIED");
+    private static final Set<String> CONFIDENTIALITY_LEVELS = Set.of(
+            "PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED");
+    private static final int MAX_TAGS = 20;
+    private static final int MAX_TAG_LENGTH = 64;
 
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeNodeMapper nodeMapper;
@@ -49,6 +59,7 @@ public class KnowledgeDocumentService {
     private final ObjectMapper objectMapper;
     private final ExcelSheetExtractor excelExtractor;
     private final SystemSettingService systemSettingService;
+    private final KnowledgeDocumentVersionService versionService;
 
     /** 阶段1：预读 Excel sheet 名。存文件（PREVIEW，10min TTL）+ POI 只读名，不建 knowledge_document 行。 */
     public SheetPreviewVO previewSheets(Long kbId, MultipartFile file, Long operatorId, boolean admin) {
@@ -148,6 +159,9 @@ public class KnowledgeDocumentService {
         doc.setCreatedBy(operatorId);
         doc.setParseOptions(buildParseOptions(selectedSheets, resolvedIndexMode, manualIndexText, visionModel));
         documentMapper.insert(doc);
+        var initialVersion = versionService.createInitialVersion(
+                doc.getId(), fileRef, fileHash, operatorId, "首次上传");
+        doc.setCurrentVersionId(initialVersion.getId());
         // 解析异步触发：仅在上传事务提交后（AFTER_COMMIT）才跑，确保异步线程读得到 PENDING 行
         applicationEventPublisher.publishEvent(new DocumentUploadedEvent(doc.getId(), operatorId));
         return toVO(doc);
@@ -281,6 +295,89 @@ public class KnowledgeDocumentService {
         return toVO(doc);
     }
 
+    /** 更新不影响原文件内容的治理元数据；密级变更仅管理员可执行。 */
+    @Transactional
+    public KnowledgeDocumentVO updateMetadata(Long id, KnowledgeDocumentUpdateRequest request,
+                                               Long operatorId, boolean admin) {
+        KnowledgeDocument current = ensure(id);
+        KnowledgeBase kb = knowledgeBaseService.ensure(current.getKbId());
+        if (!knowledgeBaseService.canManage(kb, operatorId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权管理该文档元数据");
+        }
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文档元数据不能为空");
+        }
+        OffsetDateTime effectiveAt = request.getEffectiveAt();
+        OffsetDateTime expiredAt = request.getExpiredAt();
+        if (effectiveAt != null && expiredAt != null && !effectiveAt.isBefore(expiredAt)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "生效时间必须早于失效时间");
+        }
+        String authority = normalizeEnum(request.getAuthorityLevel(), "REFERENCE",
+                AUTHORITY_LEVELS, "权威等级");
+        String confidentiality = normalizeEnum(request.getConfidentialityLevel(), "INTERNAL",
+                CONFIDENTIALITY_LEVELS, "密级");
+        String oldConfidentiality = normalizeEnum(current.getConfidentialityLevel(), "INTERNAL",
+                CONFIDENTIALITY_LEVELS, "原密级");
+        if (!admin && !oldConfidentiality.equals(confidentiality)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员可以调整文档密级");
+        }
+        List<String> tags = normalizeTags(request.getTags());
+
+        KnowledgeDocument update = new KnowledgeDocument();
+        update.setId(id);
+        update.setOwnerId(request.getOwnerId());
+        update.setSourceType(trimToNull(request.getSourceType(), 64, "来源类型"));
+        update.setSourceUri(trimToNull(request.getSourceUri(), 2000, "来源地址"));
+        update.setSourceUpdatedAt(request.getSourceUpdatedAt());
+        update.setAuthorityLevel(authority);
+        update.setConfidentialityLevel(confidentiality);
+        update.setTags(writeTags(tags));
+        update.setEffectiveAt(effectiveAt);
+        update.setExpiredAt(expiredAt);
+        update.setUpdatedBy(operatorId);
+        if (documentMapper.updateGovernance(update) != 1) {
+            throw new BusinessException(ErrorCode.CONFLICT, "文档治理信息更新冲突，请刷新后重试");
+        }
+        applicationEventPublisher.publishEvent(new VisibilityInvalidationEvent(current.getKbId()));
+
+        current.setOwnerId(update.getOwnerId());
+        current.setSourceType(update.getSourceType());
+        current.setSourceUri(update.getSourceUri());
+        current.setSourceUpdatedAt(update.getSourceUpdatedAt());
+        current.setAuthorityLevel(authority);
+        current.setConfidentialityLevel(confidentiality);
+        current.setTags(update.getTags());
+        current.setEffectiveAt(effectiveAt);
+        current.setExpiredAt(expiredAt);
+        return toVO(current);
+    }
+
+    /** 新版本必须上传真实文件；fileRef 与 sourceHash 均由后端生成，禁止客户端伪造。 */
+    @Transactional
+    public com.superprogrammer.knowledge.dto.KnowledgeDocumentVersionVO createVersion(
+            Long documentId, MultipartFile file, Long expectedCurrentVersionId,
+            String changeNote, Long operatorId, boolean admin) {
+        KnowledgeDocument doc = ensure(documentId);
+        KnowledgeBase kb = knowledgeBaseService.ensure(doc.getKbId());
+        if (!knowledgeBaseService.canManage(kb, operatorId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权管理该文档版本");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "版本文件不能为空");
+        }
+        StoredFile stored = fileStorageService.store(file, operatorId,
+                com.superprogrammer.file.entity.StoredFileEntity.SOURCE_KB, doc.getKbId(), null);
+        String sourceHash;
+        try {
+            sourceHash = sha256(file);
+        } catch (NoSuchAlgorithmException e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件哈希计算失败");
+        }
+        var version = versionService.createDraftVersion(documentId, expectedCurrentVersionId,
+                stored.url(), sourceHash, changeNote, operatorId, admin);
+        return versionService.toVO(version);
+    }
+
     @Transactional
     public void delete(Long id, Long operatorId, boolean admin) {
         KnowledgeDocument doc = ensure(id);
@@ -320,6 +417,7 @@ public class KnowledgeDocumentService {
                 .title(doc.getTitle())
                 .docType(doc.getDocType())
                 .status(doc.getStatus())
+                .currentVersionId(doc.getCurrentVersionId())
                 .fileRef(doc.getFileRef())
                 .fileHash(doc.getFileHash())
                 .mime(meta == null ? null : meta.getMime())
@@ -328,9 +426,70 @@ public class KnowledgeDocumentService {
                 .parseError(doc.getParseError())
                 .parseOptions(doc.getParseOptions())
                 .parseWarning(doc.getParseWarning())
+                .ownerId(doc.getOwnerId())
+                .sourceType(doc.getSourceType())
+                .sourceUri(doc.getSourceUri())
+                .sourceUpdatedAt(doc.getSourceUpdatedAt())
+                .authorityLevel(doc.getAuthorityLevel())
+                .confidentialityLevel(doc.getConfidentialityLevel())
+                .tags(readTags(doc.getTags()))
+                .effectiveAt(doc.getEffectiveAt())
+                .expiredAt(doc.getExpiredAt())
                 .createdAt(doc.getCreatedAt())
                 .updatedAt(doc.getUpdatedAt())
                 .build();
+    }
+
+    private static String normalizeEnum(String value, String defaultValue, Set<String> allowed, String label) {
+        String normalized = value == null || value.isBlank() ? defaultValue : value.trim().toUpperCase();
+        if (!allowed.contains(normalized)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, label + "不合法");
+        }
+        return normalized;
+    }
+
+    private static List<String> normalizeTags(List<String> rawTags) {
+        if (rawTags == null) return List.of();
+        if (rawTags.size() > MAX_TAGS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "标签数量不能超过 " + MAX_TAGS);
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String raw : rawTags) {
+            if (raw == null || raw.isBlank()) continue;
+            String tag = raw.trim();
+            if (tag.length() > MAX_TAG_LENGTH) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "单个标签不能超过 " + MAX_TAG_LENGTH + " 字符");
+            }
+            normalized.add(tag);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private String writeTags(List<String> tags) {
+        try {
+            return objectMapper.writeValueAsString(tags);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "标签序列化失败");
+        }
+    }
+
+    private List<String> readTags(String tagsJson) {
+        if (tagsJson == null || tagsJson.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(tagsJson,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static String trimToNull(String value, int maxLength, String label) {
+        if (value == null || value.isBlank()) return null;
+        String result = value.trim();
+        if (result.length() > maxLength) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, label + "过长");
+        }
+        return result;
     }
 
     /** parse_options.indexMode 解析（VO 展示用）；null/格式错 → null。 */

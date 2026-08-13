@@ -11,6 +11,10 @@ export interface UserVO {
   email: string | null
   avatar: string | null
   status: string
+  /** 封禁/禁用/锁定原因（11x 加固 V104，非 ACTIVE 时展示） */
+  banReason?: string | null
+  /** 自动锁定到期时间（11x 加固 V104） */
+  lockedUntil?: string | null
   lastLoginAt: string | null
   createdAt: string
   roles: string[]
@@ -49,8 +53,8 @@ export const adminApi = {
   getUser(id: number) {
     return request.get<ApiResponse<UserVO>>(`/users/${id}`)
   },
-  updateUserStatus(id: number, status: string) {
-    return request.put<ApiResponse<void>>(`/users/${id}/status`, { status })
+  updateUserStatus(id: number, status: string, reason?: string) {
+    return request.put<ApiResponse<void>>(`/users/${id}/status`, { status, reason })
   },
   assignRoles(id: number, roleIds: number[]) {
     return request.put<ApiResponse<void>>(`/users/${id}/roles`, roleIds)

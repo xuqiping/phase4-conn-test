@@ -96,18 +96,19 @@ class AnswerCacheServiceTest {
     @Test
     void lookup_disabled_returnsEmpty() {
         props.setEnabled(false);
-        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "sig");
+        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "sig", protocol());
         assertTrue(r.isEmpty());
-        verify(answerCacheMapper, never()).searchCandidates(anyLong(), anyString(), anyInt());
+        verify(answerCacheMapper, never()).searchCandidates(anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), anyInt());
     }
 
     @Test
     void lookup_simBelowThreshold_breaksNoVerify() {
         props.setEnabled(true);
         CacheCandidateRow c = candidate(0.5, "sig", "[1]", "[\"h\"]", null);  // distance 0.5 → sim 0.5 < 0.9 阈
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt())).thenReturn(List.of(c));
+        stubCandidates(c);
 
-        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "sig");
+        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "sig", protocol());
 
         assertTrue(r.isEmpty());
         verify(queryMapper, never()).reverifyNode(anyLong());   // sim 不足直接 break，不验 P2a
@@ -117,9 +118,9 @@ class AnswerCacheServiceTest {
     void lookup_permissionSigMismatch_continues() {
         props.setEnabled(true);
         CacheCandidateRow c = candidate(0.05, "DIFFERENT_SIG", "[1]", "[\"h\"]", null);  // sim 0.95 够阈，但签名不匹配
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt())).thenReturn(List.of(c));
+        stubCandidates(c);
 
-        assertTrue(service.lookup("[0.1]", 1L, "EXPECTED_SIG").isEmpty());
+        assertTrue(service.lookup("[0.1]", 1L, "EXPECTED_SIG", protocol()).isEmpty());
         verify(queryMapper, never()).reverifyNode(anyLong());   // P3 失败 continue，不进 P2a
     }
 
@@ -127,9 +128,9 @@ class AnswerCacheServiceTest {
     void lookup_nodeIdsEmpty_continues() {
         props.setEnabled(true);
         CacheCandidateRow c = candidate(0.05, "SIG", "[]", "[]", null);
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt())).thenReturn(List.of(c));
+        stubCandidates(c);
 
-        assertTrue(service.lookup("[0.1]", 1L, "SIG").isEmpty());
+        assertTrue(service.lookup("[0.1]", 1L, "SIG", protocol()).isEmpty());
         verify(answerCacheMapper, never()).bumpUsage(anyLong());
     }
 
@@ -137,10 +138,10 @@ class AnswerCacheServiceTest {
     void lookup_p2aHashMismatch_continues() {
         props.setEnabled(true);
         CacheCandidateRow c = candidate(0.05, "SIG", "[1]", "[\"stale\"]", null);
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt())).thenReturn(List.of(c));
+        stubCandidates(c);
         when(queryMapper.reverifyNode(1L)).thenReturn(hashRow("current"));  // 现值与缓存 hash 不符
 
-        assertTrue(service.lookup("[0.1]", 1L, "SIG").isEmpty());
+        assertTrue(service.lookup("[0.1]", 1L, "SIG", protocol()).isEmpty());
         verify(answerCacheMapper, never()).bumpUsage(anyLong());
     }
 
@@ -151,10 +152,10 @@ class AnswerCacheServiceTest {
         payload.setAnswer("cached answer");
         payload.setInjectedIndexes(List.of(1));
         CacheCandidateRow c = candidate(0.05, "SIG", "[1]", "[\"h\"]", objectMapper.writeValueAsString(payload));
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt())).thenReturn(List.of(c));
+        stubCandidates(c);
         when(queryMapper.reverifyNode(1L)).thenReturn(hashRow("h"));
 
-        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "SIG");
+        Optional<CachedPayload> r = service.lookup("[0.1]", 1L, "SIG", protocol());
 
         assertTrue(r.isPresent());
         assertEquals("cached answer", r.get().getAnswer());
@@ -164,10 +165,11 @@ class AnswerCacheServiceTest {
     @Test
     void lookup_exceptionSwallowed_returnsEmpty() {
         props.setEnabled(true);
-        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyInt()))
+        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyInt()))
                 .thenThrow(new RuntimeException("redis down"));
 
-        assertTrue(service.lookup("[0.1]", 1L, "SIG").isEmpty());  // 缓存失败不抛
+        assertTrue(service.lookup("[0.1]", 1L, "SIG", protocol()).isEmpty());  // 缓存失败不抛
     }
 
     // ============================ store ============================
@@ -176,7 +178,7 @@ class AnswerCacheServiceTest {
     void store_disabled_isNoOp() {
         props.setEnabled(false);
         service.store("q", "[0.1]", 1L, List.of(1L), "sig",
-                payload(), List.of(1L), List.of("h"), 0.9, "model");
+                payload(), List.of(1L), List.of("h"), 0.9, protocol());
         verify(answerCacheMapper, never()).insert(any(), anyString());
     }
 
@@ -184,7 +186,7 @@ class AnswerCacheServiceTest {
     void store_emptyNodes_isNoOp() {
         props.setEnabled(true);
         service.store("q", "[0.1]", 1L, List.of(1L), "sig",
-                payload(), List.of(), List.of(), 0.9, "model");
+                payload(), List.of(), List.of(), 0.9, protocol());
         verify(answerCacheMapper, never()).insert(any(), anyString());
     }
 
@@ -192,7 +194,7 @@ class AnswerCacheServiceTest {
     void store_nullPayload_isNoOp() {
         props.setEnabled(true);
         service.store("q", "[0.1]", 1L, List.of(1L), "sig",
-                null, List.of(1L), List.of("h"), 0.9, "model");
+                null, List.of(1L), List.of("h"), 0.9, protocol());
         verify(answerCacheMapper, never()).insert(any(), anyString());
     }
 
@@ -201,8 +203,13 @@ class AnswerCacheServiceTest {
         props.setEnabled(true);
         props.setTtlDays(7);
         service.store("q", "[0.1]", 1L, List.of(1L), "sig",
-                payload(), List.of(1L), List.of("h"), 0.9, "doubao-embedding-vision");
-        verify(answerCacheMapper).insert(any(), eq("[0.1]"));
+                payload(), List.of(1L), List.of("h"), 0.9, protocol());
+        verify(answerCacheMapper).insert(argThat(row ->
+                "embed-a".equals(row.getKeyEmbeddingModel())
+                        && "rank-v1".equals(row.getRankingConfigVersion())
+                        && "pipe-v1".equals(row.getPipelineVersion())
+                        && "prompt-v1".equals(row.getPromptVersion())
+                        && "snap-v1".equals(row.getKnowledgeSnapshot())), eq("[0.1]"));
     }
 
     @Test
@@ -211,7 +218,7 @@ class AnswerCacheServiceTest {
         doThrow(new RuntimeException("db down")).when(answerCacheMapper).insert(any(), anyString());
 
         assertDoesNotThrow(() -> service.store("q", "[0.1]", 1L, List.of(1L), "sig",
-                payload(), List.of(1L), List.of("h"), 0.9, "model"));  // 写失败不抛
+                payload(), List.of(1L), List.of("h"), 0.9, protocol()));  // 写失败不抛
     }
 
     // ============================ helpers ============================
@@ -239,5 +246,15 @@ class AnswerCacheServiceTest {
         RagQueryRow.HashVerifyRow hv = new RagQueryRow.HashVerifyRow();
         hv.setNodeHash(nodeHash);
         return hv;
+    }
+
+    private AnswerCacheService.CacheProtocol protocol() {
+        return new AnswerCacheService.CacheProtocol(
+                "embed-a", "rank-v1", "pipe-v1", "prompt-v1", "snap-v1");
+    }
+
+    private void stubCandidates(CacheCandidateRow candidate) {
+        when(answerCacheMapper.searchCandidates(anyLong(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyInt())).thenReturn(List.of(candidate));
     }
 }

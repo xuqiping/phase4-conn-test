@@ -33,9 +33,19 @@ public interface RagAnswerCacheMapper {
                    provenance_node_ids,
                    evidence_hashes,
                    permission_signature,
+                   key_embedding_model,
+                   ranking_config_version,
+                   pipeline_version,
+                   prompt_version,
+                   knowledge_snapshot,
                    confidence
             FROM rag_answer_cache
             WHERE scope_user_id = #{scopeUserId}
+              AND key_embedding_model = #{embeddingModel}
+              AND ranking_config_version = #{rankingConfigVersion}
+              AND pipeline_version = #{pipelineVersion}
+              AND prompt_version = #{promptVersion}
+              AND knowledge_snapshot = #{knowledgeSnapshot}
               AND status = 'ACTIVE'
             ORDER BY key_embedding &lt;=&gt; #{qHalf}::halfvec
             LIMIT #{topN}
@@ -43,6 +53,11 @@ public interface RagAnswerCacheMapper {
             """)
     List<CacheCandidateRow> searchCandidates(@Param("scopeUserId") Long scopeUserId,
                                              @Param("qHalf") String qHalf,
+                                             @Param("embeddingModel") String embeddingModel,
+                                             @Param("rankingConfigVersion") String rankingConfigVersion,
+                                             @Param("pipelineVersion") String pipelineVersion,
+                                             @Param("promptVersion") String promptVersion,
+                                             @Param("knowledgeSnapshot") String knowledgeSnapshot,
                                              @Param("topN") int topN);
 
     /**
@@ -52,10 +67,12 @@ public interface RagAnswerCacheMapper {
     @Insert("""
             INSERT INTO rag_answer_cache
                 (tenant_id, scope_user_id, kb_ids, query_canonical, key_embedding, key_embedding_model,
+                 ranking_config_version, pipeline_version, prompt_version, knowledge_snapshot,
                  answer, provenance_node_ids, evidence_hashes, permission_signature, confidence,
                  usage_count, decay_at, status, created_at, updated_at)
             VALUES
                 (#{c.tenantId}, #{c.scopeUserId}, #{c.kbIds}, #{c.queryCanonical}, #{keyHalf}::halfvec, #{c.keyEmbeddingModel},
+                 #{c.rankingConfigVersion}, #{c.pipelineVersion}, #{c.promptVersion}, #{c.knowledgeSnapshot},
                  #{c.answer}, #{c.provenanceNodeIds}, #{c.evidenceHashes}, #{c.permissionSignature}, #{c.confidence},
                  #{c.usageCount}, #{c.decayAt}, #{c.status}, now(), now())
             """)
@@ -64,6 +81,19 @@ public interface RagAnswerCacheMapper {
     /** 命中时计数 + 刷新 updated_at（命中频次观测 + LRU 清理依据）。 */
     @Update("UPDATE rag_answer_cache SET usage_count = usage_count + 1, updated_at = now() WHERE id = #{id}")
     void bumpUsage(@Param("id") Long id);
+
+    /** 权限、文档或知识库配置变化后主动停用该 KB 相关答案缓存。 */
+    @Update("""
+            UPDATE rag_answer_cache
+               SET status = 'REVOKED', updated_at = now()
+             WHERE status = 'ACTIVE'
+               AND kb_ids::jsonb @> to_jsonb(ARRAY[#{kbId}]::bigint[])
+            """)
+    int invalidateByKb(@Param("kbId") Long kbId);
+
+    /** 管理员默认 Ranking/Pipeline 协议整体变化时主动停用全部活动缓存。 */
+    @Update("UPDATE rag_answer_cache SET status = 'REVOKED', updated_at = now() WHERE status = 'ACTIVE'")
+    int invalidateAllActive();
 
     // ============================ 阶段7 decay 清理（ReconciliationJob）============================
 

@@ -3,6 +3,7 @@ package com.superprogrammer.knowledge.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.config.RagRecallProperties;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
+import com.superprogrammer.knowledge.trace.RagTraceContext;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
@@ -186,7 +187,10 @@ public class QueryExpansionService {
                 .maxTokens(400)
                 .stream(false)
                 .build();
-        String json = llmGateway.chat(req, userId).getContent();
+        String json;
+        try (var ignored = RagTraceContext.openPurpose("QUERY_REWRITE_AND_HYDE")) {
+            json = llmGateway.chat(req, userId).getContent();
+        }
         return parsePayload(json, count);
     }
 

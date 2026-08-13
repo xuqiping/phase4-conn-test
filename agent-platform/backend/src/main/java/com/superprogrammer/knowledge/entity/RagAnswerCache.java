@@ -40,6 +40,14 @@ public class RagAnswerCache {
 
     private String keyEmbeddingModel;
 
+    private String rankingConfigVersion;
+
+    private String pipelineVersion;
+
+    private String promptVersion;
+
+    private String knowledgeSnapshot;
+
     /** JSON：CachedPayload（answer 或 systemPrompt + citations + injectedIndexes）*/
     private String answer;
 

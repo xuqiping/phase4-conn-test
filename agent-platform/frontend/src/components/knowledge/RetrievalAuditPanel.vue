@@ -70,18 +70,15 @@
             <n-descriptions-item label="时间">{{ formatTime(detail.createdAt) }}</n-descriptions-item>
             <n-descriptions-item label="查询">{{ detail.query || '-' }}</n-descriptions-item>
           </n-descriptions>
-          <div v-if="detail.tokenBudget" class="retrieval-audit__json">
-            <div class="retrieval-audit__json-label">token 预算</div>
-            <pre>{{ pretty(detail.tokenBudget) }}</pre>
-          </div>
-          <div v-if="detail.candidatesL0" class="retrieval-audit__json">
-            <div class="retrieval-audit__json-label">候选 L0</div>
-            <pre>{{ pretty(detail.candidatesL0) }}</pre>
-          </div>
-          <div v-if="detail.evidenceL2" class="retrieval-audit__json">
-            <div class="retrieval-audit__json-label">证据 L2</div>
-            <pre>{{ pretty(detail.evidenceL2) }}</pre>
-          </div>
+          <n-spin :show="traceLoading">
+            <template v-if="traceDetail">
+              <div class="retrieval-audit__json"><div class="retrieval-audit__json-label">检索运行</div><pre>{{ prettyValue(traceDetail.retrievals) }}</pre></div>
+              <div class="retrieval-audit__json"><div class="retrieval-audit__json-label">重排运行</div><pre>{{ prettyValue(traceDetail.rankings) }}</pre></div>
+              <div class="retrieval-audit__json"><div class="retrieval-audit__json-label">模型调用</div><pre>{{ prettyValue(traceDetail.modelCalls) }}</pre></div>
+              <div class="retrieval-audit__json"><div class="retrieval-audit__json-label">计费记录</div><pre>{{ prettyValue(traceDetail.usages) }}</pre></div>
+              <div class="retrieval-audit__json"><div class="retrieval-audit__json-label">审计记录</div><pre>{{ prettyValue(traceDetail.audits) }}</pre></div>
+            </template>
+          </n-spin>
         </div>
       </n-drawer-content>
     </n-drawer>
@@ -92,10 +89,10 @@
 import { h, onMounted, reactive, ref, computed } from 'vue'
 import {
   NButton, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent,
-  NInputNumber, NSelect, NDatePicker, NSpace, NTag, useDialog, useMessage
+  NInputNumber, NSelect, NDatePicker, NSpace, NTag, NSpin, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { knowledgeApi, type RagRetrievalLog } from '@/api/knowledge'
+import { knowledgeApi, type RagRetrievalLog, type RagTraceDetail } from '@/api/knowledge'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const message = useMessage()
@@ -108,6 +105,8 @@ const loading = ref(false)
 const records = ref<RagRetrievalLog[]>([])
 const detail = ref<RagRetrievalLog | null>(null)
 const showDetail = ref(false)
+const traceLoading = ref(false)
+const traceDetail = ref<RagTraceDetail | null>(null)
 
 const filter = reactive<{ userId: number | null; kbId: number | null; mode: string | null; range: [number, number] | null }>({
   userId: null, kbId: null, mode: null, range: null
@@ -158,8 +157,8 @@ function formatTime(iso: string): string {
   try { return new Date(iso).toLocaleString('zh-CN') } catch { return iso }
 }
 
-function pretty(json: string | null): string {
-  try { return JSON.stringify(JSON.parse(json || '{}'), null, 2) } catch { return json || '' }
+function prettyValue(value: unknown): string {
+  return JSON.stringify(value ?? [], null, 2)
 }
 
 function buildQuery() {
@@ -194,7 +193,21 @@ function onReset() {
 }
 function onPage(p: number) { pagination.page = p; void load() }
 
-function openDetail(r: RagRetrievalLog) { detail.value = r; showDetail.value = true }
+async function openDetail(r: RagRetrievalLog) {
+  detail.value = r
+  traceDetail.value = null
+  showDetail.value = true
+  if (!r.traceId) return
+  traceLoading.value = true
+  try {
+    const res = await knowledgeApi.getRagTraceDetail(r.traceId)
+    traceDetail.value = res.data.data
+  } catch {
+    message.error('加载 Trace 时间线失败')
+  } finally {
+    traceLoading.value = false
+  }
+}
 
 function confirmDelete(r: RagRetrievalLog) {
   dialog.warning({

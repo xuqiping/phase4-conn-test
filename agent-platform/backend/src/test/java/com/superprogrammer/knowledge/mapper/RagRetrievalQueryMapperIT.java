@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.test.mock.mockito.MockBean;
 
 import java.util.List;
 
@@ -22,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * （Maven 默认 GBK 源码编码会令中文字面量 mojibake）。所有中文走 `?` 占位。
  */
 class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
+
+    // 并行认证改造暂时移除了 Anji Captcha 配置；Mapper IT 隔离该无关 Bean，避免掩盖数据库验证。
+    @MockBean private com.anji.captcha.service.CaptchaService captchaService;
 
     @Autowired private RagRetrievalQueryMapper mapper;
     @Autowired private JdbcTemplate jdbc;
@@ -41,6 +45,7 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
                 kbId);
         docId = jdbc.queryForObject(
                 "SELECT id FROM knowledge_documents WHERE kb_id=? ORDER BY id DESC LIMIT 1", Long.class, kbId);
+        attachEffectiveVersion(docId);
     }
 
     @AfterEach
@@ -54,6 +59,14 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
                 + " content_hash, status) "
                 + "VALUES (?,?,?,?,'SECTION','L2',?,?,?,?,'ACTIVE')",
                 nodeId, kbId, docId, nodeId, title, contentTokens, contentTokens, "hash" + nodeId);
+    }
+
+    private void attachEffectiveVersion(Long documentId) {
+        jdbc.update("INSERT INTO knowledge_document_versions(document_id, version_no, status, effective_at) "
+                + "VALUES (?,1,'EFFECTIVE',now())", documentId);
+        Long versionId = jdbc.queryForObject(
+                "SELECT id FROM knowledge_document_versions WHERE document_id=?", Long.class, documentId);
+        jdbc.update("UPDATE knowledge_documents SET current_version_id=? WHERE id=?", versionId, documentId);
     }
 
     /** 构造 2048 维 halfvec 文本：hotIndex 位为 1，余 0（用于 cosine 序测，dim 与 doubao/V36 一致）。 */
@@ -114,6 +127,7 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
                 + "VALUES (?,1,?,'doubao',?::halfvec,'l1hashA')", docId, kbId, halfvec(0));
         jdbc.update("INSERT INTO knowledge_documents(kb_id, title, status) VALUES (?, 'docB-L1', 'INDEXED')", kbId);
         Long docB = jdbc.queryForObject("SELECT id FROM knowledge_documents WHERE title='docB-L1'", Long.class);
+        attachEffectiveVersion(docB);
         jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
                 + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
                 + "VALUES (?,1,?,'doubao',?::halfvec,'l1hashB')", docB, kbId, halfvec(1));
@@ -123,6 +137,33 @@ class RagRetrievalQueryMapperIT extends AbstractIntegrationTest {
         assertEquals(2, rows.size(), "L1 向量表两 doc 均召回");
         assertEquals(docId, rows.get(0).getDocumentId(), "与 query 同向的 doc A 余弦距离最小，排首位");
         assertNotNull(rows.get(0).getCosineDistance());
+    }
+
+    @Test
+    void denseRecallL1_excludesFutureAndExpiredDocumentsAtTimezoneBoundary() {
+        jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
+                + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
+                + "VALUES (?,1,?,'doubao',?::halfvec,'active')", docId, kbId, halfvec(0));
+
+        jdbc.update("INSERT INTO knowledge_documents(kb_id, title, status, effective_at) "
+                + "VALUES (?, 'future-doc', 'INDEXED', now() + interval '1 second')", kbId);
+        Long futureDoc = jdbc.queryForObject("SELECT id FROM knowledge_documents WHERE title='future-doc'", Long.class);
+        attachEffectiveVersion(futureDoc);
+        jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
+                + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
+                + "VALUES (?,1,?,'doubao',?::halfvec,'future')", futureDoc, kbId, halfvec(0));
+
+        jdbc.update("INSERT INTO knowledge_documents(kb_id, title, status, expired_at) "
+                + "VALUES (?, 'expired-doc', 'INDEXED', now())", kbId);
+        Long expiredDoc = jdbc.queryForObject("SELECT id FROM knowledge_documents WHERE title='expired-doc'", Long.class);
+        attachEffectiveVersion(expiredDoc);
+        jdbc.update("INSERT INTO knowledge_doc_embeddings_doubao"
+                + "(document_id, tenant_id, kb_id, embedding_model, embedding, content_hash) "
+                + "VALUES (?,1,?,'doubao',?::halfvec,'expired')", expiredDoc, kbId, halfvec(0));
+
+        List<RagQueryRow.L1RecallRow> rows = mapper.denseRecallL1(kbId, halfvec(0), true, List.of(), null, 10);
+
+        assertEquals(List.of(docId), rows.stream().map(RagQueryRow.L1RecallRow::getDocumentId).toList());
     }
 
     @Test

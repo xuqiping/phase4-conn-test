@@ -42,6 +42,9 @@ public interface RagRetrievalQueryMapper {
               AND e.content_hash = n.content_hash
               AND e.embedding_model = kb.embedding_model
               AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
               <if test="!allDocs">
                 AND n.document_id IN
                 <foreach collection="docIds" item="did" open="(" separator="," close=")">#{did}</foreach>
@@ -78,6 +81,9 @@ public interface RagRetrievalQueryMapper {
             WHERE kb.id = #{kbId}
               AND kb.deleted = 0
               AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
               AND e.embedding_model = kb.embedding_model
               <if test="!allDocs">
                 AND d.id IN
@@ -183,6 +189,9 @@ public interface RagRetrievalQueryMapper {
             FROM knowledge_documents d
             WHERE d.kb_id = #{kbId}
               AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
               AND (
                 EXISTS (SELECT 1 FROM knowledge_permissions p
                         WHERE p.tenant_id = #{tenantId} AND p.subject_type='USER' AND p.subject_id=#{userId}
@@ -204,6 +213,9 @@ public interface RagRetrievalQueryMapper {
             <script>
             SELECT id FROM knowledge_documents
             WHERE kb_id = #{kbId} AND deleted = 0
+              AND current_version_id IS NOT NULL
+              AND (effective_at IS NULL OR effective_at &lt;= now())
+              AND (expired_at IS NULL OR expired_at &gt; now())
               AND doc_type IN
               <foreach collection="docTypes" item="dt" open="(" separator="," close=")">#{dt}</foreach>
             </script>
@@ -220,15 +232,34 @@ public interface RagRetrievalQueryMapper {
             """)
     RagQueryRow.HashVerifyRow reverifyNode(@Param("nodeId") Long nodeId);
 
+    /** 当前知识快照：只返回 Hash，不返回任何文档或 Chunk 正文。 */
+    @Select("""
+            <script>
+            SELECT md5(COALESCE(string_agg(
+                       n.id::text || ':' || COALESCE(n.content_hash, '') || ':' || n.status,
+                       '|' ORDER BY n.id), ''))
+            FROM knowledge_nodes n
+            WHERE n.deleted = 0
+              AND n.kb_id IN
+              <foreach collection="kbIds" item="kbId" open="(" separator="," close=")">#{kbId}</foreach>
+            </script>
+            """)
+    String computeKnowledgeSnapshot(@Param("kbIds") List<Long> kbIds);
+
     /** step8：L1 文档元数据（outline/importantRules 注入用）+ IMAGE/FILE 原件回显字段（JOIN stored_files）。 */
     @Select("""
             SELECT d.id, d.title, d.doc_type, d.l1_metadata,
+                   d.authority_level, d.confidentiality_level,
+                   d.effective_at, d.expired_at,
                    d.file_ref AS file_ref,
                    sf.mime AS mime,
                    sf.original_name AS original_name
             FROM knowledge_documents d
             LEFT JOIN stored_files sf ON sf.file_id = REPLACE(d.file_ref, '/api/files/', '')
             WHERE d.id = #{docId} AND d.deleted = 0
+              AND d.current_version_id IS NOT NULL
+              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
+              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
             """)
     RagQueryRow.L1Row fetchL1Metadata(@Param("docId") Long docId);
 

@@ -19,6 +19,7 @@ import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.service.internal.RrfFusion;
 import com.superprogrammer.knowledge.service.internal.VisibleDocSet;
 import com.superprogrammer.knowledge.util.TokenEstimator;
+import com.superprogrammer.knowledge.trace.RagTraceService;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
@@ -69,6 +70,8 @@ public class RagRetrievalService {
     private final AnswerCacheProperties answerCacheProps;
     private final QueryExpansionService queryExpansionService;
     private final RagRecallProperties recallProps;
+    private final RagTraceService ragTraceService;
+    private final RankingConfigService rankingConfigService;
 
     // ============================ 内部 record ============================
 
@@ -103,6 +106,20 @@ public class RagRetrievalService {
     // ============================ 入口 ============================
 
     public RagRetrieveVO retrieve(RagRetrieveRequest req, Long userId) {
+        try (var run = ragTraceService.beginRetrieval(List.of(req.getKbId()), req.getQuery(), userId, "RETRIEVE")) {
+            try {
+                RagRetrieveVO result = retrieveInternal(req, userId);
+                if (result.isAbstained()) run.abstain(result.getAbstainReason());
+                else run.succeed("SUPPORTED");
+                return result;
+            } catch (RuntimeException e) {
+                run.fail(e instanceof BusinessException be ? String.valueOf(be.getCode()) : "INTERNAL_ERROR", e.getMessage());
+                throw e;
+            }
+        }
+    }
+
+    private RagRetrieveVO retrieveInternal(RagRetrieveRequest req, Long userId) {
         long t0 = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().replace("-", "");
         String mode = req.getMode() == null || req.getMode().isBlank() ? DEFAULT_MODE : req.getMode();
@@ -138,13 +155,17 @@ public class RagRetrievalService {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");
             }
             String qHalf = qHalfs.get(0);   // 规范 query → 答案缓存键（D8）
+            AnswerCacheService.CacheProtocol cacheProtocol = answerCacheProps.isEnabled()
+                    ? answerCacheService.protocol(List.of(req.getKbId()), embedModel,
+                            rankingConfigService.resolve(req.getKbId()).configVersion())
+                    : null;
 
             // step2 答案缓存（阶段4-B）：命中则跳过 step3-8 + 生成，回放缓存 answer
             if (answerCacheProps.isEnabled()) {
                 List<AnswerCacheService.KbScope> sigScopes = List.of(
                         new AnswerCacheService.KbScope(req.getKbId(), vs.allDocs, vs.docIds));
                 String cacheSig = answerCacheService.permissionSignature(sigScopes);
-                Optional<CachedPayload> hit = answerCacheService.lookup(qHalf, userId, cacheSig);
+                Optional<CachedPayload> hit = answerCacheService.lookup(qHalf, userId, cacheSig, cacheProtocol);
                 if (hit.isPresent()) {
                     CachedPayload p = hit.get();
                     budget.setPromptTokens(0);
@@ -189,7 +210,8 @@ public class RagRetrievalService {
                 throw new IllegalStateException("B3 违规: rerank pool=" + pool.size()
                         + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
             }
-            List<L2Candidate> topK = pickTopK(pool, ragConfig.getMaxL2Read());
+            List<L2Candidate> topK = rankWithTrace(req.getKbId(), pool, ragConfig.getMaxL2Read(),
+                    "P0_PROXY_NOT_YET_ENABLED");
             List<L2Candidate> bm25OnlyCands = topK.stream().filter(L2Candidate::bm25Only).toList();
             trace.setL2LexicalFallback(bm25Fallback[0]);
 
@@ -251,7 +273,7 @@ public class RagRetrievalService {
                         .citations(toCitationRefs(vo.getCitations()))
                         .build();
                 answerCacheService.store(req.getQuery(), qHalf, userId, List.of(req.getKbId()),
-                        cacheSig, payload, nodeIds, hashes, bestSim, embedModel);
+                        cacheSig, payload, nodeIds, hashes, bestSim, cacheProtocol);
             }
             return vo;
         } catch (BusinessException be) {
@@ -275,6 +297,21 @@ public class RagRetrievalService {
      * @return abstained=true → 调用方短路 ABSTAIN_MSG；否则 systemPrompt=证据上下文 + injectedIndexes
      */
     public com.superprogrammer.knowledge.dto.EvidenceResult retrieveEvidence(
+            List<Long> effectiveKbs, String query, Long userId, boolean admin) {
+        try (var run = ragTraceService.beginRetrieval(effectiveKbs, query, userId, "EVIDENCE")) {
+            try {
+                var result = retrieveEvidenceInternal(effectiveKbs, query, userId, admin);
+                if (result.isAbstained()) run.abstain(result.getAbstainReason());
+                else run.succeed("SUPPORTED");
+                return result;
+            } catch (RuntimeException e) {
+                run.fail(e instanceof BusinessException be ? String.valueOf(be.getCode()) : "INTERNAL_ERROR", e.getMessage());
+                throw e;
+            }
+        }
+    }
+
+    private com.superprogrammer.knowledge.dto.EvidenceResult retrieveEvidenceInternal(
             List<Long> effectiveKbs, String query, Long userId, boolean admin) {
         long t0 = System.currentTimeMillis();
         String traceId = UUID.randomUUID().toString().replace("-", "");
@@ -315,6 +352,10 @@ public class RagRetrievalService {
                 }
                 validScopes.add(new KbScopeCtx(kbId, vs));
             }
+            AnswerCacheService.CacheProtocol cacheProtocol = answerCacheProps.isEnabled() && !validScopes.isEmpty()
+                    ? answerCacheService.protocol(validScopes.stream().map(KbScopeCtx::kbId).toList(), embedModel,
+                            rankingConfigService.resolve(validScopes.get(0).kbId).configVersion())
+                    : null;
 
             // step2 答案缓存（阶段4-B）：命中则跳过 step3-7 检索，回放缓存证据上下文
             if (answerCacheProps.isEnabled() && !validScopes.isEmpty()) {
@@ -322,7 +363,7 @@ public class RagRetrievalService {
                         .map(c -> new AnswerCacheService.KbScope(c.kbId, c.vs.allDocs, c.vs.docIds))
                         .toList();
                 String cacheSig = answerCacheService.permissionSignature(sigScopes);
-                Optional<CachedPayload> hit = answerCacheService.lookup(qHalf, userId, cacheSig);
+                Optional<CachedPayload> hit = answerCacheService.lookup(qHalf, userId, cacheSig, cacheProtocol);
                 if (hit.isPresent()) {
                     CachedPayload p = hit.get();
                     List<RagRetrieveVO.CitationVO> hitCitations = toCitationVOs(p.getCitations());
@@ -381,7 +422,8 @@ public class RagRetrievalService {
             double globalMaxBm = allPool.stream().map(L2Candidate::bm25Rank)
                     .filter(java.util.Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
             List<L2Candidate> ranked = rerankWithBoost(allPool, globalMaxBm);
-            List<L2Candidate> topK = pickTopK(ranked, ragConfig.getMaxL2Read());
+            List<L2Candidate> topK = rankWithTrace(validScopes.get(0).kbId, ranked,
+                    ragConfig.getMaxL2Read(), "P0_PROXY_NOT_YET_ENABLED_MULTI_KB_PRIMARY_CONFIG");
 
             // 软拒答（hard 阈；灰区 bestSim∈[hard,soft) 照注入证据，不 abstain——注入优于拒答）
             // best sim 取 L0 父 sim 与 L1 doc sim 较大者（Phase3：L1 可救 L0 漏召回）
@@ -426,7 +468,7 @@ public class RagRetrievalService {
                         .citations(toCitationRefs(citations))
                         .build();
                 answerCacheService.store(query, qHalf, userId, effectiveKbs, cacheSig, payload,
-                        nodeIds, hashes, bestSim, embedModel);
+                        nodeIds, hashes, bestSim, cacheProtocol);
             }
             return com.superprogrammer.knowledge.dto.EvidenceResult.builder()
                     .systemPrompt(ctx)
@@ -731,6 +773,28 @@ public class RagRetrievalService {
         }
         pool.sort((a, b) -> Double.compare(b.rerankScore(), a.rerankScore()));
         return pool;
+    }
+
+    /**
+     * P0 只建立可观测契约，当前实际排序仍是启发式代理，不能伪记为已经调用 LLM/Rerank。
+     */
+    private List<L2Candidate> rankWithTrace(Long kbId, List<L2Candidate> rankedPool, int limit,
+                                            String fallbackReason) {
+        RankingConfigService.ResolvedRankingConfig config = rankingConfigService.resolve(kbId);
+        String candidateSummary = rankedPool.stream()
+                .map(c -> String.valueOf(c.nodeId()))
+                .collect(java.util.stream.Collectors.joining(","));
+        try (var ranking = ragTraceService.beginRanking(config.mode(), "HEURISTIC_PROXY",
+                config.configId(), config.configVersion(), rankedPool.size(), candidateSummary, fallbackReason)) {
+            try {
+                List<L2Candidate> topK = pickTopK(rankedPool, Math.min(limit, config.finalLimit()));
+                ranking.succeed(topK.size());
+                return topK;
+            } catch (RuntimeException e) {
+                ranking.fail(e.getMessage());
+                throw e;
+            }
+        }
     }
 
     private List<L2Candidate> pickTopK(List<L2Candidate> pool, int k) {

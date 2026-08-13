@@ -147,6 +147,8 @@ public class ChatController {
     }
 
     @PostMapping("/messages")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<ChatResponse>> sendMessageNew(@RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         ChatResponse response = chatSessionService.sendMessage(userId, request);
@@ -163,6 +165,8 @@ public class ChatController {
     }
 
     @PostMapping(value = "/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public SseEmitter sendMessageNewStream(@RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         return doStream(userId, request);

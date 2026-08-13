@@ -37,4 +37,12 @@ public interface UserMapper extends BaseMapper<User> {
      * 根据用户ID查询权限编码列表
      */
     List<String> selectPermissionCodesByUserId(Long userId);
+
+    /** 11x 加固 P1-C3：统计仍 ACTIVE 且持指定权限的用户数（防最后超管锁死）。 */
+    @Select("SELECT COUNT(DISTINCT u.id) FROM users u " +
+            "JOIN user_roles ur ON ur.user_id = u.id " +
+            "JOIN role_permissions rp ON rp.role_id = ur.role_id " +
+            "JOIN permissions p ON p.id = rp.permission_id " +
+            "WHERE u.deleted = 0 AND u.status = 'ACTIVE' AND p.code = #{permissionCode}")
+    long countActiveByPermission(@Param("permissionCode") String permissionCode);
 }

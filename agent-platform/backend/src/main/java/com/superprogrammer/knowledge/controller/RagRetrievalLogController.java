@@ -5,6 +5,9 @@ import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.RagRetrievalLogVO;
 import com.superprogrammer.knowledge.service.RagRetrievalLogService;
+import com.superprogrammer.knowledge.service.RagTraceQueryService;
+import com.superprogrammer.knowledge.dto.RagTraceDetailVO;
+import com.superprogrammer.common.audit.AuditLog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +34,24 @@ import java.time.OffsetDateTime;
 public class RagRetrievalLogController {
 
     private final RagRetrievalLogService ragRetrievalLogService;
+    private final RagTraceQueryService ragTraceQueryService;
+
+    @GetMapping("/traces/{traceId}")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_trace_view", targetType = "rag_trace")
+    public ResponseEntity<R<RagTraceDetailVO>> traceDetail(@PathVariable String traceId) {
+        return ResponseEntity.ok(R.ok(ragTraceQueryService.detail(traceId)));
+    }
+
+    @GetMapping("/traces/resolve")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_trace_reverse_lookup", targetType = "rag_trace")
+    public ResponseEntity<R<String>> resolveTrace(
+            @RequestParam(required = false) String modelRequestId,
+            @RequestParam(required = false) Long usageLogId,
+            @RequestParam(required = false) Long auditLogId) {
+        return ResponseEntity.ok(R.ok(ragTraceQueryService.resolveTraceId(modelRequestId, usageLogId, auditLogId)));
+    }
 
     @GetMapping
     @RequirePermission("knowledge:manage")

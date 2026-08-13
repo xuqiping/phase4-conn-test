@@ -163,6 +163,8 @@ rag:
     sim-threshold: 0.90
     top-n: 5
     ttl-days: 7
+    pipeline-version: ${RAG_CACHE_PIPELINE_VERSION:rag-pipeline-v1}
+    prompt-version: ${RAG_CACHE_PROMPT_VERSION:rag-prompt-v1}
   reconciliation:
     enabled: false          # 阶段7 对账 + decay 清理 worker（opt-in）
     poll-ms: 600000         # 10 分钟

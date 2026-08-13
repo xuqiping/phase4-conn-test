@@ -1,5 +1,9 @@
 # 14 - 知识库 RAG - 基础
 
+> 文档版本治理：`knowledge_documents` 是 Canonical Document 主记录，`current_version_id` 指向当前生效的不可变 `knowledge_document_versions`。新上传自动创建 v1；后续版本先保存 DRAFT，再显式生效。撤销当前版本会清空指针并立即退出检索。
+>
+> 元数据治理：文档可维护责任人、来源、来源更新时间、权威等级、密级、标签和生效区间。默认检索会在 SQL 层排除未来生效、已过期或无当前版本的文档；密级仅管理员可调整。
+
 ## 功能简介
 知识库(KB) CRUD、文档上传/解析/分块向量化(Embedding)、文档节点(chunk)查看、知识库可见性权限。属 RAG v6 精简版。
 
@@ -10,7 +14,7 @@
 
 ## 后端 (backend) — `knowledge` 包
 - 知识库：[KnowledgeBaseController.java](../../backend/src/main/java/com/superprogrammer/knowledge/controller/KnowledgeBaseController.java) — `GET/POST /api/knowledge/bases` `GET/PUT/DELETE /{id}`
-- 文档：[KnowledgeDocumentController.java](../../backend/src/main/java/com/superprogrammer/knowledge/controller/KnowledgeDocumentController.java) — `POST /api/knowledge/documents/upload`（Excel 可带 `tempFileRef`+`selectedSheets`；图片/文件带 `docType`+`indexMode`+`manualIndexText`+`visionModel`）/ `POST /api/knowledge/documents/sheets/preview`（阶段1 预读 sheet 名，picker 用）/ `GET /{id}/asset`（取图片/文件原件，KB 成员可读，跨用户）/ `GET` `GET/DELETE /{id}`
+- 文档：[KnowledgeDocumentController.java](../../backend/src/main/java/com/superprogrammer/knowledge/controller/KnowledgeDocumentController.java) — 上传/预读/原件/版本接口；`PUT /api/knowledge/documents/{id}/metadata` 更新治理字段并写审计、失效缓存。
 - 节点：[KnowledgeNodeController.java](../../backend/src/main/java/com/superprogrammer/knowledge/controller/KnowledgeNodeController.java) — `GET /api/knowledge/documents/{docId}/nodes`
 - 权限：[KnowledgePermissionController.java](../../backend/src/main/java/com/superprogrammer/knowledge/controller/KnowledgePermissionController.java) — `GET POST /api/knowledge/permissions` `DELETE /{id}`
 - 服务：`knowledge/service/`
@@ -33,7 +37,7 @@
 
 ## 前端 (frontend)
 - 视图：[KnowledgeView.vue](../../frontend/src/views/KnowledgeView.vue)
-- 组件：[knowledge/](../../frontend/src/components/knowledge/) DocumentManager、KbFormModal、KbPermissionModal、**DocumentOptionsModal**（上传选项：docType + indexMode + 手填文本 + Excel sheet）、RetrievalDebugPanel（检索调试，含「来源」列回显图片/文件）、RagAskPanel、RetrievalAuditPanel、SheetPickerModal
+- 组件：[knowledge/](../../frontend/src/components/knowledge/) DocumentManager、KbFormModal、KbPermissionModal、**DocumentOptionsModal**（上传选项）、**DocumentMetadataModal**（来源/权威/密级/标签/有效期治理）、RetrievalDebugPanel、RagAskPanel、RetrievalAuditPanel。
 - API：[knowledge.ts](../../frontend/src/api/knowledge.ts)（`UploadOptions` + `documentAssetUrl(docId)`）
 - 状态：[knowledge.ts (store)](../../frontend/src/stores/knowledge.ts)（`uploadDocument/uploadDocumentSheets` 透传 opts）
 - 路由：`/knowledge`
@@ -45,7 +49,7 @@
 [RAG设计v6](../设计/后续其他功能设计/RAG设计v6-模块作用与通俗解读.md)、[调试手册](../项目开发进度/企业级RAG知识库-功能调试手册.md)
 
 ## 数据表
-`knowledge_bases`、`knowledge_documents`（V39 加 `parse_options`/`parse_warning` 列）、`knowledge_nodes`(chunk)、`knowledge_embeddings_doubao`(pgvector，V17 建表即带 `_doubao` 后缀)、`knowledge_index_jobs`、`knowledge_permissions`、`stored_files`(V40，文件归属 owner + 生命周期)
+`knowledge_bases`、`knowledge_documents`（V107 加治理字段和有效期/权威/密级/标签索引）、`knowledge_document_versions`、`knowledge_nodes`、`knowledge_embeddings_doubao`、`knowledge_index_jobs`、`knowledge_permissions`、`stored_files`。
 
 ## 前端 (frontend) — 上传（统一选项 modal）
 - `DocumentManager.vue` accept 含 `.md/.txt/.pdf/.docx/.html/.xlsx/.xls` + 图片 `.png/.jpg/.jpeg/.gif/.webp/.bmp`；所有文件上传先弹 **DocumentOptionsModal** 选 `docType`+`indexMode`（MANUAL 显手填 textarea、IMAGE+AUTO P2 占位、EXCEL 显 sheet 勾选）→ confirm。

@@ -40,20 +40,41 @@
       @confirm="onOptionsConfirm"
       @cancel="onOptionsCancel"
     />
+
+    <DocumentMetadataModal
+      :show="metadataModalShow"
+      :document="activeMetadataDoc"
+      :loading="metadataSaving"
+      :is-admin="authStore.isAdmin"
+      @confirm="saveMetadata"
+      @cancel="metadataModalShow = false"
+    />
+
+    <n-modal v-model:show="versionModalShow" preset="card" title="文档版本" style="width: 760px">
+      <div class="doc-manager__version-upload" v-if="canWrite && activeVersionDoc">
+        <n-input v-model:value="versionChangeNote" placeholder="版本说明（可选）" />
+        <n-upload :show-file-list="false" :custom-request="uploadNewVersion">
+          <n-button type="primary">上传新版本</n-button>
+        </n-upload>
+      </div>
+      <n-data-table :columns="versionColumns" :data="versions" :loading="versionLoading" :pagination="false" />
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  NButton, NDataTable, NEmpty, NIcon, NTag, NUpload, NUploadDragger, useMessage
+  NButton, NDataTable, NEmpty, NIcon, NInput, NModal, NTag, NUpload, NUploadDragger, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
 import { CloudUploadOutline } from '@vicons/ionicons5'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useAuthStore } from '@/stores/auth'
 import { knowledgeApi } from '@/api/knowledge'
-import type { KnowledgeDocument, KnowledgeNode, SheetPreview, UploadOptions } from '@/api/knowledge'
+import type { KnowledgeDocument, KnowledgeDocumentMetadataUpdate, KnowledgeDocumentVersion, KnowledgeNode, SheetPreview, UploadOptions } from '@/api/knowledge'
 import DocumentOptionsModal from './DocumentOptionsModal.vue'
+import DocumentMetadataModal from './DocumentMetadataModal.vue'
 
 const props = defineProps<{
   kbId: number
@@ -62,10 +83,19 @@ const props = defineProps<{
 
 const message = useMessage()
 const store = useKnowledgeStore()
+const authStore = useAuthStore()
 
 const docs = computed(() => store.documents)
 const loading = computed(() => store.loadingDocs)
 const uploading = ref(false)
+const versionModalShow = ref(false)
+const versionLoading = ref(false)
+const versions = ref<KnowledgeDocumentVersion[]>([])
+const activeVersionDoc = ref<KnowledgeDocument | null>(null)
+const versionChangeNote = ref('')
+const metadataModalShow = ref(false)
+const metadataSaving = ref(false)
+const activeMetadataDoc = ref<KnowledgeDocument | null>(null)
 
 // 展开行：查看文档拆分节点（L0 摘要 + L2 原文）。按 docId 缓存，懒加载。
 const expandedRowKeys = ref<number[]>([])
@@ -190,12 +220,119 @@ const columns: DataTableColumns<KnowledgeDocument> = [
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
-    title: '操作', key: 'actions', width: 80, fixed: 'right',
-    render: r => props.canWrite
-      ? h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => remove(r) }, () => '删除')
-      : '-'
+    title: '操作', key: 'actions', width: 210, fixed: 'right',
+    render: r => h('div', { style: 'display:flex;gap:6px' }, [
+      h(NButton, { size: 'small', quaternary: true, onClick: () => openVersions(r) }, () => '版本'),
+      props.canWrite
+        ? h(NButton, { size: 'small', quaternary: true, onClick: () => openMetadata(r) }, () => '治理')
+        : null,
+      props.canWrite
+        ? h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => remove(r) }, () => '删除')
+        : null
+    ])
   }
 ]
+
+function openMetadata(doc: KnowledgeDocument) {
+  activeMetadataDoc.value = doc
+  metadataModalShow.value = true
+}
+
+async function saveMetadata(payload: KnowledgeDocumentMetadataUpdate) {
+  const doc = activeMetadataDoc.value
+  if (!doc) return
+  metadataSaving.value = true
+  try {
+    const res = await knowledgeApi.updateDocumentMetadata(doc.id, payload)
+    Object.assign(doc, res.data.data)
+    metadataModalShow.value = false
+    message.success('治理信息已保存')
+  } catch {
+    message.error('治理信息保存失败')
+  } finally {
+    metadataSaving.value = false
+  }
+}
+
+const versionColumns: DataTableColumns<KnowledgeDocumentVersion> = [
+  { title: '版本', key: 'versionNo', width: 70, render: r => `v${r.versionNo}` },
+  { title: '状态', key: 'status', width: 110, render: r => h(NTag, { size: 'small' }, () => r.status) },
+  { title: '说明', key: 'changeNote', ellipsis: { tooltip: true }, render: r => r.changeNote || '-' },
+  { title: '创建时间', key: 'createdAt', width: 170, render: r => new Date(r.createdAt).toLocaleString('zh-CN') },
+  {
+    title: '操作', key: 'actions', width: 150,
+    render: r => !props.canWrite || !activeVersionDoc.value
+      ? '-'
+      : h('div', { style: 'display:flex;gap:6px' }, [
+        r.status === 'DRAFT' || r.status === 'ARCHIVED'
+          ? h(NButton, { size: 'tiny', type: 'primary', onClick: () => activateVersion(r) }, () => '生效')
+          : null,
+        r.status !== 'REVOKED'
+          ? h(NButton, { size: 'tiny', type: 'error', quaternary: true, onClick: () => revokeVersion(r) }, () => '撤销')
+          : null
+      ])
+  }
+]
+
+async function openVersions(doc: KnowledgeDocument) {
+  activeVersionDoc.value = doc
+  versionModalShow.value = true
+  await loadVersions()
+}
+
+async function loadVersions() {
+  if (!activeVersionDoc.value) return
+  versionLoading.value = true
+  try {
+    const res = await knowledgeApi.listDocumentVersions(activeVersionDoc.value.id)
+    versions.value = res.data.data || []
+  } catch {
+    message.error('加载版本历史失败')
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+async function uploadNewVersion({ file, onFinish, onError }: UploadCustomRequestOptions) {
+  const doc = activeVersionDoc.value
+  if (!doc || !file.file || doc.currentVersionId == null) { onError(); return }
+  try {
+    await knowledgeApi.createDocumentVersion(doc.id, file.file, doc.currentVersionId, versionChangeNote.value)
+    versionChangeNote.value = ''
+    await loadVersions()
+    message.success('新版本已保存为草稿')
+    onFinish()
+  } catch {
+    message.error('新版本上传失败，请刷新后重试')
+    onError()
+  }
+}
+
+async function activateVersion(version: KnowledgeDocumentVersion) {
+  const doc = activeVersionDoc.value
+  if (!doc) return
+  try {
+    await knowledgeApi.activateDocumentVersion(doc.id, version.id, doc.currentVersionId)
+    doc.currentVersionId = version.id
+    await loadVersions()
+    message.success(`v${version.versionNo} 已生效`)
+  } catch {
+    message.error('版本生效失败，请刷新后重试')
+  }
+}
+
+async function revokeVersion(version: KnowledgeDocumentVersion) {
+  const doc = activeVersionDoc.value
+  if (!doc) return
+  try {
+    await knowledgeApi.revokeDocumentVersion(doc.id, version.id)
+    if (doc.currentVersionId === version.id) doc.currentVersionId = null
+    await loadVersions()
+    message.success(`v${version.versionNo} 已撤销`)
+  } catch {
+    message.error('版本撤销失败')
+  }
+}
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -316,6 +453,11 @@ onUnmounted(() => {
 .doc-manager__uploading {
   margin-top: 4px;
   color: var(--color-primary);
+}
+.doc-manager__version-upload {
+  display: flex;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
 }
 
 .doc-manager__nodes {

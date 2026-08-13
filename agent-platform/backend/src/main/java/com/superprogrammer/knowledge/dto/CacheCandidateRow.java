@@ -25,5 +25,15 @@ public class CacheCandidateRow {
 
     private String permissionSignature;
 
+    private String keyEmbeddingModel;
+
+    private String rankingConfigVersion;
+
+    private String pipelineVersion;
+
+    private String promptVersion;
+
+    private String knowledgeSnapshot;
+
     private Float confidence;
 }

@@ -20,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 解析产物落库（v6 §6 单事务）。
@@ -80,7 +82,7 @@ public class KnowledgeNodeWriter {
             Section section = sections.get(i);
             String abstract0 = pickAbstract(section, abstracts, i);
 
-            KnowledgeNode l0 = buildNode(doc, null, "L0", section.getTitle(), abstract0,
+            KnowledgeNode l0 = buildNode(doc, null, "L0", section, abstract0,
                     "/L0-" + i, metadataJson);
             l0.setContentHash(HashUtil.sha256(abstract0));
             l0.setTokenCount(TokenEstimator.estimate(abstract0));
@@ -90,7 +92,7 @@ public class KnowledgeNodeWriter {
 
             int j = 0;
             for (String chunk : splitL2(section.getContent())) {
-                KnowledgeNode l2 = buildNode(doc, l0.getId(), "L2", section.getTitle(), chunk,
+                KnowledgeNode l2 = buildNode(doc, l0.getId(), "L2", section, chunk,
                         "/L0-" + i + "/L2-" + j, metadataJson);
                 l2.setContentHash(HashUtil.sha256(chunk));
                 l2.setTokenCount(TokenEstimator.estimate(chunk));
@@ -115,23 +117,42 @@ public class KnowledgeNodeWriter {
     }
 
     private KnowledgeNode buildNode(KnowledgeDocument doc, Long parentId, String level,
-                                    String title, String content, String path, String metadataJson) {
+                                    Section section, String content, String path, String metadataJson) {
         KnowledgeNode node = new KnowledgeNode();
         node.setTenantId(TENANT_ID);
         node.setKbId(doc.getKbId());
         node.setDocumentId(doc.getId());
         node.setParentId(parentId);
         node.setPath(path);
-        node.setNodeType("SECTION");
+        node.setNodeType(section.getNodeType() == null || section.getNodeType().isBlank()
+                ? "SECTION" : section.getNodeType());
         node.setLevel(level);
-        node.setTitle(title);
+        node.setTitle(section.getTitle());
         node.setContent(content);
         node.setContentTokens(com.superprogrammer.knowledge.util.JiebaTokenizer.tokenize(content));
-        node.setMetadata(metadataJson == null || metadataJson.isBlank() ? "{}" : metadataJson);
+        node.setMetadata(mergeSectionMetadata(metadataJson, section));
         node.setStatus("ACTIVE");
+        node.setVersionId(doc.getCurrentVersionId());
         node.setCreatedBy(nullSafe(doc.getCreatedBy()));
         node.setUpdatedBy(nullSafe(doc.getCreatedBy()));
         return node;
+    }
+
+    private String mergeSectionMetadata(String metadataJson, Section section) {
+        try {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            if (metadataJson != null && !metadataJson.isBlank()) {
+                metadata.putAll(objectMapper.readValue(metadataJson, Map.class));
+            }
+            metadata.put("sectionId", section.getSectionId());
+            metadata.put("parentSectionId", section.getParentSectionId());
+            metadata.put("titlePath", section.getTitlePath());
+            metadata.put("ordinal", section.getOrdinal());
+            metadata.put("locator", section.getLocator());
+            return objectMapper.writeValueAsString(metadata);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("invalid node metadata JSON", e);
+        }
     }
 
     /** UPSERT job：仅 L0。idempotency_key=sha256(nodeId:contentHash:UPSERT)（I4）。 */

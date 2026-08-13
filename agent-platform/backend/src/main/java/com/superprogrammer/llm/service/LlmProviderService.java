@@ -39,11 +39,13 @@ public class LlmProviderService {
     public static final String CATEGORY_VIDEO = "VIDEO";
     /** IMAGE = 生图 provider（预留，画布 R-3 接入），不进 chat 路由/视频目录。 */
     public static final String CATEGORY_IMAGE = "IMAGE";
+    /** RERANK = 专用语义重排模型；与 CHAT 分开，避免把普通对话模型误当专用重排。 */
+    public static final String CATEGORY_RERANK = "RERANK";
 
     private static final String DEFAULT_CATEGORY = CATEGORY_CHAT;
     /** category 白名单四分（FR-002）；CHAT_EMBEDDING / MEDIA 已由 V60 迁移废弃。 */
     private static final Set<String> CATEGORIES =
-            Set.of(CATEGORY_CHAT, CATEGORY_EMBEDDING, CATEGORY_VIDEO, CATEGORY_IMAGE);
+            Set.of(CATEGORY_CHAT, CATEGORY_EMBEDDING, CATEGORY_VIDEO, CATEGORY_IMAGE, CATEGORY_RERANK);
 
     /** 规范化 category：合法原样返回，null/blank/非法 → CHAT（容错 warn 不抛 400）。 */
     private String normalizeCategory(String raw) {

@@ -674,6 +674,21 @@ public class SystemSettingService {
         upsert(key, aesEncryptService.encrypt(plaintext), description);
     }
 
+    /** 动态模块读取普通配置；不存在返回 null，由调用方应用部署配置兜底。 */
+    public String getSettingValue(String key) {
+        return getValue(key);
+    }
+
+    /** 动态模块写普通配置。 */
+    public void upsertSettingValue(String key, String value, String description) {
+        upsert(key, value, description);
+    }
+
+    /** 动态模块清除数据库覆盖值，随后恢复部署配置兜底。 */
+    public void clearSettingValue(String key) {
+        removeKey(key);
+    }
+
     /** 取指定 provider 的 API key 明文（tavily/serper/bing）。 */
     public String getSearchApiKey(String provider) {
         return switch (provider) {

@@ -243,6 +243,10 @@
             <version>2.2.1</version>
         </dependency>
 
+        <!-- ip2region：11x 加固 P2-C7 GeoIpService 复用认证系统增强引入的 2.7.0（见文件尾部），
+             本处不重复声明（Maven 重复 dependency 仅取首个，告警且版本漂移风险）。
+             xdb 库文件（resources/ip2region_v4.xdb）缺失 → GeoIpService 降级返回空（不阻登录主链）。 -->
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -268,19 +272,6 @@
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
-        </dependency>
-        <!-- 阿里云邮件推送（DirectMail）：认证系统增强 通道A邮箱验证/通道D找回密码 -->
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>dm20151123</artifactId>
-            <version>1.12.1</version>
-        </dependency>
-        <!-- 阿里云短信（SMS）：认证系统增强 通道B手机验证码 -->
-        <!-- 用老版坐标 aliyun-java-sdk-dysmsapi（中央仓库有），新版 dysmsapi20170525 的传递依赖不在中央仓库 -->
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>aliyun-java-sdk-dysmsapi</artifactId>
-            <version>2.2.1</version>
         </dependency>
         <!-- AJ-Captcha 滑块验证码：认证系统增强 防短信轰炸/撞库闸门 -->
         <dependency>

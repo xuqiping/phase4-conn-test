@@ -1,6 +1,8 @@
 package com.superprogrammer.knowledge.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.superprogrammer.common.typehandler.JsonbStringTypeHandler;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -44,9 +46,40 @@ class RagPipelineTraceSchemaTest {
         assertTable("com.superprogrammer.knowledge.entity.RagFallbackEvent", "rag_fallback_events");
     }
 
+    @Test
+    void jsonbFieldsUsePostgresTypeHandler() throws Exception {
+        assertJsonbField("com.superprogrammer.knowledge.entity.RagPipelineVersion", "configSnapshot");
+        assertJsonbField("com.superprogrammer.knowledge.entity.RagRetrievalRun", "kbIds");
+    }
+
+    @Test
+    void uuidTraceMappersExposeExplicitInsertOperations() throws Exception {
+        assertInsertMethod("com.superprogrammer.knowledge.mapper.RagRetrievalRunMapper", "insertRun",
+                "com.superprogrammer.knowledge.entity.RagRetrievalRun");
+        assertInsertMethod("com.superprogrammer.knowledge.mapper.RagRankingRunMapper", "insertRun",
+                "com.superprogrammer.knowledge.entity.RagRankingRun");
+        assertInsertMethod("com.superprogrammer.knowledge.mapper.RagModelCallMapper", "insertCall",
+                "com.superprogrammer.knowledge.entity.RagModelCall");
+        assertInsertMethod("com.superprogrammer.knowledge.mapper.RagFallbackEventMapper", "insertEvent",
+                "com.superprogrammer.knowledge.entity.RagFallbackEvent");
+    }
+
     private static void assertTable(String className, String expectedTable) throws Exception {
         Class<?> type = Class.forName(className);
         TableName tableName = type.getAnnotation(TableName.class);
         assertEquals(expectedTable, tableName.value());
+    }
+
+    private static void assertJsonbField(String className, String fieldName) throws Exception {
+        Class<?> type = Class.forName(className);
+        assertTrue(type.getAnnotation(TableName.class).autoResultMap(), className + " must enable autoResultMap");
+        TableField field = type.getDeclaredField(fieldName).getAnnotation(TableField.class);
+        assertEquals(JsonbStringTypeHandler.class, field.typeHandler());
+    }
+
+    private static void assertInsertMethod(String mapperName, String methodName, String entityName) throws Exception {
+        Class<?> mapper = Class.forName(mapperName);
+        Class<?> entity = Class.forName(entityName);
+        assertEquals(int.class, mapper.getMethod(methodName, entity).getReturnType());
     }
 }
