@@ -249,14 +249,18 @@ app:
       cross-province: true
 
 # AJ-Captcha 滑块验证码（认证系统增强 防短信轰炸/撞库闸门）
+# AJ-Captcha 滑块验证码（com.anji-plus:spring-boot-starter-captcha:1.3.0）
+# 注意前缀必须是 aj.captcha（starter 的 AjCaptchaProperties @ConfigurationProperties prefix），
+# 写成 captcha: 会导致属性不绑定、CaptchaService bean 不创建。
 # cache-type=redis 使 captcha token 跨实例共享 + 单次有效删除语义（防重放）
-captcha:
-  cache-type: redis
-  type: default
-  # 滑块图尺寸（与前端 SliderCaptcha width 对齐）
-  original:
-    width: 310
-    height: 160
-  # 滑块缺口容差（px）——用户拖动误差范围内判定通过
-  slip:
-    offset: 5
+aj:
+  captcha:
+    cache-type: redis
+    type: default
+    # 滑块图尺寸（与前端 SliderCaptcha width 对齐）
+    original:
+      width: 310
+      height: 160
+    # 滑块缺口容差（px）——用户拖动误差范围内判定通过
+    slip:
+      offset: 5
