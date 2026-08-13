@@ -13,9 +13,14 @@ import lombok.Data;
 @Data
 public class MediaImportRequest {
 
-    /** 生图任务 id（media_gen_tasks.id）。 */
+    /** 生图/视频任务 id（media_gen_tasks.id）。 */
     private Long taskId;
-    /** 入库的目标图下标（0-based，对应该任务 result_meta.imageFileIds 顺序）。 */
+    /**
+     * 产物类型（4x-2）：IMAGE=生图逐张入库（按 imageIdx 定位）；VIDEO=视频任务结果入库
+     * （按 result_file_id 定位，无需 imageIdx）。空值按 IMAGE 兼容旧调用方。
+     */
+    private String mediaKind;
+    /** 入库的目标图下标（0-based，对应该任务 result_meta.imageFileIds 顺序；仅 IMAGE 用）。 */
     private Integer imageIdx;
     /** 目标项目 id（必填，须当前用户可写）。 */
     private Long projectId;

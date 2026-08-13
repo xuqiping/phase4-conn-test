@@ -294,6 +294,41 @@ export const mediaApi = {
 }
 
 /**
+ * 4x-1：会话内媒体产物 blob 缓存（LRU）。缓存的请求路径 ↔ Blob，
+ * 每次调用仍各自 createObjectURL——调用方 revoke 自己的 URL，互不影响。
+ * 后端 `/tasks/{id}/download` 已带 ETag + no-cache（304 再验证），跨会话由 HTTP 缓存兜底；
+ * 本缓存解决同一会话内切任务/翻页反复拉同一视频的重复下载。
+ * 任务结果文件不可变（重新生成=新任务新 id 新路径），会话内命中不存在过期问题。
+ */
+const mediaBlobCache = new Map<string, Blob>()
+const MEDIA_BLOB_CACHE_MAX_ENTRIES = 6
+const MEDIA_BLOB_CACHE_MAX_BYTES = 256 * 1024 * 1024
+let mediaBlobCacheBytes = 0
+
+function cacheMediaBlob(path: string, blob: Blob) {
+  if (blob.size > MEDIA_BLOB_CACHE_MAX_BYTES) return // 单条超大不缓存
+  // LRU 淘汰：Map 迭代序=插入序，超条数/超字节从最旧开始逐出
+  while (mediaBlobCache.size >= MEDIA_BLOB_CACHE_MAX_ENTRIES
+      || (mediaBlobCacheBytes + blob.size > MEDIA_BLOB_CACHE_MAX_BYTES && mediaBlobCache.size > 0)) {
+    const oldest = mediaBlobCache.keys().next().value
+    if (oldest === undefined) break
+    mediaBlobCacheBytes -= mediaBlobCache.get(oldest)!.size
+    mediaBlobCache.delete(oldest)
+  }
+  mediaBlobCache.set(path, blob)
+  mediaBlobCacheBytes += blob.size
+}
+
+/** 命中缓存则 LRU 触碰（删了重插到末尾）并直接返回新 objectURL。 */
+function cachedObjectUrl(path: string): string | null {
+  const hit = mediaBlobCache.get(path)
+  if (!hit) return null
+  mediaBlobCache.delete(path)
+  mediaBlobCache.set(path, hit)
+  return URL.createObjectURL(hit)
+}
+
+/**
  * 带鉴权拉取视频并转 objectURL（用于 <video> 播放 / 下载）。
  *
  * 下载端点 @RequirePermission("media:gen") 需 Authorization header，<video src> / <a download>
@@ -304,7 +339,10 @@ export async function fetchVideoBlob(downloadPath: string): Promise<string> {
   // VO 的 videoUrl 是 `/api/media/tasks/{id}/download`（带 /api 前缀），axios baseURL 已是 /api，
   // 去掉前缀避免拼成 /api/api/media/...
   const path = downloadPath.replace(/^\/api/, '')
+  const hit = cachedObjectUrl(path)
+  if (hit) return hit
   const res = await request.get<Blob>(path, { responseType: 'blob' })
+  cacheMediaBlob(path, res.data)
   return URL.createObjectURL(res.data)
 }
 
@@ -315,7 +353,11 @@ export async function fetchVideoBlob(downloadPath: string): Promise<string> {
  */
 export async function fetchMediaBlob(downloadPath: string): Promise<string> {
   const path = downloadPath.replace(/^\/api/, '')
+  // 4x-1：同 fetchVideoBlob 走会话内 LRU 缓存（图片体积小，命中收益同样明显）
+  const hit = cachedObjectUrl(path)
+  if (hit) return hit
   const res = await request.get<Blob>(path, { responseType: 'blob' })
+  cacheMediaBlob(path, res.data)
   return URL.createObjectURL(res.data)
 }
 

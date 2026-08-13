@@ -281,9 +281,15 @@
                 playsinline
                 class="video-gen__video"
               />
-              <n-button v-if="videoObjectUrl" size="small" tag="a" :href="videoObjectUrl" download @click.stop>
-                下载视频
-              </n-button>
+              <div v-if="videoObjectUrl" class="video-gen__player-actions">
+                <n-button size="small" tag="a" :href="videoObjectUrl" download @click.stop>
+                  下载视频
+                </n-button>
+                <!-- 4x-2：成功后入库资产库 -->
+                <n-button size="small" type="primary" secondary @click="openSaveToAsset()">
+                  入库到资产库
+                </n-button>
+              </div>
               <div v-if="activeTask.tokensCost" class="video-gen__usage">
                 用量：{{ activeTask.tokensCost.toLocaleString() }} tokens
               </div>
@@ -350,6 +356,15 @@
       @update:show="showAssetPicker = $event"
       @picked="onAssetPicked"
     />
+
+    <!-- 4x-2：视频任务结果入库资产库 -->
+    <SaveVideoToAssetDialog
+      :show="saveDialog.show"
+      :task-id="saveDialog.taskId"
+      :default-name="saveDialog.defaultName"
+      @update:show="saveDialog.show = $event"
+      @imported="onVideoImported"
+    />
   </div>
 </template>
 
@@ -358,9 +373,10 @@ import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
   NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
-  useMessage
+  useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import MentionTextarea from '@/components/canvas/MentionTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
@@ -373,6 +389,7 @@ import {
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
+import SaveVideoToAssetDialog from '@/components/media/SaveVideoToAssetDialog.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
@@ -383,6 +400,8 @@ import { canAddVideoAttachment, type VideoAttachmentTarget } from '@/utils/video
 
 const authStore = useAuthStore()
 const message = useMessage()
+const dialog = useDialog()
+const router = useRouter()
 const { isMobile } = useBreakpoints()
 
 /** 4 层权限显隐①：菜单入口；②此处页内提交（canGen）；③后端 @RequirePermission 403 兜底；④路由 meta 仅 requiresAuth。 */
@@ -938,6 +957,35 @@ async function openHistoryTask(summary: MediaTaskVO) {
   }
 }
 
+/** 4x-2：视频入库资产库弹窗状态（成功播放区/历史行共用）。 */
+const saveDialog = reactive({
+  show: false,
+  taskId: null as number | null,
+  defaultName: ''
+})
+
+function openSaveToAsset(task?: MediaTaskVO) {
+  const t = task ?? (activeTask.value && activeTask.value.status === 'SUCCEEDED' ? activeTask.value : null)
+  if (!t) return
+  saveDialog.taskId = t.id
+  const prompt = (t.prompt ?? '').trim()
+  saveDialog.defaultName = prompt ? prompt.slice(0, 30) : '视频产出'
+  saveDialog.show = true
+}
+
+/** 入库成功 → 给出明确的「进资产库」入口（4x-2）。 */
+function onVideoImported(payload: { assetId: number; name: string }) {
+  dialog.success({
+    title: '已入库资产库',
+    content: `「${payload.name}」已存入目标项目。`,
+    positiveText: '前往资产库',
+    negativeText: '留在本页',
+    onPositiveClick: () => {
+      router.push('/assets')
+    }
+  })
+}
+
 function restoreTaskForm(task: MediaTaskVO) {
   ;[images, videos, audios].forEach(list => list.value.forEach(revokeAttachmentUrl))
   revokeFrame(firstFrame.value)
@@ -1041,11 +1089,18 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
       : h('span', { class: 'video-gen__preview-placeholder' }, '-')
   },
   {
-    title: '操作', key: 'actions', width: 90,
-    render: r => h(NButton, {
-      size: 'small', quaternary: true,
-      onClick: () => void openHistoryTask(r)
-    }, () => '查看')
+    title: '操作', key: 'actions', width: 140,
+    render: r => h('div', { style: 'display:flex;gap:4px' }, [
+      h(NButton, {
+        size: 'small', quaternary: true,
+        onClick: () => void openHistoryTask(r)
+      }, () => '查看'),
+      // 4x-2：历史成功任务一键入库资产库
+      ...(r.status === 'SUCCEEDED' ? [h(NButton, {
+        size: 'small', quaternary: true, type: 'primary',
+        onClick: () => openSaveToAsset(r)
+      }, () => '入库')] : [])
+    ])
   }
 ]
 
@@ -1126,6 +1181,12 @@ onUnmounted(() => {
     max-height: 360px;
     background: #000;
     border-radius: var(--radius-base);
+    margin-bottom: var(--spacing-2);
+  }
+
+  &__player-actions {
+    display: flex;
+    gap: var(--spacing-2);
     margin-bottom: var(--spacing-2);
   }
 

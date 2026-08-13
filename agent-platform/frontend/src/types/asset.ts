@@ -350,17 +350,19 @@ export interface CanvasImportVO {
   message?: string
 }
 
-// ---------- 媒体生图 → 资产库（生成→库，无画布节点） ----------
+// ---------- 媒体生成 → 资产库（生成→库，无画布节点） ----------
 
-/** POST /assets/from-media — 生图结果某张图入库（复用 SOURCE_MEDIA fileId，不拷贝）。 */
+/** POST /assets/from-media — 生图逐张 / 视频任务结果入库（复用 SOURCE_MEDIA fileId，不拷贝）。 */
 export interface MediaImportRequest {
-  /** 生图任务 id（media_gen_tasks.id）。 */
+  /** 生图/视频任务 id（media_gen_tasks.id）。 */
   taskId: number
-  /** 目标图下标（0-based，对应 result_meta.imageFileIds 顺序）。 */
-  imageIdx: number
+  /** 产物类型：IMAGE=按 imageIdx 定位图片；VIDEO=视频任务 resultFileId。缺省 IMAGE（兼容旧调用）。 */
+  mediaKind?: 'IMAGE' | 'VIDEO'
+  /** 目标图下标（0-based，对应 result_meta.imageFileIds 顺序；仅 IMAGE 必填）。 */
+  imageIdx?: number
   /** 目标项目 id（必填，须当前用户可写）。 */
   projectId: number
-  /** 资产名（≤100；空则后端兜底「图片产出」）。 */
+  /** 资产名（≤100；空则后端兜底「图片产出/视频产出」）。 */
   name?: string
   /** 资产描述。 */
   description?: string

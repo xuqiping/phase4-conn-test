@@ -101,3 +101,7 @@
 - **能力怎么配**：内置前缀默认（`MediaModelCapabilityService`）；需微调时在 provider 的 `config` JSON 写
   `{"capabilities":{"doubao-seedance-2-0-260128":{"maxVideos":3,"maxAudios":3,"maxImages":9,"maxAttachments":12,"videoDataUri":true}}}`（只覆盖出现的字段）。
 - **参考视频部署开关**：Ark 已确认拒绝视频 data URI。模型 `maxVideos>0` 且 `MEDIA_REFERENCE_PUBLIC_BASE_URL` 为公网 HTTPS、`MEDIA_REFERENCE_SIGNING_KEY` 长度至少 32 时，模型目录才返回 `referenceVideoEnabled=true`；否则前端保留入口但禁用上传/资产库选择并显示配置提示，后端继续 fail-closed。
+
+## 4x 第二轮修复增补（2026-08-14）
+- **下载缓存**：`MediaGenController.serveFile` 返回 `Cache-Control: no-cache, private` + `ETag(fileId+size)`；Spring MVC 自动处理 If-None-Match → 304 零 body。审计不受影响（请求仍进控制器）。前端 `fetchVideoBlob/fetchMediaBlob` 增加会话内 LRU blob 缓存（6 条/256MB，缓存 Blob 各自 createObjectURL，revoke 语义不变）。
+- **视频入库**：`MediaImportRequest` 新增 `mediaKind`（IMAGE 默认兼容/VIDEO）；`AssetMediaBridgeService` VIDEO 分支复用 `loadForDownload` 咽喉按 `result_file_id` 建 VIDEO 资产 v1。前端新增 `SaveVideoToAssetDialog`，成功播放区+历史行「入库」按钮，入库成功可一键跳 `/assets`。

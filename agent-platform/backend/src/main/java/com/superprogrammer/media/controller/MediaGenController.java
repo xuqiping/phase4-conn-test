@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -164,7 +165,14 @@ public class MediaGenController {
         return serveFile(fileId, id, userId, admin, "task-" + id + "-" + idx, ".png", "image/png");
     }
 
-    /** 通用文件下发：load + findMeta → Content-Disposition 附件。视频/图片共用（只差默认名/mime）。 */
+    /**
+     * 通用文件下发：load + findMeta → Content-Disposition 附件。
+     * 视频/图片共用（只差默认名/mime）。
+     *
+     * <p>4x-1 缓存策略：任务结果文件不可变（任务成功后 resultFileId 固定，重新生成=新任务新 id 新 URL），
+     * 所以 body 允许浏览器缓存；但走 {@code private, no-cache + ETag} 每次携带 If-None-Match 回源再验证——
+     * 未变化返 304 零 body（省掉多 MB 视频重传），且请求仍进控制器、{@code @AuditLog} 下载审计不打折。
+     */
     private ResponseEntity<Resource> serveFile(String fileId, Long id, Long userId, boolean admin,
                                                String nameFallback, String extFallback, String mimeFallback) {
         Resource resource = fileStorageService.load(fileId, userId, admin);
@@ -173,10 +181,16 @@ public class MediaGenController {
         String filename = meta != null && meta.getOriginalName() != null && !meta.getOriginalName().isBlank()
                 ? meta.getOriginalName() : (nameFallback + extFallback);
         String disposition = "attachment; filename=\"" + URLEncoder.encode(filename, StandardCharsets.UTF_8) + "\"";
-        return ResponseEntity.ok()
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .contentType(MediaType.parseMediaType(mime))
-                .body(resource);
+                .cacheControl(CacheControl.noCache().cachePrivate());
+        if (meta != null) {
+            // ETag 由 fileId+size 组成：文件内容被替换（size 变）或换文件（fileId 变）时缓存自动失效
+            String etag = "\"" + fileId + "-" + (meta.getSize() != null ? meta.getSize() : 0) + "\"";
+            builder = builder.eTag(etag);
+        }
+        return builder.body(resource);
     }
 
     private Long getCurrentUserId() {

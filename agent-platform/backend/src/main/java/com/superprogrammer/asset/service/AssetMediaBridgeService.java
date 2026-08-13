@@ -21,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 媒体生成产物 → 项目资产库 入库桥（media→asset，与 {@link AssetCanvasBridgeService} 画布→库并列）。
  *
- * <p>把生图任务的某张结果图存入资产库。复用 stored_files(SOURCE_MEDIA) 行，不拷贝（同画布桥复用 SOURCE_CANVAS）。
+ * <p>把媒体生成产物存入资产库（生图逐张 / 视频任务结果，4x-2 扩展）。
+ * 复用 stored_files(SOURCE_MEDIA) 行，不拷贝（同画布桥复用 SOURCE_CANVAS）。
  * genMeta.source="MEDIA" 标记来源 + taskId/model/prompt 供追溯。
  *
  * <p>跨包单向依赖：本服务只读依赖 {@link MediaGenQueryService}（loadImageForImport 复用媒体归属/终态/idx 咽喉点），
@@ -48,29 +49,58 @@ public class AssetMediaBridgeService {
     private final ObjectMapper objectMapper;
 
     /**
-     * 生图结果入库：定位目标图（归属+SUCCEEDED+idx 校验）→ requireWrite(目标项目) →
-     * 建 IMAGE 资产 v1（fileId 复用，genMeta 标 MEDIA 来源）。
+     * 媒体产物入库：定位目标文件（归属+SUCCEEDED 校验）→ requireWrite(目标项目) →
+     * 建资产 v1（fileId 复用，genMeta 标 MEDIA 来源）。
+     *
+     * <p>4x-2：mediaKind=VIDEO 走视频分支（result_file_id 定位，复用 loadForDownload 归属/终态咽喉），
+     * 建 VIDEO 资产；IMAGE/null 走原图分支（imageIdx 定位 imageFileIds）。
      */
     @Transactional
     public MediaImportVO importFromMediaTask(MediaImportRequest req, Long userId, boolean admin) {
-        if (req == null || req.getTaskId() == null || req.getImageIdx() == null || req.getProjectId() == null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "taskId/imageIdx/projectId 不能为空");
+        if (req == null || req.getTaskId() == null || req.getProjectId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "taskId/projectId 不能为空");
+        }
+        String kind = req.getMediaKind() == null || req.getMediaKind().isBlank()
+                ? "IMAGE" : req.getMediaKind().trim().toUpperCase();
+        if (!"IMAGE".equals(kind) && !"VIDEO".equals(kind)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "mediaKind 仅支持 IMAGE/VIDEO");
+        }
+        boolean isVideo = "VIDEO".equals(kind);
+        if (!isVideo && req.getImageIdx() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片入库需带 imageIdx");
         }
         Long projectId = req.getProjectId();
         // 目标项目写权限（viewer 不可入库）
         aclService.requireWrite(projectId, userId, admin);
-        // 媒体归属 + SUCCEEDED + idx 校验，返任务实体 + 目标图 fileId（单一咽喉）
-        MediaGenQueryService.ImageImportContext ctx = mediaGenQueryService.loadImageForImport(
-                req.getTaskId(), req.getImageIdx(), userId, admin);
-        MediaGenTask task = ctx.task();
-        String fileId = ctx.fileId();
+        final MediaGenTask task;
+        final String fileId;
+        final String mediaType;
+        final String category;
+        final String defaultName;
+        if (isVideo) {
+            // 视频分支：loadForDownload 已校验归属 + SUCCEEDED + resultFileId 非空（单一咽喉）
+            task = mediaGenQueryService.loadForDownload(req.getTaskId(), userId, admin);
+            fileId = task.getResultFileId();
+            mediaType = Asset.MEDIA_VIDEO;
+            category = Asset.CATEGORY_VIDEO;
+            defaultName = "视频产出";
+        } else {
+            // 图片分支：归属 + SUCCEEDED + idx 校验，返任务实体 + 目标图 fileId
+            MediaGenQueryService.ImageImportContext ctx = mediaGenQueryService.loadImageForImport(
+                    req.getTaskId(), req.getImageIdx(), userId, admin);
+            task = ctx.task();
+            fileId = ctx.fileId();
+            mediaType = Asset.MEDIA_IMAGE;
+            category = Asset.CATEGORY_IMAGE;
+            defaultName = "图片产出";
+        }
 
         String name = assetService.validateAssetName(
-                (req.getName() != null && !req.getName().isBlank()) ? req.getName().trim() : "图片产出");
+                (req.getName() != null && !req.getName().isBlank()) ? req.getName().trim() : defaultName);
         Asset asset = new Asset();
         asset.setProjectId(projectId);
-        asset.setMediaType(Asset.MEDIA_IMAGE);
-        asset.setMediaCategory(Asset.CATEGORY_IMAGE);
+        asset.setMediaType(mediaType);
+        asset.setMediaCategory(category);
         asset.setName(name);
         asset.setDescription(req.getDescription());
         asset.setStatus(Asset.STATUS_DRAFT);
@@ -88,13 +118,13 @@ public class AssetMediaBridgeService {
         v1.setCreatedBy(userId);
         versionMapper.insert(v1);
 
-        log.info("media import as new asset: assetId={} taskId={} idx={} fileId={} projectId={} userId={}",
-                asset.getId(), req.getTaskId(), req.getImageIdx(), fileId, projectId, userId);
+        log.info("media import as new asset: assetId={} kind={} taskId={} idx={} fileId={} projectId={} userId={}",
+                asset.getId(), kind, req.getTaskId(), req.getImageIdx(), fileId, projectId, userId);
         return MediaImportVO.builder()
                 .created(true)
                 .assetId(asset.getId())
                 .name(name)
-                .mediaType(Asset.MEDIA_IMAGE)
+                .mediaType(mediaType)
                 .version(1)
                 .message("已入库 v1")
                 .build();
