@@ -5,6 +5,8 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.junit.jupiter.api.Test;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -55,6 +57,44 @@ class StructuredDocumentExtractorTest {
                 .containsExactly("售后政策", "退款条件");
         assertThat(document.getSections()).extracting(s -> s.getLocator().getReadingOrder())
                 .containsExactly(0, 1, 2);
+    }
+
+    @Test
+    void docxPreservesHeadingHierarchy() throws Exception {
+        byte[] docx;
+        try (XWPFDocument word = new XWPFDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            XWPFParagraph h1 = word.createParagraph();
+            h1.setStyle("Heading1");
+            h1.createRun().setText("售后政策");
+            word.createParagraph().createRun().setText("总则");
+            XWPFParagraph h2 = word.createParagraph();
+            h2.setStyle("Heading2");
+            h2.createRun().setText("退款条件");
+            word.createParagraph().createRun().setText("七天内可以退款");
+            word.write(out);
+            docx = out.toByteArray();
+        }
+
+        ExtractedDocument document = extractor.extractDocx(new ByteArrayInputStream(docx));
+
+        assertThat(document.getDocumentType()).isEqualTo("DOCX");
+        assertThat(document.getSections()).extracting(Section::getTitle)
+                .containsExactly("售后政策", "退款条件");
+        assertThat(document.getSections().get(1).getTitlePath())
+                .containsExactly("售后政策", "退款条件");
+        assertThat(document.getSections().get(1).getContent()).contains("七天内可以退款");
+    }
+
+    @Test
+    void imageTextUsesSinglePageRegionWithoutInventedBoundingBox() {
+        ExtractedDocument document = extractor.extractImageText("设备铭牌", "型号 A-100");
+
+        Section section = document.getSections().get(0);
+        assertThat(document.getDocumentType()).isEqualTo("IMAGE");
+        assertThat(section.getLocator().getPageStart()).isEqualTo(1);
+        assertThat(section.getLocator().getPageEnd()).isEqualTo(1);
+        assertThat(section.getLocator().getRegionType()).isEqualTo("IMAGE");
+        assertThat(section.getLocator().getBoundingBoxes()).isNullOrEmpty();
     }
 
     private byte[] twoPagePdf() throws Exception {

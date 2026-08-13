@@ -59,6 +59,10 @@ public class ExcelSheetExtractor {
             throw new RuntimeException("Excel 抽取失败: " + e.getMessage(), e);
         }
         ExtractedDocument doc = ExtractedDocument.builder()
+                .schemaVersion("1.0")
+                .parserName("apache-poi")
+                .parserVersion("5.2")
+                .documentType("EXCEL")
                 .plainText(plain.toString())
                 .sections(sections)
                 .build();

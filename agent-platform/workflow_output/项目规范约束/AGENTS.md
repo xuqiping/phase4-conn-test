@@ -139,3 +139,30 @@
 - 密级变更仅管理员可执行；知识库管理员可维护其他治理字段。所有更新写审计并主动失效该 KB 的答案缓存。
 - 有效区间使用 `TIMESTAMPTZ`，规则为 `effectiveAt < expiredAt`；默认检索排除尚未生效和已经失效的文档，边界统一以数据库 `now()` 判断。
 - 标签最多 20 个、单标签最多 64 字符，写入前去空白、去重；JSONB 更新必须显式 `::jsonb`，不得依赖通用更新器猜 JDBC 类型。
+
+## 知识库结构化解析协议约束
+
+- `ExtractedDocument` 必须携带 `schemaVersion/parserName/parserVersion/sourceHash/documentType`；Section 必须携带稳定 `sectionId/nodeType/titlePath/ordinal/locator`，后续分块不得重新猜测源文档位置。
+- 定位协议按文档类型填写可靠子集：PDF 用真实页码，Excel 用 Sheet/行/Cell，Markdown/DOCX 用标题树和阅读顺序，图片固定第 1 页区域；无法可靠获得 bbox 时必须留空，禁止伪造坐标。
+- 结构化解析 JSON 属于大对象，必须写文件存储；数据库版本行只保存 `parserVersion/parseArtifactRef/parseArtifactHash/parsedAt`，并以 SHA-256 校验完整性。
+- 解析产物必须绑定 `knowledge_documents.current_version_id`；历史无版本数据可兼容解析但不写产物，新上传文档不得绕过版本绑定。
+- L0/L2 节点必须继承当前 `versionId`，并把 Section 的层级与 locator 合并进 metadata；原有文件回显 metadata 不得被覆盖。
+- 解析器不得执行宏、脚本或外部链接；PDF 页数和全文字符数必须设硬上限。拿不到的视觉证据交给后续 OCR/Layout，不得以默认 bbox 冒充真实证据。
+
+## 知识库分块协议约束
+
+- D0/S1/C2/E3 在迁移期必须采用双轨兼容：D0 继续由文档 `l1_metadata` 承载，S1 写旧 `L0`，C2/E3 写旧 `L2`；新粒度、类型与版本只写节点 metadata，禁止直接破坏现有 PostgreSQL 检索层级。
+- Chunk 必须经 `ChunkFactory` 注册策略生成，不得在 Writer 中恢复通用字符硬切。普通文档按完整段落聚合；CLAUSE/FAQ/LIST/PROCEDURE 保持原子；TABLE_ROW、VISUAL_REGION、PDF_PAGE 使用各自明确类型。
+- 普通 C2 目标为 300～600 token；禁止跨章节凑下限，超过上限时才允许安全切分。Overlap 必须复制完整段落且最多 100 token，禁止从语句中间截取重叠文本。
+- S1、C2、E3 metadata 必须保存稳定 `parentPath/previousPath/nextPath`、`chunkOrdinal/chunkerVersion/titlePath/locator`；邻居关系基于同批稳定顺序生成，不得依赖数据库偶然排序。
+- 所有节点必须继承 `tenantId/kbId/documentId/versionId/ownerId/authorityLevel/confidentialityLevel`；缺少 documentId 或 kbId 时立即拒绝写入，禁止产生无归属知识节点。
+- 分块日志和指标只记录文档/版本标识、固定粒度、数量、版本与耗时；禁止记录 Prompt、Query、Chunk 正文、密钥或完整模型输出，指标 tag 禁止使用文档 ID 等高基数字段。
+
+## 知识库上下文化与索引任务约束
+
+- C2/E3 的向量输入必须由 `Contextualizer` 按固定顺序拼装“文档标题、不可变版本、titlePath、所属背景、Chunk 原文”；权限、密级、owner、ACL token 等治理字段不得混入模型文本。
+- `contentHash` 只覆盖 Chunk 原文，`contextHash` 覆盖完整 contextual content；Worker 在模型调用前、事务完成前都必须复核两者，任一漂移即作废旧任务，不得让旧向量覆盖新版本。
+- 索引任务必须在入队时锁定 `versionId/parserVersion/chunkerVersion/embeddingModel/pipelineVersion`。Worker 优先使用任务模型快照；仅历史无快照任务可兼容读取当前 KB 模型，运行时代码禁止硬编码模型 ID。
+- Pipeline 版本来自 `rag.index.pipeline-version` / `RAG_INDEX_PIPELINE_VERSION` 配置；索引编排语义变化时必须递增版本，不得散落硬编码。
+- 节点任务入队必须使用 `ON CONFLICT (idempotency_key) DO NOTHING`；幂等键覆盖节点、content/context Hash 和完整版本指纹。同任务重放只能跳过，不能把唯一键冲突升级为解析失败。
+- 向量 upsert、任务 DONE 和文档 INDEXED 判定必须处于同一短事务；LLM embedding 调用在事务外。写向量时保存节点真实 level 与 contextHash，旧无 level/context 任务仅允许明确兼容回退。

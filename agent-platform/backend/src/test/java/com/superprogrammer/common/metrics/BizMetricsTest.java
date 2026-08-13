@@ -103,6 +103,18 @@ class BizMetricsTest {
     }
 
     @Test
+    void knowledgeChunkMetricsUseOnlyBoundedGranularityTags() {
+        metrics.knowledgeChunked("S1", 2);
+        metrics.knowledgeChunked("C2", 5);
+        metrics.knowledgeChunkDuration(Duration.ofMillis(120));
+
+        String out = scrape();
+        assertTrue(out.contains("knowledge_chunks_total{granularity=\"S1\",} 2.0"), out);
+        assertTrue(out.contains("knowledge_chunks_total{granularity=\"C2\",} 5.0"), out);
+        assertTrue(out.contains("knowledge_chunk_duration_seconds_count 1.0"), out);
+    }
+
+    @Test
     void memoryMetrics_recorded() {
         metrics.memoryPipelineDuration(Duration.ofMillis(500));
         metrics.memoryIncident();

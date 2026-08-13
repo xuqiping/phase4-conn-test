@@ -16,6 +16,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ParseArtifactServiceTest {
@@ -49,5 +50,18 @@ class ParseArtifactServiceTest {
         verify(versionMapper).updateParseArtifact(eq(9L), eq("2"), eq("/api/files/artifact-1.json"),
                 org.mockito.ArgumentMatchers.matches("[0-9a-f]{64}"));
         assertThat(extracted.getArtifactRef()).isEqualTo("/api/files/artifact-1.json");
+    }
+
+    @Test
+    void legacyDocumentWithoutCurrentVersionSkipsArtifactPersistence() {
+        FileStorageService storage = mock(FileStorageService.class);
+        KnowledgeDocumentVersionMapper versionMapper = mock(KnowledgeDocumentVersionMapper.class);
+        ParseArtifactService service = new ParseArtifactService(storage, versionMapper, new ObjectMapper());
+        KnowledgeDocument legacy = new KnowledgeDocument();
+        legacy.setId(7L);
+
+        service.persistIfVersioned(legacy, ExtractedDocument.builder().sections(List.of()).build());
+
+        verifyNoInteractions(storage, versionMapper);
     }
 }

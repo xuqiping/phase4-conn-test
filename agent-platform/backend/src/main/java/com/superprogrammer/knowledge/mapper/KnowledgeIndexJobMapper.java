@@ -12,6 +12,22 @@ import java.util.List;
 public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
 
     /**
+     * S1/C2/E3 节点索引任务幂等入队。任务指纹已包含内容、上下文与全套版本快照；
+     * 相同任务重放命中唯一键后直接跳过，不把可预期重复当成解析失败。
+     */
+    @org.apache.ibatis.annotations.Insert("""
+            INSERT INTO knowledge_index_jobs
+                (node_id, kb_id, job_type, content_hash, context_hash, version_id, parser_version,
+                 chunker_version, embedding_model, pipeline_version, idempotency_key, created_at, updated_at)
+            VALUES
+                (#{j.nodeId}, #{j.kbId}, #{j.jobType}, #{j.contentHash},
+                 COALESCE(#{j.contextHash}, '__phase1_placeholder__'), #{j.versionId}, #{j.parserVersion},
+                 #{j.chunkerVersion}, #{j.embeddingModel}, #{j.pipelineVersion}, #{j.idempotencyKey}, now(), now())
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """)
+    int insertNodeJobIgnoreConflict(@Param("j") KnowledgeIndexJob job);
+
+    /**
      * 文档下仍未完成的 job 数（PENDING/RUNNING），用于判断整文档是否可置 INDEXED。
      * JOIN knowledge_nodes 取 document_id（job 表无 doc 维度）。
      */
@@ -90,9 +106,11 @@ public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
      */
     @org.apache.ibatis.annotations.Insert("""
             INSERT INTO knowledge_index_jobs
-                (node_id, document_id, kb_id, job_type, content_hash, idempotency_key, created_at, updated_at)
+                (node_id, document_id, kb_id, job_type, content_hash, version_id, parser_version,
+                 chunker_version, embedding_model, pipeline_version, idempotency_key, created_at, updated_at)
             VALUES
-                (NULL, #{j.documentId}, #{j.kbId}, 'UPSERT_L1', #{j.contentHash}, #{j.idempotencyKey}, now(), now())
+                (NULL, #{j.documentId}, #{j.kbId}, 'UPSERT_L1', #{j.contentHash}, #{j.versionId}, #{j.parserVersion},
+                 #{j.chunkerVersion}, #{j.embeddingModel}, #{j.pipelineVersion}, #{j.idempotencyKey}, now(), now())
             ON CONFLICT (idempotency_key) DO NOTHING
             """)
     int insertL1JobIgnoreConflict(@Param("j") com.superprogrammer.knowledge.entity.KnowledgeIndexJob j);

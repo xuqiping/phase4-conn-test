@@ -133,6 +133,26 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 知识分块产出数：granularity 仅允许 S1/C2/E3 等固定枚举，禁止文档 ID 等高基数值。 */
+    public void knowledgeChunked(String granularity, long count) {
+        if (count <= 0) {
+            return;
+        }
+        Counter.builder("knowledge.chunks")
+                .description("知识文档分块产出数（按固定粒度）")
+                .tags("granularity", safe(granularity))
+                .register(registry)
+                .increment(count);
+    }
+
+    /** 单文档节点写入与分块耗时；无 tag，避免高基数。 */
+    public void knowledgeChunkDuration(Duration duration) {
+        Timer.builder("knowledge.chunk.duration")
+                .description("知识文档分块与节点写入耗时")
+                .register(registry)
+                .record(duration);
+    }
+
     // ---------- OPS-FR-06：记忆管线 ----------
 
     /** 记忆管线耗时：memory_pipeline_duration。 */

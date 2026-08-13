@@ -12,6 +12,9 @@ import com.superprogrammer.knowledge.service.internal.ExcelSheetExtractor;
 import com.superprogrammer.knowledge.service.internal.ExtractedDocument;
 import com.superprogrammer.knowledge.service.internal.L1Metadata;
 import com.superprogrammer.knowledge.service.internal.Section;
+import com.superprogrammer.knowledge.service.internal.SectionLocator;
+import com.superprogrammer.knowledge.service.internal.StructuredDocumentExtractor;
+import com.superprogrammer.knowledge.service.internal.ParseArtifactService;
 import com.superprogrammer.knowledge.util.TokenEstimator;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.llm.LlmGateway;
@@ -105,6 +108,8 @@ public class DocumentParserService {
     private final KnowledgeNodeWriter knowledgeNodeWriter;
     private final ExcelSheetExtractor excelExtractor;
     private final SystemSettingService systemSettingService;
+    private final StructuredDocumentExtractor structuredDocumentExtractor;
+    private final ParseArtifactService parseArtifactService;
 
     /** 监听器入口。宽 catch 有意：LlmGateway 抛裸 RuntimeException、Tika 抛 IOException/TikaException，均汇入 markFailed。 */
     public void parse(Long documentId, Long operatorId) {
@@ -120,7 +125,8 @@ public class DocumentParserService {
         BillingContext.set(operatorId);
         try {
             updateStatus(documentId, "PARSING", operatorId);
-            ExtractedDocument extracted = extract(doc);
+            ExtractedDocument extracted = completeProtocol(doc, extract(doc));
+            parseArtifactService.persistIfVersioned(doc, extracted);
             persistParseWarning(documentId, doc.getParseWarning(), operatorId);
             updateStatus(documentId, "SUMMARIZING", operatorId);
             SummaryResult result = switch (strategy) {
@@ -153,7 +159,19 @@ public class DocumentParserService {
         if ("FILE".equals(dt)) {
             return extractFile(doc);
         }
-        return isExcel(doc) ? extractExcel(doc) : extractTika(doc);
+        if (isExcel(doc)) {
+            return extractExcel(doc);
+        }
+        if (isPdf(doc)) {
+            return extractPdf(doc);
+        }
+        if (isMarkdown(doc)) {
+            return extractMarkdown(doc);
+        }
+        if (isDocx(doc)) {
+            return extractDocx(doc);
+        }
+        return extractTika(doc);
     }
 
     /**
@@ -163,7 +181,11 @@ public class DocumentParserService {
     private ExtractedDocument extractImage(KnowledgeDocument doc) {
         String mode = readIndexOption(doc.getParseOptions(), "indexMode");
         if ("MANUAL".equalsIgnoreCase(mode)) {
-            return manualExtracted(doc, readIndexOption(doc.getParseOptions(), "manualIndexText"));
+            String text = readIndexOption(doc.getParseOptions(), "manualIndexText");
+            if (text == null || text.isBlank()) {
+                throw new RuntimeException("MANUAL 索引文本为空 docId=" + doc.getId());
+            }
+            return structuredDocumentExtractor.extractImageText(title(doc), text);
         }
         return extractImageByVision(doc);
     }
@@ -214,7 +236,7 @@ public class DocumentParserService {
             throw new RuntimeException("视觉模型返回空内容 docId=" + doc.getId());
         }
         log.info("视觉模型识图完成 docId={} model={} chars={}", doc.getId(), visionModel, text.length());
-        return manualExtracted(doc, text);
+        return structuredDocumentExtractor.extractImageText(title(doc), text);
     }
 
     /**
@@ -237,7 +259,12 @@ public class DocumentParserService {
         String title = (doc.getTitle() == null || doc.getTitle().isBlank()) ? "手动索引文档" : doc.getTitle();
         Section s = Section.builder()
                 .title(title).content(manualText).tokenCount(TokenEstimator.estimate(manualText)).build();
-        return ExtractedDocument.builder().plainText(manualText).sections(List.of(s)).build();
+        return ExtractedDocument.builder()
+                .schemaVersion("1.0")
+                .parserName("manual")
+                .parserVersion("1")
+                .documentType("IMAGE".equals(doc.getDocType()) ? "IMAGE" : "MANUAL")
+                .plainText(manualText).sections(List.of(s)).build();
     }
 
     /** parse_options 单 key 读取（indexMode/manualIndexText/visionModel）；null/格式错 → null。 */
@@ -288,6 +315,23 @@ public class DocumentParserService {
         return ref.endsWith(".xlsx") || ref.endsWith(".xls");
     }
 
+    private static boolean isPdf(KnowledgeDocument doc) {
+        return lowerFileRef(doc).endsWith(".pdf");
+    }
+
+    private static boolean isMarkdown(KnowledgeDocument doc) {
+        String ref = lowerFileRef(doc);
+        return ref.endsWith(".md") || ref.endsWith(".markdown");
+    }
+
+    private static boolean isDocx(KnowledgeDocument doc) {
+        return lowerFileRef(doc).endsWith(".docx");
+    }
+
+    private static String lowerFileRef(KnowledgeDocument doc) {
+        return doc.getFileRef() == null ? "" : doc.getFileRef().toLowerCase();
+    }
+
     /** Excel：POI sheet 级抽取。selectedSheets 从 parse_options 解析；降级告警写回 doc.parseWarning。 */
     private ExtractedDocument extractExcel(KnowledgeDocument doc) {
         String fileId = stripFileRef(doc.getFileRef());
@@ -310,6 +354,42 @@ public class DocumentParserService {
             doc.setParseWarning(String.join("；", result.warnings()));
         }
         return result.document();
+    }
+
+    private ExtractedDocument extractPdf(KnowledgeDocument doc) {
+        Resource resource = loadSource(doc);
+        try (InputStream input = resource.getInputStream()) {
+            return structuredDocumentExtractor.extractPdf(input);
+        } catch (Exception e) {
+            throw new RuntimeException("PDF 抽取失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
+        }
+    }
+
+    private ExtractedDocument extractMarkdown(KnowledgeDocument doc) {
+        Resource resource = loadSource(doc);
+        try (InputStream input = resource.getInputStream()) {
+            return structuredDocumentExtractor.extractMarkdown(
+                    new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            throw new RuntimeException("Markdown 抽取失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
+        }
+    }
+
+    private ExtractedDocument extractDocx(KnowledgeDocument doc) {
+        Resource resource = loadSource(doc);
+        try (InputStream input = resource.getInputStream()) {
+            return structuredDocumentExtractor.extractDocx(input);
+        } catch (Exception e) {
+            throw new RuntimeException("DOCX 抽取失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
+        }
+    }
+
+    private Resource loadSource(KnowledgeDocument doc) {
+        String fileId = stripFileRef(doc.getFileRef());
+        if (fileId == null || fileId.isBlank()) {
+            throw new RuntimeException("文档无 file_ref，无法读取原文 docId=" + doc.getId());
+        }
+        return fileStorageService.load(fileId, doc.getCreatedBy(), false);
     }
 
     /** parse_options.selectedSheets 解析；null/空/格式错 → 空集（= 导全部 sheet）。 */
@@ -351,9 +431,40 @@ public class DocumentParserService {
             log.warn("Tika 抽出空文本 docId={}", doc.getId());
         }
         return ExtractedDocument.builder()
+                .schemaVersion("1.0")
+                .parserName("apache-tika")
+                .parserVersion("2.9")
+                .documentType("DOCUMENT")
                 .plainText(text)
                 .sections(split(text))
                 .build();
+    }
+
+    /** 为旧抽取路径补齐稳定协议字段；只填可靠信息，不生成虚假页码或 bbox。 */
+    private ExtractedDocument completeProtocol(KnowledgeDocument doc, ExtractedDocument extracted) {
+        if (extracted.getSchemaVersion() == null) extracted.setSchemaVersion("1.0");
+        if (extracted.getParserName() == null) extracted.setParserName("unknown");
+        if (extracted.getParserVersion() == null) extracted.setParserVersion("1");
+        if (extracted.getDocumentType() == null) extracted.setDocumentType("DOCUMENT");
+        extracted.setSourceHash(doc.getFileHash());
+        List<Section> sections = extracted.getSections() == null ? List.of() : extracted.getSections();
+        for (int i = 0; i < sections.size(); i++) {
+            Section section = sections.get(i);
+            if (section.getSectionId() == null) section.setSectionId("section-" + i);
+            if (section.getNodeType() == null) section.setNodeType("SECTION");
+            if (section.getTitlePath() == null || section.getTitlePath().isEmpty()) {
+                section.setTitlePath(section.getTitle() == null ? List.of() : List.of(section.getTitle()));
+            }
+            section.setOrdinal(i);
+            if (section.getLocator() == null) {
+                section.setLocator(SectionLocator.builder()
+                        .readingOrder(i)
+                        .regionType("IMAGE".equals(extracted.getDocumentType()) ? "IMAGE" : "SECTION")
+                        .crossPage(false)
+                        .build());
+            }
+        }
+        return extracted;
     }
 
     /** section 切分：标题感知优先，无标题退化按大小累积；超长段再切；过小段合并。 */

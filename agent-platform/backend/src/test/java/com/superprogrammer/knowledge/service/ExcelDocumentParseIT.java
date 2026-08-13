@@ -58,6 +58,7 @@ class ExcelDocumentParseIT extends AbstractIntegrationTest {
     @Autowired private FileStorageService fileStorageService;
     @Autowired private JdbcTemplate jdbc;
     @MockBean private LlmGateway llmGateway;
+    @MockBean private com.anji.captcha.service.CaptchaService captchaService;
 
     private static final long KB = 9101L;
     private static final long U1 = 9101L;
@@ -137,6 +138,12 @@ class ExcelDocumentParseIT extends AbstractIntegrationTest {
         // 每数据行一 L0 节点（title=Sheet:X:行N）；每 sheet 1 数据行 → 每 sheet 1 节点
         assertThat(l0Titles(docId)).containsExactlyInAnyOrder(
                 "Sheet:销售:行2", "Sheet:库存:行2", "Sheet:退货:行2");
+        List<String> e3Metadata = jdbc.queryForList(
+                "SELECT metadata FROM knowledge_nodes WHERE document_id=? AND level='L2' ORDER BY id",
+                String.class, docId);
+        assertThat(e3Metadata).hasSize(3).allSatisfy(metadata ->
+                assertThat(metadata).contains("\"granularity\":\"E3\"", "\"chunkType\":\"TABLE_ROW\"",
+                        "\"sheetName\""));
     }
 
     @Test

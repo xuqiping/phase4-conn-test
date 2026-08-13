@@ -51,7 +51,8 @@ class IndexJobWorkerTest {
     void setUp() {
         // retainAfterIndex=false：completeUpsert 返回 fileRef 时触发清原件（此处 mock 返 null，不触发）
         worker = new IndexJobWorker(txService, nodeMapper, documentMapper, knowledgeBaseService,
-                llmGateway, objectMapper, directExecutor, fileStorageService, false, bizMetrics);
+                llmGateway, objectMapper, directExecutor, fileStorageService, false, bizMetrics,
+                new Contextualizer(objectMapper));
     }
 
     // ===== OPS-FR-05 队列指标 =====
@@ -63,7 +64,7 @@ class IndexJobWorkerTest {
                 new io.micrometer.prometheus.PrometheusMeterRegistry(io.micrometer.prometheus.PrometheusConfig.DEFAULT);
         IndexJobWorker w = new IndexJobWorker(txService, nodeMapper, documentMapper, knowledgeBaseService,
                 llmGateway, objectMapper, directExecutor, fileStorageService, false,
-                new com.superprogrammer.common.metrics.BizMetrics(registry));
+                new com.superprogrammer.common.metrics.BizMetrics(registry), new Contextualizer(objectMapper));
         when(txService.countClaimable()).thenReturn(37L);
 
         w.registerQueueDepthGauge();
@@ -138,17 +139,47 @@ class IndexJobWorkerTest {
         KnowledgeNode n = node("hash1", "ACTIVE");
         n.setId(10L);
         n.setDocumentId(99L);
+        n.setTitle("环境准备");
+        n.setVersionId(3L);
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setTitle("部署手册");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
+                new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
+        version.setId(3L);
+        Contextualizer.ContextualContent contextual = new Contextualizer(objectMapper).contextualize(doc, version, n);
+        n.setContextHash(contextual.contextHash());
+        job.setContextHash(contextual.contextHash());
+        job.setEmbeddingModel("task-embedding-model");
         when(nodeMapper.selectById(10L)).thenReturn(n);
-        KnowledgeBase kb = new KnowledgeBase();
-        kb.setEmbeddingModel("doubao-embedding-vision");
-        when(knowledgeBaseService.ensure(7L)).thenReturn(kb);
-        when(llmGateway.embed(anyString(), eq("doubao-embedding-vision"), any())).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.embed(eq(contextual.text()), eq("task-embedding-model"), any())).thenReturn(new float[HalfVecUtil.DIM]);
 
         worker.poll();
 
         verify(txService).completeUpsert(eq(1L), eq(10L), eq(99L), eq(7L),
-                eq("doubao-embedding-vision"), anyString(), eq("hash1"));
+                eq("task-embedding-model"), anyString(), eq("hash1"), eq(contextual.contextHash()));
         verify(txService, never()).failJob(anyLong(), anyString());
+    }
+
+    @Test
+    void contextualHashMismatchVoidsWithoutEmbedding() {
+        KnowledgeIndexJob job = job(10L, 1L, "hash1");
+        job.setKbId(7L);
+        job.setContextHash("stale-context-hash");
+        job.setEmbeddingModel("task-embedding-model");
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        KnowledgeNode n = node("hash1", "ACTIVE");
+        n.setId(10L); n.setDocumentId(99L); n.setVersionId(3L);
+        n.setContextHash("current-context-hash");
+        when(nodeMapper.selectById(10L)).thenReturn(n);
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L); doc.setTitle("部署手册");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        worker.poll();
+
+        verify(txService).voidJob(eq(1L), contains("上下文化文本或版本已变更"));
+        verify(llmGateway, never()).embed(anyString(), anyString(), any());
     }
 
     @Test

@@ -9,6 +9,9 @@ import com.superprogrammer.knowledge.mapper.KnowledgeIndexJobMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import com.superprogrammer.knowledge.service.internal.ExtractedDocument;
 import com.superprogrammer.knowledge.service.internal.Section;
+import com.superprogrammer.knowledge.chunk.ChunkDraft;
+import com.superprogrammer.knowledge.chunk.ChunkFactory;
+import com.superprogrammer.common.metrics.BizMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.knowledge.util.HashUtil;
 import com.superprogrammer.knowledge.util.L1EmbedText;
@@ -18,10 +21,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.time.Duration;
 
 /**
  * 解析产物落库（v6 §6 单事务）。
@@ -37,12 +40,18 @@ import java.util.Map;
 public class KnowledgeNodeWriter {
 
     private static final Long TENANT_ID = 1L;
-    private static final int L2_MAX_TOKENS = 1024;
+    private static final String CHUNKER_VERSION = "1";
 
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeNodeMapper nodeMapper;
     private final KnowledgeIndexJobMapper indexJobMapper;
     private final ObjectMapper objectMapper;
+    private final ChunkFactory chunkFactory;
+    private final BizMetrics bizMetrics;
+    private final KnowledgeBaseService knowledgeBaseService;
+    private final Contextualizer contextualizer;
+    @org.springframework.beans.factory.annotation.Value("${rag.index.pipeline-version:rag-index-v1}")
+    private String pipelineVersion;
 
     /**
      * @param doc          待解析文档（读 kbId/title/id）
@@ -56,6 +65,8 @@ public class KnowledgeNodeWriter {
     public void writeNodes(KnowledgeDocument doc, Long operatorId,
                            ExtractedDocument extracted, String l1Json, List<String> abstracts,
                            String metadataJson) {
+        long startedAt = System.nanoTime();
+        requireOwnership(doc);
         // 1. doc → EMBEDDING + l1_metadata，清 parse_error
         LambdaUpdateWrapper<KnowledgeDocument> docUpdate = new LambdaUpdateWrapper<>();
         docUpdate.eq(KnowledgeDocument::getId, doc.getId())
@@ -77,30 +88,49 @@ public class KnowledgeNodeWriter {
             return;
         }
 
-        // 2. 每 section：1 个 L0（摘要=内容）+ 其 L2 子节点（原文切片）
+        int c2Count = 0;
+        int e3Count = 0;
+        // 2. 每 section：1 个兼容 L0/S1（摘要）+ 其兼容 L2/C2|E3 子节点
         for (int i = 0; i < sections.size(); i++) {
             Section section = sections.get(i);
             String abstract0 = pickAbstract(section, abstracts, i);
 
-            KnowledgeNode l0 = buildNode(doc, null, "L0", section, abstract0,
-                    "/L0-" + i, metadataJson);
+            String s1Path = "/L0-" + i;
+            KnowledgeNode l0 = buildNode(doc, null, "L0", section.getNodeType(), section,
+                    abstract0, s1Path, mergeS1Metadata(metadataJson, doc, section, i, sections.size()));
             l0.setContentHash(HashUtil.sha256(abstract0));
             l0.setTokenCount(TokenEstimator.estimate(abstract0));
             nodeMapper.insert(l0);                  // id 回填
 
-            indexJobMapper.insert(buildUpsertJob(l0, doc.getKbId()));  // 仅 L0 建 job（I4）
+            indexJobMapper.insertNodeJobIgnoreConflict(
+                    buildUpsertJob(l0, doc.getKbId(), extracted.getParserVersion()));
 
-            int j = 0;
-            for (String chunk : splitL2(section.getContent())) {
-                KnowledgeNode l2 = buildNode(doc, l0.getId(), "L2", section, chunk,
-                        "/L0-" + i + "/L2-" + j, metadataJson);
-                l2.setContentHash(HashUtil.sha256(chunk));
-                l2.setTokenCount(TokenEstimator.estimate(chunk));
-                nodeMapper.insert(l2);              // L2 不向量化、无 job
-                j++;
+            List<ChunkDraft> chunks = chunkFactory.chunk(section);
+            for (ChunkDraft chunk : chunks) {
+                if ("E3".equals(chunk.granularity())) e3Count++; else c2Count++;
+                String path = s1Path + "/L2-" + chunk.ordinal();
+                KnowledgeNode l2 = buildNode(doc, l0.getId(), "L2", chunk.chunkType(), section,
+                        chunk.content(), path, mergeChunkMetadata(metadataJson, doc, section, chunk, s1Path));
+                l2.setContentHash(HashUtil.sha256(chunk.content()));
+                l2.setTokenCount(chunk.tokenCount());
+                com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
+                        new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
+                version.setId(doc.getCurrentVersionId());
+                Contextualizer.ContextualContent contextual = contextualizer.contextualize(doc, version, l2);
+                l2.setContextHash(contextual.contextHash());
+                nodeMapper.insert(l2);
+                indexJobMapper.insertNodeJobIgnoreConflict(
+                        buildContextualUpsertJob(l2, doc.getKbId(), extracted.getParserVersion()));
             }
         }
-        log.info("文档落库完成 docId={} sections={} ", doc.getId(), sections.size());
+        bizMetrics.knowledgeChunked("S1", sections.size());
+        bizMetrics.knowledgeChunked("C2", c2Count);
+        bizMetrics.knowledgeChunked("E3", e3Count);
+        Duration duration = Duration.ofNanos(System.nanoTime() - startedAt);
+        bizMetrics.knowledgeChunkDuration(duration);
+        log.info("知识分块落库完成 docId={} versionId={} chunkerVersion={} s1={} c2={} e3={} elapsedMs={}",
+                doc.getId(), doc.getCurrentVersionId(), CHUNKER_VERSION,
+                sections.size(), c2Count, e3Count, duration.toMillis());
     }
 
     /** 摘要为空（BATCH 未匹配 / HYBRID 未覆盖 / LLM 失败）→ 兜底 section 原文前 ~400 字。禁止空 content L0。 */
@@ -117,20 +147,20 @@ public class KnowledgeNodeWriter {
     }
 
     private KnowledgeNode buildNode(KnowledgeDocument doc, Long parentId, String level,
-                                    Section section, String content, String path, String metadataJson) {
+                                    String nodeType, Section section, String content,
+                                    String path, String metadataJson) {
         KnowledgeNode node = new KnowledgeNode();
         node.setTenantId(TENANT_ID);
         node.setKbId(doc.getKbId());
         node.setDocumentId(doc.getId());
         node.setParentId(parentId);
         node.setPath(path);
-        node.setNodeType(section.getNodeType() == null || section.getNodeType().isBlank()
-                ? "SECTION" : section.getNodeType());
+        node.setNodeType(nodeType == null || nodeType.isBlank() ? "SECTION" : nodeType);
         node.setLevel(level);
         node.setTitle(section.getTitle());
         node.setContent(content);
         node.setContentTokens(com.superprogrammer.knowledge.util.JiebaTokenizer.tokenize(content));
-        node.setMetadata(mergeSectionMetadata(metadataJson, section));
+        node.setMetadata(metadataJson);
         node.setStatus("ACTIVE");
         node.setVersionId(doc.getCurrentVersionId());
         node.setCreatedBy(nullSafe(doc.getCreatedBy()));
@@ -138,7 +168,36 @@ public class KnowledgeNodeWriter {
         return node;
     }
 
-    private String mergeSectionMetadata(String metadataJson, Section section) {
+    private String mergeS1Metadata(String metadataJson, KnowledgeDocument doc, Section section,
+                                   int sectionIndex, int sectionCount) {
+        Map<String, Object> additions = new LinkedHashMap<>();
+        additions.put("granularity", "S1");
+        additions.put("chunkType", section.getNodeType());
+        additions.put("chunkerVersion", CHUNKER_VERSION);
+        additions.put("previousPath", sectionIndex == 0 ? null : "/L0-" + (sectionIndex - 1));
+        additions.put("nextPath", sectionIndex + 1 < sectionCount ? "/L0-" + (sectionIndex + 1) : null);
+        return mergeMetadata(metadataJson, doc, section, additions);
+    }
+
+    private String mergeChunkMetadata(String metadataJson, KnowledgeDocument doc,
+                                      Section section, ChunkDraft chunk,
+                                      String parentPath) {
+        Map<String, Object> additions = new LinkedHashMap<>();
+        additions.put("granularity", chunk.granularity());
+        additions.put("chunkType", chunk.chunkType());
+        additions.put("chunkerVersion", CHUNKER_VERSION);
+        additions.put("chunkOrdinal", chunk.ordinal());
+        additions.put("parentPath", parentPath);
+        additions.put("previousPath", chunk.previousOrdinal() == null
+                ? null : parentPath + "/L2-" + chunk.previousOrdinal());
+        additions.put("nextPath", chunk.nextOrdinal() == null
+                ? null : parentPath + "/L2-" + chunk.nextOrdinal());
+        additions.put("locator", chunk.locator());
+        return mergeMetadata(metadataJson, doc, section, additions);
+    }
+
+    private String mergeMetadata(String metadataJson, KnowledgeDocument doc,
+                                 Section section, Map<String, Object> additions) {
         try {
             Map<String, Object> metadata = new LinkedHashMap<>();
             if (metadataJson != null && !metadataJson.isBlank()) {
@@ -149,21 +208,67 @@ public class KnowledgeNodeWriter {
             metadata.put("titlePath", section.getTitlePath());
             metadata.put("ordinal", section.getOrdinal());
             metadata.put("locator", section.getLocator());
+            metadata.put("tenantId", TENANT_ID);
+            metadata.put("kbId", doc.getKbId());
+            metadata.put("documentId", doc.getId());
+            metadata.put("versionId", doc.getCurrentVersionId());
+            metadata.put("ownerId", doc.getOwnerId() == null ? doc.getCreatedBy() : doc.getOwnerId());
+            metadata.put("authorityLevel", doc.getAuthorityLevel());
+            metadata.put("confidentialityLevel", doc.getConfidentialityLevel());
+            metadata.putAll(additions);
             return objectMapper.writeValueAsString(metadata);
         } catch (Exception e) {
             throw new IllegalArgumentException("invalid node metadata JSON", e);
         }
     }
 
+    private void requireOwnership(KnowledgeDocument doc) {
+        if (doc == null || doc.getId() == null || doc.getKbId() == null) {
+            throw new IllegalArgumentException("knowledge chunk requires documentId and kbId");
+        }
+    }
+
     /** UPSERT job：仅 L0。idempotency_key=sha256(nodeId:contentHash:UPSERT)（I4）。 */
-    private KnowledgeIndexJob buildUpsertJob(KnowledgeNode l0, Long kbId) {
+    private KnowledgeIndexJob buildUpsertJob(KnowledgeNode l0, Long kbId, String parserVersion) {
         KnowledgeIndexJob job = new KnowledgeIndexJob();
         job.setNodeId(l0.getId());
         job.setKbId(kbId);
         job.setJobType("UPSERT");
         job.setContentHash(l0.getContentHash());
-        job.setIdempotencyKey(HashUtil.sha256(l0.getId() + ":" + l0.getContentHash() + ":UPSERT"));
+        fillVersionFingerprint(job, l0.getVersionId(), parserVersion, kbId);
+        job.setIdempotencyKey(HashUtil.sha256(l0.getId() + ":" + l0.getContentHash() + ":"
+                + l0.getVersionId() + ":" + parserVersion + ":" + CHUNKER_VERSION + ":"
+                + job.getEmbeddingModel() + ":" + job.getPipelineVersion() + ":UPSERT"));
         return job;
+    }
+
+    /** C2/E3 上下文化索引任务；正文或上下文任一变化都会生成新的幂等键。 */
+    private KnowledgeIndexJob buildContextualUpsertJob(KnowledgeNode node, Long kbId, String parserVersion) {
+        KnowledgeIndexJob job = new KnowledgeIndexJob();
+        job.setNodeId(node.getId());
+        job.setKbId(kbId);
+        job.setJobType("UPSERT");
+        job.setContentHash(node.getContentHash());
+        job.setContextHash(node.getContextHash());
+        fillVersionFingerprint(job, node.getVersionId(), parserVersion, kbId);
+        job.setIdempotencyKey(HashUtil.sha256(node.getId() + ":" + node.getContentHash()
+                + ":" + node.getContextHash() + ":" + node.getVersionId() + ":" + parserVersion + ":"
+                + CHUNKER_VERSION + ":" + job.getEmbeddingModel() + ":" + job.getPipelineVersion() + ":UPSERT"));
+        return job;
+    }
+
+    private void fillVersionFingerprint(KnowledgeIndexJob job, Long versionId,
+                                        String parserVersion, Long kbId) {
+        String embeddingModel = knowledgeBaseService.ensure(kbId).getEmbeddingModel();
+        if (embeddingModel == null || embeddingModel.isBlank()) {
+            throw new IllegalStateException("知识库未配置可用 embedding 模型 kbId=" + kbId);
+        }
+        job.setVersionId(versionId);
+        job.setParserVersion(parserVersion);
+        job.setChunkerVersion(CHUNKER_VERSION);
+        job.setEmbeddingModel(embeddingModel.trim());
+        job.setPipelineVersion(pipelineVersion == null || pipelineVersion.isBlank()
+                ? "rag-index-v1" : pipelineVersion.trim());
     }
 
     /**
@@ -178,47 +283,11 @@ public class KnowledgeNodeWriter {
         job.setKbId(kbId);
         job.setJobType("UPSERT_L1");
         job.setContentHash(l1Hash);
-        job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + l1Hash + ":UPSERT_L1"));
+        fillVersionFingerprint(job, doc.getCurrentVersionId(), null, kbId);
+        job.setIdempotencyKey(HashUtil.sha256(doc.getId() + ":" + l1Hash + ":"
+                + doc.getCurrentVersionId() + ":" + job.getEmbeddingModel() + ":"
+                + job.getPipelineVersion() + ":UPSERT_L1"));
         return job;
-    }
-
-    /** L2 原文按 ≤1024 tok（≈4096 字符）切片，按段落边界累积，超长单段硬切。 */
-    private List<String> splitL2(String content) {
-        List<String> chunks = new ArrayList<>();
-        if (content == null || content.isBlank()) {
-            return chunks;
-        }
-        int maxChars = L2_MAX_TOKENS * 4;
-        String[] paras = content.split("\n\n+");
-        StringBuilder buf = new StringBuilder();
-        for (String para : paras) {
-            String p = para.strip();
-            if (p.isEmpty()) {
-                continue;
-            }
-            if (buf.length() + p.length() + 2 > maxChars && buf.length() > 0) {
-                chunks.add(buf.toString());
-                buf.setLength(0);
-            }
-            if (p.length() > maxChars) {
-                if (buf.length() > 0) {
-                    chunks.add(buf.toString());
-                    buf.setLength(0);
-                }
-                for (int s = 0; s < p.length(); s += maxChars) {
-                    chunks.add(p.substring(s, Math.min(p.length(), s + maxChars)));
-                }
-            } else {
-                if (buf.length() > 0) {
-                    buf.append("\n\n");
-                }
-                buf.append(p);
-            }
-        }
-        if (buf.length() > 0) {
-            chunks.add(buf.toString());
-        }
-        return chunks;
     }
 
     private Long nullSafe(Long v) {

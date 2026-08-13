@@ -42,7 +42,6 @@ public class IndexJobTxService {
     private static final int LOCK_MINUTES = 5;
     private static final long BACKOFF_BASE_SEC = 10;
     private static final long BACKOFF_CAP_SEC = 300;
-    private static final String CONTEXT_HASH = "__phase1_placeholder__";
 
     private final KnowledgeIndexJobMapper indexJobMapper;
     private final KnowledgeEmbeddingMapper embeddingMapper;
@@ -106,14 +105,24 @@ public class IndexJobTxService {
     @Transactional(rollbackFor = Exception.class)
     public IndexedDoc completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
                                String embeddingModel, String halfvec, String contentHash) {
+        return completeUpsert(jobId, nodeId, documentId, kbId, embeddingModel, halfvec,
+                contentHash, "__phase1_placeholder__");
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public IndexedDoc completeUpsert(Long jobId, Long nodeId, Long documentId, Long kbId,
+                               String embeddingModel, String halfvec, String contentHash, String contextHash) {
         KnowledgeNode node = nodeMapper.selectById(nodeId);
         if (node == null || !"ACTIVE".equals(node.getStatus())
-                || !eq(node.getContentHash(), contentHash)) {
+                || !eq(node.getContentHash(), contentHash)
+                || (contextHash != null && !"__phase1_placeholder__".equals(contextHash)
+                    && !eq(node.getContextHash(), contextHash))) {
             voidJob(jobId, "完成前节点已变更/失活/删除，job 作废（新版本 job 接管）");
             return null;
         }
-        embeddingMapper.upsert(node.getId(), TENANT_ID, kbId, "L0", embeddingModel,
-                halfvec, node.getContentHash(), CONTEXT_HASH);
+        String nodeLevel = node.getLevel() == null || node.getLevel().isBlank() ? "L0" : node.getLevel();
+        embeddingMapper.upsert(node.getId(), TENANT_ID, kbId, nodeLevel, embeddingModel,
+                halfvec, node.getContentHash(), contextHash == null ? "__phase1_placeholder__" : contextHash);
 
         LambdaUpdateWrapper<KnowledgeIndexJob> ju = new LambdaUpdateWrapper<>();
         ju.eq(KnowledgeIndexJob::getId, jobId)

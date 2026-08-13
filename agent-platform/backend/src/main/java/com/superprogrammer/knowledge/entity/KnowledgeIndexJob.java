@@ -35,6 +35,13 @@ public class KnowledgeIndexJob {
 
     private String contextHash;
 
+    /** 入队时锁定的文档、解析、分块、向量与 Pipeline 版本快照。 */
+    private Long versionId;
+    private String parserVersion;
+    private String chunkerVersion;
+    private String embeddingModel;
+    private String pipelineVersion;
+
     /** PENDING / RUNNING / DONE / FAILED / DEAD */
     private String status;
 

@@ -154,6 +154,8 @@ runtime:
     token: ${RUNTIME_CALLBACK_TOKEN:}
 
 rag:
+  index:
+    pipeline-version: ${RAG_INDEX_PIPELINE_VERSION:rag-index-v1}
   visibility-cache:
     enabled: true
     ttl-ms: 1800000

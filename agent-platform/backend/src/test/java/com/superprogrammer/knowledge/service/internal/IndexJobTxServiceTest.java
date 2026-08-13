@@ -143,6 +143,7 @@ class IndexJobTxServiceTest {
     void complete_success_upsertsAndMarksIndexed() {
         KnowledgeNode n = node("hash", "ACTIVE");
         n.setId(10L);
+        n.setLevel("L2");
         when(nodeMapper.selectById(10L)).thenReturn(n);
         when(indexJobMapper.update(isNull(), any())).thenReturn(1);
         when(indexJobMapper.countPendingRunningByDoc(99L)).thenReturn(0L);  // 文档全完成
@@ -151,10 +152,11 @@ class IndexJobTxServiceTest {
         when(documentMapper.selectById(99L)).thenReturn(doc);
         when(documentMapper.update(isNull(), any())).thenReturn(1);
 
-        service.completeUpsert(1L, 10L, 99L, 7L, "doubao-embedding-vision", "[0.1]", "hash");
+        n.setContextHash("context-hash");
+        service.completeUpsert(1L, 10L, 99L, 7L, "doubao-embedding-vision", "[0.1]", "hash", "context-hash");
 
-        verify(embeddingMapper).upsert(eq(10L), eq(1L), eq(7L), eq("L0"),
-                eq("doubao-embedding-vision"), eq("[0.1]"), eq("hash"), eq("__phase1_placeholder__"));
+        verify(embeddingMapper).upsert(eq(10L), eq(1L), eq(7L), eq("L2"),
+                eq("doubao-embedding-vision"), eq("[0.1]"), eq("hash"), eq("context-hash"));
         verify(documentMapper).update(isNull(), any());  // markDocIndexedIfDone → INDEXED
     }
 

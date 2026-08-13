@@ -56,6 +56,7 @@ public class IndexJobWorker {
     private final boolean retainAfterIndex;
     /** 运维系统 OPS-FR-05：queue.depth Gauge + indexed.total 指标。 */
     private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    private final Contextualizer contextualizer;
 
     public IndexJobWorker(IndexJobTxService txService,
                           KnowledgeNodeMapper nodeMapper,
@@ -66,7 +67,8 @@ public class IndexJobWorker {
                           @Qualifier("knowledgeTaskExecutor") Executor executor,
                           FileStorageService fileStorageService,
                           @Value("${app.files.retain-after-index:false}") boolean retainAfterIndex,
-                          com.superprogrammer.common.metrics.BizMetrics bizMetrics) {
+                          com.superprogrammer.common.metrics.BizMetrics bizMetrics,
+                          Contextualizer contextualizer) {
         this.txService = txService;
         this.nodeMapper = nodeMapper;
         this.documentMapper = documentMapper;
@@ -77,6 +79,7 @@ public class IndexJobWorker {
         this.fileStorageService = fileStorageService;
         this.retainAfterIndex = retainAfterIndex;
         this.bizMetrics = bizMetrics;
+        this.contextualizer = contextualizer;
     }
 
     /** OPS-FR-05：启动即注册 queue.depth Gauge（否则首次 scrape 前无值/NaN）。回调为轻 count 查询。 */
@@ -118,13 +121,33 @@ public class IndexJobWorker {
                 return;
             }
 
-            KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
-            String embeddingModel = kb.getEmbeddingModel();
+            String embeddingModel = job.getEmbeddingModel();
+            if (!hasText(embeddingModel)) {
+                KnowledgeBase kb = knowledgeBaseService.ensure(job.getKbId());
+                embeddingModel = kb.getEmbeddingModel();
+            }
+            if (!hasText(embeddingModel)) {
+                throw new IllegalStateException("索引任务未配置可用 embedding 模型");
+            }
 
             // 计费归户：@Scheduled 轮询线程无请求上下文，按文档上传者（doc.createdBy）归户 embed 计费
             KnowledgeDocument doc = documentMapper.selectById(node.getDocumentId());
             Long docOwner = doc != null ? doc.getCreatedBy() : null;
-            float[] vector = llmGateway.embed(node.getContent(), embeddingModel, docOwner);
+            String embedText = node.getContent();
+            String contextHash = job.getContextHash();
+            if (hasText(contextHash)) {
+                com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
+                        new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
+                version.setId(node.getVersionId());
+                Contextualizer.ContextualContent contextual = contextualizer.contextualize(doc, version, node);
+                if (!eq(contextual.contextHash(), contextHash) || !eq(node.getContextHash(), contextHash)) {
+                    txService.voidJob(job.getId(), "上下文化文本或版本已变更，job 作废（新版本 job 接管）");
+                    bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_VOID);
+                    return;
+                }
+                embedText = contextual.text();
+            }
+            float[] vector = llmGateway.embed(embedText, embeddingModel, docOwner);
             if (vector.length != HalfVecUtil.DIM) {
                 throw new RuntimeException("embedding 维度不匹配 expected=" + HalfVecUtil.DIM
                         + " actual=" + vector.length);
@@ -132,7 +155,7 @@ public class IndexJobWorker {
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
             IndexJobTxService.IndexedDoc indexed = txService.completeUpsert(job.getId(), node.getId(), node.getDocumentId(),
-                    job.getKbId(), embeddingModel, halfvec, node.getContentHash());
+                    job.getKbId(), embeddingModel, halfvec, node.getContentHash(), contextHash);
             cleanOriginalFileAfterIndex(indexed);
             bizMetrics.indexed(com.superprogrammer.common.metrics.BizMetrics.INDEX_SUCCESS);
             log.info("索引完成 nodeId={} kbId={} model={}", node.getId(), job.getKbId(), embeddingModel);
@@ -244,6 +267,10 @@ public class IndexJobWorker {
 
     private static boolean eq(String a, String b) {
         return a == null ? b == null : a.equals(b);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private static String truncate(String s, int max) {

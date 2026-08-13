@@ -44,7 +44,7 @@
   - **安全检查**：密级只能由授权角色提升/降低；标签长度和数量限制。
   - **验证**：时区边界、生效/过期、权威冲突、批量更新和取消操作。
 
-- [ ] **Step 3：结构化解析产物协议与精确定位（进行中）**
+- [x] **Step 3：结构化解析产物协议与精确定位**
   - **对应需求**：RAG-FR-02、RAG-FR-06
   - **目标**：统一表达标题树、条款、Sheet/Cell、页码、阅读顺序、bbox 和区域证据。
   - **动作**：扩展 `ExtractedDocument/Section` 为结构化节点协议；解析产物大对象写文件存储；保留 parser version 和 source hash；Word/Markdown/PDF/Excel/图片分别映射定位字段。
@@ -59,7 +59,7 @@
   - **安全检查**：解析器禁执行宏/脚本/外部链接；压缩炸弹、页数、行数、字符数限额。
   - **验证**：多类型 fixture 的页码、Sheet/Cell、bbox、跨页关系和恶意文件拒绝测试。
 
-- [ ] **Step 4：按文档类型生成 D0/S1/C2/E3 Chunk**
+- [x] **Step 4：按文档类型生成 D0/S1/C2/E3 Chunk**
   - **对应需求**：RAG-FR-02、RAG-FR-06
   - **目标**：C2 成为 300～600 token 的事实主单元，保留完整逻辑边界和父子邻居。
   - **动作**：把 `KnowledgeNodeWriter.splitL2()` 替换为策略注册表；实现普通文档、条款、FAQ、表格、PDF/视觉策略；保存 titlePath、ordinal、locator、parent/neighbor 和 token 数。
@@ -74,7 +74,7 @@
   - **安全检查**：Chunk 继承 tenant/KB/version/ACL/密级，禁止生成无归属节点。
   - **验证**：token 上下界、overlap、列表/条款/表格原子性、父子邻居和定位回放测试。
 
-- [ ] **Step 5：Contextual Content 与幂等索引任务**
+- [x] **Step 5：Contextual Content 与幂等索引任务**
   - **对应需求**：RAG-FR-02、RAG-FR-09
   - **目标**：为每个 C2 生成稳定的上下文化文本，并可靠进入后续双写。
   - **动作**：拼装标题、版本、路径、背景和原文；计算 content/context hash；索引任务携带 version/parser/chunker/embedding/pipeline 版本；重试保持幂等。

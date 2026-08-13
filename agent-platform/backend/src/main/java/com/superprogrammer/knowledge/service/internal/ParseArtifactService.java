@@ -21,6 +21,12 @@ public class ParseArtifactService {
     private final KnowledgeDocumentVersionMapper versionMapper;
     private final ObjectMapper objectMapper;
 
+    public void persistIfVersioned(KnowledgeDocument document, ExtractedDocument extracted) {
+        if (document.getCurrentVersionId() != null) {
+            persist(document, extracted);
+        }
+    }
+
     public void persist(KnowledgeDocument document, ExtractedDocument extracted) {
         if (document.getCurrentVersionId() == null) {
             throw new IllegalStateException("current document version is required for parse artifact");
