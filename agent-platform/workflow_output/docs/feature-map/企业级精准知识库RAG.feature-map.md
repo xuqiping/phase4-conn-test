@@ -42,6 +42,7 @@
 | 引用校验 | `citation/CitationVerifier.java`、`service/internal/CitationChecker.java`、`RagRetrieveVO.java` | locator、权限/版本/Hash、Claim 支持度 |
 | Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
 | RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V110__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标 |
+| 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
 
 ## 关键调用链路
 
@@ -165,3 +166,4 @@
 | 2026-08-13 | 增加精确 locator Citation 与 Claim 支持校验 | P4 Step 4 完成 |
 | 2026-08-13 | 增加分批事实归纳与六态置信状态机 | P4 Step 5 完成，P4 收口 |
 | 2026-08-13 | 增加黄金集数据结构与检索指标引擎 | P5 Step 1 完成 |
+| 2026-08-13 | 增加 Champion/Challenger 发布门禁与影子检索 seam | P5 Step 2 完成 |

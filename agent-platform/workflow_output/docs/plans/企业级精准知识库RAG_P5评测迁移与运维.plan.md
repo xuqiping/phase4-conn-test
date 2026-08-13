@@ -27,7 +27,7 @@
   - **安全检查**：数据集按 tenant/KB 授权；导出脱敏；禁止把无权原文带出。
   - **验证**：手算小样本与指标一致；空集、禁止候选、多证据和无答案边界。
 
-- [ ] **Step 2：Champion/Challenger、影子检索与发布门禁**
+- [x] **Step 2：Champion/Challenger、影子检索与发布门禁**
   - **对应需求**：RAG-FR-07、RAG-FR-09
   - **目标**：任何 Pipeline 变化必须评测；未达门槛不能切生产。
   - **动作**：Pipeline 绑定评测 run；旧链路 Champion、新链路 Challenger；影子只记结果；门槛采用规格数值并允许更严格覆盖；失败锁定切换按钮。
