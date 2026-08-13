@@ -56,6 +56,9 @@
       <n-tab-pane v-if="canManage" name="index-ops" tab="索引运维">
         <IndexOperationsPanel :bases="store.bases" />
       </n-tab-pane>
+      <n-tab-pane v-if="canManage" name="evaluation" tab="RAG 评测">
+        <KnowledgeEvaluationView />
+      </n-tab-pane>
     </n-tabs>
   </div>
 </template>
@@ -78,6 +81,7 @@ import RetrievalDebugPanel from '@/components/knowledge/RetrievalDebugPanel.vue'
 import RetrievalAuditPanel from '@/components/knowledge/RetrievalAuditPanel.vue'
 import RagAskPanel from '@/components/knowledge/RagAskPanel.vue'
 import IndexOperationsPanel from '@/components/knowledge/IndexOperationsPanel.vue'
+import KnowledgeEvaluationView from '@/views/KnowledgeEvaluationView.vue'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 
 const authStore = useAuthStore()

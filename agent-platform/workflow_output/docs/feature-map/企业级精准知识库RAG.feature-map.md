@@ -43,6 +43,7 @@
 | Grounded Answer | `answer/GroundedAnswerService.java`、`ConfidenceEvaluator.java` | 分批事实携带引用、配置化六态置信协议 |
 | RAG 评测中心 | `evaluation/RagMetricsCalculator.java`、`EvaluationService.java`、`V110__rag_evaluation_center.sql` | 黄金集、run/result 与 Recall/MRR/nDCG 指标 |
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
+| 评测管理界面 | `KnowledgeEvaluationView.vue`、`EvaluationRunPanel.vue`、`ShadowComparisonPanel.vue`、`KnowledgeView.vue` | 管理员启动异步评测、查看 Champion/Challenger 与发布门禁状态 |
 
 ## 关键调用链路
 
@@ -167,3 +168,4 @@
 | 2026-08-13 | 增加分批事实归纳与六态置信状态机 | P4 Step 5 完成，P4 收口 |
 | 2026-08-13 | 增加黄金集数据结构与检索指标引擎 | P5 Step 1 完成 |
 | 2026-08-13 | 增加 Champion/Challenger 发布门禁与影子检索 seam | P5 Step 2 完成 |
+| 2026-08-13 | 增加管理员 RAG 评测 Tab、异步运行状态与 Champion/Challenger 对比卡片 | P5 Step 3 完成 |

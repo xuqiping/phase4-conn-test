@@ -80,3 +80,13 @@ LLM 重排只使用知识库调用模块中明确选择的模型。模型只能�
 黄金集按租户和知识库隔离，样本可记录相关/禁止 Chunk、版本、主题和期望 Claim。每次 Pipeline 评测单独产生 run/result，可计算 Recall@K、MRR、nDCG，并为后续 Citation、Faithfulness、Abstention 指标保留结构。
 
 新 Pipeline 是 Challenger，当前线上是 Champion。任何必需指标未达门槛都不能切生产；影子检索只保存对比结果，超时或预算耗尽会停止，不影响用户收到的 Champion 答案。
+
+## 管理员：启动 RAG 评测并查看影子对比
+
+1. 进入“知识库”，打开仅具备 `knowledge:manage` 权限的管理员可见“RAG 评测”Tab。
+2. 在“RAG 评测运行”卡片输入 Dataset ID；未输入时“启动评测”按钮保持禁用。
+3. 点击“启动评测”后，页面显示异步任务进度和提示；离开页面不会被描述为同步完成。
+4. 在“Champion / Challenger”卡片查看当前生产 Pipeline、待评测 Pipeline 和发布门禁状态。
+5. 当门禁仍显示“等待评测结果”时，不应执行生产切换；后续灰度控制只接受已通过门禁的配置。
+
+常见异常：看不到该 Tab 时先确认账号是否拥有 `knowledge:manage`；Dataset ID 为空时补齐后再启动；评测运行中可稍后返回查看，不要重复连续提交。
