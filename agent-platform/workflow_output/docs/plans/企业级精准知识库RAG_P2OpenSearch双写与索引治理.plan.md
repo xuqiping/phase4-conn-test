@@ -28,7 +28,7 @@
   - **安全检查**：密码仅环境变量；TLS 校验默认开启；禁止记录 Authorization。
   - **验证**：禁用、认证错误、TLS 错误、超时和成功健康状态。
 
-- [ ] **Step 2：版本化索引模板与 read/write alias 管理**
+- [x] **Step 2：版本化索引模板与 read/write alias 管理**
   - **对应需求**：RAG-FR-02、RAG-FR-09
   - **目标**：创建包含 C2 Dense/Sparse/Metadata/ACL 的物理索引并原子切换别名。
   - **动作**：mapping 保存规格要求字段；Analyzer/RRF 权重属于 Pipeline；索引名不含硬编码模型昵称；实现 create/validate/switch/rollback。

@@ -26,6 +26,8 @@
 | 测试 | `backend/src/test/java/com/superprogrammer/knowledge/` | 版本、解析、分块、节点和 PostgreSQL 集成验证 |
 | OpenSearch 配置 | `backend/src/main/java/com/superprogrammer/knowledge/config/OpenSearchProperties.java`、`OpenSearchConfig.java` | 可关闭的官方客户端、环境变量认证与连接超时 |
 | OpenSearch 健康检查 | `backend/src/main/java/com/superprogrammer/knowledge/config/OpenSearchHealthIndicator.java` | 区分 disabled/up/down，诊断信息不暴露认证信息 |
+| 索引规格 | `backend/src/main/java/com/superprogrammer/knowledge/opensearch/KnowledgeIndexSchema.java` | 版本化物理索引名、向量维度校验、严格 mapping |
+| 索引与 Alias | `KnowledgeIndexManager.java`、`IndexAliasService.java` | 创建物理索引并原子切换/回滚 read/write alias |
 
 ## 关键调用链路
 
@@ -83,6 +85,13 @@
 - **大白话案例**：像给新仓库装总闸和指示灯，总闸没开时不会误报事故，开闸后绿灯代表连通、红灯代表需要排查。
 > 批注：密码只允许来自环境变量；健康详情和日志禁止出现用户名、密码、Authorization 或完整异常正文。
 
+### 7. 版本化物理索引与双 Alias
+
+- **采用技术**：严格 mapping、物理索引快照、read/write alias、原子 Alias Actions。
+- **一句话原理**：先完整建好新索引，再一次性把读写路标从旧仓库切到新仓库，失败时按反向动作回滚。
+- **大白话案例**：像搬仓库先把新仓库装满并验货，最后一次性更换导航牌，而不是边搬边让客户找不到货。
+> 批注：物理索引名不得包含模型昵称；不同向量维度禁止混入同一索引；mapping 强制包含 tenant/KB/ACL/status/version/hash。
+
 ## 数据库迁移速查
 
 - `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
@@ -106,3 +115,4 @@
 | 2026-08-13 | 建立 P0/P1 Step 1～4 速查地图 | 避免与既有 M3 记忆配置 Feature Map 混写 |
 | 2026-08-13 | 补充 P1 Step 5 Contextual Content 与幂等索引任务 | P1 完成 |
 | 2026-08-13 | 增加 OpenSearch 官方客户端、环境变量配置与三态健康检查 | P2 Step 1 完成 |
+| 2026-08-13 | 增加版本化索引规格、严格 mapping 与 read/write alias 原子切换 | P2 Step 2 完成 |

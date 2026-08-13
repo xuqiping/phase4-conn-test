@@ -1,0 +1,21 @@
+{
+  "_comment": "运行时由 KnowledgeIndexSchema 注入向量维度；物理索引名只含 KB、snapshot 与 pipeline 版本。",
+  "settings": { "index": { "knn": true } },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "tenantId": { "type": "keyword" },
+      "knowledgeBaseId": { "type": "long" },
+      "documentId": { "type": "long" },
+      "documentVersionId": { "type": "long" },
+      "nodeId": { "type": "long" },
+      "aclTokens": { "type": "keyword" },
+      "status": { "type": "keyword" },
+      "contentHash": { "type": "keyword" },
+      "contextHash": { "type": "keyword" },
+      "pipelineVersion": { "type": "keyword" },
+      "sparseText": { "type": "text" },
+      "denseVector": { "type": "knn_vector", "dimension": "${EMBEDDING_DIMENSION}" }
+    }
+  }
+}
