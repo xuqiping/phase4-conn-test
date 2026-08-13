@@ -25,6 +25,22 @@ public interface RagRankingConfigMapper extends BaseMapper<RagRankingConfig> {
             """)
     RagRankingConfig findActiveDefault();
 
+    @Select("""
+            SELECT * FROM rag_ranking_configs
+             WHERE tenant_id = 1 AND kb_id = #{kbId}
+               AND config_version = #{configVersion} AND deleted = 0
+             LIMIT 1
+            """)
+    RagRankingConfig findForKbByVersion(Long kbId, String configVersion);
+
+    @Select("""
+            SELECT * FROM rag_ranking_configs
+             WHERE tenant_id = 1 AND kb_id IS NULL
+               AND config_version = #{configVersion} AND deleted = 0
+             LIMIT 1
+            """)
+    RagRankingConfig findDefaultByVersion(String configVersion);
+
     @Update("""
             UPDATE rag_ranking_configs
                SET status = 'ARCHIVED', updated_by = #{userId}, updated_at = now(), version = version + 1

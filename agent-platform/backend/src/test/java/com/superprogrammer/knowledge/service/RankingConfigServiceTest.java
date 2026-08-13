@@ -66,6 +66,20 @@ class RankingConfigServiceTest {
     }
 
     @Test
+    void resolvesImmutableChallengerByRequestedConfigVersion() {
+        when(mapper.findForKbByVersion(9L, "rc-challenger"))
+                .thenReturn(config(9L, "LLM", "challenger-chat", "rc-challenger"));
+        when(providerService.listActiveModels(LlmProviderService.CATEGORY_CHAT))
+                .thenReturn(List.of("challenger-chat"));
+
+        RankingConfigService.ResolvedRankingConfig result =
+                service.resolveVersion(9L, "rc-challenger");
+
+        assertEquals("rc-challenger", result.configVersion());
+        assertEquals("challenger-chat", result.model());
+    }
+
+    @Test
     void noConfigurationFailsInsteadOfChoosingFirstProviderModel() {
         when(mapper.findActiveForKb(9L)).thenReturn(null);
         when(mapper.findActiveDefault()).thenReturn(null);
@@ -127,12 +141,16 @@ class RankingConfigServiceTest {
     }
 
     private static RagRankingConfig config(Long kbId, String mode, String model) {
+        return config(kbId, mode, model, "v1");
+    }
+
+    private static RagRankingConfig config(Long kbId, String mode, String model, String version) {
         RagRankingConfig config = new RagRankingConfig();
         config.setId(1L);
         config.setKbId(kbId);
         config.setRankingMode(mode);
         config.setModel(model);
-        config.setConfigVersion("v1");
+        config.setConfigVersion(version);
         config.setCandidateLimit(30);
         config.setFinalLimit(10);
         config.setBatchSize(10);

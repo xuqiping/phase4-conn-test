@@ -154,6 +154,11 @@ runtime:
     token: ${RUNTIME_CALLBACK_TOKEN:}
 
 rag:
+  shadow:
+    enabled: ${RAG_SHADOW_ENABLED:false}
+    sample-percentage: ${RAG_SHADOW_SAMPLE_PERCENTAGE:0}
+    budget-per-request: ${RAG_SHADOW_BUDGET_PER_REQUEST:0}
+    timeout-ms: ${RAG_SHADOW_TIMEOUT_MS:1500}
   opensearch:
     enabled: ${RAG_OPENSEARCH_ENABLED:false}
     url: ${RAG_OPENSEARCH_URL:https://127.0.0.1:9200}

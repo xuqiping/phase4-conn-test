@@ -77,6 +77,8 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
+    private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
+    private final com.superprogrammer.knowledge.retrieval.RagShadowCoordinator ragShadowCoordinator;
     private final com.superprogrammer.knowledge.citation.CitationVerifier citationVerifier =
             new com.superprogrammer.knowledge.citation.CitationVerifier();
 
@@ -117,6 +119,26 @@ public class RagRetrievalService {
     // ============================ 入口 ============================
 
     public RagRetrieveVO retrieve(RagRetrieveRequest req, Long userId) {
+        var rollout = ragRolloutService.status(req.getKbId());
+        boolean challengerSelected = rollout.challengerSelected(userId);
+        String routedVersion = challengerSelected ? rollout.configVersion() : null;
+        RagRetrieveVO result = retrieveRouted(req, userId, routedVersion);
+        if (!challengerSelected) {
+            String championVersion = rankingConfigService.resolve(req.getKbId()).configVersion();
+            RagRetrieveRequest shadowRequest = copyForShadow(req);
+            ragShadowCoordinator.afterChampion(TENANT_ID, req.getKbId(), userId, result.getTraceId(), championVersion,
+                    () -> {
+                        RagRetrieveVO challenger = retrieveRouted(shadowRequest, userId, rollout.configVersion());
+                        return new com.superprogrammer.knowledge.retrieval.ShadowRetrievalService.ChallengerResult(
+                                challenger.getTraceId(), challenger.getEvidenceL2() == null ? List.of() :
+                                challenger.getEvidenceL2().stream().map(e -> String.valueOf(e.getNodeId())).toList(), 0d);
+                    });
+        }
+        return result;
+    }
+
+    private RagRetrieveVO retrieveRouted(RagRetrieveRequest req, Long userId, String configVersion) {
+        try (var ignored = RagRankingRouteContext.open(configVersion)) {
         try (var run = ragTraceService.beginRetrieval(List.of(req.getKbId()), req.getQuery(), userId, "RETRIEVE")) {
             try {
                 RagRetrieveVO result = retrieveInternal(req, userId);
@@ -127,6 +149,7 @@ public class RagRetrievalService {
                 run.fail(e instanceof BusinessException be ? String.valueOf(be.getCode()) : "INTERNAL_ERROR", e.getMessage());
                 throw e;
             }
+        }
         }
     }
 
@@ -1159,6 +1182,15 @@ public class RagRetrievalService {
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "事实提炼模型未返回合法 JSON");
         }
+    }
+
+    private static RagRetrieveRequest copyForShadow(RagRetrieveRequest source) {
+        RagRetrieveRequest copy = new RagRetrieveRequest();
+        copy.setKbId(source.getKbId()); copy.setQuery(source.getQuery());
+        copy.setDocTypes(source.getDocTypes() == null ? null : List.copyOf(source.getDocTypes()));
+        copy.setMaxL0(source.getMaxL0()); copy.setMode(source.getMode());
+        copy.setGenerateAnswer(false); copy.setAdminHint(source.isAdminHint());
+        return copy;
     }
 
     private String composeGroundedAnswer(String query,

@@ -51,6 +51,8 @@ class RagRetrievalServiceTest {
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
+    @Mock private com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
+    @Mock private com.superprogrammer.knowledge.retrieval.RagShadowCoordinator ragShadowCoordinator;
 
     private final RagConfig ragConfig = new RagConfig();
     private final CitationChecker citationChecker = new CitationChecker();
@@ -66,7 +68,10 @@ class RagRetrievalServiceTest {
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
                 ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway,
-                evidencePolicyService, groundedAnswerService);
+                evidencePolicyService, groundedAnswerService, ragRolloutService, ragShadowCoordinator);
+        lenient().when(ragRolloutService.status(anyLong())).thenAnswer(invocation ->
+                new com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState(
+                        invocation.getArgument(0), 0, "champion", 0));
         lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
                 .thenReturn(retrievalScope);
         lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(

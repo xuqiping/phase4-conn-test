@@ -44,6 +44,8 @@ public class RankingConfigService {
     private final RagAnswerCacheMapper answerCacheMapper;
 
     public ResolvedRankingConfig resolve(Long kbId) {
+        String routedVersion = RagRankingRouteContext.currentVersion();
+        if (routedVersion != null) return resolveVersion(kbId, routedVersion);
         RagRankingConfig config = kbId == null ? null : mapper.findActiveForKb(kbId);
         Source source = Source.KNOWLEDGE_BASE;
         if (config == null) {
@@ -55,6 +57,25 @@ public class RankingConfigService {
                     "知识库未配置重排模式，且管理员未设置默认配置");
         }
 
+        return validateResolved(config, source);
+    }
+
+    public ResolvedRankingConfig resolveVersion(Long kbId, String configVersion) {
+        String version = trimToNull(configVersion);
+        if (version == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "重排配置版本不能为空");
+        RagRankingConfig config = kbId == null ? null : mapper.findForKbByVersion(kbId, version);
+        Source source = Source.KNOWLEDGE_BASE;
+        if (config == null) {
+            config = mapper.findDefaultByVersion(version);
+            source = Source.ADMIN_DEFAULT;
+        }
+        if (config == null) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "知识库重排配置版本不存在: " + version);
+        }
+        return validateResolved(config, source);
+    }
+
+    private ResolvedRankingConfig validateResolved(RagRankingConfig config, Source source) {
         String mode = normalizeMode(config.getRankingMode());
         String model = trimToNull(config.getModel());
         if (!"DISABLED".equals(mode)) {

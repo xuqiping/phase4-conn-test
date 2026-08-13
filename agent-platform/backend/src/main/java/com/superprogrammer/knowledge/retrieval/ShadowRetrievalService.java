@@ -29,7 +29,9 @@ public class ShadowRetrievalService {
         } catch (TimeoutException timeout) {
             future.cancel(true); return persist(request,"TIMED_OUT",null,"timeout");
         } catch (Exception error) {
-            return persist(request,"FAILED",null,error.getClass().getSimpleName());
+            Throwable cause = error instanceof java.util.concurrent.ExecutionException && error.getCause() != null
+                    ? error.getCause() : error;
+            return persist(request,"FAILED",null,cause.getClass().getSimpleName());
         }
     }
 
