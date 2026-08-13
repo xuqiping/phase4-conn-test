@@ -75,6 +75,13 @@ export interface KnowledgeIndexStatus {
   previousSnapshotId?: string | null
 }
 
+export interface RagRolloutState {
+  knowledgeBaseId: number
+  percentage: number
+  configVersion: string
+  operatorId: number
+}
+
 /** 文档（对应后端 KnowledgeDocumentVO） */
 export interface KnowledgeDocument {
   id: number
@@ -371,6 +378,19 @@ export const knowledgeApi = {
   },
   rollbackIndex(kbId: number) {
     return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rollback`, { snapshotId: 'rollback', confirmed: true, dryRun: false })
+  },
+  getRolloutStatus(kbId: number) {
+    return request.get<ApiResponse<RagRolloutState>>(`/knowledge/admin/rollouts/${kbId}`)
+  },
+  configureRollout(kbId: number, percentage: number, configVersion: string) {
+    return request.post<ApiResponse<RagRolloutState>>(`/knowledge/admin/rollouts/${kbId}`, {
+      percentage, configVersion, confirmed: true
+    })
+  },
+  rollbackRollout(kbId: number) {
+    return request.post<ApiResponse<RagRolloutState>>(`/knowledge/admin/rollouts/${kbId}/rollback`, {
+      percentage: 0, configVersion: 'rollback', confirmed: true
+    })
   },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)

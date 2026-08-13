@@ -1,6 +1,7 @@
 package com.superprogrammer.knowledge.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.service.KnowledgeNodeService;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * 知识库管理员端点（knowledge:manage）。
@@ -25,6 +28,8 @@ public class KnowledgeAdminController {
 
     private final KnowledgeNodeService knowledgeNodeService;
     private final com.superprogrammer.knowledge.opensearch.KnowledgeIndexOperationsService indexOperationsService;
+    private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
+    private final com.superprogrammer.knowledge.migration.RagRolloutReadinessService rolloutReadinessService;
 
     @PostMapping("/backfill-tokens")
     @RequirePermission("knowledge:manage")
@@ -67,5 +72,37 @@ public class KnowledgeAdminController {
             @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.KnowledgeIndexOperationRequest request)
             throws java.io.IOException {
         return ResponseEntity.ok(R.ok(indexOperationsService.rollback(kbId, request.confirmed())));
+    }
+
+    @GetMapping("/rollouts/{kbId}")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState>> rolloutStatus(
+            @PathVariable Long kbId) {
+        return ResponseEntity.ok(R.ok(ragRolloutService.status(kbId)));
+    }
+
+    @AuditLog(module = "kb", action = "rag_rollout_update", targetType = "knowledge_base")
+    @PostMapping("/rollouts/{kbId}")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState>> configureRollout(
+            @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.RagRolloutRequest request) {
+        return ResponseEntity.ok(R.ok(ragRolloutService.configure(kbId, request.percentage(),
+                request.configVersion(), currentUserId(), request.confirmed(), rolloutReadinessService.readiness(kbId))));
+    }
+
+    @AuditLog(module = "kb", action = "rag_rollout_rollback", targetType = "knowledge_base")
+    @PostMapping("/rollouts/{kbId}/rollback")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<com.superprogrammer.knowledge.migration.RagRolloutService.RolloutState>> rollbackRollout(
+            @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.RagRolloutRequest request) {
+        return ResponseEntity.ok(R.ok(ragRolloutService.rollback(kbId, currentUserId(), request.confirmed())));
+    }
+
+    private long currentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof Long id)) {
+            throw new IllegalStateException("无法识别当前操作者");
+        }
+        return id;
     }
 }

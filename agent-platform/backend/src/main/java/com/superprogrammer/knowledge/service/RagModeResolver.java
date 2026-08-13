@@ -29,6 +29,11 @@ public class RagModeResolver {
     private final WorkflowMapper workflowMapper;
     private final ExecutionLogService executionLogService;
     private final ObjectMapper objectMapper;
+    private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
+
+    public boolean useChallenger(Long kbId, Long userId) {
+        return kbId != null && userId != null && ragRolloutService.useChallenger(kbId, userId);
+    }
 
     /**
      * 解析当前会话是否开启记忆模式。
