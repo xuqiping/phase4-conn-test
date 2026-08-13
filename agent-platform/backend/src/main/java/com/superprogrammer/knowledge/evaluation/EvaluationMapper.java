@@ -57,6 +57,15 @@ public interface EvaluationMapper {
             """)
     RunRow findRun(@Param("tenantId") long tenantId, @Param("runId") long runId);
 
+    @Select("""
+            SELECT r.id,d.tenant_id,r.dataset_id,r.pipeline_version,r.status,r.started_by,
+                   r.started_at,r.finished_at,r.summary_metrics::text,r.error_summary
+            FROM rag_eval_runs r JOIN rag_eval_datasets d ON d.id=r.dataset_id
+            WHERE d.tenant_id=#{tenantId} AND d.kb_id=#{kbId} AND r.status='COMPLETED'
+            ORDER BY r.finished_at DESC,r.id DESC LIMIT 1
+            """)
+    RunRow findLatestCompletedRun(@Param("tenantId") long tenantId, @Param("kbId") long kbId);
+
     @Update("""
             UPDATE rag_eval_runs SET status=#{status},finished_at=#{finishedAt},
               summary_metrics=#{summaryMetrics}::jsonb,error_summary=#{errorSummary}

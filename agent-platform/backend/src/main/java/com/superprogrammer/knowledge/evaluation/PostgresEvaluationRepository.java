@@ -39,6 +39,11 @@ public class PostgresEvaluationRepository implements EvaluationService.Repositor
         return new EvaluationRunService.Run(row.id,row.tenantId,row.datasetId,row.pipelineVersion,row.status,
                 row.startedBy,row.startedAt,row.finishedAt,doubleMap(row.summaryMetrics),row.errorSummary);
     }
+    public EvaluationRunService.Run findLatestCompletedRun(long tenantId,long kbId) {
+        EvaluationMapper.RunRow row=mapper.findLatestCompletedRun(tenantId,kbId); if(row==null)return null;
+        return new EvaluationRunService.Run(row.id,row.tenantId,row.datasetId,row.pipelineVersion,row.status,
+                row.startedBy,row.startedAt,row.finishedAt,doubleMap(row.summaryMetrics),row.errorSummary);
+    }
     public void updateRun(EvaluationRunService.Run value) { mapper.updateRun(runRow(value)); }
     public void insertResult(EvaluationRunService.Result value) {
         EvaluationMapper.ResultRow row=new EvaluationMapper.ResultRow(); row.id=value.id(); row.runId=value.runId();
