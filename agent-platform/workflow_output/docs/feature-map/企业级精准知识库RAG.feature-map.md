@@ -37,6 +37,7 @@
 | Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/` | LLM/DISABLED Provider、候选白名单、严格 JSON 与显式模型 |
 | Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 | 动态证据覆盖 | `backend/src/main/java/com/superprogrammer/knowledge/context/CoverageSelector.java`、`EvidenceBudget.java` | 按问题类型选择 2～20 条并限制单文档挤占 |
+| 覆盖补检索 | `CoverageVerifier.java`、`retrieval/RetrievalRouter.java` | 缺项检测、1/2 轮上限、继承原 FilterContext |
 
 ## 关键调用链路
 
@@ -155,3 +156,4 @@
 | 2026-08-13 | 增加统一 Ranking Engine 与严格 LLM 重排协议 | P3 Step 4 完成 |
 | 2026-08-13 | 增加专用 Rerank SPI、能力校验与调试时间线 | P3 Step 5 完成，P3 收口 |
 | 2026-08-13 | 增加 2～20 条动态证据预算与来源多样性 | P4 Step 1 完成 |
+| 2026-08-13 | 增加缺项检测与最多两轮同范围补检索 | P4 Step 2 完成 |
