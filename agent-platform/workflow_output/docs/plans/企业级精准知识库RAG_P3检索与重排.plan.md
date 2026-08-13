@@ -41,7 +41,7 @@
   - **安全检查**：禁止 Java 后过滤替代 Pre-filter；PG 复核仍保留。
   - **验证**：跨用户/租户、权限竞态、过期/撤销/历史版本、部门/项目/密级过滤。
 
-- [ ] **Step 3：Exact/Sparse/Dense/Entity 多通道召回与 RRF**
+- [x] **Step 3：Exact/Sparse/Dense/Entity 多通道召回与 RRF**
   - **对应需求**：RAG-FR-03
   - **目标**：各通道独立召回后统一去重、近邻折叠和动态 RRF 融合。
   - **动作**：定义 `RetrievalCandidate`；实现 Exact、BM25、C2/Section/Document Dense、Entity provider；Pipeline 配置候选数和权重；扩展现有 `RrfFusion`。
