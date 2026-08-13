@@ -12,6 +12,7 @@ public class DatabaseSnapshotStore implements KnowledgeIndexOperationsService.Sn
 
     @Override public KnowledgeIndexOperationsService.SnapshotRecord load(long kbId) { return mapper.load(kbId); }
     @Override public void save(KnowledgeIndexOperationsService.SnapshotRecord record) { mapper.save(record); }
-    @Override public void register(long kbId, String snapshotId) { mapper.register(kbId, snapshotId); }
+    @Override public void register(long kbId, String snapshotId, String physicalIndex) { mapper.register(kbId, snapshotId, physicalIndex); }
     @Override public boolean registered(long kbId, String snapshotId) { return mapper.registered(kbId, snapshotId); }
+    @Override public String physicalIndex(long kbId, String snapshotId) { return mapper.physicalIndex(kbId, snapshotId); }
 }

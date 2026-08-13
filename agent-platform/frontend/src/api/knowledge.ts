@@ -73,6 +73,11 @@ export interface KnowledgeIndexStatus {
   writeAlias: string
   activeSnapshotId?: string | null
   previousSnapshotId?: string | null
+  rebuildSnapshotId?: string | null
+  total?: number | null
+  completed?: number | null
+  failed?: number | null
+  cancelled?: number | null
 }
 
 export interface RagRolloutState {
@@ -372,6 +377,11 @@ export const knowledgeApi = {
   },
   rebuildIndex(kbId: number, snapshotId: string, dryRun = true) {
     return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rebuild`, { snapshotId, dryRun, confirmed: false })
+  },
+  cancelIndexRebuild(kbId: number, snapshotId: string) {
+    return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/rebuild/cancel`, {
+      snapshotId, dryRun: false, confirmed: true
+    })
   },
   switchIndex(kbId: number, snapshotId: string) {
     return request.post<ApiResponse<KnowledgeIndexStatus>>(`/knowledge/admin/indexes/${kbId}/switch`, { snapshotId, confirmed: true, dryRun: false })

@@ -1,6 +1,7 @@
 package com.superprogrammer.knowledge.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,16 +12,20 @@ import static org.junit.jupiter.api.Assertions.*;
 class KnowledgeAdminIndexControllerContractTest {
 
     @Test
-    void exposesProtectedStatusRebuildSwitchAndRollbackEndpoints() throws Exception {
+    void exposesProtectedStatusRebuildCancelSwitchAndRollbackEndpoints() throws Exception {
         assertEndpoint("indexStatus", GetMapping.class, "/indexes/{kbId}");
         assertEndpoint("rebuildIndex", PostMapping.class, "/indexes/{kbId}/rebuild");
+        assertEndpoint("cancelIndexRebuild", PostMapping.class, "/indexes/{kbId}/rebuild/cancel");
         assertEndpoint("switchIndex", PostMapping.class, "/indexes/{kbId}/switch");
         assertEndpoint("rollbackIndex", PostMapping.class, "/indexes/{kbId}/rollback");
         for (Method method : KnowledgeAdminController.class.getDeclaredMethods()) {
-            if (method.getName().matches("indexStatus|rebuildIndex|switchIndex|rollbackIndex")) {
+            if (method.getName().matches("indexStatus|rebuildIndex|cancelIndexRebuild|switchIndex|rollbackIndex")) {
                 RequirePermission permission = method.getAnnotation(RequirePermission.class);
                 assertNotNull(permission, method.getName());
                 assertEquals("knowledge:manage", permission.value());
+                if (!method.getName().equals("indexStatus")) {
+                    assertNotNull(method.getAnnotation(AuditLog.class), method.getName());
+                }
             }
         }
     }

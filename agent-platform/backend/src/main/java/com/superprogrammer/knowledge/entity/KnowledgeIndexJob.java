@@ -42,6 +42,10 @@ public class KnowledgeIndexJob {
     private String embeddingModel;
     private String pipelineVersion;
 
+    /** 蓝绿全量重建目标；为空表示普通增量任务写当前 write alias。 */
+    private String targetSnapshotId;
+    private String targetPhysicalIndex;
+
     /** PENDING / RUNNING / DONE / FAILED / DEAD */
     private String status;
 

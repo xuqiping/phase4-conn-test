@@ -1,6 +1,6 @@
 # Feature Map · 企业级精准知识库 RAG
 
-> Phase 3 持续维护的粗略功能-代码速查表。当前覆盖 P0、P1 与 P2 Step 1，后续 Chunk 在同一文件追加；文档接近 5000 tokens 时拆分技术清单。
+> Phase 3 持续维护的粗略功能-代码速查表。当前重点复核 P2～P5 的生产链路真实性；文档接近 5000 tokens 时拆分技术清单。
 > 需求编号：RAG-FR-01、RAG-FR-02、RAG-FR-03、RAG-FR-06、RAG-FR-09。
 
 ## 一句话描述
@@ -32,6 +32,7 @@
 | OpenSearch 对账 | `OpenSearchReconciliationService.java`、`ReconciliationWorker.java` | 缺失/孤儿/Hash/ACL 漂移、dry-run 修复与删除传播 |
 | 索引控制面 | `KnowledgeIndexOperationsService.java`、`KnowledgeAdminController.java`、`frontend/src/components/knowledge/IndexOperationsPanel.vue` | 状态、预检、切换和回滚 |
 | 索引快照持久化 | `V112__rag_index_snapshot_registry.sql`、`KnowledgeIndexSnapshotMapper.java`、`DatabaseSnapshotStore.java` | snapshot 登记与 active/previous route 以 PG 为真相源，服务重启不丢失 |
+| 实际快照重建 | `V113__rag_index_snapshot_physical_name.sql`、`V114__rag_snapshot_rebuild_jobs.sql`、`KnowledgeIndexRebuildService.java`、`DatabaseKnowledgeIndexRebuildGateway.java` | 创建隔离物理索引、按 snapshot 入队、聚合进度、取消与 READY 门禁 |
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 | 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
@@ -132,9 +133,16 @@
 - **大白话案例**：像机房切换只能选资产系统里的已验收服务器，不能在输入框里随便敲一个地址接管流量。
 > 批注：所有写操作要求 `knowledge:manage`；切换和回滚必须明确确认，后续审计沿用平台操作日志体系。
 
+### 11. 隔离快照全量重建
+
+- **采用技术**：PG 持久化重建状态、Outbox 目标快照字段、OpenSearch 隔离物理索引、状态聚合。
+- **一句话原理**：重建任务把数据写进新仓库，全部成功后才允许把 Alias 路牌切过去。
+- **大白话案例**：装修新门店时先在新店完成上货盘点，旧店继续营业；新店没验收绝不改导航地址。
+> 批注：重建任务禁止写线上 write alias；物理索引名只能由后端 `KnowledgeIndexSchema` 生成并登记；FAILED/CANCELLED 快照不可切换。
+
 ## 数据库迁移速查
 
-- `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
+- `V103` 起建立文档版本治理；`V107` 增加治理字段；`V108` 增加解析产物信息；`V109` 增加任务版本指纹；`V112`～`V114` 增加快照路由、真实物理索引和目标快照任务字段。
 - `knowledge_documents`：一行代表一个主文档，`current_version_id` 是当前有效版书签。
 - `knowledge_document_versions`：一行代表一次不可变修订，并保存其文件与解析产物证据。
 - `knowledge_nodes`：当前仍使用旧 L0/L2 物理层级，新 D0/S1/C2/E3 协议保存在 metadata，等待后续 OpenSearch 双写迁移。
@@ -175,3 +183,4 @@
 | 2026-08-13 | 增加 5/20/50/100 稳定灰度、后端发布前检查、操作者审计与缓存失效回滚 | P5 Step 4 完成 |
 | 2026-08-13 | 增加在线反馈待审核队列、低基数 RAG 指标、测试方案/README/旧文档导航 | P5 Step 5 完成，P0–P5 收口 |
 | 2026-08-13 | 完成审计后修正索引控制面：快照/路由持久化、未登记目标拦截、首快照 Alias 激活 | P2 Step 5 真实性修复 |
+| 2026-08-13 | 接通实际物理索引创建、快照任务、进度恢复、取消、READY 门禁与前端操作 | P2 重建闭环真实性修复 |

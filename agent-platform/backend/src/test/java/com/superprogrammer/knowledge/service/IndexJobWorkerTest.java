@@ -40,6 +40,7 @@ class IndexJobWorkerTest {
     @Mock private LlmGateway llmGateway;
     @Mock private FileStorageService fileStorageService;
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+    @Mock private com.superprogrammer.knowledge.opensearch.OpenSearchChunkWriter openSearchChunkWriter;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 同步 executor：poll 提交的 process 立即在同线程跑。 */
@@ -160,6 +161,38 @@ class IndexJobWorkerTest {
         verify(txService).completeUpsert(eq(1L), eq(10L), eq(99L), eq(7L),
                 eq("task-embedding-model"), anyString(), eq("hash1"), eq(contextual.contextHash()));
         verify(txService, never()).failJob(anyLong(), anyString());
+    }
+
+    @Test
+    void snapshotRebuildWritesIsolatedPhysicalIndexInsteadOfLiveAlias() {
+        org.springframework.test.util.ReflectionTestUtils.setField(worker, "openSearchChunkWriter", openSearchChunkWriter);
+        KnowledgeIndexJob job = job(10L, 1L, "hash1");
+        job.setKbId(7L);
+        job.setTargetSnapshotId("snap-1");
+        job.setTargetPhysicalIndex("kb-7-chunks-snap-1-pipe-v2");
+        job.setEmbeddingModel("task-embedding-model");
+        when(txService.claimBatch(anyInt())).thenReturn(List.of(job));
+        KnowledgeNode n = node("hash1", "ACTIVE");
+        n.setId(10L);
+        n.setDocumentId(99L);
+        n.setVersionId(3L);
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(99L);
+        doc.setTitle("部署手册");
+        when(documentMapper.selectById(99L)).thenReturn(doc);
+        com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion version =
+                new com.superprogrammer.knowledge.entity.KnowledgeDocumentVersion();
+        version.setId(3L);
+        Contextualizer.ContextualContent contextual = new Contextualizer(objectMapper).contextualize(doc, version, n);
+        n.setContextHash(contextual.contextHash());
+        job.setContextHash(contextual.contextHash());
+        when(nodeMapper.selectById(10L)).thenReturn(n);
+        when(llmGateway.embed(anyString(), eq("task-embedding-model"), any())).thenReturn(new float[HalfVecUtil.DIM]);
+
+        worker.poll();
+
+        verify(openSearchChunkWriter).write(eq("kb-7-chunks-snap-1-pipe-v2"), anyList());
+        verify(openSearchChunkWriter, never()).write(eq("kb-7-chunks-write"), anyList());
     }
 
     @Test

@@ -11,6 +11,49 @@ import java.util.List;
 @Mapper
 public interface KnowledgeIndexJobMapper extends BaseMapper<KnowledgeIndexJob> {
 
+    /** 将当前有效 C2/E3（兼容存量 level=L2）节点按目标快照入队。 */
+    @org.apache.ibatis.annotations.Insert("""
+            INSERT INTO knowledge_index_jobs
+                (node_id, kb_id, job_type, content_hash, context_hash, version_id, parser_version,
+                 chunker_version, embedding_model, pipeline_version, target_snapshot_id,
+                 target_physical_index, idempotency_key, created_at, updated_at)
+            SELECT n.id, n.kb_id, 'REINDEX', n.content_hash,
+                   COALESCE(n.context_hash, '__phase1_placeholder__'), n.version_id,
+                   v.parser_version, COALESCE(n.metadata::jsonb ->> 'chunkerVersion', 'legacy'),
+                   b.embedding_model, #{pipelineVersion}, #{snapshotId}, #{physicalIndex},
+                   md5(n.id || ':' || n.content_hash || ':' || #{snapshotId} || ':REINDEX'),
+                   now(), now()
+              FROM knowledge_nodes n
+              JOIN knowledge_bases b ON b.id=n.kb_id AND b.deleted=0
+              LEFT JOIN knowledge_document_versions v ON v.id=n.version_id AND v.deleted=0
+             WHERE n.kb_id=#{kbId} AND n.deleted=0 AND n.status='ACTIVE'
+               AND n.level='L2'
+               AND COALESCE(n.metadata::jsonb ->> 'granularity', 'C2') IN ('C2','E3')
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """)
+    int enqueueSnapshotJobs(@Param("kbId") long kbId, @Param("snapshotId") String snapshotId,
+                            @Param("physicalIndex") String physicalIndex,
+                            @Param("pipelineVersion") String pipelineVersion);
+
+    @Select("""
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status='DONE') AS done,
+                   COUNT(*) FILTER (WHERE status IN ('FAILED','DEAD')) AS failed,
+                   COUNT(*) FILTER (WHERE status='CANCELLED') AS cancelled
+              FROM knowledge_index_jobs
+             WHERE kb_id=#{kbId} AND target_snapshot_id=#{snapshotId}
+            """)
+    SnapshotJobCounts countSnapshotJobs(@Param("kbId") long kbId, @Param("snapshotId") String snapshotId);
+
+    @org.apache.ibatis.annotations.Update("""
+            UPDATE knowledge_index_jobs SET status='CANCELLED', locked_until=NULL, updated_at=now()
+             WHERE kb_id=#{kbId} AND target_snapshot_id=#{snapshotId}
+               AND status IN ('PENDING','RUNNING')
+            """)
+    int cancelSnapshotJobs(@Param("kbId") long kbId, @Param("snapshotId") String snapshotId);
+
+    record SnapshotJobCounts(int total, int done, int failed, int cancelled) {}
+
     /**
      * S1/C2/E3 节点索引任务幂等入队。任务指纹已包含内容、上下文与全套版本快照；
      * 相同任务重放命中唯一键后直接跳过，不把可预期重复当成解析失败。

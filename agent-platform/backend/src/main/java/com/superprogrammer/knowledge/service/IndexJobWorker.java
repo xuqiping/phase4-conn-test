@@ -158,8 +158,11 @@ public class IndexJobWorker {
             String halfvec = HalfVecUtil.toHalfVec(vector);
 
             if (openSearchChunkWriter != null) {
+                String indexTarget = hasText(job.getTargetPhysicalIndex())
+                        ? job.getTargetPhysicalIndex()
+                        : com.superprogrammer.knowledge.opensearch.IndexAliasService.writeAlias(job.getKbId());
                 openSearchChunkWriter.write(
-                        com.superprogrammer.knowledge.opensearch.IndexAliasService.writeAlias(job.getKbId()),
+                        indexTarget,
                         List.of(new com.superprogrammer.knowledge.opensearch.OpenSearchChunkDocument(
                                 node.getTenantId(), job.getKbId(), node.getDocumentId(), node.getVersionId(), node.getId(),
                                 List.of("tenant:" + node.getTenantId(), "kb:" + job.getKbId()), node.getStatus(),

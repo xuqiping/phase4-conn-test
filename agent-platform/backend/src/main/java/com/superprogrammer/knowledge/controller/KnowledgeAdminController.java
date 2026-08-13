@@ -28,6 +28,7 @@ public class KnowledgeAdminController {
 
     private final KnowledgeNodeService knowledgeNodeService;
     private final com.superprogrammer.knowledge.opensearch.KnowledgeIndexOperationsService indexOperationsService;
+    private final com.superprogrammer.knowledge.opensearch.KnowledgeIndexRebuildService indexRebuildService;
     private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
     private final com.superprogrammer.knowledge.migration.RagRolloutReadinessService rolloutReadinessService;
 
@@ -48,18 +49,30 @@ public class KnowledgeAdminController {
     @GetMapping("/indexes/{kbId}")
     @RequirePermission("knowledge:manage")
     public ResponseEntity<R<com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO>> indexStatus(@PathVariable Long kbId) {
-        return ResponseEntity.ok(R.ok(indexOperationsService.status(kbId)));
+        com.superprogrammer.knowledge.opensearch.KnowledgeIndexRebuildService.RebuildStatus rebuild =
+                indexRebuildService.latest(kbId);
+        return ResponseEntity.ok(R.ok(rebuild == null ? indexOperationsService.status(kbId) : rebuildStatus(rebuild)));
     }
 
     @PostMapping("/indexes/{kbId}/rebuild")
     @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_index_rebuild", targetType = "knowledge_base")
     public ResponseEntity<R<com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO>> rebuildIndex(
             @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.KnowledgeIndexOperationRequest request) {
-        return ResponseEntity.ok(R.ok(indexOperationsService.registerRebuild(kbId, request.snapshotId(), request.dryRun())));
+        return ResponseEntity.ok(R.ok(rebuildStatus(indexRebuildService.start(kbId, request.snapshotId(), request.dryRun()))));
+    }
+
+    @PostMapping("/indexes/{kbId}/rebuild/cancel")
+    @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_index_rebuild_cancel", targetType = "knowledge_base")
+    public ResponseEntity<R<com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO>> cancelIndexRebuild(
+            @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.KnowledgeIndexOperationRequest request) {
+        return ResponseEntity.ok(R.ok(rebuildStatus(indexRebuildService.cancel(kbId, request.snapshotId()))));
     }
 
     @PostMapping("/indexes/{kbId}/switch")
     @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_index_switch", targetType = "knowledge_base")
     public ResponseEntity<R<com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO>> switchIndex(
             @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.KnowledgeIndexOperationRequest request)
             throws java.io.IOException {
@@ -68,6 +81,7 @@ public class KnowledgeAdminController {
 
     @PostMapping("/indexes/{kbId}/rollback")
     @RequirePermission("knowledge:manage")
+    @AuditLog(module = "kb", action = "rag_index_rollback", targetType = "knowledge_base")
     public ResponseEntity<R<com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO>> rollbackIndex(
             @PathVariable Long kbId, @RequestBody com.superprogrammer.knowledge.dto.KnowledgeIndexOperationRequest request)
             throws java.io.IOException {
@@ -104,5 +118,14 @@ public class KnowledgeAdminController {
             throw new IllegalStateException("无法识别当前操作者");
         }
         return id;
+    }
+
+    private com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO rebuildStatus(
+            com.superprogrammer.knowledge.opensearch.KnowledgeIndexRebuildService.RebuildStatus rebuild) {
+        com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO route = indexOperationsService.status(rebuild.knowledgeBaseId());
+        return new com.superprogrammer.knowledge.dto.KnowledgeIndexStatusVO(
+                rebuild.knowledgeBaseId(), rebuild.state(), route.readAlias(), route.writeAlias(),
+                route.activeSnapshotId(), route.previousSnapshotId(), rebuild.snapshotId(), rebuild.total(),
+                rebuild.completed(), rebuild.failed(), rebuild.cancelled());
     }
 }

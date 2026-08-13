@@ -25,8 +25,14 @@ public class KnowledgeIndexOperationsService {
 
     public KnowledgeIndexStatusVO registerRebuild(long kbId, String snapshotId, boolean dryRun) {
         validateSnapshot(snapshotId);
-        if (!dryRun) store.register(kbId, snapshotId);
+        if (!dryRun) throw new IllegalStateException("必须由实际索引创建流程登记 snapshot");
         return status(kbId);
+    }
+
+    public void registerSnapshot(long kbId, String snapshotId, String physicalIndex) {
+        validateSnapshot(snapshotId);
+        validatePhysicalIndex(physicalIndex, kbId);
+        store.register(kbId, snapshotId, physicalIndex);
     }
 
     public KnowledgeIndexStatusVO switchSnapshot(long kbId, String snapshotId, boolean confirmed) throws IOException {
@@ -36,12 +42,12 @@ public class KnowledgeIndexOperationsService {
             throw new IllegalArgumentException("snapshot 未登记，禁止切换");
         }
         SnapshotRecord current = store.load(kbId);
-        String target = physical(kbId, snapshotId);
+        String target = requiredPhysicalIndex(kbId, snapshotId);
         if (current == null || current.activeSnapshotId() == null) {
             aliasService.execute(aliasService.activatePlan(kbId, target));
         } else if (!snapshotId.equals(current.activeSnapshotId())) {
             aliasService.execute(aliasService.switchPlan(kbId,
-                    physical(kbId, current.activeSnapshotId()), target));
+                    requiredPhysicalIndex(kbId, current.activeSnapshotId()), target));
         }
         long version = current == null ? 1 : current.configVersion() + 1;
         store.save(new SnapshotRecord(kbId, snapshotId,
@@ -56,7 +62,8 @@ public class KnowledgeIndexOperationsService {
             throw new IllegalStateException("没有可回滚的已登记 snapshot");
         }
         aliasService.execute(aliasService.rollbackPlan(kbId,
-                physical(kbId, current.activeSnapshotId()), physical(kbId, current.previousSnapshotId())));
+                requiredPhysicalIndex(kbId, current.activeSnapshotId()),
+                requiredPhysicalIndex(kbId, current.previousSnapshotId())));
         store.save(new SnapshotRecord(kbId, current.previousSnapshotId(), current.activeSnapshotId(),
                 current.configVersion() + 1, null));
         return status(kbId);
@@ -72,15 +79,26 @@ public class KnowledgeIndexOperationsService {
         if (!confirmed) throw new IllegalArgumentException("需要二次确认");
     }
 
-    private static String physical(long kbId, String snapshot) {
-        return "kb-" + kbId + "-chunks-" + snapshot;
+    private String requiredPhysicalIndex(long kbId, String snapshotId) {
+        String physical = store.physicalIndex(kbId, snapshotId);
+        if (physical == null || physical.isBlank()) {
+            throw new IllegalStateException("snapshot 缺少已登记物理索引");
+        }
+        return physical;
+    }
+
+    private static void validatePhysicalIndex(String physical, long kbId) {
+        if (physical == null || !physical.matches("kb-" + kbId + "-chunks-[a-z0-9_-]{1,180}")) {
+            throw new IllegalArgumentException("physical index 不属于目标知识库");
+        }
     }
 
     public interface SnapshotStore {
         SnapshotRecord load(long kbId);
         void save(SnapshotRecord record);
-        void register(long kbId, String snapshotId);
+        void register(long kbId, String snapshotId, String physicalIndex);
         boolean registered(long kbId, String snapshotId);
+        String physicalIndex(long kbId, String snapshotId);
     }
 
     public record SnapshotRecord(long knowledgeBaseId, String activeSnapshotId,
