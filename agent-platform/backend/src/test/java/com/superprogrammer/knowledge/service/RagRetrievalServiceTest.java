@@ -45,6 +45,7 @@ class RagRetrievalServiceTest {
     @Mock private RankingConfigService rankingConfigService;
     @Mock private com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     @Mock private com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
+    @Mock private com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService ragTraceService;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RetrievalScope retrievalScope;
     @Mock private com.superprogrammer.knowledge.trace.RagTraceService.RankingScope rankingScope;
@@ -62,7 +63,7 @@ class RagRetrievalServiceTest {
         service = new RagRetrievalService(queryMapper, logMapper, knowledgeBaseService, llmGateway,
                 ragConfig, citationChecker, objectMapper, visibilitySetService,
                 answerCacheService, answerCacheProps, queryExpansionService, recallProps,
-                ragTraceService, rankingConfigService, queryPlanner, rankingEngine);
+                ragTraceService, rankingConfigService, queryPlanner, rankingEngine, productionRetrievalGateway);
         lenient().when(ragTraceService.beginRetrieval(anyList(), anyString(), any(), anyString()))
                 .thenReturn(retrievalScope);
         lenient().when(rankingConfigService.resolve(anyLong())).thenReturn(
@@ -104,7 +105,7 @@ class RagRetrievalServiceTest {
 
         assertTrue(vo.isAbstained());
         assertEquals("NO_VISIBLE_DOCS", vo.getAbstainReason());
-        verify(queryExpansionService, never()).expand(anyString(), anyString(), any());  // 早 abstain，未扩展
+        verify(queryExpansionService, never()).expand(anyString(), anyString(), any(), anyBoolean());  // 早 abstain，未扩展
     }
 
     @Test
@@ -122,6 +123,28 @@ class RagRetrievalServiceTest {
     }
 
     @Test
+    void exactPlanSkipsRewriteAndUsesPrefilteredProductionRetrieval() {
+        KnowledgeBase kb = kb(1L);
+        stubReadableAll(kb);
+        when(queryPlanner.plan("请找第十条 V2.1")).thenReturn(new com.superprogrammer.knowledge.query.QueryPlan(
+                "EXACT", "DIRECT", java.util.Map.of("version", "V2.1"), List.of("EXACT", "SPARSE"),
+                false, false, false));
+        when(queryExpansionService.expand(eq("请找第十条 V2.1"), anyString(), eq(7L), eq(false)))
+                .thenReturn(new ExpandedQuery("请找第十条 V2.1", List.of("[0.1]")));
+        when(queryMapper.denseRecallL0(anyLong(), anyString(), anyBoolean(), anyList(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(productionRetrievalGateway.retrieve(eq("请找第十条 V2.1"), any(),
+                eq(List.of("EXACT", "SPARSE")), anyInt())).thenReturn(List.of());
+
+        service.retrieve(req(1L, "请找第十条 V2.1"), 7L);
+
+        verify(queryExpansionService).expand("请找第十条 V2.1", kb.getEmbeddingModel(), 7L, false);
+        verify(productionRetrievalGateway).retrieve(eq("请找第十条 V2.1"), argThat(filter ->
+                filter.summary().contains("kb=1") && filter.summary().contains("status=ACTIVE")),
+                eq(List.of("EXACT", "SPARSE")), anyInt());
+    }
+
+    @Test
     void b4_queryExpandedExactlyOnce_embedDelegatedToExpansion() {
         KnowledgeBase kb = kb(1L);
         stubReadableAll(kb);
@@ -132,7 +155,7 @@ class RagRetrievalServiceTest {
         service.retrieve(req(1L, "如何安装"), 7L);
 
         // B4 精神：每个逻辑 query 一轮扩展；service 不再直调 embed（embed 在 QueryExpansionService 内）
-        verify(queryExpansionService, times(1)).expand(anyString(), anyString(), any());
+        verify(queryExpansionService, times(1)).expand(anyString(), anyString(), any(), anyBoolean());
         verify(llmGateway, never()).embed(anyString(), anyString());
         verify(queryPlanner).plan("如何安装");
     }
@@ -215,7 +238,7 @@ class RagRetrievalServiceTest {
 
     /** 扩展 mock：返回单规范 halfvec（非空，让流程进入 step5）。 */
     private void stubExpandSingle() {
-        when(queryExpansionService.expand(anyString(), anyString(), any()))
+        when(queryExpansionService.expand(anyString(), anyString(), any(), anyBoolean()))
                 .thenReturn(new ExpandedQuery("q", List.of("[0.1]")));
     }
 

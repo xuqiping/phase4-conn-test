@@ -10,5 +10,8 @@ class RetrievalFilterBuilderTest {
   assertTrue(f.json().contains("tenantId")); assertTrue(f.json().contains("knowledgeBaseId"));
   assertTrue(f.json().contains("aclTokens")); assertTrue(f.json().contains("documentVersionId"));
   assertTrue(f.summary().contains("acl=2"));
+  var scoped=b.build(1L,42L,List.of("user:1"),null,List.of(7L,8L));
+  assertTrue(scoped.json().contains("documentId"));
+  assertTrue(scoped.summary().contains("docs=2"));
  }
 }

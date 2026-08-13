@@ -74,6 +74,7 @@ public class RagRetrievalService {
     private final RankingConfigService rankingConfigService;
     private final com.superprogrammer.knowledge.query.QueryPlanner queryPlanner;
     private final com.superprogrammer.knowledge.ranking.RankingEngine rankingEngine;
+    private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
 
     // ============================ 内部 record ============================
 
@@ -152,7 +153,8 @@ public class RagRetrievalService {
             }
 
             // B4：query 多路扩展（规范 query + 释义 + HyDE），返回 halfvec 列表（规范第一个）
-            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(req.getQuery(), embedModel, userId);
+            QueryExpansionService.ExpandedQuery eq = queryExpansionService.expand(
+                    req.getQuery(), embedModel, userId, queryPlan.requiresLlmAnalysis());
             List<String> qHalfs = eq.qHalfs();
             if (qHalfs.isEmpty()) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "query embedding 失败");
@@ -196,12 +198,20 @@ public class RagRetrievalService {
             // step4 目录路由（Phase1 降级全库，hook）
             step4DirectoryRouting(req.getQuery(), req.getKbId());
 
+            com.superprogrammer.knowledge.retrieval.RetrievalFilterBuilder.FilterContext productionFilter =
+                    new com.superprogrammer.knowledge.retrieval.RetrievalFilterBuilder().build(
+                            TENANT_ID, req.getKbId(), List.of("tenant:" + TENANT_ID, "kb:" + req.getKbId()),
+                            null, scope.allDocs ? List.of() : scope.docIds);
+            List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> productionHits =
+                    productionRetrievalGateway.retrieve(req.getQuery(), productionFilter,
+                            queryPlan.strategies(), ragConfig.getMaxRerankPairs());
+
             // step5 dense 召回（多 qvec 并集，按 max 余弦去重排序；强制 §6.1 WHERE）
             int maxL0 = req.getMaxL0() != null ? req.getMaxL0() : ragConfig.getMaxL0Candidates();
             List<RecallHit> l0 = multiDenseRecallL0(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             List<L1DocHit> l1 = multiDenseRecallL1(req.getKbId(), qHalfs, scope, req.getDocTypes(), maxL0);
             trace.setCandidatesL1(l1HitsToJson(l1));   // Phase3 L1 trace 列（短路前未算的路径留 null）
-            if (l0.isEmpty() && l1.isEmpty()) {
+            if (l0.isEmpty() && l1.isEmpty() && productionHits.isEmpty()) {
                 return finishAbstain(trace, budget, t0, "NO_DENSE_HITS", req, List.of(), List.of(),
                         false, List.of(), List.of());
             }
@@ -209,6 +219,7 @@ public class RagRetrievalService {
             // step6 L2 候选 + rerank 代理（Phase3：L1 doc 级语义锚跨通道融合）
             boolean[] bm25Fallback = {false};
             List<L2Candidate> pool = step6L2Candidates(req.getQuery(), l0, req.getKbId(), bm25Fallback, l1);
+            pool = mergeProductionCandidates(pool, productionHits);
             if (pool.size() > ragConfig.getMaxRerankPairs()) {
                 throw new IllegalStateException("B3 违规: rerank pool=" + pool.size()
                         + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
@@ -828,6 +839,20 @@ public class RagRetrievalService {
 
     private List<L2Candidate> pickTopK(List<L2Candidate> pool, int k) {
         return pool.subList(0, Math.min(k, pool.size()));
+    }
+
+    private List<L2Candidate> mergeProductionCandidates(
+            List<L2Candidate> pgCandidates,
+            List<com.superprogrammer.knowledge.retrieval.RetrievalCandidate> productionHits) {
+        Map<Long, L2Candidate> merged = new LinkedHashMap<>();
+        pgCandidates.forEach(candidate -> merged.put(candidate.nodeId(), candidate));
+        for (com.superprogrammer.knowledge.retrieval.RetrievalCandidate hit : productionHits) {
+            if (hit.nodeId() == null || hit.documentId() == null || hit.contentHash() == null) continue;
+            merged.putIfAbsent(hit.nodeId(), new L2Candidate(hit.nodeId(), hit.documentId(), null,
+                    hit.title(), hit.content(), hit.contentHash(), hit.rawScore(), null,
+                    hit.rawScore(), false, 0));
+        }
+        return new ArrayList<>(merged.values());
     }
 
     /** step8：I3 复校（content_hash 现值）+ L1 装载 + 编号。失配丢弃并记 REINDEX。 */

@@ -35,7 +35,7 @@
 | 实际快照重建 | `V113__rag_index_snapshot_physical_name.sql`、`V114__rag_snapshot_rebuild_jobs.sql`、`KnowledgeIndexRebuildService.java`、`DatabaseKnowledgeIndexRebuildGateway.java` | 创建隔离物理索引、按 snapshot 入队、聚合进度、取消与 READY 门禁 |
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
-| 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
+| 多通道召回 | `RetrievalCandidate.java`、`ProductionRetrievalGateway.java`、`OpenSearchProductionRetrievalGateway.java`、`RrfFusion.java` | OpenSearch Exact/Sparse 强制 Pre-filter + PG Dense/BM25 兼容合并、降级与统一重排 |
 | Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/`、`RagRetrievalService.java` | LLM/RERANK/DISABLED Provider 已接生产链路；候选白名单、正文相关性、严格 JSON 与显式模型 |
 | Rerank/时间线 | `ModelRerankProvider.java`、`RagRetrieveVO.java`、`RetrievalDebugPanel.vue` | capability fail-closed 与 QueryPlan/RRF/Ranking 调试协议 |
 | 动态证据覆盖 | `backend/src/main/java/com/superprogrammer/knowledge/context/CoverageSelector.java`、`EvidenceBudget.java` | 按问题类型选择 2～20 条并限制单文档挤占 |
@@ -185,3 +185,4 @@
 | 2026-08-13 | 完成审计后修正索引控制面：快照/路由持久化、未登记目标拦截、首快照 Alias 激活 | P2 Step 5 真实性修复 |
 | 2026-08-13 | 接通实际物理索引创建、快照任务、进度恢复、取消、READY 门禁与前端操作 | P2 重建闭环真实性修复 |
 | 2026-08-13 | QueryPlan 与真实 Ranking Engine 接入 RagRetrievalService，移除启发式代理伪标 | P3 生产链路修复 1 |
+| 2026-08-13 | QueryPlan 控制 Rewrite/HyDE，OpenSearch Exact/Sparse 带可见文档 Pre-filter 接入 | P3 生产链路修复 2 |

@@ -13,6 +13,11 @@ public class RetrievalFilterBuilder {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public FilterContext build(Long tenantId, Long knowledgeBaseId, List<String> aclTokens, String version) {
+        return build(tenantId, knowledgeBaseId, aclTokens, version, List.of());
+    }
+
+    public FilterContext build(Long tenantId, Long knowledgeBaseId, List<String> aclTokens, String version,
+                               List<Long> visibleDocumentIds) {
         if (tenantId == null || knowledgeBaseId == null) throw new IllegalArgumentException("tenantId and knowledgeBaseId are required");
         List<String> acl = aclTokens == null ? List.of() : aclTokens.stream().filter(v -> v != null && !v.isBlank()).distinct().toList();
         Map<String,Object> bool = new LinkedHashMap<>();
@@ -25,9 +30,13 @@ public class RetrievalFilterBuilder {
             try { filters.add(Map.of("term", Map.of("documentVersionId", Long.parseLong(version)))); }
             catch (NumberFormatException e) { throw new IllegalArgumentException("version must resolve to documentVersionId"); }
         }
+        if (visibleDocumentIds != null && !visibleDocumentIds.isEmpty()) {
+            filters.add(Map.of("terms", Map.of("documentId", visibleDocumentIds)));
+        }
         bool.put("filter", filters);
         String summary = "tenant=1,kb=" + knowledgeBaseId + ",acl=" + acl.size()
-                + ",status=ACTIVE" + (version == null ? "" : ",version=" + version);
+                + ",status=ACTIVE" + (version == null ? "" : ",version=" + version)
+                + (visibleDocumentIds == null || visibleDocumentIds.isEmpty() ? "" : ",docs=" + visibleDocumentIds.size());
         try { return new FilterContext(objectMapper.writeValueAsString(Map.of("bool", bool)), summary); }
         catch (JsonProcessingException e) { throw new IllegalStateException("filter serialization failed", e); }
     }

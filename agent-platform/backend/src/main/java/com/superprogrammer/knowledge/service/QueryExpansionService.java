@@ -46,6 +46,10 @@ public class QueryExpansionService {
      * @return ExpandedQuery；失败/关闭 → 仅含规范 query 单向量
      */
     public ExpandedQuery expand(String query, String embedModel, Long userId) {
+        return expand(query, embedModel, userId, true);
+    }
+
+    public ExpandedQuery expand(String query, String embedModel, Long userId, boolean allowLlmExpansion) {
         // 规范 query 必 embed（即使扩展全关/全失败）
         String canonicalHalf = embedHalf(query, embedModel, userId);
         if (canonicalHalf == null) {
@@ -55,7 +59,7 @@ public class QueryExpansionService {
 
         // 运行时全局开关（4 条检索路径同读：/retrieve、/ask、Chat、Agent/工作流 → 调试与真实一致）
         boolean enabled = systemSettingService.getRagRecallExpansionEnabled();
-        if (!enabled) {
+        if (!enabled || !allowLlmExpansion) {
             return new ExpandedQuery(query, List.of(canonicalHalf));
         }
 
