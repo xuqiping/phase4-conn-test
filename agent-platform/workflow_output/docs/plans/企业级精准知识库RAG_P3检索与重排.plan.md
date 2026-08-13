@@ -57,7 +57,7 @@
   - **安全检查**：每个 Retriever 必须接受同一不可省略 FilterContext。
   - **验证**：通道故障降级、按 chunk 去重、同文档近邻折叠、RRF 稳定性和性能。
 
-- [ ] **Step 4：统一 Ranking Engine 与 LLM 重排实现**
+- [x] **Step 4：统一 Ranking Engine 与 LLM 重排实现**
   - **对应需求**：RAG-FR-04
   - **目标**：替代 `rerankWithBoost()`，当前用可选 LLM 真正判断 Query-Chunk 相关性。
   - **动作**：RankingProvider 协议输出 candidate/score/provider/model/run；LLM 每批约 10 条、Schema 校验、温度最低、失败重试一次；按配置 fail closed/RRF/no answer。

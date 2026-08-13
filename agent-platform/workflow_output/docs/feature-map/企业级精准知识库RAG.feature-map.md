@@ -34,6 +34,7 @@
 | QueryPlan | `backend/src/main/java/com/superprogrammer/knowledge/query/QueryPlanner.java`、`QueryPlan.java` | 规则优先识别精确/比较/流程/列表/语义问题 |
 | 召回 Pre-filter | `backend/src/main/java/com/superprogrammer/knowledge/retrieval/RetrievalFilterBuilder.java` | tenant/KB/ACL/status/version 强制前置过滤 |
 | 多通道召回 | `RetrievalCandidate.java`、`Retriever.java`、`OpenSearchRetrievers.java`、`RrfFusion.java` | Exact/Sparse/Dense/Entity SPI、降级与加权 RRF |
+| Ranking Engine | `backend/src/main/java/com/superprogrammer/knowledge/ranking/` | LLM/DISABLED Provider、候选白名单、严格 JSON 与显式模型 |
 
 ## 关键调用链路
 
@@ -149,3 +150,4 @@
 | 2026-08-13 | 增加规则优先 QueryPlan 与可选 LLM 分析标记 | P3 Step 1 完成 |
 | 2026-08-13 | 增加 OpenSearch ACL/版本强制 Pre-filter | P3 Step 2 完成 |
 | 2026-08-13 | 增加统一候选协议、多通道降级与加权 RRF | P3 Step 3 完成 |
+| 2026-08-13 | 增加统一 Ranking Engine 与严格 LLM 重排协议 | P3 Step 4 完成 |
