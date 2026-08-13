@@ -1,6 +1,6 @@
 # Feature Map · 企业级精准知识库 RAG
 
-> Phase 3 持续维护的粗略功能-代码速查表。当前覆盖 P0 与完整 P1，后续 Chunk 在同一文件追加；文档接近 5000 tokens 时拆分技术清单。
+> Phase 3 持续维护的粗略功能-代码速查表。当前覆盖 P0、P1 与 P2 Step 1，后续 Chunk 在同一文件追加；文档接近 5000 tokens 时拆分技术清单。
 > 需求编号：RAG-FR-01、RAG-FR-02、RAG-FR-03、RAG-FR-06、RAG-FR-09。
 
 ## 一句话描述
@@ -24,6 +24,8 @@
 | 索引任务 | `backend/src/main/java/com/superprogrammer/knowledge/service/IndexJobWorker.java`、`service/internal/IndexJobTxService.java` | 版本复核、任务快照、事务完成与重试幂等 |
 | 数据迁移 | `backend/src/main/resources/db/migration/V103__rag_document_version_governance.sql`～`V108__knowledge_parse_artifact.sql` | 文档版本、治理和解析产物引用演进 |
 | 测试 | `backend/src/test/java/com/superprogrammer/knowledge/` | 版本、解析、分块、节点和 PostgreSQL 集成验证 |
+| OpenSearch 配置 | `backend/src/main/java/com/superprogrammer/knowledge/config/OpenSearchProperties.java`、`OpenSearchConfig.java` | 可关闭的官方客户端、环境变量认证与连接超时 |
+| OpenSearch 健康检查 | `backend/src/main/java/com/superprogrammer/knowledge/config/OpenSearchHealthIndicator.java` | 区分 disabled/up/down，诊断信息不暴露认证信息 |
 
 ## 关键调用链路
 
@@ -74,6 +76,13 @@
 - **大白话案例**：像生产工单不仅写零件编号，还把图纸版本、机器型号和工艺版本钉在单上；第二天机器设置变了，旧工单也不会偷偷换配方。
 > 批注：Worker 调模型前与写向量事务内都要复核 content/context Hash；权限和密级不得拼进模型文本。
 
+### 6. 可关闭的 OpenSearch 连接基座
+
+- **采用技术**：OpenSearch Java Client、Spring `ConfigurationProperties`、Actuator `HealthIndicator`。
+- **一句话原理**：只有管理员明确启用时才创建客户端；健康检查把未启用、可连接和连接失败分成三种状态。
+- **大白话案例**：像给新仓库装总闸和指示灯，总闸没开时不会误报事故，开闸后绿灯代表连通、红灯代表需要排查。
+> 批注：密码只允许来自环境变量；健康详情和日志禁止出现用户名、密码、Authorization 或完整异常正文。
+
 ## 数据库迁移速查
 
 - `V103` 起建立文档版本治理；`V107` 增加 owner、来源、权威、密级、标签和有效期；`V108` 为版本行增加解析产物信息；`V109` 为索引任务增加 version/parser/chunker/embedding/pipeline 指纹。
@@ -96,3 +105,4 @@
 |---|---|---|
 | 2026-08-13 | 建立 P0/P1 Step 1～4 速查地图 | 避免与既有 M3 记忆配置 Feature Map 混写 |
 | 2026-08-13 | 补充 P1 Step 5 Contextual Content 与幂等索引任务 | P1 完成 |
+| 2026-08-13 | 增加 OpenSearch 官方客户端、环境变量配置与三态健康检查 | P2 Step 1 完成 |

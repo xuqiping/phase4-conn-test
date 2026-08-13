@@ -154,6 +154,14 @@ runtime:
     token: ${RUNTIME_CALLBACK_TOKEN:}
 
 rag:
+  opensearch:
+    enabled: ${RAG_OPENSEARCH_ENABLED:false}
+    url: ${RAG_OPENSEARCH_URL:https://127.0.0.1:9200}
+    username: ${RAG_OPENSEARCH_USERNAME:}
+    password: ${RAG_OPENSEARCH_PASSWORD:}
+    tls-verification: ${RAG_OPENSEARCH_TLS_VERIFICATION:true}
+    connect-timeout: ${RAG_OPENSEARCH_CONNECT_TIMEOUT:3s}
+    request-timeout: ${RAG_OPENSEARCH_REQUEST_TIMEOUT:10s}
   index:
     pipeline-version: ${RAG_INDEX_PIPELINE_VERSION:rag-index-v1}
   visibility-cache:

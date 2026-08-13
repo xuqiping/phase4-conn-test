@@ -13,7 +13,7 @@
 
 ## 实现步骤
 
-- [ ] **Step 1：引入 OpenSearch 客户端、配置与健康检查**
+- [x] **Step 1：引入 OpenSearch 客户端、配置与健康检查**
   - **对应需求**：RAG-FR-02、RAG-FR-09
   - **目标**：提供可关闭、可测试、fail-closed 的连接基座。
   - **动作**：加入官方 Java Client；环境变量配置 URL/认证/TLS/超时；健康检查区分 disabled/down/up；测试用 Testcontainers 或独立 profile。
