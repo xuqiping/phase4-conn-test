@@ -168,6 +168,8 @@
 
 > 导出只含评测字段，不携带知识 Chunk 正文；接口不把完整问题写入 Java 日志。
 
+- `EvaluationRunService`：异步执行固定 Case，状态为 QUEUED/RUNNING/COMPLETED/FAILED；逐题关联 trace，汇总检索、引用、忠实度和拒答指标。它当前是显式装配的领域类，待 PostgreSQL 与生产 Pipeline 适配器完成后再注册运行时 Bean。
+
 - [规格总览](../specs/企业级精准知识库RAG-总览.md)
 - [架构与数据](../specs/企业级精准知识库RAG-架构与数据.md)
 - [质量、安全与迁移](../specs/企业级精准知识库RAG-质量安全与迁移.md)
