@@ -37,6 +37,14 @@
       <div v-else class="rag-ask__answer">{{ answer }}</div>
       <div v-if="error" class="rag-ask__error">{{ error }}</div>
 
+      <div v-if="answer && !asking" class="rag-ask__feedback">
+        <n-select v-model:value="feedbackCategory" size="small" :options="feedbackOptions" placeholder="选择反馈类型" />
+        <n-input v-model:value="feedbackComment" size="small" maxlength="1000" placeholder="补充说明（可选）" />
+        <n-button size="small" :disabled="!feedbackCategory || kbIds.length !== 1" @click="submitFeedback">
+          提交反馈
+        </n-button>
+      </div>
+
       <!-- 引用列表（CITATION）-->
       <div v-if="citations.length" class="rag-ask__citations">
         <div class="rag-ask__citations-title">引用（{{ citations.length }}）</div>
@@ -65,6 +73,14 @@ const answer = ref('')
 const citations = ref<RagCitation[]>([])
 const asking = ref(false)
 const error = ref('')
+const feedbackCategory = ref<string | null>(null)
+const feedbackComment = ref('')
+const feedbackOptions = [
+  { label: '结果不相关', value: 'NOT_RELEVANT' },
+  { label: '内容已过期', value: 'OUTDATED' },
+  { label: '引用错误', value: 'WRONG_CITATION' },
+  { label: '答案不完整', value: 'INCOMPLETE' }
+]
 let abortController: AbortController | null = null
 
 const canAsk = computed(() => query.value.trim().length > 0 && kbIds.value.length > 0)
@@ -123,6 +139,18 @@ function parseCitations(json: string | undefined): RagCitation[] {
   } catch { return [] }
 }
 
+async function submitFeedback() {
+  if (!feedbackCategory.value || kbIds.value.length !== 1) return
+  await knowledgeApi.submitRagFeedback({
+    knowledgeBaseId: kbIds.value[0],
+    category: feedbackCategory.value,
+    comment: feedbackComment.value.trim() || undefined
+  })
+  feedbackCategory.value = null
+  feedbackComment.value = ''
+  message.success('反馈已进入待审核队列，不会直接改变线上排序')
+}
+
 onMounted(() => { void loadBases() })
 onUnmounted(() => { abortController?.abort() })
 </script>
@@ -164,6 +192,15 @@ onUnmounted(() => { abortController?.abort() })
 .rag-ask__error {
   color: var(--color-error, #e88080);
   font-size: 13px;
+}
+.rag-ask__feedback {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr auto;
+  gap: var(--spacing-2);
+  align-items: center;
+}
+@media (max-width: 768px) {
+  .rag-ask__feedback { grid-template-columns: 1fr; }
 }
 .rag-ask__citations {
   margin-top: var(--spacing-2);

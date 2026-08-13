@@ -392,6 +392,9 @@ export const knowledgeApi = {
       percentage: 0, configVersion: 'rollback', confirmed: true
     })
   },
+  submitRagFeedback(data: { knowledgeBaseId: number; evaluationResultId?: number; category: string; comment?: string }) {
+    return request.post<ApiResponse<{ id: number; status: string }>>('/knowledge/feedback', data)
+  },
   getRankingConfig(kbId: number) {
     return request.get<ApiResponse<RankingConfig>>(`/knowledge/bases/${kbId}/ranking-config`)
   },

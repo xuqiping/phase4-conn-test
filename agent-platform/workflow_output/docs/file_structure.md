@@ -104,3 +104,11 @@ agent-platform/
 - `企业级精准知识库RAG-检索与重排.md`：QueryPlan、多通道召回、RRF、LLM/Rerank、多证据和拒答。
 - `企业级精准知识库RAG-质量安全与迁移.md`：评测、安全、缓存、性能、降级、测试和迁移。
 - `企业级精准知识库RAG-旧文档差异清单.md`：逐文件列出旧设计未来应调整项，但本次不修改旧文件。
+
+Phase 3 实现导航新增：
+
+- `workflow_output/docs/feature-map/企业级精准知识库RAG.feature-map.md`：P0–P5 代码、迁移、调用链和运维约束。
+- `workflow_output/docs/user-ops/企业级精准知识库RAG用户操作手册.md`：用户提问、管理员评测、索引运维、灰度回滚和反馈操作。
+- `workflow_output/docs/测试方案/企业级精准知识库RAG测试方案.md`：Phase 4 人工验收基准。
+- `workflow_output/开发进度/企业级精准知识库RAG/README.md`：功能地图与技术总览。
+- 旧 `14-知识库RAG-*`、`15-知识库RAG-*`、`16-知识库RAG-*` 正文保持不变；需要修改的内容统一见“旧文档差异清单”，避免两套正文同时漂移。

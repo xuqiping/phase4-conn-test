@@ -45,6 +45,7 @@
 | 发布门禁/影子 | `evaluation/ReleaseGateService.java`、`retrieval/ShadowRetrievalService.java` | 指标阈值、采样/预算控制且不影响用户答案 |
 | 评测管理界面 | `KnowledgeEvaluationView.vue`、`EvaluationRunPanel.vue`、`ShadowComparisonPanel.vue`、`KnowledgeView.vue` | 管理员启动异步评测、查看 Champion/Challenger 与发布门禁状态 |
 | 稳定灰度与回滚 | `migration/RagRolloutService.java`、`RagRolloutReadinessService.java`、`RagModeResolver.java`、`KnowledgeAdminController.java`、`IndexOperationsPanel.vue` | 按 KB/用户稳定分桶，后端权威门禁，回滚时恢复路由并失效答案缓存 |
+| 反馈与运维指标 | `evaluation/FeedbackReviewService.java`、`FeedbackReviewMapper.java`、`RagFeedbackController.java`、`BizMetrics.java`、`RagAskPanel.vue`、`V111__rag_feedback_review_queue.sql` | 反馈只进待审核队列；召回/重排/覆盖/降级/删除 SLA 使用低基数指标 |
 
 ## 关键调用链路
 
@@ -171,3 +172,4 @@
 | 2026-08-13 | 增加 Champion/Challenger 发布门禁与影子检索 seam | P5 Step 2 完成 |
 | 2026-08-13 | 增加管理员 RAG 评测 Tab、异步运行状态与 Champion/Challenger 对比卡片 | P5 Step 3 完成 |
 | 2026-08-13 | 增加 5/20/50/100 稳定灰度、后端发布前检查、操作者审计与缓存失效回滚 | P5 Step 4 完成 |
+| 2026-08-13 | 增加在线反馈待审核队列、低基数 RAG 指标、测试方案/README/旧文档导航 | P5 Step 5 完成，P0–P5 收口 |

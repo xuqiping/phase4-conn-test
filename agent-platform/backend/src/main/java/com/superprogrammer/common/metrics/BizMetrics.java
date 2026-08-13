@@ -153,6 +153,33 @@ public class BizMetrics {
                 .record(duration);
     }
 
+    /** RAG 各阶段结果计数；stage/result 仅允许代码枚举，禁止 userId/traceId/KB 名进入 tag。 */
+    public void ragPipeline(String stage, String result) {
+        Counter.builder("rag.pipeline")
+                .description("RAG 召回、重排、覆盖、降级和删除 SLA 结果")
+                .tags("stage", safe(stage), "result", safe(result))
+                .register(registry)
+                .increment();
+    }
+
+    /** RAG 阶段耗时；stage 为有限枚举，例如 retrieval/rerank/coverage。 */
+    public void ragStageLatency(String stage, Duration duration) {
+        Timer.builder("rag.stage.latency")
+                .description("RAG 各阶段耗时")
+                .tags("stage", safe(stage))
+                .register(registry)
+                .record(duration);
+    }
+
+    /** 在线反馈计数；分类和状态都是固定枚举，反馈正文绝不进入指标。 */
+    public void ragFeedback(String category, String status) {
+        Counter.builder("rag.feedback")
+                .description("RAG 在线反馈待审核队列计数")
+                .tags("category", safe(category), "status", safe(status))
+                .register(registry)
+                .increment();
+    }
+
     // ---------- OPS-FR-06：记忆管线 ----------
 
     /** 记忆管线耗时：memory_pipeline_duration。 */
