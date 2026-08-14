@@ -1,6 +1,7 @@
 package com.superprogrammer.knowledge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.knowledge.config.RagRecallProperties;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.knowledge.trace.RagTraceContext;
@@ -166,6 +167,10 @@ public class QueryExpansionService {
                 return null;
             }
             return HalfVecUtil.toHalfVec(vec);
+        } catch (BusinessException e) {
+            // Phase4 UI 冒烟实证：业务类失败（积分余额不足/价表缺失/模型不可用）吞成 null 会让页面只看到
+            // 「query embedding 失败」，真实原因埋在 WARN 里。业务异常上浮给调用方，技术性异常仍降级返 null。
+            throw e;
         } catch (Exception e) {
             log.warn("query embed 失败 text='{}': {}", abbrev(text), e.getMessage());
             return null;
