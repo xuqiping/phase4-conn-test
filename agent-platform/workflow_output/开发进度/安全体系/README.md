@@ -8,9 +8,9 @@
 |---|---|---|---|
 | S1 | 止血与基线 | 密钥治理/gitleaks 门禁/`${}` SQL 门禁/安全事件中心/限流闸门/上传加固/安全响应头 | 已验收（Phase4 闭环） |
 | S2 | 防篡改与越权 | 审计 HMAC 哈希链+锚点/单点登录/低余额在途闸门/越权 IT 脚手架（AbstractPrivilegeIT）/注册密码策略 | 已验收（Phase4 闭环） |
-| S3 | AI 安全（OWASP LLM） | LLM01 围栏+KB 隔离 / LLM02 输出打码 / LLM07② 提示词指纹 / LLM10 限流+会话封顶 / LLM08 检索越权 IT / C4 参数校验 / C2 前端渲染门禁 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
-| S4 | 文件与主机加固 | F-2 magic number / F-3 解析炸弹三件套 / F-4 存储配额+上传限流 / L6 计费回归断言 / F-5+K3 Nginx 红线 / K1~K5 基线+巡检脚本 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
-| S5 | 检测响应与收尾 | A4 refresh 旋转 / A6 TOTP / H SSRF 三路收口 / C5+C8+F2 残点 / G5 审计 / I 供应链+M4 蜜罐 / J2 注销+J4 隐私 / M1 IR+M3 FIM+M5 备份防勒索+M6 狩猎 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
+| S3 | AI 安全（OWASP LLM） | LLM01 围栏+KB 隔离 / LLM02 输出打码 / LLM07② 提示词指纹 / LLM10 限流+会话封顶 / LLM08 检索越权 IT / C4 参数校验 / C2 前端渲染门禁 | 已验收（Phase4 闭环） |
+| S4 | 文件与主机加固 | F-2 magic number / F-3 解析炸弹三件套 / F-4 存储配额+上传限流 / L6 计费回归断言 / F-5+K3 Nginx 红线 / K1~K5 基线+巡检脚本 | 已验收（Phase4 闭环） |
+| S5 | 检测响应与收尾 | A4 refresh 旋转 / A6 TOTP / H SSRF 三路收口 / C5+C8+F2 残点 / G5 审计 / I 供应链+M4 蜜罐 / J2 注销+J4 隐私 / M1 IR+M3 FIM+M5 备份防勒索+M6 狩猎 | 已验收（Phase4 闭环，10 findings 修复 `c95ffe68`） |
 
 ## S4 架构速记（六步）
 
@@ -59,4 +59,4 @@
 
 ## 后续
 
-S3+S4+S5 统一 Phase4 交叉审查。开发进度：[开发进度5-S3.md](开发进度5-S3.md) / [开发进度6-S4.md](开发进度6-S4.md) / [开发进度7-S5.md](开发进度7-S5.md)；坐标底图：[../../docs/feature-map/安全体系.feature-map.md](../../docs/feature-map/安全体系.feature-map.md)。
+S3+S4+S5 统一 Phase4 已闭环（2026-08-15）：全量回归（后端 1960/2 预存、前端 431/7 预存、boot 冒烟 UP）+ 交叉审查 10 findings 全修 `c95ffe68`。开发进度：[开发进度5-S3.md](开发进度5-S3.md) / [开发进度6-S4.md](开发进度6-S4.md) / [开发进度7-S5.md](开发进度7-S5.md) / **[开发进度8-Phase4验证.md](开发进度8-Phase4验证.md)**；坐标底图：[../../docs/feature-map/安全体系.feature-map.md](../../docs/feature-map/安全体系.feature-map.md)。
