@@ -167,6 +167,26 @@ public class KnowledgeDocumentService {
         return toVO(doc);
     }
 
+    /**
+     * 安全体系 S3 · SEC-FR-051：解除注入隔离（管理员复核通过后调用）。
+     * 置回 PENDING 并显式重发解析触发事件——解析由 DocumentUploadedEvent 驱动，仅改状态不会自动跑。
+     */
+    public void unquarantine(Long id, Long operatorId, boolean admin) {
+        KnowledgeDocument doc = ensure(id);
+        if (!knowledgeBaseService.canManage(doc.getKbId(), operatorId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权管理该知识库文档");
+        }
+        if (!"QUARANTINED".equals(doc.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅隔离中的文档可解除隔离");
+        }
+        KnowledgeDocument upd = new KnowledgeDocument();
+        upd.setId(id);
+        upd.setStatus("PENDING");
+        upd.setQuarantineReason("");
+        documentMapper.updateById(upd);
+        applicationEventPublisher.publishEvent(new DocumentUploadedEvent(id, operatorId));
+    }
+
     /** docType 解析：显式传入非空 → 归一化校验；否则按标题后缀推断。 */
     private static String resolveDocType(String docType, String title) {
         if (docType != null && !docType.isBlank()) {
@@ -426,6 +446,7 @@ public class KnowledgeDocumentService {
                 .parseError(doc.getParseError())
                 .parseOptions(doc.getParseOptions())
                 .parseWarning(doc.getParseWarning())
+                .quarantineReason(doc.getQuarantineReason())
                 .ownerId(doc.getOwnerId())
                 .sourceType(doc.getSourceType())
                 .sourceUri(doc.getSourceUri())

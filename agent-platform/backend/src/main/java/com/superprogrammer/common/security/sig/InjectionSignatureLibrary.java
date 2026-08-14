@@ -49,4 +49,26 @@ public final class InjectionSignatureLibrary {
         }
         return null;
     }
+
+    /**
+     * 全文滑窗扫描（安全体系 S3 · SEC-FR-051，KB 文档入库隔离用）：
+     * 4k 窗 + 2k 步进（2k 重叠兜住跨窗边界特征）遍历全文，命中即止。
+     * 文档不似 chat「注入必在开头引导」，投毒特征可能埋在中后部，故必须全文。
+     */
+    public static String matchFull(String content) {
+        if (content == null || content.length() <= 4000) {
+            return match(content);
+        }
+        for (int start = 0; start < content.length(); start += 2000) {
+            int end = Math.min(content.length(), start + 4000);
+            String hit = match(content.substring(start, end));
+            if (hit != null) {
+                return hit + " @offset~" + start;
+            }
+            if (end == content.length()) {
+                break;
+            }
+        }
+        return null;
+    }
 }

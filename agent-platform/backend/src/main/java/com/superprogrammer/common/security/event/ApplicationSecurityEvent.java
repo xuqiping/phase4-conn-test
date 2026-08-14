@@ -31,6 +31,8 @@ public class ApplicationSecurityEvent extends ApplicationEvent {
     public static final String KIND_LOGIN_SUCCESS = "LOGIN_SUCCESS";
     /** 特权/敏感配置变更（payload: action, targetType, targetId）。 */
     public static final String KIND_PRIVILEGE_CHANGE = "PRIVILEGE_CHANGE";
+    /** KB 文档入库检出注入特征（安全体系 S3 · SEC-FR-051；payload: docId, kbId, hit）。 */
+    public static final String KIND_KB_INJECTION = "KB_INJECTION";
 
     private final String kind;
     private final Long userId;

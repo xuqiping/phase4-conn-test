@@ -218,6 +218,13 @@ public class SystemSettingService {
         return getBoolean(SECURITY_AI_FENCE_ENABLED, true);
     }
 
+    /** LLM01 KB 入库注入扫描开关（SEC-FR-051），默认开。 */
+    public static final String SECURITY_AI_KB_SCAN_ENABLED = "security.ai.kb-scan.enabled";
+
+    public boolean getAiKbScanEnabled() {
+        return getBoolean(SECURITY_AI_KB_SCAN_ENABLED, true);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

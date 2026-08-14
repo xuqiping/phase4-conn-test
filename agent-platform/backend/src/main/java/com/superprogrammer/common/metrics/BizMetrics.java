@@ -264,6 +264,14 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S3 · SEC-FR-051：KB 文档因注入特征被隔离次数。 */
+    public void kbQuarantined() {
+        Counter.builder("security.ai.kb.quarantined")
+                .description("KB 文档因提示注入特征被隔离次数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")

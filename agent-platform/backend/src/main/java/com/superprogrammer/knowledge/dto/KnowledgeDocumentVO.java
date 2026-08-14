@@ -27,6 +27,9 @@ public class KnowledgeDocumentVO {
     private String parseOptions;
     /** 非致命解析告警（Excel 截断/降级），前端黄色徽章；与 parseError（致命 FAILED）并列（V39）。 */
     private String parseWarning;
+
+    /** 隔离原因（安全体系 S3 · SEC-FR-051）：status=QUARANTINED 时返回，前端红色徽标+tooltip。 */
+    private String quarantineReason;
     private Long ownerId;
     private String sourceType;
     private String sourceUri;

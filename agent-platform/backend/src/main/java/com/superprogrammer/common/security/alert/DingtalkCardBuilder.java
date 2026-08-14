@@ -35,6 +35,7 @@ public final class DingtalkCardBuilder {
             Map.entry(SecurityEventTypes.POINTS_ABUSE, "积分滥用"),
             Map.entry(SecurityEventTypes.MEDIA_ABUSE, "媒体滥用"),
             Map.entry(SecurityEventTypes.PROMPT_INJECTION, "Prompt注入"),
+            Map.entry(SecurityEventTypes.KB_INJECTION, "KB文档注入隔离"),
             Map.entry(SecurityEventTypes.TOKEN_REUSE, "Token盗号疑似"),
             Map.entry(SecurityEventTypes.PRIVILEGE_CHANGE, "特权变更"));
 

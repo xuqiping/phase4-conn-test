@@ -29,6 +29,7 @@ public class RuleConfigController {
         // 总闸/响应/告警
         put("security.rate.enabled", "true");
         put("security.ai.fence.enabled", "true");
+        put("security.ai.kb-scan.enabled", "true");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

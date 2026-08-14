@@ -111,6 +111,7 @@ export const EVENT_TYPE_CN: Record<string, string> = {
   POINTS_ABUSE: '积分滥用',
   MEDIA_ABUSE: '媒体滥用',
   PROMPT_INJECTION: 'Prompt注入',
+  KB_INJECTION: 'KB文档注入隔离',
   TOKEN_REUSE: 'Token盗号疑似',
   PRIVILEGE_CHANGE: '特权变更',
 }

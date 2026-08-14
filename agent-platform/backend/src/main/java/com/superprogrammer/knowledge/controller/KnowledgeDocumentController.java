@@ -65,6 +65,15 @@ public class KnowledgeDocumentController {
                         getCurrentUserId(), isAdmin())));
     }
 
+    /** 安全体系 S3 · SEC-FR-051：解除文档注入隔离（复核通过），置回 PENDING 重新解析入库。 */
+    @PostMapping("/{id}/unquarantine")
+    @AuditLog(module = "kb", action = "document_unquarantine", targetType = "document")
+    @RequirePermission("knowledge:manage")
+    public ResponseEntity<R<Void>> unquarantine(@PathVariable Long id) {
+        knowledgeDocumentService.unquarantine(id, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("已解除隔离，重新解析已触发", null));
+    }
+
     /** 取图片/文件原件（KB 成员可读，跨用户）。docType=IMAGE → inline；FILE → attachment 下载。 */
     @GetMapping("/{id}/asset")
     @RequirePermission("knowledge:read")

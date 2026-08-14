@@ -1,11 +1,16 @@
 package com.superprogrammer.knowledge.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.billing.context.BillingContext;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgeDocument;
+import com.superprogrammer.knowledge.entity.KnowledgeNode;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocEmbeddingMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeEmbeddingMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeNodeMapper;
 import com.superprogrammer.knowledge.service.internal.BatchLlmResult;
 import com.superprogrammer.knowledge.service.internal.ExcelExtractResult;
 import com.superprogrammer.knowledge.service.internal.ExcelSheetExtractor;
@@ -110,6 +115,9 @@ public class DocumentParserService {
     private final SystemSettingService systemSettingService;
     private final StructuredDocumentExtractor structuredDocumentExtractor;
     private final ParseArtifactService parseArtifactService;
+    private final KnowledgeNodeMapper nodeMapper;
+    private final KnowledgeEmbeddingMapper embeddingMapper;
+    private final KnowledgeDocEmbeddingMapper docEmbeddingMapper;
 
     /** 监听器入口。宽 catch 有意：LlmGateway 抛裸 RuntimeException、Tika 抛 IOException/TikaException，均汇入 markFailed。 */
     public void parse(Long documentId, Long operatorId) {
@@ -126,6 +134,13 @@ public class DocumentParserService {
         try {
             updateStatus(documentId, "PARSING", operatorId);
             ExtractedDocument extracted = completeProtocol(doc, extract(doc));
+            // 安全体系 S3 · SEC-FR-051：入库注入扫描（LLM01 入库面 + LLM04 投毒）。
+            // 命中 → QUARANTINED 隔离（不入索引、不落 parse artifact）+ HIGH 安全事件；解除走 admin unquarantine 端点。
+            String injectionHit = scanInjection(extracted);
+            if (injectionHit != null) {
+                quarantine(documentId, operatorId, doc, injectionHit);
+                return;
+            }
             parseArtifactService.persistIfVersioned(doc, extracted);
             persistParseWarning(documentId, doc.getParseWarning(), operatorId);
             updateStatus(documentId, "SUMMARIZING", operatorId);
@@ -144,6 +159,66 @@ public class DocumentParserService {
             markFailed(documentId, operatorId, truncate(e.getMessage(), 1900));
         } finally {
             BillingContext.clear();
+        }
+    }
+
+    // -------------------- 安全体系 S3 · SEC-FR-051 注入扫描与隔离 --------------------
+
+    /** 横切可选依赖（沿用 2026-08-12 范式：测试/切片无 bean 时降级跳过）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+
+    /** 全文注入特征扫描；开关关/异常一律放行（检测层不自残）。返命中描述或 null。（包私有供单测） */
+    String scanInjection(ExtractedDocument extracted) {
+        try {
+            if (!systemSettingService.getAiKbScanEnabled() || extracted == null) {
+                return null;
+            }
+            String text = extracted.getPlainText();
+            if (text == null || text.isBlank()) {
+                text = extracted.getSections() == null ? "" : extracted.getSections().stream()
+                        .map(s -> s.getContent() == null ? "" : s.getContent())
+                        .filter(c -> !c.isBlank())
+                        .collect(java.util.stream.Collectors.joining("\n"));
+            }
+            return com.superprogrammer.common.security.sig.InjectionSignatureLibrary.matchFull(text);
+        } catch (Exception e) {
+            log.warn("KB 注入扫描失败(降级放行): {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 隔离：置 QUARANTINED + 原因 + HIGH 安全事件 + 指标；不写 parse artifact、不索引。（包私有供单测） */
+    void quarantine(Long documentId, Long operatorId, KnowledgeDocument doc, String hit) {
+        KnowledgeDocument upd = new KnowledgeDocument();
+        upd.setId(documentId);
+        upd.setStatus("QUARANTINED");
+        upd.setQuarantineReason(truncate("检测到提示注入特征: " + hit, 250));
+        documentMapper.updateById(upd);
+        // 纵深防御：清该文档残留节点+向量（新版重解析命中场景——旧版干净节点也不能继续留在召回池），
+        // 与 delete() 同构：node 软删 + L0/L1 向量硬删。可见集缓存无需失效（召回以节点为准）。
+        nodeMapper.delete(new LambdaQueryWrapper<KnowledgeNode>()
+                .eq(KnowledgeNode::getDocumentId, documentId));
+        embeddingMapper.deleteByDocument(documentId);
+        docEmbeddingMapper.deleteByDocument(documentId);
+        log.warn("KB 文档注入隔离 docId={} kbId={} hit={}", documentId, doc.getKbId(), hit);
+        if (securityEventPublisher != null) {
+            Long actor = operatorId != null ? operatorId : doc.getCreatedBy();
+            securityEventPublisher.publish(
+                    com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_KB_INJECTION,
+                    actor,
+                    java.util.Map.of("docId", documentId,
+                            "kbId", doc.getKbId() == null ? -1L : doc.getKbId(),
+                            "hit", truncate(hit, 120)));
+        }
+        if (bizMetrics != null) {
+            try {
+                bizMetrics.kbQuarantined();
+            } catch (Exception ignore) {
+                // 指标绝不阻断主链路
+            }
         }
     }
 

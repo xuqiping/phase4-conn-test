@@ -107,6 +107,8 @@ export interface KnowledgeDocument {
   parseOptions: string | null
   /** 非致命解析告警（Excel 截断/降级），前端黄色徽章（V39） */
   parseWarning: string | null
+  /** 隔离原因：status=QUARANTINED 时返回，红色徽标+tooltip（安全体系 S3） */
+  quarantineReason: string | null
   ownerId: number | null
   sourceType: string | null
   sourceUri: string | null
@@ -568,6 +570,10 @@ export const knowledgeApi = {
   },
   deleteDocument(id: number) {
     return request.delete<ApiResponse<void>>(`/knowledge/documents/${id}`)
+  },
+  /** POST /api/knowledge/documents/{docId}/unquarantine — 解除注入隔离并重新解析（knowledge:manage，安全体系 S3） */
+  unquarantineDocument(id: number) {
+    return request.post<ApiResponse<void>>(`/knowledge/documents/${id}/unquarantine`)
   },
   /** GET /api/knowledge/documents/{docId}/nodes — 文档目录树/原文节点（knowledge:read） */
   listDocumentNodes(docId: number) {

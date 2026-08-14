@@ -225,7 +225,8 @@ const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'defau
   PENDING: { type: 'warning', label: '排队中' },
   PARSING: { type: 'warning', label: '解析中' },
   SUMMARIZING: { type: 'warning', label: '摘要中' },
-  EMBEDDING: { type: 'warning', label: '向量化中' }
+  EMBEDDING: { type: 'warning', label: '向量化中' },
+  QUARANTINED: { type: 'error', label: '已隔离' }
 }
 
 const columns: DataTableColumns<KnowledgeDocument> = [
@@ -244,18 +245,26 @@ const columns: DataTableColumns<KnowledgeDocument> = [
   },
   {
     title: '错误', key: 'parseError', ellipsis: { tooltip: true },
-    render: r => r.parseError ? h('span', { style: 'color:var(--color-danger)' }, r.parseError) : '-'
+    // 安全体系 S3：隔离原因与解析错误并列展示（QUARANTINED 优先）
+    render: r => {
+      const err = r.quarantineReason || r.parseError
+      return err ? h('span', { style: 'color:var(--color-danger)' }, err) : '-'
+    }
   },
   {
     title: '创建', key: 'createdAt', width: 160,
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
-    title: '操作', key: 'actions', width: 210, fixed: 'right',
+    title: '操作', key: 'actions', width: 250, fixed: 'right',
     render: r => h('div', { style: 'display:flex;gap:6px' }, [
       h(NButton, { size: 'small', quaternary: true, onClick: () => openVersions(r) }, () => '版本'),
       props.canWrite
         ? h(NButton, { size: 'small', quaternary: true, onClick: () => openMetadata(r) }, () => '治理')
+        : null,
+      // 安全体系 S3：隔离文档优先给「解除隔离」（复核通过后重走解析），否则给删除
+      props.canWrite && r.status === 'QUARANTINED'
+        ? h(NButton, { size: 'small', quaternary: true, type: 'warning', onClick: () => unquarantine(r) }, () => '解除隔离')
         : null,
       props.canWrite
         ? h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => remove(r) }, () => '删除')
@@ -485,6 +494,17 @@ async function remove(doc: KnowledgeDocument) {
     message.success('已删除')
   } catch {
     message.error('删除失败')
+  }
+}
+
+/** 安全体系 S3：解除注入隔离（knowledge:manage）→ 置回 PENDING + 重发解析事件，列表靠轮询自刷新。 */
+async function unquarantine(doc: KnowledgeDocument) {
+  try {
+    await knowledgeApi.unquarantineDocument(doc.id)
+    message.success('已解除隔离，重新解析已触发')
+    void store.loadDocuments(props.kbId)
+  } catch {
+    message.error('解除隔离失败（需知识库管理权限）')
   }
 }
 

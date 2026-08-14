@@ -23,7 +23,7 @@ public class KnowledgeDocument extends BaseEntity {
     /** policy / manual / faq / api / ... */
     private String docType;
 
-    /** PENDING / PARSING / SUMMARIZING / EMBEDDING / INDEXED / FAILED */
+    /** PENDING / PARSING / SUMMARIZING / EMBEDDING / INDEXED / FAILED / QUARANTINED（S3 注入隔离） */
     private String status;
 
     private Long currentVersionId;
@@ -43,6 +43,9 @@ public class KnowledgeDocument extends BaseEntity {
 
     /** 非致命解析告警（截断/降级），前端黄色徽章；与 parseError（致命 FAILED）并列（V39） */
     private String parseWarning;
+
+    /** 隔离原因（安全体系 S3 · SEC-FR-051）：status=QUARANTINED 时写入，命中注入特征描述；解除时清空（V122） */
+    private String quarantineReason;
 
     private OffsetDateTime effectiveAt;
 
