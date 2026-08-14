@@ -155,6 +155,15 @@
 - `knowledge_nodes`：当前仍使用旧 L0/L2 物理层级，新 D0/S1/C2/E3 协议保存在 metadata，等待后续 OpenSearch 双写迁移。
 > 批注：已执行 Flyway 不可修改；任何结构演进必须新增高于 V108 的迁移。
 
+## Qwen Embedding / Rerank 真实调用链路
+
+- Qwen 多模态 Embedding 端点发送 `input.contents`、`enable_fusion=true`、`dimension=2048`，读取 `output.embeddings[0].embedding`；普通 OpenAI `/data/0/embedding` 协议保持不变。
+- RERANK 使用独立 Provider 注册表和 `LlmGateway.rerank`，不会进入 CHAT 路由，也不会回落到某个硬编码模型。
+- 专用 Rerank 返回的候选索引会校验越界、重复、空结果；知识库按索引映射回原候选并保留上游排序。
+- Rerank 模型调用通过 `callPurpose=RERANK` 关联 RAG Trace、Java 日志、低基数指标和 `llm_usage_logs.kind=RERANK`；Trace 仅保存候选数量摘要，不保存 Query、documents 或 Chunk 正文。
+- `V119__billing_rerank_kind.sql` 扩展调用明细与价表 kind 约束；RERANK 按输入 token 计价，管理员可在价表配置页选择重排模型。
+- 管理员设置页的 Embedding/Rerank“测试”均发真实请求。Rerank 诊断还会确认两个相关文本排在量子计算无关文本之前，HTTP 成功但语义排序错误仍判失败。
+
 ## 相关文档
 
 ## P5 评测数据集真实链路

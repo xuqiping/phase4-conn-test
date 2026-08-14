@@ -28,6 +28,17 @@
 - 重建写入隔离物理索引，现网 read/write Alias 在管理员确认切换前保持不变。
 - 只有状态为 `READY` 的已登记快照允许切换；失败或取消的快照必须重新生成新 snapshot ID。
 
+## 管理员：配置并验证 Embedding / Rerank
+
+1. 进入“设置 → 全局模型供应商”，Embedding 与 Rerank 必须分别创建为 `EMBEDDING`、`RERANK` 类型，不能登记为 CHAT。
+2. Qwen Embedding 完整端点填写 `/v1/services/embeddings/multimodal-embedding/multimodal-embedding`；知识库当前固定 2048 维，编辑弹窗会显示提示。
+3. Qwen Rerank 完整端点填写 `/v1/reranks`，模型列表填写实际配置的模型 ID。
+4. 保存后点击行内“测试”：Embedding 成功应显示“维度 2048”；Rerank 成功应显示返回 2 条排序结果，并已验证相关文本排在无关文本之前。
+5. 到“价表配置”为 Embedding 和 Rerank 分别建立价表。Rerank 选择“知识库重排”，按输入价/百万 token 配置；未配价表不会阻断模型测试，但调用明细会记录 `FAILED/未配置价表`，不扣积分。
+6. 在知识库重排配置中选择 `RERANK` 和明确的 Rerank 模型。未选择或模型不可用时会明确报错，不会静态替换为其他模型。
+
+排查顺序：先看设置页真实测试，再按同一 `traceId` 查看 Java 日志与调用明细。日志只应包含模型、供应商、候选数量、耗时、状态和关联 ID，不应出现 API Key、Query、候选正文或 Chunk 原文。
+
 ## 管理员：理解双写状态
 
 - `RAG_OPENSEARCH_ENABLED=false`：文档继续只写旧 PG 索引链路，适合尚未部署 OpenSearch 的环境。
