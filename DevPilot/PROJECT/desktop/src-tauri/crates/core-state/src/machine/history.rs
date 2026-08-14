@@ -19,14 +19,24 @@ pub fn record(
     gate: Option<&str>,
     actor: &str,
 ) -> DbResult<()> {
-    db.write(|c| {
-        c.execute(
-            "INSERT INTO transition_history (project_id, from_phase, to_phase, gate, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (project_id, from, to, gate, actor),
-        )?;
-        Ok(())
-    })
+    db.write(|c| record_on(c, project_id, from, to, gate, actor).map_err(Into::into))
+}
+
+/// 在既有连接上记历史（供调用方在同一 write 闭包/事务内复用，保证原子）。
+pub fn record_on(
+    c: &rusqlite::Connection,
+    project_id: i64,
+    from: &str,
+    to: &str,
+    gate: Option<&str>,
+    actor: &str,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO transition_history (project_id, from_phase, to_phase, gate, actor)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        (project_id, from, to, gate, actor),
+    )?;
+    Ok(())
 }
 
 pub fn list(db: &Db, project_id: i64) -> DbResult<Vec<HistoryEntry>> {

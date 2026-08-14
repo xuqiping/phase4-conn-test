@@ -41,10 +41,21 @@ export interface CmdError {
 }
 
 export function errMessage(e: unknown): string {
+  let raw: string;
   if (e && typeof e === "object" && "message" in e) {
-    return String((e as CmdError).message);
+    raw = String((e as CmdError).message);
+  } else {
+    raw = String(e);
   }
-  return String(e);
+  // 前端只显示大白话（plan 安全清单）：底层 JS/网络原始错误在此翻译，
+  // 不允许英文堆栈直接甩给用户（BUG-P01-01）。
+  if (raw.includes("reading 'invoke'") || raw.includes("__TAURI__")) {
+    return "内核通信未就绪，请重启应用再试";
+  }
+  if (raw.includes("Failed to fetch") || raw.includes("NetworkError")) {
+    return "网络连接失败，请检查网络后重试";
+  }
+  return raw;
 }
 
 export const ipc = {

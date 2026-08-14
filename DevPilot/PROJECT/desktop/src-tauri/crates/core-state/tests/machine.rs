@@ -228,3 +228,56 @@ fn ac052_restore_rejects_phase_not_in_def() {
     let mut m = Machine::new(def, "L2").unwrap();
     assert!(m.restore("ghost_phase", vec![]).is_err());
 }
+
+#[test]
+fn concurrent_transitions_do_not_tear_state_and_history() {
+    // 交叉审查 P02 期间修-3：transition 的当前态+历史必须在同一 write 闭包内落库。
+    // 4 线程并发对同一项目推 idea→spec：恰好一个成功；最终态与历史行数必须一致
+    // （旧实现读-改-写分离，可能出现 2 行历史但状态只前进一步、或互相覆盖）。
+    let db = Db::open_in_memory().unwrap();
+    db.write(|c| {
+        c.execute(
+            "INSERT INTO projects (name, path, workflow_version) VALUES ('demo', '/tmp/demo', 'v1.20')",
+            [],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let def = loader::parse(BUILTIN_DEFAULT_YAML).unwrap();
+
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let db = db.clone();
+            let def = def.clone();
+            std::thread::spawn(move || {
+                let mut pm =
+                    PersistentMachine::load_or_init(db, 1, def, "L2").expect("加载成功");
+                pm.transition("spec", "user").is_ok()
+            })
+        })
+        .collect();
+    let ok_count = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .filter(|ok| *ok)
+        .count();
+
+    assert_eq!(ok_count, 1, "idea→spec 只能成功一次");
+    let (phase, history_rows): (String, i64) = db
+        .read(|c| {
+            let phase: String = c.query_row(
+                "SELECT phase FROM workflow_states WHERE project_id = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            let history_rows: i64 = c.query_row(
+                "SELECT COUNT(*) FROM transition_history WHERE project_id = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok((phase, history_rows))
+        })
+        .unwrap();
+    assert_eq!(phase, "spec");
+    assert_eq!(history_rows, 1, "状态与历史必须一一对应，不得撕裂");
+}

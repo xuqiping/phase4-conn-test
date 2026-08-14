@@ -24,10 +24,15 @@ interface ProjectState {
   passGate: (gate: string) => Promise<void>;
 }
 
-function applySnapshot(dto: StateDto) {
+/** 应用内核快照（导出供测试：归位策略是联动点 1 的测试对象） */
+export function applySnapshot(dto: StateDto) {
+  const prev = useProjectStore.getState().snapshot;
   useProjectStore.setState({ snapshot: dto, currentId: dto.project_id });
-  // 视图归位到内核阶段（驾驶舱不是阶段，phase 一定是六阶段之一）
-  useUiStore.getState().setView(dto.phase as ViewKey);
+  // 仅当阶段真变时才把视图归位到内核阶段——用户正看驾驶舱/存档点列表时
+  // 不被内核推送事件拽走（交叉审查做偏-1）。首次快照（prev 为空）也归位。
+  if (prev?.phase !== dto.phase) {
+    useUiStore.getState().setView(dto.phase as ViewKey);
+  }
   if (dto.warning) {
     useProjectStore.setState({ error: dto.warning });
   }

@@ -22,6 +22,13 @@ export default function App() {
     return () => resetProjectStore();
   }, [init]);
 
+  // toast 8 秒自动消失：固定弹层不能长期拦截右栏点击（BUG-P01-02）
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(dismissError, 8000);
+    return () => clearTimeout(t);
+  }, [error, dismissError]);
+
   return (
     <div className="flex h-screen flex-col" data-density={density}>
       <Topbar />

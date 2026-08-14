@@ -334,12 +334,31 @@ impl PersistentMachine {
     }
 
     /// 裁决 + 落库（当前态 + 历史），actor 记录操作来源（user/cli/mcp/deeplink）。
+    /// 落库在**同一个 write 闭包**内完成：写队列串行执行，两条 SQL 不可能
+    /// 被并发插入撕裂，消除读-改-写竞态（交叉审查 P02 期间修-3）。
     pub fn transition(&mut self, to: &str, actor: &str) -> Result<(), MachineError> {
         let from = self.machine.phase().to_string();
         let gate = self.machine.gate_for(to).map(str::to_string);
         self.machine.transition(to)?;
-        self.persist()?;
-        history::record(&self.db, self.project_id, &from, to, gate.as_deref(), actor)?;
+        let gates: Vec<&String> = self.machine.gates_passed().iter().collect();
+        let gates_json = serde_json::to_string(&gates)?;
+        let project_id = self.project_id;
+        let to_owned = to.to_string();
+        self.db.write(|c| {
+            c.execute(
+                "UPDATE workflow_states SET phase = ?1, gate_status = ?2, updated_at = datetime('now') WHERE project_id = ?3",
+                (to_owned.as_str(), gates_json.as_str(), project_id),
+            )?;
+            history::record_on(
+                c,
+                project_id,
+                &from,
+                &to_owned,
+                gate.as_deref(),
+                actor,
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 

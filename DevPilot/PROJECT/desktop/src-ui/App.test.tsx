@@ -46,9 +46,9 @@ function stateDto(p: FakeProject) {
   };
 }
 
-vi.mock("./lib/ipc", () => ({
-  errMessage: (e: unknown) =>
-    e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : String(e),
+vi.mock("./lib/ipc", async (importOriginal) => ({
+  // errMessage 用真实实现（Step0 大白话翻译是测试对象，不能 mock 掉）
+  ...(await importOriginal<typeof import("./lib/ipc")>()),
   ipc: {
     listProjects: async () =>
       fake.projects.map((p) => ({
