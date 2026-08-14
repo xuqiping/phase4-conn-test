@@ -220,4 +220,26 @@ class TestConnectionTest {
         verify(billingService).onSuccess(any(), eq(1L), eq("GLOBAL"),
                 eq("configured-rerank-model"), eq("RERANK"), eq(20), eq(0));
     }
+
+    @Test
+    void testRerank_failsWhenIrrelevantDocumentRanksAhead() {
+        LlmProviderEntity entity = buildEntity();
+        entity.setCategory(LlmProviderService.CATEGORY_RERANK);
+        entity.setModels("[\"configured-rerank-model\"]");
+        when(mapper.selectById(1L)).thenReturn(entity);
+        when(aesEncryptService.decrypt("encrypted-key")).thenReturn("sk-test-key");
+        when(llmConfig.createProvider(entity, "sk-test-key")).thenReturn(provider);
+        when(provider.rerank(any())).thenReturn(RerankResult.builder()
+                .model("configured-rerank-model").duration(20L)
+                .items(java.util.List.of(
+                        RerankResult.Item.builder().index(1).score(0.9).build(),
+                        RerankResult.Item.builder().index(0).score(0.8).build()))
+                .build());
+
+        TestConnectionResult result = service.testRerank(1L);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("语义排序"));
+        verifyNoInteractions(billingService);
+    }
 }

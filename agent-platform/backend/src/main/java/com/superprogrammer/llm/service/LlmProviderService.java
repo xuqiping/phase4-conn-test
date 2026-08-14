@@ -397,6 +397,12 @@ public class LlmProviderService {
                     .documents(documents)
                     .topN(2)
                     .build());
+            Set<Integer> rankedIndexes = result.getItems().stream()
+                    .map(RerankResult.Item::getIndex)
+                    .collect(java.util.stream.Collectors.toSet());
+            if (result.getItems().size() != 2 || !rankedIndexes.equals(Set.of(0, 2))) {
+                throw new IllegalStateException("语义排序校验失败：无关候选未被正确降权");
+            }
             long duration = result.getDuration() != null ? result.getDuration() : System.currentTimeMillis() - start;
             com.superprogrammer.llm.dto.TokenUsage usage = result.getUsage();
             int inputTokens = usage != null ? usage.getPromptTokens()
