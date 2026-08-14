@@ -253,6 +253,44 @@ class RuntimeNodeCallbackServiceTest {
         verify(skillExecutor).executeSkill(eq(13L), org.mockito.ArgumentMatchers.any());
     }
 
+    // ============================ 安全体系 S4 · SEC-FR-125（L6 回归断言·回调层） ============================
+
+    /**
+     * AGENT 循环内 buildContext 塞 trustedUserId（executionId 反查值），请求体伪造 userId 不生效。
+     * 下游 SkillExecutor → LlmCallHandler 据此走 {@code chat(request, userId)} 双参归户计费
+     * （gateway 内 requireAffordable + UsageCollector；双参断言见 LlmCallHandlerTest L6 用例）。
+     * 本用例红线：若 buildContext 丢弃/信任 body userId，工作流绕计费通道即被打开。
+     */
+    @Test
+    void executeNode_agentLoopContextCarriesTrustedUserId_overridingSpoofedBody() {
+        RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);
+        Agent agent = new Agent();
+        agent.setId(3L);
+        agent.setName("writer");
+        agent.setStatus("PUBLISHED");
+        when(agentMapper.selectById(3L)).thenReturn(agent);
+        when(agentPermissionService.canUse(3L, 7L, false)).thenReturn(true);
+        when(agentRouter.route(agent, "write docs", 7L))
+                .thenReturn(RoutingResult.builder().skillIds(java.util.List.of(12L)).build());
+        when(skillExecutor.executeSkill(eq(12L), org.mockito.ArgumentMatchers.any()))
+                .thenReturn("billed output");
+
+        RuntimeNodeCallbackResponse response = service.executeNode(RuntimeNodeCallbackRequest.builder()
+                .executionId("1001")     // @BeforeEach 反查 triggeredBy=7（可信）
+                .nodeId("agent-1")
+                .sourceType("AGENT")
+                .sourceId(3L)
+                .userId(999L)            // 伪造 body userId——必须被反查值覆盖
+                .input(Map.of("message", "write docs"))
+                .build());
+
+        assertThat(response.isSuccess()).isTrue();
+        ArgumentCaptor<com.superprogrammer.engine.context.ExecutionContext> contextCaptor =
+                ArgumentCaptor.forClass(com.superprogrammer.engine.context.ExecutionContext.class);
+        verify(skillExecutor).executeSkill(eq(12L), contextCaptor.capture());
+        assertThat(contextCaptor.getValue().getUserId()).isEqualTo(7L);   // trustedUserId，非 999
+    }
+
     @Test
     void executeNode_rejectsSkillWhenOwningAgentIsNotPublishedAndUserIsNotOwner() {
         RuntimeNodeCallbackService service = new RuntimeNodeCallbackService(skillExecutor, agentMapper, skillMapper, agentRouter, agentPermissionService, ragScopeResolver, ragRetrievalService, ragModeResolver, executionLogService);

@@ -111,4 +111,26 @@ class LlmCallHandlerTest {
                         && "user".equals(req.getMessages().get(1).getRole())
                         && req.getMessages().get(1).getContent().contains("联调日志")), any());
     }
+
+    // ============================ 安全体系 S4 · SEC-FR-125（L6 回归断言） ============================
+
+    /**
+     * L6 计费链防退化：LLM_CALL 必须走 {@code chat(request, userId)} 双参重载——
+     * LlmGateway 内部 requireAffordable + UsageCollector 归户计费（S2 L7 / S1 L4 已测）。
+     * 工作流回调链：RuntimeNodeCallbackService.executeNode 反查 trustedUserId →
+     * buildContext 塞 context.userId → SkillExecutor → 本 handler。
+     * 若这里退化成无户 {@code chat(request)}，「借工作流节点绕过对话计费」的免费通道即被打开。
+     */
+    @Test
+    void execute_chargesViaUserIdOverload_neverUserIdFreeCall() {
+        ExecutionContext ctx = new ExecutionContext(1L, "WORKFLOW", null, null);
+        ctx.setUserId(7L);
+        when(llmGateway.chat(any(), any())).thenReturn(LlmResponse.builder()
+                .content("ok").usage(TokenUsage.builder().totalTokens(1).build()).build());
+
+        handler.execute("{\"promptTemplate\":\"hi\",\"outputKey\":\"out\"}", ctx);
+
+        verify(llmGateway).chat(any(), eq(7L));   // 归户=trustedUserId（计费链入口）
+        verify(llmGateway, never()).chat(any(com.superprogrammer.llm.dto.LlmRequest.class));   // 无户重载=免费通道，禁
+    }
 }
