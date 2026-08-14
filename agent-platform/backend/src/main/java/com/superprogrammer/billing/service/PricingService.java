@@ -82,6 +82,8 @@ public class PricingService {
                     textCost(rule, tokensInput, tokensOutput, true);
             case PricingRuleEntity.KIND_EMBED ->
                     textCost(rule, tokensInput, tokensOutput, false);
+            case PricingRuleEntity.KIND_RERANK ->
+                    textCost(rule, tokensInput, tokensOutput, false);
             case PricingRuleEntity.KIND_VIDEO -> videoCost(rule, tokensInput, videoSeconds);
             case PricingRuleEntity.KIND_IMAGE -> imageCost(rule, imageCount);
             default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "未知计费 kind: " + kind);

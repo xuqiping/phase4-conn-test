@@ -46,7 +46,7 @@ public class PricingConfigService {
 
     private static final Set<String> KINDS = Set.of(
             PricingRuleEntity.KIND_CHAT, PricingRuleEntity.KIND_EMBED,
-            PricingRuleEntity.KIND_IMAGE, PricingRuleEntity.KIND_VIDEO);
+            PricingRuleEntity.KIND_RERANK, PricingRuleEntity.KIND_IMAGE, PricingRuleEntity.KIND_VIDEO);
     private static final Set<String> VIDEO_MODES = Set.of(
             PricingRuleEntity.VIDEO_MODE_TOKEN, PricingRuleEntity.VIDEO_MODE_SECOND);
 
@@ -298,6 +298,7 @@ public class PricingConfigService {
         return switch (category) {
             case "CHAT" -> PricingRuleEntity.KIND_CHAT;
             case "EMBEDDING" -> PricingRuleEntity.KIND_EMBED;
+            case "RERANK" -> PricingRuleEntity.KIND_RERANK;
             case "IMAGE" -> PricingRuleEntity.KIND_IMAGE;
             case "VIDEO" -> PricingRuleEntity.KIND_VIDEO;
             default -> null;
@@ -354,7 +355,7 @@ public class PricingConfigService {
 
     private void validatePricingRule(PricingRuleRequest req) {
         if (req.getKind() == null || !KINDS.contains(req.getKind())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 须为 CHAT/EMBED/IMAGE/VIDEO");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 须为 CHAT/EMBED/RERANK/IMAGE/VIDEO");
         }
         if (req.getModel() == null || req.getModel().isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "model 不能为空");

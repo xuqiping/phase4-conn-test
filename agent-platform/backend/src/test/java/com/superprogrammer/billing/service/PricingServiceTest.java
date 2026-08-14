@@ -72,6 +72,18 @@ class PricingServiceTest {
     }
 
     @Test
+    void rerank_cost_uses_input_tokens_only() {
+        PricingRuleEntity r = rule("RERANK");
+        r.setPriceInputPerMillion(new BigDecimal("0.80"));
+        when(pricingRuleMapper.findEffective("RERANK", 9L, "rerank-model", false)).thenReturn(r);
+
+        BigDecimal cost = pricingService.computeCost("RERANK", 9L, "rerank-model",
+                2_000_000, 999_999, null, null, false);
+
+        assertThat(cost).isEqualByComparingTo("1.600000");
+    }
+
+    @Test
     void video_token_mode_uses_tokens_times_input_rate() {
         PricingRuleEntity r = rule("VIDEO");
         r.setPriceInputPerMillion(new BigDecimal("3.00"));

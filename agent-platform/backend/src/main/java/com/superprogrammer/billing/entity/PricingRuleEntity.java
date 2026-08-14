@@ -20,6 +20,7 @@ public class PricingRuleEntity {
 
     public static final String KIND_CHAT = "CHAT";
     public static final String KIND_EMBED = "EMBED";
+    public static final String KIND_RERANK = "RERANK";
     public static final String KIND_IMAGE = "IMAGE";
     public static final String KIND_VIDEO = "VIDEO";
 

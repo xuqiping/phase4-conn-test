@@ -15,7 +15,7 @@ import type { PageResult } from './admin'
 
 // === 类型定义 ===
 
-export type BillingKind = 'CHAT' | 'EMBED' | 'IMAGE' | 'VIDEO'
+export type BillingKind = 'CHAT' | 'EMBED' | 'RERANK' | 'IMAGE' | 'VIDEO'
 export type VideoBillingMode = 'TOKEN' | 'SECOND'
 
 /** 新增价表时可选择的 ACTIVE 全局模型。 */
@@ -276,6 +276,7 @@ export interface BillingQueryParams {
 export const KIND_LABEL: Record<BillingKind, string> = {
   CHAT: '文本对话',
   EMBED: '向量嵌入',
+  RERANK: '知识库重排',
   IMAGE: '图片生成',
   VIDEO: '视频生成'
 }
@@ -283,6 +284,7 @@ export const KIND_LABEL: Record<BillingKind, string> = {
 export const KIND_TAG_TYPE: Record<BillingKind, 'success' | 'info' | 'warning' | 'error'> = {
   CHAT: 'success',
   EMBED: 'info',
+  RERANK: 'info',
   IMAGE: 'warning',
   VIDEO: 'error'
 }

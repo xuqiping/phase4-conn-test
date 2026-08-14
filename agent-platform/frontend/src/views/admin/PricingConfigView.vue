@@ -73,7 +73,7 @@
             <n-input v-model:value="pricingForm.model" disabled />
           </n-form-item>
         </template>
-        <n-form-item label="输入价 ¥/百万" v-if="pricingForm.kind === 'CHAT' || pricingForm.kind === 'EMBED'"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
+        <n-form-item label="输入价 ¥/百万" v-if="pricingForm.kind === 'CHAT' || pricingForm.kind === 'EMBED' || pricingForm.kind === 'RERANK'"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="输出价 ¥/百万" v-if="pricingForm.kind === 'CHAT'"><n-input-number v-model:value="pricingForm.priceOutputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="视频计费模式" v-if="pricingForm.kind === 'VIDEO'">
           <n-select v-model:value="pricingForm.videoBillingMode" :options="modeOptions" />
@@ -236,7 +236,7 @@ function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
   const out: PricingRuleRequest = { ...form }
   const k = out.kind
   // 非文本/embed：清掉 token 价
-  if (k !== 'CHAT' && k !== 'EMBED') {
+  if (k !== 'CHAT' && k !== 'EMBED' && k !== 'RERANK') {
     out.priceInputPerMillion = null
     out.priceOutputPerMillion = null
   }
