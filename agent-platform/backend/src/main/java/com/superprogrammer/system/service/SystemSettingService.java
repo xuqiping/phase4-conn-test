@@ -299,6 +299,16 @@ public class SystemSettingService {
         return "ENFORCE".equals(getValue(SECURITY_RUNTIME_CALLBACK_HMAC_MODE)) ? "ENFORCE" : "DUAL";
     }
 
+    /**
+     * 安全体系 S5 · SEC-FR-133（M4 蜜罐）：canary 端点告警开关。
+     * 默认开；关=纯 404 伪装不告警（误报高时降级）。
+     */
+    public static final String SECURITY_HONEYPOT_ENABLED = "security.honeypot.enabled";
+
+    public boolean getHoneypotEnabled() {
+        return getBoolean(SECURITY_HONEYPOT_ENABLED, true);
+    }
+
     /** 安全体系 S4 · SEC-FR-033 per-user 存储配额（MB，F-4）。默认 2048；0=关闭配额。 */
     public static final String SECURITY_USER_STORAGE_QUOTA_MB = "security.user.storage-quota-mb";
 

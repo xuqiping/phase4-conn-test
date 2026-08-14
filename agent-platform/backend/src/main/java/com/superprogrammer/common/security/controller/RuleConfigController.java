@@ -47,6 +47,8 @@ public class RuleConfigController {
         put("security.auth.totp.required", "false");
         // 安全体系 S5 · SEC-FR-061 sidecar 回调 HMAC 模式（F2，dual=无签回落静态token / enforce=强制验签）
         put("security.runtime.callback.hmac-mode", "dual");
+        // 安全体系 S5 · SEC-FR-133 蜜罐端点告警开关（M4，关=纯404伪装不告警）
+        put("security.honeypot.enabled", "true");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

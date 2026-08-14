@@ -364,6 +364,15 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S5 · SEC-FR-133（M4）：蜜罐端点命中（path=canary 路径，基数固定 4）。 */
+    public void honeypotHit(String path) {
+        Counter.builder("security.honeypot.hit")
+                .tag("path", path)
+                .description("蜜罐端点命中次数（扫描器探测）")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P4-C11：钉钉告警发送成功（无 tag）。 */
     public void alertSent() {
         Counter.builder("security.alert.sent")

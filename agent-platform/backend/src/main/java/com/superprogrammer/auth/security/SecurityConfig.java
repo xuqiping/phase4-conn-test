@@ -105,6 +105,9 @@ public class SecurityConfig {
                         // 运维系统 OPS-FR-01：健康检查/指标端点 permitAll（Prometheus 抓取与部署探活无 JWT）。
                         // 暴露面控制不在这一层——Nginx 不反代 /actuator + 防火墙仅内网（见 application.yml 红线注释）。
                         .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
+                        // 安全体系 S5 · SEC-FR-133（M4 蜜罐）：canary 路由公开（扫描器无 JWT）——
+                        // 控制器内 404 伪装 + KIND_HONEYPOT HIGH 事件；不 permitAll 的话被 401 挡住蜜罐就哑了
+                        .requestMatchers("/wp-admin", "/.env", "/.git/config", "/api/admin/config.php").permitAll()
                         // 其他路径需要认证
                         .anyRequest().authenticated()
                 )

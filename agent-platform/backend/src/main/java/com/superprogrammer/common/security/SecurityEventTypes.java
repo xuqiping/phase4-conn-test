@@ -44,6 +44,8 @@ public final class SecurityEventTypes {
     public static final String LLM_SESSION_CAP = "LLM_SESSION_CAP";
     public static final String TOKEN_REUSE = "TOKEN_REUSE";
     public static final String PRIVILEGE_CHANGE = "PRIVILEGE_CHANGE";
+    /** 蜜罐端点命中（安全体系 S5 · SEC-FR-133，扫描器探测可感知，404 伪装 + HIGH 告警）。 */
+    public static final String KIND_HONEYPOT = "HONEYPOT";
 
     // ---- 严重度 ----
     public static final String SEV_LOW = "LOW";

@@ -328,4 +328,40 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          安全体系 S5 · SEC-FR-090（I1/I2 依赖漏洞扫描入口）：独立 profile，不绑默认构建生命周期——
+          全量 NVD 库首次下载极慢且离线会失败，绝不能让 CI/本地构建因此挂掉。
+          用法：mvn -P deps-check verify（或经 scripts/security/deps-check.sh 汇总门禁调用）。
+          报告：backend/target/dependency-check-report.html
+        -->
+        <profile>
+            <id>deps-check</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>9.2.0</version>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <!-- 只查漏不阻断构建（汇总门禁由 deps-check.sh 汇总退出码决定） -->
+                            <failBuildOnCVSS>11</failBuildOnCVSS>
+                            <!-- NVD API 密钥可经 env NVD_API_KEY 注入提速；无 key 慢但不影响结果 -->
+                            <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+                            <!-- 首跑全量下载可达数百 MB，缓存进本地仓库目录 -->
+                            <failOnError>false</failOnError>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
