@@ -1,4 +1,4 @@
-# 安全体系（S1~S4）· 技术说明
+# 安全体系（S1~S5）· 技术说明
 
 > 多 Agent 平台纵深防御体系。本 README 面向开发者（A 类），用户自助指引见 [../../docs/user-ops/安全体系用户操作手册.md](../../docs/user-ops/安全体系用户操作手册.md)。
 
@@ -10,6 +10,7 @@
 | S2 | 防篡改与越权 | 审计 HMAC 哈希链+锚点/单点登录/低余额在途闸门/越权 IT 脚手架（AbstractPrivilegeIT）/注册密码策略 | 已验收（Phase4 闭环） |
 | S3 | AI 安全（OWASP LLM） | LLM01 围栏+KB 隔离 / LLM02 输出打码 / LLM07② 提示词指纹 / LLM10 限流+会话封顶 / LLM08 检索越权 IT / C4 参数校验 / C2 前端渲染门禁 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
 | S4 | 文件与主机加固 | F-2 magic number / F-3 解析炸弹三件套 / F-4 存储配额+上传限流 / L6 计费回归断言 / F-5+K3 Nginx 红线 / K1~K5 基线+巡检脚本 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
+| S5 | 检测响应与收尾 | A4 refresh 旋转 / A6 TOTP / H SSRF 三路收口 / C5+C8+F2 残点 / G5 审计 / I 供应链+M4 蜜罐 / J2 注销+J4 隐私 / M1 IR+M3 FIM+M5 备份防勒索+M6 狩猎 | 代码侧闭环（2026-08-15，待 Phase4 交叉审查） |
 
 ## S4 架构速记（六步）
 
@@ -42,6 +43,20 @@
 
 单测：UntrustedContentFenceTest 7 / DocumentParserInjectionScanTest 6 / InjectionSignatureLibraryTest 8 / SensitivePatternCatalogTest 6 / OutputSanitizerTest 11 / ChatSessionServiceTest 21（含封顶×4）/ FileUploadValidatorTest 10 / ImageGuardTest 7 / FileStorageServiceTest 11（含配额×4）/ RuntimeNodeCallbackServiceTest 11（含归户断言）/ LlmCallHandlerTest 5（含计费重载断言）。IT：KnowledgeRetrievalPrivilegeIT 4（真实 PG，`mvn test -Dsurefire.excludedGroups= -Dtest=KnowledgeRetrievalPrivilegeIT`）。门禁：`scripts/security/{frontend-html-gate,mybatis-dollar-check,gitleaks-scan}.sh`；巡检：`scripts/ops/security-baseline-check.ps1`。
 
+## S5 架构速记（七步，2026-08-15 代码侧闭环）
+
+1. **refresh 旋转（Step1 `2ee9bd18`）**：换 access 同时换 refresh（同 sid），旧票拉黑值=`rotated` 区别 logout 的 `1`；黑名单命中且=rotated → 重放检出（MEDIUM 事件+计数，复用 TokenReuseRule）。开关 `security.auth.refresh-rotation.enabled`（默认开）。
+2. **TOTP（Step2 `4dc6444f`）**：`TotpService` RFC6238 零依赖自实现（官方测试向量对拍）；绑定流 secret 加密存 system_settings（不在 EDITABLE_KEYS）；两步登录 mfaToken（5min 一次性 jti 拉黑+5 次试错封顶）；8 组恢复码只存 SHA-256。开关 `security.auth.totp.required`（默认关，只建议不硬阻断）。
+3. **SSRF 三路收口（Step3 `d039334`）**：连通测试/媒体回源/搜索重定向全过 SsrfGuard——SearxngClient 弃自动跟随改手动逐跳 ≤3 跳每跳 assertPublicUrl；SanitizeUtil 补 CGNAT 100.64/10+IPv6 ULA。
+4. **残点（Step4 `a5b7746b`）**：WS Origin 白名单（共读 CORS 配置，误配 fail-closed）；KB visibility/Agent status 枚举白名单；sidecar 回调 HMAC（`ts.body` 签名+±300s 窗+恒定时间比对+BodyCachingRequest 重放 body，dual/enforce 热更双轨）。
+5. **密码学审计（Step5 `50f78f5`）**：AesEncryptService 生产态弱密钥 fail-fast（复用 CORS 信号）；审计文档落字 A7 维持 localStorage/F1 sourcemap 关。
+6. **供应链+蜜罐（Step6 `c4ddfac`）**：pom profile `deps-check`（不绑构建）+ `deps-check.sh` 五门禁汇总（audit 只卡生产依赖）；HoneypotController 四 canary 404 伪装+HIGH 事件（复用 5min 去重）。
+7. **隐私+收尾（Step7 `bdec27a7`）**：DELETE /auth/account 软删匿名化（deleted_{uuid}+DELETED+随机口令+踢全会话+双 token 拉黑+TOTP 清痕）；/privacy 隐私页；运维手册 §十 IR 预案（P1~P4+取证保全）；FIM SHA256 基线段（-Rebaseline 重建）；offsite 弃 /MIR 改 point-in-time 周快照（防勒索扩散）；K6 月度狩猎章。
+
+**S5 开关**：上述 + `security.honeypot.enabled`（默认开）/ `security.runtime.callback.hmac-mode`（dual/enforce）。**指标**：`security.auth.refresh.rotated|replayed` / `security.auth.mfa.verify{result}` / `security.ssrf.denied{source}` / `security.callback.auth{result}` / `security.honeypot.hit{path}`。**事件**：TOKEN_REUSE（MEDIUM，重放检出）/ HONEYPOT（HIGH）。
+
+**测试资产**：TotpServiceTest 9 / MfaServiceTest 13 / AuthServiceTest 31（旋转/两步/注销）/ RuntimeCallbackSecurityFilterTest 12（RFC4231 向量）/ WebSocketConfigTest 3 / KB 可见性 5 / Agent 14 / AesEncryptServiceTest 7 / HoneypotControllerTest 5 / SearxngClient 8 / SanitizeUtil 10 + python 回调加签 2；门禁单入口 `scripts/security/deps-check.sh`。
+
 ## 后续
 
-S5（检测响应与收尾）→ S3+S4+S5 统一 Phase4。开发进度：[开发进度5-S3.md](开发进度5-S3.md) / [开发进度6-S4.md](开发进度6-S4.md)；坐标底图：[../../docs/feature-map/安全体系.feature-map.md](../../docs/feature-map/安全体系.feature-map.md)。
+S3+S4+S5 统一 Phase4 交叉审查。开发进度：[开发进度5-S3.md](开发进度5-S3.md) / [开发进度6-S4.md](开发进度6-S4.md) / [开发进度7-S5.md](开发进度7-S5.md)；坐标底图：[../../docs/feature-map/安全体系.feature-map.md](../../docs/feature-map/安全体系.feature-map.md)。
