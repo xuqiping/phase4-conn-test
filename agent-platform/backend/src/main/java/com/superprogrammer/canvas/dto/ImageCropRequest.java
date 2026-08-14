@@ -1,5 +1,7 @@
 package com.superprogrammer.canvas.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import lombok.Data;
 
 /**
@@ -12,11 +14,15 @@ import lombok.Data;
 public class ImageCropRequest {
 
     /** 裁剪区左上角 x 归一化（0-1）。 */
+    @DecimalMin("0") @DecimalMax("1")
     private Double x;
     /** 裁剪区左上角 y 归一化（0-1）。 */
+    @DecimalMin("0") @DecimalMax("1")
     private Double y;
     /** 裁剪区宽归一化（0-1）。 */
+    @DecimalMin("0") @DecimalMax("1")
     private Double w;
     /** 裁剪区高归一化（0-1）。 */
+    @DecimalMin("0") @DecimalMax("1")
     private Double h;
 }

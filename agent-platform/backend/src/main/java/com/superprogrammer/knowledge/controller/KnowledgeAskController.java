@@ -11,6 +11,7 @@ import com.superprogrammer.knowledge.service.RagScopeResolver;
 import com.superprogrammer.llm.LlmGateway;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -50,7 +51,7 @@ public class KnowledgeAskController {
     @RequirePermission("knowledge:read")
     @com.superprogrammer.common.ratelimit.RateLimit(action = "rag_ask", max = 10, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
-    public SseEmitter ask(@RequestBody AskRequest request) {
+    public SseEmitter ask(@Valid @RequestBody AskRequest request) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         SecurityContext securityContext = SecurityContextHolder.getContext();

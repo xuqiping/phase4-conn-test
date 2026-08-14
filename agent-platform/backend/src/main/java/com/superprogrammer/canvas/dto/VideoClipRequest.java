@@ -1,5 +1,6 @@
 package com.superprogrammer.canvas.dto;
 
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
 
 /**
@@ -14,7 +15,9 @@ import lombok.Data;
 public class VideoClipRequest {
 
     /** 起始秒。 */
+    @PositiveOrZero
     private Long startSec;
     /** 结束秒。 */
+    @PositiveOrZero
     private Long endSec;
 }

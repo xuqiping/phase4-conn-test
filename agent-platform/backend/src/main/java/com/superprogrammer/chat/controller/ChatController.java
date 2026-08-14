@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.http.MediaType;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
@@ -78,7 +79,7 @@ public class ChatController {
     }
 
     @PostMapping("/sessions")
-    public ResponseEntity<R<SessionVO>> createSession(@RequestBody ChatRequest request) {
+    public ResponseEntity<R<SessionVO>> createSession(@Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         SessionVO session = chatSessionService.createSession(userId, request);
         return ResponseEntity.ok(R.ok(session));
@@ -116,7 +117,7 @@ public class ChatController {
     @PutMapping("/sessions/{id}/target")
     public ResponseEntity<R<SessionVO>> updateSessionTarget(
             @PathVariable Long id,
-            @RequestBody ChatRequest request) {
+            @Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         SessionVO session = chatSessionService.updateSessionTarget(userId, id, request);
         return ResponseEntity.ok(R.ok(session));
@@ -139,7 +140,7 @@ public class ChatController {
     @PostMapping("/sessions/{id}/messages")
     public ResponseEntity<R<ChatResponse>> sendMessage(
             @PathVariable Long id,
-            @RequestBody ChatRequest request) {
+            @Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         request.setSessionId(id);
         ChatResponse response = chatSessionService.sendMessage(userId, request);
@@ -149,7 +150,7 @@ public class ChatController {
     @PostMapping("/messages")
     @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
-    public ResponseEntity<R<ChatResponse>> sendMessageNew(@RequestBody ChatRequest request) {
+    public ResponseEntity<R<ChatResponse>> sendMessageNew(@Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         ChatResponse response = chatSessionService.sendMessage(userId, request);
         return ResponseEntity.ok(R.ok(response));
@@ -158,7 +159,7 @@ public class ChatController {
     @PostMapping(value = "/sessions/{id}/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter sendMessageStream(
             @PathVariable Long id,
-            @RequestBody ChatRequest request) {
+            @Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         request.setSessionId(id);
         return doStream(userId, request);
@@ -167,7 +168,7 @@ public class ChatController {
     @PostMapping(value = "/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
-    public SseEmitter sendMessageNewStream(@RequestBody ChatRequest request) {
+    public SseEmitter sendMessageNewStream(@Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         return doStream(userId, request);
     }

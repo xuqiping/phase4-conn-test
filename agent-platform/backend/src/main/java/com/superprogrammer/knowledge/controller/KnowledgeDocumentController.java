@@ -10,6 +10,7 @@ import com.superprogrammer.knowledge.dto.KnowledgeDocumentVersionActivateRequest
 import com.superprogrammer.knowledge.dto.KnowledgeDocumentUpdateRequest;
 import com.superprogrammer.knowledge.service.KnowledgeDocumentService;
 import com.superprogrammer.knowledge.service.KnowledgeDocumentVersionService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -98,7 +99,7 @@ public class KnowledgeDocumentController {
     @RequirePermission("knowledge:write")
     @AuditLog(module = "kb", action = "document_metadata_update", targetType = "document")
     public ResponseEntity<R<KnowledgeDocumentVO>> updateMetadata(
-            @PathVariable Long id, @RequestBody KnowledgeDocumentUpdateRequest request) {
+            @PathVariable Long id, @Valid @RequestBody KnowledgeDocumentUpdateRequest request) {
         return ResponseEntity.ok(R.ok(knowledgeDocumentService.updateMetadata(
                 id, request, getCurrentUserId(), isAdmin())));
     }
@@ -125,7 +126,7 @@ public class KnowledgeDocumentController {
     @RequirePermission("knowledge:write")
     @AuditLog(module = "kb", action = "document_version_activate", targetType = "document_version")
     public ResponseEntity<R<Void>> activateVersion(@PathVariable Long id, @PathVariable Long versionId,
-                                                    @RequestBody KnowledgeDocumentVersionActivateRequest request) {
+                                                    @Valid @RequestBody KnowledgeDocumentVersionActivateRequest request) {
         versionService.activate(id, versionId, request.getExpectedCurrentVersionId(), getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("版本已生效", null));
     }

@@ -1,5 +1,7 @@
 package com.superprogrammer.canvas.dto;
 
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -16,5 +18,7 @@ import java.util.List;
 public class StoryboardConcatRequest {
 
     /** 按序拼接的源视频 fileId 列表（≥1，≤ {@code canvas.storyboard-max-segments}，默认 20）。 */
+    @NotEmpty(message = "fileIds 不能为空")
+    @Size(max = 50, message = "拼接片段不能超过50个")
     private List<String> fileIds;
 }

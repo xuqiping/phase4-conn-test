@@ -1,5 +1,6 @@
 package com.superprogrammer.knowledge.dto;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
@@ -9,7 +10,9 @@ import java.util.List;
 @Data
 public class KnowledgeDocumentUpdateRequest {
     private Long ownerId;
+    @Size(max = 50)
     private String sourceType;
+    @Size(max = 1024)
     private String sourceUri;
     private OffsetDateTime sourceUpdatedAt;
     private String authorityLevel;

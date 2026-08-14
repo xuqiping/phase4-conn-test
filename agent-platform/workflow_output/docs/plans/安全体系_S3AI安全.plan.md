@@ -114,7 +114,7 @@ created-date: 2026-08-14
   - **需人工介入**：否
   - **验证**：11 次快速打 canvas run→第 11 次 429；jdbc 灌会话 usage 超限→发送被拒话术；usage 行带 session_id。
 
-- [ ] **Step 5：SEC-FR-057/058 LLM08 越权 IT + C4 校验抽查**
+- [x] **Step 5：SEC-FR-057/058 LLM08 越权 IT + C4 校验抽查** ✅ 2026-08-15
   - **目标**：KB 检索越权回归机制化；AI 入口参数校验补缺。
   - **动作**：①`KnowledgeRetrievalPrivilegeIT`（继承 AbstractPrivilegeIT）：A 建私有 KB+文档（jdbc 直插），B（持 knowledge:read）`POST /api/knowledge/retrieve` 带 A 的 kbId→403；B 多 KB 证据请求混入 A 的 kbId→结果不含 A 内容；sidecar 回调路径：用 RUNTIME_CALLBACK_TOKEN 打 `/api/runtime/callbacks/nodes/execute`，execution 属 A、body 伪造 userId=B→检索仍按 A 权限（token 未配则 @EnabledIfEnvironmentVariable 跳过）；②C4 抽查 chat/知识库/画布 12 个写端点 DTO：缺 @Valid/@NotNull/@Size 处补（伪代码列出清单后逐一补，只动注解与 DTO 字段约束）。
   - **文件**：`KnowledgeRetrievalPrivilegeIT.java`（新）、抽查涉及 DTO ≤8 个（ChatSendRequest/RagRetrieveRequest/CanvasRunRequest 等）

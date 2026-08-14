@@ -1,5 +1,6 @@
 package com.superprogrammer.canvas.dto;
 
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
 
 /**
@@ -16,5 +17,6 @@ public class FrameExtractRequest {
     /** FIRST / LAST / AT。 */
     private String mode;
     /** AT 模式抽帧秒数。 */
+    @PositiveOrZero
     private Long second;
 }

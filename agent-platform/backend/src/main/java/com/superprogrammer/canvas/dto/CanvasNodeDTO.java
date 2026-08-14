@@ -1,5 +1,6 @@
 package com.superprogrammer.canvas.dto;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.Map;
@@ -25,8 +26,10 @@ public class CanvasNodeDTO {
     public static final String TYPE_STORYBOARD = "storyboard";
 
     /** 节点 id（前端生成，画布内唯一）。 */
+    @Size(max = 64)
     private String id;
     /** 节点类型（text/image/video/audio/script）。 */
+    @Size(max = 32)
     private String type;
     /** 位置（画布坐标）。 */
     private Double positionX;

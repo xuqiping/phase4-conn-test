@@ -129,7 +129,7 @@ public class CanvasController {
     @com.superprogrammer.common.ratelimit.RateLimit(action = "canvas_run", max = 10, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<NodeRunResult>> runNode(@PathVariable Long id,
-                                                    @RequestBody CanvasNodeDTO node) {
+                                                    @Valid @RequestBody CanvasNodeDTO node) {
         Long userId = getCurrentUserId();
         // 归属咽喉点：即便运行无状态，也禁止在他人画布上触发（避免用他人 canvasId 借道跑 LLM）
         canvasService.loadOwned(id, userId, isAdmin());
@@ -166,7 +166,7 @@ public class CanvasController {
     @RequirePermission("canvas:write")
     public ResponseEntity<R<FrameExtractVO>> extractFrame(@PathVariable Long id,
                                                           @PathVariable String nodeId,
-                                                          @RequestBody FrameExtractRequest req) {
+                                                          @Valid @RequestBody FrameExtractRequest req) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         Canvas c = canvasService.loadOwned(id, userId, isAdmin());
@@ -208,7 +208,7 @@ public class CanvasController {
     @RequirePermission("canvas:write")
     public ResponseEntity<R<ImageCropVO>> cropImage(@PathVariable Long id,
                                                     @PathVariable String nodeId,
-                                                    @RequestBody ImageCropRequest req) {
+                                                    @Valid @RequestBody ImageCropRequest req) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         Canvas c = canvasService.loadOwned(id, userId, isAdmin());
@@ -252,7 +252,7 @@ public class CanvasController {
     @RequirePermission("canvas:write")
     public ResponseEntity<R<VideoClipVO>> clipVideo(@PathVariable Long id,
                                                     @PathVariable String nodeId,
-                                                    @RequestBody VideoClipRequest req) {
+                                                    @Valid @RequestBody VideoClipRequest req) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         Canvas c = canvasService.loadOwned(id, userId, isAdmin());
@@ -305,7 +305,7 @@ public class CanvasController {
     @PostMapping("/{id}/storyboard/concat")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<StoryboardConcatVO>> concatStoryboard(@PathVariable Long id,
-                                                                  @RequestBody StoryboardConcatRequest req) {
+                                                                  @Valid @RequestBody StoryboardConcatRequest req) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
         canvasService.loadOwned(id, userId, isAdmin());
