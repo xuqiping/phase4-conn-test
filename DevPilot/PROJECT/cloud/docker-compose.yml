@@ -1,0 +1,30 @@
+# DevPilot 云端开发编排（architecture §6：单机 compose 起步）。
+# 用法：docker compose up -d pg redis flyway && npm run start:dev
+services:
+  pg:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: devpilot
+      POSTGRES_PASSWORD: devpilot_dev
+      POSTGRES_DB: devpilot
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devpilot"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  # Flyway 一次性容器：pg 就绪后自动迁移 ./flyway 脚本
+  flyway:
+    image: flyway/flyway:10
+    command: -url=jdbc:postgresql://pg:5432/devpilot -user=devpilot -password=devpilot_dev -connectRetries=10 migrate
+    depends_on:
+      pg: { condition: service_healthy }
+    volumes: ["./flyway:/flyway/sql"]
+
+volumes:
+  pgdata:
