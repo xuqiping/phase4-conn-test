@@ -126,6 +126,8 @@ public class CanvasController {
      */
     @PostMapping("/{id}/nodes/run")
     @RequirePermission("canvas:write")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "canvas_run", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<NodeRunResult>> runNode(@PathVariable Long id,
                                                     @RequestBody CanvasNodeDTO node) {
         Long userId = getCurrentUserId();

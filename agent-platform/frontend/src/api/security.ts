@@ -113,6 +113,7 @@ export const EVENT_TYPE_CN: Record<string, string> = {
   PROMPT_INJECTION: 'Prompt注入',
   KB_INJECTION: 'KB文档注入隔离',
   PROMPT_LEAK: 'Prompt泄露遮蔽',
+  LLM_SESSION_CAP: '会话Token超限',
   TOKEN_REUSE: 'Token盗号疑似',
   PRIVILEGE_CHANGE: '特权变更',
 }

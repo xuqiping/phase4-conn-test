@@ -81,4 +81,10 @@ public class LlmUsageLogEntity {
      * chat/embed 无任务 → null。
      */
     private Long taskId;
+
+    /**
+     * 归属 chat 会话 id（安全体系 S3 · SEC-FR-056 / V122）：会话 token 上限 SUM 统计列。
+     * null=非会话调用（记忆后台/文档解析/画布节点等）。
+     */
+    private String sessionId;
 }

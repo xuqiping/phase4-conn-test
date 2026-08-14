@@ -237,7 +237,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"));
+                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"), isNull());
     }
 
     @Test
@@ -254,7 +254,7 @@ class LlmGatewayTest {
         gateway.chat(request, 42L);
 
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"));
+                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"), isNull());
     }
 
     @Test
@@ -289,7 +289,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(20), eq(10));
+                eq("CHAT"), eq(20), eq(10), eq("SUCCESS"), isNull());
         verify(modelCallScope).detach();
         verify(modelCallScope, atLeast(2)).runWithContext(any(Runnable.class));
     }
@@ -315,7 +315,7 @@ class LlmGatewayTest {
 
             verify(walletService).requireAffordable(42L);   // uid 取自 BillingContext
             verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"));
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull());
         } finally {
             BillingContext.clear();
         }
@@ -338,7 +338,7 @@ class LlmGatewayTest {
         // uid=null → requireAffordable(null) 短路（不扣），onSuccess(null,...) 仅采集不扣费
         verify(walletService).requireAffordable(null);
         verify(billingService).onSuccess(isNull(), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"));
+                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull());
     }
 
     // ===== OPS-FR-03 LLM 指标埋点（正好一次，不重不漏）=====

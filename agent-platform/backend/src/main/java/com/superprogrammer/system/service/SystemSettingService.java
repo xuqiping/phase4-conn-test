@@ -239,6 +239,13 @@ public class SystemSettingService {
         return getBoolean(SECURITY_AI_PROMPT_LEAK_ENABLED, true);
     }
 
+    /** LLM10 单会话累计 token 上限（SEC-FR-056），0=关。 */
+    public static final String SECURITY_LLM_SESSION_TOKEN_CAP = "security.llm.session-token-cap";
+
+    public long getLlmSessionTokenCap() {
+        return getLong(SECURITY_LLM_SESSION_TOKEN_CAP, 500000L);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

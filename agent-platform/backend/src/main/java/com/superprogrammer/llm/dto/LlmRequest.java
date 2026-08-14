@@ -25,4 +25,10 @@ public class LlmRequest {
     private Integer timeoutMs;
     /** RAG trace purpose; null uses the gateway's endpoint default. */
     private String callPurpose;
+    /**
+     * 归属 chat 会话 id（安全体系 S3 · SEC-FR-056 / LLM10 会话 token 上限）：
+     * 透传计费落 llm_usage_logs.session_id（V122），发送前 SUM 检查在此列上做。
+     * null=非会话调用（记忆后台/解析摘要/画布节点等），不参与会话封顶。
+     */
+    private String sessionId;
 }

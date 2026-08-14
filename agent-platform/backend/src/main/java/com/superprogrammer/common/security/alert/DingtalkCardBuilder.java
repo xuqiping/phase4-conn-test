@@ -37,6 +37,7 @@ public final class DingtalkCardBuilder {
             Map.entry(SecurityEventTypes.PROMPT_INJECTION, "Prompt注入"),
             Map.entry(SecurityEventTypes.KB_INJECTION, "KB文档注入隔离"),
             Map.entry(SecurityEventTypes.PROMPT_LEAK, "Prompt泄露遮蔽"),
+            Map.entry(SecurityEventTypes.LLM_SESSION_CAP, "会话Token超限"),
             Map.entry(SecurityEventTypes.TOKEN_REUSE, "Token盗号疑似"),
             Map.entry(SecurityEventTypes.PRIVILEGE_CHANGE, "特权变更"));
 

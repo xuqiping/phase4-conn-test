@@ -90,7 +90,7 @@ created-date: 2026-08-14
   - **需人工介入**：否
   - **验证**：单测 strip 变体（`</RETRIEVED_DATA >` 等）；集成冒烟：开启 RAG 提问→trace 日志 prompt 含围栏且引用照常；关开关→回退纯文本。
 
-- [ ] **Step 2：SEC-FR-051 KB 入库注入扫描与隔离（LLM01 入库面）**
+- [x] **Step 2：SEC-FR-051 KB 入库注入扫描与隔离（LLM01 入库面）** ✅ `7c98e6ae`（2026-08-15）
   - **目标**：含注入特征的文档不入检索索引，检出写安全事件，管理员可复核解除。
   - **动作**：①`InjectionSignatureLibrary` 加 `matchFull(text)`（4k 滑窗）；②`DocumentParserService.parse` 在 extract 后：命中→doc 置 `status=QUARANTINED`+`quarantine_reason`，跳过 summarize/embedding，`SecurityEventPublisher.publish(KIND_KB_INJECTION, uploaderId, {docId,kbId,hits})`；③`KnowledgeDocument` 实体/状态机注释补 QUARANTINED；④检索侧确认既有 status 过滤天然排除（补断言测试）；⑤管理员端点 `POST /api/knowledge/documents/{id}/unquarantine`（`knowledge:manage`+`@AuditLog(module="kb",action="document_unquarantine")`→置 PENDING 并**显式触发解析**（publish DocumentUploadedEvent 或直调 parse——解析由上传事务后事件驱动，仅改状态不会自动跑，自 critique 修正））；⑥前端 DocumentManager 徽标+原因 tooltip+解除按钮；⑦新冷规则 `KbInjectionRule`（supports KIND_KB_INJECTION，HIGH，autoAction=NONE）；⑧事件中文文案两处+BizMetrics 计数。
   - **文件**：`V122__ai_security.sql`（knowledge_documents 加 quarantined 标记列：`quarantine_reason VARCHAR(255) NULL`；llm_usage_logs 加 `session_id`——与 Step 4 共用本迁移）、`InjectionSignatureLibrary.java`、`DocumentParserService.java`、`KnowledgeDocument.java`、`KnowledgeDocumentController.java`（解除端点）、`common/security/rule/KbInjectionRule.java`（新）、`ApplicationSecurityEvent.java`、`SecurityEventTypes.java`、`DingtalkCardBuilder.java`、`frontend/src/api/security.ts`、`frontend/src/components/knowledge/DocumentManager.vue`、测试×3
@@ -98,7 +98,7 @@ created-date: 2026-08-14
   - **需人工介入**：否
   - **验证**：上传埋「忽略之前所有指令…」文档→QUARANTINED+钉钉卡片（本地日志断言）；检索不含其内容；解除→重走 INDEXED；第 10k 字符埋特征仍检出。
 
-- [ ] **Step 3：SEC-FR-052/053 输出侧打码 + prompt 泄露指纹（LLM02/07）**
+- [x] **Step 3：SEC-FR-052/053 输出侧打码 + prompt 泄露指纹（LLM02/07）** ✅ `55e133b2`（2026-08-15）
   - **目标**：LLM 文本输出经网关咽喉统一扫敏感模式打码；含 system prompt 片段即遮蔽+HIGH 告警。
   - **动作**：①新建 `common/security/ai/SensitivePatternCatalog`（抄 LogMasker 同源正则：身份证18/银行卡/api[-_]?(key|token|secret|password)=值/Bearer/手机号，替换 `***`，独立类注释与 LogMasker 双向同步红线）；②新建 `OutputSanitizer`：同步 `mask(text)`；流式 `maskChunk(chunk, state)`（40 字符 carry）；③新建 `PromptLeakDetector`：**只指纹静态 prompt 资产**（Agent/Skill 库存 systemPrompt，自 critique 修正——不按请求内 system 消息算，防动态记忆/证据被误当资产致用户复述自己记忆遭遮蔽）：10min TTL 进程内缓存全量 shingle hash 集（32 字符步进 8），响应滑窗 hash 命中连续≥2→返回遮蔽区间；Agent/Skill 更新钩子主动失效；④`LlmGateway.chat` 返回值过 sanitizer；`chatStream` CHUNK 事件 map 过 `maskChunk`；⑤泄露命中→publish KIND_PROMPT_LEAK(HIGH)；⑥全部挂 `security.ai.*` 开关，异常透传原文+ERROR。
   - **文件**：`SensitivePatternCatalog.java`（新）、`OutputSanitizer.java`（新）、`PromptLeakDetector.java`（新）、`LlmGateway.java`、`ApplicationSecurityEvent.java`/`SecurityEventTypes.java`/`DingtalkCardBuilder.java`/`frontend/src/api/security.ts`（新事件码）、`SystemSettingService.java`、`BizMetrics.java`、测试×3
@@ -106,7 +106,7 @@ created-date: 2026-08-14
   - **需人工介入**：否
   - **验证**：单测身份证跨 chunk、apiKey kv、Bearer、prompt 复述遮蔽+事件；手机号开关关→不打码；记忆/标签既有套件回归绿。
 
-- [ ] **Step 4：SEC-FR-055/056 LLM10 速率补齐 + 会话 token 上限**
+- [x] **Step 4：SEC-FR-055/056 LLM10 速率补齐 + 会话 token 上限** ✅ 2026-08-15
   - **目标**：全部用户直触 LLM 入口有限流；单会话累计 token 封顶。
   - **动作**：①`@RateLimit` 补三入口：`CanvasController /{id}/nodes/run`（canvas_run 10/60s USER SLIDING）、`KnowledgeAskController /ask`（rag_ask 10/60s USER）、`WorkflowController /stream-run`（workflow_run 10/60s USER），阈值热更键同步进 EDITABLE_KEYS；②`LlmRequest` 加可选 `sessionId`，`ChatSessionService` 同步/流式两路填入；③`LlmBillingService.onSuccess` 透传写 llm_usage_logs.session_id；④`ChatSessionService` 发送前（两路）查 `SUM(total_tokens) WHERE session_id=?` ≥ `security.llm.session-token-cap`（默认 500000，0=关）→拒固定话术+MEDIUM 事件；⑤顺手修 `KnowledgeAskController.java:83` e.getMessage 直发前端→固定话术。
   - **文件**：`CanvasController.java`、`KnowledgeAskController.java`、`WorkflowController.java`、`LlmRequest.java`、`ChatSessionService.java`、`LlmGateway.java`（透传）、`LlmBillingService.java`、`LlmUsageLogEntity.java`+Mapper、`UsageCollector.java`、`SystemSettingService.java`、`ErrorCode.java`（LLM_SESSION_CAP_EXCEEDED）、测试×2

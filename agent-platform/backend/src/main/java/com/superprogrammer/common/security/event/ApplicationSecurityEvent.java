@@ -35,6 +35,8 @@ public class ApplicationSecurityEvent extends ApplicationEvent {
     public static final String KIND_KB_INJECTION = "KB_INJECTION";
     /** LLM 输出含静态 system prompt 指纹（安全体系 S3 · SEC-FR-053；payload: channel, chars——不带原文）。 */
     public static final String KIND_PROMPT_LEAK = "PROMPT_LEAK";
+    /** 单会话累计 token 达上限被拒（安全体系 S3 · SEC-FR-056；payload: sessionId, used, cap）。 */
+    public static final String KIND_LLM_SESSION_CAP = "LLM_SESSION_CAP";
 
     private final String kind;
     private final Long userId;

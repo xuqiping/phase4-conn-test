@@ -105,6 +105,13 @@ public class ChatSessionService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
 
+    /**
+     * 安全体系 S3 · SEC-FR-056（LLM10）：usage 表读取（会话 token 封顶 SUM 检查）。
+     * 同上横切可选依赖范式（@InjectMocks 单测无此 mapper 时跳过检查）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.billing.mapper.LlmUsageLogMapper llmUsageLogMapper;
+
     private static final int MAX_CONTEXT_MESSAGES = 20;
 
     @Transactional
@@ -226,6 +233,7 @@ public class ChatSessionService {
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
         context.setModel(request.getModel());
         context.setUserId(userId);
+        enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略
         if (request.getRagEnabled() != null && !request.getRagEnabled().equals(session.getRagEnabled())) {
@@ -427,6 +435,39 @@ public class ChatSessionService {
         return (message == null ? "" : message) + "\n（附件：" + mention + "）";
     }
 
+    /**
+     * 安全体系 S3 · SEC-FR-056（LLM10 无限消耗）：发送前查本会话累计 token。
+     * SUM(tokens_input+tokens_output) WHERE session_id ≥ security.llm.session-token-cap（默认 500000，0=关）
+     * → 拒固定话术（LLM_SESSION_CAP_EXCEEDED）+ KIND_LLM_SESSION_CAP MEDIUM 事件。
+     * 检测层不自残：mapper 缺席/查询异常/开关解析失败一律放行（封顶是止损闸，不挡正常聊天）。
+     * payload 只带 sessionId/used/cap（PII 红线 #6：不带消息原文）。
+     */
+    private void enforceSessionTokenCap(Long sessionId, Long userId) {
+        try {
+            if (llmUsageLogMapper == null || sessionId == null) {
+                return;
+            }
+            long cap = systemSettingService.getLlmSessionTokenCap();
+            if (cap <= 0) {
+                return;
+            }
+            long used = llmUsageLogMapper.sumTokensBySession(String.valueOf(sessionId));
+            if (used < cap) {
+                return;
+            }
+            if (securityEventPublisher != null) {
+                securityEventPublisher.publish(
+                        com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_LLM_SESSION_CAP,
+                        userId, java.util.Map.of("sessionId", sessionId, "used", used, "cap", cap));
+            }
+            throw new BusinessException(ErrorCode.LLM_SESSION_CAP_EXCEEDED);
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            log.warn("会话token封顶检查失败(放行) sessionId={}: {}", sessionId, e.getMessage());
+        }
+    }
+
     private List<ChatMessage> loadContextWindow(Long sessionId) {
         LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId)
@@ -475,6 +516,7 @@ public class ChatSessionService {
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
         context.setModel(request.getModel());
         context.setUserId(userId);
+        enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略
         if (request.getRagEnabled() != null && !request.getRagEnabled().equals(session.getRagEnabled())) {

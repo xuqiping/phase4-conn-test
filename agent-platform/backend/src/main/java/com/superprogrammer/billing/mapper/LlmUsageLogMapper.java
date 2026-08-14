@@ -93,4 +93,12 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
 
     @Select("SELECT trace_id FROM llm_usage_logs WHERE id=#{id}")
     String findTraceIdById(Long id);
+
+    /**
+     * 安全体系 S3 · SEC-FR-056：会话累计 token（input+output）。
+     * 命中 V122 partial index（WHERE session_id IS NOT NULL）；COALESCE 保证无行返 0。
+     */
+    @Select("SELECT COALESCE(SUM(tokens_input + tokens_output), 0) FROM llm_usage_logs"
+            + " WHERE session_id=#{sessionId}")
+    long sumTokensBySession(@Param("sessionId") String sessionId);
 }

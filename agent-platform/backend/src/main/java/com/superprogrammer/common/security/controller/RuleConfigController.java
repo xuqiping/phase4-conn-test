@@ -32,6 +32,8 @@ public class RuleConfigController {
         put("security.ai.kb-scan.enabled", "true");
         put("security.ai.output-mask.enabled", "true");
         put("security.ai.prompt-leak.enabled", "true");
+        // SEC-FR-056 会话 token 上限（0=关）
+        put("security.llm.session-token-cap", "500000");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");
@@ -42,6 +44,10 @@ public class RuleConfigController {
         put("security.rate.global_ip.max", "600");
         put("security.rate.chat_send.max", "20");
         put("security.rate.media_submit.max", "10");
+        // 安全体系 S3 · SEC-FR-055（LLM10 用户直触入口补齐）
+        put("security.rate.canvas_run.max", "10");
+        put("security.rate.rag_ask.max", "10");
+        put("security.rate.workflow_run.max", "10");
         // 规则阈值（P3 默认）
         put("security.rule.idor.threshold", "10");
         put("security.rule.exfil.threshold", "500");

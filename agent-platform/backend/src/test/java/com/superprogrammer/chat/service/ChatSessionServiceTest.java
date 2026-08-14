@@ -58,6 +58,9 @@ class ChatSessionServiceTest {
     // 8x Chunk4 对话审计
     @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
     @Mock private com.superprogrammer.common.audit.AuditLogEntity auditLogEntityStub;
+    // S3 Step4（SEC-FR-056）：可选依赖注入后走封顶检查；未 stub 的用例 getLlmSessionTokenCap 默认 0 → 检查跳过
+    @Mock private com.superprogrammer.billing.mapper.LlmUsageLogMapper llmUsageLogMapper;
+    @Mock private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
 
     @InjectMocks
     private ChatSessionService chatSessionService;
@@ -279,6 +282,101 @@ class ChatSessionServiceTest {
         verify(auditLogService).fromMdc(eq("chat"), eq("send_message"), eq("chat_session"),
                 eq("1"), anyString(), eq(com.superprogrammer.common.audit.AuditLogEntity.RESULT_SUCCESS));
         verify(auditLogService).record(any());
+    }
+
+    // ============================ S3 Step4 · SEC-FR-056 会话 token 封顶 ============================
+
+    /** 超限：SUM ≥ cap → 拒 LLM_SESSION_CAP_EXCEEDED + KIND_LLM_SESSION_CAP 事件（payload 不带原文）。 */
+    @Test
+    void sendMessage_sessionTokenCapExceeded_rejectsAndPublishesEvent() {
+        // @RequiredArgsConstructor 下 Mockito 走构造注入，@Autowired 字段需手工种（同 chatAuditEnabled 范式）
+        ReflectionTestUtils.setField(chatSessionService, "llmUsageLogMapper", llmUsageLogMapper);
+        ReflectionTestUtils.setField(chatSessionService, "securityEventPublisher", securityEventPublisher);
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(systemSettingService.getLlmSessionTokenCap()).thenReturn(500000L);
+        when(llmUsageLogMapper.sumTokensBySession("1")).thenReturn(600000L);
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("Hello");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> chatSessionService.sendMessage(100L, request));
+        assertEquals(com.superprogrammer.common.exception.ErrorCode.LLM_SESSION_CAP_EXCEEDED.getCode(),
+                ex.getCode());
+        verify(securityEventPublisher).publish(
+                eq(com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_LLM_SESSION_CAP),
+                eq(100L), argThat(payload -> payload.containsKey("used") && payload.containsKey("cap")));
+        verify(orchestrationEngine, never()).execute(any(), anyString());
+    }
+
+    /** 未超限：正常放行走完整发送链。 */
+    @Test
+    void sendMessage_sessionTokenUnderCap_passes() {
+        ReflectionTestUtils.setField(chatSessionService, "llmUsageLogMapper", llmUsageLogMapper);
+        ReflectionTestUtils.setField(chatSessionService, "securityEventPublisher", securityEventPublisher);
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(systemSettingService.getLlmSessionTokenCap()).thenReturn(500000L);
+        when(llmUsageLogMapper.sumTokensBySession("1")).thenReturn(499999L);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("Hi");
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("Hello");
+        ChatResponse response = chatSessionService.sendMessage(100L, request);
+
+        assertEquals("Hi", response.getContent());
+        verify(securityEventPublisher, never()).publish(
+                eq(com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_LLM_SESSION_CAP),
+                any(), any());
+    }
+
+    /** 检测层不自残：usage 查询抛异常 → 放行（封顶是止损闸，不挡正常聊天）。 */
+    @Test
+    void sendMessage_sessionTokenCapQueryFails_passesThrough() {
+        ReflectionTestUtils.setField(chatSessionService, "llmUsageLogMapper", llmUsageLogMapper);
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(systemSettingService.getLlmSessionTokenCap()).thenReturn(500000L);
+        when(llmUsageLogMapper.sumTokensBySession("1")).thenThrow(new RuntimeException("db down"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("Hi");
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("Hello");
+        ChatResponse response = chatSessionService.sendMessage(100L, request);
+
+        assertEquals("Hi", response.getContent());
+    }
+
+    /** cap=0 关闭：不查 usage 直接放行。 */
+    @Test
+    void sendMessage_sessionTokenCapDisabled_skipsQuery() {
+        ReflectionTestUtils.setField(chatSessionService, "llmUsageLogMapper", llmUsageLogMapper);
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(systemSettingService.getLlmSessionTokenCap()).thenReturn(0L);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("Hi");
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("Hello");
+        chatSessionService.sendMessage(100L, request);
+
+        verify(llmUsageLogMapper, never()).sumTokensBySession(anyString());
     }
 
     @Test

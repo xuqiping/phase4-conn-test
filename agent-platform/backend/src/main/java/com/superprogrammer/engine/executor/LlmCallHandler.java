@@ -53,6 +53,8 @@ public class LlmCallHandler implements StepActionHandler {
                     .model(model)
                     .messages(messages)
                     .temperature(temperature)
+                    // 安全体系 S3 · SEC-FR-056：chat 会话归户（计费落 llm_usage_logs.session_id，供会话封顶 SUM）
+                    .sessionId(context.getSessionId() == null ? null : String.valueOf(context.getSessionId()))
                     .build();
 
             var response = llmGateway.chat(request, context.getUserId());

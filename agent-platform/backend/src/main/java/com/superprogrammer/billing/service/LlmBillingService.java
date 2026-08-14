@@ -59,6 +59,17 @@ public class LlmBillingService {
      */
     public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
                                 Integer tokensInput, Integer tokensOutput, String status) {
+        return onSuccess(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, status, null);
+    }
+
+    /**
+     * 安全体系 S3 · SEC-FR-056（LLM10）：+sessionId 会话归户版本。
+     * chat 会话出口（gateway chat/chatStream）透传 LlmRequest.sessionId 落 llm_usage_logs.session_id（V122），
+     * 供发送前 SUM 封顶检查；其他调用走无 sessionId 重载。
+     */
+    public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
+                                Integer tokensInput, Integer tokensOutput, String status, String sessionId) {
         if (!walletService.isEnabled()) {
             return null;
         }
@@ -69,7 +80,7 @@ public class LlmBillingService {
             // refType = kind（CHAT/EMBED，与 ledger REF_* 同串）；refId 暂无单次调用 id
             BigDecimal after = walletService.charge(userId, points, kind, null, model);
             usageCollector.record(userId, providerId, providerScope, model, kind,
-                    tokensInput, tokensOutput, yuan, points, status, null);
+                    tokensInput, tokensOutput, yuan, points, status, null, null, sessionId);
             // 8x Chunk4 行2：对话完成审计（单一计算源——复用本帧 tokens/points，不二次算价，坑点 #11）
             auditChatCompleted(userId, model, kind, tokensInput, tokensOutput, points,
                     AuditLogEntity.RESULT_SUCCESS, null);

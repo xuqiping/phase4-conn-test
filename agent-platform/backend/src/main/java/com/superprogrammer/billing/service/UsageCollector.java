@@ -112,6 +112,20 @@ public class UsageCollector {
                        Integer tokensInput, Integer tokensOutput,
                        BigDecimal costYuan, BigDecimal pointsConsumed,
                        String status, String errorMsg, Long taskId) {
+        record(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, costYuan, pointsConsumed, status, errorMsg, taskId, null);
+    }
+
+    /**
+     * 异步落一条 usage 审计日志（安全体系 S3 · SEC-FR-056：+sessionId 会话归户）。
+     *
+     * <p>{@code sessionId} 仅 chat 会话出口传（LlmRequest.sessionId 透传，V122 列）；
+     * 记忆后台/文档解析/画布节点等非会话调用传 null（不参与会话 token 封顶统计）。
+     */
+    public void record(Long userId, Long providerId, String providerScope, String model, String kind,
+                       Integer tokensInput, Integer tokensOutput,
+                       BigDecimal costYuan, BigDecimal pointsConsumed,
+                       String status, String errorMsg, Long taskId, String sessionId) {
         if (!enabled) {
             return;
         }
@@ -131,6 +145,7 @@ public class UsageCollector {
         // 8x Chunk7：traceId 取调用线程 MDC（与 audit_logs 同源；调用线程无 traceId 则 null，不崩）
         row.setTraceId(currentTraceId());
         row.setTaskId(taskId);
+        row.setSessionId(sessionId);
         submit(row);
     }
 

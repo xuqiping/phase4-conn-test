@@ -35,6 +35,8 @@ public enum ErrorCode {
     PRICING_NOT_FOUND(40202, "未配置该模型的价表，无法计费"),
     // 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）
     LOW_BALANCE_INFLIGHT_LIMIT(42902, "余额不足，请等待当前任务完成"),
+    // 安全体系 S3 · SEC-FR-056 会话 token 上限（LLM10）：固定话术，不透传用量细节
+    LLM_SESSION_CAP_EXCEEDED(42903, "本会话累计用量已达上限，请开通新会话继续"),
 
     // 认证系统增强（多凭证账号模型）
     // 解绑时账号仅剩一种可用凭证 → 拒，防账号失联（找回密码/登录将无可用方式）

@@ -40,6 +40,8 @@ public final class SecurityEventTypes {
     public static final String KB_INJECTION = "KB_INJECTION";
     /** LLM 输出含静态 system prompt 指纹（安全体系 S3 · SEC-FR-053，遮蔽+告警）。 */
     public static final String PROMPT_LEAK = "PROMPT_LEAK";
+    /** 单会话累计 token 达上限被拒（安全体系 S3 · SEC-FR-056，LLM10 异常消耗面）。 */
+    public static final String LLM_SESSION_CAP = "LLM_SESSION_CAP";
     public static final String TOKEN_REUSE = "TOKEN_REUSE";
     public static final String PRIVILEGE_CHANGE = "PRIVILEGE_CHANGE";
 

@@ -58,7 +58,7 @@ class LlmBillingServiceTest {
         assertThat(after).isEqualByComparingTo("99.7");
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null));
     }
 
     @Test
@@ -89,7 +89,8 @@ class LlmBillingServiceTest {
         assertThat(after).isNull();
         // 仍采 SUCCESS（采不扣）
         verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
-                any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any());
+                any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
+                any(), any());
     }
 
     @Test

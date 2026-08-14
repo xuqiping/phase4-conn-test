@@ -96,7 +96,8 @@ public class LlmGateway {
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
-                    request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
+                    request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status,
+                    request.getSessionId());
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             ragCall.succeed(response.getContent(), in, out);
             // 安全体系 S3：出口净化（null bean/异常均透传原文，见 OutputSanitizer）
@@ -165,7 +166,8 @@ public class LlmGateway {
                                 ragUsage.set(usage);
                                 billingService.onSuccess(uid, providerId, providerScope,
                                         model, LlmUsageLogEntity.KIND_CHAT,
-                                        usage.getPromptTokens(), usage.getCompletionTokens());
+                                        usage.getPromptTokens(), usage.getCompletionTokens(),
+                                        LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId());
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
                                         usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,

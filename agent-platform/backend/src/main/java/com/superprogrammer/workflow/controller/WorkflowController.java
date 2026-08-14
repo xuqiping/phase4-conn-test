@@ -92,6 +92,8 @@ public class WorkflowController {
 
     @PostMapping("/{id}/run")
     @RequirePermission("execution:run")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "workflow_run", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<List<ExecutionEvent>>> runWorkflow(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> input) {
@@ -107,6 +109,8 @@ public class WorkflowController {
 
     @PostMapping(value = "/{id}/run/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @RequirePermission("execution:run")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "workflow_run", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public SseEmitter streamRunWorkflow(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> input) {

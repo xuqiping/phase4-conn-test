@@ -48,6 +48,8 @@ public class KnowledgeAskController {
 
     @PostMapping(value = "/ask", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @RequirePermission("knowledge:read")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "rag_ask", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public SseEmitter ask(@RequestBody AskRequest request) {
         Long userId = getCurrentUserId();
         boolean admin = isAdmin();
@@ -80,7 +82,8 @@ public class KnowledgeAskController {
             } catch (Exception e) {
                 log.error("/api/knowledge/ask 流式失败: {}", e.getMessage(), e);
                 try {
-                    emitter.send(SseEmitter.event().data(StreamEvent.error(e.getMessage())));
+                    // S3 Step4：固定话术出前端（原 e.getMessage 直发泄漏内部异常细节）；日志保留全量
+                    emitter.send(SseEmitter.event().data(StreamEvent.error("知识库问答失败，请稍后重试")));
                     emitter.send(SseEmitter.event().data(StreamEvent.done()));
                     emitter.complete();
                 } catch (Exception ignored) {}
