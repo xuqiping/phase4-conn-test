@@ -56,6 +56,10 @@ public class WorkflowService {
     private final AgentPermissionService agentPermissionService;
     private final ObjectMapper objectMapper;
 
+    /** 安全体系 S3 · SEC-FR-053：prompt 指纹失效钩子（LLM 节点 config.systemPrompt 属静态资产；横切可选依赖）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.ai.PromptLeakDetector promptLeakDetector;
+
     public List<WorkflowVO> listWorkflows(Long userId) {
         LambdaQueryWrapper<Workflow> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Workflow::getOwnerId, userId)
@@ -174,8 +178,20 @@ public class WorkflowService {
         }
 
         insertEdges(id, request.getEdges(), userId);
+        evictPromptFingerprint();
         log.info("工作流更新成功 id={}", id);
         return toWorkflowVO(workflow);
+    }
+
+    /** 节点集变更 → prompt 指纹立即失效（10min TTL 之外的主路径）。 */
+    private void evictPromptFingerprint() {
+        if (promptLeakDetector != null) {
+            try {
+                promptLeakDetector.evict();
+            } catch (Exception ignore) {
+                // 失效失败靠 TTL 兜底，绝不阻断保存
+            }
+        }
     }
 
     public void deleteWorkflow(Long id, Long userId) {

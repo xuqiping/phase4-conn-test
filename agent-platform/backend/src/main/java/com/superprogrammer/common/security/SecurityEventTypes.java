@@ -38,6 +38,8 @@ public final class SecurityEventTypes {
     public static final String PROMPT_INJECTION = "PROMPT_INJECTION";
     /** KB 文档入库检出注入特征（安全体系 S3 · SEC-FR-051，文档隔离）。 */
     public static final String KB_INJECTION = "KB_INJECTION";
+    /** LLM 输出含静态 system prompt 指纹（安全体系 S3 · SEC-FR-053，遮蔽+告警）。 */
+    public static final String PROMPT_LEAK = "PROMPT_LEAK";
     public static final String TOKEN_REUSE = "TOKEN_REUSE";
     public static final String PRIVILEGE_CHANGE = "PRIVILEGE_CHANGE";
 

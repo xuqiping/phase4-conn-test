@@ -58,6 +58,13 @@ public class LlmGateway {
     private final SystemSettingService systemSettingService;
     private final RagTraceService ragTraceService;
 
+    /**
+     * 安全体系 S3 · SEC-FR-052/053（LLM02/07②）：输出净化（敏感打码 + prompt 泄露指纹遮蔽）。
+     * 横切可选依赖（沉淀范式）：测试/切片无 bean 时降级直通；sanitize 内部异常也透传原文。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.ai.OutputSanitizer outputSanitizer;
+
     public LlmResponse chat(LlmRequest request) {
         // 无 userId（系统调用）→ userId=null：仅采不扣（charge 在 userId=null 时短路）。
         return chat(request, null);
@@ -92,6 +99,8 @@ public class LlmGateway {
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status);
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             ragCall.succeed(response.getContent(), in, out);
+            // 安全体系 S3：出口净化（null bean/异常均透传原文，见 OutputSanitizer）
+            response.setContent(sanitizeSync(response.getContent(), uid));
             return response;
         } catch (RuntimeException e) {
             ragCall.fail(e.getMessage());
@@ -146,6 +155,9 @@ public class LlmGateway {
             // 立即恢复订阅线程，后续每个 usage/terminal 回调按快照短暂恢复同一 RAG Trace。
             ragCall.detach();
             java.util.concurrent.atomic.AtomicReference<TokenUsage> ragUsage = new java.util.concurrent.atomic.AtomicReference<>();
+            // 安全体系 S3：每订阅一个流式净化器（carry 状态不可跨流复用）；null bean → 直通
+            final com.superprogrammer.common.security.ai.OutputSanitizer.StreamMasker masker =
+                    outputSanitizer == null ? null : outputSanitizer.openStream(uid);
             final Flux<StreamEvent> inner;
             try {
                 inner = provider.chatStream(request, usage -> {
@@ -176,7 +188,9 @@ public class LlmGateway {
                         .doOnCancel(() -> ragCall.runWithContext(() -> {
                             recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos);
                             ragCall.cancel();
-                        }));
+                        }))
+                        // 安全体系 S3：CHUNK/THINKING 过净化器（40 字符 carry）；终态事件前补发尾段
+                        .concatMap(evt -> sanitizeStreamEvent(evt, masker));
             } catch (RuntimeException e) {
                 // 组装期抛异常 → doFinally 尚未注册，此处配对释放
                 if (held) {
@@ -296,6 +310,33 @@ public class LlmGateway {
                 || request.getDocuments() == null || request.getDocuments().isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "重排请求缺少查询或候选文档");
         }
+    }
+
+    /** 安全体系 S3 · 同步净化（null bean/内部异常均透传原文）。 */
+    private String sanitizeSync(String content, Long userId) {
+        if (outputSanitizer == null || content == null || content.isEmpty()) {
+            return content;
+        }
+        return outputSanitizer.maskSync(content, userId);
+    }
+
+    /**
+     * 安全体系 S3 · 流式净化：CHUNK/THINKING 内容过 masker.feed（尾 40 字符扣留下拍合并扫）；
+     * 其余事件（DONE/ERROR/CITATION…）前补发 flush 尾段，保末尾内容不丢。
+     * concatMap 保序；masker=null（无 bean）直通。
+     */
+    private Flux<StreamEvent> sanitizeStreamEvent(StreamEvent evt,
+                                                  com.superprogrammer.common.security.ai.OutputSanitizer.StreamMasker masker) {
+        if (masker == null || evt == null || evt.getContent() == null) {
+            return Flux.just(evt);
+        }
+        String type = evt.getType();
+        if ("CHUNK".equals(type) || "THINKING".equals(type)) {
+            evt.setContent(masker.feed(evt.getContent()));
+            return Flux.just(evt);
+        }
+        String rest = masker.flush();
+        return rest.isEmpty() ? Flux.just(evt) : Flux.just(StreamEvent.chunk(rest), evt);
     }
 
     /**

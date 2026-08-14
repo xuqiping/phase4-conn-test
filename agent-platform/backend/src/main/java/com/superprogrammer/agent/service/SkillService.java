@@ -29,6 +29,10 @@ public class SkillService {
     private final SkillStepMapper skillStepMapper;
     private final AgentMapper agentMapper;
 
+    /** 安全体系 S3 · SEC-FR-053：prompt 指纹失效钩子（横切可选依赖，步骤 config.systemPrompt 属静态资产）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.ai.PromptLeakDetector promptLeakDetector;
+
     /**
      * 查询指定Agent下的技能列表
      */
@@ -171,6 +175,7 @@ public class SkillService {
         LambdaQueryWrapper<SkillStep> stepWrapper = new LambdaQueryWrapper<>();
         stepWrapper.eq(SkillStep::getSkillId, skillId);
         skillStepMapper.delete(stepWrapper);
+        evictPromptFingerprint();
 
         List<SkillSaveRequest.SkillStepSaveRequest> steps =
                 requestSteps == null ? new ArrayList<>() : requestSteps;
@@ -191,6 +196,17 @@ public class SkillService {
             step.setUpdatedBy(operatorId);
             skillStepMapper.insert(step);
             fallbackOrder++;
+        }
+    }
+
+    /** 步骤集变更 → prompt 指纹立即失效（10min TTL 之外的主路径）。 */
+    private void evictPromptFingerprint() {
+        if (promptLeakDetector != null) {
+            try {
+                promptLeakDetector.evict();
+            } catch (Exception ignore) {
+                // 失效失败靠 TTL 兜底，绝不阻断保存
+            }
         }
     }
 }

@@ -225,6 +225,20 @@ public class SystemSettingService {
         return getBoolean(SECURITY_AI_KB_SCAN_ENABLED, true);
     }
 
+    /** LLM02 输出侧敏感打码开关（SEC-FR-052），默认开。 */
+    public static final String SECURITY_AI_OUTPUT_MASK_ENABLED = "security.ai.output-mask.enabled";
+
+    public boolean getAiOutputMaskEnabled() {
+        return getBoolean(SECURITY_AI_OUTPUT_MASK_ENABLED, true);
+    }
+
+    /** LLM07② system prompt 泄露指纹开关（SEC-FR-053），默认开。 */
+    public static final String SECURITY_AI_PROMPT_LEAK_ENABLED = "security.ai.prompt-leak.enabled";
+
+    public boolean getAiPromptLeakEnabled() {
+        return getBoolean(SECURITY_AI_PROMPT_LEAK_ENABLED, true);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

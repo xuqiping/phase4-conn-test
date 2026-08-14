@@ -272,6 +272,22 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S3 · SEC-FR-052：LLM 输出敏感模式命中打码次数。 */
+    public void outputMasked() {
+        Counter.builder("security.ai.output.masked")
+                .description("LLM 输出敏感模式命中打码次数")
+                .register(registry)
+                .increment();
+    }
+
+    /** 安全体系 S3 · SEC-FR-053：LLM 输出命中静态 prompt 指纹遮蔽次数。 */
+    public void promptLeak() {
+        Counter.builder("security.ai.prompt.leak")
+                .description("LLM 输出命中 system prompt 指纹遮蔽次数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")

@@ -33,6 +33,8 @@ public class ApplicationSecurityEvent extends ApplicationEvent {
     public static final String KIND_PRIVILEGE_CHANGE = "PRIVILEGE_CHANGE";
     /** KB 文档入库检出注入特征（安全体系 S3 · SEC-FR-051；payload: docId, kbId, hit）。 */
     public static final String KIND_KB_INJECTION = "KB_INJECTION";
+    /** LLM 输出含静态 system prompt 指纹（安全体系 S3 · SEC-FR-053；payload: channel, chars——不带原文）。 */
+    public static final String KIND_PROMPT_LEAK = "PROMPT_LEAK";
 
     private final String kind;
     private final Long userId;
