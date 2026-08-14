@@ -241,6 +241,80 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         return endpoint.contains("/multimodal-embedding/");
     }
 
+    @Override
+    public RerankResult rerank(RerankRequest request) {
+        if (request == null || request.getModel() == null || request.getModel().isBlank()
+                || request.getQuery() == null || request.getQuery().isBlank()
+                || request.getDocuments() == null || request.getDocuments().isEmpty()) {
+            throw new IllegalArgumentException("重排请求缺少必要参数");
+        }
+        int topN = request.getTopN() == null ? request.getDocuments().size() : request.getTopN();
+        if (topN <= 0 || topN > request.getDocuments().size()) {
+            throw new IllegalArgumentException("重排 topN 超出候选范围");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", request.getModel());
+            body.put("documents", request.getDocuments());
+            body.put("query", request.getQuery());
+            body.put("top_n", topN);
+            body.put("instruct", request.getInstruct() == null || request.getInstruct().isBlank()
+                    ? RerankRequest.DEFAULT_INSTRUCT : request.getInstruct());
+
+            String responseJson = webClient.post()
+                    .uri(endpoint)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(RESPONSE_TIMEOUT);
+            JsonNode root = objectMapper.readTree(responseJson);
+            JsonNode results = root.path("results");
+            if (!results.isArray() || results.isEmpty()) {
+                log.warn("rerank 响应格式非预期 provider={} bodyLen={}", name, responseJson.length());
+                throw new RuntimeException("rerank 响应格式非预期（provider=" + name + "）");
+            }
+
+            Set<Integer> seen = new HashSet<>();
+            List<RerankResult.Item> items = new ArrayList<>();
+            for (JsonNode item : results) {
+                int index = item.path("index").asInt(-1);
+                if (index < 0 || index >= request.getDocuments().size() || !seen.add(index)) {
+                    throw new RuntimeException("rerank 响应索引非法（provider=" + name + "）");
+                }
+                JsonNode scoreNode = item.path("relevance_score");
+                if (!scoreNode.isNumber()) {
+                    throw new RuntimeException("rerank 响应分数非法（provider=" + name + "）");
+                }
+                items.add(RerankResult.Item.builder()
+                        .index(index)
+                        .score(scoreNode.asDouble())
+                        .build());
+            }
+
+            JsonNode usageNode = root.path("usage");
+            TokenUsage usage = null;
+            if (usageNode.isObject() && !usageNode.isEmpty()) {
+                int inputTokens = usageNode.path("input_tokens").asInt(0);
+                usage = TokenUsage.builder()
+                        .promptTokens(inputTokens)
+                        .completionTokens(0)
+                        .totalTokens(usageNode.path("total_tokens").asInt(inputTokens))
+                        .build();
+            }
+            return RerankResult.builder()
+                    .items(items)
+                    .model(request.getModel())
+                    .duration(System.currentTimeMillis() - start)
+                    .usage(usage)
+                    .build();
+        } catch (Exception e) {
+            log.warn("rerank 调用失败 provider={} errorType={}", name, e.getClass().getSimpleName());
+            throw new RuntimeException("rerank 调用失败（provider=" + name + "）", e);
+        }
+    }
+
     private Map<String, Object> buildRequestBody(LlmRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.getModel());

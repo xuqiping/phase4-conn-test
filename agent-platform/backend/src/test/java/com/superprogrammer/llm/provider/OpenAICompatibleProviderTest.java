@@ -196,6 +196,66 @@ class OpenAICompatibleProviderTest {
     }
 
     @Test
+    void rerank_shouldSendQwenRequestAndPreserveProviderOrder() throws Exception {
+        OpenAICompatibleProvider rerankProvider = new OpenAICompatibleProvider(
+                "qwen-rerank", server.url("/v1/reranks").toString(), "k",
+                List.of("configured-rerank-model"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"results\":[{\"index\":2,\"relevance_score\":0.91},"
+                        + "{\"index\":0,\"relevance_score\":0.72}],"
+                        + "\"usage\":{\"input_tokens\":11,\"total_tokens\":11}}")
+                .setHeader("Content-Type", "application/json"));
+
+        RerankResult result = rerankProvider.rerank(RerankRequest.builder()
+                .model("configured-rerank-model")
+                .query("什么是文本排序模型")
+                .documents(List.of("文本排序模型", "量子计算", "预训练模型改进排序"))
+                .build());
+
+        JsonNode body = mapper.readTree(server.takeRequest().getBody().readUtf8());
+        assertEquals("configured-rerank-model", body.path("model").asText());
+        assertEquals("什么是文本排序模型", body.path("query").asText());
+        assertEquals(3, body.path("documents").size());
+        assertEquals(3, body.path("top_n").asInt());
+        assertFalse(body.path("instruct").asText().isBlank());
+        assertEquals(List.of(2, 0), result.getItems().stream().map(RerankResult.Item::getIndex).toList());
+        assertEquals(0.91, result.getItems().get(0).getScore(), 1e-6);
+        assertEquals(11, result.getUsage().getPromptTokens());
+    }
+
+    @Test
+    void rerank_shouldRejectDuplicateOrOutOfRangeIndexes() {
+        OpenAICompatibleProvider rerankProvider = new OpenAICompatibleProvider(
+                "qwen-rerank", server.url("/v1/reranks").toString(), "k",
+                List.of("configured-rerank-model"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"results\":[{\"index\":0,\"relevance_score\":0.9},"
+                        + "{\"index\":0,\"relevance_score\":0.8}]}")
+                .setHeader("Content-Type", "application/json"));
+
+        assertThrows(RuntimeException.class, () -> rerankProvider.rerank(RerankRequest.builder()
+                .model("configured-rerank-model").query("q").documents(List.of("a", "b")).build()));
+
+        server.enqueue(new MockResponse()
+                .setBody("{\"results\":[{\"index\":2,\"relevance_score\":0.9}]}")
+                .setHeader("Content-Type", "application/json"));
+        assertThrows(RuntimeException.class, () -> rerankProvider.rerank(RerankRequest.builder()
+                .model("configured-rerank-model").query("q").documents(List.of("a", "b")).build()));
+    }
+
+    @Test
+    void rerank_shouldRejectEmptyResults() {
+        OpenAICompatibleProvider rerankProvider = new OpenAICompatibleProvider(
+                "qwen-rerank", server.url("/v1/reranks").toString(), "k",
+                List.of("configured-rerank-model"), mapper);
+        server.enqueue(new MockResponse().setBody("{\"results\":[]}")
+                .setHeader("Content-Type", "application/json"));
+
+        assertThrows(RuntimeException.class, () -> rerankProvider.rerank(RerankRequest.builder()
+                .model("configured-rerank-model").query("q").documents(List.of("a")).build()));
+    }
+
+    @Test
     void supports_shouldMatchModelName() {
         assertTrue(provider.supports("deepseek-chat"));
         assertFalse(provider.supports("gpt-4"));

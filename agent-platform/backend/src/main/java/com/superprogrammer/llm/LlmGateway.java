@@ -16,6 +16,8 @@ import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TokenUsage;
+import com.superprogrammer.llm.dto.RerankRequest;
+import com.superprogrammer.llm.dto.RerankResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.entity.UserLlmProviderEntity;
 import com.superprogrammer.llm.provider.ClaudeProvider;
@@ -240,6 +242,62 @@ public class LlmGateway {
         }
     }
 
+    public RerankResult rerank(RerankRequest request) {
+        return rerank(request, null);
+    }
+
+    /** 专用 RERANK 出口：独立路由、Trace、计费和指标，日志只记录数量摘要。 */
+    public RerankResult rerank(RerankRequest request, Long userId) {
+        validateRerankRequest(request);
+        String model = request.getModel().trim();
+        request.setModel(model);
+        Long uid = resolveBillingUser(userId, model);
+        LlmProviderInterface provider = findRerankProvider(model);
+        int topN = request.getTopN() == null ? request.getDocuments().size() : request.getTopN();
+        String summary = "documents=" + request.getDocuments().size() + ",topN=" + topN;
+        log.info("rerank 调用 model={} provider={} userId={} {}", model, provider.getName(), uid, summary);
+        walletService.requireAffordable(uid);
+        long startNanos = System.nanoTime();
+        var ragCall = ragTraceService.beginModelCall(model, provider.getName(), summary, "RERANK");
+        try (ragCall) {
+            RerankResult result = provider.rerank(request);
+            TokenUsage usage = result.getUsage();
+            Integer in;
+            String status;
+            if (usage != null) {
+                in = usage.getPromptTokens();
+                status = LlmUsageLogEntity.STATUS_SUCCESS;
+            } else {
+                in = TokenEstimator.estimate(request.getQuery());
+                for (String document : request.getDocuments()) {
+                    in += TokenEstimator.estimate(document);
+                }
+                status = LlmUsageLogEntity.STATUS_ESTIMATED;
+            }
+            billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(), model,
+                    LlmUsageLogEntity.KIND_RERANK, in, 0, status);
+            recordLlmSuccess(provider.getName(), model, in, 0, startNanos);
+            ragCall.succeed(null, in, 0);
+            return result;
+        } catch (RuntimeException e) {
+            ragCall.fail(e.getMessage());
+            billingService.onFailure(uid, provider.getId(), provider.getProviderScope(), model,
+                    LlmUsageLogEntity.KIND_RERANK, e.getMessage());
+            recordLlmTerminal(provider.getName(), model, BizMetrics.RESULT_FAIL, startNanos);
+            throw e;
+        }
+    }
+
+    private void validateRerankRequest(RerankRequest request) {
+        if (request == null || request.getModel() == null || request.getModel().isBlank()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "未选择重排模型");
+        }
+        if (request.getQuery() == null || request.getQuery().isBlank()
+                || request.getDocuments() == null || request.getDocuments().isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "重排请求缺少查询或候选文档");
+        }
+    }
+
     /**
      * 计费归户：显式 userId 优先；空则回退 {@link BillingContext#current()}（请求线程 filter 种入 /
      * 池线程 TaskDecorator 透传 / 裸线程手工 set）；再空 = 无用户上下文（系统调用），仅采不扣。
@@ -315,6 +373,16 @@ public class LlmGateway {
         }
         throw new BusinessException(ErrorCode.UNPROCESSABLE,
                 "所选向量模型不可用或没有启用的向量 Provider: " + model);
+    }
+
+    private LlmProviderInterface findRerankProvider(String model) {
+        for (LlmProviderInterface provider : llmConfig.getRerankProviders()) {
+            if (provider.supports(model)) {
+                return provider;
+            }
+        }
+        throw new BusinessException(ErrorCode.UNPROCESSABLE,
+                "所选重排模型不可用或没有启用的重排 Provider: " + model);
     }
 
     /**

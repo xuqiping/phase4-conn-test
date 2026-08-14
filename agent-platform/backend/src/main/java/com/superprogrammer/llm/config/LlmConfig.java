@@ -28,11 +28,14 @@ public class LlmConfig {
     private volatile List<LlmProviderInterface> staticProviders = Collections.emptyList();
     /** EMBEDDING 行注册表——embed 路由只在这里找，不进 chat 路由/模型列表。 */
     private volatile List<LlmProviderInterface> staticEmbedProviders = Collections.emptyList();
+    /** RERANK 行注册表——专用重排只在这里找，绝不进入 Chat。 */
+    private volatile List<LlmProviderInterface> staticRerankProviders = Collections.emptyList();
 
     @PostConstruct
     public synchronized void initProviders() {
         List<LlmProviderInterface> providers = new ArrayList<>();
         List<LlmProviderInterface> embedProviders = new ArrayList<>();
+        List<LlmProviderInterface> rerankProviders = new ArrayList<>();
         List<LlmProviderEntity> activeProviders = providerService.listActive();
         for (LlmProviderEntity entity : activeProviders) {
             // VIDEO/IMAGE（任务型 provider）不注册——
@@ -53,6 +56,10 @@ public class LlmConfig {
                 embedProviders.add(provider);
                 log.info("注册 embedding Provider（仅 embed，不进 chat 路由）: {} ({})",
                         entity.getName(), entity.getApiEndpoint());
+            } else if (LlmProviderService.CATEGORY_RERANK.equalsIgnoreCase(entity.getCategory())) {
+                rerankProviders.add(provider);
+                log.info("注册 rerank Provider（仅 rerank，不进 chat 路由）: {} ({})",
+                        entity.getName(), entity.getApiEndpoint());
             } else {
                 providers.add(provider);
                 log.info("注册LLM Provider: {} ({})", entity.getName(), entity.getApiEndpoint());
@@ -60,7 +67,9 @@ public class LlmConfig {
         }
         staticProviders = Collections.unmodifiableList(providers);
         staticEmbedProviders = Collections.unmodifiableList(embedProviders);
-        log.info("共注册 {} 个LLM Provider（chat）+ {} 个 embedding Provider", providers.size(), embedProviders.size());
+        staticRerankProviders = Collections.unmodifiableList(rerankProviders);
+        log.info("共注册 {} 个 chat + {} 个 embedding + {} 个 rerank Provider",
+                providers.size(), embedProviders.size(), rerankProviders.size());
     }
 
     public synchronized void reload() {
@@ -76,6 +85,10 @@ public class LlmConfig {
     /** embed 路由注册表（仅 EMBEDDING 行）；embed 调用只在这里找，不回落 chat 表。 */
     public List<LlmProviderInterface> getEmbedProviders() {
         return staticEmbedProviders;
+    }
+
+    public List<LlmProviderInterface> getRerankProviders() {
+        return staticRerankProviders;
     }
 
     public LlmProviderInterface createProvider(LlmProviderEntity entity, String apiKey) {

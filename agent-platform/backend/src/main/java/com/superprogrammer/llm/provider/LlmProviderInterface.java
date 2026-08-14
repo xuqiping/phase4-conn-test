@@ -5,6 +5,8 @@ import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TokenUsage;
 import com.superprogrammer.llm.dto.EmbedResult;
+import com.superprogrammer.llm.dto.RerankRequest;
+import com.superprogrammer.llm.dto.RerankResult;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -45,6 +47,11 @@ public interface LlmProviderInterface {
      */
     default EmbedResult embedWithUsage(String text, String model) {
         return new EmbedResult(embed(text, model), null);
+    }
+
+    /** 专用重排能力；未实现的 Provider 必须失败关闭，禁止回落到 Chat。 */
+    default RerankResult rerank(RerankRequest request) {
+        throw new UnsupportedOperationException("Provider 不支持专用重排");
     }
 
     /**

@@ -8,7 +8,11 @@ import com.superprogrammer.llm.provider.OpenAICompatibleProvider;
 import com.superprogrammer.llm.service.LlmProviderService;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
 
 class LlmConfigTest {
@@ -38,5 +42,25 @@ class LlmConfigTest {
         LlmProviderInterface provider = config.createProvider(entity, "test-key");
 
         assertInstanceOf(OpenAICompatibleProvider.class, provider);
+    }
+
+    @Test
+    void initProviders_shouldKeepRerankOutOfChatRegistry() {
+        LlmProviderService service = mock(LlmProviderService.class);
+        LlmConfig isolatedConfig = new LlmConfig(service, new ObjectMapper());
+        LlmProviderEntity rerank = new LlmProviderEntity();
+        rerank.setId(9L);
+        rerank.setName("rerank-provider");
+        rerank.setCategory(LlmProviderService.CATEGORY_RERANK);
+        rerank.setApiEndpoint("https://example.test/v1/reranks");
+        rerank.setModels("[\"configured-rerank-model\"]");
+        when(service.listActive()).thenReturn(List.of(rerank));
+        when(service.getDecryptedApiKey(9L)).thenReturn("key");
+
+        isolatedConfig.initProviders();
+
+        assertEquals(0, isolatedConfig.getProviders().size());
+        assertEquals(0, isolatedConfig.getEmbedProviders().size());
+        assertEquals(1, isolatedConfig.getRerankProviders().size());
     }
 }

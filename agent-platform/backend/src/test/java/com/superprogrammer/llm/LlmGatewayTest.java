@@ -46,6 +46,9 @@ class LlmGatewayTest {
     private LlmProviderInterface openaiProvider;
 
     @Mock
+    private LlmProviderInterface rerankProvider;
+
+    @Mock
     private LlmConfig llmConfig;
 
     @Mock
@@ -84,6 +87,9 @@ class LlmGatewayTest {
         lenient().when(openaiProvider.supports(anyString())).thenReturn(true);
 
         when(llmConfig.getProviders()).thenReturn(List.of(deepseekProvider, openaiProvider));
+        when(rerankProvider.getName()).thenReturn("qwen-rerank-provider");
+        when(rerankProvider.supports("configured-rerank-model")).thenReturn(true);
+        when(llmConfig.getRerankProviders()).thenReturn(List.of(rerankProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
                 billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
@@ -109,6 +115,44 @@ class LlmGatewayTest {
         assertEquals("你好", resp.getContent());
         verify(deepseekProvider).chat(any());
         verify(openaiProvider, never()).chat(any());
+    }
+
+    @Test
+    void rerank_shouldUseDedicatedRegistryAndRecordUsage() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(11).completionTokens(0).totalTokens(11).build();
+        RerankResult providerResult = RerankResult.builder()
+                .items(List.of(RerankResult.Item.builder().index(1).score(0.9).build()))
+                .model("configured-rerank-model").usage(usage).duration(12L).build();
+        when(rerankProvider.rerank(any())).thenReturn(providerResult);
+        when(rerankProvider.getId()).thenReturn(9L);
+        when(rerankProvider.getProviderScope()).thenReturn("GLOBAL");
+
+        RerankResult result = gateway.rerank(RerankRequest.builder()
+                .model("configured-rerank-model")
+                .query("secret query")
+                .documents(List.of("secret doc a", "secret doc b"))
+                .build(), 42L);
+
+        assertEquals(1, result.getItems().get(0).getIndex());
+        verify(rerankProvider).rerank(any(RerankRequest.class));
+        verify(openaiProvider, never()).rerank(any());
+        verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"),
+                eq("configured-rerank-model"), eq("RERANK"), eq(11), eq(0), eq("SUCCESS"));
+        verify(ragTraceService).beginModelCall(eq("configured-rerank-model"),
+                eq("qwen-rerank-provider"), eq("documents=2,topN=2"), eq("RERANK"));
+        verify(modelCallScope).succeed(isNull(), eq(11), eq(0));
+    }
+
+    @Test
+    void rerank_withoutMatchingProvider_shouldFailClearly() {
+        when(llmConfig.getRerankProviders()).thenReturn(List.of());
+
+        RuntimeException error = assertThrows(RuntimeException.class, () -> gateway.rerank(
+                RerankRequest.builder().model("missing-rerank-model").query("q")
+                        .documents(List.of("a")).build(), 42L));
+
+        assertTrue(error.getMessage().contains("missing-rerank-model"));
+        verifyNoInteractions(rerankProvider);
     }
 
     @Test

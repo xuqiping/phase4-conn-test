@@ -22,6 +22,8 @@ public class LlmUsageLogEntity {
     public static final String KIND_CHAT = "CHAT";
     /** kind：向量嵌入。 */
     public static final String KIND_EMBED = "EMBED";
+    /** kind：知识库专用重排。 */
+    public static final String KIND_RERANK = "RERANK";
     /** kind：图片生成（stub，未接真 provider）。 */
     public static final String KIND_IMAGE = "IMAGE";
     /** kind：视频生成。 */
@@ -49,7 +51,7 @@ public class LlmUsageLogEntity {
 
     private String model;
 
-    /** CHAT/EMBED/IMAGE/VIDEO。 */
+    /** CHAT/EMBED/RERANK/IMAGE/VIDEO。 */
     private String kind;
 
     private Integer tokensInput;
