@@ -1,0 +1,8 @@
+[package]
+name = "core-exec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "进程执行、测试/lint 探测、环境画像、环境一键安装（FR-003/004/005）"
+
+[dependencies]

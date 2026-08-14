@@ -26,9 +26,10 @@ fi
 if [ -f "PROJECT/desktop/src-tauri/Cargo.toml" ]; then
     echo ""
     echo "[Desktop-Core] fmt / clippy / test..."
+    # 注意：workspace 下必须 --workspace，否则 crates/* 的测试不会执行
     ( cd PROJECT/desktop/src-tauri && cargo fmt --check )                || FAIL=1
-    ( cd PROJECT/desktop/src-tauri && cargo clippy --all-targets -- -D warnings ) || FAIL=1
-    ( cd PROJECT/desktop/src-tauri && cargo test )                       || FAIL=1
+    ( cd PROJECT/desktop/src-tauri && cargo clippy --workspace --all-targets -- -D warnings ) || FAIL=1
+    ( cd PROJECT/desktop/src-tauri && cargo test --workspace )           || FAIL=1
 fi
 
 # ------------------------------ 云端（P02 起启用） ------------------------------

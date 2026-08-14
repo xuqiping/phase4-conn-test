@@ -1,15 +1,51 @@
 @import "tailwindcss";
 
-/* P01 Step 1：仅落基础底色与字体栈；完整设计令牌在 Step 3 从 prototypes/shared.css 移植 */
-:root {
-  --bg: #070a12;
-  --text: #e6eaf2;
-  --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-  --sans:
-    -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+/* ==========================================================================
+   DevPilot 设计令牌（对齐 prototypes/shared.css v2 科技感基调）
+   - @theme 内的变量同时是 Tailwind 4 类名（bg-panel / text-text-dim…）与 CSS 变量
+   - 密度模式用 data-density 切换（comfort/compact），组件引用 var(--space-*)
+   ========================================================================== */
+
+@theme {
+  /* 底色与面板 */
+  --color-bg: #070a12;
+  --color-panel: rgb(13 17 27 / 0.92);
+  --color-card: rgb(20 26 40 / 0.72);
+  --color-card-hover: rgb(28 36 55 / 0.85);
+  --color-glass: rgb(18 24 38 / 0.85);
+  /* 描边 */
+  --color-border: rgb(120 160 255 / 0.1);
+  --color-border-strong: rgb(120 160 255 / 0.22);
+  /* 文字 */
+  --color-text: #e6eaf2;
+  --color-text-dim: #8b94a7;
+  --color-text-faint: #5c6577;
+  /* 品牌与状态色 */
+  --color-brand: #4f7cff;
+  --color-brand2: #38bdf8;
+  --color-success: #34d399;
+  --color-amber: #fbbf24;
+  --color-coral: #fb7185;
+  --color-violet: #a78bfa;
+  /* 字体栈 */
+  --font-sans: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     "Source Han Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 }
 
+/* ---- 密度令牌：舒适（默认）/ 紧凑 ---- */
+:root {
+  --space-row: 34px; /* 列表行高 */
+  --space-pad: 18px; /* 面板内边距 */
+  --space-gap: 12px; /* 元素间距 */
+}
+[data-density="compact"] {
+  --space-row: 27px;
+  --space-pad: 12px;
+  --space-gap: 8px;
+}
+
+/* ---- 全局底：深空径向辉光 + 细网格纹 ---- */
 html,
 body,
 #root {
@@ -18,8 +54,57 @@ body,
 }
 
 body {
-  font-family: var(--sans);
-  background: var(--bg);
-  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--color-text);
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(900px 500px at 12% -8%, rgb(79 124 255 / 0.13), transparent 60%),
+    radial-gradient(800px 480px at 88% -10%, rgb(56 189 248 / 0.1), transparent 60%),
+    radial-gradient(700px 500px at 50% 115%, rgb(167 139 250 / 0.07), transparent 60%),
+    var(--color-bg);
+}
+
+/* 网格纹覆层（仅顶部渐隐，不挡交互） */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgb(120 160 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(120 160 255 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 75%);
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(120 160 255 / 0.16);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- 通用工具类 ---- */
+.glow-brand {
+  box-shadow: 0 0 18px rgb(79 124 255 / 0.35);
+}
+.panel {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(14px);
 }

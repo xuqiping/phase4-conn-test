@@ -1,0 +1,8 @@
+[package]
+name = "core-sandbox"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "目录白名单、命令审批、macOS Seatbelt / Windows Job Object（FR-001/006/009）"
+
+[dependencies]

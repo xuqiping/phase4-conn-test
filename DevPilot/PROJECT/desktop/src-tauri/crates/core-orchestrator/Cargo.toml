@@ -1,0 +1,8 @@
+[package]
+name = "core-orchestrator"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "chunk→任务编排、subagent 分派、产物生成器（PRD/plan/AGENTS.md）（FR-003/030~035）"
+
+[dependencies]

@@ -342,6 +342,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-cli"
+version = "0.1.0"
+
+[[package]]
+name = "core-exec"
+version = "0.1.0"
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,6 +388,30 @@ dependencies = [
  "core-foundation",
  "libc",
 ]
+
+[[package]]
+name = "core-mcp"
+version = "0.1.0"
+
+[[package]]
+name = "core-meter"
+version = "0.1.0"
+
+[[package]]
+name = "core-orchestrator"
+version = "0.1.0"
+
+[[package]]
+name = "core-sandbox"
+version = "0.1.0"
+
+[[package]]
+name = "core-skills"
+version = "0.1.0"
+
+[[package]]
+name = "core-state"
+version = "0.1.0"
 
 [[package]]
 name = "cpufeatures"
@@ -573,6 +605,14 @@ dependencies = [
 name = "devpilot"
 version = "0.1.0"
 dependencies = [
+ "core-cli",
+ "core-exec",
+ "core-mcp",
+ "core-meter",
+ "core-orchestrator",
+ "core-sandbox",
+ "core-skills",
+ "core-state",
  "serde",
  "serde_json",
  "tauri",

@@ -1,7 +1,7 @@
 # AGENTS.md · DevPilot 项目宪法
 
 > 每次开工前必读。本文件是项目级 AI 指令与人类约定的地基，Phase 3 持续织入新规范。
-> last_updated: 2026-08-13 ｜ 基线工作流：`2_编程类可迭代workflow` v1.20
+> last_updated: 2026-08-14 ｜ 基线工作流：`2_编程类可迭代workflow` v1.20
 
 ## 1. 项目定位（一句话）
 
@@ -24,6 +24,8 @@ DevPilot = Win/Mac 桌面端 AI 编程智能体：Codex 级能力 + 内置引导
 - **客户端不持有任何上游模型 Key**——全部走自家网关（ADR-003），违者视为严重事故。
 - **命名**：代码标识符英文；UI 文案中文；文档中文为主、技术术语保留英文并括注大白话。
 - **提交规范**：`feat:/fix:/docs:/refactor:/chore: 中文描述（FR-xxx）`。
+- **git 入库注意**：父仓库根 .gitignore 有 `docs/` 全局忽略——本项目文档靠 `!DevPilot/workflow_output/docs/` 放开，新增 docs 外目录时自查 `git status` 是否漏文件。
+- **本地依赖审计降级**：cargo/npm audit 本地网络受限时仅 WARN，硬拦截在 CI（GitHub Actions）。
 
 ## 4. 文档规范
 
@@ -39,9 +41,9 @@ DevPilot = Win/Mac 桌面端 AI 编程智能体：Codex 级能力 + 内置引导
 
 ## 6. 当前阶段（每次交接必更新——新会话的接力棒）
 
-**Phase 2 进行中（2026-08-14）**：MVP 计划拆分地图与接力规则见 [../docs/plans/00_MVP实现计划总索引.md](../docs/plans/00_MVP实现计划总索引.md)。
+**Phase 3 进行中（2026-08-14）**：P01 客户端骨架与状态机引擎 · Step 1/9 已完成（commit 27da741）。进度台账见 [../开发进度/开发进度总览.md](../开发进度/开发进度总览.md)。
 
-- 已完成：Phase 0 设计（docs/项目分析/）→ Phase 1 规格（docs/specs/ 全套 + ADR×3）
-- 当前：P01 客户端骨架与状态机引擎——plan 已产出，待用户审；审过且用户明确许可后进入 Phase 3 实现
-- 下一张待写 plan：P02 云端骨架：账号计费与模型网关（`/phase2 P02_云端骨架：账号计费与模型网关`）
-- 新会话开工顺序：读本文件 → 读 plans/00 索引确认当前位置 → 按索引接力指引行动
+- 已完成：Phase 0 设计 → Phase 1 规格 → P01 测试方案 + Step 1 脚手架（check_all 全绿）
+- 当前：P01 Step 2（Rust workspace 8 crates 骨架）/ Step 3（前端设计令牌与三栏骨架），同批可并行
+- P01 之后下一张 plan：P02 云端骨架：账号计费与模型网关（`/phase2 P02_云端骨架：账号计费与模型网关`）
+- 新会话开工顺序：读本文件 → 读 plans/00 索引 + 开发进度总览确认当前位置 → 按接力指引行动

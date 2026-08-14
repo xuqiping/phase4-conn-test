@@ -1,0 +1,8 @@
+[package]
+name = "core-state"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化（FR-029/046/047/048）"
+
+[dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "core-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "MCP 客户端 + MCP Server（对外委派接口）（FR-010/026/027）"
+
+[dependencies]

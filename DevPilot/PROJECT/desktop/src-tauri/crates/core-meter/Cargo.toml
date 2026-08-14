@@ -1,0 +1,8 @@
+[package]
+name = "core-meter"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Token 预估/实扣本地镜像、余额同步、超限暂停（FR-041）"
+
+[dependencies]
