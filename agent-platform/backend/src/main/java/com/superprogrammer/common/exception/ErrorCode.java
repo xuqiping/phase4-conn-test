@@ -26,6 +26,8 @@ public enum ErrorCode {
 
     // 文件（安全体系 S1）
     FILE_TYPE_NOT_ALLOWED(40010, "文件类型不允许上传"),
+    // 安全体系 S4 · SEC-FR-033 per-user 存储配额超限
+    STORAGE_QUOTA_EXCEEDED(40011, "存储空间已满"),
     LOGIN_LOCKED(40103, "登录失败次数过多，请稍后再试"),
     // 安全体系 S2 · A8 单点登录（SEC-FR-008）：固定话术，不透传额外信息
     SESSION_KICKED(40104, "账号已在别处登录，请重新登录"),

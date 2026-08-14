@@ -39,6 +39,9 @@ public class AssetUploadController {
     @PostMapping
     @AuditLog(module = "asset", action = "asset_upload", targetType = "asset")
     @RequirePermission("asset:write")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<AssetVO>> upload(@PathVariable("id") Long id,
                                              @RequestParam("file") MultipartFile file,
                                              @RequestParam("mediaType") String mediaType,

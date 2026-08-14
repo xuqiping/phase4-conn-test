@@ -47,6 +47,16 @@ public class FileStorageService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private FileUploadValidator uploadValidator;
 
+    /**
+     * per-user 存储配额（安全体系 S4 · SEC-FR-033）。横切可选依赖同上；null → 默认 2048MB。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
+    /** 配额拒收指标（S4 · SEC-FR-033）。横切可选依赖：缺席不计数。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+
     @org.springframework.beans.factory.annotation.Autowired
     public FileStorageService(@Value("${app.files.storage-dir:uploads/workflow-inputs}") String storageDir,
                               StoredFileMapper storedFileMapper,
@@ -81,6 +91,9 @@ public class FileStorageService {
         if (uploadValidator != null) {
             uploadValidator.sniff(file);
         }
+        // 安全体系 S4 · SEC-FR-033：第三关 per-user 存储配额（storeStream 不查——服务端可信回源）。
+        // SUM 查询异常放行（检测层不自残）；0=关闭。
+        enforceStorageQuota(ownerUserId, file.getSize());
         String originalName = StringUtils.cleanPath(
                 file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
                         ? "file"
@@ -280,6 +293,55 @@ public class FileStorageService {
         if (!FileSecurityPolicy.isUploadAllowed(originalFilename)) {
             throw new BusinessException(ErrorCode.FILE_TYPE_NOT_ALLOWED);
         }
+    }
+
+    /**
+     * per-user 存储配额预检（安全体系 S4 · SEC-FR-033，F-4）。
+     *
+     * <p>已用量 = stored_files 按 owner 汇总 ACTIVE 行 size（单条聚合查询，owner 维度行数有限无 N+1 面）；
+     * 已用 + 本文件 > 配额 → {@code STORAGE_QUOTA_EXCEEDED} 固定话术（含用量/上限）+ 拒收计数。
+     * 查询/设置异常一律放行 + WARN（检测层不自残）；配额 ≤0 = 关闭（不查库零开销）。
+     */
+    private void enforceStorageQuota(Long ownerUserId, long incomingSize) {
+        try {
+            long quotaMb = systemSettingService == null
+                    ? 2048L
+                    : systemSettingService.getUserStorageQuotaMb();
+            if (quotaMb <= 0) {
+                return;
+            }
+            long quotaBytes = quotaMb * 1024 * 1024;
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<StoredFileEntity> w =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            w.select("COALESCE(SUM(size),0) AS used")
+                    .eq("owner_user_id", ownerUserId)
+                    .eq("status", StoredFileEntity.STATUS_ACTIVE);
+            long used = 0L;
+            for (java.util.Map<String, Object> row : storedFileMapper.selectMaps(w)) {
+                Object v = row == null ? null : row.get("used");
+                if (v instanceof Number n) {
+                    used = n.longValue();
+                }
+                break;   // 聚合单行
+            }
+            if (used + incomingSize > quotaBytes) {
+                if (bizMetrics != null) {
+                    bizMetrics.uploadQuotaDenied();
+                }
+                throw new BusinessException(ErrorCode.STORAGE_QUOTA_EXCEEDED,
+                        "存储空间已满（已用 " + toGb(used) + "GB / 上限 " + toGb(quotaBytes)
+                                + "GB），请删除旧文件后重试");
+            }
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(FileStorageService.class)
+                    .warn("存储配额检查失败(放行) owner={}: {}", ownerUserId, e.getMessage());
+        }
+    }
+
+    private static String toGb(long bytes) {
+        return String.format(java.util.Locale.ROOT, "%.1f", bytes / 1024.0 / 1024.0 / 1024.0);
     }
 
     private Path resolveSafe(String fileId) {

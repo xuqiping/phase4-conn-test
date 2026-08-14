@@ -42,6 +42,9 @@ public class ChatController {
     /** 聊天附件上传（V69 二期 P3，FR-201）：落盘 stored_files(CHAT) + 建文件记忆行（PROCESSING）。 */
     @PostMapping("/attachments")
     @AuditLog(module = "chat", action = "upload_attachment")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<MemoryAssetUploadVO>> uploadAttachment(@RequestParam("file") MultipartFile file) {
         Long userId = getCurrentUserId();
         return ResponseEntity.ok(R.ok(memoryAssetUploadService.upload(file, userId)));

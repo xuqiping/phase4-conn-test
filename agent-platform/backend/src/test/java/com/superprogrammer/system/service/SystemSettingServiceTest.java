@@ -334,4 +334,20 @@ class SystemSettingServiceTest {
 
         assertEquals(20_000, service.getUploadMaxParseChars());
     }
+
+    @Test
+    void getUserStorageQuotaMb_shouldDefault2048WhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(2048L, service.getUserStorageQuotaMb());
+    }
+
+    @Test
+    void getUserStorageQuotaMb_shouldReturnStoredZeroAsDisabled() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("0");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(0L, service.getUserStorageQuotaMb());
+    }
 }

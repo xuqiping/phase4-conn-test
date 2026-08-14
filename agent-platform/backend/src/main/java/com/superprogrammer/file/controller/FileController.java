@@ -43,6 +43,9 @@ public class FileController {
 
     @PostMapping("/upload")
     @AuditLog(module = "system", action = "upload_file", targetType = "file")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（5 入口共用 upload_file 动作，L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<StoredFile>> upload(@RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(R.ok(fileStorageService.store(
                 file, getCurrentUserId(), StoredFileEntity.SOURCE_WORKFLOW)));

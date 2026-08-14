@@ -40,6 +40,9 @@ public class KnowledgeDocumentController {
     /** 阶段1：预读 Excel sheet 名（picker）。存文件 + POI 只读名，不建文档行。 */
     @PostMapping("/sheets/preview")
     @RequirePermission("knowledge:write")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<SheetPreviewVO>> previewSheets(@RequestParam("kbId") Long kbId,
                                                            @RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(R.ok(knowledgeDocumentService.previewSheets(
@@ -51,6 +54,9 @@ public class KnowledgeDocumentController {
     @PostMapping("/upload")
     @AuditLog(module = "kb", action = "document_upload", targetType = "document")
     @RequirePermission("knowledge:write")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<KnowledgeDocumentVO>> upload(
             @RequestParam("kbId") Long kbId,
             @RequestParam(value = "file", required = false) MultipartFile file,
@@ -113,6 +119,9 @@ public class KnowledgeDocumentController {
     @PostMapping("/{id}/versions")
     @RequirePermission("knowledge:write")
     @AuditLog(module = "kb", action = "document_version_create", targetType = "document")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（版本上传同走 store 咽喉）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<KnowledgeDocumentVersionVO>> createVersion(
             @PathVariable Long id,
             @RequestParam("file") MultipartFile file,

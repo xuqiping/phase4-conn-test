@@ -270,6 +270,13 @@ public class SystemSettingService {
         return v > 0 ? (int) Math.min(v, Integer.MAX_VALUE) : 100_000;
     }
 
+    /** 安全体系 S4 · SEC-FR-033 per-user 存储配额（MB，F-4）。默认 2048；0=关闭配额。 */
+    public static final String SECURITY_USER_STORAGE_QUOTA_MB = "security.user.storage-quota-mb";
+
+    public long getUserStorageQuotaMb() {
+        return getLong(SECURITY_USER_STORAGE_QUOTA_MB, 2048L);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

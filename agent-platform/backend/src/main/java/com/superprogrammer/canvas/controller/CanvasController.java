@@ -144,6 +144,9 @@ public class CanvasController {
     @PostMapping("/{id}/upload")
     @AuditLog(module = "canvas", action = "canvas_upload")
     @RequirePermission("canvas:write")
+    // 安全体系 S4 · SEC-FR-124：上传频率限制（L5 补齐）
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "upload_file", max = 10, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<StoredFile>> upload(@PathVariable Long id,
                                                 @RequestParam("file") MultipartFile file) {
         Long userId = getCurrentUserId();

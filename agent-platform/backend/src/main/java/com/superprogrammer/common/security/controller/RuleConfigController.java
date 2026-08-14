@@ -39,6 +39,8 @@ public class RuleConfigController {
         // 安全体系 S4 · SEC-FR-032 解析炸弹上限（F-3：像素/解析文本）
         put("security.upload.max-pixels", "100000000");
         put("security.upload.max-parse-chars", "100000");
+        // 安全体系 S4 · SEC-FR-033 per-user 存储配额 MB（F-4，0=关）
+        put("security.user.storage-quota-mb", "2048");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");
@@ -53,6 +55,8 @@ public class RuleConfigController {
         put("security.rate.canvas_run.max", "10");
         put("security.rate.rag_ask.max", "10");
         put("security.rate.workflow_run.max", "10");
+        // 安全体系 S4 · SEC-FR-124 上传频率（L5 补齐，5 入口共用）
+        put("security.rate.upload_file.max", "10");
         // 规则阈值（P3 默认）
         put("security.rule.idor.threshold", "10");
         put("security.rule.exfil.threshold", "500");

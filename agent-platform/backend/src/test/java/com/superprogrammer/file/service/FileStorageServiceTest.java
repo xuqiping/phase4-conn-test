@@ -145,4 +145,76 @@ class FileStorageServiceTest {
         assertThatThrownBy(() -> throwing.loadPath(fileId, 99L, false))
                 .hasMessageContaining("无权访问");   // grantor 异常 fail-closed
     }
+
+    // ============================ 安全体系 S4 · SEC-FR-033 per-user 存储配额 ============================
+
+    @org.mockito.Mock
+    private com.superprogrammer.system.service.SystemSettingService quotaSettings;
+    @org.mockito.Mock
+    private com.superprogrammer.common.metrics.BizMetrics quotaMetrics;
+
+    private void wireQuota() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "systemSettingService", quotaSettings);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "bizMetrics", quotaMetrics);
+    }
+
+    private static java.util.Map<String, Object> row(long used) {
+        return java.util.Map.of("used", used);
+    }
+
+    // AC：已用+本文件超配额 → 40011 固定话术（含用量/上限）+ 拒收计数
+    @Test
+    void store_overQuota_rejectedWithUsage() {
+        wireQuota();
+        org.mockito.Mockito.when(quotaSettings.getUserStorageQuotaMb()).thenReturn(1L);   // 1MB
+        org.mockito.Mockito.when(storedFileMapper.selectMaps(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(row(1024 * 1024)));   // 已用满
+        MockMultipartFile file = new MockMultipartFile("file", "big.png", "image/png", new byte[100]);
+
+        assertThatThrownBy(() -> service.store(file, 7L, StoredFileEntity.SOURCE_KB))
+                .isInstanceOf(com.superprogrammer.common.exception.BusinessException.class)
+                .hasMessageContaining("存储空间已满")
+                .hasMessageContaining("上限");
+        org.mockito.Mockito.verify(quotaMetrics).uploadQuotaDenied();
+        org.mockito.Mockito.verify(storedFileMapper, org.mockito.Mockito.never())
+                .insert(org.mockito.ArgumentMatchers.any(StoredFileEntity.class));
+    }
+
+    // AC：配额 0 = 关闭（不查库零开销）
+    @Test
+    void store_quotaZero_skipsCheck() {
+        wireQuota();
+        org.mockito.Mockito.when(quotaSettings.getUserStorageQuotaMb()).thenReturn(0L);
+        MockMultipartFile file = new MockMultipartFile("file", "any.png", "image/png", new byte[10]);
+
+        StoredFile result = service.store(file, 7L, StoredFileEntity.SOURCE_KB);
+
+        assertThat(result.fileId()).endsWith(".png");
+        org.mockito.Mockito.verify(storedFileMapper, org.mockito.Mockito.never())
+                .selectMaps(org.mockito.ArgumentMatchers.any());
+    }
+
+    // AC：配额查询故障放行（检测层不自残）
+    @Test
+    void store_quotaQueryFails_passes() {
+        wireQuota();
+        org.mockito.Mockito.when(quotaSettings.getUserStorageQuotaMb()).thenReturn(1L);
+        org.mockito.Mockito.when(storedFileMapper.selectMaps(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new RuntimeException("db down"));
+        MockMultipartFile file = new MockMultipartFile("file", "any.png", "image/png", new byte[10]);
+
+        assertThat(service.store(file, 7L, StoredFileEntity.SOURCE_KB).fileId()).endsWith(".png");
+    }
+
+    // AC：预算内放行
+    @Test
+    void store_withinQuota_passes() {
+        wireQuota();
+        org.mockito.Mockito.when(quotaSettings.getUserStorageQuotaMb()).thenReturn(1L);
+        org.mockito.Mockito.when(storedFileMapper.selectMaps(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(row(0)));
+        MockMultipartFile file = new MockMultipartFile("file", "small.png", "image/png", new byte[10]);
+
+        assertThat(service.store(file, 7L, StoredFileEntity.SOURCE_KB).fileId()).endsWith(".png");
+    }
 }

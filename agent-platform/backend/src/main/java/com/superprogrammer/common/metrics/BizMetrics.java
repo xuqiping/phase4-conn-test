@@ -305,6 +305,14 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S4 · SEC-FR-033：per-user 存储配额超限拒收次数。 */
+    public void uploadQuotaDenied() {
+        Counter.builder("security.upload.quota.denied")
+                .description("用户存储配额超限拒收次数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")
