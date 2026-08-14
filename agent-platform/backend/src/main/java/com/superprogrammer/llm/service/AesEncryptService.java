@@ -20,13 +20,53 @@ public class AesEncryptService {
     private static final int IV_LENGTH = 12;
     private static final int TAG_LENGTH = 128;
 
-    @Value("${llm.encryption.secret:default-secret-key-change-in-production!!}")
+    /** 内置默认密钥（随代码进仓库=公开）：任何能看到代码的人都可解密库里所有密文。 */
+    static final String DEFAULT_SECRET = "default-secret-key-change-in-production!!";
+    /** 生产态最低密钥长度（此服务对 secret 先 SHA-256 派生，长度只影响熵，16 字符=96 bit 熵下限）。 */
+    private static final int MIN_SECRET_LENGTH = 16;
+
+    @Value("${llm.encryption.secret:" + DEFAULT_SECRET + "}")
     private String secret;
+
+    @Value("${app.cors.allowed-origins:}")
+    private String corsAllowedOrigins;
 
     private final SecureRandom random = new SecureRandom();
 
     public void setSecret(String secret) {
         this.secret = secret;
+    }
+
+    /** 单测注入生产态信号（@Value 字段无 setter）。 */
+    void setCorsAllowedOriginsForTest(String corsAllowedOrigins) {
+        this.corsAllowedOrigins = corsAllowedOrigins;
+    }
+
+    /**
+     * 安全体系 S5 · SEC-FR-074（G5）：生产态弱密钥 fail-fast（复用 JwtUtil KNOWN_WEAK 范式）。
+     *
+     * <p>「生产态」判定 = {@code app.cors.allowed-origins} 非空（该配置只有生产/预发才设置，
+     * 与 CORS 白名单同信号源）；此时密钥为内置默认值或长度 &lt; 16 → 拒绝启动——
+     * 默认密钥随 git 仓库公开，apiKey/密钥列（api_key_enc）等于明文裸奔。
+     * <p>dev（CORS 空）→ 放行 + WARN，不打断本地起服务（库里的密文也全是测试数据）。
+     */
+    @jakarta.annotation.PostConstruct
+    void validateSecret() {
+        boolean productionMode = corsAllowedOrigins != null && !corsAllowedOrigins.isBlank();
+        String trimmed = secret == null ? "" : secret.trim();
+        boolean weak = DEFAULT_SECRET.equals(trimmed) || trimmed.length() < MIN_SECRET_LENGTH;
+        if (!weak) {
+            return;
+        }
+        if (productionMode) {
+            throw new IllegalStateException(
+                    "llm.encryption.secret 为内置默认值或长度<" + MIN_SECRET_LENGTH
+                            + "，且 app.cors.allowed-origins 已配置（生产态）——加密密钥形同虚设。"
+                            + "请经环境变量 LLM_ENCRYPTION_SECRET 注入 ≥16 字符随机密钥后重启"
+                            + "（生成: openssl rand -base64 32 | tr -d '\\n'；注意：换密钥需重录存量 apiKey 密文）。");
+        }
+        log.warn("llm.encryption.secret 使用弱密钥（默认值/过短）——仅限 dev 放行；"
+                + "生产环境必须经 LLM_ENCRYPTION_SECRET 注入随机密钥（S5 SEC-FR-074 fail-fast 会在生产态拒启动）");
     }
 
     /**
