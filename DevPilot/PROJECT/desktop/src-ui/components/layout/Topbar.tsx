@@ -1,10 +1,19 @@
-// 顶栏：Logo + 项目切换 + 阶段管道条（Step 5 静态联动）+ 密度开关。
+// 顶栏：Logo + 项目切换（下拉） + 阶段管道条 + 密度开关。
+import { useState } from "react";
+import { useProjectStore } from "../../stores/project";
 import { useUiStore } from "../../stores/ui";
 import PipelineBar from "../pipeline/PipelineBar";
 
 export default function Topbar() {
   const density = useUiStore((s) => s.density);
   const toggleDensity = useUiStore((s) => s.toggleDensity);
+  const projects = useProjectStore((s) => s.projects);
+  const currentId = useProjectStore((s) => s.currentId);
+  const select = useProjectStore((s) => s.select);
+  const openWizard = useProjectStore((s) => s.openWizard);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const current = projects.find((p) => p.id === currentId);
 
   return (
     <header
@@ -19,16 +28,63 @@ export default function Topbar() {
         <span className="text-[15px] font-bold tracking-widest">DevPilot</span>
       </div>
 
-      {/* 项目切换（Step 7 接创建向导后启用） */}
-      <button
-        type="button"
-        className="flex cursor-default items-center gap-2 rounded-[9px] border border-border bg-card px-3 py-1.5 text-[13px] text-text-dim"
-        title="项目切换将在创建向导接通后启用"
-      >
-        未选择项目 <span className="text-[10px]">▾</span>
-      </button>
+      {/* 项目切换（联动点 3：切换 = 整体换快照） */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((o) => !o)}
+          className="flex items-center gap-2 rounded-[9px] border border-border bg-card px-3 py-1.5 text-[13px] text-text-dim transition hover:border-border-strong hover:text-text"
+        >
+          {current ? current.name : "未选择项目"}
+          <span className="text-[10px]">▾</span>
+        </button>
+        {menuOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setMenuOpen(false)}
+              aria-hidden
+            />
+            <div
+              role="menu"
+              className="panel absolute top-full left-0 z-50 mt-1 w-56 rounded-[9px] p-1.5"
+            >
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void select(p.id);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-[13px] transition hover:bg-card-hover ${
+                    p.id === currentId ? "text-text" : "text-text-dim"
+                  }`}
+                >
+                  {p.name}
+                  <span className="font-mono text-[10px] text-text-faint">
+                    {p.scale}
+                  </span>
+                </button>
+              ))}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openWizard();
+                }}
+                className="mt-0.5 w-full rounded-md border-t border-border px-3 py-1.5 text-left text-[13px] text-brand2 transition hover:bg-card-hover"
+              >
+                ＋ 新建项目
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
-      {/* 阶段管道条（Step 5 静态联动；Step 7 起由状态机事件驱动） */}
+      {/* 阶段管道条（内核快照驱动） */}
       <PipelineBar />
 
       {/* 密度切换 */}

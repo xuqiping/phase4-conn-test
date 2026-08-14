@@ -1,13 +1,41 @@
-// 阶段管道条（顶栏中央）：想法→需求→计划→建造→验收→部署。
-// Step 5 静态版：高亮 = 当前视图；Step 7 起由状态机事件驱动真实阶段。
+// 阶段管道条（顶栏中央）。
+// 高亮 = 内核状态机真相（快照 phases.status）；无项目时按当前浏览视图静态高亮。
+// 规模变体（L0/L1 跳阶段）由快照 phases 自动呈现——缺哪些阶段就不渲染哪些（联动点 2）。
 import { Fragment } from "react";
-import { STAGES } from "../../lib/viewRegistry";
+import { STAGES, type ViewKey } from "../../lib/viewRegistry";
+import { useProjectStore } from "../../stores/project";
 import { useUiStore } from "../../stores/ui";
-import StageChip from "./StageChip";
+import StageChip, { type StageItem } from "./StageChip";
 
 export default function PipelineBar() {
+  const snapshot = useProjectStore((s) => s.snapshot);
+  const transition = useProjectStore((s) => s.transition);
   const view = useUiStore((s) => s.view);
-  const currentOrder = STAGES.findIndex((s) => s.key === view); // 驾驶舱 = -1
+  const setView = useUiStore((s) => s.setView);
+
+  let items: StageItem[];
+  if (snapshot) {
+    items = snapshot.phases.map((p) => ({
+      key: p.key as ViewKey,
+      label: STAGES.find((s) => s.key === p.key)?.label ?? p.label,
+      status: p.status,
+    }));
+  } else {
+    const order = STAGES.findIndex((s) => s.key === view);
+    items = STAGES.map((s, i) => ({
+      key: s.key,
+      label: s.label,
+      status: order >= 0 && i < order ? "done" : i === order ? "active" : "todo",
+    }));
+  }
+
+  const onClick = (key: ViewKey) => {
+    if (snapshot) {
+      void transition(key); // 内核裁决；被拒走 toast
+    } else {
+      setView(key);
+    }
+  };
 
   return (
     <div
@@ -16,14 +44,14 @@ export default function PipelineBar() {
       role="navigation"
       aria-label="阶段管道条"
     >
-      {STAGES.map((s, i) => (
-        <Fragment key={s.key}>
+      {items.map((item, i) => (
+        <Fragment key={item.key}>
           {i > 0 && (
             <span className="stage-sep" aria-hidden>
               ›
             </span>
           )}
-          <StageChip def={s} currentOrder={currentOrder} />
+          <StageChip item={item} onClick={onClick} />
         </Fragment>
       ))}
     </div>

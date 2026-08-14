@@ -1,36 +1,32 @@
-// 管道条单个阶段节点：呼吸/流光效对齐 prototypes/shared.css。
-// done/active 状态当前按当前视图静态推导（Step 7 起由状态机驱动）。
-import type { ViewDef, ViewKey } from "../../lib/viewRegistry";
-import { STAGES } from "../../lib/viewRegistry";
-import { useUiStore } from "../../stores/ui";
+// 管道条单个阶段节点（Step 7 起由内核快照驱动）。
+// 点击语义：有项目 = 向内核发起阶段转移（被门禁/越阶段拦则 toast 大白话）；
+// 无项目 = 仅静态预览视图。
+import type { ViewKey } from "../../lib/viewRegistry";
 
-interface Props {
-  def: ViewDef;
-  /** 当前视图在阶段序列中的次序；-1 = 驾驶舱（无高亮） */
-  currentOrder: number;
+export interface StageItem {
+  key: ViewKey;
+  label: string;
+  status: "done" | "active" | "todo";
 }
 
-export default function StageChip({ def, currentOrder }: Props) {
-  const setView = useUiStore((s) => s.setView);
-  const order = STAGES.findIndex((s) => s.key === def.key);
-  const state =
-    currentOrder >= 0 && order < currentOrder
-      ? "done"
-      : order === currentOrder
-        ? "active"
-        : "todo";
-
+export default function StageChip({
+  item,
+  onClick,
+}: {
+  item: StageItem;
+  onClick: (key: ViewKey) => void;
+}) {
   return (
     <button
       type="button"
-      className={`stage stage-${state}`}
-      aria-current={state === "active" ? "step" : undefined}
-      onClick={() => setView(def.key as ViewKey)}
+      className={`stage stage-${item.status}`}
+      aria-current={item.status === "active" ? "step" : undefined}
+      onClick={() => onClick(item.key)}
     >
       <span className="dot" aria-hidden>
-        {state === "done" ? "✓" : "●"}
+        {item.status === "done" ? "✓" : "●"}
       </span>
-      {def.label}
+      {item.label}
     </button>
   );
 }

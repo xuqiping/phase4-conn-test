@@ -287,6 +287,10 @@ impl PersistentMachine {
         &self.machine
     }
 
+    pub fn project_id(&self) -> i64 {
+        self.project_id
+    }
+
     pub fn pass_gate(&mut self, gate: &str) -> Result<(), MachineError> {
         self.machine.pass_gate(gate)?;
         self.persist()?;

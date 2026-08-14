@@ -1,0 +1,113 @@
+// 项目与内核状态 store：前端不存业务真相，快照来自内核（plan 坑点表）。
+// 每次快照更新后视图归位到内核阶段（联动点 1/4）。
+import { create } from "zustand";
+import { errMessage, ipc, onState, type ProjectDto, type StateDto } from "../lib/ipc";
+import { type ViewKey } from "../lib/viewRegistry";
+import { useUiStore } from "./ui";
+
+interface ProjectState {
+  projects: ProjectDto[];
+  currentId: number | null;
+  snapshot: StateDto | null;
+  /** 大白话错误（toast 展示） */
+  error: string | null;
+  wizardOpen: boolean;
+
+  /** 启动时调用：拉项目列表 + 订阅内核事件（断连重连 = 重拉快照） */
+  init: () => Promise<void>;
+  openWizard: () => void;
+  closeWizard: () => void;
+  dismissError: () => void;
+  create: (name: string, parentDir: string | null, scale: string) => Promise<boolean>;
+  select: (id: number) => Promise<void>;
+  transition: (to: string) => Promise<void>;
+  passGate: (gate: string) => Promise<void>;
+}
+
+function applySnapshot(dto: StateDto) {
+  useProjectStore.setState({ snapshot: dto, currentId: dto.project_id });
+  // 视图归位到内核阶段（驾驶舱不是阶段，phase 一定是六阶段之一）
+  useUiStore.getState().setView(dto.phase as ViewKey);
+  if (dto.warning) {
+    useProjectStore.setState({ error: dto.warning });
+  }
+}
+
+export const useProjectStore = create<ProjectState>((set, get) => ({
+  projects: [],
+  currentId: null,
+  snapshot: null,
+  error: null,
+  wizardOpen: false,
+
+  init: async () => {
+    try {
+      const projects = await ipc.listProjects();
+      set({ projects, wizardOpen: projects.length === 0 });
+      if (projects.length > 0) {
+        await get().select(projects[projects.length - 1].id);
+      }
+    } catch (e) {
+      set({ error: errMessage(e) });
+    }
+    await onState((dto) => {
+      if (dto.project_id === get().currentId) applySnapshot(dto);
+    });
+  },
+
+  openWizard: () => set({ wizardOpen: true }),
+  closeWizard: () => set({ wizardOpen: false }),
+  dismissError: () => set({ error: null }),
+
+  create: async (name, parentDir, scale) => {
+    try {
+      const p = await ipc.createProject(name, parentDir, scale);
+      set((s) => ({ projects: [...s.projects, p], wizardOpen: false }));
+      await get().select(p.id);
+      return true;
+    } catch (e) {
+      set({ error: errMessage(e) });
+      return false;
+    }
+  },
+
+  select: async (id) => {
+    try {
+      applySnapshot(await ipc.getState(id));
+    } catch (e) {
+      set({ error: errMessage(e) });
+    }
+  },
+
+  transition: async (to) => {
+    const id = get().currentId;
+    if (id == null) return;
+    try {
+      applySnapshot(await ipc.transition(id, to));
+      set({ error: null });
+    } catch (e) {
+      set({ error: errMessage(e) }); // 门禁拦截等大白话错误走 toast
+    }
+  },
+
+  passGate: async (gate) => {
+    const id = get().currentId;
+    if (id == null) return;
+    try {
+      applySnapshot(await ipc.passGate(id, gate));
+    } catch (e) {
+      set({ error: errMessage(e) });
+    }
+  },
+}));
+
+// 供测试重置用
+export function resetProjectStore() {
+  useProjectStore.setState({
+    projects: [],
+    currentId: null,
+    snapshot: null,
+    error: null,
+    wizardOpen: false,
+  });
+}
