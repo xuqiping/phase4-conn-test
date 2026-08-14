@@ -1170,7 +1170,11 @@ public class RagRetrievalService {
         LlmRequest request = LlmRequest.builder()
                 .messages(List.of(
                         LlmMessage.builder().role("system").content(
-                                "仅从证据提炼事实。返回 JSON 数组，每项字段 subject、value、citationIds；禁止使用证据外知识。")
+                                "仅从证据提炼事实。返回 JSON 数组，每项字段 subject、value、citationIds；禁止使用证据外知识。"
+                                // 14x 冒烟实证：无长度约束时 glm-5.1 对长证据逐条复述 → 输出 1200+ tok，
+                                // 生成 >30s 撞 ClaudeProvider 阻塞读超时/截断 JSON。强约束精简输出。
+                                + "务必精简：只输出 JSON 本身，不加任何解释或代码块；subject≤10字，value≤60字，"
+                                + "每条 citationId 只列编号；只提炼与回答问题相关的关键事实，宁少勿多。")
                                 .build(),
                         LlmMessage.builder().role("user").content(evidenceJson).build()))
                 .temperature(0.0).maxTokens(ragConfig.getChatMaxTokens()).stream(false)
@@ -1180,6 +1184,21 @@ public class RagRetrievalService {
             return objectMapper.readValue(lenientModelJson(content), objectMapper.getTypeFactory().constructCollectionType(
                     List.class, com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact.class));
         } catch (Exception e) {
+            // 二次兜底（14x 冒烟实证）：模型偶尔返回对象包裹（如 {"facts":[...]}）或逐行 JSON——
+            // 解析为 Map 取首个数组值再转 Fact 列表；再不行才报 422。
+            try {
+                Object parsed = objectMapper.readValue(lenientModelJson(content), Object.class);
+                if (parsed instanceof Map<?, ?> map) {
+                    for (Object v : map.values()) {
+                        if (v instanceof List<?> list && !list.isEmpty()) {
+                            return objectMapper.convertValue(list, objectMapper.getTypeFactory().constructCollectionType(
+                                    List.class, com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact.class));
+                        }
+                    }
+                }
+            } catch (Exception ignore) {
+                // 落入下方 422
+            }
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "事实提炼模型未返回合法 JSON");
         }
     }
@@ -1198,6 +1217,12 @@ public class RagRetrievalService {
         int hi = s.lastIndexOf(']');
         if (lo >= 0 && hi > lo) {
             return s.substring(lo, hi + 1);
+        }
+        // 无数组括号：可能是对象包裹（{"facts":[...]} 已被上面截走）或裸对象，截 {..} 交给二次兜底解析
+        int blo = s.indexOf('{');
+        int bhi = s.lastIndexOf('}');
+        if (blo >= 0 && bhi > blo) {
+            return s.substring(blo, bhi + 1);
         }
         return s;
     }

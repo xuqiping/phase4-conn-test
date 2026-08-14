@@ -159,6 +159,23 @@
                 @update:value="onSelectWebSearch"
               />
             </div>
+            <!-- 14x-2：知识库引用多选（CHAT 模式）：选中后每条消息走 RAG 检索注入 + 📎 引用回显 -->
+            <div class="chat-view__rag-toggle" title="引用知识库：选中后消息生成前做 RAG 检索注入，回答带 📎 引用来源；多选时与你的可读权限求交">
+              <span class="chat-view__rag-label">知识库</span>
+              <n-select
+                :value="kbPref"
+                :options="kbOptions"
+                :disabled="chatStore.sending"
+                multiple
+                clearable
+                size="small"
+                max-tag-count="responsive"
+                placeholder="不引用"
+                style="width: 180px"
+                :consistent-menu-width="false"
+                @update:value="onSelectKb"
+              />
+            </div>
             <!-- 二期 P1（FR-006）：一期「写目标/读范围」手动控件已下线——
                  turns 纯个人域（写入恒个人流水账），召回范围由 F-6 新栈 scope popover 统一承载 -->
             <div class="chat-view__mem-scope chat-view__mem-scope--read">
@@ -224,6 +241,7 @@ import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
 import { useBreakpoints } from '@/composables/useBreakpoints'
+import { knowledgeApi } from '@/api/knowledge'
 
 const route = useRoute()
 const chatStore = useChatStore()
@@ -301,6 +319,30 @@ function onSelectWebSearch(v: 'on' | 'off') {
   setStorage(STORAGE_KEYS.CHAT_WEB_SEARCH_ENABLED, on)
 }
 
+/**
+ * 14x-2：知识库引用（CHAT 模式会话级）。后端链路早已就绪（ChatRequest.kbIds → 会话持久化 →
+ * RAG 检索证据注入 → CITATION 帧 → MessageBubble 📎 引用渲染），本下拉只补「用户选择」入口。
+ * 多选与用户可读权限在后端求交（RagScopeResolver P4 不变式），混排 embedding 模型时取首个模型组。
+ */
+const kbPref = ref<number[]>(getStorage<number[]>(STORAGE_KEYS.CHAT_KB_IDS) ?? [])
+const kbOptions = ref<{ label: string; value: number }[]>([])
+
+function onSelectKb(ids: number[]) {
+  kbPref.value = ids
+  setStorage(STORAGE_KEYS.CHAT_KB_IDS, ids)
+}
+
+async function loadKbOptions() {
+  try {
+    const { data } = await knowledgeApi.listBases()
+    kbOptions.value = (data.data ?? [])
+      .filter(kb => kb.status === 'ACTIVE')
+      .map(kb => ({ label: kb.name, value: kb.id }))
+  } catch {
+    /* 拦截器提示；选择器保持空列表 */
+  }
+}
+
 const hasStarted = computed(() => chatStore.messages.length > 0 || chatStore.sending || chatStore.streamingContent)
 
 /**
@@ -322,6 +364,7 @@ onMounted(async () => {
   await chatStore.fetchSessions()
   chatStore.connectWS()
   chatStore.startConflictPoll()
+  void loadKbOptions()
   const sessionId = route.params.sessionId
   if (sessionId) {
     await chatStore.selectSession(Number(sessionId))
@@ -367,8 +410,15 @@ async function handleSelectSession(sessionId: number) {
 function handleSend(message: string, attachments?: ChatAttachmentRef[]) {
   // ragPref=null → 省略 ragEnabled 字段，后端继承全局；非 null → 覆盖（写 session.rag_enabled）。
   // webSearchPref：显式传 true/false（null=false 默认关），写 session.web_search_enabled。
+  // kbPref（14x-2）：非空时随消息传 kbIds，后端持久化到会话并做 RAG 引用。
   // 二期 P3（FR-201）：附件 fileId 集随消息走，后端归属校验 + metadata 记录（文件卡片回显）。
-  chatStore.sendStreamingMessage(message, ragPref.value ?? undefined, webSearchPref.value, attachments)
+  chatStore.sendStreamingMessage(
+    message,
+    ragPref.value ?? undefined,
+    webSearchPref.value,
+    attachments,
+    kbPref.value.length ? kbPref.value : undefined
+  )
 }
 
 function handleModelChange(model: string) {

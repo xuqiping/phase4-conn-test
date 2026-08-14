@@ -6,7 +6,7 @@
       :custom-request="customUpload"
       :show-file-list="false"
       multiple
-      accept=".md,.txt,.markdown,.pdf,.docx,.doc,.html,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+      accept=".md,.markdown,.txt,.pdf,.docx,.doc,.html,.htm,.xlsx,.xls,.csv,.json,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     >
       <n-upload-dragger>
         <div class="doc-manager__dragger">
@@ -17,6 +17,16 @@
         </div>
       </n-upload-dragger>
     </n-upload>
+
+    <!-- 14x-3：直接输入文本入库（免上传文件）。复用后端 indexMode=MANUAL 链路：文本作为唯一索引内容，
+         构造内存 .txt 留档原件，解析侧 manualExtracted 生成单 section 节点。 -->
+    <div v-if="canWrite" class="doc-manager__inline-entry">
+      <n-button size="small" @click="textModalShow = true">
+        <template #icon><n-icon :component="CreateOutline" /></template>
+        直接输入文本入库
+      </n-button>
+      <span class="doc-manager__hint doc-manager__hint--sub">无需文件，粘贴/手写内容直接进知识库（≤4000 字）</span>
+    </div>
 
     <!-- 文档表 -->
     <n-data-table
@@ -59,16 +69,37 @@
       </div>
       <n-data-table :columns="versionColumns" :data="versions" :loading="versionLoading" :pagination="false" />
     </n-modal>
+
+    <!-- 14x-3：直接输入文本入库弹窗 -->
+    <n-modal v-model:show="textModalShow" preset="card" title="直接输入文本入库" style="width: 640px">
+      <n-space vertical>
+        <n-input v-model:value="textTitle" placeholder="标题（可选，默认取正文首行）" maxlength="100" />
+        <n-input
+          v-model:value="textContent"
+          type="textarea"
+          placeholder="粘贴或输入要进知识库的内容（≤4000 字，作为索引与检索正文）"
+          :rows="10"
+          maxlength="4000"
+          show-count
+        />
+        <n-space justify="end">
+          <n-button :disabled="uploading" @click="textModalShow = false">取消</n-button>
+          <n-button type="primary" :loading="uploading" :disabled="!textContent.trim()" @click="submitTextDocument">
+            提交入库
+          </n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  NButton, NDataTable, NEmpty, NIcon, NInput, NModal, NTag, NUpload, NUploadDragger, useMessage
+  NButton, NDataTable, NEmpty, NIcon, NInput, NModal, NSpace, NTag, NUpload, NUploadDragger, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
-import { CloudUploadOutline } from '@vicons/ionicons5'
+import { CloudUploadOutline, CreateOutline } from '@vicons/ionicons5'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
 import { knowledgeApi } from '@/api/knowledge'
@@ -418,6 +449,36 @@ function onOptionsCancel() {
   pendingFile = null
 }
 
+// ---- 14x-3：直接输入文本入库（docType=FILE + indexMode=MANUAL，复用既有 MANUAL 解析链路）----
+const textModalShow = ref(false)
+const textTitle = ref('')
+const textContent = ref('')
+
+async function submitTextDocument() {
+  const text = textContent.value.trim()
+  if (!text) return
+  uploading.value = true
+  try {
+    // 标题兜底：未填取正文首行；构造内存 .txt 作为留档原件（下载可见），索引内容用手填文本
+    const firstLine = text.split('\n').map(s => s.trim()).find(Boolean) || '文本记录'
+    const safeTitle = (textTitle.value.trim() || firstLine).slice(0, 100).replace(/[\\/:*?"<>|]/g, '_')
+    const file = new File([text], `${safeTitle}.txt`, { type: 'text/plain' })
+    await store.uploadDocument(props.kbId, file, {
+      docType: 'FILE',
+      indexMode: 'MANUAL',
+      manualIndexText: text
+    })
+    message.success(`已入库：${safeTitle}`)
+    textModalShow.value = false
+    textTitle.value = ''
+    textContent.value = ''
+  } catch {
+    message.error('文本入库失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
 async function remove(doc: KnowledgeDocument) {
   try {
     await store.deleteDocument(doc.id, props.kbId)
@@ -458,6 +519,12 @@ onUnmounted(() => {
   display: flex;
   gap: var(--spacing-2);
   margin-bottom: var(--spacing-3);
+}
+
+.doc-manager__inline-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
 }
 
 .doc-manager__nodes {

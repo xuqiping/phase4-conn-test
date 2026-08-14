@@ -14,7 +14,9 @@ export const STORAGE_KEYS = {
   CHAT_SELECTED_MODEL: 'chat_selected_model',
   CHAT_SELECTED_TARGET: 'chat_selected_target',
   CHAT_RAG_ENABLED: 'chat_rag_enabled',
-  CHAT_WEB_SEARCH_ENABLED: 'chat_web_search_enabled'
+  CHAT_WEB_SEARCH_ENABLED: 'chat_web_search_enabled',
+  /** 14x-2：智能对话引用知识库（KB 多选，会话级持久化到后端 ChatSession.kbIds）。 */
+  CHAT_KB_IDS: 'chat_kb_ids'
 } as const
 
 /**

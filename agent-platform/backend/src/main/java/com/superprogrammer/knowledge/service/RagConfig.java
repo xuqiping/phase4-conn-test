@@ -38,7 +38,8 @@ public class RagConfig {
 
     // ---- 生成 ----
     private final double chatTemperature = 0.2;
-    private final int chatMaxTokens = 1200;
+    /** 14x 冒烟实证：事实提炼对较大证据批次（688 tok 输入）输出恰被 1200 截断 → JSON 断尾 422；放宽到 3000。 */
+    private final int chatMaxTokens = 3000;
 
     /** B1：effectiveContextCap = min(maxContextTokens, modelMaxContext - answerTokenReserve)。 */
     public int computeEffectiveContextCap() {

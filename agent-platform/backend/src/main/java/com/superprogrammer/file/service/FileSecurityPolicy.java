@@ -44,8 +44,11 @@ public final class FileSecurityPolicy {
      * 危险类型与可执行文件（exe/bat/sh/dll…）天然不在列 → 拒收。
      */
     private static final Set<String> UPLOAD_ALLOWED_EXTENSIONS = Set.of(
-            // 文档
-            "txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "json", "srt", "vtt",
+            // 文档（14x-4：补 markdown/html/htm——知识库 DocumentParserService 的 docType 推断本就认这三种，
+            // 且前端 accept 已列 .html/.markdown，缺白名单导致上传必被 FILE_TYPE_NOT_ALLOWED 拒；
+            // html 下载侧仍走危险类型强制 attachment+nosniff，不新增 inline 暴露面）
+            "txt", "md", "markdown", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            "csv", "json", "srt", "vtt", "html", "htm",
             // 图片
             "png", "jpg", "jpeg", "webp", "gif", "bmp", "ico", "avif",
             // 音频

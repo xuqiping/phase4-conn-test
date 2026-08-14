@@ -235,3 +235,8 @@
 | 2026-08-13 | 接通实际物理索引创建、快照任务、进度恢复、取消、READY 门禁与前端操作 | P2 重建闭环真实性修复 |
 | 2026-08-13 | QueryPlan 与真实 Ranking Engine 接入 RagRetrievalService，移除启发式代理伪标 | P3 生产链路修复 1 |
 | 2026-08-13 | QueryPlan 控制 Rewrite/HyDE，OpenSearch Exact/Sparse 带可见文档 Pre-filter 接入 | P3 生产链路修复 2 |
+| 2026-08-14 | Phase4 E2E：V120/V121 修 stored_files 字段漂移（真凶 source VARCHAR(16)）+ 裸注解 SQL 实体/事实提炼 JSON 容错/rerank usage 回退三修复；全链路（上传→2048维索引→召回→qwen3-rerank→引用→计费对账）真实跑通 | Phase 4 运行验证（开发进度58） |
+| 2026-08-14 | 14x-2 智能对话引用知识库：ChatView 顶栏 KB 多选下拉（`CHAT_KB_IDS` 持久化）→ chat.ts/api 透传 `kbIds` → 后端既有 kbIds→CITATION 链路；浏览器实测引用回显 | 14x 问题修复 |
+| 2026-08-14 | 14x-3 直接输入文本入库：DocumentManager「直接输入文本入库」弹窗（≤4000字）→ 内存 .txt + `docType=FILE/indexMode=MANUAL` 复用既有链路；实测 doc#27 入库并被问答引用 | 14x 问题修复 |
+| 2026-08-14 | 14x-4 上传白名单对齐：`FileSecurityPolicy` 上传白名单补 `markdown/html/htm`（下载侧仍强制 attachment+nosniff）；前端 accept 补 `.htm/.csv/.json/.ppt/.pptx` | 14x 问题修复 |
+| 2026-08-14 | 14x-1 检索耗时：`RagConfig.chatMaxTokens` 1200→3000（修事实提炼截断 JSON 断尾 422）+ 提炼提示词精简强约束（修 glm-5.1 长输出 >30s 超时）+ lenientModelJson 对象包裹二次兜底 | 14x 问题修复 |
