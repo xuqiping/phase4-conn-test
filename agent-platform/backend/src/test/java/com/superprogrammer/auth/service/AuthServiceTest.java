@@ -344,6 +344,101 @@ class AuthServiceTest {
         assertThrows(BusinessException.class, () -> authService.refreshToken(request));
     }
 
+    // ---- 安全体系 S5 · SEC-FR-004+（A4 refresh 旋转）----
+
+    @Test
+    void refreshToken_rotationEnabled_rotatesAndBlacklistsOld() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("old-refresh");
+
+        when(jwtUtil.isTokenValid("old-refresh")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("old-refresh")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("old-refresh")).thenReturn("jti-1");
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(jwtUtil.getUserIdFromToken("old-refresh")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("old-refresh")).thenReturn("sid-1");
+        when(sessionService.isCurrent(1L, "sid-1")).thenReturn(true);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L), eq("sid-1"))).thenReturn("new-access");
+        when(systemSettingService.getAuthRefreshRotationEnabled()).thenReturn(true);
+        when(jwtUtil.getRemainingTtl("old-refresh")).thenReturn(600000L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(jwtUtil.generateRefreshToken(1L, "sid-1")).thenReturn("new-refresh");
+
+        TokenResponse response = authService.refreshToken(request);
+
+        assertEquals("new-access", response.getAccessToken());
+        assertEquals("new-refresh", response.getRefreshToken());
+        // 旧票拉黑：值=rotated（区别于 logout 的 "1"），TTL=剩余有效期
+        verify(valueOperations).set(eq("token:blacklist:jti-1"), eq("rotated"), eq(600000L), eq(TimeUnit.MILLISECONDS));
+        verify(bizMetrics).authRefreshRotated();
+    }
+
+    @Test
+    void refreshToken_rotationDisabled_reusesOldRefresh() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("old-refresh");
+
+        when(jwtUtil.isTokenValid("old-refresh")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("old-refresh")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("old-refresh")).thenReturn("jti-1");
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(jwtUtil.getUserIdFromToken("old-refresh")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("old-refresh")).thenReturn("sid-1");
+        when(sessionService.isCurrent(1L, "sid-1")).thenReturn(true);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L), eq("sid-1"))).thenReturn("new-access");
+        when(systemSettingService.getAuthRefreshRotationEnabled()).thenReturn(false);
+
+        TokenResponse response = authService.refreshToken(request);
+
+        assertEquals("old-refresh", response.getRefreshToken());   // 回传旧票（旧行为）
+        verify(redisTemplate, never()).opsForValue();
+        verify(jwtUtil, never()).generateRefreshToken(anyLong(), anyString());
+        verify(bizMetrics, never()).authRefreshRotated();
+    }
+
+    @Test
+    void refreshToken_replayedRotatedToken_rejectedAndAlerted() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("stolen-refresh");
+
+        when(jwtUtil.isTokenValid("stolen-refresh")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("stolen-refresh")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("stolen-refresh")).thenReturn("jti-stolen");
+        when(redisTemplate.hasKey("token:blacklist:jti-stolen")).thenReturn(true);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("token:blacklist:jti-stolen")).thenReturn("rotated");   // 旋转拉黑标记=重放
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.refreshToken(request));
+
+        assertEquals(40102, e.getCode());   // TOKEN_INVALID 固定话术防探测
+        verify(bizMetrics).authRefreshReplayed();
+        verify(userMapper, never()).selectById(anyLong());   // 不进签发链
+    }
+
+    @Test
+    void refreshToken_loggedOutBlacklistedToken_plainInvalidNoReplayAlert() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("logged-out-refresh");
+
+        when(jwtUtil.isTokenValid("logged-out-refresh")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("logged-out-refresh")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("logged-out-refresh")).thenReturn("jti-logout");
+        when(redisTemplate.hasKey("token:blacklist:jti-logout")).thenReturn(true);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("token:blacklist:jti-logout")).thenReturn("1");   // logout 拉黑≠重放
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.refreshToken(request));
+
+        assertEquals(40102, e.getCode());
+        verify(bizMetrics, never()).authRefreshReplayed();   // 正常登出过期不告警
+    }
+
     // AC-SEC-FR-008：被踢会话的 refresh 同样拒绝（40104 固定话术），不查库不签发
     @Test
     void refreshToken_kickedSession_rejected() {

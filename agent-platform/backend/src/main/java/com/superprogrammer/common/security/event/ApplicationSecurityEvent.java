@@ -37,6 +37,8 @@ public class ApplicationSecurityEvent extends ApplicationEvent {
     public static final String KIND_PROMPT_LEAK = "PROMPT_LEAK";
     /** 单会话累计 token 达上限被拒（安全体系 S3 · SEC-FR-056；payload: sessionId, used, cap）。 */
     public static final String KIND_LLM_SESSION_CAP = "LLM_SESSION_CAP";
+    /** 已被旋转的 refresh token 再次使用（安全体系 S5 · SEC-FR-004+；payload: jti——不带 token 原文）。 */
+    public static final String KIND_TOKEN_REUSE = "TOKEN_REUSE";
 
     private final String kind;
     private final Long userId;

@@ -66,6 +66,14 @@ public class AuthService {
     private final LoginAlertService loginAlertService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
+    /**
+     * 安全体系 S5 · SEC-FR-004+（A4 旋转）：旋转拉黑标记值。logout 写 "1"（正常过期），
+     * 旋转写本标记——刷新路径读到它 = 已被旋转换走的 refresh 再次出现 = 重放信号（token 可能被偷）。
+     */
+    private static final String REFRESH_ROTATION_MARKER = "rotated";
+    /** 安全体系 S5 · SEC-FR-004+：重放检出告警（MEDIUM 事件）。横切可选依赖，单测无 Bean 直通。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
 
     // 安全审计 #9：开放注册限流（防单 IP 1 分钟批量注册万号烧 LLM 配额 + 放大 SSRF 攻击面）
     private static final String RATE_LIMIT_IP_PREFIX = "ratelimit:register:ip:";
@@ -564,6 +572,23 @@ public class AuthService {
         // 检查Redis黑名单（降级放行同 isTokenBlacklisted：Redis 故障不阻断刷新主链）
         String jti = jwtUtil.getTokenId(refreshToken);
         if (isTokenBlacklisted(jti)) {
+            // 安全体系 S5 · SEC-FR-004+（A4 旋转）：黑名单值="rotated" 的 refresh 再次出现 = 重放。
+            // （logout 拉黑的值="1"，属正常登出过期路径，不告警。）话术固定 TOKEN_INVALID 防探测。
+            if (REFRESH_ROTATION_MARKER.equals(blacklistMarker(jti))) {
+                log.warn("refresh token 重放检出(已被旋转的旧票再次使用) jti={}", jti);
+                bizMetrics.authRefreshReplayed();
+                if (securityEventPublisher != null) {
+                    try {
+                        securityEventPublisher.publish(
+                                com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_TOKEN_REUSE,
+                                jwtUtil.getUserIdFromToken(refreshToken),
+                                java.util.Map.of("jti", jti));
+                    } catch (Exception e) {
+                        log.warn("TOKEN_REUSE 事件发布失败(不阻断拒绝): {}", e.getMessage());
+                    }
+                }
+                auditAuth("refresh", null, null, AuditLogEntity.RESULT_FAIL, "refresh_replayed");
+            }
             throw new BusinessException(ErrorCode.TOKEN_INVALID, "Token已失效");
         }
 
@@ -593,9 +618,28 @@ public class AuthService {
         // A8：旋转沿用同 sid（会话延续）
         String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs, sid);
 
+        // 安全体系 S5 · SEC-FR-004+（A4 refresh 旋转）：旧票拉黑（值=rotated，TTL=剩余有效期）+
+        // 签发新 refresh（同 sid）回传——7 天重放窗口封死。拉黑失败 WARN 降级（旧票至多活到自然过期）。
+        String newRefreshToken = refreshToken;
+        if (systemSettingService.getAuthRefreshRotationEnabled()) {
+            try {
+                long remainingTtl = jwtUtil.getRemainingTtl(refreshToken);
+                if (remainingTtl > 0) {
+                    redisTemplate.opsForValue().set(
+                            TOKEN_BLACKLIST_PREFIX + jti, REFRESH_ROTATION_MARKER,
+                            remainingTtl, TimeUnit.MILLISECONDS);
+                }
+            } catch (Exception e) {
+                log.warn("refresh旋转拉黑旧票失败(降级:旧票残留至自然过期,access仍15min短命): {}", e.getMessage());
+            }
+            newRefreshToken = jwtUtil.generateRefreshToken(userId, sid);
+            bizMetrics.authRefreshRotated();
+        }
+
         auditAuth("refresh", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         return TokenResponse.builder()
                 .accessToken(newAccessToken)
+                .refreshToken(newRefreshToken)
                 .tokenType("Bearer")
                 .expiresIn(accessExpirationMs)
                 .build();
@@ -679,6 +723,19 @@ public class AuthService {
         } catch (Exception e) {
             log.warn("Token黑名单查询失败(降级放行): {}", e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * 安全体系 S5 · SEC-FR-004+：读黑名单标记值（区分 logout="1" / 旋转="rotated"）。
+     * Redis 故障返回 null（调用侧只在 isTokenBlacklisted 已确认存在时读，降级不改变拒绝结果）。
+     */
+    private String blacklistMarker(String jti) {
+        try {
+            return redisTemplate.opsForValue().get(TOKEN_BLACKLIST_PREFIX + jti);
+        } catch (Exception e) {
+            log.warn("Token黑名单标记读取失败(按普通失效处理): {}", e.getMessage());
+            return null;
         }
     }
 

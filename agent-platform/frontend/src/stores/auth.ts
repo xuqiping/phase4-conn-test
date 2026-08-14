@@ -140,6 +140,14 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken.value = newToken
     setStorage(STORAGE_KEYS.ACCESS_TOKEN, newToken)
 
+    // 安全体系 S5（A4 refresh 旋转）：后端旋转模式下每次刷新回传新 refresh，旧票已作废——
+    // 不落新票会导致下一次刷新拿已旋转的旧票换取 401 被登出。开关关闭时后端不回传该字段，维持旧值。
+    const rotatedRefresh = res.data.data?.refreshToken
+    if (rotatedRefresh && rotatedRefresh !== refreshToken.value) {
+      refreshToken.value = rotatedRefresh
+      setStorage(STORAGE_KEYS.REFRESH_TOKEN, rotatedRefresh)
+    }
+
     return newToken
   }
 

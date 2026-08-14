@@ -313,6 +313,22 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S5 · SEC-FR-004+（A4 旋转）：refresh 旋转成功次数。 */
+    public void authRefreshRotated() {
+        Counter.builder("security.auth.refresh.rotated")
+                .description("refresh token 旋转签发次数")
+                .register(registry)
+                .increment();
+    }
+
+    /** 安全体系 S5 · SEC-FR-004+（A4 旋转）：已被旋转的旧 refresh 再次使用（重放检出，token 可能被偷）。 */
+    public void authRefreshReplayed() {
+        Counter.builder("security.auth.refresh.replayed")
+                .description("refresh token 重放检出次数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")

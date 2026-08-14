@@ -41,6 +41,8 @@ public class RuleConfigController {
         put("security.upload.max-parse-chars", "100000");
         // 安全体系 S4 · SEC-FR-033 per-user 存储配额 MB（F-4，0=关）
         put("security.user.storage-quota-mb", "2048");
+        // 安全体系 S5 · SEC-FR-004+ refresh token 旋转（A4，关=refresh 固定复用旧行为）
+        put("security.auth.refresh-rotation.enabled", "true");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

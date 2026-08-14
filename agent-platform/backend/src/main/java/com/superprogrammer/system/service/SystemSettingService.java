@@ -270,6 +270,13 @@ public class SystemSettingService {
         return v > 0 ? (int) Math.min(v, Integer.MAX_VALUE) : 100_000;
     }
 
+    /** 安全体系 S5 · SEC-FR-004+ refresh token 旋转（A4）。默认开；关=回到「refresh 7 天固定复用」旧行为。 */
+    public static final String SECURITY_AUTH_REFRESH_ROTATION_ENABLED = "security.auth.refresh-rotation.enabled";
+
+    public boolean getAuthRefreshRotationEnabled() {
+        return getBoolean(SECURITY_AUTH_REFRESH_ROTATION_ENABLED, true);
+    }
+
     /** 安全体系 S4 · SEC-FR-033 per-user 存储配额（MB，F-4）。默认 2048；0=关闭配额。 */
     public static final String SECURITY_USER_STORAGE_QUOTA_MB = "security.user.storage-quota-mb";
 

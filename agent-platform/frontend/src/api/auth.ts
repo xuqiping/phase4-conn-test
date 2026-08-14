@@ -16,9 +16,10 @@ export interface LoginResponse {
   userInfo: UserInfo
 }
 
-/** 刷新Token响应数据 */
+/** 刷新Token响应数据（安全体系 S5 A4：旋转模式下回传新 refreshToken，旧票已作废） */
 export interface RefreshResponse {
   accessToken: string
+  refreshToken?: string
   expiresIn: number
 }
 
