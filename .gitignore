@@ -57,6 +57,9 @@ docs/
 # 放开 workflow_output/docs/（SDD 功能级文档：feature-map/user-ops/plans/specs/changes 等需入库）
 !agent-platform/workflow_output/docs/
 !agent-platform/workflow_output/docs/**
+# 放开 frontnew/docs/（样式预览版功能文档：测试方案/feature-map/user-ops/皮肤层约定需入库）
+!agent-platform/frontnew/docs/
+!agent-platform/frontnew/docs/**
 项目部署需要文件/
 
 # 日志和临时文件
