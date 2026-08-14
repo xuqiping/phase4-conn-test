@@ -7,13 +7,19 @@ import request from './request'
 import type { ApiResponse } from './request'
 import type { UserInfo } from '@/stores/auth'
 
-/** 登录响应数据 */
+/** 登录响应数据（S5 A6：已绑定 TOTP 用户第一屏只回 mfaRequired+mfaToken，token 字段缺省） */
 export interface LoginResponse {
-  accessToken: string
-  refreshToken: string
-  tokenType: string
-  expiresIn: number
-  userInfo: UserInfo
+  accessToken?: string
+  refreshToken?: string
+  tokenType?: string
+  expiresIn?: number
+  userInfo?: UserInfo
+  /** true=进入两步登录第二屏（此时无 token 字段） */
+  mfaRequired?: boolean
+  /** 两步登录中间票（5 分钟一次性，配合 verifyMfa） */
+  mfaToken?: string
+  /** totp.required 开 + admin 未绑定 → 引导绑定（不阻断） */
+  mfaBindAdvice?: boolean
 }
 
 /** 刷新Token响应数据（安全体系 S5 A4：旋转模式下回传新 refreshToken，旧票已作废） */
@@ -241,7 +247,54 @@ export const authApi = {
    */
   changePassword(oldPassword: string, newPassword: string) {
     return request.post<ApiResponse<void>>('/me/password/change', { oldPassword, newPassword })
+  },
+
+  // ==================== 安全体系 S5 · A6 TOTP 两步验证 ====================
+
+  /**
+   * 两步登录第二屏：mfaToken + TOTP 码/恢复码 → 双 token
+   * POST /api/auth/mfa/verify（公开端点，mfaToken 即凭证）
+   */
+  verifyMfa(mfaToken: string, code: string) {
+    return request.post<ApiResponse<LoginResponse>>('/auth/mfa/verify', { mfaToken, code })
+  },
+
+  /** 当前用户 MFA 绑定状态（设置页渲染） */
+  getMfaStatus() {
+    return request.get<ApiResponse<MfaStatus>>('/auth/mfa/status')
+  },
+
+  /** 发起绑定：返回 secret + otpauth URI（确认前不生效） */
+  mfaBind() {
+    return request.post<ApiResponse<MfaBindStart>>('/auth/mfa/bind')
+  },
+
+  /** 确认绑定：验证器首个 code → 发放 8 组一次性恢复码（明文仅此一次） */
+  mfaBindConfirm(code: string) {
+    return request.post<ApiResponse<MfaBindConfirm>>('/auth/mfa/bind/confirm', { code })
+  },
+
+  /** 解绑：需当前有效验证码/恢复码 */
+  mfaUnbind(code: string) {
+    return request.post<ApiResponse<void>>('/auth/mfa/unbind', { code })
   }
+}
+
+/** MFA 绑定状态（S5 A6）。 */
+export interface MfaStatus {
+  bound: boolean
+  required: boolean
+}
+
+/** 绑定发起响应：secret 手动加入验证器 App，或粘贴 otpauthUri。 */
+export interface MfaBindStart {
+  secret: string
+  otpauthUri: string
+}
+
+/** 绑定确认响应：8 组一次性恢复码（仅本次返回，请提示用户保存）。 */
+export interface MfaBindConfirm {
+  recoveryCodes: string[]
 }
 
 /** 凭证列表项（设置页展示，identifier 已脱敏）。 */

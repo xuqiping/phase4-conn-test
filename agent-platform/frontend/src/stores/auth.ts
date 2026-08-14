@@ -58,22 +58,41 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 用户登录
-   * 调用登录API，存储token和用户信息
+   * 调用登录API，存储token和用户信息。
+   * S5 A6 TOTP：已绑定用户第一屏只回 mfaRequired+mfaToken（不落任何登录态），
+   * 由登录页第二屏调 verifyMfa 完成双 token 落地。
    */
-  async function login(params: LoginParams) {
+  async function login(params: LoginParams): Promise<{ mfaRequired?: boolean; mfaToken?: string; mfaBindAdvice?: boolean }> {
     loading.value = true
     try {
       const res = await authApi.login(params)
+      const data = res.data.data
+
+      if (data.mfaRequired && data.mfaToken) {
+        return { mfaRequired: true, mfaToken: data.mfaToken }
+      }
+
+      const { accessToken: at, refreshToken: rt, userInfo: info } = data
+      applyTokenPair(at!, rt!, info!)
+
+      if (data.mfaBindAdvice) {
+        return { mfaBindAdvice: true }
+      }
+      return {}
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * S5 A6 TOTP：两步登录第二屏——mfaToken + TOTP 码/恢复码 → 双 token 落地。
+   */
+  async function verifyMfa(mfaToken: string, code: string) {
+    loading.value = true
+    try {
+      const res = await authApi.verifyMfa(mfaToken, code)
       const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
-
-      accessToken.value = at
-      refreshToken.value = rt
-      userInfo.value = info
-
-      // 持久化到 localStorage
-      setStorage(STORAGE_KEYS.ACCESS_TOKEN, at)
-      setStorage(STORAGE_KEYS.REFRESH_TOKEN, rt)
-      setStorage(STORAGE_KEYS.USER_INFO, info)
+      applyTokenPair(at!, rt!, info!)
     } finally {
       loading.value = false
     }
@@ -172,7 +191,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await authApi.dingTalkLogin(authCode, source)
       const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
-      applyTokenPair(at, rt, info)
+      applyTokenPair(at!, rt!, info!)
     } finally {
       loading.value = false
     }
@@ -186,7 +205,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await authApi.loginBySms(phone, code)
       const { accessToken: at, refreshToken: rt, userInfo: info } = res.data.data
-      applyTokenPair(at, rt, info)
+      applyTokenPair(at!, rt!, info!)
     } finally {
       loading.value = false
     }
@@ -235,6 +254,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     // Actions
     login,
+    verifyMfa,
     register,
     logout,
     fetchUserInfo,

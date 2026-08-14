@@ -64,6 +64,8 @@ public class AuthService {
     private final com.superprogrammer.common.security.BanService banService;
     /** 认证系统增强 Chunk E：异地登录提醒（登录成功后异步比对省份）。 */
     private final LoginAlertService loginAlertService;
+    /** 安全体系 S5 · SEC-FR-006（A6 TOTP）：已绑定用户两步登录 + 验证码校验。 */
+    private final MfaService mfaService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
     /**
@@ -276,6 +278,18 @@ public class AuthService {
         auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
         bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_SUCCESS);
 
+        // 安全体系 S5 · SEC-FR-006（A6 TOTP）：已绑定用户走两步登录——密码因子已过，
+        // 此处不发 access/refresh，只发 5 分钟 mfaToken 引导第二屏（校验通过才建会话发双 token）。
+        if (mfaService.isBound(user.getId())) {
+            log.info("TOTP已绑定，进入两步登录: {}", user.getUsername());
+            auditAuth("login_mfa", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, "mfa_pending");
+            return TokenResponse.builder()
+                    .mfaRequired(true)
+                    .mfaToken(jwtUtil.generateMfaToken(user.getId()))
+                    .tokenType("Bearer")
+                    .build();
+        }
+
         // 认证系统增强 Chunk E：异地登录提醒（异步，不阻塞发 token）
         try {
             loginAlertService.maybeAlert(user, user.getUsername(), clientIp);
@@ -283,7 +297,104 @@ public class AuthService {
             log.warn("异地登录提醒调度失败(已吞) : {}", e.toString());
         }
 
+        TokenResponse response = issueTokens(user, roleCodes, permissionCodes);
+        // S5 A6：totp.required 灰度开关开 + admin 未绑定 → 建议标记（前端引导绑定，不阻断登录）
+        if (systemSettingService.getAuthTotpRequired()
+                && roleCodes != null && roleCodes.contains("admin") && !mfaService.isBound(user.getId())) {
+            response.setMfaBindAdvice(true);
+        }
+        return response;
+    }
+
+    /**
+     * 安全体系 S5 · SEC-FR-006（A6 TOTP）：两步登录第二屏校验。
+     *
+     * <p>链路：mfaToken 签名/类型/有效期 → 一次性（jti 黑名单）→ 防爆破（同一 mfaToken
+     * 最多 5 次试错，6 位码空间 10^6，5 分钟窗内 5 次封顶）→ TOTP/恢复码校验 →
+     * 消费 mfaToken + 用户状态复查（防密码步与验证码步之间被禁用）→ issueTokens 建会话。</p>
+     */
+    @Transactional
+    public TokenResponse verifyMfa(MfaVerifyRequest request) {
+        String mfaToken = request.getMfaToken();
+        if (!jwtUtil.isTokenValid(mfaToken) || !"mfa".equals(jwtUtil.getTypeFromToken(mfaToken))) {
+            throw new BusinessException(ErrorCode.TOKEN_INVALID, "MFA会话已失效，请重新登录");
+        }
+        String jti = jwtUtil.getTokenId(mfaToken);
+        Long userId = jwtUtil.getUserIdFromToken(mfaToken);
+        if (isTokenBlacklisted(jti)) {
+            throw new BusinessException(ErrorCode.TOKEN_INVALID, "MFA会话已失效，请重新登录");
+        }
+        if (exceedsMfaAttempts(jti)) {
+            blacklistMfaToken(jti);
+            auditAuth("login_mfa", userId, null, AuditLogEntity.RESULT_FAIL, "mfa_attempts_exceeded");
+            throw new BusinessException(ErrorCode.TOKEN_INVALID, "验证尝试次数过多，请重新登录");
+        }
+
+        if (!mfaService.verifyAndConsume(userId, request.getCode(), true)) {
+            auditAuth("login_mfa", userId, null, AuditLogEntity.RESULT_FAIL, "mfa_code_wrong");
+            bizMetrics.authMfaVerify(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "验证码错误");
+        }
+
+        blacklistMfaToken(jti);
+        User user = userMapper.selectById(userId);
+        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+            auditAuth("login_mfa", userId, null, AuditLogEntity.RESULT_FAIL, "user_disabled");
+            bizMetrics.authMfaVerify(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
+        }
+
+        log.info("TOTP两步登录完成: {}", user.getUsername());
+        auditAuth("login_mfa", user.getId(), user.getUsername(), AuditLogEntity.RESULT_SUCCESS, "mfa_verified");
+        bizMetrics.authMfaVerify(com.superprogrammer.common.metrics.BizMetrics.RESULT_SUCCESS);
+        List<String> roleCodes = userMapper.selectRoleCodesByUsername(user.getUsername());
+        List<String> permissionCodes = userMapper.selectPermissionCodesByUserId(user.getId());
         return issueTokens(user, roleCodes, permissionCodes);
+    }
+
+    /** 同一 mfaToken 试错计数（Redis 5 分钟窗，>5 次 → 作废该票）。Redis 故障降级：跳过限次（WARN）。 */
+    private boolean exceedsMfaAttempts(String jti) {
+        try {
+            Long n = redisTemplate.opsForValue().increment("mfa:tries:" + jti);
+            redisTemplate.expire("mfa:tries:" + jti, 5 * 60, TimeUnit.SECONDS);
+            return n != null && n > 5;
+        } catch (Exception e) {
+            log.warn("MFA试错计数Redis失败(降级不限次) : {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** 消费 mfaToken：jti 拉黑 5 分钟（= 票自然寿命，一次性）。失败仅 WARN 不阻断（票已短命）。 */
+    private void blacklistMfaToken(String jti) {
+        try {
+            redisTemplate.opsForValue().set(TOKEN_BLACKLIST_PREFIX + jti, "1",
+                    5 * 60, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("MFA token拉黑失败(降级,票5min自然过期) : {}", e.getMessage());
+        }
+    }
+
+    // ---------- S5 A6 TOTP：绑定流委托 MfaService（AuthController 转发用） ----------
+
+    public boolean isMfaBound(Long userId) {
+        return mfaService.isBound(userId);
+    }
+
+    public boolean isTotpRequired() {
+        return systemSettingService.getAuthTotpRequired();
+    }
+
+    public com.superprogrammer.auth.dto.MfaBindResponse startMfaBind(Long userId) {
+        User user = userMapper.selectById(userId);
+        return mfaService.startBind(userId, user == null ? String.valueOf(userId) : user.getUsername());
+    }
+
+    public com.superprogrammer.auth.dto.MfaBindResponse confirmMfaBind(Long userId, String code) {
+        return mfaService.confirmBind(userId, code);
+    }
+
+    public void unbindMfa(Long userId, String code) {
+        mfaService.unbind(userId, code);
     }
 
     /**

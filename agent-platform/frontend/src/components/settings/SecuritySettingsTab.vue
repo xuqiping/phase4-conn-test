@@ -102,6 +102,9 @@
       </p>
     </n-card>
 
+    <!-- 安全体系 S5 · A6：TOTP 两步验证（绑定/解绑/恢复码） -->
+    <TotpSettingsCard />
+
     <!-- 绑定邮箱弹窗 -->
     <n-modal
       v-model:show="showBindEmail"
@@ -143,6 +146,7 @@ import {
 } from 'naive-ui'
 import { authApi, type CredentialItem, type AuthChannels } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
+import TotpSettingsCard from './TotpSettingsCard.vue'
 
 const message = useMessage()
 const dialog = useDialog()

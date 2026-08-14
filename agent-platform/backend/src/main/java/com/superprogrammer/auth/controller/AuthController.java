@@ -52,6 +52,52 @@ public class AuthController {
         return ResponseEntity.ok(R.ok(response));
     }
 
+    // ==================== 安全体系 S5 · SEC-FR-006（A6 TOTP） ====================
+
+    /** 两步登录第二屏：mfaToken + 验证码/恢复码 → 双 token（permitAll，mfaToken 即凭证）。 */
+    @PostMapping("/mfa/verify")
+    public ResponseEntity<R<TokenResponse>> verifyMfa(@Valid @RequestBody MfaVerifyRequest request) {
+        TokenResponse response = authService.verifyMfa(request);
+        return ResponseEntity.ok(R.ok(response));
+    }
+
+    /** 当前用户 MFA 状态（设置页渲染：是否已绑定/平台是否建议绑定）。 */
+    @GetMapping("/mfa/status")
+    public ResponseEntity<R<MfaStatusResponse>> mfaStatus() {
+        Long userId = currentUserId();
+        return ResponseEntity.ok(R.ok(MfaStatusResponse.builder()
+                .bound(authService.isMfaBound(userId))
+                .required(authService.isTotpRequired())
+                .build()));
+    }
+
+    /** 发起绑定：返回 secret + otpauth URI（确认前不生效，可重复发起覆盖 pending）。 */
+    @PostMapping("/mfa/bind")
+    public ResponseEntity<R<MfaBindResponse>> mfaBind() {
+        Long userId = currentUserId();
+        return ResponseEntity.ok(R.ok(authService.startMfaBind(userId)));
+    }
+
+    /** 确认绑定：验证器首个 code 验 secret 转正 + 发放 8 组一次性恢复码（明文仅此一次）。 */
+    @PostMapping("/mfa/bind/confirm")
+    public ResponseEntity<R<MfaBindResponse>> mfaBindConfirm(@Valid @RequestBody MfaConfirmRequest request) {
+        Long userId = currentUserId();
+        return ResponseEntity.ok(R.ok(authService.confirmMfaBind(userId, request.getCode())));
+    }
+
+    /** 解绑：需当前有效验证码/恢复码（防会话被劫后直接拆掉第二因素）。 */
+    @PostMapping("/mfa/unbind")
+    public ResponseEntity<R<Void>> mfaUnbind(@Valid @RequestBody MfaConfirmRequest request) {
+        Long userId = currentUserId();
+        authService.unbindMfa(userId, request.getCode());
+        return ResponseEntity.ok(R.ok("解绑成功", null));
+    }
+
+    private Long currentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return (Long) authentication.getPrincipal();
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<R<Void>> logout(
             @RequestHeader(value = "Authorization", required = false) String authHeader,

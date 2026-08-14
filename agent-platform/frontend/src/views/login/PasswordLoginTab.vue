@@ -1,5 +1,7 @@
 <template>
+  <!-- S5 A6 TOTP：两步登录——第一屏密码，已绑定用户过密码后切到第二屏验证码 -->
   <n-form
+    v-if="!mfaToken"
     ref="formRef"
     :model="form"
     :rules="rules"
@@ -49,13 +51,49 @@
       登 录
     </n-button>
   </n-form>
+
+  <!-- 第二屏：TOTP 验证码 / 一次性恢复码 -->
+  <n-form v-else @submit.prevent="handleVerifyMfa">
+    <n-alert type="info" :bordered="false" class="pwd-tab__mfa-tip">
+      账号已开启两步验证，请输入验证器 App 中的 6 位动态码；手机丢失时可输入一次性恢复码
+    </n-alert>
+
+    <n-form-item label="验证码">
+      <n-input
+        v-model:value="mfaCode"
+        placeholder="6 位动态码或恢复码"
+        size="large"
+        :input-props="{ autocomplete: 'one-time-code' }"
+        @keyup.enter="handleVerifyMfa"
+      >
+        <template #prefix>
+          <n-icon :component="ShieldCheckmarkOutline" color="var(--color-text-tertiary)" />
+        </template>
+      </n-input>
+    </n-form-item>
+
+    <n-button
+      type="primary"
+      block
+      size="large"
+      :loading="authStore.loading"
+      attr-type="submit"
+      class="pwd-tab__submit"
+    >
+      验证并登录
+    </n-button>
+
+    <n-button quaternary block size="small" class="pwd-tab__back" @click="backToPassword">
+      返回重新输入密码
+    </n-button>
+  </n-form>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
-import { NForm, NFormItem, NInput, NButton, NIcon, useMessage } from 'naive-ui'
-import { PersonOutline, LockClosedOutline } from '@vicons/ionicons5'
+import { NForm, NFormItem, NInput, NButton, NIcon, NAlert, useMessage } from 'naive-ui'
+import { PersonOutline, LockClosedOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 
 const emit = defineEmits<{
@@ -70,6 +108,10 @@ const authStore = useAuthStore()
 
 const formRef = ref<FormInst | null>(null)
 const form = reactive({ username: '', password: '' })
+
+// S5 A6：两步登录状态——mfaToken 非空即处于第二屏
+const mfaToken = ref('')
+const mfaCode = ref('')
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -86,13 +128,44 @@ async function handleLogin() {
     return
   }
   try {
-    await authStore.login({ username: form.username, password: form.password })
+    const result = await authStore.login({ username: form.username, password: form.password })
+    if (result.mfaRequired && result.mfaToken) {
+      // 密码因子已过 → 进第二屏（未落任何登录态）
+      mfaToken.value = result.mfaToken
+      mfaCode.value = ''
+      return
+    }
+    if (result.mfaBindAdvice) {
+      message.warning('平台建议管理员开启两步验证：设置 → 安全设置 → 两步验证')
+    }
     message.success('登录成功')
     emit('success')
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : '登录失败，请检查用户名和密码'
     message.error(msg)
   }
+}
+
+async function handleVerifyMfa() {
+  if (!mfaCode.value.trim()) {
+    message.warning('请输入验证码')
+    return
+  }
+  try {
+    await authStore.verifyMfa(mfaToken.value, mfaCode.value.trim())
+    message.success('登录成功')
+    mfaToken.value = ''
+    emit('success')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '验证码错误'
+    message.error(msg)
+  }
+}
+
+/** 第二屏返回：mfaToken 作废（后端 5min 一次性），重新走密码步。 */
+function backToPassword() {
+  mfaToken.value = ''
+  mfaCode.value = ''
 }
 
 defineExpose({
@@ -118,5 +191,11 @@ defineExpose({
   transition: all var(--duration-fast) var(--ease-in-out);
   &:hover { box-shadow: var(--shadow-primary); transform: translateY(-1px); }
   &:active { transform: translateY(0); }
+}
+.pwd-tab__mfa-tip {
+  margin-bottom: 16px;
+}
+.pwd-tab__back {
+  margin-top: 8px;
 }
 </style>

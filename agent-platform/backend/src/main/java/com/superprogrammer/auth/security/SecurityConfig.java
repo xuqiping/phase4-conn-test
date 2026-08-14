@@ -87,6 +87,9 @@ public class SecurityConfig {
                         // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
                         .requestMatchers("/api/auth/login/wechat/redirect").permitAll()
                         .requestMatchers("/api/auth/login/wechat/callback").permitAll()
+                        // 安全体系 S5 · SEC-FR-006（A6 TOTP）：两步登录第二屏公开（mfaToken 即凭证，
+                        // 5min 一次性+5 次试错封顶在 AuthService 内自限）；bind/status/unbind 走认证
+                        .requestMatchers("/api/auth/mfa/verify").permitAll()
                         // 认证系统增强：找回密码（公开端点）
                         .requestMatchers("/api/auth/password/forgot").permitAll()
                         .requestMatchers("/api/auth/password/reset").permitAll()

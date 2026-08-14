@@ -113,6 +113,25 @@ public class JwtUtil {
                 .compact();
     }
 
+    /**
+     * 安全体系 S5 · SEC-FR-006（A6 TOTP）：两步登录中间票。密码验证通过后签发，
+     * 持有它仅代表「可进入第二屏输验证码」，不代表已登录——校验器过滤器只放行 type=access。
+     * 5 分钟短命 + verify 成功即拉黑 jti（一次性），无 sid（尚未建会话）。
+     */
+    public String generateMfaToken(Long userId) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + 5 * 60 * 1000L);
+
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("type", "mfa")
+                .id(UUID.randomUUID().toString())
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSigningKey())
+                .compact();
+    }
+
     public Long getUserIdFromToken(String token) {
         Claims claims = parseToken(token);
         return Long.parseLong(claims.getSubject());

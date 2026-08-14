@@ -329,6 +329,15 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S5 · SEC-FR-006（A6 TOTP）：两步登录第二屏校验结果（result=success/fail）。 */
+    public void authMfaVerify(String result) {
+        Counter.builder("security.auth.mfa.verify")
+                .tag("result", result)
+                .description("TOTP 两步登录验证码校验结果")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")

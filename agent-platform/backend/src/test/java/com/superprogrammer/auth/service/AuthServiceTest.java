@@ -87,6 +87,9 @@ class AuthServiceTest {
     private com.superprogrammer.common.security.BanService banService;
 
     @Mock
+    private com.superprogrammer.auth.service.MfaService mfaService;
+
+    @Mock
     private ValueOperations<String, String> valueOperations;
 
     @InjectMocks
@@ -344,9 +347,7 @@ class AuthServiceTest {
         assertThrows(BusinessException.class, () -> authService.refreshToken(request));
     }
 
-    // ---- 安全体系 S5 · SEC-FR-004+（A4 refresh 旋转）----
-
-    @Test
+    // ---- 安全体系 S5 · SEC-FR-004+（A4 refresh 旋转）----    @Test
     void refreshToken_rotationEnabled_rotatesAndBlacklistsOld() {
         RefreshTokenRequest request = new RefreshTokenRequest();
         request.setRefreshToken("old-refresh");
@@ -437,6 +438,121 @@ class AuthServiceTest {
 
         assertEquals(40102, e.getCode());
         verify(bizMetrics, never()).authRefreshReplayed();   // 正常登出过期不告警
+    }
+
+    // ---- 安全体系 S5 · SEC-FR-006（A6 TOTP 两步登录）----
+
+    // 已绑定用户：密码步通过 → 只回 mfaRequired+mfaToken，不发双 token
+    @Test
+    void login_mfaBound_returnsMfaTokenOnly() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(mfaService.isBound(1L)).thenReturn(true);
+        when(jwtUtil.generateMfaToken(1L)).thenReturn("mfa-token");
+
+        TokenResponse response = authService.login(loginRequest);
+
+        assertEquals(Boolean.TRUE, response.getMfaRequired());
+        assertEquals("mfa-token", response.getMfaToken());
+        assertNull(response.getAccessToken());   // 双 token 未签发
+        assertNull(response.getRefreshToken());
+        verify(jwtUtil, never()).generateAccessToken(anyLong(), anyString(), anyList(), anyLong(), any());
+    }
+
+    // 未绑定 + totp.required 开 + admin → 正常发 token 且带绑定建议标记（不阻断）
+    @Test
+    void login_totpRequiredAdminUnbound_setsBindAdvice() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("admin"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+        when(systemSettingService.getAuthTotpRequired()).thenReturn(true);
+        when(mfaService.isBound(1L)).thenReturn(false);
+
+        TokenResponse response = authService.login(loginRequest);
+
+        assertEquals("access-token", response.getAccessToken());
+        assertEquals(Boolean.TRUE, response.getMfaBindAdvice());
+    }
+
+    // 第二屏校验通过：消费 mfaToken（jti 拉黑）+ 发双 token
+    @Test
+    void verifyMfa_validCode_issuesTokensAndConsumesMfaToken() {
+        MfaVerifyRequest request = new MfaVerifyRequest();
+        request.setMfaToken("mfa-token");
+        request.setCode("123456");
+
+        when(jwtUtil.isTokenValid("mfa-token")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("mfa-token")).thenReturn("mfa");
+        when(jwtUtil.getTokenId("mfa-token")).thenReturn("mfa-jti");
+        when(jwtUtil.getUserIdFromToken("mfa-token")).thenReturn(1L);
+        when(redisTemplate.hasKey("token:blacklist:mfa-jti")).thenReturn(false);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("mfa:tries:mfa-jti")).thenReturn(1L);
+        when(mfaService.verifyAndConsume(1L, "123456", true)).thenReturn(true);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("admin"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+
+        TokenResponse response = authService.verifyMfa(request);
+
+        assertEquals("access-token", response.getAccessToken());
+        assertNull(response.getMfaRequired());   // 完整登录响应
+        // 一次性：mfaToken jti 拉黑 5min（= 票自然寿命）
+        verify(valueOperations).set(eq("token:blacklist:mfa-jti"), eq("1"), eq(300L), eq(TimeUnit.SECONDS));
+        verify(bizMetrics).authMfaVerify("success");
+    }
+
+    // 验证码错误：401 + 不进用户查询/不发 token + mfaToken 不作废（可重试，5 次封顶）
+    @Test
+    void verifyMfa_wrongCode_rejectedRetryable() {
+        MfaVerifyRequest request = new MfaVerifyRequest();
+        request.setMfaToken("mfa-token");
+        request.setCode("000000");
+
+        when(jwtUtil.isTokenValid("mfa-token")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("mfa-token")).thenReturn("mfa");
+        when(jwtUtil.getTokenId("mfa-token")).thenReturn("mfa-jti");
+        when(jwtUtil.getUserIdFromToken("mfa-token")).thenReturn(1L);
+        when(redisTemplate.hasKey("token:blacklist:mfa-jti")).thenReturn(false);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("mfa:tries:mfa-jti")).thenReturn(1L);
+        when(mfaService.verifyAndConsume(1L, "000000", true)).thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.verifyMfa(request));
+
+        assertEquals(401, e.getCode());
+        verify(valueOperations, never()).set(eq("token:blacklist:mfa-jti"), anyString(), anyLong(), any());
+        verify(userMapper, never()).selectById(anyLong());
+        verify(bizMetrics).authMfaVerify("fail");
+    }
+
+    // 已消费过的 mfaToken（重放）：直接 40102，不进验证码比对
+    @Test
+    void verifyMfa_consumedMfaToken_rejected() {
+        MfaVerifyRequest request = new MfaVerifyRequest();
+        request.setMfaToken("mfa-token");
+        request.setCode("123456");
+
+        when(jwtUtil.isTokenValid("mfa-token")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("mfa-token")).thenReturn("mfa");
+        when(jwtUtil.getTokenId("mfa-token")).thenReturn("mfa-jti");
+        when(redisTemplate.hasKey("token:blacklist:mfa-jti")).thenReturn(true);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.verifyMfa(request));
+
+        assertEquals(40102, e.getCode());
+        verify(mfaService, never()).verifyAndConsume(anyLong(), anyString(), anyBoolean());
     }
 
     // AC-SEC-FR-008：被踢会话的 refresh 同样拒绝（40104 固定话术），不查库不签发

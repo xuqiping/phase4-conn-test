@@ -277,6 +277,17 @@ public class SystemSettingService {
         return getBoolean(SECURITY_AUTH_REFRESH_ROTATION_ENABLED, true);
     }
 
+    /**
+     * 安全体系 S5 · SEC-FR-006（A6 TOTP）：admin 绑定建议灰度开关。
+     * 默认关；开=未绑定 admin 登录响应带 mfaBindAdvice（前端引导绑定）。已绑定用户恒走两步登录，
+     * 与本开关无关（开关只影响「建议」，不影响「强制」——避免开关误开把未绑定 admin 锁死在门外）。
+     */
+    public static final String SECURITY_AUTH_TOTP_REQUIRED = "security.auth.totp.required";
+
+    public boolean getAuthTotpRequired() {
+        return getBoolean(SECURITY_AUTH_TOTP_REQUIRED, false);
+    }
+
     /** 安全体系 S4 · SEC-FR-033 per-user 存储配额（MB，F-4）。默认 2048；0=关闭配额。 */
     public static final String SECURITY_USER_STORAGE_QUOTA_MB = "security.user.storage-quota-mb";
 

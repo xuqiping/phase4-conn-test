@@ -43,6 +43,8 @@ public class RuleConfigController {
         put("security.user.storage-quota-mb", "2048");
         // 安全体系 S5 · SEC-FR-004+ refresh token 旋转（A4，关=refresh 固定复用旧行为）
         put("security.auth.refresh-rotation.enabled", "true");
+        // 安全体系 S5 · SEC-FR-006 admin TOTP 绑定建议灰度（A6，开=未绑定 admin 登录带引导标记）
+        put("security.auth.totp.required", "false");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");
