@@ -10,6 +10,7 @@ import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
 import com.superprogrammer.auth.security.JwtUtil;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +26,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -367,15 +367,49 @@ class AuthServiceTest {
         when(systemSettingService.getAuthRefreshRotationEnabled()).thenReturn(true);
         when(jwtUtil.getRemainingTtl("old-refresh")).thenReturn(600000L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // Phase4 原子闸：setIfAbsent 抢占赢家（null=抢输会被当重放拒）
+        when(valueOperations.setIfAbsent(eq("token:blacklist:jti-1"), eq("rotated"), eq(600000L), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn(true);
         when(jwtUtil.generateRefreshToken(1L, "sid-1")).thenReturn("new-refresh");
 
         TokenResponse response = authService.refreshToken(request);
 
         assertEquals("new-access", response.getAccessToken());
         assertEquals("new-refresh", response.getRefreshToken());
-        // 旧票拉黑：值=rotated（区别于 logout 的 "1"），TTL=剩余有效期
-        verify(valueOperations).set(eq("token:blacklist:jti-1"), eq("rotated"), eq(600000L), eq(TimeUnit.MILLISECONDS));
+        // 旧票拉黑（原子抢占）：值=rotated（区别于 logout 的 "1"），TTL=剩余有效期
+        verify(valueOperations).setIfAbsent(eq("token:blacklist:jti-1"), eq("rotated"), eq(600000L), eq(TimeUnit.MILLISECONDS));
         verify(bizMetrics).authRefreshRotated();
+    }
+
+    // Phase4：并发双发同票旋转——第二个请求 setIfAbsent 抢输 → 按重放拒绝，不发新票
+    @Test
+    void refreshToken_concurrentRotationLosesRace_rejected() {
+        RefreshTokenRequest request = new RefreshTokenRequest();
+        request.setRefreshToken("old-refresh");
+
+        when(jwtUtil.isTokenValid("old-refresh")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("old-refresh")).thenReturn("refresh");
+        when(jwtUtil.getTokenId("old-refresh")).thenReturn("jti-1");
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(jwtUtil.getUserIdFromToken("old-refresh")).thenReturn(1L);
+        when(jwtUtil.getSidFromToken("old-refresh")).thenReturn("sid-1");
+        when(sessionService.isCurrent(1L, "sid-1")).thenReturn(true);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), anyString(), anyList(), eq(300000L), eq("sid-1"))).thenReturn("new-access");
+        when(systemSettingService.getAuthRefreshRotationEnabled()).thenReturn(true);
+        when(jwtUtil.getRemainingTtl("old-refresh")).thenReturn(600000L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 抢输：拉黑位已被并发请求占住
+        when(valueOperations.setIfAbsent(eq("token:blacklist:jti-1"), eq("rotated"), eq(600000L), eq(TimeUnit.MILLISECONDS)))
+                .thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.refreshToken(request));
+
+        assertEquals(ErrorCode.TOKEN_INVALID.getCode(), e.getCode());
+        verify(jwtUtil, never()).generateRefreshToken(anyLong(), anyString());   // 不签新票
+        verify(bizMetrics).authRefreshReplayed();
     }
 
     @Test
@@ -504,14 +538,43 @@ class AuthServiceTest {
         when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
         when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
         when(userMapper.updateById(any(User.class))).thenReturn(1);
+        // Phase4 原子消费：setIfAbsent 抢占赢家
+        when(valueOperations.setIfAbsent(eq("token:blacklist:mfa-jti"), eq("1"), eq(300L), eq(TimeUnit.SECONDS)))
+                .thenReturn(true);
 
         TokenResponse response = authService.verifyMfa(request);
 
         assertEquals("access-token", response.getAccessToken());
         assertNull(response.getMfaRequired());   // 完整登录响应
-        // 一次性：mfaToken jti 拉黑 5min（= 票自然寿命）
-        verify(valueOperations).set(eq("token:blacklist:mfa-jti"), eq("1"), eq(300L), eq(TimeUnit.SECONDS));
+        // 一次性（原子）：setIfAbsent 抢占 jti 拉黑位 5min（= 票自然寿命）
+        verify(valueOperations).setIfAbsent(eq("token:blacklist:mfa-jti"), eq("1"), eq(300L), eq(TimeUnit.SECONDS));
         verify(bizMetrics).authMfaVerify("success");
+    }
+
+    // Phase4：并发重放——验码成功但 setIfAbsent 抢输（同票已被并发消费）→ TOKEN_INVALID + 审计重放
+    @Test
+    void verifyMfa_concurrentReplayLosesRace_rejected() {
+        MfaVerifyRequest request = new MfaVerifyRequest();
+        request.setMfaToken("mfa-token");
+        request.setCode("123456");
+
+        when(jwtUtil.isTokenValid("mfa-token")).thenReturn(true);
+        when(jwtUtil.getTypeFromToken("mfa-token")).thenReturn("mfa");
+        when(jwtUtil.getTokenId("mfa-token")).thenReturn("mfa-jti");
+        when(jwtUtil.getUserIdFromToken("mfa-token")).thenReturn(1L);
+        when(redisTemplate.hasKey("token:blacklist:mfa-jti")).thenReturn(false);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("mfa:tries:mfa-jti")).thenReturn(1L);
+        when(mfaService.verifyAndConsume(1L, "123456", true)).thenReturn(true);
+        // 抢输：同票已被并发请求消费（拉黑位已存在）
+        when(valueOperations.setIfAbsent(eq("token:blacklist:mfa-jti"), eq("1"), eq(300L), eq(TimeUnit.SECONDS)))
+                .thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.verifyMfa(request));
+
+        assertEquals(ErrorCode.TOKEN_INVALID.getCode(), e.getCode());
+        verify(userMapper, never()).selectById(anyLong());   // 不进发 token 链
+        verify(jwtUtil, never()).generateAccessToken(anyLong(), anyString(), anyList(), anyLong(), any());
     }
 
     // 验证码错误：401 + 不进用户查询/不发 token + mfaToken 不作废（可重试，5 次封顶）

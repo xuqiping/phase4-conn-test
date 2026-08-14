@@ -98,7 +98,7 @@ public class RuleConfigController {
         return R.ok(result);
     }
 
-    /** 改单个键（白名单校验 + 长度上限；@AuditLog 留痕）。 */
+    /** 改单个键（白名单校验 + 长度上限 + 枚举键校验；@AuditLog 留痕）。 */
     @PutMapping("/{key}")
     @RequirePermission("security:rule:manage")
     @AuditLog(module = "security", action = "rule_config_update", targetType = "system_setting")
@@ -109,6 +109,12 @@ public class RuleConfigController {
         String value = body == null ? null : body.get("value");
         if (value == null || value.length() > 512) {
             return R.fail(400, "value 必填且 ≤512 字符");
+        }
+        // Phase4 修正：枚举键在入口校验——此前手输 " enforce"/"Enforce" 被读取侧静默回落 DUAL，
+        // 管理员以为已切强制验签实际没有。此处显式 400，配置状态所见即所得。
+        if ("security.runtime.callback.hmac-mode".equals(key)
+                && !value.trim().equalsIgnoreCase("dual") && !value.trim().equalsIgnoreCase("enforce")) {
+            return R.fail(400, "hmac-mode 仅允许 dual / enforce");
         }
         systemSettingService.upsertSettingValue(key, value, "安全管理页配置");
         return R.ok(null);

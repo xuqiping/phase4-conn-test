@@ -39,14 +39,22 @@ public class MfaService {
     private final TotpService totpService;
     private final ObjectMapper objectMapper;
 
-    /** 是否已绑定（secret 存在且非空）。登录流据此分流两步登录。 */
+    /**
+     * 是否已绑定（secret 存在且非空）。登录流据此分流两步登录。
+     *
+     * <p>Phase4 交叉审查修正（fail-closed）：读取失败（DB 抖动/AES 解密失败——LLM_ENCRYPTION_SECRET
+     * 轮换后存量密文即不可解）时**按已绑定处理**——宁可把该用户挡在第二屏（走恢复码/管理员重置通道），
+     * 也不能让已绑定 TOTP 的 admin 因基础设施故障静默回落单步密码登录。MFA 是强制层，
+     * 不适用「检测层不自残」的放行范式。
+     */
     public boolean isBound(Long userId) {
         try {
             String secret = systemSettingService.getDecryptedValue(SECRET_KEY_PREFIX + userId);
             return secret != null && !secret.isBlank();
         } catch (Exception e) {
-            log.error("TOTP isBound 读取失败(按未绑定处理,登录走单步+绑定页可见) userId={} : {}", userId, e.getMessage());
-            return false;
+            log.error("TOTP isBound 读取失败(按已绑定 fail-closed,走恢复码/管理员通道) userId={} : {}",
+                    userId, e.getMessage());
+            return true;
         }
     }
 
@@ -167,7 +175,10 @@ public class MfaService {
             systemSettingService.upsertEncrypted(RECOVERY_KEY_PREFIX + userId,
                     objectMapper.writeValueAsString(hashes), "TOTP恢复码SHA256哈希数组 u" + userId);
         } catch (Exception e) {
-            log.error("恢复码哈希写回失败 userId={} : {}", userId, e.getMessage());
+            // Phase4 修正：写回失败必须上抛——verifyAndConsume 外层 catch 按验证失败处理，
+            // confirmBind 直接失败可重试。静默吞掉 = 恢复码「已判定有效但没从存储移除」= 重放窗口。
+            log.error("恢复码哈希写回失败(上抛按验证失败处理) userId={} : {}", userId, e.getMessage());
+            throw new IllegalStateException("恢复码哈希写回失败", e);
         }
     }
 

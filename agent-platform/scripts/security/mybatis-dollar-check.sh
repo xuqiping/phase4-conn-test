@@ -25,10 +25,11 @@ done || true)"
 
 # 白名单豁免（确有合法动态表名等场景时，整行贴进 allowlist）
 # 注意先剔空行/空白行：grep -F -f 遇空模式匹配一切 → 门禁无声永绿（Phase4 审查发现的脆弱点）。
+# Phase4 修正：-x 整行精确匹配——无锚点的子串匹配会让 "Foo.xml:1" 误豁免 "Foo.xml:12/123" 行
 if [ -n "$hits" ] && [ -f "$ALLOWLIST" ]; then
   allow="$(grep -v '^[[:space:]]*$' "$ALLOWLIST" || true)"
   if [ -n "$allow" ]; then
-    hits="$(printf '%s\n' "$hits" | grep -v -F -f <(printf '%s\n' "$allow") || true)"
+    hits="$(printf '%s\n' "$hits" | grep -v -x -F -f <(printf '%s\n' "$allow") || true)"
   fi
 fi
 

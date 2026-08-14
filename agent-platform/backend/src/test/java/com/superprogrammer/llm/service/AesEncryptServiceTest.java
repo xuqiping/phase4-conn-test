@@ -67,4 +67,22 @@ class AesEncryptServiceTest {
         service.setCorsAllowedOriginsForTest("");
         assertDoesNotThrow(service::validateSecret);
     }
+
+    // ---- Phase4 修正：prod profile 主信号（Nginx 同源生产不配 CORS，仅靠 CORS 信号会漏检） ----
+
+    @Test
+    void validateSecret_prodProfileNoCorsDefaultSecret_rejected() {
+        service.setSecret(AesEncryptService.DEFAULT_SECRET);
+        service.setActiveProfileForTest("prod");
+        service.setCorsAllowedOriginsForTest("");
+        assertThrows(IllegalStateException.class, service::validateSecret);
+    }
+
+    @Test
+    void validateSecret_devProfileDefaultSecret_warnOnly() {
+        service.setSecret(AesEncryptService.DEFAULT_SECRET);
+        service.setActiveProfileForTest("dev");
+        service.setCorsAllowedOriginsForTest("");
+        assertDoesNotThrow(service::validateSecret);
+    }
 }

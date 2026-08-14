@@ -35,6 +35,36 @@ const request: AxiosInstance = axios.create({
 
 let isRedirectingToLogin = false
 
+/**
+ * Phase4 修正（S5 交叉审查）：401 先尝试静默刷新 access token（15min 短命），
+ * 刷新成功重放原请求；失败/无 refresh → 跳登录。此前拦截器直接跳登录——
+ * stores/auth.refreshAccessToken 是死代码，用户每 15min 被踢一次。
+ * 单飞（single-flight）：并发多请求同时 401 只发一次 /auth/refresh，共享同一 Promise。
+ */
+let refreshPromise: Promise<string | null> | null = null
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  const rt = getStorage<string>(STORAGE_KEYS.REFRESH_TOKEN)
+  if (!rt) return null
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      // 动态 import：request.ts ← stores/auth.ts ← api/auth.ts ← request.ts 静态环
+      const { useAuthStore } = await import('@/stores/auth')
+      const store = useAuthStore()
+      const newAt = await store.refreshAccessToken()
+      return newAt
+    })()
+      .catch(() => null)
+      .finally(() => {
+        // 微任务清引用：本轮并发 401 已拿到引用，下一轮可重新发起
+        setTimeout(() => {
+          refreshPromise = null
+        }, 0)
+      })
+  }
+  return refreshPromise
+}
+
 /** 连续网络层错误（无 response：超时/断网/后端不可达）计数。任一成功响应归零。 */
 let consecutiveNetErrors = 0
 /** 上次「网络异常」toast 时间戳，用于节流，避免轮询风暴刷屏。 */
@@ -87,7 +117,19 @@ request.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && originalRequest?.url !== '/auth/login') {
+    if (error.response?.status === 401
+        && originalRequest?.url !== '/auth/login'
+        && originalRequest?.url !== '/auth/refresh') {
+      // Phase4：静默刷新一次并重放原请求；刷新失败或已重放过 → 跳登录
+      if (!originalRequest._retry) {
+        const newAt = await tryRefreshAccessToken()
+        if (newAt) {
+          originalRequest._retry = true
+          originalRequest.headers = originalRequest.headers ?? {}
+          originalRequest.headers.Authorization = `Bearer ${newAt}`
+          return request(originalRequest)
+        }
+      }
       redirectToLogin()
       return Promise.reject(error)
     }

@@ -39,6 +39,8 @@ class SystemSettingLegacyEndpoint404Test {
     @MockBean SystemSettingService service;
     @MockBean WebSearchService webSearchService;
     @MockBean LlmProviderService llmProviderService;
+    /** 认证系统增强（08-13 auto-sync）给 controller 构造新增的依赖——切片补 mock */
+    @MockBean com.superprogrammer.auth.service.AuthChannelSettingService authChannelSettingService;
 
     // ---- 已删的 MemoryController 全族（代表）→ 不再 2xx ----
 

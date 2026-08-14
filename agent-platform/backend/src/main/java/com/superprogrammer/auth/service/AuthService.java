@@ -336,7 +336,12 @@ public class AuthService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "验证码错误");
         }
 
-        blacklistMfaToken(jti);
+        // Phase4 交叉审查修正：原子消费——setIfAbsent 抢占 jti 拉黑位，并发同票同码只有
+        // 一个赢家（旧实现验码成功后才 set，双发 token 竞态）；抢输=同票被复用（重放）→ 拒。
+        if (!consumeMfaTokenOnce(jti)) {
+            auditAuth("login_mfa", userId, null, AuditLogEntity.RESULT_FAIL, "mfa_token_replayed");
+            throw new BusinessException(ErrorCode.TOKEN_INVALID, "MFA会话已失效，请重新登录");
+        }
         User user = userMapper.selectById(userId);
         if (user == null || !"ACTIVE".equals(user.getStatus())) {
             auditAuth("login_mfa", userId, null, AuditLogEntity.RESULT_FAIL, "user_disabled");
@@ -371,6 +376,22 @@ public class AuthService {
                     5 * 60, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.warn("MFA token拉黑失败(降级,票5min自然过期) : {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 原子消费 mfaToken（Phase4 修正）：setIfAbsent 抢占 jti 拉黑位——返回 true=赢家（首次使用），
+     * false=同票已被并发使用（重放）。Redis 故障降级放行 + WARN（沿黑名单家族范式：可用性 > 强制力，
+     * 且票本身仅 5min 短命）。
+     */
+    private boolean consumeMfaTokenOnce(String jti) {
+        try {
+            Boolean won = redisTemplate.opsForValue().setIfAbsent(
+                    TOKEN_BLACKLIST_PREFIX + jti, "1", 5 * 60, TimeUnit.SECONDS);
+            return Boolean.TRUE.equals(won);
+        } catch (Exception e) {
+            log.warn("MFA token原子消费Redis失败(降级放行,票5min自然过期) : {}", e.getMessage());
+            return true;
         }
     }
 
@@ -730,16 +751,28 @@ public class AuthService {
         String newAccessToken = jwtUtil.generateAccessToken(userId, user.getUsername(), roleCodes, accessExpirationMs, sid);
 
         // 安全体系 S5 · SEC-FR-004+（A4 refresh 旋转）：旧票拉黑（值=rotated，TTL=剩余有效期）+
-        // 签发新 refresh（同 sid）回传——7 天重放窗口封死。拉黑失败 WARN 降级（旧票至多活到自然过期）。
+        // 签发新 refresh（同 sid）回传——7 天重放窗口封死。
+        // Phase4 交叉审查修正（原子闸）：拉黑改 setIfAbsent 抢占——并发双发同票只有一个赢家，
+        // 抢输 = 该票已被并发旋转换走（重放）→ 拒绝（旧实现 set 非原子，两请求都成功旋转各自换新票）。
+        // Redis 故障仍 WARN 降级（旧票至多活到自然过期，access 15min 短命兜底）。
         String newRefreshToken = refreshToken;
         if (systemSettingService.getAuthRefreshRotationEnabled()) {
             try {
                 long remainingTtl = jwtUtil.getRemainingTtl(refreshToken);
                 if (remainingTtl > 0) {
-                    redisTemplate.opsForValue().set(
+                    Boolean won = redisTemplate.opsForValue().setIfAbsent(
                             TOKEN_BLACKLIST_PREFIX + jti, REFRESH_ROTATION_MARKER,
                             remainingTtl, TimeUnit.MILLISECONDS);
+                    if (!Boolean.TRUE.equals(won)) {
+                        log.warn("refresh并发旋转抢占失败(按重放拒绝) jti={}", jti);
+                        bizMetrics.authRefreshReplayed();
+                        auditAuth("refresh", userId, user.getUsername(),
+                                AuditLogEntity.RESULT_FAIL, "refresh_replayed");
+                        throw new BusinessException(ErrorCode.TOKEN_INVALID, "Token已失效");
+                    }
                 }
+            } catch (BusinessException e) {
+                throw e;
             } catch (Exception e) {
                 log.warn("refresh旋转拉黑旧票失败(降级:旧票残留至自然过期,access仍15min短命): {}", e.getMessage());
             }

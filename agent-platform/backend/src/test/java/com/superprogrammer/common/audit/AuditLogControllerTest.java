@@ -51,6 +51,10 @@ class AuditLogControllerTest {
     @MockBean AuditLogMapper auditLogMapper;
     @MockBean AuditChainVerifyService auditChainVerifyService;
     @MockBean PermissionEvaluator permissionEvaluator;
+    /** S5 Step4：SecurityConfig 构造新增依赖，切片加载真安全链须补 mock（null → DUAL 兼容） */
+    @MockBean com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** controller 构造后续演进新增的依赖（用户名筛选）——切片补 mock */
+    @MockBean com.superprogrammer.auth.mapper.UserMapper userMapper;
 
     @AfterEach
     void tearDown() {

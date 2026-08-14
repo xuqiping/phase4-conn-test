@@ -27,10 +27,11 @@ hits="$(printf '%s\n' "$hits" | while IFS= read -r line; do
 done || true)"
 
 # 白名单豁免（确有全段转义 + 测试覆盖的场景，整行贴进 allowlist 并注明理由）
+# Phase4 修正：-x 整行精确匹配——无锚点的子串匹配会让 "foo.vue:1" 误豁免 "foo.vue:12/123" 行
 if [ -n "$hits" ] && [ -f "$ALLOWLIST" ]; then
   allow="$(grep -v '^[[:space:]]*$' "$ALLOWLIST" | grep -v '^#' || true)"
   if [ -n "$allow" ]; then
-    hits="$(printf '%s\n' "$hits" | grep -v -F -f <(printf '%s\n' "$allow") || true)"
+    hits="$(printf '%s\n' "$hits" | grep -v -x -F -f <(printf '%s\n' "$allow") || true)"
   fi
 fi
 

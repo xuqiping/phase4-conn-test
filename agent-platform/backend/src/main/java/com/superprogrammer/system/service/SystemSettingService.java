@@ -296,7 +296,9 @@ public class SystemSettingService {
     public static final String SECURITY_RUNTIME_CALLBACK_HMAC_MODE = "security.runtime.callback.hmac-mode";
 
     public String getRuntimeCallbackHmacMode() {
-        return "ENFORCE".equals(getValue(SECURITY_RUNTIME_CALLBACK_HMAC_MODE)) ? "ENFORCE" : "DUAL";
+        // Phase4 修正：trim + 忽略大小写——RuleConfig 界面手输 " enforce "/"Enforce" 不再静默回落 DUAL
+        String v = getValue(SECURITY_RUNTIME_CALLBACK_HMAC_MODE);
+        return "ENFORCE".equalsIgnoreCase(v == null ? "" : v.trim()) ? "ENFORCE" : "DUAL";
     }
 
     /**

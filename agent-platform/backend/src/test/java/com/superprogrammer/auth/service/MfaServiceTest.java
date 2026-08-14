@@ -58,9 +58,11 @@ class MfaServiceTest {
     }
 
     @Test
-    void isBound_storageFailure_degradesToFalse() {
+    void isBound_storageFailure_failClosed() {
+        // Phase4 修正：读取异常按已绑定处理（fail-closed）——不能让已绑定 TOTP 的用户
+        // 因 DB 抖动/AES 解密失败静默回落单步密码登录；走恢复码/管理员重置通道
         when(systemSettingService.getDecryptedValue(SECRET_KEY)).thenThrow(new RuntimeException("db down"));
-        assertFalse(mfaService.isBound(1L));   // 不抛异常（登录链不被打死）
+        assertTrue(mfaService.isBound(1L));   // 不抛异常（登录链不死），但按已绑定挡第二屏
     }
 
     @Test

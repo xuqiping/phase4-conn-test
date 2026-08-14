@@ -82,6 +82,8 @@ public class ChatController {
     }
 
     @PostMapping("/sessions")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<SessionVO>> createSession(@Valid @RequestBody ChatRequest request) {
         Long userId = getCurrentUserId();
         SessionVO session = chatSessionService.createSession(userId, request);
@@ -141,6 +143,8 @@ public class ChatController {
     }
 
     @PostMapping("/sessions/{id}/messages")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<ChatResponse>> sendMessage(
             @PathVariable Long id,
             @Valid @RequestBody ChatRequest request) {
@@ -160,6 +164,8 @@ public class ChatController {
     }
 
     @PostMapping(value = "/sessions/{id}/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public SseEmitter sendMessageStream(
             @PathVariable Long id,
             @Valid @RequestBody ChatRequest request) {

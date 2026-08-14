@@ -37,14 +37,14 @@ Write-Host "==== 安全基线核查 $(Get-Date -Format 'yyyy-MM-dd HH:mm') ===="
 
 # ---------- K1a 监听端口面：非回环 LISTENING 端口必须 ⊆ AllowedPublicPorts ----------
 try {
+    # Phase4 修正：非回环即对外可达——0.0.0.0/:: 全接口**和**绑定到具体网卡 IP（单播，如
+    # 192.168.x.x）都算对外监听。原实现只查全接口，服务绑到单播地址即绕过白名单。
     $listeners = Get-NetTCPConnection -State Listen -ErrorAction Stop |
-        Where-Object { $_.LocalAddress -notin @("127.0.0.1", "::1", "0.0.0.0", "::") -or $_.LocalAddress -in @("0.0.0.0", "::") }
-    # 0.0.0.0/:: = 全接口（含公网）——须在白名单；127.0.0.1 放行
-    $public = Get-NetTCPConnection -State Listen -ErrorAction Stop |
-        Where-Object { $_.LocalAddress -in @("0.0.0.0", "::") }
-    $bad = $public | Where-Object { $_.LocalPort -notin $AllowedPublicPorts }
-    $badList = ($bad | Select-Object -ExpandProperty LocalPort -Unique | Sort-Object) -join ","
-    Write-Check "K1a 全接口监听端口 ⊆ 白名单($($AllowedPublicPorts -join ','))" ($null -eq $bad -or $bad.Count -eq 0) "越界端口: $badList"
+        Where-Object { $_.LocalAddress -notin @("127.0.0.1", "::1") }
+    $bad = $listeners | Where-Object { $_.LocalPort -notin $AllowedPublicPorts }
+    $badList = ($bad | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" } |
+        Select-Object -Unique | Sort-Object) -join ","
+    Write-Check "K1a 非回环监听端口 ⊆ 白名单($($AllowedPublicPorts -join ','))" ($null -eq $bad -or $bad.Count -eq 0) "越界 地址:端口: $badList"
 } catch {
     Write-Check "K1a 监听端口面" $false "查询失败: $($_.Exception.Message)"
 }

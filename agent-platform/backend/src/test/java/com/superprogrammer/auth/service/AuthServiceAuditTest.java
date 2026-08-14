@@ -56,6 +56,8 @@ class AuthServiceAuditTest {
     @Mock private com.superprogrammer.common.security.IpBlacklistService ipBlacklistService;
     @Mock private com.superprogrammer.common.security.SecurityEventService securityEventService;
     @Mock private com.superprogrammer.common.security.BanService banService;
+    /** 安全体系 S5 · A6：登录分流依赖（未绑定 → mock 默认 false=单步登录，与旧行为一致） */
+    @Mock private MfaService mfaService;
 
     @InjectMocks
     private AuthService authService;

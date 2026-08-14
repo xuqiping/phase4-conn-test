@@ -28,6 +28,10 @@ public class AesEncryptService {
     @Value("${llm.encryption.secret:" + DEFAULT_SECRET + "}")
     private String secret;
 
+    /** Phase4 修正：生产态主信号——Nginx 同源部署不配 CORS 时 CORS 信号失效，profile 才是权威。 */
+    @Value("${spring.profiles.active:}")
+    private String activeProfile;
+
     @Value("${app.cors.allowed-origins:}")
     private String corsAllowedOrigins;
 
@@ -38,6 +42,11 @@ public class AesEncryptService {
     }
 
     /** 单测注入生产态信号（@Value 字段无 setter）。 */
+    void setActiveProfileForTest(String activeProfile) {
+        this.activeProfile = activeProfile;
+    }
+
+    /** 单测注入生产态信号（@Value 字段无 setter）。 */
     void setCorsAllowedOriginsForTest(String corsAllowedOrigins) {
         this.corsAllowedOrigins = corsAllowedOrigins;
     }
@@ -45,14 +54,17 @@ public class AesEncryptService {
     /**
      * 安全体系 S5 · SEC-FR-074（G5）：生产态弱密钥 fail-fast（复用 JwtUtil KNOWN_WEAK 范式）。
      *
-     * <p>「生产态」判定 = {@code app.cors.allowed-origins} 非空（该配置只有生产/预发才设置，
-     * 与 CORS 白名单同信号源）；此时密钥为内置默认值或长度 &lt; 16 → 拒绝启动——
+     * <p>「生产态」判定（Phase4 修正为双信号）：{@code spring.profiles.active=prod}（主信号，
+     * 部署侧显式声明）**或** {@code app.cors.allowed-origins} 非空（辅信号——只有生产/预发才配 CORS；
+     * Nginx 同源生产不配 CORS，仅靠它会漏检）。命中即：密钥为内置默认值或长度 &lt; 16 → 拒绝启动——
      * 默认密钥随 git 仓库公开，apiKey/密钥列（api_key_enc）等于明文裸奔。
-     * <p>dev（CORS 空）→ 放行 + WARN，不打断本地起服务（库里的密文也全是测试数据）。
+     * <p>dev（两信号皆空）→ 放行 + WARN，不打断本地起服务（库里的密文也全是测试数据）。
      */
     @jakarta.annotation.PostConstruct
     void validateSecret() {
-        boolean productionMode = corsAllowedOrigins != null && !corsAllowedOrigins.isBlank();
+        boolean prodProfile = "prod".equalsIgnoreCase(activeProfile == null ? "" : activeProfile.trim());
+        boolean productionMode = prodProfile
+                || (corsAllowedOrigins != null && !corsAllowedOrigins.isBlank());
         String trimmed = secret == null ? "" : secret.trim();
         boolean weak = DEFAULT_SECRET.equals(trimmed) || trimmed.length() < MIN_SECRET_LENGTH;
         if (!weak) {
@@ -61,7 +73,7 @@ public class AesEncryptService {
         if (productionMode) {
             throw new IllegalStateException(
                     "llm.encryption.secret 为内置默认值或长度<" + MIN_SECRET_LENGTH
-                            + "，且 app.cors.allowed-origins 已配置（生产态）——加密密钥形同虚设。"
+                            + "，且判定为生产态（prod profile 或 CORS 已配置）——加密密钥形同虚设。"
                             + "请经环境变量 LLM_ENCRYPTION_SECRET 注入 ≥16 字符随机密钥后重启"
                             + "（生成: openssl rand -base64 32 | tr -d '\\n'；注意：换密钥需重录存量 apiKey 密文）。");
         }
