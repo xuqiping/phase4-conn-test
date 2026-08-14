@@ -1,7 +1,8 @@
 //! core-state：阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化。
-//! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎。
+//! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎（`machine` 模块）。
 
 pub mod db;
+pub mod machine;
 
 pub use db::{Db, DbError, DbResult};
 
@@ -47,7 +48,7 @@ mod tests {
         })
         .expect("重复迁移");
         let versions = db.read(db::migrate::applied_versions).expect("读版本");
-        assert_eq!(versions, vec!["L1".to_string()]);
+        assert_eq!(versions, vec!["L1".to_string(), "L2".to_string()]);
     }
 
     #[test]

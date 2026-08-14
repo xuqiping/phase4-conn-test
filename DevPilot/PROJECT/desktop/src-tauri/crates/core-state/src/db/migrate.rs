@@ -10,10 +10,16 @@ struct Migration {
 }
 
 /// 迁移清单（追加式，顺序即执行顺序）。
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: "L1",
-    sql: include_str!("../../migrations/L1__init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: "L1",
+        sql: include_str!("../../migrations/L1__init.sql"),
+    },
+    Migration {
+        version: "L2",
+        sql: include_str!("../../migrations/L2__transition_history.sql"),
+    },
+];
 
 /// 应用所有未执行的迁移。重复调用安全（幂等）。
 pub fn migrate(conn: &Connection) -> DbResult<()> {

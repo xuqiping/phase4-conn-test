@@ -8,3 +8,6 @@ description = "阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化�
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"

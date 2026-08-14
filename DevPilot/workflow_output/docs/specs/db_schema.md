@@ -103,6 +103,7 @@ erDiagram
 | tasks | id, round_id, chunk_no, title, status, source(local/cli/mcp/deeplink), tokens_est, tokens_actual | 任务/chunk（FR-021/027/028/041） |
 | checkpoints | id, task_id, git_commit, snapshot_path, summary_plain, created_at | 存档点（FR-037） |
 | artifacts | id, project_id, type(prd/plan/progress/userops...), path, version | 产物索引（FR-030~035） |
+| transition_history | id, project_id, from_phase, to_phase, gate, actor, created_at | 状态机转移历史，只增，可回放排查（FR-029 运维项） |
 | usage_mirror | id, task_id, model, tokens_in/out, amount_cents, synced | Token 消耗本地镜像，与云端对账（FR-041） |
 | skills_local | id, name, yaml_path, enabled | 技能注册表（FR-025） |
 | mcp_servers | id, name, config JSON, status | MCP server 管理（FR-026） |
@@ -111,7 +112,8 @@ erDiagram
 | 版本 | 内容 |
 |---|---|
 | L1__init.sql | projects / workflow_states / rounds / tasks / checkpoints / artifacts |
-| L2__meter_skills.sql | usage_mirror / skills_local / mcp_servers |
+| L2__transition_history.sql | transition_history（P01 Step 6 插入：状态机历史为引擎内核刚需，先于计量建表） |
+| L3__meter_skills.sql | usage_mirror / skills_local / mcp_servers（原 L2，P01 中顺移） |
 
 ## 3. 设计说明
 

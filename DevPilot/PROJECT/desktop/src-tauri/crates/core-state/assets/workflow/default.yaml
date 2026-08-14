@@ -1,0 +1,44 @@
+# DevPilot 默认工作流定义（基线：2_编程类可迭代workflow v1.20）
+# 阶段 = 前端管道条六阶段；门禁不可跳过（AGENTS 铁律）。
+# 规模变体：skip 的阶段被移除，前后自动桥接；桥接边继承「原第一条边」的门禁，
+# 指向被删终点的边直接丢弃（如 L0/L1 无部署阶段，则上线门禁随之不适用）。
+workflow_version: "1.20"
+
+phases:
+  - { key: idea,   label: 想法 }
+  - { key: spec,   label: 需求 }
+  - { key: plan,   label: 计划 }
+  - { key: build,  label: 建造 }
+  - { key: accept, label: 验收 }
+  - { key: deploy, label: 部署 }
+
+gates:
+  requirement_confirm:
+    label: 需求确认
+    checklist: [需求卡全部确认锁定]
+  kickoff:
+    label: 开工确认
+    checklist: [实现计划已批准, 测试方案已产出]
+  security:                                # FR-040 强制安全门
+    label: 安全检查
+    checklist: [安全检查清单全过, 依赖审计通过]
+  release:
+    label: 上线确认
+    checklist: [验收全部通过, 回滚方案就绪]
+
+transitions:
+  - { from: idea,   to: spec }
+  - { from: spec,   to: plan,   gate: requirement_confirm }
+  - { from: plan,   to: build,  gate: kickoff }
+  - { from: build,  to: accept, gate: security }
+  - { from: accept, to: deploy, gate: release }
+  # 回退边（验收打回 / 计划退回需求 / 需求退回想法）——回退不设门禁
+  - { from: accept, to: build }
+  - { from: plan,   to: spec }
+  - { from: spec,   to: idea }
+
+scale_variants:
+  L0: { skip: [spec, plan, deploy] }   # 小脚本：想法直建→验收
+  L1: { skip: [deploy] }               # 小工具：本机使用，无部署阶段
+  L2: { skip: [] }                     # 标准应用：全流程
+  L3: { skip: [] }                     # 复杂系统：全流程（二期扩子阶段）
