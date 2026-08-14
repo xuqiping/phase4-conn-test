@@ -89,6 +89,12 @@ public class LlmController {
         return ResponseEntity.ok(R.ok(result));
     }
 
+    @PostMapping("/providers/{id}/test-rerank")
+    @RequirePermission("role:manage")
+    public ResponseEntity<R<TestConnectionResult>> testRerank(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(providerService.testRerank(id)));
+    }
+
     @PostMapping("/providers/reload")
     @RequirePermission("role:manage")
     public ResponseEntity<R<Void>> reloadProviders() {

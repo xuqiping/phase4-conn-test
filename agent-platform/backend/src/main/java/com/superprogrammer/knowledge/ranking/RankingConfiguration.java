@@ -23,7 +23,7 @@ public class RankingConfiguration {
                 .build()).getContent());
     }
 
-    @Bean ModelRerankProvider modelRerankProvider() { return new ModelRerankProvider(false, null); }
+    @Bean ModelRerankProvider modelRerankProvider(LlmGateway gateway) { return new ModelRerankProvider(gateway); }
     @Bean RankingEngine rankingEngine(List<RankingProvider> providers) { return new RankingEngine(providers); }
 
     private static String rankingInput(ObjectMapper mapper, String query,

@@ -5,6 +5,7 @@ import com.superprogrammer.llm.config.LlmConfig;
 import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TestConnectionResult;
 import com.superprogrammer.llm.dto.TokenUsage;
+import com.superprogrammer.llm.dto.RerankResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.mapper.EmbeddingModelVersionMapper;
 import com.superprogrammer.llm.mapper.LlmProviderMapper;
@@ -192,5 +193,31 @@ class TestConnectionTest {
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("ANTHROPIC"));
         verify(llmConfig, never()).createProvider(any(), any());
+    }
+
+    @Test
+    void testRerank_callsSelectedProviderAndReturnsCount() {
+        LlmProviderEntity entity = buildEntity();
+        entity.setCategory(LlmProviderService.CATEGORY_RERANK);
+        entity.setModels("[\"configured-rerank-model\"]");
+        when(mapper.selectById(1L)).thenReturn(entity);
+        when(aesEncryptService.decrypt("encrypted-key")).thenReturn("sk-test-key");
+        when(llmConfig.createProvider(entity, "sk-test-key")).thenReturn(provider);
+        when(provider.rerank(any())).thenReturn(RerankResult.builder()
+                .model("configured-rerank-model").duration(88L)
+                .usage(TokenUsage.builder().promptTokens(20).completionTokens(0).totalTokens(20).build())
+                .items(java.util.List.of(
+                        RerankResult.Item.builder().index(0).score(0.9).build(),
+                        RerankResult.Item.builder().index(2).score(0.8).build()))
+                .build());
+
+        TestConnectionResult result = service.testRerank(1L);
+
+        assertTrue(result.isSuccess());
+        assertTrue(result.getMessage().contains("2"));
+        assertEquals("configured-rerank-model", result.getModel());
+        assertEquals(88L, result.getDurationMs());
+        verify(billingService).onSuccess(any(), eq(1L), eq("GLOBAL"),
+                eq("configured-rerank-model"), eq("RERANK"), eq(20), eq(0));
     }
 }

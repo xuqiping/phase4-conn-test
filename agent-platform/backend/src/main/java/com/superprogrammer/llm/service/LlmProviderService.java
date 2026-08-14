@@ -21,6 +21,8 @@ import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
 import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TestConnectionResult;
+import com.superprogrammer.llm.dto.RerankRequest;
+import com.superprogrammer.llm.dto.RerankResult;
 import com.superprogrammer.llm.provider.LlmProviderInterface;
 
 import java.util.List;
@@ -362,6 +364,53 @@ public class LlmProviderService {
                     .build();
         } catch (Exception e) {
             log.warn("embedding 连通测试失败 [provider={}]: {}", entity.getName(), e.getMessage());
+            return TestConnectionResult.fail(extractRootMessage(e));
+        }
+    }
+
+    /** Rerank 专用连通测试：直测所选 Provider，不经模型名全局路由。 */
+    public TestConnectionResult testRerank(Long providerId) {
+        LlmProviderEntity entity = mapper.selectById(providerId);
+        if (entity == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "供应商不存在");
+        }
+        String model = pickFirstModel(entity);
+        if (model == null) {
+            return TestConnectionResult.fail("未配置模型列表");
+        }
+        if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
+            return TestConnectionResult.fail("未配置API端点");
+        }
+        if (isAnthropic(entity)) {
+            return TestConnectionResult.fail("ANTHROPIC 协议不提供专用 rerank 接口");
+        }
+        List<String> documents = List.of(
+                "文本排序模型广泛用于搜索引擎和推荐系统中，它们根据文本相关性对候选文本进行排序",
+                "量子计算是计算科学的一个前沿领域",
+                "预训练语言模型的发展给文本排序模型带来了新的进展");
+        try {
+            LlmProviderInterface provider = llmConfig.createProvider(entity, getDecryptedApiKey(providerId));
+            long start = System.currentTimeMillis();
+            RerankResult result = provider.rerank(RerankRequest.builder()
+                    .model(model)
+                    .query("什么是文本排序模型")
+                    .documents(documents)
+                    .topN(2)
+                    .build());
+            long duration = result.getDuration() != null ? result.getDuration() : System.currentTimeMillis() - start;
+            com.superprogrammer.llm.dto.TokenUsage usage = result.getUsage();
+            int inputTokens = usage != null ? usage.getPromptTokens()
+                    : TokenEstimator.estimate("什么是文本排序模型")
+                    + documents.stream().mapToInt(TokenEstimator::estimate).sum();
+            chargeAdminDiagnostic(entity.getId(), model, LlmUsageLogEntity.KIND_RERANK, inputTokens, 0);
+            return TestConnectionResult.builder()
+                    .success(true)
+                    .message("连接成功 (返回 " + result.getItems().size() + " 条排序结果)")
+                    .model(model)
+                    .durationMs(duration)
+                    .build();
+        } catch (Exception e) {
+            log.warn("rerank 连通测试失败 [provider={}]: {}", entity.getName(), e.getClass().getSimpleName());
             return TestConnectionResult.fail(extractRootMessage(e));
         }
     }
