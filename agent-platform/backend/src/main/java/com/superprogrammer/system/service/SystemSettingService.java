@@ -209,6 +209,15 @@ public class SystemSettingService {
         return getBillingSettings();
     }
 
+    // ============================ 安全体系 S3 · AI 安全 ============================
+
+    /** LLM01 不可信内容围栏总开关（SEC-FR-050），默认开。 */
+    public static final String SECURITY_AI_FENCE_ENABLED = "security.ai.fence.enabled";
+
+    public boolean getAiFenceEnabled() {
+        return getBoolean(SECURITY_AI_FENCE_ENABLED, true);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

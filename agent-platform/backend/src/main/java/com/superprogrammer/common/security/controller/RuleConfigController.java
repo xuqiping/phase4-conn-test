@@ -28,6 +28,7 @@ public class RuleConfigController {
     private static final Map<String, String> EDITABLE_KEYS = new LinkedHashMap<>() {{
         // 总闸/响应/告警
         put("security.rate.enabled", "true");
+        put("security.ai.fence.enabled", "true");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

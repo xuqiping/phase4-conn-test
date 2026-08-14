@@ -77,6 +77,22 @@ public class RagRetrievalService {
     private final com.superprogrammer.knowledge.retrieval.ProductionRetrievalGateway productionRetrievalGateway;
     private final com.superprogrammer.knowledge.context.EvidencePolicyService evidencePolicyService;
     private final com.superprogrammer.knowledge.answer.GroundedAnswerService groundedAnswerService;
+
+    /** 安全体系 S3 · LLM01 围栏（横切可选依赖：测试/切片无 bean 时降级直通，沿用 2026-08-12 范式）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.security.ai.UntrustedContentFence untrustedContentFence;
+
+    /** 证据正文包围栏；围栏缺席/关闭/异常一律原文直通（检测层不自残）。 */
+    private String fenced(String label, String content) {
+        if (untrustedContentFence == null || content == null || content.isEmpty()) {
+            return content;
+        }
+        try {
+            return untrustedContentFence.wrap(label, content);
+        } catch (Exception e) {
+            return content;
+        }
+    }
     private final com.superprogrammer.knowledge.migration.RagRolloutService ragRolloutService;
     private final com.superprogrammer.knowledge.retrieval.RagShadowCoordinator ragShadowCoordinator;
     private final com.superprogrammer.knowledge.citation.CitationVerifier citationVerifier =
@@ -515,8 +531,9 @@ public class RagRetrievalService {
                 return com.superprogrammer.knowledge.dto.EvidenceResult.abstain(traceId, "NO_DENSE_HITS", ABSTAIN_MSG);
             }
             EvidencePack pack = fitToBudget(evidence, cap);
+            // 安全体系 S3 · SEC-FR-050：证据正文包 <retrieved_data> 围栏（LLM01 间接注入防御），[n] 引用机制不变
             String ctx = "知识库证据（每个事实用 [n] 标注来源，n 为证据编号；不得编造引用）：\n"
-                    + evidenceBlock(pack.injected());
+                    + fenced("知识库检索证据", evidenceBlock(pack.injected()));
             budget.setPromptTokens(TokenEstimator.estimate(systemPrompt() + ctx));
 
             String verdict = grayZone ? "LOW_CONFIDENCE_SUPPORTED" : "SUPPORTED";
