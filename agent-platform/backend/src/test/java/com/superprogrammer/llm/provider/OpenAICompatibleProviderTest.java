@@ -1,6 +1,7 @@
 package com.superprogrammer.llm.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.superprogrammer.llm.dto.*;
 import com.superprogrammer.chat.dto.StreamEvent;
 import okhttp3.mockwebserver.*;
@@ -129,6 +130,69 @@ class OpenAICompatibleProviderTest {
 
         assertEquals(3, res.getEmbedding().length);
         assertNull(res.getUsage());
+    }
+
+    @Test
+    void qwenMultimodalEmbed_shouldUseContentsParametersAndParseOutput() throws Exception {
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "qwen-emb",
+                server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
+                "k", List.of("configured-embedding-model"), mapper);
+        StringBuilder vector = new StringBuilder();
+        for (int i = 0; i < 2048; i++) {
+            if (i > 0) vector.append(',');
+            vector.append(i == 0 ? "0.25" : "0.0");
+        }
+        server.enqueue(new MockResponse()
+                .setBody("{\"output\":{\"embeddings\":[{\"embedding\":[" + vector
+                        + "]}]},\"usage\":{\"input_tokens\":9}}")
+                .setHeader("Content-Type", "application/json"));
+
+        EmbedResult result = embedProvider.embedWithUsage("商品描述文本", "configured-embedding-model");
+
+        RecordedRequest request = server.takeRequest();
+        JsonNode body = mapper.readTree(request.getBody().readUtf8());
+        assertEquals("configured-embedding-model", body.path("model").asText());
+        assertEquals("商品描述文本", body.at("/input/contents/0/text").asText());
+        assertTrue(body.at("/parameters/enable_fusion").asBoolean());
+        assertEquals(2048, body.at("/parameters/dimension").asInt());
+        assertEquals(2048, result.getEmbedding().length);
+        assertEquals(0.25f, result.getEmbedding()[0], 1e-6);
+        assertNotNull(result.getUsage());
+        assertEquals(9, result.getUsage().getPromptTokens());
+        assertEquals(9, result.getUsage().getTotalTokens());
+    }
+
+    @Test
+    void qwenMultimodalEmbed_shouldFailWhenOutputEmbeddingMissing() {
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "qwen-emb",
+                server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
+                "k", List.of("configured-embedding-model"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"output\":{\"embeddings\":[]}}")
+                .setHeader("Content-Type", "application/json"));
+
+        RuntimeException error = assertThrows(RuntimeException.class,
+                () -> embedProvider.embedWithUsage("hello", "configured-embedding-model"));
+
+        assertTrue(error.getMessage().contains("embedding"));
+    }
+
+    @Test
+    void qwenMultimodalEmbed_shouldFailWhenDimensionIsNot2048() {
+        OpenAICompatibleProvider embedProvider = new OpenAICompatibleProvider(
+                "qwen-emb",
+                server.url("/v1/services/embeddings/multimodal-embedding/multimodal-embedding").toString(),
+                "k", List.of("configured-embedding-model"), mapper);
+        server.enqueue(new MockResponse()
+                .setBody("{\"output\":{\"embeddings\":[{\"embedding\":[0.1,0.2]}]}}")
+                .setHeader("Content-Type", "application/json"));
+
+        RuntimeException error = assertThrows(RuntimeException.class,
+                () -> embedProvider.embedWithUsage("hello", "configured-embedding-model"));
+
+        assertTrue(error.getMessage().contains("embedding"));
     }
 
     @Test

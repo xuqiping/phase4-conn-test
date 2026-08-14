@@ -36,6 +36,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     /** 单次响应超时。兜底 .block(Duration)，杜绝无超时 .block() 钉死线程。 */
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(30);
+    private static final int QWEN_MULTIMODAL_EMBEDDING_DIMENSION = 2048;
 
     public OpenAICompatibleProvider(String name, String endpoint, String apiKey, List<String> models, ObjectMapper objectMapper) {
         this(name, endpoint, apiKey, models, objectMapper, null, "GLOBAL");
@@ -179,7 +180,15 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", model);
-            body.put("input", text);
+            boolean qwenMultimodalProtocol = usesQwenMultimodalEmbeddingProtocol();
+            if (qwenMultimodalProtocol) {
+                body.put("input", Map.of("contents", List.of(Map.of("text", text))));
+                body.put("parameters", Map.of(
+                        "enable_fusion", true,
+                        "dimension", QWEN_MULTIMODAL_EMBEDDING_DIMENSION));
+            } else {
+                body.put("input", text);
+            }
             // 全 URL 直发（FR-001）：EMBEDDING 行的 endpoint 即完整 embed URL（V60 补全 /embeddings）
             String responseJson = webClient.post()
                     .uri(endpoint)
@@ -189,14 +198,19 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
                     .bodyToMono(String.class)
                     .block(RESPONSE_TIMEOUT);
             JsonNode root = objectMapper.readTree(responseJson);
-            JsonNode arr = root.at("/data/0/embedding");
+            JsonNode arr = qwenMultimodalProtocol
+                    ? root.at("/output/embeddings/0/embedding")
+                    : root.at("/data/0/embedding");
             if (arr == null || !arr.isArray() || arr.isEmpty()) {
                 // 安全审计 #3：响应体可能含 SSRF 取回的内网/云元数据内容，禁止回显进异常消息（防泄露）。
-                // 仅服务端日志记录（截断），抛固定话术。
-                log.warn("embedding 响应格式非预期 provider={} bodyLen={} bodyHead={}",
-                        name, responseJson.length(),
-                        responseJson.length() > 200 ? responseJson.substring(0, 200) : responseJson);
+                // 仅记录响应长度，避免正文、向量或上游细节进入日志。
+                log.warn("embedding 响应格式非预期 provider={} bodyLen={}", name, responseJson.length());
                 throw new RuntimeException("embedding 响应格式非预期（provider=" + name + "）");
+            }
+            if (qwenMultimodalProtocol && arr.size() != QWEN_MULTIMODAL_EMBEDDING_DIMENSION) {
+                log.warn("embedding 维度不匹配 provider={} expected={} actual={}",
+                        name, QWEN_MULTIMODAL_EMBEDDING_DIMENSION, arr.size());
+                throw new RuntimeException("embedding 响应维度非预期（provider=" + name + "）");
             }
             float[] vec = new float[arr.size()];
             for (int i = 0; i < arr.size(); i++) {
@@ -206,7 +220,9 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             JsonNode usageNode = root.path("usage");
             TokenUsage usage = null;
             if (usageNode.isObject() && !usageNode.isEmpty()) {
-                int prompt = usageNode.path("prompt_tokens").asInt(0);
+                int prompt = qwenMultimodalProtocol
+                        ? usageNode.path("input_tokens").asInt(0)
+                        : usageNode.path("prompt_tokens").asInt(0);
                 usage = TokenUsage.builder()
                         .promptTokens(prompt)
                         .completionTokens(0)
@@ -219,6 +235,10 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             log.warn("embedding 调用失败 provider={}: {}", name, e.getMessage());
             throw new RuntimeException("embedding 调用失败（provider=" + name + "）", e);
         }
+    }
+
+    private boolean usesQwenMultimodalEmbeddingProtocol() {
+        return endpoint.contains("/multimodal-embedding/");
     }
 
     private Map<String, Object> buildRequestBody(LlmRequest request) {
