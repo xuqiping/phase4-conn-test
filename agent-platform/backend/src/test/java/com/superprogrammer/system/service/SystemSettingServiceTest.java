@@ -280,4 +280,58 @@ class SystemSettingServiceTest {
         assertEquals(com.superprogrammer.knowledge.service.RagConfig.MEMORY_TAG_VOCAB_DEFAULT,
                 service.getMemoryTagVocab());
     }
+
+    // ============================ 安全体系 S4 · 上传解析防护默认值（SEC-FR-031/032） ============================
+
+    @Test
+    void getUploadMagicSniffEnabled_shouldDefaultTrueWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertTrue(service.getUploadMagicSniffEnabled());
+    }
+
+    @Test
+    void getUploadMaxPixels_shouldDefaultHundredMillionWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(100_000_000L, service.getUploadMaxPixels());
+    }
+
+    @Test
+    void getUploadMaxPixels_shouldReturnStoredValue() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("5000000");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(5_000_000L, service.getUploadMaxPixels());
+    }
+
+    @Test
+    void getUploadMaxPixels_shouldFallbackOnZeroOrIllegal() {
+        SystemSetting zero = new SystemSetting();
+        zero.setSettingValue("0");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(zero);
+        assertEquals(100_000_000L, service.getUploadMaxPixels());
+
+        SystemSetting bad = new SystemSetting();
+        bad.setSettingValue("abc");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(bad);
+        assertEquals(100_000_000L, service.getUploadMaxPixels());
+    }
+
+    @Test
+    void getUploadMaxParseChars_shouldDefaultHundredThousandWhenMissing() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertEquals(100_000, service.getUploadMaxParseChars());
+    }
+
+    @Test
+    void getUploadMaxParseChars_shouldReturnStoredValue() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingValue("20000");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertEquals(20_000, service.getUploadMaxParseChars());
+    }
 }

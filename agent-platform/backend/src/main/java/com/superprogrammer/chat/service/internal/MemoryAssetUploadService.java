@@ -57,6 +57,10 @@ public class MemoryAssetUploadService {
         this.assetMemoryMapper = assetMemoryMapper;
     }
 
+    /** 安全体系 S4 · SEC-FR-032 像素上限读取（F-3①，图片预检）。横切可选依赖范式：null 用默认上限。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     /**
      * 上传聊天附件：校验 → 落盘登记 → 解析预检 → 建文件记忆行（PROCESSING）。
      * 超限/不支持类型 → BAD_REQUEST 友好话术（已落盘的删干净）。
@@ -156,6 +160,8 @@ public class MemoryAssetUploadService {
             }
             case MemoryAssetMemory.KIND_AUDIO, MemoryAssetMemory.KIND_VIDEO -> {
                 try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(path.toFile())) {
+                    // S4 F-3③：IO 超时（损坏容器卡死预检线程时有限时返回）
+                    grabber.setOption("rw_timeout", String.valueOf(30_000_000L));
                     grabber.start();
                     long us = grabber.getLengthInTime();
                     grabber.stop();
@@ -163,7 +169,21 @@ public class MemoryAssetUploadService {
                             ? "音视频超过时长上限（≤" + (maxDurationUs / 60 / 1_000_000) + " 分钟），请裁剪后重试" : null;
                 }
             }
-            default -> null;   // IMAGE/DOC/OTHER：页数不可靠或无意义，仅大小门控
+            // S4 F-3①：图片像素预算（头读取不解码；ingestion 解码前先拦炸弹图）
+            case MemoryAssetMemory.KIND_IMAGE -> {
+                try (java.io.InputStream in = java.nio.file.Files.newInputStream(path)) {
+                    long cap = systemSettingService == null
+                            ? com.superprogrammer.common.security.util.ImageGuard.DEFAULT_MAX_PIXELS
+                            : systemSettingService.getUploadMaxPixels();
+                    int[] dims = com.superprogrammer.common.security.util.ImageGuard.dimensions(in);
+                    yield dims != null && (long) dims[0] * dims[1] > cap
+                            ? "图片分辨率过大（" + dims[0] + "×" + dims[1] + "），请压缩后重新上传" : null;
+                } catch (Exception e) {
+                    log.warn("图片像素预检失败(放行) path={}: {}", path, e.getMessage());
+                    yield null;
+                }
+            }
+            default -> null;   // DOC/OTHER：页数不可靠或无意义，仅大小门控
         };
     }
 

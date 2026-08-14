@@ -498,7 +498,10 @@ public class DocumentParserService {
         String text;
         try (InputStream in = res.getInputStream()) {
             Tika tika = new Tika();   // 非线程安全，每次新建
-            text = tika.parseToString(in);
+            // S4 F-3②：解析文本上限显式化（默认 100000=Tika facade 单参隐式值，行为不变），
+            // zip bomb 高膨胀文档截断即止——超大文本不再整段进内存/切分/LLM。
+            text = tika.parseToString(in, new org.apache.tika.metadata.Metadata(),
+                    systemSettingService.getUploadMaxParseChars());
         } catch (Exception e) {
             throw new RuntimeException("Tika 抽取失败 docId=" + doc.getId() + ": " + e.getMessage(), e);
         }

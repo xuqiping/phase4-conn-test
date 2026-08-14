@@ -345,4 +345,30 @@ class VideoFrameServiceTest {
         g.dispose();
         return img;
     }
+
+    // ==================== 安全体系 S4 · SEC-FR-032 cropImage 像素护栏（F-3①）====================
+
+    @Test
+    void cropImage_pixelBudgetOverCap_rejectedBeforeDecode() throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        Path src = writeQuadrantPng();   // 100×100 = 10000 像素
+        com.superprogrammer.system.service.SystemSettingService settings =
+                org.mockito.Mockito.mock(com.superprogrammer.system.service.SystemSettingService.class);
+        org.mockito.Mockito.when(settings.getUploadMaxPixels()).thenReturn(1000L);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "systemSettingService", settings);
+
+        assertThatThrownBy(() -> svc.cropImage(src, 0.1, 0.1, 0.5, 0.5))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("分辨率过大");
+    }
+
+    @Test
+    void cropImage_settingsAbsent_usesDefaultCapAndCrops() throws Exception {
+        VideoFrameService svc = new VideoFrameService();   // systemSettingService=null → 默认 1 亿上限
+        Path src = writeQuadrantPng();
+
+        VideoFrameService.ExtractedFrame out = svc.cropImage(src, 0.0, 0.0, 0.5, 0.5);
+        assertThat(out.mimeType()).isEqualTo("image/png");
+        assertThat(out.bytes().length).isGreaterThan(0);
+    }
 }

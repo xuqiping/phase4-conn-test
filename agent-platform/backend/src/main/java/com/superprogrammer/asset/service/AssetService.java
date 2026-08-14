@@ -22,6 +22,8 @@ import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetRoleLinkMapper;
 import com.superprogrammer.asset.mapper.AssetVersionMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.security.util.ImageGuard;
+import com.superprogrammer.system.service.SystemSettingService;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.file.entity.StoredFileEntity;
@@ -33,8 +35,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -86,6 +86,11 @@ public class AssetService {
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
     private final AssetVersionService versionService;
+
+    /** 安全体系 S4 · SEC-FR-032 像素上限读取（F-3①）。横切可选依赖：@RequiredArgsConstructor
+     * 构造注入不填本字段 → null 时用 ImageGuard 默认上限，不破坏既有测试切片。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SystemSettingService systemSettingService;
 
     /**
      * 该 fileId 是否为当前用户可访问的资产文件（项目成员 viewer+ 可读即放行；admin 放行）。
@@ -299,6 +304,10 @@ public class AssetService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "上传文件不能为空");
         }
         validateFileMime(category, file.getContentType());
+        // 安全体系 S4 · SEC-FR-032：图片类像素预算（F-3① 像素炸弹）——落盘前头读取校验，超限拒收
+        if ("IMAGE".equals(category)) {
+            guardImagePixels(file);
+        }
         // 落盘 + 登记 owner（SOURCE_ASSET）
         StoredFile stored = fileStorageService.store(file, userId, StoredFileEntity.SOURCE_ASSET);
         // 名称：缺省用原始文件名
@@ -729,13 +738,27 @@ public class AssetService {
         }
     }
 
-    /** 读图片宽高（JDK ImageIO，无原生依赖）。失败返 null（容错不阻断上传）。 */
+    /**
+     * 图片像素预算校验（S4 F-3①）：只读文件头不解码像素（原 ImageIO.read 全量解码是 OOM 面）。
+     * 无法判定放行（检测层不自残），超限 BAD_REQUEST 拒收。
+     */
+    private void guardImagePixels(MultipartFile file) {
+        try (InputStream in = file.getInputStream()) {
+            long cap = systemSettingService == null
+                    ? ImageGuard.DEFAULT_MAX_PIXELS
+                    : systemSettingService.getUploadMaxPixels();
+            ImageGuard.assertPixels(cap, in, file.getOriginalFilename());
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            log.warn("image pixel guard failed(放行) name={}: {}", file.getOriginalFilename(), e.getMessage());
+        }
+    }
+
+    /** 读图片宽高（S4 F-3 起改头读取，不解码像素——原 ImageIO.read 是像素炸弹面）。失败返 null（容错）。 */
     private int[] readImageDims(MultipartFile file) {
         try (InputStream in = file.getInputStream()) {
-            BufferedImage img = ImageIO.read(in);
-            if (img != null) {
-                return new int[]{img.getWidth(), img.getHeight()};
-            }
+            return ImageGuard.dimensions(in);
         } catch (Exception e) {
             log.warn("read image dims failed: {}", e.getMessage());
         }

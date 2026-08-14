@@ -57,8 +57,28 @@ public class VideoFrameService {
     /** 单次拼接段数上限（plan C13 安全清单：防空切片/防滥用）。 */
     private static final int MAX_CONCAT_PARTS = 20;
 
+    // ============================ 安全体系 S4 · SEC-FR-032（F-3③ 抽帧超时/帧预算） ============================
+
+    /** FFmpeg IO 层超时（微秒，30s）：损坏/恶意容器让 native 读卡死时有限时返回（rw_timeout）。 */
+    private static final long FFMPEG_RW_TIMEOUT_US = 30_000_000L;
+
+    /** clip 帧预算：600s × 120fps 上限（防时间戳异常导致逐帧死循环占线程）。 */
+    private static final int CLIP_MAX_FRAMES = 72_000;
+
+    /** concat 累计帧预算：20 段 × 600s × 30fps 量级（同样防 native 死循环）。 */
+    private static final int CONCAT_MAX_FRAMES = 360_000;
+
+    /** 统一 grabber 预备：IO 超时 option（必须在 start() 前设置）。 */
+    private static void prepare(FFmpegFrameGrabber grabber) {
+        grabber.setOption("rw_timeout", String.valueOf(FFMPEG_RW_TIMEOUT_US));
+    }
+
     @Value("${canvas.frame-extractor:javacv}")
     private String extractorBackend = "javacv";
+
+    /** 安全体系 S4 · SEC-FR-032 像素上限读取（F-3①，cropImage 解码前护栏）。横切可选依赖范式。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     public enum FrameMode { FIRST, LAST, AT }
 
@@ -107,6 +127,7 @@ public class VideoFrameService {
         long started = System.currentTimeMillis();
         FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(videoPath.toFile());
         try {
+            prepare(grabber);   // S4 F-3③：IO 超时
             grabber.start();
             long durationUs = grabber.getLengthInTime(); // 微秒；某些流式/VFR 视频可能为 0
             if (mode == FrameMode.LAST) {
@@ -178,6 +199,17 @@ public class VideoFrameService {
         }
 
         long started = System.currentTimeMillis();
+        // S4 F-3①：解码前头读取核像素预算（ImageIO.read 按声明尺寸分配缓冲，炸弹图直接 OOM）
+        try (java.io.InputStream guardIn = Files.newInputStream(srcPath)) {
+            long cap = systemSettingService == null
+                    ? com.superprogrammer.common.security.util.ImageGuard.DEFAULT_MAX_PIXELS
+                    : systemSettingService.getUploadMaxPixels();
+            com.superprogrammer.common.security.util.ImageGuard.assertPixels(cap, guardIn, srcPath.toString());
+        } catch (BusinessException be) {
+            throw be;
+        } catch (IOException e) {
+            log.warn("canvas cropImage pixel guard failed(放行): {}", e.getMessage());
+        }
         BufferedImage src;
         try {
             src = ImageIO.read(srcPath.toFile());
@@ -265,6 +297,7 @@ public class VideoFrameService {
 
         FFmpegFrameRecorder recorder = null;
         try {
+            prepare(grabber);   // S4 F-3③：IO 超时
             grabber.start();
             long durationUs = grabber.getLengthInTime();
             long startUs = startSec * 1_000_000L;
@@ -304,6 +337,10 @@ public class VideoFrameService {
                 }
                 recorder.record(frame);
                 recorded++;
+                // S4 F-3③ 帧预算：时间戳异常/容器恶意时不无限逐帧（600s×120fps 上限）
+                if (recorded >= CLIP_MAX_FRAMES) {
+                    throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频截取时长异常，已中止");
+                }
             }
 
             long size = Files.size(tempFile);
@@ -377,9 +414,11 @@ public class VideoFrameService {
         FFmpegFrameGrabber grabber = null;
         boolean recorderStarted = false;
         long totalDurationUs = 0;
+        int totalFrames = 0;
         try {
             for (int i = 0; i < parts.size(); i++) {
                 grabber = new FFmpegFrameGrabber(parts.get(i).toFile());
+                prepare(grabber);   // S4 F-3③：IO 超时
                 grabber.start();
                 long durUs = grabber.getLengthInTime();
                 if (durUs > 0) {
@@ -408,6 +447,10 @@ public class VideoFrameService {
                 Frame frame;
                 while ((frame = grabber.grabImage()) != null) {
                     recorder.record(frame);
+                    // S4 F-3③ 累计帧预算：跨段累计，防多段恶意容器叠加死循环
+                    if (++totalFrames >= CONCAT_MAX_FRAMES) {
+                        throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频拼接时长异常，已中止");
+                    }
                 }
 
                 try {

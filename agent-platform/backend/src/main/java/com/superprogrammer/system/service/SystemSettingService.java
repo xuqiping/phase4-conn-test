@@ -253,6 +253,23 @@ public class SystemSettingService {
         return getBoolean(SECURITY_UPLOAD_MAGIC_SNIFF_ENABLED, true);
     }
 
+    /** 安全体系 S4 · SEC-FR-032 图片总像素上限（F-3① 像素炸弹），0=默认 1 亿。 */
+    public static final String SECURITY_UPLOAD_MAX_PIXELS = "security.upload.max-pixels";
+
+    public long getUploadMaxPixels() {
+        long v = getLong(SECURITY_UPLOAD_MAX_PIXELS, 100_000_000L);
+        return v > 0 ? v : 100_000_000L;
+    }
+
+    /** 安全体系 S4 · SEC-FR-032 解析文本上限（F-3② zip bomb 文本膨胀）。默认 100000=
+     * Tika facade 单参 parseToString 的既有隐式值——显式化不改行为，防膨胀靠可配可降。 */
+    public static final String SECURITY_UPLOAD_MAX_PARSE_CHARS = "security.upload.max-parse-chars";
+
+    public int getUploadMaxParseChars() {
+        long v = getLong(SECURITY_UPLOAD_MAX_PARSE_CHARS, 100_000L);
+        return v > 0 ? (int) Math.min(v, Integer.MAX_VALUE) : 100_000;
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

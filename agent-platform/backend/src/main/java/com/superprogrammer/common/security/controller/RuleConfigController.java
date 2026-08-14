@@ -36,6 +36,9 @@ public class RuleConfigController {
         put("security.llm.session-token-cap", "500000");
         // 安全体系 S4 · SEC-FR-031 上传 magic number 嗅探（F-2）
         put("security.upload.magic-sniff.enabled", "true");
+        // 安全体系 S4 · SEC-FR-032 解析炸弹上限（F-3：像素/解析文本）
+        put("security.upload.max-pixels", "100000000");
+        put("security.upload.max-parse-chars", "100000");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");
