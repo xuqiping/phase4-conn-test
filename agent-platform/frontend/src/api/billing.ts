@@ -209,6 +209,10 @@ export const billingApi = {
   updatePricingRule(id: number, data: PricingRuleRequest) {
     return request.put<ApiResponse<PricingRuleVO>>(`/billing/pricing/${id}`, data)
   },
+  /** 删除价表行（配错模型/价格的清理入口；历史账单不受影响） */
+  deletePricingRule(id: number) {
+    return request.delete<ApiResponse<null>>(`/billing/pricing/${id}`)
+  },
   // 7x-2：导出当前全量价表（blob 触发下载）
   exportPricingRules() {
     return request.get<Blob>('/billing/pricing/export', { responseType: 'blob' })

@@ -146,7 +146,20 @@ const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => fmt(r.pricePerSecond) },
   { title: '图片单价 ¥', key: 'pricePerImage', render: r => fmt(r.pricePerImage) },
   { title: '生效时间', key: 'effectiveFrom', render: r => new Date(r.effectiveFrom).toLocaleString('zh-CN', { hour12: false }) },
-  { title: '操作', key: 'op', render: r => h(NButton, { size: 'small', text: true, type: 'primary', onClick: () => openPricingModal(r) }, { default: () => '编辑' }) }
+  {
+    title: '操作', key: 'op', width: 110,
+    render: r => h(NSpace, { size: 'small' }, {
+      default: () => [
+        h(NButton, { size: 'small', text: true, type: 'primary', onClick: () => openPricingModal(r) }, { default: () => '编辑' }),
+        // 删除价表行（7x 追加）：配错模型/价格的清理入口；历史账单金额已在扣费时落账不受影响
+        h(NPopconfirm, { onPositiveClick: () => removePricing(r.id) }, {
+          trigger: () => h(NButton, { size: 'small', text: true, type: 'error' }, { default: () => '删除' }),
+          default: () => `确认删除 ${r.model ?? '该行'}（${r.hasReference ? '有参考' : '无参考'}）价表行？` +
+            '若删后该模型无其他价行，之后调用它将因「价表缺失」失败，需重新配置。'
+        })
+      ]
+    })
+  }
 ]
 
 const ratioColumns: DataTableColumns<RatioTierVO> = [
@@ -275,6 +288,19 @@ async function savePricing() {
     /* 拦截器已 toast */
   } finally {
     saving.value = false
+  }
+}
+
+/** 删除价表行（7x 追加）：物理删，删后候选下拉会重新出现该维度。 */
+async function removePricing(id: number) {
+  try {
+    await billingApi.deletePricingRule(id)
+    message.success('价表已删除')
+    await load()
+    // 候选列表联动刷新（删掉的维度重新可配）
+    if (!pricingShow.value) await loadAvailableModels()
+  } catch {
+    /* 拦截器已 toast */
   }
 }
 

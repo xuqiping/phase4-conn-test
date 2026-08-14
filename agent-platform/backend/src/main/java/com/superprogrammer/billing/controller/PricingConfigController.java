@@ -66,6 +66,15 @@ public class PricingConfigController {
         return ResponseEntity.ok(R.ok("价表已更新", pricingConfigService.updatePricingRule(id, req)));
     }
 
+    /** 删除价表行（配错模型/价格的清理入口；历史账单金额已在扣费时落账，不受影响）。 */
+    @AuditLog(module = "billing", action = "pricing_delete", targetType = "pricing_rule")
+    @DeleteMapping("/pricing/{id}")
+    @RequirePermission("pricing:manage")
+    public ResponseEntity<R<Void>> deletePricingRule(@PathVariable Long id) {
+        pricingConfigService.deletePricingRule(id);
+        return ResponseEntity.ok(R.ok("价表已删除", null));
+    }
+
     /**
      * 7x-2：导出当前全量价表为 JSON 文件（备份/迁移）。价表无加密，纯明文价格。
      */

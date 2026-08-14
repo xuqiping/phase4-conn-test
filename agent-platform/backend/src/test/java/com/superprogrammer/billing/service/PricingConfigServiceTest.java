@@ -294,6 +294,26 @@ class PricingConfigServiceTest {
         org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
     }
 
+    @Test
+    void deletePricingRule_notFound_throws() {
+        when(pricingRuleMapper.selectById(99L)).thenReturn(null);
+        assertThatThrownBy(() -> service.deletePricingRule(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
+    }
+
+    @Test
+    void deletePricingRule_existing_deletes() {
+        PricingRuleEntity e = new PricingRuleEntity();
+        e.setId(13L);
+        e.setKind(PricingRuleEntity.KIND_VIDEO);
+        e.setProviderId(6L);
+        e.setModel("Cdance2.0");
+        when(pricingRuleMapper.selectById(13L)).thenReturn(e);
+        assertThatCode(() -> service.deletePricingRule(13L)).doesNotThrowAnyException();
+        org.mockito.Mockito.verify(pricingRuleMapper).deleteById(13L);
+    }
+
     // ---------------- 7x-3：has_reference 视频参考定价 ----------------
 
     @Test

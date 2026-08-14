@@ -374,6 +374,23 @@ public class PricingConfigService {
         return toVO(e);
     }
 
+    /**
+     * 删除价表行（7x 追加：配错模型/价格需清理入口）。
+     * 物理删除（本表无 @TableLogic，同阶梯删除范式）；历史账单不受影响——
+     * 计费时价格已在扣费瞬间落 points_ledger/用量表，删行只影响之后的询价。
+     * 若删的是该 (provider, model, kind, hasReference) 的唯一生效行，之后该模型计费
+     * 会按「价表缺失」失败，前端删除确认弹窗已提示。
+     */
+    public void deletePricingRule(Long id) {
+        PricingRuleEntity e = pricingRuleMapper.selectById(id);
+        if (e == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "价表不存在 id=" + id);
+        }
+        pricingRuleMapper.deleteById(id);
+        log.info("删除价表 id={} kind={} providerId={} model={} hasReference={}",
+                id, e.getKind(), e.getProviderId(), e.getModel(), e.getHasReference());
+    }
+
     private void validatePricingRule(PricingRuleRequest req) {
         if (req.getKind() == null || !KINDS.contains(req.getKind())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 须为 CHAT/EMBED/RERANK/IMAGE/VIDEO");

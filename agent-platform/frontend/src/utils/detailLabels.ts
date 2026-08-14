@@ -124,6 +124,7 @@ export const AUDIT_ACTION_CN: Record<string, string> = {
   rule_config_update: '修改安全规则',
   pricing_create: '新建价表',
   pricing_update: '修改价表',
+  pricing_delete: '删除价表',
   pricing_import: '导入价表',
   pricing_export: '导出价表',
   pricing_template_download: '下载价表模板',
