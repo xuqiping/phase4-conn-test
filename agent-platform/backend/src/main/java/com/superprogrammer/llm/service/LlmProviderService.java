@@ -79,6 +79,27 @@ public class LlmProviderService {
         this.billingService = billingService;
     }
 
+    /** 安全体系 S5（H SSRF）：连通测试拒绝计数。横切可选依赖，单测无 Bean 直通。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+
+    /**
+     * 安全体系 S5 · SEC-FR-080（H SSRF）：连通测试前校验 endpoint。
+     * 背景：正式调用走 LlmGateway.createProviderInstance（SsrfGuard 单一咽喉），
+     * 但「测试连通」走 llmConfig.createProvider 直连——用户 provider 测试=绕过校验的 SSRF 入口。
+     * chat/embedding/rerank 三路测试入口统一收口到本方法。
+     */
+    private void assertEndpointSafe(LlmProviderEntity entity) {
+        try {
+            com.superprogrammer.common.security.SsrfGuard.validate(entity.getApiEndpoint());
+        } catch (BusinessException e) {
+            if (bizMetrics != null) {
+                bizMetrics.ssrfDenied("llm-test");
+            }
+            throw e;
+        }
+    }
+
     public LlmProviderEntity create(LlmProviderEntity entity) {
         if (entity.getApiKeyEnc() != null && !entity.getApiKeyEnc().isBlank()) {
             entity.setApiKeyEnc(aesEncryptService.encrypt(entity.getApiKeyEnc()));
@@ -348,6 +369,8 @@ public class LlmProviderService {
         if (isAnthropic(entity)) {
             return TestConnectionResult.fail("Claude（ANTHROPIC 协议）不提供 embedding 接口，请改用 OPENAI_COMPATIBLE 协议的向量服务");
         }
+        // S5 H SSRF：测试入口与正式调用同门槛
+        assertEndpointSafe(entity);
         try {
             LlmProviderInterface provider = llmConfig.createProvider(entity, getDecryptedApiKey(providerId));
             long start = System.currentTimeMillis();
@@ -384,6 +407,8 @@ public class LlmProviderService {
         if (isAnthropic(entity)) {
             return TestConnectionResult.fail("ANTHROPIC 协议不提供专用 rerank 接口");
         }
+        // S5 H SSRF：测试入口与正式调用同门槛
+        assertEndpointSafe(entity);
         List<String> documents = List.of(
                 "文本排序模型广泛用于搜索引擎和推荐系统中，它们根据文本相关性对候选文本进行排序",
                 "量子计算是计算科学的一个前沿领域",
@@ -440,6 +465,8 @@ public class LlmProviderService {
         if (entity.getApiEndpoint() == null || entity.getApiEndpoint().isBlank()) {
             return TestConnectionResult.fail("未配置API端点");
         }
+        // S5 H SSRF：测试入口与正式调用同门槛（admin 全局 + 用户 provider 两路共用本方法）
+        assertEndpointSafe(entity);
 
         try {
             LlmProviderInterface provider = llmConfig.createProvider(entity, apiKey != null ? apiKey : "");

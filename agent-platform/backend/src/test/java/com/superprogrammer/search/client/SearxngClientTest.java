@@ -25,7 +25,9 @@ class SearxngClientTest {
         server = new MockWebServer();
         server.start();
         String base = server.url("/").toString().replaceAll("/$", "");
-        client = new SearxngClient(WebClient.builder(), new ContentExtractor());
+        client = new SearxngClient(WebClient.builder(), new ContentExtractor(),
+                new com.superprogrammer.common.metrics.BizMetrics(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         client.setBaseUrl(base);
     }
 
@@ -37,7 +39,9 @@ class SearxngClientTest {
     @Test
     @DisplayName("未配置 base_url → isConfigured=false，search 返空")
     void not_configured_returns_empty() {
-        SearxngClient unconfigured = new SearxngClient(WebClient.builder(), new ContentExtractor());
+        SearxngClient unconfigured = new SearxngClient(WebClient.builder(), new ContentExtractor(),
+                new com.superprogrammer.common.metrics.BizMetrics(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         unconfigured.setBaseUrl("");
         assertThat(unconfigured.isConfigured()).isFalse();
         assertThat(unconfigured.search("anything", 5)).isEmpty();
@@ -98,5 +102,38 @@ class SearxngClientTest {
     void fetchContent_ssrf_rejected() {
         assertThat(client.fetchContent("http://127.0.0.1/secret")).isEmpty();
         assertThat(client.fetchContent("http://10.0.0.5/x")).isEmpty();
+    }
+
+    // ---- 安全体系 S5 · SEC-FR-082（H SSRF 重定向收口）----
+
+    @Test
+    @DisplayName("fetchContent：SSRF 拒 CGNAT/IPv6-ULA（对齐 SsrfGuard 段表）→ 返空")
+    void fetchContent_ssrf_cgnatAndUla_rejected() {
+        assertThat(client.fetchContent("http://100.64.1.1/x")).isEmpty();     // CGNAT 100.64/10
+        assertThat(client.fetchContent("http://[fd12::1]/x")).isEmpty();     // IPv6 ULA fd00::/8
+    }
+
+    @Test
+    @DisplayName("重定向判定：3xx 才跟随")
+    void redirect_status_detection() {
+        assertThat(SearxngClient.isRedirect(301)).isTrue();
+        assertThat(SearxngClient.isRedirect(302)).isTrue();
+        assertThat(SearxngClient.isRedirect(307)).isTrue();
+        assertThat(SearxngClient.isRedirect(200)).isFalse();
+        assertThat(SearxngClient.isRedirect(404)).isFalse();
+    }
+
+    @Test
+    @DisplayName("重定向目标解析：相对 Location 基于当前 URL 转绝对")
+    void redirect_location_resolution() {
+        // 相对路径
+        assertThat(SearxngClient.resolveLocation("https://a.example.com/dir/page", "next"))
+                .isEqualTo("https://a.example.com/dir/next");
+        // 绝对路径
+        assertThat(SearxngClient.resolveLocation("https://a.example.com/dir/page", "/root"))
+                .isEqualTo("https://a.example.com/root");
+        // 跨站绝对 URL（后续会过 assertPublicUrl，内网目标在此被拒）
+        assertThat(SearxngClient.resolveLocation("https://a.example.com/dir/page", "http://169.254.169.254/meta"))
+                .isEqualTo("http://169.254.169.254/meta");
     }
 }

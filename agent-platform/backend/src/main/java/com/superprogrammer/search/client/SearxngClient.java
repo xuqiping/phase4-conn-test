@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +49,11 @@ public class SearxngClient {
     /** 直抓 UA 伪装，降低被反爬识别概率。 */
     private static final String USER_AGENT =
             "Mozilla/5.0 (compatible; SuperProgrammerSearchBot/1.0; +https://example.com/bot)";
+
+    /** S5 H SSRF：重定向手动跟随上限（3xx 链每跳都过 SSRF 校验，防「公网首跳→302 跳内网」）。 */
+    private static final int MAX_REDIRECT_HOPS = 3;
+
+    private final com.superprogrammer.common.metrics.BizMetrics bizMetrics;
 
     /** SearXNG 单条结果（content 即 snippet）。 */
     public record SearxngItem(String title, String url, String snippet) {}
@@ -121,27 +127,58 @@ public class SearxngClient {
     }
 
     /**
-     * 直抓网页正文。抓前 SSRF 校验（拒私有/内网段），失败返回 ""（降级 snippet）。
+     * 直抓网页正文。每跳 SSRF 校验（拒私有/内网段），失败返回 ""（降级 snippet）。
+     *
+     * <p>安全体系 S5 · SEC-FR-082（H SSRF）：Jsoup 自动跟随重定向时只校验首跳——
+     * 恶意站可 302 跳 {@code http://169.254.169.254/...}（云元数据）借服务器手访问内网。
+     * 改 {@code followRedirects(false)} 手动逐跳跟随：读 Location → 解析为绝对 URL →
+     * 再过 {@link SanitizeUtil#assertPublicUrl} → 再抓，最多 {@value #MAX_REDIRECT_HOPS} 跳。
      */
     public String fetchContent(String url) {
+        String current = url;
         try {
-            SanitizeUtil.assertPublicUrl(url);
-            org.jsoup.nodes.Document doc = Jsoup.connect(url)
-                    .userAgent(USER_AGENT)
-                    .timeout(fetchTimeoutMs)
-                    .ignoreContentType(true)
-                    .followRedirects(true)
-                    .maxBodySize(512 * 1024) // 限 512KB 防 context/内存爆
-                    .get();
-            return contentExtractor.extract(doc.html(), url);
+            for (int hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+                SanitizeUtil.assertPublicUrl(current);   // 每跳必验（含首跳）
+                org.jsoup.Connection.Response resp = Jsoup.connect(current)
+                        .userAgent(USER_AGENT)
+                        .timeout(fetchTimeoutMs)
+                        .ignoreContentType(true)
+                        .followRedirects(false)   // 关自动跟随，重定向自己走（每跳校验）
+                        .maxBodySize(512 * 1024) // 限 512KB 防 context/内存爆
+                        .execute();
+                if (isRedirect(resp.statusCode())) {
+                    String location = resp.header("Location");
+                    if (location == null || location.isBlank() || hop == MAX_REDIRECT_HOPS) {
+                        return "";   // 无目标 / 超跳数上限：放弃（降级 snippet）
+                    }
+                    current = resolveLocation(current, location);
+                    continue;
+                }
+                org.jsoup.nodes.Document doc = resp.parse();
+                return contentExtractor.extract(doc.html(), current);
+            }
+            return "";
         } catch (IllegalArgumentException ssrf) {
-            // SSRF 命中私有段：记 warn 并拒绝，不抓
+            // SSRF 命中私有/保留段（含重定向目标）：记 warn 并拒绝，不抓
             log.warn("SSRF 防护拒绝抓取: {}", ssrf.getMessage());
+            try {
+                bizMetrics.ssrfDenied("search-fetch");
+            } catch (Exception metricEx) { /* 指标失败不影响降级 */ }
             return "";
         } catch (Exception e) {
             log.debug("抓取正文失败，降级 snippet: url={} err={}", url, e.getMessage());
             return "";
         }
+    }
+
+    /** 3xx 判定（package-private 供单测）。 */
+    static boolean isRedirect(int status) {
+        return status >= 300 && status < 400;
+    }
+
+    /** 重定向目标解析：相对 Location 基于当前 URL 转绝对（纯逻辑，供单测）。 */
+    static String resolveLocation(String currentUrl, String location) {
+        return URI.create(currentUrl).resolve(location.trim()).toString();
     }
 
     /** 审计日志脱敏 query（截断 + 去控制字符），避免日志注入。 */

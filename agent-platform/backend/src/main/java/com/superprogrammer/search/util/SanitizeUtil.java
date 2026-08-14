@@ -79,6 +79,30 @@ public final class SanitizeUtil {
                     || addr.isMulticastAddress()) {
                 throw new IllegalArgumentException("目标命中私有/内网段，拒绝抓取: " + host + " -> " + addr.getHostAddress());
             }
+            // 安全体系 S5 · SEC-FR-082（H SSRF）：对齐 SsrfGuard 全量段表——
+            // 补 IPv6 唯一本地 fc00::/7（Java isSiteLocalAddress 不覆盖）与 CGNAT 100.64.0.0/10。
+            String ip = addr.getHostAddress();
+            if (addr instanceof java.net.Inet6Address && ip != null) {
+                String lower = ip.toLowerCase();
+                int zone = lower.indexOf('%');   // 去 zone id
+                if (zone >= 0) lower = lower.substring(0, zone);
+                if (lower.startsWith("fc") || lower.startsWith("fd")) {
+                    throw new IllegalArgumentException("目标命中 IPv6 唯一本地段，拒绝抓取: " + host + " -> " + ip);
+                }
+            }
+            if (addr instanceof java.net.Inet4Address && ip != null) {
+                String[] p = ip.split("\\.");
+                if (p.length == 4) {
+                    try {
+                        int o1 = Integer.parseInt(p[0]);
+                        int o2 = Integer.parseInt(p[1]);
+                        if (o1 == 100 && o2 >= 64 && o2 <= 127) {
+                            throw new IllegalArgumentException("目标命中 CGNAT 保留段，拒绝抓取: " + host + " -> " + ip);
+                        }
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
         }
     }
 }

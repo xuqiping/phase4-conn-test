@@ -49,6 +49,26 @@ public class MediaStorageService {
     private final WebClient downloadClient = buildDownloadClient();
     /** 图片下载专用 client：4K/组图单张可能 >16MB，buffer 抬到 64MB（视频 client 仅 16MB 不够）。 */
     private final WebClient imageDownloadClient = buildImageDownloadClient();
+    /** 安全体系 S5（H SSRF）：回源拒绝计数。横切可选依赖，单测无 Bean 直通。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
+
+    /**
+     * 安全体系 S5 · SEC-FR-081（H SSRF）：媒体回源前校验目标 URL。
+     * Ark 返回的临时链接理论可信，但 url 字段经任务结果 JSON 落库——伪造任务结果（或上游被攻破）
+     * 可注入内网/云元数据 URL 借服务器回源。首跳校验后 WebClient 默认不跟随重定向
+     * （Reactor Netty followRedirect 默认 false），不存在「校验首跳→重定向跳内网」绕过面。
+     */
+    private void assertFetchSafe(String url) {
+        try {
+            com.superprogrammer.common.security.SsrfGuard.validate(url);
+        } catch (BusinessException e) {
+            if (bizMetrics != null) {
+                bizMetrics.ssrfDenied("media-fetch");
+            }
+            throw e;
+        }
+    }
 
     /**
      * 下载 Ark 视频 URL → 落 stored_files(source=MEDIA)。
@@ -56,6 +76,7 @@ public class MediaStorageService {
      * @return fileId（写入 media_gen_tasks.result_file_id）
      */
     public String downloadAndStore(String videoUrl, Long userId, String nameHint) {
+        assertFetchSafe(videoUrl);   // S5 H SSRF：回源前校验
         Resource resource;
         try {
             // 用 URI 对象传，跳过 WebClient 的 UriBuilderFactory 二次编码——
@@ -102,6 +123,7 @@ public class MediaStorageService {
      * @return fileId
      */
     public String downloadImageAndStore(String imageUrl, Long userId, String nameHint) {
+        assertFetchSafe(imageUrl);   // S5 H SSRF：回源前校验（生图 24h 临时链接同视频路径）
         Resource resource;
         try {
             // URI 对象防二次编码（同 downloadAndStore，预签名链接含已编码字符）。

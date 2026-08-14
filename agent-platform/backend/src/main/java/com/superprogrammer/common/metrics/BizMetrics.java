@@ -338,6 +338,15 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S5 · SEC-FR-080~082（H SSRF）：出站 URL 校验拒绝次数（source=search-fetch/llm-test/media-fetch）。 */
+    public void ssrfDenied(String source) {
+        Counter.builder("security.ssrf.denied")
+                .tag("source", source)
+                .description("SSRF 防护拒绝出站请求次数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")
