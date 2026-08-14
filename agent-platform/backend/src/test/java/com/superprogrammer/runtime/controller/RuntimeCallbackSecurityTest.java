@@ -42,6 +42,10 @@ class RuntimeCallbackSecurityTest {
     @MockBean
     private com.superprogrammer.auth.service.SessionService sessionService;
 
+    /** S5 F2：SecurityConfig 依赖回调 HMAC 模式热更读取（mock 缺省 null=DUAL，静态 token 路径仍通） */
+    @MockBean
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     @Test
     void executeNode_allowsSidecarCallbackWithoutJwt() throws Exception {
         when(runtimeNodeCallbackService.executeNode(any()))

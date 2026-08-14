@@ -38,6 +38,10 @@ public class SecurityConfig {
      *  ObjectProvider：@WebMvcTest 切片不加载该 @Component 时优雅跳过。 */
     private final org.springframework.beans.factory.ObjectProvider<com.superprogrammer.common.security.SecurityGateFilter> securityGateFilterProvider;
     private final ObjectMapper objectMapper;
+    /** S5 F2：回调 HMAC 模式热更读取（system_settings security.runtime.callback.hmac-mode）。 */
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
+    /** S5 F2：回调鉴权结果计数（可选依赖，缺席不影响鉴权）。 */
+    private final org.springframework.beans.factory.ObjectProvider<com.superprogrammer.common.metrics.BizMetrics> bizMetricsProvider;
 
     /** Sidecar 回调共享密钥（安全审计 #1）。env RUNTIME_CALLBACK_TOKEN。空 → fail-closed。 */
     @Value("${runtime.callback.token:}")
@@ -129,8 +133,11 @@ public class SecurityConfig {
                 .addFilterAfter(requestLogFilter, com.superprogrammer.common.logging.MdcUserFilter.class)
                 // 计费归户：排 JWT 之后，从 principal 种 userId（自动计费基础设施）
                 .addFilterAfter(billingContextFilter, JwtAuthenticationFilter.class)
-                // 安全审计 #1：sidecar 回调端点共享密钥校验（permitAll 路径上的独立咽喉点）
-                .addFilterBefore(new RuntimeCallbackSecurityFilter(runtimeCallbackToken), JwtAuthenticationFilter.class);
+                // 安全审计 #1 + S5 F2：sidecar 回调共享密钥 + HMAC 防重放（permitAll 路径上的独立咽喉点；
+                // 双轨兼容：无签名头回落静态 token，security.runtime.callback.hmac-mode 热更切 enforce）
+                .addFilterBefore(new RuntimeCallbackSecurityFilter(runtimeCallbackToken,
+                                systemSettingService::getRuntimeCallbackHmacMode, bizMetricsProvider.getIfAvailable()),
+                        JwtAuthenticationFilter.class);
 
         // 11x 加固 P2-C5：安全门排 MDC 之后（事件日志含 traceId/userId）；切片缺 bean 时跳过
         com.superprogrammer.common.security.SecurityGateFilter securityGateFilter =

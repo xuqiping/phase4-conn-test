@@ -32,6 +32,10 @@ class SecurityConfigAsyncDispatchTest {
     @MockBean
     private SessionService sessionService;
 
+    /** S5 F2：SecurityConfig 依赖回调 HMAC 模式热更读取（切片无该 bean → mock，null=DUAL 兼容） */
+    @MockBean
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     @Test
     void asyncDispatchWithoutJwtIsAllowedToCompleteCommittedStreams() throws Exception {
         mockMvc.perform(get("/async-dispatch-probe")

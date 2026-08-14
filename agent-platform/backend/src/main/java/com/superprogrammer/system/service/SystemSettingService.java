@@ -288,6 +288,17 @@ public class SystemSettingService {
         return getBoolean(SECURITY_AUTH_TOTP_REQUIRED, false);
     }
 
+    /**
+     * 安全体系 S5 · SEC-FR-061（F2 sidecar 回调防重放）：HMAC 验签模式热更开关。
+     * DUAL=默认双轨（带签名头走验签，无签名头回落静态 token——sidecar 分批发布不断流）；
+     * ENFORCE=强制验签（无签名头直接 401，sidecar 全量升级后切）。
+     */
+    public static final String SECURITY_RUNTIME_CALLBACK_HMAC_MODE = "security.runtime.callback.hmac-mode";
+
+    public String getRuntimeCallbackHmacMode() {
+        return "ENFORCE".equals(getValue(SECURITY_RUNTIME_CALLBACK_HMAC_MODE)) ? "ENFORCE" : "DUAL";
+    }
+
     /** 安全体系 S4 · SEC-FR-033 per-user 存储配额（MB，F-4）。默认 2048；0=关闭配额。 */
     public static final String SECURITY_USER_STORAGE_QUOTA_MB = "security.user.storage-quota-mb";
 

@@ -34,6 +34,10 @@ class SecurityHeadersTest {
     @MockBean
     private SessionService sessionService;
 
+    /** S5 F2：SecurityConfig 依赖回调 HMAC 模式热更读取（切片无该 bean → mock，null=DUAL 兼容） */
+    @MockBean
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
     // AC-SEC-FR-002：四安全头齐出（未认证 401 响应同样带头——HeaderWriterFilter 在入口点前写入）
     @Test
     void securityHeadersPresentOnEveryResponse() throws Exception {

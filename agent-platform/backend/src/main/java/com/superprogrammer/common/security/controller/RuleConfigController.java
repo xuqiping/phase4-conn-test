@@ -45,6 +45,8 @@ public class RuleConfigController {
         put("security.auth.refresh-rotation.enabled", "true");
         // 安全体系 S5 · SEC-FR-006 admin TOTP 绑定建议灰度（A6，开=未绑定 admin 登录带引导标记）
         put("security.auth.totp.required", "false");
+        // 安全体系 S5 · SEC-FR-061 sidecar 回调 HMAC 模式（F2，dual=无签回落静态token / enforce=强制验签）
+        put("security.runtime.callback.hmac-mode", "dual");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

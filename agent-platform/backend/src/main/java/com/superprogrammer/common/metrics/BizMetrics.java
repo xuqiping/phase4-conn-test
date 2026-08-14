@@ -355,6 +355,15 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S5 · SEC-FR-061（F2）：sidecar 回调鉴权结果（result=hmac验签过/legacy静态token过/rejected拒）。 */
+    public void callbackAuth(String result) {
+        Counter.builder("security.callback.auth")
+                .tag("result", result)
+                .description("sidecar 回调端点鉴权结果计数")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P4-C11：钉钉告警发送成功（无 tag）。 */
     public void alertSent() {
         Counter.builder("security.alert.sent")

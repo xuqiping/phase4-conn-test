@@ -16,11 +16,19 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class AgentService {
+
+    /**
+     * 安全体系 S5 · SEC-FR-027（C8 枚举残点）：Agent 状态白名单（对齐 UserController ALLOWED_STATUS 范式）。
+     * 原 updateStatus 裸写 body.get("status") 入库——脏值会破坏 AgentHall/AgentDetail 的
+     * DRAFT/PUBLISHED/OFFLINE 三态判定与发布流。
+     */
+    private static final Set<String> ALLOWED_STATUS = Set.of("DRAFT", "PUBLISHED", "OFFLINE");
 
     private final AgentGroupMapper agentGroupMapper;
     private final AgentMapper agentMapper;
@@ -287,6 +295,9 @@ public class AgentService {
     }
 
     public void updateStatus(Long id, String status, Long operatorId) {
+        if (status == null || !ALLOWED_STATUS.contains(status)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "非法状态，仅支持 DRAFT/PUBLISHED/OFFLINE");
+        }
         Agent agent = agentMapper.selectById(id);
         if (agent == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Agent不存在");

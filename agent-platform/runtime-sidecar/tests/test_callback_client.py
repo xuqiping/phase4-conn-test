@@ -1,10 +1,41 @@
+import hashlib
+import hmac
+
 import httpx
 
 from app.callback_client import (
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
+    TOKEN_HEADER,
     RuntimeNodeCallbackRequest,
     RuntimeNodeCallbackResponse,
+    build_callback_headers,
     execute_runtime_callback,
 )
+
+
+def test_build_callback_headers_signs_ts_and_body():
+    """安全体系 S5 · SEC-FR-061（F2）：签名 = HMAC-SHA256(token, f"{ts}.{body}") hex。
+
+    独立复算对拍：用返回头里的 ts 重算签名，与头内签名一致 = 签名契约自洽。
+    """
+    payload = '{"executionId":"1001","sourceType":"SKILL"}'
+    headers = build_callback_headers("shared-secret", payload)
+
+    assert headers[TOKEN_HEADER] == "shared-secret"
+    ts = headers[TIMESTAMP_HEADER]
+    assert ts.isdigit() and abs(int(ts) - int(__import__("time").time() * 1000)) < 60_000
+    expected = hmac.new(
+        "shared-secret".encode("utf-8"),
+        f"{ts}.{payload}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    assert headers[SIGNATURE_HEADER] == expected
+
+
+def test_build_callback_headers_empty_token_returns_no_auth():
+    assert build_callback_headers(None, "{}") == {}
+    assert build_callback_headers("", "{}") == {}
 
 
 def test_callback_payload_matches_java_contract():

@@ -227,6 +227,33 @@ class AgentServiceTest {
         assertThrows(BusinessException.class, () -> agentService.getSkillDetail(999L));
     }
 
+    // ---- 安全体系 S5 · SEC-FR-027（C8 枚举残点）：status 白名单 ----
+
+    @Test
+    void updateStatus_invalidValue_rejected() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> agentService.updateStatus(1L, "PWNED", 100L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(agentMapper, never()).updateById(any(Agent.class));
+    }
+
+    @Test
+    void updateStatus_nullValue_rejected() {
+        assertThrows(BusinessException.class, () -> agentService.updateStatus(1L, null, 100L));
+        verify(agentMapper, never()).updateById(any(Agent.class));
+    }
+
+    @Test
+    void updateStatus_validValue_updates() {
+        when(agentMapper.selectById(1L)).thenReturn(testAgent);
+
+        agentService.updateStatus(1L, "OFFLINE", 100L);
+
+        assertEquals("OFFLINE", testAgent.getStatus());
+        verify(agentMapper).updateById(argThat(agent -> "OFFLINE".equals(agent.getStatus())
+                && Long.valueOf(100L).equals(agent.getUpdatedBy())));
+    }
+
     @Test
     void copyAgent_createsNewAgentForUserWithCopyPermission() {
         testAgent.setConfig("{\"systemPrompt\":\"source\"}");

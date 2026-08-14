@@ -29,6 +29,12 @@ public class KnowledgeBaseService {
     /** L0 摘要生成模式（v6 §3.1，阶段2 解析）。非法/空 → PER_SECTION。 */
     private static final String DEFAULT_SUMMARY_STRATEGY = "PER_SECTION";
     private static final Set<String> SUMMARY_STRATEGIES = Set.of("PER_SECTION", "BATCH", "HYBRID");
+    /**
+     * 安全体系 S5 · SEC-FR-027（C8 枚举残点）：visibility 服务端白名单（V17 契约 PRIVATE/TEAM/PUBLIC）。
+     * 原实现自由串直写库——脏值会让 canRead 的 "PUBLIC".equalsIgnoreCase 分支永不命中，
+     * 下游可见集语义也依赖该字段，脏值=权限判定不可预期。
+     */
+    private static final Set<String> ALLOWED_VISIBILITY = Set.of("PRIVATE", "TEAM", "PUBLIC");
 
     /** 校验 summary_strategy：合法值原样返回，null/blank/非法 → PER_SECTION（容错 warn，不抛 400）。 */
     private String normalizeStrategy(String raw) {
@@ -41,6 +47,18 @@ public class KnowledgeBaseService {
             return DEFAULT_SUMMARY_STRATEGY;
         }
         return upper;
+    }
+
+    /** 校验 visibility：null/blank → 默认 PRIVATE；非法值 → 400（对齐 UserController ALLOWED_STATUS 范式）。 */
+    private String normalizeVisibility(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "PRIVATE";
+        }
+        String v = raw.trim().toUpperCase();
+        if (!ALLOWED_VISIBILITY.contains(v)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "非法 visibility，仅支持 PRIVATE/TEAM/PUBLIC");
+        }
+        return v;
     }
 
     private final KnowledgeBaseMapper baseMapper;
@@ -87,8 +105,7 @@ public class KnowledgeBaseService {
         kb.setTenantId(TENANT_ID);
         kb.setName(request.getName());
         kb.setDescription(request.getDescription());
-        kb.setVisibility(request.getVisibility() == null || request.getVisibility().isBlank()
-                ? "PRIVATE" : request.getVisibility());
+        kb.setVisibility(normalizeVisibility(request.getVisibility()));
         String embeddingModel = request.getEmbeddingModel();
         if (embeddingModel == null || embeddingModel.isBlank()) {
             embeddingModel = systemSettingService.getDefaultEmbeddingModel();
@@ -115,7 +132,7 @@ public class KnowledgeBaseService {
         kb.setName(request.getName());
         kb.setDescription(request.getDescription());
         if (request.getVisibility() != null && !request.getVisibility().isBlank()) {
-            kb.setVisibility(request.getVisibility());
+            kb.setVisibility(normalizeVisibility(request.getVisibility()));
         }
         if (request.getEmbeddingModel() != null && !request.getEmbeddingModel().isBlank()) {
             kb.setEmbeddingModel(request.getEmbeddingModel());
