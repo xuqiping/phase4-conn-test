@@ -34,6 +34,10 @@ provide('sidebarCollapsed', collapsed)
 
   &__content {
     flex: 1;
+    min-height: 0;
+    // flex 链传高度：子页面根节点 flex:1 即可拿满（百分比高度在 flex 不定高父级下会塌）
+    display: flex;
+    flex-direction: column;
     overflow: auto;
     background: var(--sf-0);
   }

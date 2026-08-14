@@ -11,6 +11,11 @@ body,
   margin: 0;
 }
 
+// n-config-provider 会多渲染一层包裹 div，高度链在此断裂——补 100%
+#app > div {
+  height: 100%;
+}
+
 body {
   font-family: var(--font-ui);
   font-size: var(--fs-md);
