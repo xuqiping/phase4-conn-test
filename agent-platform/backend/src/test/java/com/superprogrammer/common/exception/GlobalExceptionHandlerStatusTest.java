@@ -19,7 +19,9 @@ class GlobalExceptionHandlerStatusTest {
                     .getBeanProvider(org.springframework.context.ApplicationEventPublisher.class));
 
     private HttpStatus statusOf(ErrorCode code) {
-        ResponseEntity<R<Void>> resp = handler.handleBusinessException(new BusinessException(code));
+        // request 传 null：FORBIDDEN 会触发 publishAuthzDenied(null)，但空 ObjectProvider
+        // getIfAvailable()=null → 安全跳过，不阻码映射断言。
+        ResponseEntity<R<Void>> resp = handler.handleBusinessException(new BusinessException(code), null);
         return (HttpStatus) resp.getStatusCode();
     }
 

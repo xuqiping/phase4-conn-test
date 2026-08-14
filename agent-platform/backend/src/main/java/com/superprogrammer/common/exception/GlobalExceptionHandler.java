@@ -41,9 +41,15 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<R<Void>> handleBusinessException(BusinessException e) {
+    public ResponseEntity<R<Void>> handleBusinessException(BusinessException e, HttpServletRequest request) {
         log.warn("业务异常: code={}, message={}", e.getCode(), e.getMessage());
         HttpStatus status = resolveHttpStatus(e.getCode());
+        // 11x 加固 P4 修复：@RequirePermission 权限不足抛 BusinessException(FORBIDDEN)（非 Spring
+        // AccessDeniedException），原只 handleAccessDeniedException 发事件 → IdorProbe 规则拿不到
+        // 最常见 403 来源。此处补：BusinessException 映射为 HTTP 403 时同样发 KIND_AUTHZ_DENIED。
+        if (status == HttpStatus.FORBIDDEN) {
+            publishAuthzDenied(request);
+        }
         return ResponseEntity.status(status).body(R.fail(e.getCode(), e.getMessage()));
     }
 
