@@ -40,6 +40,9 @@
   /* 运行中节点：conic 流光（伪元素 rotate 动画，不动渐变角度，兼容旧 Edge） */
   --running-border: conic-gradient(from 0deg, var(--accent), var(--accent-2), transparent 40%, var(--accent));
   --running-anim: spin 2.4s linear infinite;
+  --stream-display: block;
+  --selected-border-w: 1px;
+  --timeline-display: none;
 
   /* 连线 */
   --edge-color: rgba(148, 163, 184, 0.35);

@@ -42,4 +42,12 @@ describe('tokens 完整性与双源一致', () => {
       }
     })
   }
+
+  it('组件禁止 :global([data-theme=...]) 裸选择器（曾编译成 [data-theme=x]{display:none} 弄塌整页）', () => {
+    const files = ['src/components/canvas/NodeCardBase.vue']
+    for (const f of files) {
+      const src = readFileSync(resolve(process.cwd(), f), 'utf-8')
+      expect(src.includes(':global([data-theme'), `${f} 出现 :global([data-theme]) 用法`).toBe(false)
+    }
+  })
 })

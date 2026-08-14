@@ -115,14 +115,11 @@ const durationText = computed(() =>
     transform: translateY(-1px);
   }
 
-  // 选中：类型色辉光（T2 无辉光，退化为 2px 类型色描边）
+  // 选中：类型色辉光；描边宽度走主题 token（T2=2px 克制无辉光）
   &--selected {
     border-color: var(--node-kind);
+    border-width: var(--selected-border-w, 1px);
     box-shadow: var(--node-glow, var(--glow-accent));
-  }
-  :global([data-theme='calm-slate']) &--selected {
-    border-width: 2px;
-    box-shadow: none;
   }
 
   // 失败：红描边醒目
@@ -130,12 +127,9 @@ const durationText = computed(() =>
     border-color: var(--err);
   }
 
-  // ---------- 流光描边层（running 且主题提供 --running-border 时显示） ----------
+  // ---------- 流光描边层（主题用 --stream-display 开关；T2/T4=none） ----------
   &__stream {
-    display: none;
-  }
-  &--running &__stream {
-    display: block;
+    display: var(--stream-display, block);
     position: absolute;
     inset: -1px;
     border-radius: calc(var(--r-lg) + 1px);
@@ -146,6 +140,8 @@ const durationText = computed(() =>
     mask-composite: exclude;
     pointer-events: none;
     overflow: hidden;
+    opacity: 0;
+    transition: opacity var(--d-fast) var(--ease);
 
     &::before {
       content: '';
@@ -155,10 +151,8 @@ const durationText = computed(() =>
       animation: var(--running-anim, none);
     }
   }
-  // 主题没给流光（T2/T4）时隐藏，各自由状态点/时间轴表达
-  :global([data-theme='calm-slate']) &--running &__stream,
-  :global([data-theme='cineon']) &--running &__stream {
-    display: none;
+  &--running &__stream {
+    opacity: 1;
   }
 
   // ---------- 头部 ----------
@@ -274,12 +268,9 @@ const durationText = computed(() =>
     color: var(--tx-3);
   }
 
-  // T4 时间轴：running 时播放头扫描；success 满格 ok 色
+  // T4 时间轴：主题用 --timeline-display 开关；running 播放头扫描、success 满格、failed 红段
   &__timeline {
-    display: none;
-  }
-  :global([data-theme='cineon']) &__timeline {
-    display: block;
+    display: var(--timeline-display, none);
     position: absolute;
     left: var(--sp-3);
     right: var(--sp-3);
@@ -295,16 +286,16 @@ const durationText = computed(() =>
       background: var(--accent);
     }
   }
-  :global([data-theme='cineon']) &--running &__timeline i {
-    width: 40%;
-    animation: scan 1.6s var(--ease) infinite;
+  &--running &__timeline i {
+    width: var(--timeline-running-w, 0);
+    animation: var(--timeline-anim, none);
   }
-  :global([data-theme='cineon']) &--success &__timeline i {
-    width: 100%;
+  &--success &__timeline i {
+    width: var(--timeline-success-w, 0);
     background: var(--ok);
   }
-  :global([data-theme='cineon']) &--failed &__timeline i {
-    width: 100%;
+  &--failed &__timeline i {
+    width: var(--timeline-failed-w, 0);
     background: var(--err);
   }
 

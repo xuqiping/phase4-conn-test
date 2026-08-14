@@ -34,6 +34,9 @@
   /* 运行中 = 状态点呼吸（仅 opacity），无流光 */
   --running-border: none;
   --running-anim: none;
+  --stream-display: none;
+  --selected-border-w: 2px;
+  --timeline-display: none;
 
   --edge-color: rgba(156, 156, 163, 0.35);
 }

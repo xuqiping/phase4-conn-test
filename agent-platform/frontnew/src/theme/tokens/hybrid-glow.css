@@ -35,6 +35,9 @@
 
   --running-border: conic-gradient(from 0deg, var(--node-kind, var(--accent)), var(--accent-2), transparent 40%, var(--node-kind, var(--accent)));
   --running-anim: spin 2.4s linear infinite;
+  --stream-display: block;
+  --selected-border-w: 1px;
+  --timeline-display: none;
 
   --edge-color: rgba(157, 157, 171, 0.35);
 }
