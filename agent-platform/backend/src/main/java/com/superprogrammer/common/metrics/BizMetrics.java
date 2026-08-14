@@ -288,6 +288,23 @@ public class BizMetrics {
                 .increment();
     }
 
+    /** 安全体系 S4 · SEC-FR-031：上传 magic number 嗅探拒收（tag: reason=mismatch）。 */
+    public void uploadMagicDenied(String reason) {
+        Counter.builder("security.upload.magic.denied")
+                .description("上传内容与声明类型不符拒收次数")
+                .tags("reason", safe(reason))
+                .register(registry)
+                .increment();
+    }
+
+    /** 安全体系 S4 · SEC-FR-031：嗅探无法判定（octet-stream）放行观察计数。 */
+    public void uploadMagicUnknown() {
+        Counter.builder("security.upload.magic.unknown")
+                .description("上传 magic number 嗅探无法判定的放行次数（观察后决定是否收紧）")
+                .register(registry)
+                .increment();
+    }
+
     /** 11x 加固 P3-C8：安全监控队列满丢弃计数（无 tag，零基数风险）。 */
     public void securityEventDropped() {
         Counter.builder("security.event.dropped")

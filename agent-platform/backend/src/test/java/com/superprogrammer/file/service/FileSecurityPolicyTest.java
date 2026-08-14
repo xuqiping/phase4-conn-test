@@ -41,10 +41,12 @@ class FileSecurityPolicyTest {
         assertTrue(FileSecurityPolicy.isInlineSafe(fileId), fileId + " must stay inline");
     }
 
-    // AC-SEC-FR-030c：上传白名单拒收危险类型与可执行文件
+    // AC-SEC-FR-030c：上传白名单拒收危险类型与可执行文件。
+    // html/htm 不在拒收列——14x-4 决策：KB 解析器认 html/markdown 且前端 accept 已列，
+    // 上传放行、下载侧维持强制 attachment+nosniff（下载面测试 dangerousTypesNeverInline 锁死）。
     @ParameterizedTest
     @ValueSource(strings = {
-            "evil.html", "evil.svg", "evil.xml", "evil.js", "evil.exe", "evil.bat",
+            "evil.svg", "evil.xml", "evil.js", "evil.exe", "evil.bat",
             "evil.sh", "evil.dll", "evil.jsp", "evil.php", "noext", ".hidden"
     })
     void uploadRejectsDangerousAndExecutable(String filename) {

@@ -246,6 +246,13 @@ public class SystemSettingService {
         return getLong(SECURITY_LLM_SESSION_TOKEN_CAP, 500000L);
     }
 
+    /** 安全体系 S4 · SEC-FR-031 上传 magic number 嗅探开关（F-2），默认开。 */
+    public static final String SECURITY_UPLOAD_MAGIC_SNIFF_ENABLED = "security.upload.magic-sniff.enabled";
+
+    public boolean getUploadMagicSniffEnabled() {
+        return getBoolean(SECURITY_UPLOAD_MAGIC_SNIFF_ENABLED, true);
+    }
+
     // ============================ RAG/记忆模式 ============================
 
     /** RAG/记忆模式全局总开关，默认 false（opt-in）。 */

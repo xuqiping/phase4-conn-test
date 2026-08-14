@@ -34,6 +34,8 @@ public class RuleConfigController {
         put("security.ai.prompt-leak.enabled", "true");
         // SEC-FR-056 会话 token 上限（0=关）
         put("security.llm.session-token-cap", "500000");
+        // 安全体系 S4 · SEC-FR-031 上传 magic number 嗅探（F-2）
+        put("security.upload.magic-sniff.enabled", "true");
         put("security.response.auto_enabled", "true");
         put("security.response.auto_ip_block", "true");
         put("security.response.auto_account_lock", "true");

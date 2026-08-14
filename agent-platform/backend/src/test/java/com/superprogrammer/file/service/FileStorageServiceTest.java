@@ -71,15 +71,17 @@ class FileStorageServiceTest {
 
     // ============================ 安全体系 S1 · SEC-FR-030c 上传白名单 ============================
 
-    // AC-SEC-FR-030c：危险类型（html/svg）在 store 咽喉点拒收 → 40010
+    // 14x-4 决策矫正（原断言「html 拒收」已过时）：html 上传放行（KB 解析器认此类型），
+    // 危险面由下载侧强制 attachment+nosniff 承接。svg/exe 仍拒收（下方用例）。
     @Test
-    void store_rejectsDangerousHtmlUpload() {
+    void store_allowsHtmlUpload_per14x4() {
         MockMultipartFile file = new MockMultipartFile(
-                "file", "evil.html", "text/html", "<script>alert(1)</script>".getBytes());
+                "file", "page.html", "text/html", "<html><body>doc</body></html>".getBytes());
 
-        assertThatThrownBy(() -> service.store(file, 7L, StoredFileEntity.SOURCE_WORKFLOW))
-                .isInstanceOf(com.superprogrammer.common.exception.BusinessException.class)
-                .hasMessageContaining("文件类型不允许上传");
+        StoredFile result = service.store(file, 7L, StoredFileEntity.SOURCE_WORKFLOW);
+
+        assertThat(result.fileId()).endsWith(".html");
+        assertThat(result.size()).isGreaterThan(0);
     }
 
     @Test

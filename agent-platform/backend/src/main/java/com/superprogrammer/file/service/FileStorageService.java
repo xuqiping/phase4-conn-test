@@ -40,6 +40,13 @@ public class FileStorageService {
     /** 共享放行钩子（P3 记忆二期：项目 FILE 条目成员放行）；无实现 bean 时 Spring 注空列表 = 纯 owner 校验。 */
     private final java.util.List<FileSharedAccessGrantor> sharedAccessGrantors;
 
+    /**
+     * 上传内容嗅探（安全体系 S4 · SEC-FR-031）。横切可选依赖：手写构造（单测/纯 owner 校验）
+     * 不注入 → null 直通，只保留 S1 扩展名白名单，不破坏既有切片。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private FileUploadValidator uploadValidator;
+
     @org.springframework.beans.factory.annotation.Autowired
     public FileStorageService(@Value("${app.files.storage-dir:uploads/workflow-inputs}") String storageDir,
                               StoredFileMapper storedFileMapper,
@@ -69,6 +76,11 @@ public class FileStorageService {
         // html/svg/js/exe 等拒收，与下载端 inline 白名单（Step1）双保险根治存储型 XSS。
         // storeStream 不校验：服务端可信来源（Ark 媒体产物回拉）。
         validateUploadExtension(file.getOriginalFilename());
+        // 安全体系 S4 · SEC-FR-031：第二关 magic number 嗅探（exe 改名 .png 在此拒收）。
+        // validator 缺席（手写构造的单测）或嗅探层异常均放行，不破坏可用性。
+        if (uploadValidator != null) {
+            uploadValidator.sniff(file);
+        }
         String originalName = StringUtils.cleanPath(
                 file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
                         ? "file"
