@@ -119,6 +119,11 @@ export const llmApi = {
     return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test-embed`)
   },
 
+  // RERANK 专用测试（真实 query + documents 调用，不回落到 chat）
+  testProviderRerank(id: number) {
+    return request.post<ApiResponse<TestConnectionResult>>(`/llm/providers/${id}/test-rerank`)
+  },
+
   // VIDEO 专用测试（任务型协议不支持 chat，走媒体包零成本探测 GET 任务端点/不存在id）
   testProviderVideo(id: number) {
     return request.post<ApiResponse<TestConnectionResult>>(`/media/providers/${id}/test`)

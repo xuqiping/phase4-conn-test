@@ -76,6 +76,9 @@
         <n-form-item label="类型">
           <n-select v-model:value="form.category" :options="categoryOptions" />
         </n-form-item>
+        <div v-if="form.category === 'EMBEDDING'" class="provider-manage__field-hint">
+          知识库向量库当前固定为 2048 维；Qwen 多模态 Embedding 请求会自动发送 dimension=2048。
+        </div>
         <n-form-item label="排序">
           <n-input-number v-model:value="form.sortOrder" :min="0" />
         </n-form-item>
@@ -298,8 +301,8 @@ async function handleDelete(id: number) {
   await load()
 }
 
-/** 测试类型五分：EMBEDDING→embed 取维度；VIDEO→任务端点零成本探测；
- * IMAGE→同步生图端点无统一零成本探测（提示去生图页实测）；RERANK→暂无专用探测；CHAT→chat 短对话。 */
+/** 测试类型五分：EMBEDDING→embed 取维度；RERANK→真实候选重排；
+ * VIDEO→任务端点零成本探测；IMAGE→提示去生图页实测；CHAT→chat 短对话。 */
 type TestKind = 'chat' | 'embed' | 'video' | 'image' | 'rerank'
 
 function testKindOf(category: string | undefined): TestKind {
@@ -310,19 +313,16 @@ function testKindOf(category: string | undefined): TestKind {
   return 'chat'
 }
 
-/** 按行分流测试。IMAGE 是同步生图端点（无 Ark 式任务查询可零成本探测）；
- * RERANK 暂无专用探测端点——两者给指引不发请求。 */
+/** 按行分流测试。IMAGE 是同步生图端点（无 Ark 式任务查询可零成本探测）。 */
 async function runTest(id: number, kind: TestKind) {
   if (kind === 'image') {
     message.info('生图为同步任务端点，无统一零成本探测：请保存后到「图片生成」页实际生成一张验证连通与计费')
     return
   }
-  if (kind === 'rerank') {
-    message.info('重排模型暂无专用连通测试：请保存后在知识库「重排配置」选它并实际检索验证')
-    return
-  }
   const res = kind === 'embed'
     ? await llmApi.testProviderEmbedding(id)
+    : kind === 'rerank'
+      ? await llmApi.testProviderRerank(id)
     : kind === 'video'
       ? await llmApi.testProviderVideo(id)
       : await llmApi.testProviderConnection(id)
@@ -356,13 +356,9 @@ async function handleTestInModal() {
     return
   }
   const kind = testKindOf(form.value.category)
-  // IMAGE/RERANK 无专用探测端点：无需保存即可提示（不发请求）
+  // IMAGE 无统一专用探测端点：无需保存即可提示（不发请求）
   if (kind === 'image') {
     message.info('生图为同步任务端点，无统一零成本探测：请保存后到「图片生成」页实际生成一张验证连通与计费')
-    return
-  }
-  if (kind === 'rerank') {
-    message.info('重排模型暂无专用连通测试：请保存后在知识库「重排配置」选它并实际检索验证')
     return
   }
   testing.value = true
@@ -497,6 +493,12 @@ async function doImport(items: LlmProviderExportItem[]) {
 }
 
 .provider-manage__defaults-hint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.provider-manage__field-hint {
+  margin: -8px 0 12px 100px;
   color: var(--color-text-secondary);
   font-size: 12px;
 }
