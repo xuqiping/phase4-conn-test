@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevPilot 原型 ② 需求确认卡片流</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .req-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; max-width: 780px;
+    transition: border-color .2s;
+  }
+  .req-card.confirmed { border-left: 3px solid var(--success); opacity: .75; }
+  .req-card.editing { border-left: 3px solid var(--brand1); }
+  .req-head { display: flex; align-items: center; gap: 10px; }
+  .req-no { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+  .req-title { font-weight: 700; font-size: 14.5px; }
+  .req-badge { margin-left: auto; font-size: 11px; padding: 2px 10px; border-radius: 999px; }
+  .badge-s { background: rgba(52,211,153,.1); color: var(--success); border: 1px solid rgba(52,211,153,.3); }
+  .badge-m { background: rgba(251,191,36,.1); color: var(--amber); border: 1px solid rgba(251,191,36,.3); }
+  .req-desc { color: var(--text-dim); font-size: 13px; margin-top: 8px; }
+  .req-ac { margin-top: 10px; background: rgba(255,255,255,.03); border-radius: var(--radius-sm); padding: 10px 14px; }
+  .req-ac .ac-title { font-size: 11px; color: var(--text-faint); letter-spacing: 1px; margin-bottom: 5px; }
+  .req-ac li { font-size: 12.5px; color: var(--text-dim); margin-left: 16px; }
+  .req-actions { display: flex; gap: 9px; margin-top: 13px; }
+  .confirmed-mark { display: flex; align-items: center; gap: 7px; color: var(--success); font-size: 12.5px; margin-top: 13px; font-weight: 600; }
+  .edit-chat { margin-top: 13px; border-top: 1px dashed var(--border-strong); padding-top: 12px; }
+  .chat-bubble {
+    border-radius: 12px; padding: 9px 13px; font-size: 12.5px; margin-bottom: 9px; max-width: 88%;
+  }
+  .chat-user { background: rgba(79,124,255,.14); border: 1px solid rgba(79,124,255,.3); margin-left: auto; }
+  .chat-ai { background: rgba(255,255,255,.04); border: 1px solid var(--border); color: var(--text-dim); }
+  .start-bar {
+    flex-shrink: 0; padding: 16px 34px; border-top: 1px solid var(--border);
+    background: var(--bg-panel); display: flex; align-items: center; gap: 18px;
+  }
+  .start-info { font-size: 12.5px; color: var(--text-dim); }
+  .start-info b { color: var(--text); font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <div class="topbar">
+    <div class="logo"><div class="logo-mark">D</div>DevPilot</div>
+    <div class="proj-switch">🗳️ 投票小程序 <span class="caret">▼</span></div>
+    <div class="pipeline">
+      <div class="stage done"><span class="dot">✓</span>想法</div><span class="stage-sep">›</span>
+      <div class="stage active"><span class="dot">●</span>需求</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>计划</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>建造</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>验收</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>上线</div>
+    </div>
+    <div class="top-actions">
+      <div class="balance" title="Token 余额">
+        <svg class="ring" viewBox="0 0 26 26">
+          <defs><linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4F7CFF"/><stop offset="1" stop-color="#38BDF8"/>
+          </linearGradient></defs>
+          <circle class="ring-bg" cx="13" cy="13" r="10" fill="none" stroke-width="3"/>
+          <circle class="ring-val" cx="13" cy="13" r="10" fill="none" stroke-width="3"
+                  stroke-dasharray="62.8" stroke-dashoffset="18.8" transform="rotate(-90 13 13)"/>
+        </svg>
+        <span><span class="amt">¥163.20</span> <span class="lbl">余额</span></span>
+      </div>
+      <button class="icon-btn">🔔</button>
+      <div class="avatar">徐</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="sidebar">
+      <div class="side-section">
+        <div class="side-title">阶段导航</div>
+        <div class="side-item"><span class="s-ico">💡</span>想法打磨<span class="s-meta">✓</span></div>
+        <div class="side-item on"><span class="s-ico">📋</span>需求确认<span class="s-meta">5/8</span></div>
+        <div class="side-item"><span class="s-ico">🗺️</span>施工计划</div>
+        <div class="side-item"><span class="s-ico">🔨</span>建造任务</div>
+        <div class="side-item"><span class="s-ico">✅</span>验收清单</div>
+        <div class="side-item"><span class="s-ico">🚀</span>上线部署</div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">需求池（砍掉的先放这）</div>
+        <div class="side-item"><span class="s-ico">🗂️</span>投票结果导出 Excel</div>
+        <div class="side-item"><span class="s-ico">🗂️</span>微信小程序版</div>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="center-scroll">
+        <div class="view-head">
+          <div class="view-title">📋 确认一下：这就是你要做的东西</div>
+          <div class="view-sub">我按咱们聊的整理成了 8 张功能卡。每张看清了就点「确认」，不对就点「改一改」跟我聊。<b style="color:var(--brand2)">全部确认后我才会开始写代码</b>——说到做到。</div>
+        </div>
+
+        <div class="flow">
+          <!-- 已确认卡 -->
+          <div class="req-card confirmed">
+            <div class="req-head">
+              <span class="req-no">FR-01</span><span class="req-title">手机号验证码登录</span>
+              <span class="req-badge badge-s">简单</span>
+            </div>
+            <div class="req-desc">用户输入手机号、收个验证码就能进来，第一次登录自动注册，不用填密码。</div>
+            <div class="confirmed-mark">✓ 已确认 · 昨天 16:20</div>
+          </div>
+
+          <div class="req-card confirmed">
+            <div class="req-head">
+              <span class="req-no">FR-02</span><span class="req-title">投票列表页</span>
+              <span class="req-badge badge-s">简单</span>
+            </div>
+            <div class="req-desc">首页列出所有投票，分「进行中 / 已结束」，带封面、参与人数、截止时间。</div>
+            <div class="confirmed-mark">✓ 已确认 · 昨天 16:23</div>
+          </div>
+
+          <!-- 修改中卡（对话内嵌） -->
+          <div class="req-card editing">
+            <div class="req-head">
+              <span class="req-no">FR-03</span><span class="req-title">发起投票</span>
+              <span class="req-badge badge-m">中等</span>
+            </div>
+            <div class="req-desc">用户创建投票：填标题、2~10 个选项、截止时间，可选「匿名投票」（看不到谁投了什么）。</div>
+            <div class="req-ac">
+              <div class="ac-title">怎样算做好（验收标准）</div>
+              <ul>
+                <li>少于 2 个选项时不让提交，并提示原因</li>
+                <li>截止时间最早为 1 小时后</li>
+                <li>创建成功后跳到投票详情页</li>
+              </ul>
+            </div>
+            <div class="edit-chat">
+              <div class="chat-bubble chat-user">选项能不能带图片？比如选 Logo 那种场景</div>
+              <div class="chat-bubble chat-ai">可以。加上「图片选项」后这块从「中等」变成「偏复杂」，大约多 20% 工作量。要加吗？另外我想确认一个细节：<span class="term" data-tip="防刷票：同一个人重复投票时系统能识别并拦住，常见做法是按登录账号或设备限制。">防刷票</span>要做到什么程度？是「登录就能投一次」就行，还是要防同一个人开多个小号？</div>
+              <div style="display:flex;gap:9px;margin-top:4px">
+                <button class="btn primary">✅ 加上图片选项，就这样</button>
+                <button class="btn">💬 继续聊</button>
+                <button class="btn">🗂️ 先砍掉，放需求池</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 待确认卡 -->
+          <div class="req-card">
+            <div class="req-head">
+              <span class="req-no">FR-04</span><span class="req-title">投票详情与投票</span>
+              <span class="req-badge badge-m">中等</span>
+            </div>
+            <div class="req-desc">点进一个投票能看到所有选项，选一个提交。投过就显示当前结果和你的选择。</div>
+            <div class="req-ac">
+              <div class="ac-title">怎样算做好（验收标准）</div>
+              <ul>
+                <li>未登录点投票 → 先弹登录，登录完自动回来接着投</li>
+                <li>已结束的投票只展示结果，不能再投</li>
+              </ul>
+            </div>
+            <div class="req-actions">
+              <button class="btn success">✅ 确认</button>
+              <button class="btn">✏️ 改一改</button>
+              <button class="btn">❓ 这块是干嘛的</button>
+            </div>
+          </div>
+
+          <div class="req-card">
+            <div class="req-head">
+              <span class="req-no">FR-05</span><span class="req-title">结果统计图</span>
+              <span class="req-badge badge-s">简单</span>
+            </div>
+            <div class="req-desc">投票结束后用横向柱状图展示各选项得票占比。</div>
+            <div class="req-actions">
+              <button class="btn success">✅ 确认</button>
+              <button class="btn">✏️ 改一改</button>
+              <button class="btn">❓ 这块是干嘛的</button>
+            </div>
+          </div>
+
+          <div style="text-align:center;color:var(--text-faint);font-size:12px;padding:8px 0">还有 3 张：分享卡片 / 我的投票 / 消息提醒 …</div>
+        </div>
+      </div>
+
+      <!-- 开工条 -->
+      <div class="start-bar">
+        <button class="btn primary" disabled style="font-size:14px;padding:10px 26px">🔒 全部确认后开工</button>
+        <div class="start-info">已确认 <b>5 / 8</b> · 需求说明书（PRD）已同步生成 · 需求阶段累计消耗 <b>18,204 Token ≈ ¥0.37</b></div>
+      </div>
+    </div>
+
+    <!-- 右栏 -->
+    <div class="rightbar">
+      <div class="rtabs">
+        <div class="rtab on">规格</div>
+        <div class="rtab">变更</div>
+        <div class="rtab">日志</div>
+        <div class="rtab">预览</div>
+      </div>
+      <div class="rbody">
+        <div class="r-card">
+          <h4>📄 需求说明书 · 大白话摘要</h4>
+          <p>做一个<b>网页版投票工具</b>：公司/小团队发起投票、大家手机点开链接就能投。核心是「发起 → 分享 → 投 → 看结果」四步走完不超过 1 分钟。</p>
+          <p style="margin-top:8px">明确<b style="color:var(--coral)">不做</b>：小程序版、结果导出（先放需求池，以后想要了走「改需求」）。</p>
+        </div>
+        <div class="r-card">
+          <h4>🧭 项目分析结论（想法阶段）</h4>
+          <ul>
+            <li>做给谁：20 人以内小团队 / 社群群主</li>
+            <li>凭什么赢：比问卷星轻、比微信群接龙好看</li>
+            <li>技术建议：网页版先行，验证后再考虑小程序</li>
+          </ul>
+        </div>
+        <div class="r-card">
+          <h4>⚙️ 我定下的技术方向（不用你操心）</h4>
+          <p>前端 Vue3、后端 Node、数据库 PostgreSQL——都是主流好维护的选择。专业用户可切换查看完整 <span class="term" data-tip="PRD：产品需求文档，AI 按它施工；你确认的每张功能卡都会实时写进这份文档。">PRD</span> 原文。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

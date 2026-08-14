@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* P01 Step 1：仅落基础底色与字体栈；完整设计令牌在 Step 3 从 prototypes/shared.css 移植 */
+:root {
+  --bg: #070a12;
+  --text: #e6eaf2;
+  --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --sans:
+    -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Source Han Sans SC", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
