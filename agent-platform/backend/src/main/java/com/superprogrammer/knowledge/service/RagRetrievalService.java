@@ -1177,11 +1177,29 @@ public class RagRetrievalService {
                 .callPurpose("GROUNDING_FACT_EXTRACTION").build();
         String content = llmGateway.chat(request, userId).getContent();
         try {
-            return objectMapper.readValue(content, objectMapper.getTypeFactory().constructCollectionType(
+            return objectMapper.readValue(lenientModelJson(content), objectMapper.getTypeFactory().constructCollectionType(
                     List.class, com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact.class));
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "事实提炼模型未返回合法 JSON");
         }
+    }
+
+    /**
+     * Phase4 实测修复：真实模型（glm-5.1 等）常把 JSON 数组包进 ```json 代码栅栏或前后说明文字，
+     * 裸 readValue 直接 422。先剥栅栏，再截取首个 '[' 到最后一个 ']'；截不出按原文返回（由调用方报错）。
+     */
+    private static String lenientModelJson(String content) {
+        if (content == null) return null;
+        String s = content.trim();
+        if (s.startsWith("```")) {
+            s = s.replaceFirst("^```[a-zA-Z]*\\s*", "").replaceFirst("```\\s*$", "").trim();
+        }
+        int lo = s.indexOf('[');
+        int hi = s.lastIndexOf(']');
+        if (lo >= 0 && hi > lo) {
+            return s.substring(lo, hi + 1);
+        }
+        return s;
     }
 
     private static RagRetrieveRequest copyForShadow(RagRetrieveRequest source) {

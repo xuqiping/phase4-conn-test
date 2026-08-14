@@ -27,7 +27,7 @@
 
 ## 已知环境项
 
-- 当前 qwen3-rerank 与 qwen3-vl-embedding 尚未建立价表，因此模型调用成功，但 `llm_usage_logs` 会按既有计费降级规则记录“未配置价表”的 FAILED 明细且不扣积分。管理员建立 RERANK/EMBED 价表后即可正常结算。
+- ~~qwen3-rerank 与 qwen3-vl-embedding 未建价表~~ → **已建**（2026-08-14 pricing_rule #11 EMBED / #12 RERANK），真实链路结算正常（EMBED 0.02 分、RERANK 0.19 分/次）。附带修复：rerank usage 只回 `total_tokens` 时回退取值，恒 0 计费问题消除（见 [../企业级精准知识库RAG/开发进度58.md](../企业级精准知识库RAG/开发进度58.md)）。
 - 仓库全量测试仍有既有无关失败：MemoryAssetRecall 旧模型配置假设、WebMvc 测试缺 `UserMapper` mock；本次相关测试不受影响。
 - 前端全量测试 426/433 通过；7 个既有失败来自测试夹具缺少 Naive UI `DialogProvider`。生产构建通过。
-- 知识库新文档端到端冒烟上传阶段被既有数据库结构漂移阻断：运行库 `stored_files` 写入 UUID 文件 ID 时返回 `varchar(16)` 超长，而仓库 V40 迁移定义为 `VARCHAR(128)`。本轮测试知识库、失败文档和临时文件均已清理；按本次范围未修改旧数据库结构。
+- ~~知识库新文档端到端被 `stored_files` `varchar(16)` 超长阻断~~ → **已修复**（V120 防御拉齐 file_id + V121 放宽 source；真凶是 `source VARCHAR(16)` 装不下 `"KB_PARSE_ARTIFACT"`，此前归因 file_id 有误）。全链路 E2E 已通，详见 [../企业级精准知识库RAG/开发进度58.md](../企业级精准知识库RAG/开发进度58.md)。

@@ -34,7 +34,7 @@
 2. Qwen Embedding 完整端点填写 `/v1/services/embeddings/multimodal-embedding/multimodal-embedding`；知识库当前固定 2048 维，编辑弹窗会显示提示。
 3. Qwen Rerank 完整端点填写 `/v1/reranks`，模型列表填写实际配置的模型 ID。
 4. 保存后点击行内“测试”：Embedding 成功应显示“维度 2048”；Rerank 成功应显示返回 2 条排序结果，并已验证相关文本排在无关文本之前。
-5. 到“价表配置”为 Embedding 和 Rerank 分别建立价表。Rerank 选择“知识库重排”，按输入价/百万 token 配置；未配价表不会阻断模型测试，但调用明细会记录 `FAILED/未配置价表`，不扣积分。
+5. 到“价表配置”为 Embedding 和 Rerank 分别建立价表。Rerank 选择“知识库重排”，按输入价/百万 token 配置；未配价表不会阻断模型测试，但调用明细会记录 `FAILED/未配置价表`，不扣积分。计费 token 口径：上游返回 `input_tokens` 优先；只返回 `total_tokens` 时回退采用（2026-08-14 起）；两者皆无时按本地估算记 `ESTIMATED`，不会恒 0 计费。
 6. 在知识库重排配置中选择 `RERANK` 和明确的 Rerank 模型。未选择或模型不可用时会明确报错，不会静态替换为其他模型。
 
 排查顺序：先看设置页真实测试，再按同一 `traceId` 查看 Java 日志与调用明细。日志只应包含模型、供应商、候选数量、耗时、状态和关联 ID，不应出现 API Key、Query、候选正文或 Chunk 原文。

@@ -190,8 +190,8 @@ public interface RagRetrievalQueryMapper {
             WHERE d.kb_id = #{kbId}
               AND d.deleted = 0
               AND d.current_version_id IS NOT NULL
-              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
-              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND (d.effective_at IS NULL OR d.effective_at <= now())
+              AND (d.expired_at IS NULL OR d.expired_at > now())
               AND (
                 EXISTS (SELECT 1 FROM knowledge_permissions p
                         WHERE p.tenant_id = #{tenantId} AND p.subject_type='USER' AND p.subject_id=#{userId}
@@ -259,8 +259,8 @@ public interface RagRetrievalQueryMapper {
             LEFT JOIN stored_files sf ON sf.file_id = REPLACE(d.file_ref, '/api/files/', '')
             WHERE d.id = #{docId} AND d.deleted = 0
               AND d.current_version_id IS NOT NULL
-              AND (d.effective_at IS NULL OR d.effective_at &lt;= now())
-              AND (d.expired_at IS NULL OR d.expired_at &gt; now())
+              AND (d.effective_at IS NULL OR d.effective_at <= now())
+              AND (d.expired_at IS NULL OR d.expired_at > now())
             """)
     RagQueryRow.L1Row fetchL1Metadata(@Param("docId") Long docId);
 

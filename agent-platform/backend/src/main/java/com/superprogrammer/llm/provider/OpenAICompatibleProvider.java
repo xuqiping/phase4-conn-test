@@ -296,12 +296,21 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             JsonNode usageNode = root.path("usage");
             TokenUsage usage = null;
             if (usageNode.isObject() && !usageNode.isEmpty()) {
+                // Phase4 实测：部分网关（ctaigw/qwen）rerank 只返回 total_tokens 不返回 input_tokens，
+                // 裸取 input_tokens=0 会让网关的估算兜底失效（usage 非 null 即 SUCCESS），恒 0 计费。
                 int inputTokens = usageNode.path("input_tokens").asInt(0);
-                usage = TokenUsage.builder()
-                        .promptTokens(inputTokens)
-                        .completionTokens(0)
-                        .totalTokens(usageNode.path("total_tokens").asInt(inputTokens))
-                        .build();
+                if (inputTokens <= 0) {
+                    inputTokens = usageNode.path("total_tokens").asInt(0);
+                }
+                if (inputTokens > 0) {
+                    usage = TokenUsage.builder()
+                            .promptTokens(inputTokens)
+                            .completionTokens(0)
+                            .totalTokens(usageNode.path("total_tokens").asInt(inputTokens))
+                            .build();
+                }
+                // 交叉审查加固：usage 对象非空但 token 字段全缺/为 0 时保持 usage=null，
+                // 让 LlmGateway 落 TokenEstimator 估算（ESTIMATED）分支——宁估不漏，不恒 0 计 SUCCESS。
             }
             return RerankResult.builder()
                     .items(items)
