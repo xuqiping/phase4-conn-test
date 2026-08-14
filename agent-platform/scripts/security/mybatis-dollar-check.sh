@@ -17,7 +17,7 @@ hits="$({ grep -rn '\${' --include='*Mapper.xml' backend/src/main || true; \
 
 # 过滤注释：只豁免「${ 出现在注释标记之后」的行（整行剔除曾实证可绕过——活的 ${} 后随行注释即漏拦，
 # Phase4 交叉审查发现）。做法：逐行截掉注释尾部再判 ${ 是否仍在代码区。
-hits="$(printf '%s' "$hits" | while IFS= read -r line; do
+hits="$(printf '%s\n' "$hits" | while IFS= read -r line; do
   code="${line%%<!--*}"   # XML：截掉行内注释及之后
   code="${code%%//*}"     # Java：截掉行注释及之后
   case "$code" in *'${'*) printf '%s\n' "$line";; esac

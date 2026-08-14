@@ -122,7 +122,7 @@ created-date: 2026-08-14
   - **需人工介入**：否
   - **验证**：IT 绿；人为去掉 canRead 前置→IT 红（防退化）。
 
-- [ ] **Step 6：SEC-FR-054 C2 前端渲染红线固化 + 收尾**
+- [x] **Step 6：SEC-FR-054 C2 前端渲染红线固化 + 收尾** ✅ 2026-08-15
   - **目标**：未来引入 markdown 渲染时不可能裸 v-html。
   - **动作**：①`scripts/security/frontend-html-gate.sh`（照抄 gitleaks/sql 门禁范式）：grep `src/**/*.vue` 中 `v-html` 与 `innerHTML =`（MentionTextarea.vue 白名单登记+依据注释：全段 escapeHtml+测试覆盖）→命中即红，CI 同规则；②红线入 `workflow_output/项目规范约束/通用约束.md`：「LLM/AI 生成内容渲染管道引入之日必须配 DOMPurify，禁 v-html 裸渲；新 HTML 注入点须登记白名单+转义测试」；③全量回归 `mvn test`+`npm run test`+`vue-tsc`。
   - **文件**：`scripts/security/frontend-html-gate.sh`（新）、CI workflow、`通用约束.md`、（无前端源码改动）

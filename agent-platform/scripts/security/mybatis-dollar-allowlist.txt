@@ -4,4 +4,5 @@
 #
 # LlmUsageLogMapper.xml dimCols 片段：${dim} 只由 XML 内部 <property name="dim" value="字面值"/> 静态注入
 # （CAST(user_id AS TEXT) / model / kind / date_trunc 等），永不接触用户输入，属安全的 SQL 片段复用。
-backend/src/main/resources/com/superprogrammer/billing/mapper/xml/LlmUsageLogMapper.xml:39:        ${dim} AS dimension_key,
+# 注意：白名单按整行精确匹配（含行号），上游插入行致行号漂移时会假红——更新行号即可。
+backend/src/main/resources/com/superprogrammer/billing/mapper/xml/LlmUsageLogMapper.xml:40:        ${dim} AS dimension_key,

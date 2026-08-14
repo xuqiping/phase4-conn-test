@@ -1,0 +1,6 @@
+# SEC-FR-054 前端 HTML 注入门禁白名单（整行精确匹配；# 开头为理由注释）
+# 登记前提：渲染内容全段经 escapeHtml 转义或有 DOMPurify 消毒 + 单测覆盖，缺一不登记。
+frontend/src/components/canvas/MentionTextarea.vue:142:  el.innerHTML = html
+# ^ @提及输入框命令式渲染：mentionLogic.ts buildMentionHtml() 对文本/label 全段 escapeHtml，
+#   chip 为字面量 span 模板（无用户属性注入），mentionLogic.test.ts 转义用例覆盖。
+#   光标保持要求 contenteditable 外科更新，Vue 插值不可替代（见该文件 line 123 注释）。
