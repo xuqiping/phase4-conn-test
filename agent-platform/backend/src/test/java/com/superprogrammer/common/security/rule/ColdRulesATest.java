@@ -199,4 +199,16 @@ class ColdRulesATest {
             assertNull(v);
         }
     }
+
+    @Test
+    void offHours_detailRetainsTargetFields() {
+        // 13x-1：凌晨敏感操作 detail 必须带 targetType/targetId——详情页要能看到「对谁做了什么」。
+        String detail = OffHoursSensitiveRule.buildDetail(
+                Map.of("action", "user:update_status", "targetType", "user", "targetId", "42"),
+                java.time.LocalTime.of(2, 30));
+        assertTrue(detail.contains("user:update_status"));
+        assertTrue(detail.contains("\"targetType\":\"user\""));
+        assertTrue(detail.contains("\"targetId\":\"42\""));
+        assertTrue(detail.contains("02:30"));
+    }
 }

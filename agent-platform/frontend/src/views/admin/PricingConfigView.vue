@@ -79,8 +79,8 @@
           <n-select v-model:value="pricingForm.videoBillingMode" :options="modeOptions" />
         </n-form-item>
         <n-form-item label="是否含参考视频" v-if="pricingForm.kind === 'VIDEO'">
-          <n-switch v-model:value="pricingForm.hasReference" />
-          <span class="pricing-config__hint" style="margin-left: 8px">同一视频模型可分别配「无参考」和「有参考」两行价</span>
+          <n-switch v-model:value="pricingForm.hasReference" :disabled="pricingEditId != null" />
+          <span class="pricing-config__hint" style="margin-left: 8px">同一视频模型可分别配「无参考」和「有参考」两行价；身份字段编辑时不可改</span>
         </n-form-item>
         <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
@@ -180,7 +180,8 @@ const candidateLoading = ref(false)
 const candidateError = ref('')
 const selectedCandidateKey = ref<string | null>(null)
 const candidateOptions = computed(() => availableModels.value.map(candidate => ({
-  label: `${candidate.providerName} · ${candidate.model} · ${KIND_LABEL[candidate.kind]}`,
+  // 7x-1：VIDEO 只配了一面参考维度时候选仍出现，hint 提示本次新增的是哪一面
+  label: `${candidate.providerName} · ${candidate.model} · ${KIND_LABEL[candidate.kind]}${candidate.hint ? `（${candidate.hint}）` : ''}`,
   value: candidateKey(candidate)
 })))
 
@@ -205,9 +206,10 @@ async function loadAvailableModels() {
 function onCandidateChange(value: string | null) {
   selectedCandidateKey.value = value
   const candidate = availableModels.value.find(item => candidateKey(item) === value)
+  // hasReference 属于身份字段，切候选必须复位，避免上一行遗留的值泄漏进新行（7x-1）
   Object.assign(pricingForm, candidate
-    ? { providerId: candidate.providerId, model: candidate.model, kind: candidate.kind }
-    : { providerId: null, model: null, kind: 'CHAT' as BillingKind })
+    ? { providerId: candidate.providerId, model: candidate.model, kind: candidate.kind, hasReference: false }
+    : { providerId: null, model: null, kind: 'CHAT' as BillingKind, hasReference: false })
 }
 
 async function openPricingModal(rule?: PricingRuleVO) {

@@ -132,4 +132,73 @@ describe('resolveCanvasVideoAttachments', () => {
     expect(refs).toEqual([])
     expect(rewrittenPrompt).toBe('一只猫在跳舞')
   })
+
+  // ---- 2x-4：@视频节点收为 kind=video 参考视频附件 ----
+
+  /** 造一个 video 节点（带 fileId 产出）。 */
+  function vid(id: string, fileId: string): CanvasVideoNodeLike {
+    return { id, type: 'video', data: { fileId } }
+  }
+
+  it('@视频节点 → kind=video 附件 + 视频N 序号（不再拼 fileId 文本）', () => {
+    const nodes = [vid('v1', 'a.mp4'), vid('v2', 'b.mp4')]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {},
+      '以 @{{node:v1}} 和 @{{node:v2}} 的运镜',
+      nodes,
+      resolver
+    )
+    expect(refs).toEqual([
+      { fileId: 'a.mp4', kind: 'video' },
+      { fileId: 'b.mp4', kind: 'video' }
+    ])
+    expect(rewrittenPrompt).toBe('以 视频1 和 视频2 的运镜')
+  })
+
+  it('@图 + @视频混用 → 各自独立序号（图N/视频N）', () => {
+    const nodes = [img('a', 'a.png'), vid('v1', 'a.mp4')]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {},
+      '风格参考 @{{node:a}}，运镜参考 @{{node:v1}}',
+      nodes,
+      resolver
+    )
+    expect(refs).toEqual([
+      { fileId: 'a.png', kind: 'image' },
+      { fileId: 'a.mp4', kind: 'video' }
+    ])
+    expect(rewrittenPrompt).toBe('风格参考 图1，运镜参考 视频1')
+  })
+
+  it('同一视频节点多次 @ → 序号稳定不重复收附件', () => {
+    const nodes = [vid('v1', 'a.mp4')]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {},
+      '@{{node:v1}} 再 @{{node:v1}}',
+      nodes,
+      resolver
+    )
+    expect(refs).toEqual([{ fileId: 'a.mp4', kind: 'video' }])
+    expect(rewrittenPrompt).toBe('视频1 再 视频1')
+  })
+
+  it('首尾帧与 @参考视频混用 → 同样拒绝', () => {
+    const nodes = [img('first', 'f.png'), vid('v1', 'a.mp4')]
+    expect(() => resolveCanvasVideoAttachments(
+      { firstFrameNodeId: 'first' },
+      '参考 @{{node:v1}} 生成', nodes, resolver
+    )).toThrow('首帧/尾帧不能与参考媒体同时使用')
+  })
+
+  it('video 节点无 fileId → 文本插值降级，不产附件', () => {
+    const nodes: CanvasVideoNodeLike[] = [{ id: 'empty', type: 'video', data: {} }]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {},
+      '用 @{{node:empty}}',
+      nodes,
+      resolver
+    )
+    expect(refs).toEqual([])
+    expect(rewrittenPrompt).toBe('用 【断链】')
+  })
 })

@@ -34,9 +34,20 @@ public class OffHoursSensitiveRule extends RuleRedisSupport implements SecurityR
         if (!(now.isAfter(OFF_START) && now.isBefore(OFF_END))) {
             return null;
         }
-        String action = String.valueOf(event.getPayload().getOrDefault("action", ""));
-        String detail = "{\"action\":\"" + esc(action) + "\",\"at\":\"" + now + "\"}";
         return new Verdict(SecurityEventTypes.OFF_HOURS_SENSITIVE, SecurityEventTypes.SEV_LOW,
-                event.getUserId(), event.getClientIp(), detail, SecurityEventTypes.ACT_NONE);
+                event.getUserId(), event.getClientIp(), buildDetail(event.getPayload(), now),
+                SecurityEventTypes.ACT_NONE);
+    }
+
+    /**
+     * 13x-1：detail 保留 targetType/targetId（此前被丢弃导致详情页看不到操作对象）。
+     * 抽静态纯函数便于确定性单测（evaluate 依赖系统时钟）。
+     */
+    static String buildDetail(java.util.Map<String, Object> payload, LocalTime at) {
+        String action = String.valueOf(payload.getOrDefault("action", ""));
+        String targetType = String.valueOf(payload.getOrDefault("targetType", ""));
+        String targetId = String.valueOf(payload.getOrDefault("targetId", ""));
+        return "{\"action\":\"" + esc(action) + "\",\"targetType\":\"" + esc(targetType)
+                + "\",\"targetId\":\"" + esc(targetId) + "\",\"at\":\"" + at + "\"}";
     }
 }

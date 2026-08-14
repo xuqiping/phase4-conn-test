@@ -254,6 +254,46 @@ class PricingConfigServiceTest {
                 .hasMessageContaining("已配置");
     }
 
+    // ---------------- 7x-1：VIDEO 只配一面参考维度时候选保留 ----------------
+
+    @Test
+    void availablePricingModels_videoConfiguredFalseOnly_stillCandidateWithHint() {
+        // 7x-1：VIDEO 配了「无参考」行后，候选必须保留（admin 还要能配「有参考」行），且带维度提示。
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(4L, "视频", "VIDEO", "seedance")));
+        PricingRuleEntity configured = new PricingRuleEntity();
+        configured.setProviderId(4L);
+        configured.setModel("seedance");
+        configured.setKind(PricingRuleEntity.KIND_VIDEO);
+        configured.setHasReference(false);
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(configured));
+
+        var result = service.availablePricingModels();
+        org.assertj.core.api.Assertions.assertThat(result).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(result.get(0).getHint())
+                .contains("无参考").contains("有参考");
+    }
+
+    @Test
+    void availablePricingModels_videoBothDimsConfigured_excluded() {
+        // 7x-1：两面都配齐后候选才消失（与非 VIDEO 行为对齐）。
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(4L, "视频", "VIDEO", "seedance")));
+        PricingRuleEntity noRef = new PricingRuleEntity();
+        noRef.setProviderId(4L);
+        noRef.setModel("seedance");
+        noRef.setKind(PricingRuleEntity.KIND_VIDEO);
+        noRef.setHasReference(false);
+        PricingRuleEntity withRef = new PricingRuleEntity();
+        withRef.setProviderId(4L);
+        withRef.setModel("seedance");
+        withRef.setKind(PricingRuleEntity.KIND_VIDEO);
+        withRef.setHasReference(true);
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(noRef, withRef));
+
+        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
+    }
+
     // ---------------- 7x-3：has_reference 视频参考定价 ----------------
 
     @Test

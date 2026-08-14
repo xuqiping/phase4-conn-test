@@ -28,6 +28,16 @@ export const DETAIL_KEY_CN: Record<string, string> = {
   windowSec: '窗口时长(秒)',
   matchedSig: '命中特征',
   repeatCount: '重复次数',
+  // 特权变更/凌晨敏感操作（13x-1：detail 里最核心的三个字段）
+  action: '具体操作',
+  targetType: '操作对象类型',
+  at: '发生时刻',
+  // 其余冷规则缺失 key（13x-1 一并补齐，未知 key 仍原样回落）
+  distinctIps: '不同IP数',
+  windowSpent: '窗口内消耗积分',
+  balanceAfter: '操作后余额',
+  windowCostFen: '窗口内消耗(分)',
+  taskCount: '任务数',
   // 模型调用/计费类（审计）
   model: '模型',
   kind: '任务类型',
@@ -63,6 +73,16 @@ export const DETAIL_VALUE_CN: Record<string, string> = {
   IMAGE: '图片生成',
   // resourceType
   USER: '用户',
+  // targetType（特权变更/凌晨敏感操作的操作对象，13x-1）
+  role: '角色',
+  permission: '权限',
+  user: '用户账号',
+  security_event: '安全事件',
+  security_rule: '安全规则',
+  pricing_rule: '价表规则',
+  ratio_tier: '积分阶梯',
+  system_setting: '系统设置',
+  llm_provider: '模型供应商',
   // 常见 reason 码（auth）
   user_not_found: '账号不存在',
   bad_password: '密码错误',
@@ -79,9 +99,81 @@ export const DETAIL_VALUE_CN: Record<string, string> = {
   policy_rejected: '内容安全策略拒绝'
 }
 
+/** 13x-1：@AuditLog module → 中文（与后端 @AuditLog(module=...) 同源盘点）。 */
+export const AUDIT_MODULE_CN: Record<string, string> = {
+  user: '用户管理', role: '角色权限', auth: '认证账号', security: '安全管理',
+  billing: '计费积分', llm: '模型供应', media: '媒体生成', kb: '知识库',
+  agent: '智能体', workflow: '工作流', asset: '资产库', canvas: '无限画布',
+  chat: '智能对话', memory: '记忆库', system: '系统设置', file: '文件',
+  points: '积分', project: '项目'
+}
+
+/** 13x-1：action 单词 → 中文（含全部会触发特权变更的敏感动作）。 */
+export const AUDIT_ACTION_CN: Record<string, string> = {
+  update_status: '修改账号状态',
+  assign_roles: '分配角色',
+  update_permissions: '修改权限',
+  reset_password: '重置密码',
+  password_change: '修改密码',
+  credential_bind: '绑定登录凭证',
+  credential_unbind: '解绑登录凭证',
+  event_ack: '处置安全事件',
+  event_batch_delete: '批量删除安全事件',
+  ip_block: '封禁IP',
+  ip_unblock: '解封IP',
+  rule_config_update: '修改安全规则',
+  pricing_create: '新建价表',
+  pricing_update: '修改价表',
+  pricing_import: '导入价表',
+  pricing_export: '导出价表',
+  pricing_template_download: '下载价表模板',
+  ratio_create: '新建积分阶梯',
+  ratio_update: '修改积分阶梯',
+  ratio_delete: '删除积分阶梯',
+  admin_recharge: '管理员充值',
+  provider_import: '导入供应商',
+  provider_export: '导出供应商',
+  update_auth_channels: '修改认证渠道',
+  update_auth_settings: '修改认证设置',
+  update_billing_settings: '修改计费设置',
+  update_llm_model_defaults: '修改模型默认配置',
+  update_rag_memory_settings: '修改RAG记忆设置',
+  update_rag_recall_settings: '修改RAG召回设置',
+  update_web_search_settings: '修改联网搜索设置',
+  upload_file: '上传文件',
+  grant: '授权',
+  revoke: '回收授权',
+  block: '封禁',
+  unblock: '解封',
+  ban: '封禁账号',
+  unlock: '解锁账号',
+  create: '新建',
+  update: '修改',
+  delete: '删除'
+}
+
+/** 13x-1：翻译 "module:action" 形式的敏感操作码（如 security:event_ack → 安全管理 · 处置安全事件）。 */
+export function auditActionCn(value: string): string {
+  const idx = value.indexOf(':')
+  if (idx <= 0 || idx >= value.length - 1) return DETAIL_VALUE_CN[value] ?? value
+  const module = value.slice(0, idx)
+  const action = value.slice(idx + 1)
+  const m = AUDIT_MODULE_CN[module] ?? module
+  const a = AUDIT_ACTION_CN[action] ?? action
+  return `${m} · ${a}`
+}
+
 /** 翻译单个 key；未知原样返回。 */
 export function detailKeyCn(key: string): string {
   return DETAIL_KEY_CN[key] ?? key
+}
+
+/** 按上下文 key 翻译 value：action 字段是 "module:action" 操作码，需要组合翻译（13x-1）。 */
+export function detailValueCnForKey(key: string, value: unknown): string {
+  if (typeof value === 'string' && (key === 'action' || key === 'moduleAction')) {
+    return auditActionCn(value)
+  }
+  return detailValueCn(value)
 }
 
 /** 翻译单个 value（仅字符串枚举命中才翻译，其余原样）。 */

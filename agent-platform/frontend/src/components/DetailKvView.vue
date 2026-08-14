@@ -13,7 +13,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { detailKeyCn, detailValueCn } from '@/utils/detailLabels'
+import { detailKeyCn, detailValueCnForKey } from '@/utils/detailLabels'
 
 const props = defineProps<{ raw: string | null | undefined }>()
 
@@ -24,11 +24,11 @@ const entries = computed<Entry[]>(() => {
   try {
     const obj = JSON.parse(props.raw)
     if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return []
-    // 空对象 {} 显示"无详情"
+    // 空对象 {} 显示"无详情"；value 翻译带 key 上下文（action 等 "module:action" 码组合翻译，13x-1）
     return Object.entries(obj as Record<string, unknown>).map(([k, v]) => ({
       key: k,
       label: detailKeyCn(k),
-      value: detailValueCn(v)
+      value: detailValueCnForKey(k, v)
     }))
   } catch {
     return []

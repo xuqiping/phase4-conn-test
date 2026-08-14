@@ -1,11 +1,13 @@
 // ============================================================
-// 画布视频节点 · 首尾帧 + @参考图 收集引擎（F3，设计 §画布视频帧重构）
+// 画布视频节点 · 首尾帧 + @参考图/参考视频 收集引擎（F3，设计 §画布视频帧重构）
 //
 // 与 interpolate.ts / attachmentMention.ts 语义都不同：
 // - interpolate：@{{node:id}} → 上游产出【文本】（文本/脚本节点内容）
 // - attachmentMention：@{{image:<id>}} → 序号化图N（视频生成页，附件已落 UploadedAttachment）
 // - 本引擎：画布视频节点专用 —— @{{node:id}} 指向 image 节点 → 收为 reference_image 附件 + 图N；
-//   非 image 节点 → 走文本插值；显式 firstFrameNodeId/lastFrameNodeId → 首尾帧附件。
+//   指向 video 节点 → 收为 reference_video 附件 + 视频N（2x-4：此前 video 节点被降级成
+//   文本插值 "fileId:xxx.mp4" 拼进 prompt，供应商收不到 type:"video" 参数）；
+//   其他节点 → 走文本插值；显式 firstFrameNodeId/lastFrameNodeId → 首尾帧附件。
 //
 // 纯函数（无 Vue 依赖），供 CanvasView.onRunVideo 调 + 单测覆盖。
 // ============================================================
@@ -59,10 +61,11 @@ export function resolveCanvasVideoAttachments(
     refs.push({ fileId, kind: 'image', frameRole: role })
   }
 
-  // 2) @图节点 → 参考图（按出现顺序去重，排除已是帧的）
-  const refImageFileIds: string[] = // 已收参考图 fileId（去重+定序）
-    []
+  // 2) @图节点 → 参考图；@视频节点 → 参考视频（按出现顺序去重，排除已是帧的）
+  const refImageFileIds: string[] = [] // 已收参考图 fileId（去重+定序）
+  const refVideoFileIds: string[] = [] // 已收参考视频 fileId（去重+定序，2x-4）
   const nodeIdToImageIdx = new Map<string, number>() // 节点 id → 图N 序号（0-based）
+  const nodeIdToVideoIdx = new Map<string, number>() // 节点 id → 视频N 序号（0-based）
 
   MENTION_RE.lastIndex = 0
   const rewrittenPrompt = rawPrompt.replace(MENTION_RE, (_raw, kind: string, id: string) => {
@@ -86,18 +89,36 @@ export function resolveCanvasVideoAttachments(
         return `图${idx + 1}`
       }
     }
-    // 非图节点 / 无 fileId → 文本插值（含 prompt+产物元信息）
+    // 2x-4：@视频节点收为 kind=video 附件（供应商侧映射为 reference_video 内容项），
+    // 不再把 "fileId:xxx.mp4" 拼进 prompt 文本。
+    if (n?.type === 'video' && !frameNodeIds.has(id)) {
+      const fileId = n.data.fileId as string | undefined
+      if (fileId) {
+        let idx = nodeIdToVideoIdx.get(id)
+        if (idx === undefined) {
+          const exist = refVideoFileIds.indexOf(fileId)
+          idx = exist >= 0 ? exist : refVideoFileIds.length
+          refVideoFileIds.push(fileId)
+          nodeIdToVideoIdx.set(id, idx)
+        }
+        return `视频${idx + 1}`
+      }
+    }
+    // 其他节点 / 无 fileId → 文本插值（含 prompt+产物元信息）
     const v = textResolve(kind as 'node' | 'asset', id)
     return v === undefined ? '【断链】' : v
   })
 
-  // 参考图 attachments 追加在帧之后
+  // 参考图/参考视频 attachments 追加在帧之后
   for (const fileId of refImageFileIds) {
     refs.push({ fileId, kind: 'image' })
   }
+  for (const fileId of refVideoFileIds) {
+    refs.push({ fileId, kind: 'video' })
+  }
 
-  if (frameNodeIds.size > 0 && refImageFileIds.length > 0) {
-    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图或清空首尾帧')
+  if (frameNodeIds.size > 0 && (refImageFileIds.length > 0 || refVideoFileIds.length > 0)) {
+    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图/@参考视频或清空首尾帧')
   }
 
   return { refs, rewrittenPrompt }

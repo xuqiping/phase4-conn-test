@@ -281,8 +281,13 @@
                 playsinline
                 class="video-gen__video"
               />
-              <div v-if="videoObjectUrl" class="video-gen__player-actions">
-                <n-button size="small" tag="a" :href="videoObjectUrl" download @click.stop>
+              <!-- 2x-1：下载/入库按钮只按任务成功门控——视频 blob 拉取失败时仍要能入库
+                   （入库走后端 file_id 引用，不依赖前端 blob；下载在无 blob 时退回任务原始 URL） -->
+              <div class="video-gen__player-actions">
+                <n-button
+                  v-if="videoObjectUrl"
+                  size="small" tag="a" :href="videoObjectUrl" download @click.stop
+                >
                   下载视频
                 </n-button>
                 <!-- 4x-2：成功后入库资产库 -->

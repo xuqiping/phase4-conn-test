@@ -23,6 +23,8 @@ export interface SecurityEventVO {
   handledBy: string | null
   handledAt: string | null
   createdAt: string
+  /** 13x-1：后端按 userId 批量回填的账号名（展示用，非表列） */
+  username?: string | null
 }
 
 /** 事件筛选 */

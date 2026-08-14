@@ -58,7 +58,7 @@
           placeholder="画布名"
           @blur="onRename"
         />
-        <n-button :loading="saving" type="primary" @click="onSave">
+        <n-button :loading="saving" type="primary" @click="onSave(false)">
           <n-icon :component="SaveOutline" /> 保存
         </n-button>
         <n-button :loading="rerunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
@@ -150,11 +150,11 @@
         @picked="onAssetPicked"
       />
 
-      <!-- C6 双击画布空白处的「快速加节点」搜索框（ComfyUI 式） -->
+      <!-- C6 双击画布空白处的「快速加节点」搜索框（ComfyUI 式）；2x-6 拉线到空白处也复用此弹窗并自动连线 -->
       <n-modal
         v-model:show="quickAddOpen"
         preset="card"
-        title="快速添加节点"
+        :title="quickAddSourceNode ? '添加下一节点（自动连线）' : '快速添加节点'"
         style="max-width: 360px"
         @after-leave="resetQuickAdd"
       >
@@ -184,8 +184,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
   NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useMessage
 } from 'naive-ui'
@@ -197,7 +197,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
-import type { AttachmentRef } from '@/api/media'
+import type { AttachmentRef, ImageModelVO, ImageSubmitRequest } from '@/api/media'
 import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
 import { pollMediaTask } from '@/utils/mediaTaskPolling'
 import { assetApi, assetBridgeApi } from '@/api/assets'
@@ -571,7 +571,9 @@ async function onRunVideo(node: CanvasNode) {
     const taskId = submit.data.data.id
     boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
     message.info('视频已提交，生成中…')
-    scheduleSave()
+    // 2x-2：taskId 立即持久化（不再走 800ms 防抖）——提交后立刻离开画布时
+    // 快照里必须有 taskId，重进才能恢复任务状态续轮询。
+    void onSave(true)
     await pollVideoTask(node.id, taskId)
   } catch (e: unknown) {
     const msg = (e as { msg?: string; message?: string })?.msg
@@ -607,6 +609,7 @@ async function pollVideoTask(nodeId: string, taskId: number) {
         providerRequestSnapshot: detail.providerRequestSnapshot ?? undefined,
         hasReference: detail.hasReference ?? undefined
       })
+      backfillNodeLabel(nodeId, detail.prompt)
       message.success('视频生成完成')
   } else {
       boardRef.value?.updateNodeData(nodeId, {
@@ -626,6 +629,21 @@ async function pollVideoTask(nodeId: string, taskId: number) {
 function isCurrentNodeTask(nodeId: string, taskId: number): boolean {
   const node = boardRef.value?.getNode(nodeId)
   return editingId.value != null && !!node && Number((node.data as Record<string, unknown>).taskId) === taskId
+}
+
+/**
+ * 2x-6：任务完成后回填节点名。label 仍是默认类型名（「视频」「图片 2」等自动命名）
+ * 时用提示词前 12 字命名；用户手动改过名字（不匹配默认模式）则不覆盖。
+ */
+function backfillNodeLabel(nodeId: string, prompt?: string | null) {
+  const node = boardRef.value?.getNode(nodeId)
+  if (!node) return
+  const label = String((node.data as Record<string, unknown>).label ?? '')
+  if (!/^(视频|图片|音频|文本)(\s\d+)?$/.test(label)) return
+  const base = (prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 12)
+  if (base && base !== label) {
+    boardRef.value?.updateNodeData(nodeId, { label: base })
+  }
 }
 
 type MediaRatioArg = Parameters<typeof mediaApi.submitVideo>[0]['ratio']
@@ -679,15 +697,12 @@ async function onRunImage(node: CanvasNode) {
   try {
     // @ 的图节点 → 参考图 refFileIds（复用 resolveCanvasVideoAttachments 的序号化逻辑）；其余 @ → 文本插值
     const refs = buildImageRefs(node, rawPrompt)
-    const submit = await mediaApi.submitImage({
-      model,
-      prompt: refs.rewrittenPrompt,
-      refFileIds: refs.fileIds.length > 0 ? refs.fileIds : undefined
-    })
+    const submit = await mediaApi.submitImage(buildImageRequest(node, model, refs.rewrittenPrompt, refs.fileIds))
     const taskId = submit.data.data.id
     boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
     message.info('图片已提交，生成中…')
-    scheduleSave()
+    // 2x-2：同视频节点——taskId 即时持久化，防离开丢任务关联。
+    void onSave(true)
     await pollImageTask(node.id, taskId)
   } catch (e: unknown) {
     const msg = (e as { msg?: string })?.msg || '图片提交失败'
@@ -707,6 +722,47 @@ function buildImageRefs(node: CanvasNode, rawPrompt: string): { fileIds: string[
   const allNodes = boardRef.value?.getNodes() ?? []
   const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(data, rawPrompt, allNodes, buildMentionResolver())
   return { fileIds: refs.map(r => r.fileId), rewrittenPrompt }
+}
+
+// ---- 2x-3：图片模型目录（capability 判定，提交时只带该模型支持的字段） ----
+const imageModels = ref<ImageModelVO[]>([])
+
+/** 按模型 id 取 capability（模型目录未加载/未知模型 → null，只提交基础字段）。 */
+function imageCapOf(modelId: string): ImageModelVO['capability'] | null {
+  return imageModels.value.find(m => m.modelId === modelId)?.capability ?? null
+}
+
+/**
+ * 2x-3：组装图片提交请求——节点 data 里的尺寸/格式/优化模式/引导尺度/组图/水印/联网
+ * 按模型 capability 过滤后带上（后端对「不支持字段传值」直接拒绝，不能盲传）。
+ */
+function buildImageRequest(
+  node: CanvasNode, model: string, rewrittenPrompt: string, refFileIds: string[]
+): ImageSubmitRequest {
+  const data = node.data as Record<string, unknown>
+  const req: ImageSubmitRequest = { model, prompt: rewrittenPrompt }
+  if (refFileIds.length > 0) req.refFileIds = refFileIds
+  const cap = imageCapOf(model)
+  if (cap) {
+    if (data.size === '__custom__') {
+      const custom = typeof data.customSize === 'string' ? data.customSize.trim() : ''
+      if (custom) req.size = custom
+    } else if (typeof data.size === 'string' && data.size) {
+      req.size = data.size
+    }
+    if (typeof data.outputFormat === 'string' && data.outputFormat) req.outputFormat = data.outputFormat
+    if (typeof data.optimizeMode === 'string' && data.optimizeMode) req.optimizeMode = data.optimizeMode
+    req.watermark = typeof data.watermark === 'boolean' ? data.watermark : cap.watermarkDefault
+    if (cap.supportsGuidanceScale && typeof data.guidanceScale === 'number') {
+      req.guidanceScale = data.guidanceScale
+    }
+    if (cap.supportsSequential && data.sequential === 'auto') {
+      req.sequential = 'auto'
+      req.maxImages = typeof data.maxImages === 'number' ? data.maxImages : 4
+    }
+    if (cap.supportsWebSearch && data.webSearch === true) req.webSearch = true
+  }
+  return req
 }
 
 /** 轮询图片任务至终态；成功 fetch 首张 blob 预览 + 存首张 fileId（焦点编辑裁剪源），失败标红。 */
@@ -730,6 +786,7 @@ async function pollImageTask(nodeId: string, taskId: number) {
         fileId: fileIds[0] ?? undefined,
         errorMsg: ''
       })
+      backfillNodeLabel(nodeId, detail.prompt)
       message.success('图片生成完成')
   } else {
       boardRef.value?.updateNodeData(nodeId, {
@@ -1061,10 +1118,12 @@ async function applyAssetResolve(node: CanvasNode, resolve: ResolveVO) {
     if (typeof parsed.index === 'number') patch.index = parsed.index
   } else if (resolve.fileId) {
     patch.fileId = resolve.fileId
-    // 文件类需带鉴权 fetch 转 objectURL 预览（/api/files/{id} 需 auth header）
-    if (resolve.mediaType === 'VIDEO' && resolve.url) {
+    // 文件类需带鉴权 fetch 转 objectURL 预览（/api/files/{id} 需 auth header）。
+    // 2x-5 修复：后端 ResolveVO.mediaType 是受控词汇中文（'视频'/'图片'/'音频'），
+    // 此前误用英文 'VIDEO'/'IMAGE' 比较 → 分支永不命中，拉取后节点无预览（像没拉到）。
+    if (resolve.mediaType === MEDIA_TYPE.VIDEO && resolve.url) {
       try { patch.previewUrl = await fetchVideoBlob(resolve.url) } catch { /* 预览失败不阻断 */ }
-    } else if (resolve.mediaType === 'IMAGE' || resolve.mediaType === 'AUDIO') {
+    } else if (resolve.mediaType === MEDIA_TYPE.IMAGE || resolve.mediaType === MEDIA_TYPE.AUDIO) {
       try { patch.previewUrl = await fetchCanvasPreview(resolve.fileId) } catch { /* 同上 */ }
     }
   }
@@ -1189,6 +1248,8 @@ async function loadCanvas(id: number) {
     hydratePreviews(snap.nodes)
     // 视频节点：按 taskId 重取视频预览（若有终态任务）
     hydrateVideoPreviews(snap.nodes)
+    // 2x-2：生成中离开后重进——对 status=running 且带 taskId 的节点续轮询至终态并回填结果
+    resumePendingTasks(snap.nodes)
   } catch {
     message.error('画布加载失败')
     backToList()
@@ -1235,6 +1296,24 @@ function hydrateVideoPreviews(nodes: CanvasNode[]) {
   }
 }
 
+/**
+ * 2x-2：恢复未终态任务。生成中离开画布后，快照里节点是 taskId + status='running'
+ * （mediaStatus 只在轮询到终态时才写）。重进画布时按节点类型重新续轮询：
+ * 任务早已完成 → 首次轮询即回填 success/预览/审计字段；仍在跑 → 继续轮到终态。
+ */
+function resumePendingTasks(nodes: CanvasNode[]) {
+  for (const n of nodes) {
+    const data = n.data as Record<string, unknown>
+    const taskId = data.taskId as number | undefined
+    if (!taskId || data.status !== 'running') continue
+    if (n.type === 'video') {
+      void pollVideoTask(n.id, taskId)
+    } else if (n.type === 'image') {
+      void pollImageTask(n.id, taskId)
+    }
+  }
+}
+
 function parseSnapshot(raw: string | null): CanvasSnapshot {
   if (!raw) return { nodes: [], edges: [] }
   try {
@@ -1245,7 +1324,7 @@ function parseSnapshot(raw: string | null): CanvasSnapshot {
   }
 }
 
-async function onSave() {
+async function onSave(silent = false) {
   if (!editingId.value || !boardRef.value) return
   saving.value = true
   try {
@@ -1261,10 +1340,10 @@ async function onSave() {
       name: currentName.value || '未命名画布',
       snapshot: JSON.stringify({ ...snap, nodes: cleanNodes })
     })
-    message.success('已保存')
+    if (!silent) message.success('已保存')
     await loadList()
   } catch {
-    message.error('保存失败')
+    if (!silent) message.error('保存失败')
   } finally {
     saving.value = false
   }
@@ -1314,32 +1393,40 @@ const quickAddOpen = ref(false)
 const quickAddPos = ref<{ x: number; y: number } | null>(null)
 const quickAddQuery = ref('')
 const quickAddIdx = ref(0)
+/** 2x-6：拉线建节点——quick-add 弹窗的拉线起点（双击空白打开时为 null）。 */
+const quickAddSourceNode = ref<string | null>(null)
 /** 按 query 过滤调色板（label 中文 / type 英文任一命中）。 */
 const quickAddFiltered = computed(() => {
   const q = quickAddQuery.value.trim().toLowerCase()
   if (!q) return palette
   return palette.filter(p => p.label.toLowerCase().includes(q) || p.type.toLowerCase().includes(q))
 })
-/** CanvasBoard 双击空白处 → 记坐标、清查询、开弹窗。 */
-function onQuickAdd(position: { x: number; y: number }) {
+/** CanvasBoard 双击空白处 / 2x-6 拉线到空白处 → 记坐标(+拉线起点)、清查询、开弹窗。 */
+function onQuickAdd(position: { x: number; y: number }, sourceNodeId?: string) {
   quickAddPos.value = position
+  quickAddSourceNode.value = sourceNodeId ?? null
   quickAddQuery.value = ''
   quickAddIdx.value = 0
   quickAddOpen.value = true
 }
-/** 弹窗关闭后清状态（防下次打开残留旧查询/坐标）。 */
+/** 弹窗关闭后清状态（防下次打开残留旧查询/坐标/拉线起点）。 */
 function resetQuickAdd() {
   quickAddQuery.value = ''
   quickAddIdx.value = 0
   quickAddPos.value = null
+  quickAddSourceNode.value = null
 }
-/** 选定类型 → 在双击坐标加节点并关弹窗。 */
+/** 选定类型 → 在坐标处加节点并关弹窗；若由拉线触发则自动连边（2x-6）。 */
 function confirmQuickAdd(p: { type: string; label: string }) {
-  boardRef.value?.addNode({
+  const newId = boardRef.value?.addNode({
     type: p.type,
     position: quickAddPos.value ?? undefined,
     data: { label: p.label }
   })
+  if (quickAddSourceNode.value && newId) {
+    boardRef.value?.addEdge(quickAddSourceNode.value, newId)
+    scheduleSave()
+  }
   quickAddOpen.value = false
 }
 /** 搜索框键盘：↑↓ 移高亮 / Enter 选中 / Esc 关闭。 */
@@ -1379,7 +1466,30 @@ watch(
 onMounted(() => {
   loadList()
   if (route.params.id) loadCanvas(Number(route.params.id))
+  // 2x-3：图片模型目录（capability 判定用；失败静默，提交时退化为仅基础字段）
+  mediaApi.listImageModels().then(r => { imageModels.value = r.data.data ?? [] }).catch(() => { /* 静默 */ })
+  // 2x-2：关标签/刷新前把防抖窗口内的未落盘编辑 flush 掉（尽力而为，请求已发出不等待）
+  window.addEventListener('beforeunload', flushPendingSave)
 })
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', flushPendingSave)
+})
+
+/** 2x-2：路由离开画布前 flush 防抖保存——800ms 窗口内的编辑不再因导航丢失。 */
+onBeforeRouteLeave(() => {
+  flushPendingSave()
+  return true
+})
+
+/** 防抖窗口内未落盘的保存立即执行（taskId 关键字段已即时保存，此处兜底其余编辑）。 */
+function flushPendingSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+    void onSave(true)
+  }
+}
 </script>
 
 <style lang="scss" scoped>

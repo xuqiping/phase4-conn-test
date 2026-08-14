@@ -28,7 +28,11 @@
         <n-descriptions v-if="current" :column="1" size="small" bordered>
           <n-descriptions-item label="类型">{{ typeCn(current.eventType) }}（{{ current.eventType }}）</n-descriptions-item>
           <n-descriptions-item label="严重度">{{ severityCn(current.severity) }}</n-descriptions-item>
-          <n-descriptions-item label="用户">{{ current.userId ? `用户#${current.userId}` : '—（未关联用户）' }}</n-descriptions-item>
+          <n-descriptions-item label="操作人">{{
+            current.userId
+              ? (current.username ? `${current.username}（用户#${current.userId}）` : `用户#${current.userId}（账号已删除）`)
+              : '—（未关联用户，匿名IP探测类事件）'
+          }}</n-descriptions-item>
           <n-descriptions-item label="IP">{{ current.clientIp ?? '—' }}</n-descriptions-item>
           <n-descriptions-item label="检测规则">{{ current.ruleId ?? '内置阈值规则' }}</n-descriptions-item>
           <n-descriptions-item label="traceId">{{ current.traceId ?? '—' }}</n-descriptions-item>
@@ -59,10 +63,13 @@
           </div>
         </div>
 
-        <!-- 13x-1：详情键值中文渲染，不再堆原始 JSON -->
+        <!-- 13x-1：详情键值中文渲染，不再堆原始 JSON；action/targetType 等 key 已翻译 -->
         <div v-if="current" class="security-event-view__detail">
           <div class="security-event-view__detail-title">事件详情</div>
           <DetailKvView :raw="current.detailJson" />
+          <div v-if="current.traceId" class="security-event-view__detail-hint">
+            参数级明细（改了什么值）可在「审计日志」按 traceId {{ current.traceId }} 关联查询。
+          </div>
         </div>
 
         <template #footer>
@@ -154,7 +161,11 @@ const columns: DataTableColumns<SecurityEventVO> = [
     title: '严重度', key: 'severity', width: 90,
     render: (r) => h(NTag, { size: 'small', type: severityType(r.severity) }, { default: () => severityCn(r.severity) }),
   },
-  { title: '用户', key: 'userId', width: 90, render: (r) => (r.userId != null ? `用户#${r.userId}` : '—') },
+  {
+    title: '用户', key: 'userId', width: 130,
+    // 13x-1：后端已回填 username，直接显示账号名而非裸 用户#id
+    render: (r) => (r.userId != null ? (r.username ? `${r.username} #${r.userId}` : `用户#${r.userId}`) : '—'),
+  },
   { title: 'IP', key: 'clientIp', width: 130, render: (r) => r.clientIp ?? '—' },
   { title: '自动处置', key: 'autoAction', width: 110, render: (r) => autoActionCn(r.autoAction) },
   {
@@ -241,6 +252,12 @@ onMounted(reload)
     font-weight: 600;
     margin-bottom: 6px;
     color: var(--color-text-primary);
+  }
+
+  &__detail-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
   }
 
   &__step {

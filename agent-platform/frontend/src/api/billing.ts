@@ -24,6 +24,8 @@ export interface AvailablePricingModelVO {
   providerName: string
   model: string
   kind: BillingKind
+  /** VIDEO 只配了一面参考维度时提示本次新增的是哪一面（7x-1） */
+  hint?: string
 }
 
 /** 价表行（GET /billing/pricing） */

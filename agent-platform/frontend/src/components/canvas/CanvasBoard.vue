@@ -21,6 +21,8 @@
       :snap-grid="[16, 16]"
       fit-view-on-init
       @connect="onConnect"
+      @connect-start="onConnectStart"
+      @connect-end="onConnectEnd"
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
       @node-drag-stop="onNodeDragStop"
@@ -43,7 +45,7 @@
 import { markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
-import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeMouseEvent, NodeTypesObject } from '@vue-flow/core'
+import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import TextNode from './nodes/TextNode.vue'
@@ -93,6 +95,11 @@ const emit = defineEmits<{
   (e: 'node-context-menu', node: CanvasNode): void
   /** C6：双击画布空白处 → 父开「快速加节点」搜索框（坐标已转画布坐标系）。 */
   (e: 'quick-add', position: { x: number; y: number }): void
+  /**
+   * 2x-6：从节点输出句柄拉线到空白处松手 → 同 quick-add，但携带拉线起点 nodeId，
+   * 父组件建完节点后自动连线（ComfyUI 式拖线建节点）。
+   */
+  (e: 'quick-add', position: { x: number; y: number }, sourceNodeId: string): void
   /** 结构变更（连线增/删、节点拖动结束）→ 父 scheduleSave 落库。 */
   (e: 'structure-changed'): void
 }>()
@@ -209,7 +216,44 @@ function onConnect(connection: Connection) {
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   }
   edges.value.push(edge)
+  justConnected = true
   emit('structure-changed')
+}
+
+/**
+ * 2x-6：拉线建节点支持。connect-start 记下起点（仅 source 句柄），
+ * connect-end 时若本次拖拽没有成功连上（onConnect 未触发）且落点在空白处，
+ * 就地弹「快速加节点」并携带起点 id——父组件建完节点自动连线。
+ */
+const connectStartParams = ref<OnConnectStartParams | null>(null)
+let justConnected = false
+
+function onConnectStart(params: OnConnectStartParams) {
+  connectStartParams.value = params
+  justConnected = false
+}
+
+function onConnectEnd(event: MouseEvent | TouchEvent | undefined) {
+  const start = connectStartParams.value
+  connectStartParams.value = null
+  const connected = justConnected
+  justConnected = false
+  if (!start || connected) return
+  if (start.handleType !== 'source') return // 只支持从输出句柄向前拉
+  if (!start.nodeId) return
+  const clientX = event instanceof MouseEvent ? event.clientX
+    : event && 'changedTouches' in event && event.changedTouches.length ? event.changedTouches[0].clientX : null
+  const clientY = event instanceof MouseEvent ? event.clientY
+    : event && 'changedTouches' in event && event.changedTouches.length ? event.changedTouches[0].clientY : null
+  if (clientX == null || clientY == null) return
+  const tgt = event ? (event.target as HTMLElement | null) : null
+  // 落在节点/句柄上（没对准目标句柄）不开弹窗，按 vue-flow 原语义放弃本次连线
+  if (tgt?.closest('.vue-flow__node') || tgt?.closest('.vue-flow__handle')) return
+  const vf = vueFlowRef.value as HTMLElement | null
+  if (!vf) return
+  const { left, top } = vf.getBoundingClientRect()
+  const position = project({ x: clientX - left, y: clientY - top })
+  emit('quick-add', position, start.nodeId)
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {

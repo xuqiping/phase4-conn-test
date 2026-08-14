@@ -113,9 +113,103 @@
             size="small"
             clearable
             placeholder="选择生图模型（必选）"
-            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
+            @update:value="onImageModelChange"
           />
         </div>
+
+        <!-- 2x-3：按所选模型 capability 驱动的生成参数（与图片生成模块同源能力） -->
+        <template v-if="imageCap">
+          <div class="prop-panel__field">
+            <label>尺寸</label>
+            <n-select
+              :value="(node.data.size as string) || null"
+              :options="imgSizeOptions"
+              size="small"
+              clearable
+              placeholder="模型默认"
+              @update:value="(v: string | null) => { if (node) { node.data.size = v ?? undefined; if (v !== '__custom__') node.data.customSize = undefined; emit('data-changed') } }"
+            />
+          </div>
+          <div v-if="(node.data.size as string) === '__custom__'" class="prop-panel__field">
+            <label>自定义宽x高</label>
+            <n-input
+              :value="(node.data.customSize as string) || ''"
+              size="small"
+              placeholder="如 2048x1152"
+              @update:value="(v: string) => { if (node) { node.data.customSize = v; emit('data-changed') } }"
+            />
+          </div>
+          <div class="prop-panel__row">
+            <div class="prop-panel__field">
+              <label>输出格式</label>
+              <n-select
+                :value="(node.data.outputFormat as string) || null"
+                :options="toUpperOptions(imageCap.outputFormats)"
+                size="small"
+                @update:value="(v: string | null) => { if (node) { node.data.outputFormat = v ?? undefined; emit('data-changed') } }"
+              />
+            </div>
+            <div class="prop-panel__field">
+              <label>优化模式</label>
+              <n-select
+                :value="(node.data.optimizeMode as string) || null"
+                :options="imageCap.optimizeModes.map(v => ({ label: v, value: v }))"
+                size="small"
+                @update:value="(v: string | null) => { if (node) { node.data.optimizeMode = v ?? undefined; emit('data-changed') } }"
+              />
+            </div>
+          </div>
+          <div v-if="imageCap.supportsGuidanceScale" class="prop-panel__field">
+            <label>引导尺度（{{ imageCap.guidanceMin }}-{{ imageCap.guidanceMax }}）</label>
+            <n-input-number
+              :value="(node.data.guidanceScale as number | undefined) ?? Math.round((imageCap.guidanceMin + imageCap.guidanceMax) / 2)"
+              :min="imageCap.guidanceMin"
+              :max="imageCap.guidanceMax"
+              size="small"
+              @update:value="(v: number | null) => { if (node) { node.data.guidanceScale = v ?? undefined; emit('data-changed') } }"
+            />
+          </div>
+          <div v-if="imageCap.supportsSequential" class="prop-panel__row">
+            <div class="prop-panel__field">
+              <label>组图</label>
+              <n-select
+                :value="(node.data.sequential as string) || 'disabled'"
+                :options="[{ label: '关闭', value: 'disabled' }, { label: '自动组图', value: 'auto' }]"
+                size="small"
+                @update:value="(v: string | null) => { if (node) { node.data.sequential = v ?? 'disabled'; emit('data-changed') } }"
+              />
+            </div>
+            <div v-if="(node.data.sequential as string) === 'auto'" class="prop-panel__field">
+              <label>数量</label>
+              <n-input-number
+                :value="(node.data.maxImages as number | undefined) ?? 4"
+                :min="1"
+                :max="imageCap.maxSequentialImages"
+                size="small"
+                @update:value="(v: number | null) => { if (node) { node.data.maxImages = v ?? undefined; emit('data-changed') } }"
+              />
+            </div>
+          </div>
+          <div class="prop-panel__row">
+            <div class="prop-panel__field">
+              <label>水印</label>
+              <n-switch
+                :value="(node.data.watermark as boolean | undefined) ?? imageCap.watermarkDefault"
+                size="small"
+                @update:value="(v: boolean) => { if (node) { node.data.watermark = v; emit('data-changed') } }"
+              />
+            </div>
+            <div v-if="imageCap.supportsWebSearch" class="prop-panel__field">
+              <label>联网搜索</label>
+              <n-switch
+                :value="Boolean(node.data.webSearch)"
+                size="small"
+                @update:value="(v: boolean) => { if (node) { node.data.webSearch = v; emit('data-changed') } }"
+              />
+            </div>
+          </div>
+        </template>
+        <div v-else class="prop-panel__hint">选择模型后可设置尺寸/格式/水印等生成参数</div>
         <n-button
           size="small"
           type="primary"
@@ -423,7 +517,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NSelect, NTag, NUpload } from 'naive-ui'
+import { NButton, NIcon, NInput, NInputNumber, NSelect, NSwitch, NTag, NUpload } from 'naive-ui'
 import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
@@ -432,7 +526,7 @@ import type { FrameMode } from '@/api/canvas'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
-import type { ImageModelVO } from '@/api/media'
+import type { ImageModelCapability, ImageModelVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
 import { uniqueLabel } from '@/utils/interpolate'
@@ -568,6 +662,55 @@ function groupModels(list: { providerName: string; displayName: string; modelId:
 const chatModelOptions = computed(() => groupModels(chatModels.value))
 const videoModelOptions = computed(() => groupModels(videoModels.value))
 const imageModelOptions = computed(() => groupModels(imageModels.value))
+
+// ---------- 2x-3：图片节点 capability 驱动参数 ----------
+
+/** 当前图片节点所选模型的能力（未选模型 → null，参数区隐藏）。 */
+const imageCap = computed<ImageModelCapability | null>(() => {
+  if (props.node?.type !== 'image') return null
+  const modelId = props.node.data.model as string | undefined
+  if (!modelId) return null
+  return imageModels.value.find(m => m.modelId === modelId)?.capability ?? null
+})
+
+const imgSizeOptions = computed(() => {
+  if (!imageCap.value) return []
+  const opts = imageCap.value.sizePresets.map(s => ({ label: s, value: s }))
+  if (imageCap.value.supportsWhSize) opts.push({ label: '自定义宽x高', value: '__custom__' })
+  return opts
+})
+
+function toUpperOptions(arr: string[]) {
+  return arr.map(v => ({ label: v.toUpperCase(), value: v }))
+}
+
+/**
+ * 切换图片模型 → 按新模型 capability 重置参数默认值（同 ImageGenView.onModelChange）。
+ * 旧模型不支持/新模型不支持的残留字段必须清掉——后端对「不支持的字段传值」直接拒绝。
+ */
+function onImageModelChange(model: string | null) {
+  const node = props.node
+  if (!node) return
+  node.data.model = model ?? undefined
+  const c = model ? imageModels.value.find(m => m.modelId === model)?.capability : undefined
+  const staleKeys = ['size', 'customSize', 'outputFormat', 'optimizeMode', 'guidanceScale',
+    'sequential', 'maxImages', 'watermark', 'webSearch']
+  if (c) {
+    node.data.size = c.sizePresets[0] ?? undefined
+    node.data.customSize = undefined
+    node.data.outputFormat = c.outputFormats[0] ?? undefined
+    node.data.optimizeMode = c.optimizeModes[0] ?? undefined
+    node.data.guidanceScale = c.supportsGuidanceScale
+      ? Math.round((c.guidanceMin + c.guidanceMax) / 2) : undefined
+    node.data.sequential = c.supportsSequential ? 'disabled' : undefined
+    node.data.maxImages = c.supportsSequential ? Math.min(4, c.maxSequentialImages || 4) : undefined
+    node.data.watermark = c.watermarkDefault
+    node.data.webSearch = undefined
+  } else {
+    for (const k of staleKeys) delete node.data[k]
+  }
+  emit('data-changed')
+}
 </script>
 
 <style lang="scss" scoped>

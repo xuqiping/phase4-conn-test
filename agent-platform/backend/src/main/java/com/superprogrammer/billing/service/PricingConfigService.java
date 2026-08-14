@@ -235,15 +235,36 @@ public class PricingConfigService {
                                 && Boolean.TRUE.equals(rule.getHasReference())));
             }
         }
-        // 候选恒按 has_reference=false 出（VIDEO 单行候选），admin 通过表单开关新增 true 变体行
+        // 7x-1 修复：VIDEO 模型 has_reference=true/false 是两行独立身份，只配了一面时候选必须保留，
+        // 否则配完「无参考」价后模型从下拉消失，而编辑又禁止改身份 → 用户永远配不出「有参考」价。
+        // 非 VIDEO 行为不变（全局同名模型或已配行即排除）。
         return llmProviderMapper.selectList(new LambdaQueryWrapper<LlmProviderEntity>()
                         .eq(LlmProviderEntity::getStatus, "ACTIVE"))
                 .stream()
                 .filter(provider -> "ACTIVE".equals(provider.getStatus()))
                 .flatMap(provider -> toAvailableModels(provider))
-                .filter(candidate -> !configuredGlobalModels.contains(candidate.getModel())
-                        && !configured.contains(
-                                pricingIdentity(candidate.getProviderId(), candidate.getModel(), false)))
+                .map(candidate -> {
+                    if (!PricingRuleEntity.KIND_VIDEO.equals(candidate.getKind())) {
+                        boolean blocked = configuredGlobalModels.contains(candidate.getModel())
+                                || configured.contains(pricingIdentity(
+                                        candidate.getProviderId(), candidate.getModel(), false));
+                        return blocked ? null : candidate;
+                    }
+                    // 无参考维度已配 = 全局同名价（V66 只可能覆盖 false 维）或 provider 专属 false 行
+                    boolean falseDone = configuredGlobalModels.contains(candidate.getModel())
+                            || configured.contains(pricingIdentity(
+                                    candidate.getProviderId(), candidate.getModel(), false));
+                    boolean trueDone = configured.contains(pricingIdentity(
+                            candidate.getProviderId(), candidate.getModel(), true));
+                    if (falseDone && trueDone) {
+                        return null;
+                    }
+                    candidate.setHint(falseDone
+                            ? "已配「无参考」价，本次新增为「有参考」价行"
+                            : "已配「有参考」价，本次新增为「无参考」价行");
+                    return candidate;
+                })
+                .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(AvailablePricingModelVO::getProviderName)
                         .thenComparing(AvailablePricingModelVO::getModel))
                 .toList();

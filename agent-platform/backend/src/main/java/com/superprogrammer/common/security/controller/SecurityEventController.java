@@ -3,6 +3,8 @@ package com.superprogrammer.common.security.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.superprogrammer.auth.entity.User;
+import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.PageResult;
@@ -17,6 +19,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 安全事件查询/处置端点（11x 加固）：列表筛选 + ACK。security:event:read / security:ban:manage。
@@ -27,8 +32,9 @@ import java.util.Map;
 public class SecurityEventController {
 
     private final SecurityEventMapper securityEventMapper;
+    private final UserMapper userMapper;
 
-    /** 事件列表（新在前；eventType/severity/handled 可选筛选，#{} 参数化防注入）。 */
+    /** 事件列表（新在前；eventType/severity/handled 可选筛选，#{} 参数化防注入）。13x-1：批量回填 username。 */
     @GetMapping
     @RequirePermission("security:event:read")
     public R<PageResult<SecurityEvent>> list(@RequestParam(defaultValue = "1") int page,
@@ -43,7 +49,30 @@ public class SecurityEventController {
                 .orderByDesc(SecurityEvent::getCreatedAt);
         Page<SecurityEvent> p = securityEventMapper.selectPage(
                 new Page<>(Math.max(1, page), Math.min(100, Math.max(1, size))), wrapper);
+        fillUsernames(p.getRecords());
         return R.ok(PageResult.of(p.getRecords(), p.getTotal(), page, size));
+    }
+
+    /**
+     * 13x-1：详情页要能看到「谁」——列表页一次查回本页 userId → username 映射，
+     * 避免管理员只看到 用户#id 无从核对账号。批量一次查询，无 N+1。
+     */
+    private void fillUsernames(List<SecurityEvent> records) {
+        Set<Long> ids = records.stream()
+                .map(SecurityEvent::getUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names = userMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(User::getId, u -> u.getUsername() == null ? "" : u.getUsername(),
+                        (a, b) -> a));
+        for (SecurityEvent e : records) {
+            if (e.getUserId() != null) {
+                e.setUsername(names.getOrDefault(e.getUserId(), null));
+            }
+        }
     }
 
     /** 未处置计数（侧栏 badge 轮询用）。 */

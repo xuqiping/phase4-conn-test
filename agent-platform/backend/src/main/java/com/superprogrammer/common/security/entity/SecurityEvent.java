@@ -56,4 +56,8 @@ public class SecurityEvent {
     private String handledBy;
 
     private OffsetDateTime handledAt;
+
+    /** 13x-1：展示用回填字段（按 userId 批量 join 用户表），非表列。 */
+    @TableField(exist = false)
+    private String username;
 }
