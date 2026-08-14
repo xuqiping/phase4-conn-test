@@ -1,5 +1,6 @@
-// 顶栏：Logo + 项目切换 + 阶段管道条（Step 5 落组件，此处占位）+ 密度开关。
+// 顶栏：Logo + 项目切换 + 阶段管道条（Step 5 静态联动）+ 密度开关。
 import { useUiStore } from "../../stores/ui";
+import PipelineBar from "../pipeline/PipelineBar";
 
 export default function Topbar() {
   const density = useUiStore((s) => s.density);
@@ -27,10 +28,8 @@ export default function Topbar() {
         未选择项目 <span className="text-[10px]">▾</span>
       </button>
 
-      {/* 管道条占位：Step 5 落管道条组件 */}
-      <div className="mx-auto flex items-center rounded-full border border-border bg-bg/60 px-3 py-1 text-xs text-text-faint">
-        阶段管道条（Step 5 接通）
-      </div>
+      {/* 阶段管道条（Step 5 静态联动；Step 7 起由状态机事件驱动） */}
+      <PipelineBar />
 
       {/* 密度切换 */}
       <button

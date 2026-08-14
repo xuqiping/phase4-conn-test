@@ -1,17 +1,17 @@
-// 右栏：五 Tab（规格/变更/日志/预览/文件，对齐 UI 设计 §右栏）。内容为静态占位。
-import { useState } from "react";
+// 右栏：五 Tab（规格/变更/日志/预览/文件，对齐 UI 设计 §右栏）。
+// Step 5：Tab 跟随当前视图归位（联动点 1），也可手动切换；内容为静态占位。
+import type { RightTab } from "../../lib/viewRegistry";
+import { useUiStore } from "../../stores/ui";
 
-const TABS = [
+const TABS: { key: RightTab; label: string }[] = [
   { key: "spec", label: "规格" },
   { key: "changes", label: "变更" },
   { key: "logs", label: "日志" },
   { key: "preview", label: "预览" },
   { key: "files", label: "文件" },
-] as const;
+];
 
-type TabKey = (typeof TABS)[number]["key"];
-
-const PLACEHOLDER: Record<TabKey, string> = {
+const PLACEHOLDER: Record<RightTab, string> = {
   spec: "需求/计划产物摘要（P04 接通）",
   changes: "变更记录（P08 接通）",
   logs: "内核事件日志（Step 7 事件订阅后接通）",
@@ -20,7 +20,8 @@ const PLACEHOLDER: Record<TabKey, string> = {
 };
 
 export default function Rightbar() {
-  const [tab, setTab] = useState<TabKey>("spec");
+  const tab = useUiStore((s) => s.rightTab);
+  const setTab = useUiStore((s) => s.setRightTab);
 
   return (
     <aside
