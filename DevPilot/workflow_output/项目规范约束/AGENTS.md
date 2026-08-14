@@ -25,6 +25,9 @@ DevPilot = Win/Mac 桌面端 AI 编程智能体：Codex 级能力 + 内置引导
 - **命名**：代码标识符英文；UI 文案中文；文档中文为主、技术术语保留英文并括注大白话。
 - **提交规范**：`feat:/fix:/docs:/refactor:/chore: 中文描述（FR-xxx）`。
 - **git 入库注意**：父仓库根 .gitignore 有 `docs/` 全局忽略——本项目文档靠 `!DevPilot/workflow_output/docs/` 放开，新增 docs 外目录时自查 `git status` 是否漏文件。
+- **前端依赖方向**：stores/lib 不得 import 组件注册表（viewRegistry）——元数据放 `lib/viewMeta.ts`（纯数据），组件装配层才可 import 组件。违者 module 循环（P01 Step 8 实测翻车）。
+- **前端测试**：jsdom 无 Tauri 运行时，一律 `vi.mock("../lib/ipc")` 内存假内核（模板见 App.test.tsx）；vitest 未开 globals，测试需显式 import + `afterEach(cleanup)`。
+- **CI 位置**：工作流文件必须放仓库根 `.github/workflows/`（DevPilot 是子目录，自放无效），用 `paths: DevPilot/**` 限定触发。
 - **本地依赖审计降级**：cargo/npm audit 本地网络受限时仅 WARN，硬拦截在 CI（GitHub Actions）。
 
 ## 4. 文档规范

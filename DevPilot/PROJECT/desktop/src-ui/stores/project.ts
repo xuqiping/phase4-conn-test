@@ -2,7 +2,7 @@
 // 每次快照更新后视图归位到内核阶段（联动点 1/4）。
 import { create } from "zustand";
 import { errMessage, ipc, onState, type ProjectDto, type StateDto } from "../lib/ipc";
-import { type ViewKey } from "../lib/viewRegistry";
+import { type ViewKey } from "../lib/viewMeta";
 import { useUiStore } from "./ui";
 
 interface ProjectState {

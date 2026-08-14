@@ -2,7 +2,7 @@
 // 注意：业务状态（真实阶段）单一真相源在 Rust 内核——这里只存「界面正在看哪个视图」，
 // Step 7 接事件流后由内核事件驱动 setView。
 import { create } from "zustand";
-import { type RightTab, type ViewKey, viewDef } from "../lib/viewRegistry";
+import { type RightTab, type ViewKey, viewMeta } from "../lib/viewMeta";
 
 export type Density = "comfort" | "compact";
 
@@ -22,7 +22,7 @@ export const useUiStore = create<UiState>((set) => ({
   toggleDensity: () =>
     set((s) => ({ density: s.density === "comfort" ? "compact" : "comfort" })),
   view: "dashboard",
-  rightTab: viewDef("dashboard").defaultRightTab,
-  setView: (view) => set({ view, rightTab: viewDef(view).defaultRightTab }),
+  rightTab: viewMeta("dashboard").defaultRightTab,
+  setView: (view) => set({ view, rightTab: viewMeta(view).defaultRightTab }),
   setRightTab: (rightTab) => set({ rightTab }),
 }));
