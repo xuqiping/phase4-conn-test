@@ -20,7 +20,7 @@ DevPilot = Win/Mac 桌面端 AI 编程智能体：Codex 级能力 + 内置引导
 
 - **桌面端**：Tauri 2 + Rust（workspace 多 crate，见 architecture §3）+ React 19 + TypeScript + Vite + Tailwind/Radix。
 - **云端**：NestJS + PostgreSQL（Flyway 迁移）+ Redis；统一 `R<T>` 响应封装 `{code, msg, data}`；金额一律 `*_cents` 整数；写接口必幂等。
-- **本地存储**：SQLite（sqlx 迁移，L 版本号）。
+- **本地存储**：SQLite（rusqlite bundled + 自研 L 版本迁移器，WAL 模式；写走单队列串行）。
 - **客户端不持有任何上游模型 Key**——全部走自家网关（ADR-003），违者视为严重事故。
 - **命名**：代码标识符英文；UI 文案中文；文档中文为主、技术术语保留英文并括注大白话。
 - **提交规范**：`feat:/fix:/docs:/refactor:/chore: 中文描述（FR-xxx）`。
