@@ -1,1 +1,39 @@
-/* C2 填充：calm-slate 主题变量 */
+/* T2 冷静极简「Calm Slate」— Linear 式专业工具，零装饰。
+   层级靠表面色差 + 1px 细描边；无辉光/渐变/玻璃；单一强调色。 */
+:root[data-theme='calm-slate'] {
+  --sf-0: #0f0f10;
+  --sf-1: #161617;
+  --sf-2: #1c1c1e;
+  --sf-3: #242426;
+  --sf-4: #2e2e31;
+
+  --glass-blur: none;
+  --node-blur: none;
+
+  --tx-1: #e8e8ea;
+  --tx-2: #9c9ca3;
+  --tx-3: #62626a;
+
+  --accent: #5e6ad2;
+  --accent-2: #5e6ad2;
+  --ok: #4cb782;
+  --warn: #d9a13b;
+  --err: #e5484d;
+  --info: #5e6ad2;
+
+  --line-1: rgba(255, 255, 255, 0.06);
+  --line-2: rgba(255, 255, 255, 0.12);
+
+  /* 极简：无辉光，选中 = 描边加粗（组件里用 --line-2/accent 实现） */
+  --glow-accent: none;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  --bg-glow-1: none;
+  --bg-glow-2: none;
+
+  /* 运行中 = 状态点呼吸（仅 opacity），无流光 */
+  --running-border: none;
+  --running-anim: none;
+
+  --edge-color: rgba(156, 156, 163, 0.35);
+}

@@ -1,1 +1,46 @@
-/* C2 填充：neon-pulse 主题变量 */
+/* T1 霓虹 AI「Neon Pulse」— 深空控制台，AI 在发光。
+   玻璃拟态面板 + 辉光选中态 + 渐变流光。辉光只出现在选中/运行/hover，默认态收敛。 */
+:root[data-theme='neon-pulse'] {
+  /* 表面层级：0 页面 → 4 模态 */
+  --sf-0: #070b14;
+  --sf-1: rgba(148, 163, 255, 0.05);
+  --sf-2: rgba(148, 163, 255, 0.06);
+  --sf-3: rgba(148, 163, 255, 0.1);
+  --sf-4: #121a2e;
+
+  /* 玻璃拟态：仅侧边栏/弹层等 ≤3 个固定面板用 blur（性能坑：节点卡片禁用） */
+  --glass-blur: blur(14px);
+  --node-blur: none;
+
+  /* 文字三级（对 --sf-0 对比度 ≥4.5:1） */
+  --tx-1: #e8ecf8;
+  --tx-2: #9aa5c4;
+  --tx-3: #5d688a;
+
+  /* 强调与语义色 */
+  --accent: #7c5cff;
+  --accent-2: #22d3ee;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --info: #60a5fa;
+
+  /* 描边 */
+  --line-1: rgba(148, 163, 255, 0.14);
+  --line-2: rgba(148, 163, 255, 0.28);
+
+  /* 辉光（选中/运行/hover 专用） */
+  --glow-accent: 0 0 0 1px var(--accent), 0 0 24px rgba(124, 92, 255, 0.35);
+  --shadow-pop: 0 8px 32px rgba(3, 6, 18, 0.6);
+
+  /* 背景氛围光斑（极淡） */
+  --bg-glow-1: radial-gradient(600px 400px at 15% 0%, rgba(124, 92, 255, 0.06), transparent 70%);
+  --bg-glow-2: radial-gradient(500px 380px at 90% 100%, rgba(34, 211, 238, 0.05), transparent 70%);
+
+  /* 运行中节点：conic 流光（伪元素 rotate 动画，不动渐变角度，兼容旧 Edge） */
+  --running-border: conic-gradient(from 0deg, var(--accent), var(--accent-2), transparent 40%, var(--accent));
+  --running-anim: spin 2.4s linear infinite;
+
+  /* 连线 */
+  --edge-color: rgba(148, 163, 184, 0.35);
+}

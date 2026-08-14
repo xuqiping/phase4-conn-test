@@ -1,1 +1,46 @@
-/* C2 填充：cineon 主题变量 */
+/* T4 影像工坊「Cineon」— AI 视频生成工作站：放映厅暖黑 + 胶片橙金/品红 + 时间轴母题。 */
+:root[data-theme='cineon'] {
+  --sf-0: #12100e;
+  --sf-1: #1a1714;
+  --sf-2: #221e1a;
+  --sf-3: #2b2621;
+  --sf-4: #352f29;
+
+  --glass-blur: blur(10px);
+  --node-blur: none; /* 节点卡半透明不模糊（省性能） */
+
+  --tx-1: #f3efe9;
+  --tx-2: #b0a89c;
+  --tx-3: #6f675c;
+
+  /* 双强调：橙金=主操作；品红=AI/生成相关 */
+  --accent: #f59e0b;
+  --accent-2: #ec4899;
+  --ok: #84cc16;
+  --warn: #fbbf24;
+  --err: #ef4444;
+  --info: #38bdf8;
+
+  --line-1: rgba(245, 158, 11, 0.12);
+  --line-2: rgba(245, 158, 11, 0.26);
+
+  --glow-accent: 0 0 0 1px var(--accent), 0 0 20px rgba(245, 158, 11, 0.28);
+  --shadow-pop: 0 10px 32px rgba(8, 5, 2, 0.65);
+
+  --bg-glow-1: radial-gradient(700px 420px at 20% 0%, rgba(245, 158, 11, 0.05), transparent 70%);
+  --bg-glow-2: radial-gradient(560px 400px at 85% 100%, rgba(236, 72, 153, 0.04), transparent 70%);
+
+  /* 运行中 = 底部时间轴播放头扫过（组件内 translateX 动画） */
+  --running-border: none;
+  --running-anim: none;
+
+  /* 节点类型色 → 胶片色系 */
+  --kind-text: #38bdf8;
+  --kind-image: #f59e0b;
+  --kind-video: #ec4899;
+  --kind-audio: #84cc16;
+  --kind-script: #e7e5e4;
+  --kind-storyboard: #f97316;
+
+  --edge-color: rgba(176, 168, 156, 0.35);
+}

@@ -1,1 +1,88 @@
-// C2 填充：全局 reset/滚动条/selection/reduced-motion
+// global.scss — 全局重置与皮肤无关骨架；颜色一律 var(--token)，禁止硬编码。
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--tx-1);
+  background-color: var(--sf-0);
+  // 主题氛围光斑（无则 none，不占位）
+  background-image: var(--bg-glow-1, none), var(--bg-glow-2, none);
+  background-repeat: no-repeat;
+  // 主题切换平滑过渡（颜色类属性，不动 layout）
+  transition: background-color var(--d-slow) var(--ease), color var(--d-slow) var(--ease);
+  -webkit-font-smoothing: antialiased;
+}
+
+// 滚动条皮肤
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+// 焦点环：键盘可达性的视觉锚
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+// 系统「减少动画」开关：全站动效关闭（流光/呼吸/流式打字都退化）
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+// 运行中节点的流光旋转（transform 动画，全浏览器兼容；不动 conic-gradient 角度）
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// T2 运行中状态点呼吸
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+// T4 时间轴播放头扫描
+@keyframes scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}

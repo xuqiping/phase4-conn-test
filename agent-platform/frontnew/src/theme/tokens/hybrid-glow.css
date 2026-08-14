@@ -1,1 +1,40 @@
-/* C2 填充：hybrid-glow 主题变量 */
+/* T3 混合「Hybrid Glow」— 页面用 T2 的克制，画布卡片用 T1 的玻璃+辉光。
+   表面栈近 T2；--node-* 变量把「画布出彩」限制在画布范围内。 */
+:root[data-theme='hybrid-glow'] {
+  --sf-0: #101013;
+  --sf-1: #16161a;
+  --sf-2: #1c1c21;
+  --sf-3: #25252c;
+  --sf-4: #2f2f38;
+
+  --glass-blur: none;
+  --node-blur: none; /* 节点卡半透明不模糊（省性能） */
+
+  --tx-1: #e9e9ee;
+  --tx-2: #9d9dab;
+  --tx-3: #63636f;
+
+  --accent: #5e6ad2;
+  --accent-2: #7c5cff;
+  --ok: #4cb782;
+  --warn: #d9a13b;
+  --err: #e5484d;
+  --info: #6d7ae0;
+
+  --line-1: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.14);
+
+  /* 页面零辉光；节点卡片辉光由组件用 --node-glow 施加 */
+  --glow-accent: none;
+  --node-glow: 0 0 0 1px var(--node-kind, var(--accent)), 0 0 20px color-mix(in srgb, var(--node-kind, var(--accent)) 30%, transparent);
+  --node-bg: rgba(124, 92, 255, 0.07);
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.55);
+
+  --bg-glow-1: none;
+  --bg-glow-2: none;
+
+  --running-border: conic-gradient(from 0deg, var(--node-kind, var(--accent)), var(--accent-2), transparent 40%, var(--node-kind, var(--accent)));
+  --running-anim: spin 2.4s linear infinite;
+
+  --edge-color: rgba(157, 157, 171, 0.35);
+}

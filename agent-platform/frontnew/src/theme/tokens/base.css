@@ -1,1 +1,46 @@
-/* C2 填充：共享变量（圆角/时长/间距/字号/缓动） */
+/* base.css — 4 主题共享 token：形状/动效/排版/间距。
+   颜色类变量（--sf-*/--accent/--tx-* 等）由各主题文件定义，此处只放与主题无关的骨架值。 */
+:root {
+  /* 圆角 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  /* 动效时长 */
+  --d-fast: 120ms;
+  --d-mid: 200ms;
+  --d-slow: 320ms;
+  /* 先快后慢、收尾柔和的缓动（easeOutExpo 近似） */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 间距基数 4px */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* 字号阶 */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+
+  /* 字体族：数字/代码用等宽，观感更工程 */
+  --font-ui: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+
+  /* 节点类型色（T1/T2/T3 共用一套，T4 在 cineon.css 覆盖为胶片色系） */
+  --kind-text: #3b82f6;
+  --kind-image: #a855f7;
+  --kind-video: #ec4899;
+  --kind-audio: #06b6d4;
+  --kind-script: #f59e0b;
+  --kind-storyboard: #22c55e;
+}
