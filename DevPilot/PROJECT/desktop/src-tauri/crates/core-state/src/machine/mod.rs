@@ -201,9 +201,45 @@ fn apply_scale(mut def: WorkflowDef, scale: &str) -> Result<WorkflowDef, String>
             if guard > 16 {
                 return Err(format!("规模 {scale} 桥接出现环"));
             }
-            match def.transitions.iter().find(|x| x.from == to) {
-                Some(next) => to = next.to.clone(),
-                None => continue 'edges, // 被删终点无后继：丢弃该边
+            // 被删阶段可能有多条出边（正向边 + 回退边）。逐条出边把链追到
+            // 非删落点，优先「不回到出发点」的落点——否则回退边若恰好写在
+            // 前面，桥出去就成自环被丢弃 → 出发阶段成孤岛（交叉审查 P02 前修-1）。
+            let outs: Vec<&str> = def
+                .transitions
+                .iter()
+                .filter(|x| x.from == to)
+                .map(|x| x.to.as_str())
+                .collect();
+            let mut resolved: Option<String> = None;
+            for cand in outs {
+                let mut cur = cand.to_string();
+                let mut dead = false;
+                let mut g2 = 0;
+                while skip.contains(cur.as_str()) {
+                    g2 += 1;
+                    if g2 > 16 {
+                        return Err(format!("规模 {scale} 桥接出现环"));
+                    }
+                    match def.transitions.iter().find(|x| x.from == cur) {
+                        Some(next) => cur = next.to.clone(),
+                        None => {
+                            dead = true; // 该链指向无后继的被删终点
+                            break;
+                        }
+                    }
+                }
+                if dead {
+                    continue;
+                }
+                if cur != t.from {
+                    resolved = Some(cur);
+                    break;
+                }
+                resolved.get_or_insert(cur); // 兜底：全部落点都回出发点时保留
+            }
+            match resolved {
+                Some(next) => to = next,
+                None => continue 'edges, // 无任何可追后继：丢弃该边
             }
         }
         if t.from == to || bridged.iter().any(|e| e.from == t.from && e.to == to) {

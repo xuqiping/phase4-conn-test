@@ -149,6 +149,38 @@ fn scale_l1_skips_deploy_only() {
     assert_eq!(keys, ["idea", "spec", "plan", "build", "accept"]);
 }
 
+#[test]
+fn scale_bridge_immune_to_backedge_order() {
+    // 交叉审查 P02 前修-1：回退边写在正向边之前时，桥接不得把出发阶段变孤岛。
+    // 构造：spec 有两条出边（回退 spec→idea 写在前、正向 spec→plan 写在后），
+    // L0 删掉 spec/plan 后，idea 必须仍能直达 build。
+    let yaml = r#"
+workflow_version: 1
+phases:
+  - { key: idea, label: 想法 }
+  - { key: spec, label: 需求 }
+  - { key: plan, label: 计划 }
+  - { key: build, label: 建造 }
+transitions:
+  - { from: idea, to: spec }
+  - { from: spec, to: idea }    # 回退边抢先
+  - { from: spec, to: plan }
+  - { from: plan, to: build }
+scale_variants:
+  L0: { skip: [spec, plan] }
+"#;
+    let def = loader::parse(yaml).expect("合法工作流");
+    let mut m = Machine::new(def, "L0").expect("回退边抢先时桥接仍须成功");
+    let keys: Vec<&str> = m
+        .definition()
+        .phases
+        .iter()
+        .map(|p| p.key.as_str())
+        .collect();
+    assert_eq!(keys, ["idea", "build"]);
+    m.transition("build").expect("idea 直达 build，未成孤岛");
+}
+
 // ---- AC-052：持久化与断点续开（状态机层） ----
 
 fn fixture_db() -> (Db, i64) {

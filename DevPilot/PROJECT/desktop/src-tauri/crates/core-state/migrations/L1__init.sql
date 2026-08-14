@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS workflow_states (
   project_id  INTEGER PRIMARY KEY REFERENCES projects(id),
   phase       TEXT NOT NULL,
-  gate_status TEXT NOT NULL DEFAULT '{}',
+  gate_status TEXT NOT NULL DEFAULT '[]',
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
