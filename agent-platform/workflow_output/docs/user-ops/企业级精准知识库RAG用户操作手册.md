@@ -39,6 +39,18 @@
 
 排查顺序：先看设置页真实测试，再按同一 `traceId` 查看 Java 日志与调用明细。日志只应包含模型、供应商、候选数量、耗时、状态和关联 ID，不应出现 API Key、Query、候选正文或 Chunk 原文。
 
+## Phase 4 验收现状与复验步骤
+
+当前环境已完成真实“上传文档 → Embedding → 建索引 → Rerank → 精准检索/问答 → 引用与日志、计费对账”。Qwen EMBED/RERANK 价表也已配置；OpenSearch 尚未部署时系统会按设计使用 PG 兼容路径。
+
+1. 在设置页分别测试 Qwen Embedding 和 Qwen Rerank；预期分别显示 2048 维和正确语义排序。
+2. 上传测试文档并等待状态进入 `INDEXED`。若出现 `varchar(16)`，确认 Flyway 已执行 V120/V121；真正需放宽的是 `stored_files.source`，因为解析产物来源 `KB_PARSE_ARTIFACT` 有 17 个字符。
+3. 在知识库中明确选择 `qwen3-vl-embedding`，重排方式选择 `RERANK`，模型选择 `qwen3-rerank`。
+4. 执行精准检索和 RAG 问答，核对时间线 configuredMode/effectiveMode 为 `RERANK`，答案带 Citation、定位信息和置信状态。
+5. 按同一 traceId 核对模型调用与计费：QUERY_EMBEDDING、RERANK、事实提炼和答案合成均应有关联记录；当前环境的 EMBED/RERANK 价表已可正常扣费。
+6. 余额不足等业务异常应直接显示真实原因；若只显示“query embedding 失败”，说明服务仍是修复前版本，需要重新构建并重启后端。
+7. OpenSearch 部署后，再补测双写、对账、快照、Alias 切换和回滚；9200 未部署时不把这部分记录为已验收。
+
 ## 管理员：理解双写状态
 
 - `RAG_OPENSEARCH_ENABLED=false`：文档继续只写旧 PG 索引链路，适合尚未部署 OpenSearch 的环境。

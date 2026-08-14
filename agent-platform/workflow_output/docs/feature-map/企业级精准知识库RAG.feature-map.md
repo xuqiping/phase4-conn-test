@@ -164,6 +164,15 @@
 - `V119__billing_rerank_kind.sql` 扩展调用明细与价表 kind 约束；RERANK 按输入 token 计价，管理员可在价表配置页选择重排模型。
 - 管理员设置页的 Embedding/Rerank“测试”均发真实请求。Rerank 诊断还会确认两个相关文本排在量子计算无关文本之前，HTTP 成功但语义排序错误仍判失败。
 
+### Phase 4 实测结果与字段漂移修复
+
+- Phase 4 已跑通真实链路：上传文档 → 解析 → Qwen Embedding 2048 维 → PG 索引 → 混合召回 → `qwen3-rerank` → Grounded Answer → Citation、Trace、日志和计费对账。
+- 最初的 `varchar(16)` 超长被误归因到 `file_id`；实测确认 UUID `file_id` 可正常写入，真正超长的是 `ParseArtifactService.STORAGE_SOURCE="KB_PARSE_ARTIFACT"`（17 字符）无法写入 `stored_files.source VARCHAR(16)`。
+- `V120__fix_stored_files_file_id_drift.sql` 防御性把可能漂移的 `file_id` 幂等拉齐到 `VARCHAR(128)`；`V121__widen_stored_files_source.sql` 将真正阻断解析的 `source` 放宽到 `VARCHAR(32)`。已执行的 V40 未被修改。
+- 实测文档进入 `INDEXED`，生成 9 个节点和 4 条 2048 维向量；精准检索、Rerank、Grounded Answer、引用定位、置信状态及浏览器 RAG 问答均通过。
+- 同轮修复裸注解 SQL 错误转义、模型 JSON 栅栏兼容、Rerank `total_tokens` 计费回退，以及余额不足被误包装成“query embedding 失败”的错误上浮问题。
+- 当前剩余环境项是 OpenSearch 尚未部署；系统按设计走 PG 兼容模式，OpenSearch 双写、Alias 切换和对账需在部署 9200 服务后补验。
+
 ## 相关文档
 
 ## P5 评测数据集真实链路
