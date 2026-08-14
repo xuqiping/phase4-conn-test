@@ -103,6 +103,17 @@ public class MfaService {
     }
 
     /**
+     * 注销清痕（安全体系 S5 · SEC-FR-100 J2）：无验证码直接清除全部 TOTP 材料。
+     * 与 unbind 不同——注销前已做「登录态+密码」二次确认且账号随之软删，
+     * 不存在「劫会话拆第二因素」的攻击面（账号本身已不存在）。
+     */
+    public void purgeForDeletedUser(Long userId) {
+        systemSettingService.clearSettingValue(SECRET_KEY_PREFIX + userId);
+        systemSettingService.clearSettingValue(RECOVERY_KEY_PREFIX + userId);
+        systemSettingService.clearSettingValue(PENDING_KEY_PREFIX + userId);
+    }
+
+    /**
      * 登录第二屏校验：TOTP 码（±1 窗口）或一次性恢复码（命中即作废）。
      *
      * @param consumeRecovery true=恢复码命中后从存储移除（登录/解绑场景）；

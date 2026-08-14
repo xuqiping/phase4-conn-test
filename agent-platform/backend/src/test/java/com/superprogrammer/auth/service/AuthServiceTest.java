@@ -26,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -611,5 +612,64 @@ class AuthServiceTest {
         when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis down"));
 
         assertDoesNotThrow(() -> authService.logout(accessToken, null));
+    }
+
+    // ===== 安全体系 S5 · SEC-FR-100（J2 注销）：密码确认 → 软删匿名化 =====
+
+    @Test
+    void deleteAccount_success_anonymizesKicksAndBlacklists() {
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$random-overwrite");
+        when(jwtUtil.isTokenValid("access-token")).thenReturn(true);
+        when(jwtUtil.getTokenId("access-token")).thenReturn("access-jti");
+        when(jwtUtil.getRemainingTtl("access-token")).thenReturn(50000L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        assertDoesNotThrow(() ->
+                authService.deleteAccount(1L, "password123", "access-token", null));
+
+        org.mockito.ArgumentCaptor<User> captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userMapper).updateById(captor.capture());
+        User saved = captor.getValue();
+        assertTrue(saved.getUsername().startsWith("deleted_"), "username 匿名化为 deleted_ 前缀");
+        assertTrue(saved.getEmail().endsWith("@deleted.invalid"), "email 匿名化为保留域");
+        assertEquals("DELETED", saved.getStatus());
+        assertNull(saved.getAvatar());
+        assertNull(saved.getPhone());
+        assertNull(saved.getWechatUnionid());
+        assertNull(saved.getDingtalkUnionId());
+        assertEquals("$2a$10$random-overwrite", saved.getPassword(), "随机口令覆盖");
+        // 注销语义：踢全部会话 + 当前 token 拉黑 + TOTP 材料清痕
+        verify(sessionService).kickAllSessions(1L);
+        verify(valueOperations, times(1)).set(startsWith("token:blacklist:"), eq("1"),
+                anyLong(), eq(TimeUnit.MILLISECONDS));
+        verify(mfaService).purgeForDeletedUser(1L);
+    }
+
+    @Test
+    void deleteAccount_wrongPassword_rejectedNoMutation() {
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(passwordEncoder.matches("wrong-pass", testUser.getPassword())).thenReturn(false);
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                authService.deleteAccount(1L, "wrong-pass", "access-token", null));
+
+        assertEquals(400, e.getCode());
+        verify(userMapper, never()).updateById(any(User.class));
+        verify(sessionService, never()).kickAllSessions(anyLong());
+        verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void deleteAccount_notActive_rejected() {
+        testUser.setStatus("BANNED");
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                authService.deleteAccount(1L, "password123", null, null));
+
+        assertEquals(400, e.getCode());
+        verify(userMapper, never()).updateById(any(User.class));
     }
 }

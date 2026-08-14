@@ -15,7 +15,11 @@ param(
     [string[]]$RedisConfCandidates = @("D:\IT\ops\memurai\memurai.conf", "C:\Program Files\Memurai\memurai.conf", "D:\IT\ops\redis\redis.windows.conf"),
     # 对外只允许这些端口（80/443 + RDP 自定端口按实际改）
     [int[]]$AllowedPublicPorts = @(80, 443),
-    [int]$RdpPort = 33890   # K1 改过端口后同步改这里；未改端口前先用 3389 跑基线
+    [int]$RdpPort = 33890,   # K1 改过端口后同步改这里；未改端口前先用 3389 跑基线
+    # M3 FIM 基线文件（安全体系 S5 · SEC-FR-134）：jar/yml/nginx.conf 首跑生成 SHA256 基线，
+    # 之后每次巡检比对——漂移即 FAIL（发布新版本后须 -Rebaseline 重建基线）。
+    [string]$FimBaselineFile = "C:\agent-platform\ops\fim-baseline.csv",
+    [switch]$Rebaseline
 )
 
 $script:FailCount = 0
@@ -138,6 +142,60 @@ if (Test-Path $uploadsDir) {
     }
 } else {
     Write-Check "K4 uploads 目录存在" $false "未找到: $uploadsDir"
+}
+
+# ---------- M3 FIM 关键文件完整性（安全体系 S5 · SEC-FR-134）----------
+# 首跑（基线文件不存在）→ 生成 SHA256 基线并提示人工确认后归档；之后巡检 → 逐文件比对漂移。
+# 发布/合法变更后跑 -Rebaseline 重建。jar 用通配（版本号变更即漂移，属预期提示重建）。
+try {
+    $fimTargets = @()
+    foreach ($jar in (Get-ChildItem (Join-Path $AppRoot "backend") -Filter "*.jar" -File -ErrorAction SilentlyContinue)) {
+        $fimTargets += $jar.FullName
+    }
+    foreach ($fixed in @(
+            (Join-Path $AppRoot "backend\application.yml"),
+            (Join-Path $AppRoot "backend\application-prod.yml"),
+            $NginxConf,
+            ($RedisConfCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1),
+            (Join-Path $PgDataDir "pg_hba.conf")
+        )) {
+        if ($fixed -and (Test-Path $fixed)) { $fimTargets += $fixed }
+    }
+    $fimTargets = $fimTargets | Select-Object -Unique
+
+    if ($fimTargets.Count -eq 0) {
+        Write-Check "M3 FIM 目标文件存在" $false "$AppRoot 下未找到 jar/yml"
+    } elseif ($Rebaseline -or -not (Test-Path $FimBaselineFile)) {
+        $rows = foreach ($f in $fimTargets) {
+            "{0},{1}" -f $f, (Get-FileHash $f -Algorithm SHA256).Hash
+        }
+        $dir = Split-Path $FimBaselineFile -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+        Set-Content -Path $FimBaselineFile -Value $rows -Encoding utf8
+        Write-Host "[BASELINE] M3 FIM 基线已生成（$($fimTargets.Count) 个文件）→ $FimBaselineFile" -ForegroundColor Yellow
+        Write-Host "          人工核对无误后归档；发布新版本后用 -Rebaseline 重建" -ForegroundColor Yellow
+    } else {
+        $baseline = @{}
+        foreach ($line in (Get-Content $FimBaselineFile)) {
+            $parts = $line -split ",", 2
+            if ($parts.Count -eq 2) { $baseline[$parts[0]] = $parts[1] }
+        }
+        $drift = @()
+        foreach ($f in $fimTargets) {
+            $cur = (Get-FileHash $f -Algorithm SHA256).Hash
+            if (-not $baseline.ContainsKey($f)) {
+                $drift += "新增未入基线: $f"
+            } elseif ($baseline[$f] -ne $cur) {
+                $drift += "哈希漂移: $f"
+            }
+        }
+        foreach ($gone in ($baseline.Keys | Where-Object { $_ -notin $fimTargets })) {
+            $drift += "基线内文件已消失: $gone"
+        }
+        Write-Check "M3 FIM 关键文件哈希一致（$($fimTargets.Count) 个）" ($drift.Count -eq 0) ($drift -join "; ")
+    }
+} catch {
+    Write-Check "M3 FIM 完整性检查" $false "执行失败: $($_.Exception.Message)"
 }
 
 # ---------- 汇总 ----------

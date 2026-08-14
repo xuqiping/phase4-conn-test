@@ -72,6 +72,13 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false, layout: 'auth', title: '重置密码' }
   },
   {
+    // 安全体系 S5 · J4：隐私政策独立页（注册弹窗简版条款的完整口径）
+    path: '/privacy',
+    name: 'PrivacyPolicy',
+    component: () => import('@/views/PrivacyPolicyView.vue'),
+    meta: { requiresAuth: false, layout: 'auth', title: '隐私政策' }
+  },
+  {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
     meta: { requiresAuth: true },

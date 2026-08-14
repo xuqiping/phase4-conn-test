@@ -760,24 +760,10 @@ public class AuthService {
         // 黑名单写入（Redis 故障 → WARN 不阻断登出；黑名单缺失的代价=token 残留至自然过期，access 仅 15min）
         try {
             // 将access token加入黑名单
-            if (accessToken != null && jwtUtil.isTokenValid(accessToken)) {
-                String accessJti = jwtUtil.getTokenId(accessToken);
-                long accessTtl = jwtUtil.getRemainingTtl(accessToken);
-                if (accessTtl > 0) {
-                    redisTemplate.opsForValue().set(
-                            TOKEN_BLACKLIST_PREFIX + accessJti, "1", accessTtl, TimeUnit.MILLISECONDS);
-                }
-            }
+            blacklistToken(accessToken);
 
             // 将refresh token加入黑名单
-            if (refreshToken != null && jwtUtil.isTokenValid(refreshToken)) {
-                String refreshJti = jwtUtil.getTokenId(refreshToken);
-                long refreshTtl = jwtUtil.getRemainingTtl(refreshToken);
-                if (refreshTtl > 0) {
-                    redisTemplate.opsForValue().set(
-                            TOKEN_BLACKLIST_PREFIX + refreshJti, "1", refreshTtl, TimeUnit.MILLISECONDS);
-                }
-            }
+            blacklistToken(refreshToken);
         } catch (Exception e) {
             log.warn("登出黑名单写入失败(降级:登出继续,token残留至自然过期): {}", e.getMessage());
         }
@@ -796,6 +782,86 @@ public class AuthService {
         sessionService.clearSession(logoutUserId, logoutSid);
         auditAuth("logout", logoutUserId, logoutUsername, AuditLogEntity.RESULT_SUCCESS, null);
         log.info("用户登出成功");
+    }
+
+    /**
+     * 单 token 拉黑（jti + 剩余 TTL；已过期/非法 token 静默跳过）。logout/注销共用。
+     */
+    private void blacklistToken(String token) {
+        if (token == null || !jwtUtil.isTokenValid(token)) {
+            return;
+        }
+        String jti = jwtUtil.getTokenId(token);
+        long ttl = jwtUtil.getRemainingTtl(token);
+        if (ttl > 0) {
+            redisTemplate.opsForValue().set(
+                    TOKEN_BLACKLIST_PREFIX + jti, "1", ttl, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * 安全体系 S5 · SEC-FR-100（J2 注销）：登录态+密码确认 → 软删匿名化。
+     *
+     * <p>只匿名化身份字段（username/email/name/phone/avatar/微信钉钉绑定 → deleted_{uuid} 体系值）、
+     * 状态置 DELETED（登录口 ACTIVE 检查=再不可登录）、随机口令覆盖；计费流水/审计日志按法定口径
+     * 保留（脱敏口径见隐私政策页）。踢全部会话（kickAllSessions=注销语义，与改密一致）+ 当前双
+     * token 拉黑——注销即刻全端 401。
+     */
+    @Transactional
+    public void deleteAccount(Long userId, String password, String accessToken, String refreshToken) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        if (!"ACTIVE".equals(user.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "账号当前状态不允许注销");
+        }
+        if (password == null || password.isBlank()
+                || !passwordEncoder.matches(password, user.getPassword())) {
+            auditAuth("account_deleted", userId, user.getUsername(),
+                    AuditLogEntity.RESULT_FAIL, "password_confirm_failed");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "密码错误，注销未执行");
+        }
+
+        String oldUsername = user.getUsername();
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        // 匿名化：uuid 后缀保证唯一索引（uk_users_username/uk_users_email）零碰撞；
+        // .invalid 保留域（RFC2606）——邮件系统永不投递，防误发到真实域名
+        user.setUsername("deleted_" + suffix);
+        user.setName("已注销用户");
+        user.setEmail(suffix + "@deleted.invalid");
+        user.setAvatar(null);
+        user.setPhone(null);
+        user.setWechatUnionid(null);
+        user.setWechatOpenid(null);
+        user.setDingtalkUnionId(null);
+        user.setDingtalkOpenId(null);
+        // 随机口令覆盖：即便他日放开 DELETED 状态检查，任何已知口令也命中不了
+        user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+        user.setStatus("DELETED");
+        user.setBanReason(null);
+        user.setLockedUntil(null);
+        userMapper.updateById(user);
+
+        // TOTP 材料清痕（secret/恢复码哈希/pending）——失败仅降级：账号已不可登录
+        try {
+            mfaService.purgeForDeletedUser(userId);
+        } catch (Exception e) {
+            log.warn("注销TOTP清痕失败(降级:账号已不可登录): {}", e.getMessage());
+        }
+
+        // 全会话踢除（主动放弃所有会话——密码变更同语义）
+        sessionService.kickAllSessions(userId);
+        // 当前双 token 立即拉黑（不等 15min/7d 自然过期）
+        try {
+            blacklistToken(accessToken);
+            blacklistToken(refreshToken);
+        } catch (Exception e) {
+            log.warn("注销token拉黑失败(降级:token残留至自然过期): {}", e.getMessage());
+        }
+
+        auditAuth("account_deleted", userId, oldUsername, AuditLogEntity.RESULT_SUCCESS, null);
+        log.info("用户注销完成(软删匿名化) userId={}", userId);
     }
 
     public UserVO getCurrentUser(Long userId) {

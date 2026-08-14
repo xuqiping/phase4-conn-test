@@ -124,4 +124,20 @@ public class AuthController {
         UserVO userVO = authService.getCurrentUser(userId);
         return ResponseEntity.ok(R.ok(userVO));
     }
+
+    /**
+     * 安全体系 S5 · SEC-FR-100（J2 注销）：本人+密码确认 → 软删匿名化。
+     * 成功响应即代表当前 token 已拉黑——前端收到后应清本地态并跳登录页。
+     */
+    @DeleteMapping("/account")
+    public ResponseEntity<R<Void>> deleteAccount(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @Valid @RequestBody DeleteAccountRequest request) {
+        String accessToken = null;
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            accessToken = authHeader.substring(7);
+        }
+        authService.deleteAccount(currentUserId(), request.getPassword(), accessToken, request.getRefreshToken());
+        return ResponseEntity.ok(R.ok("注销成功", null));
+    }
 }

@@ -277,6 +277,17 @@ export const authApi = {
   /** 解绑：需当前有效验证码/恢复码 */
   mfaUnbind(code: string) {
     return request.post<ApiResponse<void>>('/auth/mfa/unbind', { code })
+  },
+
+  // ==================== 安全体系 S5 · J2 注销 ====================
+
+  /**
+   * 注销账号（登录态 + 密码确认 → 软删匿名化）
+   * DELETE /api/auth/account
+   * 成功即当前 token 全部拉黑——前端须清本地态并跳登录页。
+   */
+  deleteAccount(password: string) {
+    return request.delete<ApiResponse<void>>('/auth/account', { data: { password } })
   }
 }
 

@@ -105,6 +105,57 @@
     <!-- 安全体系 S5 · A6：TOTP 两步验证（绑定/解绑/恢复码） -->
     <TotpSettingsCard />
 
+    <!-- 安全体系 S5 · J2：注销账号（危险区，密码确认 + 二次弹窗） -->
+    <n-card title="注销账号" size="small" class="security-tab__card">
+      <div class="security-tab__danger-text">
+        注销后账号将无法恢复：用户名/邮箱/手机号等身份信息将被匿名化清除，
+        所有设备立即退出登录。计费流水与审计日志将按法定要求脱敏保留。
+        详细口径见
+        <router-link to="/privacy" target="_blank" class="security-tab__danger-link">
+          《隐私政策》
+        </router-link>
+        。
+      </div>
+      <n-button type="error" ghost :loading="deleting" @click="showDeleteAccount = true">
+        注销我的账号
+      </n-button>
+    </n-card>
+
+    <!-- 注销确认弹窗：密码确认（后端最后一道闸） -->
+    <n-modal
+      v-model:show="showDeleteAccount"
+      preset="dialog"
+      title="确认注销账号"
+      :show-icon="false"
+      :mask-closable="false"
+      style="max-width: 440px"
+    >
+      <n-alert type="warning" :show-icon="true" style="margin-bottom: 12px">
+        此操作不可恢复！请确认你了解《隐私政策》中关于数据删除与法定保留的口径。
+      </n-alert>
+      <n-form ref="delFormRef" :model="delForm" :rules="delRules" label-placement="top">
+        <n-form-item path="password" label="输入当前密码确认">
+          <n-input
+            v-model:value="delForm.password"
+            type="password"
+            show-password-on="click"
+            placeholder="请输入当前密码"
+          />
+        </n-form-item>
+        <n-form-item path="confirmText" label="输入「注销」二字再次确认">
+          <n-input v-model:value="delForm.confirmText" placeholder="注销" />
+        </n-form-item>
+      </n-form>
+      <template #action>
+        <n-space>
+          <n-button @click="showDeleteAccount = false">取消</n-button>
+          <n-button type="error" :loading="deleting" @click="handleDeleteAccount">
+            确认注销
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- 绑定邮箱弹窗 -->
     <n-modal
       v-model:show="showBindEmail"
@@ -295,6 +346,45 @@ async function handleChangePassword() {
   }
 }
 
+// 安全体系 S5 · J2：注销账号（密码确认 + 「注销」二字二次确认 → 软删匿名化）
+const delFormRef = ref<FormInst | null>(null)
+const showDeleteAccount = ref(false)
+const deleting = ref(false)
+const delForm = reactive({ password: '', confirmText: '' })
+const delRules: FormRules = {
+  password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  confirmText: [
+    {
+      validator: (_rule, value) => {
+        if (value !== '注销') return new Error('请输入「注销」二字以确认')
+        return true
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+
+async function handleDeleteAccount() {
+  try {
+    await delFormRef.value?.validate()
+  } catch {
+    return
+  }
+  deleting.value = true
+  try {
+    await authApi.deleteAccount(delForm.password)
+    // 注销成功 → 后端已踢全部会话+拉黑当前 token → 本地清态跳登录页
+    // （logout 内部 API 调用会因 token 已拉黑而 401，但 catch 保证本地清理必执行）
+    message.success('账号已注销，感谢你的使用')
+    await authStore.logout()
+    await router.push('/login')
+  } catch {
+    // 拦截器已提示（密码错/状态不允许等）
+  } finally {
+    deleting.value = false
+  }
+}
+
 onMounted(loadCredentials)
 </script>
 
@@ -352,6 +442,15 @@ onMounted(loadCredentials)
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px dashed var(--color-border, rgba(0, 0, 0, 0.09));
+}
+.security-tab__danger-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+}
+.security-tab__danger-link {
+  color: var(--color-error, #d03050);
 }
 .security-tab__notice {
   margin: 12px 0 0;
