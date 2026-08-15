@@ -250,8 +250,7 @@ fn concurrent_transitions_do_not_tear_state_and_history() {
             let db = db.clone();
             let def = def.clone();
             std::thread::spawn(move || {
-                let mut pm =
-                    PersistentMachine::load_or_init(db, 1, def, "L2").expect("加载成功");
+                let mut pm = PersistentMachine::load_or_init(db, 1, def, "L2").expect("加载成功");
                 pm.transition("spec", "user").is_ok()
             })
         })

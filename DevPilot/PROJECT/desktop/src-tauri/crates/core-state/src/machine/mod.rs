@@ -303,13 +303,26 @@ impl PersistentMachine {
                 machine.restore(&phase, gates).map_err(MachineError::Def)?;
             }
             None => {
-                db.write(|c| {
+                // 并发初始化竞争（多来源同时 load_or_init）：INSERT 冲突让位，
+                // 落库成功与否都以库里现值为准重读一次。
+                let row = db.write(|c| {
                     c.execute(
-                        "INSERT INTO workflow_states (project_id, phase, gate_status) VALUES (?1, ?2, '[]')",
+                        "INSERT INTO workflow_states (project_id, phase, gate_status)
+                         VALUES (?1, ?2, '[]')
+                         ON CONFLICT (project_id) DO NOTHING",
                         (project_id, machine.phase()),
                     )?;
-                    Ok(())
+                    Ok(c.query_row(
+                        "SELECT phase, gate_status FROM workflow_states WHERE project_id = ?1",
+                        [project_id],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )?)
                 })?;
+                if row.0 != machine.phase() {
+                    machine
+                        .restore(&row.0, serde_json::from_str(&row.1)?)
+                        .map_err(MachineError::Def)?;
+                }
             }
         }
         Ok(Self {
@@ -328,14 +341,31 @@ impl PersistentMachine {
     }
 
     pub fn pass_gate(&mut self, gate: &str) -> Result<(), MachineError> {
+        let from = self.machine.phase().to_string();
         self.machine.pass_gate(gate)?;
-        self.persist()?;
+        let gates: Vec<&String> = self.machine.gates_passed().iter().collect();
+        let gates_json = serde_json::to_string(&gates)?;
+        let project_id = self.project_id;
+        let won = self.db.write(|c| {
+            let n = c.execute(
+                "UPDATE workflow_states SET gate_status = ?1, updated_at = datetime('now')
+                 WHERE project_id = ?2 AND phase = ?3",
+                (gates_json.as_str(), project_id, from.as_str()),
+            )?;
+            Ok(n > 0)
+        })?;
+        if !won {
+            // 阶段被并发转移：以库为准恢复（门禁集合也随新阶段重置），不覆盖
+            self.reload_from_db()?;
+        }
         Ok(())
     }
 
     /// 裁决 + 落库（当前态 + 历史），actor 记录操作来源（user/cli/mcp/deeplink）。
-    /// 落库在**同一个 write 闭包**内完成：写队列串行执行，两条 SQL 不可能
-    /// 被并发插入撕裂，消除读-改-写竞态（交叉审查 P02 期间修-3）。
+    /// 并发安全三板斧（交叉审查 P02 期间修-3）：
+    /// ① 两条 SQL 在同一 write 闭包（写队列串行，不会撕裂）；
+    /// ② UPDATE 带 `WHERE phase = 旧值` 的 CAS——并发抢先者赢，后来者 0 行命中；
+    /// ③ CAS 失败 = 状态被并发修改，以库内真值恢复本机镜像并报大白话错误。
     pub fn transition(&mut self, to: &str, actor: &str) -> Result<(), MachineError> {
         let from = self.machine.phase().to_string();
         let gate = self.machine.gate_for(to).map(str::to_string);
@@ -344,34 +374,39 @@ impl PersistentMachine {
         let gates_json = serde_json::to_string(&gates)?;
         let project_id = self.project_id;
         let to_owned = to.to_string();
-        self.db.write(|c| {
-            c.execute(
-                "UPDATE workflow_states SET phase = ?1, gate_status = ?2, updated_at = datetime('now') WHERE project_id = ?3",
-                (to_owned.as_str(), gates_json.as_str(), project_id),
+        let won = self.db.write(|c| {
+            let n = c.execute(
+                "UPDATE workflow_states SET phase = ?1, gate_status = ?2, updated_at = datetime('now')
+                 WHERE project_id = ?3 AND phase = ?4",
+                (to_owned.as_str(), gates_json.as_str(), project_id, from.as_str()),
             )?;
-            history::record_on(
-                c,
-                project_id,
-                &from,
-                &to_owned,
-                gate.as_deref(),
-                actor,
-            )?;
-            Ok(())
+            if n == 0 {
+                return Ok(false); // CAS 失败：并发方已改状态
+            }
+            history::record_on(c, project_id, &from, &to_owned, gate.as_deref(), actor)?;
+            Ok(true)
         })?;
+        if !won {
+            self.reload_from_db()?;
+            return Err(MachineError::Def(
+                "状态刚被其他操作改变，已为你刷新，请重试".into(),
+            ));
+        }
         Ok(())
     }
 
-    fn persist(&self) -> Result<(), MachineError> {
-        let gates: Vec<&String> = self.machine.gates_passed().iter().collect();
-        let gates_json = serde_json::to_string(&gates)?;
-        self.db.write(|c| {
-            c.execute(
-                "UPDATE workflow_states SET phase = ?1, gate_status = ?2, updated_at = datetime('now') WHERE project_id = ?3",
-                (self.machine.phase(), gates_json, self.project_id),
-            )?;
-            Ok(())
+    /// 以库内真值重建内存镜像（CAS 失败 / 外部变更后的收敛）
+    fn reload_from_db(&mut self) -> Result<(), MachineError> {
+        let row = self.db.read(|c| {
+            Ok(c.query_row(
+                "SELECT phase, gate_status FROM workflow_states WHERE project_id = ?1",
+                [self.project_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )?)
         })?;
+        self.machine
+            .restore(&row.0, serde_json::from_str(&row.1)?)
+            .map_err(MachineError::Def)?;
         Ok(())
     }
 }
