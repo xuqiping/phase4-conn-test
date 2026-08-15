@@ -68,6 +68,15 @@ export class LedgerService {
     return { items: items.rows, total: Number(total.rows[0].n) };
   }
 
+  /** 单任务累计消费（分，熔断判断用；task_id = 客户端 nonce）。 */
+  async deriveTaskSpentCents(userId: number, taskId: string): Promise<number> {
+    const res = await this.db.query<{ s: string | null }>(
+      `SELECT COALESCE(SUM(-amount_cents), 0) AS s FROM token_ledger
+       WHERE user_id = $1 AND task_id = $2 AND kind = 1`, [userId, taskId],
+    );
+    return Number(res.rows[0].s);
+  }
+
   /** 对账：账本推导的总额（分，可负）——应恒等于 wallets.balance+gift。 */
   async deriveTotalCents(userId: number): Promise<number> {
     const res = await this.db.query<{ s: string | null }>(
