@@ -1,0 +1,919 @@
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+ :: Spring Boot ::                (v3.2.5)
+
+2026-08-14 20:36:42.230  INFO 115364 --- [           main] c.s.AgentPlatformApplication             [trace=,retrieval=,ranking=,model=,purpose=,user=] : Starting AgentPlatformApplication v0.1.0-SNAPSHOT using Java 17.0.19 with PID 115364 (E:\workspace\agent-platform\backend\target\agent-platform-0.1.0-SNAPSHOT.jar started by Administrator in E:\workspace\agent-platform\backend)
+2026-08-14 20:36:42.282  INFO 115364 --- [           main] c.s.AgentPlatformApplication             [trace=,retrieval=,ranking=,model=,purpose=,user=] : No active profile set, falling back to 1 default profile: "default"
+2026-08-14 20:36:44.866  INFO 115364 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate [trace=,retrieval=,ranking=,model=,purpose=,user=] : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-08-14 20:36:44.876  INFO 115364 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate [trace=,retrieval=,ranking=,model=,purpose=,user=] : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-08-14 20:36:44.966  INFO 115364 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate [trace=,retrieval=,ranking=,model=,purpose=,user=] : Finished Spring Data repository scanning in 48 ms. Found 0 Redis repository interfaces.
+2026-08-14 20:36:48.478  INFO 115364 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  [trace=,retrieval=,ranking=,model=,purpose=,user=] : Tomcat initialized with port 8080 (http)
+2026-08-14 20:36:48.573  INFO 115364 --- [           main] o.apache.catalina.core.StandardService   [trace=,retrieval=,ranking=,model=,purpose=,user=] : Starting service [Tomcat]
+2026-08-14 20:36:48.575  INFO 115364 --- [           main] o.apache.catalina.core.StandardEngine    [trace=,retrieval=,ranking=,model=,purpose=,user=] : Starting Servlet engine: [Apache Tomcat/10.1.20]
+2026-08-14 20:36:48.801  INFO 115364 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       [trace=,retrieval=,ranking=,model=,purpose=,user=] : Initializing Spring embedded WebApplicationContext
+2026-08-14 20:36:48.803  INFO 115364 --- [           main] w.s.c.ServletWebServerApplicationContext [trace=,retrieval=,ranking=,model=,purpose=,user=] : Root WebApplicationContext: initialization completed in 6373 ms
+2026-08-14 20:36:50.622  INFO 115364 --- [           main] com.zaxxer.hikari.HikariDataSource       [trace=,retrieval=,ranking=,model=,purpose=,user=] : HikariPool-1 - Starting...
+2026-08-14 20:36:51.434  INFO 115364 --- [           main] com.zaxxer.hikari.pool.HikariPool        [trace=,retrieval=,ranking=,model=,purpose=,user=] : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@76641439
+2026-08-14 20:36:51.440  INFO 115364 --- [           main] com.zaxxer.hikari.HikariDataSource       [trace=,retrieval=,ranking=,model=,purpose=,user=] : HikariPool-1 - Start completed.
+2026-08-14 20:36:51.762  INFO 115364 --- [           main] o.f.c.internal.license.VersionPrinter    [trace=,retrieval=,ranking=,model=,purpose=,user=] : Flyway Community Edition 9.22.3 by Redgate
+2026-08-14 20:36:51.764  INFO 115364 --- [           main] o.f.c.internal.license.VersionPrinter    [trace=,retrieval=,ranking=,model=,purpose=,user=] : See release notes here: https://rd.gt/416ObMi
+2026-08-14 20:36:51.765  INFO 115364 --- [           main] o.f.c.internal.license.VersionPrinter    [trace=,retrieval=,ranking=,model=,purpose=,user=] : 
+2026-08-14 20:36:51.880  INFO 115364 --- [           main] org.flywaydb.core.FlywayExecutor         [trace=,retrieval=,ranking=,model=,purpose=,user=] : Database: jdbc:postgresql://localhost:5432/agent_platform (PostgreSQL 16.14)
+2026-08-14 20:36:51.900  WARN 115364 --- [           main] o.f.c.internal.database.base.Database    [trace=,retrieval=,ranking=,model=,purpose=,user=] : Flyway upgrade recommended: PostgreSQL 16.14 is newer than this version of Flyway and support has not been tested. The latest supported version of PostgreSQL is 15.
+2026-08-14 20:36:52.177  INFO 115364 --- [           main] o.f.core.internal.command.DbValidate     [trace=,retrieval=,ranking=,model=,purpose=,user=] : Successfully validated 118 migrations (execution time 00:00.214s)
+2026-08-14 20:36:52.230  INFO 115364 --- [           main] o.f.core.internal.command.DbMigrate      [trace=,retrieval=,ranking=,model=,purpose=,user=] : Current version of schema "public": 121
+2026-08-14 20:36:52.250  INFO 115364 --- [           main] o.f.core.internal.command.DbMigrate      [trace=,retrieval=,ranking=,model=,purpose=,user=] : Schema "public" is up to date. No migration necessary.
+2026-08-14 20:36:54.081 ERROR 115364 --- [           main] c.b.m.core.MybatisConfiguration          [trace=,retrieval=,ranking=,model=,purpose=,user=] : mapper[com.superprogrammer.chat.mapper.MemoryConflictMapper.findByUser] is ignored, because it exists, maybe from xml file
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        3.5.5 
+2026-08-14 20:36:58.387  WARN 115364 --- [           main] c.s.auth.service.GeoIpService            [trace=,retrieval=,ranking=,model=,purpose=,user=] : ip2region 离线库加载失败，异地登录提醒将降级（查询返‘未知’）: java.io.FileNotFoundException: class path resource [ip2region.xdb] cannot be opened because it does not exist
+2026-08-14 20:37:00.363  INFO 115364 --- [           main] c.s.billing.service.UsageCollector       [trace=,retrieval=,ranking=,model=,purpose=,user=] : UsageCollector 采集池就绪 threads=2 queue=1000
+2026-08-14 20:37:01.029  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册LLM Provider: newok (https://ok.com/v1)
+2026-08-14 20:37:01.041  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册LLM Provider: kimi (https://api.kimi.com/coding/v1/messages)
+2026-08-14 20:37:01.044  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册LLM Provider: glm (https://open.bigmodel.cn/api/anthropic/v1/messages)
+2026-08-14 20:37:01.046  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册 rerank Provider（仅 rerank，不进 chat 路由）: qwen-rerank (https://ai.ctaigw.cn/v1/reranks)
+2026-08-14 20:37:01.049  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册LLM Provider: deepseek (https://api.deepseek.com/v1/chat/completions)
+2026-08-14 20:37:01.050  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 跳过 VIDEO provider（不注册为 chat）: seedance (https://ai.ctaigw.cn/v1/contents/generations/tasks)
+2026-08-14 20:37:01.051  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 跳过 IMAGE provider（不注册为 chat）: ctaigw-image (https://ai.ctaigw.cn/v1/images/generations)
+2026-08-14 20:37:01.066  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册LLM Provider: doubao (https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions)
+2026-08-14 20:37:01.069  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册 embedding Provider（仅 embed，不进 chat 路由）: qwen-embedding (https://ai.ctaigw.cn/v1/services/embeddings/multimodal-embedding/multimodal-embedding)
+2026-08-14 20:37:01.071  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 注册 embedding Provider（仅 embed，不进 chat 路由）: doubao-embedding (https://ark.cn-beijing.volces.com/api/coding/v3/embeddings)
+2026-08-14 20:37:01.072  INFO 115364 --- [           main] c.superprogrammer.llm.config.LlmConfig   [trace=,retrieval=,ranking=,model=,purpose=,user=] : 共注册 5 个 chat + 2 个 embedding + 1 个 rerank Provider
+2026-08-14 20:37:01.586  INFO 115364 --- [           main] c.a.c.s.impl.CaptchaServiceFactory       [trace=,retrieval=,ranking=,model=,purpose=,user=] : supported-captchaCache-service:[local]
+2026-08-14 20:37:01.618  INFO 115364 --- [           main] c.a.c.s.impl.CaptchaServiceFactory       [trace=,retrieval=,ranking=,model=,purpose=,user=] : supported-captchaTypes-service:[clickWord, default, blockPuzzle]
+2026-08-14 20:37:01.629  INFO 115364 --- [           main] .a.c.c.AjCaptchaServiceAutoConfiguration [trace=,retrieval=,ranking=,model=,purpose=,user=] : 自定义配置项：
+AjCaptchaProperties{type=DEFAULT, jigsaw='', picClick='', waterMark='我的水印', waterFont='WenQuanZhengHei.ttf', fontType='WenQuanZhengHei.ttf', slipOffset='5', aesStatus=true, interferenceOptions='0', cacheNumber='1000', timingClear='180', cacheType=redis, reqFrequencyLimitEnable=false, reqGetLockLimit=5, reqGetLockSeconds=300, reqGetMinuteLimit=100, reqCheckMinuteLimit=100, reqVerifyMinuteLimit=100}
+2026-08-14 20:37:01.690  INFO 115364 --- [           main] com.anji.captcha.util.ImageUtils         [trace=,retrieval=,ranking=,model=,purpose=,user=] : 初始化底图:[SLIDING_BLOCK=[Ljava.lang.String;@60e5d4fb, ORIGINAL=[Ljava.lang.String;@15e8918, PIC_CLICK=[Ljava.lang.String;@1197cd8]
+2026-08-14 20:37:01.693  INFO 115364 --- [           main] c.a.c.s.i.ClickWordCaptchaServiceImpl    [trace=,retrieval=,ranking=,model=,purpose=,user=] : --->>>初始化验证码底图<<<---clickWord
+2026-08-14 20:37:01.963  INFO 115364 --- [           main] com.anji.captcha.util.ImageUtils         [trace=,retrieval=,ranking=,model=,purpose=,user=] : 初始化底图:[SLIDING_BLOCK=[Ljava.lang.String;@4295b0b8, ORIGINAL=[Ljava.lang.String;@ab8b1ef, PIC_CLICK=[Ljava.lang.String;@3413effc]
+2026-08-14 20:37:01.965  INFO 115364 --- [           main] c.a.c.s.i.BlockPuzzleCaptchaServiceImpl  [trace=,retrieval=,ranking=,model=,purpose=,user=] : --->>>初始化验证码底图<<<---blockPuzzle
+2026-08-14 20:37:07.026  INFO 115364 --- [           main] o.s.b.a.e.web.EndpointLinksResolver      [trace=,retrieval=,ranking=,model=,purpose=,user=] : Exposing 3 endpoint(s) beneath base path '/actuator'
+2026-08-14 20:37:07.195  INFO 115364 --- [           main] o.s.s.web.DefaultSecurityFilterChain     [trace=,retrieval=,ranking=,model=,purpose=,user=] : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@5739e15e, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@41f17bb7, org.springframework.security.web.context.SecurityContextHolderFilter@40b4a59c, org.springframework.security.web.header.HeaderWriterFilter@eeb1cac, org.springframework.web.filter.CorsFilter@18be3e85, org.springframework.security.web.authentication.logout.LogoutFilter@2e826bd1, com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter@50ee7857, com.superprogrammer.auth.security.JwtAuthenticationFilter@5c658163, com.superprogrammer.common.logging.MdcUserFilter@7625bfbd, com.superprogrammer.billing.context.BillingContextFilter@7fd65f9a, com.superprogrammer.common.logging.RequestLogFilter@299003eb, com.superprogrammer.common.security.SecurityGateFilter@1afea182, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@74d76660, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@6271a097, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@48455005, org.springframework.security.web.session.SessionManagementFilter@246b2469, org.springframework.security.web.access.ExceptionTranslationFilter@4310d985, org.springframework.security.web.access.intercept.AuthorizationFilter@51a94f7f]
+2026-08-14 20:37:08.002  INFO 115364 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  [trace=,retrieval=,ranking=,model=,purpose=,user=] : Tomcat started on port 8080 (http) with context path ''
+2026-08-14 20:37:08.038  INFO 115364 --- [           main] c.s.AgentPlatformApplication             [trace=,retrieval=,ranking=,model=,purpose=,user=] : Started AgentPlatformApplication in 27.254 seconds (process running for 28.621)
+2026-08-14 20:37:14.881  INFO 115364 --- [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       [trace=,retrieval=,ranking=,model=,purpose=,user=] : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-08-14 20:37:14.882  INFO 115364 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        [trace=,retrieval=,ranking=,model=,purpose=,user=] : Initializing Servlet 'dispatcherServlet'
+2026-08-14 20:37:14.884  INFO 115364 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        [trace=,retrieval=,ranking=,model=,purpose=,user=] : Completed initialization in 2 ms
+2026-08-14 20:37:16.834  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=b156d51893ac8a9382665feb74119219,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=1907
+2026-08-14 20:37:20.481  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=18979dd4f02f7944faa5664770fdd257,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/health status=200 costMs=196
+2026-08-14 20:37:30.279  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=ff7fa61f7b34744cebda258f898deefe,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=470
+2026-08-14 20:37:33.727  INFO 115364 --- [nio-8080-exec-5] c.s.auth.service.AuthService             [trace=66fcc87d2d6de79eb0e3e3131ad801a3,retrieval=,ranking=,model=,purpose=,user=-] : 用户登录成功: admin
+2026-08-14 20:37:33.735  INFO 115364 --- [nio-8080-exec-5] .s.a.AnnotationAsyncExecutionInterceptor [trace=66fcc87d2d6de79eb0e3e3131ad801a3,retrieval=,ranking=,model=,purpose=,user=-] : More than one TaskExecutor bean found within the context, and none is named 'taskExecutor'. Mark one of them as primary or name it 'taskExecutor' (possibly as an alias) in order to use it for async processing: [memoryTaskExecutor, auditTaskExecutor, securityTaskExecutor, taskScheduler]
+2026-08-14 20:37:33.920  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=66fcc87d2d6de79eb0e3e3131ad801a3,retrieval=,ranking=,model=,purpose=,user=-] : request POST /api/auth/login status=200 costMs=418
+2026-08-14 20:37:38.974  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=8c667a3297695a2bf61e2822c8cca6c3,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=16
+2026-08-14 20:37:40.090  INFO 115364 --- [nio-8080-exec-8] c.s.auth.service.AuthService             [trace=c7d2d98b2d1a8ab0c3d2b75fc35f4e18,retrieval=,ranking=,model=,purpose=,user=-] : 用户登录成功: admin
+2026-08-14 20:37:40.110  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=c7d2d98b2d1a8ab0c3d2b75fc35f4e18,retrieval=,ranking=,model=,purpose=,user=-] : request POST /api/auth/login status=200 costMs=113
+2026-08-14 20:37:41.191  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=d834e1d7e9173694457c2de6c8cb3a36,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/billing/pricing status=200 costMs=22
+2026-08-14 20:37:41.449  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=e48f5f104870ed2b8d5c676264d36608,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/billing/pricing/available-models status=200 costMs=15
+2026-08-14 20:37:45.591  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=06b792ac0874366fcaca89f6d5874749,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=783
+2026-08-14 20:37:49.044  INFO 115364 --- [nio-8080-exec-5] c.s.b.service.PricingConfigService       [trace=f1d6a580ddb2a474c027e2ef85167455,retrieval=,ranking=,model=,purpose=,user=1] : 建价表 kind=VIDEO model=Cdance2.0 providerId=6
+2026-08-14 20:37:49.050  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=f1d6a580ddb2a474c027e2ef85167455,retrieval=,ranking=,model=,purpose=,user=1] : request POST /api/billing/pricing status=200 costMs=39
+2026-08-14 20:37:49.260  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=4d51598cb9f3006bcad4848fda0fc655,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/billing/pricing/available-models status=200 costMs=9
+2026-08-14 20:37:55.550  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=99229fefb314ca0b713db007f825d61f,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events status=200 costMs=81
+2026-08-14 20:38:00.256  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=ffc48106846e2c4ae21e38fb817c6d15,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=449
+2026-08-14 20:38:15.264  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=45c447fbca0c3ae8d4241e2c107b52d2,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=456
+2026-08-14 20:38:30.256  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=dd8ebb921bfc289383f6557a01dbc1c9,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=447
+2026-08-14 20:38:38.919  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=e9f97ce896bbd07f2345ff56d5bae8b1,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:38:45.274  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=4b61c1161fa6c78f0f34d5fa10f5b49a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=465
+2026-08-14 20:39:00.264  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=12fe2f85661ce46f8d852b23ae80c169,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=455
+2026-08-14 20:39:15.259  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=eea4bed07159ec87183bf81f3c844552,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=451
+2026-08-14 20:39:30.371  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=5687f26f362e96bd980590c4fe2469f1,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=563
+2026-08-14 20:39:38.924  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=999504acad45ed5d630d71e6ec96f02a,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=6
+2026-08-14 20:39:45.838  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=7625b9434df02492911ecaa78b6ddf42,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=1031
+2026-08-14 20:40:00.311  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=d8d6280c2b9e7f631b63f4c2ee472ba6,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=502
+2026-08-14 20:40:15.259  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=c848aa7f799e2147f61595be2668ba31,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=452
+2026-08-14 20:40:30.251  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=11d347fff8d692253e28644b8d976042,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=443
+2026-08-14 20:40:38.925  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=4ad1e52630b408bc7633b1ab9961f225,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:40:45.271  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=4ede300725cdf0782efe5f0cfa4692b8,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=463
+2026-08-14 20:41:00.261  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=d746291f9392d6c26eb68600d9521244,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=454
+2026-08-14 20:41:15.374  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=322a34377f4b5612c71ec5bd14978c91,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=563
+2026-08-14 20:41:30.860  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=f31f333283197a8741dd7ca3190aff41,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=1051
+2026-08-14 20:41:45.261  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=2cc9950a07a3c78f609cdb8b933fac0f,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=453
+2026-08-14 20:41:52.910  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=706f658be7c1f4fa2fd7f233e7b8d973,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:41:53.799  INFO 115364 --- [nio-8080-exec-1] c.s.auth.service.AuthService             [trace=c5b5ffe777eca6c1567acc57650177e2,retrieval=,ranking=,model=,purpose=,user=-] : 用户登录成功: admin
+2026-08-14 20:41:53.811  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=c5b5ffe777eca6c1567acc57650177e2,retrieval=,ranking=,model=,purpose=,user=-] : request POST /api/auth/login status=200 costMs=96
+2026-08-14 20:41:53.985  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=7557fdf32a2e95de05ac38d6d9761293,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:41:53.989  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=98527a43037182f4fb5549ef751e53db,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/knowledge/bases status=200 costMs=13
+2026-08-14 20:42:00.267  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=e853b68f564e2811d662214f1f3877ce,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=460
+2026-08-14 20:42:05.920  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=b251e746d79ece4af2074e0c1b30e73e,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=9
+2026-08-14 20:42:05.977  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=8d591b01662772542aa6270be33ebdf1,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/chat/sessions status=200 costMs=66
+2026-08-14 20:42:06.017  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=a6d919b7e90dbecfdf38e16cc53739c7,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/knowledge/bases status=200 costMs=6
+2026-08-14 20:42:06.064  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=29de75062bf687b3bd20bc92b8116aea,retrieval=,ranking=,model=,purpose=,user=-] : request GET /ws/chat status=101 costMs=59
+2026-08-14 20:42:06.080  INFO 115364 --- [nio-8080-exec-8] c.s.chat.websocket.ChatWebSocketHandler  [trace=,retrieval=,ranking=,model=,purpose=,user=] : WebSocket连接建立: userId=1, sessionId=5cae058a-6e46-761e-00ec-7ba5b492710c
+2026-08-14 20:42:14.719  INFO 115364 --- [nio-8080-exec-9] c.s.chat.websocket.ChatWebSocketHandler  [trace=,retrieval=,ranking=,model=,purpose=,user=] : WebSocket连接关闭: sessionId=5cae058a-6e46-761e-00ec-7ba5b492710c, status=CloseStatus[code=1000, reason=null]
+2026-08-14 20:42:15.123  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=662e02633a20a3c8eefa2fc60c3301ed,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events status=200 costMs=14
+2026-08-14 20:42:15.248  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=60ce1a5bff707a3d9dc4498c9d60f5fe,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=440
+2026-08-14 20:42:30.303  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=3e0f7f6e67a68a5a2c6e8bf4cb7302ad,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=495
+2026-08-14 20:42:31.231  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=03d0071c211fc9b4a7942f3ad88119a3,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=6
+2026-08-14 20:42:31.243  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=ab285c10bb32e5aeebb4c7fcc85b4d20,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=17
+2026-08-14 20:42:31.254  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=2ae5af509436ae93f0afff4825151404,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=22
+2026-08-14 20:42:45.276  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=c9fa7c6837b452f741166065b2728b2f,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=468
+2026-08-14 20:42:54.068  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=87ce64a0daa344db46e955d690acd1d3,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=12
+2026-08-14 20:42:57.045  INFO 115364 --- [nio-8080-exec-8] c.s.canvas.service.CanvasService         [trace=709a42a19e642e01a134507ba4535b67,retrieval=,ranking=,model=,purpose=,user=1] : canvas created: id=5 userId=1 name=未命名画布
+2026-08-14 20:42:57.047  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=709a42a19e642e01a134507ba4535b67,retrieval=,ranking=,model=,purpose=,user=1] : request POST /api/canvas status=200 costMs=13
+2026-08-14 20:42:57.086  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=4678a731e45b16177581330b920bf6b8,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas/5 status=200 costMs=7
+2026-08-14 20:42:57.161  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=d33ef10c5bc0938e2b1b7fc53d4bea53,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/video status=200 costMs=8
+2026-08-14 20:42:57.164  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=fba2421353802d9f216d63f7b87feb92,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/available status=200 costMs=12
+2026-08-14 20:42:57.182  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=ffaa0db8d8351c9852b8a91d0d25e4cd,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=5
+2026-08-14 20:43:00.277  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=b9b4a49c982a2ddb2dbe3d8036dad24a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=469
+2026-08-14 20:43:15.247  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=d348da41a29bedb788f335773a16fba7,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=439
+2026-08-14 20:43:30.263  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=1970fed385d70d0b2d677a3287c1a00c,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=455
+2026-08-14 20:43:31.231  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=e18d173768dffbb0dd72eabd9b225c2c,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=4
+2026-08-14 20:43:45.272  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=be1e48ad1b62977744fe3455c515cb1a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=465
+2026-08-14 20:43:54.923  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=1a5edc06c7ac0b0e4ed7cce40eb36cf9,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=7
+2026-08-14 20:44:01.247  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=04dd00b9b818fd95872d57dc55afef9c,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=1439
+2026-08-14 20:44:03.839  INFO 115364 --- [nio-8080-exec-1] c.s.canvas.service.CanvasService         [trace=96deee01c3e5991d10d316e015b66c1e,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:44:03.861  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=96deee01c3e5991d10d316e015b66c1e,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=161
+2026-08-14 20:44:04.556  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=5ab580b99b6a2eee3d33977b5157edf3,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=16
+2026-08-14 20:44:13.515  INFO 115364 --- [nio-8080-exec-3] c.s.canvas.service.CanvasService         [trace=66d8f65df2989ef2d8c25bc7b6a51a02,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:44:13.525  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=66d8f65df2989ef2d8c25bc7b6a51a02,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=18
+2026-08-14 20:44:13.556  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=71ac890750afb647633b399ef1e1b08d,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=10
+2026-08-14 20:44:15.346  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=ed4caa25076cc89615805662e51fac9a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=538
+2026-08-14 20:44:25.175  WARN 115364 --- [nio-8080-exec-5] c.s.a.security.JwtAuthenticationFilter   [trace=26310dafa9e0289d91bc4035ae196f04,retrieval=,ranking=,model=,purpose=,user=] : 会话已被踢出(单点登录) userId=1 uri=/api/media/image/models
+2026-08-14 20:44:28.302  WARN 115364 --- [nio-8080-exec-7] c.s.a.security.JwtAuthenticationFilter   [trace=b2fe8811da9ed2bd906f97e3ad6ae963,retrieval=,ranking=,model=,purpose=,user=] : 会话已被踢出(单点登录) userId=1 uri=/api/media/image/models
+2026-08-14 20:44:30.271  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=3e19c729c56c156ba70666cd634bac42,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=463
+2026-08-14 20:44:31.236  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=dad9b703690a35472d1dbba01613fd71,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=3
+2026-08-14 20:44:39.599  INFO 115364 --- [io-8080-exec-10] c.s.auth.service.AuthService             [trace=e106c83ffdff105443d84c1087d1269f,retrieval=,ranking=,model=,purpose=,user=-] : 用户登录成功: admin
+2026-08-14 20:44:39.606  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=e106c83ffdff105443d84c1087d1269f,retrieval=,ranking=,model=,purpose=,user=-] : request POST /api/auth/login status=200 costMs=89
+2026-08-14 20:44:39.829  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=726dbe433d6d6dc3b122d49033972025,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=4
+2026-08-14 20:44:45.328  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=9cee335f45f7eba602a7202f9033f01f,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=521
+2026-08-14 20:44:48.880 ERROR 115364 --- [nio-8080-exec-6] c.s.c.exception.GlobalExceptionHandler   [trace=df43feba20caa1d93a7bb982917edc6f,retrieval=,ranking=,model=,purpose=,user=1] : 未预期异常: No static resource api/assets.
+
+org.springframework.web.servlet.resource.NoResourceFoundException: No static resource api/assets.
+	at org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)
+	at org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108)
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231)
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340)
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128)
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.security.SecurityGateFilter.doFilterInternal(SecurityGateFilter.java:138)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.RequestLogFilter.doFilterInternal(RequestLogFilter.java:31)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.billing.context.BillingContextFilter.doFilterInternal(BillingContextFilter.java:34)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.MdcUserFilter.doFilterInternal(MdcUserFilter.java:50)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.auth.security.JwtAuthenticationFilter.doFilterInternal(JwtAuthenticationFilter.java:114)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter.doFilterInternal(RuntimeCallbackSecurityFilter.java:40)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90)
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233)
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74)
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230)
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352)
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+2026-08-14 20:44:48.888  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=df43feba20caa1d93a7bb982917edc6f,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets status=500 costMs=22
+2026-08-14 20:44:49.171 ERROR 115364 --- [nio-8080-exec-7] c.s.c.exception.GlobalExceptionHandler   [trace=598951d4468f1ba3f6400d9f3cb25b12,retrieval=,ranking=,model=,purpose=,user=1] : 未预期异常: No static resource api/assets.
+
+org.springframework.web.servlet.resource.NoResourceFoundException: No static resource api/assets.
+	at org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)
+	at org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108)
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231)
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340)
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128)
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.security.SecurityGateFilter.doFilterInternal(SecurityGateFilter.java:138)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.RequestLogFilter.doFilterInternal(RequestLogFilter.java:31)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.billing.context.BillingContextFilter.doFilterInternal(BillingContextFilter.java:34)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.MdcUserFilter.doFilterInternal(MdcUserFilter.java:50)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.auth.security.JwtAuthenticationFilter.doFilterInternal(JwtAuthenticationFilter.java:114)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter.doFilterInternal(RuntimeCallbackSecurityFilter.java:40)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90)
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233)
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74)
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230)
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352)
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+2026-08-14 20:44:49.174  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=598951d4468f1ba3f6400d9f3cb25b12,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets status=500 costMs=9
+2026-08-14 20:44:53.551 ERROR 115364 --- [nio-8080-exec-8] c.s.c.exception.GlobalExceptionHandler   [trace=8f3625dda3199255ddd6f1d823f9f651,retrieval=,ranking=,model=,purpose=,user=1] : 未预期异常: No static resource api/assets.
+
+org.springframework.web.servlet.resource.NoResourceFoundException: No static resource api/assets.
+	at org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)
+	at org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108)
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231)
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340)
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128)
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.security.SecurityGateFilter.doFilterInternal(SecurityGateFilter.java:138)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.RequestLogFilter.doFilterInternal(RequestLogFilter.java:31)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.billing.context.BillingContextFilter.doFilterInternal(BillingContextFilter.java:34)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.MdcUserFilter.doFilterInternal(MdcUserFilter.java:50)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.auth.security.JwtAuthenticationFilter.doFilterInternal(JwtAuthenticationFilter.java:114)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter.doFilterInternal(RuntimeCallbackSecurityFilter.java:40)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90)
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233)
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74)
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230)
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352)
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+2026-08-14 20:44:53.555  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=8f3625dda3199255ddd6f1d823f9f651,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets status=500 costMs=9
+2026-08-14 20:44:55.909  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=b7d686fff9acf20f8b300280aa3488d4,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=4
+2026-08-14 20:44:57.290 ERROR 115364 --- [nio-8080-exec-1] c.s.c.exception.GlobalExceptionHandler   [trace=f17cbfdf240cd7d589ff018051ac3c67,retrieval=,ranking=,model=,purpose=,user=1] : 未预期异常: No static resource api/assets.
+
+org.springframework.web.servlet.resource.NoResourceFoundException: No static resource api/assets.
+	at org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585)
+	at org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108)
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231)
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340)
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128)
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.security.SecurityGateFilter.doFilterInternal(SecurityGateFilter.java:138)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.RequestLogFilter.doFilterInternal(RequestLogFilter.java:31)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.billing.context.BillingContextFilter.doFilterInternal(BillingContextFilter.java:34)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.common.logging.MdcUserFilter.doFilterInternal(MdcUserFilter.java:50)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.auth.security.JwtAuthenticationFilter.doFilterInternal(JwtAuthenticationFilter.java:114)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.superprogrammer.runtime.security.RuntimeCallbackSecurityFilter.doFilterInternal(RuntimeCallbackSecurityFilter.java:40)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90)
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233)
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74)
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230)
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352)
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+2026-08-14 20:44:57.294  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=f17cbfdf240cd7d589ff018051ac3c67,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets status=500 costMs=15
+2026-08-14 20:45:00.286  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=ea16c5ac17e85abf7b4b7483bd382a0d,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=480
+2026-08-14 20:45:06.018  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=6097deedb66d5eee17cc31af698726a4,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:45:12.698  WARN 115364 --- [nio-8080-exec-4] c.s.a.security.JwtAuthenticationFilter   [trace=b9b987076660bd2c4ebaaca574754e51,retrieval=,ranking=,model=,purpose=,user=] : 会话已被踢出(单点登录) userId=1 uri=/api/assets/public-pool
+2026-08-14 20:45:12.698  WARN 115364 --- [nio-8080-exec-2] c.s.a.security.JwtAuthenticationFilter   [trace=2d41b04ed90dde7298f8871c276978db,retrieval=,ranking=,model=,purpose=,user=] : 会话已被踢出(单点登录) userId=1 uri=/api/assets/projects
+2026-08-14 20:45:12.738  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=a926de210e7c720cb3832bc579c42d75,retrieval=,ranking=,model=,purpose=,user=-] : request PUT /api/canvas/5 status=401 costMs=16
+2026-08-14 20:45:13.310  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=6053946ff941830ba9863184927f65d9,retrieval=,ranking=,model=,purpose=,user=-] : request GET /api/auth/channels status=200 costMs=16
+2026-08-14 20:45:15.324  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=f52b7da7c8558446f425a6f933f117bf,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=516
+2026-08-14 20:45:22.732  INFO 115364 --- [nio-8080-exec-8] c.s.auth.service.AuthService             [trace=ff5da8fdd107fd510f575cba5be1c1bf,retrieval=,ranking=,model=,purpose=,user=-] : 用户登录成功: admin
+2026-08-14 20:45:22.745  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=ff5da8fdd107fd510f575cba5be1c1bf,retrieval=,ranking=,model=,purpose=,user=-] : request POST /api/auth/login status=200 costMs=95
+2026-08-14 20:45:22.882  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=982b32c5a3aa50ed010126613a07d58b,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=4
+2026-08-14 20:45:22.882  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=d6d34aa7d438db16d5e396523fe316c9,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=5
+2026-08-14 20:45:22.889  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=a73d9e94d18c5aa5c8a9d4de76d9a6f0,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=10
+2026-08-14 20:45:22.900  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=984c6dd79a59003e8c3e8bd4ed142d58,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas/5 status=200 costMs=14
+2026-08-14 20:45:22.944  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=5b5f2e010732f255b0d8c83493e4d60d,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/video status=200 costMs=3
+2026-08-14 20:45:22.946  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=70d98bae31a89d648cba9730b088b8c5,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/available status=200 costMs=6
+2026-08-14 20:45:22.964  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=3d28e7abf951bc5c514482b361a2fe46,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=5
+2026-08-14 20:45:30.294  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=7c5b7be3658b644d9c2d8869404e7a51,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=486
+2026-08-14 20:45:34.702  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=e4e3c86a96125e851dc9fe9a0721c3cc,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets/public-pool status=200 costMs=22
+2026-08-14 20:45:34.702  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=f2e553143a82e904af1d622e17755c1d,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets/projects status=200 costMs=22
+2026-08-14 20:45:45.305  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=3408795113994adf78fff885b90e14f0,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=498
+2026-08-14 20:45:51.213  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=0056a8ae0aed9fadd91158df7239760a,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets/projects/8/assets status=200 costMs=30
+2026-08-14 20:46:00.449  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=0b8aa91b5c411e25dccdee756ef26e2c,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/assets/projects/9/assets status=200 costMs=26
+2026-08-14 20:46:00.452  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=e82a8b86163097dcbf6949f09ed28450,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=627
+2026-08-14 20:46:06.918  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=e2e2d9f14b9698c2db78a29eb05ade07,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=3
+2026-08-14 20:46:07.058  INFO 115364 --- [nio-8080-exec-4] c.s.asset.service.AssetBindingService    [trace=13ccebf6057a77ea896baf611fa1cc6f,retrieval=,ranking=,model=,purpose=,user=1] : asset binding REFERENCE: assetId=145 v=1 canvasId=5 nodeId=node-1786****0966-0 userId=1
+2026-08-14 20:46:07.064  INFO 115364 --- [nio-8080-exec-4] c.s.a.service.AssetCanvasBridgeService   [trace=13ccebf6057a77ea896baf611fa1cc6f,retrieval=,ranking=,model=,purpose=,user=1] : asset resolved: assetId=145 v=1 canvasId=5 nodeId=node-1786****0966-0 userId=1
+2026-08-14 20:46:07.067  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=13ccebf6057a77ea896baf611fa1cc6f,retrieval=,ranking=,model=,purpose=,user=1] : request POST /api/assets/assets/145/resolve status=200 costMs=23
+2026-08-14 20:46:07.108  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=6011255fb57ef7cc28c333798c2240c5,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/files/0afea9f1-6a48-4584-af45-f8fa935a6b9b.jpeg status=200 costMs=18
+2026-08-14 20:46:07.947  INFO 115364 --- [nio-8080-exec-6] c.s.canvas.service.CanvasService         [trace=1e0c38f23e26cd757881d225b7562e49,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:46:07.949  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=1e0c38f23e26cd757881d225b7562e49,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=10
+2026-08-14 20:46:07.970  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=3b4aaf314db5500854e682d00eb775e7,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=7
+2026-08-14 20:46:15.266  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=c4660cbbf90884f2169e04fd6623c24a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=460
+2026-08-14 20:46:22.883  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=ddd5787d156e6945f87f6beeef376424,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=4
+2026-08-14 20:46:30.614  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=d2a8f9179c6e444b377e3a85fb7581f0,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=806
+2026-08-14 20:46:45.287  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=da619ffb66437c9a247ad4c82e783cf1,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=481
+2026-08-14 20:47:00.268  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=b0b0675f867cc227e61b8d015b31c44a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=461
+2026-08-14 20:47:07.175  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=65528fdff963807cf9177ed46c6abe65,retrieval=,ranking=,model=,purpose=,user=174] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:47:15.253  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=f1abed86ac68e228811919b189b8644f,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=446
+2026-08-14 20:47:22.886  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=b41cc86e093b19a51b35bce1bf4269f1,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=5
+2026-08-14 20:47:30.264  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=f4a753a7fda48ea59dd661e21ae2c6c5,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=457
+2026-08-14 20:47:45.250  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=7eaac2c77d1749b77cbdf95002c7675d,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=443
+2026-08-14 20:48:00.261  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=0b1bcbbe24bb69b06bc5fe3aae3cafff,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=455
+2026-08-14 20:48:06.831  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=2a8ff48f152861a257ede1a228e5e6a9,retrieval=,ranking=,model=,purpose=,user=-] : request GET /api/security/events/unhandled-count status=401 costMs=4
+2026-08-14 20:48:07.248  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=dc369aacd03f5e2e5acda940db73fd18,retrieval=,ranking=,model=,purpose=,user=-] : request GET /api/auth/channels status=200 costMs=11
+2026-08-14 20:48:07.562  INFO 115364 --- [io-8080-exec-10] c.s.media.service.MediaGenTaskService    [trace=ab80a16d2bf6753ab42c5e2bf201a323,retrieval=,ranking=,model=,purpose=,user=1] : 提交图片生成任务 taskId=46 userId=1 type=TEXT2IMAGE model=doubao-seedream-5.0-pro-0724 size=1K 参考图=0
+2026-08-14 20:48:07.564  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=ab80a16d2bf6753ab42c5e2bf201a323,retrieval=,ranking=,model=,purpose=,user=1] : request POST /api/media/image status=200 costMs=49
+2026-08-14 20:48:07.593  INFO 115364 --- [nio-8080-exec-1] c.s.canvas.service.CanvasService         [trace=0789b6947f409293e754f6a8e066e2e4,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:48:07.595  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=0789b6947f409293e754f6a8e066e2e4,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=7
+2026-08-14 20:48:07.610  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=f99b20315eb81b07e7c91eaf078eef31,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=6
+2026-08-14 20:48:13.079  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=5ce6861fa0f48171d213553ca63f4f26,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=32
+2026-08-14 20:48:15.684  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=007927a51653b187159f03dd089fe5a1,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=876
+2026-08-14 20:48:16.762  INFO 115364 --- [nio-8080-exec-6] c.s.canvas.service.CanvasService         [trace=a33a5f4000a17aee4beaac177dad6204,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:48:16.764  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=a33a5f4000a17aee4beaac177dad6204,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=9
+2026-08-14 20:48:17.446  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=f20e8c2af7b98f700ad1b99356fb327b,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=3
+2026-08-14 20:48:17.448  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=a228c840f7db6d584ed4a330118b3801,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=4
+2026-08-14 20:48:17.448  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=a1e254b5bc80fe5e0e21d44b8f50d5d3,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas/5 status=200 costMs=5
+2026-08-14 20:48:17.451  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=a7e80920ffde1226d4008e0cd4200a24,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=7
+2026-08-14 20:48:17.509  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=7563d69f6fcf3bdbf1363af608b37fbf,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/video status=200 costMs=4
+2026-08-14 20:48:17.513  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=b6353a9aa5229bab86fa51fbb97c4d8b,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/llm/user/models/available status=200 costMs=9
+2026-08-14 20:48:17.527  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=d5e0f61851b199f7c6bce1ace902de44,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/image/models status=200 costMs=3
+2026-08-14 20:48:17.531  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=53681d9aaaa68390fe5986b283f06eb7,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/files/0afea9f1-6a48-4584-af45-f8fa935a6b9b.jpeg status=200 costMs=13
+2026-08-14 20:48:22.904  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=7b3a00cc8a1068682950efacdd21c584,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=6
+2026-08-14 20:48:27.927  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=6057e3c415ff39790969f19fa75be486,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=4
+2026-08-14 20:48:30.338  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=b767e7391f17522343aee719cdfe990b,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=520
+2026-08-14 20:48:33.912  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=4af5a91d29a25a11ea43ad09ca2f1b14,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=7
+2026-08-14 20:48:39.909  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=65657e0b039a6f2d682c4267aa5982e7,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=4
+2026-08-14 20:48:45.261  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=6eb3e6b70f5aef9648aa8103edc4f598,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=454
+2026-08-14 20:48:45.917  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=99ca81f2cd34b76e9b67d66fb2199148,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=4
+2026-08-14 20:48:51.902  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=c3b062c047a88032d02f9473472a5cf2,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=4
+2026-08-14 20:48:57.908  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=bd0d3313178f9aa22e7fa9fdf04ff23a,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=6
+2026-08-14 20:49:00.252  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=d5ad4c2c73f31c46c8087fbc3a77a49a,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=446
+2026-08-14 20:49:03.914  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=897907ea6ab7320bab5e770353365f59,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=5
+2026-08-14 20:49:09.909  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=2411aaa11f14ded30bfa877d8663a4ac,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=5
+2026-08-14 20:49:15.269  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=c08f27d67900a0d63ff136d3e0d27b04,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=462
+2026-08-14 20:49:15.906  INFO 115364 --- [nio-8080-exec-9] c.s.common.logging.RequestLogFilter      [trace=dd4df6cab94a10319a5f0730f3f92737,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=5
+2026-08-14 20:49:17.913  INFO 115364 --- [nio-8080-exec-3] c.s.common.logging.RequestLogFilter      [trace=f8015e5ae0821968d27b080afeea8988,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/security/events/unhandled-count status=200 costMs=4
+2026-08-14 20:49:21.918  INFO 115364 --- [nio-8080-exec-7] c.s.common.logging.RequestLogFilter      [trace=682bd7dab7a10bfc795ee941362bbbc4,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=5
+2026-08-14 20:49:25.831  INFO 115364 --- [   media-task-1] c.s.media.provider.ArkImageProvider      [trace=6aff3bbda56d634b31d2c1aa4ebb40be,retrieval=,ranking=,model=,purpose=,user=] : 生图成功 model=doubao-seedream-5.0-pro-0724 张数=1 outputTokens=4056
+2026-08-14 20:49:26.322  INFO 115364 --- [   media-task-1] c.s.billing.service.PointsWalletService  [trace=6aff3bbda56d634b31d2c1aa4ebb40be,retrieval=,ranking=,model=,purpose=,user=] : 积分扣减 userId=1 delta=-200.00 balanceAfter=92254.17 ref=IMAGE:46
+2026-08-14 20:49:26.326  INFO 115364 --- [   media-task-1] c.s.media.service.MediaGenTaskWorker     [trace=6aff3bbda56d634b31d2c1aa4ebb40be,retrieval=,ranking=,model=,purpose=,user=] : 生图任务成功 taskId=46 model=doubao-seedream-5.0-pro-0724 张数=1 fileIds=1
+2026-08-14 20:49:27.906  INFO 115364 --- [nio-8080-exec-1] c.s.common.logging.RequestLogFilter      [trace=cf64a83eb5bd94e547c886d26079fa7c,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46 status=200 costMs=5
+2026-08-14 20:49:27.931  INFO 115364 --- [io-8080-exec-10] c.s.common.logging.RequestLogFilter      [trace=48aff7009f8cab2546bbe7fb4fb1eb75,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/media/tasks/46/images/0/download status=200 costMs=11
+2026-08-14 20:49:28.928  INFO 115364 --- [nio-8080-exec-4] c.s.canvas.service.CanvasService         [trace=70c291be38ba16e3cb334aa307c0efd9,retrieval=,ranking=,model=,purpose=,user=1] : canvas saved: id=5 userId=1 nodeCount=1
+2026-08-14 20:49:28.930  INFO 115364 --- [nio-8080-exec-4] c.s.common.logging.RequestLogFilter      [trace=70c291be38ba16e3cb334aa307c0efd9,retrieval=,ranking=,model=,purpose=,user=1] : request PUT /api/canvas/5 status=200 costMs=6
+2026-08-14 20:49:28.951  INFO 115364 --- [nio-8080-exec-2] c.s.common.logging.RequestLogFilter      [trace=eaef5d57a6a773ebfd880e3c6113e6cb,retrieval=,ranking=,model=,purpose=,user=1] : request GET /api/canvas status=200 costMs=7
+2026-08-14 20:49:30.275  INFO 115364 --- [nio-8080-exec-5] c.s.common.logging.RequestLogFilter      [trace=f9a72b768142a8a932d1a5d7b04387b5,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=468
+2026-08-14 20:49:45.282  INFO 115364 --- [nio-8080-exec-6] c.s.common.logging.RequestLogFilter      [trace=0843b8a2f422d0df6b603473567c647e,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=475
+2026-08-14 20:50:00.268  INFO 115364 --- [nio-8080-exec-8] c.s.common.logging.RequestLogFilter      [trace=ea3168955b3602929771b4acb2b3399d,retrieval=,ranking=,model=,purpose=,user=-] : request GET /actuator/prometheus status=200 costMs=462

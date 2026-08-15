@@ -20,3 +20,7 @@ agent-platform\workflow_output\docs\user-ops\运维系统用户操作手册.md
 落地：安全运维日志告警加固 P1-P4（V104 表 + 热拦截 SecurityGateFilter/@RateLimit/BanService 双保险 + 9 冷规则事件总线 + AutoResponder 分级处置 + 钉钉分级告警 + admin 4 页）。
 文档：spec=docs/specs/安全运维日志告警加固.md；plan=docs/plans/安全运维日志告警加固*.plan.md；feature-map=docs/feature-map/安全加固.feature-map.md；user-ops=docs/user-ops/安全管理用户操作手册.md；测试方案=docs/测试方案/安全运维日志告警加固测试方案.md；进度=开发进度/安全运维日志告警加固/。
 剩：部署必做（ip2region xdb / 钉钉机器人配置 / D盘≥25GB / trust_proxy）+ 人工 E2E（测试方案 B1-B11）。
+
+
+# 未解决
+- 运维系统的监测现在是不是单独一个端口运作？能否合并到admin账户下的一个模块里来？
