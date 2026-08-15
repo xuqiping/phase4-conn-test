@@ -8,11 +8,12 @@ import { KvModule } from "./common/kv.module";
 import { DbModule } from "./db/db.module";
 import { AuthModule } from "./auth/auth.module";
 import { BillingModule } from "./billing/billing.module";
+import { PaymentModule } from "./billing/payment/payment.module";
 import { GatewayModule } from "./gateway/gateway.module";
 import { JwtGuard } from "./auth/jwt.guard";
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), DbModule, KvModule, AuthModule, BillingModule, GatewayModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), DbModule, KvModule, AuthModule, BillingModule, PaymentModule, GatewayModule],
   controllers: [HealthController],
   providers: [
     // 全局异常过滤器走 provider：main.ts 与测试实例行为一致
