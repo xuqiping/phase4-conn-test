@@ -29,6 +29,9 @@ DevPilot = Win/Mac 桌面端 AI 编程智能体：Codex 级能力 + 内置引导
 - **前端测试**：jsdom 无 Tauri 运行时，一律 `vi.mock("../lib/ipc")` 内存假内核（模板见 App.test.tsx）；vitest 未开 globals，测试需显式 import + `afterEach(cleanup)`。
 - **CI 位置**：工作流文件必须放仓库根 `.github/workflows/`（DevPilot 是子目录，自放无效），用 `paths: DevPilot/**` 限定触发。
 - **本地依赖审计降级**：cargo/npm audit 本地网络受限时仅 WARN，硬拦截在 CI（GitHub Actions）。
+- **云端 R<T> 是 handler 手动 `.then(R)`**，不是全局拦截器——新 controller 每个返回数据的 handler 都要包，忘包就吐裸 JSON（P02 Step4 踩过，e2e 断言 `body.data` 直接暴露）。
+- **云端动钱三规则**：一切动钱走 `BillingService.charge/credit`；消费先扣体验金再扣充值余额；入账（充值/人工调整）也必须写账本——只动钱包不记账=破坏「账本 SUM=钱包余额」对账不变量。
+- **云端本地 PG 用 PGlite**（进程内 WASM）：管理员账户/GBK 环境下 embedded-postgres 起不来；测试 `PGLITE_DIR=":memory:"` + jest 需 `--experimental-vm-modules`；多语句脚本走 `db.exec()`。
 
 ## 4. 文档规范
 
