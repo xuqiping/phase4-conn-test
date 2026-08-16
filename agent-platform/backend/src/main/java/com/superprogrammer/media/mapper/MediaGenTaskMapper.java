@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface MediaGenTaskMapper extends BaseMapper<MediaGenTask> {
@@ -50,16 +51,28 @@ public interface MediaGenTaskMapper extends BaseMapper<MediaGenTask> {
      * <p>必须用显式 {@code ::jsonb} 强转——{@code LambdaUpdateWrapper.set} 生成的 {@code SET result_meta=?}
      * 不带 typeHandler（@TableField.typeHandler 仅实体 insert/updateById 路径生效），String 直入 jsonb 列
      * 报「字段 result_meta 类型 jsonb 但表达式 character varying」。此处原样 SQL + 强转最稳（同 locked_until=NULL 一并清）。
+     *
+     * <p>C3：WHERE 带 {@code status IN ('PENDING','RUNNING')}（终态迁移守卫）——已终态行影响 0，
+     * 调用方以此判断是否 release 并发闸门（防双 worker 重复 DECR 超卖）。
      */
     @Update("UPDATE media_gen_tasks SET status=#{status}, result_meta=#{resultMeta}::jsonb, "
             + "tokens_cost=#{tokensCost}, status_flag=#{statusFlag}, locked_until=NULL, "
-            + "updated_at=#{updatedAt} WHERE id=#{taskId}")
+            + "updated_at=#{updatedAt} WHERE id=#{taskId} AND status IN ('PENDING','RUNNING')")
     int markImageSucceeded(@Param("taskId") Long taskId,
                            @Param("resultMeta") String resultMeta,
                            @Param("tokensCost") Integer tokensCost,
                            @Param("statusFlag") String statusFlag,
                            @Param("status") String status,
                            @Param("updatedAt") OffsetDateTime updatedAt);
+
+    /**
+     * C3 并发对账：每用户每 taskType 的未终态任务数（V123 部分索引覆盖）。
+     * 供 MediaInflightGateService.reconcile 与 Redis 在途计数比对，漂移大 → WARN。
+     */
+    @Select("SELECT user_id AS \"userId\", task_type AS \"taskType\", COUNT(*) AS \"cnt\" "
+            + "FROM media_gen_tasks WHERE status IN ('PENDING','RUNNING') AND user_id IS NOT NULL "
+            + "GROUP BY user_id, task_type")
+    List<Map<String, Object>> countActiveByUserAndType();
 
     /** POST 前保存脱敏请求快照；快照严禁包含原始 data URI。 */
     @Update("UPDATE media_gen_tasks SET request_config=jsonb_set(COALESCE(request_config,'{}'::jsonb), "

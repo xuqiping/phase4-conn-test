@@ -60,6 +60,8 @@ class MediaGenTaskServiceTest {
     @Mock
     private InflightGateService inflightGate;
     @Mock
+    private com.superprogrammer.media.service.internal.MediaInflightGateService mediaInflightGate;
+    @Mock
     private BizMetrics bizMetrics;
     @Mock
     private com.superprogrammer.common.audit.AuditLogService auditLogService;
@@ -81,7 +83,7 @@ class MediaGenTaskServiceTest {
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
-                inflightGate, bizMetrics, auditLogService);
+                inflightGate, mediaInflightGate, bizMetrics, auditLogService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -440,5 +442,38 @@ class MediaGenTaskServiceTest {
                 null, null, SEEDANCE_2, 100L, false, null);
 
         verify(bizMetrics).mediaSubmit("video");
+    }
+
+    // ---------- C3 · 每用户媒体并发闸门接入 ----------
+
+    // C3：闸门拒（超并发上限 42904）→ 异常上抛 + 不建任务 + 不重复释放（acquire 内已回退计数）
+    @Test
+    void submit_mediaInflightOverLimit_propagates42904WithoutInsert() {
+        when(mediaInflightGate.acquire(USER_ID, com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO))
+                .thenThrow(new BusinessException(ErrorCode.MEDIA_CONCURRENT_LIMIT));
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false));
+
+        assertEquals(42904, e.getCode());
+        verify(taskMapper, never()).insert(any());
+        verify(mediaInflightGate, never()).release(any(), any());
+    }
+
+    // C3：acquire 成功但落库前校验失败（模型不可用）→ catch 内配对 release，防失败提交自我锁死至 TTL
+    @Test
+    void submit_validationFailAfterAcquire_releasesMediaSlot() {
+        when(mediaInflightGate.acquire(USER_ID, com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO))
+                .thenReturn(true);
+        when(mediaModelService.resolveProviderByModel("unknown-model")).thenReturn(null);
+
+        assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, "unknown-model", USER_ID, false));
+
+        verify(mediaInflightGate).release(USER_ID,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO);
+        verify(taskMapper, never()).insert(any());
     }
 }

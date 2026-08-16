@@ -19,6 +19,7 @@ import com.superprogrammer.common.audit.AuditLogEntity;
 import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.metrics.BizMetrics;
 import com.superprogrammer.media.service.internal.MediaGenTaskTxService;
+import com.superprogrammer.media.service.internal.MediaInflightGateService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -62,6 +63,8 @@ public class MediaGenTaskWorker {
     private final MediaBillingService mediaBillingService;
     /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：任务终态释放提交时占的槽位。 */
     private final InflightGateService inflightGate;
+    /** 2x 第三轮 C3：每用户媒体并发闸门，终态迁移真正落库才释放（防双 DECR 超卖）。 */
+    private final MediaInflightGateService mediaInflightGate;
     /** 媒体终态/耗时指标（media.task.terminal/duration）。 */
     private final BizMetrics bizMetrics;
     /** 审计：媒体终态成功落库（问题修复 #1 #7，带模型/积分快照）。 */
@@ -78,6 +81,7 @@ public class MediaGenTaskWorker {
                               @Qualifier("mediaTaskExecutor") Executor executor,
                               MediaBillingService mediaBillingService,
                               InflightGateService inflightGate,
+                              MediaInflightGateService mediaInflightGate,
                               BizMetrics bizMetrics,
                               AuditLogService auditLogService) {
         this.txService = txService;
@@ -91,6 +95,7 @@ public class MediaGenTaskWorker {
         this.executor = executor;
         this.mediaBillingService = mediaBillingService;
         this.inflightGate = inflightGate;
+        this.mediaInflightGate = mediaInflightGate;
         this.bizMetrics = bizMetrics;
         this.auditLogService = auditLogService;
     }
@@ -111,19 +116,31 @@ public class MediaGenTaskWorker {
         }
     }
 
+    /**
+     * 终态处理结果：succeeded=是否成功终态（指标用）；transitioned=终态迁移是否真正落库
+     * （C3 并发闸释放守卫——UPDATE WHERE status IN(PENDING,RUNNING) 影响 0 = 已终态重复回调，不释放）。
+     */
+    private record Outcome(boolean succeeded, boolean transitioned) {
+    }
+
     private void process(Long taskId) {
         MediaGenTask task = taskMapper.selectById(taskId);
         if (task == null) {
             return;
         }
         String kind = isImageTask(task.getTaskType()) ? BizMetrics.MEDIA_IMAGE : BizMetrics.MEDIA_VIDEO;
+        String gateKind = isImageTask(task.getTaskType())
+                ? MediaInflightGateService.KIND_IMAGE : MediaInflightGateService.KIND_VIDEO;
         boolean terminal = false;
         boolean succeeded = false;
+        boolean transitioned = false;
         try {
             // 图片任务（Seedream）走同步生图路径，与视频异步轮询分流（video 路径零改动）。
             if (isImageTask(task.getTaskType())) {
                 terminal = true;
-                succeeded = processImage(task);
+                Outcome o = processImage(task);
+                succeeded = o.succeeded();
+                transitioned = o.transitioned();
                 return;
             }
             String arkTaskId = task.getArkTaskId();
@@ -151,12 +168,15 @@ public class MediaGenTaskWorker {
             String status = result.getStatus();
             if (MediaGenResult.STATUS_SUCCEEDED.equals(status)) {
                 terminal = true;
-                succeeded = handleSucceeded(task, result, buildRequest(task, false));
+                Outcome o = handleSucceeded(task, result, buildRequest(task, false));
+                succeeded = o.succeeded();
+                transitioned = o.transitioned();
                 log.info("媒体任务成功 taskId={} arkTaskId={} usageTokens={}",
                         taskId, arkTaskId, result.getUsageTokens());
             } else if (MediaGenResult.STATUS_FAILED.equals(status)) {
                 terminal = true;
-                txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "Ark 任务失败");
+                transitioned = txService.markFailed(taskId,
+                        result.getErrorMsg() != null ? result.getErrorMsg() : "Ark 任务失败");
                 log.warn("媒体任务失败 taskId={} arkTaskId={} reason={}", taskId, arkTaskId, result.getErrorMsg());
             } else {
                 long delayMs = nextBackoffMs(task);
@@ -167,10 +187,19 @@ public class MediaGenTaskWorker {
         } catch (Exception e) {
             terminal = true;
             log.error("媒体任务处理失败 taskId={}: {}", taskId, e.getMessage(), e);
-            txService.markFailed(taskId, rootMessage(e));
+            // markFailed 自身失败（DB 抖动）→ 槽位靠 30min TTL 自愈，不再向上抛（executor 线程吞栈无意义）
+            try {
+                transitioned = txService.markFailed(taskId, rootMessage(e));
+            } catch (Exception markError) {
+                log.error("终态落库失败(并发计数将由TTL自愈) taskId={} : {}", taskId, markError.getMessage());
+            }
         } finally {
             if (terminal) {
                 inflightGate.release(task.getUserId());
+                // C3：仅终态迁移真正落库才释放（否则双 worker 重复 DECR → 少计超卖）
+                if (transitioned) {
+                    mediaInflightGate.release(task.getUserId(), gateKind);
+                }
                 bizMetrics.mediaTaskTerminal(kind, succeeded ? BizMetrics.RESULT_SUCCESS : BizMetrics.RESULT_FAIL);
                 if (task.getCreatedAt() != null) {
                     bizMetrics.mediaTaskDuration(kind,
@@ -200,21 +229,21 @@ public class MediaGenTaskWorker {
      * 若扣成功但 markSucceeded 落库失败 → 退款（防扣了却没成功态的对账黑洞），再抛交 process() 转 markFailed。
      * 失败/超时/下载失败路径本就没扣 → 不退。
      */
-    private boolean handleSucceeded(MediaGenTask task, MediaGenResult result, MediaGenRequest request) {
+    private Outcome handleSucceeded(MediaGenTask task, MediaGenResult result, MediaGenRequest request) {
         Long taskId = task.getId();
         String videoUrl = result.getResultUrl();
         if (videoUrl == null || videoUrl.isBlank()) {
-            txService.markDownloadFailed(taskId, "Ark 返回成功但无 video_url");
+            boolean t = txService.markDownloadFailed(taskId, "Ark 返回成功但无 video_url");
             log.warn("媒体任务无 video_url taskId={}", taskId);
-            return false;
+            return new Outcome(false, t);
         }
         String fileId;
         try {
             fileId = mediaStorageService.downloadAndStore(videoUrl, task.getUserId(), "task-" + taskId);
         } catch (Exception e) {
             log.error("视频下载落盘失败 taskId={}: {}", taskId, e.getMessage(), e);
-            txService.markDownloadFailed(taskId, "视频下载落盘失败: " + rootMessage(e));
-            return false;
+            boolean t = txService.markDownloadFailed(taskId, "视频下载落盘失败: " + rootMessage(e));
+            return new Outcome(false, t);
         }
         Integer tokensCost = resolveUsage(result, request);
         String flag = result.getUsageTokens() != null ? MediaGenTask.FLAG_SUCCESS : MediaGenTask.FLAG_ESTIMATED;
@@ -224,8 +253,9 @@ public class MediaGenTaskWorker {
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
                 request.getDuration(), 0, usageStatus(flag), taskId, hasReference);
+        boolean transitioned;
         try {
-            txService.markSucceeded(taskId, fileId, tokensCost, flag);
+            transitioned = txService.markSucceeded(taskId, fileId, tokensCost, flag);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
             mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId);
@@ -233,7 +263,7 @@ public class MediaGenTaskWorker {
         }
         // 问题修复 #1 #7：视频生成成功落审计，带模型+实扣积分（关联键 targetId=taskId，与 submit 行对应）
         auditMediaSuccess(task, "video_gen_success", LlmUsageLogEntity.KIND_VIDEO, chargedPoints, null);
-        return true;
+        return new Outcome(true, transitioned);
     }
 
     // ---------- 图片任务路径（Seedream 同步生图，与视频异步轮询零耦合） ----------
@@ -247,14 +277,14 @@ public class MediaGenTaskWorker {
      * 图片任务处理：同步生图（一次返全量 url）→ 逐张下载落盘 → 写 result_meta → 按张计费。
      * 同步协议无 arkTaskId/轮询；失败走 markFailed（与视频 catch 同一路径）。
      */
-    private boolean processImage(MediaGenTask task) {
+    private Outcome processImage(MediaGenTask task) {
         Long taskId = task.getId();
         MediaImageRequest request = buildImageRequest(task);
         MediaImageResult result = imageProvider.generate(request);
         if (!result.isSuccess()) {
-            txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "生图失败");
+            boolean t = txService.markFailed(taskId, result.getErrorMsg() != null ? result.getErrorMsg() : "生图失败");
             log.warn("生图失败 taskId={} model={} reason={}", taskId, request.getModel(), result.getErrorMsg());
-            return false;
+            return new Outcome(false, t);
         }
         return handleImageSucceeded(task, result, request);
     }
@@ -266,7 +296,7 @@ public class MediaGenTaskWorker {
      * <p>逐张下载隔离：任一张失败即整体 FAILED（部分图不落盘则 result_meta 不完整，前端无法展示，
      * 不留半成功态）。计费与视频同口径：markImageSucceeded 前扣，落库失败退款。
      */
-    private boolean handleImageSucceeded(MediaGenTask task, MediaImageResult result, MediaImageRequest request) {
+    private Outcome handleImageSucceeded(MediaGenTask task, MediaImageResult result, MediaImageRequest request) {
         Long taskId = task.getId();
         List<String> urls = result.getImageUrls();
         List<String> fileIds = new java.util.ArrayList<>(urls.size());
@@ -277,8 +307,8 @@ public class MediaGenTaskWorker {
             }
         } catch (Exception e) {
             log.error("图片下载落盘失败 taskId={}: {}", taskId, e.getMessage(), e);
-            txService.markDownloadFailed(taskId, "图片下载落盘失败: " + rootMessage(e));
-            return false;
+            boolean t = txService.markDownloadFailed(taskId, "图片下载落盘失败: " + rootMessage(e));
+            return new Outcome(false, t);
         }
         Integer imageCount = result.getGeneratedImages() != null ? result.getGeneratedImages() : fileIds.size();
         Long outputTokens = result.getOutputTokens();
@@ -287,8 +317,9 @@ public class MediaGenTaskWorker {
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_IMAGE, null, 0, imageCount,
                 LlmUsageLogEntity.STATUS_SUCCESS, taskId);
+        boolean transitioned;
         try {
-            txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);
+            transitioned = txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
             mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId);
@@ -298,7 +329,7 @@ public class MediaGenTaskWorker {
         auditMediaSuccess(task, "image_gen_success", LlmUsageLogEntity.KIND_IMAGE, chargedPoints, imageCount);
         log.info("生图任务成功 taskId={} model={} 张数={} fileIds={}",
                 taskId, task.getModel(), imageCount, fileIds.size());
-        return true;
+        return new Outcome(true, transitioned);
     }
 
     /**

@@ -26,6 +26,10 @@ public class SystemSettingService {
     public static final String BILLING_LOW_BALANCE_THRESHOLD = "billing.low-balance.threshold";
     /** 安全体系 S2 · L7（SEC-FR-126）：低余额时允许的最大在途任务数（默认 1）。 */
     public static final String BILLING_LOW_BALANCE_MAX_INFLIGHT = "billing.low-balance.max-inflight";
+    /** 2x 第三轮 C3（15x 三问落地）：每用户生视频并发上限（默认 2；0=不限制）。 */
+    public static final String MEDIA_CONCURRENT_VIDEO = "media.concurrent.video";
+    /** 2x 第三轮 C3（15x 三问落地）：每用户生图并发上限（默认 3；0=不限制）。 */
+    public static final String MEDIA_CONCURRENT_IMAGE = "media.concurrent.image";
     /** RAG/记忆模式总开关（false=opt-in）。4 层优先级：session>agent/workflow>global。 */
     public static final String RAG_MEMORY_ENABLED = "rag.memory.enabled";
     /** 计划12 · C：非项目会话个人记忆 gen 兜底开关（项目会话走 owner AND 会员覆写独立表）。默认 true。 */

@@ -99,56 +99,77 @@ public class MediaGenTaskTxService {
         taskMapper.saveProviderRequestSnapshot(taskId, snapshot, OffsetDateTime.now());
     }
 
-    /** 任务成功：写 result_file_id + tokens_cost + status_flag（Step4/5 填参）。 */
+    /**
+     * 任务成功：写 result_file_id + tokens_cost + status_flag（Step4/5 填参）。
+     *
+     * @return 终态迁移是否真正落库（C3 并发闸释放守卫：WHERE status IN(PENDING,RUNNING) 影响 0
+     *         = 已终态重复回调 → worker 不再 release，防双 DECR 超卖）
+     */
     @Transactional(rollbackFor = Exception.class)
-    public void markSucceeded(Long taskId, String resultFileId, Integer tokensCost, String statusFlag) {
+    public boolean markSucceeded(Long taskId, String resultFileId, Integer tokensCost, String statusFlag) {
         LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
         u.eq(MediaGenTask::getId, taskId)
+                .in(MediaGenTask::getStatus, MediaGenTask.STATUS_PENDING, MediaGenTask.STATUS_RUNNING)
                 .set(MediaGenTask::getStatus, MediaGenTask.STATUS_SUCCEEDED)
                 .set(MediaGenTask::getResultFileId, resultFileId)
                 .set(MediaGenTask::getTokensCost, tokensCost)
                 .set(MediaGenTask::getStatusFlag, statusFlag)
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
-        taskMapper.update(null, u);
+        return taskMapper.update(null, u) > 0;
     }
 
     /**
      * 图片任务成功：写 result_meta（多图 fileId 元数据 JSONB）+ tokens_cost + status_flag。
      * 与 {@link #markSucceeded} 区别：图片一次返 N 张，无单 result_file_id，多图信息落 result_meta。
+     *
+     * @return 终态迁移是否真正落库（同 {@link #markSucceeded} 释放守卫语义）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void markImageSucceeded(Long taskId, String resultMeta, Integer tokensCost, String statusFlag) {
+    public boolean markImageSucceeded(Long taskId, String resultMeta, Integer tokensCost, String statusFlag) {
         // 走 mapper @Update 显式 ::jsonb 强转（见 MediaGenTaskMapper.markImageSucceeded javadoc）：
         // LambdaUpdateWrapper.set 不带 typeHandler，String 直入 jsonb 列会报类型不匹配。
-        taskMapper.markImageSucceeded(taskId, resultMeta, tokensCost, statusFlag,
-                MediaGenTask.STATUS_SUCCEEDED, OffsetDateTime.now());
+        return taskMapper.markImageSucceeded(taskId, resultMeta, tokensCost, statusFlag,
+                MediaGenTask.STATUS_SUCCEEDED, OffsetDateTime.now()) > 0;
     }
 
+    /**
+     * 任务失败终态。
+     *
+     * @return 终态迁移是否真正落库（同 {@link #markSucceeded} 释放守卫语义）。
+     */
     @Transactional(rollbackFor = Exception.class)
-    public void markFailed(Long taskId, String errorMsg) {
+    public boolean markFailed(Long taskId, String errorMsg) {
         LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
         u.eq(MediaGenTask::getId, taskId)
+                .in(MediaGenTask::getStatus, MediaGenTask.STATUS_PENDING, MediaGenTask.STATUS_RUNNING)
                 .set(MediaGenTask::getStatus, MediaGenTask.STATUS_FAILED)
                 .set(MediaGenTask::getStatusFlag, MediaGenTask.FLAG_ESTIMATED)
                 .set(MediaGenTask::getErrorMsg, truncate(errorMsg, 256))
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
-        taskMapper.update(null, u);
+        boolean transitioned = taskMapper.update(null, u) > 0;
         auditFail(taskId, "gen_fail", truncate(errorMsg, 200));
+        return transitioned;
     }
 
-    /** 下载失败：保留 ark_task_id 便于人工/后续重试（worker 留重试入口）。 */
+    /**
+     * 下载失败：保留 ark_task_id 便于人工/后续重试（worker 留重试入口）。
+     *
+     * @return 终态迁移是否真正落库（同 {@link #markSucceeded} 释放守卫语义）。
+     */
     @Transactional(rollbackFor = Exception.class)
-    public void markDownloadFailed(Long taskId, String errorMsg) {
+    public boolean markDownloadFailed(Long taskId, String errorMsg) {
         LambdaUpdateWrapper<MediaGenTask> u = new LambdaUpdateWrapper<>();
         u.eq(MediaGenTask::getId, taskId)
+                .in(MediaGenTask::getStatus, MediaGenTask.STATUS_PENDING, MediaGenTask.STATUS_RUNNING)
                 .set(MediaGenTask::getStatus, MediaGenTask.STATUS_DOWNLOAD_FAILED)
                 .set(MediaGenTask::getErrorMsg, truncate(errorMsg, 256))
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
-        taskMapper.update(null, u);
+        boolean transitioned = taskMapper.update(null, u) > 0;
         auditFail(taskId, "download_failed", truncate(errorMsg, 200));
+        return transitioned;
     }
 
     /**

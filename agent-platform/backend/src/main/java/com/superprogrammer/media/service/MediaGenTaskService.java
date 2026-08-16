@@ -19,6 +19,7 @@ import com.superprogrammer.media.config.MediaModelCapabilityService;
 import com.superprogrammer.media.dto.AttachmentRef;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
+import com.superprogrammer.media.service.internal.MediaInflightGateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -62,6 +63,8 @@ public class MediaGenTaskService {
     private final PointsWalletService walletService;
     /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：提交时 acquire，worker 终态 release。 */
     private final InflightGateService inflightGate;
+    /** 2x 第三轮 C3：每用户媒体并发闸门（video/image 独立计数），提交 acquire / worker 终态 release。 */
+    private final MediaInflightGateService mediaInflightGate;
     /** 媒体提交指标（media.task.submitted）。 */
     private final BizMetrics bizMetrics;
     /** 审计：submit 编程式落库（关联键 targetId=taskId，问题修复 #8）。 */
@@ -113,7 +116,10 @@ public class MediaGenTaskService {
         // 但 acquire 之后、task 落库之前的任何异常（provider 缺失/参数校验/DB 异常）都不会有 worker
         // 接手 → 此处配对释放，否则低余额用户一次失败提交即自我锁死至 TTL（30min）
         boolean held = inflightGate.acquire(userId, balance);
+        // C3：每用户视频并发上限（15x 落地，D5 默认 2 可调）→ 42904；同样落库前异常须配对释放
+        boolean mediaHeld = false;
         try {
+            mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_VIDEO);
             Long taskId = doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
                     refFileId, attachments, model, userId, admin, frameRole);
             // 指标：落库成功才计提交（acquire 失败/参数校验失败不计）
@@ -124,6 +130,9 @@ public class MediaGenTaskService {
         } catch (RuntimeException e) {
             if (held) {
                 inflightGate.release(userId);
+            }
+            if (mediaHeld) {
+                mediaInflightGate.release(userId, MediaInflightGateService.KIND_VIDEO);
             }
             throw e;
         }
@@ -252,6 +261,24 @@ public class MediaGenTaskService {
         }
         // 余额预检（与视频同一咽喉）：≤0 拒；系统调用/billing 关则放行
         walletService.requireAffordable(userId);
+        // C3：每用户生图并发上限（15x 落地，D5 默认 3 可调）→ 42904；落库前异常配对释放（同视频）
+        boolean mediaHeld = false;
+        try {
+            mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_IMAGE);
+            return doSubmitImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale,
+                    optimizeMode, sequential, maxImages, webSearch, model, userId, admin);
+        } catch (RuntimeException e) {
+            if (mediaHeld) {
+                mediaInflightGate.release(userId, MediaInflightGateService.KIND_IMAGE);
+            }
+            throw e;
+        }
+    }
+
+    private Long doSubmitImage(String prompt, List<String> refFileIds, String size, String outputFormat,
+                               Boolean watermark, Double guidanceScale, String optimizeMode,
+                               String sequential, Integer maxImages, Boolean webSearch,
+                               String model, Long userId, boolean admin) {
 
         // 解析 IMAGE provider（指定 model 跨 IMAGE provider 反查；图片任务无默认 provider 回退）
         LlmProviderEntity provider = mediaModelService.resolveImageProviderByModel(model);

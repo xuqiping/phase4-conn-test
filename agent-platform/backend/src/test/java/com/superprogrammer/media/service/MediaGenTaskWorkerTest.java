@@ -42,6 +42,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaReferenceUrlService mediaReferenceUrlService;
     @Mock private MediaBillingService mediaBillingService;
     @Mock private com.superprogrammer.billing.service.InflightGateService inflightGate;
+    @Mock private com.superprogrammer.media.service.internal.MediaInflightGateService mediaInflightGate;
     @Mock private com.superprogrammer.common.metrics.BizMetrics bizMetrics;
     @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
 
@@ -56,7 +57,7 @@ class MediaGenTaskWorkerTest {
     void setUp() {
         worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
                 mediaStorageService, mediaReferenceUrlService, properties, objectMapper, directExecutor, mediaBillingService,
-                inflightGate, bizMetrics, auditLogService);
+                inflightGate, mediaInflightGate, bizMetrics, auditLogService);
     }
 
     @Test
@@ -270,6 +271,55 @@ class MediaGenTaskWorkerTest {
 
         verify(taskMapper, never()).selectById(anyLong());
         verify(arkProvider, never()).createTask(any());
+    }
+
+    // ---------- C3 · 并发闸终态释放守卫（迁移真正落库才 release） ----------
+
+    // C3：终态迁移真正落库（markFailed 返回 true）→ 释放对应 kind 槽位
+    @Test
+    void terminalTransition_releasesMediaInflightByKind() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_FAILED,
+                null, null, "Ark 429"));
+        when(txService.markFailed(eq(1L), anyString())).thenReturn(true);
+
+        worker.poll();
+
+        verify(mediaInflightGate).release(100L,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO);
+    }
+
+    // C3：重复终态回调（markFailed 影响 0 行=false，锁过期重认领双 worker 场景）→ 不再释放，防双 DECR 超卖
+    @Test
+    void alreadyTerminal_noSecondMediaRelease() {
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_FAILED,
+                null, null, "Ark 429"));
+        when(txService.markFailed(eq(1L), anyString())).thenReturn(false); // 已终态，未迁移
+
+        worker.poll();
+
+        verify(mediaInflightGate, never()).release(anyLong(), anyString());
+    }
+
+    // C3：图片任务终态迁移 → 释放 image 槽位（kind 分流）
+    @Test
+    void imageTerminalTransition_releasesImageKind() {
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        task.setTaskType(MediaGenTask.TYPE_TEXT2IMAGE);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(imageProvider.generate(any())).thenThrow(new IllegalStateException("生图超时"));
+        when(txService.markFailed(eq(1L), anyString())).thenReturn(true);
+
+        worker.poll();
+
+        verify(mediaInflightGate).release(100L,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_IMAGE);
     }
 
     // ---------- buildRequest（附件分支，ReflectionTestUtils 直调私有方法） ----------

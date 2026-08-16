@@ -39,6 +39,8 @@ public enum ErrorCode {
     LOW_BALANCE_INFLIGHT_LIMIT(42902, "余额不足，请等待当前任务完成"),
     // 安全体系 S3 · SEC-FR-056 会话 token 上限（LLM10）：固定话术，不透传用量细节
     LLM_SESSION_CAP_EXCEEDED(42903, "本会话累计用量已达上限，请开通新会话继续"),
+    // 2x 第三轮 C3 · 每用户媒体生成任务并发上限（15x 三问落地）：video/image 独立计数
+    MEDIA_CONCURRENT_LIMIT(42904, "生成任务并发数已达上限，请等待在途任务完成后再试"),
 
     // 认证系统增强（多凭证账号模型）
     // 解绑时账号仅剩一种可用凭证 → 拒，防账号失联（找回密码/登录将无可用方式）
