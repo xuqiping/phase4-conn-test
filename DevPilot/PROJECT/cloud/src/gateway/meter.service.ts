@@ -43,6 +43,7 @@ export class MeterService {
       tokensOut: input.usage.output_tokens,
       taskId: input.taskId,
       nonce: `chat:${input.nonce}`,
+      allowOverdraw: true, // 流已跑完必须记账（BUG-P02-01）：透支记负余额，后续 precheck 拦截
     });
     const taskSpent = await this.ledger.deriveTaskSpentCents(input.userId, input.taskId);
     const cap = Number(process.env.CHAT_TASK_CAP_CENTS ?? 500_00); // 默认单任务 500 元

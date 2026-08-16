@@ -61,7 +61,14 @@ export class PaymentService {
 
   /** 生成 mock 渠道签名（HMAC-SHA256，密钥走环境变量；真渠道换成渠道公钥验签） */
   signMock(payload: { order_id: number; trade_no: string; paid_cents: number }): string {
-    const secret = process.env.PAYMENT_HMAC_SECRET ?? "dev-mock-secret";
+    const secret = process.env.PAYMENT_HMAC_SECRET;
+    if (!secret) {
+      // 配置级风险（审查发现）：默认密钥=任何人可自签回调伪造充值。生产必配，缺配直接拒。
+      if (process.env.NODE_ENV === "production") {
+        throw new BadRequestException("支付验签密钥未配置，回调服务不可用");
+      }
+      return createHmac("sha256", "dev-mock-secret").update(canonical(payload)).digest("hex");
+    }
     return createHmac("sha256", secret).update(canonical(payload)).digest("hex");
   }
 
@@ -94,7 +101,32 @@ export class PaymentService {
        WHERE id = $2 AND status = 0 RETURNING id`,
       [tradeNo, orderId],
     );
-    if (won.rows.length === 0) return { first: false, credited_cents: 0 };
+    if (won.rows.length === 0) {
+      // 崩溃窗口补偿（BUG-P02-02）：CAS 赢后、credit 前进程崩溃 → 订单 status=1 但账本无
+      // recharge-{orderId} 行，用户付了钱永不到账。重放回调时发现该状态就补入账。
+      const ledgerRow = await this.db.query<{ id: number }>(
+        `SELECT id FROM token_ledger WHERE idempotency_key = $1`,
+        [`recharge-${orderId}`],
+      );
+      if (ledgerRow.rows.length === 0) {
+        const o = (
+          await this.db.query<{ user_id: number; amount: string; bonus: string; pack: string }>(
+            `SELECT user_id, amount_cents AS amount, bonus_cents AS bonus, pack_code AS pack FROM recharge_orders WHERE id = $1`,
+            [orderId],
+          )
+        ).rows[0];
+        const total = Number(o.amount) + Number(o.bonus);
+        await this.billing.credit({
+          userId: o.user_id,
+          amountCents: total,
+          kind: 2,
+          idempotencyKey: `recharge-${orderId}`,
+          note: o.pack,
+        });
+        return { first: true, credited_cents: total }; // 补账成功，视同首账
+      }
+      return { first: false, credited_cents: 0 };
+    }
 
     const got = await this.db.query<{ user_id: number; amount: string; bonus: string; pack: string }>(
       `SELECT user_id, amount_cents AS amount, bonus_cents AS bonus, pack_code AS pack FROM recharge_orders WHERE id = $1`,

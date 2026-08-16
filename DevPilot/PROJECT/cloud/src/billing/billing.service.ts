@@ -24,13 +24,15 @@ export class BillingService {
     tokensOut?: number;
     taskId?: string | null;
     nonce: string; // 调用方生成的一次性键（如 `chat-${taskId}-${round}`）
+    /** 流式末帧实扣用（BUG-P02-01）：服务已跑完，余额不足也透支记账，绝不白嫖 */
+    allowOverdraw?: boolean;
   }): Promise<LedgerRow> {
     const key = `charge:${input.userId}:${input.nonce}`;
     const existing = await this.ledger.findByIdempotencyKey(key);
     if (existing) return existing;
 
     if (input.amountCents > 0) {
-      await this.wallet.deduct(input.userId, input.amountCents);
+      await this.wallet.deduct(input.userId, input.amountCents, input.allowOverdraw === true);
     }
     try {
       return await this.ledger.append({

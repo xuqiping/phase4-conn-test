@@ -88,14 +88,20 @@ export class ChatController {
         console.error(`[fuse] user=${userId} task=${dto.task_id ?? dto.nonce} spent=${settled.task_spent_cents}c 触发单任务消费上限`);
       }
     } catch (e) {
-      // 流已开：错误只能以 SSE event 形式下发；上游挂 → 502 语义，绝不透传上游原文
+      // 流已开：错误只能以 SSE event 形式下发；上游挂 → 502 语义，绝不透传上游原文。
+      // 业务 HttpException（如扣费时余额不足 402）透传真实状态码+大白话，别误报成 500。
       const isUpstream = e instanceof UpstreamError;
+      const http = e as { getStatus?: () => number; message?: string };
+      const bizStatus = http.getStatus?.();
+      const isBiz = bizStatus != null && !(e instanceof UpstreamError);
       send("error", {
-        code: isUpstream ? 502 : 500,
-        msg: isUpstream ? "上游模型服务不可用，请稍后重试" : "服务开小差了，请稍后重试",
+        code: isUpstream ? 502 : (isBiz ? bizStatus : 500),
+        msg: isUpstream
+          ? "上游模型服务不可用，请稍后重试"
+          : (isBiz ? (http.message ?? "请求失败，请稍后重试") : "服务开小差了，请稍后重试"),
       });
       res.end();
-      if (!isUpstream) {
+      if (!isUpstream && !isBiz) {
          
         console.error(`[chat-error] user=${userId} task=${dto.nonce}`, e);
       }

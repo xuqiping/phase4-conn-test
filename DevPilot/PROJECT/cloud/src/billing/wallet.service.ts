@@ -29,13 +29,13 @@ export class WalletService {
    * 乐观锁：UPDATE ... WHERE version=旧值，0 行命中（并发改动）最多重试 3 次。
    * 余额不足抛 402（前端引导充值）。
    */
-  async deduct(userId: number, amountCents: number): Promise<void> {
+  async deduct(userId: number, amountCents: number, allowOverdraw = false): Promise<void> {
     // 进程内按用户串行（PGlite 单连接本就单写者；多进程/生产靠下方乐观锁 CAS 兜底），
     // 避免 100 并发下乐观锁重试互相踩踏导致饥饿。
     const prev = this.locks.get(userId) ?? Promise.resolve();
     const run = prev.then(
-      () => this.deductInner(userId, amountCents),
-      () => this.deductInner(userId, amountCents),
+      () => this.deductInner(userId, amountCents, allowOverdraw),
+      () => this.deductInner(userId, amountCents, allowOverdraw),
     );
     this.locks.set(
       userId,
@@ -47,12 +47,14 @@ export class WalletService {
     return run;
   }
 
-  private async deductInner(userId: number, amountCents: number): Promise<void> {
+  private async deductInner(userId: number, amountCents: number, allowOverdraw: boolean): Promise<void> {
     for (let i = 0; i < MAX_RETRY; i++) {
       const w = await this.get(userId);
       const balance = Number(w.balance_cents);
       const gift = Number(w.gift_cents);
-      if (balance + gift < amountCents) {
+      // allowOverdraw：流式服务已跑完的末帧实扣（BUG-P02-01）——宁可钱包透支也必须记账，
+      // 否则余额略不足的用户可换 nonce 无限白嫖整条流；透支后 precheck 会拦后续请求。
+      if (!allowOverdraw && balance + gift < amountCents) {
         throw new HttpException("余额不足，请充值后再试", HttpStatus.PAYMENT_REQUIRED);
       }
       const giftUse = Math.min(gift, amountCents);

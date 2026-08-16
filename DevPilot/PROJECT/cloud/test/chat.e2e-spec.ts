@@ -130,4 +130,17 @@ describe("模型网关 chat（P02 Step5）", () => {
     expect(done2.capped).toBe(true);
     expect(done2.task_spent_cents).toBe(630);
   });
+  it("BUG-P02-01 回归：余额略不足末帧实扣 → 透支记账不白嫖，done 正常收尾，二次请求 402 先拒", async () => {
+    const { token, userId } = await newUser("13822220006");
+    // 只给 185 分：预检按输入 token 估（≈0）放行，末帧实扣 315 不足——必须透支记账
+    await app.get(BillingService).credit({ userId, amountCents: 185, kind: 2, idempotencyKey: "c-6" });
+    const res = await chatReq(token, body("gpt-4o-mini", "nonce-eeee-1", "聊一句")).expect(200);
+    const done = parseSse(res.text).find((e) => e.event === "done")!.data as { cost_cents: number };
+    expect(done.cost_cents).toBe(315);
+    const w = await app.get(WalletService).get(userId);
+    expect(Number(w.balance_cents) + Number(w.gift_cents)).toBe(185 - 315); // 记了账（透支 -130）
+    const again = await chatReq(token, body("gpt-4o-mini", "nonce-eeee-2", "再来"));
+    expect(again.status).toBe(402); // 负余额用户后续先拒付，不再白嫖
+    expect(again.body.msg).toContain("余额不足");
+  });
 });

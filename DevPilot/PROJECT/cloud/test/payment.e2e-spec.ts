@@ -134,4 +134,37 @@ describe("充值（P02 Step7，mock 渠道）", () => {
     const anon = await request(app.getHttpServer()).post("/api/v1/payments/recharge").send({ pack_code: "P50" });
     expect(anon.status).toBe(401);
   });
+  it("BUG-P02-02 回归：CAS 赢后入账前崩溃（模拟：手工置 status=1 但不记账）→ 重放回调补账到账", async () => {
+    const { token, userId } = await newUser("13833330006");
+    const order = (
+      await request(app.getHttpServer())
+        .post("/api/v1/payments/recharge")
+        .set("authorization", `Bearer ${token}`)
+        .send({ pack_code: "P50" })
+    ).body.data;
+    // 模拟崩溃窗口：只把订单置为已支付，绕过 handlePaid 不入账
+    await app.get(DbService).query(
+      `UPDATE recharge_orders SET status = 1, paid_at = now() WHERE id = $1`, [order.order_id],
+    );
+    const w0 = await app.get(WalletService).get(userId);
+    const before = Number(w0.balance_cents) + Number(w0.gift_cents);
+    // 重放回调（合法签名）→ 补账分支命中
+    const payload = { order_id: order.order_id, trade_no: "crash-window-1", paid_cents: order.pay_amount_cents };
+    const sig = app.get(PaymentService).signMock(payload);
+    await request(app.getHttpServer())
+      .post("/api/v1/payments/webhook")
+      .set("x-signature", sig)
+      .send(payload)
+      .expect(200);
+    const w1 = await app.get(WalletService).get(userId);
+    expect(Number(w1.balance_cents) + Number(w1.gift_cents)).toBe(before + order.pay_amount_cents);
+    // 再重放一次：不重复加钱
+    await request(app.getHttpServer())
+      .post("/api/v1/payments/webhook")
+      .set("x-signature", sig)
+      .send(payload)
+      .expect(200);
+    const w2 = await app.get(WalletService).get(userId);
+    expect(Number(w2.balance_cents) + Number(w2.gift_cents)).toBe(before + order.pay_amount_cents);
+  });
 });
