@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -49,6 +50,7 @@ public class AssetProjectController {
 
     private final AssetProjectService projectService;
     private final AssetMemberService memberService;
+    private final com.superprogrammer.asset.service.AssetService assetService;
 
     @PostMapping
     @RequirePermission("asset:write")
@@ -97,6 +99,17 @@ public class AssetProjectController {
                                                        @RequestBody com.superprogrammer.asset.dto.ProjectSettingsRequest req) {
         return ResponseEntity.ok(R.ok("项目设置已更新",
                 projectService.updateSettings(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
+    /**
+     * 上传者筛选候选（2x第三轮C7 实测修复）：本项目资产上传者去重，读门（任何可访问项目者）。
+     * 成员邀请候选 /candidates 是 requireManage（OWNER 专用）——EDITOR 筛选复用它 403，故独立端点。
+     */
+    @GetMapping("/{id}/creator-candidates")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<List<com.superprogrammer.asset.dto.MemberCandidateVO>>> creatorCandidates(
+            @PathVariable Long id, @RequestParam(defaultValue = "") String keyword) {
+        return ResponseEntity.ok(R.ok(assetService.searchCreatorCandidates(id, getCurrentUserId(), isAdmin(), keyword)));
     }
 
     private Long getCurrentUserId() {

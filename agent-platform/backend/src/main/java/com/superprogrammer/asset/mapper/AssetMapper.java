@@ -82,6 +82,13 @@ public interface AssetMapper extends BaseMapper<Asset> {
     @Select("SELECT COUNT(*) FROM assets WHERE project_id = #{projectId} AND media_type = #{mediaType} AND deleted = 0")
     long countByMediaType(@Param("projectId") Long projectId, @Param("mediaType") String mediaType);
 
+    /**
+     * 2x 第三轮：项目内资产上传者去重（上传者筛选候选，只取本项目出现过的人——不泄露全局用户目录）。
+     */
+    @Select("SELECT DISTINCT created_by FROM assets "
+            + "WHERE project_id = #{projectId} AND deleted = 0 AND created_by IS NOT NULL")
+    List<Long> selectCreatorUserIds(@Param("projectId") Long projectId);
+
     /** 公众池项目资产数一次 GROUP BY 批查，避免项目列表 N+1。 */
     @Select({"<script>",
             "SELECT project_id AS projectId, COUNT(*) AS assetCount FROM assets ",

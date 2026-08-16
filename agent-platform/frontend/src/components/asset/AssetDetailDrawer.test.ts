@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AssetDetailDrawer from './AssetDetailDrawer.vue'
+import ConsistencyPack from './ConsistencyPack.vue'
 import { assetApi, assetBridgeApi, versionApi, scriptApi, scoreApi } from '@/api/assets'
 import type { AxiosResponse } from 'axios'
 import type { AssetVO } from '@/types/asset'
@@ -417,6 +418,16 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     const wrapper = await mountDrawer({ canEdit: true, personalMode: true, currentUserId: 1 })
     const vm = wrapper.vm as unknown as { canModify: boolean }
     expect(vm.canModify).toBe(true)
+  })
+
+  it('C7-8 PERSONAL 非本人 → 一致性包 can-edit=false（P4 实测修复：原误传 canEdit）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ createdBy: 999, roleKeys: ['人物'] }) })
+    )
+    const wrapper = await mountDrawer({ canEdit: true, personalMode: true, currentUserId: 1 })
+    const cp = wrapper.findComponent(ConsistencyPack)
+    expect(cp.exists()).toBe(true)
+    expect(cp.props('canEdit')).toBe(false)
   })
 
   it('C7-6 SHARED 模式零回归 → personalMode 缺省 canModify 恒等于 canEdit', async () => {

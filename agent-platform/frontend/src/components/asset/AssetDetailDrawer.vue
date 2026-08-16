@@ -246,7 +246,7 @@
         <ConsistencyPack
           v-if="showConsistency"
           :asset-id="asset.id"
-          :can-edit="canEdit"
+          :can-edit="canModify"
           :initial="consistencyInitial"
           @saved="onConsistencySaved"
         />

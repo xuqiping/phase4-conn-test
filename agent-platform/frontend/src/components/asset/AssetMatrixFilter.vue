@@ -118,7 +118,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { NInput, NInputNumber, NSelect } from 'naive-ui'
-import { memberApi } from '@/api/assets'
+import { projectApi } from '@/api/assets'
 import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
 
 /** 筛选态：type/role 空=不限，q=搜索词；C7 加上传者/分数区间/分数来源 */
@@ -244,7 +244,7 @@ const creatorOptions = ref<{ label: string; value: string }[]>([])
 const creatorLoading = ref(false)
 let creatorSearchTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 上传者远程候选（300ms 防抖，复用成员候选搜索 API；失败静默，手输仍可用 tag 直选）。 */
+/** 上传者远程候选（300ms 防抖；本项目上传者去重端点——成员/公共 VIEWER 可用，P4 实测修复 403；失败静默，手输仍可用 tag 直选）。 */
 function onCreatorSearch(keyword: string) {
   if (creatorSearchTimer) clearTimeout(creatorSearchTimer)
   const kw = keyword.trim()
@@ -255,7 +255,7 @@ function onCreatorSearch(keyword: string) {
   creatorSearchTimer = setTimeout(async () => {
     creatorLoading.value = true
     try {
-      const res = await memberApi.searchCandidates(props.projectId!, kw)
+      const res = await projectApi.creatorCandidates(props.projectId!, kw)
       creatorOptions.value = (res.data.data ?? []).map((c) => ({ label: c.username, value: c.username }))
     } catch {
       creatorOptions.value = []

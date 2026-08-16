@@ -805,6 +805,34 @@ class AssetServiceTest {
         return request;
     }
 
+    @Test
+    void searchCreatorCandidates_editorReadGate_returnsProjectCreatorsFilteredByKeyword() {
+        // EDITOR 走读门 loadAccessible（非 requireManage），候选只含本项目上传者（P4 实测 403 修复）
+        when(aclService.loadAccessible(PROJECT_ID, EDITOR_ID, false)).thenReturn(null);
+        when(assetMapper.selectCreatorUserIds(PROJECT_ID)).thenReturn(List.of(OWNER_ID, EDITOR_ID));
+        com.superprogrammer.auth.entity.User owner = new com.superprogrammer.auth.entity.User();
+        owner.setId(OWNER_ID);
+        owner.setUsername("p4_owner");
+        com.superprogrammer.auth.entity.User editor = new com.superprogrammer.auth.entity.User();
+        editor.setId(EDITOR_ID);
+        editor.setUsername("p4_editor");
+        when(userMapper.selectBatchIds(List.of(OWNER_ID, EDITOR_ID))).thenReturn(List.of(owner, editor));
+
+        var all = service.searchCreatorCandidates(PROJECT_ID, EDITOR_ID, false, "p4_");
+        assertEquals(2, all.size());
+        assertEquals("p4_editor", all.get(0).getUsername());
+        assertEquals("p4_owner", all.get(1).getUsername());
+
+        var hit = service.searchCreatorCandidates(PROJECT_ID, EDITOR_ID, false, "editor");
+        assertEquals(1, hit.size());
+        assertEquals("p4_editor", hit.get(0).getUsername());
+
+        var miss = service.searchCreatorCandidates(PROJECT_ID, EDITOR_ID, false, "nobody");
+        assertEquals(0, miss.size());
+        verify(aclService, org.mockito.Mockito.times(3)).loadAccessible(PROJECT_ID, EDITOR_ID, false);
+        verify(aclService, never()).requireManage(any(), any(), anyBoolean());
+    }
+
     private AssetProject targetProject(Long id, String roles, String mediaTypes) {
         AssetProject project = new AssetProject();
         project.setId(id);

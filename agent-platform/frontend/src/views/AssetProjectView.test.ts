@@ -25,7 +25,7 @@ vi.mock('vue-router', async () => {
 })
 
 vi.mock('@/api/assets', () => ({
-  projectApi: { get: vi.fn(), list: vi.fn(), update: vi.fn(), updateSettings: vi.fn() },
+  projectApi: { get: vi.fn(), list: vi.fn(), update: vi.fn(), updateSettings: vi.fn(), creatorCandidates: vi.fn() },
   assetApi: { list: vi.fn(), countMatrix: vi.fn(), create: vi.fn(), upload: vi.fn(), copy: vi.fn() },
   memberApi: { searchCandidates: vi.fn() },
   scoreApi: { mine: vi.fn(), submit: vi.fn() }

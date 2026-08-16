@@ -352,7 +352,28 @@ public class AssetService {
      * 矩阵筛选/搜索列表（分页）。loadAccessible（viewer 可读）。
      * 默认隐藏 ARCHIVED（L3），status=ARCHIVED 显式查时可及。
      *
-     * <p>2x第三轮C6 新增筛选：creatorUsername（users 精确匹配 → IN createdBy；0 命中空页）；
+    /**
+     * 2x第三轮C7 上传者筛选候选：本项目资产上传者去重（读门=任何可访问项目者，含公共 VIEWER）。
+     * 区别于成员邀请候选（requireManage 全局搜索）：只返回本项目出现过的人，不泄露全局用户目录。
+     */
+    public List<com.superprogrammer.asset.dto.MemberCandidateVO> searchCreatorCandidates(
+            Long projectId, Long currentUserId, boolean admin, String keyword) {
+        aclService.loadAccessible(projectId, currentUserId, admin);
+        List<Long> creatorIds = assetMapper.selectCreatorUserIds(projectId);
+        if (creatorIds.isEmpty()) {
+            return List.of();
+        }
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase();
+        return userMapper.selectBatchIds(creatorIds).stream()
+                .map(u -> new com.superprogrammer.asset.dto.MemberCandidateVO(u.getId(), u.getUsername()))
+                .filter(c -> kw.isEmpty() || c.getUsername().toLowerCase().contains(kw))
+                .sorted(java.util.Comparator.comparing(com.superprogrammer.asset.dto.MemberCandidateVO::getUsername))
+                .limit(20)
+                .toList();
+    }
+
+    /**
+     * 2x第三轮C6 新增筛选：creatorUsername（users 精确匹配 → IN createdBy；0 命中空页）；
      * scoreMin/scoreMax/scoreSource（owner=拥有者分行过滤 / member=成员均分 GROUP BY HAVING，
      * 与既有 type×role×q×status 同交集 wrapper 叠加）。
      * 装配 createdByUsername + 双轨评分 + myScore（批查防 N+1）。

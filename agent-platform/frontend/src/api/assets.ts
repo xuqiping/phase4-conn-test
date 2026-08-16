@@ -73,6 +73,15 @@ export const projectApi = {
   /** PATCH /assets/projects/{id}/settings — 项目设置（成员打分开关/内容模式，局部更新；C6） */
   updateSettings(id: number, data: ProjectSettingsRequest) {
     return request.patch<ApiResponse<AssetProjectVO>>(`/assets/projects/${id}/settings`, data)
+  },
+  /**
+   * GET /assets/projects/{id}/creator-candidates — 上传者筛选候选（本项目上传者去重，读门：成员/公共 VIEWER 可用）。
+   * 区别于 memberApi.searchCandidates（requireManage，OWNER 邀请专用）——EDITOR 复用它 403（P4 实测修复）。
+   */
+  creatorCandidates(id: number, keyword: string) {
+    return request.get<ApiResponse<MemberCandidateVO[]>>(`/assets/projects/${id}/creator-candidates`, {
+      params: { keyword }
+    })
   }
 }
 
