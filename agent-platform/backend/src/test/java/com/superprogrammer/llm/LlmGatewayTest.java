@@ -294,6 +294,38 @@ class LlmGatewayTest {
         verify(modelCallScope, atLeast(2)).runWithContext(any(Runnable.class));
     }
 
+    // ===== 2026-08-17 实测⑤：净化器 carry 尾段流失 =====
+
+    /**
+     * mask 开启时 StreamMasker 扣留尾 ≤40 字符；chat 流的 DONE 在网关流之后由服务层追加，
+     * 既有「非 CHUNK 事件触发 flush」分支永不执行 → 流终结必须统一补发扣留尾段（否则每条
+     * 流式回复末 40 字符静默丢失，max_tokens 截断标记 chunk 也会被整体吞掉）。
+     */
+    @Test
+    void chatStream_sanitizerCarry_flushedAtStreamTerminal() {
+        com.superprogrammer.common.security.ai.OutputSanitizer sanitizer =
+                new com.superprogrammer.common.security.ai.OutputSanitizer(systemSettingService,
+                        mock(com.superprogrammer.common.security.ai.PromptLeakDetector.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(gateway, "outputSanitizer", sanitizer);
+        when(systemSettingService.getAiOutputMaskEnabled()).thenReturn(true);
+        when(systemSettingService.getAiPromptLeakEnabled()).thenReturn(false);
+        when(deepseekProvider.chatStream(any(), any())).thenAnswer(inv ->
+                Flux.just(com.superprogrammer.chat.dto.StreamEvent.chunk("A".repeat(100))));
+        when(deepseekProvider.getId()).thenReturn(7L);
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .build();
+        List<com.superprogrammer.chat.dto.StreamEvent> events =
+                gateway.chatStream(request, 42L).collectList().block();
+
+        assertNotNull(events);
+        String all = events.stream()
+                .map(e -> e.getContent() == null ? "" : e.getContent())
+                .reduce("", String::concat);
+        assertEquals(100, all.length(), "流终结须补发扣留尾段（100 字符全量到达，实际=" + all.length() + "）");
+    }
+
     // ===== 归户兜底（层1 咽喉）：忘传 userId → 自动从 BillingContext 归户；无上下文 → 仅采不扣 =====
 
     @Test

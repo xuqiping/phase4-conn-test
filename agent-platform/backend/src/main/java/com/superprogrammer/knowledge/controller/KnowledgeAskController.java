@@ -56,7 +56,8 @@ public class KnowledgeAskController {
         boolean admin = isAdmin();
         SecurityContext securityContext = SecurityContextHolder.getContext();
         java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
-        SseEmitter emitter = new SseEmitter(120_000L);
+        // 同 ChatController.SSE_TIMEOUT_MS：120s 掐长生成（实测④），600s 覆盖长文生成
+        SseEmitter emitter = new SseEmitter(600_000L);
 
         new Thread(() -> {
             try {
@@ -75,7 +76,7 @@ public class KnowledgeAskController {
                     } catch (Exception sendError) {
                         throw new RuntimeException(sendError);
                     }
-                }).blockLast(java.time.Duration.ofSeconds(120));
+                }).blockLast(java.time.Duration.ofSeconds(600));
                 if (!sentDone.get()) {
                     emitter.send(SseEmitter.event().data(StreamEvent.done()));
                 }

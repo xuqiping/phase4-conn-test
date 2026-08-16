@@ -192,7 +192,14 @@ public class LlmGateway {
                             ragCall.cancel();
                         }))
                         // 安全体系 S3：CHUNK/THINKING 过净化器（40 字符 carry）；终态事件前补发尾段
-                        .concatMap(evt -> sanitizeStreamEvent(evt, masker));
+                        .concatMap(evt -> sanitizeStreamEvent(evt, masker))
+                        // 2026-08-17 实测④续：chat 流的 DONE 由服务层在网关流之后追加——净化器靠
+                        // 「非 CHUNK 事件」触发的 flush 分支永不执行，末 ≤40 字符扣留段（含
+                        // max_tokens 截断标记 chunk）被整体吞掉。此处流终结统一补发扣留尾段。
+                        .concatWith(Flux.defer(() -> {
+                            String rest = masker == null ? "" : masker.flush();
+                            return rest.isEmpty() ? Flux.empty() : Flux.just(StreamEvent.chunk(rest));
+                        }));
             } catch (RuntimeException e) {
                 // 组装期抛异常 → doFinally 尚未注册，此处配对释放
                 if (held) {

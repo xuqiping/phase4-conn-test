@@ -34,6 +34,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class ChatController {
 
+    /**
+     * SSE 超时（用户实测③/④ 2026-08-17）：原 120s 掐长生成（6000字文档 >2min 必 AsyncRequestTimeout，
+     * 且超时路径曾误入 sendMessage 同步重答=双倍计费）。600s 覆盖 8192 token 慢速生成。
+     */
+    private static final long SSE_TIMEOUT_MS = 600_000L;
+
     private final ChatSessionService chatSessionService;
     private final ChatTargetService chatTargetService;
     private final MemoryAssetUploadService memoryAssetUploadService;
@@ -194,7 +200,7 @@ public class ChatController {
                                        @PathVariable Long messageId,
                                        @Valid @RequestBody com.superprogrammer.chat.dto.InclusionConfirmRequest body) {
         Long userId = getCurrentUserId();
-        SseEmitter emitter = new SseEmitter(120_000L);
+        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         SecurityContext securityContext = SecurityContextHolder.getContext();
         java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
         new Thread(() -> {
@@ -217,7 +223,7 @@ public class ChatController {
                                 throw new RuntimeException(sendError);
                             }
                         })
-                        .blockLast(java.time.Duration.ofSeconds(120));
+                        .blockLast(java.time.Duration.ofMillis(SSE_TIMEOUT_MS));
                 if (!sentDone.get()) {
                     emitter.send(SseEmitter.event().data(
                             com.superprogrammer.chat.dto.StreamEvent.done()));
@@ -242,7 +248,10 @@ public class ChatController {
     }
 
     private SseEmitter doStream(Long userId, ChatRequest request) {
-        SseEmitter emitter = new SseEmitter(120_000L);
+        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        // 用户实测④：emitter 超时后连接已死——此时不得再走 sendMessage 同步重答（双倍计费+注定失败）
+        AtomicBoolean emitterTimedOut = new AtomicBoolean(false);
+        emitter.onTimeout(() -> emitterTimedOut.set(true));
         SecurityContext securityContext = SecurityContextHolder.getContext();
         // 审计 #7：裸线程不继承 ThreadLocal，手工快照请求线程 MDC（traceId/userId/username/clientIp），
         // 线程内恢复——否则流式审计 fromMdc 读 username/userId 全 null（REST 路径走 Tomcat 线程不受影响）。
@@ -268,13 +277,19 @@ public class ChatController {
                                 throw new RuntimeException(sendError);
                             }
                         })
-                        .blockLast(java.time.Duration.ofSeconds(120));
+                        .blockLast(java.time.Duration.ofMillis(SSE_TIMEOUT_MS));
                 if (!sentDone.get()) {
                     emitter.send(SseEmitter.event().data(
                             com.superprogrammer.chat.dto.StreamEvent.done()));
                 }
                 emitter.complete();
             } catch (Exception e) {
+                if (emitterTimedOut.get()) {
+                    // SSE 超时路径：连接已断，跳过 sendMessage 同步重答（实测④：曾双倍计费仍失败）
+                    log.warn("SSE 超时终止（不重答）session={} messageLen={}",
+                            request.getSessionId(), request.getMessage() == null ? 0 : request.getMessage().length());
+                    return;
+                }
                 // Streaming failed or timed out — fall back to sync REST
                 try {
                     ChatResponse response = chatSessionService.sendMessage(userId, request);
