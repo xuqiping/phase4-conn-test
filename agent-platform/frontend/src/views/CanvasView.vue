@@ -90,10 +90,25 @@
         <CanvasBoard
           ref="boardRef"
           @node-selected="onNodeSelect"
+          @nodes-selected="onNodesSelected"
           @node-context-menu="onNodeContextMenu"
           @quick-add="onQuickAdd"
           @structure-changed="scheduleSave"
         />
+
+        <!-- 3x-C1 框选批量工具条（≥2 节点选中时浮于画布顶部） -->
+        <div
+          v-if="multiSelectedIds.length >= 2"
+          class="canvas-batchbar"
+          role="toolbar"
+          aria-label="批量操作工具条"
+        >
+          <span class="canvas-batchbar__count">已选 {{ multiSelectedIds.length }} 个节点</span>
+          <n-button size="small" tertiary type="error" @click="onBatchDelete">
+            <template #icon><n-icon :component="TrashOutline" /></template>
+            批量删除
+          </n-button>
+        </div>
 
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
         <PropertyPanel
@@ -187,7 +202,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useMessage
+  NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useDialog, useMessage
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
@@ -217,6 +232,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const message = useMessage()
+const dialog = useDialog()
 
 /** 4 层权限显隐兜底：菜单隐藏 + 页内 hasPermission + API 403（plan IC-16）。 */
 const canEdit = computed(() => authStore.hasPermission('canvas:write'))
@@ -238,6 +254,8 @@ const selectedNode = ref<CanvasNode | null>(null)
 const runningNodeId = ref<string | null>(null)
 /** 焦点编辑中的图节点（null=关闭沉浸 overlay）。 */
 const focusNode = ref<CanvasNode | null>(null)
+/** 3x-C1 框选多选集（≥2 驱动批量工具条；[] 回单选/空选）。 */
+const multiSelectedIds = ref<string[]>([])
 
 /** C13 故事板抽屉显隐。 */
 const showStoryboard = ref(false)
@@ -253,6 +271,31 @@ const contextNode = ref<CanvasNode | null>(null)
 
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
+}
+
+/** 3x-C1：多选集同步（≥2 关属性面板显批量工具条；[] 回单选）。 */
+function onNodesSelected(ids: string[]) {
+  multiSelectedIds.value = ids
+  if (ids.length >= 2) selectedNode.value = null
+}
+
+/** 3x-C1：批量删除（二次确认列节点名；removeNodes 连带删边并触发落库）。 */
+function onBatchDelete() {
+  const ids = [...multiSelectedIds.value]
+  if (!ids.length) return
+  const names = ids
+    .map(id => String(boardRef.value?.getNode(id)?.data.label ?? id))
+    .join('、')
+  dialog.warning({
+    title: '批量删除节点',
+    content: `将删除 ${ids.length} 个节点及其连线：${names}`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      boardRef.value?.removeNodes(ids)
+      multiSelectedIds.value = []
+    }
+  })
 }
 
 /**
@@ -1612,6 +1655,30 @@ function flushPendingSave() {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   overflow: hidden;
+  position: relative; /* 3x-C1 批量工具条定位锚 */
+}
+
+/* 3x-C1 框选批量工具条：浮于画布顶部居中 */
+.canvas-batchbar {
+  position: absolute;
+  top: var(--spacing-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+
+  &__count {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
 }
 
 .canvas-palette {

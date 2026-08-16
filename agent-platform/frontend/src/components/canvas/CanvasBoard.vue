@@ -20,6 +20,8 @@
       :snap-to-grid="true"
       :snap-grid="[16, 16]"
       fit-view-on-init
+      :delete-key-code="null"
+      @selection-end="onSelectionEnd"
       @connect="onConnect"
       @connect-start="onConnectStart"
       @connect-end="onConnectEnd"
@@ -77,6 +79,7 @@ const {
   zoomOut: vfZoomOut,
   fitView: vfFitView,
   getViewport,
+  getSelectedNodes,
   vueFlowRef
 } = useVueFlow({ id: 'infinite-canvas' })
 
@@ -87,10 +90,18 @@ let seqCounter = 0
 /** 手选模式（同 FlowCanvas：onNodeClick 跟踪 id，规避 vue-flow Node.selected 联合类型不可达）。 */
 const selectedNodeId = ref('')
 const selectedEdgeId = ref('')
+/**
+ * 3x-C1 多选集：Shift 框选（vue-flow 原生 selectionKeyCode='Shift'）结束时同步。
+ * 库内部 selected 只做视觉高亮；应用层以此集合驱动批量工具条/批量删除。
+ * delete-key-code 已置 null —— 删除只走应用层，杜绝「库 Backspace 静默删 + 应用单删」双删。
+ */
+const multiSelectedIds = ref<string[]>([])
 const boardRoot = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   (e: 'node-selected', node: CanvasNode | null): void
+  /** 3x-C1：框选结束/清空 → 同步多选集给父（≥2 驱动批量工具条；[] 表示回到单选/空选）。 */
+  (e: 'nodes-selected', ids: string[]): void
   /** S12：节点右键 → 父开「存入资产库」弹窗（L5）。 */
   (e: 'node-context-menu', node: CanvasNode): void
   /** C6：双击画布空白处 → 父开「快速加节点」搜索框（坐标已转画布坐标系）。 */
@@ -122,13 +133,32 @@ watch(selectedEdgeId, (id) => {
 })
 
 /**
+ * 3x-C1：节点被外部程序删除（父组件批量删/拆分镜整批替换）时，修剪多选集防悬挂 id
+ * （悬挂 id 再走批量删除=空操作无害，但工具条计数会错）。
+ */
+watch(nodes, (list) => {
+  if (!multiSelectedIds.value.length) return
+  const alive = new Set(list.map(n => n.id))
+  const next = multiSelectedIds.value.filter(id => alive.has(id))
+  if (next.length !== multiSelectedIds.value.length) {
+    multiSelectedIds.value = next
+    emit('nodes-selected', next)
+  }
+}, { deep: false })
+
+/**
  * 全局 Delete/Backspace 删除（focus 无关）。boardRoot 上的 @keydown 仅在 boardRoot 聚焦时触发，
  * 用户点边后若焦点被属性面板/输入框/IME 抢占则 Delete 失效——window 监听兜底。
  * 排除可编辑元素（input/textarea/contenteditable/naive 控件），避免误删用户输入。
  */
 function onWindowKeydown(e: KeyboardEvent) {
+  // Esc：清空多选（不删）——框选误操作最顺手的退出键
+  if (e.key === 'Escape' && multiSelectedIds.value.length) {
+    clearMultiSelection()
+    return
+  }
   if (e.key !== 'Delete' && e.key !== 'Backspace') return
-  if (!selectedNodeId.value && !selectedEdgeId.value) return
+  if (!selectedNodeId.value && !selectedEdgeId.value && !multiSelectedIds.value.length) return
   const t = e.target as HTMLElement | null
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable
     || t.closest('.n-input,.n-base-selection,.mention-ta'))) return
@@ -259,9 +289,41 @@ function onConnectEnd(event: MouseEvent | TouchEvent | undefined) {
 function onNodeClick({ node }: NodeMouseEvent) {
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
+  clearMultiSelection()
   boardRoot.value?.focus()
   // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
   emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
+}
+
+/**
+ * 3x-C1：Shift 框选结束（vue-flow 原生 UserSelection 拖框）。nextTick 等库把 selected
+ * 写回节点后读 getSelectedNodes。1 个 → 归一回单选面板；≥2 → 多选集上报（父显批量工具条）。
+ * 库在普通单击/点空白时会自行重置内部选中，这里只同步应用层状态。
+ */
+function onSelectionEnd() {
+  nextTick(() => {
+    const ids = getSelectedNodes.value.map((n: { id: string }) => n.id)
+    if (ids.length >= 2) {
+      selectedNodeId.value = ''
+      selectedEdgeId.value = ''
+      multiSelectedIds.value = ids
+      emit('node-selected', null)
+      emit('nodes-selected', ids)
+    } else if (ids.length === 1) {
+      clearMultiSelection()
+      selectedNodeId.value = ids[0]
+      emit('node-selected', nodes.value.find(n => n.id === ids[0]) ?? null)
+    } else {
+      clearMultiSelection()
+    }
+  })
+}
+
+/** 清空多选集并通知父（回单选/空选模式）。 */
+function clearMultiSelection() {
+  if (!multiSelectedIds.value.length) return
+  multiSelectedIds.value = []
+  emit('nodes-selected', [])
 }
 
 /**
@@ -274,6 +336,7 @@ function focusNodeById(id: string) {
   if (!n) return
   selectedNodeId.value = id
   selectedEdgeId.value = ''
+  clearMultiSelection()
   emit('node-selected', n)
   nextTick(() => {
     vfFitView({ nodes: [id], padding: 0.4, duration: 300, maxZoom: 1.2 })
@@ -287,6 +350,7 @@ function focusNodeById(id: string) {
 function onNodeContextMenu({ node }: NodeMouseEvent) {
   selectedNodeId.value = node.id
   selectedEdgeId.value = ''
+  clearMultiSelection()
   const real = nodes.value.find(n => n.id === node.id)
   if (real) emit('node-context-menu', real)
 }
@@ -294,6 +358,7 @@ function onNodeContextMenu({ node }: NodeMouseEvent) {
 function onEdgeClick({ edge }: EdgeMouseEvent) {
   selectedNodeId.value = ''
   selectedEdgeId.value = edge.id
+  clearMultiSelection()
   boardRoot.value?.focus()
   emit('node-selected', null)
 }
@@ -301,11 +366,18 @@ function onEdgeClick({ edge }: EdgeMouseEvent) {
 function onPaneClick() {
   selectedNodeId.value = ''
   selectedEdgeId.value = ''
+  clearMultiSelection()
   boardRoot.value?.focus()
   emit('node-selected', null)
 }
 
 function deleteSelected() {
+  // 3x-C1：多选批量删除优先（removeNodes 连带删边 + structure-changed 落库）
+  if (multiSelectedIds.value.length) {
+    removeNodes([...multiSelectedIds.value])
+    clearMultiSelection()
+    return
+  }
   if (selectedNodeId.value) {
     removeNodes([selectedNodeId.value])
     selectedNodeId.value = ''
