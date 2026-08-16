@@ -149,3 +149,8 @@ backend-detached.err
 
 # 运维备份本地机密（backup-env.bat 只存在服务器本地；模板 backup-env.example.bat 入库）
 agent-platform/scripts/ops/backup/backup-env.bat
+agent-platform/start-backend-claude-jar.ps1
+
+# local backend debug logs (may echo env/secrets)
+/backend-run*.out
+/backend-run*.err
