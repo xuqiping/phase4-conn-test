@@ -28,6 +28,10 @@ public class AssetProject extends BaseEntity {
     public static final String PUBLIC_ACCESS_OPEN = "OPEN";
     public static final String PUBLIC_ACCESS_APPROVAL_REQUIRED = "APPROVAL_REQUIRED";
 
+    /** 2x第三轮C5：内容模式 SHARED（成员可删改所有内容，存量行为）/ PERSONAL（EDITOR 仅能删改自己上传的）。 */
+    public static final String CONTENT_MODE_SHARED = "SHARED";
+    public static final String CONTENT_MODE_PERSONAL = "PERSONAL";
+
     /** 项目所有者（唯一所有者，与 createdBy 解耦便于转让）。 */
     private Long ownerId;
 
@@ -68,4 +72,17 @@ public class AssetProject extends BaseEntity {
 
     /** 本次是否由管理员发布，决定“官方发布”标记。 */
     private Boolean publishedByAdmin;
+
+    /**
+     * 2x第三轮C5（V124）：OWNER 是否开放成员打分（默认 FALSE 关）。
+     * 关 = 只有 OWNER 能评分；开 = 被授权成员也可评（百分制，参与均分）。
+     */
+    private Boolean memberScoringEnabled;
+
+    /**
+     * 2x第三轮C5（V124）：内容模式（决策 D1）——
+     * SHARED=成员可删改项目内所有内容（存量默认，升级零行为变化）；
+     * PERSONAL=EDITOR 仅能删改 assets.created_by=自己 的内容。
+     */
+    private String contentMode;
 }
