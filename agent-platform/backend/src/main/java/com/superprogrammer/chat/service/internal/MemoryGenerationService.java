@@ -1,5 +1,6 @@
 package com.superprogrammer.chat.service.internal;
 
+import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryTurnMapper;
 import lombok.RequiredArgsConstructor;
@@ -155,8 +156,11 @@ public class MemoryGenerationService {
         Long sourceTurnId = outputTurn != null ? outputTurn.getId() : (inputTurn != null ? inputTurn.getId() : null);
         // 5x #2：配对 INPUT turn id——entry 覆盖整轮（双侧 L1 合并），INPUT turn 也能反查收录项目
         Long sourceTurnInputId = (outputTurn != null && inputTurn != null) ? inputTurn.getId() : null;
+        // 5x #4：条目方向=蒸馏源侧面——双侧都有 BOTH；仅 OUTPUT（纯问答）/仅 INPUT（输出被滤）单侧
+        String direction = inputTurn != null && outputTurn != null ? MemoryProjectEntry.DIRECTION_BOTH
+                : (outputTurn != null ? MemoryProjectEntry.DIRECTION_OUTPUT : MemoryProjectEntry.DIRECTION_INPUT);
         return new MemoryRoutingService.RoutingInput(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2,
-                new ArrayList<>(tagIds), chatModel);
+                new ArrayList<>(tagIds), chatModel, direction);
     }
 
     private static String joinNonBlank(String a, String b) {

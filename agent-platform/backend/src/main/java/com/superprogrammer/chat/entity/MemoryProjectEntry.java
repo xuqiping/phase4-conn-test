@@ -28,6 +28,10 @@ public class MemoryProjectEntry extends BaseEntity {
     public static final String STATUS_PENDING_REVIEW = "PENDING_REVIEW";
     public static final String CONTENT_TYPE_TEXT = "TEXT";
     public static final String CONTENT_TYPE_FILE = "FILE";
+    /** 5x #4：条目方向——TEXT=蒸馏源轮次侧面，FILE 恒 BOTH（文件无对话方向）。 */
+    public static final String DIRECTION_INPUT = "INPUT";
+    public static final String DIRECTION_OUTPUT = "OUTPUT";
+    public static final String DIRECTION_BOTH = "BOTH";
 
     private Long projectId;          // 条目归属项目（项目资产，随项目 CASCADE）
     private Long authorUserId;       // 溯源谁聊出来的（仅元数据展示）
@@ -43,6 +47,7 @@ public class MemoryProjectEntry extends BaseEntity {
     private Double confidence;       // 路由置信度 0~1
     private String status;           // ACTIVE / PENDING_REVIEW
     private String contentType;      // TEXT / FILE（P3 文件记忆收录）
+    private String direction;        // INPUT/OUTPUT/BOTH（5x #4，项目总结按方向取数；V126 回填存量）
     private String fileId;           // contentType=FILE 时指向 stored_files.file_id（VARCHAR，V69 修正类型）
     private Long reviewedBy;         // 审核人（owner/admin 收/弃留痕）
     private OffsetDateTime reviewedAt;

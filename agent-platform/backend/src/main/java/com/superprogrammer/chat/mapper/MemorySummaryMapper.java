@@ -32,10 +32,12 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
     // ============================ 计划12 · E 总结层 + DISCARD 级联 ============================
 
     /** E-3/E-4 同 (user, tag, scope) 的 CLEAN 总结（时序互斥冲突判定用， projectId=null→个人）。
-     *  返全部 CLEAN（service 喂 judge 判并存/互斥）；PENDING_CONFLICT 不再触发新冲突（已挂起待裁）。 */
+     *  返全部 CLEAN（service 喂 judge 判并存/互斥）；PENDING_CONFLICT 不再触发新冲突（已挂起待裁）。
+     *  5x #4：direction 非空 → 仅同向/双向总结参与冲突判定（INPUT/OUTPUT 侧面互不撞车）；null 不过滤。 */
     List<MemorySummary> findCleanByUserTagScope(@Param("userId") Long userId,
                                                 @Param("tagId") Long tagId,
-                                                @Param("projectId") Long projectId);
+                                                @Param("projectId") Long projectId,
+                                                @Param("direction") String direction);
 
     /** E-4 同 (user, tag, scope) 指定 status 的总结（裁决时找 PENDING_CONFLICT 的「另一方」）。 */
     List<MemorySummary> findByUserTagScopeStatus(@Param("userId") Long userId,
@@ -72,9 +74,11 @@ public interface MemorySummaryMapper extends BaseMapper<MemorySummary> {
     /** P4 项目共享总结读取（FR-301）：scope_owner=PROJECT 的项目总结，全员可读（成员咽喉在 service 层）。 */
     List<MemorySummary> findProjectSharedSummaries(@Param("projectId") Long projectId);
 
-    /** P4 同 (project, tag, scope_owner=PROJECT) CLEAN 总结（共享总结时序互斥冲突判定用）。 */
+    /** P4 同 (project, tag, scope_owner=PROJECT) CLEAN 总结（共享总结时序互斥冲突判定用）。
+     *  5x #4：direction 非空 → 仅同向/双向总结参与冲突判定；null 不过滤。 */
     List<MemorySummary> findCleanByProjectTagScope(@Param("projectId") Long projectId,
-                                                   @Param("tagId") Long tagId);
+                                                   @Param("tagId") Long tagId,
+                                                   @Param("direction") String direction);
 
     /** P4 同 (project, tag, scope_owner=PROJECT) 指定 status 总结（裁决找 PENDING_CONFLICT 另一方）。 */
     List<MemorySummary> findByProjectTagScopeStatus(@Param("projectId") Long projectId,

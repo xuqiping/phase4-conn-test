@@ -220,7 +220,7 @@ class MemoryConsolidationServiceTest {
         tag.setId(10L);
         tag.setLabel("工作");
         when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
-        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null)))
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null), eq("BOTH")))
                 .thenReturn(List.of(201L));  // e1 已覆盖，e2 未覆盖
         CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(202L));
         when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
@@ -229,8 +229,8 @@ class MemoryConsolidationServiceTest {
 
         // 嵌套取数验证：查的是 [本项目, child]
         verify(entryMapper).listActiveForRecall(List.of(99L, 77L));
-        // 覆盖行查共享通道（user_id=null）
-        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null));
+        // 覆盖行查共享通道（user_id=null）；req 无 direction → BOTH
+        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null), eq("BOTH"));
         // 仅未覆盖的 e2 委派写（shared=true）
         ArgumentCaptor<List<MemoryProjectEntryVO>> captor = ArgumentCaptor.forClass(List.class);
         verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), eq("BOTH"), captor.capture(), eq(cs), any());
@@ -255,7 +255,7 @@ class MemoryConsolidationServiceTest {
         tag.setId(10L);
         tag.setLabel("工作");
         when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
-        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L)))
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L), eq("BOTH")))
                 .thenReturn(List.of());  // 个人通道未覆盖
         CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(201L));
         when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
@@ -263,7 +263,7 @@ class MemoryConsolidationServiceTest {
         service.summarizeScope(1L, req, true);
 
         // 个人通道覆盖行 user_id=self（与共享通道互不影响）
-        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L));
+        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(1L), eq("BOTH"));
         verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(false), eq(10L), eq("BOTH"), any(), eq(cs), any());
     }
 
@@ -283,7 +283,7 @@ class MemoryConsolidationServiceTest {
         tag.setId(10L);
         tag.setLabel("工作");
         when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
-        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null)))
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null), eq("BOTH")))
                 .thenReturn(List.of(201L));  // 全已覆盖
 
         SummarizeResult r = service.summarizeScope(1L, req, false);
@@ -317,9 +317,46 @@ class MemoryConsolidationServiceTest {
         SummarizeResult r = service.summarizeScope(1L, req, false);
 
         // force 跳过覆盖闸：不查 findCoveredEntryIds，直接压缩已覆盖的 e1
-        verify(entryCoverageMapper, never()).findCoveredEntryIds(any(), any(), any(), any());
+        verify(entryCoverageMapper, never()).findCoveredEntryIds(any(), any(), any(), any(), any());
         verify(compressor).compressEntries(eq(1L), eq("工作"), any());
         verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), eq("BOTH"), any(), eq(cs), any());
+    }
+
+    // ---- 9c. 5x #4：direction=INPUT → 仅 INPUT/BOTH（含 null 兜底）条目进总结，OUTPUT 条目被滤掉 ----
+
+    @Test
+    void projectDirectionInputFiltersOutputEntries() {
+        MemoryConsolidationScopeRequest req = new MemoryConsolidationScopeRequest();
+        req.setScopeKind("PROJECT");
+        req.setProjectId(99L);
+        req.setDirection("INPUT");
+        when(linkService.isOwner(99L, 1L)).thenReturn(true);
+        when(linkService.findActiveChildIds(List.of(99L))).thenReturn(List.of());
+        MemoryProjectEntryVO in = MemoryProjectEntryVO.builder()
+                .id(201L).projectId(99L).tagIds(List.of(10L)).l1Summary("输入侧条目").direction("INPUT").build();
+        MemoryProjectEntryVO out = MemoryProjectEntryVO.builder()
+                .id(202L).projectId(99L).tagIds(List.of(10L)).l1Summary("输出侧条目").direction("OUTPUT").build();
+        MemoryProjectEntryVO both = MemoryProjectEntryVO.builder()
+                .id(203L).projectId(99L).tagIds(List.of(10L)).l1Summary("双侧条目").direction("BOTH").build();
+        when(entryMapper.listActiveForRecall(List.of(99L))).thenReturn(List.of(in, out, both));
+        MemoryTag tag = new MemoryTag();
+        tag.setId(10L);
+        tag.setLabel("工作");
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag));
+        when(entryCoverageMapper.findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null), eq("INPUT")))
+                .thenReturn(List.of());  // 全未覆盖
+        CompressedEntrySummary cs = new CompressedEntrySummary("L1", "L2", List.of(201L, 203L));
+        when(compressor.compressEntries(eq(1L), eq("工作"), any())).thenReturn(cs);
+
+        service.summarizeScope(1L, req, true);
+
+        // 覆盖判定带方向（INPUT 总结不认 OUTPUT 覆盖行）
+        verify(entryCoverageMapper).findCoveredEntryIds(any(), eq(99L), eq(10L), eq(null), eq("INPUT"));
+        // 仅 INPUT + BOTH 条目进压缩与写库，OUTPUT 条目被方向过滤
+        ArgumentCaptor<List<MemoryProjectEntryVO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(txService).writeProjectSummaryAndCoverage(eq(1L), eq(99L), eq(true), eq(10L), eq("INPUT"), captor.capture(), eq(cs), any());
+        assertEquals(2, captor.getValue().size(), "OUTPUT 条目被滤掉");
+        assertTrue(captor.getValue().stream().noneMatch(e -> e.getId() == 202L));
     }
 
     // ---- 10. scope 无标签 → 空结果 ----

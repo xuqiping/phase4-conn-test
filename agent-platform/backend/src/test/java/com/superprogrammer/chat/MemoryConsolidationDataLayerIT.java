@@ -289,7 +289,7 @@ class MemoryConsolidationDataLayerIT {
         insertSummary(uid, null, tag, "{}", "PENDING_CONFLICT"); // 非 CLEAN 不返
         insertSummary(uid, null, insertTag(uid, "house"), "{}", "CLEAN"); // 别 tag
 
-        List<MemorySummary> clean = summaryMapper.findCleanByUserTagScope(uid, tag, null);
+        List<MemorySummary> clean = summaryMapper.findCleanByUserTagScope(uid, tag, null, null);
         assertEquals(1, clean.size(), "仅本人同 tag 同 scope(personal) 的 CLEAN");
     }
 

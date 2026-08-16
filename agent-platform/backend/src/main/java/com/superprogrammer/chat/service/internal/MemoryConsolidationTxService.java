@@ -88,7 +88,7 @@ public class MemoryConsolidationTxService {
     public void writeSummaryAndCoverage(Long userId, Long scopeProjectId, Long tagId, String tagLabel,
                                         String direction, List<MemoryTurn> uncovered,
                                         CompressedSummary cs, SummarizeResult result) {
-        List<MemorySummary> existing = summaryMapper.findCleanByUserTagScope(userId, tagId, scopeProjectId);
+        List<MemorySummary> existing = summaryMapper.findCleanByUserTagScope(userId, tagId, scopeProjectId, direction);
         String initialStatus = "CLEAN";
         String askText = null;
         if (existing != null && !existing.isEmpty()) {
@@ -172,8 +172,8 @@ public class MemoryConsolidationTxService {
                                                List<MemoryProjectEntryVO> entries,
                                                CompressedEntrySummary cs, SummarizeResult result) {
         List<MemorySummary> existing = shared
-                ? summaryMapper.findCleanByProjectTagScope(projectId, tagId)
-                : summaryMapper.findCleanByUserTagScope(operatorId, tagId, projectId);
+                ? summaryMapper.findCleanByProjectTagScope(projectId, tagId, direction)   // 5x #4 同向冲突判定
+                : summaryMapper.findCleanByUserTagScope(operatorId, tagId, projectId, direction);
         String initialStatus = "CLEAN";
         String askText = null;
         if (existing != null && !existing.isEmpty()) {

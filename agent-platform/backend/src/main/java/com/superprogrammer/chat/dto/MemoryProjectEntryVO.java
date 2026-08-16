@@ -28,6 +28,7 @@ public class MemoryProjectEntryVO {
     private Double confidence;
     private String status;           // ACTIVE / PENDING_REVIEW
     private String contentType;      // TEXT / FILE
+    private String direction;        // INPUT/OUTPUT/BOTH（5x #4，项目总结方向过滤取数用）
     private String fileId;           // contentType=FILE 时指向 stored_files.file_id（召回下载回链用）
     private String ruleText;         // 命中规则文案（「为何被收录」）
     private java.util.List<Long> tagIds;   // 标签 id 集（召回合流用；列表接口不返）

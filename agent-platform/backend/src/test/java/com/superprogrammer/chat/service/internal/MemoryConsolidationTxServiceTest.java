@@ -70,7 +70,7 @@ class MemoryConsolidationTxServiceTest {
 
     @Test
     void noExistingWritesCleanNoConflict() {
-        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of());
+        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any(), any())).thenReturn(List.of());
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);
             return 1;
@@ -93,7 +93,7 @@ class MemoryConsolidationTxServiceTest {
     @Test
     void conflictMarksPendingAndInsertsConflictRow() {
         MemorySummary existing = clean(200L);
-        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(existing));
+        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any(), any())).thenReturn(List.of(existing));
         when(conflictJudge.judgeSummaryConflict(any(), any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(true, "新旧冲突，保留哪条？"));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
@@ -121,7 +121,7 @@ class MemoryConsolidationTxServiceTest {
 
     @Test
     void coexistWritesCleanNoConflictRow() {
-        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any())).thenReturn(List.of(clean(200L)));
+        when(summaryMapper.findCleanByUserTagScope(eq(1L), eq(10L), any(), any())).thenReturn(List.of(clean(200L)));
         when(conflictJudge.judgeSummaryConflict(any(), any(), any(), any()))
                 .thenReturn(new SummaryConflictResult(false, null));
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
@@ -144,7 +144,7 @@ class MemoryConsolidationTxServiceTest {
 
     @Test
     void emptyUncoveredSkipsCoverageBatch() {
-        when(summaryMapper.findCleanByUserTagScope(any(), any(), any())).thenReturn(List.of());
+        when(summaryMapper.findCleanByUserTagScope(any(), any(), any(), any())).thenReturn(List.of());
         when(summaryMapper.insert(any())).thenAnswer(inv -> {
             ((MemorySummary) inv.getArgument(0)).setId(500L);
             return 1;

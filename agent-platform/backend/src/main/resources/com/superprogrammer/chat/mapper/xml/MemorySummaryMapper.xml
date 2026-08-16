@@ -80,6 +80,9 @@
             <when test="projectId != null">AND project_id = #{projectId}</when>
             <otherwise>AND project_id IS NULL</otherwise>
         </choose>
+        <if test="direction != null and direction != ''">
+            AND (direction = #{direction} OR direction = 'BOTH')
+        </if>
         ORDER BY summarized_at DESC
     </select>
 
@@ -155,6 +158,9 @@
         SELECT * FROM memory_summaries
         WHERE deleted = 0 AND status = 'CLEAN' AND tag_id = #{tagId}
           AND project_id = #{projectId} AND scope_owner = 'PROJECT'
+        <if test="direction != null and direction != ''">
+            AND (direction = #{direction} OR direction = 'BOTH')
+        </if>
         ORDER BY summarized_at DESC
     </select>
 

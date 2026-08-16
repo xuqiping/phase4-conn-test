@@ -63,26 +63,33 @@ public class MemoryRoutingService {
     private final TaskExecutor memoryTaskExecutor;
 
     /** 路由入参（一轮对话双侧合并后的蒸馏原料；fileId 非空 = P3 文件记忆路由，落 content_type=FILE 条目；
-     *  originalName = 文件原名，文件名硬规则短路用）。 */
+     *  originalName = 文件原名，文件名硬规则短路用；direction = 条目方向（5x #4，null 落 BOTH）。 */
     public record RoutingInput(Long userId, Long sessionId, Long sourceTurnId, Long sourceTurnInputId,
                                String l1, String l2, List<Long> tagIds, String fileId, String chatModel,
-                               String originalName) {
-        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null，originalName=null，inputTurn=null）。 */
+                               String originalName, String direction) {
+        /** 对话轮入参（兼容旧签名，fileId=null，chatModel=null，originalName=null，direction=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId,
                             String l1, String l2, List<Long> tagIds) {
-            this(userId, sessionId, sourceTurnId, null, l1, l2, tagIds, null, null, null);
+            this(userId, sessionId, sourceTurnId, null, l1, l2, tagIds, null, null, null, null);
         }
 
-        /** 对话轮入参（带对话 model + 配对 INPUT turn id，fileId=null）。 */
+        /** 对话轮入参（带对话 model + 配对 INPUT turn id，fileId=null，direction=null）。 */
         public RoutingInput(Long userId, Long sessionId, Long sourceTurnId, Long sourceTurnInputId,
                             String l1, String l2, List<Long> tagIds, String chatModel) {
-            this(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2, tagIds, null, chatModel, null);
+            this(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2, tagIds, null, chatModel, null, null);
         }
 
-        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2 + 原名，无 sourceTurn，无对话 model。 */
+        /** 对话轮入参（带方向，5x #4：双侧 BOTH / 仅输出 OUTPUT / 仅输入 INPUT）。 */
+        public RoutingInput(Long userId, Long sessionId, Long sourceTurnId, Long sourceTurnInputId,
+                            String l1, String l2, List<Long> tagIds, String chatModel, String direction) {
+            this(userId, sessionId, sourceTurnId, sourceTurnInputId, l1, l2, tagIds, null, chatModel, null, direction);
+        }
+
+        /** P3 Step 4（FR-204）文件记忆入参：文本=文件 l1/l2 + 原名，无 sourceTurn，无对话 model；方向恒 BOTH。 */
         public static RoutingInput ofFile(Long userId, String fileId, String l1, String l2,
                                           List<Long> tagIds, String originalName) {
-            return new RoutingInput(userId, null, null, null, l1, l2, tagIds, fileId, null, originalName);
+            return new RoutingInput(userId, null, null, null, l1, l2, tagIds, fileId, null, originalName,
+                    MemoryProjectEntry.DIRECTION_BOTH);
         }
     }
 
@@ -212,6 +219,7 @@ public class MemoryRoutingService {
             entry.setConfidence(j.confidence());
             entry.setStatus(status);
             entry.setContentType(isFile ? MemoryProjectEntry.CONTENT_TYPE_FILE : MemoryProjectEntry.CONTENT_TYPE_TEXT);
+            entry.setDirection(input.direction() != null ? input.direction() : MemoryProjectEntry.DIRECTION_BOTH);   // 5x #4
             entry.setFileId(isFile ? input.fileId() : null);
             entry.setChatModel(judgeModel);
             entry.setCreatedBy(input.userId());
@@ -280,6 +288,7 @@ public class MemoryRoutingService {
         entry.setConfidence(1.0);                              // 确定性「一定进」→ 置满置信
         entry.setStatus(MemoryProjectEntry.STATUS_ACTIVE);     // 决策①：直接 ACTIVE 一定进
         entry.setContentType(MemoryProjectEntry.CONTENT_TYPE_FILE);
+        entry.setDirection(MemoryProjectEntry.DIRECTION_BOTH);       // 5x #4：文件无对话方向，恒 BOTH
         entry.setFileId(input.fileId());
         entry.setChatModel(null);                              // 短路不经 LLM 精判
         entry.setCreatedBy(input.userId());

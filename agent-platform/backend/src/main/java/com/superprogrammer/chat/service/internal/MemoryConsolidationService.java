@@ -7,6 +7,7 @@ import com.superprogrammer.chat.dto.MemoryGenMatrixItemVO;
 import com.superprogrammer.chat.dto.MemoryProjectEntryVO;
 import com.superprogrammer.chat.dto.RecallTagMeta;
 import com.superprogrammer.chat.entity.MemoryConsolidationScope;
+import com.superprogrammer.chat.entity.MemoryProjectEntry;
 import com.superprogrammer.chat.entity.MemorySummaryCoverage;
 import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
@@ -250,11 +251,20 @@ public class MemoryConsolidationService {
         if (timeScoped.isEmpty()) {
             return result;
         }
+        // 5x #4：方向过滤——direction≠BOTH 时仅取该方向条目（BOTH 兜底集合恒入选），修复前项目总结恒吃全量
+        String direction = normalizeDirection(req.getDirection());
+        List<MemoryProjectEntryVO> directionScoped = "BOTH".equals(direction) ? timeScoped
+                : timeScoped.stream().filter(e -> direction.equals(e.getDirection())
+                        || MemoryProjectEntry.DIRECTION_BOTH.equals(e.getDirection())
+                        || e.getDirection() == null).toList();
+        if (directionScoped.isEmpty()) {
+            return result;
+        }
 
         // ③ 按 tag 分组（tag_ids 展开；无 tag 条目不进总结——无分组锚点）
         Map<Long, List<MemoryProjectEntryVO>> byTag = new LinkedHashMap<>();
         Set<Long> tagIds = new HashSet<>();
-        for (MemoryProjectEntryVO e : timeScoped) {
+        for (MemoryProjectEntryVO e : directionScoped) {
             if (e.getTagIds() == null) continue;
             for (Long tid : e.getTagIds()) {
                 byTag.computeIfAbsent(tid, k -> new ArrayList<>()).add(e);
@@ -281,7 +291,7 @@ public class MemoryConsolidationService {
                     Comparator.nullsLast(Comparator.naturalOrder())));
             try {
                 summarizeOneEntryTag(operatorId, projectId, shared, tagId,
-                        tagLabels.getOrDefault(tagId, "总结"), groupEntries, force, result);
+                        tagLabels.getOrDefault(tagId, "总结"), groupEntries, force, direction, result);
             } catch (Exception e) {
                 log.warn("项目总结单 tag 异常 operatorId={} projectId={} tagId={}: {}",
                         operatorId, projectId, tagId, e.getMessage(), e);
@@ -296,13 +306,13 @@ public class MemoryConsolidationService {
         return result;
     }
 
-    /** per tag：entry_coverage 未覆盖判定（幂等不调 LLM）→ 压缩 → 事务写。 */
+    /** per tag：entry_coverage 未覆盖判定（幂等不调 LLM）→ 压缩 → 事务写。direction 随 req（5x #4）。 */
     private void summarizeOneEntryTag(Long operatorId, Long projectId, boolean shared, Long tagId,
                                       String tagLabel, List<MemoryProjectEntryVO> groupEntries,
-                                      boolean force, SummarizeResult result) {
+                                      boolean force, String direction, SummarizeResult result) {
         List<Long> entryIds = groupEntries.stream().map(MemoryProjectEntryVO::getId).toList();
         Set<Long> covered = force ? Set.of() : new HashSet<>(entryCoverageMapper.findCoveredEntryIds(
-                entryIds, projectId, tagId, shared ? null : operatorId));
+                entryIds, projectId, tagId, shared ? null : operatorId, direction));
         List<MemoryProjectEntryVO> uncovered = new ArrayList<>();
         for (MemoryProjectEntryVO e : groupEntries) {
             if (force || !covered.contains(e.getId())) {
@@ -318,7 +328,8 @@ public class MemoryConsolidationService {
             return;
         }
         // 二期 P3c：项目条目（蒸馏产物）无方向 → 总结记 BOTH。
-        txService.writeProjectSummaryAndCoverage(operatorId, projectId, shared, tagId, "BOTH", uncovered, cs, result);
+        // 5x #4：总结方向跟随请求（V80 已有 direction 列，二期 P3c 曾硬编码 BOTH）
+        txService.writeProjectSummaryAndCoverage(operatorId, projectId, shared, tagId, direction, uncovered, cs, result);
     }
 
     // ---- scope 解析 helpers ----

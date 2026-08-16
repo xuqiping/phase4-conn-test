@@ -2,15 +2,23 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.superprogrammer.chat.mapper.MemoryEntryCoverageMapper">
 
-    <!-- 一批条目在 (scope 项目, tag, 主体) 下已覆盖的 entry_id 集。userId=null → 共享行（IS NULL）。 -->
+    <!-- 一批条目在 (scope 项目, tag, 主体) 下已覆盖的 entry_id 集。userId=null → 共享行（IS NULL）。
+         5x #4：direction 非空 → JOIN 总结行仅认同向/双向总结（INPUT 总结不挡 OUTPUT 跑批覆盖判定）；
+         UNIQUE(entry_id,project_id,tag_id,user_id) 使二向覆盖行 DO NOTHING 保留首链，覆盖语义=至少被一总结收编。 -->
     <select id="findCoveredEntryIds" resultType="long">
-        SELECT entry_id FROM memory_entry_coverage
-        WHERE tag_id = #{tagId} AND project_id = #{projectId}
+        SELECT c.entry_id FROM memory_entry_coverage c
+        <if test="direction != null and direction != ''">
+            JOIN memory_summaries s ON s.id = c.summary_id AND s.deleted = 0
+        </if>
+        WHERE c.tag_id = #{tagId} AND c.project_id = #{projectId}
         <choose>
-            <when test="userId != null">AND user_id = #{userId}</when>
-            <otherwise>AND user_id IS NULL</otherwise>
+            <when test="userId != null">AND c.user_id = #{userId}</when>
+            <otherwise>AND c.user_id IS NULL</otherwise>
         </choose>
-        AND entry_id IN
+        <if test="direction != null and direction != ''">
+            AND s.direction IN (#{direction}, 'BOTH')
+        </if>
+        AND c.entry_id IN
         <foreach collection="entryIds" item="eid" open="(" separator="," close=")">#{eid}</foreach>
     </select>
 

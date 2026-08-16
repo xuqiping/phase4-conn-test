@@ -16,11 +16,14 @@ import java.util.List;
 public interface MemoryEntryCoverageMapper extends BaseMapper<MemoryEntryCoverage> {
 
     /** 一批条目在某 (scope 项目, tag, 主体) 下已覆盖的 entry_id 集（未覆盖判定=幂等，无新增不调 LLM）。
-     *  userId=null → 查共享行（user_id IS NULL）；非空 → 查该成员个人行。 */
+     *  userId=null → 查共享行（user_id IS NULL）；非空 → 查该成员个人行。
+     *  5x #4：direction 非空时仅认 direction 一致的总结行（INPUT 总结不算数于 OUTPUT 跑批，BOTH 行两向通吃）；
+     *  null → 不过滤（兼容旧调用）。 */
     List<Long> findCoveredEntryIds(@Param("entryIds") List<Long> entryIds,
                                    @Param("projectId") Long projectId,
                                    @Param("tagId") Long tagId,
-                                   @Param("userId") Long userId);
+                                   @Param("userId") Long userId,
+                                   @Param("direction") String direction);
 
     /** 批量写覆盖行。UNIQUE 冲突（NULLS NOT DISTINCT）→ DO NOTHING 幂等（V47 batchInsert 范式）。 */
     int batchInsert(@Param("rows") List<MemoryEntryCoverage> rows);
