@@ -43,7 +43,7 @@ public class MemorySummaryReader {
     /** 总结 > 此阈值才触发 reflect（设计 §3.3 ⑤，省 LLM）。 */
     static final int REFLECT_THRESHOLD = 5;
     private static final int LLM_MAX_ATTEMPTS = 3;
-    private static final int LLM_MAX_TOKENS = 300;
+    private static final int LLM_MAX_TOKENS = 1024;
 
     private static final String REFLECT_PROMPT =
             "你是记忆召回深读判断器。从总结清单的 L1 概要中选出与用户当前问题【需深读 L2 详述】的总结 id。\n" +
@@ -107,6 +107,7 @@ public class MemorySummaryReader {
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .disableThinking(true)
                         .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);

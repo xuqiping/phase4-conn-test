@@ -955,16 +955,6 @@ public class ChatSessionService {
             log.warn("收录确认状态落库失败 messageId={}: {}", messageId, e.getMessage());
         }
         log.info("收录确认点选 userId={} sessionId={} messageId={} choice={}", userId, sessionId, messageId, choice);
-        if (!answer) {
-            String closeText = "好的，本次不作答。相关内容将按项目规则收录，可继续输入新消息。";
-            ChatMessage closeMsg = new ChatMessage();
-            closeMsg.setSessionId(sessionId);
-            closeMsg.setRole("ASSISTANT");
-            closeMsg.setContent(closeText);
-            messageMapper.insert(closeMsg);
-            return Flux.just(StreamEvent.chunk(closeText), StreamEvent.done());
-        }
-        // ANSWER：携 metadata 原文重组请求，全量生成（附件重校验归属，记忆照常异步写——真实回答该进记忆）
         ChatRequest replay = new ChatRequest();
         replay.setSessionId(sessionId);
         replay.setMessage(ic.get("originalText") == null ? "" : String.valueOf(ic.get("originalText")));
@@ -972,6 +962,24 @@ public class ChatSessionService {
         if (ic.get("attachmentFileIds") instanceof List<?> fids && !fids.isEmpty()) {
             replay.setAttachmentFileIds(fids.stream().map(String::valueOf).toList());
         }
+        if (!answer) {
+            String closeText = "好的，本次不作答。相关内容将按项目规则收录，可继续输入新消息。";
+            ChatMessage closeMsg = new ChatMessage();
+            closeMsg.setSessionId(sessionId);
+            closeMsg.setRole("ASSISTANT");
+            closeMsg.setContent(closeText);
+            messageMapper.insert(closeMsg);
+            // 用户实测①（2026-08-16）：DECLINE 后该轮永不进记忆管线——收尾文案却承诺「将按规则收录」。
+            // 收录与作答解耦：仍异步写记忆/路由（ragOn 口径与 ANSWER 的 generateReplyStream 写入一致）。
+            if (ragModeResolver.resolve(session.getMode(), session.getRagEnabled(),
+                    session.getAgentId(), session.getWorkflowId())) {
+                dispatchMemoryWrite(userId, sessionId,
+                        withAttachmentMention(replay.getMessage(), resolveAttachmentNames(userId, replay)),
+                        closeText, replay.getModel());
+            }
+            return Flux.just(StreamEvent.chunk(closeText), StreamEvent.done());
+        }
+        // ANSWER：携 metadata 原文重组请求，全量生成（附件重校验归属，记忆照常异步写——真实回答该进记忆）
         List<String> attachmentNames = resolveAttachmentNames(userId, replay);
         return generateReplyStream(userId, session, replay, attachmentNames);
     }

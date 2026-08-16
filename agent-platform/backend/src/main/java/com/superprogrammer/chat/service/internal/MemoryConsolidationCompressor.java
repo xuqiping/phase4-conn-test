@@ -109,7 +109,8 @@ public class MemoryConsolidationCompressor {
                                 .model(judgeModel)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
-                                .maxTokens(800)
+                                .maxTokens(2048)
+                                .disableThinking(true)
                                 .build(), userId)
                         .getContent();
                 CompressedEntrySummary parsed = parseEntry(raw, entries);
@@ -175,7 +176,8 @@ public class MemoryConsolidationCompressor {
                                 .model(judgeModel)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
-                                .maxTokens(800)
+                                .maxTokens(2048)
+                                .disableThinking(true)
                                 .build(), userId)
                         .getContent();
                 CompressedSummary parsed = parse(raw, turns);

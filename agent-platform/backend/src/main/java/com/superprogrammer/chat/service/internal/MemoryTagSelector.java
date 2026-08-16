@@ -53,7 +53,7 @@ public class MemoryTagSelector {
     static final int COARSE_TOP = 30;
     private static final int RRF_K = 60;
     private static final int LLM_MAX_ATTEMPTS = 3;
-    private static final int LLM_MAX_TOKENS = 400;
+    private static final int LLM_MAX_TOKENS = 1024;
 
     private static final String SELECT_PROMPT =
             "你是记忆召回标签筛选器。从候选标签清单中选出与用户当前问题【相关】的标签 id。\n" +
@@ -161,6 +161,7 @@ public class MemoryTagSelector {
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
                         .maxTokens(LLM_MAX_TOKENS)
+                        .disableThinking(true)
                         .timeoutMs(llmTimeoutMs)
                         .build(), userId).getContent();
                 List<Long> ids = parseIds(raw, validIds);

@@ -548,7 +548,7 @@ class ChatSessionServiceTest {
         verify(memoryGenerationService, never()).processTurnAsync(any(), any(), any(), any(), any());
     }
 
-    /** DECLINE → 状态落 DECLINED + 收尾消息，不调 LLM/不写记忆。 */
+    /** DECLINE → 状态落 DECLINED + 收尾消息，不调 LLM；记忆开时仍异步写记忆（收录与作答解耦，用户实测①）。 */
     @Test
     void confirmInclusion_decline_closesWithoutLlm() {
         when(sessionMapper.selectById(1L)).thenReturn(testSession);
@@ -564,6 +564,9 @@ class ChatSessionServiceTest {
             inv.getArgument(0, ChatMessage.class).setId(31L);
             return 1;
         });
+        when(ragModeResolver.resolve(eq("CHAT"), any(), any(), any())).thenReturn(true);
+        when(memoryAssetUploadService.resolveOwnedAttachmentNames(List.of("f-1"), 100L))
+                .thenReturn(List.of("课件.pdf"));
 
         List<com.superprogrammer.chat.dto.StreamEvent> events =
                 chatSessionService.confirmInclusion(100L, 1L, 30L, "DECLINE").collectList().block();
@@ -573,7 +576,10 @@ class ChatSessionServiceTest {
         assertTrue(events.stream().anyMatch(e -> "DONE".equals(e.getType())));
         verify(messageMapper).updateById(argThat(m -> m.getMetadata().contains("DECLINED")));
         verify(orchestrationEngine, never()).executeStream(any(), any());
-        verify(memoryGenerationService, never()).processTurnAsync(any(), any(), any(), any(), any());
+        // 收录与作答解耦：DECLINE 后原轮 INPUT 仍进记忆管线（文案承诺「将按规则收录」）
+        verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L),
+                argThat(s -> s != null && s.contains("帮我看看课件")),
+                argThat(s -> s != null && s.contains("本次不作答")), eq("m1"));
     }
 
     /** ANSWER → 携服务端存原文走全量生成（跳过快检防死循环，不重插 USER 消息）。 */

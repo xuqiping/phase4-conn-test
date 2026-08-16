@@ -196,7 +196,8 @@ public class MemoryTagRepairService {
                                 .model(model)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
-                                .maxTokens(1000)
+                                .maxTokens(2048)
+                                .disableThinking(true)
                                 .build(), userId).getContent();
                 JsonNode root = parseJsonArray(raw);
                 if (root != null) {

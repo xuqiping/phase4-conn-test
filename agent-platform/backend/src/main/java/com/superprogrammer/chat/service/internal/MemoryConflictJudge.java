@@ -140,7 +140,7 @@ public class MemoryConflictJudge {
                 LlmResponse resp = llmGateway.chat(LlmRequest.builder()
                         .model(model)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
-                        .temperature(JUDGE_TEMPERATURE).maxTokens(800).build(), userId);
+                        .temperature(JUDGE_TEMPERATURE).maxTokens(2048).disableThinking(true).build(), userId);
                 String content = resp.getContent();
                 if (content != null && !content.isBlank()) return content;
                 log.warn("LLM 返回空(第{}/3次) prompt.len={}", attempt, prompt.length());

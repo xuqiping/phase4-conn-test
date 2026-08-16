@@ -215,7 +215,8 @@ public class MemoryTagResolver {
                         .model(model)
                         .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                         .temperature(0.0)
-                        .maxTokens(200)
+                        .maxTokens(1024)
+                        .disableThinking(true)
                         .build(), userId).getContent();
                 Long pick = parseFirstValidId(raw, validIds);
                 if (pick != null) return pick;

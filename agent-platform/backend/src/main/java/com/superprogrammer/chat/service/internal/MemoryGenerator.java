@@ -109,7 +109,9 @@ public class MemoryGenerator {
                                 .model(model)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
-                                .maxTokens(800)
+                                // 思考与正文共享预算：k3/glm 在 800 上限下 JSON 全截断（2026-08-16 实测 3/3 解析失败）
+                                .maxTokens(2048)
+                                .disableThinking(true)
                                 .build(), userId)
                         .getContent();
                 GenResult parsed = parse(raw, genInput, genOutput);

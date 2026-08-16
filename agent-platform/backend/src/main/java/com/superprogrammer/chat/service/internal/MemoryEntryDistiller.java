@@ -62,7 +62,8 @@ public class MemoryEntryDistiller {
                                 .model(model)
                                 .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                                 .temperature(0.0)
-                                .maxTokens(1200)
+                                .maxTokens(2560)
+                                .disableThinking(true)
                                 .build(), userId)
                         .getContent();
                 List<Judgment> parsed = parse(raw, candidates);

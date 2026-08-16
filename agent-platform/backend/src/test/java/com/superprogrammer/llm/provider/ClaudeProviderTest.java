@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaudeProviderTest {
 
@@ -128,5 +129,113 @@ class ClaudeProviderTest {
         assertEquals(25, captured.get().getPromptTokens());
         assertEquals(18, captured.get().getCompletionTokens());
         assertEquals(43, captured.get().getTotalTokens());
+    }
+
+    @Test
+    void chatStream_maxTokensStop_shouldAppendVisibleTruncationMarker() throws Exception {
+        // 2026-08-16 用户实测③：上游 max_tokens 截断此前静默成正常完成——现须追加可见标记 chunk
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        event: message_start
+                        data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+
+                        event: content_block_delta
+                        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"半句"}}
+
+                        event: message_delta
+                        data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":4096}}
+
+                        event: message_stop
+                        data: {"type":"message_stop"}
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        List<String> chunks = provider.chatStream(request)
+                .map(StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        assertEquals(2, chunks.size());
+        assertEquals("半句", chunks.get(0));
+        assertTrue(chunks.get(1).contains("截断"), "max_tokens 截断须追加可见标记，实际=" + chunks.get(1));
+    }
+
+    @Test
+    void chatStream_normalEnd_shouldNotAppendMarker() throws Exception {
+        // end_turn 正常结束不得追加标记（防噪音污染正文）
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        event: message_start
+                        data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}
+
+                        event: content_block_delta
+                        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"完整回答"}}
+
+                        event: message_delta
+                        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+                        event: message_stop
+                        data: {"type":"message_stop"}
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        List<String> chunks = provider.chatStream(request)
+                .map(StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        assertEquals(List.of("完整回答"), chunks);
+    }
+
+    @Test
+    void chat_disableThinking_shouldSendThinkingDisabledParam() throws Exception {
+        // 内部 JSON 蒸馏调用关思考：思考与正文共享 max_tokens 预算，不关会被思考吃满致 JSON 截断
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"{}\"}],\"model\":\"k2.6\",\"usage\":{}}"));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("总结").build()))
+                .disableThinking(true)
+                .build();
+
+        provider.chat(request);
+
+        String body = server.takeRequest().getBody().readUtf8();
+        assertTrue(body.contains("\"thinking\":{\"type\":\"disabled\"}"),
+                "disableThinking=true 须发 thinking.type=disabled，实际=" + body);
+    }
+
+    @Test
+    void chat_default_shouldNotSendThinkingParam() throws Exception {
+        // 默认对话流不受影响：不发 thinking 参数
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"model\":\"k2.6\",\"usage\":{}}"));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .build();
+
+        provider.chat(request);
+
+        String body = server.takeRequest().getBody().readUtf8();
+        assertFalse(body.contains("\"thinking\""), "默认不得带 thinking 参数，实际=" + body);
     }
 }

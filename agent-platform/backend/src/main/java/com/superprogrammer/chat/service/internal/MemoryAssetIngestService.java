@@ -248,7 +248,9 @@ public class MemoryAssetIngestService {
                             .model(systemSettingService.getMemoryJudgeModel())
                             .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                             .temperature(0.0)
-                            .maxTokens(800)
+                            // 思考与正文共享预算：glm 等忽略 disableThinking 时 2048 兜住思考+JSON（2026-08-16 实证 800 全截断）
+                            .maxTokens(2048)
+                            .disableThinking(true)
                             .build(), row.getOwnerUserId())
                     .getContent();
             return parseSummarize(raw);

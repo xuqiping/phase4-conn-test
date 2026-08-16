@@ -17,8 +17,17 @@ public class LlmRequest {
     private List<LlmMessage> messages;
     @Builder.Default
     private Double temperature = 0.7;
+    /** 对话输出上限。4096 实证截断长文档回复（kimi 严格按 max_tokens 停、stop_reason=max_tokens），8192 覆盖常规长答。 */
     @Builder.Default
-    private Integer maxTokens = 4096;
+    private Integer maxTokens = 8192;
+    /**
+     * 关闭模型思考（Anthropic 协议 {@code thinking.type=disabled}）。
+     * 内部 JSON 蒸馏类调用必开：思考 token 与正文共享 max_tokens 预算（2026-08-16 实证
+     * kimi k3/glm-5.1 在 800 上限下思考吃满预算、JSON 全部截断→文件记忆 FAILED/记忆生成降级）。
+     * kimi 尊重该参数（实测干净 JSON）；glm 当前忽略（无害，靠 maxTokens 余量兜底）。默认 false 不影响对话流。
+     */
+    @Builder.Default
+    private Boolean disableThinking = false;
     @Builder.Default
     private Boolean stream = false;
     /** 单次非流式请求的局部超时；null 表示使用 Provider 默认值。 */

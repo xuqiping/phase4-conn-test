@@ -124,6 +124,9 @@ public class ClaudeProvider implements LlmProviderInterface {
         body.put("stream", true);
 
         AtomicReference<TokenUsage> usageRef = new AtomicReference<>();
+        // stop_reason side-channel：message_delta 携带（end_turn/max_tokens/pause_turn…）。
+        // 此前完全丢弃 → 上游截断静默成正常完成（2026-08-16 用户实测 1839 token 处 `**“1` 断句无任何日志）。
+        AtomicReference<String> stopReasonRef = new AtomicReference<>();
 
         return webClient.post()
                 .uri(endpoint)  // 全 URL 直发（FR-001）
@@ -137,14 +140,19 @@ public class ClaudeProvider implements LlmProviderInterface {
                 .map(line -> line.startsWith("data:") ? line.substring(5).trim() : line)
                 .filter(data -> data.startsWith("{") || "[DONE]".equals(data))
                 .filter(data -> !"[DONE]".equals(data))
-                .map(data -> parseClaudeChunk(data, usageRef))   // side-channel：写 ref + 返 StreamEvent
+                .map(data -> parseClaudeChunk(data, usageRef, stopReasonRef))   // side-channel：写 ref + 返 StreamEvent
                 .filter(evt -> evt.getContent() != null && !evt.getContent().isEmpty())
                 .doOnComplete(() -> {
                     TokenUsage usage = usageRef.get();
                     if (usage != null) {
                         usageSink.accept(usage);
                     }
-                });
+                })
+                .doOnComplete(() -> logStopReason(stopReasonRef, usageRef))
+                // max_tokens 截断对用户可见（追加标记 chunk，随正文一并持久化）；其余非 end_turn 仅告警留痕
+                .concatWith(Flux.defer(() -> "max_tokens".equals(stopReasonRef.get())
+                        ? Flux.just(StreamEvent.chunk("\n\n（回复已达模型输出上限被截断，可让我继续展开。）"))
+                        : Flux.empty()));
     }
 
     @Override
@@ -167,6 +175,10 @@ public class ClaudeProvider implements LlmProviderInterface {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.getModel());
         body.put("max_tokens", request.getMaxTokens());
+        if (Boolean.TRUE.equals(request.getDisableThinking())) {
+            // 内部 JSON 蒸馏类调用：思考与正文共享 max_tokens 预算，不关会被思考吃满致 JSON 截断
+            body.put("thinking", Map.of("type", "disabled"));
+        }
 
         String systemPrompt = null;
         List<Map<String, Object>> messages = new ArrayList<>();
@@ -249,6 +261,12 @@ public class ClaudeProvider implements LlmProviderInterface {
         String content = textBuf.length() > 0 ? textBuf.toString()
                 : root.at("/content/0/text").asText("");
         String model = root.at("/model").asText("");
+        String stopReason = root.at("/stop_reason").asText("");
+        if ("max_tokens".equals(stopReason)) {
+            // 非流式多为 JSON 蒸馏任务：截断即解析失败的前兆，先留痕再让调用方重试/降级
+            log.warn("Claude非流式命中 max_tokens 截断 model={} durationMs={} contentLen={}",
+                    model, duration, content.length());
+        }
 
         TokenUsage usage = TokenUsage.builder()
                 .promptTokens(root.at("/usage/input_tokens").asInt(0))
@@ -265,16 +283,18 @@ public class ClaudeProvider implements LlmProviderInterface {
     }
 
     /**
-     * 解析单个 Claude SSE chunk，并把 usage 写入 {@code usageRef}（side-channel）。
+     * 解析单个 Claude SSE chunk，并把 usage / stop_reason 写入 side-channel ref。
      * <p>Claude 协议 usage 拆在两个事件：
      * <ul>
      *   <li>{@code message_start} → {@code message.usage.input_tokens}（prompt，一次）；</li>
-     *   <li>{@code message_delta} → {@code usage.output_tokens}（completion 累计，流末）。</li>
+     *   <li>{@code message_delta} → {@code usage.output_tokens}（completion 累计，流末）
+     *       + {@code delta.stop_reason}（流末一次）。</li>
      * </ul>
      * 二者合并成一条 {@link TokenUsage}。usage 事件无 content → 返空 chunk 被下游过滤，
      * 故须在 {@code .map} 阶段写 ref，{@code doOnComplete} 读取。<b>StreamEvent 序列不变。</b>
      */
-    private StreamEvent parseClaudeChunk(String data, AtomicReference<TokenUsage> usageRef) {
+    private StreamEvent parseClaudeChunk(String data, AtomicReference<TokenUsage> usageRef,
+                                         AtomicReference<String> stopReasonRef) {
         try {
             JsonNode node = objectMapper.readTree(data);
             String type = node.at("/type").asText("");
@@ -295,6 +315,10 @@ public class ClaudeProvider implements LlmProviderInterface {
                         .completionTokens(output)
                         .totalTokens(input + output)
                         .build());
+                String stopReason = node.at("/delta/stop_reason").asText("");
+                if (!stopReason.isEmpty()) {
+                    stopReasonRef.set(stopReason);
+                }
             }
 
             if ("content_block_delta".equals(type)) {
@@ -315,5 +339,20 @@ public class ClaudeProvider implements LlmProviderInterface {
 
     private static int defaultIfNull(Integer v) {
         return v == null ? 0 : v;
+    }
+
+    /**
+     * 流末 stop_reason 留痕（2026-08-16 用户实测断句无日志可查后才补）：
+     * max_tokens/pause_turn 等非正常结束 WARN 可检索；end_turn 不打日志防噪音。
+     * pause_turn（Claude Code 协议「暂停回合」）暂只留痕不自动续跑。
+     */
+    private void logStopReason(AtomicReference<String> stopReasonRef, AtomicReference<TokenUsage> usageRef) {
+        String stopReason = stopReasonRef.get();
+        if (stopReason == null || "end_turn".equals(stopReason)) {
+            return;
+        }
+        TokenUsage usage = usageRef.get();
+        log.warn("Claude流式非正常结束 stop_reason={} outputTokens={} model端点截断，需检查 max_tokens 或上游限制",
+                stopReason, usage == null ? -1 : defaultIfNull(usage.getCompletionTokens()));
     }
 }
