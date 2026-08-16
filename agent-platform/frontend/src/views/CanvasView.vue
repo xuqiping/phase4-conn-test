@@ -61,7 +61,7 @@
         <n-button :loading="saving" type="primary" @click="onSave(false)">
           <n-icon :component="SaveOutline" /> 保存
         </n-button>
-        <n-button :loading="rerunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
+        <n-button :loading="rerunning" :disabled="batchRunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
           <n-icon :component="RefreshOutline" /> 重跑全链
         </n-button>
         <n-button quaternary @click="showStoryboard = true" title="故事板：视频段时间线排列 + 拼接成片">
@@ -113,16 +113,40 @@
           >
             一键关联
           </n-button>
+          <n-button
+            size="small"
+            tertiary
+            type="primary"
+            :loading="batchRunning"
+            :disabled="rerunning"
+            title="按拓扑序（上游先跑）同时 2 个并发提交选中节点；并发超限自动退避重试"
+            @click="onBatchRun"
+          >
+            批量生成
+          </n-button>
           <n-button size="small" tertiary type="error" @click="onBatchDelete">
             <template #icon><n-icon :component="TrashOutline" /></template>
             批量删除
           </n-button>
         </div>
 
+        <!-- 3x-C4 批量生成进度浮条（收起只藏 UI 不停任务；轮询照常、离开画布可恢复） -->
+        <div
+          v-if="batchProgress"
+          class="canvas-batchbar canvas-batchbar--progress"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="canvas-batchbar__count">
+            {{ batchFinished ? '批量生成已完成' : '批量生成中' }}：已提交 {{ batchProgress.submitted }}/{{ batchProgress.total }} · 完成 {{ batchProgress.done }} · 失败 {{ batchProgress.failed }}
+          </span>
+          <n-button size="tiny" quaternary @click="batchProgress = null">收起</n-button>
+        </div>
+
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
         <PropertyPanel
           :node="selectedNode"
-          :running="runningNodeId === selectedNode?.id"
+          :running="isNodeRunning(selectedNode?.id)"
           :candidates="mentionCandidates"
           :broken-mentions="brokenMentions"
           :all-labels="otherLabels"
@@ -246,6 +270,7 @@ import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
+import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runSlidingWindow, submitWithBackoff } from '@/utils/batchRunner'
 
 const route = useRoute()
 const router = useRouter()
@@ -269,8 +294,13 @@ const currentName = ref('')
 const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
 /** 当前选中节点（属性面板编辑目标；null=未选）。 */
 const selectedNode = ref<CanvasNode | null>(null)
-/** 正在运行的节点 id（属性面板按钮 loading + 防重入）。 */
-const runningNodeId = ref<string | null>(null)
+/** 正在运行的节点 id 集合（3x-C4 扩多节点：属性面板按钮 loading + 防重入；批量生成与单跑共存）。 */
+const runningNodeIds = ref(new Set<string>())
+
+/** 节点是否在运行（模板绑定用）。 */
+function isNodeRunning(id?: string | null): boolean {
+  return !!id && runningNodeIds.value.has(id)
+}
 /** 焦点编辑中的图节点（null=关闭沉浸 overlay）。 */
 const focusNode = ref<CanvasNode | null>(null)
 /** 3x-C1 框选多选集（≥2 驱动批量工具条；[] 回单选/空选）。 */
@@ -360,6 +390,91 @@ function onAssociateApply(checked: AssociationProposal[]) {
   })
   scheduleSave()
   message.success(`已关联 ${applied} 处（覆盖 ${targets} 个节点），运行时将自动注入上游产出`)
+}
+
+// ---- 3x-C4：批量生成（诱导子图拓扑序 + 滑动窗口 2 + 429 退避 + 进度浮条） ----
+
+/** 批量提交进行中（工具条按钮 loading + 与「重跑全链」互斥）。 */
+const batchRunning = ref(false)
+/** 批量进度（null=无批量；关闭浮条不影响任务，只藏 UI）。 */
+const batchProgress = ref<{ total: number; submitted: number; done: number; failed: number } | null>(null)
+/** 批量是否已全部终态（浮条由「进行中」转「已完成」文案）。 */
+const batchFinished = computed(() => {
+  const p = batchProgress.value
+  return !!p && p.submitted === p.total && p.done + p.failed >= p.submitted
+})
+
+/**
+ * 3x-C4：批量生成入口。资格预检（缺提示词/模型、不支持类型列跳过原因）→
+ * 选中节点诱导子图拓扑序（未选上游按当前已物化产出插值，不补跑）→
+ * 滑动窗口 2 并发「仅提交」（video/image 拆 submitOnly + 独立轮询；text 同步跑完）→
+ * 429 并发上限指数退避 1s/2s/4s×3，仍败标红该节点不阻断其余。
+ */
+async function onBatchRun() {
+  const board = boardRef.value
+  if (!board || batchRunning.value || !editingId.value) return
+  if (rerunning.value) {
+    message.warning('重跑全链进行中，请等其结束后再批量生成')
+    return
+  }
+  const selected = multiSelectedIds.value
+    .map(id => board.getNode(id))
+    .filter((n): n is CanvasNode => !!n)
+  const eligible: CanvasNode[] = []
+  const skipped: string[] = []
+  for (const n of selected) {
+    const el = batchEligibilityOf(n)
+    if (el.ok) eligible.push(n)
+    else skipped.push(`「${String((n.data as Record<string, unknown>).label ?? n.id)}」${el.reason}`)
+  }
+  if (skipped.length) message.warning(`已跳过 ${skipped.length} 个节点：${skipped.join('；')}`)
+  if (!eligible.length) {
+    message.warning('选中节点均不可批量生成（文本/图片/视频需提示词，图片还需模型）')
+    return
+  }
+  const { order, cycle } = inducedTopoOrder(eligible.map(n => n.id), board.getEdges())
+  if (cycle) {
+    message.error('选中节点之间存在环路，无法按拓扑序批量生成（请检查连线）')
+    return
+  }
+  batchRunning.value = true
+  batchProgress.value = { total: order.length, submitted: 0, done: 0, failed: 0 }
+  const count = (key: 'done' | 'failed') => {
+    if (batchProgress.value) batchProgress.value[key]++
+  }
+  try {
+    await runSlidingWindow(order, BATCH_WINDOW, async (id) => {
+      const node = board.getNode(id)
+      if (!node) return // 批量中被删：静默跳过（poll stale-guard 亦不误写）
+      try {
+        if (node.type === 'video') {
+          const rawPrompt = String((node.data as Record<string, unknown>).prompt ?? '').trim()
+          const taskId = await submitWithBackoff(() => submitVideoOnly(node, rawPrompt))
+          if (batchProgress.value) batchProgress.value.submitted++
+          void pollVideoTask(id, taskId).then(st => { if (st === 'SUCCEEDED') count('done'); else count('failed') })
+        } else if (node.type === 'image') {
+          const taskId = await submitWithBackoff(() => submitImageOnly(node))
+          if (batchProgress.value) batchProgress.value.submitted++
+          void pollImageTask(id, taskId).then(st => { if (st === 'SUCCEEDED') count('done'); else count('failed') })
+        } else {
+          // text：同步跑完即终态（无 taskId 轮询），按节点终态计数
+          await onRunNode(node)
+          if (batchProgress.value) batchProgress.value.submitted++
+          const st = (board.getNode(id)?.data as Record<string, unknown> | undefined)?.status
+          if (st === 'success') count('done'); else count('failed')
+        }
+      } catch (e) {
+        // 提交失败（含退避 3 次仍 429）/文本跑挂：该节点标红，不阻断其余
+        if (batchProgress.value) { batchProgress.value.submitted++; batchProgress.value.failed++ }
+        const msg = (e as { msg?: string; message?: string })?.msg
+          || (e as { message?: string })?.message
+          || '批量提交失败'
+        board.updateNodeData(id, { status: 'failed', errorMsg: msg })
+      }
+    })
+  } finally {
+    batchRunning.value = false
+  }
 }
 
 /**
@@ -508,7 +623,7 @@ function onFocusEdit(node: CanvasNode) {
 async function onFocusConfirm(payload: { rect: CropRect; description: string }) {
   const src = focusNode.value
   if (!src || !boardRef.value || !editingId.value) return
-  runningNodeId.value = src.id
+  runningNodeIds.value.add(src.id)
   boardRef.value.updateNodeData(src.id, { status: 'running', errorMsg: '' })
   try {
     const res = await canvasApi.cropImage(editingId.value, src.id, payload.rect)
@@ -543,14 +658,14 @@ async function onFocusConfirm(payload: { rect: CropRect; description: string }) 
     message.error(msg)
     // 裁剪失败：保留 overlay 供用户重新框选或取消
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.delete(src.id)
   }
 }
 
 /** 运行节点（C4 文本/图片 / C5 视频）：按类型分发。视频走 media API（media:gen gated）。 */
 async function onRunNode(node: CanvasNode) {
   if (!editingId.value || !node) return
-  if (runningNodeId.value === node.id) return
+  if (runningNodeIds.value.has(node.id)) return
   if (node.type === 'video') {
     await onRunVideo(node)
     return
@@ -560,7 +675,7 @@ async function onRunNode(node: CanvasNode) {
     return
   }
   // text/image 走画布 runner（无状态）
-  runningNodeId.value = node.id
+  runningNodeIds.value.add(node.id)
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
     // S13：运行前把 @占位符插值为上游产出（不递归，不污染 node.data 原文）
@@ -581,7 +696,7 @@ async function onRunNode(node: CanvasNode) {
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.delete(node.id)
   }
 }
 
@@ -592,8 +707,8 @@ async function onRunNode(node: CanvasNode) {
  */
 async function onSplitStoryboard(node: CanvasNode) {
   if (!editingId.value || !boardRef.value) return
-  if (runningNodeId.value === node.id) return
-  runningNodeId.value = node.id
+  if (runningNodeIds.value.has(node.id)) return
+  runningNodeIds.value.add(node.id)
   boardRef.value.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
     const payload: CanvasNodeDTO = {
@@ -640,7 +755,7 @@ async function onSplitStoryboard(node: CanvasNode) {
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.delete(node.id)
   }
 }
 
@@ -651,8 +766,7 @@ async function onSplitStoryboard(node: CanvasNode) {
  */
 async function onRunVideo(node: CanvasNode) {
   if (!editingId.value) return
-  const data = node.data as Record<string, unknown>
-  const rawPrompt = String(data.prompt ?? '').trim()
+  const rawPrompt = String((node.data as Record<string, unknown>).prompt ?? '').trim()
   if (!rawPrompt) {
     message.warning('请先填写视频提示词')
     return
@@ -660,29 +774,11 @@ async function onRunVideo(node: CanvasNode) {
   if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
     message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
   }
-  runningNodeId.value = node.id
+  runningNodeIds.value.add(node.id)
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
-    // F3：首/尾帧 + @参考图 统一走 attachments[]（不再自动取上游图作首帧）。
-    // image 节点 @ → reference_image 附件 + 序号化为「图N」；非 image 节点 @ → 文本插值。
-    const attachments = buildVideoAttachments(node, rawPrompt)
-    const submit = await mediaApi.submitVideo({
-      prompt: attachments.rewrittenPrompt,
-      ratio: (data.ratio as MediaRatioArg) || '16:9',
-      duration: Number(data.duration ?? 5),
-      resolution: (data.resolution as MediaResArg) || '720p',
-      watermark: Boolean(data.watermark),
-      generateAudio: Boolean(data.generateAudio),
-      taskType: attachments.refs.length > 0 ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
-      attachments: attachments.refs.length > 0 ? attachments.refs : undefined,
-      model: (data.model as string) || undefined
-    })
-    const taskId = submit.data.data.id
-    boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+    const taskId = await submitVideoOnly(node, rawPrompt)
     message.info('视频已提交，生成中…')
-    // 2x-2：taskId 立即持久化（不再走 800ms 防抖）——提交后立刻离开画布时
-    // 快照里必须有 taskId，重进才能恢复任务状态续轮询。
-    void onSave(true)
     await pollVideoTask(node.id, taskId)
   } catch (e: unknown) {
     const msg = (e as { msg?: string; message?: string })?.msg
@@ -691,18 +787,46 @@ async function onRunVideo(node: CanvasNode) {
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.delete(node.id)
   }
 }
 
-/** 轮询视频任务至终态；成功 fetch blob 预览，失败标红。 */
-async function pollVideoTask(nodeId: string, taskId: number) {
+/**
+ * 3x-C4：仅提交视频任务并持久化 taskId（不轮询不弹消息）。onRunVideo 与批量生成共用。
+ * F3：首/尾帧 + @参考图 统一走 attachments[]（不再自动取上游图作首帧）。
+ * image 节点 @ → reference_image 附件 + 序号化为「图N」；非 image 节点 @ → 文本插值。
+ * 抛错由调用方处理（批量侧走 429 退避）。
+ */
+async function submitVideoOnly(node: CanvasNode, rawPrompt: string): Promise<number> {
+  const data = node.data as Record<string, unknown>
+  const attachments = buildVideoAttachments(node, rawPrompt)
+  const submit = await mediaApi.submitVideo({
+    prompt: attachments.rewrittenPrompt,
+    ratio: (data.ratio as MediaRatioArg) || '16:9',
+    duration: Number(data.duration ?? 5),
+    resolution: (data.resolution as MediaResArg) || '720p',
+    watermark: Boolean(data.watermark),
+    generateAudio: Boolean(data.generateAudio),
+    taskType: attachments.refs.length > 0 ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
+    attachments: attachments.refs.length > 0 ? attachments.refs : undefined,
+    model: (data.model as string) || undefined
+  })
+  const taskId = submit.data.data.id
+  boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+  // 2x-2：taskId 立即持久化（不再走 800ms 防抖）——提交后立刻离开画布时
+  // 快照里必须有 taskId，重进才能恢复任务状态续轮询。
+  void onSave(true)
+  return taskId
+}
+
+/** 轮询视频任务至终态；成功 fetch blob 预览，失败标红。返回终态（null=被替换/取消），批量进度条据此计数。 */
+async function pollVideoTask(nodeId: string, taskId: number): Promise<string | null> {
   const detail = await pollMediaTask(
     async () => (await mediaApi.getTask(taskId)).data.data,
     () => !isCurrentNodeTask(nodeId, taskId),
     { onPending: () => boardRef.value?.updateNodeData(nodeId, { status: 'running' }) }
   )
-  if (!detail) return
+  if (!detail) return null
   if (detail.status === 'SUCCEEDED') {
       const url = detail.videoUrl
       const objectUrl = url ? await fetchVideoBlob(url) : ''
@@ -733,6 +857,7 @@ async function pollVideoTask(nodeId: string, taskId: number) {
       message.error('视频生成失败')
   }
   scheduleSave()
+  return detail.status
 }
 
 function isCurrentNodeTask(nodeId: string, taskId: number): boolean {
@@ -801,25 +926,37 @@ async function onRunImage(node: CanvasNode) {
   if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
     message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
   }
-  runningNodeId.value = node.id
+  runningNodeIds.value.add(node.id)
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
-    // @ 的图节点 → 参考图 refFileIds（复用 resolveCanvasVideoAttachments 的序号化逻辑）；其余 @ → 文本插值
-    const refs = buildImageRefs(node, rawPrompt)
-    const submit = await mediaApi.submitImage(buildImageRequest(node, model, refs.rewrittenPrompt, refs.fileIds))
-    const taskId = submit.data.data.id
-    boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+    const taskId = await submitImageOnly(node)
     message.info('图片已提交，生成中…')
-    // 2x-2：同视频节点——taskId 即时持久化，防离开丢任务关联。
-    void onSave(true)
     await pollImageTask(node.id, taskId)
   } catch (e: unknown) {
     const msg = (e as { msg?: string })?.msg || '图片提交失败'
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.delete(node.id)
   }
+}
+
+/**
+ * 3x-C4：仅提交图片任务并持久化 taskId（不轮询不弹消息）。onRunImage 与批量生成共用。
+ * @ 的图节点 → 参考图 refFileIds（复用 resolveCanvasVideoAttachments 的序号化逻辑）；其余 @ → 文本插值。
+ * 抛错由调用方处理（批量侧走 429 退避）。
+ */
+async function submitImageOnly(node: CanvasNode): Promise<number> {
+  const data = node.data as Record<string, unknown>
+  const rawPrompt = String(data.prompt ?? '').trim()
+  const model = (data.model as string) || ''
+  const refs = buildImageRefs(node, rawPrompt)
+  const submit = await mediaApi.submitImage(buildImageRequest(node, model, refs.rewrittenPrompt, refs.fileIds))
+  const taskId = submit.data.data.id
+  boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
+  // 2x-2：同视频节点——taskId 即时持久化，防离开丢任务关联。
+  void onSave(true)
+  return taskId
 }
 
 /**
@@ -874,14 +1011,14 @@ function buildImageRequest(
   return req
 }
 
-/** 轮询图片任务至终态；成功 fetch 首张 blob 预览 + 存首张 fileId（焦点编辑裁剪源），失败标红。 */
-async function pollImageTask(nodeId: string, taskId: number) {
+/** 轮询图片任务至终态；成功 fetch 首张 blob 预览 + 存首张 fileId（焦点编辑裁剪源），失败标红。返回终态（null=被替换/取消）。 */
+async function pollImageTask(nodeId: string, taskId: number): Promise<string | null> {
   const detail = await pollMediaTask(
     async () => (await mediaApi.getTask(taskId)).data.data,
     () => !isCurrentNodeTask(nodeId, taskId),
     { onPending: () => boardRef.value?.updateNodeData(nodeId, { status: 'running' }) }
   )
-  if (!detail) return
+  if (!detail) return null
   if (detail.status === 'SUCCEEDED') {
       const urls = detail.imageUrls ?? []
       const fileIds = detail.imageFileIds ?? []
@@ -906,11 +1043,16 @@ async function pollImageTask(nodeId: string, taskId: number) {
       message.error('图片生成失败')
   }
   scheduleSave()
+  return detail.status
 }
 
-/** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。 */
+/** C9 一键重跑：拓扑排序（Kahn）+ 环检测 → 按序串行跑可生成节点。3x-C4：批量进行中互斥禁入。 */
 async function onRerunAll() {
   if (!boardRef.value || rerunning.value) return
+  if (batchRunning.value) {
+    message.warning('批量生成进行中，请等本轮结束后再重跑全链')
+    return
+  }
   const nodes = boardRef.value.getNodes()
   const edges = boardRef.value.getEdges()
   if (!nodes.length) {
@@ -983,7 +1125,7 @@ function topoSort(
 async function onUploadFile(payload: { node: CanvasNode; file: File }) {
   if (!editingId.value || !payload.node) return
   const { node, file } = payload
-  runningNodeId.value = node.id
+  runningNodeIds.value.add(node.id)
   boardRef.value?.updateNodeData(node.id, { status: 'running' })
   try {
     const res = await canvasApi.upload(editingId.value, file)
@@ -1004,7 +1146,7 @@ async function onUploadFile(payload: { node: CanvasNode; file: File }) {
     boardRef.value?.updateNodeData(node.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.clear()
   }
 }
 
@@ -1020,7 +1162,7 @@ async function onExtractFrame(payload: { node: CanvasNode; mode: FrameMode; seco
     message.warning('视频节点无源文件，请先生成或等待视频完成')
     return
   }
-  runningNodeId.value = src.id
+  runningNodeIds.value.add(src.id)
   try {
     const res = await canvasApi.extractFrame(editingId.value, src.id, {
       mode: payload.mode,
@@ -1053,7 +1195,7 @@ async function onExtractFrame(payload: { node: CanvasNode; mode: FrameMode; seco
     boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.clear()
   }
 }
 
@@ -1070,7 +1212,7 @@ async function onClipVideo(payload: { node: CanvasNode; startSec: number; endSec
     message.warning('视频节点无源文件，请先生成或等待视频完成')
     return
   }
-  runningNodeId.value = src.id
+  runningNodeIds.value.add(src.id)
   try {
     const res = await canvasApi.clipVideo(editingId.value, src.id, {
       startSec: payload.startSec,
@@ -1104,7 +1246,7 @@ async function onClipVideo(payload: { node: CanvasNode; startSec: number; endSec
     boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
     message.error(msg)
   } finally {
-    runningNodeId.value = null
+    runningNodeIds.value.clear()
   }
 }
 
@@ -1744,6 +1886,11 @@ function flushPendingSave() {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
     white-space: nowrap;
+  }
+
+  /* 3x-C4 批量生成进度浮条：错开工具条下方，role=status 供读屏器播报 */
+  &--progress {
+    top: calc(var(--spacing-3) + 44px);
   }
 }
 
