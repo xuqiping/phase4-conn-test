@@ -104,6 +104,15 @@
           aria-label="批量操作工具条"
         >
           <span class="canvas-batchbar__count">已选 {{ multiSelectedIds.length }} 个节点</span>
+          <n-button
+            size="small"
+            tertiary
+            type="primary"
+            title="把文本中出现的上游节点名自动替换为 @引用（LibTV Link 式）"
+            @click="onAssociate"
+          >
+            一键关联
+          </n-button>
           <n-button size="small" tertiary type="error" @click="onBatchDelete">
             <template #icon><n-icon :component="TrashOutline" /></template>
             批量删除
@@ -163,6 +172,14 @@
         :node="contextNode"
         :canvas-id="editingId"
         @picked="onAssetPicked"
+      />
+
+      <!-- 3x-C2 一键关联预览确认弹窗 -->
+      <AutoAssociateDialog
+        v-model:show="showAssociate"
+        :proposals="associateProposals"
+        :skipped="associateSkipped"
+        @apply="onAssociateApply"
       />
 
       <!-- C6 双击画布空白处的「快速加节点」搜索框（ComfyUI 式）；2x-6 拉线到空白处也复用此弹窗并自动连线 -->
@@ -225,8 +242,10 @@ import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
 import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
+import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
+import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
 
 const route = useRoute()
 const router = useRouter()
@@ -269,6 +288,11 @@ const showPicker = ref(false)
 /** S12 当前弹窗目标节点（右键/属性面板按钮触发）。 */
 const contextNode = ref<CanvasNode | null>(null)
 
+/** 3x-C2 一键关联弹窗（提案 + 跳过清单）。 */
+const showAssociate = ref(false)
+const associateProposals = ref<AssociationProposal[]>([])
+const associateSkipped = ref<SkippedNode[]>([])
+
 function onNodeSelect(node: CanvasNode | null) {
   selectedNode.value = node
 }
@@ -296,6 +320,46 @@ function onBatchDelete() {
       multiSelectedIds.value = []
     }
   })
+}
+
+/**
+ * 3x-C2：一键关联入口。快照式读画布生成提案（不改数据）；
+ * 无文本类节点/无匹配 → info 提示不弹窗。属性面板直编 node.data（reactive 实时），
+ * 故选中节点即便正在编辑，读到的也是最新值。
+ */
+function onAssociate() {
+  const board = boardRef.value
+  if (!board || !multiSelectedIds.value.length) return
+  const hasTextLike = multiSelectedIds.value.some(id => textLikeFieldOf(board.getNode(id) ?? { type: '' } as CanvasNode))
+  if (!hasTextLike) {
+    message.info('选中节点里没有文本类节点（文本/脚本/分镜），无法一键关联')
+    return
+  }
+  const { proposals, skipped } = buildProposals({
+    selectedIds: [...multiSelectedIds.value],
+    getNodes: () => board.getNodes(),
+    getEdges: () => board.getEdges()
+  })
+  if (!proposals.length) {
+    const why = skipped[0]?.reason ?? '上游节点名未出现在文本中'
+    message.info(`未找到可关联的匹配：${why}`)
+    return
+  }
+  associateProposals.value = proposals
+  associateSkipped.value = skipped
+  showAssociate.value = true
+}
+
+/** 3x-C2：应用勾选提案（逆序替换防位移）→ 写回节点 + 落库。 */
+function onAssociateApply(checked: AssociationProposal[]) {
+  const board = boardRef.value
+  if (!board || !checked.length) return
+  const { applied, targets } = applyProposals(checked, {
+    getNode: (id) => board.getNode(id),
+    updateNodeData: (id, patch) => board.updateNodeData(id, patch)
+  })
+  scheduleSave()
+  message.success(`已关联 ${applied} 处（覆盖 ${targets} 个节点），运行时将自动注入上游产出`)
 }
 
 /**
@@ -423,6 +487,8 @@ function interpolateForRun(node: CanvasNode): Record<string, unknown> {
   const resolver = buildMentionResolver()
   if (typeof data.prompt === 'string') data.prompt = interpolate(data.prompt, resolver)
   if (typeof data.synopsis === 'string') data.synopsis = interpolate(data.synopsis, resolver)
+  // 3x-C2：分镜描述支持 @占位符（一键关联主目标字段之一；对无占位符节点为 no-op）
+  if (typeof data.description === 'string') data.description = interpolate(data.description, resolver)
   if (brokenMentions.value.length && selectedNode.value?.id === node.id) {
     message.warning(`存在断链引用：${brokenMentions.value.join(' ')}（断链处将以「【断链】」注入）`)
   }
