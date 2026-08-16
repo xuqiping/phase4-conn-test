@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useProjectStore } from "../../stores/project";
 import { useUiStore } from "../../stores/ui";
 import PipelineBar from "../pipeline/PipelineBar";
+import BalanceRing from "../topbar/BalanceRing";
 
 export default function Topbar() {
   const density = useUiStore((s) => s.density);
@@ -86,6 +87,11 @@ export default function Topbar() {
 
       {/* 阶段管道条（内核快照驱动） */}
       <PipelineBar />
+
+      {/* 余额环（云端计费联动，AC-045） */}
+      <div className="ml-auto">
+        <BalanceRing />
+      </div>
 
       {/* 密度切换 */}
       <button

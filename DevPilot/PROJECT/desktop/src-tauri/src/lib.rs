@@ -25,6 +25,11 @@ pub fn run() {
             commands::get_state,
             commands::transition,
             commands::pass_gate,
+            commands::vault_save,
+            commands::vault_load,
+            commands::vault_clear,
+            commands::meter_sync,
+            commands::meter_reconcile,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");

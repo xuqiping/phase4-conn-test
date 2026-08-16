@@ -6,3 +6,8 @@ rust-version = "1.77"
 description = "Token 预估/实扣本地镜像、余额同步、超限暂停（FR-041）"
 
 [dependencies]
+core-state = { path = "../core-state" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+keyring = "3"

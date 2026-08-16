@@ -19,6 +19,10 @@ const MIGRATIONS: &[Migration] = &[
         version: "L2",
         sql: include_str!("../../migrations/L2__transition_history.sql"),
     },
+    Migration {
+        version: "L3",
+        sql: include_str!("../../migrations/L3__usage_mirror.sql"),
+    },
 ];
 
 /// 应用所有未执行的迁移。重复调用安全（幂等）。

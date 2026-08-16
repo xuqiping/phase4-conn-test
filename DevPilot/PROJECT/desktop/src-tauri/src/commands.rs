@@ -310,3 +310,54 @@ pub fn pass_gate(
     events::emit_state(&app, &dto);
     Ok(dto)
 }
+
+// ---------- P02 Step8：云端计费客户端半边（vault + 用量镜像） ----------
+
+/// refresh token 存 OS 凭据管理器（Windows 凭据管理器；绝不落明文文件）。
+#[tauri::command]
+pub fn vault_save(refresh_token: String) -> CmdResult<()> {
+    use core_meter::TokenVault as _;
+    core_meter::OsKeyringVault::new()
+        .save(&refresh_token)
+        .map_err(|e| err("VAULT", e.to_string()))
+}
+
+#[tauri::command]
+pub fn vault_load() -> CmdResult<Option<String>> {
+    use core_meter::TokenVault as _;
+    core_meter::OsKeyringVault::new()
+        .load()
+        .map_err(|e| err("VAULT", e.to_string()))
+}
+
+#[tauri::command]
+pub fn vault_clear() -> CmdResult<()> {
+    use core_meter::TokenVault as _;
+    core_meter::OsKeyringVault::new()
+        .clear()
+        .map_err(|e| err("VAULT", e.to_string()))
+}
+
+/// 云端账本行同步进本地镜像（幂等，重推零新增）。
+#[tauri::command]
+pub fn meter_sync(
+    state: State<'_, AppState>,
+    user_id: i64,
+    rows: Vec<core_meter::CloudLedgerRow>,
+) -> CmdResult<usize> {
+    core_meter::MeterMirror::new(state.db.clone())
+        .sync_from_cloud(user_id, &rows)
+        .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 对账：本地镜像推导余额 vs 云端 /balance。不平=漂移，上层记日志告警。
+#[tauri::command]
+pub fn meter_reconcile(
+    state: State<'_, AppState>,
+    user_id: i64,
+    cloud_cents: i64,
+) -> CmdResult<core_meter::ReconcileReport> {
+    core_meter::MeterMirror::new(state.db.clone())
+        .reconcile(user_id, cloud_cents)
+        .map_err(|e| err("DB", e.to_string()))
+}

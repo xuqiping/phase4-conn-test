@@ -48,7 +48,10 @@ mod tests {
         })
         .expect("重复迁移");
         let versions = db.read(db::migrate::applied_versions).expect("读版本");
-        assert_eq!(versions, vec!["L1".to_string(), "L2".to_string()]);
+        assert_eq!(
+            versions,
+            vec!["L1".to_string(), "L2".to_string(), "L3".to_string()]
+        );
     }
 
     #[test]
