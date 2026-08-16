@@ -44,6 +44,7 @@ import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.chat.service.internal.MemoryAssetUploadService;
 import com.superprogrammer.chat.service.internal.MemoryGenerationService;
 import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
+import com.superprogrammer.chat.service.internal.InclusionQuickCheckService;
 import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -93,6 +94,8 @@ public class ChatSessionService {
     private final com.superprogrammer.search.service.WebSearchService webSearchService;
     // 聊天附件归属校验（V69 二期 P3：消息体携带 file_ids，turn 提及「含附件《名》」）
     private final MemoryAssetUploadService memoryAssetUploadService;
+    /** 5x #7 收录确认式回复：确定性快检（文件名硬规则），命中→模板确认替代全量输出。 */
+    private final InclusionQuickCheckService inclusionQuickCheckService;
     /** 审计：对话两阶段（send_message + chat_completed），8x Chunk4。 */
     private final AuditLogService auditLogService;
     /** 对话审计开关（audit.chat.enabled，高频出问题可关）。非 final，Spring @Value 字段注入。 */
@@ -226,6 +229,20 @@ public class ChatSessionService {
             securityEventPublisher.publish(
                     com.superprogrammer.common.security.event.ApplicationSecurityEvent.KIND_CHAT_MESSAGE,
                     userId, java.util.Map.of("content", request.getMessage() == null ? "" : request.getMessage()));
+        }
+
+        // 5x #7 确认式回复：确定性快检命中 → 模板确认替代 LLM 全量（不调引擎/不写记忆，等用户点选）
+        List<InclusionQuickCheckService.Hit> inclusionHits = inclusionHits(userId, session.getId(), request, attachmentNames);
+        if (!inclusionHits.isEmpty()) {
+            String confirmText = buildInclusionConfirmText(inclusionHits);
+            ChatMessage confirmMsg = insertInclusionConfirmMessage(session.getId(), confirmText, request, inclusionHits);
+            return ChatResponse.builder()
+                    .sessionId(session.getId())
+                    .messageId(confirmMsg.getId())
+                    .content(confirmText)
+                    .mode(session.getMode())
+                    .metadata(confirmMsg.getMetadata())
+                    .build();
         }
 
         // Build execution context
@@ -512,6 +529,22 @@ public class ChatSessionService {
         auditSendMessage(session.getId(), session.getAgentId(), request.getModel(), userId,
                 request.getAttachmentFileIds() == null ? 0 : request.getAttachmentFileIds().size());
 
+        // 5x #7 确认式回复：确定性快检命中 → 模板确认流（CHUNK+INCLUSION_CONFIRM+DONE），不调引擎/不写记忆
+        List<InclusionQuickCheckService.Hit> inclusionHits = inclusionHits(userId, session.getId(), request, attachmentNames);
+        if (!inclusionHits.isEmpty()) {
+            return streamInclusionConfirm(session, request, inclusionHits);
+        }
+
+        return generateReplyStream(userId, session, request, attachmentNames);
+    }
+
+    /**
+     * 全量回复生成（流式）：5x #7 拆出——正常发送与确认点选 ANSWER 共用。
+     * 确认 ANSWER 路径直调本方法（天然跳过快检，防确认回复再触发确认死循环），
+     * 且不再重插 USER 消息（首轮已落库）。WORKFLOW 人机输入拦截分支保持原位。
+     */
+    private Flux<StreamEvent> generateReplyStream(Long userId, ChatSession session, ChatRequest request,
+                                                  List<String> attachmentNames) {
         ExecutionContext context = new ExecutionContext(
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
         context.setModel(request.getModel());
@@ -808,6 +841,153 @@ public class ChatSessionService {
             return String.valueOf(event.getMetadata().get("errorMessage"));
         }
         return event.getStatus() == null ? "工作流执行失败" : event.getStatus();
+    }
+
+    // ============================ 5x #7 · 收录确认式回复（MVP）============================
+
+    /**
+     * 确定性快检（fail-open）：开关关/无附件/任何异常 → 空表走原全量路径，快检故障绝不阻塞聊天。
+     * 命中记 info 日志（sessionId+命中数+项目 id，不带消息原文——PII 红线）。
+     */
+    private List<InclusionQuickCheckService.Hit> inclusionHits(Long userId, Long sessionId,
+                                                               ChatRequest request, List<String> attachmentNames) {
+        try {
+            if (attachmentNames == null || attachmentNames.isEmpty()) {
+                return List.of();
+            }
+            if (!inclusionQuickCheckService.enabled()) {
+                return List.of();
+            }
+            List<InclusionQuickCheckService.Hit> hits = inclusionQuickCheckService.quickCheck(userId, attachmentNames);
+            if (!hits.isEmpty()) {
+                List<Long> projectIds = hits.stream().map(InclusionQuickCheckService.Hit::projectId).toList();
+                log.info("收录确认命中 userId={} sessionId={} hits={} projects={}（模板确认替代全量输出）",
+                        userId, sessionId, hits.size(), projectIds);
+            }
+            return hits;
+        } catch (Exception e) {
+            log.warn("收录快检失败(fail-open走全量) userId={} sessionId={}: {}", userId, sessionId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 确认模板文案：列出全部命中项目（多命中逐个点名，实际收录以异步路由先建者赢为准）。 */
+    private String buildInclusionConfirmText(List<InclusionQuickCheckService.Hit> hits) {
+        String projects = hits.stream()
+                .map(h -> "「" + h.projectName() + "」（附件《" + h.matchedFile() + "》命中规则『" + h.matchedPattern() + "』）")
+                .collect(Collectors.joining("、"));
+        return "你输入的内容已命中项目 " + projects + " 的收录规则，将按规则收录进对应项目。\n\n"
+                + "需要我基于你的输入进行回答吗？";
+    }
+
+    /**
+     * 落确认 assistant 消息。metadata.inclusionConfirm 携 originalText/model/attachmentFileIds
+     * （原文只存服务端 metadata，确认时回读——前端仅传 messageId+choice，防内容注入替换）。
+     * 状态机 PENDING → ANSWERED/DECLINED（confirmInclusion 落库推进，防重复点选）。
+     */
+    private ChatMessage insertInclusionConfirmMessage(Long sessionId, String confirmText,
+                                                      ChatRequest request, List<InclusionQuickCheckService.Hit> hits) {
+        ChatMessage msg = new ChatMessage();
+        msg.setSessionId(sessionId);
+        msg.setRole("ASSISTANT");
+        msg.setContent(confirmText);
+        try {
+            Map<String, Object> ic = new LinkedHashMap<>();
+            ic.put("status", "PENDING");
+            ic.put("hits", hits);
+            ic.put("originalText", request.getMessage());
+            ic.put("model", request.getModel());
+            ic.put("attachmentFileIds",
+                    request.getAttachmentFileIds() != null ? request.getAttachmentFileIds() : List.of());
+            msg.setMetadata(new ObjectMapper().writeValueAsString(Map.of("inclusionConfirm", ic)));
+        } catch (Exception ignored) {}
+        messageMapper.insert(msg);
+        return msg;
+    }
+
+    /** 流式确认回复：CHUNK（模板文案）→ INCLUSION_CONFIRM（结构化载荷）→ DONE。复用既有 SSE 帧协议。 */
+    private Flux<StreamEvent> streamInclusionConfirm(ChatSession session, ChatRequest request,
+                                                     List<InclusionQuickCheckService.Hit> hits) {
+        String confirmText = buildInclusionConfirmText(hits);
+        ChatMessage confirmMsg = insertInclusionConfirmMessage(session.getId(), confirmText, request, hits);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("messageId", confirmMsg.getId());
+        payload.put("status", "PENDING");
+        payload.put("hits", hits);
+        String payloadJson;
+        try {
+            payloadJson = new ObjectMapper().writeValueAsString(payload);
+        } catch (Exception e) {
+            payloadJson = "{}";
+        }
+        return Flux.just(
+                StreamEvent.chunk(confirmText),
+                StreamEvent.inclusionConfirm(payloadJson),
+                StreamEvent.done());
+    }
+
+    /**
+     * 用户点选（messageId+choice，不传内容）：
+     * <ul>
+     *   <li>DECLINE → metadata 置 DECLINED + 收尾消息（不调 LLM/不写记忆）；</li>
+     *   <li>ANSWER → metadata 置 ANSWERED + 携服务端存 originalText 走全量生成流
+     *       （跳过快检防死循环；附件重过归属校验；不重插 USER 消息——首轮已落库）。</li>
+     * </ul>
+     * 咽喉：session 归属校验（getSessionOrFail）+ 消息属本会话 ASSISTANT + metadata 状态 PENDING。
+     */
+    public Flux<StreamEvent> confirmInclusion(Long userId, Long sessionId, Long messageId, String choice) {
+        ChatSession session = getSessionOrFail(userId, sessionId);
+        ChatMessage msg = messageMapper.selectById(messageId);
+        if (msg == null || !sessionId.equals(msg.getSessionId()) || !"ASSISTANT".equals(msg.getRole())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "确认消息不存在");
+        }
+        Map<String, Object> ic = parseInclusionConfirm(msg.getMetadata());
+        if (ic == null || !"PENDING".equals(ic.get("status"))) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该消息没有待确认的收录请求（可能已点选过）");
+        }
+        boolean answer = "ANSWER".equalsIgnoreCase(choice);
+        // 状态机先落库（点选幂等：二次点 400）
+        ic.put("status", answer ? "ANSWERED" : "DECLINED");
+        try {
+            msg.setMetadata(new ObjectMapper().writeValueAsString(Map.of("inclusionConfirm", ic)));
+            messageMapper.updateById(msg);
+        } catch (Exception e) {
+            log.warn("收录确认状态落库失败 messageId={}: {}", messageId, e.getMessage());
+        }
+        log.info("收录确认点选 userId={} sessionId={} messageId={} choice={}", userId, sessionId, messageId, choice);
+        if (!answer) {
+            String closeText = "好的，本次不作答。相关内容将按项目规则收录，可继续输入新消息。";
+            ChatMessage closeMsg = new ChatMessage();
+            closeMsg.setSessionId(sessionId);
+            closeMsg.setRole("ASSISTANT");
+            closeMsg.setContent(closeText);
+            messageMapper.insert(closeMsg);
+            return Flux.just(StreamEvent.chunk(closeText), StreamEvent.done());
+        }
+        // ANSWER：携 metadata 原文重组请求，全量生成（附件重校验归属，记忆照常异步写——真实回答该进记忆）
+        ChatRequest replay = new ChatRequest();
+        replay.setSessionId(sessionId);
+        replay.setMessage(ic.get("originalText") == null ? "" : String.valueOf(ic.get("originalText")));
+        replay.setModel(ic.get("model") == null ? null : String.valueOf(ic.get("model")));
+        if (ic.get("attachmentFileIds") instanceof List<?> fids && !fids.isEmpty()) {
+            replay.setAttachmentFileIds(fids.stream().map(String::valueOf).toList());
+        }
+        List<String> attachmentNames = resolveAttachmentNames(userId, replay);
+        return generateReplyStream(userId, session, replay, attachmentNames);
+    }
+
+    /** 解析 metadata.inclusionConfirm；格式坏/缺 → null（按无可确认处理）。 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseInclusionConfirm(String metadata) {
+        if (metadata == null || metadata.isBlank()) {
+            return null;
+        }
+        try {
+            Object ic = new ObjectMapper().readValue(metadata, Map.class).get("inclusionConfirm");
+            return ic instanceof Map ? (Map<String, Object>) ic : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ============================ 阶段5 RAG（CHAT 模式）============================

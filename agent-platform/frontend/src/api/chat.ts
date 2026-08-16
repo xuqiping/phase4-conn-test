@@ -160,5 +160,18 @@ export const chatApi = {
       },
       body: JSON.stringify(data)
     })
+  },
+
+  /** 5x #7 收录确认点选（SSE 流）：ANSWER→服务端携存档原文全量回答；DECLINE→收尾消息。只传 choice 不传内容（防篡改）。 */
+  confirmInclusionStream(sessionId: number, messageId: number, choice: 'ANSWER' | 'DECLINE') {
+    const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
+    return fetch(`/api/chat/sessions/${sessionId}/messages/${messageId}/inclusion-confirm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ choice })
+    })
   }
 }

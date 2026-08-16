@@ -12,7 +12,7 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 public class StreamEvent {
-    private String type;    // CHUNK | THINKING | CITATION | FILE_CARDS | DONE | ERROR | INPUT_REQUIRED
+    private String type;    // CHUNK | THINKING | CITATION | FILE_CARDS | DONE | ERROR | INPUT_REQUIRED | INCLUSION_CONFIRM
     private String content;
     /** 当前会话 ID（修 #3：流式建新会话后回读，避免每条消息新建会话）。前端在收到任意事件时读取并回填 currentSessionId。 */
     private Long sessionId;
@@ -45,5 +45,11 @@ public class StreamEvent {
     /** 工作流命中 HUMAN_INPUT：把待答问题规格透给前端。 */
     public static StreamEvent inputRequired(Long sessionId, Map<String, Object> payload) {
         return StreamEvent.builder().type("INPUT_REQUIRED").sessionId(sessionId).data(payload).build();
+    }
+
+    /** 5x #7 收录确认：content=inclusionConfirm 载荷 JSON（messageId/status/hits），DONE 前发，
+     *  前端捕获后并入消息 metadata 渲染「需要回答/不用了」按钮。 */
+    public static StreamEvent inclusionConfirm(String payloadJson) {
+        return StreamEvent.builder().type("INCLUSION_CONFIRM").content(payloadJson).build();
     }
 }

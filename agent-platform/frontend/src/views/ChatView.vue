@@ -73,6 +73,7 @@
             v-for="msg in chatStore.messages"
             :key="msg.id"
             :message="msg"
+            @inclusion-choice="handleInclusionChoice"
           />
           <!-- Streaming thinking -->
           <div v-if="chatStore.streamingThinking" class="chat-view__streaming-thinking">
@@ -419,6 +420,11 @@ function handleSend(message: string, attachments?: ChatAttachmentRef[]) {
     attachments,
     kbPref.value.length ? kbPref.value : undefined
   )
+}
+
+/** 5x #7：收录确认点选 → SSE 流（ANSWER 全量回答 / DECLINE 收尾消息）；按钮在确认消息 metadata.inclusionConfirm 渲染。 */
+function handleInclusionChoice(payload: { messageId: number; choice: 'ANSWER' | 'DECLINE' }) {
+  chatStore.confirmInclusion(payload.messageId, payload.choice)
 }
 
 function handleModelChange(model: string) {

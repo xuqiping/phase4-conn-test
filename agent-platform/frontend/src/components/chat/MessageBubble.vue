@@ -22,6 +22,22 @@
       </div>
       <!-- Content -->
       <div class="message-bubble__text">{{ message.content }}</div>
+      <!-- 5x #7：收录确认点选（PENDING → 需要回答/不用了；已点选 → 静态状态标） -->
+      <div v-if="inclusionConfirm" class="message-bubble__inclusion">
+        <template v-if="inclusionConfirm.status === 'PENDING'">
+          <button
+            class="message-bubble__inclusion-btn message-bubble__inclusion-btn--primary"
+            @click="emit('inclusion-choice', { messageId: message.id, choice: 'ANSWER' })"
+          >✅ 需要回答</button>
+          <button
+            class="message-bubble__inclusion-btn"
+            @click="emit('inclusion-choice', { messageId: message.id, choice: 'DECLINE' })"
+          >🚫 不用了</button>
+        </template>
+        <span v-else class="message-bubble__inclusion-done">
+          {{ inclusionConfirm.status === 'ANSWERED' ? '✅ 已选择回答' : '已选择不回答' }}
+        </span>
+      </div>
       <!-- 二期 P3（FR-201）：用户消息附件 chips（本地回显带名；历史仅 fileId → 通用「附件」标） -->
       <div v-if="userAttachments.length" class="message-bubble__attachments">
         <button
@@ -91,6 +107,10 @@ const props = defineProps<{
   message: ChatMessage
 }>()
 
+const emit = defineEmits<{
+  (e: 'inclusion-choice', payload: { messageId: number; choice: 'ANSWER' | 'DECLINE' }): void
+}>()
+
 const showThinking = ref(true)
 
 const thinkingText = computed(() => {
@@ -155,6 +175,17 @@ const userAttachments = computed<{ fileId: string; name: string }[]>(() => {
     return []
   } catch {
     return []
+  }
+})
+
+/** 5x #7：收录确认状态（metadata.inclusionConfirm：status PENDING/ANSWERED/DECLINED + hits）。 */
+const inclusionConfirm = computed<{ status: string; hits?: any[] } | null>(() => {
+  if (props.message.role !== 'ASSISTANT' || !props.message.metadata) return null
+  try {
+    const meta = JSON.parse(props.message.metadata)
+    return meta.inclusionConfirm?.status ? meta.inclusionConfirm : null
+  } catch {
+    return null
   }
 })
 
@@ -388,6 +419,43 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 }
 
 .message-bubble__file-cards-title {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.message-bubble__inclusion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.message-bubble__inclusion-btn {
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  &--primary {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-color: transparent;
+
+    &:hover {
+      opacity: 0.85;
+    }
+  }
+}
+
+.message-bubble__inclusion-done {
   font-size: 12px;
   color: var(--color-text-tertiary);
 }

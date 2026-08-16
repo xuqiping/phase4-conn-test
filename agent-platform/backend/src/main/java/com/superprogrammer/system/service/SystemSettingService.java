@@ -59,6 +59,9 @@ public class SystemSettingService {
     /** RAG 召回 query 多路扩展开关（true=改写+HyDE/切块多路；false=单 query 直接 embed）。
      *  4 条检索路径（/retrieve、/ask、Chat 注入、Agent/工作流）全读此键 → 调试与真实一致。默认 true。 */
     public static final String RAG_RECALL_EXPANSION_ENABLED = "rag.recall.expansion.enabled";
+    /** 5x #7 收录确认式回复开关：命中确定性收录规则（文件名硬规则）先模板确认，点「需要回答」才全量回答。
+     *  false=回旧行为直接全量回答。热开关，出问题关掉即回退，不回滚发版。 */
+    public static final String RAG_MEMORY_INCLUSION_CONFIRM_ENABLED = "rag.memory.inclusion-confirm.enabled";
     /** RAG 召回扩展切块触发阈值（字数）。输入 > 阈值 → 切块多路召回（多主题不丢内容）；≤ 阈值 → 改写+HyDE。
      *  仅 expansion.enabled=true 时生效。默认 200。 */
     public static final String RAG_RECALL_EXPANSION_THRESHOLD = "rag.recall.expansion.threshold";
@@ -718,6 +721,16 @@ public class SystemSettingService {
 
     public void updateSearchEnabled(boolean enabled) {
         setBoolean(SEARCH_ENABLED, enabled, "联网搜索总开关（false=禁用）");
+    }
+
+    /** 5x #7 收录确认式回复开关（默认 true）。 */
+    public boolean getInclusionConfirmEnabled() {
+        return getBoolean(RAG_MEMORY_INCLUSION_CONFIRM_ENABLED, true);
+    }
+
+    public void updateInclusionConfirmEnabled(boolean enabled) {
+        setBoolean(RAG_MEMORY_INCLUSION_CONFIRM_ENABLED, enabled,
+                "收录确认式回复开关（false=命中收录规则也直接全量回答）");
     }
 
     /** 当前生效 provider，默认 builtin（无外部 key 兜底）。非法值 → builtin。 */

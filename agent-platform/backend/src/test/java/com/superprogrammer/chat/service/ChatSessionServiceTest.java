@@ -58,6 +58,8 @@ class ChatSessionServiceTest {
     // 8x Chunk4 对话审计
     @Mock private com.superprogrammer.common.audit.AuditLogService auditLogService;
     @Mock private com.superprogrammer.common.audit.AuditLogEntity auditLogEntityStub;
+    // 5x #7 收录确认式回复
+    @Mock private com.superprogrammer.chat.service.internal.InclusionQuickCheckService inclusionQuickCheckService;
     // S3 Step4（SEC-FR-056）：可选依赖注入后走封顶检查；未 stub 的用例 getLlmSessionTokenCap 默认 0 → 检查跳过
     @Mock private com.superprogrammer.billing.mapper.LlmUsageLogMapper llmUsageLogMapper;
     @Mock private com.superprogrammer.common.security.SecurityEventPublisher securityEventPublisher;
@@ -510,5 +512,118 @@ class ChatSessionServiceTest {
         verify(orchestrationEngine, never()).executeStream(any(), any());
         verify(messageMapper, atLeastOnce()).insert(argThat(message ->
                 "ASSISTANT".equals(message.getRole()) && "最终回答".equals(message.getContent())));
+    }
+
+    // ============================ 5x #7 · 收录确认式回复 ============================
+
+    private static com.superprogrammer.chat.service.internal.InclusionQuickCheckService.Hit hit() {
+        return new com.superprogrammer.chat.service.internal.InclusionQuickCheckService.Hit(
+                5L, 9L, "AA老师项目", "PDF课件", "课件.pdf");
+    }
+
+    /** REST 快检命中 → 模板确认替代 LLM 全量（不调引擎/不写记忆/带 metadata）。 */
+    @Test
+    void sendMessage_inclusionHit_returnsConfirmTemplateWithoutLlm() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(memoryAssetUploadService.resolveOwnedAttachmentNames(List.of("f-1"), 100L))
+                .thenReturn(List.of("课件.pdf"));
+        when(inclusionQuickCheckService.enabled()).thenReturn(true);
+        when(inclusionQuickCheckService.quickCheck(100L, List.of("课件.pdf"))).thenReturn(List.of(hit()));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(30L);
+            return 1;
+        });
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("帮我看看课件");
+        request.setAttachmentFileIds(List.of("f-1"));
+        ChatResponse response = chatSessionService.sendMessage(100L, request);
+
+        assertTrue(response.getContent().contains("已命中项目"), "确认文案点名项目");
+        assertTrue(response.getContent().contains("AA老师项目"));
+        assertNotNull(response.getMetadata());
+        assertTrue(response.getMetadata().contains("PENDING"), "metadata 携待确认状态");
+        verify(orchestrationEngine, never()).execute(any(), anyString());
+        verify(memoryGenerationService, never()).processTurnAsync(any(), any(), any(), any(), any());
+    }
+
+    /** DECLINE → 状态落 DECLINED + 收尾消息，不调 LLM/不写记忆。 */
+    @Test
+    void confirmInclusion_decline_closesWithoutLlm() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        ChatMessage confirmMsg = new ChatMessage();
+        confirmMsg.setId(30L);
+        confirmMsg.setSessionId(1L);
+        confirmMsg.setRole("ASSISTANT");
+        confirmMsg.setContent("确认文案");
+        confirmMsg.setMetadata("{\"inclusionConfirm\":{\"status\":\"PENDING\",\"hits\":[],"
+                + "\"originalText\":\"帮我看看课件\",\"model\":\"m1\",\"attachmentFileIds\":[\"f-1\"]}}");
+        when(messageMapper.selectById(30L)).thenReturn(confirmMsg);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(31L);
+            return 1;
+        });
+
+        List<com.superprogrammer.chat.dto.StreamEvent> events =
+                chatSessionService.confirmInclusion(100L, 1L, 30L, "DECLINE").collectList().block();
+
+        assertNotNull(events);
+        assertTrue(events.stream().anyMatch(e -> "CHUNK".equals(e.getType()) && e.getContent().contains("本次不作答")));
+        assertTrue(events.stream().anyMatch(e -> "DONE".equals(e.getType())));
+        verify(messageMapper).updateById(argThat(m -> m.getMetadata().contains("DECLINED")));
+        verify(orchestrationEngine, never()).executeStream(any(), any());
+        verify(memoryGenerationService, never()).processTurnAsync(any(), any(), any(), any(), any());
+    }
+
+    /** ANSWER → 携服务端存原文走全量生成（跳过快检防死循环，不重插 USER 消息）。 */
+    @Test
+    void confirmInclusion_answer_replaysOriginalTextThroughLlm() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        ChatMessage confirmMsg = new ChatMessage();
+        confirmMsg.setId(30L);
+        confirmMsg.setSessionId(1L);
+        confirmMsg.setRole("ASSISTANT");
+        confirmMsg.setMetadata("{\"inclusionConfirm\":{\"status\":\"PENDING\",\"hits\":[],"
+                + "\"originalText\":\"帮我看看课件\",\"model\":\"m1\",\"attachmentFileIds\":[\"f-1\"]}}");
+        when(messageMapper.selectById(30L)).thenReturn(confirmMsg);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(31L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(memoryAssetUploadService.resolveOwnedAttachmentNames(List.of("f-1"), 100L))
+                .thenReturn(List.of("课件.pdf"));
+        when(orchestrationEngine.executeStream(any(), eq("帮我看看课件"))).thenReturn(reactor.core.publisher.Flux.just(
+                com.superprogrammer.chat.dto.StreamEvent.chunk("答案")));
+
+        List<com.superprogrammer.chat.dto.StreamEvent> events =
+                chatSessionService.confirmInclusion(100L, 1L, 30L, "ANSWER").collectList().block();
+
+        assertNotNull(events);
+        assertTrue(events.stream().anyMatch(e -> "CHUNK".equals(e.getType()) && "答案".equals(e.getContent())));
+        assertTrue(events.stream().anyMatch(e -> "DONE".equals(e.getType())));
+        // 不重插 USER 消息（仅确认态 updateById + 答案 ASSISTANT insert）
+        verify(messageMapper, never()).insert(argThat(m -> "USER".equals(m.getRole())));
+        verify(messageMapper).updateById(argThat(m -> m.getMetadata().contains("ANSWERED")));
+        // 重答不进快检（防确认回复再触发确认死循环）
+        verify(inclusionQuickCheckService, never()).quickCheck(any(), any());
+    }
+
+    /** 二次点选（状态非 PENDING）→ 400，不再生成。 */
+    @Test
+    void confirmInclusion_alreadyResolved_rejects() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        ChatMessage confirmMsg = new ChatMessage();
+        confirmMsg.setId(30L);
+        confirmMsg.setSessionId(1L);
+        confirmMsg.setRole("ASSISTANT");
+        confirmMsg.setMetadata("{\"inclusionConfirm\":{\"status\":\"DECLINED\"}}");
+        when(messageMapper.selectById(30L)).thenReturn(confirmMsg);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> chatSessionService.confirmInclusion(100L, 1L, 30L, "ANSWER"));
+        assertEquals(com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(orchestrationEngine, never()).executeStream(any(), any());
     }
 }

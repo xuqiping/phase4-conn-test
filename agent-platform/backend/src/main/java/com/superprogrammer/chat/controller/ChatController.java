@@ -182,6 +182,65 @@ public class ChatController {
         return doStream(userId, request);
     }
 
+    /**
+     * 5x #7 收录确认点选（SSE 流）：ANSWER → 携服务端存原文全量回答流；DECLINE → 收尾消息流。
+     * 前端只传 messageId+choice（不传内容，防篡改）；与发消息同一限流桶 chat_send。
+     */
+    @PostMapping(value = "/sessions/{id}/messages/{messageId}/inclusion-confirm",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
+    public SseEmitter confirmInclusion(@PathVariable Long id,
+                                       @PathVariable Long messageId,
+                                       @Valid @RequestBody com.superprogrammer.chat.dto.InclusionConfirmRequest body) {
+        Long userId = getCurrentUserId();
+        SseEmitter emitter = new SseEmitter(120_000L);
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+        java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
+        new Thread(() -> {
+            try {
+                SecurityContextHolder.setContext(securityContext);
+                if (mdcSnapshot != null) {
+                    MDC.setContextMap(mdcSnapshot);
+                }
+                // 计费归户：ANSWER 路径会调 LLM，须种 userId（同 doStream 范式）
+                com.superprogrammer.billing.context.BillingContext.set(userId);
+                AtomicBoolean sentDone = new AtomicBoolean(false);
+                chatSessionService.confirmInclusion(userId, id, messageId, body.getChoice())
+                        .doOnNext(evt -> {
+                            try {
+                                if ("DONE".equals(evt.getType())) {
+                                    sentDone.set(true);
+                                }
+                                emitter.send(SseEmitter.event().data(evt));
+                            } catch (Exception sendError) {
+                                throw new RuntimeException(sendError);
+                            }
+                        })
+                        .blockLast(java.time.Duration.ofSeconds(120));
+                if (!sentDone.get()) {
+                    emitter.send(SseEmitter.event().data(
+                            com.superprogrammer.chat.dto.StreamEvent.done()));
+                }
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("收录确认流式失败", e);
+                try {
+                    emitter.send(SseEmitter.event().data(
+                            com.superprogrammer.chat.dto.StreamEvent.error("服务器内部错误，请稍后重试")));
+                    emitter.send(SseEmitter.event().data(
+                            com.superprogrammer.chat.dto.StreamEvent.done()));
+                    emitter.complete();
+                } catch (Exception ignored) {}
+            } finally {
+                SecurityContextHolder.clearContext();
+                com.superprogrammer.billing.context.BillingContext.clear();
+                MDC.clear();
+            }
+        }).start();
+        return emitter;
+    }
+
     private SseEmitter doStream(Long userId, ChatRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
         SecurityContext securityContext = SecurityContextHolder.getContext();

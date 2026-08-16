@@ -21,6 +21,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingFileCards = ref<RecalledFileCard[] | null>(null)
   /** 工作流 HUMAN_INPUT 待答问题规格（INPUT_REQUIRED 帧捕获；select 型可渲染选项按钮）。text 型直接用普通输入框作答即可。 */
   const pendingInput = ref<Record<string, any> | null>(null)
+  /** 5x #7：收录确认结构化载荷（INCLUSION_CONFIRM 帧捕获：messageId/status/hits；DONE 时并入消息 metadata，MessageBubble 渲染点选按钮）。 */
+  const pendingInclusionConfirm = ref<Record<string, any> | null>(null)
   const wsConnected = ref(false)
   const selectedModel = ref<string | null>(
     getStorage<string>(STORAGE_KEYS.CHAT_SELECTED_MODEL) || null
@@ -181,6 +183,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingFileCards.value = null
     // 用户作答（或发新消息）：清掉上一轮 HUMAN_INPUT 待答状态（防 select 选项按钮答完后 stale 残留）
     pendingInput.value = null
+    pendingInclusionConfirm.value = null
 
     messages.value.push({
       id: Date.now(),
@@ -282,13 +285,15 @@ export const useChatStore = defineStore('chat', () => {
                   break
                 case 'DONE':
                   messages.value.push({
-                    id: Date.now(),
+                    // 5x #7：确认式回复用真实 messageId（服务端 INCLUSION_CONFIRM 帧携带），点选接口按 id 回查
+                    id: pendingInclusionConfirm.value?.messageId ?? Date.now(),
                     sessionId: currentSessionId.value ?? 0,
                     role: 'ASSISTANT',
                     content: streamingContent.value,
                     metadata: JSON.stringify({
                       ...(streamingThinking.value ? { thinking: streamingThinking.value } : {}),
                       ...(pendingInput.value ? { pendingInput: pendingInput.value } : {}),
+                      ...(pendingInclusionConfirm.value ? { inclusionConfirm: pendingInclusionConfirm.value } : {}),
                       ...(streamingCitations.value ? { citations: streamingCitations.value } : {}),
                       ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {})
                     }),
@@ -298,11 +303,20 @@ export const useChatStore = defineStore('chat', () => {
                   streamingThinking.value = ''
                   streamingCitations.value = null
                   streamingFileCards.value = null
+                  pendingInclusionConfirm.value = null
                   sending.value = false
                   await fetchSessions()
                   break
                 case 'INPUT_REQUIRED':
                   pendingInput.value = evt
+                  break
+                case 'INCLUSION_CONFIRM':
+                  // 5x #7：content 为 {messageId,status,hits} JSON（DONE 前到达）；DONE 时随消息落 metadata
+                  try {
+                    pendingInclusionConfirm.value = evt.content ? JSON.parse(evt.content) : evt
+                  } catch {
+                    pendingInclusionConfirm.value = evt
+                  }
                   break
                 case 'ERROR':
                   streamingContent.value = ''
@@ -335,6 +349,123 @@ export const useChatStore = defineStore('chat', () => {
       streamingFileCards.value = null
       messages.value.pop()
       return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
+    }
+  }
+
+  /** 本地把确认消息状态置 ANSWERED/DECLINED（按钮消失防重复点；服务端同样按 metadata 状态幂等拒绝）。 */
+  function markInclusionResolved(messageId: number, status: string) {
+    const idx = messages.value.findIndex(m => m.id === messageId)
+    if (idx < 0) return
+    try {
+      const meta = messages.value[idx].metadata ? JSON.parse(messages.value[idx].metadata!) : {}
+      meta.inclusionConfirm = { ...(meta.inclusionConfirm || {}), status }
+      messages.value[idx].metadata = JSON.stringify(meta)
+    } catch {
+      // metadata 坏 → 忽略（MessageBubble 解析失败也不渲染按钮）
+    }
+  }
+
+  /**
+   * 5x #7 收录确认点选（SSE 流）：ANSWER→携服务端存档原文全量回答流；DECLINE→收尾消息流。
+   * 不插 USER 消息（首轮已落库）；点选即本地置状态防重复点。
+   */
+  async function confirmInclusion(messageId: number, choice: 'ANSWER' | 'DECLINE') {
+    if (!currentSessionId.value || sending.value) return
+    sending.value = true
+    streamingContent.value = ''
+    streamingThinking.value = ''
+    streamingCitations.value = null
+    streamingFileCards.value = null
+    pendingInput.value = null
+    markInclusionResolved(messageId, choice === 'ANSWER' ? 'ANSWERED' : 'DECLINED')
+    try {
+      const response = await chatApi.confirmInclusionStream(currentSessionId.value, messageId, choice)
+      if (!response.ok || !response.body) {
+        sending.value = false
+        appendAssistantError('确认失败，请稍后重试。')
+        return
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue
+          const jsonStr = line.substring(5).trim()
+          if (!jsonStr) continue
+          try {
+            const evt = JSON.parse(jsonStr)
+            switch (evt.type) {
+              case 'CHUNK':
+                streamingContent.value += evt.content || ''
+                break
+              case 'THINKING':
+                streamingThinking.value += evt.content || ''
+                break
+              case 'CITATION':
+                try {
+                  const arr = evt.content ? JSON.parse(evt.content) : null
+                  if (Array.isArray(arr) && arr.length) {
+                    streamingCitations.value = [...(streamingCitations.value || []), ...arr]
+                  }
+                } catch {
+                  // 单帧解析失败不丢已有引用
+                }
+                break
+              case 'FILE_CARDS':
+                try {
+                  const cards = evt.content ? JSON.parse(evt.content) : null
+                  if (Array.isArray(cards) && cards.length) {
+                    streamingFileCards.value = cards
+                  }
+                } catch {
+                  // 解析失败不丢流内容
+                }
+                break
+              case 'DONE':
+                if (streamingContent.value) {
+                  messages.value.push({
+                    id: Date.now(),
+                    sessionId: currentSessionId.value ?? 0,
+                    role: 'ASSISTANT',
+                    content: streamingContent.value,
+                    metadata: JSON.stringify({
+                      ...(streamingThinking.value ? { thinking: streamingThinking.value } : {}),
+                      ...(streamingCitations.value ? { citations: streamingCitations.value } : {}),
+                      ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {})
+                    }),
+                    createdAt: new Date().toISOString()
+                  })
+                }
+                streamingContent.value = ''
+                streamingThinking.value = ''
+                streamingCitations.value = null
+                streamingFileCards.value = null
+                sending.value = false
+                break
+              case 'ERROR':
+                streamingContent.value = ''
+                streamingThinking.value = ''
+                sending.value = false
+                appendAssistantError(evt.content)
+                break
+            }
+          } catch {
+            // Ignore malformed JSON
+          }
+        }
+      }
+      sending.value = false
+    } catch {
+      streamingContent.value = ''
+      streamingThinking.value = ''
+      sending.value = false
+      appendAssistantError('确认失败，请稍后重试。')
     }
   }
 
@@ -533,6 +664,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     sendWSMessage,
     sendStreamingMessage,
+    confirmInclusion,
     connectWS,
     disconnectWS,
     startConflictPoll,
