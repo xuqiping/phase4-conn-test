@@ -21,6 +21,8 @@
       :snap-grid="[16, 16]"
       fit-view-on-init
       :delete-key-code="null"
+      :pan-on-drag="dragMode === 'pan'"
+      :selection-key-code="dragMode === 'select' ? true : 'Shift'"
       @selection-end="onSelectionEnd"
       @connect="onConnect"
       @connect-start="onConnectStart"
@@ -36,6 +38,26 @@
 
     <!-- 缩放/适应 工具条 -->
     <div class="canvas-board__toolbar">
+      <!-- 交互模式切换：pan=左键拖拽平移画布（默认）；select=左键拖框批量选节点（Windows 式，免按 Shift） -->
+      <button
+        class="canvas-board__btn"
+        :class="{ 'canvas-board__btn--active': dragMode === 'pan' }"
+        title="拖拽画布模式：左键拖动平移画布（Shift+拖框仍可临时框选）"
+        :aria-pressed="dragMode === 'pan'"
+        @click="setDragMode('pan')"
+      >
+        ✋
+      </button>
+      <button
+        class="canvas-board__btn"
+        :class="{ 'canvas-board__btn--active': dragMode === 'select' }"
+        title="框选节点模式：左键按住拖出选框批量选中节点（同 Windows 框选）；滚轮缩放，平移请切回 ✋"
+        :aria-pressed="dragMode === 'select'"
+        @click="setDragMode('select')"
+      >
+        ▭
+      </button>
+      <span class="canvas-board__toolbar-sep" aria-hidden="true"></span>
       <button class="canvas-board__btn" title="放大" @click="() => vfZoomIn()">＋</button>
       <button class="canvas-board__btn" title="缩小" @click="() => vfZoomOut()">－</button>
       <button class="canvas-board__btn" title="适应视图" @click="() => vfFitView()">⤢</button>
@@ -97,6 +119,19 @@ const selectedEdgeId = ref('')
  */
 const multiSelectedIds = ref<string[]>([])
 const boardRoot = ref<HTMLElement | null>(null)
+
+/**
+ * 交互模式（拖拽画布 vs 框选节点）：
+ * pan（默认）= 左键拖拽平移画布，Shift+拖框仍可临时框选（selectionKeyCode='Shift'）；
+ * select = 左键按住拖出选框批量选中节点（Windows 式框选，免按 Shift）。
+ * @vue-flow/core 1.48 无 selectionOnDrag prop：select 态用 selectionKeyCode=true（恒选）
+ * + panOnDrag=false（任何拖拽都不再平移）实现；此模式下游走画布靠滚轮缩放/适应视图，平移切回 ✋ 模式。
+ */
+type DragMode = 'pan' | 'select'
+const dragMode = ref<DragMode>('pan')
+function setDragMode(mode: DragMode) {
+  dragMode.value = mode
+}
 
 const emit = defineEmits<{
   (e: 'node-selected', node: CanvasNode | null): void
@@ -460,7 +495,7 @@ function addEdge(source: string, target: string) {
   })
 }
 
-defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById })
+defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById, dragMode, setDragMode })
 </script>
 
 <style lang="scss" scoped>
@@ -526,5 +561,20 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
     color: var(--color-primary);
     border-color: var(--color-primary);
   }
+
+  /* 当前激活的交互模式按钮：主题色高亮 */
+  &--active {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  }
+}
+
+/* 模式按钮与缩放按钮之间的分隔线 */
+.canvas-board__toolbar-sep {
+  width: 20px;
+  height: 1px;
+  margin: 2px auto;
+  background: var(--color-border);
 }
 </style>

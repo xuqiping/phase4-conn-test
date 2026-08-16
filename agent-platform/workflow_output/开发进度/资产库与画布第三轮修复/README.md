@@ -27,3 +27,4 @@
 
 - 单测：后端资产 138 + 媒体闸 15 + autoAssociate 10 + batchRunner 16 + 前端 C7 22，全绿；vue-tsc 0 错；真 PG V123/V124 迁移+回滚演练通过。
 - **Phase4 真浏览器实测（2026-08-16，Playwright 双账号）已完成**：C1 框选/批量删除、C2 一键关联、C4 批量生成（预检+进度+逐节点报错；拓扑/429/刷新恢复环境无 Provider 由单测覆盖）、C7 评分双轨/筛选/PERSONAL/开关全过。实测发现并修复 2 bug：EDITOR 上传者候选 403（新增读门 creator-candidates 端点）、一致性包 PERSONAL 门控漏传 canModify。详见 `开发进度7.md` + 测试方案 §五。
+- **框选交互改 ✋/▭ 双模式（2026-08-16，用户反馈免 Shift）**：▭ 左键拖框=Windows 式框选，✋=平移（Shift 临时框选保留）；CanvasBoard 单测 3/3 + Playwright 实测通过。详见 `开发进度8.md`。
