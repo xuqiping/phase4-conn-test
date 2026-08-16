@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AssetDetailDrawer from './AssetDetailDrawer.vue'
-import { assetApi, assetBridgeApi, versionApi, scriptApi } from '@/api/assets'
+import { assetApi, assetBridgeApi, versionApi, scriptApi, scoreApi } from '@/api/assets'
 import type { AxiosResponse } from 'axios'
 import type { AssetVO } from '@/types/asset'
 
@@ -30,7 +30,10 @@ vi.mock('@/api/assets', () => ({
   assetApi: { get: vi.fn(), remove: vi.fn() },
   assetBridgeApi: { usages: vi.fn() },
   versionApi: { lock: vi.fn(), unlock: vi.fn(), archive: vi.fn(), unarchive: vi.fn(), create: vi.fn() },
-  scriptApi: { breakdown: vi.fn(), breakdownStoryboard: vi.fn() }
+  scriptApi: { breakdown: vi.fn(), breakdownStoryboard: vi.fn() },
+  scoreApi: { mine: vi.fn(), submit: vi.fn() },
+  memberApi: { searchCandidates: vi.fn() },
+  projectApi: { updateSettings: vi.fn() }
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -63,7 +66,16 @@ async function settle() {
   await Promise.resolve()
 }
 
-async function mountDrawer(props: Partial<{ show: boolean; assetId: number | null; canEdit: boolean }> = {}) {
+async function mountDrawer(
+  props: Partial<{
+    show: boolean
+    assetId: number | null
+    canEdit: boolean
+    canScore: boolean
+    personalMode: boolean
+    currentUserId: number | null
+  }> = {}
+) {
   const wrapper = mount(AssetDetailDrawer, {
     props: { show: true, assetId: 5, canEdit: true, ...props }
   })
@@ -76,6 +88,9 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     vi.clearAllMocks()
     vi.mocked(assetApi.get).mockResolvedValue(response({ code: 200, message: 'ok', data: mkAsset() }))
     vi.mocked(assetBridgeApi.usages).mockResolvedValue(response({ code: 200, message: 'ok', data: [] }))
+    vi.mocked(scoreApi.mine).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { myScore: null, ownerScore: null, memberAvgScore: null, memberCount: 0 } })
+    )
   })
 
   it('加载资产 + usages', async () => {
@@ -344,5 +359,80 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     const wrapper = await mountDrawer()
     const vm = wrapper.vm as unknown as { textBody: string }
     expect(vm.textBody).toBe('裸文本内容')
+  })
+
+  // ---------- C7 评分区 + PERSONAL 门控（2x第三轮） ----------
+
+  it('C7-1 打开抽屉并行拉评分聚合（scoreApi.mine）+ 我的分回显草稿', async () => {
+    vi.mocked(scoreApi.mine).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { myScore: 80, ownerScore: 88, memberAvgScore: 90, memberCount: 3 } })
+    )
+    const wrapper = await mountDrawer()
+    expect(scoreApi.mine).toHaveBeenCalledWith(5)
+    const vm = wrapper.vm as unknown as { scoreInfo: { myScore: number | null }; myScoreDraft: number | null }
+    expect(vm.scoreInfo?.myScore).toBe(80)
+    expect(vm.myScoreDraft).toBe(80)
+  })
+
+  it('C7-2 双轨评分展示：拥有者 ★88 + 成员均分 90 · 3人（teleport 到 body）', async () => {
+    vi.mocked(scoreApi.mine).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { myScore: null, ownerScore: 88, memberAvgScore: 90, memberCount: 3 } })
+    )
+    await mountDrawer()
+    expect(document.body.textContent).toContain('拥有者 ★88')
+    expect(document.body.textContent).toContain('成员均分 90 · 3人')
+  })
+
+  it('C7-3 canScore → submitScore 调 scoreApi.submit + 成功刷新聚合 + emit changed（L5）', async () => {
+    vi.mocked(scoreApi.submit).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { myScore: 75, ownerScore: null, memberAvgScore: 75, memberCount: 1 } })
+    )
+    const wrapper = await mountDrawer({ canScore: true })
+    const vm = wrapper.vm as unknown as { myScoreDraft: number | null; submitScore: () => Promise<void>; scoreInfo: { myScore: number | null } }
+    vm.myScoreDraft = 75
+    await vm.submitScore()
+    expect(scoreApi.submit).toHaveBeenCalledWith(5, 75)
+    expect(vm.scoreInfo?.myScore).toBe(75)
+    expect(messageMock.success).toHaveBeenCalled()
+    expect(wrapper.emitted('changed')).toBeTruthy()
+  })
+
+  it('C7-4 PERSONAL 非本人内容 → canModify=false 隐藏状态机动作组（canEdit 仍 true）', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ createdBy: 999 }) })
+    )
+    // teleport 内容跨测试残留 body → 用增量计数断言（本次挂载不新增动作组）
+    const actionsBefore = document.body.querySelectorAll('.asset-detail__actions').length
+    const wrapper = await mountDrawer({ canEdit: true, personalMode: true, currentUserId: 1 })
+    const vm = wrapper.vm as unknown as { canModify: boolean; canOperateThis: boolean }
+    expect(vm.canOperateThis).toBe(false)
+    expect(vm.canModify).toBe(false)
+    expect(document.body.querySelectorAll('.asset-detail__actions').length).toBe(actionsBefore)
+  })
+
+  it('C7-5 PERSONAL 本人内容 → canModify=true 正常操作', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ createdBy: 1 }) })
+    )
+    const wrapper = await mountDrawer({ canEdit: true, personalMode: true, currentUserId: 1 })
+    const vm = wrapper.vm as unknown as { canModify: boolean }
+    expect(vm.canModify).toBe(true)
+  })
+
+  it('C7-6 SHARED 模式零回归 → personalMode 缺省 canModify 恒等于 canEdit', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ createdBy: 999 }) })
+    )
+    const wrapper = await mountDrawer({ canEdit: true })
+    const vm = wrapper.vm as unknown as { canModify: boolean }
+    expect(vm.canModify).toBe(true)
+  })
+
+  it('C7-7 上传者展示：username 优先，缺失回退 #id', async () => {
+    vi.mocked(assetApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkAsset({ createdBy: 42, createdByUsername: 'zhang3' }) })
+    )
+    await mountDrawer()
+    expect(document.body.textContent).toContain('zhang3')
   })
 })

@@ -39,11 +39,11 @@
                 type="textarea"
                 :rows="6"
                 :maxlength="8000"
-                :readonly="!canEdit"
+                :readonly="!canModify"
                 placeholder="剧本正文（≤8000 字）；EDITOR 可编辑，保存后点「AI 分场」"
               />
               <!-- 拆解模型选择（AI 分场/一键分镜共用，默认空=管理员默认对话模型） -->
-              <div v-if="canEdit" class="asset-detail__model-row">
+              <div v-if="canModify" class="asset-detail__model-row">
                 <span class="asset-detail__model-label">拆解模型</span>
                 <n-select
                   v-model:value="scriptModel"
@@ -55,7 +55,7 @@
                   style="flex: 1"
                 />
               </div>
-              <div v-if="canEdit" class="asset-detail__script-actions">
+              <div v-if="canModify" class="asset-detail__script-actions">
                 <n-button
                   size="small"
                   :loading="savingSynopsis"
@@ -78,7 +78,7 @@
                 </n-button>
               </div>
               <!-- S19 拆解规范（可折叠，写 content.template，指导 LLM 拆镜） -->
-              <n-collapse v-if="canEdit" :default-expanded-names="templateDirty ? 'tpl' : []">
+              <n-collapse v-if="canModify" :default-expanded-names="templateDirty ? 'tpl' : []">
                 <n-collapse-item title="拆解规范（可选，指导一键分镜）" name="tpl">
                   <n-input
                     v-model:value="templateDraft"
@@ -112,7 +112,7 @@
             <StoryboardFields
               class="asset-detail__storyboard"
               :asset="asset"
-              :can-edit="canEdit"
+              :can-edit="canModify"
               @changed="onStoryboardChanged"
               @open-parent="(pid: number) => emit('open-asset', pid)"
             />
@@ -125,10 +125,10 @@
                 type="textarea"
                 :rows="6"
                 :maxlength="8000"
-                :readonly="!canEdit"
+                :readonly="!canModify"
                 placeholder="资产正文（≤8000 字）；EDITOR 可编辑，点「保存正文」产新版本"
               />
-              <div v-if="canEdit" class="asset-detail__script-actions">
+              <div v-if="canModify" class="asset-detail__script-actions">
                 <n-button
                   size="small"
                   :loading="savingTextBody"
@@ -149,6 +149,7 @@
         <!-- 元数据 -->
         <n-descriptions label-placement="left" :column="1" size="small" bordered class="asset-detail__meta">
           <n-descriptions-item label="描述">{{ asset.description || '—' }}</n-descriptions-item>
+          <n-descriptions-item label="上传者">{{ uploaderLabel }}</n-descriptions-item>
           <n-descriptions-item label="叙事角色">
             <n-space v-if="asset.roleKeys?.length" size="small">
               <n-tag v-for="k in asset.roleKeys" :key="k" size="small">{{ k }}</n-tag>
@@ -159,13 +160,64 @@
           <n-descriptions-item label="创建时间">{{ asset.createdAt }}</n-descriptions-item>
         </n-descriptions>
 
-        <!-- 状态机动作（canEdit，L2/L3） -->
-        <div v-if="canEdit" class="asset-detail__actions">
+        <!-- C7 评分区：双轨聚合恒显（有分时）；打分表单按 canScore 显隐 -->
+        <div v-if="scoreSectionVisible" class="asset-detail__score">
+          <h4 class="asset-detail__section-title">评分</h4>
+          <div class="asset-detail__score-summary">
+            <span v-if="scoreInfo?.ownerScore != null" class="asset-detail__score-val asset-detail__score-val--owner">
+              拥有者 ★{{ scoreInfo.ownerScore }}
+            </span>
+            <span v-if="scoreInfo?.memberAvgScore != null" class="asset-detail__score-val">
+              成员均分 {{ scoreInfo.memberAvgScore }} · {{ scoreInfo?.memberCount ?? 0 }}人
+            </span>
+            <span v-if="scoreInfo?.myScore != null" class="asset-detail__score-val">
+              我的评分 {{ scoreInfo.myScore }}
+            </span>
+            <span v-if="noScoresAtAll" class="asset-detail__score-empty">暂无评分</span>
+          </div>
+          <div v-if="canScore" class="asset-detail__score-form">
+            <n-slider
+              :value="myScoreDraft ?? 50"
+              class="asset-detail__score-slider"
+              :min="0"
+              :max="100"
+              :step="1"
+              :format-tooltip="(v: number) => `${v} 分`"
+              aria-label="我的评分 0 到 100"
+              @update:value="(v: number) => (myScoreDraft = v)"
+            />
+            <n-input-number
+              v-model:value="myScoreDraft"
+              class="asset-detail__score-number"
+              :min="0"
+              :max="100"
+              size="small"
+              :update-value-on-input="false"
+              aria-label="我的评分数值"
+            />
+            <n-button
+              size="small"
+              type="primary"
+              :loading="scoring"
+              :disabled="myScoreDraft == null || myScoreDraft === scoreInfo?.myScore"
+              @click="submitScore"
+            >
+              提交评分
+            </n-button>
+          </div>
+        </div>
+
+        <!-- 下载（文件类；只读操作，不受 PERSONAL 门控） -->
+        <div v-if="needsFile && canEdit" class="asset-detail__actions">
+          <n-button size="small" quaternary @click="download">下载</n-button>
+        </div>
+
+        <!-- 状态机动作（canModify=写权×PERSONAL 本人内容，L2/L3/L6） -->
+        <div v-if="canModify" class="asset-detail__actions">
           <n-button v-if="asset.status === 'DRAFT'" size="small" type="primary" @click="doAction('lock')">定稿</n-button>
           <n-button v-if="asset.status === 'LOCKED'" size="small" @click="doAction('unlock')">解锁回退草稿</n-button>
           <n-button v-if="asset.status !== 'ARCHIVED'" size="small" type="warning" @click="doAction('archive')">归档</n-button>
           <n-button v-if="asset.status === 'ARCHIVED'" size="small" @click="doAction('unarchive')">取消归档</n-button>
-          <n-button v-if="needsFile" size="small" quaternary @click="download">下载</n-button>
           <!-- S15 删除（软删；画布引用快照不受影响，L11） -->
           <n-popconfirm @positive-click="deleteAsset">
             <template #trigger>
@@ -216,13 +268,15 @@ import {
   NDrawerContent,
   NEmpty,
   NInput,
+  NInputNumber,
   NPopconfirm,
+  NSlider,
   NSpace,
   NSpin,
   NTag,
   useMessage
 } from 'naive-ui'
-import { assetApi, assetBridgeApi, versionApi, scriptApi } from '@/api/assets'
+import { assetApi, assetBridgeApi, versionApi, scriptApi, scoreApi } from '@/api/assets'
 import { llmApi } from '@/api/llm'
 import { fetchCanvasPreview } from '@/api/canvas'
 import request from '@/api/request'
@@ -230,7 +284,7 @@ import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/
 import VersionTimeline from '@/components/asset/VersionTimeline.vue'
 import ScriptScenes from '@/components/asset/ScriptScenes.vue'
 import StoryboardFields from '@/components/asset/StoryboardFields.vue'
-import type { AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
+import type { AssetScoreVO, AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
 
 /**
@@ -275,6 +329,12 @@ const props = defineProps<{
   assetId: number | null
   /** 写权限（viewer=false 隐藏状态机动作，设计 §7.2）；S11 按项目角色传 */
   canEdit?: boolean
+  /** C7 评分资格：OWNER 恒 true；EDITOR 随项目开关；VIEWER/公共 false（父计算） */
+  canScore?: boolean
+  /** C7 PERSONAL 模式（父已排除 OWNER）：true 时仅 createdBy=当前用户的内容可操作 */
+  personalMode?: boolean
+  /** C7 当前用户 id（PERSONAL 本人内容判定） */
+  currentUserId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -349,6 +409,65 @@ const isFileAsset = computed(() => !!asset.value && FILE_CATEGORIES.includes(eff
 
 const needsFile = computed(() => props.show && !!asset.value && isFileAsset.value)
 
+// ---------- C7 PERSONAL 门控 + 评分 ----------
+
+/** PERSONAL 下仅本人上传的内容可操作（与后端 requireAssetOperate 对齐；NULL createdBy fail-closed 视为他人）。 */
+const canOperateThis = computed(() => {
+  if (props.personalMode !== true) return true
+  return props.currentUserId != null && asset.value?.createdBy === props.currentUserId
+})
+
+/** 编辑/删除/定稿/归档等写操作门控：项目写权 × PERSONAL 本人内容。 */
+const canModify = computed(() => props.canEdit === true && canOperateThis.value)
+
+/** 上传者显示：username 优先，存量无 username 回退 #id，均无 → —。 */
+const uploaderLabel = computed(() => {
+  const a = asset.value
+  return a?.createdByUsername || (a?.createdBy != null ? `#${a.createdBy}` : '—')
+})
+
+/** 单资产评分态（GET/POST /score 返回；null=接口失败/无数据）。 */
+const scoreInfo = ref<AssetScoreVO | null>(null)
+const myScoreDraft = ref<number | null>(null)
+const scoring = ref(false)
+
+/** 评分区可见：可打分（表单）或已有任一轨评分（展示）。 */
+const scoreSectionVisible = computed(
+  () => props.canScore === true
+    || scoreInfo.value?.ownerScore != null
+    || scoreInfo.value?.memberAvgScore != null
+)
+const noScoresAtAll = computed(
+  () => scoreInfo.value?.ownerScore == null && scoreInfo.value?.memberAvgScore == null && scoreInfo.value?.myScore == null
+)
+
+/** 拉我的评分 + 双轨聚合（失败不阻塞详情，评分区按空态展示）。 */
+async function loadScore(id: number) {
+  try {
+    const res = await scoreApi.mine(id)
+    scoreInfo.value = res.data.data ?? null
+  } catch {
+    scoreInfo.value = null
+  }
+  myScoreDraft.value = scoreInfo.value?.myScore ?? 50
+}
+
+/** 提交/覆盖我的评分（upsert；成功后聚合即时刷新 + 通知父重载列表卡片分，L5）。 */
+async function submitScore() {
+  if (!asset.value || myScoreDraft.value == null || scoring.value) return
+  scoring.value = true
+  try {
+    const res = await scoreApi.submit(asset.value.id, myScoreDraft.value)
+    scoreInfo.value = res.data.data ?? scoreInfo.value
+    message.success('评分已提交')
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('提交评分失败')
+  } finally {
+    scoring.value = false
+  }
+}
+
 /** 一致性包初始值（从 asset.content.consistency 解析；人物/道具/场景类额染） */
 const consistencyInitial = computed<ConsistencyPackData | null>(() => {
   if (!asset.value?.content) return null
@@ -387,6 +506,8 @@ watch(
       revokePreview()
       asset.value = null
       usages.value = []
+      scoreInfo.value = null
+      myScoreDraft.value = null
     }
   },
   { immediate: true }
@@ -395,7 +516,12 @@ watch(
 async function loadAll(id: number) {
   loading.value = true
   try {
-    const [assetRes, usagesRes] = await Promise.all([assetApi.get(id), assetBridgeApi.usages(id)])
+    // C7：评分聚合与详情并行拉（loadScore 内部 catch，不阻塞详情）
+    const [assetRes, usagesRes] = await Promise.all([
+      assetApi.get(id),
+      assetBridgeApi.usages(id),
+      loadScore(id)
+    ])
     asset.value = assetRes.data.data
     usages.value = usagesRes.data.data || []
     // C3 剧本：解析 content → 正文草稿 + 分场列表
@@ -606,7 +732,7 @@ async function download() {
   }
 }
 
-defineExpose({ asset, usages, loading, synopsis, scenes, textBody, doAction, download, loadAll, saveSynopsis, saveTextBody, deleteAsset, runBreakdown, parseScriptContent })
+defineExpose({ asset, usages, loading, synopsis, scenes, textBody, doAction, download, loadAll, saveSynopsis, saveTextBody, deleteAsset, runBreakdown, parseScriptContent, canModify, canOperateThis, scoreInfo, myScoreDraft, scoring, submitScore })
 
 /** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
 async function onConsistencySaved(assetId: number) {
@@ -706,6 +832,47 @@ async function onStoryboardChanged(assetId: number) {
     margin: 0 0 var(--spacing-2);
     font-size: var(--font-size-md);
     color: var(--color-text-primary);
+  }
+
+  &__score {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+  }
+
+  &__score-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-3);
+    font-size: var(--font-size-sm);
+  }
+
+  &__score-val {
+    color: var(--color-text-secondary);
+
+    &--owner {
+      color: var(--color-warning, #d4a14a);
+    }
+  }
+
+  &__score-empty {
+    color: var(--color-text-tertiary);
+    font-size: var(--font-size-sm);
+  }
+
+  &__score-form {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+  }
+
+  &__score-slider {
+    flex: 1;
+  }
+
+  &__score-number {
+    width: 110px;
+    flex-shrink: 0;
   }
 
   &__usage-list {

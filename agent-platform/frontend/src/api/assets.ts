@@ -26,7 +26,9 @@ import type {
   MemberRoleUpdateRequest,
   MemberVO,
   ProjectCreateRequest,
+  ProjectSettingsRequest,
   ProjectUpdateRequest,
+  AssetScoreVO,
   PublicAccessDecisionRequest,
   PublicAccessRequestVO,
   PublicProjectSummaryVO,
@@ -67,6 +69,10 @@ export const projectApi = {
   /** POST /assets/projects/{id}/transfer — 转让所有者（旧 owner 降 editor） */
   transfer(id: number, data: TransferRequest) {
     return request.post<ApiResponse<void>>(`/assets/projects/${id}/transfer`, data)
+  },
+  /** PATCH /assets/projects/{id}/settings — 项目设置（成员打分开关/内容模式，局部更新；C6） */
+  updateSettings(id: number, data: ProjectSettingsRequest) {
+    return request.patch<ApiResponse<AssetProjectVO>>(`/assets/projects/${id}/settings`, data)
   }
 }
 
@@ -104,6 +110,13 @@ export interface AssetListQuery {
   role?: string
   q?: string
   status?: string
+  /** 上传者用户名精确匹配（C6/C7；0 命中=空页）。 */
+  creatorUsername?: string
+  /** 分数区间下/上界（0-100；C6/C7）。 */
+  scoreMin?: number
+  scoreMax?: number
+  /** 分数来源：owner=拥有者评分轨；member=成员均分轨（AVG）。 */
+  scoreSource?: 'owner' | 'member'
   page?: number
   size?: number
 }
@@ -162,6 +175,22 @@ export const assetApi = {
   /** PUT /assets/assets/{id}/storyboard — 保存分镜字段(字段1/2/4，S18)。requireWrite + 须分镜类型。 */
   saveStoryboard(assetId: number, data: StoryboardSaveRequest) {
     return request.put<ApiResponse<AssetVO>>(`/assets/assets/${assetId}/storyboard`, data)
+  }
+}
+
+// === 评分（C6/C7 双轨：拥有者分 vs 成员均分） ===
+
+export const scoreApi = {
+  /**
+   * POST /assets/assets/{id}/score — 提交/覆盖我的评分（0-100）。
+   * OWNER 恒可评（独立轨）；EDITOR 需项目 memberScoringEnabled（均分轨）；VIEWER/公共 403。
+   */
+  submit(assetId: number, score: number) {
+    return request.post<ApiResponse<AssetScoreVO>>(`/assets/assets/${assetId}/score`, { score })
+  },
+  /** GET /assets/assets/{id}/score — 我的评分 + 双轨聚合（ownerScore/memberAvgScore/memberCount）。 */
+  mine(assetId: number) {
+    return request.get<ApiResponse<AssetScoreVO>>(`/assets/assets/${assetId}/score`)
   }
 }
 

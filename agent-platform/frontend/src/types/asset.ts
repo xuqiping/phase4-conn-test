@@ -37,6 +37,9 @@ export type ProjectRole = 'OWNER' | 'EDITOR' | 'VIEWER'
 /** 公众池访问方式：开放使用或先申请审批。 */
 export type PublicAccessMode = 'OPEN' | 'APPROVAL_REQUIRED'
 
+/** 内容模式（V124/C6）：SHARED=协作共享（默认，现状）；PERSONAL=成员仅能管理自己上传的内容。 */
+export type ProjectContentMode = 'SHARED' | 'PERSONAL'
+
 /** 公众池访问申请状态。 */
 export type PublicAccessStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVOKED'
 
@@ -64,6 +67,10 @@ export interface AssetProjectVO {
   publishedAt?: string | null
   /** 新后端必返；可选仅用于兼容尚未补公众池字段的旧前端夹具。 */
   publishedByAdmin?: boolean
+  /** 成员打分开关（V124/C6）：OWNER 恒可评；EDITOR 评分需开关开启。 */
+  memberScoringEnabled?: boolean
+  /** 内容模式（V124/C6）：PERSONAL=成员仅能管理自己上传的内容。 */
+  contentMode?: ProjectContentMode
   createdAt: string
   updatedAt?: string
 }
@@ -98,6 +105,12 @@ export interface ProjectUpdateRequest {
   /** null=不改；数组=覆盖；删 type 联动同 category 迁移（V60）。 */
   mediaTypes?: MediaTypeDef[] | null
   coverFileId?: string | null
+}
+
+/** 项目设置（C6 PATCH /projects/{id}/settings）：字段缺省=不改（局部更新）。 */
+export interface ProjectSettingsRequest {
+  memberScoringEnabled?: boolean
+  contentMode?: ProjectContentMode
 }
 
 // ---------- 成员 ----------
@@ -183,6 +196,16 @@ export interface AssetVO {
   /** 详情态：当前版本文件 id。 */
   fileId?: string
   createdBy?: number
+  /** 上传者用户名（C6/C7 列表批装配；存量回填近似值说明见 user-ops）。 */
+  createdByUsername?: string | null
+  /** 拥有者评分（0-100 双轨独立轨；null=未评）。 */
+  ownerScore?: number | null
+  /** 成员均分（0-100 四舍五入取整；null=无人评）。 */
+  memberAvgScore?: number | null
+  /** 参与均分的成员评分人数。 */
+  memberCount?: number
+  /** 我的评分（当前用户对该资产的一票；null=未评）。 */
+  myScore?: number | null
   createdAt: string
   updatedAt?: string
 }
@@ -321,6 +344,16 @@ export interface StoryboardBreakdownVO {
   createdAssetIds: number[]
   model: string
   version: number
+}
+
+// ---------- 评分（C6/C7 双轨：拥有者分 vs 成员均分） ----------
+
+/** 单资产评分视图（GET/POST /assets/{id}/score）：我的分 + 双轨聚合。 */
+export interface AssetScoreVO {
+  myScore?: number | null
+  ownerScore?: number | null
+  memberAvgScore?: number | null
+  memberCount?: number
 }
 
 // ---------- 画布双向打通（plan §S7 / FR-008/009/011） ----------

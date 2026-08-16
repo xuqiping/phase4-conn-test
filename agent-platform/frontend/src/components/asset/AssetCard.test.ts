@@ -147,4 +147,45 @@ describe('AssetCard (S11)', () => {
     await flushPromises()
     expect(wrapper.find('.asset-card__cover-text').exists()).toBe(false)
   })
+
+  // ---------- C7 上传者徽标 + 双轨评分行（2x第三轮） ----------
+
+  it('C7-1 有 createdByUsername → 上传者徽标渲染（title 含完整名）', () => {
+    const wrapper = mount(AssetCard, {
+      props: { asset: mkAsset({ createdByUsername: 'zhang3' }) }
+    })
+    const badge = wrapper.find('.asset-card__uploader')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('zhang3')
+    expect(badge.attributes('title')).toBe('上传者：zhang3')
+  })
+
+  it('C7-2 无 createdByUsername → 徽标不渲染（零回归）', () => {
+    const wrapper = mount(AssetCard, { props: { asset: mkAsset() } })
+    expect(wrapper.find('.asset-card__uploader').exists()).toBe(false)
+  })
+
+  it('C7-3 双轨评分行：拥有者 ★88 ｜ 成员均分 90 · 3人', () => {
+    const wrapper = mount(AssetCard, {
+      props: {
+        asset: mkAsset({ ownerScore: 88, memberAvgScore: 90, memberCount: 3 })
+      }
+    })
+    const row = wrapper.find('.asset-card__scores')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toContain('拥有者 ★88')
+    expect(row.text()).toContain('成员均分 90 · 3人')
+  })
+
+  it('C7-4 仅成员轨有分 → 只渲成员均分；均无分 → 行不渲染', () => {
+    const memberOnly = mount(AssetCard, {
+      props: { asset: mkAsset({ ownerScore: null, memberAvgScore: 75, memberCount: 2 }) }
+    })
+    expect(memberOnly.find('.asset-card__scores').exists()).toBe(true)
+    expect(memberOnly.find('.asset-card__scores').text()).toContain('成员均分 75 · 2人')
+    expect(memberOnly.find('.asset-card__scores').text()).not.toContain('拥有者')
+
+    const none = mount(AssetCard, { props: { asset: mkAsset() } })
+    expect(none.find('.asset-card__scores').exists()).toBe(false)
+  })
 })

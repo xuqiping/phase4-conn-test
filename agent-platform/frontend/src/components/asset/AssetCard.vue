@@ -39,10 +39,27 @@
     <div class="asset-card__body">
       <div class="asset-card__name-row">
         <span class="asset-card__name" :title="asset.name">{{ asset.name }}</span>
+        <!-- C7 上传者徽标（超长截断；title 兜底完整用户名） -->
+        <span
+          v-if="asset.createdByUsername"
+          class="asset-card__uploader"
+          :title="`上传者：${asset.createdByUsername}`"
+        >
+          ↑{{ asset.createdByUsername }}
+        </span>
         <span class="asset-card__version">v{{ asset.currentVersion }}</span>
       </div>
       <div v-if="asset.description" class="asset-card__desc">{{ asset.description }}</div>
       <div v-else class="asset-card__desc asset-card__desc--empty">暂无描述</div>
+      <!-- C7 双轨评分行：拥有者 ★88 ｜ 成员均分 90 · 3人（无任何评分不渲染） -->
+      <div v-if="hasScores" class="asset-card__scores">
+        <span v-if="asset.ownerScore != null" class="asset-card__score asset-card__score--owner">
+          拥有者 ★{{ asset.ownerScore }}
+        </span>
+        <span v-if="asset.memberAvgScore != null" class="asset-card__score asset-card__score--member">
+          成员均分 {{ asset.memberAvgScore }} · {{ asset.memberCount ?? 0 }}人
+        </span>
+      </div>
       <div class="asset-card__footer">
         <div class="asset-card__roles">
           <n-tag v-for="k in displayRoles" :key="k" size="tiny" round>{{ k }}</n-tag>
@@ -117,6 +134,11 @@ const typeLabel = computed(() => props.asset.mediaType)
 const MAX_ROLES = 3
 const displayRoles = computed(() => (props.asset.roleKeys ?? []).slice(0, MAX_ROLES))
 const extraRoles = computed(() => Math.max(0, (props.asset.roleKeys?.length ?? 0) - MAX_ROLES))
+
+/** C7 双轨评分行渲染条件：任一轨有分（无分不渲染该行）。 */
+const hasScores = computed(
+  () => props.asset.ownerScore != null || props.asset.memberAvgScore != null
+)
 
 // ---------- C2 缩略图懒加载 ----------
 const coverRef = ref<HTMLElement | null>(null)
@@ -243,6 +265,33 @@ function seekFirstFrame(e: Event) {
     flex-shrink: 0;
     font-size: var(--font-size-xs);
     color: var(--color-text-tertiary);
+  }
+
+  &__uploader {
+    flex-shrink: 0;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+  }
+
+  &__scores {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-xs);
+  }
+
+  &__score {
+    &--owner {
+      color: var(--color-warning, #d4a14a);
+    }
+
+    &--member {
+      color: var(--color-text-secondary);
+    }
   }
 
   &__desc {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { NInputNumber, NSelect } from 'naive-ui'
 import AssetMatrixFilter, { type AssetFilter } from './AssetMatrixFilter.vue'
 import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
 
@@ -111,5 +112,48 @@ describe('AssetMatrixFilter (S11)', () => {
     const labels = chips.map((c) => c.find('.matrix-filter__chip-label').text())
     // 全部 + 提示词 + 图片 + MAP（自定义英文 key 显原文）
     expect(labels).toEqual(['全部', '提示词', '图片', 'MAP'])
+  })
+
+  // ---------- C7 上传者/分数筛选（2x第三轮；DOM 顺序：creator=第1个 NSelect，source=第2个） ----------
+
+  it('C7-1 上传者选择 → emit creatorUsername', async () => {
+    const wrapper = mountFilter({ modelValue: { creatorUsername: 'zhang3' } })
+    const selects = wrapper.findAllComponents(NSelect)
+    await selects[0].vm.$emit('update:value', 'li4')
+    const emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ creatorUsername: 'li4' })
+  })
+
+  it('C7-2 上传者清空 → creatorUsername=undefined', async () => {
+    const wrapper = mountFilter({ modelValue: { creatorUsername: 'zhang3' } })
+    const selects = wrapper.findAllComponents(NSelect)
+    await selects[0].vm.$emit('update:value', null)
+    const emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ creatorUsername: undefined })
+  })
+
+  it('C7-3 分数来源选择 → emit scoreSource=member；清空回 undefined', async () => {
+    const wrapper = mountFilter()
+    const selects = wrapper.findAllComponents(NSelect)
+    await selects[1].vm.$emit('update:value', 'member')
+    let emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreSource: 'member' })
+    await selects[1].vm.$emit('update:value', null)
+    emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreSource: undefined })
+  })
+
+  it('C7-4 分数区间输入 → emit scoreMin/scoreMax；清空回 undefined', async () => {
+    const wrapper = mountFilter()
+    const numbers = wrapper.findAllComponents(NInputNumber)
+    await numbers[0].vm.$emit('update:value', 60)
+    let emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreMin: 60 })
+    await numbers[1].vm.$emit('update:value', 90)
+    emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreMax: 90 })
+    await numbers[0].vm.$emit('update:value', null)
+    emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreMin: undefined })
   })
 })

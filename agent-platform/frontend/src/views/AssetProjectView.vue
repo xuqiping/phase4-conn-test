@@ -22,6 +22,8 @@
         <span class="asset-project__count">{{ total }} 个资产</span>
         <div class="asset-project__spacer" />
         <template v-if="canWrite">
+          <!-- C7 OWNER 项目设置（成员打分开关/内容模式） -->
+          <n-button v-if="isOwner" quaternary @click="showSettings = true">项目设置</n-button>
           <n-button quaternary @click="showVocab = true">编辑分类</n-button>
           <n-button @click="triggerUpload">上传文件</n-button>
           <n-button type="primary" @click="openCreate">+ 新建提示词/剧本</n-button>
@@ -50,6 +52,7 @@
         :counts="matrix"
         :roles="project.narrativeRoles ?? []"
         :media-types="project.mediaTypes ?? []"
+        :project-id="projectId"
       >
         <!-- 加载 -->
         <div v-if="loading" class="asset-project__loading"><n-spin size="large" /></div>
@@ -137,12 +140,22 @@
       </template>
     </n-modal>
 
-    <!-- 资产详情抽屉（S10） -->
+    <!-- 资产详情抽屉（S10 + C7 评分/PERSONAL 门控） -->
     <AssetDetailDrawer
       v-model:show="showDetail"
       :asset-id="detailAssetId"
       :can-edit="canWrite"
+      :can-score="canScore"
+      :personal-mode="personalMode"
+      :current-user-id="currentUserId"
       @changed="onDetailChanged"
+    />
+
+    <!-- C7 项目设置（OWNER：成员打分开关 + 内容模式） -->
+    <ProjectSettingsDialog
+      v-model:show="showSettings"
+      :project="project"
+      @saved="onSettingsSaved"
     />
 
     <!-- C1a/C1b 分类管理（叙事角色桶 + 媒体类型两层，删联动迁移） -->
@@ -227,6 +240,7 @@ import { useAuthStore } from '@/stores/auth'
 import AssetCard from '@/components/asset/AssetCard.vue'
 import AssetMatrixFilter, { type AssetFilter } from '@/components/asset/AssetMatrixFilter.vue'
 import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
+import ProjectSettingsDialog from '@/components/asset/ProjectSettingsDialog.vue'
 import VocabEditor from '@/components/asset/VocabEditor.vue'
 import type {
   AssetProjectVO,
@@ -284,6 +298,24 @@ const canWrite = computed(() => {
 /** 公共池 VIEWER 可浏览并复制，但仍不能编辑源项目。 */
 const isPublicViewer = computed(() => project.value?.publicPool === true && project.value.role === 'VIEWER')
 
+// === C7 评分/PERSONAL 门控（对齐后端 C6：OWNER 恒可评独立轨；EDITOR 随开关均分轨；VIEWER 不可） ===
+const isOwner = computed(() => project.value?.role === 'OWNER')
+const currentUserId = computed(() => authStore.userInfo?.id ?? null)
+const canScore = computed(
+  () => canWrite.value && (isOwner.value || project.value?.memberScoringEnabled === true)
+)
+/** PERSONAL 仅约束非 OWNER 编辑者（OWNER/admin 旁路在父层排除，与后端 requireAssetOperate 对齐）。 */
+const personalMode = computed(
+  () => project.value?.contentMode === 'PERSONAL' && !isOwner.value && !isPublicViewer.value
+)
+
+const showSettings = ref(false)
+/** 设置保存成功 → 重拉 project（开关/模式即时生效）+ 列表（myScore 等展示字段刷新，L6）。 */
+async function onSettingsSaved() {
+  await loadProject()
+  await reload()
+}
+
 const roleOptions = computed(() =>
   (project.value?.narrativeRoles ?? []).map((r) => ({ label: r, value: r }))
 )
@@ -310,7 +342,9 @@ const pageSize = 24
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 const isFiltered = computed(
-  () => !!(filter.value.type || filter.value.role || filter.value.q)
+  () => !!(filter.value.type || filter.value.role || filter.value.q
+    || filter.value.creatorUsername || filter.value.scoreSource
+    || filter.value.scoreMin != null || filter.value.scoreMax != null)
 )
 
 function clearFilter() {
@@ -601,6 +635,10 @@ async function loadAssets(context = activeRouteContext) {
       type: filter.value.type,
       role: filter.value.role,
       q: filter.value.q,
+      creatorUsername: filter.value.creatorUsername,
+      scoreMin: filter.value.scoreMin,
+      scoreMax: filter.value.scoreMax,
+      scoreSource: filter.value.scoreSource,
       page: page.value,
       size: pageSize
     })
@@ -708,6 +746,11 @@ defineExpose({
   canEdit,
   canWrite,
   isPublicViewer,
+  isOwner,
+  canScore,
+  personalMode,
+  showSettings,
+  onSettingsSaved,
   openCreate,
   submitCreate,
   triggerUpload,

@@ -25,8 +25,10 @@ vi.mock('vue-router', async () => {
 })
 
 vi.mock('@/api/assets', () => ({
-  projectApi: { get: vi.fn(), list: vi.fn(), update: vi.fn() },
-  assetApi: { list: vi.fn(), countMatrix: vi.fn(), create: vi.fn(), upload: vi.fn(), copy: vi.fn() }
+  projectApi: { get: vi.fn(), list: vi.fn(), update: vi.fn(), updateSettings: vi.fn() },
+  assetApi: { list: vi.fn(), countMatrix: vi.fn(), create: vi.fn(), upload: vi.fn(), copy: vi.fn() },
+  memberApi: { searchCandidates: vi.fn() },
+  scoreApi: { mine: vi.fn(), submit: vi.fn() }
 }))
 
 function response<T>(data: T): AxiosResponse<T> {
@@ -453,4 +455,74 @@ describe('AssetProjectView (S11 项目详情页)', () => {
     expect(assetApi.list).toHaveBeenCalled()
     expect(assetApi.countMatrix).toHaveBeenCalled()
   })
+
+  // ---------- C7 项目设置 + 评分/PERSONAL 门控（2x第三轮） ----------
+
+  it('C7-1 OWNER 显「项目设置」按钮；EDITOR 不显', async () => {
+    const ownerWrapper = await mountView(['asset:write'], 'OWNER')
+    expect(ownerWrapper.text()).toContain('项目设置')
+    const editorWrapper = await mountView(['asset:write'], 'EDITOR')
+    expect(editorWrapper.text()).not.toContain('项目设置')
+  })
+
+  it('C7-2 canScore 矩阵：OWNER 恒 true；EDITOR 随开关；VIEWER false', async () => {
+    const ownerOff = await mountView(['asset:write'], 'OWNER', { memberScoringEnabled: false })
+    expect((ownerWrapperVm(ownerOff)).canScore).toBe(true)
+
+    const editorOff = await mountView(['asset:write'], 'EDITOR', { memberScoringEnabled: false })
+    expect((ownerWrapperVm(editorOff)).canScore).toBe(false)
+
+    const editorOn = await mountView(['asset:write'], 'EDITOR', { memberScoringEnabled: true })
+    expect((ownerWrapperVm(editorOn)).canScore).toBe(true)
+
+    const viewer = await mountView(['asset:write'], 'VIEWER', { memberScoringEnabled: true })
+    expect((ownerWrapperVm(viewer)).canScore).toBe(false)
+  })
+
+  it('C7-3 personalMode 矩阵：EDITOR+PERSONAL=true；OWNER+PERSONAL=false；SHARED 恒 false', async () => {
+    const editorPersonal = await mountView(['asset:write'], 'EDITOR', { contentMode: 'PERSONAL' })
+    expect((ownerWrapperVm(editorPersonal)).personalMode).toBe(true)
+
+    const ownerPersonal = await mountView(['asset:write'], 'OWNER', { contentMode: 'PERSONAL' })
+    expect((ownerWrapperVm(ownerPersonal)).personalMode).toBe(false)
+
+    const editorShared = await mountView(['asset:write'], 'EDITOR', { contentMode: 'SHARED' })
+    expect((ownerWrapperVm(editorShared)).personalMode).toBe(false)
+  })
+
+  it('C7-4 设置保存 → 重拉 project + 列表（L6 即时生效）', async () => {
+    const wrapper = await mountView(['asset:write'], 'OWNER')
+    vi.clearAllMocks()
+    vi.mocked(projectApi.get).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: mkProject('OWNER', { contentMode: 'PERSONAL', memberScoringEnabled: true }) })
+    )
+    vi.mocked(assetApi.list).mockResolvedValue(pageResp([mkAsset(1)]))
+    vi.mocked(assetApi.countMatrix).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: { cells: [], typeTotals: [] } })
+    )
+    const vm = wrapper.vm as unknown as { onSettingsSaved: () => Promise<void>; personalMode: boolean }
+    await vm.onSettingsSaved()
+    expect(projectApi.get).toHaveBeenCalledWith(7)
+    expect(assetApi.list).toHaveBeenCalled()
+    // 重拉后 PERSONAL 门控即时重算（L6）
+    expect(vm.personalMode).toBe(false) // OWNER 旁路
+  })
+
+  it('C7-5 筛选含上传者/分数 → assetApi.list 透传全部新参数', async () => {
+    const wrapper = await mountView(['asset:write'])
+    vi.clearAllMocks()
+    vi.mocked(assetApi.list).mockResolvedValue(pageResp([]))
+    const vm = wrapper.vm as unknown as { filter: Record<string, unknown> }
+    vm.filter = { creatorUsername: 'zhang3', scoreMin: 60, scoreMax: 90, scoreSource: 'member' }
+    await settle()
+    expect(assetApi.list).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ creatorUsername: 'zhang3', scoreMin: 60, scoreMax: 90, scoreSource: 'member' })
+    )
+  })
 })
+
+/** 取视图暴露的门控 computed。 */
+function ownerWrapperVm(wrapper: { vm: unknown }) {
+  return wrapper.vm as unknown as { canScore: boolean; personalMode: boolean }
+}

@@ -17,6 +17,56 @@
       @update:value="onQ"
     />
 
+    <!-- C7 精细筛选：上传者（远程候选+可手输任意用户名）+ 分数来源 + 分数区间 -->
+    <div class="matrix-filter__extra">
+      <n-select
+        class="matrix-filter__creator"
+        :value="modelValue.creatorUsername ?? null"
+        :options="creatorOptions"
+        :loading="creatorLoading"
+        filterable
+        remote
+        clearable
+        tag
+        placeholder="上传者"
+        aria-label="按上传者筛选"
+        @search="onCreatorSearch"
+        @update:value="onCreator"
+      />
+      <n-select
+        class="matrix-filter__source"
+        :value="modelValue.scoreSource ?? null"
+        :options="SCORE_SOURCE_OPTIONS"
+        clearable
+        placeholder="分数来源"
+        aria-label="按分数来源筛选"
+        @update:value="onScoreSource"
+      />
+      <div class="matrix-filter__range">
+        <n-input-number
+          :value="modelValue.scoreMin ?? null"
+          :min="0"
+          :max="100"
+          size="small"
+          placeholder="分数≥"
+          clearable
+          aria-label="分数下限 0 到 100"
+          @update:value="(v: number | null) => onScoreBound('min', v)"
+        />
+        <span class="matrix-filter__range-sep">—</span>
+        <n-input-number
+          :value="modelValue.scoreMax ?? null"
+          :min="0"
+          :max="100"
+          size="small"
+          placeholder="≤"
+          clearable
+          aria-label="分数上限 0 到 100"
+          @update:value="(v: number | null) => onScoreBound('max', v)"
+        />
+      </div>
+    </div>
+
     <!-- 顶栏：类型分段 -->
     <div class="matrix-filter__types">
       <button
@@ -66,15 +116,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NInput } from 'naive-ui'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { NInput, NInputNumber, NSelect } from 'naive-ui'
+import { memberApi } from '@/api/assets'
 import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
 
-/** 筛选态：type/role 空=不限，q=搜索词 */
+/** 筛选态：type/role 空=不限，q=搜索词；C7 加上传者/分数区间/分数来源 */
 export interface AssetFilter {
   type?: string
   role?: string
   q?: string
+  creatorUsername?: string
+  scoreMin?: number
+  scoreMax?: number
+  scoreSource?: 'owner' | 'member'
 }
 
 const props = defineProps<{
@@ -85,6 +140,8 @@ const props = defineProps<{
   roles: string[]
   /** 媒体类型受控词汇桶（V60，顶栏类型分段从中派生，不再写死五类） */
   mediaTypes: MediaTypeDef[]
+  /** 项目 id（C7 上传者远程候选搜索；缺省时输入仍可手输任意用户名） */
+  projectId?: number
 }>()
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: AssetFilter): void }>()
@@ -175,6 +232,57 @@ function selectRole(r: string) {
 function onQ(v: string) {
   emit('update:modelValue', { ...props.modelValue, q: v || undefined })
 }
+
+// ---------- C7 上传者/分数筛选 ----------
+
+const SCORE_SOURCE_OPTIONS = [
+  { label: '拥有者评分', value: 'owner' },
+  { label: '成员均分', value: 'member' }
+]
+
+const creatorOptions = ref<{ label: string; value: string }[]>([])
+const creatorLoading = ref(false)
+let creatorSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 上传者远程候选（300ms 防抖，复用成员候选搜索 API；失败静默，手输仍可用 tag 直选）。 */
+function onCreatorSearch(keyword: string) {
+  if (creatorSearchTimer) clearTimeout(creatorSearchTimer)
+  const kw = keyword.trim()
+  if (!kw || props.projectId == null) {
+    creatorOptions.value = []
+    return
+  }
+  creatorSearchTimer = setTimeout(async () => {
+    creatorLoading.value = true
+    try {
+      const res = await memberApi.searchCandidates(props.projectId!, kw)
+      creatorOptions.value = (res.data.data ?? []).map((c) => ({ label: c.username, value: c.username }))
+    } catch {
+      creatorOptions.value = []
+    } finally {
+      creatorLoading.value = false
+    }
+  }, 300)
+}
+
+onBeforeUnmount(() => {
+  if (creatorSearchTimer) clearTimeout(creatorSearchTimer)
+})
+
+function onCreator(v: string | null) {
+  emit('update:modelValue', { ...props.modelValue, creatorUsername: v || undefined })
+}
+
+function onScoreSource(v: string | null) {
+  emit('update:modelValue', { ...props.modelValue, scoreSource: (v as 'owner' | 'member') || undefined })
+}
+
+function onScoreBound(which: 'min' | 'max', v: number | null) {
+  emit('update:modelValue', {
+    ...props.modelValue,
+    [which === 'min' ? 'scoreMin' : 'scoreMax']: v ?? undefined
+  })
+}
 </script>
 
 <style lang="scss" scoped>
@@ -185,6 +293,32 @@ function onQ(v: string) {
 
   &__search {
     max-width: 360px;
+  }
+
+  &__extra {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-2);
+  }
+
+  &__creator {
+    width: 180px;
+  }
+
+  &__source {
+    width: 150px;
+  }
+
+  &__range {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-1);
+  }
+
+  &__range-sep {
+    color: var(--color-text-tertiary);
+    font-size: var(--font-size-sm);
   }
 
   &__types {
