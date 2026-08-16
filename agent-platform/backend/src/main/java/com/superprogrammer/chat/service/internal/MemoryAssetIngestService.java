@@ -248,8 +248,9 @@ public class MemoryAssetIngestService {
                             .model(systemSettingService.getMemoryJudgeModel())
                             .messages(List.of(LlmMessage.builder().role("user").content(prompt).build()))
                             .temperature(0.0)
-                            // 思考与正文共享预算：glm 等忽略 disableThinking 时 2048 兜住思考+JSON（2026-08-16 实证 800 全截断）
-                            .maxTokens(2048)
+                            // 思考与正文共享预算：glm 等忽略 disableThinking 时需兜住思考+JSON
+                            // （2026-08-16 实证 800 全截断；08-17 用户 1188-token 文档 2048 仍被思考吃满——judge 已切 k3，此处 4096 加固）
+                            .maxTokens(4096)
                             .disableThinking(true)
                             .build(), row.getOwnerUserId())
                     .getContent();

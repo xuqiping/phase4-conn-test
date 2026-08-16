@@ -607,7 +607,12 @@ public class SystemSettingService {
 
     /** 兼容旧记忆调用 API：统一使用管理员全局默认对话模型。 */
     public String getMemoryJudgeModel() {
-        return getDefaultChatModel();
+        // 记忆判定域专用模型（memory.judge.model，管理员可配）：显式配置优先；
+        // 空/未配回退全局默认对话模型。glm 系忽略关思考参数且思考与正文共享 max_tokens
+        // 预算——内部 JSON 调用建议配思考可控模型（kimi k2.6/k3 实证尊重 thinking:disabled），
+        // 配思考型模型会随机「思考吃满预算→JSON 截断」（2026-08-17 用户文件记忆 3 连败实证）。
+        String configured = getNullableTrimmed(MEMORY_JUDGE_MODEL);
+        return configured != null ? configured : getDefaultChatModel();
     }
 
     private String getNullableTrimmed(String key) {
