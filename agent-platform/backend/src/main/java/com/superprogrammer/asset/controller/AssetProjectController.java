@@ -17,6 +17,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -86,6 +87,16 @@ public class AssetProjectController {
     public ResponseEntity<R<Void>> transfer(@PathVariable Long id, @RequestBody TransferRequest req) {
         memberService.transfer(id, getCurrentUserId(), isAdmin(), req);
         return ResponseEntity.ok(R.ok("项目已转让", null));
+    }
+
+    /** 项目设置（2x第三轮C6）：成员打分开关 + 内容模式 SHARED/PERSONAL。仅 OWNER。 */
+    @PatchMapping("/{id}/settings")
+    @RequirePermission("asset:write")
+    @com.superprogrammer.common.audit.AuditLog(module = "asset", action = "project_settings", targetType = "asset_project")
+    public ResponseEntity<R<ProjectVO>> updateSettings(@PathVariable Long id,
+                                                       @RequestBody com.superprogrammer.asset.dto.ProjectSettingsRequest req) {
+        return ResponseEntity.ok(R.ok("项目设置已更新",
+                projectService.updateSettings(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     private Long getCurrentUserId() {

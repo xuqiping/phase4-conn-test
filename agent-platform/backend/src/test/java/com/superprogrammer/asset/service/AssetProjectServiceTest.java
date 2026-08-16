@@ -281,4 +281,65 @@ class AssetProjectServiceTest {
                 () -> service.update(PROJECT_ID, OWNER_ID, false, req));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
+
+    // ==================== 2x第三轮C6：项目设置（成员打分开关 + 内容模式） ====================
+
+    @Test
+    void updateSettings_owner_switchBoth() {
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"通用\"]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+
+        com.superprogrammer.asset.dto.ProjectSettingsRequest req =
+                new com.superprogrammer.asset.dto.ProjectSettingsRequest();
+        req.setMemberScoringEnabled(true);
+        req.setContentMode(AssetProject.CONTENT_MODE_PERSONAL);
+        ProjectVO vo = service.updateSettings(PROJECT_ID, OWNER_ID, false, req);
+
+        ArgumentCaptor<AssetProject> captor = ArgumentCaptor.forClass(AssetProject.class);
+        verify(projectMapper).updateById(captor.capture());
+        assertEquals(Boolean.TRUE, captor.getValue().getMemberScoringEnabled());
+        assertEquals(AssetProject.CONTENT_MODE_PERSONAL, captor.getValue().getContentMode());
+        // VO 同步返新值（前端即时生效）
+        assertEquals(Boolean.TRUE, vo.getMemberScoringEnabled());
+        assertEquals(AssetProject.CONTENT_MODE_PERSONAL, vo.getContentMode());
+    }
+
+    @Test
+    void updateSettings_editor_forbidden() {
+        when(aclService.requireManage(PROJECT_ID, EDITOR_ID, false))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "仅项目所有者可执行此操作"));
+        com.superprogrammer.asset.dto.ProjectSettingsRequest req =
+                new com.superprogrammer.asset.dto.ProjectSettingsRequest();
+        req.setContentMode(AssetProject.CONTENT_MODE_PERSONAL);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateSettings(PROJECT_ID, EDITOR_ID, false, req));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
+        verify(projectMapper, never()).updateById(any());
+    }
+
+    @Test
+    void updateSettings_invalidContentMode_400() {
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(PROJECT_ID, OWNER_ID, "[\"通用\"]"));
+        com.superprogrammer.asset.dto.ProjectSettingsRequest req =
+                new com.superprogrammer.asset.dto.ProjectSettingsRequest();
+        req.setContentMode("MIXED");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateSettings(PROJECT_ID, OWNER_ID, false, req));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(projectMapper, never()).updateById(any());
+    }
+
+    @Test
+    void updateSettings_allNull_noWrite() {
+        // 局部更新语义：全 null 不改不写库
+        when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(AssetRole.OWNER);
+        AssetProject p = project(PROJECT_ID, OWNER_ID, "[\"通用\"]");
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        ProjectVO vo = service.updateSettings(PROJECT_ID, OWNER_ID, false,
+                new com.superprogrammer.asset.dto.ProjectSettingsRequest());
+        verify(projectMapper, never()).updateById(any());
+        assertEquals(Boolean.FALSE, vo.getMemberScoringEnabled()); // 空值 → FALSE 归一
+    }
 }

@@ -166,7 +166,7 @@ class AssetScriptServiceTest {
         when(assetService.getImageCatalog(eq(1L), anyInt())).thenReturn(List.of());
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
                 .content("[{\"index\":1,\"prompt\":\"开场镜\"},{\"index\":2,\"prompt\":\"进门镜\",\"entities\":[]}]").build());
-        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any()))
+        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any(), any()))
                 .thenReturn(stubAsset(100L)).thenReturn(stubAsset(101L));
         when(versionService.createVersion(eq(ASSET_ID), eq(OWNER_ID), eq(false), any())).thenReturn(3);
 
@@ -176,7 +176,7 @@ class AssetScriptServiceTest {
         assertEquals(List.of(100L, 101L), vo.getCreatedAssetIds());
         assertEquals(3, vo.getVersion());
         verify(assetProjectService).ensureMediaType(1L, Asset.MEDIA_STORYBOARD, Asset.CATEGORY_TEXT);
-        verify(assetService, times(2)).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any());
+        verify(assetService, times(2)).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -188,14 +188,14 @@ class AssetScriptServiceTest {
                 List.of(new AssetService.ImageCatalogItem(100L, "主角图", Asset.MEDIA_IMAGE, List.of("人物"))));
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
                 .content("[{\"index\":1,\"prompt\":\"x\",\"entities\":[{\"key\":\"主角\",\"assetId\":999}]}]").build());
-        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any()))
+        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any(), any()))
                 .thenReturn(stubAsset(200L));
         when(versionService.createVersion(eq(ASSET_ID), eq(OWNER_ID), eq(false), any())).thenReturn(2);
 
         service.breakdownStoryboard(ASSET_ID, OWNER_ID, false, new StoryboardBreakdownRequest());
 
         ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        verify(assetService).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), cap.capture(), any());
+        verify(assetService).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), cap.capture(), any(), any());
         // content 中 entityRefs[0].assetId 应为 null（非法 id 被剔除，不崩、留 key 痕迹）
         assertFalse(cap.getValue().contains("999"), "非法 assetId 不应写入 content");
         assertTrue(cap.getValue().contains("\"key\":\"主角\""), "实体 key 痕迹保留");
@@ -209,14 +209,14 @@ class AssetScriptServiceTest {
                 List.of(new AssetService.ImageCatalogItem(100L, "主角图", Asset.MEDIA_IMAGE, List.of("人物"))));
         when(llmGateway.chat(any(), eq(OWNER_ID))).thenReturn(LlmResponse.builder()
                 .content("[{\"index\":1,\"prompt\":\"x\",\"entities\":[{\"key\":\"主角\",\"assetId\":100}]}]").build());
-        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any()))
+        when(assetService.internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), any(), any(), any()))
                 .thenReturn(stubAsset(300L));
         when(versionService.createVersion(eq(ASSET_ID), eq(OWNER_ID), eq(false), any())).thenReturn(2);
 
         service.breakdownStoryboard(ASSET_ID, OWNER_ID, false, new StoryboardBreakdownRequest());
 
         ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        verify(assetService).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), cap.capture(), any());
+        verify(assetService).internalCreateText(eq(1L), eq(Asset.MEDIA_STORYBOARD), any(), any(), cap.capture(), any(), any());
         assertTrue(cap.getValue().contains("\"assetId\":100"), "合法 assetId 保留");
         assertTrue(cap.getValue().contains("主角图"), "name 取自目录富化");
         assertTrue(cap.getValue().contains("shotIndex"), "content 含 shotIndex");
@@ -230,7 +230,7 @@ class AssetScriptServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.breakdownStoryboard(ASSET_ID, OWNER_ID, false, new StoryboardBreakdownRequest()));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
-        verify(assetService, org.mockito.Mockito.never()).internalCreateText(any(), any(), any(), any(), any(), any());
+        verify(assetService, org.mockito.Mockito.never()).internalCreateText(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -255,7 +255,7 @@ class AssetScriptServiceTest {
         assertEquals(ErrorCode.INTERNAL_ERROR.getCode(), ex.getCode());
         // 固定话术，不透传 e.getMessage()
         assertTrue(ex.getMessage() == null || !ex.getMessage().contains("upstream timeout detail"));
-        verify(assetService, org.mockito.Mockito.never()).internalCreateText(any(), any(), any(), any(), any(), any());
+        verify(assetService, org.mockito.Mockito.never()).internalCreateText(any(), any(), any(), any(), any(), any(), any());
     }
 
     private Asset stubAsset(long id) {

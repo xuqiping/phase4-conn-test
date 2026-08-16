@@ -169,6 +169,41 @@ public class AssetProjectService {
     }
 
     /**
+     * 项目设置（2x第三轮C6，决策 D1）：成员打分开关 + 内容模式。仅 OWNER（requireManage）。
+     *
+     * <p>局部更新：null 不改。contentMode 受控 SHARED/PERSONAL（切 PERSONAL 二次确认由前端弹窗承担，
+     * 后端直接生效可逆——切回 SHARED 即恢复全员可编辑，不删数据）。
+     * 切换即时生效：requireAssetOperate 每次操作实时读 contentMode。
+     */
+    @Transactional
+    public ProjectVO updateSettings(Long projectId, Long userId, boolean admin,
+                                    com.superprogrammer.asset.dto.ProjectSettingsRequest req) {
+        AssetRole role = aclService.requireManage(projectId, userId, admin);
+        AssetProject p = loadProject(projectId);
+        boolean changed = false;
+        if (req.getMemberScoringEnabled() != null) {
+            p.setMemberScoringEnabled(req.getMemberScoringEnabled());
+            changed = true;
+        }
+        if (req.getContentMode() != null) {
+            String mode = req.getContentMode().trim();
+            if (!AssetProject.CONTENT_MODE_SHARED.equals(mode)
+                    && !AssetProject.CONTENT_MODE_PERSONAL.equals(mode)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "内容模式须为 " + AssetProject.CONTENT_MODE_SHARED + " 或 " + AssetProject.CONTENT_MODE_PERSONAL);
+            }
+            p.setContentMode(mode);
+            changed = true;
+        }
+        if (changed) {
+            projectMapper.updateById(p);
+            log.info("asset project settings updated: id={} userId={} memberScoringEnabled={} contentMode={}",
+                    projectId, userId, p.getMemberScoringEnabled(), p.getContentMode());
+        }
+        return toVO(p, role);
+    }
+
+    /**
      * 确保项目受控词汇含指定媒体类型（缺则 append），供一键分镜自动补「分镜」type（S19 L13 边界）。
      *
      * <p>幂等：已存在不改动。复用 {@link #normalizeMediaTypes} 校验 + {@link #serializeMediaTypes} 持久化。
@@ -436,6 +471,8 @@ public class AssetProjectService {
                 .publishedBy(p.getPublishedBy())
                 .publishedAt(p.getPublishedAt())
                 .publishedByAdmin(Boolean.TRUE.equals(p.getPublishedByAdmin()))
+                .memberScoringEnabled(Boolean.TRUE.equals(p.getMemberScoringEnabled()))
+                .contentMode(p.getContentMode())
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
                 .build();

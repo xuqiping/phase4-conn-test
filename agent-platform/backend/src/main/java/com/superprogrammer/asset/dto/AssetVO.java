@@ -41,6 +41,16 @@ public class AssetVO {
     /** 当前版本文件 id（文件类资产）。 */
     private String fileId;
     private Long createdBy;
+    /** 上传者用户名（2x第三轮C6，列表批查 users 免 N+1；存量回填近似值见 user-ops 说明）。 */
+    private String createdByUsername;
+    /** 拥有者分（双轨独立轨，未评为 null；2x第三轮C6）。 */
+    private Integer ownerScore;
+    /** 成员均分（四舍五入取整；无成员分为 null）。 */
+    private Integer memberAvgScore;
+    /** 成员分票数（含被移除成员历史评分，D4）。 */
+    private Integer memberCount;
+    /** 我对资产的评分（未评为 null）。 */
+    private Integer myScore;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

@@ -34,6 +34,10 @@ public class ProjectVO {
     private Long publishedBy;
     private OffsetDateTime publishedAt;
     private Boolean publishedByAdmin;
+    /** 2x第三轮C6：OWNER 是否开放成员打分（V124）。 */
+    private Boolean memberScoringEnabled;
+    /** 2x第三轮C6：内容模式 SHARED/PERSONAL（V124，决策 D1）。 */
+    private String contentMode;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

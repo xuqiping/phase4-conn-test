@@ -72,7 +72,7 @@ public class AssetVersionService {
     }
 
     /**
-     * 新建版本（自动版本号，乐观锁）。requireWrite。
+     * 新建版本（自动版本号，乐观锁）。requireAssetOperate（C6：PERSONAL 下仅创建者/OWNER 可换版）。
      * 文本类：content 必填；文件类：fileId 必填（复用 stored_files 不复制文件）。
      *
      * @return 新版本号
@@ -81,7 +81,7 @@ public class AssetVersionService {
     @Transactional
     public int createVersion(Long assetId, Long userId, boolean admin, VersionCreateRequest req) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         boolean textType = isTextAsset(asset);
         String content = req.getContent();
         String fileId = req.getFileId();
@@ -123,7 +123,7 @@ public class AssetVersionService {
     }
 
     /**
-     * 保存一致性包（局部更新，null=不改）。requireWrite。产新版本。
+     * 保存一致性包（局部更新，null=不改）。requireAssetOperate（C6）。产新版本。
      *
      * @return 新版本号
      */
@@ -131,7 +131,7 @@ public class AssetVersionService {
     public int saveConsistencyPack(Long assetId, Long userId, boolean admin,
                                    com.superprogrammer.asset.dto.ConsistencyPackRequest req) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         String merged = mergeConsistencyPack(asset.getContent(), req);
         VersionCreateRequest vReq = new VersionCreateRequest();
         vReq.setContent(merged);

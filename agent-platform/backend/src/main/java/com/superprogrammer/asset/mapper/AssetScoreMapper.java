@@ -67,4 +67,38 @@ public interface AssetScoreMapper extends BaseMapper<AssetScore> {
             """)
     List<Map<String, Object>> selectMyScores(@Param("projectId") Long projectId,
                                              @Param("userId") Long userId);
+
+    /**
+     * 列表筛选：拥有者分落在 [min,max] 的资产 ids（min/max null = 不限该侧）。
+     * 每人每资产一票故无需去重；is_owner_score=TRUE 独立轨。
+     */
+    @Select("""
+            <script>
+            SELECT asset_id FROM asset_scores
+            WHERE project_id = #{projectId} AND deleted = 0 AND is_owner_score = TRUE
+            <if test="min != null">AND score &gt;= #{min}</if>
+            <if test="max != null">AND score &lt;= #{max}</if>
+            </script>
+            """)
+    List<Long> selectAssetIdsByOwnerScore(@Param("projectId") Long projectId,
+                                          @Param("min") Integer min,
+                                          @Param("max") Integer max);
+
+    /**
+     * 列表筛选：成员均分（is_owner_score=FALSE，含被移除成员——D4）落在 [min,max] 的资产 ids。
+     * GROUP BY + HAVING AVG；min/max null = 不限该侧（即「有任何成员评分」）。
+     */
+    @Select("""
+            <script>
+            SELECT asset_id FROM asset_scores
+            WHERE project_id = #{projectId} AND deleted = 0 AND is_owner_score = FALSE
+            GROUP BY asset_id
+            HAVING 1=1
+            <if test="min != null">AND AVG(score) &gt;= #{min}</if>
+            <if test="max != null">AND AVG(score) &lt;= #{max}</if>
+            </script>
+            """)
+    List<Long> selectAssetIdsByMemberAvg(@Param("projectId") Long projectId,
+                                         @Param("min") Integer min,
+                                         @Param("max") Integer max);
 }

@@ -63,7 +63,7 @@ class AssetVersionServiceTest {
     @Test
     void createVersion_textAsset_bumpsAndInsertsAndSyncsContent() {
         when(assetMapper.selectById(ASSET_ID)).thenReturn(asset(Asset.MEDIA_PROMPT, 2));
-        when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(com.superprogrammer.asset.entity.Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         when(assetMapper.bumpVersionOptimistic(ASSET_ID, 2, OWNER_ID)).thenReturn(1);
 
         VersionCreateRequest req = new VersionCreateRequest();
@@ -84,7 +84,7 @@ class AssetVersionServiceTest {
     @Test
     void createVersion_concurrentConflict_throws409() {
         when(assetMapper.selectById(ASSET_ID)).thenReturn(asset(Asset.MEDIA_PROMPT, 2));
-        when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(com.superprogrammer.asset.entity.Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         // 乐观锁：版本号已被他人改过 → 0 行
         when(assetMapper.bumpVersionOptimistic(ASSET_ID, 2, OWNER_ID)).thenReturn(0);
 
@@ -100,7 +100,7 @@ class AssetVersionServiceTest {
     @Test
     void createVersion_fileAsset_requiresFileId() {
         when(assetMapper.selectById(ASSET_ID)).thenReturn(asset(Asset.MEDIA_IMAGE, 1));
-        when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(com.superprogrammer.asset.entity.Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         VersionCreateRequest req = new VersionCreateRequest(); // 无 fileId
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.createVersion(ASSET_ID, OWNER_ID, false, req));
@@ -143,7 +143,7 @@ class AssetVersionServiceTest {
         Asset a = asset(Asset.MEDIA_IMAGE, 1);
         a.setContent("{\"consistency\":{\"standardDescription\":\"old\"}}");
         when(assetMapper.selectById(ASSET_ID)).thenReturn(a);
-        when(aclService.requireWrite(1L, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(com.superprogrammer.asset.entity.Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         when(assetMapper.bumpVersionOptimistic(ASSET_ID, 1, OWNER_ID)).thenReturn(1);
 
         ConsistencyPackRequest req = new ConsistencyPackRequest();

@@ -59,6 +59,7 @@ public class AssetController {
     private final AssetService assetService;
     private final AssetVersionService versionService;
     private final AssetScriptService scriptService;
+    private final com.superprogrammer.asset.service.AssetScoreService scoreService;
 
     @PostMapping("/projects/{id}/assets")
     @RequirePermission("asset:write")
@@ -80,9 +81,14 @@ public class AssetController {
                                                        @RequestParam(required = false) String role,
                                                        @RequestParam(required = false) String q,
                                                        @RequestParam(required = false) String status,
+                                                       @RequestParam(required = false) String creatorUsername,
+                                                       @RequestParam(required = false) Integer scoreMin,
+                                                       @RequestParam(required = false) Integer scoreMax,
+                                                       @RequestParam(required = false) String scoreSource,
                                                        @RequestParam(defaultValue = "1") int page,
                                                        @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(R.ok(assetService.list(id, getCurrentUserId(), isAdmin(), type, role, q, status, page, size)));
+        return ResponseEntity.ok(R.ok(assetService.list(id, getCurrentUserId(), isAdmin(), type, role, q, status,
+                creatorUsername, scoreMin, scoreMax, scoreSource, page, size)));
     }
 
     @GetMapping("/projects/{id}/assets/count")
@@ -195,6 +201,23 @@ public class AssetController {
                                                                         @RequestBody(required = false) StoryboardBreakdownRequest req) {
         return ResponseEntity.ok(R.ok("分镜完成",
                 scriptService.breakdownStoryboard(id, getCurrentUserId(), isAdmin(), req)));
+    }
+
+    // ---------- 评分（2x第三轮C6，百分制双轨） ----------
+
+    @PostMapping("/assets/{id}/score")
+    @RequirePermission("asset:write")
+    @com.superprogrammer.common.audit.AuditLog(module = "asset", action = "asset_score", targetType = "asset")
+    public ResponseEntity<R<com.superprogrammer.asset.dto.AssetScoreVO>> score(@PathVariable Long id,
+                                                                               @RequestBody com.superprogrammer.asset.dto.ScoreRequest req) {
+        return ResponseEntity.ok(R.ok("评分已提交",
+                scoreService.submit(id, getCurrentUserId(), isAdmin(), req == null ? null : req.getScore())));
+    }
+
+    @GetMapping("/assets/{id}/score")
+    @RequirePermission("asset:write")
+    public ResponseEntity<R<com.superprogrammer.asset.dto.AssetScoreVO>> myScore(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(scoreService.getScore(id, getCurrentUserId(), isAdmin())));
     }
 
     private Long getCurrentUserId() {

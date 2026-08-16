@@ -19,7 +19,8 @@ class AssetControllerCopyTest {
 
     private final AssetService assetService = mock(AssetService.class);
     private final AssetController controller = new AssetController(
-            assetService, mock(AssetVersionService.class), mock(AssetScriptService.class));
+            assetService, mock(AssetVersionService.class), mock(AssetScriptService.class),
+            mock(com.superprogrammer.asset.service.AssetScoreService.class));
 
     @AfterEach
     void clearSecurity() {

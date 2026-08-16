@@ -86,6 +86,8 @@ public class AssetService {
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
     private final AssetVersionService versionService;
+    private final com.superprogrammer.asset.mapper.AssetScoreMapper scoreMapper;
+    private final com.superprogrammer.auth.mapper.UserMapper userMapper;
 
     /** 安全体系 S4 · SEC-FR-032 像素上限读取（F-3①）。横切可选依赖：@RequiredArgsConstructor
      * 构造注入不填本字段 → null 时用 ImageGuard 默认上限，不破坏既有测试切片。 */
@@ -131,7 +133,7 @@ public class AssetService {
     public AssetVO create(Long projectId, Long userId, boolean admin, AssetCreateRequest req) {
         aclService.requireWrite(projectId, userId, admin);
         Asset asset = internalCreateText(projectId, req.getMediaType(), req.getName(),
-                req.getDescription(), req.getContent(), req.getRoleKeys());
+                req.getDescription(), req.getContent(), req.getRoleKeys(), userId);
         log.info("asset created: id={} projectId={} mediaType={} userId={}",
                 asset.getId(), projectId, req.getMediaType(), userId);
         return toVO(asset, false);
@@ -187,6 +189,8 @@ public class AssetService {
         copy.setContent(current.getContent());
         copy.setGenMeta(source.getGenMeta());
         copy.setCurrentVersion(1);
+        // 2x第三轮C6：复制者成为新资产创建者（PERSONAL 所有权判据；与源资产 createdBy 解耦）
+        copy.setCreatedBy(userId);
         assetMapper.insert(copy);
 
         AssetVersion firstVersion = new AssetVersion();
@@ -217,10 +221,13 @@ public class AssetService {
      *
      * <p>调用方自行 ensure {@code requireWrite}（分镜在循环外校验一次）。流程：resolveCategory→须 TEXT→
      * 校验名/正文 JSON→insert 资产+版本 1+角色挂载。返 {@link Asset}（含自增 id）供调用方收集。
+     *
+     * <p>2x第三轮C6：显式落 {@code createdBy}（PERSONAL 模式所有权判据；V124 前存量 NULL 根因即各创建路径不写值）。
      */
     @Transactional
     public Asset internalCreateText(Long projectId, String mediaType, String name,
-                                    String description, String contentJson, List<String> roleKeys) {
+                                    String description, String contentJson, List<String> roleKeys,
+                                    Long creatorUserId) {
         String category = resolveCategory(projectId, mediaType);
         if (!isTextCategory(category)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "新建仅支持文本类（TEXT 类别）资产，文件类请用上传");
@@ -240,6 +247,7 @@ public class AssetService {
         asset.setCurrentVersion(1);
         asset.setContent(contentJson);
         asset.setGenMeta("{}");
+        asset.setCreatedBy(creatorUserId);
         assetMapper.insert(asset);
         AssetVersion v1 = new AssetVersion();
         v1.setAssetId(asset.getId());
@@ -323,6 +331,8 @@ public class AssetService {
         asset.setContent("{}");
         asset.setCurrentVersion(1);
         asset.setGenMeta(buildUploadGenMeta(category, stored, file));
+        // 2x第三轮C6：上传者即创建者（PERSONAL 所有权判据）
+        asset.setCreatedBy(userId);
         assetMapper.insert(asset);
         // 版本 1（带 file_id）
         AssetVersion v1 = new AssetVersion();
@@ -341,9 +351,15 @@ public class AssetService {
     /**
      * 矩阵筛选/搜索列表（分页）。loadAccessible（viewer 可读）。
      * 默认隐藏 ARCHIVED（L3），status=ARCHIVED 显式查时可及。
+     *
+     * <p>2x第三轮C6 新增筛选：creatorUsername（users 精确匹配 → IN createdBy；0 命中空页）；
+     * scoreMin/scoreMax/scoreSource（owner=拥有者分行过滤 / member=成员均分 GROUP BY HAVING，
+     * 与既有 type×role×q×status 同交集 wrapper 叠加）。
+     * 装配 createdByUsername + 双轨评分 + myScore（批查防 N+1）。
      */
     public PageResult<AssetVO> list(Long projectId, Long userId, boolean admin,
                                     String mediaType, String role, String q, String status,
+                                    String creatorUsername, Integer scoreMin, Integer scoreMax, String scoreSource,
                                     int page, int size) {
         aclService.loadAccessible(projectId, userId, admin);
         LambdaQueryWrapper<Asset> w = new LambdaQueryWrapper<>();
@@ -376,10 +392,92 @@ public class AssetService {
             }
             w.in(Asset::getId, ids);
         }
+        // 上传者过滤（C6）：username 精确查 users → IN createdBy；0 命中直接空页
+        if (creatorUsername != null && !creatorUsername.isBlank()) {
+            String name = creatorUsername.trim();
+            if (name.length() > Q_MAX) {
+                name = name.substring(0, Q_MAX);
+            }
+            List<Long> creatorIds = userMapper.selectList(new LambdaQueryWrapper<com.superprogrammer.auth.entity.User>()
+                            .eq(com.superprogrammer.auth.entity.User::getUsername, name))
+                    .stream().map(com.superprogrammer.auth.entity.User::getId).collect(Collectors.toList());
+            if (creatorIds.isEmpty()) {
+                return PageResult.of(Collections.emptyList(), 0L, page, size);
+            }
+            w.in(Asset::getCreatedBy, creatorIds);
+        }
+        // 评分过滤（C6）：先子查询圈 asset_ids（owner 分轨 / member 均分 HAVING），再 in() 与其余条件交集
+        if (scoreSource != null && !scoreSource.isBlank()
+                || scoreMin != null || scoreMax != null) {
+            String source = scoreSource == null ? "" : scoreSource.trim();
+            if (!"owner".equals(source) && !"member".equals(source)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "评分来源须为 owner 或 member");
+            }
+            if (scoreMin != null && (scoreMin < 0 || scoreMin > 100)
+                    || scoreMax != null && (scoreMax < 0 || scoreMax > 100)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分数区间须在 0-100 内");
+            }
+            if (scoreMin != null && scoreMax != null && scoreMin > scoreMax) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分数区间下限不能大于上限");
+            }
+            List<Long> ids = "owner".equals(source)
+                    ? scoreMapper.selectAssetIdsByOwnerScore(projectId, scoreMin, scoreMax)
+                    : scoreMapper.selectAssetIdsByMemberAvg(projectId, scoreMin, scoreMax);
+            if (ids.isEmpty()) {
+                return PageResult.of(Collections.emptyList(), 0L, page, size);
+            }
+            w.in(Asset::getId, ids);
+        }
         w.orderByDesc(Asset::getUpdatedAt);
         IPage<Asset> p = assetMapper.selectPage(new Page<>(page, size <= 0 ? DEFAULT_PAGE_SIZE : size), w);
-        List<AssetVO> vos = assembleRoles(p.getRecords(), false);
+        List<AssetVO> vos = assembleList(projectId, userId, p.getRecords());
         return PageResult.of(vos, p.getTotal(), (int) p.getCurrent(), (int) p.getSize());
+    }
+
+    /**
+     * 列表态批量装配（C6）：assembleRoles（角色/fileId）之上叠加
+     * createdByUsername（users 批查）+ 双轨评分 + myScore（asset_scores 按项目两次批查）。
+     */
+    private List<AssetVO> assembleList(Long projectId, Long userId, List<Asset> assets) {
+        List<AssetVO> vos = assembleRoles(assets, false);
+        if (vos.isEmpty()) {
+            return vos;
+        }
+        // 上传者用户名：批查一次（含 null createdBy 的存量近似行）
+        Set<Long> creatorIds = assets.stream()
+                .map(Asset::getCreatedBy).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, String> usernameMap = creatorIds.isEmpty() ? Collections.emptyMap()
+                : userMapper.selectBatchIds(creatorIds).stream()
+                        .collect(Collectors.toMap(com.superprogrammer.auth.entity.User::getId,
+                                u -> u.getUsername() == null ? "" : u.getUsername(), (a, b) -> a));
+        // 双轨聚合 + 我的分：按项目各一次（FILTER GROUP BY / scorer 维度），内存按 assetId 对齐
+        Map<Long, Object[]> aggMap = new java.util.HashMap<>();
+        for (Map<String, Object> row : scoreMapper.selectAggregatesByProject(projectId)) {
+            Object[] agg = new Object[3];
+            agg[0] = row.get("ownerScore");
+            agg[1] = row.get("memberAvgScore");
+            agg[2] = row.get("memberCount");
+            aggMap.put(((Number) row.get("assetId")).longValue(), agg);
+        }
+        Map<Long, Integer> myMap = new java.util.HashMap<>();
+        for (Map<String, Object> row : scoreMapper.selectMyScores(projectId, userId)) {
+            myMap.put(((Number) row.get("assetId")).longValue(), ((Number) row.get("score")).intValue());
+        }
+        for (int i = 0; i < assets.size(); i++) {
+            AssetVO vo = vos.get(i);
+            vo.setCreatedByUsername(usernameMap.get(assets.get(i).getCreatedBy()));
+            Object[] agg = aggMap.get(assets.get(i).getId());
+            if (agg != null) {
+                vo.setOwnerScore(agg[0] == null ? null : ((Number) agg[0]).intValue());
+                // PG AVG 返回 NUMERIC（精度任意），统一 Number.intValue 取整展示
+                vo.setMemberAvgScore(agg[1] == null ? null : (int) Math.round(((Number) agg[1]).doubleValue()));
+                vo.setMemberCount(agg[2] == null ? 0 : ((Number) agg[2]).intValue());
+            } else {
+                vo.setMemberCount(0);
+            }
+            vo.setMyScore(myMap.get(assets.get(i).getId()));
+        }
+        return vos;
     }
 
     /** 矩阵每格计数（单条 GROUP BY 聚合，防 N+1，plan 坑点预判）。loadAccessible。 */
@@ -404,11 +502,11 @@ public class AssetService {
         return vo;
     }
 
-    /** 更新 meta + 分类（正文改版走版本端点 S5）。requireWrite。 */
+    /** 更新 meta + 分类（正文改版走版本端点 S5）。requireAssetOperate（C6）。 */
     @Transactional
     public AssetVO update(Long assetId, Long userId, boolean admin, AssetUpdateRequest req) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (req.getName() != null) {
             asset.setName(validateName(req.getName()));
         }
@@ -426,11 +524,11 @@ public class AssetService {
         return toVO(asset, false);
     }
 
-    /** 软删（requireWrite）。role_links 硬删；bindings 留存历史（引用快照语义）。 */
+    /** 软删（requireAssetOperate，C6）。role_links 硬删；bindings 留存历史（引用快照语义）。 */
     @Transactional
     public void delete(Long assetId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         assetMapper.deleteById(assetId);
         roleLinkMapper.delete(new LambdaQueryWrapper<AssetRoleLink>().eq(AssetRoleLink::getAssetId, assetId));
         log.info("asset deleted: id={} projectId={} userId={}", assetId, asset.getProjectId(), userId);
@@ -445,7 +543,7 @@ public class AssetService {
     @Transactional
     public AssetVO lock(Long assetId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (Asset.STATUS_LOCKED.equals(asset.getStatus())) {
             return toVO(asset, false);
         }
@@ -464,7 +562,7 @@ public class AssetService {
     @Transactional
     public AssetVO unlock(Long assetId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (Asset.STATUS_DRAFT.equals(asset.getStatus())) {
             return toVO(asset, false);
         }
@@ -485,7 +583,7 @@ public class AssetService {
     @Transactional
     public AssetVO archive(Long assetId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (Asset.STATUS_ARCHIVED.equals(asset.getStatus())) {
             return toVO(asset, false);
         }
@@ -501,7 +599,7 @@ public class AssetService {
     @Transactional
     public AssetVO unarchive(Long assetId, Long userId, boolean admin) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (!Asset.STATUS_ARCHIVED.equals(asset.getStatus())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "仅归档资产可恢复");
         }
@@ -511,12 +609,12 @@ public class AssetService {
         return toVO(asset, false);
     }
 
-    /** 保存一致性包（委托版本服务产新版本）。requireWrite。 */
+    /** 保存一致性包（委托版本服务产新版本）。requireAssetOperate（C6）。 */
     @Transactional
     public AssetVO saveConsistencyPack(Long assetId, Long userId, boolean admin,
                                        com.superprogrammer.asset.dto.ConsistencyPackRequest req) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         versionService.saveConsistencyPack(assetId, userId, admin, req);
         // 回读最新态（current_version/content 已被版本服务更新）
         return toVO(loadAsset(assetId), true);
@@ -533,7 +631,7 @@ public class AssetService {
     public AssetVO saveStoryboard(Long assetId, Long userId, boolean admin,
                                   com.superprogrammer.asset.dto.StoryboardSaveRequest req) {
         Asset asset = loadAsset(assetId);
-        aclService.requireWrite(asset.getProjectId(), userId, admin);
+        aclService.requireAssetOperate(asset, userId, admin);
         if (!Asset.MEDIA_STORYBOARD.equals(asset.getMediaType())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "仅分镜类型资产可保存分镜字段");
         }

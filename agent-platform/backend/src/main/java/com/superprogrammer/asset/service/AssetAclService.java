@@ -1,6 +1,7 @@
 package com.superprogrammer.asset.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetProjectMember;
 import com.superprogrammer.asset.entity.AssetPublicAccessRequest;
@@ -13,6 +14,8 @@ import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.Objects;
 
 /**
  * 项目资产库·权限咽喉点（设计方案 §九 9.2「归属咽喉点」）。
@@ -53,6 +56,15 @@ public class AssetAclService {
         if (project == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "项目不存在");
         }
+        return resolveRole(project, userId, admin);
+    }
+
+    /**
+     * 角色三判（admin → OWNER 旁路；project.ownerId → OWNER；成员行 → 其角色；公众池 → VIEWER 只读）。
+     * 从 {@link #loadAccessible} 抽出：{@link #requireAssetOperate} 需已载入的 project 再判一次角色，
+     * 避免「先 loadAccessible 再 selectById」同一项目查两遍。
+     */
+    private AssetRole resolveRole(AssetProject project, Long userId, boolean admin) {
         // admin 旁路（全权，等同 owner）
         if (admin) {
             return AssetRole.OWNER;
@@ -63,7 +75,7 @@ public class AssetAclService {
         }
         // 判 member
         AssetProjectMember member = memberMapper.selectOne(new LambdaQueryWrapper<AssetProjectMember>()
-                .eq(AssetProjectMember::getProjectId, projectId)
+                .eq(AssetProjectMember::getProjectId, project.getId())
                 .eq(AssetProjectMember::getUserId, userId));
         if (member != null) {
             return AssetRole.fromMemberRole(member.getRole());
@@ -76,7 +88,7 @@ public class AssetAclService {
             if (AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED.equals(project.getPublicAccessMode())) {
                 AssetPublicAccessRequest request = publicRequestMapper.selectOne(
                         new LambdaQueryWrapper<AssetPublicAccessRequest>()
-                                .eq(AssetPublicAccessRequest::getProjectId, projectId)
+                                .eq(AssetPublicAccessRequest::getProjectId, project.getId())
                                 .eq(AssetPublicAccessRequest::getApplicantId, userId)
                                 .eq(AssetPublicAccessRequest::getStatus,
                                         AssetPublicAccessRequest.STATUS_APPROVED));
@@ -85,7 +97,7 @@ public class AssetAclService {
                 }
             }
         }
-        log.warn("asset access denied: projectId={} userId={}", projectId, userId);
+        log.warn("asset access denied: projectId={} userId={}", project.getId(), userId);
         throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该项目");
     }
 
@@ -110,6 +122,39 @@ public class AssetAclService {
         if (!role.canManage()) {
             log.warn("asset manage denied: projectId={} userId={} role={}", projectId, userId, role);
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅项目所有者可执行此操作");
+        }
+        return role;
+    }
+
+    /**
+     * 资产级写操作咽喉（2x第三轮C6，决策 D1）——requireWrite 语义之上叠加 PERSONAL 内容模式：
+     * <ul>
+     *   <li>VIEWER / 未授权 → FORBIDDEN（沿 requireWrite，写操作一律拒）</li>
+     *   <li>OWNER / admin → 放行（不受 PERSONAL 约束）</li>
+     *   <li>EDITOR + SHARED → 放行（存量行为零回归）</li>
+     *   <li>EDITOR + PERSONAL → 仅 {@code asset.createdBy == userId}，否则 FORBIDDEN</li>
+     * </ul>
+     *
+     * <p>update/delete/lock/unlock/archive/unarchive/新版本/一致性包保存 统一走此方法（集中一处防漏点）。
+     * createdBy 为 NULL 的存量资产（回填兜底后理论不存在；新路径 C6 起显式写入）在 PERSONAL 下对
+     * EDITOR 视为他人内容——fail-closed，OWNER 仍可管理。
+     */
+    public AssetRole requireAssetOperate(Asset asset, Long userId, boolean admin) {
+        AssetProject project = projectMapper.selectById(asset.getProjectId());
+        if (project == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目不存在");
+        }
+        AssetRole role = resolveRole(project, userId, admin);
+        if (!role.canWrite()) {
+            log.warn("asset operate denied: projectId={} userId={} role={}", asset.getProjectId(), userId, role);
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该项目需要编辑权限");
+        }
+        if (!role.canManage()
+                && AssetProject.CONTENT_MODE_PERSONAL.equals(project.getContentMode())
+                && !Objects.equals(userId, asset.getCreatedBy())) {
+            log.warn("asset operate denied (PERSONAL): assetId={} userId={} creator={}",
+                    asset.getId(), userId, asset.getCreatedBy());
+            throw new BusinessException(ErrorCode.FORBIDDEN, "个人内容模式下仅能管理自己上传的内容");
         }
         return role;
     }

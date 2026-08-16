@@ -65,6 +65,8 @@ class AssetServiceTest {
     @Mock private AssetAclService aclService;
     @Mock private FileStorageService fileStorageService;
     @Mock private AssetVersionService versionService;
+    @Mock private com.superprogrammer.asset.mapper.AssetScoreMapper scoreMapper;
+    @Mock private com.superprogrammer.auth.mapper.UserMapper userMapper;
 
     private AssetService service;
 
@@ -81,7 +83,7 @@ class AssetServiceTest {
     @BeforeEach
     void setUp() {
         service = new AssetService(assetMapper, versionMapper, roleLinkMapper, projectMapper, aclService,
-                new ObjectMapper(), fileStorageService, versionService);
+                new ObjectMapper(), fileStorageService, versionService, scoreMapper, userMapper);
     }
 
     @Test
@@ -331,7 +333,7 @@ class AssetServiceTest {
         when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
         when(roleLinkMapper.selectList(any())).thenReturn(List.of());
         PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
-                null, "人物", null, null, 1, 20);
+                null, "人物", null, null, null, null, null, null, 1, 20);
         assertTrue(result.getRecords().isEmpty());
     }
 
@@ -357,9 +359,12 @@ class AssetServiceTest {
         vv2.setVersion(1);
         vv2.setFileId("fid-2");
         when(versionMapper.selectList(any())).thenReturn(List.of(vv1, vv2));
+        // C6：双轨评分/我的分批查（无评分→空聚合）
+        when(scoreMapper.selectAggregatesByProject(PROJECT_ID)).thenReturn(List.of());
+        when(scoreMapper.selectMyScores(PROJECT_ID, OWNER_ID)).thenReturn(List.of());
 
         PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
-                Asset.MEDIA_IMAGE, null, null, null, 1, 20);
+                Asset.MEDIA_IMAGE, null, null, null, null, null, null, null, 1, 20);
 
         assertEquals(2, result.getRecords().size());
         // 单次 IN 批查角色 + fileId（防 N+1）
@@ -369,6 +374,100 @@ class AssetServiceTest {
         assertEquals(List.of("场景"), result.getRecords().get(1).getRoleKeys());
         assertEquals("fid-1", result.getRecords().get(0).getFileId());
         assertEquals("fid-2", result.getRecords().get(1).getFileId());
+    }
+
+    // ---------- C6 列表筛选/装配 ----------
+
+    @Test
+    void list_creatorUsernameMiss_returnsEmptyPage() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(userMapper.selectList(any())).thenReturn(List.of());
+        PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
+                null, null, null, null, "不存在的用户", null, null, null, 1, 20);
+        assertTrue(result.getRecords().isEmpty());
+        verify(assetMapper, never()).selectPage(any(), any());
+    }
+
+    @Test
+    void list_creatorUsernameHit_assemblesCreatorUsername() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        Asset a1 = asset(1L, Asset.MEDIA_IMAGE);
+        a1.setCreatedBy(EDITOR_ID);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Asset> page = new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 20);
+        page.setRecords(List.of(a1));
+        page.setTotal(1);
+        when(assetMapper.selectPage(any(), any())).thenReturn(page);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of());
+        when(versionMapper.selectList(any())).thenReturn(List.of());
+        com.superprogrammer.auth.entity.User u = new com.superprogrammer.auth.entity.User();
+        u.setId(EDITOR_ID);
+        u.setUsername("editor甲");
+        when(userMapper.selectList(any())).thenReturn(List.of(u));
+        when(userMapper.selectBatchIds(java.util.Set.of(EDITOR_ID))).thenReturn(List.of(u));
+        when(scoreMapper.selectAggregatesByProject(PROJECT_ID)).thenReturn(List.of());
+        when(scoreMapper.selectMyScores(PROJECT_ID, OWNER_ID)).thenReturn(List.of());
+
+        PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
+                null, null, null, null, "editor甲", null, null, null, 1, 20);
+
+        assertEquals(1, result.getRecords().size());
+        assertEquals("editor甲", result.getRecords().get(0).getCreatedByUsername());
+        assertEquals(0, result.getRecords().get(0).getMemberCount());
+    }
+
+    @Test
+    void list_scoreSourceMember_usesAvgSubquery() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(scoreMapper.selectAssetIdsByMemberAvg(PROJECT_ID, 80, 100)).thenReturn(List.of(5L));
+        Asset a5 = asset(5L, Asset.MEDIA_IMAGE);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Asset> page = new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 20);
+        page.setRecords(List.of(a5));
+        page.setTotal(1);
+        when(assetMapper.selectPage(any(), any())).thenReturn(page);
+        when(roleLinkMapper.selectList(any())).thenReturn(List.of());
+        when(versionMapper.selectList(any())).thenReturn(List.of());
+        when(scoreMapper.selectAggregatesByProject(PROJECT_ID)).thenReturn(List.of(
+                java.util.Map.of("assetId", 5L, "ownerScore", 88, "memberAvgScore", 90.0, "memberCount", 2L)));
+        when(scoreMapper.selectMyScores(PROJECT_ID, OWNER_ID)).thenReturn(List.of(
+                java.util.Map.of("assetId", 5L, "score", 95)));
+
+        PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
+                null, null, null, null, null, 80, 100, "member", 1, 20);
+
+        verify(scoreMapper).selectAssetIdsByMemberAvg(PROJECT_ID, 80, 100);
+        AssetVO vo = result.getRecords().get(0);
+        assertEquals(88, vo.getOwnerScore());
+        assertEquals(90, vo.getMemberAvgScore());
+        assertEquals(2, vo.getMemberCount());
+        assertEquals(95, vo.getMyScore());
+    }
+
+    @Test
+    void list_scoreSourceOwnerMiss_returnsEmptyPage() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(scoreMapper.selectAssetIdsByOwnerScore(PROJECT_ID, null, 60)).thenReturn(List.of());
+        PageResult<AssetVO> result = service.list(PROJECT_ID, OWNER_ID, false,
+                null, null, null, null, null, null, 60, "owner", 1, 20);
+        assertTrue(result.getRecords().isEmpty());
+        verify(assetMapper, never()).selectPage(any(), any());
+    }
+
+    @Test
+    void list_scoreSourceInvalid_400() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.list(PROJECT_ID, OWNER_ID, false,
+                        null, null, null, null, null, 80, 100, "both", 1, 20));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void list_scoreRangeInverted_400() {
+        when(aclService.loadAccessible(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.list(PROJECT_ID, OWNER_ID, false,
+                        null, null, null, null, null, 90, 10, "owner", 1, 20));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
     @Test
@@ -391,7 +490,7 @@ class AssetServiceTest {
         Asset a = asset(1L, Asset.MEDIA_IMAGE);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, VIEWER_ID, false))
+        when(aclService.requireAssetOperate(any(Asset.class), eq(VIEWER_ID), eq(false)))
                 .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "需编辑权限"));
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.delete(1L, VIEWER_ID, false));
@@ -404,7 +503,7 @@ class AssetServiceTest {
         Asset a = asset(1L, Asset.MEDIA_PROMPT);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, EDITOR_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(EDITOR_ID), eq(false))).thenReturn(null);
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithRoles());
 
         AssetUpdateRequest req = new AssetUpdateRequest();
@@ -561,7 +660,7 @@ class AssetServiceTest {
         a.setProjectId(PROJECT_ID);
         a.setContent("{\"shotIndex\":2,\"parentId\":50,\"prompt\":\"旧提示\"}");
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         // 引用资产：id=7 同项目存在（富化），id=999 不存在（非法剔除置 null）
         Asset ref7 = asset(7L, Asset.MEDIA_IMAGE);
         ref7.setName("主角定妆");
@@ -597,7 +696,7 @@ class AssetServiceTest {
         a.setMediaCategory(Asset.CATEGORY_TEXT);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         StoryboardSaveRequest req = new StoryboardSaveRequest();
         req.setPrompt("x");
         BusinessException ex = assertThrows(BusinessException.class,
@@ -612,7 +711,7 @@ class AssetServiceTest {
         a.setMediaCategory(Asset.CATEGORY_TEXT);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
         StoryboardSaveRequest req = new StoryboardSaveRequest();
         StringBuilder huge = new StringBuilder();
         for (int i = 0; i < 8001; i++) huge.append("a");
@@ -629,7 +728,7 @@ class AssetServiceTest {
         Asset a = asset(1L, Asset.MEDIA_PROMPT);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
 
         AssetVO vo = service.lock(1L, OWNER_ID, false);
 
@@ -643,7 +742,7 @@ class AssetServiceTest {
         a.setProjectId(PROJECT_ID);
         a.setStatus(Asset.STATUS_ARCHIVED);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.lock(1L, OWNER_ID, false));
@@ -657,7 +756,7 @@ class AssetServiceTest {
         a.setProjectId(PROJECT_ID);
         a.setStatus(Asset.STATUS_LOCKED);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
 
         AssetVO vo = service.unlock(1L, OWNER_ID, false);
 
@@ -669,7 +768,7 @@ class AssetServiceTest {
         Asset a = asset(1L, Asset.MEDIA_IMAGE);
         a.setProjectId(PROJECT_ID);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
 
         AssetVO archived = service.archive(1L, OWNER_ID, false);
         assertEquals(Asset.STATUS_ARCHIVED, archived.getStatus());
@@ -686,7 +785,7 @@ class AssetServiceTest {
         a.setProjectId(PROJECT_ID);
         a.setStatus(Asset.STATUS_DRAFT);
         when(assetMapper.selectById(1L)).thenReturn(a);
-        when(aclService.requireWrite(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
+        when(aclService.requireAssetOperate(any(Asset.class), eq(OWNER_ID), eq(false))).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.unarchive(1L, OWNER_ID, false));

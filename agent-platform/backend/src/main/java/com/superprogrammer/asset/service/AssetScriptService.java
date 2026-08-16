@@ -222,7 +222,7 @@ public class AssetScriptService {
             String shotContent = buildShotContent(shot.index > 0 ? shot.index : idx, scriptAssetId, shot.prompt, entityRefs);
             Asset created = assetService.internalCreateText(asset.getProjectId(), Asset.MEDIA_STORYBOARD,
                     asset.getName() + " · 镜头" + (shot.index > 0 ? shot.index : idx),
-                    null, shotContent, List.of());
+                    null, shotContent, List.of(), userId);
             createdIds.add(created.getId());
             idx++;
         }
