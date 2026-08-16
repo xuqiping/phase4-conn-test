@@ -84,7 +84,7 @@ export class ChatController {
       res.end();
       if (settled.capped) {
         // 熔断标记：客户端收到 capped=true 后不得再用同 task_id 发起续跑（联动点 1）
-        // eslint-disable-next-line no-console
+         
         console.error(`[fuse] user=${userId} task=${dto.task_id ?? dto.nonce} spent=${settled.task_spent_cents}c 触发单任务消费上限`);
       }
     } catch (e) {
@@ -96,7 +96,7 @@ export class ChatController {
       });
       res.end();
       if (!isUpstream) {
-        // eslint-disable-next-line no-console
+         
         console.error(`[chat-error] user=${userId} task=${dto.nonce}`, e);
       }
     }

@@ -32,7 +32,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return;
     }
     // 未知异常：日志留 requestId（Step9 接 pino），对外只给大白话
-    // eslint-disable-next-line no-console
+     
     console.error(`[unhandled] ${req.method} ${req.url}`, exception);
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       code: 500,

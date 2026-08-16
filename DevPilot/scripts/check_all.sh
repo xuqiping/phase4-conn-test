@@ -37,7 +37,9 @@ if [ -f "PROJECT/cloud/package.json" ]; then
     echo ""
     echo "[Cloud] 类型检查 / 单测..."
     ( cd PROJECT/cloud && npx tsc --noEmit )  || FAIL=1
+    ( cd PROJECT/cloud && npm run lint )      || FAIL=1
     ( cd PROJECT/cloud && npm run test )      || FAIL=1
+    ( cd PROJECT/cloud && npm run test:e2e )  || FAIL=1
 fi
 
 # ------------------------------ 依赖安全 ------------------------------
@@ -48,6 +50,7 @@ if [ -f "PROJECT/desktop/src-tauri/Cargo.toml" ]; then
     echo "[Security] 依赖漏洞审计（本地失败仅 WARN，CI 硬拦截）..."
     ( cd PROJECT/desktop/src-tauri && cargo audit )  || echo " [WARN] cargo audit 未执行成功（网络受限），CI 兜底"
     ( cd PROJECT/desktop && npm audit --omit=dev )   || echo " [WARN] npm audit 未执行成功（镜像无 audit 端点），CI 兜底"
+    ( cd PROJECT/cloud && npm audit --omit=dev )    || echo " [WARN] 云端 npm audit 未执行成功（镜像无 audit 端点），CI 兜底"
 fi
 
 # ------------------------------ 文档规则 ------------------------------

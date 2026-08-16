@@ -2,7 +2,7 @@
 
 > 上级：[PRD.md](PRD.md)。本文件是数据库的全局权威版；Feature Map 的建表注解是功能视角速查版。
 > 两库分离：**云端 PostgreSQL**（账号/计费，Flyway 迁移）+ **本地 SQLite**（项目/状态机，sqlx 迁移）。本地库在用户机器上，schema 变更随客户端升级迁移。
-> last_updated: 2026-08-13
+> last_updated: 2026-08-16
 
 ## 1. 云端 PostgreSQL（计费与账号）
 
@@ -104,7 +104,7 @@ erDiagram
 | checkpoints | id, task_id, git_commit, snapshot_path, summary_plain, created_at | 存档点（FR-037） |
 | artifacts | id, project_id, type(prd/plan/progress/userops...), path, version | 产物索引（FR-030~035） |
 | transition_history | id, project_id, from_phase, to_phase, gate, actor, created_at | 状态机转移历史，只增，可回放排查（FR-029 运维项） |
-| usage_mirror | id, task_id, model, tokens_in/out, amount_cents, synced | Token 消耗本地镜像，与云端对账（FR-041） |
+| usage_mirror | id, user_id, kind(1扣费/2充值/3退款/4调整), model, amount_cents, idempotency_key UNIQUE, synced_at | Token 消耗本地镜像，幂等键防重放；与云端 token_ledger 对账（FR-041，P02 Step8 实建） |
 | skills_local | id, name, yaml_path, enabled | 技能注册表（FR-025） |
 | mcp_servers | id, name, config JSON, status | MCP server 管理（FR-026） |
 
@@ -113,7 +113,7 @@ erDiagram
 |---|---|
 | L1__init.sql | projects / workflow_states / rounds / tasks / checkpoints / artifacts |
 | L2__transition_history.sql | transition_history（P01 Step 6 插入：状态机历史为引擎内核刚需，先于计量建表） |
-| L3__meter_skills.sql | usage_mirror / skills_local / mcp_servers（原 L2，P01 中顺移） |
+| L3__usage_mirror.sql | usage_mirror（P02 Step8 实建；skills_local / mcp_servers 留待 P05+ 再建） |
 
 ## 3. 设计说明
 

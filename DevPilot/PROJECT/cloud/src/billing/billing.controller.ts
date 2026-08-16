@@ -1,5 +1,5 @@
 // 计费接口：余额 / 明细分页。默认需登录（全局 JwtGuard）。
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Query } from "@nestjs/common";
 import { IsInt, Max, Min } from "class-validator";
 import { Type } from "class-transformer";
 import { CurrentUser } from "../auth/jwt.guard";

@@ -95,7 +95,7 @@ export class SearchService {
         firstError ??= e;
       }
     }
-    // eslint-disable-next-line no-console
+     
     console.error(`[search-fallback-exhausted] query=${query.slice(0, 50)}`, firstError);
     throw new SearchUpstreamError();
   }
