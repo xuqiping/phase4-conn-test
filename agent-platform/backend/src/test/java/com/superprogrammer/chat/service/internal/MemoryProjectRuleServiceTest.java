@@ -9,6 +9,9 @@ import com.superprogrammer.chat.entity.MemoryProjectRule;
 import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectRuleMapper;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.project.entity.Project;
+import com.superprogrammer.project.mapper.ProjectMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +50,8 @@ class MemoryProjectRuleServiceTest {
     private MemoryProjectMemberMapper memberMapper;
     @Mock
     private MemoryTagAnchorService anchorService;
+    @Mock
+    private ProjectMapper projectMapper;
 
     private MemoryProjectRuleService service;
 
@@ -60,7 +65,7 @@ class MemoryProjectRuleServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemoryProjectRuleService(ruleMapper, memberMapper, anchorService);
+        service = new MemoryProjectRuleService(ruleMapper, memberMapper, anchorService, projectMapper);
     }
 
     private MemoryProjectMember membership(String role) {
@@ -191,6 +196,66 @@ class MemoryProjectRuleServiceTest {
         MemoryProjectRuleRequest tooLong = req("ok");
         tooLong.setFilenamePatterns(List.of("x".repeat(101)));
         assertThrows(BusinessException.class, () -> service.saveRule(1L, tooLong, 100L));
+    }
+
+    // 5x #8：pattern 与操作人其他 ACTIVE 项目撞重（含大小写/空白归一）→ 409 + 指明先占项目
+    @Test
+    void saveRule_filenamePatternDuplicate_conflict() {
+        when(memberMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(membershipOf(2L, "OWNER")));
+        MemoryProjectRule other = new MemoryProjectRule();
+        other.setProjectId(2L);
+        other.setFilenamePatterns(List.of(" PDF课件 "));
+        when(ruleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(other));
+        Project proj = new Project();
+        proj.setId(2L);
+        proj.setName("AA老师");
+        when(projectMapper.selectById(2L)).thenReturn(proj);
+
+        MemoryProjectRuleRequest r = req("涉及课件的讨论");
+        r.setFilenamePatterns(List.of("pdf课件"));   // 归一（trim+小写）后与「 PDF课件 」同形
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.saveRule(1L, r, 100L));
+
+        assertEquals(ErrorCode.CONFLICT.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("AA老师"));
+        verify(ruleMapper, never()).insertWithAnchor(any(), any());
+    }
+
+    // 5x #8：无其他 ACTIVE 项目（或他项目 pattern 不同）→ 不拦，正常入库（Mockito 集合默认空表）
+    @Test
+    void saveRule_filenamePattern_noConflict_saves() {
+        when(memberMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(java.util.Collections.emptyList());
+        when(ruleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(anchorService.build(any(), isNull(), isNull(), any(), any()))
+                .thenReturn(new MemoryTagAnchorService.AnchorPayload("[0.1]", "tok"));
+
+        MemoryProjectRuleRequest r = req("涉及课件的讨论");
+        r.setFilenamePatterns(List.of("课件"));
+        MemoryProjectRuleVO vo = service.saveRule(1L, r, 100L);
+
+        verify(ruleMapper).insertWithAnchor(any(MemoryProjectRule.class), any());
+        assertTrue(vo.getEnabled());
+    }
+
+    // 5x #8：req 无 filenamePatterns → 不触发用户级查重（零额外查询）
+    @Test
+    void saveRule_noPatterns_skipsUniquenessCheck() {
+        when(ruleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(anchorService.build(any(), isNull(), isNull(), any(), any()))
+                .thenReturn(new MemoryTagAnchorService.AnchorPayload("[0.1]", "tok"));
+
+        service.saveRule(1L, req("纯文本规则"), 100L);
+
+        verify(memberMapper, never()).selectList(any(LambdaQueryWrapper.class));
+    }
+
+    private MemoryProjectMember membershipOf(Long projectId, String role) {
+        MemoryProjectMember m = new MemoryProjectMember();
+        m.setProjectId(projectId);
+        m.setUserId(100L);
+        m.setRole(role);
+        m.setStatus("ACTIVE");
+        return m;
     }
 
     // AC-FR-005 前置：负例滚动追加 ≤5 先进先出；anchor 不动

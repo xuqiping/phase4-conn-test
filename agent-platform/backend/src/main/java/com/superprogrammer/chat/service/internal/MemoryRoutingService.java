@@ -233,6 +233,8 @@ public class MemoryRoutingService {
      * <p>
      * 用户显式「一定进，风险上传者自负」（决策②）：不走敏感黑名单二次扫描。
      * 幂等：同项目同文件已有未删 FILE 条目 → 跳过（与语义分支同一 countFileEntry 守门，防双插）。
+     * 5x #8：多规则同时命中（存量重复/并发双写漏网）→ 只收录「先建规则」的项目（createdAt 升序、
+     * id 兜底），其余跳过并记日志——同一文件不被重复铺进多个项目。
      */
     private void routeFilenameHardRule(RoutingInput input, List<MemoryProjectRule> candidates) {
         String filename = input.originalName();
@@ -240,37 +242,51 @@ public class MemoryRoutingService {
             return;
         }
         String filenameLower = filename.toLowerCase(Locale.ROOT);
+        List<MemoryProjectRule> hits = new ArrayList<>();
         for (MemoryProjectRule rule : candidates) {
             List<String> patterns = rule.getFilenamePatterns();
             if (patterns == null || patterns.isEmpty()) {
                 continue;
             }
-            if (!matchesAnyPattern(filenameLower, patterns)) {
-                continue;
+            if (matchesAnyPattern(filenameLower, patterns)) {
+                hits.add(rule);
             }
-            if (entryMapper.countFileEntry(rule.getProjectId(), input.fileId()) > 0) {
-                log.info("文件名硬规则跳过重复条目 userId={} projectId={} fileId={}",
-                        input.userId(), rule.getProjectId(), input.fileId());
-                continue;
-            }
-            MemoryProjectEntry entry = new MemoryProjectEntry();
-            entry.setProjectId(rule.getProjectId());
-            entry.setAuthorUserId(input.userId());
-            entry.setSourceTurnId(null);
-            entry.setTagIds(input.tagIds() != null ? input.tagIds() : List.of());
-            entry.setL1Summary(input.l1());
-            entry.setL2Detail(input.l2());
-            entry.setConfidence(1.0);                              // 确定性「一定进」→ 置满置信
-            entry.setStatus(MemoryProjectEntry.STATUS_ACTIVE);     // 决策①：直接 ACTIVE 一定进
-            entry.setContentType(MemoryProjectEntry.CONTENT_TYPE_FILE);
-            entry.setFileId(input.fileId());
-            entry.setChatModel(null);                              // 短路不经 LLM 精判
-            entry.setCreatedBy(input.userId());
-            entry.setUpdatedBy(input.userId());
-            entryMapper.insert(entry);
-            log.info("文件名硬规则命中 userId={} projectId={} fileId={} filename={} → ACTIVE 一定进",
-                    input.userId(), rule.getProjectId(), input.fileId(), filename);
         }
+        if (hits.isEmpty()) {
+            return;
+        }
+        // 5x #8 先建者赢：按规则创建时间升序（同刻按 id），确定性排序防候选集顺序不稳定
+        hits.sort(java.util.Comparator
+                .comparing((MemoryProjectRule r) -> r.getCreatedAt(), java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()))
+                .thenComparing(MemoryProjectRule::getId));
+        MemoryProjectRule winner = hits.get(0);
+        // 赢家项目已有该文件条目（重传/重灌）→ 整体幂等返回，其余项目不让位补收（一文件一项目）
+        if (entryMapper.countFileEntry(winner.getProjectId(), input.fileId()) > 0) {
+            log.info("文件名硬规则跳过重复条目 userId={} projectId={} fileId={}",
+                    input.userId(), winner.getProjectId(), input.fileId());
+            return;
+        }
+        for (int i = 1; i < hits.size(); i++) {
+            log.info("文件名硬规则多命中让位 userId={} projectId={} fileId={} → 先建规则项目(#{})已收录，跳过",
+                    input.userId(), hits.get(i).getProjectId(), input.fileId(), winner.getProjectId());
+        }
+        MemoryProjectEntry entry = new MemoryProjectEntry();
+        entry.setProjectId(winner.getProjectId());
+        entry.setAuthorUserId(input.userId());
+        entry.setSourceTurnId(null);
+        entry.setTagIds(input.tagIds() != null ? input.tagIds() : List.of());
+        entry.setL1Summary(input.l1());
+        entry.setL2Detail(input.l2());
+        entry.setConfidence(1.0);                              // 确定性「一定进」→ 置满置信
+        entry.setStatus(MemoryProjectEntry.STATUS_ACTIVE);     // 决策①：直接 ACTIVE 一定进
+        entry.setContentType(MemoryProjectEntry.CONTENT_TYPE_FILE);
+        entry.setFileId(input.fileId());
+        entry.setChatModel(null);                              // 短路不经 LLM 精判
+        entry.setCreatedBy(input.userId());
+        entry.setUpdatedBy(input.userId());
+        entryMapper.insert(entry);
+        log.info("文件名硬规则命中 userId={} projectId={} fileId={} filename={} → ACTIVE 一定进",
+                input.userId(), winner.getProjectId(), input.fileId(), filename);
     }
 
     /** v1 子串包含匹配（大小写不敏感）：文件名小写含任一模式（trim 后小写）即命中。 */

@@ -366,4 +366,48 @@ class MemoryRoutingServiceTest {
 
         verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
     }
+
+    // 5x #8：两项目规则同命中（存量重复漏网）→ 只收录「先建规则」项目，另一项目让位不双收
+    @Test
+    void route_filenameHardRule_multiHit_earliestRuleWins() {
+        // 候选集故意乱序（后建在前）——确定性须靠排序而非候选顺序
+        MemoryProjectRule later = ruleWithFilename(9L, 1L, List.of("课件"));
+        later.setCreatedAt(java.time.OffsetDateTime.now().minusDays(1));
+        MemoryProjectRule earlier = ruleWithFilename(10L, 2L, List.of("课件"));
+        earlier.setCreatedAt(java.time.OffsetDateTime.now().minusDays(10));
+        when(memberMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(activeMember(1L), activeMember(2L)));
+        when(toggleService.resolveGenEnabled(100L, 1L)).thenReturn(true);
+        when(toggleService.resolveGenEnabled(100L, 2L)).thenReturn(true);
+        when(ruleService.findRoutingCandidates(List.of(1L, 2L))).thenReturn(List.of(later, earlier));
+        when(anchorService.build(any(), any(), any(), anyString(), any())).thenReturn(null);
+        when(entryMapper.countFileEntry(2L, "f-abc.pdf")).thenReturn(0L);
+
+        service.route(fileInputNamed("XX课件.pdf"));
+
+        ArgumentCaptor<MemoryProjectEntry> captor = ArgumentCaptor.forClass(MemoryProjectEntry.class);
+        verify(entryMapper).insert(captor.capture());
+        assertEquals(2L, captor.getValue().getProjectId(), "先建规则（earlier, project 2）赢");
+    }
+
+    // 5x #8：赢家项目已有该文件条目（重传）→ 整体返回，输家项目不借机补收（一文件一项目）
+    @Test
+    void route_filenameHardRule_winnerCollected_loserDoesNotBackfill() {
+        MemoryProjectRule later = ruleWithFilename(9L, 1L, List.of("课件"));
+        later.setCreatedAt(java.time.OffsetDateTime.now().minusDays(1));
+        MemoryProjectRule earlier = ruleWithFilename(10L, 2L, List.of("课件"));
+        earlier.setCreatedAt(java.time.OffsetDateTime.now().minusDays(10));
+        when(memberMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(activeMember(1L), activeMember(2L)));
+        when(toggleService.resolveGenEnabled(100L, 1L)).thenReturn(true);
+        when(toggleService.resolveGenEnabled(100L, 2L)).thenReturn(true);
+        when(ruleService.findRoutingCandidates(List.of(1L, 2L))).thenReturn(List.of(later, earlier));
+        when(anchorService.build(any(), any(), any(), anyString(), any())).thenReturn(null);
+        when(entryMapper.countFileEntry(2L, "f-abc.pdf")).thenReturn(1L);
+
+        service.route(fileInputNamed("XX课件.pdf"));
+
+        verify(entryMapper, never()).insert(any(MemoryProjectEntry.class));
+        verify(entryMapper, never()).countFileEntry(org.mockito.ArgumentMatchers.eq(1L), any());
+    }
 }

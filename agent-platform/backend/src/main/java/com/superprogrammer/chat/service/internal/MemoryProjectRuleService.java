@@ -9,12 +9,17 @@ import com.superprogrammer.chat.mapper.MemoryProjectMemberMapper;
 import com.superprogrammer.chat.mapper.MemoryProjectRuleMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.project.entity.Project;
+import com.superprogrammer.project.mapper.ProjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * 记忆二期 P1 · 项目收录规则 service（FR-001）。
@@ -44,6 +49,7 @@ public class MemoryProjectRuleService {
     private final MemoryProjectRuleMapper ruleMapper;
     private final MemoryProjectMemberMapper memberMapper;
     private final MemoryTagAnchorService anchorService;
+    private final ProjectMapper projectMapper;
 
     /** 读取规则（成员可见；negative_examples 仅 owner/admin）。无规则返 null。 */
     public MemoryProjectRuleVO getRule(Long projectId, Long userId) {
@@ -64,6 +70,8 @@ public class MemoryProjectRuleService {
      */
     public MemoryProjectRuleVO saveRule(Long projectId, MemoryProjectRuleRequest req, Long operatorId) {
         validate(req);
+        // 5x #8：用户级查重先行（撞重 409 快失败，不白烧 anchor embed 成本）
+        checkFilenamePatternUniqueness(projectId, operatorId, req.getFilenamePatterns());
         MemoryProjectRule existing = findActiveRule(projectId);
 
         boolean enabled = req.getEnabled() == null || req.getEnabled();
@@ -226,6 +234,64 @@ public class MemoryProjectRuleService {
                         "文件名规则单条超长（≤" + MAX_FILENAME_PATTERN_LEN + "字）");
             }
         }
+    }
+
+    /**
+     * 5x #8：文件名硬规则用户级唯一——新 patterns 与操作人其他 ACTIVE 项目的规则逐条归一比对
+     * （trim+小写，与 MemoryRoutingService#matchesAnyPattern 匹配口径一致），撞重抛 409 并指明先占项目。
+     * 用户语义「用户+命名硬规则唯一」：查重域=操作人 ACTIVE 成员项目（规则只能写在 owner/admin 项目，
+     * 路由候选集同源）；跨用户不拦（互不可见）。应用层校验（规则×成员多对多，DB 唯一索引不可表达），
+     * 并发双写窗口由路由侧「多命中取先建规则项目」兜底（MemoryRoutingService#routeFilenameHardRule）。
+     */
+    private void checkFilenamePatternUniqueness(Long projectId, Long operatorId, List<String> newPatterns) {
+        if (newPatterns == null || newPatterns.isEmpty()) {
+            return;
+        }
+        Set<String> incoming = normalizePatterns(newPatterns);
+        if (incoming.isEmpty()) {
+            return;
+        }
+        List<Long> otherProjectIds = memberMapper.selectList(new LambdaQueryWrapper<MemoryProjectMember>()
+                        .select(MemoryProjectMember::getProjectId)
+                        .eq(MemoryProjectMember::getUserId, operatorId)
+                        .eq(MemoryProjectMember::getStatus, STATUS_ACTIVE))
+                .stream().map(MemoryProjectMember::getProjectId)
+                .filter(pid -> pid != null && !pid.equals(projectId)).distinct().toList();
+        if (otherProjectIds.isEmpty()) {
+            return;
+        }
+        for (MemoryProjectRule other : ruleMapper.selectList(new LambdaQueryWrapper<MemoryProjectRule>()
+                .in(MemoryProjectRule::getProjectId, otherProjectIds))) {
+            for (String p : other.getFilenamePatterns() != null ? other.getFilenamePatterns() : List.<String>of()) {
+                String norm = normalizePattern(p);
+                if (norm != null && incoming.contains(norm)) {
+                    Project proj = projectMapper.selectById(other.getProjectId());
+                    String projName = proj != null ? proj.getName() : ("#" + other.getProjectId());
+                    throw new BusinessException(ErrorCode.CONFLICT,
+                            "文件名硬规则「" + norm + "」已被项目「" + projName + "」收录，需先在该项目删除后再添加");
+                }
+            }
+        }
+    }
+
+    /** 归一 pattern：trim + 小写（与路由匹配同口径）；空返 null。 */
+    private static String normalizePattern(String p) {
+        if (p == null) {
+            return null;
+        }
+        String norm = p.trim().toLowerCase(Locale.ROOT);
+        return norm.isEmpty() ? null : norm;
+    }
+
+    private static Set<String> normalizePatterns(List<String> patterns) {
+        Set<String> out = new LinkedHashSet<>();
+        for (String p : patterns) {
+            String norm = normalizePattern(p);
+            if (norm != null) {
+                out.add(norm);
+            }
+        }
+        return out;
     }
 
     private List<String> trimExamples(List<String> examples) {
