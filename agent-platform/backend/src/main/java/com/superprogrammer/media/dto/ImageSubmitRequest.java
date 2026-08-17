@@ -44,4 +44,7 @@ public class ImageSubmitRequest {
     private Integer maxImages;
     /** 联网搜索（lite）。 */
     private Boolean webSearch;
+
+    /** 计划5 Step5：组池计费归属（null=个人钱包）；须为本人可见的项目组成员。 */
+    private Long projectGroupId;
 }

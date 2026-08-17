@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -65,6 +66,15 @@ class MediaGenTaskServiceTest {
     private BizMetrics bizMetrics;
     @Mock
     private com.superprogrammer.common.audit.AuditLogService auditLogService;
+    /** 计划5 Step5：组池预检/估价 mock（估价缺价路径走 catch 记 0，不触发 NPE）。 */
+    @Mock
+    private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
+    @Mock
+    private com.superprogrammer.projectgroup.service.ProjectGroupService projectGroupService;
+    @Mock
+    private com.superprogrammer.billing.service.PricingService pricingService;
+    @Mock
+    private com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -83,7 +93,8 @@ class MediaGenTaskServiceTest {
                 taskMapper, mediaModelService,
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
-                inflightGate, mediaInflightGate, bizMetrics, auditLogService);
+                inflightGate, mediaInflightGate, bizMetrics, auditLogService,
+                groupWalletService, projectGroupService, pricingService, pointsRatioService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -475,5 +486,90 @@ class MediaGenTaskServiceTest {
         verify(mediaInflightGate).release(USER_ID,
                 com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO);
         verify(taskMapper, never()).insert(any());
+    }
+
+    // ---------- 计划5 Step5：组池提交预检 + 估价快照 ----------
+
+    /** 估价桩：estimateVideoPoints 传 (tokens=null, output=null, seconds=5, 0, hasRef=false)。 */
+    private void stubEstimate(java.math.BigDecimal points) {
+        String kind = com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_VIDEO;
+        lenient().when(pricingService.computeCost(kind, 7L, SEEDANCE_2, null, null, 5, 0, false))
+                .thenReturn(new java.math.BigDecimal("0.5"));
+        lenient().when(pointsRatioService.toPoints(new java.math.BigDecimal("0.5"))).thenReturn(points);
+    }
+
+    @Test
+    void submit_withGroup_prechecksPoolAndStampsTask() {
+        // 选组提交：组池预检替代个人预检（requireAffordableGroup）；task 落 projectGroupId + estimatedCost
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+                .thenReturn(new java.math.BigDecimal("1000"));
+        stubEstimate(new java.math.BigDecimal("50"));
+
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, null, SEEDANCE_2, USER_ID, false, null, 5L);
+
+        verify(walletService, never()).requireAffordable(any());
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertEquals(5L, captor.getValue().getProjectGroupId());
+        assertEquals(0, captor.getValue().getEstimatedCost()
+                .compareTo(new java.math.BigDecimal("50")));
+    }
+
+    @Test
+    void submit_groupPoolInsufficient_rejected() {
+        // 组池余量 < 预估消耗 → 40201 拒，task 不建；并发闸配对释放（防自我锁死）
+        when(mediaInflightGate.acquire(USER_ID,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO))
+                .thenReturn(true);
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+                .thenReturn(new java.math.BigDecimal("10"));
+        stubEstimate(new java.math.BigDecimal("50"));
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false, null, 5L));
+
+        assertEquals(ErrorCode.INSUFFICIENT_POINTS.getCode(), e.getCode());
+        verify(taskMapper, never()).insert(any());
+        verify(mediaInflightGate).release(USER_ID,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO);
+    }
+
+    @Test
+    void submit_memberQuotaExceeded_rejected() {
+        // used(100)+预估(50) > 组长限额(120) → 400 拒；组池余量本身够（隔离两道预检）
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+                .thenReturn(new java.math.BigDecimal("1000"));
+        stubEstimate(new java.math.BigDecimal("50"));
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity member =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity();
+        member.setUsedPoints(new java.math.BigDecimal("100"));
+        member.setQuotaLimitPoints(new java.math.BigDecimal("120"));
+        when(projectGroupService.findMember(5L, USER_ID)).thenReturn(member);
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false, null, 5L));
+
+        assertTrue(e.getMessage().contains("成员积分限额"));
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submit_estimateMissingPrice_storesZeroAndProceeds() {
+        // TOKEN 模式无秒维度/价表缺价 → 估价记 0（保守容忍）：预检放行、task 照建、estimated_cost=0
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+                .thenReturn(new java.math.BigDecimal("10"));
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
+
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, null, SEEDANCE_2, USER_ID, false, null, 5L);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertEquals(0, captor.getValue().getEstimatedCost()
+                .compareTo(java.math.BigDecimal.ZERO));
     }
 }

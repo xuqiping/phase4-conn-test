@@ -70,4 +70,7 @@ public class MediaSubmitRequest {
     @Valid
     @Size(max = 12, message = "附件总数不能超过 12 个")
     private List<AttachmentRef> attachments;
+
+    /** 计划5 Step5：组池计费归属（null=个人钱包）；须为本人可见的项目组成员。 */
+    private Long projectGroupId;
 }

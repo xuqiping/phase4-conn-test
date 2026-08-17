@@ -73,7 +73,8 @@ public class MediaGenController {
                 request.getPrompt(), ratio, duration, resolution,
                 request.getWatermark(), request.getGenerateAudio(), taskType,
                 request.getRefFileId(), request.getAttachments(),
-                request.getModel(), getCurrentUserId(), isAdmin(), request.getFrameRole());
+                request.getModel(), getCurrentUserId(), isAdmin(), request.getFrameRole(),
+                request.getProjectGroupId());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }
 
@@ -100,7 +101,7 @@ public class MediaGenController {
                 request.getPrompt(), request.getRefFileIds(), request.getSize(), request.getOutputFormat(),
                 request.getWatermark(), request.getGuidanceScale(), request.getOptimizeMode(),
                 request.getSequential(), request.getMaxImages(), request.getWebSearch(),
-                request.getModel(), getCurrentUserId(), isAdmin());
+                request.getModel(), getCurrentUserId(), isAdmin(), request.getProjectGroupId());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }
 

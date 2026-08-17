@@ -69,6 +69,13 @@ public class MediaGenTaskService {
     private final BizMetrics bizMetrics;
     /** 审计：submit 编程式落库（关联键 targetId=taskId，问题修复 #8）。 */
     private final AuditLogService auditLogService;
+    /** 计划5 Step5：组池预检（成员身份+组池余额，估价值）。 */
+    private final com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
+    /** 计划5 Step5：成员限额余量预检（findMember 探针）。 */
+    private final com.superprogrammer.projectgroup.service.ProjectGroupService projectGroupService;
+    /** 计划5 Step5：提交时估价快照（estimated_cost，回收在途上限用）。 */
+    private final com.superprogrammer.billing.service.PricingService pricingService;
+    private final com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
 
     /**
      * 提交生成任务。
@@ -104,6 +111,16 @@ public class MediaGenTaskService {
                        Boolean watermark, Boolean generateAudio, String taskType,
                        String refFileId, List<AttachmentRef> attachments,
                        String model, Long userId, boolean admin, String frameRole) {
+        return submit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
+                refFileId, attachments, model, userId, admin, frameRole, null);
+    }
+
+    /** 计划5 Step5：+projectGroupId 组池计费版本（null=个人钱包，现状）。 */
+    public Long submit(String prompt, String ratio, Integer duration, String resolution,
+                       Boolean watermark, Boolean generateAudio, String taskType,
+                       String refFileId, List<AttachmentRef> attachments,
+                       String model, Long userId, boolean admin, String frameRole,
+                       Long projectGroupId) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频生成功能未开启");
         }
@@ -111,7 +128,10 @@ public class MediaGenTaskService {
         // 0) 余额预检（Chunk F 联动）：余额>0 才允许提交生成任务，≤0 拒（task 不建）。
         // userId=null（系统调用）/billing.enabled=false → requireAffordable 内部跳过（放行）。
         // 余额复用：返回值直接喂给闸门，省一次重复查库
-        java.math.BigDecimal balance = walletService.requireAffordable(userId);
+        // 计划5 Step5：带 gid → 组池预检（非成员 403/组池尽 40201），组池余额喂闸门（语义同个人）
+        java.math.BigDecimal balance = projectGroupId == null
+                ? walletService.requireAffordable(userId)
+                : groupWalletService.requireAffordableGroup(projectGroupId, userId);
         // L7：低余额用户超在途上限 → 42902（计数由 worker 终态 release 配对释放）；
         // 但 acquire 之后、task 落库之前的任何异常（provider 缺失/参数校验/DB 异常）都不会有 worker
         // 接手 → 此处配对释放，否则低余额用户一次失败提交即自我锁死至 TTL（30min）
@@ -121,7 +141,7 @@ public class MediaGenTaskService {
         try {
             mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_VIDEO);
             Long taskId = doSubmit(prompt, ratio, duration, resolution, watermark, generateAudio, taskType,
-                    refFileId, attachments, model, userId, admin, frameRole);
+                    refFileId, attachments, model, userId, admin, frameRole, projectGroupId, balance);
             // 指标：落库成功才计提交（acquire 失败/参数校验失败不计）
             bizMetrics.mediaSubmit(MediaGenTask.TYPE_TEXT2IMAGE.equals(taskType)
                     || MediaGenTask.TYPE_IMAGE2IMAGE.equals(taskType)
@@ -141,7 +161,8 @@ public class MediaGenTaskService {
     private Long doSubmit(String prompt, String ratio, Integer duration, String resolution,
                           Boolean watermark, Boolean generateAudio, String taskType,
                           String refFileId, List<AttachmentRef> attachments,
-                          String model, Long userId, boolean admin, String frameRole) {
+                          String model, Long userId, boolean admin, String frameRole,
+                          Long projectGroupId, java.math.BigDecimal poolBalance) {
 
         // 1) 解析 provider + model（指定 model 时跨 VIDEO provider 反查，未指定走旧默认路径）
         LlmProviderEntity provider;
@@ -216,6 +237,27 @@ public class MediaGenTaskService {
         task.setAttempt(0);
         // 问题修复 #6：盖戳提交者 IP（worker 终态审计取用，worker 无 MDC）
         task.setClientIp(MDC.get("clientIp"));
+        // 计划5 Step5：估价快照（V133 estimated_cost，积分口径；TOKEN 模式提交期无 token 维度/价表缺价记 0+WARN）
+        boolean hasRefVideo = attachments != null && attachments.stream()
+                .anyMatch(a -> a.getKind() != null && "video".equalsIgnoreCase(a.getKind().trim()));
+        java.math.BigDecimal estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
+                duration, hasRefVideo);
+        if (projectGroupId != null) {
+            // 组任务三重预检（估价值）：成员身份已在 submit 入口验；此处=组池余量 + 成员限额余量，不足即拒 task 不建
+            if (poolBalance != null && estimatedPoints.signum() > 0
+                    && poolBalance.compareTo(estimatedPoints) < 0) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
+                        "项目组积分不足（预估消耗 " + estimatedPoints + "），任务未提交");
+            }
+            var member = projectGroupService.findMember(projectGroupId, userId);
+            if (member != null && member.getQuotaLimitPoints() != null
+                    && member.getUsedPoints().add(estimatedPoints).compareTo(member.getQuotaLimitPoints()) > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "超出组长配置的成员积分限额（预估消耗 " + estimatedPoints + "），任务未提交");
+            }
+            task.setProjectGroupId(projectGroupId);
+        }
+        task.setEstimatedCost(estimatedPoints);
         taskMapper.insert(task);
 
         // 问题修复 #8：submit 编程式落审计，targetId=taskId（与 worker 终态行关联）
@@ -256,17 +298,30 @@ public class MediaGenTaskService {
                             Boolean watermark, Double guidanceScale, String optimizeMode,
                             String sequential, Integer maxImages, Boolean webSearch,
                             String model, Long userId, boolean admin) {
+        return submitImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale, optimizeMode,
+                sequential, maxImages, webSearch, model, userId, admin, null);
+    }
+
+    /** 计划5 Step5：+projectGroupId 组池计费版本（null=个人钱包，现状）。 */
+    public Long submitImage(String prompt, List<String> refFileIds, String size, String outputFormat,
+                            Boolean watermark, Double guidanceScale, String optimizeMode,
+                            String sequential, Integer maxImages, Boolean webSearch,
+                            String model, Long userId, boolean admin, Long projectGroupId) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "图片生成功能未开启");
         }
         // 余额预检（与视频同一咽喉）：≤0 拒；系统调用/billing 关则放行
-        walletService.requireAffordable(userId);
+        // 计划5 Step5：带 gid → 组池预检（非成员 403/组池尽 40201）
+        java.math.BigDecimal poolBalance = projectGroupId == null
+                ? walletService.requireAffordable(userId)
+                : groupWalletService.requireAffordableGroup(projectGroupId, userId);
         // C3：每用户生图并发上限（15x 落地，D5 默认 3 可调）→ 42904；落库前异常配对释放（同视频）
         boolean mediaHeld = false;
         try {
             mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_IMAGE);
             return doSubmitImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale,
-                    optimizeMode, sequential, maxImages, webSearch, model, userId, admin);
+                    optimizeMode, sequential, maxImages, webSearch, model, userId, admin,
+                    projectGroupId, poolBalance);
         } catch (RuntimeException e) {
             if (mediaHeld) {
                 mediaInflightGate.release(userId, MediaInflightGateService.KIND_IMAGE);
@@ -278,7 +333,8 @@ public class MediaGenTaskService {
     private Long doSubmitImage(String prompt, List<String> refFileIds, String size, String outputFormat,
                                Boolean watermark, Double guidanceScale, String optimizeMode,
                                String sequential, Integer maxImages, Boolean webSearch,
-                               String model, Long userId, boolean admin) {
+                               String model, Long userId, boolean admin,
+                               Long projectGroupId, java.math.BigDecimal poolBalance) {
 
         // 解析 IMAGE provider（指定 model 跨 IMAGE provider 反查；图片任务无默认 provider 回退）
         LlmProviderEntity provider = mediaModelService.resolveImageProviderByModel(model);
@@ -320,6 +376,24 @@ public class MediaGenTaskService {
         task.setAttempt(0);
         // 问题修复 #6：盖戳提交者 IP
         task.setClientIp(MDC.get("clientIp"));
+        // 计划5 Step5：估价快照（组图按 maxImages 估；价表缺价记 0+WARN）
+        java.math.BigDecimal estimatedPoints = estimateImagePoints(provider.getId(), model,
+                maxImages == null || maxImages <= 0 ? 1 : maxImages);
+        if (projectGroupId != null) {
+            if (poolBalance != null && estimatedPoints.signum() > 0
+                    && poolBalance.compareTo(estimatedPoints) < 0) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
+                        "项目组积分不足（预估消耗 " + estimatedPoints + "），任务未提交");
+            }
+            var member = projectGroupService.findMember(projectGroupId, userId);
+            if (member != null && member.getQuotaLimitPoints() != null
+                    && member.getUsedPoints().add(estimatedPoints).compareTo(member.getQuotaLimitPoints()) > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "超出组长配置的成员积分限额（预估消耗 " + estimatedPoints + "），任务未提交");
+            }
+            task.setProjectGroupId(projectGroupId);
+        }
+        task.setEstimatedCost(estimatedPoints);
         taskMapper.insert(task);
 
         // 问题修复 #8：submit 编程式落审计，targetId=taskId
@@ -609,6 +683,37 @@ public class MediaGenTaskService {
         if (mime != null && !mime.isBlank() && !mime.startsWith(kind + "/")) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "附件类型不符: 声明 " + kind + "，实际 " + mime + "（" + meta.getOriginalName() + "）");
+        }
+    }
+
+    /**
+     * 计划5 Step5：视频提交期估价（积分口径）。SECOND 模式按 duration 估；TOKEN 模式提交期无
+     * token 维度 / 价表缺价 → 记 0 + WARN（口径保守：预检/回收在途上限容忍 0，见 plan 坑表）。
+     */
+    private java.math.BigDecimal estimateVideoPoints(Long providerId, String model,
+                                                     Integer duration, boolean hasRefVideo) {
+        try {
+            java.math.BigDecimal yuan = pricingService.computeCost(
+                    com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_VIDEO,
+                    providerId, model, null, null,
+                    duration == null ? 0 : duration, 0, hasRefVideo);
+            return pointsRatioService.toPoints(yuan);
+        } catch (Exception e) {
+            log.warn("视频提交估价失败记0 model={} duration={} : {}", model, duration, e.getMessage());
+            return java.math.BigDecimal.ZERO;
+        }
+    }
+
+    /** 计划5 Step5：图片提交期估价（积分口径，按 maxImages 张数）；价表缺价记 0 + WARN。 */
+    private java.math.BigDecimal estimateImagePoints(Long providerId, String model, int imageCount) {
+        try {
+            java.math.BigDecimal yuan = pricingService.computeCost(
+                    com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
+                    providerId, model, null, null, null, imageCount, false);
+            return pointsRatioService.toPoints(yuan);
+        } catch (Exception e) {
+            log.warn("图片提交估价失败记0 model={} count={} : {}", model, imageCount, e.getMessage());
+            return java.math.BigDecimal.ZERO;
         }
     }
 

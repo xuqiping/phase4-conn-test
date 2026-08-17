@@ -252,13 +252,15 @@ public class MediaGenTaskWorker {
         // 计费扣减（返回实扣积分；null=未扣，disabled/系统调用/计费失败均吞不抛）
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
-                request.getDuration(), 0, usageStatus(flag), taskId, hasReference);
+                request.getDuration(), 0, usageStatus(flag), taskId, hasReference,
+                task.getProjectGroupId());
         boolean transitioned;
         try {
             transitioned = txService.markSucceeded(taskId, fileId, tokensCost, flag);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
-            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId);
+            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId,
+                    task.getProjectGroupId());
             throw e;
         }
         // 问题修复 #1 #7：视频生成成功落审计，带模型+实扣积分（关联键 targetId=taskId，与 submit 行对应）
@@ -316,13 +318,14 @@ public class MediaGenTaskWorker {
         // 按张计费扣减（返回实扣积分；null=未扣/系统调用/计费失败均吞不抛）
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_IMAGE, null, 0, imageCount,
-                LlmUsageLogEntity.STATUS_SUCCESS, taskId);
+                LlmUsageLogEntity.STATUS_SUCCESS, taskId, false, task.getProjectGroupId());
         boolean transitioned;
         try {
             transitioned = txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
-            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId);
+            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId,
+                    task.getProjectGroupId());
             throw e;
         }
         // 问题修复 #1 #7：图片生成成功落审计，带模型+实扣积分+张数

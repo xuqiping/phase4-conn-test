@@ -35,6 +35,10 @@ public class MediaBillingService {
     private final PricingService pricingService;
     private final PointsRatioService ratioService;
     private final PointsWalletService walletService;
+    /** 计划5 Step5：组池结算分支（chargeGroup/refundGroup/backstop）。 */
+    private final com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
+    /** 计划5 Step5：BACKSTOP 兜底取组长（组行 owner）。 */
+    private final com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
     private final UsageCollector usageCollector;
 
     /**
@@ -78,6 +82,20 @@ public class MediaBillingService {
     public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
                                   Integer tokensInput, Integer videoSeconds, Integer imageCount,
                                   String status, Long refId, boolean hasReference) {
+        return chargeMedia(userId, providerId, model, kind, tokensInput, videoSeconds, imageCount,
+                status, refId, hasReference, null);
+    }
+
+    /**
+     * 计划5 Step5：+projectGroupId 组池结算版本。gid 非空且 uid 非空 →
+     * {@code chargeGroup}（幂等键=media-charge-{taskId}，429 退避重投不双扣）；残余竞态
+     * （提交预检已过、结算时组池尽/超限额）→ <b>BACKSTOP 兜底</b>：成本已真实发生（视频已生成），
+     * 差额扣组长个人 + 组流水 BACKSTOP（不动组池、不计 used，V133 对账口径）——与「记 FAILED 让
+     * 平台亏钱」二选一，媒体语义取兜底；组长个人也不足才落 FAILED usage。gid 空 → 个人 charge 现状。
+     */
+    public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
+                                  Integer tokensInput, Integer videoSeconds, Integer imageCount,
+                                  String status, Long refId, boolean hasReference, Long projectGroupId) {
         if (!walletService.isEnabled()) {
             return null;
         }
@@ -85,8 +103,20 @@ public class MediaBillingService {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
                     tokensInput, null, videoSeconds, imageCount, hasReference);
             BigDecimal points = ratioService.toPoints(yuan);
-            // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
-            walletService.charge(userId, points, kind, refId, model);
+            if (projectGroupId != null && userId != null && points != null && points.signum() > 0) {
+                try {
+                    groupWalletService.chargeGroup(projectGroupId, userId, points, kind,
+                            String.valueOf(refId), "media-charge-" + refId);
+                } catch (BusinessException be) {
+                    // BACKSTOP：组长兜底全差额（be=组池尽/超限额残余竞态）；再失败（组长也尽）抛给外层 FAILED
+                    backstopMedia(projectGroupId, points, kind, refId);
+                    log.warn("媒体组结算转兜底 groupId={} userId={} points={} ref={} : {}",
+                            projectGroupId, userId, points, refId, be.getMessage());
+                }
+            } else {
+                // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
+                walletService.charge(userId, points, kind, refId, model);
+            }
             // 11x P3-C9：扣费成功发媒体滥用事件（worker 线程无 request → ip=null，按用户维度计数）
             if (securityEventPublisher != null && userId != null && points != null && points.signum() > 0) {
                 securityEventPublisher.publish(
@@ -94,8 +124,9 @@ public class MediaBillingService {
                         userId, java.util.Map.of("estimatedCostFen", points.longValue(), "taskCount", 1));
             }
             // 8x Chunk7：taskId=refId（任务 id）落 usage 行，媒体审计两行 targetId=taskId 与此对齐做 drill-down
+            // 计划5 Step5：gid 落 llm_usage_logs.project_group_id（账单/项目推进唯一事实源；含 BACKSTOP 行）
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, yuan, points, status, null, refId);
+                    tokensInput, null, yuan, points, status, null, refId, null, projectGroupId);
             return points;
         } catch (BusinessException e) {
             // 计费自身失败（价表缺/余额在生成期间被耗尽等）：视频已生成不可逆，记 FAILED usage 让 admin 可见缺口，不抛
@@ -124,13 +155,42 @@ public class MediaBillingService {
      * <p>仅当 {@link #chargeMedia} 返回了正数积分（确认扣过）才调；失败路径本没扣不调。
      */
     public void refundMedia(Long userId, BigDecimal chargedPoints, String kind, Long refId) {
+        refundMedia(userId, chargedPoints, kind, refId, null);
+    }
+
+    /**
+     * 计划5 Step5：+projectGroupId 组池退款版本——{@code refundGroup}（组池+used 回减+REFUND 流水，
+     * 幂等键=media-refund-{taskId}）；gid 空 → 个人 refund 现状。吞异常。
+     */
+    public void refundMedia(Long userId, BigDecimal chargedPoints, String kind, Long refId,
+                            Long projectGroupId) {
         if (chargedPoints == null || chargedPoints.signum() <= 0) {
             return;
         }
         try {
-            walletService.refund(userId, chargedPoints, kind, refId, "媒体任务落库失败退款");
+            if (projectGroupId != null && userId != null) {
+                groupWalletService.refundGroup(projectGroupId, userId, chargedPoints, kind,
+                        String.valueOf(refId), "media-refund-" + refId);
+            } else {
+                walletService.refund(userId, chargedPoints, kind, refId, "媒体任务落库失败退款");
+            }
         } catch (Exception e) {
-            log.warn("媒体退款异常(吞) userId={} kind={} refId={} : {}", userId, kind, refId, e.toString());
+            log.warn("媒体退款异常(吞) userId={} kind={} refId={} gid={} : {}",
+                    userId, kind, refId, projectGroupId, e.toString());
         }
+    }
+
+    /**
+     * 计划5 Step5：媒体结算兜底——差额扣组长个人（组行 owner）。组已删/组长钱包不足由
+     * {@code backstop} 自身抛 BusinessException → 外层记 FAILED usage（平台可见缺口）。
+     */
+    private void backstopMedia(Long groupId, BigDecimal points, String kind, Long refId) {
+        var group = groupMapper.selectById(groupId);
+        if (group == null) {
+            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
+                    "项目组已删除，无法兜底 groupId=" + groupId);
+        }
+        groupWalletService.backstop(groupId, group.getOwnerUserId(), false, points,
+                kind, String.valueOf(refId));
     }
 }

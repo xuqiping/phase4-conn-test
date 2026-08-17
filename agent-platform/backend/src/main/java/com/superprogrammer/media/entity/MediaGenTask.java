@@ -72,4 +72,13 @@ public class MediaGenTask {
     private OffsetDateTime lockedUntil;
     /** 提交者 IP（submit 时从 MDC 盖戳，worker 终态审计取用，问题修复 #6）。 */
     private String clientIp;
+    /**
+     * 计划5 Step5（V133）：项目组归属（null=个人）；worker 结算按此分支组池/个人扣费。
+     */
+    private Long projectGroupId;
+    /**
+     * 计划5 Step5（V133）：提交时估价快照（积分口径；价表缺价记 0+WARN）。
+     * 回收在途上限 = Σ(status∈PENDING/RUNNING) 的此列（仅组任务计入）。
+     */
+    private BigDecimal estimatedCost;
 }
