@@ -1,7 +1,7 @@
 # 记忆系统二期 · 功能 README
 
-> 受众 B+C（用户地图 + 技术说明）。状态：**代码全落，5x 三轮人工测试问题已修，剩人工复测**。
-> 逐轮实现记录见 [开发进度1~6.md](./)，plan 索引见 [docs/plans/](../../docs/plans/)（`记忆二期*` / `5x记忆二期*`）。
+> 受众 B+C（用户地图 + 技术说明）。状态：**代码全落，5x 三轮+四轮人工测试问题已修（V129/V130），剩人工复测**。
+> 逐轮实现记录见 [开发进度1~9.md](./)，plan 索引见 [docs/plans/](../../docs/plans/)（`记忆二期*` / `5x记忆二期*`）。
 
 ## 用户地图
 
@@ -25,19 +25,21 @@
 7. **收录确认式回复**：附件命中硬规则→秒回模板确认+「需要回答/不用了」点选，确认后才全量回答（V127 开关热关）。
 8. **授权**：项目↔项目链（非对称撤销）、项目↔个人只读 grant、公共池；删除项目双向清链。
 9. **gen 矩阵**：owner 项目级 AND 会员覆写；关=仅 raw。
+10. **四轮（V129/V130）**：流式停止（abort 落库保留+不重答防双计费）+SSE 1200s；气泡思考/回答分别复制；**文件卡向量门控**（距离>0.5 零卡片宁缺勿噪，热调）；**附件定向召回**（本附件 top-2 块+置顶卡，ragOn=false 不豁免）；文件记忆「收录于」徽标；标签**重新归类**（只增不删+手动重总结）；面板九页签两行+文件记忆提序第 3。
 
 ## 技术说明（一段）
 
-Spring Boot `chat` 包内实现（无独立 sidecar）。写入 fire-and-forget 走 `memoryTaskExecutor`；召回 `MemoryRecallPipeline` 串编+逐步降级（目标 <2s）；确认式回复前置确定性快检（规则 TTL 15s 缓存，异常 fail-open）；表 15+ 张走 Flyway V47–V127（二期 V71 起撞号改号）；LLM 兜底 model 走 `memory.judge.model`（请求域透传对话 model 优先）。
+Spring Boot `chat` 包内实现（无独立 sidecar）。写入 fire-and-forget 走 `memoryTaskExecutor`；召回 `MemoryRecallPipeline` 串编+逐步降级（目标 <2s）；确认式回复前置确定性快检（规则 TTL 15s 缓存，异常 fail-open）；四轮加文件卡向量门控+附件定向段（embedQuery 一次三用）；表 15+ 张走 Flyway V47–V130（二期 V71 起撞号改号）；LLM 兜底 model 走 `memory.judge.model`（请求域透传对话 model 优先）。
 
 ## 运维要点
 
-- 开关：`rag.memory.inclusion-confirm.enabled`（确认式回复热关回旧行为）、`rag.memory.gen.personal.enabled`、`memory.routing.*`、`memory.judge.model`。
-- 观测：召回/路由/确认各步 info 日志带 traceId；确认命中不记全文。
-- 回滚：V125/V126/V127 纯加列+回填+seed，回滚=DROP COLUMN；确认式回复关开关即回退。
-- 遗留：feature-map/user-ops 两文档超 5000 token 硬限未拆分（历史即超，本轮增量回写）；#6 自动总结三缺口已调查拍板缓办。
+- 开关：`rag.memory.inclusion-confirm.enabled`（确认式回复热关回旧行为）、`rag.memory.attachment-recall.enabled`（四轮附件定向段热关）、`memory.recall.file-card-max-distance`（四轮门控阈值热调 0~2）、`rag.memory.gen.personal.enabled`、`memory.routing.*`、`memory.judge.model`。
+- 观测：召回/路由/确认各步 info 日志带 traceId；确认命中不记全文；取消记 WARN 含 sessionId/traceId；reclassify 批次 info 记范围/命中数不记内容。
+- 回滚：V125/V126/V127/V129/V130 纯加列+回填+seed，回滚=DROP COLUMN/删行；确认式回复/附件召回关开关即回退。
+- 遗留：feature-map/user-ops 两文档超 5000 token 硬限未拆分（历史即超，四轮增量回写）；#6 自动总结三缺口已调查拍板缓办。
 
 ## 人工复测入口
 
 - [收录命中确认式回复测试方案](../../docs/测试方案/收录命中确认式回复测试方案.md)（5 联动+5 边界）。
-- 5x 问题单 #4/#7/#8 待复测：[人工测试问题/5x. 记忆二期问题.md](../../人工测试问题/5x. 记忆二期问题.md)。
+- [记忆5x第四轮问题修复测试方案](../../docs/测试方案/记忆5x第四轮问题修复测试方案.md)（U-1~U-7 联动+反向/边界）。
+- 5x 问题单 #4/#7/#8+四轮六项待复测：[人工测试问题/5x. 记忆二期问题.md](../../人工测试问题/5x. 记忆二期问题.md)。
