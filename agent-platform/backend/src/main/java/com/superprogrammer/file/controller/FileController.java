@@ -9,6 +9,7 @@ import com.superprogrammer.file.service.FileSecurityPolicy;
 import com.superprogrammer.file.service.FileStorageService;
 import com.superprogrammer.file.service.StoredFile;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.CacheControl;
@@ -28,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/files")
 @RequiredArgsConstructor
@@ -87,7 +89,11 @@ public class FileController {
         StoredFileEntity meta = fileStorageService.findMeta(fileId);
         if (meta != null) {
             // 对齐 MediaGenController.serveFile：ETag 由 fileId+size 组成
-            builder = builder.eTag("\"" + fileId + "-" + (meta.getSize() != null ? meta.getSize() : 0) + "\"");
+            String etag = "\"" + fileId + "-" + (meta.getSize() != null ? meta.getSize() : 0) + "\"";
+            // 运维可观测性：排查「图片不更新」工单看此行——etag 变了说明 fileId/size 变了（缓存应已失效），
+            // etag 没变而用户看到旧图则是浏览器侧问题；304 与否由 Spring 在写响应时判定
+            log.debug("file preview served fileId={} etag={}", fileId, etag);
+            builder = builder.eTag(etag);
         }
         return builder.body(resource);
     }
