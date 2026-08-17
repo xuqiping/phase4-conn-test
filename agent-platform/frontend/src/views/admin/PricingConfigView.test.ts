@@ -5,10 +5,12 @@ import PricingConfigView from './PricingConfigView.vue'
 import { billingApi } from '@/api/billing'
 
 const messageMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
+const dialogMock = { info: vi.fn(), warning: vi.fn(), success: vi.fn(), error: vi.fn(), create: vi.fn() }
 
 vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
-  return { ...actual, useMessage: () => messageMock }
+  // mount 无 NDialogProvider，useDialog() 会抛 no provider —— 与 VideoGenView.test 同款 harness 修复
+  return { ...actual, useMessage: () => messageMock, useDialog: () => dialogMock }
 })
 
 vi.mock('@/stores/auth', () => ({
