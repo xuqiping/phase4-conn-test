@@ -110,8 +110,15 @@ const columns: DataTableColumns<KnowledgeBase> = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '名称', key: 'name', ellipsis: { tooltip: true } },
   {
-    title: '可见性', key: 'visibility', width: 90,
-    render: r => h(NTag, { size: 'small', bordered: false }, () => visibilityLabel[r.visibility] || r.visibility)
+    title: '可见性', key: 'visibility', width: 130,
+    render: r => [
+      h(NTag, { size: 'small', bordered: false }, () => visibilityLabel[r.visibility] || r.visibility),
+      // 14x#3：保密库锁标（owner/admin 视角=状态提示；成员视角=解释为何原件/调试不可用）
+      r.confidential && h(NTag, {
+        size: 'small', bordered: false, type: 'warning', round: true,
+        title: '保密库：成员仅可经问答召回内容，原件/切片/检索调试均受限（库创建者与管理员不受限）'
+      }, () => '🔒 保密')
+    ].filter(Boolean)
   },
   { title: 'Embedding', key: 'embeddingModel', ellipsis: { tooltip: true }, render: r => r.embeddingModel || '-' },
   { title: '摘要策略', key: 'summaryStrategy', width: 130, render: r => r.summaryStrategy || '-' },

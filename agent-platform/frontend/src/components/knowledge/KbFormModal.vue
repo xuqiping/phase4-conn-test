@@ -21,6 +21,15 @@
         <!-- 14x#1：per-KB RAG 问答模型（事实提炼+答案合成）；空=跟随全局默认 -->
         <n-select v-model:value="form.answerModel" :options="answerOptions" placeholder="跟随全局默认" />
       </n-form-item>
+      <!-- 14x#3：库级保密开关——成员仅可经问答召回内容；PUBLIC 库禁开（服务端互斥校验，前端同步禁用） -->
+      <n-form-item label="保密库">
+        <div class="kb-form__confidential">
+          <n-switch v-model:value="form.confidential" :disabled="form.visibility === 'PUBLIC'" />
+          <span class="kb-form__confidential-hint">
+            {{ form.visibility === 'PUBLIC' ? '公开库不支持保密' : '开启后成员只能通过 RAG 问答获取内容，文档原件、切片原文与检索调试均不可见（库创建者与管理员不受限）' }}
+          </span>
+        </div>
+      </n-form-item>
       <!-- 14x#1（L4）：换 embedding 且库内已有文档 → 重建索引强提示横幅，读后手动关闭 -->
       <n-alert v-if="rebuildWarning" type="warning" :show-icon="true" class="kb-form__rebuild-alert">
         {{ rebuildWarning }}
@@ -43,7 +52,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { NAlert, NModal, NForm, NFormItem, NInput, NSelect, NButton, useMessage } from 'naive-ui'
+import { NAlert, NModal, NForm, NFormItem, NInput, NSelect, NButton, NSwitch, useMessage } from 'naive-ui'
 import type { FormInst, FormRules, SelectOption } from 'naive-ui'
 import { knowledgeApi, type KnowledgeBase, type KnowledgeBaseRequest, type RankingConfigUpdate, type RankingMode } from '@/api/knowledge'
 import { llmApi } from '@/api/llm'
@@ -92,7 +101,8 @@ const form = ref<KnowledgeBaseRequest>({
   summaryStrategy: 'PER_SECTION',
   embeddingModel: '',
   rerankModel: '',
-  answerModel: ''
+  answerModel: '',
+  confidential: false
 })
 
 const rules: FormRules = {
@@ -110,7 +120,8 @@ watch(visible, async (val) => {
       summaryStrategy: props.editData.summaryStrategy || 'PER_SECTION',
       embeddingModel: props.editData.embeddingModel || '',
       rerankModel: props.editData.rerankModel || '',
-      answerModel: props.editData.answerModel || ''
+      answerModel: props.editData.answerModel || '',
+      confidential: !!props.editData.confidential
     }
     try {
       const cfg = (await knowledgeApi.getRankingConfig(props.editData.id)).data.data
@@ -124,7 +135,8 @@ watch(visible, async (val) => {
       summaryStrategy: 'PER_SECTION',
       embeddingModel: '',
       rerankModel: '',
-      answerModel: ''
+      answerModel: '',
+      confidential: false
     }
   }
   await Promise.all([loadRankingModels(ranking.value.rankingMode), loadModelOptions()])
@@ -169,7 +181,8 @@ async function handleSubmit() {
       summaryStrategy: form.value.summaryStrategy,
       embeddingModel: form.value.embeddingModel || undefined,
       rerankModel: form.value.rerankModel || undefined,
-      answerModel: form.value.answerModel || undefined
+      answerModel: form.value.answerModel || undefined,
+      confidential: form.value.confidential ?? false
     }
     let kbId: number
     if (isEdit.value && props.editData) {
@@ -197,3 +210,19 @@ async function handleSubmit() {
   }
 }
 </script>
+
+<style scoped lang="scss">
+/* 14x#3：保密开关行——开关与说明文案并排，文案弱化 */
+.kb-form__confidential {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+
+  &-hint {
+    flex: 1;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+}
+</style>

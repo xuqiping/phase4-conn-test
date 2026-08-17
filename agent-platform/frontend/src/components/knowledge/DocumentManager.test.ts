@@ -4,8 +4,9 @@ import { createPinia, setActivePinia } from 'pinia'
 import DocumentManager from './DocumentManager.vue'
 import { knowledgeApi } from '@/api/knowledge'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useAuthStore } from '@/stores/auth'
 import type { AxiosResponse } from 'axios'
-import type { KnowledgeDocument } from '@/api/knowledge'
+import type { KnowledgeDocument, KnowledgeBase } from '@/api/knowledge'
 
 const messageMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 vi.mock('naive-ui', async (importOriginal) => {
@@ -122,5 +123,60 @@ describe('DocumentManager · 14x#2 per-KB 按钮显隐', () => {
     mgr2.openVersions(mkDoc(1))
     await flushPromises()
     expect(document.body.querySelector('.doc-manager__version-upload')).not.toBeNull()
+  })
+})
+
+describe('DocumentManager · 14x#3 保密库原件入口隐藏', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  function mkKb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
+    return {
+      id: 1, name: 'sec', description: null, visibility: 'TEAM',
+      embeddingModel: 'emb', rerankModel: null, answerModel: null, confidential: true,
+      summaryStrategy: 'PER_SECTION', status: 'ACTIVE', createdBy: 99,
+      createdAt: '2026-08-18T00:00:00Z', canManage: false, canWrite: false, canRead: true,
+      ...over
+    } as KnowledgeBase
+  }
+
+  async function mountConfidential() {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useKnowledgeStore()
+    const auth = useAuthStore()
+    store.bases = [mkKb()]
+    ;(auth as unknown as { userInfo: { id: number, roles: string[] } }).userInfo = { id: 7, roles: ['user'] }
+    vi.mocked(knowledgeApi.listDocuments).mockResolvedValue(response([mkDoc(1, { docType: 'FILE' })]) as never)
+    vi.mocked(knowledgeApi.listDocumentNodes).mockResolvedValue(response([]) as never)
+    await store.loadDocuments(1)
+    const wrapper = mount(DocumentManager, {
+      props: { kbId: 1, canWrite: false },
+      global: { plugins: [pinia] }
+    })
+    await flushPromises()
+    return { wrapper, auth }
+  }
+
+  it('保密库成员：原件入口以保密提示替代（无下载按钮/缩略图）', async () => {
+    const { wrapper } = await mountConfidential()
+    const mgr = wrapper.vm as unknown as {
+      renderAsset: (d: KnowledgeDocument) => { children: unknown }
+    }
+    const vnode = mgr.renderAsset(mkDoc(1, { docType: 'FILE' }))
+    expect(String(vnode.children)).toContain('保密库')
+    expect(String(vnode.children)).not.toContain('下载原件')
+  })
+
+  it('owner 直通：仍渲染下载原件入口', async () => {
+    const { wrapper, auth } = await mountConfidential()
+    ;(auth as unknown as { userInfo: { id: number, roles: string[] } }).userInfo = { id: 99, roles: ['user'] }
+    const mgr = wrapper.vm as unknown as {
+      renderAsset: (d: KnowledgeDocument) => { children: unknown }
+    }
+    const vnode = mgr.renderAsset(mkDoc(1, { docType: 'FILE' }))
+    expect(String(vnode.children)).not.toContain('保密库')
   })
 })

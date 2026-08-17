@@ -80,17 +80,17 @@
             :title="c.url"
           >🌐 {{ c.title || c.url }}</a>
           <span v-else class="message-bubble__citation-title">{{ c.title || c.originalName || `文档 ${c.documentId}` }}</span>
-          <!-- IMAGE：内联缩略图 -->
+          <!-- IMAGE：内联缩略图（14x#3：保密库引用不回显原件入口） -->
           <img
-            v-if="!c.url && c.docType === 'IMAGE' && c.fileRef && c.documentId"
+            v-if="!c.url && !c.confidential && c.docType === 'IMAGE' && c.fileRef && c.documentId"
             class="message-bubble__citation-thumb"
             :src="knowledgeApi.documentAssetUrl(c.documentId)"
             :alt="c.originalName || '图片引用'"
             loading="lazy"
           />
-          <!-- FILE：下载 chip -->
+          <!-- FILE：下载 chip（保密库引用隐藏，后端 asset 403 兜底） -->
           <a
-            v-else-if="!c.url && c.docType === 'FILE' && c.fileRef && c.documentId"
+            v-else-if="!c.url && !c.confidential && c.docType === 'FILE' && c.fileRef && c.documentId"
             class="message-bubble__citation-download"
             :href="knowledgeApi.documentAssetUrl(c.documentId)"
             :download="c.originalName || ''"
@@ -174,6 +174,8 @@ interface Citation {
   url?: string
   /** 联网搜索摘要副标题。 */
   snippet?: string
+  /** 14x#3：引用来自保密库且当前用户非 owner/admin → 隐藏缩略图/下载入口（后端 asset 403 兜底）。 */
+  confidential?: boolean
 }
 const citations = computed<Citation[]>(() => {
   if (!props.message.metadata) return []

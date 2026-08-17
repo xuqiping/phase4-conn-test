@@ -61,6 +61,9 @@ public class RagRetrieveVO {
         private String url;
         /** 联网搜索来源摘要（snippet），web citation 卡片副标题用。KB 引用为 null。 */
         private String snippet;
+        /** 14x#3：引用来自保密库且请求者非 owner/admin → 前端隐藏缩略图/下载入口（asset 403 兜底）。
+         *  答案缓存命中回放的旧条目无此标志= false，隐藏仅是 UX、强制在后端 /asset。 */
+        private boolean confidential;
         private String page;
         private String article;
         private String sheet;

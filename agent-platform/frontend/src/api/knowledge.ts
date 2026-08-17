@@ -26,6 +26,8 @@ export interface KnowledgeBase {
   answerModel: string | null
   /** 14x#1（L4）：换 embedding 且已有文档时的重建索引强提示，正常 null */
   warning?: string | null
+  /** 14x#3：库级保密开关——成员仅可经问答召回，原件/切片/调试全收紧（owner/admin 直通） */
+  confidential: boolean
   summaryStrategy: string | null  // PER_SECTION / BATCH / HYBRID
   status: string
   createdBy: number | null
@@ -45,6 +47,8 @@ export interface KnowledgeBaseRequest {
   rerankModel?: string
   /** 14x#1：per-KB 问答模型，空=跟随全局默认（服务端校验 active CHAT 白名单） */
   answerModel?: string
+  /** 14x#3：保密开关；undefined=不改既有开关（PUBLIC 库禁开，服务端互斥校验） */
+  confidential?: boolean
   summaryStrategy?: string
 }
 
@@ -209,6 +213,8 @@ export interface RagCitation {
   sheet?: string | null
   cellRange?: string | null
   bbox?: string | null
+  /** 14x#3：引用来自保密库且当前用户非 owner/admin → 隐藏缩略图/下载入口（后端 asset 403 兜底） */
+  confidential?: boolean
 }
 
 export interface RagRecallHit {

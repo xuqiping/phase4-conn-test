@@ -122,6 +122,11 @@ const authStore = useAuthStore()
 
 const docs = computed(() => store.documents)
 const loading = computed(() => store.loadingDocs)
+/** 14x#3：当前库对本人是否保密受限（保密 && 非 owner/admin）→ 隐藏原件缩略图/下载入口 */
+const assetRestricted = computed(() => {
+  const kb = store.bases.find(b => b.id === props.kbId)
+  return !!kb?.confidential && kb.createdBy !== authStore.userInfo?.id && !authStore.isAdmin
+})
 const uploading = ref(false)
 const versionModalShow = ref(false)
 const versionLoading = ref(false)
@@ -201,8 +206,12 @@ function renderDocNodes(doc: KnowledgeDocument) {
   )
 }
 
-/** IMAGE/FILE 原件回显：图片显缩略图，文件显下载按钮（asset URL 经 KB 读权限，跨用户可取）。 */
+/** IMAGE/FILE 原件回显：图片显缩略图，文件显下载按钮（asset URL 经 KB 读权限，跨用户可取）。
+ *  14x#3：保密库成员（非 owner/admin）不渲染原件入口，以提示文案替代（asset 403 兜底）。 */
 function renderAsset(doc: KnowledgeDocument) {
+  if (assetRestricted.value) {
+    return h('p', { class: 'doc-manager__node-empty' }, '🔒 保密库：原件仅可经问答召回，如需全文请联系库管理员')
+  }
   const url = knowledgeApi.documentAssetUrl(doc.id)
   const name = doc.originalName || doc.title || String(doc.id)
   if (doc.docType === 'IMAGE') {

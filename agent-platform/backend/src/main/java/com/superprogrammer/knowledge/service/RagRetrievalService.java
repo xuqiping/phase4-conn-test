@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -436,6 +437,8 @@ public class RagRetrievalService {
 
             // step1 可见集上提（原在 per-kb 循环内）：canRead + step1VisibleSet 一次算清，循环复用 vs
             List<KbScopeCtx> validScopes = new ArrayList<>();
+            // 14x#3：per-KB 保密受限标记（请求者视角），gather 循环据此登记受限节点 → citation 透传前端隐藏下载入口
+            Map<Long, Boolean> kbRestricted = new HashMap<>();
             for (Long kbId : effectiveKbs) {
                 KnowledgeBase kb = knowledgeBaseService.ensure(kbId);
                 if (!knowledgeBaseService.canRead(kb, userId, admin)) {
@@ -445,6 +448,7 @@ public class RagRetrievalService {
                 if (!vs.allDocs && vs.docIds.isEmpty()) {
                     continue;
                 }
+                kbRestricted.put(kbId, KnowledgeConfidentialGuard.isRestricted(kb, userId, admin));
                 validScopes.add(new KbScopeCtx(kbId, vs));
             }
             AnswerCacheService.CacheProtocol cacheProtocol = answerCacheProps.isEnabled() && !validScopes.isEmpty()
@@ -479,6 +483,7 @@ public class RagRetrievalService {
             List<RecallHit> allL0 = new ArrayList<>();
             List<L1DocHit> allL1 = new ArrayList<>();
             List<L2Candidate> allPool = new ArrayList<>();
+            Set<Long> confidentialNodes = new HashSet<>();   // 14x#3：受限 KB 的候选节点登记（citation 标志用）
             boolean[] bm25Fallback = {false};
 
             // per-kb steps3/5/6(gather)（step1 已上提，复用 vs）
@@ -501,6 +506,10 @@ public class RagRetrievalService {
                 if (poolK.size() > ragConfig.getMaxRerankPairs()) {
                     throw new IllegalStateException("B3 违规(per-kb): pool=" + poolK.size()
                             + " > maxRerankPairs=" + ragConfig.getMaxRerankPairs());
+                }
+                // 14x#3：受限库（保密+非 owner/admin）的全部候选节点记名；topK ⊆ allPool，标志不会漏
+                if (Boolean.TRUE.equals(kbRestricted.get(kbId))) {
+                    poolK.forEach(cand -> confidentialNodes.add(cand.nodeId()));
                 }
                 allPool.addAll(poolK);
             }
@@ -550,6 +559,7 @@ public class RagRetrievalService {
                             .title(e.title()).nodeId(e.nodeId())
                             .docType(e.docType()).fileRef(e.fileRef())
                             .mime(e.mime()).originalName(e.originalName())
+                            .confidential(confidentialNodes.contains(e.nodeId()))
                             .page(e.locator().page()).article(e.locator().article())
                             .sheet(e.locator().sheet()).cellRange(e.locator().cellRange())
                             .bbox(e.locator().bbox()).build())
@@ -1553,6 +1563,7 @@ public class RagRetrievalService {
                 .index(r.getIndex()).documentId(r.getDocumentId())
                 .title(r.getTitle()).nodeId(r.getNodeId())
                 .docType(r.getDocType()).fileRef(r.getFileRef()).mime(r.getMime()).originalName(r.getOriginalName())
+                .confidential(r.isConfidential())
                 .build()).toList();
     }
 
@@ -1565,6 +1576,7 @@ public class RagRetrievalService {
                 .index(c.getIndex()).documentId(c.getDocumentId())
                 .title(c.getTitle()).nodeId(c.getNodeId())
                 .docType(c.getDocType()).fileRef(c.getFileRef()).mime(c.getMime()).originalName(c.getOriginalName())
+                .confidential(c.isConfidential())
                 .build()).toList();
     }
 }

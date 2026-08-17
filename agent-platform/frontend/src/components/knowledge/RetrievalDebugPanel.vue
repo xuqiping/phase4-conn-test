@@ -117,6 +117,7 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useAuthStore } from '@/stores/auth'
 import {
   knowledgeApi,
   type RagRetrieveVO,
@@ -129,6 +130,7 @@ import {
 import { systemApi } from '@/api/system'
 
 const store = useKnowledgeStore()
+const authStore = useAuthStore()
 const message = useMessage()
 
 const form = ref({
@@ -156,8 +158,14 @@ onMounted(async () => {
   }
 })
 
+/** 14x#3：保密库对非 owner/admin 成员禁选（检索调试整接口 403，灰显+原因提示；问答不受限） */
 const kbOptions = computed(() =>
-  store.bases.filter(b => b.canRead).map(b => ({ label: b.name, value: b.id }))
+  store.bases.filter(b => b.canRead).map(b => {
+    const restricted = !!b.confidential && b.createdBy !== authStore.userInfo?.id && !authStore.isAdmin
+    return restricted
+      ? { label: `${b.name}（保密库，仅问答）`, value: b.id, disabled: true }
+      : { label: b.name, value: b.id }
+  })
 )
 const canRun = computed(() => !!form.value.kbId && form.value.query.trim().length > 0)
 

@@ -50,5 +50,7 @@ public class CachedPayload {
         private String fileRef;
         private String mime;
         private String originalName;
+        /** 14x#3：引用来自保密库且请求者非 owner/admin（前端隐藏下载入口；旧缓存条目缺字段反序列化=false）。 */
+        private boolean confidential;
     }
 }

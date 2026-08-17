@@ -35,6 +35,7 @@ function kb(over: Partial<KnowledgeBase> = {}): KnowledgeBase {
     embeddingModel: 'emb-active',
     rerankModel: null,
     answerModel: null,
+    confidential: false,
     summaryStrategy: 'PER_SECTION',
     status: 'ACTIVE',
     createdBy: 7,
@@ -131,5 +132,37 @@ describe('KbFormModal · 14x#1 模型下拉与 L4 横幅', () => {
     expect(document.body.querySelector('.kb-form__rebuild-alert')).toBeNull()
     expect((wrapper.vm as unknown as { visible: boolean }).visible).toBe(false)
     expect(messageMock.success).toHaveBeenCalled()
+  })
+})
+
+describe('KbFormModal · 14x#3 保密库开关', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    stubActiveModels(['emb-active'], ['glm-5.1'])
+    stubRankingConfig()
+  })
+
+  it('编辑保密库回显开关，保存 payload 透传 confidential', async () => {
+    vi.mocked(knowledgeApi.updateBase).mockResolvedValue({
+      data: { code: 200, message: 'ok', data: kb({ confidential: true }) },
+      status: 200, statusText: 'OK', headers: {}, config: {}
+    } as never)
+    const wrapper = await mountModal(kb({ confidential: true }))
+    const vm = wrapper.vm as unknown as { form: { confidential: boolean }, handleSubmit: () => Promise<void> }
+    expect(vm.form.confidential).toBe(true)
+
+    await vm.handleSubmit()
+    await flushPromises()
+    expect(knowledgeApi.updateBase).toHaveBeenCalledWith(1, expect.objectContaining({ confidential: true }))
+  })
+
+  it('PUBLIC 库开关禁用并提示互斥', async () => {
+    const wrapper = await mountModal(kb({ visibility: 'PUBLIC' }))
+    const vm = wrapper.vm as unknown as { form: { visibility: string, confidential: boolean } }
+    expect(vm.form.visibility).toBe('PUBLIC')
+    // 提示文案切换为互斥说明；开关 DOM 禁用态（modal teleport 到 body）
+    expect(document.body.querySelector('.kb-form__confidential-hint')?.textContent).toContain('公开库不支持保密')
+    expect(document.body.querySelector('.kb-form__confidential .n-switch--disabled')).not.toBeNull()
   })
 })
