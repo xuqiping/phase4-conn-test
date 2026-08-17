@@ -62,6 +62,7 @@
 - **`@Scheduled` / 定时轮询新模块例外**：调度线程无请求上下文，三路都不覆盖——**必须自种 `BillingContext.set(dbUserId)` 或显式传 uid 给 gateway**，否则 uid=null 仅采不扣（`log.warn("LLM 调用无用户上下文...")` 可见）。参考 `IndexJobWorker`（按 `doc.getCreatedBy()`）、`LlmProviderService.chargeAdminDiagnostic`（按 `BillingContext.current()`）。
 - **admin 诊断调用**（测试连通等须直调特定 provider 实例、不能走 gateway 按 model 路由）：直调 provider 后手动 `billingService.onSuccess(uid, providerId, "GLOBAL", model, kind, in, out)` 归户扣费，全链吞异常（诊断计费失败不得报错）。
 - **铁律不变**：计费是 side-channel——`LlmBillingService`/`MediaBillingService` 全链 try/catch 吞异常，**绝不回归成功的 LLM/媒体响应**；`userId=null` → 仅采不扣；`billing.enabled=false` → 扣/退短路。
+- **组池归属（计划5 Step4）**：`BillingContext` 第二槽 `currentGroupId()`——网关四出口 `resolveBillingGid`（显式 `LlmRequest.projectGroupId`/embed-rerank gid 形参优先，空回退组槽）。gid 来自请求体非 principal，**Filter 不种**：入口点手工种（ask 裸线程 `set(uid,gid)`；chat/AGENT RAG 检索段 `setGroup(gid)`+finally 还原，防记忆写入串组）；TaskDecorator 随 userId 快照透传。带 gid 调用=组池预检（非成员 403/组池尽 40201，入口可抛）+chargeGroup+`llm_usage_logs.project_group_id` 落账；**局部段落切组必须 try/finally 还原**，引擎内部开销（路由选路/记忆）保持个人。
 
 ## 运维/脚本约束（运维系统沉淀）
 
