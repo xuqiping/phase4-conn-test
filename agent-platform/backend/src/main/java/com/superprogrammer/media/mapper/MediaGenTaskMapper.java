@@ -15,12 +15,16 @@ import java.util.Map;
 public interface MediaGenTaskMapper extends BaseMapper<MediaGenTask> {
 
     /**
-     * 服务端历史筛选：ownership 与筛选条件在同一条 SQL 中完成，避免先查全量再在内存过滤。
+     * 服务端历史筛选（分页）：ownership 与筛选条件在同一条 SQL 中完成，避免先查全量再在内存过滤。
      * query 已由 service 转义 LIKE 特殊字符，因此这里执行大小写不敏感的字面子串匹配。
      *
      * <p>kind（service 已白名单校验）：IMAGE=仅图片任务（TEXT2IMAGE/IMAGE2IMAGE），
      * VIDEO=仅视频任务（TEXT2VIDEO/IMAGE2VIDEO），null=全量。kind 只进 &lt;if&gt; 等值比较
      * 不插值进 SQL，无注入面；过滤放 SQL 层（若前端先 LIMIT 再内存过滤会行数不足/仍混杂）。
+     *
+     * <p>分页：service 传 offset=(page-1)*pageSize；ORDER BY created_at DESC 保证翻页稳定。
+     * <b>where 条件必须与 {@link #countHistory} 完全一致</b>（同一组参数两条 SQL），
+     * 否则 total 与列表行数漂移、分页器页数错。
      */
     @Select({
             "<script>",
@@ -34,7 +38,7 @@ public interface MediaGenTaskMapper extends BaseMapper<MediaGenTask> {
             "<if test='kind == \"VIDEO\"'>AND task_type IN ('TEXT2VIDEO','IMAGE2VIDEO')</if>",
             "</where>",
             "ORDER BY created_at DESC",
-            "LIMIT #{limit}",
+            "LIMIT #{limit} OFFSET #{offset}",
             "</script>"
     })
     List<MediaGenTask> selectHistory(@Param("userId") Long userId,
@@ -43,7 +47,32 @@ public interface MediaGenTaskMapper extends BaseMapper<MediaGenTask> {
                                      @Param("from") OffsetDateTime from,
                                      @Param("to") OffsetDateTime to,
                                      @Param("limit") int limit,
+                                     @Param("offset") int offset,
                                      @Param("kind") String kind);
+
+    /**
+     * 分页 total：与 {@link #selectHistory} 同一组过滤参数（ownership/query/时间/kind），
+     * 供前端分页器计算总页数。两方法的 &lt;where&gt; 块需同步维护。
+     */
+    @Select({
+            "<script>",
+            "SELECT COUNT(*) FROM media_gen_tasks",
+            "<where>",
+            "<if test='!admin'>user_id = #{userId}</if>",
+            "<if test='query != null'>AND request_config ->> 'prompt' ILIKE CONCAT('%', #{query}, '%') ESCAPE '\\'</if>",
+            "<if test='from != null'>AND created_at &gt;= #{from}</if>",
+            "<if test='to != null'>AND created_at &lt; #{to}</if>",
+            "<if test='kind == \"IMAGE\"'>AND task_type IN ('TEXT2IMAGE','IMAGE2IMAGE')</if>",
+            "<if test='kind == \"VIDEO\"'>AND task_type IN ('TEXT2VIDEO','IMAGE2VIDEO')</if>",
+            "</where>",
+            "</script>"
+    })
+    long countHistory(@Param("userId") Long userId,
+                      @Param("admin") boolean admin,
+                      @Param("query") String query,
+                      @Param("from") OffsetDateTime from,
+                      @Param("to") OffsetDateTime to,
+                      @Param("kind") String kind);
 
     /**
      * 图片任务成功：写 result_meta（JSONB）+ tokens_cost + status_flag + 清锁。

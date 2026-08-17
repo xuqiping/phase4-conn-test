@@ -236,89 +236,165 @@ class MediaGenQueryServiceTest {
         assertEquals("file-xyz", loaded.getResultFileId());
     }
 
+    // ---------- 分页（4x#2）：默认值/非法回落/limit 兼容/翻页边界 ----------
+
     @Test
-    void list_AC_V3_02_passesOwnershipTimeAndEscapedLiteralQueryToMapper() {
+    void page_passesEscapedQueryAndFiltersToBothCountAndList() {
         OffsetDateTime from = OffsetDateTime.parse("2026-08-01T00:00:00+08:00");
         OffsetDateTime to = OffsetDateTime.parse("2026-08-11T00:00:00+08:00");
-        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of());
 
-        queryService.list(100L, false, "50%_猫\\", from, to, 25);
+        queryService.page(100L, false, "50%_猫\\", from, to, null, 1, 10, 25);
 
-        verify(taskMapper).selectHistory(100L, false, "50\\%\\_猫\\\\", from, to, 25, null);
+        // count 与 list 必须收到同一组转义参数，否则 total 与列表漂移
+        verify(taskMapper).countHistory(100L, false, "50\\%\\_猫\\\\", from, to, null);
+        verify(taskMapper).selectHistory(100L, false, "50\\%\\_猫\\\\", from, to, 10, 0, null);
     }
 
     @Test
-    void list_AC_V3_02_blankQueryIsNormalizedAndAdminFlagPreserved() {
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+    void page_blankQueryNormalized_adminPreserved_defaultSize10Offset0() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of());
 
-        queryService.list(999L, true, "   ", null, null, null);
+        // page/pageSize/legacyLimit 全缺省：第 1 页 × 默认 10 条
+        var result = queryService.page(999L, true, "   ", null, null, null, null, null, null);
 
-        verify(taskMapper).selectHistory(999L, true, null, null, null, 50, null);
+        verify(taskMapper).selectHistory(999L, true, null, null, null, 10, 0, null);
+        assertEquals(10L, result.getSize());
+        assertEquals(1L, result.getPage());
     }
 
     @Test
-    void list_AC_V3_07_omitsLargeRequestDetailsUntilUserOpensTask() {
+    void page_legacyLimitOnly_usedAsPageSize() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(50L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        // 旧调用只传 limit：limit 即每页条数（允许 25 这类非白名单值，沿用旧契约）
+        queryService.page(100L, false, null, null, null, null, 2, null, 25);
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 25, 25, null);
+    }
+
+    @Test
+    void page_limitAndPageSizeBoth_pageSizeWins() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        queryService.page(100L, false, null, null, null, null, 1, 5, 50);
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 5, 0, null);
+    }
+
+    @Test
+    void page_pageSizeInvalid_silentlyFallsBackTo10() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        // 15 不在白名单 {5,10,20,50} → 静默回落 10（不报错，对齐 4x#2 拍板）
+        queryService.page(100L, false, null, null, null, null, 1, 15, null);
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 0, null);
+    }
+
+    @Test
+    void page_pageLessThanOne_clampedToOffset0() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(30L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        var result = queryService.page(100L, false, null, null, null, null, 0, 10, null);
+
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 0, null);
+        assertEquals(1L, result.getPage(), "页码归一为 1 而非报错");
+    }
+
+    @Test
+    void page_beyondLastPage_emptyRecords_totalKept() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(3L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
+                .thenReturn(List.of());
+
+        // 第 5 页 × 10 条但总数只有 3 → 空页不报错，total/pages 仍正确
+        var result = queryService.page(100L, false, null, null, null, null, 5, 10, null);
+
+        assertTrue(result.getRecords().isEmpty());
+        assertEquals(3L, result.getTotal());
+        assertEquals(1L, result.getPages());
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 40, null);
+    }
+
+    @Test
+    void page_omitsLargeRequestDetailsUntilUserOpensTask() {
         MediaGenTask task = task(1L, 100L, MediaGenTask.STATUS_RUNNING, null);
         task.setRequestConfig("{\"prompt\":\"p\",\"providerRequestSnapshot\":{\"provider\":\"ark-seedance\"}}");
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(1L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of(task));
 
-        var result = queryService.list(100L, false, null, null, null, 50);
+        var result = queryService.page(100L, false, null, null, null, null, 1, 10, null);
 
-        assertNull(result.get(0).getSubmittedRequest());
-        assertNull(result.get(0).getProviderRequestSnapshot());
+        assertNull(result.getRecords().get(0).getSubmittedRequest());
+        assertNull(result.getRecords().get(0).getProviderRequestSnapshot());
     }
 
     @Test
-    void list_AC_V3_02_rejectsInvalidTimeRangeAndLimit() {
+    void page_rejectsInvalidTimeRangeAndLegacyLimit() {
         OffsetDateTime from = OffsetDateTime.parse("2026-08-11T00:00:00+08:00");
         OffsetDateTime to = from.minusMinutes(1);
 
         assertThrows(BusinessException.class,
-                () -> queryService.list(100L, false, null, from, to, 50));
+                () -> queryService.page(100L, false, null, from, to, null, 1, 10, null));
         assertThrows(BusinessException.class,
-                () -> queryService.list(100L, false, null, null, null, 101));
+                () -> queryService.page(100L, false, null, null, null, null, 1, 10, 101));
         verifyNoInteractions(taskMapper);
     }
 
     // ---------- kind 大类过滤（图片第二轮：图片记录不混进视频历史） ----------
 
     @Test
-    void list_kindImage_passesImageKindToMapper() {
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+    void page_kindImage_passesImageKindToBothQueries() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of());
 
-        queryService.list(100L, false, null, null, null, 30, "IMAGE");
+        queryService.page(100L, false, null, null, null, "IMAGE", 1, 10, null);
 
-        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "IMAGE");
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 0, "IMAGE");
+        verify(taskMapper).countHistory(100L, false, null, null, null, "IMAGE");
     }
 
     @Test
-    void list_kindVideo_passesVideoKindToMapper() {
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+    void page_kindVideo_passesVideoKindToMapper() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of());
 
-        queryService.list(100L, false, null, null, null, 30, "VIDEO");
+        queryService.page(100L, false, null, null, null, "VIDEO", 1, 10, null);
 
-        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "VIDEO");
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 0, "VIDEO");
     }
 
     @Test
-    void list_kindLowercase_isNormalizedToUppercase() {
-        when(taskMapper.selectHistory(any(), anyBoolean(), any(), any(), any(), anyInt(), any()))
+    void page_kindLowercase_isNormalizedToUppercase() {
+        when(taskMapper.countHistory(anyLong(), anyBoolean(), any(), any(), any(), any())).thenReturn(0L);
+        when(taskMapper.selectHistory(anyLong(), anyBoolean(), any(), any(), any(), anyInt(), anyInt(), any()))
                 .thenReturn(List.of());
 
-        queryService.list(100L, false, null, null, null, 30, "image");
+        queryService.page(100L, false, null, null, null, "image", 1, 10, null);
 
-        verify(taskMapper).selectHistory(100L, false, null, null, null, 30, "IMAGE");
+        verify(taskMapper).selectHistory(100L, false, null, null, null, 10, 0, "IMAGE");
     }
 
     @Test
-    void list_kindInvalid_rejectedBeforeMapper() {
+    void page_kindInvalid_rejectedBeforeMapper() {
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> queryService.list(100L, false, null, null, null, 30, "AUDIO"));
+                () -> queryService.page(100L, false, null, null, null, "AUDIO", 1, 10, null));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
         verifyNoInteractions(taskMapper);
     }

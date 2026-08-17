@@ -2,6 +2,7 @@ package com.superprogrammer.media.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.common.audit.AuditLog;
+import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
@@ -130,15 +131,24 @@ public class MediaGenController {
         return ResponseEntity.ok(R.ok(queryService.get(id, getCurrentUserId(), isAdmin())));
     }
 
+    /**
+     * 历史分页列表（4x#2）：page（缺省1）+ pageSize（白名单 5/10/20/50，缺省/非法回落10）。
+     * 响应为 PageResult 包裹结构 {records,total,page,size,pages}——<b>破坏性变更</b>，
+     * 前端消费方（ImageGenView/VideoGenView/api/media.ts）须同版本适配。
+     * legacyLimit 兼容：旧调用只传 limit 时 limit 即每页条数（1-100），与 pageSize 同传以 pageSize 为准。
+     */
     @GetMapping("/tasks")
     @RequirePermission("media:gen")
-    public ResponseEntity<R<List<MediaTaskVO>>> list(
+    public ResponseEntity<R<PageResult<MediaTaskVO>>> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
             @RequestParam(required = false) Integer limit,
-            @RequestParam(required = false) String kind) {
-        return ResponseEntity.ok(R.ok(queryService.list(getCurrentUserId(), isAdmin(), q, from, to, limit, kind)));
+            @RequestParam(required = false) String kind,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer pageSize) {
+        return ResponseEntity.ok(R.ok(queryService.page(
+                getCurrentUserId(), isAdmin(), q, from, to, kind, page, pageSize, limit)));
     }
 
     @GetMapping("/tasks/{id}/download")

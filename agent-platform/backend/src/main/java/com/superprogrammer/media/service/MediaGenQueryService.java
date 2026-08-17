@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.media.dto.MediaTaskVO;
 import com.superprogrammer.media.dto.InputAttachmentVO;
 import com.superprogrammer.media.entity.MediaGenTask;
@@ -42,19 +43,19 @@ public class MediaGenQueryService {
         return toVO(task, admin || owns(task, userId), true);
     }
 
-    /** 6 参兼容重载（视频第三轮测试契约）：kind=null 不过滤，视频/图片全量返回。 */
-    public List<MediaTaskVO> list(Long userId, boolean admin, String query,
-                                  OffsetDateTime from, OffsetDateTime to, Integer limit) {
-        return list(userId, admin, query, from, to, limit, null);
-    }
-
     /**
-     * 历史列表（服务端筛选）。kind 白名单：IMAGE=仅图片任务、VIDEO=仅视频任务、null=全量。
+     * 历史分页列表（服务端筛选 + total 计数）。kind 白名单：IMAGE=仅图片任务、VIDEO=仅视频任务、null=全量。
      * 过滤在 SQL 层完成——前端先 LIMIT 再内存过滤会行数不足/仍混杂。
+     *
+     * <p>分页契约（4x#2）：page 缺省/&lt;1 归一为 1；pageSize 白名单 {5,10,20,50}，非法/缺省静默回落 10。
+     * <b>limit 兼容</b>（旧调用/画布只传 limit）：pageSize 缺省时 limit 即每页条数（沿用 1-100 校验，
+     * 允许 25 等非白名单值——旧契约语义）；两者同传以 pageSize 为准。total 与列表用同一组归一化参数
+     * 调 count/select 两条 SQL，防止分页器页数与数据漂移。
      */
-    public List<MediaTaskVO> list(Long userId, boolean admin, String query,
-                                  OffsetDateTime from, OffsetDateTime to, Integer limit, String kind) {
-        if (limit != null && (limit < 1 || limit > 100)) {
+    public PageResult<MediaTaskVO> page(Long userId, boolean admin, String query,
+                                        OffsetDateTime from, OffsetDateTime to, String kind,
+                                        Integer page, Integer pageSize, Integer legacyLimit) {
+        if (legacyLimit != null && (legacyLimit < 1 || legacyLimit > 100)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "limit 必须在 1-100 之间");
         }
         if (from != null && to != null && !from.isBefore(to)) {
@@ -66,10 +67,26 @@ public class MediaGenQueryService {
         }
         String normalizedKind = normalizeKind(kind);
         String escapedQuery = normalizedQuery == null ? null : escapeLikeLiteral(normalizedQuery);
-        int size = limit == null ? 50 : limit;
-        return taskMapper.selectHistory(userId, admin, escapedQuery, from, to, size, normalizedKind).stream()
+        int size = resolvePageSize(pageSize, legacyLimit);
+        long current = (page == null || page < 1) ? 1 : page;
+        int offset = (int) ((current - 1) * (long) size);
+        long total = taskMapper.countHistory(userId, admin, escapedQuery, from, to, normalizedKind);
+        List<MediaTaskVO> records = taskMapper
+                .selectHistory(userId, admin, escapedQuery, from, to, size, offset, normalizedKind).stream()
                 .map(t -> toVO(t, admin || owns(t, userId), false))
                 .collect(Collectors.toList());
+        return PageResult.of(records, total, current, size);
+    }
+
+    /** pageSize 白名单 {5,10,20,50}，非法/缺省回落 10（不报错）；仅 pageSize 缺省时 legacyLimit 生效。 */
+    private int resolvePageSize(Integer pageSize, Integer legacyLimit) {
+        if (pageSize != null && (pageSize == 5 || pageSize == 10 || pageSize == 20 || pageSize == 50)) {
+            return pageSize;
+        }
+        if (pageSize == null && legacyLimit != null) {
+            return legacyLimit;
+        }
+        return 10;
     }
 
     /** kind 白名单校验：null/空白→null；IMAGE/VIDEO（大小写不敏感）→大写归一；其余 400 不泄 SQL 细节。 */
