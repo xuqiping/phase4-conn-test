@@ -33,6 +33,19 @@
         </div>
       </div>
 
+      <!-- 2x 四轮 S8：参考区（首帧/尾帧/图N/视频N 徽标缩略，悬浮放大、点击全屏/播放；随 prompt 增减 L7） -->
+      <div v-if="references.length" class="prop-panel__field">
+        <label>参考（提交时按此序号注入）</label>
+        <div class="prop-panel__refs">
+          <ReferencePreview
+            v-for="r in references"
+            :key="`${r.kind}:${r.label}:${r.fileId}`"
+            :item="r"
+            @open="onRefOpen"
+          />
+        </div>
+      </div>
+
       <!-- 文本节点：提示词（S13 支持 @引用祖先节点产出） -->
       <template v-if="node.type === 'text'">
         <div class="prop-panel__field">
@@ -536,12 +549,24 @@
         <div v-if="sceneCount" class="prop-panel__readonly">已拆 {{ sceneCount }} 分镜</div>
       </template>
     </template>
+
+    <!-- 2x 四轮 S8：参考缩略点击 → 图片 MediaLightbox 全屏 / 视频播放弹窗（blob objectURL） -->
+    <MediaLightbox :src="lightboxSrc" :alt="lightboxAlt" @close="lightboxSrc = null" />
+    <n-modal
+      v-model:show="playOpen"
+      preset="card"
+      :title="playVideo ? `播放 · ${playVideo.label}` : '播放'"
+      style="max-width: 720px"
+      @after-leave="playVideo = null"
+    >
+      <video v-if="playVideo" :src="playVideo.url" controls autoplay style="width: 100%; display: block" />
+    </n-modal>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NSelect, NSwitch, NTag, NUpload } from 'naive-ui'
+import { NButton, NIcon, NInput, NInputNumber, NModal, NSelect, NSwitch, NTag, NUpload } from 'naive-ui'
 import {
   BrushOutline, CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
@@ -553,6 +578,9 @@ import { mediaApi } from '@/api/media'
 import type { ImageModelCapability, ImageModelVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
+import MediaLightbox from '../media/MediaLightbox.vue'
+import ReferencePreview from './ReferencePreview.vue'
+import type { CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
 import { uniqueLabel } from '@/utils/interpolate'
 
 /** 2x 四轮 S6：五种确定性变换按钮（label/title 面板展示，op 直传后端白名单枚举）。 */
@@ -577,11 +605,14 @@ const props = withDefaults(defineProps<{
   allLabels?: string[]
   /** F3：祖先图节点选项（首/尾帧@选择器用，{label,value=nodeId}）。 */
   imageAncestorOptions?: { label: string; value: string }[]
+  /** 2x 四轮 S8：参考媒体预览列表（首尾帧/图N/视频N 徽标缩略；CanvasView 同源解析装配）。 */
+  references?: CanvasReferenceItem[]
 }>(), {
   candidates: () => [],
   brokenMentions: () => [],
   allLabels: () => [],
-  imageAncestorOptions: () => []
+  imageAncestorOptions: () => [],
+  references: () => []
 })
 
 const emit = defineEmits<{
@@ -622,6 +653,27 @@ const frameSecond = ref<number | null>(null)
 /** C12 截取起止秒输入值。 */
 const clipStart = ref<number | null>(null)
 const clipEnd = ref<number | null>(null)
+
+// ---------- 2x 四轮 S8：参考缩略全屏/播放（图片 MediaLightbox / 视频 blob 播放弹窗） ----------
+const lightboxSrc = ref<string | null>(null)
+const lightboxAlt = ref('')
+/** 播放中的视频（label + objectURL；null=弹窗关）。 */
+const playVideo = ref<{ label: string; url: string } | null>(null)
+const playOpen = computed({
+  get: () => playVideo.value != null,
+  set: (v: boolean) => { if (!v) playVideo.value = null }
+})
+
+/** 参考缩略点击：图片开全屏灯箱；视频开播放弹窗（objectURL 未就绪时忽略——懒加载未触发场景）。 */
+function onRefOpen(payload: { item: CanvasReferenceItem; url: string | null }) {
+  if (!payload.url) return
+  if (payload.item.kind === 'image') {
+    lightboxAlt.value = payload.item.label
+    lightboxSrc.value = payload.url
+  } else {
+    playVideo.value = { label: payload.item.label, url: payload.url }
+  }
+}
 
 /** n-upload 文件选中回调：取真实 File 抛给父组件上传（不走 n-upload 默认 XHR）。 */
 function onPickFile(opts: { file?: { file?: File | null } } | undefined) {
@@ -790,6 +842,13 @@ function onImageModelChange(model: string | null) {
   &__row {
     display: flex;
     gap: var(--spacing-2);
+  }
+
+  /* 2x 四轮 S8：参考缩略横排（超宽换行） */
+  &__refs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-1);
   }
 
   /* 2x 四轮 S6：确定性变换按钮排（五个小按钮挤一行，超出换行） */

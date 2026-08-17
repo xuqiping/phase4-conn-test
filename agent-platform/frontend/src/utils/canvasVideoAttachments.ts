@@ -42,6 +42,58 @@ export function resolveCanvasVideoAttachments(
   nodes: CanvasVideoNodeLike[],
   textResolve: MentionResolver
 ): { refs: AttachmentRef[]; rewrittenPrompt: string } {
+  const c = collectCanvasRefs(nodeData, rawPrompt, nodes, textResolve)
+  if (c.frameNodeIds.size > 0 && (c.refImageFileIds.length > 0 || c.refVideoFileIds.length > 0)) {
+    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图/@参考视频或清空首尾帧')
+  }
+  return { refs: c.refs, rewrittenPrompt: c.rewrittenPrompt }
+}
+
+/**
+ * 2x 四轮 S8：属性面板「参考」区预览列表项（fileId 缩略 + 帧角色/图N/视频N 徽标）。
+ * 与提交 attachments 同一收集引擎（collectCanvasRefs）产出——序号必然一致，防两处漂移。
+ */
+export interface CanvasReferenceItem {
+  fileId: string
+  kind: 'image' | 'video'
+  /** 徽标文案：首帧/尾帧/图N/视频N（与 rewrittenPrompt 里的序号化写法一致）。 */
+  label: string
+}
+
+/**
+ * 2x 四轮 S8：解析节点的参考媒体预览列表（帧角色 + @图/@视频 → 图N/视频N 徽标）。
+ * 与 resolveCanvasVideoAttachments 序号化同源（共用 collectCanvasRefs）；
+ * 首尾帧+参考互斥场景**不抛**（提交时才拒），预览照常展示两组（L7：互斥报错时参考区仍渲染）。
+ */
+export function buildCanvasReferenceList(
+  nodeData: Record<string, unknown>,
+  rawPrompt: string,
+  nodes: CanvasVideoNodeLike[]
+): CanvasReferenceItem[] {
+  const c = collectCanvasRefs(nodeData, rawPrompt, nodes, () => undefined)
+  let imgN = 0
+  let vidN = 0
+  return c.refs.map((r) => {
+    if (r.frameRole === 'first_frame') return { fileId: r.fileId, kind: 'image' as const, label: '首帧' }
+    if (r.frameRole === 'last_frame') return { fileId: r.fileId, kind: 'image' as const, label: '尾帧' }
+    if (r.kind === 'video') return { fileId: r.fileId, kind: 'video' as const, label: `视频${++vidN}` }
+    return { fileId: r.fileId, kind: 'image' as const, label: `图${++imgN}` }
+  })
+}
+
+/** 收集内核（resolveCanvasVideoAttachments 与 buildCanvasReferenceList 共用，单处维护防序号漂移）。 */
+function collectCanvasRefs(
+  nodeData: Record<string, unknown>,
+  rawPrompt: string,
+  nodes: CanvasVideoNodeLike[],
+  textResolve: MentionResolver
+): {
+  refs: AttachmentRef[]
+  rewrittenPrompt: string
+  frameNodeIds: Set<string>
+  refImageFileIds: string[]
+  refVideoFileIds: string[]
+} {
   const byId = new Map(nodes.map((n) => [n.id, n]))
 
   // 1) 显式首/尾帧
@@ -117,9 +169,5 @@ export function resolveCanvasVideoAttachments(
     refs.push({ fileId, kind: 'video' })
   }
 
-  if (frameNodeIds.size > 0 && (refImageFileIds.length > 0 || refVideoFileIds.length > 0)) {
-    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图/@参考视频或清空首尾帧')
-  }
-
-  return { refs, rewrittenPrompt }
+  return { refs, rewrittenPrompt, frameNodeIds, refImageFileIds, refVideoFileIds }
 }

@@ -151,6 +151,7 @@
           :broken-mentions="brokenMentions"
           :all-labels="otherLabels"
           :image-ancestor-options="imageAncestorOptions"
+          :references="referenceList"
           @run="onRunNode"
           @split-storyboard="onSplitStoryboard"
           @upload="onUploadFile"
@@ -265,7 +266,7 @@ import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
 import type { AttachmentRef, ImageModelVO, ImageSubmitRequest } from '@/api/media'
-import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
+import { buildCanvasReferenceList, resolveCanvasVideoAttachments, type CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
 import { pollMediaTask } from '@/utils/mediaTaskPolling'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
@@ -585,6 +586,19 @@ const imageAncestorOptions = computed<{ label: string; value: string }[]>(() => 
       label: String((n.data as Record<string, unknown>).label ?? n.id),
       value: n.id
     }))
+})
+
+/**
+ * 2x 四轮 S8：选中节点的参考媒体预览列表（属性面板「参考」区数据装配）。
+ * buildCanvasReferenceList 与提交序号化共用 collectCanvasRefs——预览徽标（首帧/尾帧/图N/视频N）
+ * 必与运行时 attachments 一致；互斥场景不抛（提交时才拒，L7 参考区仍渲染）。
+ * 仅 image/video 节点有参考语义；prompt 直编 data → 增删 @ 实时反映（L7）。
+ */
+const referenceList = computed<CanvasReferenceItem[]>(() => {
+  const node = selectedNode.value
+  if (!node || (node.type !== 'image' && node.type !== 'video')) return []
+  const d = node.data as Record<string, unknown>
+  return buildCanvasReferenceList(d, String(d.prompt ?? ''), boardRef.value?.getNodes() ?? [])
 })
 
 /** 同画布其他节点 label（重命名查重 L9，按节点 id 剔除自身）。 */

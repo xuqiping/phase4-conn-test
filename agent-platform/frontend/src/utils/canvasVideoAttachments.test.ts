@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCanvasVideoAttachments } from './canvasVideoAttachments'
+import { buildCanvasReferenceList, resolveCanvasVideoAttachments } from './canvasVideoAttachments'
 import type { CanvasVideoNodeLike } from './canvasVideoAttachments'
 import type { MentionResolver } from './interpolate'
 
@@ -200,5 +200,59 @@ describe('resolveCanvasVideoAttachments', () => {
     )
     expect(refs).toEqual([])
     expect(rewrittenPrompt).toBe('用 【断链】')
+  })
+})
+
+// ---- 2x 四轮 S8：参考预览列表（与提交序号化同源，防两处漂移） ----
+
+describe('buildCanvasReferenceList', () => {
+  function vid(id: string, fileId: string): CanvasVideoNodeLike {
+    return { id, type: 'video', data: { fileId } }
+  }
+
+  it('首尾帧 → 首帧/尾帧徽标（kind=image）', () => {
+    const nodes = [img('first', 'f.png'), img('last', 'l.png')]
+    const list = buildCanvasReferenceList(
+      { firstFrameNodeId: 'first', lastFrameNodeId: 'last' }, '转场', nodes
+    )
+    expect(list).toEqual([
+      { fileId: 'f.png', kind: 'image', label: '首帧' },
+      { fileId: 'l.png', kind: 'image', label: '尾帧' }
+    ])
+  })
+
+  it('@两图一视频 → 图1/图2/视频1，徽标与提交 rewrittenPrompt 序号一致', () => {
+    const nodes = [img('a', 'a.png'), img('b', 'b.png'), vid('v1', 'v.mp4')]
+    const prompt = '风格 @{{node:a}}，人物 @{{node:b}}，运镜 @{{node:v1}}'
+    const list = buildCanvasReferenceList({}, prompt, nodes)
+    expect(list.map(x => x.label)).toEqual(['图1', '图2', '视频1'])
+    expect(list.map(x => x.kind)).toEqual(['image', 'image', 'video'])
+    // 同源校验：提交引擎对同一输入的序号化文本，与预览徽标一一对齐
+    const { rewrittenPrompt } = resolveCanvasVideoAttachments({}, prompt, nodes, resolver)
+    expect(rewrittenPrompt).toContain('图1')
+    expect(rewrittenPrompt).toContain('图2')
+    expect(rewrittenPrompt).toContain('视频1')
+  })
+
+  it('首尾帧+@参考互斥场景不抛（提交时才拒），两组都渲染（L7）', () => {
+    const nodes = [img('first', 'f.png'), img('a', 'a.png')]
+    const list = buildCanvasReferenceList(
+      { firstFrameNodeId: 'first' }, '参考 @{{node:a}}', nodes
+    )
+    expect(list).toEqual([
+      { fileId: 'f.png', kind: 'image', label: '首帧' },
+      { fileId: 'a.png', kind: 'image', label: '图1' }
+    ])
+  })
+
+  it('同一 fileId 去重 → 单项；多次 @ 序号稳定', () => {
+    const nodes = [img('a', 'a.png')]
+    const list = buildCanvasReferenceList({}, '@{{node:a}} 再 @{{node:a}}', nodes)
+    expect(list).toEqual([{ fileId: 'a.png', kind: 'image', label: '图1' }])
+  })
+
+  it('断链 @（节点已删）→ 该项不产条目、不崩（断链提示由面板既有 warn 承担）', () => {
+    const list = buildCanvasReferenceList({}, '参考 @{{node:gone}}', [])
+    expect(list).toEqual([])
   })
 })
