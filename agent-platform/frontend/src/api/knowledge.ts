@@ -22,6 +22,10 @@ export interface KnowledgeBase {
   visibility: string              // PRIVATE / TEAM / PUBLIC
   embeddingModel: string | null
   rerankModel: string | null
+  /** 14x#1：per-KB 问答模型，null=跟随全局默认 */
+  answerModel: string | null
+  /** 14x#1（L4）：换 embedding 且已有文档时的重建索引强提示，正常 null */
+  warning?: string | null
   summaryStrategy: string | null  // PER_SECTION / BATCH / HYBRID
   status: string
   createdBy: number | null
@@ -39,6 +43,8 @@ export interface KnowledgeBaseRequest {
   visibility?: string
   embeddingModel?: string
   rerankModel?: string
+  /** 14x#1：per-KB 问答模型，空=跟随全局默认（服务端校验 active CHAT 白名单） */
+  answerModel?: string
   summaryStrategy?: string
 }
 
