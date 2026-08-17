@@ -28,7 +28,7 @@ describe('fetchFilePreview（6x#2 会话内 LRU）', () => {
   it('未命中：带鉴权拉 blob 并缓存', async () => {
     requestMocks.get.mockResolvedValue(okBlob())
     await fetchFilePreview('f1')
-    expect(requestMocks.get).toHaveBeenCalledWith('/files/f1', { responseType: 'blob' })
+    expect(requestMocks.get).toHaveBeenCalledWith('/files/f1', { responseType: 'blob', _background: true })
   })
 
   it('命中：不发二次请求，且每次返回新 objectURL（调用方各 revoke 各的）', async () => {

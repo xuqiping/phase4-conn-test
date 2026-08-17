@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import MessageBubble from './MessageBubble.vue'
-import { knowledgeApi } from '@/api/knowledge'
 import type { ChatMessage } from '@/api/chat'
 
 const messageMock = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }

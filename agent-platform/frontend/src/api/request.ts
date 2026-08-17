@@ -12,7 +12,15 @@ import { getStorage, clearAuthStorage, STORAGE_KEYS } from '@/utils/storage'
 import { isDingTalkClient, isDingTalkEnabled, redirectToDingTalkAuth } from '@/utils/dingtalk'
 
 declare module 'axios' {
-  interface InternalAxiosRequestConfig {
+  interface AxiosRequestConfig {
+    /**
+     * 2x#断路误伤（四轮 Step1）：标记为后台型请求（轮询/blob 预取/断点续轮）。
+     * true → 网络层失败不计连续错误、不触发断路跳登录，toast 换「后台任务网络波动」；
+     * 失败仍 console.warn 留诊断痕迹（运维考量）。用户主动操作不要标——豁免只给后台。
+     */
+    _background?: boolean
+  }
+  interface InternalAxiosRequestConfig extends AxiosRequestConfig {
     _retry?: boolean
   }
 }
@@ -69,6 +77,8 @@ async function tryRefreshAccessToken(): Promise<string | null> {
 let consecutiveNetErrors = 0
 /** 上次「网络异常」toast 时间戳，用于节流，避免轮询风暴刷屏。 */
 let lastNetToastAt = 0
+/** 上次「后台网络波动」toast 时间戳（独立节流 30s：后台退避本身在拉长间隔，提示无需更频）。 */
+let lastBgToastAt = 0
 /** 连续网络错误达此阈值 → 视同会话/服务失效，跳登录（卸载页面即停止轮询，打破死亡螺旋）。 */
 const NET_ERROR_CIRCUIT_THRESHOLD = 5
 
@@ -138,6 +148,17 @@ request.interceptors.response.use(
     // RB-001 死亡螺旋：此前轮询接口超时不触发 401 跳转，每 3s 刷屏且不停止。
     // 现累计连续网络错误：节流提示（5s 内不重复弹）+ 达阈值视同会话失效跳登录（卸载页面即停轮询）。
     if (!error.response) {
+      // 2x 四轮 Step1：后台型请求（轮询/blob 预取）豁免断路与计数——断网 30s 不弹「服务不可达」
+      // 不踢会话，任务恢复后自动续跑；错误仍进 console 供诊断。主动操作不受此分支影响（安全语义不降级）。
+      if (originalRequest?._background) {
+        console.warn('[bg-request] 网络波动', originalRequest.url, error.message)
+        const now = Date.now()
+        if (now - lastBgToastAt > 30000) {
+          lastBgToastAt = now
+          showErrorMessage('后台任务网络波动，恢复后自动重试')
+        }
+        return Promise.reject(error)
+      }
       consecutiveNetErrors++
       const now = Date.now()
       if (now - lastNetToastAt > 5000) {

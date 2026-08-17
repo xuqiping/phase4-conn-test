@@ -31,7 +31,8 @@ export function clearFilePreviewCache() {
 export async function fetchFilePreview(fileId: string): Promise<string> {
   const hit = filePreviewCache.get(fileId)
   if (hit) return URL.createObjectURL(hit)
-  const res = await request.get<Blob>(`/files/${fileId}`, { responseType: 'blob' })
+  // 2x 四轮 Step1：预览预取属后台型（断网不弹「服务不可达」不踢会话，恢复后重拉）
+  const res = await request.get<Blob>(`/files/${fileId}`, { responseType: 'blob', _background: true })
   filePreviewCache.put(fileId, res.data)
   return URL.createObjectURL(res.data)
 }

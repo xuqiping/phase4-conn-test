@@ -294,9 +294,13 @@ export const mediaApi = {
     return request.post<ApiResponse<MediaSubmitResult>>('/media/video', data)
   },
 
-  /** GET /api/media/tasks/{id} — 轮询任务态+结果（media:gen） */
+  /** GET /api/media/tasks/{id} — 轮询任务态+结果（media:gen）。
+   *  2x 四轮 Step1：后台型（豁免断路/清会话）+ timeout 30s（慢网一次超时不误判，退避由轮询器负责）。 */
   getTask(id: number) {
-    return request.get<ApiResponse<MediaTaskVO>>(`/media/tasks/${id}`)
+    return request.get<ApiResponse<MediaTaskVO>>(`/media/tasks/${id}`, {
+      _background: true,
+      timeout: 30000
+    })
   },
 
   /** GET /api/media/tasks — 历史分页列表（服务端筛选 + ownership；admin 看全量；包裹结构 MediaTaskPage，4x#2）。 */
@@ -381,7 +385,8 @@ export async function fetchVideoBlob(downloadPath: string): Promise<string> {
   const path = downloadPath.replace(/^\/api/, '')
   const hit = cachedObjectUrl(path)
   if (hit) return hit
-  const res = await request.get<Blob>(path, { responseType: 'blob' })
+  // 2x 四轮 Step1：预览预取属后台型（断网不弹「服务不可达」不踢会话，恢复后重拉）
+  const res = await request.get<Blob>(path, { responseType: 'blob', _background: true })
   cacheMediaBlob(path, res.data)
   return URL.createObjectURL(res.data)
 }
@@ -396,7 +401,8 @@ export async function fetchMediaBlob(downloadPath: string): Promise<string> {
   // 4x-1：同 fetchVideoBlob 走会话内 LRU 缓存（图片体积小，命中收益同样明显）
   const hit = cachedObjectUrl(path)
   if (hit) return hit
-  const res = await request.get<Blob>(path, { responseType: 'blob' })
+  // 2x 四轮 Step1：预览预取属后台型（同 fetchVideoBlob）
+  const res = await request.get<Blob>(path, { responseType: 'blob', _background: true })
   cacheMediaBlob(path, res.data)
   return URL.createObjectURL(res.data)
 }

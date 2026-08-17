@@ -134,9 +134,13 @@ export const mediaEditApi = {
     return { blob: res.data as Blob, filename }
   },
 
-  /** GET /api/media/edit/tasks/{id} — 轮询任务态+结果（media:edit） */
+  /** GET /api/media/edit/tasks/{id} — 轮询任务态+结果（media:edit）。
+   *  2x 四轮 Step1：后台型（豁免断路/清会话）+ timeout 30s，同 mediaApi.getTask 口径。 */
   getTask(id: number) {
-    return request.get<ApiResponse<MediaEditTaskVO>>(`/media/edit/tasks/${id}`)
+    return request.get<ApiResponse<MediaEditTaskVO>>(`/media/edit/tasks/${id}`, {
+      _background: true,
+      timeout: 30000
+    })
   },
 
   /** GET /api/media/edit/tasks?limit= — 历史列表（ownership 过滤；admin 看全量） */
