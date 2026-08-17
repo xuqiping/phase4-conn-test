@@ -23,4 +23,6 @@ public class PublicProjectSummaryVO {
     private Boolean usable;
     /** 2x#4：项目媒体类型受控词汇（jsonb 原样透传），选择器按图片/视频过滤项目用。 */
     private String mediaTypes;
+    /** 2x 待决策项（V100）：是否允许公共用户复制资产（公共 VIEWER 复制按钮显隐依据）。 */
+    private Boolean allowPublicCopy;
 }

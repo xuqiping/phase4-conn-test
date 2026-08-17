@@ -471,6 +471,8 @@ public class AssetProjectService {
                 .publishedBy(p.getPublishedBy())
                 .publishedAt(p.getPublishedAt())
                 .publishedByAdmin(Boolean.TRUE.equals(p.getPublishedByAdmin()))
+                // 2x 待决策项（V100）：null 视为 TRUE（迁移 DEFAULT，存量行已回填）
+                .allowPublicCopy(!Boolean.FALSE.equals(p.getAllowPublicCopy()))
                 .memberScoringEnabled(Boolean.TRUE.equals(p.getMemberScoringEnabled()))
                 .contentMode(p.getContentMode())
                 .createdAt(p.getCreatedAt())

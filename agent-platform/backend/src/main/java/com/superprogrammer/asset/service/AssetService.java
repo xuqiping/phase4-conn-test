@@ -17,6 +17,7 @@ import com.superprogrammer.asset.entity.Asset;
 import com.superprogrammer.asset.entity.AssetProject;
 import com.superprogrammer.asset.entity.AssetRoleLink;
 import com.superprogrammer.asset.entity.AssetVersion;
+import com.superprogrammer.asset.enums.AssetRole;
 import com.superprogrammer.asset.mapper.AssetMapper;
 import com.superprogrammer.asset.mapper.AssetProjectMapper;
 import com.superprogrammer.asset.mapper.AssetRoleLinkMapper;
@@ -146,7 +147,18 @@ public class AssetService {
     @Transactional(rollbackFor = Exception.class)
     public AssetVO copyCurrent(Long sourceAssetId, Long userId, boolean admin, AssetCopyRequest request) {
         Asset source = loadAsset(sourceAssetId);
-        aclService.loadAccessible(source.getProjectId(), userId, admin);
+        AssetRole sourceRole = aclService.loadAccessible(source.getProjectId(), userId, admin);
+        // 2x 待决策项（V100）：公共池项目关闭「允许复制」→ 仅公共 VIEWER 被拒；
+        // 成员/OWNER/admin（真实项目关系）不受限（测试方案 C5）。文案不泄漏源项目信息。
+        AssetProject sourceProject = projectMapper.selectById(source.getProjectId());
+        if (sourceProject != null
+                && Boolean.TRUE.equals(sourceProject.getPublicPool())
+                && !Boolean.TRUE.equals(sourceProject.getAllowPublicCopy())
+                && !aclService.isMemberOrOwner(sourceProject, userId, admin)) {
+            log.warn("asset public copy denied: sourceProjectId={} sourceAssetId={} userId={} role={}",
+                    source.getProjectId(), sourceAssetId, userId, sourceRole);
+            throw new BusinessException(ErrorCode.ASSET_COPY_FORBIDDEN);
+        }
         Long targetProjectId = request == null ? null : request.getTargetProjectId();
         if (targetProjectId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "目标项目不能为空");

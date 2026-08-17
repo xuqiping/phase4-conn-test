@@ -74,6 +74,13 @@ public class AssetProject extends BaseEntity {
     private Boolean publishedByAdmin;
 
     /**
+     * 2x 待决策项（V100）：发布时 OWNER/admin 自选「是否允许公共用户复制资产」。
+     * FALSE = 公共 VIEWER 仅可引用不可复制（copy 接口 ASSET_COPY_FORBIDDEN）；
+     * 项目成员/OWNER/admin 不受限。跨 unpublish→再发布保留（发布弹窗回显）。
+     */
+    private Boolean allowPublicCopy;
+
+    /**
      * 2x第三轮C5（V124）：OWNER 是否开放成员打分（默认 FALSE 关）。
      * 关 = 只有 OWNER 能评分；开 = 被授权成员也可评（百分制，参与均分）。
      */

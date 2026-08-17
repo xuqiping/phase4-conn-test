@@ -92,6 +92,44 @@ class AssetPublicPoolServiceTest {
     }
 
     @Test
+    void publish_allowPublicCopyExplicitOverwrites_nullKeepsPreviousValue() {
+        // V100：显式传值才覆盖；null=沿用当前值（跨再发布保留，发布弹窗回显依据）
+        AssetProject project = project(1L, 10L);
+        project.setAllowPublicCopy(false); // 上次发布选了「关」
+        when(projectMapper.selectById(1L)).thenReturn(project);
+        when(aclService.requireManage(1L, 10L, false)).thenReturn(AssetRole.OWNER);
+        PublicPublishRequest keepNull = new PublicPublishRequest();
+        keepNull.setAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+
+        service.publish(1L, 10L, false, keepNull);
+        assertThat(project.getAllowPublicCopy()).isFalse(); // 未传 → 保留 false
+
+        // 模拟「移出公众池后重新发布」（unpublish 不清 allowPublicCopy）
+        project.setPublicPool(false);
+        PublicPublishRequest turnOn = new PublicPublishRequest();
+        turnOn.setAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
+        turnOn.setAllowPublicCopy(true);
+        service.publish(1L, 10L, false, turnOn);
+        assertThat(project.getAllowPublicCopy()).isTrue(); // 显式 true → 覆盖
+    }
+
+    @Test
+    void publish_adminCanAlsoSetAllowPublicCopy() {
+        // C6：admin 代发同样可设开关（accessMode 被强制 OPEN，allowPublicCopy 仍取请求值）
+        AssetProject project = project(1L, 99L);
+        when(projectMapper.selectById(1L)).thenReturn(project);
+        when(aclService.requireManage(1L, 1L, true)).thenReturn(AssetRole.OWNER);
+        PublicPublishRequest request = new PublicPublishRequest();
+        request.setAccessMode(AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED);
+        request.setAllowPublicCopy(false);
+
+        service.publish(1L, 1L, true, request);
+
+        assertThat(project.getPublicAccessMode()).isEqualTo("OPEN");
+        assertThat(project.getAllowPublicCopy()).isFalse();
+    }
+
+    @Test
     void unpublish_clearsSnapshotAndRevokesActivePublicRequests() {
         // AC-F19-01/02：移出后 PENDING/APPROVED 立即失效，成员授权不动。
         AssetProject project = project(1L, 10L);
@@ -146,8 +184,13 @@ class AssetPublicPoolServiceTest {
         approved.setApplicantId(20L);
         approved.setStatus(AssetPublicAccessRequest.STATUS_APPROVED);
         when(requestMapper.selectList(any())).thenReturn(java.util.List.of(approved));
+        // V100：先设开关再单次拉取（null 视为 TRUE——迁移 DEFAULT 兼容存量行）
+        approval.setAllowPublicCopy(false);
 
         java.util.List<PublicProjectSummaryVO> result = service.listPublic(20L, false);
+
+        assertThat(result.get(0).getAllowPublicCopy()).isFalse();
+        assertThat(result.get(1).getAllowPublicCopy()).isTrue();
 
         assertThat(result).extracting("id", "assetCount", "publisherUsername", "usable")
                 .containsExactly(

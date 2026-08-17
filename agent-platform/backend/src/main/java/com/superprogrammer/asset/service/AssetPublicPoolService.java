@@ -61,9 +61,13 @@ public class AssetPublicPoolService {
         project.setPublishedBy(userId);
         project.setPublishedAt(OffsetDateTime.now());
         project.setPublishedByAdmin(admin);
+        // 2x 待决策项（V100）：显式传值才覆盖（null=沿用当前值，默认 TRUE）；跨再发布保留供回显
+        if (request != null && request.getAllowPublicCopy() != null) {
+            project.setAllowPublicCopy(request.getAllowPublicCopy());
+        }
         projectMapper.updateById(project);
-        log.info("asset public pool published: projectId={} userId={} mode={} official={}",
-                projectId, userId, mode, admin);
+        log.info("asset public pool published: projectId={} userId={} mode={} official={} allowPublicCopy={}",
+                projectId, userId, mode, admin, project.getAllowPublicCopy());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -146,6 +150,8 @@ public class AssetPublicPoolService {
                     .usable(usable)
                     // 2x#4：摘要补项目媒体类型（选择器按图片/视频过滤公共池项目）
                     .mediaTypes(project.getMediaTypes())
+                    // 2x 待决策项（V100）：公共 VIEWER「复制到我的项目」按钮显隐依据
+                    .allowPublicCopy(!Boolean.FALSE.equals(project.getAllowPublicCopy()))
                     .build();
         }).toList();
     }

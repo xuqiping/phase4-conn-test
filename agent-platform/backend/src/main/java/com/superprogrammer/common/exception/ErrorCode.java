@@ -16,6 +16,8 @@ public enum ErrorCode {
     TOKEN_INVALID(40102, "Token已失效"),
     FORBIDDEN(403, "无权限"),
     ROLE_FORBIDDEN(40301, "角色权限不足"),
+    // 2x 待决策项（V100）：公共池项目关闭「允许复制」后，公共 VIEWER copy 被拒（文案不泄漏源项目信息）
+    ASSET_COPY_FORBIDDEN(40302, "该项目不允许复制资产"),
     NOT_FOUND(404, "资源不存在"),
     CONFLICT(409, "资源冲突"),
     UNPROCESSABLE(422, "业务规则违反"),

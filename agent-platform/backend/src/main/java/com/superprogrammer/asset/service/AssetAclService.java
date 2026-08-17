@@ -115,6 +115,23 @@ public class AssetAclService {
     }
 
     /**
+     * 真实项目关系判定（2x 待决策项 V100）：admin / OWNER / 成员表在册。
+     * 公共池 VIEWER 与成员 VIEWER 同为 AssetRole.VIEWER，无法凭角色区分——
+     * copy 管控（allow_public_copy）只约束公共 VIEWER，须用本方法判「非成员」。
+     */
+    public boolean isMemberOrOwner(AssetProject project, Long userId, boolean admin) {
+        if (admin) {
+            return true;
+        }
+        if (userId != null && userId.equals(project.getOwnerId())) {
+            return true;
+        }
+        return memberMapper.selectOne(new LambdaQueryWrapper<AssetProjectMember>()
+                .eq(AssetProjectMember::getProjectId, project.getId())
+                .eq(AssetProjectMember::getUserId, userId)) != null;
+    }
+
+    /**
      * 要求管理权限（成员管理/转让/删项目）。无权抛 FORBIDDEN。仅 owner（admin 旁路）。
      */
     public AssetRole requireManage(Long projectId, Long userId, boolean admin) {

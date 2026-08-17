@@ -163,6 +163,93 @@ class AssetServiceTest {
 
     // ---------- F19 公众池资产复制 ----------
 
+    // ---------- V100 公共池复制管控（2x 待决策项） ----------
+
+    @Test
+    void copyCurrent_publicCopyDisabled_publicViewerDenied() {
+        // allow=false 的公共池项目：公共 VIEWER（非成员）copy → 40302，直调 API 也有兜底
+        Asset source = asset(100L, Asset.MEDIA_IMAGE);
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(com.superprogrammer.asset.enums.AssetRole.VIEWER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(true, false));
+        when(aclService.isMemberOrOwner(any(com.superprogrammer.asset.entity.AssetProject.class), eq(VIEWER_ID), anyBoolean()))
+                .thenReturn(false);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.ASSET_COPY_FORBIDDEN.getCode(), error.getCode());
+        verify(aclService, never()).requireWrite(any(), any(), anyBoolean());
+        verify(assetMapper, never()).insert(any());
+    }
+
+    @Test
+    void copyCurrent_publicCopyDisabled_memberNotRestricted() {
+        // C5：项目成员（含 VIEWER 成员）复制不受开关限制——过闸后进入正常流程
+        Asset source = asset(100L, Asset.MEDIA_IMAGE);
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(com.superprogrammer.asset.enums.AssetRole.VIEWER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(true, false));
+        when(aclService.isMemberOrOwner(any(com.superprogrammer.asset.entity.AssetProject.class), eq(VIEWER_ID), anyBoolean()))
+                .thenReturn(true);
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(null); // 走到「当前版本不存在」= 已过闸
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), error.getCode());
+    }
+
+    @Test
+    void copyCurrent_publicCopyEnabled_publicViewerPassesGate() {
+        // allow=true（含 null 默认）：公共 VIEWER 不受限（现状行为零回归）
+        Asset source = asset(100L, Asset.MEDIA_IMAGE);
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(com.superprogrammer.asset.enums.AssetRole.VIEWER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(true, true));
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), error.getCode());
+        // allow=true 时不查成员关系（无需要）
+        verify(aclService, never()).isMemberOrOwner(any(), any(), anyBoolean());
+    }
+
+    @Test
+    void copyCurrent_nonPublicProject_notRestricted() {
+        // 非公共池项目：loadAccessible 只放行真实成员，开关语义不适用
+        Asset source = asset(100L, Asset.MEDIA_IMAGE);
+        source.setMediaCategory(Asset.CATEGORY_IMAGE);
+        when(assetMapper.selectById(100L)).thenReturn(source);
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(com.superprogrammer.asset.enums.AssetRole.VIEWER);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(false, false));
+        when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
+        when(versionMapper.selectOne(any())).thenReturn(null);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.copyCurrent(100L, VIEWER_ID, false, copyRequest(2L)));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), error.getCode());
+    }
+
+    private com.superprogrammer.asset.entity.AssetProject sourceProject(boolean publicPool, Boolean allowCopy) {
+        com.superprogrammer.asset.entity.AssetProject p = new com.superprogrammer.asset.entity.AssetProject();
+        p.setId(PROJECT_ID);
+        p.setPublicPool(publicPool);
+        p.setAllowPublicCopy(allowCopy);
+        return p;
+    }
+
     @Test
     void copyCurrent_sourceWithoutReadPermission_createsNothing() {
         Asset source = asset(100L, "MAP");
@@ -233,6 +320,7 @@ class AssetServiceTest {
         when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
         when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
         when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(false, null)); // V100 闸前载源项目（非公共池不过闸）
         when(versionMapper.selectOne(any())).thenReturn(current);
         when(projectMapper.selectById(2L)).thenReturn(target);
         when(roleLinkMapper.selectList(any())).thenReturn(List.of(
@@ -287,6 +375,7 @@ class AssetServiceTest {
         when(assetMapper.selectById(100L)).thenReturn(source);
         when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
         when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(false, null)); // V100 闸前载源项目（非公共池不过闸）
         when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
         when(versionMapper.selectOne(any())).thenReturn(current);
         when(projectMapper.selectById(2L)).thenReturn(target);
@@ -317,6 +406,7 @@ class AssetServiceTest {
         when(assetMapper.selectById(100L)).thenReturn(source);
         when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(null);
         when(aclService.requireWrite(2L, VIEWER_ID, false)).thenReturn(null);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(sourceProject(false, null)); // V100 闸前载源项目（非公共池不过闸）
         when(assetMapper.lockByIdForUpdate(100L)).thenReturn(100L);
         when(versionMapper.selectOne(any())).thenReturn(current);
         when(projectMapper.selectById(2L)).thenReturn(target);

@@ -34,6 +34,8 @@ public class ProjectVO {
     private Long publishedBy;
     private OffsetDateTime publishedAt;
     private Boolean publishedByAdmin;
+    /** 2x 待决策项（V100）：是否允许公共用户复制资产（发布弹窗回显/详情透出）。 */
+    private Boolean allowPublicCopy;
     /** 2x第三轮C6：OWNER 是否开放成员打分（V124）。 */
     private Boolean memberScoringEnabled;
     /** 2x第三轮C6：内容模式 SHARED/PERSONAL（V124，决策 D1）。 */

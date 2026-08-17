@@ -16,6 +16,7 @@ import com.superprogrammer.asset.service.AssetScriptService;
 import com.superprogrammer.asset.service.AssetService;
 import com.superprogrammer.asset.service.AssetVersionService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.PageResult;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
@@ -69,6 +70,7 @@ public class AssetController {
 
     @PostMapping("/assets/{id}/copy")
     @RequirePermission("asset:write")
+    @AuditLog(module = "asset", action = "asset_copy", targetType = "asset")
     public ResponseEntity<R<AssetVO>> copy(@PathVariable Long id, @RequestBody AssetCopyRequest request) {
         return ResponseEntity.ok(R.ok("资产已复制到目标项目",
                 assetService.copyCurrent(id, getCurrentUserId(), isAdmin(), request)));
