@@ -231,14 +231,54 @@ export interface MediaSubmitResult {
   status: MediaStatus
 }
 
-/** 历史任务服务端筛选；时间范围采用 [from,to) ISO-8601。 */
+/** 历史任务服务端筛选；时间范围采用 [from,to) ISO-8601（拼装见 buildHistoryQuery）。 */
 export interface MediaTaskQuery {
   q?: string
   from?: string
   to?: string
+  /** @deprecated 兼容旧调用：pageSize 缺省时 limit 即每页条数（1-100，画布等既有消费方） */
   limit?: number
+  /** 页码（≥1，缺省 1） */
+  page?: number
+  /** 每页条数白名单 5/10/20/50（缺省/非法由后端静默回落 10，4x#2） */
+  pageSize?: number
   /** 任务大类过滤：IMAGE=仅图片任务、VIDEO=仅视频任务、缺省=全量（SQL 层过滤） */
   kind?: 'IMAGE' | 'VIDEO'
+}
+
+/** GET /api/media/tasks 分页包裹结构（后端 PageResult&lt;MediaTaskVO&gt;，4x#2）。 */
+export interface MediaTaskPage {
+  records: MediaTaskVO[]
+  total: number
+  page: number
+  size: number
+  pages: number
+}
+
+/**
+ * 图片/视频两页共享的历史筛选 → listTasks 查询参数拼装（防两处漂移，4x#2）。
+ * rangeType 语义两页不同，不可盲目统一：
+ * - 'day'（图片页 daterange，整天选择）：to=尾日 23:59:59.999 含尾日全天（否则同日区间 from==to 被后端 400）；
+ * - 'datetime'（视频页 datetimerange，精确到时分秒）：to 原样使用用户所选时刻。
+ */
+export function buildHistoryQuery(opts: {
+  q?: string
+  range?: [number, number] | null
+  kind: 'IMAGE' | 'VIDEO'
+  rangeType: 'day' | 'datetime'
+  page?: number
+  pageSize?: number
+}): MediaTaskQuery {
+  const range = opts.range ?? null
+  const query: MediaTaskQuery = {
+    q: opts.q?.trim() || undefined,
+    from: range ? new Date(range[0]).toISOString() : undefined,
+    to: range ? new Date(range[1] + (opts.rangeType === 'day' ? 24 * 3600 * 1000 - 1 : 0)).toISOString() : undefined,
+    kind: opts.kind
+  }
+  if (opts.page != null) query.page = opts.page
+  if (opts.pageSize != null) query.pageSize = opts.pageSize
+  return query
 }
 
 /** /api/files/upload 返回（StoredFile 最小子集，前端只取 fileId） */
@@ -259,10 +299,10 @@ export const mediaApi = {
     return request.get<ApiResponse<MediaTaskVO>>(`/media/tasks/${id}`)
   },
 
-  /** GET /api/media/tasks — 历史列表（服务端筛选 + ownership；admin 看全量）。 */
+  /** GET /api/media/tasks — 历史分页列表（服务端筛选 + ownership；admin 看全量；包裹结构 MediaTaskPage，4x#2）。 */
   listTasks(query: number | MediaTaskQuery = 50) {
     const params = typeof query === 'number' ? { limit: query } : query
-    return request.get<ApiResponse<MediaTaskVO[]>>('/media/tasks', { params })
+    return request.get<ApiResponse<MediaTaskPage>>('/media/tasks', { params })
   },
 
   /** GET /api/media/models — 可选视频模型目录（含能力画像，media:gen） */

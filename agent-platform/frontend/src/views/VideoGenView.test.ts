@@ -7,10 +7,12 @@ import { mediaApi, type MediaModelVO, type MediaTaskVO } from '@/api/media'
 import { useAuthStore } from '@/stores/auth'
 
 const messageMock = { success: vi.fn(), error: vi.fn(), warning: vi.fn() }
+const dialogMock = { info: vi.fn(), warning: vi.fn(), success: vi.fn(), error: vi.fn(), create: vi.fn() }
 
 vi.mock('naive-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('naive-ui')>()
-  return { ...actual, useMessage: () => messageMock }
+  // useDialog 同步 mock：mount 未包 NDialogProvider，组件 setup 里的 useDialog() 会抛 no provider（存量问题，非本 chunk 引入）
+  return { ...actual, useMessage: () => messageMock, useDialog: () => dialogMock }
 })
 
 vi.mock('@/composables/useBreakpoints', () => ({
@@ -111,7 +113,9 @@ describe('VideoGenView regressions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(mediaApi.listModels).mockResolvedValue(response([model]))
-    vi.mocked(mediaApi.listTasks).mockResolvedValue(response([historyTask]))
+    // 4x#2：listTasks 返回分页包裹结构（PageResult 语义）
+    vi.mocked(mediaApi.listTasks).mockResolvedValue(
+      response({ records: [historyTask], total: 1, page: 1, size: 10, pages: 1 }))
   })
 
   it('AC-VFIX-01 keeps reference-video section visible but disabled when public HTTPS is unconfigured', async () => {

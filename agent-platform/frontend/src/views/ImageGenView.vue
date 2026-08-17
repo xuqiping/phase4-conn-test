@@ -234,6 +234,18 @@
               <span v-else class="history__thumb-ph" aria-hidden="true">—</span>
             </div>
           </NSpin>
+          <NPagination
+            v-if="historyTotal > 0"
+            :page="historyPage"
+            :page-size="historyPageSize"
+            :item-count="historyTotal"
+            :page-sizes="[5, 10, 20, 50]"
+            show-size-picker
+            size="small"
+            class="history__pagination"
+            @update:page="onHistoryPageChange"
+            @update:page-size="onHistoryPageSizeChange"
+          />
         </div>
       </NCard>
     </div>
@@ -271,10 +283,10 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NDatePicker, NDivider, NEmpty, NForm, NFormItem,
-  NInput, NInputNumber, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, NUpload, useMessage
+  NInput, NInputNumber, NPagination, NSelect, NSlider, NSpace, NSpin, NSwitch, NTag, NUpload, useMessage
 } from 'naive-ui'
 import {
-  mediaApi, fetchMediaBlob,
+  mediaApi, fetchMediaBlob, buildHistoryQuery,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
   type ImageModelVO, type ImageModelCapability,
   type ImageSubmitRequest, type MediaTaskVO
@@ -541,11 +553,14 @@ function onImported(payload: { assetId: number; name: string }) {
   message.success(`已入库：${payload.name}`)
 }
 
-// ---- 历史 ----
+// ---- 历史（4x#2：服务端分页，默认 10 可选 5/10/20/50；与视频页共享 buildHistoryQuery） ----
 const history = ref<MediaTaskVO[]>([])
 const loadingHistory = ref(false)
 const historyQuery = ref('')
 const historyTimeRange = ref<[number, number] | null>(null)
+const historyPage = ref(1)
+const historyPageSize = ref(10)
+const historyTotal = ref(0)
 const hasHistoryFilters = computed(() => !!historyQuery.value.trim() || !!historyTimeRange.value)
 let historyDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let historyRequestSeq = 0
@@ -554,19 +569,31 @@ async function loadHistory() {
   const requestSeq = ++historyRequestSeq
   loadingHistory.value = true
   try {
-    const range = historyTimeRange.value
-    const { data } = await mediaApi.listTasks({
-      q: historyQuery.value.trim() || undefined,
-      from: range ? new Date(range[0]).toISOString() : undefined,
-      // daterange 结束日是当日 00:00 → +1天-1ms 含整天；否则同日区间 from==to 被后端 400
-      to: range ? new Date(range[1] + 24 * 3600 * 1000 - 1).toISOString() : undefined,
-      limit: 30,
-      kind: 'IMAGE' // 仅图片任务（SQL 层过滤，替代原前端 filter——先 LIMIT 再内存过滤会行数不足）
-    })
-    if (requestSeq === historyRequestSeq) history.value = data.data ?? []
+    const { data } = await mediaApi.listTasks(buildHistoryQuery({
+      q: historyQuery.value,
+      range: historyTimeRange.value,
+      kind: 'IMAGE', // 仅图片任务（SQL 层过滤，替代原前端 filter——先 LIMIT 再内存过滤会行数不足）
+      rangeType: 'day', // daterange：to=尾日 23:59:59.999 含整天（buildHistoryQuery 内统一处理）
+      page: historyPage.value,
+      pageSize: historyPageSize.value
+    }))
+    if (requestSeq === historyRequestSeq) {
+      history.value = data.data?.records ?? []
+      historyTotal.value = data.data?.total ?? 0
+    }
   } catch { /* 拦截器提示 */ } finally {
     if (requestSeq === historyRequestSeq) loadingHistory.value = false
   }
+}
+
+function onHistoryPageChange(p: number) {
+  historyPage.value = p
+  void loadHistory()
+}
+function onHistoryPageSizeChange(size: number) {
+  historyPage.value = 1 // L5：切条数后当前页可能越界，统一回落第 1 页
+  historyPageSize.value = size
+  void loadHistory()
 }
 function scheduleHistoryLoad() {
   if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
@@ -579,7 +606,11 @@ function clearHistoryFilters() {
   historyQuery.value = ''
   historyTimeRange.value = null
 }
-watch([historyQuery, historyTimeRange], scheduleHistoryLoad)
+// L1：筛选（含清空）变化重置第 1 页再防抖加载
+watch([historyQuery, historyTimeRange], () => {
+  historyPage.value = 1
+  scheduleHistoryLoad()
+})
 
 function truncate(s: string | null) {
   if (!s) return ''
@@ -710,6 +741,7 @@ onUnmounted(() => {
   &__filters { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   &__filter-q { flex: 1; min-width: 120px; }
   &__filter-range { width: 230px; }
+  &__pagination { margin-top: 8px; justify-content: flex-end; }
   &__row {
     display: flex; align-items: center; gap: 8px; padding: 6px 4px;
     border-radius: 6px; cursor: pointer; font-size: 13px;

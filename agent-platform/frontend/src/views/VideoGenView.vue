@@ -340,12 +340,13 @@
             <n-button size="small" @click="clearHistoryFilters">清空筛选</n-button>
           </div>
           <n-data-table
+            remote
             :columns="historyColumns"
             :data="history"
             :loading="loadingHistory"
             size="small"
             :scroll-x="1080"
-            :pagination="{ pageSize: 8 }"
+            :pagination="historyPagination"
             :max-height="320"
             striped
           />
@@ -386,7 +387,7 @@ import MentionTextarea from '@/components/canvas/MentionTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
-  mediaApi, fetchVideoBlob,
+  mediaApi, fetchVideoBlob, buildHistoryQuery,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
   type MediaTaskVO, type MediaResolution, type MediaRatio,
   type MediaModelVO, type AttachmentKind, type AttachmentRef
@@ -922,11 +923,14 @@ function startPolling(taskId: number) {
   pollTimer = setInterval(() => void pollOnce(taskId), 3000)
 }
 
-// === 历史 ===
+// === 历史（4x#2：remote 分页——翻页才向服务器要对应页，默认 10 可选 5/10/20/50） ===
 const history = ref<MediaTaskVO[]>([])
 const loadingHistory = ref(false)
 const historyQuery = ref('')
 const historyTimeRange = ref<[number, number] | null>(null)
+const historyPage = ref(1)
+const historyPageSize = ref(10)
+const historyTotal = ref(0)
 let historyDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let historyRequestSeq = 0
 
@@ -934,21 +938,43 @@ async function loadHistory() {
   const requestSeq = ++historyRequestSeq
   loadingHistory.value = true
   try {
-    const range = historyTimeRange.value
-    const { data } = await mediaApi.listTasks({
-      q: historyQuery.value.trim() || undefined,
-      from: range ? new Date(range[0]).toISOString() : undefined,
-      to: range ? new Date(range[1]).toISOString() : undefined,
-      limit: 50,
-      kind: 'VIDEO' // 视频页只显视频任务（图片记录不混入，SQL 层过滤）
-    })
-    if (requestSeq === historyRequestSeq) history.value = data.data
+    const { data } = await mediaApi.listTasks(buildHistoryQuery({
+      q: historyQuery.value,
+      range: historyTimeRange.value,
+      kind: 'VIDEO', // 视频页只显视频任务（图片记录不混入，SQL 层过滤）
+      rangeType: 'datetime', // datetimerange：to 用用户所选精确时刻
+      page: historyPage.value,
+      pageSize: historyPageSize.value
+    }))
+    if (requestSeq === historyRequestSeq) {
+      history.value = data.data?.records ?? []
+      historyTotal.value = data.data?.total ?? 0
+    }
   } catch {
     /* 拦截器提示 */
   } finally {
     if (requestSeq === historyRequestSeq) loadingHistory.value = false
   }
 }
+
+/** n-data-table remote 分页配置：itemCount=服务端 total；切页/改条数即时触发拉取。 */
+const historyPagination = computed(() => ({
+  page: historyPage.value,
+  pageSize: historyPageSize.value,
+  itemCount: historyTotal.value,
+  pageSizes: [5, 10, 20, 50],
+  showSizePicker: true,
+  onChange: (p: number) => {
+    historyPage.value = p
+    void loadHistory()
+  },
+  // L5：切条数后当前页可能越界（第5页×5条→50条），统一回落第 1 页
+  onUpdatePageSize: (s: number) => {
+    historyPage.value = 1
+    historyPageSize.value = s
+    void loadHistory()
+  }
+}))
 
 async function openHistoryTask(summary: MediaTaskVO) {
   try {
@@ -1057,7 +1083,11 @@ function clearHistoryFilters() {
   historyTimeRange.value = null
 }
 
-watch([historyQuery, historyTimeRange], scheduleHistoryLoad)
+// L1：筛选（含清空）变化重置第 1 页再防抖加载；翻页时筛选条件保持在 refs 不丢
+watch([historyQuery, historyTimeRange], () => {
+  historyPage.value = 1
+  scheduleHistoryLoad()
+})
 
 const historyColumns: DataTableColumns<MediaTaskVO> = [
   { title: 'ID', key: 'id', width: 60, fixed: 'left' },
