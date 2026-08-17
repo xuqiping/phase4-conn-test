@@ -18,7 +18,10 @@
       class="video-gen__forbidden"
     />
 
-    <div v-else class="video-gen__grid" :class="{ 'video-gen__grid--mobile': isMobile }">
+    <!-- 计划6 Step4：生成 / 视频反推 双 Tab（反推结果「用剧本生成」预填回生成表单） -->
+    <n-tabs v-else v-model:value="activeTab" default-value="gen" type="line" size="small" class="video-gen__tabs">
+      <n-tab-pane name="gen" tab="视频生成" display-directive="show">
+        <div class="video-gen__grid" :class="{ 'video-gen__grid--mobile': isMobile }">
       <!-- 左：生成表单 -->
       <n-card class="video-gen__form" title="生成参数" size="small">
         <n-form label-placement="top">
@@ -367,8 +370,15 @@
             striped
           />
         </n-card>
-      </div>
-    </div>
+        </div>
+        </div>
+      </n-tab-pane>
+
+      <!-- 计划6 Step4：视频反推 Tab（上传/历史选源 → 关键帧/分镜/剧本 → 本土化转绘 → 用剧本生成预填） -->
+      <n-tab-pane name="reverse" tab="视频反推" display-directive="show">
+        <VideoReversePanel @use-script="onUseScriptForGen" />
+      </n-tab-pane>
+    </n-tabs>
 
     <AssetFilePicker
       :show="showAssetPicker"
@@ -413,7 +423,7 @@
 import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
-  NModal, NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
+  NModal, NSelect, NSpace, NSpin, NSwitch, NTabPane, NTabs, NTag, NUpload,
   useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
@@ -435,6 +445,7 @@ import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
 import SaveVideoToAssetDialog from '@/components/media/SaveVideoToAssetDialog.vue'
+import VideoReversePanel from '@/components/media/VideoReversePanel.vue'
 import { MEDIA_TYPE } from '@/types/asset'
 import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
@@ -448,6 +459,9 @@ const message = useMessage()
 const dialog = useDialog()
 const router = useRouter()
 const { isMobile } = useBreakpoints()
+
+/** 计划6 Step4：主 Tab（gen=生成 / reverse=视频反推）；「用剧本生成」预填后切回 gen。 */
+const activeTab = ref('gen')
 
 /** 4 层权限显隐①：菜单入口；②此处页内提交（canGen）；③后端 @RequirePermission 403 兜底；④路由 meta 仅 requiresAuth。 */
 const canGen = authStore.hasPermission('media:gen')
@@ -595,6 +609,51 @@ function modeAllows(target: VideoAttachmentTarget, notify = false) {
       : '参考媒体不能与首帧/尾帧同时使用，请先清空首帧和尾帧')
   }
   return allowed
+}
+
+/**
+ * 计划6 Step4「用剧本生成」预填（plan L4）：提示词=剧本文本，参考视频槽=反推源视频。
+ * 冲突三选：表单已有提示词/参考视频 → 弹窗 替换/追加/取消（取消=表单原样，预填后手改不回弹）。
+ */
+function onUseScriptForGen(payload: { promptText: string; sourceFileId?: string; sourceName?: string }) {
+  const apply = (mode: 'replace' | 'append') => {
+    const cur = form.prompt.trim()
+    form.prompt = mode === 'replace' || !cur ? payload.promptText : `${form.prompt}\n${payload.promptText}`
+    if (payload.sourceFileId) {
+      if (modeAllows('video', true)) {
+        if (mode === 'replace') {
+          videos.value.forEach(revokeAttachmentUrl)
+          videos.value = []
+        }
+        const maxVideos = capability.value?.maxVideos ?? 0
+        if (videos.value.length < maxVideos) {
+          const id = crypto.randomUUID()
+          videos.value.push({ id, fileId: payload.sourceFileId, name: payload.sourceName || '反推源视频' })
+          void previewAsset(id, 'video', payload.sourceFileId)
+        } else {
+          message.warning('参考视频槽已满，仅预填提示词')
+        }
+      } else {
+        message.warning('当前为首尾帧模式，参考视频未带入（请先清空首尾帧再试）')
+      }
+    }
+    activeTab.value = 'gen'
+    message.success('已带入生成表单（提示词' + (payload.sourceFileId ? ' + 参考视频' : '') + '），请检查后提交')
+  }
+
+  if (!form.prompt.trim() && videos.value.length === 0) {
+    apply('replace')
+    return
+  }
+  const d = dialog.create({
+    title: '生成表单已有内容',
+    content: '提示词或参考视频槽位非空，如何带入反推剧本？',
+    action: () => h('div', { style: 'display:flex; gap:8px; justify-content:flex-end;' }, [
+      h(NButton, { size: 'small', quaternary: true, onClick: () => d.destroy() }, { default: () => '取消' }),
+      h(NButton, { size: 'small', onClick: () => { d.destroy(); apply('append') } }, { default: () => '追加' }),
+      h(NButton, { size: 'small', type: 'primary', onClick: () => { d.destroy(); apply('replace') } }, { default: () => '替换' })
+    ])
+  })
 }
 
 /** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
