@@ -41,8 +41,16 @@ public class AgentRoutingStrategy implements ExecutionStrategy {
         }
 
         // 阶段5 RAG：AGENT scope = agent_kb_bindings ∩ 用户权限（P4），同模型约束；受记忆模式门控
-        EvidenceResult evidence = context.isRagEnabled()
-                ? resolveAgentEvidence(agentId, context.getUserId(), userMessage) : null;
+        // 计划5 Step4：检索段（query embed/rerank）暂切组池归属，finally 还原——router 选路/记忆等引擎内部 LLM 保持个人
+        EvidenceResult evidence;
+        Long prevGid = com.superprogrammer.billing.context.BillingContext.currentGroupId();
+        com.superprogrammer.billing.context.BillingContext.setGroup(context.getProjectGroupId());
+        try {
+            evidence = context.isRagEnabled()
+                    ? resolveAgentEvidence(agentId, context.getUserId(), userMessage) : null;
+        } finally {
+            com.superprogrammer.billing.context.BillingContext.setGroup(prevGid);
+        }
         // 修 #2：abstain 不再短路吐死句子。丢弃证据，照常路由到 skill/LLM 生成（不带知识库引用），
         // 让 AI 基于自身能力回答，而不是直接返回"未找到可访问的相关知识"。
         if (evidence != null && evidence.isAbstained()) {

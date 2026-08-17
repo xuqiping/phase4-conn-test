@@ -126,6 +126,18 @@ public class UsageCollector {
                        Integer tokensInput, Integer tokensOutput,
                        BigDecimal costYuan, BigDecimal pointsConsumed,
                        String status, String errorMsg, Long taskId, String sessionId) {
+        record(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, costYuan, pointsConsumed, status, errorMsg, taskId, sessionId, null);
+    }
+
+    /**
+     * 计划5 Step4：+projectGroupId 组池计费版本。组归属是账单/项目推进/限额的唯一事实源（V133）。
+     * 个人计费/系统调用传 null。
+     */
+    public void record(Long userId, Long providerId, String providerScope, String model, String kind,
+                       Integer tokensInput, Integer tokensOutput,
+                       BigDecimal costYuan, BigDecimal pointsConsumed,
+                       String status, String errorMsg, Long taskId, String sessionId, Long projectGroupId) {
         if (!enabled) {
             return;
         }
@@ -146,6 +158,7 @@ public class UsageCollector {
         row.setTraceId(currentTraceId());
         row.setTaskId(taskId);
         row.setSessionId(sessionId);
+        row.setProjectGroupId(projectGroupId);
         submit(row);
     }
 

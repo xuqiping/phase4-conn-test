@@ -43,4 +43,7 @@ public class ChatRequest {
     /** 聊天附件 file_id 集（V69 二期 P3，须为本人的 CHAT 上传）。 */
     @Size(max = 10, message = "附件数量不能超过10个")
     private List<String> attachmentFileIds;
+
+    /** 项目组归属（计划5 Step4）：null=个人计费；有值须为本人所在组，组池扣费。 */
+    private Long projectGroupId;
 }

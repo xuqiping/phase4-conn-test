@@ -40,4 +40,10 @@ public class LlmRequest {
      * null=非会话调用（记忆后台/解析摘要/画布节点等），不参与会话封顶。
      */
     private String sessionId;
+
+    /**
+     * 项目组归属（计划5 Step4）：null=个人计费（现状）；有值→网关预检组池/成员身份，
+     * 计费走 chargeGroup，usage 落 llm_usage_logs.project_group_id（账单事实源）。
+     */
+    private Long projectGroupId;
 }

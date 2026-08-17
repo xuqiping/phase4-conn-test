@@ -167,6 +167,31 @@ public class ProjectGroupWalletService {
                 groupId, leaderUserId, shortfall, refType, refId, w.getBalancePoints());
     }
 
+    /**
+     * 组池预检（计划5 Step4 网关入口）：非成员 FORBIDDEN；组池≤0 INSUFFICIENT_POINTS。
+     * 镜像个人 {@code PointsWalletService.requireAffordable} 语义（>0 放行，非精确估价）。
+     *
+     * @return 组池余额（L7 闸门/前端提示复用）
+     */
+    public BigDecimal requireAffordableGroup(Long groupId, Long userId) {
+        if (userId == null) {
+            // 系统调用（uid=null）带 gid 属配置错误——组计费必须归属到人（used 记账）
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "项目组计费必须归属到成员");
+        }
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
+        }
+        if (memberMapper.selectByGroupUser(groupId, userId) == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费");
+        }
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
+        if (w == null || w.getBalancePoints().signum() <= 0) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足");
+        }
+        return w.getBalancePoints();
+    }
+
     // ==================== 内部 ====================
 
     /** 组流水落库（balance_after 取当前组池——本事务已持行锁，读即一致）。 */

@@ -28,6 +28,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
         LlmRequest request = LlmRequest.builder()
                 .model(resolveModel(context))
                 .messages(context.getMessageHistory())
+                // 计划5 Step4：组池计费透传（null=个人）
+                .projectGroupId(context.getProjectGroupId())
                 .build();
 
         var response = llmGateway.chat(request, context.getUserId());
@@ -48,6 +50,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
                 .model(resolveModel(context))
                 .messages(context.getMessageHistory())
                 .stream(true)
+                // 计划5 Step4：组池计费透传（null=个人）
+                .projectGroupId(context.getProjectGroupId())
                 .build();
 
         return llmGateway.chatStream(request, context.getUserId());

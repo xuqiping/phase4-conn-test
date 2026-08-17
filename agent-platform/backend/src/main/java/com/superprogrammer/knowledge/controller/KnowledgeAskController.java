@@ -64,7 +64,8 @@ public class KnowledgeAskController {
                 SecurityContextHolder.setContext(securityContext);
                 if (mdcSnapshot != null) MDC.setContextMap(mdcSnapshot);
                 // 计费归户：裸线程不继承 ThreadLocal，手工种 userId（RAG 流式生成段 + 查询扩展 LLM 调用自动计费）
-                com.superprogrammer.billing.context.BillingContext.set(userId);
+                // 计划5 Step4：连组池 gid 一起种——ask 链路内部 embed/rerank/answer 经网关回退自动归组计费
+                com.superprogrammer.billing.context.BillingContext.set(userId, request.getProjectGroupId());
                 Flux<StreamEvent> flux = buildAskFlux(request, userId, admin);
                 AtomicBoolean sentDone = new AtomicBoolean(false);
                 flux.doOnNext(evt -> {

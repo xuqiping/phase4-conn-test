@@ -17,10 +17,11 @@ public class BillingContextTaskDecorator implements TaskDecorator {
 
     @Override
     public Runnable decorate(Runnable runnable) {
-        // 提交线程（请求线程）捕获 userId 快照
+        // 提交线程（请求线程）捕获 userId + 组池 gid 快照（计划5 Step4：gid 随 userId 同路透传）
         Long userId = BillingContext.current();
+        Long projectGroupId = BillingContext.currentGroupId();
         return () -> {
-            BillingContext.set(userId);
+            BillingContext.set(userId, projectGroupId);
             try {
                 runnable.run();
             } finally {

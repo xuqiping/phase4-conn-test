@@ -87,4 +87,10 @@ public class LlmUsageLogEntity {
      * null=非会话调用（记忆后台/文档解析/画布节点等）。
      */
     private String sessionId;
+
+    /**
+     * 项目组归属（计划5 V133/Step4）：组池计费的账单事实源（账单项目列/项目推进/限额三处共用）。
+     * null=个人计费。
+     */
+    private Long projectGroupId;
 }

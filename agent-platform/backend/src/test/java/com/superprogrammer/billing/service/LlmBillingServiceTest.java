@@ -34,6 +34,8 @@ class LlmBillingServiceTest {
     @Mock private PricingService pricingService;
     @Mock private PointsRatioService ratioService;
     @Mock private PointsWalletService walletService;
+    /** 计划5 Step4：组池计费分支 mock。 */
+    @Mock private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     @Mock private UsageCollector usageCollector;
     @Mock private AuditLogService auditLogService;
 
@@ -58,7 +60,7 @@ class LlmBillingServiceTest {
         assertThat(after).isEqualByComparingTo("99.7");
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null));
     }
 
     @Test
@@ -90,7 +92,7 @@ class LlmBillingServiceTest {
         // 仍采 SUCCESS（采不扣）
         verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
                 any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
-                any(), any());
+                any(), any(), any());
     }
 
     @Test
@@ -175,5 +177,67 @@ class LlmBillingServiceTest {
                 isNull(), eq(1L), isNull(), isNull(),
                 org.mockito.ArgumentMatchers.contains("模型超时"),
                 eq(AuditLogEntity.RESULT_FAIL));
+    }
+
+    // ---------- 计划5 Step4：组池计费分支 ----------
+
+    /** chat 选组 → chargeGroup（组池+成员记账），个人 charge 不动，usage 落 gid（账单事实源）。 */
+    @Test
+    void onSuccess_withGroup_chargesGroupNotPersonal_usageCarriesGid() {
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
+                eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.003"));
+        when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
+        when(groupWalletService.chargeGroup(eq(5L), eq(1L), eq(new BigDecimal("0.3")),
+                eq("CHAT"), eq("gpt-4"), isNull())).thenReturn(new BigDecimal("49.7"));
+
+        BigDecimal after = billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 100, 50,
+                LlmUsageLogEntity.STATUS_SUCCESS, null, 5L);
+
+        assertThat(after).isEqualByComparingTo("49.7");
+        verify(groupWalletService).chargeGroup(5L, 1L, new BigDecimal("0.3"), "CHAT", "gpt-4", null);
+        verify(walletService, never()).charge(any(), any(), any(), any(), any());
+        verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
+                eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(5L));
+    }
+
+    /**
+     * 限额残余竞态（入口预检已过、chargeGroup 时超限）→ 铁律吞不回归出口，
+     * 记 FAILED usage 让 admin 可见缺口。
+     */
+    @Test
+    void onSuccess_withGroup_quotaRaceOnCharge_swallowedAsFailedUsage() {
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new BigDecimal("0.003"));
+        when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.3"));
+        when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.BAD_REQUEST, "成员积分限额已用尽"));
+
+        assertThatCode(() -> billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 100, 50,
+                LlmUsageLogEntity.STATUS_SUCCESS, null, 5L))
+                .doesNotThrowAnyException();
+
+        verify(walletService, never()).charge(any(), any(), any(), any(), any());
+        verify(usageCollector).record(eq(1L), any(), any(), any(), any(),
+                any(), any(), eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), any());
+    }
+
+    /** gid 非空但 uid=null（系统调用带错参）→ 退回个人分支语义：charge(null) 短路仅采不扣。 */
+    @Test
+    void onSuccess_groupWithoutUser_personalNoopStillRecords() {
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new BigDecimal("0.001"));
+        when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
+
+        billing.onSuccess(null, 7L, "GLOBAL", "embed-v1", "EMBED", 10, 0,
+                LlmUsageLogEntity.STATUS_SUCCESS, null, 5L);
+
+        verify(groupWalletService, never()).chargeGroup(any(), any(), any(), any(), any(), any());
+        verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
+                any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
+                any(), any(), eq(5L));
     }
 }

@@ -33,6 +33,8 @@ public class LlmBillingService {
     private final PricingService pricingService;
     private final PointsRatioService ratioService;
     private final PointsWalletService walletService;
+    /** 计划5 Step4：组池计费分支（chargeGroup：组池+成员 used+CONSUME 流水）。 */
+    private final com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     private final UsageCollector usageCollector;
     /** 审计：对话完成行 chat_completed（8x Chunk4 行2）。 */
     private final AuditLogService auditLogService;
@@ -70,6 +72,18 @@ public class LlmBillingService {
      */
     public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
                                 Integer tokensInput, Integer tokensOutput, String status, String sessionId) {
+        return onSuccess(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, status, sessionId, null);
+    }
+
+    /**
+     * 计划5 Step4：+projectGroupId 组池计费版本（网关入口已过 requireAffordableGroup 成员/余额预检）。
+     * gid 非空且 uid 非空 → chargeGroup（组池+成员 used+CONSUME 流水，错误按铁律吞不回归出口）；
+     * 否则个人 charge（现状）。usage 落 project_group_id（账单事实源）。
+     */
+    public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
+                                Integer tokensInput, Integer tokensOutput, String status, String sessionId,
+                                Long projectGroupId) {
         if (!walletService.isEnabled()) {
             return null;
         }
@@ -77,10 +91,16 @@ public class LlmBillingService {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
                     tokensInput, tokensOutput, 0, 0);
             BigDecimal points = ratioService.toPoints(yuan);
-            // refType = kind（CHAT/EMBED，与 ledger REF_* 同串）；refId 暂无单次调用 id
-            BigDecimal after = walletService.charge(userId, points, kind, null, model);
+            BigDecimal after;
+            if (projectGroupId != null && userId != null) {
+                // 组池：成员身份入口已验；此处超限/池尽（残余竞态）按铁律吞→FAILED usage
+                after = groupWalletService.chargeGroup(projectGroupId, userId, points, kind, model, null);
+            } else {
+                // refType = kind（CHAT/EMBED，与 ledger REF_* 同串）；refId 暂无单次调用 id
+                after = walletService.charge(userId, points, kind, null, model);
+            }
             usageCollector.record(userId, providerId, providerScope, model, kind,
-                    tokensInput, tokensOutput, yuan, points, status, null, null, sessionId);
+                    tokensInput, tokensOutput, yuan, points, status, null, null, sessionId, projectGroupId);
             // 8x Chunk4 行2：对话完成审计（单一计算源——复用本帧 tokens/points，不二次算价，坑点 #11）
             auditChatCompleted(userId, model, kind, tokensInput, tokensOutput, points,
                     AuditLogEntity.RESULT_SUCCESS, null);

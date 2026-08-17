@@ -21,6 +21,9 @@ public class ExecutionContext {
     /** 记忆模式开关（RagModeResolver 解析结果），供 AgentRoutingStrategy 等策略读取门控 RAG/记忆。 */
     private boolean ragEnabled;
 
+    /** 项目组归属（计划5 Step4）：send 请求透传；策略构建 LlmRequest 时复制→组池计费。null=个人。 */
+    private Long projectGroupId;
+
     public ExecutionContext(Long sessionId, String mode, Long agentId, Long workflowId) {
         this.sessionId = sessionId;
         this.mode = mode;
@@ -44,6 +47,10 @@ public class ExecutionContext {
 
     public void setRagEnabled(boolean ragEnabled) {
         this.ragEnabled = ragEnabled;
+    }
+
+    public void setProjectGroupId(Long projectGroupId) {
+        this.projectGroupId = projectGroupId;
     }
 
     public void addMessage(String role, String content) {

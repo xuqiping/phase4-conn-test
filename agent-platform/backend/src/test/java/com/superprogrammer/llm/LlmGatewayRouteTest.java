@@ -25,6 +25,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 import com.superprogrammer.billing.service.InflightGateService;
 import com.superprogrammer.system.service.SystemSettingService;
@@ -60,6 +61,9 @@ class LlmGatewayRouteTest {
 
     @Mock
     private PointsWalletService walletService;
+    /** 计划5 Step4：组池预检/计费 mock。 */
+    @Mock
+    private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     @Mock
     private InflightGateService inflightGate;
     @Mock
@@ -84,7 +88,7 @@ class LlmGatewayRouteTest {
         when(llmConfig.getEmbedProviders()).thenReturn(List.of(embedProvider));
 
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService,
+                billingService, walletService, groupWalletService,
                 new com.superprogrammer.common.metrics.BizMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
                 inflightGate, systemSettingService, ragTraceService);
         lenient().when(ragTraceService.beginModelCall(anyString(), anyString(), anyString(), anyString()))
@@ -189,7 +193,7 @@ class LlmGatewayRouteTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("text-embedding-3"),
-                eq("EMBED"), eq(8), eq(0), eq("SUCCESS"));
+                eq("EMBED"), eq(8), eq(0), eq("SUCCESS"), isNull(), isNull());
     }
 
     @Test
@@ -202,6 +206,6 @@ class LlmGatewayRouteTest {
         gateway.embed("hello", "text-embedding-3", 42L);
 
         verify(billingService).onSuccess(eq(42L), eq(9L), any(), eq("text-embedding-3"),
-                eq("EMBED"), eq(1), eq(0), eq("ESTIMATED"));
+                eq("EMBED"), eq(1), eq(0), eq("ESTIMATED"), isNull(), isNull());
     }
 }

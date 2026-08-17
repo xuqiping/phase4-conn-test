@@ -90,6 +90,8 @@ public class CanvasNodeRunnerService {
                     .model(model)
                     .messages(List.of(new LlmMessage("user", prompt)))
                     .stream(false)
+                    // 计划5 Step4：组池计费归属（前端工具条选择后随节点 data 下发；null=个人）
+                    .projectGroupId(readLong(node, "projectGroupId"))
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(req) : llmGateway.chat(req, userId);
             model = req.getModel();
@@ -167,6 +169,8 @@ public class CanvasNodeRunnerService {
                     .messages(List.of(new LlmMessage("user", instruction)))
                     .temperature(0.5)
                     .stream(false)
+                    // 计划5 Step4：组池计费归属（同文本节点，节点 data.projectGroupId）
+                    .projectGroupId(readLong(node, "projectGroupId"))
                     .build();
             LlmResponse resp = userId == null ? llmGateway.chat(req) : llmGateway.chat(req, userId);
             model = req.getModel();
@@ -243,6 +247,25 @@ public class CanvasNodeRunnerService {
         }
         Object v = node.getData().get(key);
         return v == null ? null : String.valueOf(v);
+    }
+
+    /** 计划5 Step4：读长整数参数（projectGroupId 组池计费归属等；非数字/缺失→null=个人）。 */
+    private Long readLong(CanvasNodeDTO node, String key) {
+        if (node.getData() == null) {
+            return null;
+        }
+        Object v = node.getData().get(key);
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        if (v instanceof String s && !s.isBlank()) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /** 读整数参数（segmentCount 等；非数字/缺失→null）。 */

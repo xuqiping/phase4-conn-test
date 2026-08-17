@@ -250,6 +250,8 @@ public class ChatSessionService {
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
         context.setModel(request.getModel());
         context.setUserId(userId);
+        // 计划5 Step4：组池计费归属（消息级，null=个人；账单事实源在 llm_usage_logs.project_group_id）
+        context.setProjectGroupId(request.getProjectGroupId());
         enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略
@@ -284,7 +286,15 @@ public class ChatSessionService {
         }
 
         // 阶段5 RAG（仅 CHAT 模式证据注入；AGENT=AgentRoutingStrategy，WORKFLOW=检索节点）— 受记忆模式门控
-        RagInjection rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        // 计划5 Step4：RAG 检索段（query embed/rerank）暂切组池归属，finally 还原——记忆召回/写入等其余 LLM 调用保持个人计费
+        RagInjection rag;
+        Long prevGid = com.superprogrammer.billing.context.BillingContext.currentGroupId();
+        com.superprogrammer.billing.context.BillingContext.setGroup(request.getProjectGroupId());
+        try {
+            rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        } finally {
+            com.superprogrammer.billing.context.BillingContext.setGroup(prevGid);
+        }
         // 修 #2：abstain 不再短路当答案。无证据也照常调 LLM 生成，仅以系统提示告知"无知识库命中"，
         // 让 AI 基于用户记忆/自身能力回答，而不是吐死句子"未找到可访问的相关知识"。
         if (rag.abstained()) {
@@ -553,6 +563,8 @@ public class ChatSessionService {
                 session.getId(), session.getMode(), session.getAgentId(), session.getWorkflowId());
         context.setModel(request.getModel());
         context.setUserId(userId);
+        // 计划5 Step4：组池计费归属（消息级，null=个人；账单事实源在 llm_usage_logs.project_group_id）
+        context.setProjectGroupId(request.getProjectGroupId());
         enforceSessionTokenCap(session.getId(), userId);
 
         // 记忆模式开关（V26）：持久化会话级覆盖 + 解析 effective + 线程化给策略
@@ -587,7 +599,15 @@ public class ChatSessionService {
         }
 
         // 阶段5 RAG（CHAT 模式证据注入；WORKFLOW 走检索节点回调，此处不注入）— 受记忆模式门控
-        final RagInjection rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        // 计划5 Step4：同同步路径——检索段暂切组池归属，finally 还原（本方法在请求线程急切求值，ThreadLocal 生效）
+        final RagInjection rag;
+        final Long prevGid = com.superprogrammer.billing.context.BillingContext.currentGroupId();
+        com.superprogrammer.billing.context.BillingContext.setGroup(request.getProjectGroupId());
+        try {
+            rag = ragOn ? resolveRagForChat(session, request.getMessage(), userId) : RagInjection.none();
+        } finally {
+            com.superprogrammer.billing.context.BillingContext.setGroup(prevGid);
+        }
         // 修 #2：abstain 不再短路当答案。无证据也照常走 executeStream 生成，仅以系统提示告知"无知识库命中"。
         if (rag.abstained()) {
             context.addMessage("system", "（知识库未检索到相关内容，请基于自身能力与用户记忆作答，不要编造引用编号。）");

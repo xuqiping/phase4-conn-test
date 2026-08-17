@@ -50,6 +50,8 @@ public class LlmGateway {
     private final LlmBillingService billingService;
     /** 钱包：入口预检 requireAffordable（≤0 抛 INSUFFICIENT_POINTS）。 */
     private final PointsWalletService walletService;
+    /** 计划5 Step4：组池预检（非成员 403/组池尽 40201）。 */
+    private final com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     /** 运维系统 OPS-FR-03：LLM 指标统一出口埋点（calls/tokens/latency，tag 仅 provider/model/result/direction）。 */
     private final BizMetrics bizMetrics;
     /** 安全体系 S2 · L7 低余额并行闸门（SEC-FR-126）：只挂 chat/chatStream 用户入口；embed 与系统调用不过闸。 */
@@ -73,11 +75,14 @@ public class LlmGateway {
     public LlmResponse chat(LlmRequest request, Long userId) {
         resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
+        // 计划5 Step4：显式 gid 优先，空回退 BillingContext（KB ask 链路内部调用免签名透传）
+        Long gid = resolveBillingGid(request.getProjectGroupId());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
         // 余额复用：返回值直接喂给闸门，省一次重复查库
-        java.math.BigDecimal balance = walletService.requireAffordable(uid);
+        // 计划5 Step4：带 projectGroupId → 组池预检（非成员 403/组池尽 40201），组池计费
+        java.math.BigDecimal balance = requireAffordableFor(uid, gid);
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
@@ -97,7 +102,7 @@ public class LlmGateway {
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status,
-                    request.getSessionId());
+                    request.getSessionId(), gid);
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             ragCall.succeed(response.getContent(), in, out);
             // 安全体系 S3：出口净化（null bean/异常均透传原文，见 OutputSanitizer）
@@ -134,9 +139,11 @@ public class LlmGateway {
     public Flux<StreamEvent> chatStream(LlmRequest request, Long userId) {
         resolveChatModel(request);
         Long uid = resolveBillingUser(userId, request.getModel());
+        // 计划5 Step4：显式 gid 优先，空回退 BillingContext（组装期解析一次，流内 usage sink 复用）
+        Long gid = resolveBillingGid(request.getProjectGroupId());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
-        java.math.BigDecimal balance = walletService.requireAffordable(uid);
+        java.math.BigDecimal balance = requireAffordableFor(uid, gid);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
         String providerName = provider.getName();
@@ -167,7 +174,8 @@ public class LlmGateway {
                                 billingService.onSuccess(uid, providerId, providerScope,
                                         model, LlmUsageLogEntity.KIND_CHAT,
                                         usage.getPromptTokens(), usage.getCompletionTokens(),
-                                        LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId());
+                                        LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
+                                        gid);
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
                                         usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
@@ -228,11 +236,17 @@ public class LlmGateway {
      * <p>embed 路由仍在全局 EMBEDDING 行找（FR-003，不吃用户级 override）；userId 仅透给计费。
      */
     public float[] embed(String text, String model, Long userId) {
+        return embed(text, model, userId, null);
+    }
+
+    /** 计划5 Step4：+projectGroupId 组池计费版本（KB ask 链路贯穿）。显式 gid 空 → 回退 BillingContext。 */
+    public float[] embed(String text, String model, Long userId, Long projectGroupId) {
         model = resolveEmbeddingModel(model);
         Long uid = resolveBillingUser(userId, model);
+        Long gid = resolveBillingGid(projectGroupId);
         LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
-        walletService.requireAffordable(uid);
+        requireAffordableFor(uid, gid);
         long startNanos = System.nanoTime();
         var ragCall = ragTraceService.beginModelCall(model, provider.getName(), text, "QUERY_EMBEDDING");
         try (ragCall) {
@@ -252,7 +266,7 @@ public class LlmGateway {
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
-                    model, LlmUsageLogEntity.KIND_EMBED, in, out, status);
+                    model, LlmUsageLogEntity.KIND_EMBED, in, out, status, null, gid);
             recordLlmSuccess(provider.getName(), model, in, out, startNanos);
             ragCall.succeed(null, in, out);
             return res.getEmbedding();
@@ -271,15 +285,21 @@ public class LlmGateway {
 
     /** 专用 RERANK 出口：独立路由、Trace、计费和指标，日志只记录数量摘要。 */
     public RerankResult rerank(RerankRequest request, Long userId) {
+        return rerank(request, userId, null);
+    }
+
+    /** 计划5 Step4：+projectGroupId 组池计费版本（KB ask 链路贯穿）。显式 gid 空 → 回退 BillingContext。 */
+    public RerankResult rerank(RerankRequest request, Long userId, Long projectGroupId) {
         validateRerankRequest(request);
         String model = request.getModel().trim();
         request.setModel(model);
         Long uid = resolveBillingUser(userId, model);
+        Long gid = resolveBillingGid(projectGroupId);
         LlmProviderInterface provider = findRerankProvider(model);
         int topN = request.getTopN() == null ? request.getDocuments().size() : request.getTopN();
         String summary = "documents=" + request.getDocuments().size() + ",topN=" + topN;
         log.info("rerank 调用 model={} provider={} userId={} {}", model, provider.getName(), uid, summary);
-        walletService.requireAffordable(uid);
+        requireAffordableFor(uid, gid);
         long startNanos = System.nanoTime();
         var ragCall = ragTraceService.beginModelCall(model, provider.getName(), summary, "RERANK");
         try (ragCall) {
@@ -298,7 +318,7 @@ public class LlmGateway {
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
             billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(), model,
-                    LlmUsageLogEntity.KIND_RERANK, in, 0, status);
+                    LlmUsageLogEntity.KIND_RERANK, in, 0, status, null, gid);
             recordLlmSuccess(provider.getName(), model, in, 0, startNanos);
             ragCall.succeed(null, in, 0);
             return result;
@@ -319,6 +339,34 @@ public class LlmGateway {
                 || request.getDocuments() == null || request.getDocuments().isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "重排请求缺少查询或候选文档");
         }
+    }
+
+    /**
+     * 计划5 Step4：计费入口预检统一分派——gid 空 → 个人余额；有值 → 组池（成员身份+组池余额）。
+     * 组路径的组池余额同样回喂 L7 闸门（低组池用户超在途上限在此拦，语义同个人）。
+     */
+    private java.math.BigDecimal requireAffordableFor(Long uid, Long projectGroupId) {
+        if (projectGroupId == null) {
+            return walletService.requireAffordable(uid);
+        }
+        return groupWalletService.requireAffordableGroup(projectGroupId, uid);
+    }
+
+    /**
+     * 计划5 Step4：组池归属解析——显式参数 gid 优先（chat 经 LlmRequest 透传、KB ask 显式调用），
+     * 空则回退 {@link BillingContext#currentGroupId()}（入口点种入 / TaskDecorator 透传 / 裸线程手工种）。
+     * 与 {@link #resolveBillingUser} 同范式：KB ask 链路内部的 query embed / rerank / answer 生成
+     * 调用零签名改动即归组计费。再空 = 个人计费（现状不变）。
+     */
+    private Long resolveBillingGid(Long projectGroupId) {
+        if (projectGroupId != null) {
+            return projectGroupId;
+        }
+        Long gid = BillingContext.currentGroupId();
+        if (gid != null) {
+            log.debug("组池归属：gid 取自 BillingContext gid={}", gid);
+        }
+        return gid;
     }
 
     /** 安全体系 S3 · 同步净化（null bean/内部异常均透传原文）。 */

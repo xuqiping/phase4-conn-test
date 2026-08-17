@@ -65,6 +65,9 @@ class LlmGatewayTest {
 
     @Mock
     private PointsWalletService walletService;
+    /** 计划5 Step4：组池预检/计费 mock。 */
+    @Mock
+    private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     @Mock
     private InflightGateService inflightGate;
     @Mock
@@ -92,7 +95,7 @@ class LlmGatewayTest {
         when(llmConfig.getRerankProviders()).thenReturn(List.of(rerankProvider));
         meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         gateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
+                billingService, walletService, groupWalletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
         lenient().when(ragTraceService.beginModelCall(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(modelCallScope);
         lenient().doAnswer(invocation -> {
@@ -137,7 +140,7 @@ class LlmGatewayTest {
         verify(rerankProvider).rerank(any(RerankRequest.class));
         verify(openaiProvider, never()).rerank(any());
         verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"),
-                eq("configured-rerank-model"), eq("RERANK"), eq(11), eq(0), eq("SUCCESS"));
+                eq("configured-rerank-model"), eq("RERANK"), eq(11), eq(0), eq("SUCCESS"), isNull(), isNull());
         verify(ragTraceService).beginModelCall(eq("configured-rerank-model"),
                 eq("qwen-rerank-provider"), eq("documents=2,topN=2"), eq("RERANK"));
         verify(modelCallScope).succeed(isNull(), eq(11), eq(0));
@@ -174,7 +177,7 @@ class LlmGatewayTest {
     void chat_withNoMatchingProvider_shouldThrow() {
         when(llmConfig.getProviders()).thenReturn(List.of());
         LlmGateway emptyGateway = new LlmGateway(llmConfig, userLlmProviderService, llmProviderService, objectMapper,
-                billingService, walletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
+                billingService, walletService, groupWalletService, new BizMetrics(meterRegistry), inflightGate, systemSettingService, ragTraceService);
         LlmRequest request = LlmRequest.builder().model("unknown").build();
         assertThrows(RuntimeException.class, () -> emptyGateway.chat(request));
     }
@@ -237,7 +240,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"), isNull());
+                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"), isNull(), isNull());
     }
 
     @Test
@@ -254,7 +257,7 @@ class LlmGatewayTest {
         gateway.chat(request, 42L);
 
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"), isNull());
+                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"), isNull(), isNull());
     }
 
     @Test
@@ -289,7 +292,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(20), eq(10), eq("SUCCESS"), isNull());
+                eq("CHAT"), eq(20), eq(10), eq("SUCCESS"), isNull(), isNull());
         verify(modelCallScope).detach();
         verify(modelCallScope, atLeast(2)).runWithContext(any(Runnable.class));
     }
@@ -347,7 +350,7 @@ class LlmGatewayTest {
 
             verify(walletService).requireAffordable(42L);   // uid 取自 BillingContext
             verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull());
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull());
         } finally {
             BillingContext.clear();
         }
@@ -370,7 +373,7 @@ class LlmGatewayTest {
         // uid=null → requireAffordable(null) 短路（不扣），onSuccess(null,...) 仅采集不扣费
         verify(walletService).requireAffordable(null);
         verify(billingService).onSuccess(isNull(), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull());
+                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull());
     }
 
     // ===== OPS-FR-03 LLM 指标埋点（正好一次，不重不漏）=====
@@ -461,5 +464,112 @@ class LlmGatewayTest {
         assertTrue(out.contains("llm_calls_total{model=\"deepseek-chat\",provider=\"deepseek\",result=\"cancel\",} 1.0"), out);
         assertFalse(out.contains("result=\"success\""), out);
         assertFalse(out.contains("result=\"fail\""), out);
+    }
+
+    // ===== 计划5 Step4：组池计费透传（chat/embed/rerank）=====
+
+    /** chat 带 gid → 组池预检+组池计费+usage 落 gid；个人 requireAffordable 不走。 */
+    @Test
+    void chat_withGroup_prepaysAndBillsGroup() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(10).completionTokens(5).totalTokens(15).build();
+        when(deepseekProvider.chat(any())).thenReturn(LlmResponse.builder()
+                .content("ans").model("deepseek-chat").usage(usage).duration(1L).build());
+        when(deepseekProvider.getId()).thenReturn(7L);
+        when(deepseekProvider.getProviderScope()).thenReturn("GLOBAL");
+        when(groupWalletService.requireAffordableGroup(5L, 42L)).thenReturn(java.math.BigDecimal.TEN);
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .projectGroupId(5L)
+                .build();
+        gateway.chat(request, 42L);
+
+        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(walletService, never()).requireAffordable(any());
+        verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
+                eq("CHAT"), eq(10), eq(5), eq("SUCCESS"), isNull(), eq(5L));
+    }
+
+    /** 非成员带 gid → 组池预检抛 403 透传前端；provider 不被调用（未调用不记 FAILED）。 */
+    @Test
+    void chat_nonMemberGroup_throws403WithoutProviderCall() {
+        when(groupWalletService.requireAffordableGroup(5L, 42L)).thenThrow(
+                new com.superprogrammer.common.exception.BusinessException(
+                        com.superprogrammer.common.exception.ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费"));
+
+        LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                .projectGroupId(5L)
+                .build();
+        RuntimeException error = assertThrows(RuntimeException.class, () -> gateway.chat(request, 42L));
+        assertTrue(error.getMessage().contains("非项目组成员"));
+
+        verify(deepseekProvider, never()).chat(any());
+        verify(billingService, never()).onSuccess(any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any());
+    }
+
+    /** 显式 gid 空 → 回退 BillingContext 组槽（KB ask 裸线程种入场景），finally 清理防串号。 */
+    @Test
+    void chat_groupFallbackFromBillingContext() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(8).completionTokens(4).totalTokens(12).build();
+        when(deepseekProvider.chat(any())).thenReturn(LlmResponse.builder()
+                .content("ans").model("deepseek-chat").usage(usage).duration(1L).build());
+        when(deepseekProvider.getId()).thenReturn(7L);
+        when(groupWalletService.requireAffordableGroup(9L, 42L)).thenReturn(java.math.BigDecimal.TEN);
+
+        com.superprogrammer.billing.context.BillingContext.set(42L, 9L);
+        try {
+            LlmRequest request = LlmRequest.builder().model("deepseek-chat")
+                    .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
+                    .build();
+            gateway.chat(request, 42L);
+
+            verify(groupWalletService).requireAffordableGroup(9L, 42L);
+            verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), eq(9L));
+        } finally {
+            com.superprogrammer.billing.context.BillingContext.clear();
+        }
+    }
+
+    /** embed 带 gid → 组池预检+usage 落 gid（知识库 ask 链路 query 向量化）。 */
+    @Test
+    void embed_withGroup_billsGroup() {
+        when(llmConfig.getEmbedProviders()).thenReturn(List.of(openaiProvider));
+        when(openaiProvider.supports("text-embedding-3")).thenReturn(true);
+        when(openaiProvider.embedWithUsage(any(), any())).thenReturn(EmbedResult.builder()
+                .embedding(new float[]{0.1f})
+                .usage(TokenUsage.builder().promptTokens(8).completionTokens(0).totalTokens(8).build())
+                .build());
+        when(openaiProvider.getId()).thenReturn(9L);
+        when(openaiProvider.getProviderScope()).thenReturn("GLOBAL");
+
+        gateway.embed("hello", "text-embedding-3", 42L, 5L);
+
+        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("text-embedding-3"),
+                eq("EMBED"), eq(8), eq(0), eq("SUCCESS"), isNull(), eq(5L));
+    }
+
+    /** rerank 带 gid → 组池预检+usage 落 gid（知识库 ask 链路重排）。 */
+    @Test
+    void rerank_withGroup_billsGroup() {
+        TokenUsage usage = TokenUsage.builder().promptTokens(11).completionTokens(0).totalTokens(11).build();
+        when(rerankProvider.rerank(any())).thenReturn(RerankResult.builder()
+                .items(List.of(RerankResult.Item.builder().index(1).score(0.9).build()))
+                .model("configured-rerank-model").usage(usage).duration(12L).build());
+        when(rerankProvider.getId()).thenReturn(9L);
+        when(rerankProvider.getProviderScope()).thenReturn("GLOBAL");
+
+        gateway.rerank(RerankRequest.builder()
+                .model("configured-rerank-model")
+                .query("q")
+                .documents(List.of("doc a", "doc b"))
+                .build(), 42L, 5L);
+
+        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("configured-rerank-model"),
+                eq("RERANK"), eq(11), eq(0), eq("SUCCESS"), isNull(), eq(5L));
     }
 }
