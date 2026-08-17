@@ -95,6 +95,7 @@
   - **worker 算 hasReference 必须从 `request.getAttachments()` 的 `kind=="video"` 判**，不用 taskType（IMAGE2VIDEO 被重载用于 image/video/audio 参考，不可靠）；**首尾帧参考图（kind=="image"）不算参考视频**。
   - `MediaTaskVO.hasReference` 是计算字段（按 inputAttachments 实时算），与定价维度 `pricing_rule.has_reference` 是不同字段——前者任务侧展示/审查，后者价表行配置/计费命中，口径一致（都按 kind=="video"）。
 - **视频任务推送参数审查**（7x 沉淀）：实际发给 Provider 的 body 已脱敏落库在 `media_gen_tasks.request_config` JSONB 的 `providerRequestSnapshot` 子键（媒体 URL→sha256/大小，无二进制）。新接入审查只需复用 `MediaTaskRequestDetails` 组件，**无需新 DB 列**；Canvas 路径需在 `pollVideoTask`/`hydrateVideoPreviews` 两处 `updateNodeData` 保留审计字段。
+- **前端后台型请求豁免 `_background`**（2x 四轮沉淀）：轮询/blob 预取类请求在 axios config 标 `_background: true`（声明在 `api/request.ts` 的 `AxiosRequestConfig` 模块扩充）——网络层失败不进断路计数、不踢会话、toast 换节流版「后台任务网络波动」。**只给后台型标**：用户主动点击触发的请求（提交/上传/抽帧 POST）保留完整断路语义。轮询一律走 `utils/mediaTaskPolling.ts`（自带 5→10→30s 退避 + visibility 回显补轮），新增后台轮询不要再手写 setInterval。
 
 ## 参考文档
 - 项目结构 → [workflow_output/docs/file_structure.md](../docs/file_structure.md)
