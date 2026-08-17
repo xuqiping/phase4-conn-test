@@ -1,9 +1,10 @@
 <!-- ============================================================
   记忆管理面板（计划12 · H'-4 瘦身版）
   旧栈「我的记忆 / 冲突 / 预览 / scope」首页签 + 全部 legacy 脚本已删（旧栈后端整体移除）。
-  现 8 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 总结 / 冲突裁决 / gen 矩阵 / 收录规则 / 收录审核 / 项目授权。
+  现 9 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 文件记忆 / 总结 / 冲突裁决 / gen 矩阵 / 收录规则 / 收录审核 / 项目授权。
   （记忆二期 P1：「项目 ACL」页签随一期 reader×target 矩阵下线，FR-006；
-    新增「收录规则/收录审核」页签，FR-001/FR-005；二期 P2 新增「项目授权」页签，FR-101。）
+    新增「收录规则/收录审核」页签，FR-001/FR-005；二期 P2 新增「项目授权」页签，FR-101。
+    5x 四轮 U2：「文件记忆」提序到第 3 位（上传附件高频，末位藏不进横向滚动里没人找得到）。）
   ============================================================ -->
 <template>
   <div class="memory-manager">
@@ -13,6 +14,9 @@
       </n-tab-pane>
       <n-tab-pane name="tags" tab="标签库" display-directive="show">
         <MemoryTagLibrary />
+      </n-tab-pane>
+      <n-tab-pane name="assets" tab="文件记忆" display-directive="show">
+        <MemoryAssetMemorySection />
       </n-tab-pane>
       <n-tab-pane name="summaries" tab="总结" display-directive="show">
         <MemorySummarySection />
@@ -31,9 +35,6 @@
       </n-tab-pane>
       <n-tab-pane name="links" tab="项目授权" display-directive="show">
         <MemoryProjectLinkPanel />
-      </n-tab-pane>
-      <n-tab-pane name="assets" tab="文件记忆" display-directive="show">
-        <MemoryAssetMemorySection />
       </n-tab-pane>
     </n-tabs>
   </div>
@@ -66,26 +67,24 @@ const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'ru
   gap: var(--spacing-3);
 }
 
-// E8 移动适配：390px 等窄屏下 Naive n-tabs 单行时末 3 个 tab（gen矩阵/项目ACL/生命周期）
-// 会越出视口且无法滚动到达。强制 tab 行折成多行，保证 7 页签全部可见/可点。
-@media (max-width: 640px) {
-  .memory-manager__tabs :deep(.n-tabs-nav-scroll-content) {
-    width: 100% !important;
-    min-width: auto !important;
-  }
+// 页签折行（5x 四轮 U2）：原仅 <640px 视口折行，桌面 720px 抽屉里 9 页签单行溢出，
+// 「文件记忆」藏在横向滚动里找不到。改为无条件折行——任何宽度下页签全部可见/可点，两行内收齐。
+.memory-manager__tabs :deep(.n-tabs-nav-scroll-content) {
+  width: 100% !important;
+  min-width: auto !important;
+}
 
-  .memory-manager__tabs :deep(.n-tabs-wrapper) {
-    flex-wrap: wrap !important;
-    width: 100% !important;
-  }
+.memory-manager__tabs :deep(.n-tabs-wrapper) {
+  flex-wrap: wrap !important;
+  width: 100% !important;
+}
 
-  .memory-manager__tabs :deep(.n-tabs-tab) {
-    flex: 0 0 auto;
-  }
+.memory-manager__tabs :deep(.n-tabs-tab) {
+  flex: 0 0 auto;
+}
 
-  // 折行后禁用 Naive 内部的水平滚动容器，避免截断第二行
-  .memory-manager__tabs :deep(.v-x-scroll) {
-    overflow: visible !important;
-  }
+// 折行后禁用 Naive 内部的水平滚动容器，避免截断第二行
+.memory-manager__tabs :deep(.v-x-scroll) {
+  overflow: visible !important;
 }
 </style>
