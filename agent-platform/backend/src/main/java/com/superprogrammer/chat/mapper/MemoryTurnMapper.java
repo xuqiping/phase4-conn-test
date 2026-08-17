@@ -63,4 +63,18 @@ public interface MemoryTurnMapper extends BaseMapper<MemoryTurn> {
 
     /** E-7 个人 scope raw turn 计数（gen_done=false，hasChange 判据 + 遗忘权面板）。 */
     int countRawPersonalTurns(@Param("userId") Long userId);
+
+    // ============================ 5x 四轮 C8 · 重新归类标签（U7）============================
+
+    /** 重新归类候选：本人未挂目标标签的 turn（gen_done 不限——raw 行也有资格挂标签），
+     *  created_at 升序（老记忆优先补），LIMIT 上限由 service 硬卡。 */
+    List<MemoryTurn> findReclassifyCandidates(@Param("userId") Long userId,
+                                              @Param("tagId") Long tagId,
+                                              @Param("olderThanCreatedAt") OffsetDateTime olderThanCreatedAt,
+                                              @Param("start") OffsetDateTime start,
+                                              @Param("end") OffsetDateTime end,
+                                              @Param("limit") int limit);
+
+    /** tag_ids 原子增补目标标签（array_append + 防重条件，幂等；只增不删铁律）。返影响行数。 */
+    int appendTagId(@Param("id") Long id, @Param("tagId") Long tagId);
 }

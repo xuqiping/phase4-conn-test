@@ -103,13 +103,62 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 5x 四轮 C8（U7）：重新归类 modal——筛选范围 + 预估条数 + 确认（命中只增补不删旧） -->
+    <n-modal v-model:show="reclassifying" preset="card" title="重新归类" :style="{ maxWidth: '520px', width: '90vw' }">
+      <n-space vertical :size="12">
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">目标标签</span>
+          <n-tag size="small" :bordered="false">{{ reclassifyTarget?.subject }} : {{ reclassifyTarget?.label }}</n-tag>
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">建标签之前</span>
+          <n-switch v-model:value="reclassifyForm.olderThanTag" size="small" />
+          <span class="memory-tag-library__hint">只扫标签创建前的记忆（建标签前的不可能已挂上，推荐开）</span>
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">时间范围</span>
+          <n-date-picker
+            v-model:value="reclassifyForm.range"
+            type="daterange"
+            size="small"
+            clearable
+            style="width: 260px"
+          />
+        </div>
+        <div class="memory-tag-library__edit-row">
+          <span class="memory-tag-library__edit-label">扫描上限</span>
+          <n-input-number
+            v-model:value="reclassifyForm.limit"
+            size="small"
+            :min="1"
+            :max="200"
+            style="width: 120px"
+          />
+          <span class="memory-tag-library__hint">单次最多 200 条</span>
+        </div>
+        <n-alert type="info" :bordered="false" size="small">
+          按范围对流水账重跑标签判定：命中的记忆<b>增补</b>此标签，<b>不会移除</b>原有标签。
+          归类后到「总结」页签点重新总结即可按新标签生效。
+        </n-alert>
+        <div v-if="estimateText" class="memory-tag-library__estimate">{{ estimateText }}</div>
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button size="small" @click="reclassifying = false">取消</n-button>
+          <n-button size="small" :loading="estimating" :disabled="submitting" @click="estimate">预估条数</n-button>
+          <n-button size="small" type="primary" :loading="submitting" @click="submitReclassify">开始归类</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { h, onMounted, ref, computed } from 'vue'
 import {
-  NAlert, NButton, NDataTable, NDynamicTags, NInput, NModal, NSelect, NSpace, NTag, useMessage
+  NAlert, NButton, NDataTable, NDatePicker, NDynamicTags, NInput, NInputNumber, NModal,
+  NSelect, NSpace, NSwitch, NTag, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { memoryApi, type MemoryTagVO } from '@/api/memory'
@@ -258,6 +307,70 @@ async function submitCreate() {
   }
 }
 
+// ---- 5x 四轮 C8：重新归类（范围筛选 + 预估 + 确认；命中只增补不删旧）----
+const reclassifying = ref(false)
+const estimating = ref(false)
+const submitting = ref(false)
+const reclassifyTarget = ref<MemoryTagVO | null>(null)
+const reclassifyForm = ref<{ olderThanTag: boolean; range: [number, number] | null; limit: number }>({
+  olderThanTag: true, range: null, limit: 200
+})
+const estimateText = ref('')
+
+function openReclassify(t: MemoryTagVO) {
+  reclassifyTarget.value = t
+  reclassifyForm.value = { olderThanTag: true, range: null, limit: 200 }
+  estimateText.value = ''
+  reclassifying.value = true
+}
+
+/** dryRun=true：后端只按范围取数计数，不调 LLM 不落库。 */
+function reclassifyBody(dryRun: boolean) {
+  const range = reclassifyForm.value.range
+  return {
+    olderThanTag: reclassifyForm.value.olderThanTag,
+    start: range ? new Date(range[0]).toISOString() : null,
+    end: range ? new Date(range[1] + 86_399_999).toISOString() : null,
+    limit: reclassifyForm.value.limit,
+    dryRun
+  }
+}
+
+async function estimate() {
+  if (!reclassifyTarget.value) return
+  estimating.value = true
+  try {
+    const res = await memoryApi.reclassifyTag(reclassifyTarget.value.id, reclassifyBody(true))
+    const n = res.data?.data?.scanned ?? 0
+    estimateText.value = n === 0
+      ? '该范围内没有可归类的记忆（都已有此标签或范围外）'
+      : `预计扫描 ${n} 条记忆，将逐批交给 AI 判定是否属于该标签`
+  } catch (e: any) {
+    message.error(e?.message || '预估失败')
+  } finally {
+    estimating.value = false
+  }
+}
+
+async function submitReclassify() {
+  if (!reclassifyTarget.value) return
+  submitting.value = true
+  try {
+    const res = await memoryApi.reclassifyTag(reclassifyTarget.value.id, reclassifyBody(false))
+    const r = res.data?.data
+    message.success(res.data?.message || `归类完成：命中 ${r?.hits ?? 0} 条`)
+    if (r && r.llmFailBatches > 0) {
+      message.warning(`有 ${r.llmFailBatches} 批判定失败被跳过（宁缺勿滥），可稍后重试`)
+    }
+    reclassifying.value = false
+    await load()   // usageCount 已递增，刷新列表
+  } catch (e: any) {
+    message.error(e?.message || '归类失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
 const columns = computed<DataTableColumns<MemoryTagVO>>(() => [
   {
     title: '主体 : 主题',
@@ -286,10 +399,17 @@ const columns = computed<DataTableColumns<MemoryTagVO>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 90,
-    render: (t) => h(NButton, {
-      size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(t)
-    }, { default: () => '编辑' })
+    width: 180,
+    render: (t) => h(NSpace, { size: 4, wrap: false }, {
+      default: () => [
+        h(NButton, {
+          size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(t)
+        }, { default: () => '编辑' }),
+        h(NButton, {
+          size: 'small', quaternary: true, type: 'info', onClick: () => openReclassify(t)
+        }, { default: () => '重新归类' })
+      ]
+    })
   }
 ])
 
@@ -328,6 +448,13 @@ defineExpose({ refresh: load })
     flex-shrink: 0;
     font-size: 13px;
     opacity: 0.75;
+  }
+  &__estimate {
+    font-size: 12px;
+    color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 6px 10px;
   }
 }
 </style>

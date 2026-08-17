@@ -109,6 +109,14 @@ export interface MemoryTagVO {
   needsReview: boolean
 }
 
+/** 重新归类报告（5x 四轮 C8；dryRun 时只有 scanned 有值）。 */
+export interface MemoryTagReclassifyReport {
+  scanned: number
+  judged: number
+  hits: number
+  llmFailBatches: number
+}
+
 /** 召回 scope 视图（底栏 + 召回预览用）。 */
 export interface MemoryRecallScopeView {
   personalOn: boolean
@@ -423,6 +431,19 @@ export const memoryApi = {
   /** P3a：主动新建标签（选定大类 topic + 自填 label + 可选别名；needs_review=false）。 */
   createTag(data: { subject?: string; topic: string; label: string; aliases?: string[] }) {
     return request.post<ApiResponse<MemoryTagVO>>('/chat/memory/tags', data)
+  },
+  /** 5x 四轮 C8：标签重新归类——范围内旧流水账 LLM 判定后 tag_ids 只增补（不删旧）。
+   *  dryRun=true 仅预估扫描条数；同步跑 LLM 分批判定，照 consolidation trigger 放宽 180s。 */
+  reclassifyTag(id: number, data: {
+    olderThanTag?: boolean
+    start?: string | null
+    end?: string | null
+    limit?: number
+    dryRun?: boolean
+  }) {
+    return request.post<ApiResponse<MemoryTagReclassifyReport>>(`/chat/memory/tags/${id}/reclassify`, data, {
+      timeout: 180000
+    })
   },
 
   // ---- 召回 scope（底栏持久化 + 预览）----

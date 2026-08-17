@@ -3,10 +3,12 @@ package com.superprogrammer.chat.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.chat.dto.MemoryTagCreateRequest;
 import com.superprogrammer.chat.dto.MemoryTagEditRequest;
+import com.superprogrammer.chat.dto.MemoryTagReclassifyRequest;
 import com.superprogrammer.chat.dto.MemoryTagVO;
 import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
 import com.superprogrammer.chat.service.internal.MemoryTagAnchorService;
+import com.superprogrammer.chat.service.internal.MemoryTagReclassifyService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
@@ -51,6 +53,7 @@ public class MemoryTagController {
     private final MemoryTagAnchorService anchorService;
     private final com.superprogrammer.chat.mapper.MemoryNotificationMapper notificationMapper;
     private final com.superprogrammer.chat.service.internal.MemoryTagRepairService repairService;
+    private final com.superprogrammer.chat.service.internal.MemoryTagReclassifyService reclassifyService;
 
     /** 列本人全部标签（按 usage_count 倒序）。只露 VO 字段（向量 4）。 */
     @GetMapping
@@ -189,6 +192,24 @@ public class MemoryTagController {
 
         MemoryTag fresh = tagMapper.selectById(id);
         return ResponseEntity.ok(R.ok("标签已更新", toVO(fresh)));
+    }
+
+    /**
+     * 5x 四轮 C8（U7）：标签「重新归类」——按筛选范围对本人流水账重跑标签判定，
+     * 命中行 tag_ids <b>只增补</b>目标标签（不删旧，拍板⑤）。
+     * <p>
+     * 同步执行（照 consolidation trigger 口径，前端 180s 超时）；单次扫描上限 200 防刷 LLM。
+     * 归类后总结需用户到总结页签手动点「重新总结」（force 重压链已有，不在本端点耦合）。
+     */
+    @PostMapping("/{id}/reclassify")
+    @com.superprogrammer.common.ratelimit.RateLimit(action = "memory_reclassify", max = 3, windowSeconds = 60,
+            algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
+    public ResponseEntity<R<com.superprogrammer.chat.service.internal.MemoryTagReclassifyService.ReclassifyReport>>
+            reclassify(@PathVariable Long id, @RequestBody MemoryTagReclassifyRequest req) {
+        Long uid = getCurrentUserId();
+        return ResponseEntity.ok(R.ok("重新归类完成，命中内容可到「总结」页签重新总结生效",
+                reclassifyService.reclassify(id, uid,
+                        MemoryTagReclassifyService.MemoryTagReclassifyParams.of(req))));
     }
 
     /** 实体 → VO（收敛字段，向量 4：aliases/anchor 不外露）。 */

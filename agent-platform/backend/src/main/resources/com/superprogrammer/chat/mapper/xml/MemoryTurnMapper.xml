@@ -104,4 +104,28 @@
         SELECT COUNT(*) FROM memory_turns t
         WHERE t.deleted = 0 AND t.gen_done = false AND t.user_id = #{userId}
     </select>
+
+    <!-- ============================ 5x 四轮 C8 · 重新归类标签（U7）============================ -->
+
+    <!-- 重新归类候选：本人未挂目标标签（COALESCE 防 NULL tag_ids 被 NOT(NULL) 过滤掉）；
+         olderThan=只扫标签创建前的行（建标签前产生的记忆不可能已挂上）。 -->
+    <select id="findReclassifyCandidates" resultMap="MemoryTurnMap">
+        SELECT t.* FROM memory_turns t
+        WHERE t.deleted = 0 AND t.user_id = #{userId}
+          AND NOT (COALESCE(t.tag_ids, '{}'::bigint[]) @> ARRAY[#{tagId}]::bigint[])
+          <if test="olderThanCreatedAt != null">AND t.created_at &lt; #{olderThanCreatedAt}</if>
+          <if test="start != null">AND t.created_at &gt;= #{start}</if>
+          <if test="end != null">AND t.created_at &lt;= #{end}</if>
+        ORDER BY t.created_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- tag_ids 原子增补（array_append + 防重条件幂等；只增不删铁律，返影响行数）。 -->
+    <update id="appendTagId">
+        UPDATE memory_turns
+        SET tag_ids    = array_append(COALESCE(tag_ids, '{}'::bigint[]), #{tagId}::bigint),
+            updated_at = NOW()
+        WHERE id = #{id} AND deleted = 0
+          AND NOT (COALESCE(tag_ids, '{}'::bigint[]) @> ARRAY[#{tagId}]::bigint[])
+    </update>
 </mapper>
