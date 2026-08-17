@@ -181,6 +181,15 @@
                 @update:value="onSelectKb"
               />
             </div>
+            <!-- 计划5 Step6：参与项目（组池计费/个人钱包切换），随每条消息携带 gid -->
+            <div class="chat-view__rag-toggle" title="参与项目：选组后本会话消耗计入组池（RAG 检索+生成），记忆召回/写入保持个人；个人（默认）= 个人钱包计费">
+              <span class="chat-view__rag-label">参与项目</span>
+              <ProjectGroupSelector
+                :model-value="projectGroupPref"
+                :disabled="chatStore.sending"
+                @update:model-value="onSelectProjectGroup"
+              />
+            </div>
             <!-- 二期 P1（FR-006）：一期「写目标/读范围」手动控件已下线——
                  turns 纯个人域（写入恒个人流水账），召回范围由 F-6 新栈 scope popover 统一承载 -->
             <div class="chat-view__mem-scope chat-view__mem-scope--read">
@@ -245,6 +254,7 @@ import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import { knowledgeApi } from '@/api/knowledge'
 
@@ -337,6 +347,18 @@ function onSelectKb(ids: number[]) {
   setStorage(STORAGE_KEYS.CHAT_KB_IDS, ids)
 }
 
+/**
+ * 计划5 Step6：参与项目（组池计费）。null=个人钱包（默认）；选组 → 本会话后续消息带
+ * projectGroupId（RAG 检索段/生成均组池计费，记忆召回与写入保持个人——后端口径）。
+ * 随 kbPref 模式：localStorage 偏好 + 每条消息携带（后端不持久化 gid 到会话列）。
+ */
+const projectGroupPref = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.CHAT_PROJECT_GROUP_ID) ?? null)
+
+function onSelectProjectGroup(v: number | null) {
+  projectGroupPref.value = v
+  setStorage(STORAGE_KEYS.CHAT_PROJECT_GROUP_ID, v)
+}
+
 async function loadKbOptions() {
   try {
     const { data } = await knowledgeApi.listBases()
@@ -422,7 +444,8 @@ function handleSend(message: string, attachments?: ChatAttachmentRef[]) {
     ragPref.value ?? undefined,
     webSearchPref.value,
     attachments,
-    kbPref.value.length ? kbPref.value : undefined
+    kbPref.value.length ? kbPref.value : undefined,
+    projectGroupPref.value ?? undefined
   )
 }
 

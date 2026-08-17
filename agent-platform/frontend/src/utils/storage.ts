@@ -16,7 +16,12 @@ export const STORAGE_KEYS = {
   CHAT_RAG_ENABLED: 'chat_rag_enabled',
   CHAT_WEB_SEARCH_ENABLED: 'chat_web_search_enabled',
   /** 14x-2：智能对话引用知识库（KB 多选，会话级持久化到后端 ChatSession.kbIds）。 */
-  CHAT_KB_IDS: 'chat_kb_ids'
+  CHAT_KB_IDS: 'chat_kb_ids',
+  /** 计划5 Step6：五入口「参与项目」选择（null=个人钱包计费；随消息/任务提交传 gid）。 */
+  CHAT_PROJECT_GROUP_ID: 'chat_project_group_id',
+  KB_ASK_PROJECT_GROUP_ID: 'kb_ask_project_group_id',
+  IMAGE_GEN_PROJECT_GROUP_ID: 'image_gen_project_group_id',
+  VIDEO_GEN_PROJECT_GROUP_ID: 'video_gen_project_group_id'
 } as const
 
 /**

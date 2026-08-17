@@ -14,6 +14,10 @@
                 @update:value="onModelChange"
               />
             </NFormItem>
+            <!-- 计划5 Step6：参与项目（组池计费）——预检组池/限额，结算入组池流水 -->
+            <NFormItem label="参与项目" class="form-item">
+              <ProjectGroupSelector v-model="projectGroupId" :disabled="submitting" style="width: 100%" />
+            </NFormItem>
             <NAlert v-if="restoredOfflineModel" type="warning" :show-icon="false" class="form-item">
               历史模型 {{ restoredOfflineModel }} 已下线，仅可回看参数，不能直接重新提交。
             </NAlert>
@@ -291,6 +295,8 @@ import {
   type ImageSubmitRequest, type MediaTaskVO
 } from '@/api/media'
 import { fetchFilePreview } from '@/api/file'
+import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import MediaLightbox from '@/components/media/MediaLightbox.vue'
 import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
@@ -445,11 +451,16 @@ const submitting = ref(false)
 const errorMsg = ref('')
 const canSubmit = computed(() => canGen.value && !!form.model && !!form.prompt?.trim())
 
+/** 计划5 Step6：参与项目（组池计费；localStorage 偏好随提交携带，null=个人钱包）。 */
+const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.IMAGE_GEN_PROJECT_GROUP_ID) ?? null)
+watch(projectGroupId, v => setStorage(STORAGE_KEYS.IMAGE_GEN_PROJECT_GROUP_ID, v))
+
 function buildRequest(): ImageSubmitRequest {
   const req: ImageSubmitRequest = {
     model: form.model,
     prompt: form.prompt.trim()
   }
+  if (projectGroupId.value != null) req.projectGroupId = projectGroupId.value
   if (refImages.value.length) req.refFileIds = refImages.value.map(r => r.fileId)
   // size：预设直接用；自定义用 customSize
   if (form.size === '__custom__') {

@@ -152,7 +152,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // REST send (non-streaming fallback)
-  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[]) {
+  async function sendMessage(content: string, agentId?: number, workflowId?: number, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number) {
     const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     try {
@@ -168,7 +168,7 @@ export const useChatStore = defineStore('chat', () => {
       let res: { data: { data: ChatResponse } }
 
       if (currentSessionId.value) {
-        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, attachmentFileIds, kbIds })
+        res = await chatApi.sendMessage(currentSessionId.value, { message: content, model: selectedModel.value ?? undefined, ragEnabled, webSearchEnabled, attachmentFileIds, kbIds, projectGroupId })
       } else {
         const targetPayload = agentId || workflowId
           ? { agentId, workflowId }
@@ -180,7 +180,8 @@ export const useChatStore = defineStore('chat', () => {
           ragEnabled,
           webSearchEnabled,
           attachmentFileIds,
-          kbIds
+          kbIds,
+          projectGroupId
         })
       }
 
@@ -207,7 +208,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // SSE streaming
-  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[]) {
+  async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number) {
     const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     streamingContent.value = ''
@@ -235,7 +236,8 @@ export const useChatStore = defineStore('chat', () => {
             ragEnabled,
             webSearchEnabled,
             attachmentFileIds,
-            kbIds
+            kbIds,
+            projectGroupId
           }, streamAbortController.signal)
         : chatApi.streamNewMessage({
             message: content,
@@ -244,7 +246,8 @@ export const useChatStore = defineStore('chat', () => {
             ragEnabled,
             webSearchEnabled,
             attachmentFileIds,
-            kbIds
+            kbIds,
+            projectGroupId
           }, streamAbortController.signal)
 
       // 60s timeout for initial response（修 #1：原 10s 对 AGENT/工作流等非真流式首字节太短，频繁误超时→REST 回退双跑更慢）
@@ -258,7 +261,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!response.ok || !response.body) {
         sending.value = false
         messages.value.pop()
-        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds)
+        return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId)
       }
 
       const reader = response.body.getReader()

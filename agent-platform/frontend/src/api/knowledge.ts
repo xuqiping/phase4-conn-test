@@ -645,11 +645,13 @@ export interface AskStreamEvent {
 /**
  * POST /api/knowledge/ask — RAG 流式问答（SSE，knowledge:read）。
  * 异步生成器逐事件 yield（CHUNK 追加答案，CITATION=引用 JSON 数组，DONE 收尾）。
+ * 计划5 Step6：projectGroupId 非空 → ask 全链（query 向量化/重排/answer 生成）组池计费。
  */
 export async function* askStream(
   query: string,
   kbIds: number[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  projectGroupId?: number
 ): AsyncGenerator<AskStreamEvent> {
   const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
   const response = await fetch('/api/knowledge/ask', {
@@ -660,7 +662,7 @@ export async function* askStream(
       'Authorization': `Bearer ${token}`
     },
     signal,
-    body: JSON.stringify({ query, kbIds })
+    body: JSON.stringify(projectGroupId ? { query, kbIds, projectGroupId } : { query, kbIds })
   })
   if (!response.ok || !response.body) {
     throw new Error(`RAG 问答请求失败: ${response.status}`)

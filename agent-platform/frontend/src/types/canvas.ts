@@ -154,4 +154,6 @@ export interface CanvasSnapshot {
   /** 2x 四轮 S9：节点组（老快照无字段 = 空数组语义，加载兜底 []，零报错）。 */
   groups?: CanvasGroup[]
   viewport?: CanvasViewport
+  /** 计划5 Step6：参与项目组 id（null/缺省=个人钱包计费；随快照顶层持久化，运行时注入节点 data）。 */
+  projectGroupId?: number | null
 }

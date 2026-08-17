@@ -45,6 +45,8 @@ export interface ChatSendRequest {
   attachmentFileIds?: string[]
   /** 14x-2：本次消息引用的知识库 id 集（后端 ChatRequest.kbIds，持久化到会话；与用户可读权限求交）。 */
   kbIds?: number[]
+  /** 计划5 Step6：参与项目组 id（组池计费；null/省略=个人钱包。非成员 403/组池尽 40201 由后端拒）。 */
+  projectGroupId?: number
   // 二期 P1（FR-006）：V33 写目标/读开关三字段（projectId/memIncludeGlobal/memReadProjectIds）已下线——
   // turns 纯个人域，召回范围走 /api/chat/memory/recall-scope 持久化偏好（MemoryRecallScopePopover）
 }
@@ -129,7 +131,7 @@ export const chatApi = {
     return request.get<ApiResponse<ChatMessage[]>>(`/chat/sessions/${sessionId}/messages`)
   },
 
-  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[] }) {
+  sendMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }) {
     return request.post<ApiResponse<ChatResponse>>(`/chat/sessions/${sessionId}/messages`, data)
   },
 
@@ -138,7 +140,7 @@ export const chatApi = {
   },
 
   // Streaming (SSE)。signal（可选）：停止生成时 abort——fetch/reader 随即抛 AbortError，服务端 send 失败取消上游。
-  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[] }, signal?: AbortSignal) {
+  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[]; projectGroupId?: number }, signal?: AbortSignal) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',

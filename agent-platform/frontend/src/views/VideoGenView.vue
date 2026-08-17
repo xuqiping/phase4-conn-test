@@ -35,6 +35,11 @@
             </n-alert>
           </n-form-item>
 
+          <!-- 计划5 Step6：参与项目（组池计费）——预检组池/限额，结算入组池流水 -->
+          <n-form-item label="参与项目">
+            <ProjectGroupSelector v-model="projectGroupId" :disabled="submitting" style="width: 100%" />
+          </n-form-item>
+
           <n-form-item label="提示词">
             <MentionTextarea
               v-model="form.prompt"
@@ -423,6 +428,8 @@ import {
   type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
+import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import MediaLightbox from '@/components/media/MediaLightbox.vue'
 import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
@@ -852,6 +859,9 @@ function removeFrame(slot: 'first' | 'last') {
 
 // === 提交 ===
 const submitting = ref(false)
+/** 计划5 Step6：参与项目（组池计费；localStorage 偏好随提交携带，null=个人钱包）。 */
+const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID) ?? null)
+watch(projectGroupId, v => setStorage(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID, v))
 /** 提示词非空 + 无附件上传中 + 附件总数未超模型上限 */
 const canSubmit = computed(
   () => form.prompt.trim().length > 0
@@ -885,7 +895,8 @@ async function onSubmit() {
       watermark: form.watermark,
       generateAudio: form.generateAudio,
       model: form.model,
-      attachments: attachments.length > 0 ? attachments : undefined
+      attachments: attachments.length > 0 ? attachments : undefined,
+      projectGroupId: projectGroupId.value ?? undefined
     })
     message.success('任务已提交，正在生成…')
     // 启动轮询

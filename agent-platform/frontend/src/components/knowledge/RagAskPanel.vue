@@ -6,14 +6,18 @@
   <div class="rag-ask">
     <!-- 输入区 -->
     <div class="rag-ask__input">
-      <n-select
-        v-model:value="kbIds"
-        multiple
-        size="small"
-        placeholder="选择知识库（可多选，与权限求交）"
-        :options="kbOptions"
-        class="rag-ask__kb-select"
-      />
+      <div class="rag-ask__selectors">
+        <n-select
+          v-model:value="kbIds"
+          multiple
+          size="small"
+          placeholder="选择知识库（可多选，与权限求交）"
+          :options="kbOptions"
+          class="rag-ask__kb-select"
+        />
+        <!-- 计划5 Step6：参与项目（组池计费）——ask 全链（query 向量化/重排/answer 生成）计入组池 -->
+        <ProjectGroupSelector v-model="projectGroupId" :disabled="asking" style="width: 170px" />
+      </div>
       <n-input
         v-model:value="query"
         type="textarea"
@@ -60,13 +64,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, onUnmounted } from 'vue'
+import { computed, onMounted, ref, onUnmounted, watch } from 'vue'
 import { NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import { askStream, knowledgeApi, type RagCitation } from '@/api/knowledge'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
+import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
 
 const message = useMessage()
 
 const kbIds = ref<number[]>([])
+/** 计划5 Step6：参与项目（null=个人；localStorage 偏好，随 ask 请求携带）。 */
+const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.KB_ASK_PROJECT_GROUP_ID) ?? null)
+watch(projectGroupId, v => setStorage(STORAGE_KEYS.KB_ASK_PROJECT_GROUP_ID, v))
 const kbOptions = ref<{ label: string; value: number }[]>([])
 const query = ref('')
 const answer = ref('')
@@ -103,7 +112,8 @@ async function ask() {
   asking.value = true
   abortController = new AbortController()
   try {
-    for await (const evt of askStream(query.value.trim(), kbIds.value, abortController.signal)) {
+    for await (const evt of askStream(query.value.trim(), kbIds.value, abortController.signal,
+      projectGroupId.value ?? undefined)) {
       switch (evt.type) {
         case 'CHUNK':
           answer.value += evt.content || ''
@@ -171,6 +181,8 @@ onUnmounted(() => { abortController?.abort() })
   gap: var(--spacing-2);
 }
 .rag-ask__kb-select { width: 100%; }
+/* 计划5 Step6：KB 选择 + 参与项目同行（KB 撑满、项目选择固定宽） */
+.rag-ask__selectors { display: flex; gap: 8px; align-items: center; }
 .rag-ask__query { width: 100%; }
 .rag-ask__actions {
   display: flex; gap: var(--spacing-2);

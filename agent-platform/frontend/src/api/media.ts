@@ -201,6 +201,8 @@ export interface ImageSubmitRequest {
   maxImages?: number
   /** 联网搜索（lite） */
   webSearch?: boolean
+  /** 计划5 Step6：参与项目组 id（组池计费+预检；省略=个人钱包）。 */
+  projectGroupId?: number
 }
 
 /** 提交请求（对应后端 MediaSubmitRequest；duration/ratio/resolution 按模型能力校验） */
@@ -223,6 +225,8 @@ export interface MediaSubmitRequest {
   attachments?: AttachmentRef[]
   /** 视频模型 id（可选，默认取默认 provider 首个模型） */
   model?: string
+  /** 计划5 Step6：参与项目组 id（组池计费+预检；省略=个人钱包）。 */
+  projectGroupId?: number
 }
 
 /** 提交响应：{ id, status } */

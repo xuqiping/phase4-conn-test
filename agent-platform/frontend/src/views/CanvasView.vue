@@ -64,6 +64,11 @@
         <n-button :loading="rerunning" :disabled="batchRunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
           <n-icon :component="RefreshOutline" /> 重跑全链
         </n-button>
+        <!-- 计划5 Step6：参与项目（组池计费）——随快照顶层持久化，运行时注入节点 data/媒体提交 -->
+        <ProjectGroupSelector
+          :model-value="projectGroupId"
+          @update:model-value="onSelectProjectGroup"
+        />
         <n-button quaternary @click="showStoryboard = true" title="故事板：视频段时间线排列 + 拼接成片">
           <n-icon :component="FilmOutline" /> 故事板
         </n-button>
@@ -329,6 +334,7 @@ import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
@@ -352,6 +358,13 @@ const rerunning = ref(false)
 
 /** 当前编辑画布 id（null=列表模式）。 */
 const editingId = ref<number | null>(null)
+/** 计划5 Step6：参与项目组（null=个人钱包；快照顶层持久化，运行时注入节点 data / 媒体提交）。 */
+const projectGroupId = ref<number | null>(null)
+
+function onSelectProjectGroup(v: number | null) {
+  projectGroupId.value = v
+  scheduleSave()
+}
 const currentName = ref('')
 const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
 /** 当前选中节点（属性面板编辑目标；null=未选）。 */
@@ -1018,10 +1031,14 @@ async function onRunNode(node: CanvasNode) {
   boardRef.value?.updateNodeData(node.id, { status: 'running', errorMsg: '' })
   try {
     // S13：运行前把 @占位符插值为上游产出（不递归，不污染 node.data 原文）
+    // 计划5 Step6：参与项目注入 node.data.projectGroupId（后端 readLong 读取；null 省略=个人）
     const payload: CanvasNodeDTO = {
       id: node.id,
       type: node.type as CanvasNodeDTO['type'],
-      data: interpolateForRun(node)
+      data: {
+        ...interpolateForRun(node),
+        ...(projectGroupId.value != null ? { projectGroupId: projectGroupId.value } : {})
+      }
     }
     const res = await canvasApi.runNode(editingId.value, payload)
     const result = res.data.data
@@ -1053,7 +1070,11 @@ async function onSplitStoryboard(node: CanvasNode) {
     const payload: CanvasNodeDTO = {
       id: node.id,
       type: 'script',
-      data: interpolateForRun(node)
+      // 计划5 Step6：脚本节点同样注入参与项目（后端 runner 均读 node data gid）
+      data: {
+        ...interpolateForRun(node),
+        ...(projectGroupId.value != null ? { projectGroupId: projectGroupId.value } : {})
+      }
     }
     const res = await canvasApi.runNode(editingId.value, payload)
     const result = res.data.data
@@ -1148,7 +1169,9 @@ async function submitVideoOnly(node: CanvasNode, rawPrompt: string): Promise<num
     generateAudio: Boolean(data.generateAudio),
     taskType: attachments.refs.length > 0 ? 'IMAGE2VIDEO' : 'TEXT2VIDEO',
     attachments: attachments.refs.length > 0 ? attachments.refs : undefined,
-    model: (data.model as string) || undefined
+    model: (data.model as string) || undefined,
+    // 计划5 Step6：参与项目（组池计费；批量生成共用本提交口）
+    projectGroupId: projectGroupId.value ?? undefined
   })
   const taskId = submit.data.data.id
   boardRef.value?.updateNodeData(node.id, { taskId, status: 'running' })
@@ -1326,6 +1349,8 @@ function buildImageRequest(
 ): ImageSubmitRequest {
   const data = node.data as Record<string, unknown>
   const req: ImageSubmitRequest = { model, prompt: rewrittenPrompt }
+  // 计划5 Step6：参与项目（组池计费；单跑/批量/重跑全链共用本提交口）
+  if (projectGroupId.value != null) req.projectGroupId = projectGroupId.value
   if (refFileIds.length > 0) req.refFileIds = refFileIds
   const cap = imageCapOf(model)
   if (cap) {
@@ -1819,6 +1844,8 @@ async function loadCanvas(id: number) {
     editingId.value = c.id
     currentName.value = c.name
     const snap = parseSnapshot(c.snapshot)
+    // 计划5 Step6：恢复参与项目选择（老快照无字段 = 个人计费）
+    projectGroupId.value = snap.projectGroupId ?? null
     // B2：旧画布（C6 前）节点 label 可能空 → 头部显「未命名」。加载时按类型补默认名（uniqueLabel 去重），
     // 下次保存即持久化修复存量数据。
     const usedLabels = snap.nodes.map((n) => String(n.data.label ?? '')).filter(Boolean)
@@ -1913,7 +1940,9 @@ function parseSnapshot(raw: string | null): CanvasSnapshot {
       edges: obj.edges ?? [],
       // 2x 四轮 S9：老快照无 groups 字段 = 空数组语义（Board.loadSnapshot 同口径兜底）
       groups: Array.isArray(obj.groups) ? obj.groups : [],
-      viewport: obj.viewport
+      viewport: obj.viewport,
+      // 计划5 Step6：老快照无 projectGroupId = 个人计费（null 语义）
+      projectGroupId: typeof obj.projectGroupId === 'number' ? obj.projectGroupId : null
     }
   } catch {
     return { nodes: [], edges: [], groups: [] }
@@ -1934,7 +1963,8 @@ async function onSave(silent = false) {
     })
     await canvasApi.save(editingId.value, {
       name: currentName.value || '未命名画布',
-      snapshot: JSON.stringify({ ...snap, nodes: cleanNodes })
+      // 计划5 Step6：参与项目随快照顶层持久化（重进画布保持选择；节点 data 不落 gid，运行时注入）
+      snapshot: JSON.stringify({ ...snap, nodes: cleanNodes, projectGroupId: projectGroupId.value })
     })
     if (!silent) message.success('已保存')
     await loadList()
