@@ -3,6 +3,7 @@ package com.superprogrammer.billing.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.billing.dto.DailyTrendVO;
 import com.superprogrammer.billing.dto.LedgerItemVO;
+import com.superprogrammer.billing.dto.ProjectGroupOptionVO;
 import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
@@ -11,6 +12,8 @@ import com.superprogrammer.billing.dto.UserWalletVO;
 import com.superprogrammer.billing.entity.PointsLedgerEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
 import com.superprogrammer.billing.mapper.PointsLedgerMapper;
+import com.superprogrammer.projectgroup.entity.ProjectGroupEntity;
+import com.superprogrammer.projectgroup.mapper.ProjectGroupMapper;
 import com.superprogrammer.common.result.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +60,8 @@ public class BillingQueryService {
     private final LlmUsageLogMapper usageLogMapper;
     private final PointsLedgerMapper ledgerMapper;
     private final PointsWalletService walletService;
+    /** 计划5 Step8：账单页项目组筛选项数据源（跨模块只读）。 */
+    private final ProjectGroupMapper groupMapper;
 
     // ---------- admin ----------
 
@@ -89,20 +94,37 @@ public class BillingQueryService {
      * admin 调用明细分页（逐条 llm_usage_logs，含 token/¥/积分 + username via JOIN）。
      * <p>复用 {@link #clamp} 兜底窗；size 缺省 {@link #DETAIL_PAGE_SIZE}、封顶 {@link #DETAIL_MAX_SIZE}；
      * total==0 短路免一次空分页查询。
+     * <p>计划5 Step8：{@code projectGroupId} 非空=只看该组池消耗行；行带组名（个人行 null）。
      */
     public PageResult<UsageDetailVO> pageDetail(OffsetDateTime from, OffsetDateTime to,
                                                 Long userId, String model, String kind, String status,
-                                                String traceId, Long taskId,
+                                                String traceId, Long taskId, Long projectGroupId,
                                                 long page, long size) {
         Window w = clamp(from, to);
         long sz = size <= 0 ? DETAIL_PAGE_SIZE : Math.min(size, DETAIL_MAX_SIZE);
         long pg = Math.max(page, 1);
-        long total = usageLogMapper.countDetail(w.from(), w.to(), userId, model, kind, status, traceId, taskId);
+        long total = usageLogMapper.countDetail(w.from(), w.to(), userId, model, kind, status, traceId, taskId,
+                projectGroupId);
         List<UsageDetailVO> records = total == 0
                 ? List.of()
                 : usageLogMapper.pageDetail(w.from(), w.to(), userId, model, kind, status, traceId, taskId,
-                        (pg - 1) * sz, sz);
+                        projectGroupId, (pg - 1) * sz, sz);
         return PageResult.of(records, total, pg, sz);
+    }
+
+    /**
+     * 计划5 Step8：admin 账单页「项目组」筛选下拉数据源（id+name）。
+     * MP @TableLogic 自动滤软删组——软删组的账单行仍带组名显示，只是不可再从下拉筛（边缘，可接受）。
+     * 仅供 usage:view 持有者（账单页侧），与项目组管理端点分离。
+     * <p>用 QueryWrapper 列名字符串（非 Lambda select）——单测无 MP TableInfo 缓存也能跑。
+     */
+    public List<ProjectGroupOptionVO> projectGroupOptions() {
+        return groupMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ProjectGroupEntity>()
+                        .select("id", "name")
+                        .orderByAsc("id"))
+                .stream()
+                .map(g -> new ProjectGroupOptionVO(g.getId(), g.getName()))
+                .toList();
     }
 
     // ---------- user（ownership 由 controller 传 current userId，无外部旁路） ----------
@@ -120,10 +142,10 @@ public class BillingQueryService {
         return vo;
     }
 
-    /** 用户积分明细（不含 token/¥，按 createdAt 倒序）。 */
-    public List<UserUsageVO> userUsage(Long userId, OffsetDateTime from, OffsetDateTime to) {
+    /** 用户积分明细（不含 token/¥，按 createdAt 倒序）。计划5 Step8：+组名列；组筛选可空=全部（个人+组池行）。 */
+    public List<UserUsageVO> userUsage(Long userId, OffsetDateTime from, OffsetDateTime to, Long projectGroupId) {
         Window w = clamp(from, to);
-        return usageLogMapper.listForUser(userId, w.from, w.to, USER_USAGE_LIMIT);
+        return usageLogMapper.listForUser(userId, w.from, w.to, projectGroupId, USER_USAGE_LIMIT);
     }
 
     // ---------- helpers ----------

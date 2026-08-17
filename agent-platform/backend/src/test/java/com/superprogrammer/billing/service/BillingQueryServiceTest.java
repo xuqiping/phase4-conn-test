@@ -8,6 +8,8 @@ import com.superprogrammer.billing.entity.PointsLedgerEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
 import com.superprogrammer.billing.mapper.PointsLedgerMapper;
 import com.superprogrammer.common.result.PageResult;
+import com.superprogrammer.projectgroup.entity.ProjectGroupEntity;
+import com.superprogrammer.projectgroup.mapper.ProjectGroupMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,12 +40,13 @@ class BillingQueryServiceTest {
     @Mock private LlmUsageLogMapper usageLogMapper;
     @Mock private PointsLedgerMapper ledgerMapper;
     @Mock private PointsWalletService walletService;
+    @Mock private ProjectGroupMapper groupMapper;
 
     private BillingQueryService service;
 
     @BeforeEach
     void setUp() {
-        service = new BillingQueryService(usageLogMapper, ledgerMapper, walletService);
+        service = new BillingQueryService(usageLogMapper, ledgerMapper, walletService, groupMapper);
     }
 
     @Test
@@ -123,14 +126,32 @@ class BillingQueryServiceTest {
         row.setKind("CHAT");
         row.setPointsConsumed(new BigDecimal("12"));
         row.setStatus("SUCCESS");
-        when(usageLogMapper.listForUser(eq(100L), any(), any(), anyInt())).thenReturn(List.of(row));
+        when(usageLogMapper.listForUser(eq(100L), any(), any(), any(), anyInt())).thenReturn(List.of(row));
 
-        List<UserUsageVO> list = service.userUsage(100L, null, null);
+        List<UserUsageVO> list = service.userUsage(100L, null, null, null);
 
         assertEquals(1, list.size());
-        verify(usageLogMapper).listForUser(eq(100L), any(), any(), eq(BillingQueryService.USER_USAGE_LIMIT));
-        // 用户 VO 字段无 token/cost_yuan（编译期保证：UserUsageVO 仅 5 字段 createdAt/model/kind/pointsConsumed/status）
+        verify(usageLogMapper).listForUser(eq(100L), any(), any(), any(), eq(BillingQueryService.USER_USAGE_LIMIT));
+        // 用户 VO 字段无 token/cost_yuan（编译期保证：UserUsageVO 刻意不含 token/costYuan 字段）
         assertEquals(new BigDecimal("12"), list.get(0).getPointsConsumed());
+    }
+
+    // ---------- 计划5 Step8：账单项目列（组名透出 + 组筛选透传 + 选项数据源） ----------
+
+    @Test
+    void userUsage_projectGroupIdFilterThreaded_andVoCarriesGroupName() {
+        // 用户筛「我在组A的消耗」：projectGroupId 透传 mapper；组名随行返回（个人行 null 由 SQL LEFT JOIN 决定）
+        UserUsageVO row = new UserUsageVO();
+        row.setKind("VIDEO");
+        row.setPointsConsumed(new BigDecimal("50"));
+        row.setProjectGroupId(10L);
+        row.setProjectGroupName("组A");
+        when(usageLogMapper.listForUser(eq(100L), any(), any(), eq(10L), anyInt())).thenReturn(List.of(row));
+
+        List<UserUsageVO> list = service.userUsage(100L, null, null, 10L);
+
+        assertEquals("组A", list.get(0).getProjectGroupName());
+        verify(usageLogMapper).listForUser(eq(100L), any(), any(), eq(10L), eq(BillingQueryService.USER_USAGE_LIMIT));
     }
 
     // ---------- admin 调用明细 pageDetail ----------
@@ -144,11 +165,11 @@ class BillingQueryServiceTest {
         row.setTokensInput(496);
         row.setTokensOutput(36);
         row.setPointsConsumed(new BigDecimal("0.57"));
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(17L);
-        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), eq((long) BillingQueryService.DETAIL_PAGE_SIZE)))
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(17L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), eq((long) BillingQueryService.DETAIL_PAGE_SIZE)))
                 .thenReturn(List.of(row));
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 1, 0);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, null, 1, 0);
 
         assertEquals(17L, pr.getTotal());
         assertEquals(1, pr.getRecords().size());
@@ -160,29 +181,29 @@ class BillingQueryServiceTest {
     @Test
     void pageDetail_sizeCappedToMax_andOffsetComputed() {
         // size=999（恶意大）→ 截到 DETAIL_MAX_SIZE(100)；page=3 → offset=(3-1)*100=200
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(500L);
-        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), eq(200L), eq((long) BillingQueryService.DETAIL_MAX_SIZE)))
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(500L);
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(200L), eq((long) BillingQueryService.DETAIL_MAX_SIZE)))
                 .thenReturn(List.of());
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 3, 999);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, null, 3, 999);
 
         assertEquals((long) BillingQueryService.DETAIL_MAX_SIZE, pr.getSize());
         assertEquals(3L, pr.getPage());
         org.mockito.ArgumentCaptor<Long> offsetCap = org.mockito.ArgumentCaptor.forClass(Long.class);
-        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), offsetCap.capture(), eq((long) BillingQueryService.DETAIL_MAX_SIZE));
+        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), any(), offsetCap.capture(), eq((long) BillingQueryService.DETAIL_MAX_SIZE));
         assertEquals(200L, offsetCap.getValue());
     }
 
     @Test
     void pageDetail_totalZero_shortCircuitsPageQuery() {
         // total=0 → 不调 pageDetail（短路免空查询），返空 records
-        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0L);
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0L);
 
-        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 1, 20);
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, null, 1, 20);
 
         assertTrue(pr.getRecords().isEmpty());
         assertEquals(0L, pr.getTotal());
-        verify(usageLogMapper, never()).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), anyLong());
+        verify(usageLogMapper, never()).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong(), anyLong());
     }
 
     // ---------- 8x Chunk7：drill-down 反查键 traceId/taskId 透传 ----------
@@ -191,21 +212,52 @@ class BillingQueryServiceTest {
     void pageDetail_traceIdAndTaskIdThreadedToMapper() {
         // admin 从审计行 drill-down：chat 行按 traceId 过滤、媒体行按 taskId 过滤 → 必须原样透传到 mapper
         when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(),
-                eq("trace-abc"), eq(9L))).thenReturn(1L);
+                eq("trace-abc"), eq(9L), any())).thenReturn(1L);
         UsageDetailVO row = new UsageDetailVO();
         row.setTraceId("trace-abc");
         row.setTaskId(9L);
         when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(),
-                eq("trace-abc"), eq(9L), anyLong(), anyLong())).thenReturn(List.of(row));
+                eq("trace-abc"), eq(9L), any(), anyLong(), anyLong())).thenReturn(List.of(row));
 
         PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null,
-                "trace-abc", 9L, 1, 20);
+                "trace-abc", 9L, null, 1, 20);
 
         assertEquals(1L, pr.getTotal());
         assertEquals("trace-abc", pr.getRecords().get(0).getTraceId());
         assertEquals(9L, pr.getRecords().get(0).getTaskId());
-        verify(usageLogMapper).countDetail(any(), any(), any(), any(), any(), any(), eq("trace-abc"), eq(9L));
+        verify(usageLogMapper).countDetail(any(), any(), any(), any(), any(), any(), eq("trace-abc"), eq(9L), any());
         verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(),
-                eq("trace-abc"), eq(9L), eq(0L), eq(20L));
+                eq("trace-abc"), eq(9L), any(), eq(0L), eq(20L));
+    }
+
+    @Test
+    void pageDetail_projectGroupIdFilterThreaded_toCountAndPage() {
+        // 计划5 Step8：admin 按「项目组A」筛调用明细 → countDetail/pageDetail 均须带 projectGroupId（漏一处=total与行数不一致）
+        when(usageLogMapper.countDetail(any(), any(), any(), any(), any(), any(), any(), any(), eq(10L))).thenReturn(1L);
+        UsageDetailVO row = new UsageDetailVO();
+        row.setProjectGroupId(10L);
+        row.setProjectGroupName("组A");
+        when(usageLogMapper.pageDetail(any(), any(), any(), any(), any(), any(), any(), any(),
+                eq(10L), anyLong(), anyLong())).thenReturn(List.of(row));
+
+        PageResult<UsageDetailVO> pr = service.pageDetail(null, null, null, null, null, null, null, null, 10L, 1, 20);
+
+        assertEquals("组A", pr.getRecords().get(0).getProjectGroupName());
+        verify(usageLogMapper).countDetail(any(), any(), any(), any(), any(), any(), any(), any(), eq(10L));
+        verify(usageLogMapper).pageDetail(any(), any(), any(), any(), any(), any(), any(), any(),
+                eq(10L), eq(0L), eq(20L));
+    }
+
+    @Test
+    void projectGroupOptions_mapsIdAndName() {
+        // 计划5 Step8：筛选项数据源——mapper 行映射 id/name record（软删滤除由 MP @TableLogic 保证）
+        ProjectGroupEntity g = new ProjectGroupEntity();
+        g.setId(10L);
+        g.setName("组A");
+        when(groupMapper.selectList(any())).thenReturn(List.of(g));
+
+        assertEquals(1, service.projectGroupOptions().size());
+        assertEquals(10L, service.projectGroupOptions().get(0).id());
+        assertEquals("组A", service.projectGroupOptions().get(0).name());
     }
 }

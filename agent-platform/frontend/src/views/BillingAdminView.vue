@@ -82,6 +82,14 @@
                 style="width: 220px"
                 @keyup.enter="loadDetail(1)"
               />
+              <!-- 计划5 Step8：项目组筛选（空=全部含个人行） -->
+              <n-select
+                v-model:value="groupFilter"
+                :options="groupOptions"
+                placeholder="全部项目组"
+                clearable
+                style="width: 180px"
+              />
             </div>
             <n-data-table
               remote
@@ -89,7 +97,7 @@
               :data="detail"
               :loading="detailLoading"
               :pagination="detailPagination"
-              :scroll-x="1200"
+              :scroll-x="1320"
               size="small"
               :max-height="480"
               @update:page="onDetailPage"
@@ -146,6 +154,9 @@ const kindFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null)
 const modelFilter = ref('')
 const userOptions = ref<{ label: string; value: number }[]>([])
+// 计划5 Step8：项目组筛选（数据源 /billing/admin/project-group-options）
+const groupFilter = ref<number | null>(null)
+const groupOptions = ref<{ label: string; value: number }[]>([])
 
 // ---------- 8x Chunk7：审计行 drill-down 反查键（从 url query ?traceId= / ?taskId= 预填） ----------
 const traceIdDrill = ref('')
@@ -209,6 +220,11 @@ const detailColumns: DataTableColumns<UsageDetailVO> = [
       type: KIND_TAG_TYPE[r.kind as BillingKind] || 'default'
     }, { default: () => KIND_LABEL[r.kind as BillingKind] ?? r.kind })
   },
+  // 计划5 Step8：项目组列（组池消耗显组名；个人消耗/软删历史组名缺失=「—」）
+  {
+    title: '项目组', key: 'projectGroupName', width: 120, ellipsis: { tooltip: true },
+    render: r => r.projectGroupName || '—'
+  },
   { title: '输入 Token', key: 'tokensInput', width: 100 },
   { title: '输出 Token', key: 'tokensOutput', width: 100 },
   { title: '真实金额 ¥', key: 'costYuan', width: 110, render: r => fmtNum(r.costYuan) },
@@ -269,6 +285,8 @@ async function loadDetail(page = 1) {
     if (m) q.model = m
     if (kindFilter.value) q.kind = kindFilter.value as BillingKind
     if (statusFilter.value) q.status = statusFilter.value
+    // 计划5 Step8：项目组筛选
+    if (groupFilter.value != null) q.projectGroupId = groupFilter.value
     // 8x Chunk7：drill-down 反查键（chat→traceId / 媒体→taskId）
     if (traceIdDrill.value) q.traceId = traceIdDrill.value
     if (taskIdDrill.value != null) q.taskId = taskIdDrill.value
@@ -319,14 +337,25 @@ async function loadUserOptions() {
   }
 }
 
+/** 计划5 Step8：项目组筛选下拉（403/无组容错→空下拉，行内组名仍由后端 JOIN 返）。 */
+async function loadGroupOptions() {
+  try {
+    const res = await billingApi.projectGroupOptions()
+    groupOptions.value = (res.data.data ?? []).map(g => ({ label: g.name, value: g.id }))
+  } catch {
+    groupOptions.value = []
+  }
+}
+
 // 筛选下拉变化 → 回到第 1 页重查（模型名走回车，不在此列）
-watch([userFilter, kindFilter, statusFilter], () => {
+watch([userFilter, kindFilter, statusFilter, groupFilter], () => {
   if (activeTab.value === 'detail') loadDetail(1)
 })
 
 onMounted(() => {
   loadAll()
   loadUserOptions()
+  loadGroupOptions()
   // 8x Chunk7：审计行 drill-down 跳转带 ?traceId= / ?taskId= → 预填 + 直跳调用明细 tab
   const qt = route.query.traceId
   const qtask = route.query.taskId

@@ -96,26 +96,33 @@
         ORDER BY day ASC
     </select>
 
-    <!-- 用户积分明细：刻意不 SELECT tokens_input/tokens_output/cost_yuan（用户侧不暴露 token/¥）。 -->
+    <!-- 用户积分明细：刻意不 SELECT tokens_input/tokens_output/cost_yuan（用户侧不暴露 token/¥）。
+         计划5 Step8：LEFT JOIN project_groups 补组名（个人行 null=「—」）；组筛选可空=全部。
+         故意不滤 pg.deleted——历史组行保留组名（组删了账不消失）。 -->
     <select id="listForUser" resultType="com.superprogrammer.billing.dto.UserUsageVO">
         SELECT
-            created_at,
-            model,
-            kind,
-            points_consumed,
-            status
-        FROM llm_usage_logs
-        WHERE user_id = #{userId}
-        <if test="from != null">AND created_at &gt;= #{from}</if>
-        <if test="to != null">AND created_at &lt; #{to}</if>
-        ORDER BY created_at DESC
+            l.created_at,
+            l.model,
+            l.kind,
+            l.points_consumed,
+            l.status,
+            l.project_group_id,
+            pg.name AS project_group_name
+        FROM llm_usage_logs l
+        LEFT JOIN project_groups pg ON pg.id = l.project_group_id
+        WHERE l.user_id = #{userId}
+        <if test="projectGroupId != null">AND l.project_group_id = #{projectGroupId}</if>
+        <if test="from != null">AND l.created_at &gt;= #{from}</if>
+        <if test="to != null">AND l.created_at &lt; #{to}</if>
+        ORDER BY l.created_at DESC
         LIMIT #{limit}
     </select>
 
     <!-- ============ admin 调用明细（逐条，含 token/¥/积分；LEFT JOIN users 取用户名） ============ -->
 
     <!-- 明细筛选 where 片段：from/to（半开）+ userId/model/kind/status 精确匹配
-         + 8x Chunk7 traceId(chat 关联)/taskId(媒体关联) drill-down 反查键。countDetail 与 pageDetail 共用。 -->
+         + 8x Chunk7 traceId(chat 关联)/taskId(媒体关联) drill-down 反查键
+         + 计划5 Step8 projectGroupId（组池消耗行反查）。countDetail 与 pageDetail 共用。 -->
     <sql id="detailWhere">
         <where>
             <if test="from != null">l.created_at &gt;= #{from}</if>
@@ -126,6 +133,7 @@
             <if test="status != null and status != ''">AND l.status = #{status}</if>
             <if test="traceId != null and traceId != ''">AND l.trace_id = #{traceId}</if>
             <if test="taskId != null">AND l.task_id = #{taskId}</if>
+            <if test="projectGroupId != null">AND l.project_group_id = #{projectGroupId}</if>
         </where>
     </sql>
 
@@ -136,7 +144,8 @@
     </select>
 
     <!-- 逐条明细分页：LEFT JOIN users（user_id 可空=系统调用，LEFT JOIN 不丢行）。
-         u.name AS display_name → 自动映射 displayName；列名 underscore→camel 自动映射已开。 -->
+         u.name AS display_name → 自动映射 displayName；列名 underscore→camel 自动映射已开。
+         计划5 Step8：+LEFT JOIN project_groups 补组名（同样不滤 deleted，历史行留名）。 -->
     <select id="pageDetail" resultType="com.superprogrammer.billing.dto.UsageDetailVO">
         SELECT
             l.id,
@@ -153,9 +162,12 @@
             l.status,
             l.error_msg,
             l.trace_id,
-            l.task_id
+            l.task_id,
+            l.project_group_id,
+            pg.name AS project_group_name
         FROM llm_usage_logs l
         LEFT JOIN users u ON u.id = l.user_id
+        LEFT JOIN project_groups pg ON pg.id = l.project_group_id
         <include refid="detailWhere"/>
         ORDER BY l.created_at DESC
         LIMIT #{size} OFFSET #{offset}

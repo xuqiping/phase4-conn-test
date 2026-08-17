@@ -31,4 +31,8 @@ public class UsageDetailVO {
     private String traceId;
     /** 8x Chunk7：媒体任务 id（媒体路径关联键，与 media 审计行 targetId 对齐）。 */
     private Long taskId;
+    /** 计划5 Step8：所属项目组 id（个人消耗=null）。 */
+    private Long projectGroupId;
+    /** 计划5 Step8：所属项目组名（LEFT JOIN project_groups；个人行/组已删时组名仍保留历史值）。 */
+    private String projectGroupName;
 }

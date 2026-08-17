@@ -54,10 +54,13 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
     /**
      * 用户积分明细（{@code /me/usage}）。<b>不含 token/cost_yuan</b>（SELECT 列刻意省略，spec §3 用户侧不暴露）。
      * ownership 由 service 强制传 current userId，SQL 不接受外部 userId 旁路。
+     * <p>计划5 Step8：+projectGroupName（LEFT JOIN project_groups，个人行 null）；
+     * {@code projectGroupId} 可空=全部，非空=只看该组内我的消耗行。
      */
     List<UserUsageVO> listForUser(@Param("userId") Long userId,
                                   @Param("from") OffsetDateTime from,
                                   @Param("to") OffsetDateTime to,
+                                  @Param("projectGroupId") Long projectGroupId,
                                   @Param("limit") int limit);
 
     // ---------- admin 调用明细（逐条 llm_usage_logs，含 token/¥/积分；LEFT JOIN users 取用户名） ----------
@@ -70,12 +73,14 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                      @Param("kind") String kind,
                      @Param("status") String status,
                      @Param("traceId") String traceId,
-                     @Param("taskId") Long taskId);
+                     @Param("taskId") Long taskId,
+                     @Param("projectGroupId") Long projectGroupId);
 
     /**
      * 逐条明细分页（含 username/displayName via LEFT JOIN users）。user_id 可空（系统调用）→ LEFT JOIN 不丢行。
      * <p>offset/size 由 service 算好（{@code (page-1)*size}）；按 created_at 倒序（最新在前）。
      * <p>8x Chunk7：{@code traceId}(chat 关联)/{@code taskId}(媒体关联) 为 drill-down 反查键，非空时精确过滤。
+     * <p>计划5 Step8：+projectGroupName（LEFT JOIN project_groups）；{@code projectGroupId} 非空时精确过滤组池消耗行。
      */
     List<UsageDetailVO> pageDetail(@Param("from") OffsetDateTime from,
                                    @Param("to") OffsetDateTime to,
@@ -85,6 +90,7 @@ public interface LlmUsageLogMapper extends BaseMapper<LlmUsageLogEntity> {
                                    @Param("status") String status,
                                    @Param("traceId") String traceId,
                                    @Param("taskId") Long taskId,
+                                   @Param("projectGroupId") Long projectGroupId,
                                    @Param("offset") long offset,
                                    @Param("size") long size);
 

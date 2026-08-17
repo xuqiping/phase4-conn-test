@@ -17,4 +17,8 @@ public class UserUsageVO {
     private String kind;
     private BigDecimal pointsConsumed;
     private String status;
+    /** 计划5 Step8：所属项目组 id（个人消耗=null）。 */
+    private Long projectGroupId;
+    /** 计划5 Step8：所属项目组名（个人行=null，前端显「—」）。 */
+    private String projectGroupName;
 }

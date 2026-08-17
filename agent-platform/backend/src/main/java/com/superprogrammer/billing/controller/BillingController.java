@@ -2,6 +2,7 @@ package com.superprogrammer.billing.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.billing.dto.DailyTrendVO;
+import com.superprogrammer.billing.dto.ProjectGroupOptionVO;
 import com.superprogrammer.billing.dto.ReconcileDiffVO;
 import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
@@ -106,10 +107,21 @@ public class BillingController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String traceId,
             @RequestParam(required = false) Long taskId,
+            @RequestParam(required = false) Long projectGroupId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
         return ResponseEntity.ok(R.ok(queryService.pageDetail(
-                from, to, userId, model, kind, status, traceId, taskId, page, size)));
+                from, to, userId, model, kind, status, traceId, taskId, projectGroupId, page, size)));
+    }
+
+    /**
+     * 计划5 Step8：账单页「项目组」筛选下拉数据源（id+name）。
+     * 与 call-log 同权限（usage:view），只读轻量。
+     */
+    @GetMapping("/admin/project-group-options")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<List<ProjectGroupOptionVO>>> projectGroupOptions() {
+        return ResponseEntity.ok(R.ok(queryService.projectGroupOptions()));
     }
 
     /**
@@ -133,8 +145,9 @@ public class BillingController {
     @GetMapping("/me/usage")
     public ResponseEntity<R<List<UserUsageVO>>> myUsage(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
-        return ResponseEntity.ok(R.ok(queryService.userUsage(currentUserId(), from, to)));
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(required = false) Long projectGroupId) {
+        return ResponseEntity.ok(R.ok(queryService.userUsage(currentUserId(), from, to, projectGroupId)));
     }
 
     private Long currentUserId() {

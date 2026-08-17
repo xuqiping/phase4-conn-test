@@ -20,6 +20,18 @@
     </n-card>
 
     <n-card title="积分消耗明细" style="margin-top: 16px">
+      <!-- 计划5 Step8：组筛选（我的组下拉，空=全部含个人行；行加组名列） -->
+      <div class="my-wallet__usage-filter">
+        <n-select
+          v-model:value="groupFilter"
+          :options="groupOptions"
+          placeholder="全部（个人+项目组）"
+          clearable
+          size="small"
+          style="width: 220px"
+        />
+        <span class="my-wallet__usage-hint">个人行「项目组」列显「—」；组池消耗不占个人余额</span>
+      </div>
       <n-data-table
         :columns="usageColumns"
         :data="usage"
@@ -32,15 +44,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
-import { NCard, NDataTable, NStatistic, NTag, NSpace } from 'naive-ui'
+import { computed, h, onMounted, ref, watch } from 'vue'
+import { NCard, NDataTable, NSelect, NStatistic, NTag, NSpace } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { billingApi, LEDGER_TYPE_LABEL, KIND_LABEL, KIND_TAG_TYPE } from '@/api/billing'
 import type { LedgerItemVO, UserUsageVO, UserWalletVO, BillingKind } from '@/api/billing'
+import { projectGroupApi } from '@/api/projectGroup'
 
 const wallet = ref<UserWalletVO | null>(null)
 const usage = ref<UserUsageVO[]>([])
 const loading = ref(false)
+// 计划5 Step8：组筛选（我的组；mine 失败容错→空下拉=不可筛，行仍全量）
+const groupFilter = ref<number | null>(null)
+const groupOptions = ref<{ label: string; value: number }[]>([])
 
 const balanceTagType = computed<'success' | 'warning' | 'error'>(() => {
   const b = wallet.value?.balance ?? 0
@@ -67,6 +83,8 @@ const usageColumns: DataTableColumns<UserUsageVO> = [
   { title: '时间', key: 'createdAt', render: r => fmt(r.createdAt) },
   { title: '模型', key: 'model' },
   { title: '类型', key: 'kind', render: r => h(NTag, { type: KIND_TAG_TYPE[r.kind as BillingKind] ?? 'default', size: 'small' }, { default: () => KIND_LABEL[r.kind as BillingKind] ?? r.kind }) },
+  // 计划5 Step8：项目组列（组池消耗显组名，个人=「—」）
+  { title: '项目组', key: 'projectGroupName', render: r => r.projectGroupName || '—' },
   { title: '消耗积分', key: 'pointsConsumed', render: r => fmtNum(r.pointsConsumed) },
   { title: '状态', key: 'status' }
 ]
@@ -85,7 +103,11 @@ function fmtDelta(n: number): string {
 async function load() {
   loading.value = true
   try {
-    const [w, u] = await Promise.all([billingApi.myWallet(), billingApi.myUsage({})])
+    // 计划5 Step8：组筛选非空 → me/usage 带 projectGroupId（只看我在该组的消耗行）
+    const [w, u] = await Promise.all([
+      billingApi.myWallet(),
+      billingApi.myUsage(groupFilter.value != null ? { projectGroupId: groupFilter.value } : {})
+    ])
     wallet.value = w.data.data
     usage.value = u.data.data ?? []
   } finally {
@@ -93,7 +115,22 @@ async function load() {
   }
 }
 
-onMounted(load)
+/** 组筛选选项：mine()=我建的+我在的（403/无权限容错→空下拉）。 */
+async function loadGroupOptions() {
+  try {
+    const res = await projectGroupApi.mine()
+    groupOptions.value = (res.data.data ?? []).map(g => ({ label: g.name, value: g.id }))
+  } catch {
+    groupOptions.value = []
+  }
+}
+
+watch(groupFilter, () => load())
+
+onMounted(() => {
+  load()
+  loadGroupOptions()
+})
 </script>
 
 <style lang="scss" scoped>
@@ -101,5 +138,17 @@ onMounted(load)
   padding: var(--spacing-4);
   max-width: 960px;
   margin: 0 auto;
+
+  &__usage-filter {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    margin-bottom: var(--spacing-2);
+  }
+
+  &__usage-hint {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+  }
 }
 </style>

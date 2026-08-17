@@ -154,6 +154,10 @@ export interface UserUsageVO {
   kind: BillingKind
   pointsConsumed: number
   status: string
+  /** 计划5 Step8：所属项目组 id（个人消耗=null） */
+  projectGroupId: number | null
+  /** 计划5 Step8：所属项目组名（个人行=null，显「—」） */
+  projectGroupName: string | null
 }
 
 /** admin 调用明细行（逐条 llm_usage_logs，含 token/¥/积分 + username via JOIN） */
@@ -175,9 +179,13 @@ export interface UsageDetailVO {
   traceId: string | null
   /** 8x Chunk7：媒体任务 id（媒体路径关联键，与 media 审计行 targetId 对齐） */
   taskId: number | null
+  /** 计划5 Step8：所属项目组 id（个人消耗=null） */
+  projectGroupId: number | null
+  /** 计划5 Step8：所属项目组名（个人行=null，显「—」） */
+  projectGroupName: string | null
 }
 
-/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to + 8x Chunk7 traceId/taskId drill-down） */
+/** 调用明细分页查询参数（page/size/userId/model/kind/status/from/to + 8x Chunk7 traceId/taskId drill-down + 计划5 projectGroupId） */
 export interface UsageDetailQuery {
   page?: number
   size?: number
@@ -189,6 +197,8 @@ export interface UsageDetailQuery {
   traceId?: string
   /** 媒体路径 drill-down 反查键（与审计行 targetId=taskId 对齐） */
   taskId?: number
+  /** 计划5 Step8：项目组筛选（null=全部含个人行） */
+  projectGroupId?: number
   from?: string
   to?: string
 }
@@ -262,6 +272,10 @@ export const billingApi = {
   listUsageDetail(params: UsageDetailQuery) {
     return request.get<ApiResponse<PageResult<UsageDetailVO>>>('/billing/admin/call-log', { params })
   },
+  /** 计划5 Step8：账单页「项目组」筛选下拉数据源（usage:view） */
+  projectGroupOptions() {
+    return request.get<ApiResponse<ProjectGroupOptionVO[]>>('/billing/admin/project-group-options')
+  },
   // 我的钱包
   myWallet() {
     return request.get<ApiResponse<UserWalletVO>>('/billing/me/wallet')
@@ -271,10 +285,18 @@ export const billingApi = {
   }
 }
 
+/** 计划5 Step8：账单筛选下拉的项目组选项 */
+export interface ProjectGroupOptionVO {
+  id: number
+  name: string
+}
+
 export interface BillingQueryParams {
   from?: string
   to?: string
   limit?: number
+  /** 计划5 Step8：me/usage 可选组筛选（只看我在该组的消耗行；不传=全部） */
+  projectGroupId?: number
 }
 
 // === 标签/色映射 ===
