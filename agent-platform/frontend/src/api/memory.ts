@@ -324,6 +324,7 @@ export interface MemoryAssetMemoryVO {
   retryCount: number | null
   weakMemory: boolean | null
   createdAt: string | null
+  projectNames?: string[] | null   // 5x 四轮 C6：收录于哪些本人可见项目（空=未收录，不渲染徽标）
 }
 
 /** 文件分块视图（FR-203 文件卡片「展开分块」；pageRef 页码锚点，仅 owner 可读）。 */

@@ -56,9 +56,10 @@ public class ChatController {
         return ResponseEntity.ok(R.ok(memoryAssetUploadService.upload(file, userId)));
     }
 
-    /** 我的文件记忆列表（二期 P3 Step 2，记忆面板「文件记忆」页签数据源）。 */
+    /** 我的文件记忆列表（二期 P3 Step 2，记忆面板「文件记忆」页签数据源；
+     *  5x 四轮 C6 增补 projectNames「收录于」徽标）。 */
     @GetMapping("/attachments")
-    public ResponseEntity<R<List<com.superprogrammer.chat.entity.MemoryAssetMemory>>> listAttachments() {
+    public ResponseEntity<R<List<com.superprogrammer.chat.dto.MemoryAssetMemoryVO>>> listAttachments() {
         Long userId = getCurrentUserId();
         return ResponseEntity.ok(R.ok(memoryAssetIngestService.listMine(userId)));
     }

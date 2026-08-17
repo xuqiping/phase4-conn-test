@@ -27,6 +27,16 @@
         <template v-if="row.ingestStatus === 'FAILED' && row.retryCount != null">· 已重试 {{ row.retryCount }} 次</template>
       </div>
       <div v-if="row.l1Summary" class="asset-memory__l1">{{ row.l1Summary }}</div>
+      <!-- 5x 四轮 C6：收录于徽标（仅本人可见项目；未收录不显示负信息） -->
+      <div v-if="row.projectNames && row.projectNames.length" class="asset-memory__projects">
+        收录于：<n-tag
+          v-for="name in row.projectNames"
+          :key="name"
+          size="small"
+          :bordered="false"
+          class="asset-memory__project-tag"
+        >{{ name }}</n-tag>
+      </div>
       <div v-if="row.ingestStatus === 'FAILED' && row.ingestError" class="asset-memory__error">{{ row.ingestError }}</div>
       <div class="asset-memory__actions">
         <n-button
@@ -233,6 +243,19 @@ onMounted(load)
   color: var(--color-text-secondary);
   line-height: 1.5;
   word-break: break-word;
+}
+
+.asset-memory__projects {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.asset-memory__project-tag {
+  font-size: 11px;
 }
 
 .asset-memory__error {

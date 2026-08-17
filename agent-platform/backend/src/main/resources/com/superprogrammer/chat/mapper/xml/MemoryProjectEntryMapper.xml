@@ -118,4 +118,20 @@
         WHERE e.deleted = 0 AND e.source_turn_input_id IS NOT NULL AND e.source_turn_input_id IN
         <foreach collection="turnIds" item="tid" open="(" separator="," close=")">#{tid}</foreach>
     </select>
+
+    <!-- 5x 四轮 C6：我的文件被哪些本人可访问项目收录（面板「收录于」徽标）。
+         域 = 本人文件（memory_asset_memories owner）∩ ACTIVE FILE 条目 ∩ ACTIVE 成员项目
+        （owner 也在 members 表带 OWNER 行，V52 回填保证）。仅返回未删条目；DEPARTED/非成员项目不透名。
+         DISTINCT 防「同文件同项目多条目」重复行；列别名匹配 FileProjectRefRow。 -->
+    <select id="selectFileProjectRefs" resultType="com.superprogrammer.chat.dto.FileProjectRefRow">
+        SELECT DISTINCT a.file_id AS fileId, e.project_id AS projectId, p.name AS projectName
+        FROM memory_asset_memories a
+        JOIN memory_project_entries e
+              ON e.deleted = 0 AND e.status = 'ACTIVE' AND e.content_type = 'FILE' AND e.file_id = a.file_id
+        JOIN memory_project_members m
+              ON m.project_id = e.project_id AND m.user_id = #{userId} AND m.status = 'ACTIVE'
+        LEFT JOIN projects p ON p.id = e.project_id
+        WHERE a.deleted = 0 AND a.owner_user_id = #{userId}
+        ORDER BY a.file_id, e.project_id
+    </select>
 </mapper>

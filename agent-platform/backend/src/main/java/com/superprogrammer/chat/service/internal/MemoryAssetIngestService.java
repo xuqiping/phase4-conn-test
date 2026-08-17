@@ -76,12 +76,48 @@ public class MemoryAssetIngestService {
         }
     }
 
-    /** 我的文件记忆列表（记忆面板「文件记忆」页签；按创建时间倒序）。 */
-    public List<MemoryAssetMemory> listMine(Long userId) {
-        return memoryMapper.selectList(
+    /**
+     * 我的文件记忆列表（记忆面板「文件记忆」页签；按创建时间倒序）。
+     * <p>
+     * 5x 四轮 C6：返 VO 增补 {@code projectNames}「收录于」徽标数据——一次反查
+     * {@code selectFileProjectRefs}（本人文件 ∩ ACTIVE FILE 条目 ∩ ACTIVE 成员域）按 fileId 分组；
+     * 反查失败降级空徽标（面板主列表不能因收录查询挂掉，宁缺勿噪）。
+     */
+    public List<com.superprogrammer.chat.dto.MemoryAssetMemoryVO> listMine(Long userId) {
+        List<MemoryAssetMemory> rows = memoryMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MemoryAssetMemory>()
                         .eq(MemoryAssetMemory::getOwnerUserId, userId)
                         .orderByDesc(MemoryAssetMemory::getCreatedAt));
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        java.util.Map<String, java.util.List<String>> namesByFile = new java.util.HashMap<>();
+        try {
+            for (com.superprogrammer.chat.dto.FileProjectRefRow ref
+                    : projectEntryMapper.selectFileProjectRefs(userId)) {
+                if (ref.getFileId() != null && ref.getProjectName() != null && !ref.getProjectName().isBlank()) {
+                    namesByFile.computeIfAbsent(ref.getFileId(), k -> new ArrayList<>())
+                            .add(ref.getProjectName());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("文件收录项目反查失败 userId={}（降级空徽标）: {}", userId, e.getMessage());
+        }
+        return rows.stream().map(r -> com.superprogrammer.chat.dto.MemoryAssetMemoryVO.builder()
+                .id(r.getId())
+                .fileId(r.getFileId())
+                .fileKind(r.getFileKind())
+                .originalName(r.getOriginalName())
+                .l1Summary(r.getL1Summary())
+                .l2Detail(r.getL2Detail())
+                .tagIds(r.getTagIds())
+                .ingestStatus(r.getIngestStatus())
+                .ingestError(r.getIngestError())
+                .retryCount(r.getRetryCount())
+                .weakMemory(r.getWeakMemory())
+                .createdAt(r.getCreatedAt() == null ? null : r.getCreatedAt().toString())
+                .projectNames(namesByFile.getOrDefault(r.getFileId(), List.of()))
+                .build()).toList();
     }
 
     /** FAILED 手动重试（运维入口）：归属校验 + 次数硬卡 + 条件 UPDATE 置回 PROCESSING。 */

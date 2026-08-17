@@ -297,4 +297,70 @@ class MemoryAssetIngestServiceTest {
         verify(projectEntryMapper, never()).softDeleteFileEntries(any());
         verify(fileStorageService, never()).delete(any());
     }
+
+    // ============================ 5x 四轮 C6 · listMine「收录于」徽标 ============================
+
+    private static com.superprogrammer.chat.dto.FileProjectRefRow ref(String fileId, Long projectId, String name) {
+        com.superprogrammer.chat.dto.FileProjectRefRow r = new com.superprogrammer.chat.dto.FileProjectRefRow();
+        r.setFileId(fileId);
+        r.setProjectId(projectId);
+        r.setProjectName(name);
+        return r;
+    }
+
+    @Test
+    @DisplayName("C6 listMine：收录反查按 fileId 分组映射 VO（一文件多项目全列）")
+    void listMine_mapsProjectRefsGroupedByFileId() {
+        MemoryAssetMemory a = row(MemoryAssetMemory.STATUS_READY);
+        a.setId(1L);
+        a.setCreatedAt(java.time.OffsetDateTime.now());
+        MemoryAssetMemory b = row(MemoryAssetMemory.STATUS_READY);
+        b.setId(2L);
+        b.setFileId("f-b.pdf");
+        when(memoryMapper.selectList(any())).thenReturn(List.of(a, b));
+        when(projectEntryMapper.selectFileProjectRefs(100L)).thenReturn(List.of(
+                ref("f-abc.pdf", 10L, "项目A"), ref("f-abc.pdf", 20L, "项目B")));
+
+        var vos = service.listMine(100L);
+
+        assertEquals(2, vos.size());
+        assertEquals(List.of("项目A", "项目B"), vos.get(0).getProjectNames(), "f-abc 两项目全列");
+        assertNotNull(vos.get(0).getCreatedAt(), "createdAt ISO 序列化透出");
+        assertEquals(List.of(), vos.get(1).getProjectNames(), "f-b 无收录 → 空列表（前端不渲染徽标）");
+    }
+
+    @Test
+    @DisplayName("C6 listMine：无任何收录行 → projectNames 全空非 null；空记忆列表短路不反查")
+    void listMine_noRefs_emptyBadgeList() {
+        when(memoryMapper.selectList(any())).thenReturn(List.of(row(MemoryAssetMemory.STATUS_READY)));
+        when(projectEntryMapper.selectFileProjectRefs(100L)).thenReturn(List.of());
+
+        var vos = service.listMine(100L);
+
+        assertEquals(List.of(), vos.get(0).getProjectNames());
+
+        when(memoryMapper.selectList(any())).thenReturn(List.of());
+        assertTrue(service.listMine(100L).isEmpty());
+        verify(projectEntryMapper, times(1)).selectFileProjectRefs(100L);
+    }
+
+    @Test
+    @DisplayName("C6 listMine：收录反查失败/脏行（null 项目名）→ 降级空徽标不炸面板")
+    void listMine_refsFailOrDirty_degradesToEmptyBadge() {
+        when(memoryMapper.selectList(any())).thenReturn(List.of(row(MemoryAssetMemory.STATUS_READY)));
+        when(projectEntryMapper.selectFileProjectRefs(100L))
+                .thenThrow(new RuntimeException("refs db down"));
+
+        var vos = service.listMine(100L);
+
+        assertEquals(1, vos.size(), "主列表不受反查失败影响");
+        assertEquals(List.of(), vos.get(0).getProjectNames(), "降级空徽标（宁缺勿噪）");
+
+        // 脏行：null/blank 项目名跳过（仅透有效名；「仅本人可见项目」域过滤在 XML JOIN，人工/集成测试覆盖）
+        // doReturn 复桩：when() 内调用会触发上一轮 thenThrow（Mockito 复桩坑）
+        doReturn(java.util.Arrays.asList(
+                ref("f-abc.pdf", 10L, "项目A"), ref("f-abc.pdf", null, null), ref("f-abc.pdf", 20L, "  ")))
+                .when(projectEntryMapper).selectFileProjectRefs(100L);
+        assertEquals(List.of("项目A"), service.listMine(100L).get(0).getProjectNames());
+    }
 }

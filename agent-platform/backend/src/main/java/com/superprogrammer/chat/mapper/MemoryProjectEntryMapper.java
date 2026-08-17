@@ -69,5 +69,9 @@ public interface MemoryProjectEntryMapper extends BaseMapper<MemoryProjectEntry>
     /** 二期 P2：这些流水账（turn）被收录到的项目（未删条目，ACTIVE+PENDING_REVIEW）。
      *  一条 turn 可能命中多项目、同项目多 tag 会产生多行——service 按 turnId 分组并对 projectId 去重。 */
     List<TurnProjectIndexRow> findProjectIndexByTurnIds(@Param("turnIds") List<Long> turnIds);
+
+    /** 5x 四轮 C6：我的文件被哪些<b>本人可访问</b>项目收录（ACTIVE FILE 条目 ∩ ACTIVE 成员域，
+     *  非成员/已离职项目不透名）。一个文件可多项目各一条 → service 按 fileId 分组。 */
+    List<com.superprogrammer.chat.dto.FileProjectRefRow> selectFileProjectRefs(@Param("userId") Long userId);
 }
 
