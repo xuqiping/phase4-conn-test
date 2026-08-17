@@ -144,6 +144,8 @@ public class AssetPublicPoolService {
                     .assetCount(counts.getOrDefault(project.getId(), 0L))
                     .myRequestStatus(requestStatus)
                     .usable(usable)
+                    // 2x#4：摘要补项目媒体类型（选择器按图片/视频过滤公共池项目）
+                    .mediaTypes(project.getMediaTypes())
                     .build();
         }).toList();
     }

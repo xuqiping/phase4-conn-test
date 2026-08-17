@@ -21,4 +21,6 @@ public class PublicProjectSummaryVO {
     private Long assetCount;
     private String myRequestStatus;
     private Boolean usable;
+    /** 2x#4：项目媒体类型受控词汇（jsonb 原样透传），选择器按图片/视频过滤项目用。 */
+    private String mediaTypes;
 }

@@ -142,7 +142,7 @@ const candidateOptions = computed<SelectOption[]>(() =>
 
 const candidateStatusText = computed(() => {
   if (candidateError.value) return candidateError.value
-  if (!candidateKeyword.value) return '输入用户名搜索候选成员'
+  if (!candidateKeyword.value) return '输入用户名筛选，最多展示 50 人'
   if (!loadingCandidates.value && candidateOptions.value.length === 0) return '未找到匹配的候选成员'
   return ''
 })
@@ -223,7 +223,11 @@ watch(
   ([show, projectId]) => {
     contextVersion += 1
     resetDialogState()
-    if (show && projectId) void reloadMembers({ projectId, version: contextVersion })
+    if (show && projectId) {
+      void reloadMembers({ projectId, version: contextVersion })
+      // 2x#5：打开即以空关键词载候选（后端返 ≤50），用户不用先输入
+      void searchCandidates('')
+    }
   },
   { immediate: true }
 )
@@ -253,7 +257,10 @@ function clearCandidateSearch() {
   loadingCandidates.value = false
 }
 
-/** 空关键词本地清空；非空关键词只从资产成员候选端点取最小字段。 */
+/**
+ * 候选搜索（2x#5 修复）：空关键词也发请求——后端返全量 ACTIVE 候选（≤50，排除
+ * owner/成员/自己）；非空关键词远程收窄（≤20）。清空关键词=恢复全量而非空白。
+ */
 async function searchCandidates(rawKeyword: string) {
   const context = captureContext()
   if (!isCurrentContext(context)) return
@@ -261,11 +268,6 @@ async function searchCandidates(rawKeyword: string) {
   candidateKeyword.value = keyword
   candidateError.value = ''
   const searchVersion = ++candidateSearchVersion
-  if (!keyword) {
-    candidates.value = []
-    loadingCandidates.value = false
-    return
-  }
 
   loadingCandidates.value = true
   try {

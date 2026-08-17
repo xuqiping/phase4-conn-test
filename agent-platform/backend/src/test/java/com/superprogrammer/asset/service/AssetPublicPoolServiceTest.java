@@ -125,6 +125,7 @@ class AssetPublicPoolServiceTest {
         open.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_OPEN);
         open.setPublishedBy(5L);
         open.setPublishedAt(java.time.OffsetDateTime.parse("2026-08-10T01:00:00Z"));
+        open.setMediaTypes("[\"图片\",\"视频\"]");
         AssetProject approval = project(2L, 11L);
         approval.setPublicPool(true);
         approval.setPublicAccessMode(AssetProject.PUBLIC_ACCESS_APPROVAL_REQUIRED);
@@ -153,9 +154,11 @@ class AssetPublicPoolServiceTest {
                         org.assertj.core.groups.Tuple.tuple(2L, 4L, "publisher-b", true),
                         org.assertj.core.groups.Tuple.tuple(1L, 3L, "publisher-a", true));
         assertThat(result.get(0).getMyRequestStatus()).isEqualTo("APPROVED");
+        assertThat(result.get(1).getMediaTypes()).isEqualTo("[\"图片\",\"视频\"]");
+        // 2x#4：mediaTypes 加入白名单（选择器按图片/视频过滤公共池项目）；叙事角色/资产内容仍禁止
         assertThat(java.util.Arrays.stream(PublicProjectSummaryVO.class.getDeclaredFields())
                 .map(java.lang.reflect.Field::getName))
-                .doesNotContain("narrativeRoles", "mediaTypes", "assets", "content", "fileId");
+                .doesNotContain("narrativeRoles", "assets", "content", "fileId");
         verify(projectMapper).selectList(any());
         verify(assetMapper).countByProjectIds(any());
         verify(userMapper).selectBatchIds(any());

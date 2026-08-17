@@ -99,8 +99,11 @@ public class AssetMemberService {
                         .eq(AssetProjectMember::getDeleted, 0))
                 .stream().map(AssetProjectMember::getUserId).forEach(excluded::add);
         String safeKeyword = escapeLikeKeyword(keyword);
-        return userMapper.searchActiveCandidates(safeKeyword, new ArrayList<>(excluded), 20)
-                .stream().limit(20)
+        // 2x#5：空关键词开箱即载全量候选（LIMIT 50），输入关键词收窄后维持 20
+        boolean blankKeyword = safeKeyword.isEmpty();
+        int limit = blankKeyword ? 50 : 20;
+        return userMapper.searchActiveCandidates(safeKeyword, new ArrayList<>(excluded), limit)
+                .stream().limit(limit)
                 .map(user -> new MemberCandidateVO(user.getId(), user.getUsername()))
                 .toList();
     }

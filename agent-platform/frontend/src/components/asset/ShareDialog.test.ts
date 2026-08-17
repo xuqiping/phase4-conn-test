@@ -102,7 +102,7 @@ describe('ShareDialog (资产成员安全分享)', () => {
     ])
   })
 
-  it('远程选择器可搜索，并提供可读标签、加载态与空态文案', async () => {
+  it('远程选择器可搜索，并提供可读标签与加载态', async () => {
     const wrapper = mountDialog()
     await settle()
 
@@ -113,7 +113,20 @@ describe('ShareDialog (资产成员安全分享)', () => {
     expect(userSelect.props('loading')).toBe(false)
     expect(userSelect.attributes('aria-label')).toBe('搜索可邀请的项目成员')
     expect(userSelect.props('placeholder')).toBe('输入用户名搜索')
-    expect(wrapper.text()).toContain('输入用户名搜索候选成员')
+  })
+
+  // 2x#5：打开即以空关键词载候选（开箱即见 ≤50 人），状态行给上限提示
+  it('打开弹窗即以空关键词请求候选并展示', async () => {
+    const wrapper = mountDialog()
+    await settle()
+    const vm = wrapper.vm as unknown as { candidateOptions: { label: string; value: number }[] }
+
+    expect(memberApi.searchCandidates).toHaveBeenCalledWith(7, '')
+    expect(vm.candidateOptions).toEqual([
+      { label: 'viewer', value: 3 },
+      { label: 'outsider', value: 4 }
+    ])
+    expect(wrapper.text()).toContain('输入用户名筛选，最多展示 50 人')
   })
 
   it('通过远程选择器 search 事件按关键词搜索最小候选', async () => {
@@ -134,7 +147,8 @@ describe('ShareDialog (资产成员安全分享)', () => {
     ])
   })
 
-  it('空关键词清空候选且不发送请求', async () => {
+  // 2x#5：清空关键词=发空关键词请求恢复全量候选，而非空白
+  it('清空关键词重新请求全量候选', async () => {
     const wrapper = mountDialog()
     await settle()
     const vm = wrapper.vm as unknown as {
@@ -146,8 +160,11 @@ describe('ShareDialog (资产成员安全分享)', () => {
     vi.mocked(memberApi.searchCandidates).mockClear()
     await vm.searchCandidates('   ')
 
-    expect(memberApi.searchCandidates).not.toHaveBeenCalled()
-    expect(vm.candidateOptions).toEqual([])
+    expect(memberApi.searchCandidates).toHaveBeenCalledWith(7, '')
+    expect(vm.candidateOptions).toEqual([
+      { label: 'viewer', value: 3 },
+      { label: 'outsider', value: 4 }
+    ])
   })
 
   it('成员加载失败后仍可搜索并获得候选', async () => {

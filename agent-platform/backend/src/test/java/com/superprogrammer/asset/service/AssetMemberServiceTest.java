@@ -124,13 +124,15 @@ class AssetMemberServiceTest {
 
     @Test
     void searchCandidates_emptyKeywordUsesBoundedActiveQuery() {
+        // 2x#5：空关键词开箱即载全量候选，LIMIT 20→50
         when(aclService.requireManage(PROJECT_ID, OWNER_ID, false)).thenReturn(null);
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(OWNER_ID));
         when(memberMapper.selectList(any())).thenReturn(List.of());
-        when(userMapper.searchActiveCandidates("", List.of(OWNER_ID), 20)).thenReturn(List.of());
+        when(userMapper.searchActiveCandidates("", List.of(OWNER_ID), 50)).thenReturn(List.of());
 
         assertTrue(service.searchCandidates(PROJECT_ID, OWNER_ID, false, "   ").isEmpty());
-        verify(userMapper).searchActiveCandidates("", List.of(OWNER_ID), 20);
+
+        verify(userMapper).searchActiveCandidates("", List.of(OWNER_ID), 50);
     }
 
     @Test
