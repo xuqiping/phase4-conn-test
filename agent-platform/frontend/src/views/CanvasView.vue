@@ -130,7 +130,7 @@
           </n-button>
         </div>
 
-        <!-- 3x-C4 批量生成进度浮条（收起只藏 UI 不停任务；轮询照常、离开画布可恢复） -->
+        <!-- 3x-C4 批量进度浮条（2x 四轮 S4：收起=停调度释放下游，在途任务不撤仅停释放） -->
         <div
           v-if="batchProgress"
           class="canvas-batchbar canvas-batchbar--progress"
@@ -138,9 +138,9 @@
           aria-live="polite"
         >
           <span class="canvas-batchbar__count">
-            {{ batchFinished ? '批量生成已完成' : '批量生成中' }}：已提交 {{ batchProgress.submitted }}/{{ batchProgress.total }} · 完成 {{ batchProgress.done }} · 失败 {{ batchProgress.failed }}
+            {{ batchFinished ? '批量生成已完成' : '批量生成中' }}：已提交 {{ batchProgress.submitted }}/{{ batchProgress.total }} · 完成 {{ batchProgress.done }} · 失败 {{ batchProgress.failed }}<template v-if="batchProgress.skipped"> · 跳过 {{ batchProgress.skipped }}</template><template v-if="batchWaiting"> · 等待上游 {{ batchWaiting }}</template>
           </span>
-          <n-button size="tiny" quaternary @click="batchProgress = null">收起</n-button>
+          <n-button size="tiny" quaternary @click="onBatchBarClose">{{ batchFinished ? '收起' : '停止调度' }}</n-button>
         </div>
 
         <!-- 属性面板（选中节点编辑 + 运行/上传触发） -->
@@ -270,7 +270,7 @@ import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
-import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runSlidingWindow, submitWithBackoff } from '@/utils/batchRunner'
+import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runDependencyScheduled } from '@/utils/batchRunner'
 
 const route = useRoute()
 const router = useRouter()
@@ -392,23 +392,37 @@ function onAssociateApply(checked: AssociationProposal[]) {
   message.success(`已关联 ${applied} 处（覆盖 ${targets} 个节点），运行时将自动注入上游产出`)
 }
 
-// ---- 3x-C4：批量生成（诱导子图拓扑序 + 滑动窗口 2 + 429 退避 + 进度浮条） ----
+// ---- 3x-C4：批量生成（2x 四轮 S4 升级为依赖调度：上游 SUCCEEDED 释放下游） ----
 
 /** 批量提交进行中（工具条按钮 loading + 与「重跑全链」互斥）。 */
 const batchRunning = ref(false)
-/** 批量进度（null=无批量；关闭浮条不影响任务，只藏 UI）。 */
-const batchProgress = ref<{ total: number; submitted: number; done: number; failed: number } | null>(null)
-/** 批量是否已全部终态（浮条由「进行中」转「已完成」文案）。 */
+/** 批量进度（null=无批量）。skipped=依赖调度跳过（上游失败/未入选集）；waiting 由 computed 派生。 */
+const batchProgress = ref<{ total: number; submitted: number; done: number; failed: number; skipped: number } | null>(null)
+/** 等待上游数 = 总数 − 已提交 − 已终态（done+failed+skipped）− 0（等待中含就绪待派发）。 */
+const batchWaiting = computed(() => {
+  const p = batchProgress.value
+  if (!p) return 0
+  return Math.max(0, p.total - p.submitted - p.done - p.failed - p.skipped)
+})
+/** 批量是否已全部终态（每个节点必落 done/failed/skipped 之一，跳过的永不提交）。 */
 const batchFinished = computed(() => {
   const p = batchProgress.value
-  return !!p && p.submitted === p.total && p.done + p.failed >= p.submitted
+  return !!p && p.done + p.failed + p.skipped >= p.total
 })
+/** 2x 四轮 S4 取消令牌：浮条「停止调度」置 true；在途任务不撤仅停释放。 */
+const batchCancelRequested = ref(false)
+
+/** 浮条按钮：已完成=纯收起；进行中=停调度（未启动的不再派发，等待上游的一并终止）。 */
+function onBatchBarClose() {
+  if (!batchFinished.value) batchCancelRequested.value = true
+  batchProgress.value = null
+}
 
 /**
- * 3x-C4：批量生成入口。资格预检（缺提示词/模型、不支持类型列跳过原因）→
- * 选中节点诱导子图拓扑序（未选上游按当前已物化产出插值，不补跑）→
- * 滑动窗口 2 并发「仅提交」（video/image 拆 submitOnly + 独立轮询；text 同步跑完）→
- * 429 并发上限指数退避 1s/2s/4s×3，仍败标红该节点不阻断其余。
+ * 3x-C4 批量生成入口（S4 依赖调度版）。资格预检（缺提示词/模型、不支持类型列跳过原因）→
+ * runDependencyScheduled：就绪=选集内全部上游 SUCCEEDED 才提交下游（互不依赖分支滑窗 2 并行）；
+ * 上游 FAILED→下游级联标灰跳过；上游不在选集（含资格剔除）→ SKIPPED_UPSTREAM_MISSING（不静默）；
+ * 429 冷却重排不占窗口槽；60min/节点看门狗；收浮条停调度。taskId 即时持久化语义不变。
  */
 async function onBatchRun() {
   const board = boardRef.value
@@ -421,59 +435,91 @@ async function onBatchRun() {
     .map(id => board.getNode(id))
     .filter((n): n is CanvasNode => !!n)
   const eligible: CanvasNode[] = []
-  const skipped: string[] = []
+  const skippedMsg: string[] = []
   for (const n of selected) {
     const el = batchEligibilityOf(n)
     if (el.ok) eligible.push(n)
-    else skipped.push(`「${String((n.data as Record<string, unknown>).label ?? n.id)}」${el.reason}`)
+    else skippedMsg.push(`「${String((n.data as Record<string, unknown>).label ?? n.id)}」${el.reason}`)
   }
-  if (skipped.length) message.warning(`已跳过 ${skipped.length} 个节点：${skipped.join('；')}`)
+  if (skippedMsg.length) message.warning(`已跳过 ${skippedMsg.length} 个节点：${skippedMsg.join('；')}`)
   if (!eligible.length) {
     message.warning('选中节点均不可批量生成（文本/图片/视频需提示词，图片还需模型）')
     return
   }
-  const { order, cycle } = inducedTopoOrder(eligible.map(n => n.id), board.getEdges())
+  const eligibleIds = eligible.map(n => n.id)
+  const { cycle } = inducedTopoOrder(eligibleIds, board.getEdges())
   if (cycle) {
-    message.error('选中节点之间存在环路，无法按拓扑序批量生成（请检查连线）')
+    message.error('选中节点之间存在环路，无法按依赖调度批量生成（请检查连线）')
     return
   }
   batchRunning.value = true
-  batchProgress.value = { total: order.length, submitted: 0, done: 0, failed: 0 }
-  const count = (key: 'done' | 'failed') => {
-    if (batchProgress.value) batchProgress.value[key]++
-  }
+  batchCancelRequested.value = false
+  batchProgress.value = { total: eligibleIds.length, submitted: 0, done: 0, failed: 0, skipped: 0 }
   try {
-    await runSlidingWindow(order, BATCH_WINDOW, async (id) => {
-      const node = board.getNode(id)
-      if (!node) return // 批量中被删：静默跳过（poll stale-guard 亦不误写）
-      try {
-        if (node.type === 'video') {
-          const rawPrompt = String((node.data as Record<string, unknown>).prompt ?? '').trim()
-          const taskId = await submitWithBackoff(() => submitVideoOnly(node, rawPrompt))
+    const out = await runDependencyScheduled(
+      eligibleIds,
+      board.getEdges(),
+      {
+        // 提交段（占窗口槽；429 抛给调度器冷却重排）。失败先标红节点保留原始报错再上抛。
+        submit: async id => {
+          const node = board.getNode(id)
+          if (!node) throw new Error('节点已被删除')
+          try {
+            if (node.type === 'video') {
+              await submitVideoOnly(node, String((node.data as Record<string, unknown>).prompt ?? '').trim())
+            } else if (node.type === 'image') {
+              await submitImageOnly(node)
+            } else {
+              // text：提交段同步跑完（无 taskId），终态在 awaitTerminal 按节点 status 读
+              await onRunNode(node)
+            }
+          } catch (e) {
+            const msg = (e as { msg?: string; message?: string })?.msg
+              || (e as { message?: string })?.message
+              || '批量提交失败'
+            board.updateNodeData(id, { status: 'failed', errorMsg: msg })
+            throw e
+          }
           if (batchProgress.value) batchProgress.value.submitted++
-          void pollVideoTask(id, taskId).then(st => { if (st === 'SUCCEEDED') count('done'); else count('failed') })
-        } else if (node.type === 'image') {
-          const taskId = await submitWithBackoff(() => submitImageOnly(node))
-          if (batchProgress.value) batchProgress.value.submitted++
-          void pollImageTask(id, taskId).then(st => { if (st === 'SUCCEEDED') count('done'); else count('failed') })
-        } else {
-          // text：同步跑完即终态（无 taskId 轮询），按节点终态计数
-          await onRunNode(node)
-          if (batchProgress.value) batchProgress.value.submitted++
-          const st = (board.getNode(id)?.data as Record<string, unknown> | undefined)?.status
-          if (st === 'success') count('done'); else count('failed')
+        },
+        // 终态段（不占槽）：video/image 轮询到终态；text 读同步结果。null=任务被替换/取消，按 FAILED 释放下游。
+        awaitTerminal: async id => {
+          const node = board.getNode(id)
+          if (!node) return 'FAILED'
+          const data = node.data as Record<string, unknown>
+          if (node.type === 'text') return data.status === 'success' ? 'SUCCEEDED' : 'FAILED'
+          const taskId = Number(data.taskId ?? 0)
+          const st = node.type === 'video'
+            ? await pollVideoTask(id, taskId)
+            : await pollImageTask(id, taskId)
+          return st === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED'
         }
-      } catch (e) {
-        // 提交失败（含退避 3 次仍 429）/文本跑挂：该节点标红，不阻断其余
-        if (batchProgress.value) { batchProgress.value.submitted++; batchProgress.value.failed++ }
-        const msg = (e as { msg?: string; message?: string })?.msg
-          || (e as { message?: string })?.message
-          || '批量提交失败'
-        board.updateNodeData(id, { status: 'failed', errorMsg: msg })
+      },
+      {
+        window: BATCH_WINDOW,
+        isCancelled: () => batchCancelRequested.value,
+        onNodeState: (id, st) => {
+          // 节点标灰与浮条计数解耦：收浮条（batchProgress=null）后跳过态仍要落到节点上
+          if (st === 'SKIPPED_UPSTREAM_FAILED' || st === 'SKIPPED_UPSTREAM_MISSING') {
+            board.updateNodeData(id, {
+              status: 'skipped',
+              errorMsg: st === 'SKIPPED_UPSTREAM_FAILED' ? '上游失败，已跳过（可重跑上游后再批量）' : '上游未在本次批量选集中，已跳过'
+            })
+          }
+          const p = batchProgress.value
+          if (!p) return
+          if (st === 'SUCCEEDED') p.done++
+          else if (st === 'FAILED') p.failed++
+          else if (st === 'SKIPPED_UPSTREAM_FAILED' || st === 'SKIPPED_UPSTREAM_MISSING') p.skipped++
+          // CANCELLED/waiting/submitting/running：不计数（waiting 由 batchWaiting 派生）
+        }
       }
-    })
+    )
+    const skippedCount = [...out.values()].filter(v => v.startsWith('SKIPPED')).length
+    if (skippedCount) message.warning(`${skippedCount} 个节点因上游失败/未执行被跳过（已标灰，见节点提示）`)
   } finally {
     batchRunning.value = false
+    batchCancelRequested.value = false
   }
 }
 

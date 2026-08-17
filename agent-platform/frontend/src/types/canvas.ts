@@ -9,8 +9,9 @@ export interface CanvasPosition {
   y: number
 }
 
-/** 节点运行态（C4+ 产出触发用；C3 骨架先展示状态） */
-export type CanvasNodeStatus = 'idle' | 'running' | 'success' | 'failed'
+/** 节点运行态（C4+ 产出触发用；C3 骨架先展示状态）。
+ *  skipped（2x 四轮 S4）：依赖调度里因上游失败/未执行被跳过——非任务失败，灰色区分，原因在 errorMsg。 */
+export type CanvasNodeStatus = 'idle' | 'running' | 'success' | 'failed' | 'skipped'
 
 /** 焦点编辑框选矩形（C10，相对 stage px；提取质量依赖后续生图/分割模型）。 */
 export interface CropRect {

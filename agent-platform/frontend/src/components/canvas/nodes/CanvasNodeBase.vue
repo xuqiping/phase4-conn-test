@@ -68,7 +68,8 @@ const STATUS_LABEL: Record<CanvasNodeStatus, string> = {
   idle: '待生成',
   running: '生成中',
   success: '完成',
-  failed: '失败'
+  failed: '失败',
+  skipped: '已跳过'
 }
 
 const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : ''))
@@ -127,6 +128,11 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
 .canvas-node--success { border-color: rgba(34, 197, 94, 0.5); }
 .canvas-node--failed { border-color: rgba(239, 68, 68, 0.55); }
 .canvas-node--running { border-color: rgba(56, 189, 248, 0.6); }
+/* 2x 四轮 S4：依赖调度跳过态——灰化区分「任务失败」，原因见节点 errorMsg / 属性面板 */
+.canvas-node--skipped {
+  border-color: rgba(148, 163, 184, 0.4);
+  opacity: 0.75;
+}
 
 .canvas-node__header {
   display: flex;
@@ -200,6 +206,7 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
   &[data-status='success'] { color: #4ade80; }
   &[data-status='failed'] { color: #f87171; }
   &[data-status='running'] { color: #38bdf8; }
+  &[data-status='skipped'] { color: #94a3b8; }
 }
 
 .canvas-node__body {
