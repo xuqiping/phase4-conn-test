@@ -9,6 +9,8 @@ import com.superprogrammer.canvas.dto.FrameExtractRequest;
 import com.superprogrammer.canvas.dto.FrameExtractVO;
 import com.superprogrammer.canvas.dto.ImageCropRequest;
 import com.superprogrammer.canvas.dto.ImageCropVO;
+import com.superprogrammer.canvas.dto.ImageTransformRequest;
+import com.superprogrammer.canvas.dto.ImageTransformVO;
 import com.superprogrammer.canvas.dto.NodeRunResult;
 import com.superprogrammer.canvas.dto.StoryboardConcatRequest;
 import com.superprogrammer.canvas.dto.StoryboardConcatVO;
@@ -239,6 +241,47 @@ public class CanvasController {
                 .mime(crop.mimeType())
                 .size(crop.size())
                 .sourceNodeId(nodeId)
+                .build()));
+    }
+
+    // ==================== 2x 四轮 S6：图片翻转/旋转（确定性像素变换） ====================
+
+    /**
+     * 图片翻转/旋转：源图按 op 确定性变换（EXIF 先归正）→ 新图片文件（SOURCE_CANVAS）→ 前端建衍生图节点 + 自动连边。
+     *
+     * <p>同 cropImage 范式：源图 fileId 从快照节点解析（不信任客户端传入）；
+     * 归属咽喉点 loadOwned（画布）+ loadPath（源图 ownership 复检）；产出新 fileId，源图不可变。
+     * op 白名单枚举校验（TransformOp.parse），非法值 BAD_REQUEST。
+     */
+    @PostMapping("/{id}/nodes/{nodeId}/transform-image")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<ImageTransformVO>> transformImage(@PathVariable Long id,
+                                                              @PathVariable String nodeId,
+                                                              @Valid @RequestBody ImageTransformRequest req) {
+        Long userId = getCurrentUserId();
+        boolean admin = isAdmin();
+        Canvas c = canvasService.loadOwned(id, userId, isAdmin());
+
+        VideoFrameService.TransformOp op = VideoFrameService.TransformOp.parse(req == null ? null : req.getOp());
+        String sourceFileId = resolveImageFileId(c.getSnapshot(), nodeId);
+
+        Path srcPath = fileStorageService.loadPath(sourceFileId, userId, admin);
+        VideoFrameService.ExtractedFrame out = videoFrameService.transformImage(srcPath, op);
+
+        String fileName = "transform_" + nodeId + "_" + op.name().toLowerCase(Locale.ROOT) + ".png";
+        String newFileId = fileStorageService.storeStream(
+                new ByteArrayInputStream(out.bytes()), fileName, out.mimeType(), out.size(),
+                userId, StoredFileEntity.SOURCE_CANVAS);
+        log.info("canvas image transformed: canvasId={} sourceNodeId={} op={} newFileId={} bytes={}",
+                id, nodeId, op, newFileId, out.size());
+
+        return ResponseEntity.ok(R.ok("已变换", ImageTransformVO.builder()
+                .fileId(newFileId)
+                .url("/api/files/" + newFileId)
+                .mime(out.mimeType())
+                .size(out.size())
+                .sourceNodeId(nodeId)
+                .op(op.name())
                 .build()));
     }
 

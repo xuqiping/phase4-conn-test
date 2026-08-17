@@ -199,32 +199,9 @@ public class VideoFrameService {
         }
 
         long started = System.currentTimeMillis();
-        // S4 F-3①：解码前头读取核像素预算（ImageIO.read 按声明尺寸分配缓冲，炸弹图直接 OOM）
-        try (java.io.InputStream guardIn = Files.newInputStream(srcPath)) {
-            long cap = systemSettingService == null
-                    ? com.superprogrammer.common.security.util.ImageGuard.DEFAULT_MAX_PIXELS
-                    : systemSettingService.getUploadMaxPixels();
-            com.superprogrammer.common.security.util.ImageGuard.assertPixels(cap, guardIn, srcPath.toString());
-        } catch (BusinessException be) {
-            throw be;
-        } catch (IOException e) {
-            log.warn("canvas cropImage pixel guard failed(放行): {}", e.getMessage());
-        }
-        BufferedImage src;
-        try {
-            src = ImageIO.read(srcPath.toFile());
-        } catch (IOException e) {
-            log.warn("canvas cropImage read failed: err={}", e.getMessage());
-            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图读取失败，无法裁剪");
-        }
-        if (src == null) {
-            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图格式不支持，无法裁剪");
-        }
+        BufferedImage src = decodeImageGuarded(srcPath);
         int ow = src.getWidth();
         int oh = src.getHeight();
-        if (ow <= 0 || oh <= 0) {
-            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图尺寸异常，无法裁剪");
-        }
         // 归一化 → 整数像素（clamp 到源图边界，防浮点误差越界）
         int sx = clampPixel((int) Math.round(nx * ow), 0, ow - 1);
         int sy = clampPixel((int) Math.round(ny * oh), 0, oh - 1);
@@ -248,6 +225,112 @@ public class VideoFrameService {
 
     private static int clampPixel(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
+    }
+
+    // ==================== 2x 四轮 S6：图片翻转/旋转（确定性像素变换） ====================
+
+    /** 五种确定性变换（spec §6.1）。ANNOTATE（S7 彩色标注合成）后续扩展同枚举。 */
+    public enum TransformOp {
+        FLIP_H, FLIP_V, ROTATE_90, ROTATE_180, ROTATE_270;
+
+        /** 客户端 op 字符串解析（白名单枚举校验，大小写敏感防绕过）。非法 → BAD_REQUEST。 */
+        public static TransformOp parse(String s) {
+            if (s == null || s.isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "变换类型缺失");
+            }
+            try {
+                return TransformOp.valueOf(s.trim());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的图片变换: " + s.trim());
+            }
+        }
+    }
+
+    /**
+     * 图片翻转/旋转（2x 四轮 S6 / spec §6.1）。EXIF 方向先归正（ImageIO 不应用 Orientation，
+     * 手机竖拍图不归正则结果与所见相反），再按 op 做确定性像素变换 → 新 PNG 字节。
+     *
+     * <p>产出新图（新 fileId 由 Controller 落 stored_files），源图不可变语义不破（同 cropImage）。
+     * 像素护栏复用 cropImage 口径（S4 F-3① 解码前核像素预算）。显式像素循环不用 AffineTransform
+     * ——映射关系可单测像素断言，无图形矩阵推导出错面。
+     *
+     * @param srcPath 源图路径（已过 FileStorageService.loadPath 归属咽喉点）
+     * @param op      变换类型（枚举，Controller 层 parse）
+     */
+    public ExtractedFrame transformImage(Path srcPath, TransformOp op) {
+        if (srcPath == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源图路径缺失");
+        }
+        if (op == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "变换类型缺失");
+        }
+        long started = System.currentTimeMillis();
+        BufferedImage raw = decodeImageGuarded(srcPath);
+        // EXIF 归正：Orientation≠1 的 JPEG 先转正，后续 op 按「用户所见」作用
+        int orientation = ExifOrientation.readOrientation(srcPath);
+        BufferedImage base = orientation > 1 ? ExifOrientation.applyOrientation(raw, orientation) : raw;
+
+        int ow = base.getWidth();
+        int oh = base.getHeight();
+        boolean rotateQuarter = op == TransformOp.ROTATE_90 || op == TransformOp.ROTATE_270;
+        BufferedImage dst = rotateQuarter
+                ? new BufferedImage(oh, ow, BufferedImage.TYPE_INT_ARGB)
+                : new BufferedImage(ow, oh, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < oh; y++) {
+            for (int x = 0; x < ow; x++) {
+                int rgb = base.getRGB(x, y);
+                switch (op) {
+                    case FLIP_H -> dst.setRGB(ow - 1 - x, y, rgb);          // 水平镜像（左右翻转）
+                    case FLIP_V -> dst.setRGB(x, oh - 1 - y, rgb);          // 垂直镜像（上下翻转）
+                    case ROTATE_90 -> dst.setRGB(oh - 1 - y, x, rgb);       // 顺时针 90°（宽高互换）
+                    case ROTATE_180 -> dst.setRGB(ow - 1 - x, oh - 1 - y, rgb);
+                    case ROTATE_270 -> dst.setRGB(y, ow - 1 - x, rgb);      // 逆时针 90°（宽高互换）
+                }
+            }
+        }
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(dst, "png", baos);
+            byte[] bytes = baos.toByteArray();
+            log.info("canvas image transformed: op={} exif={} srcW={} srcH={} outW={} outH={} bytes={} costMs={}",
+                    op, orientation, ow, oh, dst.getWidth(), dst.getHeight(), bytes.length,
+                    System.currentTimeMillis() - started);
+            return new ExtractedFrame(bytes, "image/png", bytes.length);
+        } catch (IOException e) {
+            log.warn("canvas transformImage encode failed: op={} err={}", op, e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "变换图编码失败");
+        }
+    }
+
+    /**
+     * 解码前像素护栏 + ImageIO 读取（S4 F-3①，cropImage/transformImage 共用口径）。
+     * 头读取核预算失败放行（同 cropImage 容错语义），解码失败/格式不支持 → UNPROCESSABLE。
+     */
+    private BufferedImage decodeImageGuarded(Path srcPath) {
+        try (java.io.InputStream guardIn = Files.newInputStream(srcPath)) {
+            long cap = systemSettingService == null
+                    ? com.superprogrammer.common.security.util.ImageGuard.DEFAULT_MAX_PIXELS
+                    : systemSettingService.getUploadMaxPixels();
+            com.superprogrammer.common.security.util.ImageGuard.assertPixels(cap, guardIn, srcPath.toString());
+        } catch (BusinessException be) {
+            throw be;
+        } catch (IOException e) {
+            log.warn("canvas image decode pixel guard failed(放行): {}", e.getMessage());
+        }
+        BufferedImage src;
+        try {
+            src = ImageIO.read(srcPath.toFile());
+        } catch (IOException e) {
+            log.warn("canvas image read failed: err={}", e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图读取失败，无法处理");
+        }
+        if (src == null) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图格式不支持，无法处理");
+        }
+        if (src.getWidth() <= 0 || src.getHeight() <= 0) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "源图尺寸异常，无法处理");
+        }
+        return src;
     }
 
     /**

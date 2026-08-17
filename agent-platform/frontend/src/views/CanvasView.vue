@@ -155,6 +155,7 @@
           @split-storyboard="onSplitStoryboard"
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
+          @transform-image="onTransformImage"
           @extract-frame="onExtractFrame"
           @clip-video="onClipVideo"
           @save-to-asset="onSaveToAsset"
@@ -251,7 +252,7 @@ import {
   FilmOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode } from '@/api/canvas'
+import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
 import type { AttachmentRef, ImageModelVO, ImageSubmitRequest } from '@/api/media'
 import { resolveCanvasVideoAttachments } from '@/utils/canvasVideoAttachments'
@@ -703,6 +704,58 @@ async function onFocusConfirm(payload: { rect: CropRect; description: string }) 
     boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
     // 裁剪失败：保留 overlay 供用户重新框选或取消
+  } finally {
+    runningNodeIds.value.delete(src.id)
+  }
+}
+
+/**
+ * 2x 四轮 S6：确定性图片翻转/旋转（同 crop 链路范式）。
+ * 后端 transform-image（EXIF 先归正 + op 白名单）→ 新 fileId（源图不可变）→
+ * 建衍生图节点（label 按 op 中文命名 + parentFileId/sourceNodeId 溯源）+ 自动连边回源图节点。
+ * 失败不产空节点（端点抛 → catch 标红源节点）。
+ */
+const TRANSFORM_LABELS: Record<ImageTransformOp, string> = {
+  FLIP_H: '水平翻转',
+  FLIP_V: '垂直翻转',
+  ROTATE_90: '旋转90°',
+  ROTATE_180: '旋转180°',
+  ROTATE_270: '旋转270°'
+}
+
+async function onTransformImage(payload: { node: CanvasNode; op: ImageTransformOp }) {
+  const src = payload.node
+  if (!src || !boardRef.value || !editingId.value) return
+  if (runningNodeIds.value.has(src.id)) return
+  runningNodeIds.value.add(src.id)
+  boardRef.value.updateNodeData(src.id, { status: 'running', errorMsg: '' })
+  try {
+    const res = await canvasApi.transformImage(editingId.value, src.id, payload.op)
+    const f = res.data.data
+    const previewUrl = await fetchCanvasPreview(f.fileId)
+    boardRef.value.addNode({
+      type: 'image',
+      position: { x: (src.position?.x ?? 0) + 260, y: src.position?.y ?? 0 },
+      data: {
+        label: (src.data.label ? `${String(src.data.label)}·` : '') + TRANSFORM_LABELS[payload.op],
+        fileId: f.fileId,
+        previewUrl,
+        parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
+        transformOp: f.op,
+        sourceNodeId: src.id,
+        status: 'success'
+      }
+    })
+    const nodes = boardRef.value.getNodes()
+    const created = nodes[nodes.length - 1]
+    if (created) boardRef.value.addEdge(src.id, created.id)
+    boardRef.value.updateNodeData(src.id, { status: 'success', errorMsg: '' })
+    message.success(`已${TRANSFORM_LABELS[payload.op]}，生成新图节点`)
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '图片变换失败'
+    boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
   } finally {
     runningNodeIds.value.delete(src.id)
   }

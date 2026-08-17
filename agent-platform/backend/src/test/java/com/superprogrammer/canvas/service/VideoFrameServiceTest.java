@@ -14,6 +14,7 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -370,5 +371,199 @@ class VideoFrameServiceTest {
         VideoFrameService.ExtractedFrame out = svc.cropImage(src, 0.0, 0.0, 0.5, 0.5);
         assertThat(out.mimeType()).isEqualTo("image/png");
         assertThat(out.bytes().length).isGreaterThan(0);
+    }
+
+    // ==================== 2x 四轮 S6：图片翻转/旋转（transformImage 五 op 像素断言） ====================
+
+    /** 2x2 四色图：R G / B Y（左上红 右上绿 左下蓝 右下黄）——翻转/旋转各 op 断言基准。 */
+    private Path writeFourColorPng() throws Exception {
+        BufferedImage img = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
+        img.setRGB(0, 0, Color.RED.getRGB());
+        img.setRGB(1, 0, Color.GREEN.getRGB());
+        img.setRGB(0, 1, Color.BLUE.getRGB());
+        img.setRGB(1, 1, Color.YELLOW.getRGB());
+        Path p = tempDir.resolve("fourcolor_" + System.nanoTime() + ".png");
+        ImageIO.write(img, "png", p.toFile());
+        return p;
+    }
+
+    private BufferedImage transformFourColor(VideoFrameService.TransformOp op) throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.transformImage(writeFourColorPng(), op);
+        assertThat(f.mimeType()).isEqualTo("image/png");
+        return ImageIO.read(new ByteArrayInputStream(f.bytes()));
+    }
+
+    @Test
+    void transform_flipH_mirrorsHorizontally() throws Exception {
+        // R G / B Y → G R / Y B（左右镜像）
+        BufferedImage out = transformFourColor(VideoFrameService.TransformOp.FLIP_H);
+        assertThat(out.getWidth()).isEqualTo(2);
+        assertThat(out.getHeight()).isEqualTo(2);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.GREEN.getRGB());
+        assertThat(out.getRGB(1, 0)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.YELLOW.getRGB());
+        assertThat(out.getRGB(1, 1)).isEqualTo(Color.BLUE.getRGB());
+    }
+
+    @Test
+    void transform_flipV_mirrorsVertically() throws Exception {
+        // R G / B Y → B Y / R G（上下镜像）
+        BufferedImage out = transformFourColor(VideoFrameService.TransformOp.FLIP_V);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.BLUE.getRGB());
+        assertThat(out.getRGB(1, 0)).isEqualTo(Color.YELLOW.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(1, 1)).isEqualTo(Color.GREEN.getRGB());
+    }
+
+    @Test
+    void transform_rotate90_swapsDimsAndRotatesClockwise() throws Exception {
+        // R G / B Y 顺 90° → B R / Y G（2x2 旋转后左上=原左下）
+        BufferedImage out = transformFourColor(VideoFrameService.TransformOp.ROTATE_90);
+        assertThat(out.getWidth()).isEqualTo(2);
+        assertThat(out.getHeight()).isEqualTo(2);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.BLUE.getRGB());
+        assertThat(out.getRGB(1, 0)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.YELLOW.getRGB());
+        assertThat(out.getRGB(1, 1)).isEqualTo(Color.GREEN.getRGB());
+    }
+
+    @Test
+    void transform_rotate180_invertsAllQuadrants() throws Exception {
+        // R G / B Y → Y B / G R
+        BufferedImage out = transformFourColor(VideoFrameService.TransformOp.ROTATE_180);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.YELLOW.getRGB());
+        assertThat(out.getRGB(1, 0)).isEqualTo(Color.BLUE.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.GREEN.getRGB());
+        assertThat(out.getRGB(1, 1)).isEqualTo(Color.RED.getRGB());
+    }
+
+    @Test
+    void transform_rotate270_swapsDimsAndRotatesCounterClockwise() throws Exception {
+        // R G / B Y 逆 90° → G Y / R B
+        BufferedImage out = transformFourColor(VideoFrameService.TransformOp.ROTATE_270);
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.GREEN.getRGB());
+        assertThat(out.getRGB(1, 0)).isEqualTo(Color.YELLOW.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(1, 1)).isEqualTo(Color.BLUE.getRGB());
+    }
+
+    @Test
+    void transform_nonSquare_rotate90SwapsDimensions() throws Exception {
+        // 3x2（宽>高）顺 90° → 2x3：尺寸互换才是真旋转（区别于翻转）
+        BufferedImage img = new BufferedImage(3, 2, BufferedImage.TYPE_INT_RGB);
+        Path p = tempDir.resolve("rect_" + System.nanoTime() + ".png");
+        ImageIO.write(img, "png", p.toFile());
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.transformImage(p, VideoFrameService.TransformOp.ROTATE_90);
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        assertThat(out.getWidth()).isEqualTo(2);
+        assertThat(out.getHeight()).isEqualTo(3);
+    }
+
+    @Test
+    void transform_nullPath_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.transformImage(null, VideoFrameService.TransformOp.FLIP_H))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("源图路径缺失");
+    }
+
+    @Test
+    void transformOp_parse_rejectsUnknown() {
+        assertThatThrownBy(() -> VideoFrameService.TransformOp.parse("INVERT"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的图片变换");
+        assertThatThrownBy(() -> VideoFrameService.TransformOp.parse(null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("变换类型缺失");
+        assertThat(VideoFrameService.TransformOp.parse("ROTATE_90")).isEqualTo(VideoFrameService.TransformOp.ROTATE_90);
+    }
+
+    // ==================== 2x 四轮 S6：EXIF 方向归正 ====================
+
+    /** 手造带 EXIF Orientation 的 JPEG（8x16：左半红右半蓝——够大躲开 4:2:0 色度糊边，采样取内部像素）。 */
+    private Path writeExifJpeg(int orientation) throws Exception {
+        BufferedImage img = new BufferedImage(8, 16, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 8; x++) {
+                img.setRGB(x, y, x < 4 ? Color.RED.getRGB() : Color.BLUE.getRGB());
+            }
+        }
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", jpeg);
+        byte[] body = jpeg.toByteArray();
+
+        // TIFF 头（小端）+ IFD0：1 个目录项（tag 0x0112, type SHORT, count 1, value=orientation）
+        java.io.ByteArrayOutputStream tiff = new java.io.ByteArrayOutputStream();
+        tiff.write('I'); tiff.write('I');
+        tiff.write(42); tiff.write(0);
+        tiff.write(8); tiff.write(0); tiff.write(0); tiff.write(0);   // IFD0 偏移=8
+        tiff.write(1); tiff.write(0);                                  // 目录项数=1
+        tiff.write(0x12); tiff.write(0x01);                            // tag 0x0112（小端低字节在前）
+        tiff.write(3); tiff.write(0);                                  // type SHORT
+        tiff.write(1); tiff.write(0); tiff.write(0); tiff.write(0);    // count=1
+        tiff.write(orientation); tiff.write(0); tiff.write(0); tiff.write(0); // value 内联
+        tiff.write(0); tiff.write(0); tiff.write(0); tiff.write(0);    // 下一 IFD=0
+
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(0xFF); out.write(0xD8);                              // SOI
+        byte[] tiffBytes = tiff.toByteArray();
+        int app1Len = tiffBytes.length + 8;                            // 段长含自身 2 + "Exif\0\0" 6
+        out.write(0xFF); out.write(0xE1);
+        out.write(app1Len >> 8); out.write(app1Len & 0xFF);
+        out.write('E'); out.write('x'); out.write('i'); out.write('f'); out.write(0); out.write(0);
+        out.write(tiffBytes);
+        out.write(body, 2, body.length - 2);                           // 原 JPEG 体去掉其 SOI（外层已写）
+        Path p = tempDir.resolve("exif" + orientation + "_" + System.nanoTime() + ".jpg");
+        Files.write(p, out.toByteArray());
+        return p;
+    }
+
+    @Test
+    void exifOrientation_readParsesTag6() throws Exception {
+        assertThat(ExifOrientation.readOrientation(writeExifJpeg(6))).isEqualTo(6);
+        assertThat(ExifOrientation.readOrientation(writeExifJpeg(1))).isEqualTo(1);
+    }
+
+    @Test
+    void exifOrientation_pngHasNoExif_returns1() throws Exception {
+        assertThat(ExifOrientation.readOrientation(writeFourColorPng())).isEqualTo(1);
+    }
+
+    @Test
+    void exifOrientation_applySwapsDimsForQuarter() {
+        BufferedImage img = new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB);
+        img.setRGB(0, 0, Color.RED.getRGB());
+        img.setRGB(1, 0, Color.BLUE.getRGB());
+        BufferedImage out = ExifOrientation.applyOrientation(img, 6);
+        assertThat(out.getWidth()).isEqualTo(1);
+        assertThat(out.getHeight()).isEqualTo(2);
+        // Orientation=6（需顺 90° 归正）：左红右蓝 → 竖排红上蓝下
+        assertThat(out.getRGB(0, 0)).isEqualTo(Color.RED.getRGB());
+        assertThat(out.getRGB(0, 1)).isEqualTo(Color.BLUE.getRGB());
+    }
+
+    @Test
+    void transform_exifOrientation6AppliedBeforeFlip() throws Exception {
+        // 源 8x16 左红右蓝；EXIF=6 归正 → 16x8 上红下蓝；再 FLIP_V → 上蓝下红。
+        // 若未归正，FLIP_V 产物仍是 8x16 左红右蓝。采样取内部像素（躲开 4:2:0 色度糊边），色距排序断言。
+        Path src = writeExifJpeg(6);
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.transformImage(src, VideoFrameService.TransformOp.FLIP_V);
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        assertThat(out.getWidth()).isEqualTo(16);
+        assertThat(out.getHeight()).isEqualTo(8);
+        int top = out.getRGB(8, 2);    // 上半中部（归正后原右半=蓝，镜像后置顶）
+        int bottom = out.getRGB(8, 6); // 下半中部
+        assertThat(colorDistance(top, Color.BLUE)).isLessThan(colorDistance(top, Color.RED));
+        assertThat(colorDistance(bottom, Color.RED)).isLessThan(colorDistance(bottom, Color.BLUE));
+    }
+
+    /** RGB 三通道绝对差之和（色距，0=同色）。JPEG 有损断言用。 */
+    private static int colorDistance(int rgb, Color c) {
+        return Math.abs(((rgb >> 16) & 0xFF) - c.getRed())
+                + Math.abs(((rgb >> 8) & 0xFF) - c.getGreen())
+                + Math.abs((rgb & 0xFF) - c.getBlue());
     }
 }

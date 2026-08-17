@@ -231,6 +231,20 @@
           <template #icon><n-icon :component="CropOutline" /></template>
           焦点编辑（框选裁剪）
         </n-button>
+        <!-- 2x 四轮 S6：确定性翻转/旋转（有源图才可变换；每次产新衍生图节点，原图不可变） -->
+        <div v-if="node.data.fileId" class="prop-panel__transform">
+          <button
+            v-for="t in IMAGE_TRANSFORMS"
+            :key="t.op"
+            type="button"
+            class="prop-panel__transform-btn"
+            :title="t.title"
+            :disabled="running"
+            @click="emit('transform-image', { node, op: t.op })"
+          >
+            {{ t.label }}
+          </button>
+        </div>
         <div v-if="node.data.fileId" class="prop-panel__readonly">fileId: {{ node.data.fileId }}</div>
         <div v-if="node.data.taskId" class="prop-panel__readonly">taskId: {{ node.data.taskId }}</div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
@@ -522,7 +536,7 @@ import {
   CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode, MentionCandidate } from '@/types/canvas'
-import type { FrameMode } from '@/api/canvas'
+import type { FrameMode, ImageTransformOp } from '@/api/canvas'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
@@ -530,6 +544,15 @@ import type { ImageModelCapability, ImageModelVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
 import { uniqueLabel } from '@/utils/interpolate'
+
+/** 2x 四轮 S6：五种确定性变换按钮（label/title 面板展示，op 直传后端白名单枚举）。 */
+const IMAGE_TRANSFORMS: ReadonlyArray<{ op: ImageTransformOp; label: string; title: string }> = [
+  { op: 'FLIP_H', label: '↔ 翻转', title: '水平翻转：左右镜像，产新图节点' },
+  { op: 'FLIP_V', label: '↕ 翻转', title: '垂直翻转：上下镜像，产新图节点' },
+  { op: 'ROTATE_90', label: '⟳ 90°', title: '顺时针旋转 90°，产新图节点' },
+  { op: 'ROTATE_180', label: '⟳ 180°', title: '旋转 180°，产新图节点' },
+  { op: 'ROTATE_270', label: '⟲ 270°', title: '逆时针旋转 90°（270°），产新图节点' }
+]
 
 const props = withDefaults(defineProps<{
   /** 选中节点（数组中的真实引用，直编 data 即时反映到画布）。 */
@@ -557,6 +580,8 @@ const emit = defineEmits<{
   (e: 'split-storyboard', node: CanvasNode): void
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
   (e: 'focus-edit', node: CanvasNode): void
+  /** 2x 四轮 S6：确定性翻转/旋转（后端 transform-image → 衍生图节点）。 */
+  (e: 'transform-image', payload: { node: CanvasNode; op: ImageTransformOp }): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
   (e: 'clip-video', payload: { node: CanvasNode; startSec: number; endSec: number }): void
   /** S12：存入资产库（开 SaveToAssetDialog，L5）。 */
@@ -753,6 +778,35 @@ function onImageModelChange(model: string | null) {
   &__row {
     display: flex;
     gap: var(--spacing-2);
+  }
+
+  /* 2x 四轮 S6：确定性变换按钮排（五个小按钮挤一行，超出换行） */
+  &__transform {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-1);
+  }
+
+  &__transform-btn {
+    flex: 1 1 30%;
+    padding: var(--spacing-1);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    white-space: nowrap;
+
+    &:hover:not(:disabled) {
+      color: var(--color-primary);
+      border-color: var(--color-primary);
+    }
+
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
   }
 
   &__hint,

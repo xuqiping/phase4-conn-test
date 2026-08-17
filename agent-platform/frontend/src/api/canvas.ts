@@ -80,6 +80,21 @@ export interface ImageCropVO {
   sourceNodeId: string
 }
 
+// === 2x 四轮 S6：图片翻转/旋转（对齐后端 ImageTransformRequest / ImageTransformVO） ===
+
+/** 确定性图片变换 op（后端 TransformOp 白名单枚举）。 */
+export type ImageTransformOp = 'FLIP_H' | 'FLIP_V' | 'ROTATE_90' | 'ROTATE_180' | 'ROTATE_270'
+
+/** 图片变换响应（对齐后端 ImageTransformVO；op 回显供节点命名）。 */
+export interface ImageTransformVO {
+  fileId: string
+  url: string
+  mime: string
+  size: number
+  sourceNodeId: string
+  op: string
+}
+
 // === C13：故事板拼接（对齐后端 StoryboardConcatRequest / StoryboardConcatVO） ===
 
 /** 拼接响应（对齐后端 StoryboardConcatVO）。 */
@@ -202,6 +217,18 @@ export const canvasApi = {
     return request.post<ApiResponse<ImageCropVO>>(
       `/canvas/${id}/nodes/${nodeId}/crop-image`,
       payload
+    )
+  },
+
+  /**
+   * POST /api/canvas/{id}/nodes/{nodeId}/transform-image — 图片翻转/旋转（2x 四轮 S6）。
+   * 五种确定性变换（EXIF 先归正）→ 新图片文件（SOURCE_CANVAS）；前端建衍生图节点 + 自动连边回源图节点。
+   * 源图不可变（新 fileId）；op 白名单校验在后端 TransformOp.parse。
+   */
+  transformImage(id: number, nodeId: string, op: ImageTransformOp) {
+    return request.post<ApiResponse<ImageTransformVO>>(
+      `/canvas/${id}/nodes/${nodeId}/transform-image`,
+      { op }
     )
   },
 
