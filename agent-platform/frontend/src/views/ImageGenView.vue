@@ -271,11 +271,7 @@
     />
 
     <!-- 生成图点击放大（沉浸预览，点击空白关闭） -->
-    <Teleport to="body">
-      <div v-if="previewSrc" class="lightbox" @click="previewSrc = null">
-        <img :src="previewSrc" class="lightbox__img" alt="预览" />
-      </div>
-    </Teleport>
+    <MediaLightbox :src="previewSrc" alt="生成图预览" @close="previewSrc = null" />
   </div>
 </template>
 
@@ -292,6 +288,7 @@ import {
   type ImageSubmitRequest, type MediaTaskVO
 } from '@/api/media'
 import { fetchFilePreview } from '@/api/file'
+import MediaLightbox from '@/components/media/MediaLightbox.vue'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
 import MediaTaskImageThumb from '@/components/media/MediaTaskImageThumb.vue'
@@ -728,14 +725,7 @@ onUnmounted(() => {
   }
   &__actions { padding: 6px; display: flex; gap: 6px; justify-content: flex-end; }
 }
-// 生成图点击放大（沉浸预览）
-.lightbox {
-  position: fixed; inset: 0; z-index: 2000;
-  background: rgba(0, 0, 0, 0.92);
-  display: flex; align-items: center; justify-content: center;
-  cursor: zoom-out;
-  &__img { max-width: 94vw; max-height: 92vh; object-fit: contain; }
-}
+// 生成图点击放大 → 已抽取共享组件 MediaLightbox（4x#3/6x#1，画布/反推复用）
 .history {
   &__title { font-size: 13px; color: var(--text-color-3); margin-bottom: 8px; }
   &__filters { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
