@@ -60,7 +60,10 @@
                 <label>首帧（可选，图作开头）</label>
                 <div class="video-gen__frame-tile">
                   <template v-if="firstFrame">
-                    <img v-if="firstFrame.url" :src="firstFrame.url" class="video-gen__frame-media" :alt="firstFrame.name" />
+                    <!-- 4x#3：悬浮放大（复用已加载 objectURL 零请求）+ 点击全屏灯箱 -->
+                    <HoverPreviewImage v-if="firstFrame.url" :preview-src="firstFrame.url" :alt="firstFrame.name">
+                      <img :src="firstFrame.url" class="video-gen__frame-media" :alt="firstFrame.name" @click="lightboxSrc = firstFrame.url" />
+                    </HoverPreviewImage>
                     <span v-else class="video-gen__frame-media video-gen__frame-media--ph">{{ firstFrame.name }}</span>
                     <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeFrame('first')">×</n-button>
                     <n-input :value="firstFrame.name" size="tiny" class="video-gen__tile-name"
@@ -79,7 +82,9 @@
                 <label>尾帧（可选，图作结尾）</label>
                 <div class="video-gen__frame-tile">
                   <template v-if="lastFrame">
-                    <img v-if="lastFrame.url" :src="lastFrame.url" class="video-gen__frame-media" :alt="lastFrame.name" />
+                    <HoverPreviewImage v-if="lastFrame.url" :preview-src="lastFrame.url" :alt="lastFrame.name">
+                      <img :src="lastFrame.url" class="video-gen__frame-media" :alt="lastFrame.name" @click="lightboxSrc = lastFrame.url" />
+                    </HoverPreviewImage>
                     <span v-else class="video-gen__frame-media video-gen__frame-media--ph">{{ lastFrame.name }}</span>
                     <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeFrame('last')">×</n-button>
                     <n-input :value="lastFrame.name" size="tiny" class="video-gen__tile-name"
@@ -111,7 +116,9 @@
               <div class="video-gen__tiles">
                 <div v-for="(a, i) in images" :key="a.id" class="video-gen__tile">
                   <span class="video-gen__tile-idx">图{{ i + 1 }}</span>
-                  <img v-if="a.url" :src="a.url" :alt="a.name" class="video-gen__tile-media" />
+                  <HoverPreviewImage v-if="a.url" :preview-src="a.url" :alt="a.name">
+                    <img :src="a.url" :alt="a.name" class="video-gen__tile-media" @click="lightboxSrc = a.url" />
+                  </HoverPreviewImage>
                   <span v-else class="video-gen__tile-media video-gen__tile-media--ph">{{ a.name }}</span>
                   <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeAttachment(a.id, 'image')">×</n-button>
                   <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
@@ -137,7 +144,11 @@
               <div class="video-gen__tiles">
                 <div v-for="(a, i) in videos" :key="a.id" class="video-gen__tile">
                   <span class="video-gen__tile-idx">视频{{ i + 1 }}</span>
-                  <video v-if="a.url" :src="a.url" class="video-gen__tile-media" muted />
+                  <!-- 4x#3：瓦片静音预览，点击弹播放窗（controls；弹窗只读 url 不改表单=L4） -->
+                  <div v-if="a.url" class="video-gen__tile-video" title="点击播放" @click="openVideoPlay(a)">
+                    <video :src="a.url" class="video-gen__tile-media" muted />
+                    <span class="video-gen__tile-play" aria-hidden="true">▶</span>
+                  </div>
                   <span v-else class="video-gen__tile-media video-gen__tile-media--ph">{{ a.name }}</span>
                   <n-button class="video-gen__tile-del" size="tiny" quaternary circle @click="removeAttachment(a.id, 'video')">×</n-button>
                   <n-input :value="a.name" size="tiny" class="video-gen__tile-name"
@@ -371,6 +382,25 @@
       @update:show="saveDialog.show = $event"
       @imported="onVideoImported"
     />
+
+    <!-- 4x#3：参考图/首尾帧全屏灯箱（共享组件，画布/反推同款） -->
+    <MediaLightbox :src="lightboxSrc" alt="参考图预览" @close="lightboxSrc = null" />
+
+    <!-- 4x#3：参考视频播放弹窗（v-if 含 show 关闭即卸载 video 停止播放） -->
+    <n-modal
+      v-model:show="videoPlay.show"
+      preset="card"
+      :title="videoPlay.name || '参考视频'"
+      :style="{ width: 'min(720px, 92vw)' }"
+    >
+      <video
+        v-if="videoPlay.show && videoPlay.url"
+        :src="videoPlay.url"
+        controls
+        autoplay
+        class="video-gen__play-video"
+      />
+    </n-modal>
   </div>
 </template>
 
@@ -378,7 +408,7 @@
 import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
-  NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
+  NModal, NSelect, NSpace, NSpin, NSwitch, NTag, NUpload,
   useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, SelectGroupOption, SelectOption, UploadCustomRequestOptions } from 'naive-ui'
@@ -393,6 +423,8 @@ import {
   type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
+import MediaLightbox from '@/components/media/MediaLightbox.vue'
+import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
 import SaveVideoToAssetDialog from '@/components/media/SaveVideoToAssetDialog.vue'
@@ -637,6 +669,16 @@ async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOpti
 // === 资产库选取（图/视频/音频/首帧/尾帧 复用项目资产，免去重复上传） ===
 // 单个 picker 实例复用多目标：mediaType/max/exclude 随 pickerTarget 动态切换。
 const showAssetPicker = ref(false)
+
+// 4x#3：参考图/首尾帧瓦片 hover 放大 + 点击灯箱；参考视频瓦片点击播放弹窗（L4：弹窗只读 url 不改表单）
+const lightboxSrc = ref<string | null>(null)
+const videoPlay = reactive({ show: false, url: '', name: '' })
+function openVideoPlay(a: { url?: string | null; name: string }) {
+  if (!a.url) return
+  videoPlay.url = a.url
+  videoPlay.name = a.name
+  videoPlay.show = true
+}
 /** picker 目标：image/video/audio（参考素材，可多选）或 first/last（首尾帧，单选）。 */
 type PickerTarget = AttachmentKind | 'first' | 'last'
 const pickerTarget = ref<PickerTarget | null>(null)
@@ -1351,6 +1393,32 @@ onUnmounted(() => {
     border-radius: var(--radius-small);
     padding: 0 4px;
     line-height: 1.4;
+  }
+
+  // 4x#3：视频瓦片点击播放（▶ 角标提示可点；pointer-events:none 防挡点击）
+  &__tile-video {
+    position: relative;
+    cursor: pointer;
+    display: inline-flex;
+  }
+  &__tile-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 20px;
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: var(--radius-base);
+    pointer-events: none;
+  }
+  &__play-video {
+    width: 100%;
+    max-height: 70vh;
+    display: block;
+    background: #000;
+    border-radius: var(--radius-base);
   }
 
   &__tile-media {

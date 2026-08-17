@@ -35,7 +35,10 @@
               <NFormItem v-if="cap.refImageMax > 0" class="form-item" :label="`参考图（≤${cap.refImageMax}）`">
                 <div class="refs">
                   <div v-for="(r, i) in refImages" :key="r.fileId" class="refs__chip">
-                    <img :src="r.url" class="refs__thumb" :alt="r.name" />
+                    <!-- 4x#3：悬浮放大（复用已加载 objectURL 零请求）+ 点击全屏灯箱 -->
+                    <HoverPreviewImage :preview-src="r.url" :alt="r.name">
+                      <img :src="r.url" class="refs__thumb" :alt="r.name" @click="previewSrc = r.url" />
+                    </HoverPreviewImage>
                     <NButton size="tiny" quaternary circle @click="removeRef(i)">✕</NButton>
                   </div>
                   <NButton
@@ -289,6 +292,7 @@ import {
 } from '@/api/media'
 import { fetchFilePreview } from '@/api/file'
 import MediaLightbox from '@/components/media/MediaLightbox.vue'
+import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
 import MediaTaskImageThumb from '@/components/media/MediaTaskImageThumb.vue'
