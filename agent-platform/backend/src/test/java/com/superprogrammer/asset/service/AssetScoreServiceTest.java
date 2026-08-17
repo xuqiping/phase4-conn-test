@@ -182,6 +182,53 @@ class AssetScoreServiceTest {
         assertNull(vo.getMemberAvgScore());
         assertEquals(0, vo.getMemberCount());
         assertNull(vo.getMyScore());
+        // 2x#7：未评 → 等级同为 null
+        assertNull(vo.getOwnerGrade());
+        assertNull(vo.getMemberAvgGrade());
+    }
+
+    // ---------- 等级派生（2x#7：均分先取整再映射） ----------
+
+    @Test
+    void gradeDerived_fromBothTracks() {
+        // OWNER 88→B、成员均 90→A：等级随双轨各自派生
+        when(assetMapper.selectById(ASSET_ID)).thenReturn(asset());
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(AssetRole.VIEWER);
+        when(scoreMapper.selectList(any())).thenReturn(List.of(
+                score(10L, 88, true),
+                score(EDITOR_ID, 90, false)));
+        AssetScoreVO vo = service.getScore(ASSET_ID, VIEWER_ID, false);
+        assertEquals("B", vo.getOwnerGrade());
+        assertEquals("A", vo.getMemberAvgGrade());
+    }
+
+    @Test
+    void grade_avgRoundsBeforeMapping_90_33and90_5bothA() {
+        // 3 人 90/90/91 → 90.33 → 取整 90 → A；2 人 90/91 → 90.5 → 取整 91 → A
+        when(assetMapper.selectById(ASSET_ID)).thenReturn(asset());
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(AssetRole.VIEWER);
+        when(scoreMapper.selectList(any())).thenReturn(List.of(
+                score(EDITOR_ID, 90, false), score(31L, 90, false), score(32L, 91, false)));
+        assertEquals("A", service.getScore(ASSET_ID, VIEWER_ID, false).getMemberAvgGrade());
+        assertEquals(90, service.getScore(ASSET_ID, VIEWER_ID, false).getMemberAvgScore());
+
+        when(scoreMapper.selectList(any())).thenReturn(List.of(
+                score(EDITOR_ID, 90, false), score(31L, 91, false)));
+        AssetScoreVO vo = service.getScore(ASSET_ID, VIEWER_ID, false);
+        assertEquals(91, vo.getMemberAvgScore());
+        assertEquals("A", vo.getMemberAvgGrade());
+    }
+
+    @Test
+    void grade_roundingCanCrossGradeBoundary_94_5toAPlus() {
+        // 94+95 → 94.5 → 四舍五入 95 → A+（不取整直接比 ≥95 会误判 A——取整先行的意义）
+        when(assetMapper.selectById(ASSET_ID)).thenReturn(asset());
+        when(aclService.loadAccessible(PROJECT_ID, VIEWER_ID, false)).thenReturn(AssetRole.VIEWER);
+        when(scoreMapper.selectList(any())).thenReturn(List.of(
+                score(EDITOR_ID, 94, false), score(31L, 95, false)));
+        AssetScoreVO vo = service.getScore(ASSET_ID, VIEWER_ID, false);
+        assertEquals(95, vo.getMemberAvgScore());
+        assertEquals("A+", vo.getMemberAvgGrade());
     }
 
     @Test

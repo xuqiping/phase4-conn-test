@@ -440,6 +440,9 @@ class AssetServiceTest {
         assertEquals(90, vo.getMemberAvgScore());
         assertEquals(2, vo.getMemberCount());
         assertEquals(95, vo.getMyScore());
+        // 2x#7：列表批装配同步派生等级（88→B、均90→A）
+        assertEquals("B", vo.getOwnerGrade());
+        assertEquals("A", vo.getMemberAvgGrade());
     }
 
     @Test

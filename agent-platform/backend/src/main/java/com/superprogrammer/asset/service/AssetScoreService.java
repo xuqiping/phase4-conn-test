@@ -90,11 +90,15 @@ public class AssetScoreService {
                 myScore = r.getScore();
             }
         }
+        // 2x#7：均分先取整（展示口径一致），等级现场派生不入库
+        Integer memberAvgScore = memberCount == 0 ? null : (int) Math.round((double) memberSum / memberCount);
         return AssetScoreVO.builder()
                 .myScore(myScore)
                 .ownerScore(ownerScore)
-                .memberAvgScore(memberCount == 0 ? null : (int) Math.round((double) memberSum / memberCount))
+                .memberAvgScore(memberAvgScore)
                 .memberCount(memberCount)
+                .ownerGrade(AssetGrade.fromScore(ownerScore))
+                .memberAvgGrade(AssetGrade.fromScore(memberAvgScore))
                 .build();
     }
 

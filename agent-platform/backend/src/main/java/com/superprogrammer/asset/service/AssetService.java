@@ -497,6 +497,9 @@ public class AssetService {
                 vo.setMemberCount(0);
             }
             vo.setMyScore(myMap.get(assets.get(i).getId()));
+            // 2x#7：等级现场派生（均分上方已取整），不入库
+            vo.setOwnerGrade(AssetGrade.fromScore(vo.getOwnerScore()));
+            vo.setMemberAvgGrade(AssetGrade.fromScore(vo.getMemberAvgScore()));
         }
         return vos;
     }

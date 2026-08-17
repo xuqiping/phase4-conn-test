@@ -25,4 +25,10 @@ public class AssetScoreVO {
 
     /** 参与均分的成员分票数（含被移除成员的历史评分）。 */
     private Integer memberCount;
+
+    /** 拥有者分等级（2x#7，AssetGrade 派生；未评为 null）。 */
+    private String ownerGrade;
+
+    /** 成员均分等级（2x#7，先取整再映射；无成员分为 null）。 */
+    private String memberAvgGrade;
 }

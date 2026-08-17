@@ -51,6 +51,10 @@ public class AssetVO {
     private Integer memberCount;
     /** 我对资产的评分（未评为 null）。 */
     private Integer myScore;
+    /** 拥有者分等级（2x#7，AssetGrade 派生不入库；未评为 null）。 */
+    private String ownerGrade;
+    /** 成员均分等级（2x#7，均分先取整再派生；无成员分为 null）。 */
+    private String memberAvgGrade;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }
