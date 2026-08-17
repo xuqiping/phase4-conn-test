@@ -165,13 +165,13 @@
           <h4 class="asset-detail__section-title">评分</h4>
           <div class="asset-detail__score-summary">
             <span v-if="scoreInfo?.ownerScore != null" class="asset-detail__score-val asset-detail__score-val--owner">
-              拥有者 ★{{ scoreInfo.ownerScore }}
+              拥有者 ★{{ scoreInfo.ownerScore }}<b v-if="scoreInfo?.ownerGrade" class="asset-detail__grade">{{ scoreInfo.ownerGrade }}</b>
             </span>
             <span v-if="scoreInfo?.memberAvgScore != null" class="asset-detail__score-val">
-              成员均分 {{ scoreInfo.memberAvgScore }} · {{ scoreInfo?.memberCount ?? 0 }}人
+              成员均分 {{ scoreInfo.memberAvgScore }} · {{ scoreInfo?.memberCount ?? 0 }}人<b v-if="scoreInfo?.memberAvgGrade" class="asset-detail__grade">{{ scoreInfo.memberAvgGrade }}</b>
             </span>
             <span v-if="scoreInfo?.myScore != null" class="asset-detail__score-val">
-              我的评分 {{ scoreInfo.myScore }}
+              我的评分 {{ scoreInfo.myScore }}<b class="asset-detail__grade">{{ myGradeLabel }}</b>
             </span>
             <span v-if="noScoresAtAll" class="asset-detail__score-empty">暂无评分</span>
           </div>
@@ -182,10 +182,11 @@
               :min="0"
               :max="100"
               :step="1"
-              :format-tooltip="(v: number) => `${v} 分`"
+              :format-tooltip="(v: number) => `${v} 分 · ${gradeFromScore(v) ?? '—'}`"
               aria-label="我的评分 0 到 100"
               @update:value="(v: number) => (myScoreDraft = v)"
             />
+            <span class="asset-detail__score-live" aria-live="polite">当前 {{ myScoreDraft ?? 50 }} 分 · {{ liveGradeLabel }}</span>
             <n-input-number
               v-model:value="myScoreDraft"
               class="asset-detail__score-number"
@@ -286,6 +287,7 @@ import ScriptScenes from '@/components/asset/ScriptScenes.vue'
 import StoryboardFields from '@/components/asset/StoryboardFields.vue'
 import type { AssetScoreVO, AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
+import { gradeFromScore } from '@/constants/assetGrade'
 
 /**
  * 读文本类正文：SCRIPT→content.synopsis；其他 TEXT→content.body；兜底首个字符串值/裸文本。
@@ -440,6 +442,11 @@ const scoreSectionVisible = computed(
 const noScoresAtAll = computed(
   () => scoreInfo.value?.ownerScore == null && scoreInfo.value?.memberAvgScore == null && scoreInfo.value?.myScore == null
 )
+
+/** 2x#7 我的评分等级徽章：只看已保存分（不随草稿拖动跳变）。 */
+const myGradeLabel = computed(() => gradeFromScore(scoreInfo.value?.myScore) ?? '—')
+/** 2x#7 打分实时等级：跟草稿走（未评草稿=滑杆默认 50 档；前端常量与后端对齐有单测）。 */
+const liveGradeLabel = computed(() => gradeFromScore(myScoreDraft.value ?? 50) ?? '—')
 
 /** 拉我的评分 + 双轨聚合（失败不阻塞详情，评分区按空态展示）。 */
 async function loadScore(id: number) {
@@ -853,6 +860,27 @@ async function onStoryboardChanged(assetId: number) {
     &--owner {
       color: var(--color-warning, #d4a14a);
     }
+  }
+
+  // 2x#7 等级徽章（数值右侧小胶囊）
+  &__grade {
+    display: inline-block;
+    margin-left: var(--spacing-1);
+    padding: 0 4px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    line-height: 16px;
+  }
+
+  // 2x#7 打分实时等级提示（slider 右侧，跨档位即变，L3）
+  &__score-live {
+    flex-shrink: 0;
+    min-width: 96px;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
   }
 
   &__score-empty {

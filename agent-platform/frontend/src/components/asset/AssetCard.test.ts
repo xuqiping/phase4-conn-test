@@ -165,16 +165,19 @@ describe('AssetCard (S11)', () => {
     expect(wrapper.find('.asset-card__uploader').exists()).toBe(false)
   })
 
-  it('C7-3 双轨评分行：拥有者 ★88 ｜ 成员均分 90 · 3人', () => {
+  it('C7-3 双轨评分行：拥有者 ★88 B ｜ 成员均分 90 · 3人 A（2x#7 等级徽章用 VO 派生字段）', () => {
     const wrapper = mount(AssetCard, {
       props: {
-        asset: mkAsset({ ownerScore: 88, memberAvgScore: 90, memberCount: 3 })
+        asset: mkAsset({ ownerScore: 88, memberAvgScore: 90, memberCount: 3, ownerGrade: 'B', memberAvgGrade: 'A' })
       }
     })
     const row = wrapper.find('.asset-card__scores')
     expect(row.exists()).toBe(true)
     expect(row.text()).toContain('拥有者 ★88')
     expect(row.text()).toContain('成员均分 90 · 3人')
+    // 等级徽章（后端派生字段，前端只渲染）
+    const grades = row.findAll('.asset-card__grade')
+    expect(grades.map((g) => g.text())).toEqual(['B', 'A'])
   })
 
   it('C7-4 仅成员轨有分 → 只渲成员均分；均无分 → 行不渲染', () => {

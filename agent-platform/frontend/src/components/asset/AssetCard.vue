@@ -51,13 +51,13 @@
       </div>
       <div v-if="asset.description" class="asset-card__desc">{{ asset.description }}</div>
       <div v-else class="asset-card__desc asset-card__desc--empty">暂无描述</div>
-      <!-- C7 双轨评分行：拥有者 ★88 ｜ 成员均分 90 · 3人（无任何评分不渲染） -->
+      <!-- C7 双轨评分行：拥有者 ★88 B ｜ 成员均分 90 · 3人 A（2x#7 等级为后端派生字段；无任何评分不渲染） -->
       <div v-if="hasScores" class="asset-card__scores">
         <span v-if="asset.ownerScore != null" class="asset-card__score asset-card__score--owner">
-          拥有者 ★{{ asset.ownerScore }}
+          拥有者 ★{{ asset.ownerScore }}<b v-if="asset.ownerGrade" class="asset-card__grade">{{ asset.ownerGrade }}</b>
         </span>
         <span v-if="asset.memberAvgScore != null" class="asset-card__score asset-card__score--member">
-          成员均分 {{ asset.memberAvgScore }} · {{ asset.memberCount ?? 0 }}人
+          成员均分 {{ asset.memberAvgScore }} · {{ asset.memberCount ?? 0 }}人<b v-if="asset.memberAvgGrade" class="asset-card__grade">{{ asset.memberAvgGrade }}</b>
         </span>
       </div>
       <div class="asset-card__footer">
@@ -292,6 +292,19 @@ function seekFirstFrame(e: Event) {
     &--member {
       color: var(--color-text-secondary);
     }
+  }
+
+  // 2x#7 等级徽章（数值右侧小胶囊，如 ★88 B）
+  &__grade {
+    display: inline-block;
+    margin-left: var(--spacing-1);
+    padding: 0 4px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    line-height: 16px;
+    vertical-align: baseline;
   }
 
   &__desc {

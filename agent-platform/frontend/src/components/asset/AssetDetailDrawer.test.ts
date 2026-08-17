@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import AssetDetailDrawer from './AssetDetailDrawer.vue'
 import ConsistencyPack from './ConsistencyPack.vue'
 import { assetApi, assetBridgeApi, versionApi, scriptApi, scoreApi } from '@/api/assets'
@@ -375,13 +376,36 @@ describe('AssetDetailDrawer (S10-10a)', () => {
     expect(vm.myScoreDraft).toBe(80)
   })
 
-  it('C7-2 双轨评分展示：拥有者 ★88 + 成员均分 90 · 3人（teleport 到 body）', async () => {
+  it('C7-2 双轨评分展示：拥有者 ★88 B + 成员均分 90 · 3人 A（2x#7 等级徽章，teleport 到 body）', async () => {
     vi.mocked(scoreApi.mine).mockResolvedValue(
-      response({ code: 200, message: 'ok', data: { myScore: null, ownerScore: 88, memberAvgScore: 90, memberCount: 3 } })
+      response({ code: 200, message: 'ok', data: { myScore: null, ownerScore: 88, memberAvgScore: 90, memberCount: 3, ownerGrade: 'B', memberAvgGrade: 'A' } })
     )
     await mountDrawer()
     expect(document.body.textContent).toContain('拥有者 ★88')
     expect(document.body.textContent).toContain('成员均分 90 · 3人')
+    const grades = [...document.body.querySelectorAll('.asset-detail__grade')].map((n) => n.textContent)
+    expect(grades).toContain('B')
+    expect(grades).toContain('A')
+  })
+
+  it('C7-2b 打分实时等级：拖 slider 跨档位标签即变 94→A / 95→A+（L3）', async () => {
+    const wrapper = await mountDrawer({ canScore: true })
+    const vm = wrapper.vm as unknown as { myScoreDraft: number | null }
+    const live = () => document.body.querySelector('.asset-detail__score-live')?.textContent ?? ''
+    vm.myScoreDraft = 94
+    await nextTick()
+    expect(live()).toContain('94 分')
+    expect(live()).toContain('A')
+    expect(live()).not.toContain('A+')
+    vm.myScoreDraft = 95
+    await nextTick()
+    expect(live()).toContain('95 分')
+    expect(live()).toContain('A+')
+    // 未评草稿清空 → 回滑杆默认 50 分档（<70 → D）
+    vm.myScoreDraft = null
+    await nextTick()
+    expect(live()).toContain('50 分')
+    expect(live()).toContain('D')
   })
 
   it('C7-3 canScore → submitScore 调 scoreApi.submit + 成功刷新聚合 + emit changed（L5）', async () => {

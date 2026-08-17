@@ -114,7 +114,7 @@ describe('AssetMatrixFilter (S11)', () => {
     expect(labels).toEqual(['全部', '提示词', '图片', 'MAP'])
   })
 
-  // ---------- C7 上传者/分数筛选（2x第三轮；DOM 顺序：creator=第1个 NSelect，source=第2个） ----------
+  // ---------- C7 上传者/分数筛选（2x第三轮；DOM 顺序：creator=第1个 NSelect，source=第2个，grade=第3个） ----------
 
   it('C7-1 上传者选择 → emit creatorUsername', async () => {
     const wrapper = mountFilter({ modelValue: { creatorUsername: 'zhang3' } })
@@ -155,5 +155,22 @@ describe('AssetMatrixFilter (S11)', () => {
     await numbers[0].vm.$emit('update:value', null)
     emits = wrapper.emitted('update:modelValue')!
     expect(emits[emits.length - 1][0]).toMatchObject({ scoreMin: undefined })
+  })
+
+  it('C7-5 等级快捷筛选：选 A+ → 覆盖区间 95-100；清除等级不动手动区间（L4）', async () => {
+    const wrapper = mountFilter()
+    const selects = wrapper.findAllComponents(NSelect)
+    // 选 A+ → emit scoreMin/scoreMax 覆盖（等级是快捷方式，冲突时以等级为准）
+    await selects[2].vm.$emit('update:value', 'A+')
+    let emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreMin: 95, scoreMax: 100 })
+    // 选 D → [0,69]（换档即重映射）
+    await selects[2].vm.$emit('update:value', 'D')
+    emits = wrapper.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toMatchObject({ scoreMin: 0, scoreMax: 69 })
+    // 清除等级 → 不再 emit（手动区间原样保留）
+    const countBefore = wrapper.emitted('update:modelValue')!.length
+    await selects[2].vm.$emit('update:value', null)
+    expect(wrapper.emitted('update:modelValue')!.length).toBe(countBefore)
   })
 })

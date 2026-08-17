@@ -42,6 +42,16 @@
         aria-label="按分数来源筛选"
         @update:value="onScoreSource"
       />
+      <!-- 2x#7 等级快捷筛选：选中即覆盖 scoreMin/scoreMax；清除不动手动区间（L4 快捷方式语义） -->
+      <n-select
+        class="matrix-filter__grade"
+        :value="gradeValue"
+        :options="GRADE_OPTIONS"
+        clearable
+        placeholder="等级"
+        aria-label="按等级快捷筛选"
+        @update:value="onGrade"
+      />
       <div class="matrix-filter__range">
         <n-input-number
           :value="modelValue.scoreMin ?? null"
@@ -120,6 +130,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { NInput, NInputNumber, NSelect } from 'naive-ui'
 import { projectApi } from '@/api/assets'
 import type { MatrixCountVO, MediaTypeDef } from '@/types/asset'
+import { ASSET_GRADES, ASSET_GRADE_RANGE, type AssetGrade } from '@/constants/assetGrade'
 
 /** 筛选态：type/role 空=不限，q=搜索词；C7 加上传者/分数区间/分数来源 */
 export interface AssetFilter {
@@ -240,6 +251,26 @@ const SCORE_SOURCE_OPTIONS = [
   { label: '成员均分', value: 'member' }
 ]
 
+// ---------- 2x#7 等级快捷筛选（等级→区间换算，常量与后端对齐有单测） ----------
+
+const GRADE_OPTIONS = ASSET_GRADES.map((g) => ({
+  label: `${g}（${ASSET_GRADE_RANGE[g][0]}-${ASSET_GRADE_RANGE[g][1]} 分）`,
+  value: g
+}))
+
+/** 等级选择态（不入 AssetFilter——等级是区间快捷方式，真实筛选条件仍是 scoreMin/scoreMax）。 */
+const gradeValue = ref<AssetGrade | null>(null)
+
+function onGrade(v: AssetGrade | null) {
+  gradeValue.value = v
+  if (!v) {
+    // L4：清除等级不清手动区间（快捷方式移除，保留用户显式设的区间）
+    return
+  }
+  const [min, max] = ASSET_GRADE_RANGE[v]
+  emit('update:modelValue', { ...props.modelValue, scoreMin: min, scoreMax: max })
+}
+
 const creatorOptions = ref<{ label: string; value: string }[]>([])
 const creatorLoading = ref(false)
 let creatorSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -308,6 +339,11 @@ function onScoreBound(which: 'min' | 'max', v: number | null) {
 
   &__source {
     width: 150px;
+  }
+
+  // 2x#7 等级快捷筛选下拉
+  &__grade {
+    width: 130px;
   }
 
   &__range {

@@ -208,6 +208,10 @@ export interface AssetVO {
   memberCount?: number
   /** 我的评分（当前用户对该资产的一票；null=未评）。 */
   myScore?: number | null
+  /** 拥有者分等级（2x#7 后端 AssetGrade 派生；null=未评）。 */
+  ownerGrade?: string | null
+  /** 成员均分等级（2x#7 均分先取整再派生；null=无成员分）。 */
+  memberAvgGrade?: string | null
   createdAt: string
   updatedAt?: string
 }
@@ -356,6 +360,10 @@ export interface AssetScoreVO {
   ownerScore?: number | null
   memberAvgScore?: number | null
   memberCount?: number
+  /** 拥有者分等级（2x#7 派生；null=未评）。 */
+  ownerGrade?: string | null
+  /** 成员均分等级（2x#7 先取整再派生；null=无成员分）。 */
+  memberAvgGrade?: string | null
 }
 
 // ---------- 画布双向打通（plan §S7 / FR-008/009/011） ----------
