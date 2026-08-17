@@ -18,7 +18,7 @@
 2. **分享候选开箱即载**：根因=前端空关键词不发请求。后端 `searchCandidates` 空关键词 LIMIT 20→50；`ShareDialog` watcher 打开即 `searchCandidates('')`，清空关键词恢复全量。
 3. **评分等级后端派生**：`AssetGrade.fromScore` 唯一真相源（null→null；≥95 A+ / ≥90 A / ≥80 B / ≥70 C / 其余 D；均分先 `Math.round` 再映射）。`AssetScoreVO`/`AssetVO` +`ownerGrade`/`memberAvgGrade` 派生字段，两处装配点（单资产 getScore、列表 assembleList），零新查询。
 4. **前端等级 UI**：`constants/assetGrade.ts` 镜像后端常量 + 对齐单测防双份漂移。卡片/详情徽章只渲染 VO 字段；打分 slider 实时等级（`myGradeLabel` 已存分 / `liveGradeLabel` 跟草稿拆分，拖动不跳已存徽章）；筛选条第 3 下拉「等级」选中即覆写 scoreMin/scoreMax（A+=[95,100]…D=[0,69]），清除等级不清手动区间，gradeValue 不入 AssetFilter（后端契约零变化）。
-5. **复制管控后端**（V100）：`asset_projects.allow_public_copy BOOLEAN NOT NULL DEFAULT TRUE`（存量=允许零变化；unpublish 不清列，再发布回显）。`copyCurrent` 闸：公共池=true 且 allow=false 且非成员 → `ASSET_COPY_FORBIDDEN(40302)`。公共 VIEWER 与成员 VIEWER 同为 AssetRole.VIEWER，用 `AssetAclService.isMemberOrOwner` 查成员表区分（成员豁免）。copy 端点 +`@AuditLog`，拒绝路径走 aspect Throwable 分支自动记 FAIL。VO 透出用 `!Boolean.FALSE.equals`（null 视为 TRUE 兼容旧后端/存量）。
+5. **复制管控后端**（V132，原名 V132 因撞已占版本号改名，见知识库开发进度2）：`asset_projects.allow_public_copy BOOLEAN NOT NULL DEFAULT TRUE`（存量=允许零变化；unpublish 不清列，再发布回显）。`copyCurrent` 闸：公共池=true 且 allow=false 且非成员 → `ASSET_COPY_FORBIDDEN(40302)`。公共 VIEWER 与成员 VIEWER 同为 AssetRole.VIEWER，用 `AssetAclService.isMemberOrOwner` 查成员表区分（成员豁免）。copy 端点 +`@AuditLog`，拒绝路径走 aspect Throwable 分支自动记 FAIL。VO 透出用 `!Boolean.FALSE.equals`（null 视为 TRUE 兼容旧后端/存量）。
 6. **前端发布开关**：发布弹窗「复制权限」n-switch（默认开、回显上次值、submit 携带 `allowPublicCopy`）；项目页复制按钮 `canCopyAsset = isPublicViewer && allowPublicCopy !== false`（false 不渲染非置灰；后端 403 兜底直调 API）。
 
 ## 关键坑（沉淀）
