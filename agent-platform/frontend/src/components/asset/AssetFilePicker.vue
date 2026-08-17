@@ -6,12 +6,38 @@
     style="max-width: 640px"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
+    <div class="picker__source" aria-label="资产来源">
+      <n-button-group>
+        <n-button
+          size="small"
+          :type="source === 'local' ? 'primary' : 'default'"
+          :secondary="source !== 'local'"
+          :aria-pressed="source === 'local'"
+          @click="switchSource('local')"
+        >
+          我的/共享项目
+        </n-button>
+        <n-button
+          size="small"
+          :type="source === 'public' ? 'primary' : 'default'"
+          :secondary="source !== 'public'"
+          :aria-pressed="source === 'public'"
+          @click="switchSource('public')"
+        >
+          公共池
+        </n-button>
+      </n-button-group>
+      <span class="picker__source-status">
+        {{ source === 'public' ? '公共池项目按发布者开放范围可用，仅展示可用项目' : `可选 ${selectedIds.length}/${max}` }}
+      </span>
+    </div>
+
     <div class="picker__bar">
       <n-select
         v-model:value="projectId"
         :options="projectOptions"
-        placeholder="选择项目"
-        :loading="loadingProjects"
+        :placeholder="source === 'public' ? '选择可用公共项目' : '选择项目'"
+        :loading="source === 'public' ? loadingPublicProjects : loadingProjects"
         style="width: 240px"
         @update:value="onProjectChange"
       />
@@ -28,7 +54,9 @@
 
     <n-spin :show="loadingAssets">
       <div v-if="!assets.length && !loadingAssets" class="picker__empty">
-        {{ projectId == null ? '请先选择项目' : '该项目下无此类资产' }}
+        {{ projectId == null
+          ? (source === 'public' ? '请先选择可用的公共项目' : '请先选择项目')
+          : '该项目下无此类资产' }}
       </div>
       <n-checkbox-group v-else v-model:value="selectedIds" class="picker__list">
         <div
@@ -82,9 +110,11 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NCheckbox, NCheckboxGroup, NInput, NModal, NSelect, NSpace, NSpin, useMessage } from 'naive-ui'
-import { assetApi, assetBridgeApi, projectApi } from '@/api/assets'
-import type { AssetFilePicked, AssetMediaType, AssetProjectVO, AssetStatus, AssetVO } from '@/types/asset'
+import { NButton, NButtonGroup, NCheckbox, NCheckboxGroup, NInput, NModal, NSelect, NSpace, NSpin, useMessage } from 'naive-ui'
+import { assetApi, assetBridgeApi, projectApi, publicPoolApi } from '@/api/assets'
+import type {
+  AssetFilePicked, AssetMediaType, AssetProjectVO, AssetStatus, AssetVO, PublicProjectSummaryVO
+} from '@/types/asset'
 import AssetPickerMediaPreview from './AssetPickerMediaPreview.vue'
 
 /** 中文 mediaType → 显示标签（与 MEDIA_TYPE 取值对齐）。 */
@@ -113,17 +143,44 @@ const STATUS_LABEL: Record<AssetStatus, string> = { DRAFT: '草稿', LOCKED: '�
 function statusLabel(s: AssetStatus) { return STATUS_LABEL[s] ?? s }
 
 const projects = ref<AssetProjectVO[]>([])
+/** 2x#4：公共池摘要（每次打开刷新——usable 审批状态会变）。 */
+const publicProjects = ref<PublicProjectSummaryVO[]>([])
+const source = ref<'local' | 'public'>('local')
 const projectId = ref<number | null>(null)
 const keyword = ref('')
 const assets = ref<AssetVO[]>([])
 const loadingProjects = ref(false)
+const loadingPublicProjects = ref(false)
 const loadingAssets = ref(false)
 /** 选中资产 id（n-checkbox-group 多选）。 */
 const selectedIds = ref<number[]>([])
 /** 确认中（逐个 get 取 fileId，按钮 loading）。 */
 const resolving = ref(false)
 
-const projectOptions = computed(() => projects.value.map(p => ({ label: p.name, value: p.id })))
+/** 公共池项目可用性：解析 mediaTypes jsonb 判断项目含当前类型（解析失败视为不过滤）。 */
+function publicProjectMatchesType(p: PublicProjectSummaryVO): boolean {
+  if (!p.mediaTypes) return true
+  try {
+    const arr = JSON.parse(p.mediaTypes) as unknown
+    if (!Array.isArray(arr) || arr.length === 0) return true
+    return arr.includes(props.mediaType)
+  } catch {
+    return true
+  }
+}
+
+const projectOptions = computed(() => {
+  if (source.value === 'public') {
+    // 仅展示 usable 项目（需审批未获批不出现，与资产库页公共池口径一致，spec §3.1）
+    return publicProjects.value
+      .filter(p => p.usable && publicProjectMatchesType(p))
+      .map(p => ({
+        label: `${p.name} · ${p.publishedByAdmin ? '官方发布' : p.publisherUsername ?? '发布者'} · 资产 ${p.assetCount}`,
+        value: p.id
+      }))
+  }
+  return projects.value.map(p => ({ label: p.name, value: p.id }))
+})
 const excludedSet = computed(() => new Set(props.excludeAssetIds))
 
 /** 行禁用：已添加（去重）或 超过剩余槽位（非已选时）。 */
@@ -133,11 +190,12 @@ function isRowDisabled(assetId: number): boolean {
   return false
 }
 
-/** 弹窗打开：拉项目列表 + 重置选择；immediate 覆盖首挂 show=true。 */
+/** 弹窗打开：拉两种来源项目 + 重置选择；immediate 覆盖首挂 show=true。 */
 watch(
   () => props.show,
   async (open) => {
     if (!open) return
+    source.value = 'local'
     projectId.value = null
     keyword.value = ''
     assets.value = []
@@ -153,9 +211,29 @@ watch(
         loadingProjects.value = false
       }
     }
+    // 公共池每次打开刷新（usable 审批状态会变）
+    loadingPublicProjects.value = true
+    try {
+      const { data } = await publicPoolApi.list()
+      publicProjects.value = data.data ?? []
+    } catch {
+      message.error('公共池项目列表加载失败')
+    } finally {
+      loadingPublicProjects.value = false
+    }
   },
   { immediate: true }
 )
+
+/** 切换来源：清选择/关键词/资产列表（L1 反向：切回本地列表正确切换）。 */
+function switchSource(next: 'local' | 'public') {
+  if (source.value === next) return
+  source.value = next
+  projectId.value = null
+  keyword.value = ''
+  assets.value = []
+  selectedIds.value = []
+}
 
 function onProjectChange() {
   keyword.value = ''
@@ -220,6 +298,19 @@ async function onConfirm() {
 </script>
 
 <style lang="scss" scoped>
+.picker__source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+}
+
+.picker__source-status {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 .picker__bar {
   display: flex;
   align-items: center;

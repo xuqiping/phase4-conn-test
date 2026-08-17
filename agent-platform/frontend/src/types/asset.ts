@@ -89,6 +89,8 @@ export interface PublicProjectSummaryVO {
   assetCount: number
   myRequestStatus?: PublicAccessStatus | null
   usable: boolean
+  /** 2x#4：项目媒体类型（jsonb 字符串），选择器按图片/视频过滤公共池项目 */
+  mediaTypes?: string | null
 }
 
 export interface ProjectCreateRequest {
