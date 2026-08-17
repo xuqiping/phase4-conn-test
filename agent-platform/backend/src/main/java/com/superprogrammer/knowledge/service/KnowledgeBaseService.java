@@ -126,7 +126,8 @@ public class KnowledgeBaseService {
     @Transactional
     public KnowledgeBaseVO update(Long id, KnowledgeBaseRequest request, Long userId, boolean admin) {
         KnowledgeBase kb = ensure(id);
-        if (!canManage(kb, userId, admin)) {
+        // 14x#2：改名/改模型/可见性属库级治理，仅 owner/admin（canManage 授予位不含销毁与改名）
+        if (!isOwnerOrAdmin(kb, userId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员或知识库创建者可修改");
         }
         kb.setName(request.getName());
@@ -148,7 +149,8 @@ public class KnowledgeBaseService {
     @Transactional
     public void delete(Long id, Long userId, boolean admin) {
         KnowledgeBase kb = ensure(id);
-        if (!canManage(kb, userId, admin)) {
+        // 14x#2：删库仅 owner/admin（canManage 授予位不含销毁库）
+        if (!isOwnerOrAdmin(kb, userId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员或知识库创建者可删除");
         }
         kb.setStatus("ARCHIVED");
@@ -157,17 +159,26 @@ public class KnowledgeBaseService {
         baseMapper.deleteById(id);
     }
 
-    /** canManage = admin 或 owner。供 Permission/Document service 复用。 */
-    public boolean canManage(KnowledgeBase kb, Long userId, boolean admin) {
+    /** 库级身份判定：admin 或库创建者。改名/删除等销毁类操作仅此判定（14x#2：授予位不含销毁库）。 */
+    public boolean isOwnerOrAdmin(KnowledgeBase kb, Long userId, boolean admin) {
         return admin || (userId != null && userId.equals(kb.getCreatedBy()));
+    }
+
+    /**
+     * canManage = admin ‖ owner ‖ 直接授予 canManage 位（14x#2：授权弹窗「管理」勾选生效，
+     * 可管理该库授权与治理；但 KB 改名/删除走 isOwnerOrAdmin，授予位不含销毁库）。
+     */
+    public boolean canManage(KnowledgeBase kb, Long userId, boolean admin) {
+        return isOwnerOrAdmin(kb, userId, admin) || hasGrantLevel(kb.getId(), userId, GrantLevel.MANAGE);
     }
 
     public boolean canManage(Long kbId, Long userId, boolean admin) {
         return canManage(ensure(kbId), userId, admin);
     }
 
+    /** canWrite = canManage ‖ 直接授予 canWrite 位（canRead 单独授权不再放行写——越权修复核心）。 */
     public boolean canWrite(KnowledgeBase kb, Long userId, boolean admin) {
-        return canManage(kb, userId, admin) || hasGrant(kb.getId(), userId, true);
+        return canManage(kb, userId, admin) || hasGrantLevel(kb.getId(), userId, GrantLevel.WRITE);
     }
 
     public boolean canRead(KnowledgeBase kb, Long userId, boolean admin) {
@@ -190,22 +201,55 @@ public class KnowledgeBaseService {
         return kb;
     }
 
-    /** 是否存在该用户对 KB 的直接授权（Phase1：USER 直接授权；ROLE/DEPT 聚合在阶段4 可见集）。 */
-    private boolean hasGrant(Long kbId, Long userId, boolean requireWrite) {
-        if (kbId == null || userId == null) {
+    /** 授权位语义档位：高位隐含低位（MANAGE>WRITE>READ）。 */
+    private enum GrantLevel { READ, WRITE, MANAGE }
+
+    /**
+     * 是否存在该用户对 KB 的直接授权且达到要求档位（Phase1：USER 直接授权；ROLE/DEPT 聚合在可见集）。
+     * 14x#2 谓词修复：原实现 canRead ‖ (requireWrite && canWrite)——只读授权也能通过写检查。
+     * 修复后按档位严格判定：READ=任一位；WRITE=canWrite/canManage；MANAGE=仅 canManage。
+     */
+    private boolean hasGrantLevel(Long kbId, Long userId, GrantLevel level) {
+        return hasLevel(userGrants(kbId, userId), level);
+    }
+
+    /** 纯函数档位判定（高位隐含低位），供单次拉取后多处复用免 N+1。 */
+    private static boolean hasLevel(List<KnowledgePermission> perms, GrantLevel level) {
+        if (perms == null || perms.isEmpty()) {
             return false;
+        }
+        return perms.stream().anyMatch(p -> switch (level) {
+            case MANAGE -> Boolean.TRUE.equals(p.getCanManage());
+            case WRITE -> Boolean.TRUE.equals(p.getCanWrite()) || Boolean.TRUE.equals(p.getCanManage());
+            case READ -> Boolean.TRUE.equals(p.getCanRead())
+                    || Boolean.TRUE.equals(p.getCanWrite())
+                    || Boolean.TRUE.equals(p.getCanManage());
+        });
+    }
+
+    /** 拉取该用户对 KB 的 USER 直接授权行（kbId/userId 任一为空返空表，不查库）。 */
+    private List<KnowledgePermission> userGrants(Long kbId, Long userId) {
+        if (kbId == null || userId == null) {
+            return List.of();
         }
         LambdaQueryWrapper<KnowledgePermission> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(KnowledgePermission::getTargetType, "KB")
                 .eq(KnowledgePermission::getTargetId, kbId)
                 .eq(KnowledgePermission::getSubjectType, "USER")
                 .eq(KnowledgePermission::getSubjectId, userId);
-        List<KnowledgePermission> perms = permissionMapper.selectList(wrapper);
-        return perms.stream().anyMatch(p -> Boolean.TRUE.equals(p.getCanRead())
-                || (requireWrite && Boolean.TRUE.equals(p.getCanWrite())));
+        return permissionMapper.selectList(wrapper);
     }
 
     private KnowledgeBaseVO toVO(KnowledgeBase kb, Long userId, boolean admin) {
+        // owner/admin 短路免查授权表；否则单次拉取授权行派生 manage/write 两态（免 N+1）
+        boolean owner = isOwnerOrAdmin(kb, userId, admin);
+        boolean manage = owner;
+        boolean write = owner;
+        if (!owner) {
+            List<KnowledgePermission> grants = userGrants(kb.getId(), userId);
+            manage = hasLevel(grants, GrantLevel.MANAGE);
+            write = manage || hasLevel(grants, GrantLevel.WRITE);
+        }
         return KnowledgeBaseVO.builder()
                 .id(kb.getId())
                 .name(kb.getName())
@@ -217,7 +261,8 @@ public class KnowledgeBaseService {
                 .status(kb.getStatus())
                 .createdBy(kb.getCreatedBy())
                 .createdAt(kb.getCreatedAt())
-                .canManage(canManage(kb, userId, admin))
+                .canManage(manage)
+                .canWrite(write)
                 .canRead(canRead(kb, userId, admin))
                 .build();
     }

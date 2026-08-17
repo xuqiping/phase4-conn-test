@@ -1,6 +1,7 @@
 package com.superprogrammer.knowledge.controller;
 
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.knowledge.dto.KnowledgePermissionRequest;
 import com.superprogrammer.knowledge.dto.KnowledgePermissionVO;
@@ -40,6 +41,7 @@ public class KnowledgePermissionController {
 
     @PostMapping
     @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "kb_grant", targetType = "knowledge_permission")
     public ResponseEntity<R<KnowledgePermissionVO>> grant(@Valid @RequestBody KnowledgePermissionRequest request) {
         return ResponseEntity.ok(R.ok("授权成功",
                 knowledgePermissionService.grant(request, getCurrentUserId(), isAdmin())));
@@ -47,6 +49,7 @@ public class KnowledgePermissionController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("knowledge:write")
+    @AuditLog(module = "kb", action = "kb_revoke", targetType = "knowledge_permission")
     public ResponseEntity<R<Void>> revoke(@PathVariable Long id) {
         knowledgePermissionService.revoke(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("撤销成功", null));

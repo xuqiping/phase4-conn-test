@@ -22,5 +22,7 @@ public class KnowledgeBaseVO {
 
     /** 调用者对该 KB 的访问（供前端显隐按钮） */
     private boolean canManage;
+    /** 14x#2：per-KB 写权限（上传/直传显隐；canRead 单独授权不再隐含写） */
+    private boolean canWrite;
     private boolean canRead;
 }
