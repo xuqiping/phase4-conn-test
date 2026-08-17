@@ -100,6 +100,10 @@
             <n-spin size="small" />
             <span>思考中...</span>
           </div>
+          <!-- 5x 四轮 U6：停止生成（abort SSE；已生成部分保留，服务端取消钩子落库） -->
+          <div v-if="chatStore.sending" class="chat-view__stop-row">
+            <n-button size="tiny" ghost type="error" @click="chatStore.stopStreaming()">⏹ 停止生成</n-button>
+          </div>
           <!-- HUMAN_INPUT select 型：内联选项按钮（点选=当答案发送，后端拦截恢复执行）-->
           <div v-if="pendingSelect" class="chat-view__input-options">
             <div class="chat-view__input-options-label">👆 请选择一项作答</div>
@@ -621,6 +625,11 @@ async function handleBatchDeleteSessions(ids: number[]) {
   padding: 12px 20px;
   font-size: 13px;
   color: var(--color-text-tertiary);
+}
+
+/* 5x 四轮 U6：停止生成按钮行（流式/思考期间可见） */
+.chat-view__stop-row {
+  padding: 0 20px 12px;
 }
 
 .chat-view__cursor {

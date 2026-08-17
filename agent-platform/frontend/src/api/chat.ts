@@ -137,8 +137,8 @@ export const chatApi = {
     return request.post<ApiResponse<ChatResponse>>('/chat/messages', data)
   },
 
-  // Streaming (SSE)
-  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[] }) {
+  // Streaming (SSE)。signal（可选）：停止生成时 abort——fetch/reader 随即抛 AbortError，服务端 send 失败取消上游。
+  streamMessage(sessionId: number, data: { message: string; model?: string; ragEnabled?: boolean; webSearchEnabled?: boolean; attachmentFileIds?: string[]; kbIds?: number[] }, signal?: AbortSignal) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
       method: 'POST',
@@ -146,11 +146,12 @@ export const chatApi = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      signal
     })
   },
 
-  streamNewMessage(data: ChatSendRequest) {
+  streamNewMessage(data: ChatSendRequest, signal?: AbortSignal) {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN) || ''
     return fetch('/api/chat/messages/stream', {
       method: 'POST',
@@ -158,7 +159,8 @@ export const chatApi = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      signal
     })
   },
 

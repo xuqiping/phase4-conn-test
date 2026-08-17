@@ -32,6 +32,8 @@
       </div>
       <!-- Content -->
       <div class="message-bubble__text">{{ message.content }}</div>
+      <!-- 5x 四轮 U6：停止生成的部分回答标记 -->
+      <div v-if="stoppedFlag" class="message-bubble__stopped">⏹ 已停止生成（上为部分回答）</div>
       <!-- 5x #7：收录确认点选（PENDING → 需要回答/不用了；已点选 → 静态状态标） -->
       <div v-if="inclusionConfirm" class="message-bubble__inclusion">
         <template v-if="inclusionConfirm.status === 'PENDING'">
@@ -122,6 +124,16 @@ const emit = defineEmits<{
 }>()
 
 const showThinking = ref(true)
+
+/** 5x 四轮 U6：metadata.stopped → 部分回答标记（服务端 doOnCancel / 本地停止收尾都会写）。 */
+const stoppedFlag = computed(() => {
+  if (!props.message.metadata) return false
+  try {
+    return Boolean(JSON.parse(props.message.metadata).stopped)
+  } catch {
+    return false
+  }
+})
 
 /** 5x 四轮 U5：复制正文（仅 content，思考块不随复制）；1.6s 图标反馈复位。 */
 const copied = ref(false)
@@ -362,6 +374,14 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-bubble__stopped {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  border-top: 1px dashed var(--color-border-light);
+  padding-top: 6px;
 }
 
 .message-bubble__citations {

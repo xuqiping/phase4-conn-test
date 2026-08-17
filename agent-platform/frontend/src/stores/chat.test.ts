@@ -139,7 +139,7 @@ describe('chat store', () => {
     expect(chatApi.streamNewMessage).toHaveBeenCalledWith(expect.objectContaining({
       message: 'hello',
       agentId: 10
-    }))
+    }), expect.anything())
   })
 
   it('updates the current session target and local session list', async () => {    vi.mocked(chatApi.listSessions).mockResolvedValue({ data: { code: 200, message: 'ok', data: [
@@ -197,7 +197,7 @@ describe('chat store', () => {
     expect(chatApi.streamNewMessage).toHaveBeenCalledWith(expect.objectContaining({
       message: '看这个课件',
       attachmentFileIds: ['f-abc.pdf']
-    }))
+    }), expect.anything())
     const userMsg = store.messages[0]
     expect(userMsg.role).toBe('USER')
     expect(JSON.parse(userMsg.metadata!)).toEqual({

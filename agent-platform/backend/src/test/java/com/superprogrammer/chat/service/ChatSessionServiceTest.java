@@ -514,6 +514,58 @@ class ChatSessionServiceTest {
                 "ASSISTANT".equals(message.getRole()) && "最终回答".equals(message.getContent())));
     }
 
+    // ============================ 5x 四轮 U6 · 停止生成 ============================
+
+    /** 用户停止（上游取消）→ 已生成部分落库（stopped 标），不走正常完成落库、不写记忆。 */
+    @Test
+    void sendMessageStream_cancelPersistsPartialContentWithStoppedMeta() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        // ragOn=false（默认 resolve→false）：跳召回/记忆写入，聚焦取消落库断言
+        when(ragModeResolver.resolve(eq("CHAT"), any(), any(), any())).thenReturn(false);
+        when(orchestrationEngine.executeStream(any(), eq("长问题"))).thenReturn(
+                reactor.core.publisher.Flux.concat(
+                        reactor.core.publisher.Flux.just(com.superprogrammer.chat.dto.StreamEvent.chunk("部分回答前半")),
+                        reactor.core.publisher.Flux.never()));
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("长问题");
+
+        reactor.test.StepVerifier.create(chatSessionService.sendMessageStream(100L, request))
+                .expectNextMatches(evt -> "CHUNK".equals(evt.getType()) && "部分回答前半".equals(evt.getContent()))
+                .thenCancel()
+                .verify();
+
+        verify(messageMapper).insert(argThat(message ->
+                "ASSISTANT".equals(message.getRole())
+                        && "部分回答前半".equals(message.getContent())
+                        && message.getMetadata() != null
+                        && message.getMetadata().contains("\"stopped\"")));
+        // 用户主动中止：半截输出不进记忆管线
+        verify(memoryGenerationService, never()).processTurnAsync(any(), any(), any(), any(), any());
+    }
+
+    /** 取消时零内容（首字节前停止）→ 不落空消息。 */
+    @Test
+    void sendMessageStream_cancelBeforeAnyChunkPersistsNothing() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(ragModeResolver.resolve(eq("CHAT"), any(), any(), any())).thenReturn(false);
+        when(orchestrationEngine.executeStream(any(), eq("早停"))).thenReturn(
+                reactor.core.publisher.Flux.never());
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("早停");
+
+        reactor.test.StepVerifier.create(chatSessionService.sendMessageStream(100L, request))
+                .thenCancel()
+                .verify();
+
+        verify(messageMapper, never()).insert(argThat(message -> "ASSISTANT".equals(message.getRole())));
+    }
+
     // ============================ 5x #7 · 收录确认式回复 ============================
 
     private static com.superprogrammer.chat.service.internal.InclusionQuickCheckService.Hit hit() {

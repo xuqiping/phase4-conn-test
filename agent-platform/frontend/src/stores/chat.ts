@@ -32,6 +32,38 @@ export const useChatStore = defineStore('chat', () => {
   )
   let ws: WebSocket | null = null
 
+  // 5x 四轮 U6：当前流式请求的 abort 控制器（停止生成）；stopping 标记区分「用户停止」与「真失败」（后者才走 REST 回退）
+  let streamAbortController: AbortController | null = null
+  const stoppingStream = ref(false)
+
+  /**
+   * 停止生成：abort 当前 SSE → reader.read() 抛 AbortError → sendStreamingMessage 的 abort 分支
+   * 收尾（本地保留已生成部分 + 不走 REST 回退防双倍计费；服务端 doOnCancel 同步落库部分内容）。
+   */
+  function stopStreaming() {
+    if (!streamAbortController || !sending.value) return
+    stoppingStream.value = true
+    streamAbortController.abort()
+  }
+
+  /** 停止后的本地收尾：已生成部分转为带 stopped 标的消息（服务端也落库一份，刷新后以服务端为准）。 */
+  function finalizeStoppedMessage() {
+    const partial = streamingContent.value
+    const think = streamingThinking.value
+    if (partial) {
+      appendAssistantMessage(partial, JSON.stringify({
+        ...(think ? { thinking: think } : {}),
+        stopped: true
+      }))
+    }
+    streamingContent.value = ''
+    streamingThinking.value = ''
+    streamingCitations.value = null
+    streamingFileCards.value = null
+    pendingInclusionConfirm.value = null
+    sending.value = false
+  }
+
   function appendAssistantMessage(content: string, metadata: string | null = null) {
     messages.value.push({
       id: Date.now(),
@@ -195,6 +227,7 @@ export const useChatStore = defineStore('chat', () => {
     })
 
     try {
+      streamAbortController = new AbortController()
       const fetchPromise = currentSessionId.value
         ? chatApi.streamMessage(currentSessionId.value, {
             message: content,
@@ -203,7 +236,7 @@ export const useChatStore = defineStore('chat', () => {
             webSearchEnabled,
             attachmentFileIds,
             kbIds
-          })
+          }, streamAbortController.signal)
         : chatApi.streamNewMessage({
             message: content,
             ...resolveSelectedTargetPayload(),
@@ -212,7 +245,7 @@ export const useChatStore = defineStore('chat', () => {
             webSearchEnabled,
             attachmentFileIds,
             kbIds
-          })
+          }, streamAbortController.signal)
 
       // 60s timeout for initial response（修 #1：原 10s 对 AGENT/工作流等非真流式首字节太短，频繁误超时→REST 回退双跑更慢）
       const response = await Promise.race([
@@ -339,16 +372,26 @@ export const useChatStore = defineStore('chat', () => {
         streamingThinking.value = ''
         streamingFileCards.value = null
         messages.value.pop()
+        streamAbortController?.abort()
         return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
       }
     } catch (e) {
+      // U6：用户停止（abort 使 read 抛 AbortError）→ 保留部分内容收尾，严禁走 REST 回退（双倍计费）
+      if (stoppingStream.value) {
+        finalizeStoppedMessage()
+        return
+      }
       console.warn('SSE failed, falling back to REST:', e)
       sending.value = false
       streamingContent.value = ''
       streamingThinking.value = ''
       streamingFileCards.value = null
       messages.value.pop()
+      streamAbortController?.abort()
       return sendMessage(content, undefined, undefined, ragEnabled, webSearchEnabled, attachments)
+    } finally {
+      streamAbortController = null
+      stoppingStream.value = false
     }
   }
 
@@ -664,6 +707,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     sendWSMessage,
     sendStreamingMessage,
+    stopStreaming,
     confirmInclusion,
     connectWS,
     disconnectWS,

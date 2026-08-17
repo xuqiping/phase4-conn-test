@@ -612,6 +612,8 @@ public class ChatSessionService {
         StringBuilder fullResponse = new StringBuilder();
         StringBuilder fullThinking = new StringBuilder();
         AtomicBoolean hasError = new AtomicBoolean(false);
+        // 5x 四轮 U6（拍板③）：用户停止→部分内容落库防重（cancel 终态理论单次，CAS 兜底三终态互斥红线）
+        AtomicBoolean partialPersisted = new AtomicBoolean(false);
 
         return orchestrationEngine.executeStream(context, request.getMessage())
                 .doOnNext(evt -> {
@@ -702,6 +704,33 @@ public class ChatSessionService {
                     tail.add(StreamEvent.done());
                     return Flux.fromIterable(tail);
                 }).subscribeOn(Schedulers.boundedElastic()))
+                // 5x 四轮 U6（拍板③：停止后部分内容落库）：客户端 abort → controller send 失败 → blockLast
+                // 取消上游订阅 → 此钩子落已生成部分（metadata.stopped=true，刷新后可见）。
+                // 设计取舍：部分回答不 dispatchMemoryWrite——用户主动中止，半截输出进记忆是噪声。
+                .doOnCancel(() -> {
+                    if (!partialPersisted.compareAndSet(false, true)
+                            || fullResponse.length() == 0 || hasError.get()) {
+                        return;
+                    }
+                    try {
+                        ChatMessage partial = new ChatMessage();
+                        partial.setSessionId(sessionId);
+                        partial.setRole("ASSISTANT");
+                        partial.setContent(fullResponse.toString());
+                        java.util.Map<String, Object> stoppedMeta = new java.util.LinkedHashMap<>();
+                        stoppedMeta.put("stopped", true);
+                        if (fullThinking.length() > 0) {
+                            stoppedMeta.put("thinking", fullThinking.toString());
+                        }
+                        try {
+                            partial.setMetadata(new ObjectMapper().writeValueAsString(stoppedMeta));
+                        } catch (Exception ignored) {}
+                        messageMapper.insert(partial);
+                        log.info("流式取消：部分内容落库 sessionId={} contentLen={}", sessionId, fullResponse.length());
+                    } catch (Exception ex) {
+                        log.warn("流式取消部分落库失败 sessionId={}: {}", sessionId, ex.getMessage());
+                    }
+                })
                 .doOnError(e -> log.error("流式执行失败: {}", e.getMessage()));
     }
 

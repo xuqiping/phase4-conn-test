@@ -252,6 +252,9 @@ public class ChatController {
         // 用户实测④：emitter 超时后连接已死——此时不得再走 sendMessage 同步重答（双倍计费+注定失败）
         AtomicBoolean emitterTimedOut = new AtomicBoolean(false);
         emitter.onTimeout(() -> emitterTimedOut.set(true));
+        // 5x 四轮 U6：客户端断开（点停止 abort / 关页 / 断网）同样不得重答——send 失败即连接不可达
+        AtomicBoolean clientGone = new AtomicBoolean(false);
+        emitter.onError(t -> clientGone.set(true));
         SecurityContext securityContext = SecurityContextHolder.getContext();
         // 审计 #7：裸线程不继承 ThreadLocal，手工快照请求线程 MDC（traceId/userId/username/clientIp），
         // 线程内恢复——否则流式审计 fromMdc 读 username/userId 全 null（REST 路径走 Tomcat 线程不受影响）。
@@ -274,6 +277,7 @@ public class ChatController {
                                 }
                                 emitter.send(SseEmitter.event().data(evt));
                             } catch (Exception sendError) {
+                                clientGone.set(true);
                                 throw new RuntimeException(sendError);
                             }
                         })
@@ -284,9 +288,10 @@ public class ChatController {
                 }
                 emitter.complete();
             } catch (Exception e) {
-                if (emitterTimedOut.get()) {
-                    // SSE 超时路径：连接已断，跳过 sendMessage 同步重答（实测④：曾双倍计费仍失败）
-                    log.warn("SSE 超时终止（不重答）session={} messageLen={}",
+                if (emitterTimedOut.get() || clientGone.get()) {
+                    // SSE 超时/客户端断开路径：连接已死，跳过 sendMessage 同步重答（实测④双倍计费；
+                    // U6 停止场景同理——上游已随 blockLast 取消，部分内容由 service doOnCancel 落库）
+                    log.warn("SSE 超时/客户端断开（不重答）session={} messageLen={}",
                             request.getSessionId(), request.getMessage() == null ? 0 : request.getMessage().length());
                     return;
                 }
