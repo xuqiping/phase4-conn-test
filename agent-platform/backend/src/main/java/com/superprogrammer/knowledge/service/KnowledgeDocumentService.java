@@ -255,9 +255,12 @@ public class KnowledgeDocumentService {
      */
     public ResponseEntity<org.springframework.core.io.Resource> streamAsset(Long id, Long operatorId, boolean admin) {
         KnowledgeDocument doc = ensure(id);
-        if (!knowledgeBaseService.canRead(knowledgeBaseService.ensure(doc.getKbId()), operatorId, admin)) {
+        com.superprogrammer.knowledge.entity.KnowledgeBase assetKb = knowledgeBaseService.ensure(doc.getKbId());
+        if (!knowledgeBaseService.canRead(assetKb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该文档");
         }
+        // 14x#3：保密库成员禁下载原件（403，RAG 问答唯一出口；owner/admin 直通）
+        KnowledgeConfidentialGuard.assertCanViewContent(assetKb, operatorId, admin);
         String fileId = stripFileRef(doc.getFileRef());
         if (fileId == null || fileId.isBlank()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文档无原件");
@@ -299,20 +302,33 @@ public class KnowledgeDocumentService {
         if (!knowledgeBaseService.canRead(kb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
         }
+        // 14x#3：保密库成员可当目录索引（标题/类型/状态/时间保留），但剔除 fileRef 防原件旁路
+        boolean stripFileRef = KnowledgeConfidentialGuard.isRestricted(kb, operatorId, admin);
         LambdaQueryWrapper<KnowledgeDocument> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(KnowledgeDocument::getKbId, kbId)
                 .orderByDesc(KnowledgeDocument::getCreatedAt);
         return documentMapper.selectList(wrapper).stream()
                 .map(this::toVO)
+                .peek(vo -> {
+                    if (stripFileRef) {
+                        vo.setFileRef(null);
+                    }
+                })
                 .toList();
     }
 
     public KnowledgeDocumentVO get(Long id, Long operatorId, boolean admin) {
         KnowledgeDocument doc = ensure(id);
-        if (!knowledgeBaseService.canRead(knowledgeBaseService.ensure(doc.getKbId()), operatorId, admin)) {
+        KnowledgeBase kb = knowledgeBaseService.ensure(doc.getKbId());
+        if (!knowledgeBaseService.canRead(kb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该文档");
         }
-        return toVO(doc);
+        KnowledgeDocumentVO vo = toVO(doc);
+        // 14x#3：单查与列表同语义（spec §5.3 矩阵列表行的延伸），保密库成员剔除 fileRef
+        if (KnowledgeConfidentialGuard.isRestricted(kb, operatorId, admin)) {
+            vo.setFileRef(null);
+        }
+        return vo;
     }
 
     /** 更新不影响原文件内容的治理元数据；密级变更仅管理员可执行。 */

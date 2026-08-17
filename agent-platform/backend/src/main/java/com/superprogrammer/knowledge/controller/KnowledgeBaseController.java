@@ -51,6 +51,8 @@ public class KnowledgeBaseController {
 
     @PutMapping("/{id}")
     @RequirePermission("knowledge:write")
+    // 14x#3：库配置变更（含保密开关切换）留痕——保密切换是安全敏感操作
+    @AuditLog(module = "kb", action = "kb_update", targetType = "knowledge_base")
     public ResponseEntity<R<KnowledgeBaseVO>> update(@PathVariable Long id,
                                                       @Valid @RequestBody KnowledgeBaseRequest request) {
         return ResponseEntity.ok(R.ok(knowledgeBaseService.update(id, request, getCurrentUserId(), isAdmin())));

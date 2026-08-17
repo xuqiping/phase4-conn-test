@@ -63,6 +63,17 @@ public class KnowledgeBaseService {
     }
 
     /**
+     * 14x#3：保密开关与可见性互斥校验——PUBLIC 库禁开保密
+     * （公开库任何人可读，保密语义自相矛盾；spec §5.3 边界）。
+     */
+    private static void assertConfidentialCompatible(String visibility, Boolean confidential) {
+        if (Boolean.TRUE.equals(confidential) && "PUBLIC".equalsIgnoreCase(visibility)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "公开（PUBLIC）知识库不允许开启保密；请先调整为私有/团队可见性");
+        }
+    }
+
+    /**
      * 14x#1：校验 answer_model——null/blank → null（跟随全局默认）；
      * 超长 400；须在启用 CHAT 模型列表内（防任意串写库导致问答路由 422）。
      */
@@ -152,6 +163,9 @@ public class KnowledgeBaseService {
         kb.setEmbeddingModel(embeddingModel.trim());
         kb.setRerankModel(request.getRerankModel());
         kb.setAnswerModel(normalizeAnswerModel(request.getAnswerModel()));
+        // 14x#3：保密开关（默认关；PUBLIC 互斥校验）
+        assertConfidentialCompatible(kb.getVisibility(), request.getConfidential());
+        kb.setConfidential(Boolean.TRUE.equals(request.getConfidential()));
         kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
         kb.setStatus("ACTIVE");
         kb.setCreatedBy(userId);
@@ -170,6 +184,11 @@ public class KnowledgeBaseService {
         kb.setDescription(request.getDescription());
         if (request.getVisibility() != null && !request.getVisibility().isBlank()) {
             kb.setVisibility(normalizeVisibility(request.getVisibility()));
+        }
+        // 14x#3：保密切换（null=不动既有开关；对「本次生效后的可见性」做 PUBLIC 互斥）
+        if (request.getConfidential() != null) {
+            assertConfidentialCompatible(kb.getVisibility(), request.getConfidential());
+            kb.setConfidential(request.getConfidential());
         }
         String embeddingWarning = null;
         if (request.getEmbeddingModel() != null && !request.getEmbeddingModel().isBlank()) {
@@ -311,6 +330,7 @@ public class KnowledgeBaseService {
                 .embeddingModel(kb.getEmbeddingModel())
                 .rerankModel(kb.getRerankModel())
                 .answerModel(kb.getAnswerModel())
+                .confidential(Boolean.TRUE.equals(kb.getConfidential()))
                 .summaryStrategy(kb.getSummaryStrategy())
                 .status(kb.getStatus())
                 .createdBy(kb.getCreatedBy())

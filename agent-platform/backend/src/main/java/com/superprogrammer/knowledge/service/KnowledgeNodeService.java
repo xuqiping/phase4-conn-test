@@ -44,9 +44,12 @@ public class KnowledgeNodeService {
         if (doc == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文档不存在");
         }
-        if (!knowledgeBaseService.canRead(knowledgeBaseService.ensure(doc.getKbId()), operatorId, admin)) {
+        com.superprogrammer.knowledge.entity.KnowledgeBase kb = knowledgeBaseService.ensure(doc.getKbId());
+        if (!knowledgeBaseService.canRead(kb, operatorId, admin)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该文档");
         }
+        // 14x#3：保密库成员禁看切片原文（403，防列表+切片拼全文旁路；owner/admin 直通）
+        KnowledgeConfidentialGuard.assertCanViewContent(kb, operatorId, admin);
         LambdaQueryWrapper<KnowledgeNode> w = new LambdaQueryWrapper<>();
         w.eq(KnowledgeNode::getDocumentId, docId)
                 .orderByAsc(KnowledgeNode::getId);

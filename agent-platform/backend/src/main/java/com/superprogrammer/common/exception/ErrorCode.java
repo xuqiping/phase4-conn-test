@@ -18,6 +18,8 @@ public enum ErrorCode {
     ROLE_FORBIDDEN(40301, "角色权限不足"),
     // 2x 待决策项（V100）：公共池项目关闭「允许复制」后，公共 VIEWER copy 被拒（文案不泄漏源项目信息）
     ASSET_COPY_FORBIDDEN(40302, "该项目不允许复制资产"),
+    // 14x#3 库级保密：保密库成员旁路取原文（asset/nodes/retrieve 调试）被拒，RAG 问答为唯一内容出口
+    KNOWLEDGE_CONFIDENTIAL_DENIED(40303, "保密知识库内容受限"),
     NOT_FOUND(404, "资源不存在"),
     CONFLICT(409, "资源冲突"),
     UNPROCESSABLE(422, "业务规则违反"),

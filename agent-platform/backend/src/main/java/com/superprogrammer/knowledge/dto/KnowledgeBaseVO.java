@@ -17,6 +17,8 @@ public class KnowledgeBaseVO {
     private String rerankModel;
     /** 14x#1：per-KB RAG 问答模型，null=跟随全局默认 */
     private String answerModel;
+    /** 14x#3：库级保密开关（前端徽标/入口隐藏依据） */
+    private boolean confidential;
     private String summaryStrategy;
     private String status;
     private Long createdBy;

@@ -190,6 +190,9 @@ public class RagRetrievalService {
             if (!knowledgeBaseService.canRead(kb, userId, admin)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
             }
+            // 14x#3：保密库成员禁用检索调试（整接口 403，防候选/证据/原文旁路；
+            // /ask 与 chat kbIds 走 retrieveGroundedAnswer→retrieveEvidence，不受限=唯一内容出口）
+            KnowledgeConfidentialGuard.assertCanViewContent(kb, userId, admin);
             String embedModel = kb.getEmbeddingModel();
             // 14x#1：per-KB 问答模型（null=不 set，LlmGateway 走全局默认回退）
             String answerModel = knowledgeBaseService.resolveAnswerModel(kb);
