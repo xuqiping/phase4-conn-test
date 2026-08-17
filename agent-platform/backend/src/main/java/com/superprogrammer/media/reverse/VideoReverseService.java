@@ -1,10 +1,24 @@
 package com.superprogrammer.media.reverse;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
+import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.llm.dto.ContentPart;
+import com.superprogrammer.llm.dto.LlmMessage;
+import com.superprogrammer.llm.dto.LlmRequest;
+import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.reverse.config.MediaReverseProperties;
+import com.superprogrammer.media.reverse.dto.LocalizeRequest;
+import com.superprogrammer.media.reverse.dto.LocalizeResponse;
+import com.superprogrammer.media.reverse.dto.ReverseAnalyzeRequest;
+import com.superprogrammer.media.reverse.dto.ReverseAnalyzeResponse;
+import com.superprogrammer.media.service.MediaGenQueryService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -19,9 +33,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -78,12 +94,20 @@ public class VideoReverseService {
 
     private final MediaReverseProperties props;
     private final FileStorageService fileStorageService;
+    private final LlmGateway llmGateway;
+    private final MediaGenQueryService mediaGenQueryService;
+    private final ObjectMapper objectMapper;
     /** 抽帧并发闸（tryAcquire 快速失败，不排队——同步接口宁拒不等）。 */
     private final Semaphore slots;
 
-    public VideoReverseService(MediaReverseProperties props, FileStorageService fileStorageService) {
+    public VideoReverseService(MediaReverseProperties props, FileStorageService fileStorageService,
+                               LlmGateway llmGateway, MediaGenQueryService mediaGenQueryService,
+                               ObjectMapper objectMapper) {
         this.props = props;
         this.fileStorageService = fileStorageService;
+        this.llmGateway = llmGateway;
+        this.mediaGenQueryService = mediaGenQueryService;
+        this.objectMapper = objectMapper;
         this.slots = new Semaphore(Math.max(1, props.getMaxConcurrency()));
     }
 
@@ -108,6 +132,298 @@ public class VideoReverseService {
         if (!props.isEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推功能未启用");
         }
+        ExtractionArtifacts ex = runExtraction(userId, fileId, sceneThreshold, maxFrames);
+        return new KeyFrameResult(
+                ex.artifacts().stream().map(FrameArtifact::frame).toList(),
+                ex.durationSeconds(), ex.mode(), ex.sceneHits());
+    }
+
+    // ============================ Step2：analyze / localize 编排 ============================
+
+    /** script / targetLocale / notes 输入上限（plan 安全清单）。 */
+    private static final int SCRIPT_MAX_LEN = 8_000;
+    private static final int LOCALE_MAX_LEN = 32;
+    private static final int NOTES_MAX_LEN = 500;
+    /** LLM JSON 输出 token 预算（plan 坑表3：maxTokens 3000+ 精简约束）。 */
+    private static final int ANALYZE_MAX_TOKENS = 4_000;
+
+    /** 单帧中间产物：缩略字节（LLM image part 用）+ 落库元数据。 */
+    record FrameArtifact(byte[] thumbBytes, KeyFrame frame) {}
+
+    /** 抽帧中间产物全集（analyze 复用缩略字节免二次读盘）。 */
+    record ExtractionArtifacts(List<FrameArtifact> artifacts, double durationSeconds, String mode, int sceneHits) {}
+
+    /**
+     * 反推分析（spec §4.1，plan Step2）：源校验→Step1 抽帧→（STORYBOARD/SCRIPT 时）
+     * 帧序列按时间序组 image parts 单次调 LLM→JSON 解析（失败重试 1 次）→按 modes 装配。
+     *
+     * <p>计费：LLM 走 {@link LlmGateway#chat(LlmRequest, Long)} 既有 chat 链路（多模态 token），
+     * {@code projectGroupId} 透传 → 组池/个人由网关分派（计划5 口径）；抽帧本身不另计费。
+     */
+    public ReverseAnalyzeResponse analyze(ReverseAnalyzeRequest req, Long userId) {
+        if (!props.isEnabled()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推功能未启用");
+        }
+        boolean wantStoryboard = false;
+        boolean wantScript = false;
+        boolean wantAny = false;
+        if (req != null && req.getModes() != null) {
+            for (String m : req.getModes()) {
+                switch (m == null ? "" : m.trim().toUpperCase(Locale.ROOT)) {
+                    case "STORYBOARD" -> {
+                        wantAny = true;
+                        wantStoryboard = true;
+                    }
+                    case "SCRIPT" -> {
+                        wantAny = true;
+                        wantScript = true;
+                    }
+                    case "KEYFRAMES" -> wantAny = true;
+                    default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的产物类型: " + m);
+                }
+            }
+        }
+        if (!wantAny) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "modes 至少包含 KEYFRAMES/STORYBOARD/SCRIPT 之一");
+        }
+        String fileId = resolveSourceFileId(req == null ? null : req.getTaskId(),
+                req == null ? null : req.getFileId(), userId);
+
+        ExtractionArtifacts ex = runExtraction(userId, fileId,
+                req == null ? null : req.getSceneThreshold(),
+                req == null ? null : req.getMaxFrames());
+
+        List<Map<String, Object>> storyboard = null;
+        Map<String, Object> script = null;
+        String model = null;
+        if (wantStoryboard || wantScript) {
+            LlmJson out = callLlmJson(analyzeParts(ex), req.getModel(), userId,
+                    req.getProjectGroupId(), "MEDIA_REVERSE_ANALYZE");
+            model = out.model();
+            if (wantStoryboard) {
+                storyboard = toListMap(out.json().path("storyboard"));
+            }
+            if (wantScript) {
+                script = toMap(out.json().path("script"));
+            }
+        }
+        List<KeyFrame> frames = ex.artifacts().stream().map(FrameArtifact::frame).toList();
+        log.info("media reverse analyze done: fileId={} modes={} frames={} storyboard={} script={} model={}",
+                fileId, req == null ? null : req.getModes(), frames.size(),
+                storyboard == null ? "-" : storyboard.size(), script == null ? "-" : "y", model);
+        return new ReverseAnalyzeResponse(frames, ex.durationSeconds(), ex.mode(), ex.sceneHits(),
+                storyboard, script, model);
+    }
+
+    /**
+     * 本土化转绘（spec §4.2，plan Step2）：剧本→LLM 改写（镜头/场景数与顺序不变约束）→
+     * localizedScript + changeLog；结构校验不一致 → warning 标注（结果仍可用，L3 联动边界）。
+     */
+    public LocalizeResponse localize(LocalizeRequest req, Long userId) {
+        if (!props.isEnabled()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推功能未启用");
+        }
+        String script = req == null ? null : req.getScript();
+        if (script == null || script.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本不能为空");
+        }
+        if (script.length() > SCRIPT_MAX_LEN) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "剧本长度超限（≤" + SCRIPT_MAX_LEN + "）");
+        }
+        String locale = req.getTargetLocale() == null ? "" : req.getTargetLocale().trim();
+        if (locale.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "目标地区不能为空");
+        }
+        if (locale.length() > LOCALE_MAX_LEN) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "目标地区超长（≤" + LOCALE_MAX_LEN + "字）");
+        }
+        String notes = req.getNotes() == null ? "" : req.getNotes().trim();
+        if (notes.length() > NOTES_MAX_LEN) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "保留要求超长（≤" + NOTES_MAX_LEN + "字）");
+        }
+
+        String instruction = """
+                你是影视剧本本土化改写专家。把下面的剧本改写为「%s」文化版本，要求：
+                1. 剧情、场景数量、场景顺序、每个场景的角色与台词条数完全不变；
+                2. 只替换源文化专属元素（餐具/服饰/建筑/招牌文字/节庆/礼仪/饮食/称呼/地名等）为目标文化对应元素；
+                3. 台词与描述自然融入目标文化语境，不逐字直译。
+                严格只输出一个 JSON 对象，不要任何解释或 markdown 代码块：
+                {"localizedScript":{与输入剧本同结构的改写版},"changeLog":[{"from":"源元素","to":"目标元素","scene":"第几场或场景标题"}]}
+                %s剧本：
+                """.formatted(locale, notes.isEmpty() ? "" : "额外保留要求：" + notes + "\n") + script;
+
+        LlmJson out = callLlmJson(
+                List.of(ContentPart.builder().type("text").text(instruction).build()),
+                req.getModel(), userId, req.getProjectGroupId(), "MEDIA_REVERSE_LOCALIZE");
+        JsonNode localized = out.json().path("localizedScript");
+        if (!localized.isObject()) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "模型未返回合法 JSON，请重试");
+        }
+        String warning = structureWarning(script, localized);
+        List<Map<String, Object>> changeLog = toListMap(out.json().path("changeLog"));
+        log.info("media reverse localize done: locale={} scriptChars={} changeLog={} warning={} model={}",
+                locale, script.length(), changeLog.size(), warning != null, out.model());
+        return new LocalizeResponse(localized.toString(), changeLog, warning);
+    }
+
+    /** 源解析：taskId → loadForDownload 咽喉（归属+终态校验，他人任务 403）；fileId → 抽帧 loadPath 校验。 */
+    private String resolveSourceFileId(Long taskId, String fileId, Long userId) {
+        if (taskId == null && (fileId == null || fileId.isBlank())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "需提供 taskId 或 fileId 之一作为反推源");
+        }
+        if (taskId != null && fileId != null && !fileId.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "taskId 与 fileId 只能二选一");
+        }
+        if (taskId != null) {
+            MediaGenTask task = mediaGenQueryService.loadForDownload(taskId, userId, false);
+            return task.getResultFileId();
+        }
+        return fileId;
+    }
+
+    /** analyze 提示词：说明文本 part + 每帧 image part 与「第N帧 t=Xs」标注 part 交替（时间序）。 */
+    private List<ContentPart> analyzeParts(ExtractionArtifacts ex) {
+        List<ContentPart> parts = new ArrayList<>(1 + ex.artifacts().size() * 2);
+        parts.add(ContentPart.builder().type("text").text(ANALYZE_INSTRUCTION).build());
+        for (FrameArtifact a : ex.artifacts()) {
+            parts.add(ContentPart.builder().type("image")
+                    .data(Base64.getEncoder().encodeToString(a.thumbBytes()))
+                    .mediaType("image/jpeg").build());
+            parts.add(ContentPart.builder().type("text").text(
+                    "第" + a.frame().shotNo() + "帧 t="
+                            + String.format(Locale.ROOT, "%.2f", a.frame().timestampSec()) + "s").build());
+        }
+        return parts;
+    }
+
+    /** analyze 单次调用产出分镜+剧本双结构（两 mode 共用一次 LLM，省一次调用）。 */
+    private static final String ANALYZE_INSTRUCTION = """
+            你是影视分析专家。下面按时间顺序提供一段视频的关键帧（每张图片后紧跟一行文本标注镜头号与时间戳）。
+            请分析整个视频，严格只输出一个 JSON 对象，不要任何解释或 markdown 代码块，结构如下：
+            {"storyboard":[{"shotNo":1,"startSec":0.0,"endSec":5.2,"shotSize":"远景/全景/中景/近景/特写之一","cameraMove":"固定/推/拉/摇/移/跟之一","description":"画面描述，不超过80字","dialogue":"该镜头台词，无则空字符串"}],"script":{"scenes":[{"sceneHeading":"场景标题，如：内景-餐厅-白天","action":"画面与动作描述","dialogue":[{"role":"角色名","line":"台词"}]}],"synopsis":"全片一句话剧情，不超过60字"}}
+            约束：storyboard 与 script 场景划分一致、按时间升序、时间戳与所给帧吻合；镜头数不超过30；所有文本用中文。
+            """;
+
+    /** LLM 调用结果（解析后的 JSON 对象 + 实际使用模型——网关可能回退管理员默认）。 */
+    private record LlmJson(JsonNode json, String model) {}
+
+    /**
+     * LLM 调用 + JSON 解析（plan 坑表3）：解析失败（围栏外乱文/断尾/空）重试 1 次，两次皆败明确报错。
+     * 重试是第二次真实调用（多一次计费）——比静默返回坏 JSON 可控。
+     */
+    private LlmJson callLlmJson(List<ContentPart> parts, String model, Long userId, Long projectGroupId,
+                                 String callPurpose) {
+        LlmMessage userMsg = LlmMessage.builder().role("user").content("").parts(parts).build();
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            LlmRequest req = LlmRequest.builder()
+                    .model(model)
+                    .messages(List.of(userMsg))
+                    .temperature(0.3)
+                    .maxTokens(ANALYZE_MAX_TOKENS)
+                    .stream(false)
+                    .callPurpose(callPurpose)
+                    .projectGroupId(projectGroupId)
+                    .build();
+            LlmResponse resp = llmGateway.chat(req, userId);
+            String content = resp == null || resp.getContent() == null ? "" : resp.getContent();
+            try {
+                // 实际模型以响应为准（网关空 model 回退管理员默认）；响应缺失再回请求名
+                String actualModel = resp != null && resp.getModel() != null && !resp.getModel().isBlank()
+                        ? resp.getModel() : req.getModel();
+                return new LlmJson(parseJsonObject(content), actualModel);
+            } catch (BusinessException e) {
+                log.warn("media reverse llm json parse failed: attempt={} purpose={} err={}",
+                        attempt, callPurpose, e.getMessage());
+            }
+        }
+        throw new BusinessException(ErrorCode.UNPROCESSABLE, "模型未返回合法 JSON，请重试");
+    }
+
+    /**
+     * 容错 JSON 解析（承 CanvasNodeRunnerService/MemoryEntryDistiller 范式）：剥 ``` 围栏 →
+     * 截首 {@code {} 尾 {@code }} → readTree；非对象/不可解析抛 UNPROCESSABLE。
+     */
+    private JsonNode parseJsonObject(String raw) {
+        String cleaned = raw == null ? "" : raw.trim();
+        if (cleaned.startsWith("```")) {
+            int nl = cleaned.indexOf('\n');
+            if (nl > 0) {
+                cleaned = cleaned.substring(nl + 1);
+            }
+            if (cleaned.endsWith("```")) {
+                cleaned = cleaned.substring(0, cleaned.length() - 3);
+            }
+            cleaned = cleaned.trim();
+        }
+        int l = cleaned.indexOf('{');
+        int r = cleaned.lastIndexOf('}');
+        if (l < 0 || r <= l) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "未返回合法 JSON");
+        }
+        try {
+            JsonNode node = objectMapper.readTree(cleaned.substring(l, r + 1));
+            if (!node.isObject()) {
+                throw new BusinessException(ErrorCode.UNPROCESSABLE, "未返回合法 JSON");
+            }
+            return node;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "未返回合法 JSON");
+        }
+    }
+
+    /** LLM 产物宽松映射：数组→List&lt;Map&gt;（非数组/缺失→空表）；对象→Map（非对象→空表）。 */
+    private List<Map<String, Object>> toListMap(JsonNode node) {
+        if (node == null || !node.isArray() || node.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>(node.size());
+        for (JsonNode item : node) {
+            if (item.isObject()) {
+                out.add(objectMapper.convertValue(item,
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> toMap(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return Map.of();
+        }
+        return objectMapper.convertValue(node,
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+    }
+
+    /**
+     * 结构校验告警（plan 坑表8）：剧本.scenes 数与改写版对比，不一致返回告警文本（null=一致或无法比较）。
+     * 用户改后剧本可能非 JSON——解析失败静默跳过比较（不阻断主流程）。
+     */
+    private String structureWarning(String originalScript, JsonNode localized) {
+        Integer orig = sceneCountOf(originalScript);
+        Integer loc = sceneCountOf(localized.toString());
+        if (orig == null || loc == null || orig.equals(loc)) {
+            return null;
+        }
+        return "场景数不一致：原 " + orig + " 现 " + loc + "，改写结果仅供参考，请人工核对";
+    }
+
+    /** 数「scenes」数组长度；输入非 JSON 对象或无 scenes → null（无法比较）。 */
+    private Integer sceneCountOf(String scriptText) {
+        try {
+            JsonNode node = parseJsonObject(scriptText);
+            JsonNode scenes = node.path("scenes");
+            return scenes.isArray() ? scenes.size() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ============================ 抽帧主管线（Step1 逻辑，Step2 复用缩略字节） ============================
+
+    /** 抽帧全管线：探测→场景扫描→兜底/截断→逐帧取帧→缩略→落库，返回含缩略字节的中间产物。 */
+    private ExtractionArtifacts runExtraction(Long userId, String fileId, Double sceneThreshold, Integer maxFrames) {
         double threshold = clampSceneThreshold(sceneThreshold);
         int want = clampMaxFrames(maxFrames);
         Path video = fileStorageService.loadPath(fileId, userId, false);
@@ -142,7 +458,7 @@ public class VideoReverseService {
                 timestamps = idx.stream().map(hits::get).toList();
             }
 
-            List<KeyFrame> frames = new ArrayList<>(timestamps.size());
+            List<FrameArtifact> artifacts = new ArrayList<>(timestamps.size());
             for (int i = 0; i < timestamps.size(); i++) {
                 double t = timestamps.get(i);
                 byte[] jpeg = grabFrame(video, t, i + 1, workDir);
@@ -152,14 +468,14 @@ public class VideoReverseService {
                 // 原帧长边本就 ≤ 上限 → 缩略即原帧，复用 fileId 不重复落一份
                 String thumbFileId = thumb == jpeg ? frameFileId : store(thumb,
                         originalName.replace(".jpg", "-thumb.jpg"), userId);
-                frames.add(new KeyFrame(frameFileId, thumbFileId, t, i + 1));
+                artifacts.add(new FrameArtifact(thumb, new KeyFrame(frameFileId, thumbFileId, t, i + 1)));
             }
 
             log.info("media reverse keyframes: fileId={} frames={} mode={} sceneHits={} threshold={} durationSec={} costMs={}",
-                    fileId, frames.size(), mode, hits.size(), threshold,
+                    fileId, artifacts.size(), mode, hits.size(), threshold,
                     String.format(Locale.ROOT, "%.1f", probe.durationSeconds()),
                     System.currentTimeMillis() - started);
-            return new KeyFrameResult(frames, probe.durationSeconds(), mode, hits.size());
+            return new ExtractionArtifacts(artifacts, probe.durationSeconds(), mode, hits.size());
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {

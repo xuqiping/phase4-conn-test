@@ -1,12 +1,24 @@
 package com.superprogrammer.media.reverse;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.file.service.FileStorageService;
+import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.llm.dto.ContentPart;
+import com.superprogrammer.llm.dto.LlmRequest;
+import com.superprogrammer.llm.dto.LlmResponse;
+import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.reverse.config.MediaReverseProperties;
+import com.superprogrammer.media.reverse.dto.LocalizeRequest;
+import com.superprogrammer.media.reverse.dto.LocalizeResponse;
+import com.superprogrammer.media.reverse.dto.ReverseAnalyzeRequest;
+import com.superprogrammer.media.reverse.dto.ReverseAnalyzeResponse;
+import com.superprogrammer.media.service.MediaGenQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import javax.imageio.ImageIO;
@@ -20,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,11 +45,13 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 计划6 Step1 单测：抽帧四态（正常 / 0命中兜底 / 超限截断 / 超时长拒）+ 钳制与选点纯函数 + 缩略护栏。
+ * Step2 增量：analyze/localize 编排（源解析 / 单次 LLM parts / JSON 解析重试 / 结构告警 / 入参校验）。
  *
  * <p>FFmpeg 桥通过 Mockito spy 覆写：{@code probeVideo} 直接回桩值；{@code runFfmpeg} 按 cmd 分流——
  * 含 showinfo=场景扫描回 canned 输出，含 -frames:v=取帧往 workDir 落一张小 JPEG 模拟 FFmpeg 产物。
@@ -47,6 +62,8 @@ class VideoReverseServiceTest {
     Path tempDir;
 
     private FileStorageService fileStorageService;
+    private LlmGateway llmGateway;
+    private MediaGenQueryService mediaGenQueryService;
     private MediaReverseProperties props;
     private VideoReverseService service;
     private final AtomicInteger fileSeq = new AtomicInteger();
@@ -57,8 +74,11 @@ class VideoReverseServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         fileStorageService = mock(FileStorageService.class);
+        llmGateway = mock(LlmGateway.class);
+        mediaGenQueryService = mock(MediaGenQueryService.class);
         props = new MediaReverseProperties();
-        service = Mockito.spy(new VideoReverseService(props, fileStorageService));
+        service = Mockito.spy(new VideoReverseService(props, fileStorageService,
+                llmGateway, mediaGenQueryService, new ObjectMapper()));
         fileSeq.set(0);
         sceneOutput = "";
 
@@ -272,5 +292,252 @@ class VideoReverseServiceTest {
     void scaleToMaxEdge_undecodableThrowsIllegalState() {
         assertThrows(IllegalStateException.class,
                 () -> VideoReverseService.scaleToMaxEdge("not an image".getBytes(), 1024));
+    }
+
+    // ============================ Step2：analyze 编排 ============================
+
+    /** 连续多次 chat 返回（重试场景按序消耗）。 */
+    private void stubChat(String... contents) {
+        LlmResponse[] resps = java.util.Arrays.stream(contents)
+                .map(c -> LlmResponse.builder().content(c).model("gpt-test").build())
+                .toArray(LlmResponse[]::new);
+        when(llmGateway.chat(any(), any())).thenReturn(resps[0], java.util.Arrays.copyOfRange(resps, 1, resps.length));
+    }
+
+    private ReverseAnalyzeRequest analyzeReq(List<String> modes, Long taskId, String fileId) {
+        ReverseAnalyzeRequest r = new ReverseAnalyzeRequest();
+        r.setModes(modes);
+        r.setTaskId(taskId);
+        r.setFileId(fileId);
+        r.setMaxFrames(4);
+        r.setModel("vision-x");
+        r.setProjectGroupId(42L);
+        return r;
+    }
+
+    private void stubExtractionFourFrames() throws Exception {
+        stubProbe(60, true);
+        sceneOutput = sceneOut(1.5, 2.5, 4.5, 6.5);
+    }
+
+    private static final String GOOD_ANALYZE_JSON = """
+            ```json
+            {"storyboard":[{"shotNo":1,"description":"开场"}],"script":{"scenes":[{"sceneHeading":"内景-餐厅-白天"}],"synopsis":"测试剧情"}}
+            ```
+            """;
+
+    @Test
+    void analyze_keyframesOnly_neverCallsLlm() throws Exception {
+        stubExtractionFourFrames();
+        ReverseAnalyzeResponse r = service.analyze(analyzeReq(List.of("KEYFRAMES"), null, "src-1"), 7L);
+
+        assertEquals(4, r.keyframes().size());
+        assertNull(r.storyboard());
+        assertNull(r.script());
+        assertNull(r.model());
+        verify(llmGateway, never()).chat(any(), any());
+    }
+
+    @Test
+    void analyze_llmModes_singleCallImagePartsAndParams() throws Exception {
+        stubExtractionFourFrames();
+        stubChat(GOOD_ANALYZE_JSON);
+        ReverseAnalyzeResponse r = service.analyze(
+                analyzeReq(List.of("KEYFRAMES", "STORYBOARD", "SCRIPT"), null, "src-1"), 7L);
+
+        // 单次 LLM 调用（分镜+剧本共用），parts=1条指令+每帧2parts（图+标注）
+        ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
+        verify(llmGateway, times(1)).chat(cap.capture(), any());
+        LlmRequest sent = cap.getValue();
+        List<ContentPart> parts = sent.getMessages().get(0).getParts();
+        assertEquals(1 + 4 * 2, parts.size());
+        assertEquals("image", parts.get(1).getType());
+        assertEquals("image/jpeg", parts.get(1).getMediaType());
+        assertNotNull(parts.get(1).getData());
+        assertTrue(((String) parts.get(2).getText()).contains("第1帧"));
+        assertEquals(0.3, sent.getTemperature());
+        assertEquals(4000, sent.getMaxTokens());
+        assertFalse(sent.getStream());
+        assertEquals("MEDIA_REVERSE_ANALYZE", sent.getCallPurpose());
+        assertEquals(42L, sent.getProjectGroupId());
+        assertEquals("vision-x", sent.getModel());
+
+        assertEquals(1, r.storyboard().size());
+        assertEquals("开场", r.storyboard().get(0).get("description"));
+        assertEquals("测试剧情", r.script().get("synopsis"));
+        assertEquals("gpt-test", r.model());
+    }
+
+    @Test
+    void analyze_badJson_retriesOnceThenSucceeds() throws Exception {
+        stubExtractionFourFrames();
+        stubChat("模型前言不输出JSON", GOOD_ANALYZE_JSON);
+        ReverseAnalyzeResponse r = service.analyze(
+                analyzeReq(List.of("STORYBOARD"), null, "src-1"), 7L);
+
+        assertEquals(1, r.storyboard().size());
+        verify(llmGateway, times(2)).chat(any(), any());
+    }
+
+    @Test
+    void analyze_bothAttemptsBadJson_unprocessable() throws Exception {
+        stubExtractionFourFrames();
+        stubChat("垃圾输出1", "垃圾输出2");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of("SCRIPT"), null, "src-1"), 7L));
+        assertEquals(ErrorCode.UNPROCESSABLE.getCode(), ex.getCode());
+        assertEquals("模型未返回合法 JSON，请重试", ex.getMessage());
+        verify(llmGateway, times(2)).chat(any(), any());
+    }
+
+    @Test
+    void analyze_taskIdSource_resolvesResultFileWithOwnershipGate() throws Exception {
+        stubExtractionFourFrames();
+        MediaGenTask task = new MediaGenTask();
+        task.setResultFileId("res-9");
+        when(mediaGenQueryService.loadForDownload(100L, 7L, false)).thenReturn(task);
+
+        service.analyze(analyzeReq(List.of("KEYFRAMES"), 100L, null), 7L);
+
+        verify(mediaGenQueryService).loadForDownload(100L, 7L, false);
+        verify(fileStorageService).loadPath("res-9", 7L, false);
+    }
+
+    @Test
+    void analyze_taskIdAndFileIdBothOrNeither_badRequest() {
+        BusinessException both = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of("KEYFRAMES"), 100L, "src-1"), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), both.getCode());
+        BusinessException neither = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of("KEYFRAMES"), null, null), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), neither.getCode());
+    }
+
+    @Test
+    void analyze_invalidMode_badRequest() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of("KEYFRAMES", "AUDIO"), null, "src-1"), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("AUDIO"));
+    }
+
+    @Test
+    void analyze_emptyModes_badRequest() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of(), null, "src-1"), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    @Test
+    void analyze_otherUsersTask_forbiddenPropagates() {
+        when(mediaGenQueryService.loadForDownload(anyLong(), anyLong(), anyBoolean()))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "无权访问该任务"));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.analyze(analyzeReq(List.of("KEYFRAMES"), 100L, null), 7L));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), ex.getCode());
+    }
+
+    // ============================ Step2：localize 编排 ============================
+
+    private static String scriptWithScenes(int n) {
+        StringBuilder sb = new StringBuilder("{\"scenes\":[");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"sceneHeading\":\"场景").append(i + 1).append("\"}");
+        }
+        return sb.append("]}").toString();
+    }
+
+    private LocalizeRequest localizeReq(String script, String locale) {
+        LocalizeRequest r = new LocalizeRequest();
+        r.setScript(script);
+        r.setTargetLocale(locale);
+        r.setNotes("保留春节团圆情节");
+        return r;
+    }
+
+    @Test
+    void localize_happyPath_noWarning() {
+        stubChat("{\"localizedScript\":" + scriptWithScenes(2)
+                + ",\"changeLog\":[{\"from\":\"筷子\",\"to\":\"刀叉\",\"scene\":\"场景1\"}]}");
+        LocalizeResponse r = service.localize(localizeReq(scriptWithScenes(2), "美国"), 7L);
+
+        assertTrue(r.localizedScript().contains("scenes"));
+        assertEquals(1, r.changeLog().size());
+        assertEquals("筷子", r.changeLog().get(0).get("from"));
+        assertNull(r.warning());
+        // 提示词带目标地区与保留要求
+        ArgumentCaptor<LlmRequest> cap = ArgumentCaptor.forClass(LlmRequest.class);
+        verify(llmGateway).chat(cap.capture(), any());
+        String prompt = cap.getValue().getMessages().get(0).getParts().get(0).getText();
+        assertTrue(prompt.contains("美国"));
+        assertTrue(prompt.contains("保留春节团圆情节"));
+    }
+
+    @Test
+    void localize_sceneCountMismatch_returnsWarning() {
+        stubChat("{\"localizedScript\":" + scriptWithScenes(3) + ",\"changeLog\":[]}");
+        LocalizeResponse r = service.localize(localizeReq(scriptWithScenes(2), "美国"), 7L);
+
+        assertNotNull(r.warning());
+        assertTrue(r.warning().contains("原 2 现 3"));
+    }
+
+    @Test
+    void localize_nonJsonOriginalScript_skipsStructureCheck() {
+        stubChat("{\"localizedScript\":" + scriptWithScenes(3) + ",\"changeLog\":[]}");
+        LocalizeResponse r = service.localize(localizeReq("自由文本剧本，非 JSON", "美国"), 7L);
+        assertNull(r.warning());
+    }
+
+    @Test
+    void localize_localizedScriptMissing_unprocessable() {
+        stubChat("{\"changeLog\":[]}");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq(scriptWithScenes(2), "美国"), 7L));
+        assertEquals(ErrorCode.UNPROCESSABLE.getCode(), ex.getCode());
+    }
+
+    @Test
+    void localize_inputValidation_badRequest() {
+        BusinessException blank = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq("  ", "美国"), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), blank.getCode());
+        BusinessException noLocale = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq(scriptWithScenes(1), null), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), noLocale.getCode());
+        BusinessException tooLong = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq("x".repeat(8001), "美国"), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), tooLong.getCode());
+        BusinessException longLocale = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq(scriptWithScenes(1), "地".repeat(33)), 7L));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), longLocale.getCode());
+    }
+
+    @Test
+    void localize_disabled_unprocessable() {
+        props.setEnabled(false);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.localize(localizeReq(scriptWithScenes(1), "美国"), 7L));
+        assertEquals(ErrorCode.UNPROCESSABLE.getCode(), ex.getCode());
+    }
+
+    @Test
+    void localize_changeLogTolerant_whenArrayMissing() {
+        stubChat("{\"localizedScript\":" + scriptWithScenes(1) + "}");
+        LocalizeResponse r = service.localize(localizeReq(scriptWithScenes(1), "美国"), 7L);
+        assertEquals(List.of(), r.changeLog());
+        assertNull(r.warning());
+    }
+
+    @Test
+    void analyze_responseCarriesExtractionMeta() throws Exception {
+        stubExtractionFourFrames();
+        ReverseAnalyzeResponse r = service.analyze(analyzeReq(List.of("KEYFRAMES"), null, "src-1"), 7L);
+        assertEquals(60.0, r.durationSeconds());
+        assertEquals(VideoReverseService.MODE_SCENE, r.mode());
+        assertEquals(4, r.sceneHits());
     }
 }
