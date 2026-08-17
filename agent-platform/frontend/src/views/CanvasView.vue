@@ -162,6 +162,7 @@
         <PropertyPanel
           :node="selectedNode"
           :running="isNodeRunning(selectedNode?.id)"
+          :reversing="reversingNodeId === selectedNode?.id"
           :candidates="mentionCandidates"
           :broken-mentions="brokenMentions"
           :all-labels="otherLabels"
@@ -175,6 +176,9 @@
           @annotate="onAnnotate"
           @extract-frame="onExtractFrame"
           @clip-video="onClipVideo"
+          @reverse-analyze="onReverseAnalyze"
+          @reverse-cancel="onReverseCancel"
+          @localize-script="onLocalizeScript"
           @save-to-asset="onSaveToAsset"
           @pick-from-asset="onPickFromAsset"
           @check-update="onCheckUpdate"
@@ -317,7 +321,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
-import type { AttachmentRef, ImageModelVO, ImageSubmitRequest } from '@/api/media'
+import type { AttachmentRef, ImageModelVO, ImageSubmitRequest, ReverseMode } from '@/api/media'
 import { buildCanvasReferenceList, resolveCanvasVideoAttachments, type CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
 import { expandGroupCandidates } from '@/utils/groupCandidates'
 import { pollMediaTask } from '@/utils/mediaTaskPolling'
@@ -1607,6 +1611,182 @@ async function onClipVideo(payload: { node: CanvasNode; startSec: number; endSec
     scheduleSave()
   } catch (e: unknown) {
     const msg = (e as { msg?: string })?.msg || '截取失败'
+    boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeIds.value.clear()
+  }
+}
+
+// ---------- 计划6 视频反推 + 本土化转绘（画布入口，spec §5.1） ----------
+
+/** 反推进行中的节点 id（PropertyPanel reversing 徽标）；AbortController 供「取消反推」（plan L2）。 */
+const reversingNodeId = ref<string | null>(null)
+let reverseAbort: AbortController | null = null
+
+/** axios/浏览器取消错误识别（ERR_CANCELED=CanceledError / AbortError）。 */
+function isAbortError(e: unknown): boolean {
+  const err = e as { code?: string; name?: string }
+  return err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.name === 'AbortError'
+}
+
+/** 分镜表 → 表格化文本（storyboard 节点 description；LLM 字段开放，仅取已知键、缺省容错）。 */
+function storyboardToText(shots: Record<string, unknown>[]): string {
+  return shots.map(s => {
+    const no = s.shotNo ?? '-'
+    const start = typeof s.startSec === 'number' ? s.startSec.toFixed(1) : '?'
+    const end = typeof s.endSec === 'number' ? s.endSec.toFixed(1) : '?'
+    const size = s.shotSize ? `${s.shotSize}` : ''
+    const move = s.cameraMove ? `/${s.cameraMove}` : ''
+    const desc = s.description ?? ''
+    const dlg = s.dialogue ? ` 台词：${s.dialogue}` : ''
+    return `#${no} ${start}-${end}s ${size}${move} ${desc}${dlg}`
+  }).join('\n')
+}
+
+/** 后端 localizedScript 为紧凑 JSON 串 → 缩进美化便于节点内查看/编辑（非 JSON 原样返回）。 */
+function prettyJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+/** 建一个节点并连回源节点（extract/clip 模式复用；返回新建节点）。 */
+function addDerivedNode(type: string, src: CanvasNode, offsetX: number, offsetY: number, data: Record<string, unknown>) {
+  boardRef.value?.addNode({
+    type,
+    position: { x: (src.position?.x ?? 0) + offsetX, y: (src.position?.y ?? 0) + offsetY },
+    data: { ...data, sourceNodeId: src.id }
+  })
+  const nodes = boardRef.value!.getNodes()
+  const created = nodes[nodes.length - 1]
+  if (created) boardRef.value!.addEdge(src.id, created.id)
+  return created
+}
+
+/**
+ * 视频反推：analyze（120s + background + AbortController 可取消）→
+ * 关键帧每帧一个图节点（鉴权 blob 预览）纵向连自视频节点；分镜表→storyboard 节点（表格化文本）；
+ * 剧本→script 节点（synopsis=美化 JSON）。取消：请求中断，画布零节点（已落库帧文件保留，可重跑，plan L2）。
+ */
+async function onReverseAnalyze(payload: {
+  node: CanvasNode
+  modes: ReverseMode[]
+  maxFrames?: number
+  sceneThreshold?: number
+}) {
+  if (!editingId.value || !payload.node) return
+  const src = payload.node
+  const srcFileId = (src.data as Record<string, unknown>).fileId as string | undefined
+  if (!srcFileId) {
+    message.warning('视频节点无源文件，请先生成或等待视频完成')
+    return
+  }
+  reverseAbort = new AbortController()
+  reversingNodeId.value = src.id
+  try {
+    const res = await mediaApi.reverseAnalyze(
+      {
+        fileId: srcFileId,
+        modes: payload.modes,
+        maxFrames: payload.maxFrames,
+        sceneThreshold: payload.sceneThreshold
+      },
+      reverseAbort.signal
+    )
+    const r = res.data.data
+    // 关键帧列：纵向排布（每帧一图节点，fileId=原始帧；预览走鉴权 blob objectURL）
+    for (let i = 0; i < r.keyframes.length; i++) {
+      const kf = r.keyframes[i]
+      const previewUrl = await fetchCanvasPreview(kf.fileId)
+      addDerivedNode('image', src, 280, i * 120, {
+        label: `帧${kf.shotNo}@${kf.timestampSec.toFixed(1)}s`,
+        fileId: kf.fileId,
+        previewUrl,
+        parentFileId: srcFileId,
+        status: 'success'
+      })
+    }
+    let colX = 580
+    if (r.storyboard && r.storyboard.length > 0) {
+      addDerivedNode('storyboard', src, colX, 0, {
+        label: `分镜表(${r.storyboard.length}镜)`,
+        description: storyboardToText(r.storyboard),
+        status: 'success'
+      })
+      colX += 300
+    }
+    if (r.script) {
+      addDerivedNode('script', src, colX, 0, {
+        label: '剧本',
+        synopsis: JSON.stringify(r.script, null, 2),
+        status: 'success'
+      })
+    }
+    message.success(
+      `反推完成（${r.mode === 'SCENE' ? '场景检测' : '均匀采样'}）：${r.keyframes.length} 帧` +
+      (r.storyboard ? ` · 分镜 ${r.storyboard.length} 镜` : '') +
+      (r.script ? ' · 剧本' : '')
+    )
+    scheduleSave()
+  } catch (e: unknown) {
+    if (isAbortError(e)) {
+      message.info('已取消反推：未产生节点；已落库的帧文件保留，可重新发起')
+      return
+    }
+    const msg = (e as { msg?: string })?.msg || '反推失败'
+    boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
+    message.error(msg)
+  } finally {
+    reversingNodeId.value = null
+    reverseAbort = null
+  }
+}
+
+/** 取消反推：仅中断请求（in-flight FFmpeg/LLM 由服务端自然完成并计费，画布不建节点）。 */
+function onReverseCancel() {
+  reverseAbort?.abort()
+}
+
+/**
+ * 本土化转绘：script(synopsis)/storyboard(description) 文本 → localize →
+ * 新 script 节点连自原节点（synopsis=美化 JSON，changeLog/localizeWarning 存 data 供详情核对）。
+ * warning 非空=场景数不一致：toast 提示但结果仍可用（spec §5.1 / plan L3）。
+ */
+async function onLocalizeScript(payload: { node: CanvasNode; targetLocale: string; notes?: string }) {
+  if (!editingId.value || !payload.node) return
+  const src = payload.node
+  const key = src.type === 'storyboard' ? 'description' : 'synopsis'
+  const scriptText = ((src.data as Record<string, unknown>)[key] as string | undefined)?.trim()
+  if (!scriptText) {
+    message.warning('节点内容为空，无法转绘')
+    return
+  }
+  runningNodeIds.value.add(src.id)
+  try {
+    const res = await mediaApi.reverseLocalize({
+      script: scriptText,
+      targetLocale: payload.targetLocale,
+      notes: payload.notes
+    })
+    const r = res.data.data
+    addDerivedNode('script', src, 280, 160, {
+      label: `本土化(${payload.targetLocale})`,
+      synopsis: prettyJson(r.localizedScript),
+      changeLog: r.changeLog,
+      localizeWarning: r.warning ?? undefined,
+      status: 'success'
+    })
+    if (r.warning) {
+      message.warning(`${r.warning}（结果仍可用，请人工核对）`)
+    } else {
+      message.success(`转绘完成：已产新剧本节点（替换 ${r.changeLog.length} 处）`)
+    }
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '转绘失败'
     boardRef.value?.updateNodeData(src.id, { errorMsg: msg })
     message.error(msg)
   } finally {

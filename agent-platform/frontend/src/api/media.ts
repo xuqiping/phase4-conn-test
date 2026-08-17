@@ -290,6 +290,70 @@ export interface StoredFileRef {
   fileId: string
 }
 
+// === 视频反推与本土化转绘（计划6，对齐后端 media/reverse/dto） ===
+
+/** 反推产物组合（后端 modes 白名单子集）。 */
+export type ReverseMode = 'KEYFRAMES' | 'STORYBOARD' | 'SCRIPT'
+
+/** 关键帧（fileId=原始帧供查看，thumbFileId=缩略帧；无缩略时两者相同）。 */
+export interface ReverseKeyframe {
+  fileId: string
+  thumbFileId: string
+  timestampSec: number
+  shotNo: number
+}
+
+/** 分镜条目（LLM 产物，字段开放——提示词约束核心字段名）。 */
+export interface ReverseStoryboardShot extends Record<string, unknown> {
+  shotNo?: number
+  startSec?: number
+  endSec?: number
+  shotSize?: string
+  cameraMove?: string
+  description?: string
+  dialogue?: string
+}
+
+/** 反推分析请求（taskId/fileId 二选一）。 */
+export interface ReverseAnalyzeRequest {
+  taskId?: number | null
+  fileId?: string | null
+  modes: ReverseMode[]
+  sceneThreshold?: number
+  maxFrames?: number
+}
+
+/** 反推分析响应：keyframes 恒有；storyboard/script 按请求 modes 带（未请求为 null）。 */
+export interface ReverseAnalyzeResult {
+  keyframes: ReverseKeyframe[]
+  durationSeconds: number
+  mode: 'SCENE' | 'UNIFORM'
+  sceneHits: number
+  storyboard: ReverseStoryboardShot[] | null
+  script: Record<string, unknown> | null
+  /** 实际使用的模型（请求未指定时为管理员默认，可能非多模态——用户可感知） */
+  model: string | null
+}
+
+/** 本土化转绘请求/响应（warning=结构校验告警，非空=场景数不一致，结果仍可用）。 */
+export interface LocalizeRequest {
+  script: string
+  targetLocale: string
+  notes?: string
+}
+
+export interface LocalizeChange extends Record<string, unknown> {
+  from?: string
+  to?: string
+  scene?: string
+}
+
+export interface LocalizeResult {
+  localizedScript: string
+  changeLog: LocalizeChange[]
+  warning: string | null
+}
+
 // === API 函数 ===
 
 export const mediaApi = {
@@ -337,6 +401,33 @@ export const mediaApi = {
     return request.post<ApiResponse<StoredFileRef>>('/files/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 120000 // 参考视频最大 50MB，放宽上传超时
+    })
+  },
+
+  // === 视频反推与本土化转绘（计划6，/api/media/reverse/**） ===
+
+  /**
+   * POST /api/media/reverse/analyze — 反推分析（关键帧恒返 + 分镜/剧本按 modes，media:gen）。
+   * 同步接口：抽帧 + 单次多模态 LLM（秒级~分钟级）→ timeout 放大 120s + background 标记
+   * （防一次网络波动触发断路，规格 §4.1）；signal 接 AbortController 供「取消反推」（plan L2）。
+   */
+  reverseAnalyze(data: ReverseAnalyzeRequest, signal?: AbortSignal) {
+    return request.post<ApiResponse<ReverseAnalyzeResult>>('/media/reverse/analyze', data, {
+      timeout: 120000,
+      _background: true,
+      signal
+    })
+  },
+
+  /**
+   * POST /api/media/reverse/localize — 剧本本土化改写（剧情/分镜结构不变，文化元素替换）。
+   * 纯 LLM 文本调用，60s 足够；background 同上（长请求不触发断路）。
+   */
+  reverseLocalize(data: LocalizeRequest, signal?: AbortSignal) {
+    return request.post<ApiResponse<LocalizeResult>>('/media/reverse/localize', data, {
+      timeout: 60000,
+      _background: true,
+      signal
     })
   }
 }

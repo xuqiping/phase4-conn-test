@@ -160,3 +160,62 @@ describe('PropertyPanel C5 节点选模型', () => {
     expect(wrapper.findAll('label').map(l => l.text())).toContain('视频模型')
   })
 })
+
+// 计划6 Step3：视频反推区 + 本土化转绘入口（画布 PropertyPanel）
+describe('PropertyPanel 计划6 视频反推 / 本土化转绘', () => {
+  function mkVideo(data: Record<string, unknown> = {}): CanvasNode {
+    const node = mkNode({ prompt: 'p', ...data })
+    node.type = 'video'
+    return node
+  }
+
+  it('视频节点渲染反推区（三勾选默认关键帧 + 帧数/阈值高级项）', () => {
+    const wrapper = mountPanel(mkVideo({ fileId: 'f1' }))
+    const text = wrapper.text()
+    expect(text).toContain('反推（关键帧 / 分镜表 / 剧本）')
+    expect(text).toContain('关键帧')
+    expect(text).toContain('分镜表')
+    expect(text).toContain('剧本')
+  })
+
+  it('无 fileId（视频未生成）→ 开始反推禁用', () => {
+    const wrapper = mountPanel(mkVideo({}))
+    const btn = wrapper.findAll('button').find(b => b.text().includes('开始反推'))!
+    expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('reversing=true → 取消按钮出现', () => {
+    const wrapper = mount(PropertyPanel, { props: { node: mkVideo({ fileId: 'f1' }), reversing: true } })
+    expect(wrapper.findAll('button').some(b => b.text().includes('取消'))).toBe(true)
+  })
+
+  it('点击开始反推 → emit reverse-analyze（默认 modes=[KEYFRAMES]，未填高级项不传）', async () => {
+    const node = mkVideo({ fileId: 'f1' })
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    const btn = wrapper.findAll('button').find(b => b.text().includes('开始反推'))!
+    await btn.trigger('click')
+    const events = wrapper.emitted('reverse-analyze')
+    expect(events).toHaveLength(1)
+    expect(events![0][0]).toMatchObject({ node, modes: ['KEYFRAMES'] })
+    const payload = events![0][0] as { maxFrames?: number; sceneThreshold?: number }
+    expect(payload.maxFrames).toBeUndefined()
+    expect(payload.sceneThreshold).toBeUndefined()
+  })
+
+  it('script 节点渲染「本土化转绘」按钮；synopsis 空 → 禁用', () => {
+    const node = mkNode({ synopsis: '' })
+    node.type = 'script'
+    const wrapper = mountPanel(node)
+    const btn = wrapper.findAll('button').find(b => b.text().includes('本土化转绘'))!
+    expect(btn).toBeTruthy()
+    expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('storyboard 节点有描述 → 转绘按钮可用', () => {
+    const node = mkNode({ description: '#1 0-5s 远景 开场' })
+    node.type = 'storyboard'
+    const wrapper = mountPanel(node)
+    const btn = wrapper.findAll('button').find(b => b.text().includes('本土化转绘'))!
+    expect(btn.attributes('disabled')).toBeUndefined()
+  })
+})

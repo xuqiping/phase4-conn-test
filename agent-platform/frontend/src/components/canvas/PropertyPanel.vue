@@ -422,6 +422,61 @@
             截取片段
           </n-button>
         </div>
+
+        <!-- 计划6 视频反推：抽帧+多模态 LLM 产 关键帧/分镜表/剧本 → CanvasView 建节点连边（需已生成视频） -->
+        <div class="prop-panel__field">
+          <label>反推（关键帧 / 分镜表 / 剧本）</label>
+          <n-checkbox-group v-model:value="reverseModes">
+            <n-space :size="12">
+              <n-checkbox value="KEYFRAMES" label="关键帧" />
+              <n-checkbox value="STORYBOARD" label="分镜表" />
+              <n-checkbox value="SCRIPT" label="剧本" />
+            </n-space>
+          </n-checkbox-group>
+          <div class="prop-panel__row" style="margin-top: 6px">
+            <n-input-number
+              v-model:value="reverseMaxFrames"
+              size="small"
+              :min="4"
+              :max="24"
+              placeholder="帧数(4-24)"
+              style="flex: 1"
+            />
+            <n-input-number
+              v-model:value="reverseThreshold"
+              size="small"
+              :min="0.1"
+              :max="0.9"
+              :step="0.05"
+              placeholder="阈值0.1-0.9"
+              style="flex: 1"
+            />
+          </div>
+          <div class="prop-panel__hint">
+            帧数默认 12 上限 24；阈值默认 0.3（调低更易识别切镜）。仅勾「关键帧」不调大模型；
+            分镜/剧本按帧计费（≤{{ reverseMaxFrames ?? 12 }} 帧多模态 token）。
+          </div>
+          <div class="prop-panel__row">
+            <n-button
+              size="small"
+              type="primary"
+              block
+              :loading="reversing"
+              :disabled="!node.data.fileId || reverseModes.length === 0"
+              @click="emit('reverse-analyze', {
+                node,
+                modes: [...reverseModes],
+                maxFrames: reverseMaxFrames ?? undefined,
+                sceneThreshold: reverseThreshold ?? undefined
+              })"
+            >
+              开始反推
+            </n-button>
+            <n-button v-if="reversing" size="small" tertiary type="warning" @click="emit('reverse-cancel')">
+              取消
+            </n-button>
+          </div>
+        </div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
         <div v-if="node.data.taskId" class="prop-panel__readonly">
           taskId: {{ node.data.taskId }}
@@ -480,6 +535,16 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连）
           </div>
         </div>
+        <!-- 计划6 本土化转绘（分镜描述文本作为改写输入；产出新 script 节点连自本节点） -->
+        <n-button
+          size="small"
+          block
+          tertiary
+          :disabled="!(node.data.description as string)?.trim()"
+          @click="openLocalize(node)"
+        >
+          本土化转绘
+        </n-button>
       </template>
 
       <!-- 脚本节点：剧本 → LLM 拆分镜（S13 剧本支持 @引用上游产出） -->
@@ -545,6 +610,17 @@
           <template #icon><n-icon :component="PlayOutline" /></template>
           拆分镜
         </n-button>
+        <!-- 计划6 本土化转绘：剧本→目标文化版本（剧情/分镜结构不变），产出新 script 节点 -->
+        <n-button
+          size="small"
+          block
+          tertiary
+          :disabled="!(node.data.synopsis as string)?.trim()"
+          style="margin-top: 6px"
+          @click="openLocalize(node)"
+        >
+          本土化转绘
+        </n-button>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
         <div v-if="sceneCount" class="prop-panel__readonly">已拆 {{ sceneCount }} 分镜</div>
       </template>
@@ -561,17 +637,46 @@
     >
       <video v-if="playVideo" :src="playVideo.url" controls autoplay style="width: 100%; display: block" />
     </n-modal>
+
+    <!-- 计划6 本土化转绘表单弹窗：目标地区+保留要求 → emit localize-script（CanvasView 调接口建新 script 节点） -->
+    <n-modal v-model:show="localizeOpen" preset="card" title="本土化转绘" style="max-width: 480px">
+      <div class="prop-panel__field">
+        <label>目标国家/地区</label>
+        <n-input v-model:value="localizeLocale" size="small" placeholder="如：美国 / 西方 / 日本" />
+      </div>
+      <div class="prop-panel__field">
+        <label>额外保留要求（可选）</label>
+        <n-input
+          v-model:value="localizeNotes"
+          type="textarea"
+          :rows="2"
+          size="small"
+          placeholder="如：保留春节团圆情节"
+        />
+      </div>
+      <div class="prop-panel__hint">
+        剧情、分镜数与顺序不变；只替换文化元素（餐具/服饰/建筑/招牌/节庆等）。改写产新剧本节点，附替换清单（changeLog）可核对。
+      </div>
+      <template #footer>
+        <n-button size="small" type="primary" :disabled="!localizeLocale.trim()" @click="confirmLocalize">
+          开始转绘
+        </n-button>
+      </template>
+    </n-modal>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NModal, NSelect, NSwitch, NTag, NUpload } from 'naive-ui'
+import {
+  NButton, NCheckbox, NCheckboxGroup, NIcon, NInput, NInputNumber, NModal, NSelect, NSpace, NSwitch, NTag, NUpload
+} from 'naive-ui'
 import {
   BrushOutline, CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode, ImageTransformOp } from '@/api/canvas'
+import type { ReverseMode } from '@/api/media'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
@@ -597,6 +702,8 @@ const props = withDefaults(defineProps<{
   node: CanvasNode | null
   /** 该节点是否运行中（按钮 loading + 防重入）。 */
   running?: boolean
+  /** 计划6：视频反推进行中（反推按钮 loading + 取消按钮显隐；与 running 分开——抽帧+LLM 长任务）。 */
+  reversing?: boolean
   /** S13：@选择器候选（当前节点的祖先节点集；无连线可达则空）。 */
   candidates?: MentionCandidate[]
   /** S13：当前节点文本中的断链占位符（上游被删/断连），用于灰显提示 L7/L8。 */
@@ -627,6 +734,17 @@ const emit = defineEmits<{
   (e: 'transform-image', payload: { node: CanvasNode; op: ImageTransformOp }): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void
   (e: 'clip-video', payload: { node: CanvasNode; startSec: number; endSec: number }): void
+  /** 计划6 视频反推：modes 组合+可选帧数/阈值 → analyze（CanvasView 建节点连边；modes 空时按钮禁用）。 */
+  (e: 'reverse-analyze', payload: {
+    node: CanvasNode
+    modes: ReverseMode[]
+    maxFrames?: number
+    sceneThreshold?: number
+  }): void
+  /** 计划6：取消进行中的反推（AbortController；已落库帧文件保留，节点不产生）。 */
+  (e: 'reverse-cancel'): void
+  /** 计划6 本土化转绘：script/storyboard 节点文本 → localize → 新 script 节点（changeLog 存 data）。 */
+  (e: 'localize-script', payload: { node: CanvasNode; targetLocale: string; notes?: string }): void
   /** S12：存入资产库（开 SaveToAssetDialog，L5）。 */
   (e: 'save-to-asset', node: CanvasNode): void
   /** S12：从库选择（开 AssetPicker，L6）。 */
@@ -653,6 +771,37 @@ const frameSecond = ref<number | null>(null)
 /** C12 截取起止秒输入值。 */
 const clipStart = ref<number | null>(null)
 const clipEnd = ref<number | null>(null)
+
+// ---------- 计划6 视频反推 / 本土化转绘 ----------
+
+/** 反推产物勾选（默认只取关键帧——零 LLM 成本；分镜/剧本勾上才调多模态）。 */
+const reverseModes = ref<ReverseMode[]>(['KEYFRAMES'])
+/** 帧数（4-24，空=后端默认 12）与场景阈值（0.1-0.9，空=后端默认 0.3）。 */
+const reverseMaxFrames = ref<number | null>(null)
+const reverseThreshold = ref<number | null>(null)
+
+/** 转绘弹窗状态 + 发起节点（script 取 synopsis / storyboard 取 description 作输入）。 */
+const localizeOpen = ref(false)
+const localizeLocale = ref('')
+const localizeNotes = ref('')
+const localizeSourceNode = ref<CanvasNode | null>(null)
+
+function openLocalize(node: CanvasNode) {
+  localizeSourceNode.value = node
+  localizeLocale.value = ''
+  localizeNotes.value = ''
+  localizeOpen.value = true
+}
+
+function confirmLocalize() {
+  if (!localizeSourceNode.value || !localizeLocale.value.trim()) return
+  emit('localize-script', {
+    node: localizeSourceNode.value,
+    targetLocale: localizeLocale.value.trim(),
+    notes: localizeNotes.value.trim() || undefined
+  })
+  localizeOpen.value = false
+}
 
 // ---------- 2x 四轮 S8：参考缩略全屏/播放（图片 MediaLightbox / 视频 blob 播放弹窗） ----------
 const lightboxSrc = ref<string | null>(null)
