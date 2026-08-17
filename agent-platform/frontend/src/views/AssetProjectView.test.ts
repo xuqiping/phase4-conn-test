@@ -193,6 +193,18 @@ describe('AssetProjectView (S11 项目详情页)', () => {
     expect(vm.writableTargets.map((p) => [p.id, p.role])).toEqual([[8, 'OWNER'], [9, 'EDITOR']])
   })
 
+  it('2x V100 复制管控：allowPublicCopy=false → 公共 VIEWER 不渲染复制按钮（C2）；缺省/true 照常显示', async () => {
+    // 关复制 → 按钮不渲染（非置灰）
+    const hidden = await mountView(['asset:write'], 'VIEWER', { publicPool: true, allowPublicCopy: false })
+    expect(hidden.find('.asset-project__copy-button').exists()).toBe(false)
+
+    // 缺省（旧后端/存量项目视为允许）与显式 true → 照常显示
+    const byDefault = await mountView(['asset:write'], 'VIEWER', { publicPool: true })
+    expect(byDefault.find('.asset-project__copy-button').exists()).toBe(true)
+    const enabled = await mountView(['asset:write'], 'VIEWER', { publicPool: true, allowPublicCopy: true })
+    expect(enabled.find('.asset-project__copy-button').exists()).toBe(true)
+  })
+
   it('真实 NSelect + 复制按钮提交参数正确；成功关闭并清状态，不刷新源资产', async () => {
     const wrapper = await mountView(['asset:write'], 'VIEWER', { publicPool: true })
     await wrapper.find('.asset-project__copy-button').trigger('click')

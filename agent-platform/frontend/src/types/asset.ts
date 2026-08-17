@@ -67,6 +67,8 @@ export interface AssetProjectVO {
   publishedAt?: string | null
   /** 新后端必返；可选仅用于兼容尚未补公众池字段的旧前端夹具。 */
   publishedByAdmin?: boolean
+  /** 2x 待决策项（V100）：是否允许公共用户复制资产（发布弹窗回显/复制按钮显隐；缺省视为 true）。 */
+  allowPublicCopy?: boolean
   /** 成员打分开关（V124/C6）：OWNER 恒可评；EDITOR 评分需开关开启。 */
   memberScoringEnabled?: boolean
   /** 内容模式（V124/C6）：PERSONAL=成员仅能管理自己上传的内容。 */
@@ -91,6 +93,8 @@ export interface PublicProjectSummaryVO {
   usable: boolean
   /** 2x#4：项目媒体类型（jsonb 字符串），选择器按图片/视频过滤公共池项目 */
   mediaTypes?: string | null
+  /** 2x V100：是否允许公共用户复制资产（公共 VIEWER 复制按钮显隐依据）。 */
+  allowPublicCopy?: boolean | null
 }
 
 export interface ProjectCreateRequest {
@@ -160,6 +164,8 @@ export interface PublicAccessRequestVO {
 
 export interface PublicPublishRequest {
   accessMode: PublicAccessMode
+  /** 2x V100：是否允许公共用户复制资产（缺省=沿用当前值）。 */
+  allowPublicCopy?: boolean
 }
 
 export interface PublicAccessDecisionRequest {

@@ -62,7 +62,7 @@
           <div v-for="a in assets" :key="a.id" class="asset-project__asset-item">
             <AssetCard :asset="a" @open="openDetail" />
             <n-button
-              v-if="isPublicViewer"
+              v-if="canCopyAsset"
               class="asset-project__copy-button"
               size="small"
               secondary
@@ -297,6 +297,11 @@ const canWrite = computed(() => {
 
 /** 公共池 VIEWER 可浏览并复制，但仍不能编辑源项目。 */
 const isPublicViewer = computed(() => project.value?.publicPool === true && project.value.role === 'VIEWER')
+/**
+ * 2x V100：复制按钮显隐——公共 VIEWER 且项目允许复制（不渲染非置灰，C2）；
+ * 发布方关闭后重进/刷新即消失（L2）；后端另有 403 兜底（直调 API）。
+ */
+const canCopyAsset = computed(() => isPublicViewer.value && project.value?.allowPublicCopy !== false)
 
 // === C7 评分/PERSONAL 门控（对齐后端 C6：OWNER 恒可评独立轨；EDITOR 随开关均分轨；VIEWER 不可） ===
 const isOwner = computed(() => project.value?.role === 'OWNER')

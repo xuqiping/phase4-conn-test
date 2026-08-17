@@ -75,7 +75,28 @@ describe('PublicPublishDialog', () => {
     vm.mode = 'APPROVAL_REQUIRED'
     await vm.submit()
 
-    expect(publicPoolApi.publish).toHaveBeenCalledWith(7, { accessMode: 'APPROVAL_REQUIRED' })
+    expect(publicPoolApi.publish).toHaveBeenCalledWith(7, { accessMode: 'APPROVAL_REQUIRED', allowPublicCopy: true })
+  })
+
+  it('2x V100 复制开关：默认开；关掉后发布携带 allowPublicCopy=false；回显上次选择', async () => {
+    // 默认开
+    const wrapper = mountDialog()
+    const vm = wrapper.vm as unknown as {
+      allowCopy: boolean
+      submit: () => Promise<void>
+    }
+    expect(vm.allowCopy).toBe(true)
+    expect(wrapper.text()).toContain('关闭后公共用户仅可引用，不可复制副本')
+
+    // 关掉 → 发布携带 false
+    vm.allowCopy = false
+    await vm.submit()
+    expect(publicPoolApi.publish).toHaveBeenCalledWith(7, { accessMode: 'OPEN', allowPublicCopy: false })
+
+    // 回显：项目上次发布选了「关」（unpublish 后再发布）→ 打开弹窗默认关
+    const reopened = mountDialog({ project: { ...project(), allowPublicCopy: false } })
+    const vm2 = reopened.vm as unknown as { allowCopy: boolean }
+    expect(vm2.allowCopy).toBe(false)
   })
 
   it('管理员显示官方发布说明并固定为 OPEN，不提供审批模式选项', async () => {
@@ -88,7 +109,7 @@ describe('PublicPublishDialog', () => {
     expect(wrapper.text()).not.toContain('使用前需要申请')
 
     await vm.submit()
-    expect(publicPoolApi.publish).toHaveBeenCalledWith(7, { accessMode: 'OPEN' })
+    expect(publicPoolApi.publish).toHaveBeenCalledWith(7, { accessMode: 'OPEN', allowPublicCopy: true })
   })
 
   it('成功后提示、通知项目 id 并关闭弹窗', async () => {

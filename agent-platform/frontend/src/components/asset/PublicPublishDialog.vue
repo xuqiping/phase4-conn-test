@@ -42,6 +42,18 @@
         </n-radio-group>
       </section>
 
+      <!-- 2x 待决策项（V100）：发布时自选「是否允许公共用户复制资产」，OWNER/admin 均可设 -->
+      <section aria-labelledby="public-copy-heading">
+        <div class="public-publish-dialog__section-title">复制权限</div>
+        <div class="public-publish-dialog__copy-switch">
+          <n-switch v-model:value="allowCopy" aria-label="允许公共用户复制资产" />
+          <span>
+            <strong>允许公共用户复制资产</strong>
+            <small>关闭后公共用户仅可引用，不可复制副本；项目成员不受影响。</small>
+          </span>
+        </div>
+      </section>
+
       <n-alert v-if="error" type="error" :show-icon="true" role="alert">{{ error }}</n-alert>
     </div>
 
@@ -58,7 +70,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NIcon, NModal, NRadio, NRadioGroup, NSpace, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NIcon, NModal, NRadio, NRadioGroup, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
 import { RibbonOutline } from '@vicons/ionicons5'
 import { publicPoolApi } from '@/api/assets'
 import type { AssetProjectVO, PublicAccessMode } from '@/types/asset'
@@ -76,6 +88,8 @@ const emit = defineEmits<{
 
 const message = useMessage()
 const mode = ref<PublicAccessMode>('OPEN')
+/** 2x V100：是否允许公共用户复制资产（发布弹窗自选，回显上次值）。 */
+const allowCopy = ref(true)
 const error = ref('')
 const publishingProjectIds = ref<number[]>([])
 const completedProjectIds = ref<number[]>([])
@@ -103,6 +117,8 @@ watch(
     }
     mode.value = 'OPEN'
     error.value = ''
+    // 2x V100 回显：再发布沿用上次选择（unpublish 不清此值）；新项目/旧后端缺省 → 默认开
+    allowCopy.value = props.project?.allowPublicCopy ?? true
     if (!show) return
   },
   { immediate: true }
@@ -161,7 +177,7 @@ async function submit() {
   const accessMode: PublicAccessMode = props.isAdmin ? 'OPEN' : mode.value
   let closeCurrentDialog = false
   try {
-    await publicPoolApi.publish(currentProject.id, { accessMode })
+    await publicPoolApi.publish(currentProject.id, { accessMode, allowPublicCopy: allowCopy.value })
     emit('published', currentProject.id)
     setCompleted(currentProject.id, true)
     if (isCurrentContext(context)) {
@@ -179,7 +195,7 @@ async function submit() {
   if (closeCurrentDialog && isCurrentContext(context)) emit('update:show', false)
 }
 
-defineExpose({ mode, submitting, publishCompleted, error, submit, handleShowUpdate })
+defineExpose({ mode, allowCopy, submitting, publishCompleted, error, submit, handleShowUpdate })
 </script>
 
 <style scoped lang="scss">
@@ -213,6 +229,27 @@ defineExpose({ mode, submitting, publishCompleted, error, submit, handleShowUpda
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   cursor: pointer;
+}
+
+.public-publish-dialog__copy-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+}
+
+.public-publish-dialog__copy-switch > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.public-publish-dialog__copy-switch strong {
+  color: var(--color-text-primary);
+}
+
+.public-publish-dialog__copy-switch small {
+  color: var(--color-text-secondary);
+  line-height: 1.65;
 }
 
 .public-publish-dialog__mode--selected {
