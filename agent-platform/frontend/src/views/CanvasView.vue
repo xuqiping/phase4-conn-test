@@ -156,6 +156,7 @@
           @upload="onUploadFile"
           @focus-edit="onFocusEdit"
           @transform-image="onTransformImage"
+          @annotate="onAnnotate"
           @extract-frame="onExtractFrame"
           @clip-video="onClipVideo"
           @save-to-asset="onSaveToAsset"
@@ -173,6 +174,15 @@
         :preview-url="(focusNode.data.previewUrl as string | undefined)"
         @confirm="onFocusConfirm"
         @cancel="focusNode = null"
+      />
+
+      <!-- 2x 四轮 S7：彩色标注沉浸 overlay（生成标注图 / AI 修改双出口） -->
+      <AnnotateOverlay
+        v-if="annotateNode"
+        :preview-url="(annotateNode.data.previewUrl as string | undefined)"
+        @confirm-annotate="onAnnotateConfirm"
+        @confirm-ai="onAnnotateAi"
+        @cancel="annotateNode = null"
       />
 
       <!-- C13 故事板抽屉（视频段时间线排列 + 顺序预览 + 拼接成片） -->
@@ -264,6 +274,8 @@ import type { CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } 
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
+import AnnotateOverlay, { type AnnotateConfirmPayload } from '@/components/canvas/AnnotateOverlay.vue'
+import { ANNOTATE_COLOR_NAMES } from '@/api/canvas'
 import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
@@ -304,6 +316,9 @@ function isNodeRunning(id?: string | null): boolean {
 }
 /** 焦点编辑中的图节点（null=关闭沉浸 overlay）。 */
 const focusNode = ref<CanvasNode | null>(null)
+
+/** 2x 四轮 S7：彩色标注弹层锚定节点（FocusEditOverlay 同范式）。 */
+const annotateNode = ref<CanvasNode | null>(null)
 /** 3x-C1 框选多选集（≥2 驱动批量工具条；[] 回单选/空选）。 */
 const multiSelectedIds = ref<string[]>([])
 
@@ -754,6 +769,122 @@ async function onTransformImage(payload: { node: CanvasNode; op: ImageTransformO
     scheduleSave()
   } catch (e: unknown) {
     const msg = (e as { msg?: string })?.msg || '图片变换失败'
+    boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeIds.value.delete(src.id)
+  }
+}
+
+// ---- 2x 四轮 S7：彩色框选标注（生成标注图 / AI 修改双出口，spec §6.2） ----
+
+/** S7：进入彩色标注弹层。 */
+function onAnnotate(node: CanvasNode) {
+  annotateNode.value = node
+}
+
+/** 节点显示名（衍生节点 label 前缀用；空名回落「图」）。 */
+function nodeLabelOf(n: CanvasNode): string {
+  return (n.data.label as string | undefined)?.trim() || '图'
+}
+
+/**
+ * S7 公共步：服务端 ANNOTATE 合成（EXIF 归正 + 框 + 序号徽标）→ 建「源名·标注」图节点 + 连边。
+ * 返回新节点（供 AI 出口继续串下游）；失败上抛由调用方标红源节点。
+ */
+async function annotateSubmit(src: CanvasNode, payload: AnnotateConfirmPayload): Promise<CanvasNode | null> {
+  const res = await canvasApi.annotateImage(editingId.value!, src.id, payload.boxes)
+  const f = res.data.data
+  const previewUrl = await fetchCanvasPreview(f.fileId)
+  boardRef.value!.addNode({
+    type: 'image',
+    position: { x: (src.position?.x ?? 0) + 260, y: (src.position?.y ?? 0) + 120 },
+    data: {
+      label: `${nodeLabelOf(src)}·标注`,
+      fileId: f.fileId,
+      previewUrl,
+      parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
+      sourceNodeId: src.id,
+      annotateCount: payload.boxes.length,
+      status: 'success'
+    }
+  })
+  const nodes = boardRef.value!.getNodes()
+  const created = nodes[nodes.length - 1]
+  if (created) boardRef.value!.addEdge(src.id, created.id)
+  return created ?? null
+}
+
+/** S7 出口①：仅合成标注图 → 新图节点（无 AI）。 */
+async function onAnnotateConfirm(payload: AnnotateConfirmPayload) {
+  const src = annotateNode.value
+  if (!src || !boardRef.value || !editingId.value) return
+  runningNodeIds.value.add(src.id)
+  boardRef.value.updateNodeData(src.id, { status: 'running', errorMsg: '' })
+  try {
+    await annotateSubmit(src, payload)
+    boardRef.value.updateNodeData(src.id, { status: 'success', errorMsg: '' })
+    annotateNode.value = null
+    message.success('已生成标注图节点')
+    scheduleSave()
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || '标注图生成失败'
+    boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
+    message.error(msg)
+  } finally {
+    runningNodeIds.value.delete(src.id)
+  }
+}
+
+/**
+ * S7 出口②：AI 修改。先合成标注图节点，再建下游 AI 图节点——
+ * prompt = @原图 @标注图 + 逐框指令清单（@图节点经 resolveCanvasVideoAttachments 序号化为图1/图2 参考图）；
+ * 复制源节点生图参数（model/size/...）；有 model 即自动提交（走既有 onRunImage 链路），否则提示选模型后手动运行。
+ */
+async function onAnnotateAi(payload: AnnotateConfirmPayload) {
+  const src = annotateNode.value
+  if (!src || !boardRef.value || !editingId.value) return
+  runningNodeIds.value.add(src.id)
+  boardRef.value.updateNodeData(src.id, { status: 'running', errorMsg: '' })
+  try {
+    const annotated = await annotateSubmit(src, payload)
+    if (!annotated) throw new Error('标注节点创建失败')
+    const instructionList = payload.instructions
+      .map(i => `第${i.index}（${ANNOTATE_COLOR_NAMES[i.color]}）框：${i.text || '按图示区域优化'}`)
+      .join('；')
+    // 复制源节点已配的生图参数（AI 节点继承尺寸/格式等 capability 字段）
+    const GEN_PARAM_KEYS = ['model', 'size', 'customSize', 'outputFormat', 'optimizeMode',
+      'guidanceScale', 'sequential', 'maxImages', 'watermark', 'webSearch']
+    const genParams: Record<string, unknown> = {}
+    for (const k of GEN_PARAM_KEYS) {
+      const v = (src.data as Record<string, unknown>)[k]
+      if (v !== undefined) genParams[k] = v
+    }
+    boardRef.value.addNode({
+      type: 'image',
+      position: { x: (annotated.position?.x ?? 0) + 260, y: annotated.position?.y ?? 0 },
+      data: {
+        label: `${nodeLabelOf(src)}·AI修改`,
+        prompt: `@{{node:${src.id}}} @{{node:${annotated.id}}}\n参考图1为原图，参考图2为标注图。按标注图序号逐框修改：${instructionList}`,
+        ...genParams,
+        sourceNodeId: annotated.id,
+        aiFromAnnotate: true
+      }
+    })
+    const nodes = boardRef.value.getNodes()
+    const aiNode = nodes[nodes.length - 1]
+    if (aiNode) boardRef.value.addEdge(annotated.id, aiNode.id)
+    boardRef.value.updateNodeData(src.id, { status: 'success', errorMsg: '' })
+    annotateNode.value = null
+    scheduleSave()
+    if (aiNode && genParams.model) {
+      message.info('已建 AI 修改节点并提交生成…')
+      void onRunImage(aiNode)
+    } else {
+      message.warning('已建 AI 修改节点，选择图片模型后点「AI 生图」运行')
+    }
+  } catch (e: unknown) {
+    const msg = (e as { msg?: string })?.msg || 'AI 修改链路失败'
     boardRef.value.updateNodeData(src.id, { status: 'failed', errorMsg: msg })
     message.error(msg)
   } finally {

@@ -231,6 +231,16 @@
           <template #icon><n-icon :component="CropOutline" /></template>
           焦点编辑（框选裁剪）
         </n-button>
+        <n-button
+          size="small"
+          block
+          tertiary
+          :disabled="!node.data.fileId"
+          @click="emit('annotate', node)"
+        >
+          <template #icon><n-icon :component="BrushOutline" /></template>
+          彩色标注（框选标改）
+        </n-button>
         <!-- 2x 四轮 S6：确定性翻转/旋转（有源图才可变换；每次产新衍生图节点，原图不可变） -->
         <div v-if="node.data.fileId" class="prop-panel__transform">
           <button
@@ -533,7 +543,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NSelect, NSwitch, NTag, NUpload } from 'naive-ui'
 import {
-  CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
+  BrushOutline, CloudUploadOutline, CropOutline, PlayOutline, SparklesOutline
 } from '@vicons/ionicons5'
 import type { CanvasNode, MentionCandidate } from '@/types/canvas'
 import type { FrameMode, ImageTransformOp } from '@/api/canvas'
@@ -580,6 +590,8 @@ const emit = defineEmits<{
   (e: 'split-storyboard', node: CanvasNode): void
   (e: 'upload', payload: { node: CanvasNode; file: File }): void
   (e: 'focus-edit', node: CanvasNode): void
+  /** 2x 四轮 S7：彩色标注弹层入口（框选标改 → 标注图 / AI 修改）。 */
+  (e: 'annotate', node: CanvasNode): void
   /** 2x 四轮 S6：确定性翻转/旋转（后端 transform-image → 衍生图节点）。 */
   (e: 'transform-image', payload: { node: CanvasNode; op: ImageTransformOp }): void
   (e: 'extract-frame', payload: { node: CanvasNode; mode: FrameMode; second?: number }): void

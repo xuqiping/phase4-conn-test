@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -229,9 +230,9 @@ public class VideoFrameService {
 
     // ==================== 2x 四轮 S6：图片翻转/旋转（确定性像素变换） ====================
 
-    /** 五种确定性变换（spec §6.1）。ANNOTATE（S7 彩色标注合成）后续扩展同枚举。 */
+    /** 确定性变换（spec §6.1 五 op）+ S7 彩色标注合成（ANNOTATE，走 annotateImage 非 transformImage）。 */
     public enum TransformOp {
-        FLIP_H, FLIP_V, ROTATE_90, ROTATE_180, ROTATE_270;
+        FLIP_H, FLIP_V, ROTATE_90, ROTATE_180, ROTATE_270, ANNOTATE;
 
         /** 客户端 op 字符串解析（白名单枚举校验，大小写敏感防绕过）。非法 → BAD_REQUEST。 */
         public static TransformOp parse(String s) {
@@ -263,6 +264,10 @@ public class VideoFrameService {
         }
         if (op == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "变换类型缺失");
+        }
+        if (op == TransformOp.ANNOTATE) {
+            // 防误用守卫：ANNOTATE 需 boxes 载荷，走 annotateImage（Controller 分流；此处兜底防未来新调用方踩空 switch）
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "ANNOTATE 变换需携带标注框，走标注合成接口");
         }
         long started = System.currentTimeMillis();
         BufferedImage raw = decodeImageGuarded(srcPath);
@@ -300,6 +305,126 @@ public class VideoFrameService {
             log.warn("canvas transformImage encode failed: op={} err={}", op, e.getMessage());
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "变换图编码失败");
         }
+    }
+
+    // ==================== 2x 四轮 S7：彩色框选标注合成（ANNOTATE） ====================
+
+    /** 标注框（归一化坐标 + 颜色键；service 层校验后使用，DTO→record 一次转换）。 */
+    public record AnnotateBox(Double x, Double y, Double w, Double h, String color) {
+    }
+
+    /** 框数上限（spec §6.2：≤8 框，与前端 AnnotateOverlay 同口径）。 */
+    public static final int MAX_ANNOTATE_BOXES = 8;
+
+    /**
+     * 8 色标注板（spec §6.2：红/橙/黄/绿/青/蓝/紫/品红）。键为前后端同名单白名单，
+     * 客户端传任意 hex 绕过配色统一 → 直接拒（BAD_REQUEST）。
+     */
+    public static final java.util.Map<String, Color> ANNOTATE_COLORS = java.util.Map.of(
+            "red", new Color(255, 0, 0),
+            "orange", new Color(255, 140, 0),
+            "yellow", new Color(255, 215, 0),
+            "green", new Color(0, 180, 60),
+            "cyan", new Color(0, 190, 190),
+            "blue", new Color(30, 110, 255),
+            "purple", new Color(150, 60, 255),
+            "magenta", new Color(255, 0, 200));
+
+    /**
+     * 彩色标注合成（2x 四轮 S7 / spec §6.2 出口①）：源图（EXIF 先归正）+ 每框
+     * 30% 半透明填充 + 同色描边 + 左上角序号徽标（同色圆底白数字，与 AI prompt 逐框指令同序号）。
+     *
+     * <p>逐框中文指令不上传不落图——留在前端拼进 AI prompt（出口②）；标注图本身只需框+序号
+     * 供多模态模型定位。产出新 PNG（源图不可变同 transformImage）；安全链路同（loadPath 归属复检在上游）。
+     */
+    public ExtractedFrame annotateImage(Path srcPath, List<AnnotateBox> boxes) {
+        if (srcPath == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "源图路径缺失");
+        }
+        List<AnnotateBox> safe = validateAnnotateBoxes(boxes);
+
+        long started = System.currentTimeMillis();
+        BufferedImage raw = decodeImageGuarded(srcPath);
+        int orientation = ExifOrientation.readOrientation(srcPath);
+        BufferedImage base = orientation > 1 ? ExifOrientation.applyOrientation(raw, orientation) : raw;
+
+        int w = base.getWidth();
+        int h = base.getHeight();
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = dst.createGraphics();
+        try {
+            g.drawImage(base, 0, 0, null);
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            int minDim = Math.min(w, h);
+            int stroke = Math.max(2, minDim / 300);
+            int badgeR = Math.max(10, minDim / 30);
+            g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD,
+                    (int) Math.round(badgeR * 1.2)));
+            java.awt.FontMetrics fm = g.getFontMetrics();
+            for (int i = 0; i < safe.size(); i++) {
+                AnnotateBox b = safe.get(i);
+                Color c = ANNOTATE_COLORS.get(b.color());
+                int px = (int) Math.round(b.x() * w);
+                int py = (int) Math.round(b.y() * h);
+                int pw = Math.max(1, (int) Math.round(b.w() * w));
+                int ph = Math.max(1, (int) Math.round(b.h() * h));
+                // 30% 半透明填充（alpha 77 ≈ 30%），底下原图仍可辨——AI 参考定位用
+                g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 77));
+                g.fillRect(px, py, pw, ph);
+                // 同色实线描边（mark 边界）
+                g.setColor(c);
+                g.setStroke(new java.awt.BasicStroke(stroke));
+                g.drawRect(px, py, pw, ph);
+                // 序号徽标：同色圆底 + 白色数字（夹在图内，贴框左上角）
+                int cx = clampPixel(px + badgeR, 0, w - 1);
+                int cy = clampPixel(py + badgeR, 0, h - 1);
+                g.fillOval(cx - badgeR, cy - badgeR, badgeR * 2, badgeR * 2);
+                String num = String.valueOf(i + 1);
+                g.setColor(Color.WHITE);
+                g.drawString(num, cx - fm.stringWidth(num) / 2, cy + fm.getAscent() / 2 - 1);
+            }
+        } finally {
+            g.dispose();
+        }
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(dst, "png", baos);
+            byte[] bytes = baos.toByteArray();
+            log.info("canvas image annotated: boxes={} exif={} srcW={} srcH={} bytes={} costMs={}",
+                    safe.size(), orientation, w, h, bytes.length, System.currentTimeMillis() - started);
+            return new ExtractedFrame(bytes, "image/png", bytes.length);
+        } catch (IOException e) {
+            log.warn("canvas annotateImage encode failed: err={}", e.getMessage());
+            throw new BusinessException(ErrorCode.UNPROCESSABLE, "标注图编码失败");
+        }
+    }
+
+    /** 逐框校验（空/超限/坐标越界/颜色白名单）→ 返回非空安全列表；非法即抛 BAD_REQUEST。 */
+    private List<AnnotateBox> validateAnnotateBoxes(List<AnnotateBox> boxes) {
+        if (boxes == null || boxes.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "标注框列表为空");
+        }
+        if (boxes.size() > MAX_ANNOTATE_BOXES) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "标注框数超限（最多 " + MAX_ANNOTATE_BOXES + " 个）");
+        }
+        for (AnnotateBox b : boxes) {
+            if (b == null || b.x() == null || b.y() == null || b.w() == null || b.h() == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "标注区域参数缺失");
+            }
+            if (b.x() < 0 || b.y() < 0 || b.w() <= 0 || b.h() <= 0
+                    || b.x() + b.w() > 1.0001 || b.y() + b.h() > 1.0001) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "标注区域非法");
+            }
+            if (b.color() == null || b.color().isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "标注颜色缺失");
+            }
+            if (!ANNOTATE_COLORS.containsKey(b.color())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的标注颜色: " + b.color());
+            }
+        }
+        return boxes;
     }
 
     /**

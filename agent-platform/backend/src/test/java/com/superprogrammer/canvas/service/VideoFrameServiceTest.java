@@ -566,4 +566,146 @@ class VideoFrameServiceTest {
                 + Math.abs(((rgb >> 8) & 0xFF) - c.getGreen())
                 + Math.abs((rgb & 0xFF) - c.getBlue());
     }
+
+    // ==================== 2x 四轮 S7：彩色框选标注合成（annotateImage） ====================
+
+    /** 100x100 纯白 PNG（标注底图——白底下 30% 色块混色可精确推算）。 */
+    private Path writeWhitePng() throws Exception {
+        BufferedImage img = new BufferedImage(100, 100, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 100, 100);
+        g.dispose();
+        Path p = tempDir.resolve("white_" + System.nanoTime() + ".png");
+        ImageIO.write(img, "png", p.toFile());
+        return p;
+    }
+
+    private static VideoFrameService.AnnotateBox box(double x, double y, double w, double h, String color) {
+        return new VideoFrameService.AnnotateBox(x, y, w, h, color);
+    }
+
+    @Test
+    void annotate_singleBox_drawsFillStrokeBadge() throws Exception {
+        // 红框 (0.1,0.1,0.5,0.5) → px=10,py=10,pw=50,ph=50
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.annotateImage(
+                writeWhitePng(), List.of(box(0.1, 0.1, 0.5, 0.5, "red")));
+        assertThat(f.mimeType()).isEqualTo("image/png");
+
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        assertThat(out.getWidth()).isEqualTo(100);
+        assertThat(out.getHeight()).isEqualTo(100);
+        // 框外：原图纯白
+        assertThat(colorDistance(out.getRGB(95, 95), Color.WHITE)).isZero();
+        // 框内部（远离描边/徽标，box 10-60 取 (40,40)）：白底 30% 红混色 ≈ (255,178,178)（PNG 无损，容差 ≤6 防舍入）
+        int interior = out.getRGB(40, 40);
+        assertThat(colorDistance(interior, new Color(255, 178, 178))).isLessThanOrEqualTo(6);
+        // 左描边（x=10，stroke=2 居中覆盖 9-11）：纯红盖在 30% 红上 → 红本红
+        assertThat(colorDistance(out.getRGB(10, 60), new Color(255, 0, 0))).isLessThanOrEqualTo(6);
+        // 序号徽标中心（框左上角内移 badgeR=10 → (20,20)）：圆底红或白数字，必 ≠ 30% 混色
+        int badge = out.getRGB(20, 20);
+        assertThat(colorDistance(badge, new Color(255, 178, 178))).isGreaterThan(30);
+    }
+
+    @Test
+    void annotate_twoBoxes_eachColorRespected() throws Exception {
+        VideoFrameService svc = new VideoFrameService();
+        VideoFrameService.ExtractedFrame f = svc.annotateImage(writeWhitePng(), List.of(
+                box(0.0, 0.0, 0.3, 0.3, "blue"),
+                box(0.6, 0.6, 0.3, 0.3, "green")));
+        BufferedImage out = ImageIO.read(new ByteArrayInputStream(f.bytes()));
+        // 蓝框 (0-30,0-30) 内部取 (25,25)（徽标圆心 10,10 r10 覆盖 0-20，25 距其 21 安全）：
+        // 30% 蓝 (30,110,255) 叠白底 → (187,211,255)
+        int blueArea = out.getRGB(25, 25);
+        assertThat(colorDistance(blueArea, new Color(187, 211, 255))).isLessThanOrEqualTo(6);
+        // 绿框 (60-90) 内部取 (85,85)（远离徽标 70,70 与描边）：30% 绿 (0,180,60) 叠白底 → (178,232,196)
+        int greenArea = out.getRGB(85, 85);
+        assertThat(colorDistance(greenArea, new Color(178, 232, 196))).isLessThanOrEqualTo(6);
+    }
+
+    @Test
+    void annotate_emptyBoxes_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注框列表为空");
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注框列表为空");
+    }
+
+    @Test
+    void annotate_exceedsEightBoxes_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        List<VideoFrameService.AnnotateBox> nine = new java.util.ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            nine.add(box(0.05, 0.05, 0.05, 0.05, "red"));
+        }
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(), nine))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注框数超限");
+    }
+
+    @Test
+    void annotate_boxOutOfBounds_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        // x+w = 1.2 > 1
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(),
+                List.of(box(0.8, 0.1, 0.5, 0.2, "red"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注区域非法");
+        // 负坐标
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(),
+                List.of(box(-0.1, 0.1, 0.2, 0.2, "red"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注区域非法");
+        // 零宽
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(),
+                List.of(box(0.1, 0.1, 0.0, 0.2, "red"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注区域非法");
+    }
+
+    @Test
+    void annotate_unknownColor_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(),
+                List.of(box(0.1, 0.1, 0.3, 0.3, "pink"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的标注颜色");
+        // null/空色
+        assertThatThrownBy(() -> svc.annotateImage(writeWhitePngQuiet(),
+                List.of(box(0.1, 0.1, 0.3, 0.3, null))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("标注颜色缺失");
+    }
+
+    @Test
+    void annotate_nullPath_throwsBadRequest() {
+        VideoFrameService svc = new VideoFrameService();
+        assertThatThrownBy(() -> svc.annotateImage(null, List.of(box(0.1, 0.1, 0.2, 0.2, "red"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("源图路径缺失");
+    }
+
+    @Test
+    void annotateOp_parse_and_transformImageGuard() {
+        assertThat(VideoFrameService.TransformOp.parse("ANNOTATE"))
+                .isEqualTo(VideoFrameService.TransformOp.ANNOTATE);
+        // ANNOTATE 误入 transformImage → 守卫拒绝（防空 switch 产透明图）
+        assertThatThrownBy(() -> new VideoFrameService()
+                .transformImage(writeWhitePngQuiet(), VideoFrameService.TransformOp.ANNOTATE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("ANNOTATE");
+    }
+
+    /** 校验类用例的底图（内容不参与断言，失败仅需路径存在）。 */
+    private Path writeWhitePngQuiet() {
+        try {
+            return writeWhitePng();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }

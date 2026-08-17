@@ -95,6 +95,32 @@ export interface ImageTransformVO {
   op: string
 }
 
+// === 2x 四轮 S7：彩色框选标注合成（对齐后端 AnnotateBoxDTO / ANNOTATE_COLORS 白名单） ===
+
+/** 8 色标注板色键（后端 Map 同名单白名单，任意 hex 拒绝）。 */
+export type AnnotateColor = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta'
+
+/** 单个标注框（归一化 0-1，与 crop 同口径；服务端按源图自然像素换算画框+序号徽标）。 */
+export interface AnnotateBoxPayload {
+  x: number
+  y: number
+  w: number
+  h: number
+  color: AnnotateColor
+}
+
+/** 面板展示用色键 → 中文名（AI prompt 逐框指令「①红色区域：…」同文案）。 */
+export const ANNOTATE_COLOR_NAMES: Record<AnnotateColor, string> = {
+  red: '红色',
+  orange: '橙色',
+  yellow: '黄色',
+  green: '绿色',
+  cyan: '青色',
+  blue: '蓝色',
+  purple: '紫色',
+  magenta: '品红'
+}
+
 // === C13：故事板拼接（对齐后端 StoryboardConcatRequest / StoryboardConcatVO） ===
 
 /** 拼接响应（对齐后端 StoryboardConcatVO）。 */
@@ -229,6 +255,18 @@ export const canvasApi = {
     return request.post<ApiResponse<ImageTransformVO>>(
       `/canvas/${id}/nodes/${nodeId}/transform-image`,
       { op }
+    )
+  },
+
+  /**
+   * POST /api/canvas/{id}/nodes/{nodeId}/transform-image（op=ANNOTATE）— 彩色标注合成（2x 四轮 S7）。
+   * 源图 + ≤8 框（30% 填充+同色描边+序号徽标）→ 新图片文件（SOURCE_CANVAS）；
+   * 框数/坐标/颜色白名单校验在后端 validateAnnotateBoxes。
+   */
+  annotateImage(id: number, nodeId: string, boxes: AnnotateBoxPayload[]) {
+    return request.post<ApiResponse<ImageTransformVO>>(
+      `/canvas/${id}/nodes/${nodeId}/transform-image`,
+      { op: 'ANNOTATE', boxes }
     )
   },
 

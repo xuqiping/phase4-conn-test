@@ -266,7 +266,21 @@ public class CanvasController {
         String sourceFileId = resolveImageFileId(c.getSnapshot(), nodeId);
 
         Path srcPath = fileStorageService.loadPath(sourceFileId, userId, admin);
-        VideoFrameService.ExtractedFrame out = videoFrameService.transformImage(srcPath, op);
+        VideoFrameService.ExtractedFrame out;
+        if (op == VideoFrameService.TransformOp.ANNOTATE) {
+            // S7 彩色标注合成：boxes DTO→record 转换（null 元素由 service 校验拒）
+            List<VideoFrameService.AnnotateBox> boxes = (req == null || req.getBoxes() == null)
+                    ? List.of()
+                    : req.getBoxes().stream()
+                            .map(b -> new VideoFrameService.AnnotateBox(
+                                    b == null ? null : b.getX(), b == null ? null : b.getY(),
+                                    b == null ? null : b.getW(), b == null ? null : b.getH(),
+                                    b == null ? null : b.getColor()))
+                            .toList();
+            out = videoFrameService.annotateImage(srcPath, boxes);
+        } else {
+            out = videoFrameService.transformImage(srcPath, op);
+        }
 
         String fileName = "transform_" + nodeId + "_" + op.name().toLowerCase(Locale.ROOT) + ".png";
         String newFileId = fileStorageService.storeStream(
