@@ -26,6 +26,7 @@
 - 配置类灵活字段优先 JSONB（PostgreSQL 决定性优势）。
 - 文档/对话/记忆大文本走 text 列，不混入主表。
 - 修 bug 在注释里简述理由。
+- **给现有方法加尾参重载后，Mockito 测试的 stub 与 verify 必须同步升参**——旧参 stub/verify 静默命中旧重载（=0 调用），stub 失配还会被被测类 catch 吞成错误分支，比 verify 失配更隐蔽。给 `@RequiredArgsConstructor` 服务加 final 依赖时，手工 `new` 的测试构造器按字段序同步补参。
 
 ## 反幻觉条款（硬性）
 - 不确定或缺少上下文时，**先问，不要编**。
