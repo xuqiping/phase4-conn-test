@@ -10,7 +10,17 @@
     </div>
     <div class="message-bubble__content">
       <div class="message-bubble__role">
-        {{ message.role === 'USER' ? '你' : '助手' }}
+        <span>{{ message.role === 'USER' ? '你' : '助手' }}</span>
+        <!-- 5x 四轮 U5：用户/助手气泡各自独立复制按钮（复制正文，不含思考块） -->
+        <button
+          v-if="message.content"
+          class="message-bubble__copy"
+          :title="copied ? '已复制' : '复制全文'"
+          @click="copyContent"
+        >
+          <n-icon size="13" :component="copied ? CheckmarkOutline : CopyOutline" />
+          <span>{{ copied ? '已复制' : '复制' }}</span>
+        </button>
       </div>
       <!-- Thinking section -->
       <div v-if="thinkingText" class="message-bubble__thinking">
@@ -95,8 +105,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NIcon } from 'naive-ui'
-import { PersonOutline, SparklesOutline } from '@vicons/ionicons5'
+import { NIcon, useMessage } from 'naive-ui'
+import { PersonOutline, SparklesOutline, CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
 import { knowledgeApi } from '@/api/knowledge'
@@ -112,6 +122,22 @@ const emit = defineEmits<{
 }>()
 
 const showThinking = ref(true)
+
+/** 5x 四轮 U5：复制正文（仅 content，思考块不随复制）；1.6s 图标反馈复位。 */
+const copied = ref(false)
+let copiedTimer: number | undefined
+const messageApi = useMessage()
+function copyContent() {
+  navigator.clipboard?.writeText(props.message.content).then(
+    () => {
+      copied.value = true
+      messageApi.success('已复制')
+      window.clearTimeout(copiedTimer)
+      copiedTimer = window.setTimeout(() => { copied.value = false }, 1600)
+    },
+    () => messageApi.error('复制失败，请手动选择复制')
+  )
+}
 
 const thinkingText = computed(() => {
   if (!props.message.metadata) return null
@@ -254,6 +280,41 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   font-size: 12px;
   color: var(--color-text-tertiary);
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.message-bubble__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+
+  &:hover {
+    color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+
+.message-bubble:hover .message-bubble__copy,
+.message-bubble__copy:focus-visible {
+  opacity: 1;
+}
+
+/* 触屏无 hover：复制按钮常显 */
+@media (hover: none) {
+  .message-bubble__copy {
+    opacity: 1;
+  }
 }
 
 .message-bubble__thinking {
