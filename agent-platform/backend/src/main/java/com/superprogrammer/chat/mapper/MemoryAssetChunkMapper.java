@@ -65,4 +65,18 @@ public interface MemoryAssetChunkMapper extends BaseMapper<MemoryAssetChunk> {
                                   @Param("maxDistance") double maxDistance,
                                   @Param("perFileLimit") int perFileLimit,
                                   @Param("limit") int limit);
+
+    /**
+     * 5x 四轮 U8（C5 附件定向召回）：每文件取开头 N 块（按 chunk_no 升序，<b>免向量阈值</b>——
+     * 本轮亲手上传的相关性先验成立；问「这文件讲了什么」要的是文档开篇概览，非 query 近邻）。
+     * distance 恒 0（占位，无相似度语义）。
+     */
+    @Select("SELECT id, asset_memory_id, chunk_no, chunk_text, page_ref, 0.0 AS distance FROM ("
+            + "SELECT id, asset_memory_id, chunk_no, chunk_text, page_ref, "
+            + "ROW_NUMBER() OVER (PARTITION BY asset_memory_id ORDER BY chunk_no ASC) AS rn "
+            + "FROM memory_asset_chunks "
+            + "WHERE deleted = 0 AND asset_memory_id = ANY(#{memoryIds,typeHandler=com.superprogrammer.common.typehandler.LongArrayTypeHandler})) ranked "
+            + "WHERE rn <= #{perFileLimit} ORDER BY asset_memory_id, chunk_no")
+    List<FileChunkHit> headChunksPerFile(@Param("memoryIds") List<Long> memoryIds,
+                                         @Param("perFileLimit") int perFileLimit);
 }

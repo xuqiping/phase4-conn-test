@@ -56,6 +56,8 @@ public class MemoryAssetRecallService {
     static final double MAX_DISTANCE = 0.5d;
     /** 5x 四轮 U3：单文件深读分块上限（窗口 per-file；防分块多的单文件垄断 top-k 挤掉其他文件）。 */
     static final int PER_FILE_TOP_K = 2;
+    /** 5x 四轮 U8（C5）：每附件注入开头分块数（免阈值）。 */
+    static final int ATTACH_TOP_K = 2;
     /** query embed 输入截断（防爆 token）。 */
     private static final int QUERY_CAP = 1000;
 
@@ -278,6 +280,82 @@ public class MemoryAssetRecallService {
                 .toList();
     }
 
+    /**
+     * 5x 四轮 U8（C5 附件定向召回）：本轮消息附件（入口已过归属校验）→
+     * READY 者开头 {@link #ATTACH_TOP_K} 块直接注入（<b>免向量阈值</b>——本轮亲手上传，相关性先验成立；
+     * 问「这文件讲了什么」要的是开篇概览，非 query 近邻）+ 卡片必出（attached=true，pipeline 置顶）；
+     * 非 READY（PROCESSING/FAILED）仅出卡带 attachStatus 状态标，不注入。
+     * fileId 无本人记忆行（未入库/已删）→ 跳过该附件（无内容可注入也无状态可标）。
+     * 任何异常抛给调用方（pipeline 兜 fail-open：按无附件处理，不阻塞聊天）。
+     */
+    public AttachmentRecall recallAttachments(List<String> attachmentFileIds, Long userId) {
+        if (attachmentFileIds == null || attachmentFileIds.isEmpty() || userId == null) {
+            return AttachmentRecall.EMPTY;
+        }
+        List<String> fileIds = attachmentFileIds.stream()
+                .filter(fid -> fid != null && !fid.isBlank()).distinct().toList();
+        if (fileIds.isEmpty()) {
+            return AttachmentRecall.EMPTY;
+        }
+        List<MemoryAssetMemory> rows = memoryMapper.findByFileIdsOwned(fileIds, userId);
+        Map<String, MemoryAssetMemory> rowByFile = rows.stream()
+                .filter(m -> m.getFileId() != null)
+                .collect(Collectors.toMap(MemoryAssetMemory::getFileId, Function.identity(), (a, b) -> a));
+        if (rowByFile.isEmpty()) {
+            return AttachmentRecall.EMPTY;
+        }
+        // 卡片：按附件在消息里的顺序出（置顶由 pipeline 合并时保证）
+        List<RecalledFileCard> cards = new ArrayList<>();
+        List<MemoryAssetMemory> readyRows = new ArrayList<>();
+        for (String fid : fileIds) {
+            MemoryAssetMemory row = rowByFile.get(fid);
+            if (row == null) {
+                continue;
+            }
+            boolean ready = MemoryAssetMemory.STATUS_READY.equals(row.getIngestStatus());
+            if (ready) {
+                readyRows.add(row);
+            }
+            StoredFileEntity meta = null;
+            try {
+                meta = storedFileMapper.selectById(fid);
+            } catch (Exception e) {
+                log.warn("附件卡片元数据回查失败 fileId={}: {}", fid, e.getMessage());
+            }
+            boolean cleaned = meta == null || !StoredFileEntity.STATUS_ACTIVE.equals(meta.getStatus());
+            cards.add(RecalledFileCard.builder()
+                    .memoryId(row.getId())
+                    .fileId(fid)
+                    .originalName(row.getOriginalName())
+                    .fileKind(row.getFileKind())
+                    .chunkCount(0)                    // 附件卡不重复计块（深读块已单独注入）
+                    .weakMemory(row.getWeakMemory())
+                    .fileCleaned(cleaned)
+                    .downloadable(!cleaned)
+                    .l1(row.getL1Summary())
+                    .l2(row.getL2Detail())
+                    .attached(true)                   // 前端「📎 本附件」徽标 + 置顶
+                    .attachStatus(ready ? null : row.getIngestStatus())
+                    .build());
+        }
+        // 注入：仅 READY 行的开头分块（免阈值）
+        List<DeepReadChunk> chunks = List.of();
+        if (!readyRows.isEmpty()) {
+            List<Long> readyIds = readyRows.stream()
+                    .map(MemoryAssetMemory::getId).filter(Objects::nonNull).toList();
+            Map<Long, String> names = readyRows.stream()
+                    .filter(r -> r.getId() != null)
+                    .collect(Collectors.toMap(MemoryAssetMemory::getId,
+                            r -> r.getOriginalName() == null ? "附件" : r.getOriginalName(), (a, b) -> a));
+            chunks = chunkMapper.headChunksPerFile(readyIds, ATTACH_TOP_K).stream()
+                    .map(r -> new DeepReadChunk(r.getAssetMemoryId(),
+                            names.getOrDefault(r.getAssetMemoryId(), "附件"),
+                            r.getPageRef(), r.getChunkText(), 0d))
+                    .toList();
+        }
+        return new AttachmentRecall(List.copyOf(cards), chunks);
+    }
+
     /** 深读命中的分块（装配「文件深读」块用；distance 仅打点/debug）。 */
     public record DeepReadChunk(Long memoryId, String fileName, String pageRef, String chunkText, double distance) {
     }
@@ -285,5 +363,10 @@ public class MemoryAssetRecallService {
     /** 5x 四轮 U3：门控后产物——过阈值的卡片 + 对应深读分块（一次 SQL 双产出）。 */
     public record GatedFileRecall(List<RecalledFileCard> cards, List<DeepReadChunk> chunks) {
         static final GatedFileRecall EMPTY = new GatedFileRecall(List.of(), List.of());
+    }
+
+    /** 5x 四轮 U8（C5）：附件定向召回产物——附件卡片（含非 READY 带状态标）+ READY 附件开头分块。 */
+    public record AttachmentRecall(List<RecalledFileCard> cards, List<DeepReadChunk> chunks) {
+        static final AttachmentRecall EMPTY = new AttachmentRecall(List.of(), List.of());
     }
 }

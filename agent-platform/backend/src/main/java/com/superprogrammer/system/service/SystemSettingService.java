@@ -626,6 +626,16 @@ public class SystemSettingService {
         return getDoubleInRange(MEMORY_RECALL_FILE_CARD_MAX_DISTANCE, 0.5, 0.0, 2.0);
     }
 
+    /**
+     * 5x 四轮 U8（C5）：附件定向召回开关（rag.memory.attachment-recall.enabled，默认开）。
+     * 关 → 带附件消息不做附件段注入（标签召回链不受影响）；异常 fail-open 在调用方兜。
+     */
+    public static final String RAG_MEMORY_ATTACHMENT_RECALL_ENABLED = "rag.memory.attachment-recall.enabled";
+
+    public boolean isAttachmentRecallEnabled() {
+        return getBoolean(RAG_MEMORY_ATTACHMENT_RECALL_ENABLED, true);
+    }
+
     private String getNullableTrimmed(String key) {
         String value = getValue(key);
         return normalizeNullable(value);

@@ -274,7 +274,8 @@ public class ChatSessionService {
         // Load long-term memories（仅记忆模式开启；新栈召回 pipeline，scope 走用户持久化偏好）
         MemoryRecallResult recallResult = null;
         if (ragOn) {
-            recallResult = recallMemory(userId, request.getMessage(), request.getModel());
+            recallResult = recallMemory(userId, request.getMessage(), request.getModel(),
+                    request.getAttachmentFileIds());
             String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 // 安全体系 S3 · SEC-FR-050：记忆含项目共享内容（他人可写）→ 不可信，包围栏
@@ -349,8 +350,11 @@ public class ChatSessionService {
     /**
      * 召回长期记忆（结果含装配文本 + 二期 P3 文件卡片）。scope 走用户持久化偏好（F-6 底栏 popover），
      * 无历史默认 {个人}（设计 §3.3 line113）。pipeline 内部全降级，失败返 null 不崩聊天。
+     * <p>
+     * 5x 四轮 C5：attachmentFileIds 本轮附件 → pipeline 附件定向召回段（READY 开头块免阈值注入 +
+     * attached 卡置顶）。仅在 ragOn 分支调用（拍板④：附件不豁免记忆模式开关）。
      */
-    private MemoryRecallResult recallMemory(Long userId, String query, String model) {
+    private MemoryRecallResult recallMemory(Long userId, String query, String model, List<String> attachmentFileIds) {
         if (userId == null || query == null || query.isBlank()) return null;
         try {
             MemoryRecallScopeRequest scopeReq = memoryRecallPrefService.getScope(userId);
@@ -358,7 +362,7 @@ public class ChatSessionService {
                 scopeReq = new MemoryRecallScopeRequest();
                 scopeReq.setPersonalOn(true);
             }
-            return memoryRecallPipeline.recall(query, scopeReq, userId, model);
+            return memoryRecallPipeline.recall(query, scopeReq, userId, model, attachmentFileIds);
         } catch (Exception e) {
             log.warn("记忆召回失败 userId={} query.len={}: {}", userId, query.length(), e.getMessage());
             return null;
@@ -572,7 +576,8 @@ public class ChatSessionService {
         final java.util.concurrent.atomic.AtomicReference<java.util.List<com.superprogrammer.chat.dto.RecalledFileCard>> recalledFileCards =
                 new java.util.concurrent.atomic.AtomicReference<>();
         if (ragOn) {
-            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage(), request.getModel());
+            MemoryRecallResult recallResult = recallMemory(userId, request.getMessage(), request.getModel(),
+                    request.getAttachmentFileIds());
             String memoryContext = recallResult == null ? "" : recallResult.getAssembledText();
             if (memoryContext != null && !memoryContext.isEmpty()) {
                 // 安全体系 S3 · SEC-FR-050：同同步路径，记忆包围栏

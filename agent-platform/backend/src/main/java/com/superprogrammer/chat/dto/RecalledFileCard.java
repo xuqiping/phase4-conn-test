@@ -23,4 +23,9 @@ public class RecalledFileCard {
     private boolean downloadable; // = !fileCleaned（前端据此渲染下载按钮）
     private String l1;            // 一句话总结
     private String l2;            // 结构化详述（可空）
+
+    /** 5x 四轮 U8（C5 附件定向召回）：本卡片来自本轮消息附件 → 前端「📎 本附件」徽标 + 置顶。 */
+    private Boolean attached;
+    /** 附件非 READY 状态标（PROCESSING/FAILED；null=READY 正常注入）。 */
+    private String attachStatus;
 }

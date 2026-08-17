@@ -13,6 +13,10 @@
         <span class="file-card__meta">
           {{ fileKindLabel(card.fileKind) }}
           <template v-if="card.chunkCount > 0">· 共 {{ card.chunkCount }} 块</template>
+          <span v-if="card.attached" class="file-card__attached">📎 本附件</span>
+          <span v-else-if="card.attachStatus" class="file-card__attach-status"
+                :class="`file-card__attach-status--${card.attachStatus.toLowerCase()}`"
+          >{{ attachStatusText }}</span>
           <span v-if="card.weakMemory" class="file-card__weak">弱记忆</span>
         </span>
       </div>
@@ -62,6 +66,16 @@ const kindIcon = computed(() => {
     case 'AUDIO': return '🎵'
     case 'VIDEO': return '🎬'
     default: return '📎'
+  }
+})
+
+/** C5：非 READY 附件状态文案（PROCESSING=解析中不出分块；FAILED=解析失败可重试）。 */
+const attachStatusText = computed(() => {
+  switch (props.card.attachStatus) {
+    case 'PROCESSING': return '解析中…'
+    case 'FAILED': return '解析失败'
+    case 'PENDING': return '待解析'
+    default: return props.card.attachStatus || ''
   }
 })
 
@@ -154,6 +168,30 @@ async function toggleChunks() {
   border-radius: 8px;
   background: rgba(230, 162, 60, 0.15);
   color: #e6a23c;
+}
+
+.file-card__attached {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(103, 194, 58, 0.15);
+  color: #67c23a;
+}
+
+.file-card__attach-status {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+
+  &--processing, &--pending {
+    background: rgba(144, 147, 153, 0.15);
+    color: #909399;
+  }
+
+  &--failed {
+    background: rgba(245, 108, 108, 0.15);
+    color: #f56c6c;
+  }
 }
 
 .file-card__actions {

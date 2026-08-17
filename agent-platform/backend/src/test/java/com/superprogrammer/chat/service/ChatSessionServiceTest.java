@@ -416,7 +416,7 @@ class ChatSessionServiceTest {
         com.superprogrammer.chat.dto.MemoryRecallScopeRequest pref = new com.superprogrammer.chat.dto.MemoryRecallScopeRequest();
         pref.setPersonalOn(true);
         when(memoryRecallPrefService.getScope(100L)).thenReturn(pref);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any(), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("用户偏好深空主题").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 
@@ -426,9 +426,37 @@ class ChatSessionServiceTest {
         ChatResponse response = chatSessionService.sendMessage(100L, request);
 
         // 召回文本随 LLM 上下文进引擎；新栈写入提交一次
-        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L), any());
+        verify(memoryRecallPipeline).recall(eq("Hello"), argThat(r -> Boolean.TRUE.equals(r.getPersonalOn())), eq(100L), any(), any());
         verify(memoryGenerationService).processTurnAsync(eq(100L), eq(1L), eq("Hello"), eq("回复"), any());
         assertEquals("回复", response.getContent());
+    }
+
+    /** 5x 四轮 C5：ragOn + 带附件 → pipeline 5 参入口收到 attachmentFileIds（附件定向召回链入口）。 */
+    @Test
+    void sendMessage_ragOnWithAttachments_passesAttachmentIdsToPipeline() {
+        when(sessionMapper.selectById(1L)).thenReturn(testSession);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, ChatMessage.class).setId(10L);
+            return 1;
+        });
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(ragModeResolver.resolve(eq("CHAT"), any(), any(), any())).thenReturn(true);
+        when(ragScopeResolver.resolveEffectiveKbs(any(), any(), any(), any(), eq(100L), anyBoolean())).thenReturn(List.of());
+        when(memoryRecallPrefService.getScope(100L)).thenReturn(null);
+        when(memoryRecallPipeline.recall(eq("看下附件"), any(), eq(100L), any(), eq(List.of("f-1")))).thenReturn(
+                com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("").build());
+        when(orchestrationEngine.execute(any(), eq("看下附件"))).thenReturn("回复");
+        when(memoryAssetUploadService.resolveOwnedAttachmentNames(List.of("f-1"), 100L))
+                .thenReturn(List.of("课件.pdf"));
+
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(1L);
+        request.setMessage("看下附件");
+        request.setAttachmentFileIds(List.of("f-1"));
+        chatSessionService.sendMessage(100L, request);
+
+        // 附件 ids 透传 5 参 recall（入口归属校验先行，pipeline 附件段免阈值注入）
+        verify(memoryRecallPipeline).recall(eq("看下附件"), any(), eq(100L), any(), eq(List.of("f-1")));
     }
 
     @Test
@@ -443,7 +471,7 @@ class ChatSessionServiceTest {
         when(ragScopeResolver.resolveEffectiveKbs(any(), any(), any(), any(), eq(100L), anyBoolean())).thenReturn(List.of());
         // 召回装配空串
         when(memoryRecallPrefService.getScope(100L)).thenReturn(null);
-        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any())).thenReturn(
+        when(memoryRecallPipeline.recall(eq("Hello"), any(), eq(100L), any(), any())).thenReturn(
                 com.superprogrammer.chat.dto.MemoryRecallResult.builder().assembledText("").build());
         when(orchestrationEngine.execute(any(), eq("Hello"))).thenReturn("回复");
 

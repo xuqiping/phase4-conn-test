@@ -60,6 +60,8 @@ class MemoryRecallPipelineTest {
     MemoryTagMapper tagMapper;
     @Mock
     MemoryAssetRecallService assetRecallService;
+    @Mock
+    com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     private MemoryRecallPipeline pipeline;
 
@@ -71,7 +73,7 @@ class MemoryRecallPipelineTest {
     @BeforeEach
     void setUp() {
         pipeline = new MemoryRecallPipeline(resolver, aggregator, selector, reader, patcher,
-                entryRecallService, tagMapper, assetRecallService);
+                entryRecallService, tagMapper, assetRecallService, systemSettingService);
         // ①.5 条目合流默认无条目（各条目用例自行覆盖）
         lenient().when(entryRecallService.collectActiveEntries(anyList(), anyLong())).thenReturn(List.of());
         // ⑥.5 文件记忆默认无命中/无深读（各文件用例自行覆盖）；5x 四轮 U3 门控默认桩：
@@ -83,6 +85,8 @@ class MemoryRecallPipelineTest {
                 .thenReturn(MemoryAssetRecallService.GatedFileRecall.EMPTY);
         lenient().when(assetRecallService.gateProjectCards(anyList(), any(float[].class)))
                 .thenAnswer(inv -> inv.getArgument(0));
+        // 5x 四轮 C5：附件召回开关默认开（无附件轮不触发，lenient 防闲置告警）
+        lenient().when(systemSettingService.isAttachmentRecallEnabled()).thenReturn(true);
     }
 
     // ---------- helpers ----------
@@ -832,5 +836,82 @@ class MemoryRecallPipelineTest {
 
         assertTrue(r.getFileCards().isEmpty(), "被门掉的项目卡不透出");
         assertFalse(r.getAssembledText().contains("【文件记忆】"));
+    }
+
+    // ============================ 5x 四轮 U8（C5）· 附件定向召回 ============================
+
+    /** 附件注入：attached 卡置顶 + 同 fileId 门控卡去重 + 附件开头块插最前（非 READY 状态标透传）。 */
+    @Test
+    void attachmentRecall_injectsAndToppesCards() {
+        stubFileRecallBase();
+        // 标签召回链同文件命中（门控过阈卡 memoryId=501 + 深读块）
+        java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> gated = List.of(
+                fileCard(501, "React课件.pdf", false));
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(gated);
+        when(assetRecallService.recallGated(eq(gated), any(float[].class)))
+                .thenReturn(new MemoryAssetRecallService.GatedFileRecall(gated, List.of(
+                        new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第12页", "近邻深读块", 0.2d))));
+        // 附件段：READY 附件 A（file-501 同文件）+ PROCESSING 附件 B
+        com.superprogrammer.chat.dto.RecalledFileCard attachA =
+                com.superprogrammer.chat.dto.RecalledFileCard.builder()
+                        .memoryId(501L).fileId("file-501").originalName("React课件.pdf")
+                        .fileKind("PDF").chunkCount(0).attached(true).fileCleaned(false)
+                        .downloadable(true).l1("附件卡l1").build();
+        com.superprogrammer.chat.dto.RecalledFileCard attachB =
+                com.superprogrammer.chat.dto.RecalledFileCard.builder()
+                        .memoryId(502L).fileId("file-502").originalName("解析中.pdf")
+                        .fileKind("PDF").chunkCount(0).attached(true)
+                        .attachStatus("PROCESSING").fileCleaned(false)
+                        .downloadable(true).l1("附件卡l1-b").build();
+        when(assetRecallService.recallAttachments(List.of("file-501", "file-502"), SELF))
+                .thenReturn(new MemoryAssetRecallService.AttachmentRecall(
+                        List.of(attachA, attachB),
+                        List.of(new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第1页", "附件开篇块", 0d))));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL, List.of("file-501", "file-502"));
+
+        assertEquals(2, r.getFileCards().size(), "附件A(覆盖同fileId门控卡) + 附件B");
+        assertTrue(r.getFileCards().get(0).getAttached(), "附件卡置顶（attached 优先）");
+        assertEquals("file-501", r.getFileCards().get(0).getFileId());
+        assertTrue(Boolean.TRUE.equals(r.getFileCards().get(1).getAttached()));
+        assertEquals("PROCESSING", r.getFileCards().get(1).getAttachStatus(), "非 READY 状态标透传（前端解析中 chip）");
+        assertTrue(r.getAssembledText().contains("【文件记忆】"), "附件卡进文件记忆块");
+        assertTrue(r.getAssembledText().contains("附件开篇块"), "附件开头块注入（免阈值）");
+        assertFalse(r.getAssembledText().contains("近邻深读块"),
+                "同记忆深读块去重（附件开头块已注入，不重复文本）");
+        assertTrue(r.getSteps().stream().anyMatch(s -> "attach-recall".equals(s.step()) && s.count() == 2),
+                "attach-recall 打点 count=2");
+        assertFalse(r.isDegraded(), "附件正常注入非降级");
+    }
+
+    /** 开关关（rag.memory.attachment-recall.enabled=false）→ 跳过附件段，标签召回链不受影响。 */
+    @Test
+    void attachmentRecall_switchOff_skipsAttachmentSection() {
+        when(systemSettingService.isAttachmentRecallEnabled()).thenReturn(false);
+        stubFileRecallBase();
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL, List.of("file-501"));
+
+        verify(assetRecallService, never()).recallAttachments(anyList(), anyLong());
+        assertTrue(r.getNotes().isEmpty(), "配置性跳过不打 notes（不误标 degraded）");
+        assertTrue(r.getFileCards().isEmpty());
+        assertFalse(r.isDegraded());
+    }
+
+    /** 附件段异常 → fail-open 按无附件处理（note 记明细），主干标签召回/turns 兜底不受影响。 */
+    @Test
+    void attachmentRecall_throws_failOpen() {
+        stubFileRecallBase();
+        when(assetRecallService.recallAttachments(anyList(), eq(SELF)))
+                .thenThrow(new RuntimeException("attach db down"));
+        when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of(turn(100, SELF, "INPUT", "兜底原文")));
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL, List.of("file-501"));
+
+        assertTrue(r.isDegraded(), "fail-open 标降级");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("附件召回失败：按无附件处理")));
+        assertTrue(r.getAssembledText().contains("兜底原文"), "turns 兜底不受影响");
+        assertTrue(r.getFileCards().isEmpty());
     }
 }

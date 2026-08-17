@@ -74,4 +74,16 @@ public interface MemoryAssetMemoryMapper extends BaseMapper<MemoryAssetMemory> {
             + "<foreach collection='fileIds' item='fid' open='(' separator=',' close=')'>#{fid}</foreach>"
             + "</script>")
     List<MemoryAssetMemory> findReadyByFileIds(@Param("fileIds") List<String> fileIds);
+
+    /**
+     * 5x 四轮 U8（C5 附件定向召回）：本人文件记忆按 file_id 批量取（<b>任意 ingest_status</b>——
+     * READY 注入开头分块，非 READY 仅出卡带状态标）。owner 过滤 = 归属咽喉第二道
+     * （第一道在 ChatSessionService 入口 resolveOwnedAttachmentNames，防拿他人 fileId 注入内容）。
+     */
+    @Select("<script>"
+            + "SELECT * FROM memory_asset_memories WHERE deleted = 0 AND owner_user_id = #{userId} AND file_id IN "
+            + "<foreach collection='fileIds' item='fid' open='(' separator=',' close=')'>#{fid}</foreach>"
+            + "</script>")
+    List<MemoryAssetMemory> findByFileIdsOwned(@Param("fileIds") List<String> fileIds,
+                                               @Param("userId") Long userId);
 }

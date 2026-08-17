@@ -12,6 +12,7 @@ import com.superprogrammer.chat.entity.MemorySummary;
 import com.superprogrammer.chat.entity.MemoryTag;
 import com.superprogrammer.chat.entity.MemoryTurn;
 import com.superprogrammer.chat.mapper.MemoryTagMapper;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -72,6 +73,7 @@ public class MemoryRecallPipeline {
     private final MemoryEntryRecallService entryRecallService;   // 记忆二期 P1 · ①.5 项目条目合流
     private final MemoryTagMapper tagMapper;                     // 条目标签并入 ② 候选用
     private final MemoryAssetRecallService assetRecallService;   // 记忆二期 P3 · ⑥.5 文件记忆召回+深读
+    private final SystemSettingService systemSettingService;     // 5x 四轮 C5 · 附件定向召回开关（V130）
 
     /**
      * 召回主流程入口。
@@ -83,6 +85,19 @@ public class MemoryRecallPipeline {
      * @return 装配产物 + 打点 + 降级标记
      */
     public MemoryRecallResult recall(String query, MemoryRecallScopeRequest req, Long userId, String model) {
+        return recall(query, req, userId, model, null);
+    }
+
+    /**
+     * 召回主流程入口（5x 四轮 C5 附件定向召回扩展）。
+     *
+     * @param attachmentFileIds 本轮消息附件 fileId 清单（入口已过归属校验；null/空=无附件走原链）。
+     *                          仅受服务层 ragOn 总门控（拍板④不豁免记忆模式开关），不受 personalOn 门——
+     *                          附件是本轮对话上下文非记忆浏览；开关 rag.memory.attachment-recall.enabled
+     *                          关 → 跳过附件段（标签召回链不受影响）；段内异常 fail-open 按无附件处理。
+     */
+    public MemoryRecallResult recall(String query, MemoryRecallScopeRequest req, Long userId, String model,
+                                     List<String> attachmentFileIds) {
         String traceId = UUID.randomUUID().toString();
         List<RecallTraceStep> steps = new ArrayList<>();
         List<String> notes = new ArrayList<>();
@@ -211,6 +226,34 @@ public class MemoryRecallPipeline {
             notes.add("patch 异常: " + e.getMessage());
         }
 
+        // ⑥.4 附件定向召回（5x 四轮 U8/C5）：本轮消息附件 → READY 者开头块免阈值注入 + 卡片必出
+        // （attached=true，合并时置顶）。与标签召回链独立：不受 personalOn/selectDegraded 影响
+        // （附件是亲手上传的当轮上下文，相关性先验成立）；受 ragOn 总门（服务层已控，拍板④不豁免）
+        // + rag.memory.attachment-recall.enabled 热开关。fail-open：异常按无附件处理，不阻塞聊天。
+        long t4g = System.nanoTime();
+        List<RecalledFileCard> attachCards = List.of();
+        List<MemoryAssetRecallService.DeepReadChunk> attachChunks = List.of();
+        if (attachmentFileIds != null && !attachmentFileIds.isEmpty()) {
+            if (!systemSettingService.isAttachmentRecallEnabled()) {
+                // 配置性跳过非降级：不打 notes（避免 degraded 误标），attach-recall step count=0 留痕
+                steps.add(new RecallTraceStep("attach-recall", 0, 0, true));
+            } else {
+                try {
+                    MemoryAssetRecallService.AttachmentRecall att =
+                            assetRecallService.recallAttachments(attachmentFileIds, userId);
+                    attachCards = att.cards();
+                    attachChunks = att.chunks();
+                    steps.add(step("attach-recall", t4g, attachCards.size(), true));
+                } catch (Exception e) {
+                    log.warn("recall traceId={} attach-recall 失败（fail-open 按无附件处理）: {}", traceId, e.getMessage());
+                    attachCards = List.of();
+                    attachChunks = List.of();
+                    steps.add(step("attach-recall", t4g, 0, false));
+                    notes.add("附件召回失败：按无附件处理: " + e.getMessage());
+                }
+            }
+        }
+
         // ⑥.5 文件记忆召回 + 深读（记忆二期 P3 · FR-203 → 5x 四轮 U3 向量门控）：
         // 个人域 READY 文件记忆按 ③ 选中标签取候选 → recallGated 向量门控（≥1 分块距离 ≤ 阈值才出卡）
         // + 深读分块（per-file ≤2、总 ≤5）。文件记忆为个人域资产：仅 personalOn 时召回。
@@ -258,6 +301,27 @@ public class MemoryRecallPipeline {
             // 个人域关闭 / 无选中标签：不查文件记忆，打点 count=0（非异常）
             steps.add(new RecallTraceStep("file-recall", 0, 0, true));
             steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+        }
+
+        // 附件段与标签召回段合并（C5）：附件卡置顶（attached 优先），同一 fileId 附件卡覆盖门控卡
+        // （附件卡带本附件徽标/状态标更准）；附件开头块插最前（当轮上下文优先于历史记忆深读块）。
+        if (!attachCards.isEmpty()) {
+            Set<String> attachFileIds = attachCards.stream()
+                    .map(RecalledFileCard::getFileId).filter(Objects::nonNull).collect(Collectors.toSet());
+            Set<Long> attachMemoryIds = attachCards.stream()
+                    .map(RecalledFileCard::getMemoryId).filter(Objects::nonNull).collect(Collectors.toSet());
+            List<RecalledFileCard> merged = new ArrayList<>(attachCards);
+            merged.addAll(fileCards.stream()
+                    .filter(c -> c.getFileId() == null || !attachFileIds.contains(c.getFileId())).toList());
+            fileCards = merged;
+            // 门控深读块若属附件同记忆 → 丢弃（附件开头块已注入，近邻块重复文本）
+            if (!attachMemoryIds.isEmpty()) {
+                fileChunks = fileChunks.stream()
+                        .filter(ch -> ch.memoryId() == null || !attachMemoryIds.contains(ch.memoryId())).toList();
+            }
+            List<MemoryAssetRecallService.DeepReadChunk> mergedChunks = new ArrayList<>(attachChunks);
+            mergedChunks.addAll(fileChunks);
+            fileChunks = mergedChunks;
         }
 
         // ⑦ assemble（按 subject 聚合打 owner 前缀 + 项目条目打作者前缀 + 文件卡片/深读块）

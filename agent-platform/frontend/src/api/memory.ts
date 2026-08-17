@@ -345,6 +345,8 @@ export interface RecalledFileCard {
   downloadable: boolean
   l1: string | null
   l2: string | null
+  attached?: boolean | null        // 5x 四轮 C5：true=本轮消息附件（「本附件」徽标+列表置顶）
+  attachStatus?: string | null     // C5：非 READY 附件状态标（PROCESSING/FAILED；null=READY）
 }
 
 /** 文件类型中文标签（与后端 MemoryAssetMemory.kindLabel 同源）。 */

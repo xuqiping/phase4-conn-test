@@ -393,4 +393,67 @@ class MemoryAssetRecallServiceTest {
         assertFalse(cards.get(1).isDownloadable());
         assertNull(cards.get(1).getOriginalName(), "无 memory 行 → 文件名 null（前端兜底未命名）");
     }
+
+    // ===== 5x 四轮 U8（C5）· recallAttachments 附件定向召回 =====
+
+    /** READY 附件：卡必出（attached=true 置顶标）+ 开头分块免阈值注入（chunk_no 升序，非 query 近邻）。 */
+    @Test
+    void recallAttachments_ready_emitsAttachedCardAndHeadChunks() {
+        when(memoryMapper.findByFileIdsOwned(List.of("f-a", "f-b"), SELF))
+                .thenReturn(List.of(row(501, "f-a", "附件A.pdf"), row(502, "f-b", "附件B.pdf")));
+        when(storedFileMapper.selectById(anyString()))
+                .thenReturn(meta("f-a", StoredFileEntity.STATUS_ACTIVE), meta("f-b", StoredFileEntity.STATUS_ACTIVE));
+        when(chunkMapper.headChunksPerFile(List.of(501L, 502L), MemoryAssetRecallService.ATTACH_TOP_K))
+                .thenReturn(List.of(hit(501, 0, "附件A 开篇", "第1页", 0d), hit(502, 0, "附件B 开篇", "第1页", 0d)));
+
+        MemoryAssetRecallService.AttachmentRecall r = service.recallAttachments(List.of("f-a", "f-b"), SELF);
+
+        assertEquals(2, r.cards().size(), "两附件卡全出（免向量门）");
+        assertTrue(r.cards().get(0).getAttached(), "attached=true → 前端「本附件」徽标+置顶");
+        assertNull(r.cards().get(0).getAttachStatus(), "READY → attachStatus null");
+        assertEquals(501L, r.cards().get(0).getMemoryId());
+        assertEquals(0, r.cards().get(0).getChunkCount(), "附件卡不重复计块（分块已单独注入）");
+        assertTrue(r.cards().get(0).isDownloadable());
+        assertEquals(2, r.chunks().size(), "每附件开头块注入");
+        assertEquals("附件A.pdf", r.chunks().get(0).fileName());
+        assertEquals("附件A 开篇", r.chunks().get(0).chunkText());
+        assertEquals(0d, r.chunks().get(0).distance(), "distance 占位 0（无相似度语义）");
+        verifyNoInteractions(llmGateway, systemSettingService);
+    }
+
+    /** 非 READY（PROCESSING/FAILED）：仅出卡带 attachStatus 状态标，不注入分块。 */
+    @Test
+    void recallAttachments_notReady_cardWithStatusNoInjection() {
+        MemoryAssetMemory processing = row(501, "f-a", "解析中.pdf");
+        processing.setIngestStatus(MemoryAssetMemory.STATUS_PROCESSING);
+        MemoryAssetMemory failed = row(502, "f-b", "失败.pdf");
+        failed.setIngestStatus(MemoryAssetMemory.STATUS_FAILED);
+        when(memoryMapper.findByFileIdsOwned(List.of("f-a", "f-b"), SELF))
+                .thenReturn(List.of(processing, failed));
+        when(storedFileMapper.selectById(anyString()))
+                .thenReturn(meta("f-a", StoredFileEntity.STATUS_ACTIVE), meta("f-b", StoredFileEntity.STATUS_ACTIVE));
+
+        MemoryAssetRecallService.AttachmentRecall r = service.recallAttachments(List.of("f-a", "f-b"), SELF);
+
+        assertEquals(2, r.cards().size());
+        assertEquals(MemoryAssetMemory.STATUS_PROCESSING, r.cards().get(0).getAttachStatus());
+        assertEquals(MemoryAssetMemory.STATUS_FAILED, r.cards().get(1).getAttachStatus());
+        assertTrue(r.cards().get(0).getAttached(), "非 READY 也带 attached 标（徽标+置顶仍生效）");
+        assertTrue(r.chunks().isEmpty(), "无 READY 行 → 零注入");
+        verifyNoInteractions(chunkMapper);
+    }
+
+    /** 空参 / fileId 无本人记忆行（未入库/他人文件）→ EMPTY 短路（归属双门第二道：mapper owner 过滤）。 */
+    @Test
+    void recallAttachments_emptyOrUnowned_shortCircuit() {
+        assertTrue(service.recallAttachments(null, SELF).cards().isEmpty());
+        assertTrue(service.recallAttachments(List.of(), SELF).cards().isEmpty());
+        assertTrue(service.recallAttachments(List.of("f-a"), null).cards().isEmpty());
+        when(memoryMapper.findByFileIdsOwned(List.of("f-a"), SELF)).thenReturn(List.of());
+        MemoryAssetRecallService.AttachmentRecall r = service.recallAttachments(List.of("f-a"), SELF);
+        assertTrue(r.cards().isEmpty());
+        assertTrue(r.chunks().isEmpty());
+        verify(chunkMapper, never()).headChunksPerFile(anyList(), anyInt());
+        verify(storedFileMapper, never()).selectById(anyString());
+    }
 }
