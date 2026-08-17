@@ -19,6 +19,9 @@ public class KnowledgeBaseRequest {
 
     private String rerankModel;
 
+    /** 14x#1：per-KB RAG 问答模型，null/空=跟随全局默认；服务端校验须在启用 CHAT 列表内且 ≤128 */
+    private String answerModel;
+
     /** L0 摘要模式：PER_SECTION / BATCH / HYBRID，留空走默认 */
     private String summaryStrategy;
 }

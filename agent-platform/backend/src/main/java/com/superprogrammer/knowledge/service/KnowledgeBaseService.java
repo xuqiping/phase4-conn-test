@@ -8,6 +8,7 @@ import com.superprogrammer.knowledge.dto.KnowledgeBaseVO;
 import com.superprogrammer.knowledge.entity.KnowledgeBase;
 import com.superprogrammer.knowledge.entity.KnowledgePermission;
 import com.superprogrammer.knowledge.mapper.KnowledgeBaseMapper;
+import com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper;
 import com.superprogrammer.knowledge.mapper.KnowledgePermissionMapper;
 import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
@@ -61,8 +62,42 @@ public class KnowledgeBaseService {
         return v;
     }
 
+    /**
+     * 14x#1：校验 answer_model——null/blank → null（跟随全局默认）；
+     * 超长 400；须在启用 CHAT 模型列表内（防任意串写库导致问答路由 422）。
+     */
+    private String normalizeAnswerModel(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String m = raw.trim();
+        if (m.length() > 128) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "问答模型名过长（≤128）");
+        }
+        if (!llmProviderService.listActiveModels("CHAT").contains(m)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "问答模型未启用或不存在：" + m + "，请在 LLM 供应商管理中确认已启用");
+        }
+        return m;
+    }
+
+    /**
+     * 14x#1（L5 边界）：检索期解析 per-KB 问答模型。空/未启用（模型已下线）→ null，
+     * 调用方不 set model → LlmGateway 走全局默认回退，问答不因下线中断。
+     */
+    public String resolveAnswerModel(KnowledgeBase kb) {
+        if (kb == null || kb.getAnswerModel() == null || kb.getAnswerModel().isBlank()) {
+            return null;
+        }
+        String m = kb.getAnswerModel().trim();
+        return llmProviderService.listActiveModels("CHAT").contains(m) ? m : null;
+    }
+
     private final KnowledgeBaseMapper baseMapper;
     private final KnowledgePermissionMapper permissionMapper;
+    private final KnowledgeDocumentMapper documentMapper;
+    /** 14x#1：answer_model 保存校验（须在启用 CHAT 列表）与解析期 active 过滤共用 */
+    private final com.superprogrammer.llm.service.LlmProviderService llmProviderService;
     /**
      * 可见集服务（USER+ROLE+DEPT 三层并集，KB/DIRECTORY/DOCUMENT 三级 target）。
      * canRead 委托它作单一权限权威（B1 修复）：DIRECTORY/DOCUMENT/ROLE/DEPT 授权可达。
@@ -116,6 +151,7 @@ public class KnowledgeBaseService {
         }
         kb.setEmbeddingModel(embeddingModel.trim());
         kb.setRerankModel(request.getRerankModel());
+        kb.setAnswerModel(normalizeAnswerModel(request.getAnswerModel()));
         kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
         kb.setStatus("ACTIVE");
         kb.setCreatedBy(userId);
@@ -135,15 +171,32 @@ public class KnowledgeBaseService {
         if (request.getVisibility() != null && !request.getVisibility().isBlank()) {
             kb.setVisibility(normalizeVisibility(request.getVisibility()));
         }
+        String embeddingWarning = null;
         if (request.getEmbeddingModel() != null && !request.getEmbeddingModel().isBlank()) {
-            kb.setEmbeddingModel(request.getEmbeddingModel());
+            String newEmbedding = request.getEmbeddingModel().trim();
+            // 14x#1（L4）：换向量模型且库内已有文档 → 存量向量仍是旧模型空间，混空间检索质量劣化，
+            // 返回 warning 强提示重建索引（空库无存量向量，无需提示）
+            if (!newEmbedding.equalsIgnoreCase(kb.getEmbeddingModel()) && hasDocuments(kb.getId())) {
+                embeddingWarning = "向量模型已变更，存量向量仍为旧模型空间；请到「索引运维」重建索引后再检索，否则召回质量会劣化";
+            }
+            kb.setEmbeddingModel(newEmbedding);
         }
         if (request.getSummaryStrategy() != null && !request.getSummaryStrategy().isBlank()) {
             kb.setSummaryStrategy(normalizeStrategy(request.getSummaryStrategy()));
         }
         kb.setRerankModel(request.getRerankModel());
+        kb.setAnswerModel(normalizeAnswerModel(request.getAnswerModel()));
         baseMapper.updateById(kb);
-        return toVO(kb, userId, admin);
+        KnowledgeBaseVO vo = toVO(kb, userId, admin);
+        vo.setWarning(embeddingWarning);
+        return vo;
+    }
+
+    /** 库内是否已有未删除文档（L4 换 embedding 提示条件；@TableLogic 自动滤删除行）。 */
+    private boolean hasDocuments(Long kbId) {
+        LambdaQueryWrapper<com.superprogrammer.knowledge.entity.KnowledgeDocument> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(com.superprogrammer.knowledge.entity.KnowledgeDocument::getKbId, kbId);
+        return documentMapper.selectCount(wrapper) > 0;
     }
 
     @Transactional
@@ -257,6 +310,7 @@ public class KnowledgeBaseService {
                 .visibility(kb.getVisibility())
                 .embeddingModel(kb.getEmbeddingModel())
                 .rerankModel(kb.getRerankModel())
+                .answerModel(kb.getAnswerModel())
                 .summaryStrategy(kb.getSummaryStrategy())
                 .status(kb.getStatus())
                 .createdBy(kb.getCreatedBy())

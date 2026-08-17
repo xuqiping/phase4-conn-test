@@ -191,6 +191,8 @@ public class RagRetrievalService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该知识库");
             }
             String embedModel = kb.getEmbeddingModel();
+            // 14x#1：per-KB 问答模型（null=不 set，LlmGateway 走全局默认回退）
+            String answerModel = knowledgeBaseService.resolveAnswerModel(kb);
 
             // step1 可见集
             VisibleSet vs = step1VisibleSet(kb, userId, admin);
@@ -329,15 +331,15 @@ public class RagRetrievalService {
                                     .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
                                             e.citationIndex(), e.content())).toList(),
                             Math.max(1, Math.min(5, pack.injected().size())),
-                            batch -> extractGroundedFacts(batch, userId));
+                            batch -> extractGroundedFacts(batch, userId, answerModel));
             if (grounded.facts().isEmpty()) {
                 return finishAbstain(trace, budget, t0, "INSUFFICIENT", req, l0, l1,
                         bm25Fallback[0], bm25OnlyCands, toEvidencePreview(topK));
             }
-            String answer = composeGroundedAnswer(req.getQuery(), grounded, userId, false);
+            String answer = composeGroundedAnswer(req.getQuery(), grounded, userId, false, answerModel);
             List<Integer> cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
             if (cited == null) {
-                answer = composeGroundedAnswer(req.getQuery(), grounded, userId, true);
+                answer = composeGroundedAnswer(req.getQuery(), grounded, userId, true, answerModel);
                 cited = citationChecker.extractAndCheck(answer, pack.injectedIndexes());
                 if (cited == null) {
                     return finishAbstain(trace, budget, t0, "CITATION_CHECK_FAIL", req, l0, l1,
@@ -929,19 +931,21 @@ public class RagRetrievalService {
         if (evidence.isAbstained()) {
             return new GroundedAskResult(evidence, evidence.getAnswer(), stateForAbstain(evidence.getAbstainReason()));
         }
+        // 14x#1：多库问答模型取首个有效库（与 embedModel 的 kb0 口径一致；null=全局默认）
+        String answerModel = knowledgeBaseService.resolveAnswerModel(knowledgeBaseService.ensure(effectiveKbs.get(0)));
         List<Evidence> parsed = parseEvidencePrompt(evidence.getSystemPrompt());
         com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded =
                 groundedAnswerService.synthesize(parsed.stream()
                                 .map(e -> new com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence(
                                         e.citationIndex(), e.content())).toList(),
-                        Math.max(1, Math.min(5, parsed.size())), batch -> extractGroundedFacts(batch, userId));
+                        Math.max(1, Math.min(5, parsed.size())), batch -> extractGroundedFacts(batch, userId, answerModel));
         if (grounded.facts().isEmpty()) {
             return new GroundedAskResult(evidence, ABSTAIN_MSG, "INSUFFICIENT");
         }
-        String answer = composeGroundedAnswer(query, grounded, userId, false);
+        String answer = composeGroundedAnswer(query, grounded, userId, false, answerModel);
         List<Integer> cited = citationChecker.extractAndCheck(answer, evidence.getInjectedIndexes());
         if (cited == null) {
-            answer = composeGroundedAnswer(query, grounded, userId, true);
+            answer = composeGroundedAnswer(query, grounded, userId, true, answerModel);
             cited = citationChecker.extractAndCheck(answer, evidence.getInjectedIndexes());
         }
         if (cited == null) {
@@ -1076,7 +1080,7 @@ public class RagRetrievalService {
         return sb.toString();
     }
 
-    private String generate(String query, EvidencePack pack, Long userId, boolean strict) {
+    private String generate(String query, EvidencePack pack, Long userId, boolean strict, String answerModel) {
         String system = strict ? systemPromptStrict(pack.injectedIndexes()) : systemPrompt();
         LlmRequest req = LlmRequest.builder()
                 .messages(List.of(
@@ -1085,6 +1089,7 @@ public class RagRetrievalService {
                 .temperature(ragConfig.getChatTemperature())
                 .maxTokens(ragConfig.getChatMaxTokens())
                 .stream(false)
+                .model(answerModel)
                 .build();
         return llmGateway.chat(req, userId).getContent();
     }
@@ -1177,7 +1182,8 @@ public class RagRetrievalService {
     }
 
     private List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Fact> extractGroundedFacts(
-            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> evidence, Long userId) {
+            List<com.superprogrammer.knowledge.answer.GroundedAnswerService.Evidence> evidence, Long userId,
+            String answerModel) {
         String evidenceJson;
         try {
             evidenceJson = objectMapper.writeValueAsString(evidence);
@@ -1194,7 +1200,7 @@ public class RagRetrievalService {
                                 + "每条 citationId 只列编号；只提炼与回答问题相关的关键事实，宁少勿多。")
                                 .build(),
                         LlmMessage.builder().role("user").content(evidenceJson).build()))
-                .temperature(0.0).maxTokens(ragConfig.getChatMaxTokens()).stream(false)
+                .temperature(0.0).maxTokens(ragConfig.getChatMaxTokens()).stream(false).model(answerModel)
                 .callPurpose("GROUNDING_FACT_EXTRACTION").build();
         String content = llmGateway.chat(request, userId).getContent();
         try {
@@ -1255,7 +1261,7 @@ public class RagRetrievalService {
 
     private String composeGroundedAnswer(String query,
                                          com.superprogrammer.knowledge.answer.GroundedAnswerService.Result grounded,
-                                         Long userId, boolean strict) {
+                                         Long userId, boolean strict, String answerModel) {
         String rule = strict
                 ? "必须仅使用下列事实，每句话至少带一个已有 [n] 引用，不得新增编号。"
                 : "仅使用下列事实回答，并保留对应 [n] 引用；冲突时明确列出不同说法。";
@@ -1265,7 +1271,7 @@ public class RagRetrievalService {
                         LlmMessage.builder().role("user").content("问题：" + query + "\n事实：\n"
                                 + groundedAnswerService.renderFacts(grounded.facts())).build()))
                 .temperature(ragConfig.getChatTemperature()).maxTokens(ragConfig.getChatMaxTokens())
-                .stream(false).callPurpose("GROUNDED_ANSWER_COMPOSITION").build();
+                .stream(false).model(answerModel).callPurpose("GROUNDED_ANSWER_COMPOSITION").build();
         return llmGateway.chat(request, userId).getContent();
     }
 

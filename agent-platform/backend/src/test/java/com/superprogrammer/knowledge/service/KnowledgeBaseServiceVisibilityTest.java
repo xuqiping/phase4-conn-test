@@ -32,6 +32,8 @@ class KnowledgeBaseServiceVisibilityTest {
 
     @Mock private KnowledgeBaseMapper baseMapper;
     @Mock private KnowledgePermissionMapper permissionMapper;
+    @Mock private com.superprogrammer.knowledge.mapper.KnowledgeDocumentMapper documentMapper;
+    @Mock private com.superprogrammer.llm.service.LlmProviderService llmProviderService;
     @Mock private VisibilitySetService visibilitySetService;
     @Mock private SystemSettingService systemSettingService;
 

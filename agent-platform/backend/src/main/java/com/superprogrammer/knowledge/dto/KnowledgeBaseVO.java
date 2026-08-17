@@ -15,10 +15,15 @@ public class KnowledgeBaseVO {
     private String visibility;
     private String embeddingModel;
     private String rerankModel;
+    /** 14x#1：per-KB RAG 问答模型，null=跟随全局默认 */
+    private String answerModel;
     private String summaryStrategy;
     private String status;
     private Long createdBy;
     private OffsetDateTime createdAt;
+
+    /** 14x#1（L4）：换 embedding 且库内已有文档时的重建索引强提示，正常为 null */
+    private String warning;
 
     /** 调用者对该 KB 的访问（供前端显隐按钮） */
     private boolean canManage;
