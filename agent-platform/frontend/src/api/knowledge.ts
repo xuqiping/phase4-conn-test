@@ -27,6 +27,8 @@ export interface KnowledgeBase {
   createdBy: number | null
   createdAt: string
   canManage: boolean
+  /** 14x#2：per-KB 写权限（上传/直传；canRead 单独授权不再隐含写） */
+  canWrite: boolean
   canRead: boolean
 }
 

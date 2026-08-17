@@ -61,7 +61,8 @@
     />
 
     <n-modal v-model:show="versionModalShow" preset="card" title="文档版本" style="width: 760px">
-      <div class="doc-manager__version-upload" v-if="canWrite && activeVersionDoc">
+      <!-- 14x#2：新版本上传走 createVersion（后端 canManage 门），非 canWrite -->
+      <div class="doc-manager__version-upload" v-if="canManage && activeVersionDoc">
         <n-input v-model:value="versionChangeNote" placeholder="版本说明（可选）" />
         <n-upload :show-file-list="false" :custom-request="uploadNewVersion">
           <n-button type="primary">上传新版本</n-button>
@@ -109,7 +110,10 @@ import DocumentMetadataModal from './DocumentMetadataModal.vue'
 
 const props = defineProps<{
   kbId: number
+  /** per-KB 写权限（上传/直传；14x#2 后归位，canRead 授权不再隐含） */
   canWrite: boolean
+  /** per-KB 治理权限（元数据/隔离/删除/版本；与后端 canManage 对齐） */
+  canManage?: boolean
 }>()
 
 const message = useMessage()
@@ -259,14 +263,15 @@ const columns: DataTableColumns<KnowledgeDocument> = [
     title: '操作', key: 'actions', width: 250, fixed: 'right',
     render: r => h('div', { style: 'display:flex;gap:6px' }, [
       h(NButton, { size: 'small', quaternary: true, onClick: () => openVersions(r) }, () => '版本'),
-      props.canWrite
+      // 14x#2：治理/隔离/删除为 canManage 门（写授权不再放行治理动作）
+      props.canManage
         ? h(NButton, { size: 'small', quaternary: true, onClick: () => openMetadata(r) }, () => '治理')
         : null,
       // 安全体系 S3：隔离文档优先给「解除隔离」（复核通过后重走解析），否则给删除
-      props.canWrite && r.status === 'QUARANTINED'
+      props.canManage && r.status === 'QUARANTINED'
         ? h(NButton, { size: 'small', quaternary: true, type: 'warning', onClick: () => unquarantine(r) }, () => '解除隔离')
         : null,
-      props.canWrite
+      props.canManage
         ? h(NButton, { size: 'small', quaternary: true, type: 'error', onClick: () => remove(r) }, () => '删除')
         : null
     ])
@@ -301,7 +306,7 @@ const versionColumns: DataTableColumns<KnowledgeDocumentVersion> = [
   { title: '创建时间', key: 'createdAt', width: 170, render: r => new Date(r.createdAt).toLocaleString('zh-CN') },
   {
     title: '操作', key: 'actions', width: 150,
-    render: r => !props.canWrite || !activeVersionDoc.value
+    render: r => !props.canManage || !activeVersionDoc.value
       ? '-'
       : h('div', { style: 'display:flex;gap:6px' }, [
         r.status === 'DRAFT' || r.status === 'ARCHIVED'

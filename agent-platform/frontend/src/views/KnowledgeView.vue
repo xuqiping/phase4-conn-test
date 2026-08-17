@@ -23,7 +23,7 @@
         <!-- 文档抽屉 -->
         <n-drawer v-model:show="showDocDrawer" :width="docDrawerWidth" placement="right">
           <n-drawer-content :title="`文档管理 · ${docKb?.name || ''}`" closable>
-            <DocumentManager v-if="docKb" :kb-id="docKb.id" :can-write="docKb.canManage || canWrite" />
+            <DocumentManager v-if="docKb" :kb-id="docKb.id" :can-write="docKb.canWrite" :can-manage="docKb.canManage" />
           </n-drawer-content>
         </n-drawer>
 
@@ -124,14 +124,20 @@ const columns: DataTableColumns<KnowledgeBase> = [
     title: '操作', key: 'actions', width: 240, fixed: 'right',
     render: r => h(NSpace, { size: 4 }, () => [
       h(NButton, { size: 'small', onClick: () => openDocs(r) }, () => '文档'),
-      canWrite && h(NButton, { size: 'small', onClick: () => openEdit(r) }, () => '编辑'),
+      // 14x#2：编辑/删除仅 owner/admin（per-KB，canManage 授予位不含销毁库）；全局 knowledge:write 不再放行他人库
+      canDestroy(r) && h(NButton, { size: 'small', onClick: () => openEdit(r) }, () => '编辑'),
       r.canManage && h(NButton, { size: 'small', onClick: () => openPerm(r) }, () => '授权'),
-      canWrite && h(NButton, {
+      canDestroy(r) && h(NButton, {
         size: 'small', quaternary: true, type: 'error', onClick: () => confirmDelete(r)
       }, () => '删除')
     ].filter(Boolean))
   }
 ]
+
+/** 库级销毁/改名按钮判定：库创建者或 admin（与后端 isOwnerOrAdmin 对齐）。 */
+function canDestroy(kb: KnowledgeBase): boolean {
+  return authStore.isAdmin || kb.createdBy === authStore.userInfo?.id
+}
 
 function openCreate() {
   editingKb.value = null
