@@ -280,6 +280,34 @@ public class PointsWalletService {
                 order.getId(), remark != null && !remark.isBlank() ? remark : "充值", "积分充值");
     }
 
+    /**
+     * 计划5 组划拨 · 个人侧半边：-points + 流水(GROUP_ALLOCATE, ref=GROUP/groupId)。
+     * <p>锁序约定（plan §坑点 双钱包死锁）：凡个人↔组池双向操作，**先锁个人行后锁组池行**——
+     * 本方法与 {@link #creditForGroupReclaim} 只在被组钱包服务的同一事务内调用（REQUIRED 传播加入外层事务）。
+     * 透支（含 SQL 守卫 0 行）抛 {@link ErrorCode#INSUFFICIENT_POINTS}，外层回滚组侧一切写。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal debitForGroupAllocate(Long userId, BigDecimal points, Long groupId, String remark) {
+        if (userId == null || points == null || points.signum() <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "划拨积分必须大于0");
+        }
+        return adjust(userId, points.negate(), PointsLedgerEntity.TYPE_GROUP_ALLOCATE,
+                null, PointsLedgerEntity.REF_GROUP, groupId, remark, "划拨至项目组").getBalanceAfter();
+    }
+
+    /**
+     * 计划5 组回收 · 个人侧半边：+points + 流水(GROUP_RECLAIM, ref=GROUP/groupId)。
+     * 调用约定同 {@link #debitForGroupAllocate}（外层组钱包事务内、先个人后组锁序）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal creditForGroupReclaim(Long userId, BigDecimal points, Long groupId, String remark) {
+        if (userId == null || points == null || points.signum() <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "回收积分必须大于0");
+        }
+        return adjust(userId, points, PointsLedgerEntity.TYPE_GROUP_RECLAIM,
+                null, PointsLedgerEntity.REF_GROUP, groupId, remark, "从项目组回收").getBalanceAfter();
+    }
+
     /** 查余额（用户钱包页）。无行返 0。 */
     public BigDecimal getBalance(Long userId) {
         if (userId == null) {

@@ -25,6 +25,10 @@ public class PointsLedgerEntity {
     public static final String TYPE_REFUND = "REFUND";
     /** type：管理员发放（MVP 充值入口）。 */
     public static final String TYPE_ADMIN_GRANT = "ADMIN_GRANT";
+    /** type：划入项目组池（计划5 V133，ref=GROUP/groupId，负 delta）。 */
+    public static final String TYPE_GROUP_ALLOCATE = "GROUP_ALLOCATE";
+    /** type：从项目组池回收（正 delta）。 */
+    public static final String TYPE_GROUP_RECLAIM = "GROUP_RECLAIM";
 
     /** ref_type：对话。 */
     public static final String REF_CHAT = "CHAT";
@@ -38,6 +42,8 @@ public class PointsLedgerEntity {
     public static final String REF_PAYMENT = "PAYMENT";
     /** ref_type：管理员操作。 */
     public static final String REF_ADMIN = "ADMIN";
+    /** ref_type：项目组划拨/回收（ref_id=project_groups.id）。 */
+    public static final String REF_GROUP = "GROUP";
 
     @TableId(type = IdType.AUTO)
     private Long id;
