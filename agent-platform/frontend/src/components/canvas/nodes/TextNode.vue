@@ -48,4 +48,13 @@ const assetBadge = useNodeAssetBadge(props.data)
   white-space: pre-wrap;
   min-height: 18px;
 }
+
+// 2x 四轮 S2：用户拉过高度（--resized 由 CanvasNodeBase 按 data.height 加）→
+// 解除行数截断，全文可见，超高由节点 body 滚动（canvas-node__body overflow-y:auto）
+.canvas-node--resized .text-node__prompt,
+.canvas-node--resized .text-node__output {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
 </style>

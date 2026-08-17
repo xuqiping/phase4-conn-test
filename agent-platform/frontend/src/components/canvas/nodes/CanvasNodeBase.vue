@@ -3,9 +3,27 @@
     class="canvas-node"
     :class="[
       `canvas-node--${kind}`,
-      { 'canvas-node--selected': selected, [`canvas-node--${status}`]: !!status }
+      {
+        'canvas-node--selected': selected,
+        [`canvas-node--${status}`]: !!status,
+        // 2x 四轮 S2：用户拉过高度 → 文本类解除 line-clamp 改随高度滚动（见 TextNode 样式）
+        'canvas-node--resized': isResized
+      }
     ]"
   >
+    <!-- 2x 四轮 S2：选中时显四角拖柄（只角落不四边——边线会压住上下连线 Handle 的热区）。
+         拖动由 node-resizer 走 d3-drag + noDragClassName，不会触发节点拖动/画布平移。 -->
+    <template v-if="selected">
+      <NodeResizeControl
+        v-for="pos in RESIZE_CORNERS"
+        :key="pos"
+        :variant="ResizeControlVariant.Handle"
+        :position="pos"
+        :min-width="160"
+        :min-height="64"
+        @resize-end="onResizeEnd"
+      />
+    </template>
     <Handle type="target" :position="Position.Top" />
     <div class="canvas-node__accent" />
     <div class="canvas-node__header">
@@ -28,7 +46,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
+import { Handle, Position, useNode } from '@vue-flow/core'
+import { NodeResizeControl, ResizeControlVariant } from '@vue-flow/node-resizer'
+import '@vue-flow/node-resizer/dist/style.css'
 import { NIcon } from 'naive-ui'
 import type { CanvasNodeStatus, AssetBadge } from '@/types/canvas'
 
@@ -51,13 +71,36 @@ const STATUS_LABEL: Record<CanvasNodeStatus, string> = {
 }
 
 const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : ''))
+
+// 2x 四轮 S2：注入所属节点（vue-flow 对节点子树 provide；单元测试裸挂时无注入，链式守卫）
+const nodeCtx = useNode()
+const nodeData = computed(() => nodeCtx?.node?.data as { width?: number; height?: number } | undefined)
+const isResized = computed(() => typeof nodeData.value?.height === 'number')
+const RESIZE_CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const
+
+/**
+ * 拖角柄松手 → 尺寸落 node.data.width/height（快照持久化真源）。
+ * wrapper 的 style 由 node-resizer 实时改写（保存时剥离），data 在 resize-end 与
+ * 结构变更通知（structure-changed → 防抖落库）同拍写入，不漂移。
+ */
+function onResizeEnd({ params }: { params: { width: number; height: number } }) {
+  if (!nodeData.value) return
+  nodeData.value.width = Math.round(params.width)
+  nodeData.value.height = Math.round(params.height)
+}
 </script>
 
 <style lang="scss" scoped>
+// 2x 四轮 S2：宽高跟随 vue-flow wrapper（resizer 改 wrapper style，本根 100% 跟随；
+// 默认宽 200 由 addNode/loadSnapshot 写进 wrapper style 兜底，此处只留最小尺寸守卫）
 .canvas-node {
   position: relative;
-  width: 200px;
+  width: 100%;
+  height: 100%;
+  min-width: 160px;
   min-height: 64px;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(145deg, rgba(8, 18, 34, 0.98), rgba(17, 28, 47, 0.96));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -86,6 +129,7 @@ const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : 
 
 .canvas-node__header {
   display: flex;
+  flex-wrap: wrap; // 2x 四轮 S2：节点拉宽/徽标多时头部换行不溢出
   align-items: center;
   gap: var(--spacing-2);
   padding: 8px 10px 4px;
@@ -158,6 +202,10 @@ const statusLabel = computed(() => (props.status ? STATUS_LABEL[props.status] : 
 }
 
 .canvas-node__body {
+  // 2x 四轮 S2：flex 列布局下占满剩余高；用户拉高后内容超出走滚动（文本不再截断）
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 4px 10px 10px;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);

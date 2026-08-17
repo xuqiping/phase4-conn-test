@@ -30,6 +30,7 @@
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
       @node-drag-stop="onNodeDragStop"
+      @nodes-change="onNodesChange"
       @edge-click="onEdgeClick"
       @pane-click="onPaneClick"
     >
@@ -69,7 +70,7 @@
 import { markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
-import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
+import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import TextNode from './nodes/TextNode.vue'
@@ -228,6 +229,18 @@ function onDrop(event: DragEvent) {
 }
 
 /**
+ * 2x 四轮 S2：由 data.width/height 推导 wrapper style（vue-flow 应用到 .vue-flow__node）。
+ * 默认宽 200（老节点/新节点统一口径）；高仅在用户拉过（data.height 存在）才定死，否则随内容。
+ * style 是会话态——保存时剥离（getSnapshot），真源只有 data。
+ */
+function nodeSizeStyle(data: Record<string, unknown> | undefined): Record<string, string> {
+  const width = typeof data?.width === 'number' ? data.width : 200
+  const style: Record<string, string> = { width: `${width}px` }
+  if (typeof data?.height === 'number') style.height = `${data.height}px`
+  return style
+}
+
+/**
  * C6：双击画布空白处 → emit 坐标给父开「快速加节点」搜索框（ComfyUI 式）。
  * 仅空白处触发：点节点(.vue-flow__node)/连线(.vue-flow__edge)/句柄(.vue-flow__handle)不弹，避免误加。
  * 坐标复用 onDrop 的 project 范式（clientXY − vueFlow 容器偏移 → 画布坐标系，兼容缩放/平移）。
@@ -263,7 +276,9 @@ function addNode(partial: { type?: string; position?: { x: number; y: number }; 
     id: `node-${Date.now()}-${seqCounter++}`,
     type: partial.type ?? 'text',
     position: partial.position ?? { x: Math.random() * 200 + 80, y: Math.random() * 120 + 80 },
-    data: { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) }
+    data: { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) },
+    // 2x 四轮 S2：默认/携带的宽高落 wrapper style（含粘贴携带 width/height 的场景）
+    style: nodeSizeStyle(partial.data)
   }
   nodes.value.push(node)
   return node.id
@@ -440,9 +455,21 @@ function onNodeDragStop() {
   emit('structure-changed')
 }
 
+/**
+ * 2x 四轮 S2：尺寸变更通知（node-resizer 拖动走 nodesChange dimensions）。
+ * 只认拖动结束标记（resizing:false）——拖动中每帧都是 updateStyle:true+resizing:true，
+ * 逐帧 emit 会把 800ms 防抖落库搅成保存风暴。结束时 CanvasNodeBase 已把宽高写进
+ * node.data（resizeEnd 事件先于该通知），此处只补「结构变更」让父组件防抖落库。
+ */
+function onNodesChange(changes: NodeChange[]) {
+  const sizeSettled = changes.some(c => c.type === 'dimensions' && c.resizing === false)
+  if (sizeSettled) emit('structure-changed')
+}
+
 /** 载入快照（从后端加载画布时调）。 */
 function loadSnapshot(snap: CanvasSnapshot) {
-  nodes.value = snap.nodes ?? []
+  // 2x 四轮 S2：data.width/height → wrapper style（含默认 200 兜底），老快照无字段即默认宽
+  nodes.value = (snap.nodes ?? []).map(n => ({ ...n, style: nodeSizeStyle(n.data) }))
   // 旧画布边为 smoothstep/default 无删除入口 → 统一归一为 deletable（贝塞尔+删除按钮）
   edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
 }
@@ -451,7 +478,8 @@ function loadSnapshot(snap: CanvasSnapshot) {
 function getSnapshot(): CanvasSnapshot {
   const vp = getViewport()
   return {
-    nodes: nodes.value,
+    // 2x 四轮 S2：剥 wrapper style（会话态，resizer 实时改写）——持久化真源只有 data.width/height
+    nodes: nodes.value.map(({ style: _style, ...rest }) => rest),
     // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）
     edges: edges.value.map(({ class: _class, ...rest }) => rest),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }

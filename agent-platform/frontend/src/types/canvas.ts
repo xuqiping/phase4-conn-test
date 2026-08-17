@@ -75,6 +75,15 @@ export interface CanvasNodeData {
   assetVersion?: number
   /** S12：会话级标记——资产已有更高版本（属性面板选中时比对算出，不入快照）。 */
   assetHasUpdate?: boolean
+  /**
+   * 2x 四轮 S2：手动调过的节点宽高（px，整数）。拖角柄 resize-end 时写入，
+   * 快照持久化；老节点无字段 = 默认宽 200、高随内容（min 64）。
+   * 渲染真源是 node.style（vue-flow wrapper），由 loadSnapshot/addNode 从本字段推导，
+   * 保存时剥 style 只留 data——单一真相源，不两处漂移。
+   */
+  width?: number
+  /** 同上；仅用户显式拉过高度才存在（未拉过 = 高度自适应内容）。 */
+  height?: number
   [key: string]: unknown
 }
 
@@ -84,6 +93,12 @@ export interface CanvasNode {
   type: string
   position: CanvasPosition
   data: CanvasNodeData
+  /**
+   * 会话级尺寸样式（vue-flow wrapper 上的 width/height px）。由 data.width/height 推导
+   * （loadSnapshot/addNode），resize 拖动时 @vue-flow/node-resizer 实时改写；
+   * 保存时剥离——持久化真源只有 data.width/height（2x 四轮 S2）。
+   */
+  style?: Record<string, string>
   /** 运行态状态（C4+ 节点产出触发用） */
   class?: string
 }
