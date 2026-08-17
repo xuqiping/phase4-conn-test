@@ -59,6 +59,17 @@
         ▭
       </button>
       <span class="canvas-board__toolbar-sep" aria-hidden="true"></span>
+      <!-- 2x 四轮 S5：只看关联——藏无关节点（visibility，布局不动可逆）；无节点选中时禁用 -->
+      <button
+        class="canvas-board__btn"
+        :class="{ 'canvas-board__btn--active': relatedOnly }"
+        :disabled="!relatedInfo"
+        title="只看关联：隐藏与选中节点无连线的节点（再点恢复）"
+        :aria-pressed="relatedOnly"
+        @click="relatedOnly = !relatedOnly"
+      >
+        🔗
+      </button>
       <button class="canvas-board__btn" title="放大" @click="() => vfZoomIn()">＋</button>
       <button class="canvas-board__btn" title="缩小" @click="() => vfZoomOut()">－</button>
       <button class="canvas-board__btn" title="适应视图" @click="() => vfFitView()">⤢</button>
@@ -67,12 +78,13 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
 import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
+import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -159,14 +171,42 @@ const defaultEdgeOptions = {
 const connectionLineStyle = { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
 
 /**
- * 选中边视觉反馈：watch selectedEdgeId → 给选中边打 class（高亮描边，提示可 Delete 删除）。
- * vue-flow 边渲染在子组件内，scoped 样式需 :deep 穿透（同 A1 chip 修复范式）。
+ * 2x 四轮 S5：关联高亮集合（memo）。computed 只依赖选集与边集——节点拖动改 position
+ * 不触发重算（BFS 闭包纯函数在 utils/graphClosure.ts，菱形/环单测覆盖）。
+ * 无节点选中（含只选了边）→ null，还原全部视觉态。
  */
-watch(selectedEdgeId, (id) => {
-  for (const e of edges.value) {
-    e.class = e.id === id ? 'canvas-edge--selected' : ''
-  }
+const relatedInfo = computed<GraphClosure | null>(() => {
+  const seeds = multiSelectedIds.value.length
+    ? [...multiSelectedIds.value]
+    : selectedNodeId.value ? [selectedNodeId.value] : []
+  return relatedClosure(seeds, edges.value)
 })
+
+/** 「只看关联」开关（无关节点 visibility:hidden，可逆；无选中时按钮禁用）。 */
+const relatedOnly = ref(false)
+
+/**
+ * 视觉态 class 统一注入（2x 四轮 S5 起取代单选边 watch）：
+ * - 边：选中(红/可删) > 关联(--related 加粗辉光) > 高亮态下无关(--dimmed) > 无高亮('');
+ * - 节点：高亮态下无关节点 --dimmed（透明 0.25），开关再叠 --hidden（visibility 藏，布局不动）。
+ * class 均为会话态，getSnapshot 剥离不入快照。
+ */
+function applyVisualClasses() {
+  const info = relatedInfo.value
+  for (const e of edges.value) {
+    e.class = e.id === selectedEdgeId.value
+      ? 'canvas-edge--selected'
+      : !info ? ''
+        : info.edgeIds.has(e.id) ? 'canvas-edge--related'
+        : 'canvas-edge--dimmed'
+  }
+  for (const n of nodes.value) {
+    n.class = !info || info.nodeIds.has(n.id)
+      ? ''
+      : 'canvas-node--dimmed' + (relatedOnly.value ? ' canvas-node--hidden' : '')
+  }
+}
+watch([selectedNodeId, selectedEdgeId, multiSelectedIds, relatedOnly, relatedInfo], applyVisualClasses)
 
 /**
  * 3x-C1：节点被外部程序删除（父组件批量删/拆分镜整批替换）时，修剪多选集防悬挂 id
@@ -478,8 +518,8 @@ function loadSnapshot(snap: CanvasSnapshot) {
 function getSnapshot(): CanvasSnapshot {
   const vp = getViewport()
   return {
-    // 2x 四轮 S2：剥 wrapper style（会话态，resizer 实时改写）——持久化真源只有 data.width/height
-    nodes: nodes.value.map(({ style: _style, ...rest }) => rest),
+    // 2x 四轮 S2/S5：剥 wrapper style 与视觉态 class（均会话态）——持久化真源只有 data
+    nodes: nodes.value.map(({ style: _style, class: _class, ...rest }) => rest),
     // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）
     edges: edges.value.map(({ class: _class, ...rest }) => rest),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
@@ -549,7 +589,7 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
     font-size: var(--font-size-xs);
   }
 
-  /* 选中边高亮：红色加粗描边 + 手型，提示点 Delete 可删（class 由 watch 注入 edge.class） */
+  /* 选中边高亮：红色加粗描边 + 手型，提示点 Delete 可删（class 由 applyVisualClasses 注入） */
   :deep(.canvas-edge--selected .vue-flow__edge-path) {
     stroke: #ef4444;
     stroke-width: 3;
@@ -558,6 +598,27 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
 
   :deep(.canvas-edge--selected) {
     cursor: pointer;
+  }
+
+  /* 2x 四轮 S5：关联边高亮——加粗 2.5px + 辉光（accent 同主色，靠粗细/辉光区分默认 1.5px 细线） */
+  :deep(.canvas-edge--related .vue-flow__edge-path) {
+    stroke: var(--color-primary);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 5px rgba(var(--color-primary-rgb), 0.55));
+  }
+
+  /* 高亮态下的无关边组（路径+中点×一起降透明度，避免「暗线亮按钮」） */
+  :deep(.vue-flow__edge.canvas-edge--dimmed) {
+    opacity: 0.25;
+  }
+
+  /* 高亮态下的无关节点淡化；「只看关联」再叠 visibility 藏（布局不动、可逆，class 注入 node.class 落 wrapper） */
+  :deep(.vue-flow__node.canvas-node--dimmed) {
+    opacity: 0.25;
+  }
+
+  :deep(.vue-flow__node.canvas-node--hidden) {
+    visibility: hidden;
   }
 }
 
@@ -588,6 +649,14 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
   &:hover {
     color: var(--color-primary);
     border-color: var(--color-primary);
+  }
+
+  /* 只看关联：无节点选中时禁用（无关联集可言） */
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    color: var(--color-text-tertiary);
+    border-color: var(--color-border);
   }
 
   /* 当前激活的交互模式按钮：主题色高亮 */

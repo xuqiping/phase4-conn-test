@@ -57,15 +57,17 @@ describe('CanvasBoard 交互模式（拖拽画布 vs 框选节点）', () => {
 
   it('select 切回 pan：prop 翻转回来；aria-pressed 跟随激活态', async () => {
     const wrapper = mount(CanvasBoard)
+    // aria-pressed 按钮=模式×2 + S5「只看关联」×1（无选中时 disabled）
     const btns = wrapper.findAll('button[aria-pressed]')
-    expect(btns).toHaveLength(2)
+    expect(btns).toHaveLength(3)
+    expect(btns[2].attributes('disabled')).toBeDefined() // 只看关联：无节点选中禁用
     await btns[1].trigger('click')
-    await wrapper.findAll('button[aria-pressed]')[0].trigger('click')
+    await wrapper.find('button[title^="拖拽画布模式"]').trigger('click')
     expect(boardVm(wrapper).dragMode).toBe('pan')
     expect(flowProps(wrapper).panOnDrag).toBe(true)
     expect(flowProps(wrapper).selectionKeyCode).toBe('Shift')
-    const pressed = wrapper.findAll('button[aria-pressed]').map(b => b.attributes('aria-pressed'))
-    expect(pressed).toEqual(['true', 'false'])
+    const pressed = btns.map(b => b.attributes('aria-pressed'))
+    expect(pressed).toEqual(['true', 'false', 'false'])
   })
 })
 
