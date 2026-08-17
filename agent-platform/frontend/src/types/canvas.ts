@@ -46,6 +46,28 @@ export interface MentionCandidate {
   id: string
   /** 显示名（节点 label / 资产名 / 附件序号名；重命名或重排后选择器即时跟随，占位符不变）。 */
   label: string
+  /**
+   * 2x 四轮 S9：该候选所属节点组（@候选并集扩展——组内任一祖先命中→组全员可 @，
+   * 选择器按组分节显示）。仅 kind='node' 的组员候选携带；散节点无字段。
+   */
+  groupId?: string
+  /** 组显示名（分节标题用）。 */
+  groupLabel?: string
+  /** 组色（分节标题色条用）。 */
+  groupColor?: string
+}
+
+/**
+ * 2x 四轮 S9：节点组（框选成组，彩框+组名）。成员关系存组侧（单一真相源，
+ * 节点 data 不落 groupId——解组/换组只改组数组，节点零感知）。
+ */
+export interface CanvasGroup {
+  id: string
+  name: string
+  /** 成员节点 id（上限 50；成员节点被删 → watch 修剪；全删 → 组自解散）。 */
+  memberIds: string[]
+  /** 组色（8 色板轮转；包围盒描边 + 成员节点 ring + 选择器分节色条）。 */
+  color: string
 }
 
 /**
@@ -129,5 +151,7 @@ export interface CanvasViewport {
 export interface CanvasSnapshot {
   nodes: CanvasNode[]
   edges: CanvasEdge[]
+  /** 2x 四轮 S9：节点组（老快照无字段 = 空数组语义，加载兜底 []，零报错）。 */
+  groups?: CanvasGroup[]
   viewport?: CanvasViewport
 }

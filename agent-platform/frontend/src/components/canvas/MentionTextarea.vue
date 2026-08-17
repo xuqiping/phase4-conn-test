@@ -28,18 +28,23 @@
     <span v-if="maxlength" class="mention-ta__count">{{ modelValue.length }}/{{ maxlength }}</span>
     <div v-if="open && filtered.length" class="mention-ta__popover">
       <div class="mention-ta__hint">@ 引用祖先节点（拓扑保证其先跑）</div>
-      <button
-        v-for="(c, i) in filtered"
-        :key="c.kind + ':' + c.id"
-        type="button"
-        class="mention-ta__item"
-        :class="{ 'is-active': i === activeIndex }"
-        @mousedown.prevent="selectCandidate(c)"
-        @mouseenter="activeIndex = i"
-      >
-        <span class="mention-ta__kind">{{ kindLabels[c.kind] ?? c.kind }}</span>
-        <span class="mention-ta__label">{{ c.label }}</span>
-      </button>
+      <template v-for="row in popRows" :key="row.type === 'header' ? row.key : `${row.c.kind}:${row.c.id}`">
+        <!-- 2x 四轮 S9：组分节头（组内任一祖先命中→组全员可 @；头随成员过滤自动隐现） -->
+        <div v-if="row.type === 'header'" class="mention-ta__group-head">
+          <span class="mention-ta__group-dot" :style="{ background: row.color }"></span>{{ row.label }}
+        </div>
+        <button
+          v-else
+          type="button"
+          class="mention-ta__item"
+          :class="{ 'is-active': row.idx === activeIndex }"
+          @mousedown.prevent="selectCandidate(row.c)"
+          @mouseenter="activeIndex = row.idx"
+        >
+          <span class="mention-ta__kind">{{ kindLabels[row.c.kind] ?? row.c.kind }}</span>
+          <span class="mention-ta__label">{{ row.c.label }}</span>
+        </button>
+      </template>
     </div>
     <div v-else-if="open && !filtered.length" class="mention-ta__popover">
       <div class="mention-ta__empty">{{ emptyHint }}</div>
@@ -111,6 +116,30 @@ const filtered = computed<MentionCandidate[]>(() => {
   const q = query.value.trim().toLowerCase()
   if (!q) return props.candidates
   return props.candidates.filter((c) => c.label.toLowerCase().includes(q))
+})
+
+/**
+ * 2x 四轮 S9：弹层展示行 = 候选项 + 组分节头交错（首个某组候选前插头；header 非候选，
+ * query 过滤掉组员后头自动消失——头是派生行不是数据）。idx 指向 filtered 下标（键盘高亮对齐）。
+ */
+type PopRow =
+  | { type: 'header'; key: string; label: string; color?: string }
+  | { type: 'item'; c: MentionCandidate; idx: number }
+const popRows = computed<PopRow[]>(() => {
+  const rows: PopRow[] = []
+  let lastGroup = ''
+  filtered.value.forEach((c, idx) => {
+    if (c.groupId) {
+      if (c.groupId !== lastGroup) {
+        rows.push({ type: 'header', key: `h-${c.groupId}`, label: c.groupLabel ?? '组', color: c.groupColor })
+        lastGroup = c.groupId
+      }
+    } else {
+      lastGroup = ''
+    }
+    rows.push({ type: 'item', c, idx })
+  })
+  return rows
 })
 
 /**
@@ -481,6 +510,26 @@ defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, ren
       background: rgba(var(--color-primary-rgb), 0.14);
       color: var(--color-primary);
     }
+  }
+
+  /* 2x 四轮 S9：组分节头（色点+组名，非交互） */
+  &__group-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: var(--spacing-1) var(--spacing-2);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    border-top: 1px solid var(--color-border-light);
+    margin-top: 2px;
+    user-select: none;
+  }
+
+  &__group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
 
   &__kind {

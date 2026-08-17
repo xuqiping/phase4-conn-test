@@ -94,6 +94,7 @@
           @node-context-menu="onNodeContextMenu"
           @quick-add="onQuickAdd"
           @structure-changed="scheduleSave"
+          @group-rename-request="onGroupRenameRequest"
         />
 
         <!-- 3x-C1 框选批量工具条（≥2 节点选中时浮于画布顶部） -->
@@ -123,6 +124,15 @@
             @click="onBatchRun"
           >
             批量生成
+          </n-button>
+          <n-button
+            size="small"
+            tertiary
+            type="primary"
+            title="把选中节点设为一组（彩框+组名；下游 @ 命中组内任一祖先即可引用组全员）"
+            @click="onCreateGroup"
+          >
+            设为组
           </n-button>
           <n-button size="small" tertiary type="error" @click="onBatchDelete">
             <template #icon><n-icon :component="TrashOutline" /></template>
@@ -218,6 +228,43 @@
         @apply="onAssociateApply"
       />
 
+      <!-- 2x 四轮 S9：建组弹窗（批量工具条「设为组」）/ 组改名弹窗（包围盒头部点组名） -->
+      <n-modal v-model:show="showGroupModal" preset="card" title="设为组" style="max-width: 360px">
+        <n-input
+          v-model:value="groupDraftName"
+          placeholder="组名（如：角色设定组）"
+          maxlength="30"
+          @keydown.enter="confirmCreateGroup"
+        />
+        <div class="canvas-view__group-hint">选中 {{ multiSelectedIds.length }} 个节点将归入该组；成员节点带组色描边，下游 @ 引用可命中组全员。</div>
+        <template #footer>
+          <div class="canvas-view__group-footer">
+            <n-button size="small" quaternary @click="showGroupModal = false">取消</n-button>
+            <n-button size="small" type="primary" @click="confirmCreateGroup">建组</n-button>
+          </div>
+        </template>
+      </n-modal>
+      <n-modal
+        :show="renameTargetGroup != null"
+        preset="card"
+        title="组改名"
+        style="max-width: 360px"
+        @update:show="(v: boolean) => { if (!v) renameTargetGroup = null }"
+      >
+        <n-input
+          v-model:value="groupRenameDraft"
+          placeholder="组名"
+          maxlength="30"
+          @keydown.enter="confirmGroupRename"
+        />
+        <template #footer>
+          <div class="canvas-view__group-footer">
+            <n-button size="small" quaternary @click="renameTargetGroup = null">取消</n-button>
+            <n-button size="small" type="primary" @click="confirmGroupRename">保存</n-button>
+          </div>
+        </template>
+      </n-modal>
+
       <!-- C6 双击画布空白处的「快速加节点」搜索框（ComfyUI 式）；2x-6 拉线到空白处也复用此弹窗并自动连线 -->
       <n-modal
         v-model:show="quickAddOpen"
@@ -267,11 +314,12 @@ import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type 
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
 import type { AttachmentRef, ImageModelVO, ImageSubmitRequest } from '@/api/media'
 import { buildCanvasReferenceList, resolveCanvasVideoAttachments, type CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
+import { expandGroupCandidates } from '@/utils/groupCandidates'
 import { pollMediaTask } from '@/utils/mediaTaskPolling'
 import { assetApi, assetBridgeApi } from '@/api/assets'
 import type { ResolveVO } from '@/types/asset'
 import { MEDIA_TYPE } from '@/types/asset'
-import type { CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
+import type { CanvasGroup, CanvasNode, CanvasSnapshot, MentionCandidate, StoryboardSegment } from '@/types/canvas'
 import CanvasBoard from '@/components/canvas/CanvasBoard.vue'
 import PropertyPanel from '@/components/canvas/PropertyPanel.vue'
 import FocusEditOverlay from '@/components/canvas/FocusEditOverlay.vue'
@@ -563,18 +611,65 @@ const selectedAncestors = computed<Set<string>>(() => {
   return ancestors(id, boardRef.value.getEdges())
 })
 
-/** @选择器候选：祖先节点 → {kind:'node', id, label}（设计 §十三：@沿既有连线）。 */
+/**
+ * @选择器候选（设计 §十三：@沿既有连线；2x 四轮 S9 组并集扩展）：
+ * 散祖先节点 + 命中组全员分节（组内任一成员 ∈ 祖先 → 组全员可 @；孤立组不进候选，
+ * 纯函数 utils/groupCandidates.ts 单测覆盖菱形/孤立组/多组）。
+ */
 const mentionCandidates = computed<MentionCandidate[]>(() => {
-  const set = selectedAncestors.value
   const nodes = boardRef.value?.getNodes() ?? []
-  return nodes
-    .filter((n) => set.has(n.id))
-    .map((n) => ({
-      kind: 'node' as const,
-      id: n.id,
-      label: String((n.data as Record<string, unknown>).label ?? n.id)
-    }))
+  const groups = boardRef.value?.getGroups() ?? []
+  return expandGroupCandidates(
+    selectedAncestors.value,
+    nodes,
+    groups,
+    (n) => String((n.data as Record<string, unknown>).label ?? n.id)
+  )
 })
+
+// ---- 2x 四轮 S9：建组/组改名（结构变更由 Board emit structure-changed → scheduleSave 落库） ----
+
+/** 建组弹窗显隐 + 组名草稿（默认「组N」，N=现存组数+1）。 */
+const showGroupModal = ref(false)
+const groupDraftName = ref('')
+/** 改名目标组（null=弹窗关）+ 草稿名（打开时预填现名）。 */
+const renameTargetGroup = ref<CanvasGroup | null>(null)
+const groupRenameDraft = ref('')
+
+/** 批量工具条「设为组」→ 预填名开弹窗（≥2 选中才显工具条，此处不再重复校验下限）。 */
+function onCreateGroup() {
+  if (multiSelectedIds.value.length < 2) return
+  groupDraftName.value = `组${(boardRef.value?.getGroups().length ?? 0) + 1}`
+  showGroupModal.value = true
+}
+
+/** 建组确认：Board.createGroup 过滤死亡成员/查 50 上限/自动移出旧组；失败 reason toast。 */
+function confirmCreateGroup() {
+  const board = boardRef.value
+  if (!board) return
+  const count = multiSelectedIds.value.length
+  const r = board.createGroup(groupDraftName.value, [...multiSelectedIds.value])
+  if (!r.ok) {
+    message.error(r.reason ?? '建组失败')
+    return
+  }
+  showGroupModal.value = false
+  message.success(`已建组（${count} 个成员），成员节点带组色描边`)
+}
+
+/** 包围盒头部点组名 → 预填现名开改名弹窗。 */
+function onGroupRenameRequest(g: CanvasGroup) {
+  renameTargetGroup.value = g
+  groupRenameDraft.value = g.name
+}
+
+/** 改名确认（空名/同名 no-op）。 */
+function confirmGroupRename() {
+  const g = renameTargetGroup.value
+  if (!g) return
+  boardRef.value?.renameGroup(g.id, groupRenameDraft.value)
+  renameTargetGroup.value = null
+}
 
 /** F3：祖先图节点选项（首/尾帧选择器用）—— 只列有 fileId 的 image 祖先节点。 */
 const imageAncestorOptions = computed<{ label: string; value: string }[]>(() => {
@@ -1810,12 +1905,18 @@ function resumePendingTasks(nodes: CanvasNode[]) {
 }
 
 function parseSnapshot(raw: string | null): CanvasSnapshot {
-  if (!raw) return { nodes: [], edges: [] }
+  if (!raw) return { nodes: [], edges: [], groups: [] }
   try {
     const obj = JSON.parse(raw)
-    return { nodes: obj.nodes ?? [], edges: obj.edges ?? [], viewport: obj.viewport }
+    return {
+      nodes: obj.nodes ?? [],
+      edges: obj.edges ?? [],
+      // 2x 四轮 S9：老快照无 groups 字段 = 空数组语义（Board.loadSnapshot 同口径兜底）
+      groups: Array.isArray(obj.groups) ? obj.groups : [],
+      viewport: obj.viewport
+    }
   } catch {
-    return { nodes: [], edges: [] }
+    return { nodes: [], edges: [], groups: [] }
   }
 }
 
@@ -2136,6 +2237,20 @@ function flushPendingSave() {
   &--progress {
     top: calc(var(--spacing-3) + 44px);
   }
+}
+
+/* 2x 四轮 S9：建组/改名弹窗 footer 与提示行 */
+.canvas-view__group-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+}
+
+.canvas-view__group-hint {
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
 }
 
 .canvas-palette {

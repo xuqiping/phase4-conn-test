@@ -25,6 +25,8 @@ vi.mock('@vue-flow/core', async (importOriginal) => {
       fitView: vi.fn(),
       getViewport: vi.fn(() => ({ x: 0, y: 0, zoom: 1 })),
       getSelectedNodes: vi.fn(() => []),
+      // 2x 四轮 S9：包围盒视口跟踪（真实 onMove 是 vue-flow 事件钩子；测试环境无拖拽，空实现够用）
+      onMove: vi.fn(),
       vueFlowRef: { value: null }
     })
   }

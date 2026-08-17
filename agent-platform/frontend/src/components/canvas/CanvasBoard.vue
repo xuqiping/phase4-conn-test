@@ -37,6 +37,34 @@
       <Background :gap="20" :size="1" pattern-color="rgba(255,255,255,0.05)" />
     </VueFlow>
 
+    <!-- 2x 四轮 S9：组包围盒渲染层（rAF 合帧；框体穿透不可点，头部可改名/解组） -->
+    <div class="canvas-board__groups">
+      <div
+        v-for="b in groupBoxes"
+        :key="b.id"
+        class="canvas-board__groupbox"
+        :style="{
+          left: `${b.left}px`,
+          top: `${b.top}px`,
+          width: `${b.width}px`,
+          height: `${b.height}px`,
+          borderColor: b.color
+        }"
+      >
+        <div class="canvas-board__groupbox-head" :style="{ background: b.color }">
+          <span
+            class="canvas-board__groupbox-name"
+            role="button"
+            tabindex="0"
+            title="点击重命名组"
+            @click="onGroupRenameClick(b.id)"
+            @keydown.enter.prevent="onGroupRenameClick(b.id)"
+          >{{ b.name }} · {{ b.count }}</span>
+          <button type="button" class="canvas-board__groupbox-x" title="解散分组" @click="ungroupGroup(b.id)">✕</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 缩放/适应 工具条 -->
     <div class="canvas-board__toolbar">
       <!-- 交互模式切换：pan=左键拖拽平移画布（默认）；select=左键拖框批量选节点（Windows 式，免按 Shift） -->
@@ -82,9 +110,10 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, provide, ref, watc
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
-import type { CanvasEdge, CanvasNode, CanvasSnapshot } from '@/types/canvas'
+import type { CanvasEdge, CanvasGroup, CanvasNode, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
+import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -115,11 +144,14 @@ const {
   fitView: vfFitView,
   getViewport,
   getSelectedNodes,
+  onMove,
   vueFlowRef
 } = useVueFlow({ id: 'infinite-canvas' })
 
 const nodes = ref<CanvasNode[]>([])
 const edges = ref<CanvasEdge[]>([])
+/** 2x 四轮 S9：节点组（框选成组）。成员关系只存组侧，节点 data 零感知。 */
+const groups = ref<CanvasGroup[]>([])
 /** 节点 id 自增序号（防批量 addNode 同毫秒撞 id）。 */
 let seqCounter = 0
 /** 手选模式（同 FlowCanvas：onNodeClick 跟踪 id，规避 vue-flow Node.selected 联合类型不可达）。 */
@@ -159,8 +191,10 @@ const emit = defineEmits<{
    * 父组件建完节点后自动连线（ComfyUI 式拖线建节点）。
    */
   (e: 'quick-add', position: { x: number; y: number }, sourceNodeId: string): void
-  /** 结构变更（连线增/删、节点拖动结束）→ 父 scheduleSave 落库。 */
+  /** 结构变更（连线增/删、节点拖动结束/组建删改名）→ 父 scheduleSave 落库。 */
   (e: 'structure-changed'): void
+  /** 2x 四轮 S9：组名点击重命名 → 父开改名弹窗（输入交互在 CanvasView），确认后回调 renameGroup。 */
+  (e: 'group-rename-request', group: CanvasGroup): void
 }>()
 
 const defaultEdgeOptions = {
@@ -191,6 +225,13 @@ const relatedOnly = ref(false)
  * - 节点：高亮态下无关节点 --dimmed（透明 0.25），开关再叠 --hidden（visibility 藏，布局不动）。
  * class 均为会话态，getSnapshot 剥离不入快照。
  */
+/** 2x 四轮 S9：节点 id → 所属组（一节点仅属一组；建组时自动移出旧组）。 */
+const nodeGroupMap = computed<Map<string, CanvasGroup>>(() => {
+  const m = new Map<string, CanvasGroup>()
+  for (const g of groups.value) for (const id of g.memberIds) m.set(id, g)
+  return m
+})
+
 function applyVisualClasses() {
   const info = relatedInfo.value
   for (const e of edges.value) {
@@ -200,25 +241,183 @@ function applyVisualClasses() {
         : info.edgeIds.has(e.id) ? 'canvas-edge--related'
         : 'canvas-edge--dimmed'
   }
+  const gmap = nodeGroupMap.value
   for (const n of nodes.value) {
-    n.class = !info || info.nodeIds.has(n.id)
-      ? ''
-      : 'canvas-node--dimmed' + (relatedOnly.value ? ' canvas-node--hidden' : '')
+    const cls: string[] = []
+    if (info && !info.nodeIds.has(n.id)) {
+      cls.push('canvas-node--dimmed')
+      if (relatedOnly.value) cls.push('canvas-node--hidden')
+    }
+    const g = gmap.get(n.id)
+    if (g) cls.push('canvas-node--grouped')
+    n.class = cls.join(' ')
+    // 组色 ring：CSS 变量注入 wrapper style（会话态，getSnapshot 剥离；宽度仍由 nodeSizeStyle 真源推导）
+    if (g) n.style = { ...nodeSizeStyle(n.data), '--group-color': g.color }
+    else if (n.style && '--group-color' in n.style) n.style = nodeSizeStyle(n.data)
   }
 }
-watch([selectedNodeId, selectedEdgeId, multiSelectedIds, relatedOnly, relatedInfo], applyVisualClasses)
+watch([selectedNodeId, selectedEdgeId, multiSelectedIds, relatedOnly, relatedInfo, nodeGroupMap], applyVisualClasses)
+
+// ---- 2x 四轮 S9：节点组（建/解/改名 + 成员修剪 + 包围盒渲染层） ----
+
+/**
+ * 框选建组（批量工具条「设为组」）。成员先按存活节点过滤+去重；
+ * 入新组自动移出旧组（一节点仅属一组）；旧组被掏空即解散。上限 50。
+ * 返回 {ok:false,reason} 由父组件 message 提示（Board 无 message 服务）。
+ */
+function createGroup(name: string, memberIds: string[]): { ok: boolean; reason?: string } {
+  const alive = new Set(nodes.value.map(n => n.id))
+  const ids = [...new Set(memberIds)].filter(id => alive.has(id))
+  if (ids.length < 2) return { ok: false, reason: '组内至少需要 2 个存活节点' }
+  if (ids.length > MAX_GROUP_MEMBERS) {
+    return { ok: false, reason: `组成员上限 ${MAX_GROUP_MEMBERS}（本次 ${ids.length}）` }
+  }
+  const g: CanvasGroup = {
+    id: `group-${Date.now()}-${seqCounter++}`,
+    name: name.trim() || `组${groups.value.length + 1}`,
+    memberIds: ids,
+    color: nextGroupColor(groups.value)
+  }
+  const memberSet = new Set(ids)
+  for (const other of groups.value) {
+    if (other.id === g.id) continue
+    other.memberIds = other.memberIds.filter(id => !memberSet.has(id))
+  }
+  groups.value = groups.value.filter(x => x.memberIds.length > 0) // 掏空即解散
+  groups.value.push(g)
+  emit('structure-changed')
+  return { ok: true }
+}
+
+/** 解组（包围盒头部 ✕）：删组不删节点。 */
+function ungroupGroup(groupId: string) {
+  if (!groups.value.some(g => g.id === groupId)) return
+  groups.value = groups.value.filter(g => g.id !== groupId)
+  emit('structure-changed')
+}
+
+/** 组改名（父组件弹窗确认后回调）。 */
+function renameGroup(groupId: string, name: string) {
+  const g = groups.value.find(x => x.id === groupId)
+  const n = name.trim()
+  if (!g || !n || g.name === n) return
+  g.name = n
+  emit('structure-changed')
+}
+
+/** 取全部组（父组件 @候选并集用）。 */
+function getGroups(): CanvasGroup[] {
+  return groups.value
+}
+
+/** 组名点击 → 上抛父开改名弹窗（携带组实体）。 */
+function onGroupRenameClick(groupId: string) {
+  const g = groups.value.find(x => x.id === groupId)
+  if (g) emit('group-rename-request', g)
+}
+
+/** 视口变换（onMove 同步；包围盒屏幕定位 = 画布坐标 × zoom + 平移）。 */
+const vpTransform = ref({ x: 0, y: 0, zoom: 1 })
+onMove(({ flowTransform }) => {
+  vpTransform.value = { x: flowTransform.x, y: flowTransform.y, zoom: flowTransform.zoom }
+  scheduleGroupBounds()
+})
+
+/** 组包围盒屏幕矩形（rAF 合帧重算——拖节点/缩放平移每帧只算一次）。 */
+interface GroupBox {
+  id: string
+  name: string
+  color: string
+  count: number
+  left: number
+  top: number
+  width: number
+  height: number
+}
+const groupBoxes = ref<GroupBox[]>([])
+let boundsRaf = 0
+function scheduleGroupBounds() {
+  if (boundsRaf) return
+  boundsRaf = requestAnimationFrame(() => {
+    boundsRaf = 0
+    const vp = vpTransform.value
+    const boxes: GroupBox[] = []
+    for (const g of groups.value) {
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      let count = 0
+      for (const id of g.memberIds) {
+        const n = nodes.value.find(x => x.id === id)
+        if (!n) continue
+        count++
+        const { w, h } = nodeSizeOf(n)
+        minX = Math.min(minX, n.position.x)
+        minY = Math.min(minY, n.position.y)
+        maxX = Math.max(maxX, n.position.x + w)
+        maxY = Math.max(maxY, n.position.y + h)
+      }
+      if (!count) continue
+      const pad = 12
+      boxes.push({
+        id: g.id,
+        name: g.name,
+        color: g.color,
+        count,
+        left: (minX - pad) * vp.zoom + vp.x,
+        top: (minY - pad) * vp.zoom + vp.y,
+        width: (maxX - minX + pad * 2) * vp.zoom,
+        height: (maxY - minY + pad * 2) * vp.zoom
+      })
+    }
+    groupBoxes.value = boxes
+  })
+}
+watch([nodes, groups, vpTransform], scheduleGroupBounds, { deep: true })
+onUnmounted(() => {
+  if (boundsRaf) cancelAnimationFrame(boundsRaf)
+})
+
+/** 节点渲染尺寸：优先 vue-flow 实测 dimensions，回落 data.width/height（默认 200×120）。 */
+function nodeSizeOf(n: CanvasNode): { w: number; h: number } {
+  const dims = (n as CanvasNode & { dimensions?: { width: number; height: number } }).dimensions
+  if (dims && dims.width > 0 && dims.height > 0) return { w: dims.width, h: dims.height }
+  return {
+    w: typeof n.data.width === 'number' ? n.data.width : 200,
+    h: typeof n.data.height === 'number' ? n.data.height : 120
+  }
+}
 
 /**
  * 3x-C1：节点被外部程序删除（父组件批量删/拆分镜整批替换）时，修剪多选集防悬挂 id
  * （悬挂 id 再走批量删除=空操作无害，但工具条计数会错）。
+ * 2x 四轮 S9：同步修剪组员引用（删成员→组减员；组内全删→组自解散，L5）。
  */
 watch(nodes, (list) => {
-  if (!multiSelectedIds.value.length) return
   const alive = new Set(list.map(n => n.id))
-  const next = multiSelectedIds.value.filter(id => alive.has(id))
-  if (next.length !== multiSelectedIds.value.length) {
-    multiSelectedIds.value = next
-    emit('nodes-selected', next)
+  if (multiSelectedIds.value.length) {
+    const next = multiSelectedIds.value.filter(id => alive.has(id))
+    if (next.length !== multiSelectedIds.value.length) {
+      multiSelectedIds.value = next
+      emit('nodes-selected', next)
+    }
+  }
+  if (groups.value.length) {
+    let pruned = false
+    for (const g of groups.value) {
+      const next = g.memberIds.filter(id => alive.has(id))
+      if (next.length !== g.memberIds.length) {
+        g.memberIds = next
+        pruned = true
+      }
+    }
+    const before = groups.value.length
+    groups.value = groups.value.filter(g => g.memberIds.length > 0)
+    if (pruned || groups.value.length !== before) {
+      scheduleGroupBounds()
+      emit('structure-changed')
+    }
   }
 }, { deep: false })
 
@@ -512,6 +711,8 @@ function loadSnapshot(snap: CanvasSnapshot) {
   nodes.value = (snap.nodes ?? []).map(n => ({ ...n, style: nodeSizeStyle(n.data) }))
   // 旧画布边为 smoothstep/default 无删除入口 → 统一归一为 deletable（贝塞尔+删除按钮）
   edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
+  // 2x 四轮 S9：组（老快照无 groups 字段 = 空数组语义，零报错）
+  groups.value = (snap.groups ?? []).map(g => ({ ...g, memberIds: [...(g.memberIds ?? [])] }))
 }
 
 /** 序列化快照（保存时调）。getViewport 是函数非 ref（@vue-flow/core 1.41）。 */
@@ -522,6 +723,7 @@ function getSnapshot(): CanvasSnapshot {
     nodes: nodes.value.map(({ style: _style, class: _class, ...rest }) => rest),
     // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）
     edges: edges.value.map(({ class: _class, ...rest }) => rest),
+    groups: groups.value.map(g => ({ ...g, memberIds: [...g.memberIds] })),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
   }
 }
@@ -563,7 +765,12 @@ function addEdge(source: string, target: string) {
   })
 }
 
-defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes, updateNodeData, focusNodeById, dragMode, setDragMode })
+defineExpose({
+  addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
+  updateNodeData, focusNodeById, dragMode, setDragMode,
+  // 2x 四轮 S9：组 CRUD（父组件批量工具条「设为组」/改名弹窗回调/@候选并集）
+  createGroup, ungroupGroup, renameGroup, getGroups
+})
 </script>
 
 <style lang="scss" scoped>
@@ -619,6 +826,66 @@ defineExpose({ addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode
 
   :deep(.vue-flow__node.canvas-node--hidden) {
     visibility: hidden;
+  }
+
+  /* 2x 四轮 S9：组员色 ring（--group-color 由 applyVisualClasses 注入 wrapper style） */
+  :deep(.vue-flow__node.canvas-node--grouped) {
+    border-radius: var(--radius-base);
+    box-shadow: 0 0 0 2px var(--group-color, var(--color-primary));
+  }
+}
+
+/* 2x 四轮 S9：组包围盒层（框体 pointer-events:none 穿透；头部可交互改名/解组） */
+.canvas-board__groups {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.canvas-board__groupbox {
+  position: absolute;
+  border: 1.5px dashed;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.canvas-board__groupbox-head {
+  position: absolute;
+  left: -1.5px;
+  top: -22px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 6px 6px 0 0;
+  color: #10131a;
+  font-size: 11px;
+  line-height: 18px;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.canvas-board__groupbox-name {
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.canvas-board__groupbox-x {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 2px;
+
+  &:hover {
+    color: #7f1d1d;
   }
 }
 
