@@ -1,5 +1,6 @@
 package com.superprogrammer.file.controller;
 
+import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.service.FileStorageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
@@ -105,6 +106,67 @@ class FileControllerDownloadTest {
 
             assertEquals(MediaType.APPLICATION_OCTET_STREAM, resp.getHeaders().getContentType());
             assertTrue(resp.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION).startsWith("attachment"));
+        } finally {
+            tearDown();
+        }
+    }
+
+    // 6x#2：有登记行 → Cache-Control no-cache/private + ETag=fileId-size（跨会话 304 再验证的基础）
+    @Test
+    void respondsWithEtagAndRevalidationCacheControl() {
+        authenticate();
+        try {
+            when(storage.load(anyString(), any(), anyBoolean()))
+                    .thenReturn(new ByteArrayResource(new byte[]{1, 2, 3}));
+            when(storage.detectMimeType("uuid.png")).thenReturn("image/png");
+            StoredFileEntity meta = new StoredFileEntity();
+            meta.setSize(3L);
+            when(storage.findMeta("uuid.png")).thenReturn(meta);
+
+            ResponseEntity<Resource> resp = controller.get("uuid.png");
+
+            assertEquals("\"uuid.png-3\"", resp.getHeaders().getETag());
+            assertTrue(resp.getHeaders().getCacheControl().contains("no-cache"));
+            assertTrue(resp.getHeaders().getCacheControl().contains("private"));
+        } finally {
+            tearDown();
+        }
+    }
+
+    // 6x#2：size 变（文件被替换）→ ETag 变，浏览器缓存自动失效
+    @Test
+    void etagChangesWhenSizeChanges() {
+        authenticate();
+        try {
+            when(storage.load(anyString(), any(), anyBoolean()))
+                    .thenReturn(new ByteArrayResource(new byte[]{1, 2, 3, 4}));
+            when(storage.detectMimeType("uuid.png")).thenReturn("image/png");
+            StoredFileEntity meta = new StoredFileEntity();
+            meta.setSize(4L);
+            when(storage.findMeta("uuid.png")).thenReturn(meta);
+
+            ResponseEntity<Resource> resp = controller.get("uuid.png");
+
+            assertEquals("\"uuid.png-4\"", resp.getHeaders().getETag());
+        } finally {
+            tearDown();
+        }
+    }
+
+    // 6x#2：无登记行（meta=null）→ 不加 ETag，但 revalidate 头照发（降级不破预览）
+    @Test
+    void noMetaStillSendsRevalidationCacheControl() {
+        authenticate();
+        try {
+            when(storage.load(anyString(), any(), anyBoolean()))
+                    .thenReturn(new ByteArrayResource(new byte[]{1, 2, 3}));
+            when(storage.detectMimeType("uuid.png")).thenReturn("image/png");
+            when(storage.findMeta("uuid.png")).thenReturn(null);
+
+            ResponseEntity<Resource> resp = controller.get("uuid.png");
+
+            assertEquals(null, resp.getHeaders().getETag());
+            assertTrue(resp.getHeaders().getCacheControl().contains("no-cache"));
         } finally {
             tearDown();
         }

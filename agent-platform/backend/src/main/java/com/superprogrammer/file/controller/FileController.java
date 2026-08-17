@@ -11,6 +11,7 @@ import com.superprogrammer.file.service.StoredFile;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -58,6 +59,11 @@ public class FileController {
      * <p>安全体系 S1 · F-1 存储型 XSS 修复（SEC-FR-030a/b）：按 {@link FileSecurityPolicy}
      * 判定 disposition——危险类型（html/svg/xml…）与未知类型强制 attachment + octet-stream 下载，
      * 仅安全白名单（png/mp4/pdf…）维持 inline 预览；响应固定 nosniff 防 MIME 嗅探绕过。
+     *
+     * <p>6x#2 跨会话缓存：响应 {@code private, no-cache + ETag}，浏览器每次带 If-None-Match
+     * 回源再验证——Spring MVC 对 ResponseEntity eTag 自动做条件请求短路（命中返 304 零 body）。
+     * 复验请求仍完整走 load 归属校验与 DATA_EXFIL 计数（304 也算一次访问），审计不打折。
+     * ETag=fileId+size：文件被替换（size 变）或换文件（fileId 变）缓存自动失效。
      */
     @GetMapping("/{fileId}")
     public ResponseEntity<Resource> get(@PathVariable String fileId) {
@@ -73,11 +79,17 @@ public class FileController {
                 ? MediaType.parseMediaType(fileStorageService.detectMimeType(fileId))
                 : MediaType.APPLICATION_OCTET_STREAM;
         String disposition = (inlineSafe ? "inline" : "attachment") + "; filename=\"" + fileId + "\"";
-        return ResponseEntity.ok()
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                 .contentType(contentType)
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .header("X-Content-Type-Options", "nosniff")
-                .body(resource);
+                .cacheControl(CacheControl.noCache().cachePrivate());
+        StoredFileEntity meta = fileStorageService.findMeta(fileId);
+        if (meta != null) {
+            // 对齐 MediaGenController.serveFile：ETag 由 fileId+size 组成
+            builder = builder.eTag("\"" + fileId + "-" + (meta.getSize() != null ? meta.getSize() : 0) + "\"");
+        }
+        return builder.body(resource);
     }
 
     private Long getCurrentUserId() {
