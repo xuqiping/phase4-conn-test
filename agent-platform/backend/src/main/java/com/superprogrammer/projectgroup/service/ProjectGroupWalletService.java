@@ -48,10 +48,10 @@ public class ProjectGroupWalletService {
     private final PointsWalletService pointsWallet;
     private final IdempotencyKeyMapper idemMapper;
 
-    /** 组长划拨：个人 -points（GROUP_ALLOCATE 流水）→ 组池 +points（ALLOCATE 流水）。 */
+    /** 组长划拨：个人 -points（GROUP_ALLOCATE 流水）→ 组池 +points（ALLOCATE 流水）。admin 越组长代管放行（审计在 Controller @AuditLog）。 */
     @Transactional(rollbackFor = Exception.class)
-    public void allocate(Long groupId, Long actorUserId, BigDecimal points, String remark) {
-        requireOwner(groupId, actorUserId);
+    public void allocate(Long groupId, Long actorUserId, boolean admin, BigDecimal points, String remark) {
+        requireOwner(groupId, actorUserId, admin);
         requirePositive(points, "划拨积分必须大于0");
         pointsWallet.debitForGroupAllocate(actorUserId, points, groupId, remark);   // 锁①个人
         if (walletMapper.credit(groupId, points) == 0) {                            // 锁②组池
@@ -69,8 +69,8 @@ public class ProjectGroupWalletService {
      * 提前回笼到个人，结算时差额走 BACKSTOP，不会丢钱/负账（组长自担，可接受）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void reclaim(Long groupId, Long actorUserId, BigDecimal points, String remark) {
-        requireOwner(groupId, actorUserId);
+    public void reclaim(Long groupId, Long actorUserId, boolean admin, BigDecimal points, String remark) {
+        requireOwner(groupId, actorUserId, admin);
         requirePositive(points, "回收积分必须大于0");
         ProjectGroupWalletEntity w = requireWallet(groupId);
         BigDecimal inflight = walletMapper.sumInflightEstimated(groupId);
@@ -152,9 +152,9 @@ public class ProjectGroupWalletService {
      * 对账口径：BACKSTOP 不进组池余额重建、不计成员 used（见类注释不变量②）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public void backstop(Long groupId, Long leaderUserId, BigDecimal shortfall,
+    public void backstop(Long groupId, Long leaderUserId, boolean admin, BigDecimal shortfall,
                          String refType, String refId) {
-        requireOwner(groupId, leaderUserId);
+        requireOwner(groupId, leaderUserId, admin);
         requirePositive(shortfall, "兜底差额必须大于0");
         pointsWallet.charge(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId, "组池不足·组长兜底"); // 锁①个人
         ProjectGroupWalletEntity w = walletMapper.selectByGroupIdForUpdate(groupId); // 锁②组池（只读锁，取一致 balance_after）
@@ -235,12 +235,12 @@ public class ProjectGroupWalletService {
         return w;
     }
 
-    private void requireOwner(Long groupId, Long userId) {
+    private void requireOwner(Long groupId, Long userId, boolean admin) {
         ProjectGroupEntity g = groupMapper.selectById(groupId);
         if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
         }
-        if (!g.getOwnerUserId().equals(userId)) {
+        if (!admin && !g.getOwnerUserId().equals(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅组长可操作项目组资金");
         }
     }
