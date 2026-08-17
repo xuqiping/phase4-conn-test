@@ -74,9 +74,15 @@ class MemoryRecallPipelineTest {
                 entryRecallService, tagMapper, assetRecallService);
         // ①.5 条目合流默认无条目（各条目用例自行覆盖）
         lenient().when(entryRecallService.collectActiveEntries(anyList(), anyLong())).thenReturn(List.of());
-        // ⑥.5 文件记忆默认无命中/无深读（各文件用例自行覆盖）
+        // ⑥.5 文件记忆默认无命中/无深读（各文件用例自行覆盖）；5x 四轮 U3 门控默认桩：
+        // embed 成功（合法维度）+ 门控零命中 + 项目卡门原样放行（门控行为在 MemoryAssetRecallServiceTest 单测）
         lenient().when(assetRecallService.collectFileCards(anyList(), anyLong())).thenReturn(List.of());
-        lenient().when(assetRecallService.deepReadChunks(anyList(), anyString(), anyLong())).thenReturn(List.of());
+        lenient().when(assetRecallService.embedQuery(any(), anyLong()))
+                .thenReturn(new float[com.superprogrammer.knowledge.util.HalfVecUtil.DIM]);
+        lenient().when(assetRecallService.recallGated(anyList(), any(float[].class)))
+                .thenReturn(MemoryAssetRecallService.GatedFileRecall.EMPTY);
+        lenient().when(assetRecallService.gateProjectCards(anyList(), any(float[].class)))
+                .thenAnswer(inv -> inv.getArgument(0));
     }
 
     // ---------- helpers ----------
@@ -543,13 +549,16 @@ class MemoryRecallPipelineTest {
         lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
     }
 
-    // ===== 21 文件命中 → 【文件记忆】卡片块 + fileCards 透出 =====
+    // ===== 21 文件命中 → 【文件记忆】卡片块 + fileCards 透出（5x 四轮 U3 后经 recallGated 门控）=====
 
     @Test
     void fileCardHit_assemblesFileMemorySection() {
         stubFileRecallBase();
-        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
-                fileCard(501, "React课件.pdf", false)));
+        java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> cards = List.of(
+                fileCard(501, "React课件.pdf", false));
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(cards);
+        when(assetRecallService.recallGated(eq(cards), any(float[].class)))
+                .thenReturn(new MemoryAssetRecallService.GatedFileRecall(cards, List.of()));
 
         MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
@@ -569,8 +578,9 @@ class MemoryRecallPipelineTest {
         java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> cards = List.of(
                 fileCard(501, "React课件.pdf", false));
         when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(cards);
-        when(assetRecallService.deepReadChunks(eq(cards), eq(QUERY), eq(SELF))).thenReturn(List.of(
-                new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第12页", "useEffect 依赖数组规则", 0.21d)));
+        when(assetRecallService.recallGated(eq(cards), any(float[].class)))
+                .thenReturn(new MemoryAssetRecallService.GatedFileRecall(cards, List.of(
+                        new MemoryAssetRecallService.DeepReadChunk(501L, "React课件.pdf", "第12页", "useEffect 依赖数组规则", 0.21d))));
 
         MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
@@ -585,8 +595,11 @@ class MemoryRecallPipelineTest {
     @Test
     void cleanedFile_marksDeletedButKeepsSummary() {
         stubFileRecallBase();
-        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
-                fileCard(502, "旧课件.pdf", true)));
+        java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> cards = List.of(
+                fileCard(502, "旧课件.pdf", true));
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(cards);
+        when(assetRecallService.recallGated(eq(cards), any(float[].class)))
+                .thenReturn(new MemoryAssetRecallService.GatedFileRecall(cards, List.of()));
 
         MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
 
@@ -723,8 +736,11 @@ class MemoryRecallPipelineTest {
         when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
         when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
         // 个人文件记忆命中 fileId=file-501（memoryId=501，有展开分块）
-        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
-                fileCard(501, "React课件.pdf", false)));
+        java.util.List<com.superprogrammer.chat.dto.RecalledFileCard> personal = List.of(
+                fileCard(501, "React课件.pdf", false));
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(personal);
+        when(assetRecallService.recallGated(eq(personal), any(float[].class)))
+                .thenReturn(new MemoryAssetRecallService.GatedFileRecall(personal, List.of()));
         // 项目条目同 fileId → collectFileCardsForEntries 返项目卡，但应被去重剔除
         MemoryProjectEntryVO fileEntry = MemoryProjectEntryVO.builder()
                 .id(9L).projectId(10L).authorUserId(OTHER).authorName("张三")
@@ -739,5 +755,82 @@ class MemoryRecallPipelineTest {
         // 仅 1 张卡片（个人卡优先，项目卡同 fileId 去重）
         assertEquals(1, r.getFileCards().size(), "同 fileId 去重：仅 1 张卡片");
         assertEquals(501L, r.getFileCards().get(0).getMemoryId(), "保留个人卡（有展开分块），项目卡被剔");
+    }
+
+    // ============================ 5x 四轮 U3 · 文件召回向量门控 ============================
+
+    /** select 异常降级（selected=全集）→ 跳过文件召回（宁缺勿噪，U3 刷屏放大器封口）。 */
+    @Test
+    void selectDegraded_skipsFileRecall() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "文件", "hooks", SELF)));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenThrow(new RuntimeException("llm down"));
+        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        verify(assetRecallService, never()).collectFileCards(anyList(), anyLong());
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("select 降级轮：跳过文件召回")),
+                "note 记跳过原因");
+        assertFalse(r.getAssembledText().contains("【文件记忆】"));
+    }
+
+    /** select 启发式降级（selected==候选全集且 size>COARSE_TOP）→ 同样跳过文件召回。 */
+    @Test
+    void selectHeuristicDegraded_skipsFileRecall() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(RecallScope.defaultPersonalOnly());
+        List<RecallTagMeta> many = new java.util.ArrayList<>();
+        for (long i = 1; i <= MemoryTagSelector.COARSE_TOP + 1; i++) {
+            many.add(tag(i, "我", "话题" + i, SELF));
+        }
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(many);
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(many);  // 全集 = 降级
+        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        verify(assetRecallService, never()).collectFileCards(anyList(), anyLong());
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("select 降级轮：跳过文件召回")));
+    }
+
+    /** query embed 失败 → 零文件卡零深读，note 记降级（宁缺勿噪），非 degraded 主干。 */
+    @Test
+    void embedFails_zeroFileCardsWithNote() {
+        stubFileRecallBase();
+        when(assetRecallService.collectFileCards(List.of(10L), SELF)).thenReturn(List.of(
+                fileCard(501, "React课件.pdf", false)));
+        when(assetRecallService.embedQuery(eq(QUERY), eq(SELF))).thenReturn(null);
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        assertTrue(r.getFileCards().isEmpty(), "embed 失败零文件卡");
+        assertTrue(r.getNotes().stream().anyMatch(n -> n.contains("query embed 失败：零文件卡")));
+        assertFalse(r.getAssembledText().contains("【文件记忆】"));
+    }
+
+    /** 项目附件卡过 gateProjectCards 同门（被门掉则不透出）。 */
+    @Test
+    void projectFileCard_gatedByVector() {
+        when(resolver.resolve(any(), eq(SELF))).thenReturn(projectScope());
+        when(aggregator.aggregate(any(), eq(SELF))).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        MemoryProjectEntryVO fileEntry = MemoryProjectEntryVO.builder()
+                .id(7L).projectId(10L).authorUserId(OTHER).authorName("张三")
+                .l1Summary("hooks 课件讲义").contentType("FILE").fileId("f-courseware")
+                .tagIds(List.of(10L)).build();
+        when(entryRecallService.collectActiveEntries(List.of(10L), SELF)).thenReturn(List.of(fileEntry));
+        when(selector.select(eq(QUERY), anyList(), eq(SELF), any())).thenReturn(List.of(tag(10, "我", "课件", SELF)));
+        lenient().when(reader.read(eq(QUERY), anyList(), any(), eq(SELF), any())).thenReturn(List.of());
+        lenient().when(patcher.collectUncovered(any(), eq(SELF))).thenReturn(List.of());
+        when(assetRecallService.collectFileCardsForEntries(anyList())).thenReturn(List.of(
+                projectFileCard("f-courseware", "React课件.pdf", false)));
+        // 门控判不相关 → 空列表
+        when(assetRecallService.gateProjectCards(anyList(), any(float[].class))).thenReturn(List.of());
+
+        MemoryRecallResult r = pipeline.recall(QUERY, null, SELF, MODEL);
+
+        assertTrue(r.getFileCards().isEmpty(), "被门掉的项目卡不透出");
+        assertFalse(r.getAssembledText().contains("【文件记忆】"));
     }
 }

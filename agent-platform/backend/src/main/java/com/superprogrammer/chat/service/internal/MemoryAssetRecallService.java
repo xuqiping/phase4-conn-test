@@ -12,13 +12,18 @@ import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.mapper.StoredFileMapper;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.system.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -35,7 +40,8 @@ import java.util.stream.Collectors;
  * 过滤分块噪声（无分块过阈值 = 等效 reflect 不通过不深读），<b>不新增 reflect LLM 调用</b>，
  * 守 pipeline「最多 2 次 LLM」预算（embed 不计 chat LLM）。
  * <p>
- * <b>降级</b>：embed 失败/维度不符 → 不深读返空（卡片仍在）；其余异常抛给 pipeline ⑥.5 try-catch 兜。
+ * <b>降级（5x 四轮 U3 后）</b>：embed 失败/维度不符 → <b>零卡片</b>（原「卡片仍在」正是无关文件刷屏根因之一，
+ * 拍板②：宁缺勿噪）；无分块文件（弱记忆）不过向量门不出卡（已接受记档）；其余异常抛给 pipeline ⑥.5 try-catch 兜。
  */
 @Slf4j
 @Service
@@ -48,6 +54,8 @@ public class MemoryAssetRecallService {
     static final int DEEP_READ_TOP_K = 5;
     /** 深读 cosine 距离阈值（越小越相关；≤0.5 才注入，无关提问不触发深读）。 */
     static final double MAX_DISTANCE = 0.5d;
+    /** 5x 四轮 U3：单文件深读分块上限（窗口 per-file；防分块多的单文件垄断 top-k 挤掉其他文件）。 */
+    static final int PER_FILE_TOP_K = 2;
     /** query embed 输入截断（防爆 token）。 */
     private static final int QUERY_CAP = 1000;
 
@@ -55,6 +63,7 @@ public class MemoryAssetRecallService {
     private final MemoryAssetChunkMapper chunkMapper;
     private final StoredFileMapper storedFileMapper;
     private final LlmGateway llmGateway;
+    private final SystemSettingService systemSettingService;
 
     /**
      * 命中本人 READY 文件记忆 → 文件卡片（含 chunk 计数 + 原文件存续标记）。
@@ -154,41 +163,127 @@ public class MemoryAssetRecallService {
     }
 
     /**
-     * 深读：query 向量在命中记忆的分块里取 top-5（带 page_ref 语义锚点）。
-     * embed 失败 / 维度不符 → 返空（降级不深读，卡片块仍装配）。
+     * 深读（保留旧签名入口）：query → 向量 → {@link #recallGated}，返回过门文件的分块。
+     * 空 hits 短路不 embed（旧语义）；embed 失败 / 维度不符 → 返空（降级不深读）。
      */
     public List<DeepReadChunk> deepReadChunks(List<RecalledFileCard> hits, String query, Long userId) {
-        if (hits == null || hits.isEmpty() || query == null || query.isBlank()) {
+        if (hits == null || hits.isEmpty()) {
             return List.of();
         }
+        return recallGated(hits, embedQuery(query, userId)).chunks();
+    }
+
+    /**
+     * 5x 四轮 U3 · query → 向量（一次 embed 供卡片门 + 深读 + 项目卡门三处复用）。
+     * 截断 QUERY_CAP；失败/维度不符返 null——调用方据此走「零卡片」降级（宁缺勿噪，
+     * 已在 plan 拍板记档：embed 挂了宁可这轮不出文件卡，不出无关卡）。
+     */
+    public float[] embedQuery(String query, Long userId) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        String q = query.length() > QUERY_CAP ? query.substring(0, QUERY_CAP) : query;
         float[] vector;
         try {
-            String q = query.length() > QUERY_CAP ? query.substring(0, QUERY_CAP) : query;
             vector = llmGateway.embed(q, null, userId);
         } catch (Exception e) {
-            log.warn("文件深读 query embed 失败 userId={}: {} → 降级不深读", userId, e.getMessage());
-            return List.of();
+            log.warn("文件召回 query embed 失败 userId={}: {} → 降级零文件卡", userId, e.getMessage());
+            return null;
         }
         if (vector == null || vector.length != HalfVecUtil.DIM) {
-            log.warn("文件深读 embed 维度不符 userId={} → 降级不深读", userId);
-            return List.of();
+            log.warn("文件召回 embed 维度不符 userId={} → 降级零文件卡", userId);
+            return null;
         }
-        List<Long> memoryIds = hits.stream().map(RecalledFileCard::getMemoryId)
-                .filter(Objects::nonNull).toList();
-        List<FileChunkHit> rows = chunkMapper.searchTopK(memoryIds,
-                HalfVecUtil.toHalfVec(vector), MAX_DISTANCE, DEEP_READ_TOP_K);
-        Map<Long, String> names = hits.stream()
+        return vector;
+    }
+
+    /**
+     * 5x 四轮 U3 · 向量门控召回（核心修法）：
+     * 候选卡片须有 <b>≥1 个分块</b>与 query 的 cosine 距离 ≤ 阈值
+     * （memory.recall.file-card-max-distance，默认 0.5）才展示+注入——原仅标签重叠命中，
+     * 无关文件刷屏（U3 主诉）。一次 searchTopK 双产出：过门卡片（按最近邻距离排序）
+     * + 深读分块（per-file ≤{@link #PER_FILE_TOP_K}，总 ≤{@link #DEEP_READ_TOP_K}）。
+     * <p>
+     * vec null（embed 失败）→ 空卡片空分块；无分块文件（弱记忆）天然不过门（已接受记档）。
+     */
+    public GatedFileRecall recallGated(List<RecalledFileCard> candidates, float[] queryVec) {
+        if (candidates == null || candidates.isEmpty()
+                || queryVec == null || queryVec.length != HalfVecUtil.DIM) {
+            return GatedFileRecall.EMPTY;
+        }
+        Map<Long, RecalledFileCard> byId = candidates.stream()
+                .filter(c -> c.getMemoryId() != null)
+                .collect(Collectors.toMap(RecalledFileCard::getMemoryId, Function.identity(), (a, b) -> a));
+        if (byId.isEmpty()) {
+            return GatedFileRecall.EMPTY;
+        }
+        double maxDistance = systemSettingService.getMemoryRecallFileCardMaxDistance();
+        List<FileChunkHit> rows = chunkMapper.searchTopK(new ArrayList<>(byId.keySet()),
+                HalfVecUtil.toHalfVec(queryVec), maxDistance, PER_FILE_TOP_K, DEEP_READ_TOP_K);
+        if (rows.isEmpty()) {
+            return GatedFileRecall.EMPTY;
+        }
+        Map<Long, String> names = byId.values().stream()
                 .collect(Collectors.toMap(RecalledFileCard::getMemoryId,
                         c -> c.getOriginalName() == null ? "文件" : c.getOriginalName(), (a, b) -> a));
-        return rows.stream()
-                .map(r -> new DeepReadChunk(r.getAssetMemoryId(),
-                        names.getOrDefault(r.getAssetMemoryId(), "文件"),
-                        r.getPageRef(), r.getChunkText(),
-                        r.getDistance() == null ? 0d : r.getDistance()))
+        // rows 已按 distance ASC → 首见即该文件最近邻；LinkedHashMap 保序（卡片按相关性排，最近邻文件靠前）
+        Map<Long, RecalledFileCard> kept = new LinkedHashMap<>();
+        List<DeepReadChunk> chunks = new ArrayList<>();
+        for (FileChunkHit r : rows) {
+            RecalledFileCard c = byId.get(r.getAssetMemoryId());
+            if (c == null) {
+                continue;
+            }
+            kept.putIfAbsent(r.getAssetMemoryId(), c);
+            chunks.add(new DeepReadChunk(r.getAssetMemoryId(),
+                    names.getOrDefault(r.getAssetMemoryId(), "文件"),
+                    r.getPageRef(), r.getChunkText(),
+                    r.getDistance() == null ? 0d : r.getDistance()));
+        }
+        return new GatedFileRecall(List.copyOf(kept.values()), List.copyOf(chunks));
+    }
+
+    /**
+     * 5x 四轮 U3 · 项目附件下载卡同门：项目卡 memoryId=null（跨用户不展开分块），按 fileId 回查
+     * READY memory → 分块向量判距离（per-file 1、总 ≤ 文件数，只判过阈不取文本）。
+     * 无分块/无 memory 行/不相关 → 不展示（原「项目 FILE 条目恒拼恒展示」是 U3 刷屏放大器）。
+     * vec null → 全部不展示（与个人卡同策略：宁缺勿噪）。
+     */
+    public List<RecalledFileCard> gateProjectCards(List<RecalledFileCard> projectCards, float[] queryVec) {
+        if (projectCards == null || projectCards.isEmpty()
+                || queryVec == null || queryVec.length != HalfVecUtil.DIM) {
+            return List.of();
+        }
+        List<String> fileIds = projectCards.stream()
+                .map(RecalledFileCard::getFileId)
+                .filter(fid -> fid != null && !fid.isBlank())
+                .distinct().toList();
+        if (fileIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Long> memIdByFile = memoryMapper.findReadyByFileIds(fileIds).stream()
+                .filter(m -> m.getFileId() != null && m.getId() != null)
+                .collect(Collectors.toMap(MemoryAssetMemory::getFileId, MemoryAssetMemory::getId, (a, b) -> a));
+        if (memIdByFile.isEmpty()) {
+            return List.of();
+        }
+        List<Long> memIds = new ArrayList<>(new LinkedHashSet<>(memIdByFile.values()));
+        List<FileChunkHit> probe = chunkMapper.searchTopK(memIds, HalfVecUtil.toHalfVec(queryVec),
+                systemSettingService.getMemoryRecallFileCardMaxDistance(), 1, memIds.size());
+        Set<Long> passMemIds = probe.stream()
+                .map(FileChunkHit::getAssetMemoryId).filter(Objects::nonNull).collect(Collectors.toSet());
+        return projectCards.stream()
+                .filter(c -> memIdByFile.get(c.getFileId()) != null)
+                .filter(c -> passMemIds.contains(memIdByFile.get(c.getFileId())))
                 .toList();
     }
 
     /** 深读命中的分块（装配「文件深读」块用；distance 仅打点/debug）。 */
     public record DeepReadChunk(Long memoryId, String fileName, String pageRef, String chunkText, double distance) {
+    }
+
+    /** 5x 四轮 U3：门控后产物——过阈值的卡片 + 对应深读分块（一次 SQL 双产出）。 */
+    public record GatedFileRecall(List<RecalledFileCard> cards, List<DeepReadChunk> chunks) {
+        static final GatedFileRecall EMPTY = new GatedFileRecall(List.of(), List.of());
     }
 }

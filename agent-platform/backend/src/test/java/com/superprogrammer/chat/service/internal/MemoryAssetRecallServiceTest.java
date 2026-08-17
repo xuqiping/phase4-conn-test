@@ -12,6 +12,7 @@ import com.superprogrammer.file.entity.StoredFileEntity;
 import com.superprogrammer.file.mapper.StoredFileMapper;
 import com.superprogrammer.knowledge.util.HalfVecUtil;
 import com.superprogrammer.llm.LlmGateway;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +30,9 @@ import static org.mockito.Mockito.*;
  * <p>
  * 覆盖：命中卡片装配（chunk 计数/CLEANED 标记/可下载派生）、深读门控（embed 失败/维度不符降级、
  * top-k 映射带 pageRef + 文件名回查、query 截断）、空入参短路。
+ * <p>
+ * 5x 四轮 U3 增补：向量门控（无分块过阈不出卡 / per-file ≤2 / 阈值取 system_settings /
+ * 项目卡同门）。阈值默认桩返 {@link MemoryAssetRecallService#MAX_DISTANCE}（lenient，非门控用例不触发）。
  */
 @ExtendWith(MockitoExtension.class)
 class MemoryAssetRecallServiceTest {
@@ -41,6 +45,8 @@ class MemoryAssetRecallServiceTest {
     StoredFileMapper storedFileMapper;
     @Mock
     LlmGateway llmGateway;
+    @Mock
+    SystemSettingService systemSettingService;
 
     private MemoryAssetRecallService service;
 
@@ -48,7 +54,10 @@ class MemoryAssetRecallServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemoryAssetRecallService(memoryMapper, chunkMapper, storedFileMapper, llmGateway);
+        service = new MemoryAssetRecallService(memoryMapper, chunkMapper, storedFileMapper, llmGateway,
+                systemSettingService);
+        lenient().when(systemSettingService.getMemoryRecallFileCardMaxDistance())
+                .thenReturn(MemoryAssetRecallService.MAX_DISTANCE);
     }
 
     private static MemoryAssetMemory row(long id, String fileId, String name) {
@@ -153,24 +162,24 @@ class MemoryAssetRecallServiceTest {
 
     @Test
     void deepRead_embedThrows_degradesToEmpty() {
-        when(llmGateway.embed(anyString(), anyString(), eq(SELF))).thenThrow(new RuntimeException("embed down"));
+        when(llmGateway.embed(anyString(), nullable(String.class), eq(SELF))).thenThrow(new RuntimeException("embed down"));
         assertTrue(service.deepReadChunks(List.of(card(501, "课件A.pdf")), "hooks 那页", SELF).isEmpty());
-        verify(chunkMapper, never()).searchTopK(anyList(), anyString(), anyDouble(), anyInt());
+        verify(chunkMapper, never()).searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt());
     }
 
     @Test
     void deepRead_embedNullOrWrongDim_degradesToEmpty() {
-        when(llmGateway.embed(anyString(), anyString(), eq(SELF))).thenReturn(null);
+        when(llmGateway.embed(anyString(), nullable(String.class), eq(SELF))).thenReturn(null);
         assertTrue(service.deepReadChunks(List.of(card(501, "课件A.pdf")), "问", SELF).isEmpty());
 
-        when(llmGateway.embed(anyString(), anyString(), eq(SELF))).thenReturn(new float[8]);
+        when(llmGateway.embed(anyString(), nullable(String.class), eq(SELF))).thenReturn(new float[8]);
         assertTrue(service.deepReadChunks(List.of(card(501, "课件A.pdf")), "问", SELF).isEmpty());
-        verify(chunkMapper, never()).searchTopK(anyList(), anyString(), anyDouble(), anyInt());
+        verify(chunkMapper, never()).searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt());
     }
 
     @Test
     void deepRead_happy_mapsHitsWithFileNameAndPageRef() {
-        when(llmGateway.embed(eq("hooks 那页"), anyString(), eq(SELF))).thenReturn(new float[HalfVecUtil.DIM]);
+        when(llmGateway.embed(eq("hooks 那页"), nullable(String.class), eq(SELF))).thenReturn(new float[HalfVecUtil.DIM]);
         FileChunkHit hit = new FileChunkHit();
         hit.setId(9001L);
         hit.setAssetMemoryId(501L);
@@ -179,7 +188,8 @@ class MemoryAssetRecallServiceTest {
         hit.setPageRef("第12页");
         hit.setDistance(0.21d);
         when(chunkMapper.searchTopK(eq(List.of(501L)), anyString(),
-                eq(MemoryAssetRecallService.MAX_DISTANCE), eq(MemoryAssetRecallService.DEEP_READ_TOP_K)))
+                eq(MemoryAssetRecallService.MAX_DISTANCE),
+                eq(MemoryAssetRecallService.PER_FILE_TOP_K), eq(MemoryAssetRecallService.DEEP_READ_TOP_K)))
                 .thenReturn(List.of(hit));
 
         List<MemoryAssetRecallService.DeepReadChunk> chunks =
@@ -195,13 +205,130 @@ class MemoryAssetRecallServiceTest {
 
     @Test
     void deepRead_longQuery_cappedBeforeEmbed() {
-        when(llmGateway.embed(anyString(), anyString(), eq(SELF))).thenReturn(new float[HalfVecUtil.DIM]);
-        when(chunkMapper.searchTopK(anyList(), anyString(), anyDouble(), anyInt())).thenReturn(List.of());
+        when(llmGateway.embed(anyString(), nullable(String.class), eq(SELF))).thenReturn(new float[HalfVecUtil.DIM]);
+        when(chunkMapper.searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt())).thenReturn(List.of());
         String longQuery = "问".repeat(2000);
 
         service.deepReadChunks(List.of(card(501, "课件A.pdf")), longQuery, SELF);
 
-        verify(llmGateway).embed(argThat(q -> q.length() == 1000), anyString(), eq(SELF));
+        verify(llmGateway).embed(argThat(q -> q.length() == 1000), nullable(String.class), eq(SELF));
+    }
+
+    // ===== 5x 四轮 U3 · recallGated 向量门控 =====
+
+    private static FileChunkHit hit(long memoryId, int chunkNo, String text, String pageRef, double dist) {
+        FileChunkHit h = new FileChunkHit();
+        h.setId(memoryId * 100 + chunkNo);
+        h.setAssetMemoryId(memoryId);
+        h.setChunkNo(chunkNo);
+        h.setChunkText(text);
+        h.setPageRef(pageRef);
+        h.setDistance(dist);
+        return h;
+    }
+
+    /** 门控核心：仅「≥1 分块过阈」的文件出卡；无分块文件（弱记忆）被门掉；卡片按最近邻排序。 */
+    @Test
+    void recallGated_onlyFilesWithPassingChunkEmitCards() {
+        RecalledFileCard a = card(501, "无关B.pdf");
+        RecalledFileCard b = card(502, "相关A.pdf");
+        // rows 按 distance ASC：502 最近邻 0.1 → 501 不在 rows（全部分块不过阈）→ 只出 502 卡
+        when(chunkMapper.searchTopK(eq(List.of(501L, 502L)), anyString(),
+                eq(MemoryAssetRecallService.MAX_DISTANCE),
+                eq(MemoryAssetRecallService.PER_FILE_TOP_K), eq(MemoryAssetRecallService.DEEP_READ_TOP_K)))
+                .thenReturn(List.of(hit(502, 3, "useEffect 规则", "第3页", 0.1d), hit(502, 7, "依赖数组", "第7页", 0.3d)));
+
+        MemoryAssetRecallService.GatedFileRecall r = service.recallGated(List.of(a, b), new float[HalfVecUtil.DIM]);
+
+        assertEquals(List.of("相关A.pdf"), r.cards().stream().map(RecalledFileCard::getOriginalName).toList(),
+                "仅过阈文件出卡（无关B 全部分块不过阈被门掉）");
+        assertEquals(2, r.chunks().size(), "过阈文件的两块全注入（per-file ≤2 内）");
+        assertEquals(502L, r.chunks().get(0).memoryId());
+        assertEquals("第3页", r.chunks().get(0).pageRef());
+    }
+
+    /** vec null（embed 失败）→ 零卡片零分块（宁缺勿噪，拍板②）。 */
+    @Test
+    void recallGated_nullVec_returnsEmpty() {
+        MemoryAssetRecallService.GatedFileRecall r = service.recallGated(List.of(card(501, "a.pdf")), null);
+        assertTrue(r.cards().isEmpty());
+        assertTrue(r.chunks().isEmpty());
+        verifyNoInteractions(chunkMapper);
+    }
+
+    /** 无分块过阈（searchTopK 返空）→ 零卡片（U3 主修法：无关提问不出卡）。 */
+    @Test
+    void recallGated_noChunkPasses_zeroCards() {
+        when(chunkMapper.searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+        MemoryAssetRecallService.GatedFileRecall r = service.recallGated(
+                List.of(card(501, "a.pdf"), card(502, "b.pdf")), new float[HalfVecUtil.DIM]);
+        assertTrue(r.cards().isEmpty());
+        assertTrue(r.chunks().isEmpty());
+    }
+
+    /** 阈值取 system_settings（memory.recall.file-card-max-distance）：管理员调 0.3 → SQL 收到 0.3。 */
+    @Test
+    void recallGated_thresholdFromSetting() {
+        when(systemSettingService.getMemoryRecallFileCardMaxDistance()).thenReturn(0.3d);
+        when(chunkMapper.searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt()))
+                .thenReturn(List.of(hit(501, 1, "t", "第1页", 0.2d)));
+
+        service.recallGated(List.of(card(501, "a.pdf")), new float[HalfVecUtil.DIM]);
+
+        verify(chunkMapper).searchTopK(anyList(), anyString(), eq(0.3d),
+                eq(MemoryAssetRecallService.PER_FILE_TOP_K), eq(MemoryAssetRecallService.DEEP_READ_TOP_K));
+    }
+
+    /** per-file 窗口参数：searchTopK 收 perFileLimit=2 / limit=5（防单文件垄断 top-k）。 */
+    @Test
+    void recallGated_perFileWindowArgs() {
+        when(chunkMapper.searchTopK(anyList(), anyString(), anyDouble(), anyInt(), anyInt()))
+                .thenReturn(List.of(hit(501, 1, "t", "第1页", 0.2d)));
+        service.recallGated(List.of(card(501, "a.pdf")), new float[HalfVecUtil.DIM]);
+        verify(chunkMapper).searchTopK(anyList(), anyString(), anyDouble(),
+                eq(MemoryAssetRecallService.PER_FILE_TOP_K), eq(MemoryAssetRecallService.DEEP_READ_TOP_K));
+    }
+
+    // ===== 5x 四轮 U3 · gateProjectCards 项目附件卡同门 =====
+
+    /** 项目卡按 fileId 回查 memory → 分块判距：过阈出卡，无 memory 行/不过阈剔除。 */
+    @Test
+    void gateProjectCards_filtersByChunkDistance() {
+        RecalledFileCard pass = projectCard("f-relate", "相关课件.pdf");
+        RecalledFileCard fail = projectCard("f-off", "无关课件.pdf");
+        when(memoryMapper.findReadyByFileIds(List.of("f-relate", "f-off"))).thenReturn(List.of(
+                row(501, "f-relate", "相关课件.pdf"), row(502, "f-off", "无关课件.pdf")));
+        // 探针只判 501 过阈（per-file 1、总 ≤ 文件数）
+        when(chunkMapper.searchTopK(eq(List.of(501L, 502L)), anyString(), anyDouble(), eq(1), eq(2)))
+                .thenReturn(List.of(hit(501, 1, "t", "第1页", 0.2d)));
+
+        List<RecalledFileCard> kept = service.gateProjectCards(List.of(pass, fail), new float[HalfVecUtil.DIM]);
+
+        assertEquals(1, kept.size(), "仅过阈项目卡保留");
+        assertEquals("f-relate", kept.get(0).getFileId());
+    }
+
+    /** 项目卡 fileId 无 READY memory 行（纯项目附件未入个人库）→ 无从判距 → 不展示。 */
+    @Test
+    void gateProjectCards_noMemoryRow_dropped() {
+        when(memoryMapper.findReadyByFileIds(List.of("f-x"))).thenReturn(List.of());
+        assertTrue(service.gateProjectCards(
+                List.of(projectCard("f-x", "x.pdf")), new float[HalfVecUtil.DIM]).isEmpty());
+        verifyNoInteractions(chunkMapper);
+    }
+
+    /** vec null（embed 失败）→ 项目卡全不展示（与个人卡同策略）。 */
+    @Test
+    void gateProjectCards_nullVec_allDropped() {
+        assertTrue(service.gateProjectCards(List.of(projectCard("f-x", "x.pdf")), null).isEmpty());
+        verifyNoInteractions(memoryMapper, chunkMapper);
+    }
+
+    private static RecalledFileCard projectCard(String fileId, String name) {
+        return RecalledFileCard.builder()
+                .memoryId(null).fileId(fileId).originalName(name)
+                .fileKind("PDF").chunkCount(0).fileCleaned(false).downloadable(true).build();
     }
 
     // ===== collectFileCardsForEntries（记忆二期 P3 扩展 · 项目收录附件下载卡片）=====

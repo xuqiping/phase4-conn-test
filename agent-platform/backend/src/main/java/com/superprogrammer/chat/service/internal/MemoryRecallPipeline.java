@@ -156,6 +156,9 @@ public class MemoryRecallPipeline {
         List<RecallTagMeta> selected = List.of();
         List<RecalledSummary> summaries = List.of();
         List<Long> selectedTagIds = List.of();   // ⑥.5 文件记忆命中也用（提升作用域）
+        // 5x 四轮 U3：select 降级标记（异常兜底全集 / 启发式判全集）——降级轮标签重叠失去相关性
+        // 意义，⑥.5 跳过文件召回（全集 ∩ 文件 tag = 全部文件 → 无关文件刷屏的放大器）。
+        boolean selectDegraded = false;
         if (!tags.isEmpty()) {
             // ③ select（向量 12，最多 1 次 LLM）
             long t2 = System.nanoTime();
@@ -165,12 +168,14 @@ public class MemoryRecallPipeline {
             } catch (Exception e) {
                 log.warn("recall traceId={} select 异常: {}", traceId, e.getMessage());
                 selected = tags;  // 降级用全集
+                selectDegraded = true;
                 steps.add(step("select", t2, selected.size(), false));
                 notes.add("select 异常降级用全集: " + e.getMessage());
             }
             // 启发式：selector 内部降级（LLM 全失败用 candidates 全集，selector 不暴露信号）
             if (tags.size() > MemoryTagSelector.COARSE_TOP
                     && selected.size() == tags.size() && !selected.isEmpty()) {
+                selectDegraded = true;
                 notes.add("select 启发式降级：selected==候选全集(size=" + tags.size() + ">" + MemoryTagSelector.COARSE_TOP + ")");
             }
 
@@ -206,35 +211,48 @@ public class MemoryRecallPipeline {
             notes.add("patch 异常: " + e.getMessage());
         }
 
-        // ⑥.5 文件记忆召回 + 深读（记忆二期 P3 · FR-203）：个人域 READY 文件记忆按 ③ 选中标签命中
-        // → 「文件记忆」卡片块；query embed 后分块向量 top-5（距离阈值过滤）→ 「文件深读」块带 page_ref。
-        // 文件记忆为个人域资产：仅 personalOn 时召回。独立 try/catch 降级跳过，绝不动主干。
+        // ⑥.5 文件记忆召回 + 深读（记忆二期 P3 · FR-203 → 5x 四轮 U3 向量门控）：
+        // 个人域 READY 文件记忆按 ③ 选中标签取候选 → recallGated 向量门控（≥1 分块距离 ≤ 阈值才出卡）
+        // + 深读分块（per-file ≤2、总 ≤5）。文件记忆为个人域资产：仅 personalOn 时召回。
+        // 独立 try/catch 降级跳过，绝不动主干。
         long t4h = System.nanoTime();
         List<RecalledFileCard> fileCards = List.of();
         List<MemoryAssetRecallService.DeepReadChunk> fileChunks = List.of();
-        if (scope.personalOn() && !selectedTagIds.isEmpty()) {
+        float[] fileQueryVec = null;   // 一次 embed 供个人卡门 + ⑦ 项目卡门复用
+        boolean personalFileOn = scope.personalOn() && !selectedTagIds.isEmpty();
+        if (personalFileOn && selectDegraded) {
+            // 降级轮（selected=全集）：标签重叠无相关性意义 → 跳过文件召回（宁缺勿噪，5x 四轮 U3）
+            notes.add("select 降级轮：跳过文件召回（宁缺勿噪）");
+            steps.add(new RecallTraceStep("file-recall", 0, 0, true));
+            steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+        } else if (personalFileOn) {
             try {
-                fileCards = assetRecallService.collectFileCards(selectedTagIds, userId);
-                steps.add(step("file-recall", t4h, fileCards.size(), true));
+                List<RecalledFileCard> candidates = assetRecallService.collectFileCards(selectedTagIds, userId);
+                steps.add(step("file-recall", t4h, candidates.size(), true));
+                if (!candidates.isEmpty()) {
+                    float[] queryVec = assetRecallService.embedQuery(query, userId);
+                    long t4i = System.nanoTime();
+                    if (queryVec == null) {
+                        notes.add("query embed 失败：零文件卡（宁缺勿噪）");
+                        steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+                    } else {
+                        fileQueryVec = queryVec;
+                        MemoryAssetRecallService.GatedFileRecall gated =
+                                assetRecallService.recallGated(candidates, queryVec);
+                        fileCards = gated.cards();
+                        fileChunks = gated.chunks();
+                        steps.add(step("file-deepread", t4i, fileChunks.size(), true));
+                    }
+                } else {
+                    steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+                }
             } catch (Exception e) {
                 log.warn("recall traceId={} file-recall 失败: {}", traceId, e.getMessage());
                 fileCards = List.of();
+                fileChunks = List.of();
                 steps.add(step("file-recall", t4h, 0, false));
-                notes.add("file-recall 失败: " + e.getMessage());
-            }
-            if (!fileCards.isEmpty()) {
-                long t4i = System.nanoTime();
-                try {
-                    fileChunks = assetRecallService.deepReadChunks(fileCards, query, userId);
-                    steps.add(step("file-deepread", t4i, fileChunks.size(), true));
-                } catch (Exception e) {
-                    log.warn("recall traceId={} file-deepread 失败: {}", traceId, e.getMessage());
-                    fileChunks = List.of();
-                    steps.add(step("file-deepread", t4i, 0, false));
-                    notes.add("file-deepread 失败: " + e.getMessage());
-                }
-            } else {
                 steps.add(new RecallTraceStep("file-deepread", 0, 0, true));
+                notes.add("file-recall 失败: " + e.getMessage());
             }
         } else {
             // 个人域关闭 / 无选中标签：不查文件记忆，打点 count=0（非异常）
@@ -256,8 +274,22 @@ public class MemoryRecallPipeline {
             try {
                 List<RecalledFileCard> cards = assetRecallService.collectFileCardsForEntries(entriesToAssemble);
                 projectFileCards = cards == null ? List.of() : cards;
+                // 5x 四轮 U3：项目附件下载卡同过向量门（原「项目 FILE 条目恒拼恒展示」是无关文件
+                // 刷屏放大器——无标签条目绕过 ③ 选择直达展示）。embed 缺则现算（⑥.5 未算过时）。
+                if (!projectFileCards.isEmpty()) {
+                    if (fileQueryVec == null) {
+                        fileQueryVec = assetRecallService.embedQuery(query, userId);
+                    }
+                    if (fileQueryVec == null) {
+                        notes.add("query embed 失败：项目文件卡不展示（宁缺勿噪）");
+                        projectFileCards = List.of();
+                    } else {
+                        projectFileCards = assetRecallService.gateProjectCards(projectFileCards, fileQueryVec);
+                    }
+                }
             } catch (Exception e) {
                 log.warn("recall traceId={} 项目文件卡片构建失败: {}", traceId, e.getMessage());
+                projectFileCards = List.of();
                 notes.add("项目文件卡片构建失败: " + e.getMessage());
             }
         }

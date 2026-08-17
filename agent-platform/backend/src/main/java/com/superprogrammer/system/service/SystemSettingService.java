@@ -615,6 +615,17 @@ public class SystemSettingService {
         return configured != null ? configured : getDefaultChatModel();
     }
 
+    /**
+     * 5x 四轮 U3：文件记忆卡片向量门控阈值（memory.recall.file-card-max-distance）。
+     * 文件卡片原仅按标签重叠命中即展示（无相关性判断）→ 无关文件刷屏。现要求至少一个分块
+     * 与 query 的 cosine 距离 ≤ 阈值才出卡（0~2 越小越严；默认 0.5 与深读阈值同源，管理员可调）。
+     */
+    public static final String MEMORY_RECALL_FILE_CARD_MAX_DISTANCE = "memory.recall.file-card-max-distance";
+
+    public double getMemoryRecallFileCardMaxDistance() {
+        return getDoubleInRange(MEMORY_RECALL_FILE_CARD_MAX_DISTANCE, 0.5, 0.0, 2.0);
+    }
+
     private String getNullableTrimmed(String key) {
         String value = getValue(key);
         return normalizeNullable(value);
