@@ -199,6 +199,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的钱包', module: 'wallet' }
       },
       {
+        path: 'project-groups',
+        name: 'ProjectGroups',
+        component: () => import('@/views/ProjectGroupsView.vue'),
+        // 计划5 Step7：项目组推进页（我的组卡片→组详情）；菜单按 project-group:manage 隐藏，API 二层兜底
+        meta: { title: '项目组', module: 'projectGroups' }
+      },
+      {
         path: 'admin/users',
         name: 'UserManage',
         component: () => import('@/views/admin/UserManageView.vue'),

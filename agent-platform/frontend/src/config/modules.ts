@@ -26,6 +26,7 @@ export type ModuleKey =
   | 'canvas'
   | 'assets'
   | 'wallet'
+  | 'projectGroups'
   | 'settings'
 
 /**
@@ -47,6 +48,7 @@ export const ENABLED_MODULES: Record<ModuleKey, boolean> = {
   canvas: true,
   assets: true,
   wallet: true,
+  projectGroups: true,
   settings: true
 }
 
@@ -64,7 +66,9 @@ export const MODULE_PERMISSION_MAP: Partial<Record<ModuleKey, string>> = {
   imageGen: 'media:gen',
   videoEdit: 'media:edit',
   canvas: 'canvas:write',
-  assets: 'asset:write'
+  assets: 'asset:write',
+  // 计划5：项目组模块（推进页+选择器数据源同权限码；后端 /api/project-groups/** 全端点同码兜底）
+  projectGroups: 'project-group:manage'
 }
 
 /** 模块是否启用（开关）。 */

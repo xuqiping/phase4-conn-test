@@ -11,8 +11,12 @@ import com.superprogrammer.projectgroup.dto.ProjectGroupMemberAddRequest;
 import com.superprogrammer.projectgroup.dto.ProjectGroupMineVO;
 import com.superprogrammer.projectgroup.dto.ProjectGroupQuotaRequest;
 import com.superprogrammer.projectgroup.dto.ProjectGroupUpdateRequest;
+import com.superprogrammer.projectgroup.dto.ProjectGroupOverviewVO;
+import com.superprogrammer.projectgroup.dto.ProjectGroupOutputVO;
+import com.superprogrammer.projectgroup.service.ProjectGroupQueryService;
 import com.superprogrammer.projectgroup.service.ProjectGroupService;
 import com.superprogrammer.projectgroup.service.ProjectGroupWalletService;
+import com.superprogrammer.common.result.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -52,6 +56,8 @@ import java.util.Map;
  * POST   /{id}/members/{uid}/reset-used       重置成员已用（ADMIN_ADJUST delta=0 留痕）
  * POST   /{id}/allocate                       划拨（个人→组池）
  * POST   /{id}/reclaim                        回收（组池→个人，在途上限校验）
+ * GET    /{id}/overview                       组长总览（组详情+组池流水分页，Step7）
+ * GET    /{id}/outputs                        组产出列表（组长全员/成员仅自己，Step7）
  * </pre>
  */
 @Slf4j
@@ -62,6 +68,7 @@ public class ProjectGroupController {
 
     private final ProjectGroupService groupService;
     private final ProjectGroupWalletService walletService;
+    private final ProjectGroupQueryService queryService;
 
     @PostMapping
     @RequirePermission("project-group:manage")
@@ -157,6 +164,53 @@ public class ProjectGroupController {
                                                           @RequestBody ProjectGroupAllocateRequest req) {
         walletService.reclaim(id, getCurrentUserId(), isAdmin(), req.getPoints(), req.getRemark());
         return ResponseEntity.ok(R.ok("回收成功", Map.of("groupId", id, "points", req.getPoints())));
+    }
+
+    // ==================== Step7：推进查询（overview 组长总览 / outputs 产出列表） ====================
+
+    /**
+     * 组长总览（组长/admin）：组详情 + 组池流水倒序分页。
+     * 普通成员 403（service requireOwner 口径，管理页组长专属）。
+     */
+    @GetMapping("/{id}/overview")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<ProjectGroupOverviewVO>> overview(
+            @PathVariable("id") Long id,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(R.ok(queryService.overview(id, getCurrentUserId(), isAdmin(), page, size)));
+    }
+
+    /**
+     * 组产出列表：组长/admin 看全员（可按 memberUserId/kind/时间筛选）；
+     * 普通成员仅看自己行（忽略筛选强制 self）；非成员 403。
+     */
+    @GetMapping("/{id}/outputs")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<PageResult<ProjectGroupOutputVO>>> outputs(
+            @PathVariable("id") Long id,
+            @RequestParam(required = false) Long memberUserId,
+            @RequestParam(required = false) String kind,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(R.ok(queryService.outputs(
+                id, getCurrentUserId(), isAdmin(), memberUserId, kind,
+                parseTime(from, "from"), parseTime(to, "to"), page, size)));
+    }
+
+    /** ISO-8601 偏移时间解析（前端 toISOString 对齐）；空/非法 400。 */
+    private static java.time.OffsetDateTime parseTime(String raw, String name) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(raw);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, name + " 时间格式非法");
+        }
     }
 
     private Long getCurrentUserId() {

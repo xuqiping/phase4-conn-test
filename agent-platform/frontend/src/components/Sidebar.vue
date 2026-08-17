@@ -185,6 +185,10 @@ const navItems = computed(() => {
     )
   }
   items.push({ path: '/wallet', label: '我的钱包', icon: CardOutline, module: 'wallet' })
+  // 计划5 Step7：项目组推进页（module 权限码 project-group:manage → 组长/成员可见，admin 默认有）
+  if (canSeeModule('projectGroups')) {
+    items.push({ path: '/project-groups', label: '项目组', icon: PeopleOutline, module: 'projectGroups' })
+  }
   // 设置入口：开关 ON 且用户是 admin（10x-3：非 admin 不开放设置）
   if (isModuleEnabled('settings') && authStore.isAdmin) {
     items.push({ path: '/settings', label: '设置', icon: SettingsOutline, module: 'settings' })
