@@ -33,7 +33,7 @@ import org.slf4j.MDC;
 /**
  * /api/knowledge/ask — RAG 流式问答（阶段5）。
  * retrieveEvidence（多KB，P4 求交）→ llmGateway.chatStream 流式生成 → CITATION（DONE 前）→ DONE。
- * 复用 chat SSE 接线（SseEmitter + blockLast 120s + SecurityContext 透传）。
+ * 复用 chat SSE 接线（SseEmitter + blockLast 1200s + SecurityContext 透传）。
  */
 @Slf4j
 @RestController
@@ -56,8 +56,8 @@ public class KnowledgeAskController {
         boolean admin = isAdmin();
         SecurityContext securityContext = SecurityContextHolder.getContext();
         java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
-        // 同 ChatController.SSE_TIMEOUT_MS：120s 掐长生成（实测④），600s 覆盖长文生成
-        SseEmitter emitter = new SseEmitter(600_000L);
+        // 同 ChatController.SSE_TIMEOUT_MS：1200s 覆盖长文生成（2026-08-17 用户拍板 U4）
+        SseEmitter emitter = new SseEmitter(1_200_000L);
 
         new Thread(() -> {
             try {
@@ -76,7 +76,7 @@ public class KnowledgeAskController {
                     } catch (Exception sendError) {
                         throw new RuntimeException(sendError);
                     }
-                }).blockLast(java.time.Duration.ofSeconds(600));
+                }).blockLast(java.time.Duration.ofSeconds(1200));
                 if (!sentDone.get()) {
                     emitter.send(SseEmitter.event().data(StreamEvent.done()));
                 }

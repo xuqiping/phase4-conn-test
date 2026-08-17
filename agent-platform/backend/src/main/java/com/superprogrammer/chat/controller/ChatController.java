@@ -36,9 +36,9 @@ public class ChatController {
 
     /**
      * SSE 超时（用户实测③/④ 2026-08-17）：原 120s 掐长生成（6000字文档 >2min 必 AsyncRequestTimeout，
-     * 且超时路径曾误入 sendMessage 同步重答=双倍计费）。600s 覆盖 8192 token 慢速生成。
+     * 且超时路径曾误入 sendMessage 同步重答=双倍计费）。2026-08-17 用户拍板 600s→1200s（U4）。
      */
-    private static final long SSE_TIMEOUT_MS = 600_000L;
+    private static final long SSE_TIMEOUT_MS = 1_200_000L;
 
     private final ChatSessionService chatSessionService;
     private final ChatTargetService chatTargetService;
