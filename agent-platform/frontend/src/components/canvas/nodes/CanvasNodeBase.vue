@@ -24,7 +24,8 @@
         @resize-end="onResizeEnd"
       />
     </template>
-    <Handle type="target" :position="Position.Top" />
+    <!-- 2x 四轮 S3：连线改左右流向（target=左入 source=右出），横向贝塞尔贴合画布从左到右的心智模型 -->
+    <Handle type="target" :position="Position.Left" />
     <div class="canvas-node__accent" />
     <div class="canvas-node__header">
       <div class="canvas-node__icon"><n-icon size="14"><slot name="icon" /></n-icon></div>
@@ -40,7 +41,7 @@
     <div class="canvas-node__body">
       <slot />
     </div>
-    <Handle type="source" :position="Position.Bottom" />
+    <Handle type="source" :position="Position.Right" />
   </div>
 </template>
 
