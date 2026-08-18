@@ -818,10 +818,12 @@ function confirmLocalize() {
   localizeOpen.value = false
 }
 
-/** 本土化产物节点的替换清单（仅转绘生成的 script 节点 data 有 changeLog；普通节点空列表不渲染）。 */
+/** 本土化产物节点的替换清单（仅转绘生成的 script 节点 data 有 changeLog；普通节点空列表不渲染；from/to 全缺的行跳过防空行）。 */
 const localizeChanges = computed(() => {
   const log = props.node?.data?.changeLog
-  return Array.isArray(log) ? log.filter((c): c is { from?: string; to?: string; scene?: string } => !!c) : []
+  if (!Array.isArray(log)) return []
+  return log.filter((c): c is { from?: string; to?: string; scene?: string } =>
+    !!c && !!(c.from || c.to))
 })
 
 // ---------- 2x 四轮 S8：参考缩略全屏/播放（图片 MediaLightbox / 视频 blob 播放弹窗） ----------

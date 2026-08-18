@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -64,11 +65,11 @@ public class VideoReverseController {
         return auth == null ? null : (Long) auth.getPrincipal();
     }
 
-    /** admin 判定（与 MediaGenController 同口径）：admin 角色列表见全量任务，反推源校验同放行。 */
+    /** admin 判定（与 MediaGenController 逐字同口径）：admin 角色列表见全量任务，反推源校验同放行。 */
     private boolean isAdmin() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null && auth.getAuthorities().stream()
-                .map(a -> a.getAuthority() == null ? "" : a.getAuthority())
-                .anyMatch(r -> "ROLE_admin".equals(r) || "ROLE_ADMIN".equals(r));
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(a -> "ROLE_admin".equalsIgnoreCase(a) || "ROLE_ADMIN".equalsIgnoreCase(a));
     }
 }
