@@ -36,16 +36,36 @@
           :scene-data="scene"
           :selected-element-id="selectedId"
           :transform-mode="transformMode"
+          :active-camera-id="activeCameraId"
           @pick="onPick"
+          @pick-camera="onPickCamera"
           @transform-end="onTransformEnd"
         />
-        <DirectorProperties
-          :scene="scene"
-          :selected-id="selectedId"
-          :transform-mode="transformMode"
-          @update-element="onUpdateElement"
-          @set-transform-mode="transformMode = $event"
-        />
+        <div class="director-right-panel">
+          <n-tabs type="segment" size="small" default-value="element">
+            <n-tab-pane name="element" tab="元素">
+              <DirectorProperties
+                :scene="scene"
+                :selected-id="selectedId"
+                :transform-mode="transformMode"
+                @update-element="onUpdateElement"
+                @set-transform-mode="transformMode = $event"
+              />
+            </n-tab-pane>
+            <n-tab-pane name="camera" tab="机位">
+              <DirectorCameraPanel
+                :scene="scene"
+                :selected-camera-id="selectedCameraId"
+                :active-camera-id="activeCameraId"
+                @add-from-view="onAddCameraFromView"
+                @update-camera="onUpdateCamera"
+                @delete-camera="onDeleteCamera"
+                @view-camera="onViewCamera"
+                @select-camera="selectedCameraId = $event"
+              />
+            </n-tab-pane>
+          </n-tabs>
+        </div>
       </div>
     </template>
   </div>
@@ -58,19 +78,24 @@
  * 职责：WebGL 探测失败降级 / undo 栈与快捷键 / 场景暂存（close 回传 node.data）/ 卸载释放共享缓存。
  * 左右栏（元素工具栏/机位面板）Step 4/5 落进 body 布局。
  */
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { NAlert, NButton } from 'naive-ui';
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { NAlert, NButton, NTabPane, NTabs } from 'naive-ui';
 import DirectorToolbar from './DirectorToolbar.vue';
 import DirectorProperties from './DirectorProperties.vue';
+import DirectorCameraPanel from './DirectorCameraPanel.vue';
 import DirectorViewport from './DirectorViewport.vue';
 import { disposeSceneAssets } from '../../director/buildScene';
 import {
+  CAMERA_NAME_MAX,
   NAME_MAX,
   UndoStack,
   cloneScene,
+  createCamera,
   createElement,
   genId,
   isValidHexColor,
+  MAX_CAMERAS,
+  type DirectorCameraData,
   type DirectorElement,
   type DirectorSceneData,
   type ElementKind,
@@ -141,6 +166,7 @@ function onSelect(id: string | null): void {
 
 function onPick(id: string | null): void {
   onSelect(id);
+  if (id) selectedCameraId.value = null; // 元素/机位两选中域互斥
 }
 
 function onAdd(kind: ElementKind, overrides?: Partial<DirectorElement>): void {
@@ -189,6 +215,61 @@ function onTransformEnd({ id, transform }: { id: string; transform: ElementTrans
   el.transform = transform;
   commitHistory();
 }
+
+// ---------- 相机系统（Step 5） ----------
+
+const selectedCameraId = ref<string | null>(null);
+const activeCameraId = ref<string | null>(null);
+
+function onAddCameraFromView(): void {
+  if (scene.cameras.length >= MAX_CAMERAS) return;
+  const pose = viewportRef.value?.getDirectorPose();
+  const cam = createCamera(pose?.position ?? [6, 4, 8], pose?.target ?? [0, 1, 0], scene.cameras.length);
+  scene.cameras.push(cam);
+  selectedCameraId.value = cam.id;
+  commitHistory();
+}
+
+function onUpdateCamera(id: string, patch: Partial<DirectorCameraData>): void {
+  const cam = scene.cameras.find((c) => c.id === id);
+  if (!cam) return;
+  if (patch.name !== undefined) patch.name = patch.name.trim().slice(0, CAMERA_NAME_MAX) || cam.name;
+  Object.assign(cam, patch);
+  commitHistoryDebounced();
+}
+
+function onDeleteCamera(id: string): void {
+  const i = scene.cameras.findIndex((c) => c.id === id);
+  if (i >= 0) scene.cameras.splice(i, 1);
+  if (selectedCameraId.value === id) selectedCameraId.value = null;
+  // L4：删除当前所在机位视角 → 自动回导演视角
+  if (activeCameraId.value === id) activeCameraId.value = null;
+  commitHistory();
+}
+
+function onViewCamera(id: string | null): void {
+  activeCameraId.value = id;
+}
+
+function onPickCamera(id: string | null): void {
+  selectedCameraId.value = id;
+  if (id === null) return;
+  // 视锥点选 → 元素选中态清除（两个选中域互斥）
+  if (selectedId.value) selectedId.value = null;
+}
+
+// undo/redo 或外部变化移除当前查看的机位 → 回导演视角（L4 兜底）
+watch(
+  () => scene.cameras.map((c) => c.id).join(','),
+  (ids) => {
+    if (activeCameraId.value && !ids.split(',').includes(activeCameraId.value)) {
+      activeCameraId.value = null;
+    }
+    if (selectedCameraId.value && !ids.split(',').includes(selectedCameraId.value)) {
+      selectedCameraId.value = null;
+    }
+  },
+);
 
 function onKeyDown(e: KeyboardEvent): void {
   const target = e.target as HTMLElement | null;

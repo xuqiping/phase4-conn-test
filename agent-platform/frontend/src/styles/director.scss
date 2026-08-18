@@ -55,6 +55,27 @@
   display: flex;
 }
 
+.director-right-panel {
+  width: 264px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-color, #2d3748);
+  background: var(--card-bg, #1a1f2b);
+  padding: 8px;
+  overflow-y: auto;
+
+  // 属性面板嵌进 tab 后去自身侧栏形态
+  .director-properties {
+    width: auto;
+    border: none;
+    background: transparent;
+    padding: 0;
+  }
+
+  .director-camera-panel {
+    padding-top: 4px;
+  }
+}
+
 .director-webgl-fallback {
   flex: 1;
   display: flex;
