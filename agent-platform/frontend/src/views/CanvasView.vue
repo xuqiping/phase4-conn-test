@@ -100,6 +100,7 @@
           @quick-add="onQuickAdd"
           @structure-changed="scheduleSave"
           @group-rename-request="onGroupRenameRequest"
+          @open-director="onOpenDirector"
         />
 
         <!-- 3x-C1 框选批量工具条（≥2 节点选中时浮于画布顶部） -->
@@ -303,12 +304,22 @@
           <div v-if="!quickAddFiltered.length" class="canvas-quickadd__empty">无匹配节点类型</div>
         </div>
       </n-modal>
+
+      <!-- 导演台 3D 构图编辑器（defineAsyncComponent 懒加载；v-if 卸载即全量 dispose GPU 资源） -->
+      <DirectorEditorModal
+        v-if="directorNodeId && editingId"
+        :initial-scene="directorInitialScene()"
+        :canvas-id="editingId"
+        @close="onDirectorClose"
+        @screenshot="onDirectorScreenshot"
+        @screenshot-failed="onDirectorShotFailed"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
   NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useDialog, useMessage
@@ -316,7 +327,7 @@ import {
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
   DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline,
-  FilmOutline
+  FilmOutline, CubeOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
@@ -343,6 +354,9 @@ import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
 import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runDependencyScheduled } from '@/utils/batchRunner'
+import { parseScene, type DirectorSceneData } from '@/director/sceneModel'
+// 导演台 modal 懒加载：three 只进该异步 chunk，主包零增量（性能红线）
+const DirectorEditorModal = defineAsyncComponent(() => import('@/components/director/DirectorEditorModal.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -1996,7 +2010,8 @@ const palette = [
   { type: 'video', label: '视频', icon: VideocamOutline },
   { type: 'audio', label: '音频', icon: MusicalNotesOutline },
   { type: 'script', label: '脚本', icon: CodeSlashOutline },
-  { type: 'storyboard', label: '分镜', icon: FilmOutline }
+  { type: 'storyboard', label: '分镜', icon: FilmOutline },
+  { type: 'director', label: '导演台', icon: CubeOutline }
 ]
 
 async function loadList() {
@@ -2055,6 +2070,15 @@ async function loadCanvas(id: number) {
     // 否则此处 boardRef.value===null，可选链 ?. 静默吞掉 loadSnapshot → 重进画布空白（历史 bug）。
     await nextTick()
     boardRef.value?.loadSnapshot(snap)
+    // 导演台封面预览：coverFileId 经既有文件预览链拉 objectURL 注入（会话级，保存剥离；
+    // 失败静默——卡片退回「截图后显示封面」文案，不阻断画布加载）
+    for (const n of snap.nodes) {
+      if (n.type === 'director' && n.data.coverFileId && !n.data.coverPreviewUrl) {
+        fetchCanvasPreview(String(n.data.coverFileId))
+          .then(url => boardRef.value?.updateNodeData(n.id, { coverPreviewUrl: url }))
+          .catch(() => { /* 静默 */ })
+      }
+    }
     // S5 修复配套：数据就位才允许保存——加载完成前的任何 scheduleSave（挂载期 nodes-change/
     // HMR 热替换触发）若放行，会把「尚未加载的空画布」PUT 上去，服务端快照被清空（实测丢画布）。
     canvasLoaded.value = true
@@ -2185,6 +2209,8 @@ async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
     const cleanNodes = snap.nodes.map(n => {
       const dataCopy = { ...n.data } as Record<string, unknown>
       delete dataCopy.previewUrl
+      // 导演台封面预览同 previewUrl 口径：会话级 objectURL，不入快照
+      delete dataCopy.coverPreviewUrl
       return { ...n, data: dataCopy }
     })
     await canvasApi.save(editingId.value, {
@@ -2305,6 +2331,70 @@ function onQuickAddKey(e: KeyboardEvent) {
 function formatTime(t: string | null): string {
   if (!t) return ''
   return t.slice(0, 16).replace('T', ' ')
+}
+
+// ---------- 导演台 Step 7：modal 编排（打开/关闭回流/截图回流三链路） ----------
+
+/** 正在编辑的导演台节点 id（null=modal 关闭；v-if 卸载即视口全量 dispose）。 */
+const directorNodeId = ref<string | null>(null)
+
+function onOpenDirector(nodeId: string) {
+  directorNodeId.value = nodeId
+}
+
+/** modal 初始场景：node.data.directorScene 经 parseScene 白名单解析（旧快照无字段=空场景）。 */
+function directorInitialScene(): DirectorSceneData {
+  const id = directorNodeId.value
+  const raw = id ? boardRef.value?.getNode(id)?.data.directorScene : undefined
+  return parseScene(raw)
+}
+
+/**
+ * 关 modal：scene 有值（完成并关闭）→ 场景暂存进 node.data 随画布保存（L7）；
+ * null（WebGL 失败降级/未带数据）→ 不动节点数据，只收 modal。
+ */
+function onDirectorClose(scene: DirectorSceneData | null) {
+  const id = directorNodeId.value
+  directorNodeId.value = null
+  if (!id || !scene) return
+  boardRef.value?.updateNodeData(id, { directorScene: scene })
+  scheduleSave()
+}
+
+/**
+ * 截图回流（L6）：图片节点落导演台右侧偏移（连截按已有出边数纵排不叠位）+ 建边 +
+ * 刷新封面 fileId。预览 objectURL 会话级注入（保存时剥离 previewUrl/coverPreviewUrl）。
+ */
+async function onDirectorScreenshot(fileId: string) {
+  const dirId = directorNodeId.value
+  const board = boardRef.value
+  if (!dirId || !board) return
+  const src = board.getNode(dirId)
+  if (!src) return
+  const shotCount = board.getEdges().filter(e => e.source === dirId).length
+  const imgId = board.addNode({
+    type: 'image',
+    position: { x: src.position.x + 260, y: src.position.y + shotCount * 220 },
+    data: {
+      label: uniqueLabel(`截图${shotCount + 1}`, board.getNodes().map(n => String(n.data.label ?? ''))),
+      fileId
+    }
+  })
+  board.addEdge(dirId, imgId)
+  board.updateNodeData(dirId, { coverFileId: fileId })
+  board.updateNodeData(imgId, { status: 'success' })
+  try {
+    const previewUrl = await fetchCanvasPreview(fileId)
+    board.updateNodeData(imgId, { previewUrl })
+    board.updateNodeData(dirId, { coverPreviewUrl: previewUrl })
+  } catch {
+    // 封面/预览拉取失败不阻断：图片节点已在（fileId 持久），保存不含预览（剥离字段）
+  }
+  scheduleSave()
+}
+
+function onDirectorShotFailed(reason: string) {
+  message.error(`截图回流失败：${reason}（未建图片节点，可重试）`)
 }
 
 // 路由 param 驱动 列表/编辑 切换

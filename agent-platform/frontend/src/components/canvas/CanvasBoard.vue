@@ -120,16 +120,19 @@ import VideoNode from './nodes/VideoNode.vue'
 import AudioNode from './nodes/AudioNode.vue'
 import ScriptNode from './nodes/ScriptNode.vue'
 import StoryboardNode from './nodes/StoryboardNode.vue'
+import DirectorNode from './nodes/DirectorNode.vue'
 import DeletableEdge from './edges/DeletableEdge.vue'
+import { DIRECTOR_BRIDGE_KEY } from './directorBridge'
 
-/** 6 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
+/** 7 类节点 shape 注册（markRaw 规避响应式包裹组件对象，同 FlowCanvas 范式）。 */
 const nodeTypes = {
   text: markRaw(TextNode),
   image: markRaw(ImageNode),
   video: markRaw(VideoNode),
   audio: markRaw(AudioNode),
   script: markRaw(ScriptNode),
-  storyboard: markRaw(StoryboardNode)
+  storyboard: markRaw(StoryboardNode),
+  director: markRaw(DirectorNode)
 } as unknown as NodeTypesObject
 
 /** 自定义边：贝塞尔弧线 + 中点「×」删除按钮（点按钮即删，无需键盘，可发现性强）。 */
@@ -195,7 +198,14 @@ const emit = defineEmits<{
   (e: 'structure-changed'): void
   /** 2x 四轮 S9：组名点击重命名 → 父开改名弹窗（输入交互在 CanvasView），确认后回调 renameGroup。 */
   (e: 'group-rename-request', group: CanvasGroup): void
+  /** 导演台 Step 7：节点卡片按钮/双击 → 父开导演台 modal（节点 emit 不冒泡，走桥+DOM 双路）。 */
+  (e: 'open-director', nodeId: string): void
 }>()
+
+/** 导演台节点 → 画布桥：节点组件 inject 调 openEditor，本组件上抛父（Vue Flow 节点 emit 不冒泡）。 */
+provide(DIRECTOR_BRIDGE_KEY, {
+  openEditor: (nodeId: string) => emit('open-director', nodeId)
+})
 
 const defaultEdgeOptions = {
   type: 'deletable', // 自定义边：贝塞尔 + 中点删除按钮（原 default 无删除入口）
@@ -483,11 +493,18 @@ function nodeSizeStyle(data: Record<string, unknown> | undefined): Record<string
  * C6：双击画布空白处 → emit 坐标给父开「快速加节点」搜索框（ComfyUI 式）。
  * 仅空白处触发：点节点(.vue-flow__node)/连线(.vue-flow__edge)/句柄(.vue-flow__handle)不弹，避免误加。
  * 坐标复用 onDrop 的 project 范式（clientXY − vueFlow 容器偏移 → 画布坐标系，兼容缩放/平移）。
+ * 导演台 Step 7：双击 director 节点 = 打开导演台（wrapper data-id 反查节点类型）。
  */
 function onDblClick(event: MouseEvent) {
   const tgt = event.target as HTMLElement | null
+  const nodeEl = tgt?.closest('.vue-flow__node') as HTMLElement | null
+  if (nodeEl) {
+    const nodeId = nodeEl.dataset.id
+    const hit = nodeId ? nodes.value.find(n => n.id === nodeId) : null
+    if (hit?.type === 'director' && nodeId) emit('open-director', nodeId)
+    return
+  }
   if (
-    tgt?.closest('.vue-flow__node') ||
     tgt?.closest('.vue-flow__edge') ||
     tgt?.closest('.vue-flow__handle')
   ) {
