@@ -6,9 +6,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,14 +18,14 @@ import static org.mockito.Mockito.*;
 
 /**
  * RateLimiter 单测（11x P1-C2）：固定/滑动窗口边界 + Redis 故障降级放行。
+ * 固定窗口走原子 Lua（2026-08-19 毒键事故改版）：mock execute 返回计数，脚本自身的
+ * 「INCR + TTL&lt;0 自愈挂 EXPIRE」原子性由 Redis 保证，单测只验 Java 侧判定与降级。
  */
 @ExtendWith(MockitoExtension.class)
 class RateLimiterTest {
 
     @Mock
     private StringRedisTemplate redisTemplate;
-    @Mock
-    private ValueOperations<String, String> valueOps;
     @Mock
     private ZSetOperations<String, String> zSetOps;
 
@@ -35,46 +36,55 @@ class RateLimiterTest {
         rateLimiter = new RateLimiter(redisTemplate);
     }
 
-    // ---------- 固定窗口 ----------
+    // ---------- 固定窗口（原子 Lua） ----------
 
-    @Test
-    void fixed_firstHit_setsExpireAndPasses() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.increment("k")).thenReturn(1L);
-
-        assertTrue(rateLimiter.checkFixed("k", 5, 60));
-        verify(valueOps).increment("k");
-        verify(redisTemplate).expire("k", 60, TimeUnit.SECONDS);
+    @SuppressWarnings("unchecked")
+    private void stubScript(Long returns) {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), eq("60"))).thenReturn(returns);
     }
 
     @Test
-    void fixed_atMax_passes_noDoubleExpire() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.increment("k")).thenReturn(5L);
+    void fixed_firstHit_passes() {
+        stubScript(1L);
 
         assertTrue(rateLimiter.checkFixed("k", 5, 60));
-        verify(redisTemplate, never()).expire(anyString(), anyLong(), any());
+        verify(redisTemplate).execute(any(RedisScript.class), eq(List.of("k")), eq("60"));
+    }
+
+    @Test
+    void fixed_atMax_passes() {
+        stubScript(5L);
+
+        assertTrue(rateLimiter.checkFixed("k", 5, 60));
     }
 
     @Test
     void fixed_overMax_rejects() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.increment("k")).thenReturn(6L);
+        stubScript(6L);
 
         assertFalse(rateLimiter.checkFixed("k", 5, 60));
     }
 
     @Test
-    void fixed_nullIncrement_passes() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.increment("k")).thenReturn(null);
+    void fixed_poisonedKey_overMax_rejects_untilSelfHealExpiry() {
+        // 毒键场景（实证 2026-08-19）：历史无 TTL 键计数 1705 → 超限拒绝；
+        // Lua 的 TTL<0 自愈分支会在真实 Redis 重挂 EXPIRE，下一窗口计数归零。
+        stubScript(1705L);
+
+        assertFalse(rateLimiter.checkFixed("k", 600, 60));
+    }
+
+    @Test
+    void fixed_nullResult_passes() {
+        stubScript(null);
 
         assertTrue(rateLimiter.checkFixed("k", 5, 60));
     }
 
     @Test
     void fixed_redisDown_failsOpen() {
-        when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis down"));
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), anyString()))
+                .thenThrow(new RuntimeException("redis down"));
 
         assertTrue(rateLimiter.checkFixed("k", 5, 60));
     }
