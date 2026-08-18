@@ -218,4 +218,29 @@ describe('PropertyPanel 计划6 视频反推 / 本土化转绘', () => {
     const btn = wrapper.findAll('button').find(b => b.text().includes('本土化转绘'))!
     expect(btn.attributes('disabled')).toBeUndefined()
   })
+
+  it('转绘产物节点 data 带 changeLog → 面板渲染替换清单逐条核对；warning 展示', () => {
+    const node = mkNode({
+      synopsis: '{"scenes":[]}',
+      changeLog: [
+        { from: '筷子', to: '刀叉', scene: '第2场' },
+        { from: '红灯笼', to: '感恩节彩灯', scene: '第2场' }
+      ],
+      localizeWarning: '场景数不一致：原 2 现 1，改写结果仅供参考，请人工核对'
+    })
+    node.type = 'script'
+    const wrapper = mountPanel(node)
+    const text = wrapper.text()
+    expect(text).toContain('替换清单（changeLog，2 处）')
+    expect(text).toContain('筷子 → 刀叉（第2场）')
+    expect(text).toContain('红灯笼 → 感恩节彩灯（第2场）')
+    expect(text).toContain('场景数不一致')
+  })
+
+  it('普通 script 节点（无 changeLog）→ 不渲染替换清单', () => {
+    const node = mkNode({ synopsis: '普通剧本' })
+    node.type = 'script'
+    const wrapper = mountPanel(node)
+    expect(wrapper.text()).not.toContain('替换清单')
+  })
 })

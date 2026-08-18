@@ -621,6 +621,21 @@
         >
           本土化转绘
         </n-button>
+        <!-- 计划6 本土化产物核对：转绘生成的节点 data 带 changeLog/localizeWarning，逐条可核（2x「逐条核对」） -->
+        <div v-if="localizeChanges.length" class="prop-panel__field" style="margin-top: 6px">
+          <label>替换清单（changeLog，{{ localizeChanges.length }} 处）</label>
+          <div
+            v-for="(c, i) in localizeChanges"
+            :key="i"
+            class="prop-panel__readonly"
+            style="margin-bottom: 2px"
+          >
+            {{ c.from }} → {{ c.to }}{{ c.scene ? `（${c.scene}）` : '' }}
+          </div>
+        </div>
+        <div v-if="(node.data.localizeWarning as string)" class="prop-panel__warn">
+          {{ node.data.localizeWarning }}
+        </div>
         <div v-if="(node.data.errorMsg as string)" class="prop-panel__error">{{ node.data.errorMsg }}</div>
         <div v-if="sceneCount" class="prop-panel__readonly">已拆 {{ sceneCount }} 分镜</div>
       </template>
@@ -802,6 +817,12 @@ function confirmLocalize() {
   })
   localizeOpen.value = false
 }
+
+/** 本土化产物节点的替换清单（仅转绘生成的 script 节点 data 有 changeLog；普通节点空列表不渲染）。 */
+const localizeChanges = computed(() => {
+  const log = props.node?.data?.changeLog
+  return Array.isArray(log) ? log.filter((c): c is { from?: string; to?: string; scene?: string } => !!c) : []
+})
 
 // ---------- 2x 四轮 S8：参考缩略全屏/播放（图片 MediaLightbox / 视频 blob 播放弹窗） ----------
 const lightboxSrc = ref<string | null>(null)
