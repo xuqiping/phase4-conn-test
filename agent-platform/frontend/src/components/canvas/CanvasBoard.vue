@@ -616,6 +616,38 @@ function clearMultiSelection() {
 }
 
 /**
+ * 2x 四轮 S5 修复：Vue Flow 内部选中变化即同步应用层（单选真相源收敛）。
+ * 背景：此前 selectedNodeId 只靠 @node-click 维护——点击被拖拽打断（微小位移即判拖拽）
+ * 或被卡片内元素吞掉时，库内部已选中新节点（wrapper selected 类切换）而应用层仍持旧值，
+ * 关联高亮闭包用旧种子算 → 「选中 A 无关节点淡化、但 B 的无关节点没淡化」错乱。
+ * 挂点说明：@vue-flow/core 无 selectionChange 事件（实测不触发），选中变化统一走
+ * nodes-change 的 {type:'select'} 变更——onNodesChange 捕获后调本函数，nextTick 等库
+ * 写回 node.selected 再读 getSelectedNodes（onSelectionEnd 同范式）。
+ * 以库选中为准兜底（幂等，与 node-click/selection-end 重复触发无副作用）；
+ * 0 选中不处理（pane/edge 点击由各自 handler 负责清）。
+ */
+function syncSelectionFromLibrary() {
+  nextTick(() => {
+    const ids = getSelectedNodes.value.map((n: { id: string }) => n.id)
+    if (ids.length >= 2) {
+      const next = ids.join(' ')
+      if (next !== multiSelectedIds.value.join(' ')) {
+        selectedNodeId.value = ''
+        selectedEdgeId.value = ''
+        multiSelectedIds.value = ids
+        emit('node-selected', null)
+        emit('nodes-selected', ids)
+      }
+    } else if (ids.length === 1 && selectedNodeId.value !== ids[0]) {
+      clearMultiSelection()
+      selectedNodeId.value = ids[0]
+      selectedEdgeId.value = ''
+      emit('node-selected', nodes.value.find(n => n.id === ids[0]) ?? null)
+    }
+  })
+}
+
+/**
  * A1：@chip 点击 → 按 id 聚焦节点（选中 + 居中视口）。
  * 复用 onNodeClick 的选中语义（selectedNodeId + emit node-selected → 属性面板切到该节点），
  * 叠加 vfFitView({nodes:[id]}) 把该节点滚入视口中心（maxZoom 限制防过度放大）。
@@ -703,6 +735,8 @@ function onNodeDragStop() {
 function onNodesChange(changes: NodeChange[]) {
   const sizeSettled = changes.some(c => c.type === 'dimensions' && c.resizing === false)
   if (sizeSettled) emit('structure-changed')
+  // 2x 四轮 S5：库内选中变化（含拖拽吞 click / 卡片内元素吞 click 的场景）→ 同步应用层单选真相
+  if (changes.some(c => c.type === 'select')) syncSelectionFromLibrary()
 }
 
 /** 载入快照（从后端加载画布时调）。 */

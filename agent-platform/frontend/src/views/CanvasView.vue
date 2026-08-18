@@ -362,6 +362,17 @@ const rerunning = ref(false)
 
 /** 当前编辑画布 id（null=列表模式）。 */
 const editingId = ref<number | null>(null)
+/**
+ * 2x 四轮 S5 配套：画布数据是否已从服务端载入 board（onSave 闸门）。
+ * false 期间一切保存静默丢弃——挂载期/HMR 热重载触发的 nodes-change 防抖保存若放行，
+ * 会把「尚未加载的空 board」PUT 上去，服务端快照被清空（实测丢画布事故）。
+ */
+const canvasLoaded = ref(false)
+/**
+ * 最近一次落库/载入的节点数（空板防误清空闸门）：快照空 + 此值 >0 = 数据被整体重置
+ * 而非用户逐个删除（HMR 子组件重挂载实测触发），自动保存丢弃。
+ */
+let lastSavedNodeCount = 0
 /** 计划5 Step6：参与项目组（null=个人钱包；快照顶层持久化，运行时注入节点 data / 媒体提交）。 */
 const projectGroupId = ref<number | null>(null)
 
@@ -2018,6 +2029,9 @@ function openEditor(id: number) {
 }
 
 async function loadCanvas(id: number) {
+  // 进入/切换画布先关门：加载期间（含 HMR 重挂载后重跑本函数）不允许保存，
+  // 防旧画布节点串写新画布 + 防空 board 清空服务端快照。
+  canvasLoaded.value = false
   try {
     const res = await canvasApi.get(id)
     const c = res.data.data
@@ -2041,6 +2055,10 @@ async function loadCanvas(id: number) {
     // 否则此处 boardRef.value===null，可选链 ?. 静默吞掉 loadSnapshot → 重进画布空白（历史 bug）。
     await nextTick()
     boardRef.value?.loadSnapshot(snap)
+    // S5 修复配套：数据就位才允许保存——加载完成前的任何 scheduleSave（挂载期 nodes-change/
+    // HMR 热替换触发）若放行，会把「尚未加载的空画布」PUT 上去，服务端快照被清空（实测丢画布）。
+    canvasLoaded.value = true
+    lastSavedNodeCount = snap.nodes.length
     // 重取会话级预览：快照只存 fileId（previewUrl blob 上次保存已剥），image/audio 节点按 fileId 拉 blob
     hydratePreviews(snap.nodes)
     // 视频节点：按 taskId 重取视频预览（若有终态任务）
@@ -2130,10 +2148,38 @@ function parseSnapshot(raw: string | null): CanvasSnapshot {
 }
 
 async function onSave(silent = false) {
-  if (!editingId.value || !boardRef.value) return
+  // canvasLoaded 闸门：数据未就位（挂载中/HMR 重挂载/切换画布加载中）一律不保存——
+  // 此时 getSnapshot() 是空 board 或上一张画布残留，PUT 即丢数据/串写。
+  if (!editingId.value || !boardRef.value || !canvasLoaded.value) return
+  const snap = boardRef.value.getSnapshot()
+  // 空板防误清空闸门：board 被整体重置（开发期 HMR 子组件热替换重挂载实测触发）而父层
+  // canvasLoaded 仍 true 时，快照 nodes 为空 ≠ 用户清空——自动保存一律丢弃（丢数据不可逆，
+  // 误跳过保存只是服务端暂留旧节点，可恢复）。手动「保存」弹确认兜底真想清空的场景。
+  if (snap.nodes.length === 0 && lastSavedNodeCount > 0) {
+    if (silent) {
+      console.warn('[canvas] 跳过空画布自动保存（防误清空；lastSavedNodeCount=' + lastSavedNodeCount + '）')
+      return
+    }
+    dialog.warning({
+      title: '画布已为空',
+      content: '保存将清空服务端上的画布数据（当前存有 ' + lastSavedNodeCount + ' 个节点）。确认清空？',
+      positiveText: '确认清空',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        lastSavedNodeCount = 0
+        void doSaveSnapshot(snap, false)
+      }
+    })
+    return
+  }
+  await doSaveSnapshot(snap, silent)
+}
+
+/** 实际 PUT（onSave 拆出：空板确认后复用）。成功后刷新 lastSavedNodeCount。 */
+async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
+  if (!editingId.value) return
   saving.value = true
   try {
-    const snap = boardRef.value.getSnapshot()
     // 剥离会话级字段：视频 previewUrl 是 blob: objectURL（带鉴权 fetch 产物），跨会话失效，不入快照。
     // taskId/status 入快照（加载时可按 taskId 重新 fetch 预览）。
     const cleanNodes = snap.nodes.map(n => {
@@ -2147,6 +2193,7 @@ async function onSave(silent = false) {
       snapshot: JSON.stringify({ ...snap, nodes: cleanNodes, projectGroupId: projectGroupId.value })
     })
     if (!silent) message.success('已保存')
+    lastSavedNodeCount = snap.nodes.length
     await loadList()
   } catch {
     if (!silent) message.error('保存失败')
