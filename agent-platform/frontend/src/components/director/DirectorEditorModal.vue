@@ -21,7 +21,31 @@
         </div>
       </header>
       <div class="director-modal-body">
-        <DirectorViewport ref="viewportRef" :scene-data="scene" @director-pose="onDirectorPose" />
+        <DirectorToolbar
+          ref="toolbarRef"
+          :scene="scene"
+          :selected-id="selectedId"
+          @add="onAdd"
+          @select="onSelect"
+          @update-element="onUpdateElement"
+          @delete-element="onDeleteElement"
+          @duplicate-element="onDuplicateElement"
+        />
+        <DirectorViewport
+          ref="viewportRef"
+          :scene-data="scene"
+          :selected-element-id="selectedId"
+          :transform-mode="transformMode"
+          @pick="onPick"
+          @transform-end="onTransformEnd"
+        />
+        <DirectorProperties
+          :scene="scene"
+          :selected-id="selectedId"
+          :transform-mode="transformMode"
+          @update-element="onUpdateElement"
+          @set-transform-mode="transformMode = $event"
+        />
       </div>
     </template>
   </div>
@@ -36,12 +60,21 @@
  */
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { NAlert, NButton } from 'naive-ui';
+import DirectorToolbar from './DirectorToolbar.vue';
+import DirectorProperties from './DirectorProperties.vue';
 import DirectorViewport from './DirectorViewport.vue';
 import { disposeSceneAssets } from '../../director/buildScene';
 import {
+  NAME_MAX,
   UndoStack,
   cloneScene,
+  createElement,
+  genId,
+  isValidHexColor,
+  type DirectorElement,
   type DirectorSceneData,
+  type ElementKind,
+  type ElementTransform,
 } from '../../director/sceneModel';
 
 const props = defineProps<{
@@ -54,8 +87,11 @@ const emit = defineEmits<{
 
 const webglFailed = ref(false);
 const viewportRef = ref<InstanceType<typeof DirectorViewport> | null>(null);
+const toolbarRef = ref<InstanceType<typeof DirectorToolbar> | null>(null);
 const scene = reactive(cloneScene(props.initialScene));
 const undoStack = new UndoStack(props.initialScene);
+const selectedId = ref<string | null>(null);
+const transformMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
 function detectWebGL(): boolean {
   try {
@@ -66,25 +102,108 @@ function detectWebGL(): boolean {
   }
 }
 
-function onDirectorPose(): void {
-  // 位姿消费方（Step 5「从当前视角新增机位」）落地时在此暂存
+/** 交互结束统一推栈（gizmo 拖完 / 增删改 / 姿势体型切换等离散操作） */
+function commitHistory(): void {
+  undoStack.push(cloneScene(scene));
+}
+
+/** 文本类输入（名称/颜色 HEX）防逐键推栈：500ms 防抖合并 */
+let textCommitTimer = 0;
+function commitHistoryDebounced(): void {
+  if (textCommitTimer) window.clearTimeout(textCommitTimer);
+  textCommitTimer = window.setTimeout(() => commitHistory(), 500);
 }
 
 function undo(): void {
   const prev = undoStack.undo();
-  if (prev) Object.assign(scene, prev);
+  if (prev) {
+    Object.assign(scene, prev);
+    if (selectedId.value && !scene.elements.some((el) => el.id === selectedId.value)) {
+      selectedId.value = null;
+    }
+  }
 }
 
 function redo(): void {
   const next = undoStack.redo();
-  if (next) Object.assign(scene, next);
+  if (next) {
+    Object.assign(scene, next);
+    if (selectedId.value && !scene.elements.some((el) => el.id === selectedId.value)) {
+      selectedId.value = null;
+    }
+  }
+}
+
+function onSelect(id: string | null): void {
+  selectedId.value = id;
+  if (id) toolbarRef.value?.scrollToSelected();
+}
+
+function onPick(id: string | null): void {
+  onSelect(id);
+}
+
+function onAdd(kind: ElementKind, overrides?: Partial<DirectorElement>): void {
+  const el = createElement(kind, scene.elements.length, overrides);
+  scene.elements.push(el);
+  selectedId.value = el.id;
+  commitHistory();
+}
+
+function onUpdateElement(id: string, patch: Partial<DirectorElement>): void {
+  const el = scene.elements.find((e) => e.id === id);
+  if (!el) return;
+  if (patch.name !== undefined) patch.name = patch.name.trim().slice(0, NAME_MAX) || el.name;
+  if (patch.color !== undefined && !isValidHexColor(patch.color)) delete patch.color;
+  Object.assign(el, patch);
+  commitHistoryDebounced();
+}
+
+function onDeleteElement(id: string): void {
+  const i = scene.elements.findIndex((e) => e.id === id);
+  if (i >= 0) scene.elements.splice(i, 1);
+  if (selectedId.value === id) selectedId.value = null;
+  commitHistory();
+}
+
+function onDuplicateElement(id: string): void {
+  const src = scene.elements.find((e) => e.id === id);
+  if (!src || scene.elements.length >= 200) return;
+  const copy: DirectorElement = {
+    ...structuredClone(src),
+    id: genId('el'),
+    name: `${src.name} 副本`.slice(0, NAME_MAX),
+    transform: {
+      ...structuredClone(src.transform),
+      position: [src.transform.position[0] + 1, src.transform.position[1], src.transform.position[2] + 1],
+    },
+  };
+  scene.elements.push(copy);
+  selectedId.value = copy.id;
+  commitHistory();
+}
+
+function onTransformEnd({ id, transform }: { id: string; transform: ElementTransform }): void {
+  const el = scene.elements.find((e) => e.id === id);
+  if (!el) return;
+  el.transform = transform;
+  commitHistory();
 }
 
 function onKeyDown(e: KeyboardEvent): void {
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
-  e.preventDefault();
-  if (e.shiftKey) redo();
-  else undo();
+  const target = e.target as HTMLElement | null;
+  const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === 'v') transformMode.value = 'translate';
+  else if (key === 'r') transformMode.value = 'rotate';
+  else if (key === 's') transformMode.value = 'scale';
 }
 
 function closeWithScene(): void {
@@ -98,8 +217,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
+  if (textCommitTimer) window.clearTimeout(textCommitTimer);
   disposeSceneAssets();
 });
 </script>
 
-<style scoped lang="scss" src="../../../styles/director.scss" />
+<style scoped lang="scss" src="../../styles/director.scss" />

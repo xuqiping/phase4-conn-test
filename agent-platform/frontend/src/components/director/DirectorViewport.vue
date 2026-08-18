@@ -18,6 +18,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import {
   applyTransform,
   buildElementObject,
@@ -25,14 +26,25 @@ import {
   disposeScene,
   rebuildElementObject,
 } from '../../director/buildScene';
-import type { DirectorSceneData, Vec3 } from '../../director/sceneModel';
+import {
+  POS_CLAMP,
+  SCALE_MAX,
+  SCALE_MIN,
+  type DirectorSceneData,
+  type ElementTransform,
+  type Vec3,
+} from '../../director/sceneModel';
 
 const props = defineProps<{
   sceneData: DirectorSceneData;
+  selectedElementId: string | null;
+  transformMode: 'translate' | 'rotate' | 'scale';
 }>();
 
 const emit = defineEmits<{
   (e: 'director-pose', pose: { position: Vec3; target: Vec3 }): void;
+  (e: 'pick', elementId: string | null): void;
+  (e: 'transform-end', payload: { id: string; transform: ElementTransform }): void;
 }>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -41,6 +53,7 @@ let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
+let transformControls: TransformControls | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
 // 按需渲染循环状态
@@ -108,6 +121,11 @@ function resync(): void {
     }
   });
   built = next;
+  // 元素对象被重建（改色/姿势/阵列）时 gizmo 换绑新 Group
+  if (transformControls && props.selectedElementId) {
+    const g = built.get(props.selectedElementId);
+    if (g && transformControls.object !== g) transformControls.attach(g);
+  }
   invalidate();
 }
 
@@ -179,11 +197,117 @@ onMounted(() => {
     emitDirectorPose();
   });
 
+  // gizmo：拖拽期禁 orbit（两控制器抢事件是已知坑）；松手即回写 transform（undo 只在这一刻推栈）
+  transformControls = new TransformControls(camera, renderer.domElement);
+  transformControls.setMode(props.transformMode);
+  // r169 起 TransformControls 不再是 Object3D，须加 helper 进场景
+  scene.add(transformControls.getHelper());
+  transformControls.addEventListener('change', () => invalidate());
+  transformControls.addEventListener('dragging-changed', (e) => {
+    const dragging = (e as unknown as { value: boolean }).value;
+    if (controls) controls.enabled = !dragging;
+    if (!dragging) emitTransformEnd();
+    invalidate();
+  });
+  if (props.selectedElementId) {
+    const g = built.get(props.selectedElementId);
+    if (g) transformControls.attach(g);
+  }
+  window.addEventListener('keydown', onShiftKey);
+  window.addEventListener('keyup', onShiftKey);
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  renderer.domElement.addEventListener('pointerup', onPointerUp);
+
   resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(el);
   onResize();
   invalidate();
 });
+
+/** 缩放模式按住 Shift：只留中心手柄=等比缩放（spec §4.2 Shift 等比） */
+function onShiftKey(e: KeyboardEvent): void {
+  if (!transformControls || props.transformMode !== 'scale') return;
+  const uniform = e.type === 'keydown' && e.shiftKey;
+  transformControls.showX = !uniform;
+  transformControls.showY = !uniform;
+  transformControls.showZ = !uniform;
+  invalidate();
+}
+
+// ---------- 视口点选（raycast → userData.elementId 反查） ----------
+
+let downX = 0;
+let downY = 0;
+
+function onPointerDown(e: PointerEvent): void {
+  downX = e.clientX;
+  downY = e.clientY;
+}
+
+function onPointerUp(e: PointerEvent): void {
+  if (!camera || !rootGroup || !renderer) return;
+  // 悬停/拖拽 gizmo 时不处理点选；位移超 5px 视为环视拖拽
+  if (transformControls?.axis || transformControls?.dragging) return;
+  if (Math.abs(e.clientX - downX) > 5 || Math.abs(e.clientY - downY) > 5) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(rootGroup, true);
+  for (const hit of hits) {
+    let node: THREE.Object3D | null = hit.object;
+    while (node && !node.userData.elementId) node = node.parent;
+    if (node?.userData.elementId) {
+      emit('pick', node.userData.elementId as string);
+      return;
+    }
+  }
+  emit('pick', null);
+}
+
+/** gizmo 拖完回写：读 Group 世界变换 → clamp 到 schema 区间 → 上抛 */
+function emitTransformEnd(): void {
+  const id = props.selectedElementId;
+  const g = id ? built.get(id) : null;
+  if (!id || !g) return;
+  const cl = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  emit('transform-end', {
+    id,
+    transform: {
+      position: [cl(g.position.x, -POS_CLAMP, POS_CLAMP), cl(g.position.y, -POS_CLAMP, POS_CLAMP), cl(g.position.z, -POS_CLAMP, POS_CLAMP)],
+      rotation: [g.rotation.x, g.rotation.y, g.rotation.z],
+      scale: [cl(g.scale.x, SCALE_MIN, SCALE_MAX), cl(g.scale.y, SCALE_MIN, SCALE_MAX), cl(g.scale.z, SCALE_MIN, SCALE_MAX)],
+    },
+  });
+}
+
+// 选中 ↔ gizmo 双向：清单点选 → attach；清空 → detach
+watch(
+  () => props.selectedElementId,
+  (id) => {
+    if (!transformControls) return;
+    const g = id ? built.get(id) : null;
+    if (g) transformControls.attach(g);
+    else transformControls.detach();
+    invalidate();
+  },
+);
+
+watch(
+  () => props.transformMode,
+  (mode) => {
+    if (!transformControls) return;
+    transformControls.setMode(mode);
+    // 模式切走时恢复三轴显示（Shift 等比只作用于 scale 模式）
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = true;
+    invalidate();
+  },
+);
 
 let poseTimer = 0;
 function emitDirectorPose(): void {
@@ -203,8 +327,15 @@ onBeforeUnmount(() => {
   if (poseTimer) window.clearTimeout(poseTimer);
   if (rafId) cancelAnimationFrame(rafId);
   rafId = 0;
+  window.removeEventListener('keydown', onShiftKey);
+  window.removeEventListener('keyup', onShiftKey);
+  renderer?.domElement.removeEventListener('pointerdown', onPointerDown);
+  renderer?.domElement.removeEventListener('pointerup', onPointerUp);
   resizeObserver?.disconnect();
   resizeObserver = null;
+  transformControls?.detach();
+  transformControls?.dispose();
+  transformControls = null;
   controls?.dispose();
   controls = null;
   if (rootGroup) disposeScene(rootGroup);

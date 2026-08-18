@@ -168,7 +168,7 @@ export const COLOR_PALETTE: readonly string[] = [
 
 export const DEFAULT_COLOR = '#9aa4b2';
 export const DEFAULT_BG_COLOR = '#1a1f28';
-const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+export const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 // ---------- 基础清洗 ----------
 
@@ -184,12 +184,12 @@ function sanitizeName(raw: unknown, max: number, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
-export function isValidHexColor(raw: unknown): raw is string {
-  return typeof raw === 'string' && HEX_RE.test(raw);
+export function isValidHexColor(raw: unknown): boolean {
+  return typeof raw === 'string' && HEX_COLOR_RE.test(raw);
 }
 
 function sanitizeColor(raw: unknown, fallback: string): string {
-  return isValidHexColor(raw) ? raw.toLowerCase() : fallback;
+  return typeof raw === 'string' && isValidHexColor(raw) ? raw.toLowerCase() : fallback;
 }
 
 function parseVec3(raw: unknown): Vec3 {
