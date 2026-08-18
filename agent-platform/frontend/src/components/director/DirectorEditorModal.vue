@@ -16,6 +16,14 @@
         <div class="director-topbar-actions">
           <n-button size="small" quaternary :disabled="!undoStack.canUndo" @click="undo">撤销</n-button>
           <n-button size="small" quaternary :disabled="!undoStack.canRedo" @click="redo">重做</n-button>
+          <n-button
+            size="small"
+            :disabled="!activeCameraId || shooting"
+            :title="activeCameraId ? '截图回流画布成图片节点' : '先在机位面板进入某机位视角'"
+            @click="shootActiveCamera"
+          >
+            {{ shooting ? '截图上传中…' : '截图回流画布' }}
+          </n-button>
           <span class="director-topbar-hint">Ctrl+Z 撤销 · Ctrl+Shift+Z 重做</span>
           <n-button size="small" type="primary" @click="closeWithScene">完成并关闭</n-button>
         </div>
@@ -84,6 +92,7 @@ import DirectorToolbar from './DirectorToolbar.vue';
 import DirectorProperties from './DirectorProperties.vue';
 import DirectorCameraPanel from './DirectorCameraPanel.vue';
 import DirectorViewport from './DirectorViewport.vue';
+import { canvasApi } from '../../api/canvas';
 import { disposeSceneAssets } from '../../director/buildScene';
 import {
   CAMERA_NAME_MAX,
@@ -104,10 +113,14 @@ import {
 
 const props = defineProps<{
   initialScene: DirectorSceneData;
+  /** 截图上传走既有画布上传咽喉（POST /api/canvas/{id}/upload） */
+  canvasId: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'close', scene: DirectorSceneData | null): void;
+  (e: 'screenshot', fileId: string): void;
+  (e: 'screenshot-failed', reason: string): void;
 }>();
 
 const webglFailed = ref(false);
@@ -270,6 +283,32 @@ watch(
     }
   },
 );
+
+// ---------- 截图回流画布（Step 6） ----------
+
+const shooting = ref(false);
+
+async function shootActiveCamera(): Promise<void> {
+  const cam = scene.cameras.find((c) => c.id === activeCameraId.value);
+  if (!cam || shooting.value) return;
+  shooting.value = true;
+  try {
+    const blob = await viewportRef.value?.captureView(cam);
+    if (!blob) throw new Error('截图失败');
+    const ext = blob.type === 'image/webp' ? 'webp' : 'jpg';
+    const file = new File([blob], `director-${cam.name || 'shot'}-${Date.now()}.${ext}`, { type: blob.type });
+    const res = await canvasApi.upload(props.canvasId, file);
+    const fileId = res.data?.data?.fileId;
+    if (!fileId) throw new Error('上传未返回 fileId');
+    emit('screenshot', fileId);
+  } catch (err) {
+    // 运维埋点：上传/截图失败两关键点之一（plan 运维清单-可观测）
+    console.error('[导演台] 截图回流失败:', err);
+    emit('screenshot-failed', err instanceof Error ? err.message : '未知错误');
+  } finally {
+    shooting.value = false;
+  }
+}
 
 function onKeyDown(e: KeyboardEvent): void {
   const target = e.target as HTMLElement | null;

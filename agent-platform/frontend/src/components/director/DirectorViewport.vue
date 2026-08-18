@@ -47,6 +47,7 @@ import {
   SCALE_MAX,
   SCALE_MIN,
   letterboxRect,
+  resolutionForAspect,
   type DirectorCameraData,
   type DirectorSceneData,
   type ElementTransform,
@@ -539,9 +540,54 @@ function getDirectorPose(): { position: Vec3; target: Vec3 } | null {
   };
 }
 
+/**
+ * 机位截图：暂存视口状态 → 按画幅分辨率（长边≤2048，PR=1 防超采样）离屏渲染 →
+ * toBlob webp q92（不支持回退 jpeg）→ finally 全量恢复。
+ * 顺序纪律：不暂存直接 setSize 会破坏主视口 + 闪烁（plan 坑表 #3）。
+ */
+async function captureView(cam: DirectorCameraData): Promise<Blob> {
+  if (!renderer || !scene) throw new Error('视口未初始化');
+  syncRenderCamera();
+  const renderCam = cameraObjs.get(cam.id);
+  if (!renderCam) throw new Error('机位相机未就绪');
+
+  const [pxW, pxH] = resolutionForAspect(cam.aspect);
+  renderCam.aspect = pxW / pxH;
+  renderCam.updateProjectionMatrix();
+
+  const oldSize = new THREE.Vector2();
+  renderer.getSize(oldSize);
+  const oldPR = renderer.getPixelRatio();
+
+  try {
+    renderer.setScissorTest(false);
+    renderer.setPixelRatio(1); // 像素精确：PR>1 会把 buffer 撑过 2048
+    renderer.setSize(pxW, pxH, false);
+    renderer.setViewport(0, 0, pxW, pxH);
+    renderer.render(scene, renderCam);
+    const blob = await toBlob(renderer.domElement, 'image/webp', 0.92);
+    if (blob && blob.type === 'image/webp') return blob;
+    // 编码器不支持 webp（Safari 旧版）→ 回退 jpeg
+    renderer.render(scene, renderCam);
+    const jpeg = await toBlob(renderer.domElement, 'image/jpeg', 0.92);
+    if (jpeg) return jpeg;
+    throw new Error('截图编码失败');
+  } finally {
+    renderer.setPixelRatio(oldPR);
+    renderer.setSize(Math.round(oldSize.x), Math.round(oldSize.y), false);
+    applyViewFrame();
+    invalidate();
+  }
+}
+
+function toBlob(canvas: HTMLCanvasElement, mime: string, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
+}
+
 defineExpose({
   invalidate,
   getDirectorPose,
+  captureView,
 });
 </script>
 
