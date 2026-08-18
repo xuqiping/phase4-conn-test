@@ -20,12 +20,14 @@
     "dingtalk-jsapi": "^3.2.9",
     "naive-ui": "^2.38.1",
     "pinia": "^2.1.7",
+    "three": "^0.169.0",
     "vue": "^3.4.27",
     "vue-router": "^4.3.2"
   },
   "devDependencies": {
     "@testing-library/vue": "^8.1.0",
     "@types/crypto-js": "^4.2.2",
+    "@types/three": "^0.169.0",
     "@vitejs/plugin-vue": "^5.0.4",
     "@vue/test-utils": "^2.4.10",
     "happy-dom": "^20.9.0",
