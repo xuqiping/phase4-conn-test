@@ -1,0 +1,27 @@
+﻿
+> agent-platform-frontend@0.1.0 dev
+> vite
+
+Re-optimizing dependencies because lockfile has changed
+
+  VITE v5.4.21  ready in 1170 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+node.exe : 08:58:07 [vite] http proxy error: /api/auth/channels
+At line:1 char:1
++ & "E:\xlxpzwj/node.exe" "E:\xlxpzwj/node_modules/npm/bin/npm-cli.js"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (08:58:07 [vite]...i/auth/channels:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+08:58:07 [vite] http proxy error: /api/knowledge/bases
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+09:26:10 [vite] hmr update /src/components/canvas/PropertyPanel.vue
+09:26:22 [vite] hmr update /src/components/canvas/PropertyPanel.vue
+09:41:19 [vite] hmr update /src/components/canvas/PropertyPanel.vue

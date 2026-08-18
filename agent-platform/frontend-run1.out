@@ -1,0 +1,28 @@
+﻿
+> agent-platform-frontend@0.1.0 dev
+> vite
+
+Re-optimizing dependencies because lockfile has changed
+
+  VITE v5.4.21  ready in 1017 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+node.exe : 12:21:02 [vite] http proxy error: /api/auth/channels
+At line:1 char:1
++ & "E:\xlxpzwj/node.exe" "E:\xlxpzwj/node_modules/npm/bin/npm-cli.js"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (12:21:02 [vite]...i/auth/channels:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:21:02 [vite] http proxy error: /api/security/events/unhandled-count
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:21:02 [vite] http proxy error: /api/chat/sessions
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
