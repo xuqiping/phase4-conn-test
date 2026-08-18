@@ -100,9 +100,10 @@ public class SecurityGateFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 2. 全局 per-IP 限流
+        // 2. 全局 per-IP 限流（13x：admin 豁免——管理员后台巡检/批量操作会高频打 API，不应撞限流；
+        //    仅跳过本步，IP 黑名单（上）与注入扫描（下）对 admin 照常生效）
         RateLimiter rateLimiter = rateLimiterProvider.getIfAvailable();
-        if (rateLimiter != null) {
+        if (rateLimiter != null && !isAdminRequest()) {
             long max = resolveGlobalMax();
             if (!rateLimiter.checkFixed("rl:global:" + ip, max, 60)) {
                 BizMetrics bizMetrics = bizMetricsProvider.getIfAvailable();
@@ -209,6 +210,21 @@ public class SecurityGateFilter extends OncePerRequestFilter {
     private String resolveIp(HttpServletRequest request) {
         ClientIpResolver resolver = clientIpResolverProvider.getIfAvailable();
         return resolver != null ? resolver.resolve(request) : request.getRemoteAddr();
+    }
+
+    /**
+     * admin 豁免判定（13x）：本 filter 排在 JwtAuthenticationFilter 之后，SecurityContext 已就绪。
+     * 与各 controller 内联判定同款（ROLE_admin/ROLE_ADMIN 忽略大小写）；未认证 → false 照常限流。
+     */
+    private boolean isAdminRequest() {
+        var authentication = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+        return authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_admin".equalsIgnoreCase(a.getAuthority())
+                        || "ROLE_ADMIN".equalsIgnoreCase(a.getAuthority()));
     }
 
     /** 403/429 固定话术（不透传具体原因防探测；R 格式与全局一致）。 */

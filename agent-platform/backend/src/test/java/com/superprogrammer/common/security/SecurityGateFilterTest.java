@@ -107,6 +107,22 @@ class SecurityGateFilterTest {
     }
 
     @Test
+    void adminRequest_bypassesGlobalRateLimit() throws Exception {
+        // 13x：admin 豁免——全局限流必拒也放行（不触达 Redis 计数；黑名单/注入扫描照常走）
+        when(ipBlacklistService.isBlocked("1.2.3.4")).thenReturn(false);
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        1L, "admin",
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_admin"))));
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verifyNoInteractions(rateLimiter);
+        org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+
+    @Test
     void normalRequest_passes() throws Exception {
         when(ipBlacklistService.isBlocked("1.2.3.4")).thenReturn(false);
         when(rateLimiter.checkFixed("rl:global:1.2.3.4", 600L, 60L)).thenReturn(true);

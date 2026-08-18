@@ -192,6 +192,20 @@ class RateLimitInterceptorTest {
         verify(rateLimiter, never()).checkFixed(anyString(), anyLong(), anyLong());
     }
 
+    @Test
+    void adminRequest_bypassesRateLimit() {
+        // 13x：admin 豁免——注解存在且总闸开，admin 照常放行且不触达 Redis 计数
+        RateLimit ann = annotation("chat_send", 20, 60);
+        when(handlerMethod.getMethodAnnotation(RateLimit.class)).thenReturn(ann);
+        when(systemSettingService.getBoolean(RateLimitInterceptor.KEY_ENABLED, true)).thenReturn(true);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(1L, "admin",
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_admin"))));
+
+        assertTrue(interceptor.preHandle(request, null, handlerMethod));
+        verifyNoInteractions(rateLimiter);
+    }
+
     /** 构造注解实例（mock 轻量替代实现接口）。lenient：总闸关等短路场景不读注解字段。 */
     private RateLimit annotation(String action, int max, int window) {
         RateLimit ann = mock(RateLimit.class);

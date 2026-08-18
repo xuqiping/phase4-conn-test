@@ -80,6 +80,10 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if (!isEnabled()) {
             return true; // 总闸关=全部放行
         }
+        // 13x：admin 豁免——管理员后台巡检/批量操作会高频打 API，不应撞限流（与 SecurityGateFilter 全局闸同口径）
+        if (isAdminRequest()) {
+            return true;
+        }
 
         String action = rateLimit.action();
         long max = resolveMax(action, rateLimit.max());
@@ -195,5 +199,19 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             return userId;
         }
         return null;
+    }
+
+    /**
+     * admin 豁免判定（13x）：与各 controller 内联判定同款（ROLE_admin/ROLE_ADMIN 忽略大小写）；
+     * 未认证 → false 照常限流。
+     */
+    private boolean isAdminRequest() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+        return authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_admin".equalsIgnoreCase(a.getAuthority())
+                        || "ROLE_ADMIN".equalsIgnoreCase(a.getAuthority()));
     }
 }
