@@ -132,7 +132,7 @@ public class VideoReverseService {
         if (!props.isEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推功能未启用");
         }
-        ExtractionArtifacts ex = runExtraction(userId, fileId, sceneThreshold, maxFrames);
+        ExtractionArtifacts ex = runExtraction(userId, fileId, sceneThreshold, maxFrames, false);
         return new KeyFrameResult(
                 ex.artifacts().stream().map(FrameArtifact::frame).toList(),
                 ex.durationSeconds(), ex.mode(), ex.sceneHits());
@@ -161,6 +161,14 @@ public class VideoReverseService {
      * {@code projectGroupId} 透传 → 组池/个人由网关分派（计划5 口径）；抽帧本身不另计费。
      */
     public ReverseAnalyzeResponse analyze(ReverseAnalyzeRequest req, Long userId) {
+        return analyze(req, userId, false);
+    }
+
+    /**
+     * 反推分析（admin 旁路与 media 列表同口径：admin 角色列表见全量任务 → 源校验同样放行，
+     * 否则 admin 下拉里选得到的任务反推必 403，自相矛盾）。
+     */
+    public ReverseAnalyzeResponse analyze(ReverseAnalyzeRequest req, Long userId, boolean admin) {
         if (!props.isEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推功能未启用");
         }
@@ -187,11 +195,11 @@ public class VideoReverseService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "modes 至少包含 KEYFRAMES/STORYBOARD/SCRIPT 之一");
         }
         String fileId = resolveSourceFileId(req == null ? null : req.getTaskId(),
-                req == null ? null : req.getFileId(), userId);
+                req == null ? null : req.getFileId(), userId, admin);
 
         ExtractionArtifacts ex = runExtraction(userId, fileId,
                 req == null ? null : req.getSceneThreshold(),
-                req == null ? null : req.getMaxFrames());
+                req == null ? null : req.getMaxFrames(), admin);
 
         List<Map<String, Object>> storyboard = null;
         Map<String, Object> script = null;
@@ -266,8 +274,8 @@ public class VideoReverseService {
         return new LocalizeResponse(localized.toString(), changeLog, warning);
     }
 
-    /** 源解析：taskId → loadForDownload 咽喉（归属+终态校验，他人任务 403）；fileId → 抽帧 loadPath 校验。 */
-    private String resolveSourceFileId(Long taskId, String fileId, Long userId) {
+    /** 源解析：taskId → loadForDownload 咽喉（归属+终态校验，他人任务 403，admin 旁路）；fileId → 抽帧 loadPath 校验。 */
+    private String resolveSourceFileId(Long taskId, String fileId, Long userId, boolean admin) {
         if (taskId == null && (fileId == null || fileId.isBlank())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "需提供 taskId 或 fileId 之一作为反推源");
         }
@@ -275,7 +283,7 @@ public class VideoReverseService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "taskId 与 fileId 只能二选一");
         }
         if (taskId != null) {
-            MediaGenTask task = mediaGenQueryService.loadForDownload(taskId, userId, false);
+            MediaGenTask task = mediaGenQueryService.loadForDownload(taskId, userId, admin);
             return task.getResultFileId();
         }
         return fileId;
@@ -423,10 +431,10 @@ public class VideoReverseService {
     // ============================ 抽帧主管线（Step1 逻辑，Step2 复用缩略字节） ============================
 
     /** 抽帧全管线：探测→场景扫描→兜底/截断→逐帧取帧→缩略→落库，返回含缩略字节的中间产物。 */
-    private ExtractionArtifacts runExtraction(Long userId, String fileId, Double sceneThreshold, Integer maxFrames) {
+    private ExtractionArtifacts runExtraction(Long userId, String fileId, Double sceneThreshold, Integer maxFrames, boolean admin) {
         double threshold = clampSceneThreshold(sceneThreshold);
         int want = clampMaxFrames(maxFrames);
-        Path video = fileStorageService.loadPath(fileId, userId, false);
+        Path video = fileStorageService.loadPath(fileId, userId, admin);
 
         if (!slots.tryAcquire()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "视频反推并发已满，请稍后重试");

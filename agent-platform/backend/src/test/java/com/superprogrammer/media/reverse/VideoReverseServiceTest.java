@@ -404,6 +404,20 @@ class VideoReverseServiceTest {
     }
 
     @Test
+    void analyze_adminBypass_passesAdminFlagToOwnershipGates() throws Exception {
+        // admin 角色列表见全量任务（media 列表口径）→ 源校验同放行，否则 admin 下拉里选得到的任务反推必 403
+        stubExtractionFourFrames();
+        MediaGenTask task = new MediaGenTask();
+        task.setResultFileId("res-9");
+        when(mediaGenQueryService.loadForDownload(100L, 7L, true)).thenReturn(task);
+
+        service.analyze(analyzeReq(List.of("KEYFRAMES"), 100L, null), 7L, true);
+
+        verify(mediaGenQueryService).loadForDownload(100L, 7L, true);
+        verify(fileStorageService).loadPath("res-9", 7L, true);
+    }
+
+    @Test
     void analyze_taskIdAndFileIdBothOrNeither_badRequest() {
         BusinessException both = assertThrows(BusinessException.class,
                 () -> service.analyze(analyzeReq(List.of("KEYFRAMES"), 100L, "src-1"), 7L));

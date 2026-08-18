@@ -42,7 +42,7 @@ public class VideoReverseController {
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     @AuditLog(module = "media", action = "reverse_analyze", targetType = "media_reverse")
     public ResponseEntity<R<ReverseAnalyzeResponse>> analyze(@RequestBody ReverseAnalyzeRequest request) {
-        ReverseAnalyzeResponse resp = videoReverseService.analyze(request, getCurrentUserId());
+        ReverseAnalyzeResponse resp = videoReverseService.analyze(request, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok(resp));
     }
 
@@ -62,5 +62,13 @@ public class VideoReverseController {
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth == null ? null : (Long) auth.getPrincipal();
+    }
+
+    /** admin 判定（与 MediaGenController 同口径）：admin 角色列表见全量任务，反推源校验同放行。 */
+    private boolean isAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .map(a -> a.getAuthority() == null ? "" : a.getAuthority())
+                .anyMatch(r -> "ROLE_admin".equals(r) || "ROLE_ADMIN".equals(r));
     }
 }
