@@ -6,3 +6,8 @@ rust-version = "1.77"
 description = "目录白名单、命令审批、macOS Seatbelt / Windows Job Object（FR-001/006/009）"
 
 [dependencies]
+dunce = "1"
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
