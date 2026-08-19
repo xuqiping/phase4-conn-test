@@ -3,6 +3,7 @@
 
 pub mod approval;
 pub mod db;
+pub mod env_profile;
 pub mod machine;
 
 pub use approval::{create as create_approval, list_unresolved, resolve as resolve_approval};
@@ -56,7 +57,8 @@ mod tests {
                 "L1".to_string(),
                 "L2".to_string(),
                 "L3".to_string(),
-                "L4".to_string()
+                "L4".to_string(),
+                "L5".to_string()
             ]
         );
     }
