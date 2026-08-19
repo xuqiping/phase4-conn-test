@@ -145,7 +145,7 @@ fn package_manager() -> (String, String) {
 pub async fn run_plan(
     plan: &InstallPlan,
     cwd: &Path,
-    on_output: impl Fn(&str),
+    mut on_output: impl FnMut(&str),
 ) -> Vec<InstallResult> {
     let mut results = Vec::new();
     for step in &plan.steps {

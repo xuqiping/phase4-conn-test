@@ -5,6 +5,7 @@ pub mod exec;
 pub mod install;
 pub mod probe;
 pub mod profile;
+pub mod runner;
 
 pub use exec::{run, ExecRequest, ExecResult};
 pub use install::{
@@ -12,6 +13,10 @@ pub use install::{
 };
 pub use probe::{probe, EnvProfile, Stack};
 pub use profile::{get_cached, probe_and_cache};
+pub use runner::{
+    read_project_file, run_task, write_project_file, FileChange, FileError, FixStrategy,
+    NoOpFixStrategy, TaskRequest, TaskResult, TestResult,
+};
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
 pub const CRATE_NAME: &str = "core-exec";

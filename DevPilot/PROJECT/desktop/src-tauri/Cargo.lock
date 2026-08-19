@@ -361,6 +361,7 @@ version = "0.1.0"
 name = "core-exec"
 version = "0.1.0"
 dependencies = [
+ "core-sandbox",
  "core-state",
  "libc",
  "rusqlite",
@@ -369,6 +370,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
 ]
 
@@ -678,6 +680,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
 ]
 
 [[package]]

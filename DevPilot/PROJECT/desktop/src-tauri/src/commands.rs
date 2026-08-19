@@ -539,3 +539,66 @@ pub async fn install_runtime(
     .await;
     Ok(results.into_iter().map(Into::into).collect())
 }
+
+// ---------- 全流程任务执行（P03 Step6 FR-003/AC-004） ----------
+
+fn project_path(db: &Db, project_id: i64) -> CmdResult<String> {
+    db.read(|c| {
+        c.query_row(
+            "SELECT path FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    })
+    .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 读取项目内文件（受沙箱约束）。
+#[tauri::command]
+pub fn read_project_file(
+    state: State<'_, AppState>,
+    project_id: i64,
+    rel_path: String,
+) -> CmdResult<String> {
+    let path = project_path(&state.db, project_id)?;
+    core_exec::read_project_file(std::path::Path::new(&path), &rel_path)
+        .map_err(|e| err("SANDBOX", e.to_string()))
+}
+
+/// 写入项目内文件（受沙箱约束）。
+#[tauri::command]
+pub fn write_project_file(
+    state: State<'_, AppState>,
+    project_id: i64,
+    rel_path: String,
+    content: String,
+) -> CmdResult<()> {
+    let path = project_path(&state.db, project_id)?;
+    core_exec::write_project_file(std::path::Path::new(&path), &rel_path, &content)
+        .map_err(|e| err("SANDBOX", e.to_string()))
+}
+
+/// 运行一次任务闭环：写文件→安装→测试/lint→修复→commit 存档点。
+#[tauri::command]
+pub async fn run_task(
+    state: State<'_, AppState>,
+    req: core_exec::TaskRequest,
+) -> CmdResult<core_exec::TaskResult> {
+    let path = project_path(&state.db, req.project_id)?;
+    let result = tokio::task::block_in_place(|| {
+        state.db.write(|c| {
+            let r = tokio::runtime::Handle::current().block_on(core_exec::run_task(
+                Some(c),
+                &req,
+                std::path::Path::new(&path),
+                &core_exec::NoOpFixStrategy,
+                |_line| {
+                    // 后续可接前端事件流（FR-038 日志透明层）
+                },
+            ));
+            Ok::<_, core_state::DbError>(r)
+        })
+    });
+    result.map_err(|e| err("DB", e.to_string()))
+}
