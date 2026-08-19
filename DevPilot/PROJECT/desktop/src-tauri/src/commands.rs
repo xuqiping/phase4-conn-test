@@ -440,3 +440,102 @@ pub fn submit_approval(state: State<'_, AppState>, id: i64, allow: bool) -> CmdR
         .write(|c| core_state::resolve_approval(c, id, allow))
         .map_err(Into::into)
 }
+
+// ---------- 安装向导（P03 Step5 FR-005/AC-006） ----------
+
+#[derive(Debug, serde::Serialize)]
+pub struct InstallPlanDto {
+    pub missing: Vec<String>,
+    pub steps: Vec<InstallStepDto>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct InstallStepDto {
+    pub name: String,
+    pub command: String,
+    pub estimated_seconds: u32,
+    pub risk_note: String,
+}
+
+impl From<core_exec::InstallStep> for InstallStepDto {
+    fn from(s: core_exec::InstallStep) -> Self {
+        Self {
+            name: s.name,
+            command: s.command.join(" "),
+            estimated_seconds: s.estimated_seconds,
+            risk_note: s.risk_note,
+        }
+    }
+}
+
+impl From<core_exec::InstallPlan> for InstallPlanDto {
+    fn from(p: core_exec::InstallPlan) -> Self {
+        Self {
+            missing: p.missing,
+            steps: p.steps.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// 生成项目安装计划（不执行）。
+#[tauri::command]
+pub fn install_plan(state: State<'_, AppState>, project_id: i64) -> CmdResult<InstallPlanDto> {
+    let path: String = state.db.read(|c| {
+        c.query_row(
+            "SELECT path FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    })?;
+    let profile = state.db.write(|c| {
+        core_exec::probe_and_cache(c, std::path::Path::new(&path))
+            .map_err(|e| core_state::DbError::Io(std::io::Error::other(e.to_string())))
+    })?;
+    Ok(core_exec::install_plan(&profile).into())
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct InstallResultDto {
+    pub step: String,
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl From<core_exec::InstallResult> for InstallResultDto {
+    fn from(r: core_exec::InstallResult) -> Self {
+        Self {
+            step: r.step,
+            success: r.success,
+            stdout: r.stdout,
+            stderr: r.stderr,
+        }
+    }
+}
+
+/// 执行安装计划（逐个运行，失败即停）。
+#[tauri::command]
+pub async fn install_runtime(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<InstallResultDto>> {
+    let path: String = state.db.read(|c| {
+        c.query_row(
+            "SELECT path FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    })?;
+    let profile = state.db.write(|c| {
+        core_exec::probe_and_cache(c, std::path::Path::new(&path))
+            .map_err(|e| core_state::DbError::Io(std::io::Error::other(e.to_string())))
+    })?;
+    let plan = core_exec::install_plan(&profile);
+    let results = core_exec::run_install_plan(&plan, std::path::Path::new(&path), |_line| {
+        // 后续可接前端事件流（FR-038 日志透明层）
+    })
+    .await;
+    Ok(results.into_iter().map(Into::into).collect())
+}

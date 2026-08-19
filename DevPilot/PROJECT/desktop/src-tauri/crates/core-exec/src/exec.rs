@@ -39,6 +39,11 @@ impl ExecRequest {
         self
     }
 
+    pub fn args(mut self, a: Vec<String>) -> Self {
+        self.args.extend(a);
+        self
+    }
+
     pub fn env(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
         self.env.insert(k.into(), v.into());
         self

@@ -33,6 +33,8 @@ pub fn run() {
             commands::create_approval,
             commands::list_unresolved_approvals,
             commands::submit_approval,
+            commands::install_plan,
+            commands::install_runtime,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");
