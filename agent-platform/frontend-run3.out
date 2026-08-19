@@ -1,0 +1,44 @@
+﻿
+> agent-platform-frontend@0.1.0 dev
+> vite
+
+
+  VITE v5.4.21  ready in 1162 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+node.exe : 13:55:18 [vite] http proxy error: /api/auth/channels
+At line:1 char:1
++ & "E:\xlxpzwj/node.exe" "E:\xlxpzwj/node_modules/npm/bin/npm-cli.js"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (13:55:18 [vite]...i/auth/channels:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+13:55:18 [vite] http proxy error: /api/security/events/unhandled-count
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+13:55:18 [vite] http proxy error: /api/media/edit/assets
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+13:55:18 [vite] http proxy error: /api/media/edit/tasks?limit=50
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+22:54:44 [vite] hmr update /src/components/canvas/nodes/CanvasNodeBase.vue
+22:54:45 [vite] hmr update /src/components/canvas/PropertyPanel.vue, /src/components/canvas/SaveToAssetDialog.vue, /src/components/canvas/AssetPicker.vue, /src/components/canvas/nodes/CanvasNodeBase.vue
+22:54:54 [vite] hmr update /src/components/canvas/CanvasBoard.vue
+22:55:01 [vite] hmr update /src/components/canvas/CanvasBoard.vue
+22:55:19 [vite] hmr update /src/components/canvas/CanvasBoard.vue
+22:55:25 [vite] hmr update /src/views/CanvasView.vue
+22:55:32 [vite] hmr update /src/views/CanvasView.vue
+22:55:33 [vite] hmr update /src/views/CanvasView.vue
+22:55:38 [vite] hmr update /src/views/CanvasView.vue
+22:55:43 [vite] hmr update /src/views/CanvasView.vue
+22:55:57 [vite] hmr update /src/views/CanvasView.vue
+22:56:07 [vite] hmr update /src/views/CanvasView.vue
+22:56:15 [vite] hmr update /src/views/CanvasView.vue
