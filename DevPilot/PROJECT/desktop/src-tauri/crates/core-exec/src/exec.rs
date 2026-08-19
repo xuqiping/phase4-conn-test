@@ -49,6 +49,11 @@ impl ExecRequest {
         self
     }
 
+    pub fn envs(mut self, envs: HashMap<String, String>) -> Self {
+        self.env.extend(envs);
+        self
+    }
+
     pub fn timeout(mut self, ms: u64) -> Self {
         self.timeout_ms = ms;
         self

@@ -5,6 +5,7 @@ pub mod approval;
 pub mod db;
 pub mod env_profile;
 pub mod machine;
+pub mod secrets;
 
 pub use approval::{create as create_approval, list_unresolved, resolve as resolve_approval};
 pub use db::{Db, DbError, DbResult};
@@ -58,7 +59,8 @@ mod tests {
                 "L2".to_string(),
                 "L3".to_string(),
                 "L4".to_string(),
-                "L5".to_string()
+                "L5".to_string(),
+                "L6".to_string()
             ]
         );
     }

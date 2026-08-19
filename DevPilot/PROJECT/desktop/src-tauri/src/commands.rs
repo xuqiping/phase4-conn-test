@@ -588,11 +588,19 @@ pub async fn run_task(
     let path = project_path(&state.db, req.project_id)?;
     let result = tokio::task::block_in_place(|| {
         state.db.write(|c| {
+            let names = core_state::secrets::list(c, req.project_id)?;
+            let mut secrets = Vec::new();
+            for m in names {
+                if let Some(v) = core_state::secrets::load(c, req.project_id, &m.name)? {
+                    secrets.push(core_exec::MaskedSecret::new(m.name, v));
+                }
+            }
             let r = tokio::runtime::Handle::current().block_on(core_exec::run_task(
                 Some(c),
                 &req,
                 std::path::Path::new(&path),
                 &core_exec::NoOpFixStrategy,
+                &secrets,
                 |_line| {
                     // 后续可接前端事件流（FR-038 日志透明层）
                 },
@@ -601,4 +609,71 @@ pub async fn run_task(
         })
     });
     result.map_err(|e| err("DB", e.to_string()))
+}
+
+// ---------- Secrets 管理（P03 Step7 FR-012/AC-014） ----------
+
+#[derive(Debug, serde::Serialize)]
+pub struct SecretMetaDto {
+    pub id: i64,
+    pub project_id: i64,
+    pub name: String,
+}
+
+impl From<core_state::secrets::SecretMeta> for SecretMetaDto {
+    fn from(m: core_state::secrets::SecretMeta) -> Self {
+        Self {
+            id: m.id,
+            project_id: m.project_id,
+            name: m.name,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SaveSecretReq {
+    pub project_id: i64,
+    pub name: String,
+    pub value: String,
+}
+
+/// 保存/更新 secret。值不落 DB，走 keyring 或 AES-256-GCM 加密。
+#[tauri::command]
+pub fn save_secret(state: State<'_, AppState>, req: SaveSecretReq) -> CmdResult<i64> {
+    state
+        .db
+        .write(|c| core_state::secrets::save(c, req.project_id, &req.name, &req.value))
+        .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 列出某项目的 secret 名称（不含值）。
+#[tauri::command]
+pub fn list_secrets(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<SecretMetaDto>> {
+    state
+        .db
+        .read(|c| core_state::secrets::list(c, project_id))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+        .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 读取某个 secret 值（仅用于编辑回填，调用方需自行脱敏展示）。
+#[tauri::command]
+pub fn load_secret(
+    state: State<'_, AppState>,
+    project_id: i64,
+    name: String,
+) -> CmdResult<Option<String>> {
+    state
+        .db
+        .read(|c| core_state::secrets::load(c, project_id, &name))
+        .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 删除 secret。
+#[tauri::command]
+pub fn delete_secret(state: State<'_, AppState>, project_id: i64, name: String) -> CmdResult<bool> {
+    state
+        .db
+        .write(|c| core_state::secrets::delete(c, project_id, &name))
+        .map_err(|e| err("DB", e.to_string()))
 }

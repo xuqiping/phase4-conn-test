@@ -31,6 +31,10 @@ const MIGRATIONS: &[Migration] = &[
         version: "L5",
         sql: include_str!("../../migrations/L5__env_profiles.sql"),
     },
+    Migration {
+        version: "L6",
+        sql: include_str!("../../migrations/L6__secrets.sql"),
+    },
 ];
 
 /// 应用所有未执行的迁移。重复调用安全（幂等）。

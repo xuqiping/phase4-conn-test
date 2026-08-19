@@ -1,6 +1,7 @@
 // 任务执行器：读文件 → 写文件 → 安装 → 跑测试/lint → 失败自动修复 → 产出 diff → commit 存档点。
 // 对应 FR-003/AC-004（P03 Step6 全流程闭环 v1）。
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
@@ -12,6 +13,7 @@ use crate::exec::{run, ExecRequest, ExecResult};
 use crate::install::{plan as install_plan, run_plan as run_install_plan};
 use crate::probe::{probe, EnvProfile, Stack};
 use crate::profile::probe_and_cache;
+use crate::secrets::{inject_env, redact, MaskedSecret};
 use core_sandbox::path::PathError;
 use core_sandbox::policy::{Decision, SandboxPolicy};
 
@@ -171,6 +173,7 @@ pub async fn run_task<F>(
     req: &TaskRequest,
     project_path: &Path,
     fixer: &F,
+    secrets: &[MaskedSecret],
     mut on_event: impl FnMut(&str),
 ) -> TaskResult
 where
@@ -254,15 +257,9 @@ where
     );
 
     // 5. 跑测试 + 失败修复循环。
-    let mut exec_req = build_exec_request(&test_cmd, project_path);
+    let mut exec_req = build_exec_request(&test_cmd, project_path, secrets);
     let mut last = run(exec_req).await;
-    result.test_result = Some(TestResult {
-        command: test_cmd.join(" "),
-        exit_code: last.exit_code,
-        stdout: last.stdout.clone(),
-        stderr: last.stderr.clone(),
-        timed_out: last.timed_out,
-    });
+    result.test_result = Some(into_test_result(&test_cmd, &last, secrets));
 
     while last.exit_code != Some(0) && result.fix_attempts < req.max_fix_attempts {
         result.fix_attempts += 1;
@@ -281,15 +278,9 @@ where
             return result;
         }
         emit(&mut on_event, &format!("[runner] 应用修复：{}", patch.path));
-        exec_req = build_exec_request(&test_cmd, project_path);
+        exec_req = build_exec_request(&test_cmd, project_path, secrets);
         last = run(exec_req).await;
-        result.test_result = Some(TestResult {
-            command: test_cmd.join(" "),
-            exit_code: last.exit_code,
-            stdout: last.stdout.clone(),
-            stderr: last.stderr.clone(),
-            timed_out: last.timed_out,
-        });
+        result.test_result = Some(into_test_result(&test_cmd, &last, secrets));
     }
 
     result.success = last.exit_code == Some(0) && !last.timed_out;
@@ -312,10 +303,23 @@ fn emit(on_event: &mut impl FnMut(&str), msg: &str) {
     on_event(msg);
 }
 
-fn build_exec_request(cmd: &[String], cwd: &Path) -> ExecRequest {
+fn build_exec_request(cmd: &[String], cwd: &Path, secrets: &[MaskedSecret]) -> ExecRequest {
+    let mut env = HashMap::new();
+    inject_env(&mut env, secrets);
     ExecRequest::new(&cmd[0], cwd)
         .args(cmd[1..].to_vec())
+        .envs(env)
         .timeout(120_000)
+}
+
+fn into_test_result(cmd: &[String], last: &ExecResult, secrets: &[MaskedSecret]) -> TestResult {
+    TestResult {
+        command: cmd.join(" "),
+        exit_code: last.exit_code,
+        stdout: redact(&last.stdout, secrets),
+        stderr: redact(&last.stderr, secrets),
+        timed_out: last.timed_out,
+    }
 }
 
 /// 根据画像选一个测试/lint 命令；没有识别到则返回 None。
@@ -446,7 +450,7 @@ mod tests {
 
         let mut req = TaskRequest::new("add fn", "write something");
         req.test_command = Some(vec!["node".into(), "-e".into(), "console.log('ok')".into()]);
-        let r = run_task(None, &req, tmp.path(), &NoOpFixStrategy, |_| {}).await;
+        let r = run_task(None, &req, tmp.path(), &NoOpFixStrategy, &[], |_| {}).await;
         assert!(r.success, "{:?}", r);
         assert_eq!(r.phase, "done");
         assert!(r.test_result.unwrap().stdout.contains("ok"));
@@ -461,7 +465,7 @@ mod tests {
 
         let mut req = TaskRequest::new("broken", "will fail");
         req.test_command = Some(vec!["node".into(), "-e".into(), "process.exit(1)".into()]);
-        let r = run_task(None, &req, tmp.path(), &NoOpFixStrategy, |_| {}).await;
+        let r = run_task(None, &req, tmp.path(), &NoOpFixStrategy, &[], |_| {}).await;
         assert!(!r.success);
         assert_eq!(r.phase, "failed");
 
@@ -500,9 +504,30 @@ mod tests {
         let mut req = TaskRequest::new("fixable", "try fix");
         req.test_command = Some(vec!["node".into(), "check.js".into()]);
         req.max_fix_attempts = 2;
-        let r = run_task(None, &req, tmp.path(), &MockFixer, |_| {}).await;
+        let r = run_task(None, &req, tmp.path(), &MockFixer, &[], |_| {}).await;
         assert!(r.success);
         assert_eq!(r.fix_attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn secrets_injected_and_redacted_in_output() {
+        let tmp = TempDir::new().unwrap();
+        init_git(tmp.path());
+
+        std::fs::write(tmp.path().join("package.json"), "{}").unwrap();
+
+        let mut req = TaskRequest::new("secret-task", "use secret");
+        req.test_command = Some(vec![
+            "node".into(),
+            "-e".into(),
+            "console.log('token=' + process.env.DEVPILOT_SECRET_API_KEY)".into(),
+        ]);
+        let secrets = vec![MaskedSecret::new("api_key", "super-secret")];
+        let r = run_task(None, &req, tmp.path(), &NoOpFixStrategy, &secrets, |_| {}).await;
+        assert!(r.success, "{:?}", r);
+        let out = r.test_result.unwrap().stdout;
+        assert!(out.contains("token=***"), "{out}");
+        assert!(!out.contains("super-secret"));
     }
 
     #[test]
