@@ -4,6 +4,7 @@
 use core_state::machine::loader;
 use core_state::machine::{PersistentMachine, TransitionError};
 use core_state::Db;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -676,4 +677,151 @@ pub fn delete_secret(state: State<'_, AppState>, project_id: i64, name: String) 
         .db
         .write(|c| core_state::secrets::delete(c, project_id, &name))
         .map_err(|e| err("DB", e.to_string()))
+}
+
+// ---------- 状态机集成：建造阶段自动执行（P03 Step8 FR-003 联动） ----------
+
+/// 在「建造」阶段触发一次本地任务闭环；成功后自动推进到「验收」，失败留在建造阶段。
+#[tauri::command]
+pub async fn execute_build(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<StateDto> {
+    let (mut machine, _) = load_machine(&state.db, project_id)?;
+    if machine.machine().phase() != "build" {
+        return Err(err("STATE", "只有「建造」阶段才能执行构建"));
+    }
+
+    // 取当前 open 轮次；没有则自动开一轮。
+    let round_id: i64 = state
+        .db
+        .write(|c| {
+            let id: Option<i64> = c
+                .query_row(
+                    "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+                    [project_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(id) = id {
+                return Ok(id);
+            }
+            c.execute(
+                "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, (SELECT COALESCE(MAX(seq),0)+1 FROM rounds WHERE project_id = ?1), '自动构建轮', 'open')",
+                [project_id],
+            )?;
+            Ok(c.last_insert_rowid())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    // 创建任务记录。
+    let task_id: i64 = state
+        .db
+        .write(|c| {
+            c.execute(
+                "INSERT INTO tasks (round_id, chunk_no, title, status, source) VALUES (?1, 1, 'build', 'running', 'local')",
+                [round_id],
+            )?;
+            Ok(c.last_insert_rowid())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let path = project_path(&state.db, project_id)?;
+    let result = tokio::task::block_in_place(|| {
+        state.db.write(|c| {
+            let names = core_state::secrets::list(c, project_id)?;
+            let mut secrets = Vec::new();
+            for m in names {
+                if let Some(v) = core_state::secrets::load(c, project_id, &m.name)? {
+                    secrets.push(core_exec::MaskedSecret::new(m.name, v));
+                }
+            }
+            let req = core_exec::TaskRequest {
+                project_id,
+                task_id,
+                title: "自动构建".into(),
+                instructions: "执行本地测试/lint 并提交存档点".into(),
+                files: Vec::new(),
+                test_command: None,
+                max_fix_attempts: 0,
+            };
+            let r = tokio::runtime::Handle::current().block_on(core_exec::run_task(
+                Some(c),
+                &req,
+                std::path::Path::new(&path),
+                &core_exec::NoOpFixStrategy,
+                &secrets,
+                |_line| {},
+            ));
+            Ok::<_, core_state::DbError>(r)
+        })
+    })
+    .map_err(|e| err("DB", e.to_string()))?;
+
+    // 回写任务结果与 checkpoint。
+    let status = if result.success { "done" } else { "failed" };
+    let git_commit = latest_commit_hash(&path).unwrap_or_default();
+    state
+        .db
+        .write(|c| {
+            c.execute(
+                "UPDATE tasks SET status = ?1, tokens_actual = ?2, updated_at = datetime('now') WHERE id = ?3",
+                (status, result.cost_cents, task_id),
+            )?;
+            c.execute(
+                "INSERT INTO checkpoints (task_id, git_commit, summary_plain) VALUES (?1, ?2, ?3)",
+                (task_id, &git_commit, &result.diff_summary),
+            )?;
+            Ok(())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    // 成功则推进到验收阶段。
+    let mut warning: Option<String> = None;
+    if result.success {
+        if let Err(e) = machine.transition("accept", "devpilot") {
+            warning = Some(e.to_string());
+        } else {
+            let phase = machine.machine().phase().to_string();
+            state
+                .db
+                .write(|c| {
+                    c.execute(
+                        "UPDATE projects SET current_phase = ?1, updated_at = datetime('now') WHERE id = ?2",
+                        (&phase, project_id),
+                    )?;
+                    Ok(())
+                })
+                .map_err(|e| err("DB", e.to_string()))?;
+        }
+    } else {
+        warning = Some(format!(
+            "构建失败（exit={:?}），已保留 devpilot-failed 存档点",
+            result.test_result.as_ref().and_then(|t| t.exit_code)
+        ));
+    }
+
+    let dto = to_state_dto(
+        &machine,
+        warning.or_else(|| {
+            if result.success {
+                None
+            } else {
+                Some("构建未通过，留在建造阶段".into())
+            }
+        }),
+    );
+    events::emit_state(&app, &dto);
+    Ok(dto)
+}
+
+fn latest_commit_hash(project_path: &str) -> Option<String> {
+    std::process::Command::new("git")
+        .args(["log", "-1", "--pretty=%H"])
+        .current_dir(project_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }

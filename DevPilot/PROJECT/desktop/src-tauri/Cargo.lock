@@ -736,6 +736,7 @@ dependencies = [
  "core-sandbox",
  "core-skills",
  "core-state",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
