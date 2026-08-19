@@ -105,6 +105,9 @@ erDiagram
 | artifacts | id, project_id, type(prd/plan/progress/userops...), path, version | 产物索引（FR-030~035） |
 | transition_history | id, project_id, from_phase, to_phase, gate, actor, created_at | 状态机转移历史，只增，可回放排查（FR-029 运维项） |
 | usage_mirror | id, user_id, kind(1扣费/2充值/3退款/4调整), model, amount_cents, idempotency_key UNIQUE, synced_at | Token 消耗本地镜像，幂等键防重放；与云端 token_ledger 对账（FR-041，P02 Step8 实建） |
+| pending_approvals | id, project_id, task_id, kind, title, detail, risk_level, decision, resolved_at | 两档审批待决记录（FR-009，P03 Step3） |
+| env_profiles | path_hash UNIQUE, lockfile_hash, profile_json, updated_at | 项目技术栈画像缓存，命中则跳过文件系统探测（FR-005，P03 Step4） |
+| secrets | id, project_id, name, encrypted_value | 项目级 Secrets；名称落库，值优先 OS keyring，失败回退 AES-256-GCM（FR-012，P03 Step7） |
 | skills_local | id, name, yaml_path, enabled | 技能注册表（FR-025） |
 | mcp_servers | id, name, config JSON, status | MCP server 管理（FR-026） |
 
@@ -112,8 +115,11 @@ erDiagram
 | 版本 | 内容 |
 |---|---|
 | L1__init.sql | projects / workflow_states / rounds / tasks / checkpoints / artifacts |
-| L2__transition_history.sql | transition_history（P01 Step 6 插入：状态机历史为引擎内核刚需，先于计量建表） |
-| L3__usage_mirror.sql | usage_mirror（P02 Step8 实建；skills_local / mcp_servers 留待 P05+ 再建） |
+| L2__transition_history.sql | transition_history（P01 Step 6 插入） |
+| L3__usage_mirror.sql | usage_mirror（P02 Step8 实建） |
+| L4__pending_approvals.sql | pending_approvals（P03 Step3 FR-009） |
+| L5__env_profiles.sql | env_profiles（P03 Step4 FR-005） |
+| L6__secrets.sql | secrets（P03 Step7 FR-012） |
 
 ## 3. 设计说明
 
