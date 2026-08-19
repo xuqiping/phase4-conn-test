@@ -1,11 +1,13 @@
 //! core-sandbox：目录白名单、命令审批、macOS Seatbelt / Windows Job Object。
 //! 对应 FR-001/006/009。P03 Step1 实现目录白名单与越界判定。
 
+pub mod approval;
 pub mod path;
 pub mod policy;
 
+pub use approval::{ApprovalGate, ApprovalPolicy, Decision, Operation, RiskLevel};
 pub use path::{normalize, safe_join, PathError};
-pub use policy::{Decision, SandboxPolicy};
+pub use policy::{Decision as PolicyDecision, SandboxPolicy};
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
 pub const CRATE_NAME: &str = "core-sandbox";

@@ -361,3 +361,82 @@ pub fn meter_reconcile(
         .reconcile(user_id, cloud_cents)
         .map_err(|e| err("DB", e.to_string()))
 }
+
+// ---------- 审批（P03 Step3 FR-009） ----------
+
+#[derive(Debug, serde::Serialize)]
+pub struct ApprovalDto {
+    pub id: i64,
+    pub project_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<i64>,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub risk_level: String,
+}
+
+impl From<core_state::approval::PendingApproval> for ApprovalDto {
+    fn from(a: core_state::approval::PendingApproval) -> Self {
+        Self {
+            id: a.id,
+            project_id: a.project_id,
+            task_id: a.task_id,
+            kind: a.kind,
+            title: a.title,
+            detail: a.detail,
+            risk_level: a.risk_level,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CreateApprovalReq {
+    pub project_id: i64,
+    #[serde(default)]
+    pub task_id: Option<i64>,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub risk_level: String,
+}
+
+/// 创建一条待审批记录。
+#[tauri::command]
+pub fn create_approval(state: State<'_, AppState>, req: CreateApprovalReq) -> CmdResult<i64> {
+    state
+        .db
+        .write(|c| {
+            core_state::create_approval(
+                c,
+                req.project_id,
+                req.task_id,
+                &req.kind,
+                &req.title,
+                &req.detail,
+                &req.risk_level,
+            )
+        })
+        .map_err(Into::into)
+}
+
+/// 列出某项目未解决的审批。
+#[tauri::command]
+pub fn list_unresolved_approvals(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<ApprovalDto>> {
+    let rows = state
+        .db
+        .read(|c| core_state::list_unresolved(c, project_id))?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// 提交审批决定：true=允许，false=拒绝。
+#[tauri::command]
+pub fn submit_approval(state: State<'_, AppState>, id: i64, allow: bool) -> CmdResult<bool> {
+    state
+        .db
+        .write(|c| core_state::resolve_approval(c, id, allow))
+        .map_err(Into::into)
+}

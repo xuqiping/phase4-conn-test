@@ -30,6 +30,9 @@ pub fn run() {
             commands::vault_clear,
             commands::meter_sync,
             commands::meter_reconcile,
+            commands::create_approval,
+            commands::list_unresolved_approvals,
+            commands::submit_approval,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");

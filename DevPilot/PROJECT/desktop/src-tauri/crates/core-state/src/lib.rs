@@ -1,9 +1,11 @@
 //! core-state：阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化。
 //! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎（`machine` 模块）。
 
+pub mod approval;
 pub mod db;
 pub mod machine;
 
+pub use approval::{create as create_approval, list_unresolved, resolve as resolve_approval};
 pub use db::{Db, DbError, DbResult};
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
@@ -50,7 +52,12 @@ mod tests {
         let versions = db.read(db::migrate::applied_versions).expect("读版本");
         assert_eq!(
             versions,
-            vec!["L1".to_string(), "L2".to_string(), "L3".to_string()]
+            vec![
+                "L1".to_string(),
+                "L2".to_string(),
+                "L3".to_string(),
+                "L4".to_string()
+            ]
         );
     }
 
