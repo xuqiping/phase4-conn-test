@@ -71,10 +71,10 @@ describe("充值（P02 Step7，mock 渠道）", () => {
 
     // 明细里单列 kind=2，备注 pack_code（联动点 2）
     const tx = await request(app.getHttpServer()).get("/api/v1/balance/transactions").set("Authorization", `Bearer ${token}`);
-    const item = (tx.body.data.items as { kind_label: string; amount_cents: number; model: string | null }[]).at(-1)!;
+    const item = (tx.body.data.items as { kind_label: string; amount_cents: number; note: string | null }[]).at(-1)!;
     expect(item.kind_label).toBe("充值");
     expect(item.amount_cents).toBe(20500);
-    expect(item.model).toBe("P200");
+    expect(item.note).toBe("P200");
   });
 
   it("回调重放（同单再打一次）→ 不重复加钱", async () => {

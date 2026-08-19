@@ -18,7 +18,7 @@ export function estimateCostCents(model: string, tokensIn: number, tokensOut: nu
   const p = PRICING[model];
   if (!p) throw new BadRequestException(`暂不支持模型 ${model}`);
   const cost =
-    (BigInt(tokensIn) * BigInt(p.input_per_mtok_cents)) / 1_000_000n +
+    (BigInt(tokensIn) * BigInt(p.input_per_mtok_cents) + 999_999n) / 1_000_000n +
     (BigInt(tokensOut) * BigInt(p.output_per_mtok_cents) + 999_999n) / 1_000_000n;
   return Number(cost);
 }

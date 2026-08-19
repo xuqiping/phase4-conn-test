@@ -12,6 +12,7 @@ export interface LedgerRow {
   tokens_out: number;
   amount_cents: string; // BIGINT 经 PGlite 序列化为字符串
   idempotency_key: string;
+  note: string | null;
   created_at: string;
 }
 
@@ -36,13 +37,15 @@ export class LedgerService {
     model?: string | null;
     tokensIn?: number;
     tokensOut?: number;
+    note?: string | null;
   }): Promise<LedgerRow> {
     const res = await this.db.query<LedgerRow>(
-      `INSERT INTO token_ledger (user_id, task_id, kind, model, tokens_in, tokens_out, amount_cents, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `INSERT INTO token_ledger (user_id, task_id, kind, model, tokens_in, tokens_out, amount_cents, idempotency_key, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [
         row.userId, row.taskId ?? null, row.kind, row.model ?? null,
         row.tokensIn ?? 0, row.tokensOut ?? 0, row.amountCents, row.idempotencyKey,
+        row.note ?? null,
       ],
     );
     return res.rows[0];

@@ -75,7 +75,7 @@ export class BillingService {
       kind: input.kind,
       amountCents: input.amountCents,
       idempotencyKey: input.idempotencyKey,
-      model: input.note ?? null,
+      note: input.note ?? null,
     });
     await this.wallet.credit(input.userId, input.amountCents);
     return row;

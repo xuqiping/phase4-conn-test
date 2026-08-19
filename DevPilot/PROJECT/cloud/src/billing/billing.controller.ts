@@ -47,6 +47,7 @@ function toVo(r: LedgerRow) {
     kind: r.kind,
     kind_label: KIND_LABEL[r.kind] ?? `kind${r.kind}`,
     model: r.model,
+    note: r.note,
     tokens_in: r.tokens_in,
     tokens_out: r.tokens_out,
     amount_cents: Number(r.amount_cents),
