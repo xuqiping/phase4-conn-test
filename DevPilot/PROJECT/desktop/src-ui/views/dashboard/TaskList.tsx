@@ -1,37 +1,59 @@
-// 任务列表（1000 条 mock + 虚拟滚动，PERF-03 骨架期验证）。
-import { useVirtualList } from "../../lib/useVirtualList";
+// 任务列表：接入当前 open round 的真实 tasks（P05 S7）。
 
-const MOCK_COUNT = 1000;
-const ROW_H = 34;
-const VIEWPORT_H = 320;
+import { useEffect, useState } from "react";
+import { ipc, type TaskDto } from "../../lib/ipc";
+import { useProjectStore } from "../../stores/project";
 
 export default function TaskList() {
-  const win = useVirtualList(MOCK_COUNT, ROW_H, VIEWPORT_H);
-  const rows = Array.from({ length: win.end - win.start }, (_, i) => win.start + i);
+  const projectId = useProjectStore((s) => s.currentId);
+  const [tasks, setTasks] = useState<TaskDto[]>([]);
+
+  useEffect(() => {
+    if (projectId == null) return;
+    ipc
+      .listTasks(projectId)
+      .then(setTasks)
+      .catch(() => setTasks([]));
+  }, [projectId]);
+
+  const statusClass = (status: string) => {
+    switch (status) {
+      case "done":
+        return "text-success";
+      case "failed":
+        return "text-coral";
+      case "running":
+        return "text-brand2";
+      default:
+        return "text-text-faint";
+    }
+  };
 
   return (
     <div
       data-testid="task-list"
-      className="panel overflow-y-auto rounded-[14px]"
-      style={{ height: VIEWPORT_H }}
-      onScroll={win.onScroll}
+      className="panel max-h-[320px] overflow-y-auto rounded-[14px]"
     >
-      <div style={{ height: win.totalHeight, position: "relative" }}>
-        <div style={{ transform: `translateY(${win.offsetTop}px)` }}>
-          {rows.map((i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 border-b border-border px-4 text-[13px]"
-              style={{ height: ROW_H }}
-            >
-              <span className="font-mono text-[11px] text-text-faint">
-                #{String(i + 1).padStart(3, "0")}
-              </span>
-              <span className="text-text-dim">示例任务 {i + 1}（P05 接通真实任务流）</span>
-            </div>
-          ))}
+      {tasks.length === 0 && (
+        <div className="px-4 py-3 text-xs text-text-dim">当前轮次暂无任务。</div>
+      )}
+      {tasks.map((t) => (
+        <div
+          key={t.id}
+          className="flex items-center gap-3 border-b border-border px-4 py-2 text-[13px] last:border-0"
+        >
+          <span className="font-mono text-[11px] text-text-faint">
+            #{String(t.chunk_no).padStart(3, "0")}
+          </span>
+          <span className="flex-1 truncate text-text">{t.title}</span>
+          <span className={`text-[11px] ${statusClass(t.status)}`}>
+            {t.status}
+          </span>
+          {t.cost_cents > 0 && (
+            <span className="text-[11px] text-text-dim">{t.cost_cents}¢</span>
+          )}
         </div>
-      </div>
+      ))}
     </div>
   );
 }

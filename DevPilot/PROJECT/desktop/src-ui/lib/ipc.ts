@@ -94,6 +94,27 @@ export interface CheckpointDto {
   created_at: string;
 }
 
+export interface TaskDto {
+  id: number;
+  round_id: number;
+  chunk_no: number;
+  title: string;
+  status: string;
+  instructions: string;
+  cost_cents: number;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface RoundDto {
+  id: number;
+  seq: number;
+  title: string;
+  status: string;
+  total_tasks: number;
+  done_tasks: number;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -182,6 +203,11 @@ export const ipc = {
     invoke<CheckpointDto[]>("list_checkpoints", { projectId }),
   rollbackToCheckpoint: (checkpointId: number) =>
     invoke<StateDto>("rollback_to_checkpoint", { checkpointId }),
+  listTasks: (projectId: number, roundId?: number) =>
+    invoke<TaskDto[]>("list_tasks", { projectId, roundId }),
+  listRounds: (projectId: number) => invoke<RoundDto[]>("list_rounds", { projectId }),
+  listTaskEvents: (taskId: number) =>
+    invoke<TaskEventDto[]>("list_task_events", { taskId }),
   continueTask: (
     projectId: number,
     instructions: string,

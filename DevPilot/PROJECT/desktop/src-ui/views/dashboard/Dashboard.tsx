@@ -1,15 +1,26 @@
-// 驾驶舱静态版（Step 8）：HUD 四指标 + 轮次时间线 + 任务列表（虚拟滚动）。
-// 进度读状态机快照（真实）；缺陷/覆盖率/消耗占位「待接通」（plan 备注：P02/P05 接通）。
+// 驾驶舱真实数据版（P05 S7）：HUD 四指标读真实 tasks/rounds。
+
+import { useEffect, useState } from "react";
 import HudTile from "../../components/hud/HudTile";
 import PlainText from "../../components/plain/PlainText";
+import { ipc, type TaskDto } from "../../lib/ipc";
 import { useProjectStore } from "../../stores/project";
 import RoundTimeline from "./RoundTimeline";
 import TaskList from "./TaskList";
 
 export default function Dashboard() {
   const snapshot = useProjectStore((s) => s.snapshot);
+  const projectId = useProjectStore((s) => s.currentId);
+  const [tasks, setTasks] = useState<TaskDto[]>([]);
 
-  // 进度 = 已过阶段数 / 总阶段数（状态机真实数据，AC-043 数据源部分）
+  useEffect(() => {
+    if (projectId == null) return;
+    ipc
+      .listTasks(projectId)
+      .then(setTasks)
+      .catch(() => setTasks([]));
+  }, [projectId, snapshot?.phase]);
+
   const progress = snapshot
     ? Math.round(
         (snapshot.phases.filter((p) => p.status === "done").length /
@@ -17,6 +28,12 @@ export default function Dashboard() {
           100,
       )
     : 0;
+
+  const failed = tasks.filter((t) => t.status === "failed").length;
+  const done = tasks.filter((t) => t.status === "done").length;
+  const total = tasks.length;
+  const coverage = total > 0 ? Math.round((done / total) * 100) : 0;
+  const cost = tasks.reduce((sum, t) => sum + t.cost_cents, 0);
 
   return (
     <section
@@ -33,20 +50,31 @@ export default function Dashboard() {
         />
         <HudTile
           label="缺陷"
-          value="—"
-          hint={<PlainText text="待 P06 验收接通" context="驾驶舱指标" />}
+          value={failed > 0 ? `${failed}` : "—"}
+          hint={<PlainText
+            text={`当前轮次失败任务数${failed > 0 ? "（真实）" : ""}`}
+            context="驾驶舱指标"
+          />}
           tone="coral"
         />
         <HudTile
           label="覆盖率"
-          value="—"
-          hint={<PlainText text="待 P05 任务接通" context="驾驶舱指标" />}
+          value={`${coverage}`}
+          unit="%"
+          hint={<PlainText
+            text="当前轮次 done 任务占比（真实）"
+            context="驾驶舱指标"
+          />}
           tone="success"
         />
         <HudTile
           label="消耗"
-          value="—"
-          hint={<PlainText text="待 P02 计量接通" context="驾驶舱指标" />}
+          value={`${cost}`}
+          unit="¢"
+          hint={<PlainText
+            text="当前轮次任务 cost_cents 累计（真实）"
+            context="驾驶舱指标"
+          />}
           tone="amber"
         />
       </div>

@@ -1075,6 +1075,124 @@ pub async fn continue_task(
     Ok(dto)
 }
 
+// ---------- Build 视图 + 驾驶舱真实数据（P05 S7 FR-038/039/043） ----------
+
+#[derive(Debug, Serialize)]
+pub struct TaskDto {
+    pub id: i64,
+    pub round_id: i64,
+    pub chunk_no: i64,
+    pub title: String,
+    pub status: String,
+    pub instructions: String,
+    pub cost_cents: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoundDto {
+    pub id: i64,
+    pub seq: i64,
+    pub title: String,
+    pub status: String,
+    pub total_tasks: i64,
+    pub done_tasks: i64,
+}
+
+fn current_open_round_id(
+    c: &rusqlite::Connection,
+    project_id: i64,
+) -> core_state::DbResult<Option<i64>> {
+    c.query_row(
+        "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+        [project_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// 列出某项目任务；不传 round_id 时默认取当前 open round。
+#[tauri::command]
+pub fn list_tasks(
+    state: State<'_, AppState>,
+    project_id: i64,
+    round_id: Option<i64>,
+) -> CmdResult<Vec<TaskDto>> {
+    let rid = match round_id {
+        Some(r) => r,
+        None => state
+            .db
+            .read(|c| current_open_round_id(c, project_id))?
+            .unwrap_or(-1),
+    };
+    if rid < 0 {
+        return Ok(Vec::new());
+    }
+    let rows = state.db.read(|c| {
+        let mut stmt = c.prepare(
+            "SELECT id, round_id, chunk_no, title, status, instructions, cost_cents, started_at, finished_at
+             FROM tasks WHERE round_id = ?1 ORDER BY chunk_no",
+        )?;
+        let rows = stmt.query_map([rid], |r| {
+            Ok(TaskDto {
+                id: r.get(0)?,
+                round_id: r.get(1)?,
+                chunk_no: r.get(2)?,
+                title: r.get(3)?,
+                status: r.get(4)?,
+                instructions: r.get(5)?,
+                cost_cents: r.get(6).unwrap_or(0),
+                started_at: r.get(7)?,
+                finished_at: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    })?;
+    Ok(rows)
+}
+
+/// 列出某项目的全部轮次及任务统计。
+#[tauri::command]
+pub fn list_rounds(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<RoundDto>> {
+    let rows = state.db.read(|c| {
+        let mut stmt = c.prepare(
+            "SELECT r.id, r.seq, r.title, r.status,
+                    COUNT(t.id) AS total,
+                    SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done
+             FROM rounds r
+             LEFT JOIN tasks t ON t.round_id = r.id
+             WHERE r.project_id = ?1
+             GROUP BY r.id
+             ORDER BY r.seq",
+        )?;
+        let rows = stmt.query_map([project_id], |r| {
+            Ok(RoundDto {
+                id: r.get(0)?,
+                seq: r.get(1)?,
+                title: r.get(2)?,
+                status: r.get(3)?,
+                total_tasks: r.get(4).unwrap_or(0),
+                done_tasks: r.get(5).unwrap_or(0),
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    })?;
+    Ok(rows)
+}
+
+/// 列出某任务的事件流（叙事/原始日志/错误/存档点）。
+#[tauri::command]
+pub fn list_task_events(state: State<'_, AppState>, task_id: i64) -> CmdResult<Vec<TaskEvent>> {
+    let rows = state
+        .db
+        .read(|c| Ok(core_state::task_event::list_by_task(c, task_id)?))?;
+    Ok(rows)
+}
+
 // ---------- AGENTS.md 大白话表单（P04 S1 FR-008/AC-009） ----------
 
 /// 加载项目约定表单（无记录时返回默认模板）。
