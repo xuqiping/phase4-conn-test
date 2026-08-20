@@ -1,6 +1,7 @@
 // 需求视图：项目分析报告 → 需求确认卡片；全部确认才解锁「进入计划」（FR-031/AC-034）。
 import { useEffect, useState } from "react";
 import ClarifyDialog from "../components/clarify/ClarifyDialog";
+import { useClarifyRound } from "../hooks/useClarifyRound";
 import { generateSpecCards, type SpecCardDraft } from "../lib/generator";
 import { errMessage, ipc, type SpecCardDto } from "../lib/ipc";
 import { useProjectStore } from "../stores/project";
@@ -14,7 +15,7 @@ export default function Spec() {
   const [cards, setCards] = useState<SpecCardDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [clarify, setClarify] = useState<string[] | null>(null);
+  const clarify = useClarifyRound();
   const [editing, setEditing] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<{ title: string; detail: string; ac: string }>({
     title: "",
@@ -46,11 +47,14 @@ export default function Spec() {
     if (projectId == null || reportMd == null) return;
     setLoading(true);
     setError(null);
+    clarify.reset();
     try {
       const agent = await ipc.loadAgentConfig(projectId);
       const res = await generateSpecCards(reportMd, agent);
       if (res.clarifyingQuestions.length > 0) {
-        setClarify(res.clarifyingQuestions);
+        if (clarify.open(res.clarifyingQuestions)) {
+          setError("信息仍不足，建议人工梳理后重试");
+        }
         setLoading(false);
         return;
       }
@@ -65,7 +69,7 @@ export default function Spec() {
   };
 
   const handleClarify = async (answers: string[]) => {
-    setClarify(null);
+    clarify.close();
     // 把追问回答追加到报告末尾，再次生成
     if (!reportMd) return;
     const appendix = "\n\n【补充澄清】\n" + answers.map((a, i) => `${i + 1}. ${a}`).join("\n");
@@ -267,11 +271,11 @@ export default function Spec() {
         </div>
       )}
 
-      {clarify && (
+      {clarify.questions && (
         <ClarifyDialog
-          questions={clarify}
+          questions={clarify.questions}
           onAnswer={handleClarify}
-          onCancel={() => setClarify(null)}
+          onCancel={() => clarify.close()}
         />
       )}
     </section>

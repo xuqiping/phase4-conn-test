@@ -1,6 +1,7 @@
 // 计划视图：需求卡 → chunk 级施工计划；审批后才创建任务并解锁建造（FR-032/AC-035）。
 import { useEffect, useState } from "react";
 import ClarifyDialog from "../components/clarify/ClarifyDialog";
+import { useClarifyRound } from "../hooks/useClarifyRound";
 import { generatePlanChunks, type SpecCardDraft } from "../lib/generator";
 import { errMessage, ipc, type PlanChunkDto, type SpecCardDto } from "../lib/ipc";
 import { useProjectStore } from "../stores/project";
@@ -12,7 +13,6 @@ export default function Plan() {
   const [chunks, setChunks] = useState<PlanChunkDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [clarify, setClarify] = useState<string[] | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<{
     title: string;
@@ -20,6 +20,7 @@ export default function Plan() {
     estimated_tokens: string;
     dependencies: string;
   }>({ title: "", goal: "", estimated_tokens: "", dependencies: "" });
+  const clarify = useClarifyRound();
 
   const load = async () => {
     if (projectId == null) return;
@@ -50,6 +51,7 @@ export default function Plan() {
     }
     setLoading(true);
     setError(null);
+    clarify.reset();
     try {
       const agent = await ipc.loadAgentConfig(projectId);
       const drafts: SpecCardDraft[] = confirmed.map((c) => ({
@@ -59,7 +61,9 @@ export default function Plan() {
       }));
       const res = await generatePlanChunks(drafts, agent);
       if (res.clarifyingQuestions.length > 0) {
-        setClarify(res.clarifyingQuestions);
+        if (clarify.open(res.clarifyingQuestions)) {
+          setError("信息仍不足，建议人工梳理后重试");
+        }
         setLoading(false);
         return;
       }
@@ -79,7 +83,7 @@ export default function Plan() {
   };
 
   const handleClarify = async (answers: string[]) => {
-    setClarify(null);
+    clarify.close();
     // 把追问回答追加到对应需求卡详情（简化处理）
     const appended = answers.map((a, i) => `补充${i + 1}：${a}`).join("；");
     setSpecCards((prev) =>
@@ -299,11 +303,11 @@ export default function Plan() {
         </div>
       </div>
 
-      {clarify && (
+      {clarify.questions && (
         <ClarifyDialog
-          questions={clarify}
+          questions={clarify.questions}
           onAnswer={handleClarify}
-          onCancel={() => setClarify(null)}
+          onCancel={() => clarify.close()}
         />
       )}
     </section>

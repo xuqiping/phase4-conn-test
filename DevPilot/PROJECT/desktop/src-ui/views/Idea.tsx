@@ -1,6 +1,7 @@
 // 想法视图：访谈式问答 → 项目分析报告 + 三选一建议（FR-030/AC-033），歧义先追问（FR-044/AC-048）。
 import { useState } from "react";
 import ClarifyDialog from "../components/clarify/ClarifyDialog";
+import { useClarifyRound } from "../hooks/useClarifyRound";
 import { generateIdeaReport, type IdeaReport } from "../lib/generator";
 import { errMessage, ipc } from "../lib/ipc";
 import { useProjectStore } from "../stores/project";
@@ -45,7 +46,7 @@ export default function Idea() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<IdeaReport | null>(null);
-  const [clarify, setClarify] = useState<string[] | null>(null);
+  const clarify = useClarifyRound();
 
   const update = (key: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
@@ -59,7 +60,9 @@ export default function Idea() {
       const agent = await ipc.loadAgentConfig(projectId);
       const res = await generateIdeaReport(answers, agent);
       if (res.clarifyingQuestions.length > 0) {
-        setClarify(res.clarifyingQuestions);
+        if (clarify.open(res.clarifyingQuestions)) {
+          setError("信息仍不足，建议人工梳理后重试");
+        }
         setLoading(false);
         return;
       }
@@ -69,6 +72,7 @@ export default function Idea() {
         res.content.report_md,
       );
       setReport(res.content);
+      clarify.reset();
     } catch (e) {
       setError(errMessage(e));
     } finally {
@@ -77,9 +81,9 @@ export default function Idea() {
   };
 
   const handleClarify = (responses: string[]) => {
-    setClarify(null);
+    clarify.close();
     const combined: Record<string, string> = { ...answers };
-    clarify?.forEach((q, i) => {
+    clarify.questions?.forEach((q, i) => {
       combined[`clarify_${i}`] = `${q} → ${responses[i]}`;
     });
     setAnswers(combined);
@@ -120,7 +124,7 @@ export default function Idea() {
           </div>
           <button
             type="button"
-            onClick={() => setReport(null)}
+            onClick={() => { setReport(null); clarify.reset(); }}
             className="self-start rounded-[9px] border border-border px-3 py-1.5 text-xs text-text-dim transition hover:bg-card-hover"
           >
             重新生成
@@ -152,11 +156,11 @@ export default function Idea() {
         </div>
       )}
 
-      {clarify && (
+      {clarify.questions && (
         <ClarifyDialog
-          questions={clarify}
+          questions={clarify.questions}
           onAnswer={handleClarify}
-          onCancel={() => setClarify(null)}
+          onCancel={() => clarify.close()}
         />
       )}
     </section>
