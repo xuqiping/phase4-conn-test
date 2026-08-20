@@ -4,6 +4,7 @@
 use core_state::agent_config::AgentConfigFields;
 use core_state::machine::loader;
 use core_state::machine::{PersistentMachine, TransitionError};
+use core_state::task_event::{self, TaskEvent};
 use core_state::Db;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -605,6 +606,7 @@ pub fn write_project_file(
 #[tauri::command]
 pub async fn run_task(
     state: State<'_, AppState>,
+    app: AppHandle,
     req: core_exec::TaskRequest,
 ) -> CmdResult<core_exec::TaskResult> {
     let path = project_path(&state.db, req.project_id)?;
@@ -617,16 +619,21 @@ pub async fn run_task(
                     secrets.push(core_exec::MaskedSecret::new(m.name, v));
                 }
             }
+            let mut events: Vec<TaskEvent> = Vec::new();
             let r = tokio::runtime::Handle::current().block_on(core_exec::run_task(
                 Some(c),
                 &req,
                 std::path::Path::new(&path),
                 &core_exec::NoOpFixStrategy,
                 &secrets,
-                |_line| {
-                    // 后续可接前端事件流（FR-038 日志透明层）
+                |ev| {
+                    events.push(ev.clone());
+                    events::emit_task_event(&app, ev);
                 },
             ));
+            for ev in &events {
+                let _ = task_event::insert(c, ev.task_id, ev.event_type, &ev.message);
+            }
             Ok::<_, core_state::DbError>(r)
         })
     });
@@ -737,12 +744,13 @@ pub async fn execute_build(
         .map_err(|e| err("DB", e.to_string()))?;
 
     // 创建任务记录。
+    let task_title = "自动构建".to_string();
     let task_id: i64 = state
         .db
         .write(|c| {
             c.execute(
-                "INSERT INTO tasks (round_id, chunk_no, title, status, source) VALUES (?1, 1, 'build', 'running', 'local')",
-                [round_id],
+                "INSERT INTO tasks (round_id, chunk_no, title, status, source) VALUES (?1, 1, ?2, 'running', 'local')",
+                (round_id, &task_title),
             )?;
             Ok(c.last_insert_rowid())
         })
@@ -758,23 +766,34 @@ pub async fn execute_build(
                     secrets.push(core_exec::MaskedSecret::new(m.name, v));
                 }
             }
+            c.execute(
+                "UPDATE tasks SET started_at = datetime('now') WHERE id = ?1",
+                [task_id],
+            )?;
             let req = core_exec::TaskRequest {
                 project_id,
                 task_id,
-                title: "自动构建".into(),
+                title: task_title.clone(),
                 instructions: "执行本地测试/lint 并提交存档点".into(),
                 files: Vec::new(),
                 test_command: None,
                 max_fix_attempts: 0,
             };
+            let mut events: Vec<TaskEvent> = Vec::new();
             let r = tokio::runtime::Handle::current().block_on(core_exec::run_task(
                 Some(c),
                 &req,
                 std::path::Path::new(&path),
                 &core_exec::NoOpFixStrategy,
                 &secrets,
-                |_line| {},
+                |ev| {
+                    events.push(ev.clone());
+                    events::emit_task_event(&app, ev);
+                },
             ));
+            for ev in &events {
+                let _ = task_event::insert(c, ev.task_id, ev.event_type, &ev.message);
+            }
             Ok::<_, core_state::DbError>(r)
         })
     })
@@ -787,12 +806,12 @@ pub async fn execute_build(
         .db
         .write(|c| {
             c.execute(
-                "UPDATE tasks SET status = ?1, tokens_actual = ?2, updated_at = datetime('now') WHERE id = ?3",
-                (status, result.cost_cents, task_id),
+                "UPDATE tasks SET status = ?1, tokens_actual = ?2, cost_cents = ?3, finished_at = datetime('now') WHERE id = ?4",
+                (status, result.cost_cents, result.cost_cents, task_id),
             )?;
             c.execute(
-                "INSERT INTO checkpoints (task_id, git_commit, summary_plain) VALUES (?1, ?2, ?3)",
-                (task_id, &git_commit, &result.diff_summary),
+                "INSERT INTO checkpoints (task_id, git_commit, summary_plain, title, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+                (task_id, &git_commit, &result.diff_summary, &task_title, status),
             )?;
             Ok(())
         })

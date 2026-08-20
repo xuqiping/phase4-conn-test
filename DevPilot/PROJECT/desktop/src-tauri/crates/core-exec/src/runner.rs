@@ -16,6 +16,7 @@ use crate::profile::probe_and_cache;
 use crate::secrets::{inject_env, redact, MaskedSecret};
 use core_sandbox::path::PathError;
 use core_sandbox::policy::{Decision, SandboxPolicy};
+use core_state::task_event::{TaskEvent, TaskEventType};
 
 /// 请求：一次本地执行任务。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,7 +175,7 @@ pub async fn run_task<F>(
     project_path: &Path,
     fixer: &F,
     secrets: &[MaskedSecret],
-    mut on_event: impl FnMut(&str),
+    mut on_event: impl FnMut(&TaskEvent),
 ) -> TaskResult
 where
     F: FixStrategy,
@@ -189,7 +190,12 @@ where
         error: None,
     };
 
-    emit(&mut on_event, &format!("[runner] 任务开始：{}", req.title));
+    emit(
+        &mut on_event,
+        req.task_id,
+        TaskEventType::Narrative,
+        format!("[runner] 任务开始：{}", req.title),
+    );
 
     // 1. 应用初始文件变更。
     result.phase = "write".into();
@@ -198,7 +204,12 @@ where
             result.error = Some(format!("写入 {} 失败：{e}", fc.path));
             return result;
         }
-        emit(&mut on_event, &format!("[runner] 已写文件：{}", fc.path));
+        emit(
+            &mut on_event,
+            req.task_id,
+            TaskEventType::Narrative,
+            format!("[runner] 已写文件：{}", fc.path),
+        );
     }
 
     // 2. 环境探测与缓存。
@@ -215,7 +226,9 @@ where
     };
     emit(
         &mut on_event,
-        &format!("[runner] 识别技术栈：{:?}", profile.stacks),
+        req.task_id,
+        TaskEventType::Narrative,
+        format!("[runner] 识别技术栈：{:?}", profile.stacks),
     );
 
     // 3. 安装缺失运行时（失败即停）。
@@ -224,13 +237,20 @@ where
     if !install_plan.missing.is_empty() {
         emit(
             &mut on_event,
-            &format!(
+            req.task_id,
+            TaskEventType::Narrative,
+            format!(
                 "[runner] 发现缺失运行时：{}",
                 install_plan.missing.join("、")
             ),
         );
         let install_res = run_install_plan(&install_plan, project_path, |line| {
-            emit(&mut on_event, line.trim_end());
+            emit(
+                &mut on_event,
+                req.task_id,
+                TaskEventType::Raw,
+                line.trim_end(),
+            );
         })
         .await;
         for r in &install_res {
@@ -253,7 +273,9 @@ where
 
     emit(
         &mut on_event,
-        &format!("[runner] 执行：{}", test_cmd.join(" ")),
+        req.task_id,
+        TaskEventType::Narrative,
+        format!("[runner] 执行：{}", test_cmd.join(" ")),
     );
 
     // 5. 跑测试 + 失败修复循环。
@@ -265,7 +287,9 @@ where
         result.fix_attempts += 1;
         emit(
             &mut on_event,
-            &format!("[runner] 第 {} 次自动修复", result.fix_attempts),
+            req.task_id,
+            TaskEventType::Narrative,
+            format!("[runner] 第 {} 次自动修复", result.fix_attempts),
         );
         let Some(patch) = fixer
             .fix(req, result.test_result.as_ref().unwrap(), project_path)
@@ -277,7 +301,12 @@ where
             result.error = Some(format!("修复写入 {} 失败：{e}", patch.path));
             return result;
         }
-        emit(&mut on_event, &format!("[runner] 应用修复：{}", patch.path));
+        emit(
+            &mut on_event,
+            req.task_id,
+            TaskEventType::Narrative,
+            format!("[runner] 应用修复：{}", patch.path),
+        );
         exec_req = build_exec_request(&test_cmd, project_path, secrets);
         last = run(exec_req).await;
         result.test_result = Some(into_test_result(&test_cmd, &last, secrets));
@@ -290,17 +319,38 @@ where
     result.diff_summary = diff_stat(project_path);
 
     // 7. commit 存档点（失败也提交，便于排查）。
-    commit_checkpoint(project_path, &req.title, result.success);
+    let commit = commit_checkpoint(project_path, &req.title, result.success);
+    if let Some(ref hash) = commit {
+        emit(
+            &mut on_event,
+            req.task_id,
+            TaskEventType::Checkpoint,
+            format!("checkpoint {}", hash),
+        );
+    }
 
     emit(
         &mut on_event,
-        &format!("[runner] 任务结束：{}", result.phase),
+        req.task_id,
+        TaskEventType::Narrative,
+        format!("[runner] 任务结束：{}", result.phase),
     );
     result
 }
 
-fn emit(on_event: &mut impl FnMut(&str), msg: &str) {
-    on_event(msg);
+fn emit(
+    on_event: &mut impl FnMut(&TaskEvent),
+    task_id: i64,
+    event_type: TaskEventType,
+    message: impl Into<String>,
+) {
+    on_event(&TaskEvent {
+        id: None,
+        task_id,
+        event_type,
+        message: message.into(),
+        created_at: None,
+    });
 }
 
 fn build_exec_request(cmd: &[String], cwd: &Path, secrets: &[MaskedSecret]) -> ExecRequest {
@@ -405,7 +455,8 @@ fn count_files(dir: &Path) -> usize {
 }
 
 /// 把当前变更提交为存档点；成功用 devpilot: 前缀，失败用 devpilot-failed: 前缀。
-fn commit_checkpoint(project_path: &Path, title: &str, success: bool) {
+/// 返回 commit hash（失败或无 git 时返回 None）。
+fn commit_checkpoint(project_path: &Path, title: &str, success: bool) -> Option<String> {
     let msg = if success {
         format!("devpilot: {title}")
     } else {
@@ -419,6 +470,13 @@ fn commit_checkpoint(project_path: &Path, title: &str, success: bool) {
         .args(["commit", "-m", &msg, "--no-verify"])
         .current_dir(project_path)
         .output();
+    std::process::Command::new("git")
+        .args(["log", "-1", "--pretty=%H"])
+        .current_dir(project_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
 #[cfg(test)]

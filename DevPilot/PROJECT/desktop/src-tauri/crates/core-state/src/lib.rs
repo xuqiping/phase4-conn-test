@@ -9,6 +9,7 @@ pub mod machine;
 pub mod plan_chunk;
 pub mod secrets;
 pub mod spec_card;
+pub mod task_event;
 
 pub use approval::{create as create_approval, list_unresolved, resolve as resolve_approval};
 pub use db::{Db, DbError, DbResult};

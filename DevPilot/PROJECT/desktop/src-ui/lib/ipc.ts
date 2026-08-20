@@ -64,6 +64,14 @@ export interface PlanChunkDto {
   status: "draft" | "approved" | "running" | "done";
 }
 
+export interface TaskEventDto {
+  id?: number;
+  task_id: number;
+  event_type: "narrative" | "raw" | "error" | "checkpoint";
+  message: string;
+  created_at?: string;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -131,6 +139,13 @@ export const ipc = {
   revokePlanApproval: (projectId: number) =>
     invoke<PlanChunkDto[]>("revoke_plan_approval", { projectId }),
 };
+
+/** 订阅任务事件流（事件名对齐 events.rs）；返回取消订阅函数 */
+export function onTaskEvent(
+  cb: (dto: TaskEventDto) => void,
+): Promise<() => void> {
+  return listen<TaskEventDto>("kernel://task-event", (e) => cb(e.payload));
+}
 
 /** 订阅内核状态推送（事件名对齐 events.rs）；返回取消订阅函数 */
 export function onState(cb: (dto: StateDto) => void): Promise<() => void> {
