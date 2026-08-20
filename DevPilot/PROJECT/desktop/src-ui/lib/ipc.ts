@@ -34,6 +34,17 @@ export interface StateDto {
   warning: string | null;
 }
 
+export interface AgentConfigFields {
+  positioning: string;
+  target_users: string;
+  tech_stack: string;
+  commit_style: string;
+  security_redlines: string;
+  doc_requirements: string;
+  testing_redlines: string;
+  naming_style: string;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -72,6 +83,10 @@ export const ipc = {
     invoke<StateDto>("transition", { projectId, to }),
   passGate: (projectId: number, gate: string) =>
     invoke<StateDto>("pass_gate", { projectId, gate }),
+  loadAgentConfig: (projectId: number) =>
+    invoke<AgentConfigFields>("load_agent_config", { projectId }),
+  saveAgentConfig: (projectId: number, fields: AgentConfigFields) =>
+    invoke<void>("save_agent_config", { projectId, fields }),
 };
 
 /** 订阅内核状态推送（事件名对齐 events.rs）；返回取消订阅函数 */

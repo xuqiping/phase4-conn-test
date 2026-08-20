@@ -1,6 +1,7 @@
 //! IPC commands：前端操作状态机的唯一入口（单一真相源在 Rust，plan 坑点表）。
 //! 错误上抛只带大白话 message + 分类 code，不含路径/堆栈（plan 安全清单）。
 
+use core_state::agent_config::AgentConfigFields;
 use core_state::machine::loader;
 use core_state::machine::{PersistentMachine, TransitionError};
 use core_state::Db;
@@ -814,6 +815,38 @@ pub async fn execute_build(
     );
     events::emit_state(&app, &dto);
     Ok(dto)
+}
+
+// ---------- AGENTS.md 大白话表单（P04 S1 FR-008/AC-009） ----------
+
+/// 加载项目约定表单（无记录时返回默认模板）。
+#[tauri::command]
+pub fn load_agent_config(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<AgentConfigFields> {
+    state
+        .db
+        .read(|c| core_state::agent_config::load(c, project_id))
+        .map_err(|e| err("DB", e.to_string()))
+}
+
+/// 保存项目约定：写库 + 重写项目根 AGENTS.md。
+#[tauri::command]
+pub fn save_agent_config(
+    state: State<'_, AppState>,
+    project_id: i64,
+    fields: AgentConfigFields,
+) -> CmdResult<()> {
+    let path = project_path(&state.db, project_id)?;
+    state
+        .db
+        .write(|c| core_state::agent_config::save(c, project_id, &fields))
+        .map_err(|e| err("DB", e.to_string()))?;
+    let md = core_state::agent_config::render(&fields);
+    let agents_path = std::path::Path::new(&path).join("AGENTS.md");
+    std::fs::write(&agents_path, md).map_err(|e| err("IO", e.to_string()))?;
+    Ok(())
 }
 
 fn latest_commit_hash(project_path: &str) -> Option<String> {

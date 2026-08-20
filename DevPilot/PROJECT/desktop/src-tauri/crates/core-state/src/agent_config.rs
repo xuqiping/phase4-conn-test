@@ -74,6 +74,32 @@ pub fn save(conn: &mut Connection, project_id: i64, fields: &AgentConfigFields) 
     Ok(())
 }
 
+/// 把字段渲染成项目根 `AGENTS.md` 文本。
+///
+/// 顶部加「本文件由 DevPilot 自动维护」提示，避免用户手动编辑后被覆盖产生困惑。
+pub fn render(fields: &AgentConfigFields) -> String {
+    format!(
+        "# AGENTS.md · 项目 AI 使用说明书\n\n\
+        > ⚠️ 本文件由 DevPilot 自动维护。请通过客户端「项目约定」表单修改，手动编辑会在下次保存时被覆盖。\n\n\
+        ## 1. 项目定位\n\n{}\n\n\
+        ## 2. 目标用户\n\n{}\n\n\
+        ## 3. 技术栈偏好\n\n{}\n\n\
+        ## 4. 命名与代码风格\n\n{}\n\n\
+        ## 5. 提交规范\n\n{}\n\n\
+        ## 6. 安全红线\n\n{}\n\n\
+        ## 7. 文档/注释要求\n\n{}\n\n\
+        ## 8. 测试红线\n\n{}\n",
+        fields.positioning,
+        fields.target_users,
+        fields.tech_stack,
+        fields.naming_style,
+        fields.commit_style,
+        fields.security_redlines,
+        fields.doc_requirements,
+        fields.testing_redlines,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +134,15 @@ mod tests {
 
         let loaded = db.read(|c| load(c, pid)).unwrap();
         assert_eq!(loaded.positioning, "用药提醒小程序");
+    }
+
+    #[test]
+    fn render_contains_fields() {
+        let mut fields = AgentConfigFields::default_template();
+        fields.positioning = "用药提醒小程序".into();
+        let md = render(&fields);
+        assert!(md.contains("用药提醒小程序"));
+        assert!(md.contains("本文件由 DevPilot 自动维护"));
+        assert!(md.contains("## 3. 技术栈偏好"));
     }
 }

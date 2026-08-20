@@ -1,7 +1,8 @@
 // 顶栏：Logo + 项目切换（下拉） + 阶段管道条 + 密度开关。
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useProjectStore } from "../../stores/project";
 import { useUiStore } from "../../stores/ui";
+import AgentConfigModal from "../agent/AgentConfigModal";
 import PipelineBar from "../pipeline/PipelineBar";
 import BalanceRing from "../topbar/BalanceRing";
 
@@ -15,12 +16,14 @@ export default function Topbar() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const current = projects.find((p) => p.id === currentId);
+  const [agentsOpen, setAgentsOpen] = useState(false);
 
   return (
-    <header
-      data-testid="topbar"
-      className="panel relative flex h-14 shrink-0 items-center gap-4 border-x-0 border-t-0 px-[var(--space-pad)]"
-    >
+    <Fragment>
+      <header
+        data-testid="topbar"
+        className="panel relative flex h-14 shrink-0 items-center gap-4 border-x-0 border-t-0 px-[var(--space-pad)]"
+      >
       {/* 品牌 */}
       <div className="flex items-center gap-2.5">
         <span className="glow-brand grid size-[26px] place-items-center rounded-lg bg-gradient-to-br from-brand to-brand2 text-[13px] font-extrabold text-white">
@@ -93,6 +96,16 @@ export default function Topbar() {
         <BalanceRing />
       </div>
 
+      {/* 项目约定入口（P04 S1 FR-008） */}
+      <button
+        type="button"
+        onClick={() => setAgentsOpen(true)}
+        className="rounded-[9px] border border-border bg-card px-3 py-1.5 text-xs text-text-dim transition hover:border-border-strong hover:text-text"
+        aria-label="项目约定"
+      >
+        项目约定
+      </button>
+
       {/* 密度切换 */}
       <button
         type="button"
@@ -102,6 +115,8 @@ export default function Topbar() {
       >
         {density === "comfort" ? "舒适" : "紧凑"}
       </button>
-    </header>
+      </header>
+      {agentsOpen && <AgentConfigModal onClose={() => setAgentsOpen(false)} />}
+    </Fragment>
   );
 }

@@ -43,6 +43,8 @@ pub fn run() {
             commands::load_secret,
             commands::delete_secret,
             commands::execute_build,
+            commands::load_agent_config,
+            commands::save_agent_config,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");
