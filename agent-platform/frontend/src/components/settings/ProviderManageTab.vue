@@ -249,7 +249,10 @@ async function saveModelDefaults() {
     const res = await systemApi.updateLlmModelDefaults(modelDefaults.value)
     modelDefaults.value = res.data.data
     message.success('默认模型已更新')
-  } catch {
+  } catch (e) {
+    // 9x#9：保存被拒（校验失败/限流/网络）此前静默 load() 回退，用户看到的是「选不上」。
+    // 拦截器已 toast 原因，这里再明示「未生效」并把选择器回退到服务端真值。
+    message.error('默认模型保存未生效，已回退为服务端当前值（失败原因见上条提示）')
     await load()
   }
 }

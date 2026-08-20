@@ -38,6 +38,8 @@ public class LlmBillingService {
     private final UsageCollector usageCollector;
     /** 审计：对话完成行 chat_completed（8x Chunk4 行2）。 */
     private final AuditLogService auditLogService;
+    /** 9x#7：流式线程无 MDC/SecurityContext，chat_completed 行的 username 按 userId 反查补齐。 */
+    private final com.superprogrammer.auth.mapper.UserMapper userMapper;
     /** 对话审计开关（audit.chat.enabled）。非 final，Spring @Value 字段注入。 */
     @Value("${audit.chat.enabled:true}")
     private boolean chatAuditEnabled;
@@ -166,8 +168,14 @@ public class LlmBillingService {
                 detail.put("reason", reason.length() > 200 ? reason.substring(0, 200) : reason);
             }
             String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(detail);
+            // 9x#7：流式 raw 线程无 MDC，recordTask 的 username 不能靠 MdcUserFilter——按 userId 反查（一次一条，低频）。
+            String username = null;
+            try {
+                com.superprogrammer.auth.entity.User u = userMapper.selectById(userId);
+                username = u == null ? null : u.getUsername();
+            } catch (Exception ignore) { /* 反查失败不挡审计落库 */ }
             auditLogService.recordTask("chat", "chat_completed", "chat_session",
-                    null, userId, null, null, json, result);
+                    null, userId, username, null, json, result);
         } catch (Exception e) {
             log.warn("对话完成审计失败(已吞) userId={} model={} : {}", userId, model, e.toString());
         }
