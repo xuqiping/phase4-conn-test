@@ -267,6 +267,20 @@ export const ipc = {
     invoke<AcceptanceItemDto>("update_acceptance_item", { id, ...patch }),
   runSecurityScan: (projectId: number) =>
     invoke<SecurityScanDto>("run_security_scan", { projectId }),
+  createFixTask: (req: {
+    projectId: number;
+    acceptanceItemId?: number;
+    selector: string;
+    description: string;
+  }) =>
+    invoke<number>("create_fix_task", {
+      req: {
+        project_id: req.projectId,
+        acceptance_item_id: req.acceptanceItemId ?? null,
+        selector: req.selector,
+        description: req.description,
+      },
+    }),
   runTask: (req: {
     projectId: number;
     taskId: number;

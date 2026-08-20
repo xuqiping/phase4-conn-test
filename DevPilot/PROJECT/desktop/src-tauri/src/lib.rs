@@ -28,6 +28,7 @@ pub fn run() {
             commands::enter_acceptance,
             commands::request_release,
             commands::run_security_scan,
+            commands::create_fix_task,
             commands::get_acceptance_checklist,
             commands::regenerate_acceptance_checklist,
             commands::update_acceptance_item,

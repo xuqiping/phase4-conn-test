@@ -63,7 +63,9 @@ mod tests {
         assert_eq!(
             versions,
             vec![
+                // applied_versions 按字母序返回：L1 < L10 < L2
                 "L1".to_string(),
+                "L10".to_string(),
                 "L2".to_string(),
                 "L3".to_string(),
                 "L4".to_string(),

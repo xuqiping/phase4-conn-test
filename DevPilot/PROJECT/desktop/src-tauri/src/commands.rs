@@ -587,6 +587,78 @@ pub async fn run_security_scan(
     })
 }
 
+// ---------- P06 S7：元素圈选 → 修复任务（FR-033 / AC-037） ----------
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CreateFixTaskReq {
+    pub project_id: i64,
+    /// 关联的验收项（可空：从预览直接圈选时无关联项）。
+    #[serde(default)]
+    pub acceptance_item_id: Option<i64>,
+    pub selector: String,
+    pub description: String,
+}
+
+/// 圈选元素后创建修复任务：当前 open round 末尾插入 source='fix' 的 pending task，
+/// 并回写 acceptance_items.fix_task_id（同一 item 只关联最新一个 fix_task）。
+#[tauri::command]
+pub fn create_fix_task(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    req: CreateFixTaskReq,
+) -> CmdResult<i64> {
+    // 安全清单：长度限制，防超长注入与 UI 撑爆。
+    let selector = req.selector.trim();
+    let description = req.description.trim();
+    if selector.is_empty() || selector.len() > 200 {
+        return Err(err("BAD_INPUT", "元素定位信息需为 1~200 个字符"));
+    }
+    if description.is_empty() || description.len() > 1000 {
+        return Err(err("BAD_INPUT", "问题描述需为 1~1000 个字符"));
+    }
+
+    let instructions = format!(
+        "修复验收发现的问题。\n元素定位：{selector}\n问题描述：{description}\n完成后请自测该交互。"
+    );
+
+    let task_id = state
+        .db
+        .write(|c| {
+            // 取当前 open 轮次；没有则自动开一轮（与 execute_build 同语义）。
+            let round_id: Option<i64> = c
+                .query_row(
+                    "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+                    [req.project_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let round_id = match round_id {
+                Some(id) => id,
+                None => {
+                    c.execute(
+                        "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, (SELECT COALESCE(MAX(seq),0)+1 FROM rounds WHERE project_id = ?1), '验收修复轮', 'open')",
+                        [req.project_id],
+                    )?;
+                    c.last_insert_rowid()
+                }
+            };
+            c.execute(
+                "INSERT INTO tasks (round_id, chunk_no, title, status, source, instructions)
+                 VALUES (?1, (SELECT COALESCE(MAX(chunk_no),0)+1 FROM tasks WHERE round_id = ?1), ?2, 'pending', 'fix', ?3)",
+                (round_id, format!("修复：{description}"), &instructions),
+            )?;
+            let task_id = c.last_insert_rowid();
+            if let Some(item_id) = req.acceptance_item_id {
+                acceptance_checklist::set_fix_task(c, item_id, Some(task_id))?;
+            }
+            Ok(task_id)
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
+    emit_current_state(&state.db, &app, req.project_id)?;
+    Ok(task_id)
+}
+
 // ---------- P06 S2/S3：验收清单解析与持久化（FR-033 / AC-036） ----------
 
 #[derive(Debug, Serialize)]
@@ -2059,5 +2131,76 @@ mod tests {
         auto_unpass_gate(&db, pid, "kickoff").unwrap();
         let (machine, _) = load_machine(&db, pid).unwrap();
         assert!(!machine.machine().gates_passed().contains("kickoff"));
+    }
+
+    #[test]
+    fn create_fix_task_inserts_pending_fix_task_and_links_item() {
+        // AC-037：圈选 → source='fix' pending task + acceptance_items.fix_task_id 回写。
+        let db = Db::open_in_memory().unwrap();
+        let pid = project_fixture(&db);
+        db.write(|c| {
+            core_state::acceptance_checklist::regenerate(
+                c,
+                pid,
+                &[core_state::acceptance_checklist::NewAcceptanceItem {
+                    source_file: "t.md".into(),
+                    tc_id: "TC-01".into(),
+                    title: "登录可用".into(),
+                    steps: "步骤".into(),
+                    expected: "预期".into(),
+                    method: "manual".into(),
+                    sort_order: 0,
+                }],
+            )
+        })
+        .unwrap();
+        let item_id = db
+            .read(|c| core_state::acceptance_checklist::list(c, pid))
+            .unwrap()[0]
+            .id;
+
+        let task_id = db
+            .write(|c| {
+                c.execute(
+                    "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, 1, '轮', 'open')",
+                    [pid],
+                )?;
+                c.execute(
+                    "INSERT INTO tasks (round_id, chunk_no, title, status, source, instructions)
+                     VALUES (1, 1, '旧任务', 'done', 'local', 'x')",
+                    [],
+                )?;
+                let id = c.last_insert_rowid();
+                // 模拟 create_fix_task 的库内逻辑（命令层薄封装，重点验证 SQL 语义）
+                c.execute(
+                    "INSERT INTO tasks (round_id, chunk_no, title, status, source, instructions)
+                     VALUES (1, (SELECT COALESCE(MAX(chunk_no),0)+1 FROM tasks WHERE round_id = 1), ?1, 'pending', 'fix', ?2)",
+                    ("修复：按钮没反应".to_string(), "元素定位：坐标(10,20)".to_string()),
+                )?;
+                let fix_id = c.last_insert_rowid();
+                core_state::acceptance_checklist::set_fix_task(c, item_id, Some(fix_id))?;
+                Ok(id)
+            })
+            .unwrap();
+
+        let (source, status, chunk_no): (String, String, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT source, status, chunk_no FROM tasks WHERE id = (SELECT MAX(id) FROM tasks)",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!((source.as_str(), status.as_str()), ("fix", "pending"));
+        assert_eq!(chunk_no, 2, "fix task 追加在轮次末尾");
+
+        let item = db
+            .read(|c| core_state::acceptance_checklist::get(c, item_id))
+            .unwrap()
+            .unwrap();
+        assert!(item.fix_task_id.is_some());
+        assert!(task_id > 0);
     }
 }

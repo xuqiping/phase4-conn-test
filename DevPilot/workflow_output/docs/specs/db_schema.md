@@ -100,7 +100,7 @@ erDiagram
 | projects | id, name, path UNIQUE, scale(L0~L3), workflow_version, current_phase | 项目档案（FR-042/046） |
 | workflow_states | project_id, phase, gate_status JSON, updated_at | 状态机当前态（FR-029/048） |
 | rounds | id, project_id, seq, title, status, snapshot_tag | 迭代轮次（FR-047） |
-| tasks | id, round_id, chunk_no, title, status, source(local/cli/mcp/deeplink), tokens_est, tokens_actual, **instructions, generated_files_json, cost_cents, started_at, finished_at** | 任务/chunk（FR-021/027/028/041）；P05 增加实现指令、产出文件、成本、起止时间 |
+| tasks | id, round_id, chunk_no, title, status, source(local/cli/mcp/deeplink/fix), tokens_est, tokens_actual, **instructions, generated_files_json, cost_cents, started_at, finished_at** | 任务/chunk（FR-021/027/028/041）；P05 增加实现指令、产出文件、成本、起止时间 |
 | checkpoints | id, task_id, git_commit, snapshot_path, summary_plain, **title, status**, created_at | 存档点（FR-037）；P05 增加标题与成功/失败状态 |
 | task_events | id, task_id, event_type, message, created_at | 任务事件流（FR-038），只增不改 |
 | artifacts | id, project_id, type(prd/plan/progress/userops...), path, version | 产物索引（FR-030~035） |
@@ -130,6 +130,7 @@ erDiagram
 | L7__workflow_artifacts.sql | agent_configs / spec_cards / plan_chunks（P04 S0 FR-008/031/032） |
 | L8__build_runtime.sql | tasks 扩展字段 + task_events + checkpoints 增强（P05 S0 FR-038/048） |
 | L9__acceptance_security.sql | acceptance_items + acceptance_runs + security_scans（P06 S0 FR-033/040/052） |
+| L10__task_source_fix.sql | tasks 重建：source 增加 'fix'（P06 S7 验收圈选修复任务 FR-033） |
 
 ## 3. 设计说明
 
