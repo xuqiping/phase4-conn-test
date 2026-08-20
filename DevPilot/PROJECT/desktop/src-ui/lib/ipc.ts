@@ -115,6 +115,21 @@ export interface RoundDto {
   done_tasks: number;
 }
 
+export interface AcceptanceItemDto {
+  id: number;
+  project_id: number;
+  source_file: string;
+  tc_id: string;
+  title: string;
+  steps: string;
+  expected: string;
+  method: "auto" | "manual";
+  status: "pending" | "pass" | "fail" | "na";
+  evidence_path?: string;
+  fix_task_id?: number;
+  sort_order: number;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -224,6 +239,15 @@ export const ipc = {
       accessToken,
       cloudBase,
     }),
+  getAcceptanceChecklist: (projectId: number) =>
+    invoke<AcceptanceItemDto[]>("get_acceptance_checklist", { projectId }),
+  regenerateAcceptanceChecklist: (projectId: number) =>
+    invoke<AcceptanceItemDto[]>("regenerate_acceptance_checklist", { projectId }),
+  updateAcceptanceItem: (
+    id: number,
+    patch: { status?: AcceptanceItemDto["status"]; evidence_path?: string },
+  ) =>
+    invoke<AcceptanceItemDto>("update_acceptance_item", { id, ...patch }),
   runTask: (req: {
     projectId: number;
     taskId: number;

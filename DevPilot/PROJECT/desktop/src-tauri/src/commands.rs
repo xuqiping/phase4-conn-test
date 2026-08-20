@@ -1,8 +1,10 @@
 //! IPC commands：前端操作状态机的唯一入口（单一真相源在 Rust，plan 坑点表）。
 //! 错误上抛只带大白话 message + 分类 code，不含路径/堆栈（plan 安全清单）。
 
+use core_orchestrator::acceptance::{parse_project_test_plans, AcceptanceMethod};
 use core_orchestrator::diff_summarizer::{self, DiffSummary};
 use core_orchestrator::task_scheduler::{HttpLlmClient, RunResult, Scheduler};
+use core_state::acceptance_checklist::{self, AcceptanceItem, NewAcceptanceItem};
 use core_state::agent_config::AgentConfigFields;
 use core_state::checkpoint;
 use core_state::machine::loader;
@@ -467,6 +469,130 @@ async fn transition_to(
     let dto = to_state_dto(machine, None);
     events::emit_state(app, &dto);
     Ok(dto)
+}
+
+// ---------- P06 S2/S3：验收清单解析与持久化（FR-033 / AC-036） ----------
+
+#[derive(Debug, Serialize)]
+pub struct AcceptanceItemDto {
+    pub id: i64,
+    pub project_id: i64,
+    pub source_file: String,
+    pub tc_id: String,
+    pub title: String,
+    pub steps: String,
+    pub expected: String,
+    pub method: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_task_id: Option<i64>,
+    pub sort_order: i32,
+}
+
+impl From<AcceptanceItem> for AcceptanceItemDto {
+    fn from(item: AcceptanceItem) -> Self {
+        Self {
+            id: item.id,
+            project_id: item.project_id,
+            source_file: item.source_file,
+            tc_id: item.tc_id,
+            title: item.title,
+            steps: item.steps,
+            expected: item.expected,
+            method: item.method,
+            status: item.status,
+            evidence_path: item.evidence_path,
+            fix_task_id: item.fix_task_id,
+            sort_order: item.sort_order,
+        }
+    }
+}
+
+/// 读取某项目的全部验收项。
+#[tauri::command]
+pub fn get_acceptance_checklist(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<AcceptanceItemDto>> {
+    let rows = state
+        .db
+        .read(|c| acceptance_checklist::list(c, project_id))?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// 重新解析测试方案并生成验收清单。
+#[tauri::command]
+pub fn regenerate_acceptance_checklist(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<Vec<AcceptanceItemDto>> {
+    let path = project_path(&state.db, project_id)?;
+    let drafts = parse_project_test_plans(std::path::Path::new(&path))
+        .map_err(|e| err("PARSE", e.to_string()))?;
+
+    let items: Vec<NewAcceptanceItem> = drafts
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| NewAcceptanceItem {
+            source_file: d.source_file,
+            tc_id: d.tc_id,
+            title: d.title,
+            steps: d.steps,
+            expected: d.expected,
+            method: match d.method {
+                AcceptanceMethod::Auto => "auto",
+                AcceptanceMethod::Manual => "manual",
+            }
+            .to_string(),
+            sort_order: i as i32,
+        })
+        .collect();
+
+    let rows = state.db.write(|c| {
+        acceptance_checklist::regenerate(c, project_id, &items)?;
+        acceptance_checklist::list(c, project_id)
+    })?;
+
+    emit_current_state(&state.db, &app, project_id)?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateAcceptanceItemReq {
+    pub id: i64,
+    pub status: String,
+    #[serde(default)]
+    pub evidence_path: Option<String>,
+}
+
+/// 更新验收项状态与证据路径。
+#[tauri::command]
+pub fn update_acceptance_item(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    req: UpdateAcceptanceItemReq,
+) -> CmdResult<AcceptanceItemDto> {
+    if !matches!(req.status.as_str(), "pending" | "pass" | "fail" | "na") {
+        return Err(err("BAD_INPUT", "状态需为 pending/pass/fail/na 之一"));
+    }
+    let updated = state
+        .db
+        .write(|c| {
+            acceptance_checklist::update_status(
+                c,
+                req.id,
+                &req.status,
+                req.evidence_path.as_deref(),
+            )?;
+            acceptance_checklist::get(c, req.id)?
+                .ok_or_else(|| core_state::DbError::Io(std::io::Error::other("验收项不存在")))
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+    emit_current_state(&state.db, &app, updated.project_id)?;
+    Ok(updated.into())
 }
 
 // ---------- P02 Step8：云端计费客户端半边（vault + 用量镜像） ----------

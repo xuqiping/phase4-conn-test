@@ -1,6 +1,7 @@
 //! core-state：阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化。
 //! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎（`machine` 模块）。
 
+pub mod acceptance_checklist;
 pub mod agent_config;
 pub mod approval;
 pub mod checkpoint;
