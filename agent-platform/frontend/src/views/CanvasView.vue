@@ -72,6 +72,43 @@
         <n-button quaternary @click="showStoryboard = true" title="故事板：视频段时间线排列 + 拼接成片">
           <n-icon :component="FilmOutline" /> 故事板
         </n-button>
+        <!-- 2x 五轮：版本保存/恢复（跨会话快照点，区别于 Board 内 Ctrl+Z 撤销栈） -->
+        <n-popover v-model:show="versionPanelOpen" trigger="click" placement="bottom-end" :width="340">
+          <template #trigger>
+            <n-button quaternary title="版本：手动存快照点 / 恢复（每画布保留最近 30 个，恢复前自动存当前）">
+              <n-icon :component="GitBranchOutline" /> 版本
+            </n-button>
+          </template>
+          <div class="canvas-versions">
+            <div class="canvas-versions__save">
+              <n-input
+                v-model:value="versionLabel"
+                size="small"
+                placeholder="版本名（可空=自动时间戳）"
+                :maxlength="64"
+                @keyup.enter="onCreateVersion"
+              />
+              <n-button size="small" type="primary" :loading="versionSaving" @click="onCreateVersion">
+                存版本
+              </n-button>
+            </div>
+            <n-spin :show="versionLoading">
+              <n-empty v-if="!versions.length" size="small" description="还没有版本，存一个试试" />
+              <div v-else class="canvas-versions__list">
+                <div v-for="v in versions" :key="v.id" class="canvas-versions__item">
+                  <div class="canvas-versions__info">
+                    <div class="canvas-versions__label" :title="v.label">{{ v.label }}</div>
+                    <div class="canvas-versions__meta">{{ v.nodeCount ?? 0 }} 节点 · {{ formatTime(v.createdAt) }}</div>
+                  </div>
+                  <n-button size="tiny" tertiary type="primary" @click="onRestoreVersion(v)">恢复</n-button>
+                  <n-button size="tiny" quaternary title="删除该版本" @click="onDeleteVersion(v)">
+                    <n-icon :component="TrashOutline" />
+                  </n-button>
+                </div>
+              </div>
+            </n-spin>
+          </div>
+        </n-popover>
       </div>
 
       <div class="canvas-view__main">
@@ -322,15 +359,15 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  NButton, NCard, NEmpty, NIcon, NInput, NModal, NSpin, useDialog, useMessage
+  NButton, NCard, NEmpty, NIcon, NInput, NModal, NPopover, NSpin, useDialog, useMessage
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
   DocumentTextOutline, ImageOutline, VideocamOutline, MusicalNotesOutline, CodeSlashOutline,
-  FilmOutline, CubeOutline
+  FilmOutline, CubeOutline, GitBranchOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
+import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type CanvasVersionVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
 import type { AttachmentRef, ImageModelVO, ImageSubmitRequest, ReverseMode } from '@/api/media'
 import { buildCanvasReferenceList, resolveCanvasVideoAttachments, type CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
@@ -2199,24 +2236,30 @@ async function onSave(silent = false) {
   await doSaveSnapshot(snap, silent)
 }
 
+/**
+ * 组装可持久化快照 JSON（doSaveSnapshot / 存版本共用）。
+ * 剥离会话级字段：视频 previewUrl 是 blob: objectURL（带鉴权 fetch 产物），跨会话失效，不入快照；
+ * 导演台封面预览（coverPreviewUrl）同口径。taskId/status 入快照（加载时可按 taskId 重新 fetch 预览）。
+ */
+function buildPersistSnapshot(snap: CanvasSnapshot): string {
+  const cleanNodes = snap.nodes.map(n => {
+    const dataCopy = { ...n.data } as Record<string, unknown>
+    delete dataCopy.previewUrl
+    delete dataCopy.coverPreviewUrl
+    return { ...n, data: dataCopy }
+  })
+  // 计划5 Step6：参与项目随快照顶层持久化（重进画布保持选择；节点 data 不落 gid，运行时注入）
+  return JSON.stringify({ ...snap, nodes: cleanNodes, projectGroupId: projectGroupId.value })
+}
+
 /** 实际 PUT（onSave 拆出：空板确认后复用）。成功后刷新 lastSavedNodeCount。 */
 async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
   if (!editingId.value) return
   saving.value = true
   try {
-    // 剥离会话级字段：视频 previewUrl 是 blob: objectURL（带鉴权 fetch 产物），跨会话失效，不入快照。
-    // taskId/status 入快照（加载时可按 taskId 重新 fetch 预览）。
-    const cleanNodes = snap.nodes.map(n => {
-      const dataCopy = { ...n.data } as Record<string, unknown>
-      delete dataCopy.previewUrl
-      // 导演台封面预览同 previewUrl 口径：会话级 objectURL，不入快照
-      delete dataCopy.coverPreviewUrl
-      return { ...n, data: dataCopy }
-    })
     await canvasApi.save(editingId.value, {
       name: currentName.value || '未命名画布',
-      // 计划5 Step6：参与项目随快照顶层持久化（重进画布保持选择；节点 data 不落 gid，运行时注入）
-      snapshot: JSON.stringify({ ...snap, nodes: cleanNodes, projectGroupId: projectGroupId.value })
+      snapshot: buildPersistSnapshot(snap)
     })
     if (!silent) message.success('已保存')
     lastSavedNodeCount = snap.nodes.length
@@ -2225,6 +2268,89 @@ async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
     if (!silent) message.error('保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+// ---------- 2x 五轮：版本保存（跨会话快照点；区别于 Board 会话内撤销栈） ----------
+
+const versionPanelOpen = ref(false)
+const versionLabel = ref('')
+const versionSaving = ref(false)
+const versionLoading = ref(false)
+const versions = ref<CanvasVersionVO[]>([])
+
+/** 面板打开即拉版本列表（编辑器头懒加载，不进画布不打接口）。 */
+watch(versionPanelOpen, (open) => { if (open) void loadVersions() })
+
+async function loadVersions() {
+  if (!editingId.value) return
+  versionLoading.value = true
+  try {
+    const res = await canvasApi.listVersions(editingId.value)
+    versions.value = res.data.data
+  } catch {
+    message.error('版本列表加载失败')
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+/** 存版本：先 flush 800ms 防抖窗口内的未落盘编辑，再带当前快照定格（与保存同剥离口径）。 */
+async function onCreateVersion() {
+  if (!editingId.value || versionSaving.value) return
+  versionSaving.value = true
+  try {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    await onSave(true)
+    const snap = boardRef.value?.getSnapshot()
+    await canvasApi.createVersion(editingId.value, {
+      label: versionLabel.value.trim() || undefined,
+      snapshot: snap ? buildPersistSnapshot(snap) : undefined
+    })
+    message.success('版本已保存')
+    versionLabel.value = ''
+    await loadVersions()
+  } catch {
+    message.error('存版本失败')
+  } finally {
+    versionSaving.value = false
+  }
+}
+
+/** 恢复版本：确认后覆盖画布；后端恢复前自动存「恢复前」版本（误恢复可再恢复回来）。 */
+function onRestoreVersion(v: CanvasVersionVO) {
+  dialog.warning({
+    title: '恢复版本',
+    content: `将画布恢复到「${v.label}」？当前状态会先自动存为「恢复前」版本，误恢复可再恢复回来。`,
+    positiveText: '恢复',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await canvasApi.restoreVersion(editingId.value!, v.id)
+        const snap = parseSnapshot(res.data.data.snapshot)
+        projectGroupId.value = snap.projectGroupId ?? null
+        await nextTick()
+        boardRef.value?.loadSnapshot(snap) // loadSnapshot 清撤销栈=恢复即新时间线
+        hydratePreviews(snap.nodes)
+        hydrateVideoPreviews(snap.nodes)
+        resumePendingTasks(snap.nodes)
+        lastSavedNodeCount = snap.nodes.length
+        message.success('已恢复该版本')
+        await loadVersions() // 列表头多了「恢复前自动存」
+      } catch {
+        message.error('恢复失败')
+      }
+    }
+  })
+}
+
+async function onDeleteVersion(v: CanvasVersionVO) {
+  try {
+    await canvasApi.removeVersion(editingId.value!, v.id)
+    versions.value = versions.value.filter(x => x.id !== v.id)
+    message.success('版本已删除')
+  } catch {
+    message.error('版本删除失败')
   }
 }
 
@@ -2671,5 +2797,54 @@ function flushPendingSave() {
   color: var(--color-text-tertiary);
   padding: var(--spacing-2);
   text-align: center;
+}
+
+/* 2x 五轮：版本面板（n-popover 内容；BEM 同文件口径，色值走 CSS 变量主题） */
+.canvas-versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.canvas-versions__save {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.canvas-versions__list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-versions__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) 0;
+  border-bottom: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.canvas-versions__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.canvas-versions__label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary, #fff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-versions__meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 </style>

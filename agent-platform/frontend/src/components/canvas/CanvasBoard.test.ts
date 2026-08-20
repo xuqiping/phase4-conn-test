@@ -126,3 +126,81 @@ describe('CanvasBoard 节点宽高持久化（S2）', () => {
     expect(flowNodes[1].style).toEqual({ width: '200px' })
   })
 })
+
+/** 2x 五轮：撤回/重做——结构快照 50 步；同 tag <800ms 合并（脚本拆分镜批量=一步）；loadSnapshot 清栈开新时间线。 */
+describe('CanvasBoard 撤回/重做', () => {
+  type BoardVm = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string }[]; edges: { id: string }[] }
+    addNode: (p: { type?: string; data?: Record<string, unknown> }) => string
+    addEdge: (p: { source: string; target: string }) => string
+    removeNodes: (ids: string[]) => void
+    undo: () => void
+    redo: () => void
+    canUndo: boolean
+    canRedo: boolean
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm
+
+  it('新增→撤回→节点消失；重做→节点回来；栈空后再撤回无操作', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [{ id: 'n1', type: 'text', position: { x: 0, y: 0 }, data: { label: 'A' } }], edges: [] })
+    const id = vm(wrapper).addNode({ type: 'text', data: { label: 'B' } })
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(2)
+    expect(vm(wrapper).canUndo).toBe(true)
+
+    vm(wrapper).undo()
+    expect(vm(wrapper).getSnapshot().nodes.map(n => n.id)).toEqual(['n1'])
+    expect(vm(wrapper).canRedo).toBe(true)
+
+    vm(wrapper).redo()
+    expect(vm(wrapper).getSnapshot().nodes.map(n => n.id)).toContain(id)
+
+    // 撤干栈：undo 到底后 canUndo=false，不再抛错/变化
+    vm(wrapper).undo()
+    vm(wrapper).undo()
+    expect(vm(wrapper).canUndo).toBe(false)
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(1)
+  })
+
+  it('同 tag <800ms 合并成一步：两次 addNode 一次撤回全消失（脚本拆分镜批量场景）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).addNode({ type: 'text', data: { label: 'A' } })
+    vm(wrapper).addNode({ type: 'text', data: { label: 'B' } })
+    vm(wrapper).undo()
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(0)
+  })
+
+  it('删节点可撤回；连边可撤回（remove/edge 各自独立步）', () => {
+    const wrapper = mount(CanvasBoard)
+    const a = vm(wrapper).addNode({ type: 'text', data: { label: 'A' } })
+    const b = vm(wrapper).addNode({ type: 'text', data: { label: 'B' } })
+    vm(wrapper).addEdge({ source: a, target: b })
+    vm(wrapper).removeNodes([b])
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(1)
+    vm(wrapper).undo() // 撤 remove → B 回来
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(2)
+    vm(wrapper).undo() // 撤 edge（与 remove 不同 tag 不同帧，各自成步）
+    expect(vm(wrapper).getSnapshot().edges).toHaveLength(0)
+  })
+
+  it('loadSnapshot 清空两栈：外部载入=新时间线，之前历史不可再撤', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).addNode({ type: 'text', data: { label: 'A' } })
+    expect(vm(wrapper).canUndo).toBe(true)
+    vm(wrapper).loadSnapshot({ nodes: [], edges: [] })
+    expect(vm(wrapper).canUndo).toBe(false)
+    expect(vm(wrapper).canRedo).toBe(false)
+  })
+
+  it('工具条撤回/重做按钮随栈态禁用', async () => {
+    const wrapper = mount(CanvasBoard)
+    const undoBtn = wrapper.find('button[title^="撤回"]')
+    const redoBtn = wrapper.find('button[title^="重做"]')
+    expect(undoBtn.attributes('disabled')).toBeDefined()
+    expect(redoBtn.attributes('disabled')).toBeDefined()
+    vm(wrapper).addNode({ type: 'text', data: { label: 'A' } })
+    await flushPromises()
+    expect(undoBtn.attributes('disabled')).toBeUndefined()
+  })
+})

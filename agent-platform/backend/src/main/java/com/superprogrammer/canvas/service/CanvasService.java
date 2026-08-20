@@ -87,6 +87,11 @@ public class CanvasService {
         return c;
     }
 
+    /** 直接落库已归属校验过的实体（版本恢复覆盖快照用，2x 五轮；调用方负责 ownership）。 */
+    public void saveEntity(Canvas c) {
+        canvasMapper.updateById(c);
+    }
+
     /** 软删（不级联清 stored_files 产出物，plan 联动清单）。 */
     public void delete(Long id, Long userId, boolean admin) {
         Canvas c = loadOwned(id, userId, admin);

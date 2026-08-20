@@ -5,6 +5,8 @@ import com.superprogrammer.canvas.dto.CanvasCreateRequest;
 import com.superprogrammer.canvas.dto.CanvasNodeDTO;
 import com.superprogrammer.canvas.dto.CanvasSaveRequest;
 import com.superprogrammer.canvas.dto.CanvasVO;
+import com.superprogrammer.canvas.dto.CanvasVersionCreateRequest;
+import com.superprogrammer.canvas.dto.CanvasVersionVO;
 import com.superprogrammer.canvas.dto.FrameExtractRequest;
 import com.superprogrammer.canvas.dto.FrameExtractVO;
 import com.superprogrammer.canvas.dto.ImageCropRequest;
@@ -19,6 +21,7 @@ import com.superprogrammer.canvas.dto.VideoClipVO;
 import com.superprogrammer.canvas.entity.Canvas;
 import com.superprogrammer.canvas.service.CanvasNodeRunnerService;
 import com.superprogrammer.canvas.service.CanvasService;
+import com.superprogrammer.canvas.service.CanvasVersionService;
 import com.superprogrammer.canvas.service.VideoFrameService;
 import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.exception.BusinessException;
@@ -73,6 +76,7 @@ public class CanvasController {
 
     private final CanvasService canvasService;
     private final CanvasNodeRunnerService nodeRunnerService;
+    private final CanvasVersionService versionService;
     private final FileStorageService fileStorageService;
     private final VideoFrameService videoFrameService;
     private final ObjectMapper objectMapper;
@@ -118,6 +122,55 @@ public class CanvasController {
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         canvasService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("已删除", null));
+    }
+
+    // ==================== 2x 五轮：版本保存（跨会话快照点，区别于会话内撤销栈） ====================
+
+    /** 存版本：snapshot 缺省=定格服务端当前快照（自动保存 800ms 防抖后近乎实时）。 */
+    @PostMapping("/{id}/versions")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<CanvasVersionVO>> createVersion(@PathVariable Long id,
+                                                            @Valid @RequestBody(required = false) CanvasVersionCreateRequest req) {
+        String label = req == null ? null : req.getLabel();
+        String snapshot = req == null ? null : req.getSnapshot();
+        return ResponseEntity.ok(R.ok("版本已保存",
+                versionService.create(id, getCurrentUserId(), isAdmin(), label, snapshot)));
+    }
+
+    /** 版本列表（摘要，新→旧；每画布保留最近 30 个，超出自动修剪）。 */
+    @GetMapping("/{id}/versions")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<List<CanvasVersionVO>>> listVersions(@PathVariable Long id) {
+        return ResponseEntity.ok(R.ok(versionService.list(id, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 版本详情（带 snapshot，恢复前预览）。 */
+    @GetMapping("/{id}/versions/{versionId}")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<CanvasVersionVO>> getVersion(@PathVariable Long id,
+                                                         @PathVariable Long versionId) {
+        return ResponseEntity.ok(R.ok(versionService.get(id, versionId, getCurrentUserId(), isAdmin())));
+    }
+
+    /**
+     * 恢复版本：覆盖画布当前快照；恢复前自动存「恢复前」版本防误操作（双保险）。
+     * 前端收到 CanvasVO 后 loadSnapshot 重建画布（撤销栈清空=新时间线）。
+     */
+    @PostMapping("/{id}/versions/{versionId}/restore")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<CanvasVO>> restoreVersion(@PathVariable Long id,
+                                                      @PathVariable Long versionId) {
+        return ResponseEntity.ok(R.ok("已恢复该版本",
+                versionService.restore(id, versionId, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 删版本（软删）。 */
+    @DeleteMapping("/{id}/versions/{versionId}")
+    @RequirePermission("canvas:write")
+    public ResponseEntity<R<Void>> deleteVersion(@PathVariable Long id,
+                                                 @PathVariable Long versionId) {
+        versionService.delete(id, versionId, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("版本已删除", null));
     }
 
     // ==================== C4：节点产出触发 + 产出物上传 ====================

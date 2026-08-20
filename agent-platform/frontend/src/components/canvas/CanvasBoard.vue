@@ -2,6 +2,7 @@
   <div
     ref="boardRoot"
     class="canvas-board"
+    :class="{ 'canvas-board--connecting': connectingEdge }"
     tabindex="0"
     @dragover.prevent="onDragOver"
     @drop="onDrop"
@@ -9,6 +10,7 @@
     @contextmenu.prevent
     @keydown.delete.prevent="deleteSelected"
     @keydown.backspace.prevent="deleteSelected"
+    @keydown="onKeydownUndo"
   >
     <VueFlow
       v-model:nodes="nodes"
@@ -29,6 +31,7 @@
       @connect-end="onConnectEnd"
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
+      @node-drag-start="onNodeDragStart"
       @node-drag-stop="onNodeDragStop"
       @nodes-change="onNodesChange"
       @edge-click="onEdgeClick"
@@ -87,6 +90,26 @@
         ▭
       </button>
       <span class="canvas-board__toolbar-sep" aria-hidden="true"></span>
+      <!-- 2x 五轮：撤回/重做（结构操作 50 步；Ctrl+Z / Ctrl+Shift+Z） -->
+      <button
+        class="canvas-board__btn"
+        :disabled="!canUndo"
+        title="撤回（Ctrl+Z）"
+        :aria-disabled="!canUndo"
+        @click="undo()"
+      >
+        ↩︎
+      </button>
+      <button
+        class="canvas-board__btn"
+        :disabled="!canRedo"
+        title="重做（Ctrl+Shift+Z）"
+        :aria-disabled="!canRedo"
+        @click="redo()"
+      >
+        ↪︎
+      </button>
+      <span class="canvas-board__toolbar-sep" aria-hidden="true"></span>
       <!-- 2x 四轮 S5：只看关联——藏无关节点（visibility，布局不动可逆）；无节点选中时禁用 -->
       <button
         class="canvas-board__btn"
@@ -106,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
@@ -282,6 +305,7 @@ function createGroup(name: string, memberIds: string[]): { ok: boolean; reason?:
   if (ids.length > MAX_GROUP_MEMBERS) {
     return { ok: false, reason: `组成员上限 ${MAX_GROUP_MEMBERS}（本次 ${ids.length}）` }
   }
+  pushHistory('group') // 校验通过才入栈（失败入栈=无变化垃圾撤回步）
   const g: CanvasGroup = {
     id: `group-${Date.now()}-${seqCounter++}`,
     name: name.trim() || `组${groups.value.length + 1}`,
@@ -302,6 +326,7 @@ function createGroup(name: string, memberIds: string[]): { ok: boolean; reason?:
 /** 解组（包围盒头部 ✕）：删组不删节点。 */
 function ungroupGroup(groupId: string) {
   if (!groups.value.some(g => g.id === groupId)) return
+  pushHistory('group')
   groups.value = groups.value.filter(g => g.id !== groupId)
   emit('structure-changed')
 }
@@ -311,6 +336,7 @@ function renameGroup(groupId: string, name: string) {
   const g = groups.value.find(x => x.id === groupId)
   const n = name.trim()
   if (!g || !n || g.name === n) return
+  pushHistory('group')
   g.name = n
   emit('structure-changed')
 }
@@ -523,6 +549,7 @@ function onDblClick(event: MouseEvent) {
  * （重命名查重在 PropertyPanel.onRenameBlur，占位符存 id 不受 label 改名影响）。
  */
 function addNode(partial: { type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }): string {
+  pushHistory('add') // 2x 五轮撤回（批量建节点同 tag 800ms 合并=一步）
   const baseLabel = String(partial.data?.label ?? '新节点')
   const existing = nodes.value.map((n) => String(n.data.label ?? ''))
   // label 放 spread 之后，确保去重值覆盖 partial.data 自带 label（L9 三入口）
@@ -542,6 +569,7 @@ function addNode(partial: { type?: string; position?: { x: number; y: number }; 
 
 function onConnect(connection: Connection) {
   if (!connection.source || !connection.target) return
+  pushHistory('edge')
   const edge: CanvasEdge = {
     id: `edge-${connection.source}-${connection.target}-${Date.now()}`,
     source: connection.source,
@@ -560,18 +588,24 @@ function onConnect(connection: Connection) {
  * 2x-6：拉线建节点支持。connect-start 记下起点（仅 source 句柄），
  * connect-end 时若本次拖拽没有成功连上（onConnect 未触发）且落点在空白处，
  * 就地弹「快速加节点」并携带起点 id——父组件建完节点自动连线。
+ *
+ * connectingEdge（2x 五轮）：连线拖拽进行中——关联高亮淡化的节点被指针（=连线末端）
+ * 悬停时恢复不透明（CSS :hover），解决「拖线看不清目标节点」。
  */
 const connectStartParams = ref<OnConnectStartParams | null>(null)
+const connectingEdge = ref(false)
 let justConnected = false
 
 function onConnectStart(params: OnConnectStartParams) {
   connectStartParams.value = params
   justConnected = false
+  connectingEdge.value = true
 }
 
 function onConnectEnd(event: MouseEvent | TouchEvent | undefined) {
   const start = connectStartParams.value
   connectStartParams.value = null
+  connectingEdge.value = false
   const connected = justConnected
   justConnected = false
   if (!start || connected) return
@@ -726,6 +760,7 @@ function deleteSelected() {
 }
 
 function removeNodes(nodeIds: string[]) {
+  pushHistory('remove')
   const removeSet = new Set(nodeIds)
   nodes.value = nodes.value.filter(n => !removeSet.has(n.id))
   edges.value = edges.value.filter(e => !removeSet.has(e.source) && !removeSet.has(e.target))
@@ -733,9 +768,15 @@ function removeNodes(nodeIds: string[]) {
 }
 
 function removeEdges(edgeIds: string[]) {
+  pushHistory('remove')
   const removeSet = new Set(edgeIds)
   edges.value = edges.value.filter(e => !removeSet.has(e.id))
   emit('structure-changed')
+}
+
+/** 节点拖动开始 → 变更前入撤回栈（位置快照）。 */
+function onNodeDragStart() {
+  pushHistory('move')
 }
 
 /** 节点拖动结束 → 落库新位置（vue-flow @node-drag-stop）。 */
@@ -751,19 +792,37 @@ function onNodeDragStop() {
  */
 function onNodesChange(changes: NodeChange[]) {
   const sizeSettled = changes.some(c => c.type === 'dimensions' && c.resizing === false)
-  if (sizeSettled) emit('structure-changed')
+  if (sizeSettled) {
+    emit('structure-changed')
+    resizeGestureOpen = false // 手势结束，下次 resize 重开门
+  }
+  // 2x 五轮：resize 手势首帧（resizing:true）入栈一次——拖动中每帧 dimensions 变更不重复推
+  if (!resizeGestureOpen && changes.some(c => c.type === 'dimensions' && c.resizing === true)) {
+    resizeGestureOpen = true
+    pushHistory('resize')
+  }
   // 2x 四轮 S5：库内选中变化（含拖拽吞 click / 卡片内元素吞 click 的场景）→ 同步应用层单选真相
   if (changes.some(c => c.type === 'select')) syncSelectionFromLibrary()
 }
 
-/** 载入快照（从后端加载画布时调）。 */
-function loadSnapshot(snap: CanvasSnapshot) {
+/** resize 手势开合标记（onNodesChange 内去重入栈用）。 */
+let resizeGestureOpen = false
+
+/** 集合重建（载入/撤回复用）：nodes 重挂尺寸 style、edges 归一 deletable、组深拷贝。 */
+function applySnapshot(snap: CanvasSnapshot) {
   // 2x 四轮 S2：data.width/height → wrapper style（含默认 200 兜底），老快照无字段即默认宽
   nodes.value = (snap.nodes ?? []).map(n => ({ ...n, style: nodeSizeStyle(n.data) }))
   // 旧画布边为 smoothstep/default 无删除入口 → 统一归一为 deletable（贝塞尔+删除按钮）
   edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
   // 2x 四轮 S9：组（老快照无 groups 字段 = 空数组语义，零报错）
   groups.value = (snap.groups ?? []).map(g => ({ ...g, memberIds: [...(g.memberIds ?? [])] }))
+}
+
+/** 载入快照（从后端加载画布时调）。换画布/恢复版本=新时间线起点，清撤回栈。 */
+function loadSnapshot(snap: CanvasSnapshot) {
+  applySnapshot(snap)
+  undoStack.length = 0
+  redoStack.length = 0
 }
 
 /** 序列化快照（保存时调）。getViewport 是函数非 ref（@vue-flow/core 1.41）。 */
@@ -777,6 +836,77 @@ function getSnapshot(): CanvasSnapshot {
     groups: groups.value.map(g => ({ ...g, memberIds: [...g.memberIds] })),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
   }
+}
+
+// ---- 2x 五轮：撤回/重做（结构操作历史栈，同导演台 sceneModel 50 深口径） ----
+
+/**
+ * 历史快照 = 结构快照（复用 getSnapshot 序列化规则：剥 style/class 会话态，不带 viewport
+ * ——撤回不应劫持视口）。JSON 深拷贝与画布响应式对象彻底断链。
+ * 覆盖面：增删节点/连线、拖动、改尺寸、组 CRUD。文本内容编辑不单独入栈（编辑器内
+ * 有原生 undo），但会随下一次结构操作的快照一并定格。
+ */
+interface HistoryEntry { snap: CanvasSnapshot; tag: string; ts: number }
+// reactive：canUndo/canRedo 依赖 length，普通数组变更不会触发 computed/按钮重渲染
+const undoStack = reactive<HistoryEntry[]>([])
+const redoStack = reactive<HistoryEntry[]>([])
+const HISTORY_MAX = 50
+const canUndo = computed(() => undoStack.length > 0)
+const canRedo = computed(() => redoStack.length > 0)
+
+/** 变更前入栈。tag 合并规则：同 tag 且 800ms 内的连续变更只留一步（脚本拆分镜批量建 N 节点=一次撤回）。 */
+function pushHistory(tag: string) {
+  const now = Date.now()
+  const top = undoStack[undoStack.length - 1]
+  if (top && top.tag === tag && now - top.ts < 800) {
+    top.ts = now
+    return
+  }
+  undoStack.push({ snap: cloneHistoryState(), tag, ts: now })
+  if (undoStack.length > HISTORY_MAX) undoStack.shift()
+  redoStack.length = 0
+}
+
+/** 当前结构深拷贝（不入栈，undo/redo 前互备现态用）。 */
+function cloneHistoryState(): CanvasSnapshot {
+  const { viewport: _vp, ...rest } = getSnapshot()
+  // 节点/边来自 reactive ref（Vue Proxy），structuredClone 会抛 DataCloneError；
+  // 快照本就走 JSON 持久化，JSON 深拷贝即正确形状。
+  return JSON.parse(JSON.stringify(rest)) as CanvasSnapshot
+}
+
+/** 应用历史快照：重建三类集合 + 清选中 + 通知父组件落库（不动撤回栈）。 */
+function applyHistoryState(snap: CanvasSnapshot) {
+  applySnapshot(snap)
+  selectedNodeId.value = ''
+  selectedEdgeId.value = ''
+  clearMultiSelection()
+  applyVisualClasses()
+  emit('structure-changed')
+}
+
+function undo() {
+  const entry = undoStack.pop()
+  if (!entry) return
+  redoStack.push({ snap: cloneHistoryState(), tag: entry.tag, ts: Date.now() })
+  applyHistoryState(entry.snap)
+}
+
+function redo() {
+  const entry = redoStack.pop()
+  if (!entry) return
+  undoStack.push({ snap: cloneHistoryState(), tag: entry.tag, ts: Date.now() })
+  applyHistoryState(entry.snap)
+}
+
+/** 键盘撤回：Ctrl/Cmd+Z 撤回、+Shift 重做。输入框内放行浏览器原生文本 undo。 */
+function onKeydownUndo(e: KeyboardEvent) {
+  const tgt = e.target as HTMLElement | null
+  if (tgt?.closest('input, textarea, [contenteditable="true"')) return
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
+  e.preventDefault()
+  if (e.shiftKey) redo()
+  else undo()
 }
 
 /** 取节点真实引用（数组中的对象，reactive 即时反映画布）。 */
@@ -807,6 +937,7 @@ function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
 function addEdge(source: string, target: string) {
   if (source === target) return
   if (edges.value.some(e => e.source === source && e.target === target)) return
+  pushHistory('edge')
   edges.value.push({
     id: `edge-${source}-${target}-${Date.now()}`,
     source,
@@ -820,7 +951,9 @@ defineExpose({
   addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
   updateNodeData, focusNodeById, dragMode, setDragMode,
   // 2x 四轮 S9：组 CRUD（父组件批量工具条「设为组」/改名弹窗回调/@候选并集）
-  createGroup, ungroupGroup, renameGroup, getGroups
+  createGroup, ungroupGroup, renameGroup, getGroups,
+  // 2x 五轮：撤回/重做（版本恢复由父组件 loadSnapshot 承接并清栈）
+  undo, redo, canUndo, canRedo
 })
 </script>
 
@@ -877,6 +1010,12 @@ defineExpose({
 
   :deep(.vue-flow__node.canvas-node--hidden) {
     visibility: hidden;
+  }
+
+  /* 2x 五轮：连线拖拽进行中，淡化节点被指针（=连线末端）悬停 → 恢复不透明，
+     解决「拖线连向淡化节点看不清」。只看关联隐藏的节点不在此恢复（仍不可连）。 */
+  &.canvas-board--connecting :deep(.vue-flow__node.canvas-node--dimmed:hover) {
+    opacity: 1;
   }
 
   /* 2x 四轮 S9：组员色 ring（--group-color 由 applyVisualClasses 注入 wrapper style） */

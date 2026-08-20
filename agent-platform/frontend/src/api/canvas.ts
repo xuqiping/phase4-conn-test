@@ -151,6 +151,23 @@ export interface CanvasVO {
   updatedAt: string | null
 }
 
+/** 画布版本 VO（对齐后端 CanvasVersionVO，V135）。列表摘要 snapshot=null，详情才带。 */
+export interface CanvasVersionVO {
+  id: number
+  canvasId: number
+  label: string
+  nodeCount: number | null
+  /** 画布结构 JSON 字符串；列表为 null，详情/恢复才带。 */
+  snapshot: string | null
+  createdAt: string
+}
+
+/** 存版本请求（label 可空=后端补时间戳名；snapshot 可空=定格服务端当前快照）。 */
+export interface CanvasVersionCreateRequest {
+  label?: string
+  snapshot?: string
+}
+
 /** 新建请求。name 可空（后端默认「未命名画布」）。 */
 export interface CanvasCreateRequest {
   name?: string
@@ -194,6 +211,33 @@ export const canvasApi = {
   /** DELETE /api/canvas/{id} — 软删 */
   remove(id: number) {
     return request.delete<ApiResponse<void>>(`/canvas/${id}`)
+  },
+
+  // === 2x 五轮：版本保存（跨会话快照点；每画布保留最近 30 个，超出后端自动修剪） ===
+
+  /** POST /api/canvas/{id}/versions — 存版本（snapshot 缺省=定格服务端当前快照） */
+  createVersion(id: number, data?: CanvasVersionCreateRequest) {
+    return request.post<ApiResponse<CanvasVersionVO>>(`/canvas/${id}/versions`, data ?? {})
+  },
+
+  /** GET /api/canvas/{id}/versions — 版本列表（摘要，新→旧） */
+  listVersions(id: number) {
+    return request.get<ApiResponse<CanvasVersionVO[]>>(`/canvas/${id}/versions`)
+  },
+
+  /** GET /api/canvas/{id}/versions/{versionId} — 版本详情（含 snapshot，恢复前预览） */
+  getVersion(id: number, versionId: number) {
+    return request.get<ApiResponse<CanvasVersionVO>>(`/canvas/${id}/versions/${versionId}`)
+  },
+
+  /** POST /api/canvas/{id}/versions/{versionId}/restore — 恢复（恢复前后端自动存「恢复前」版本） */
+  restoreVersion(id: number, versionId: number) {
+    return request.post<ApiResponse<CanvasVO>>(`/canvas/${id}/versions/${versionId}/restore`)
+  },
+
+  /** DELETE /api/canvas/{id}/versions/{versionId} — 删版本 */
+  removeVersion(id: number, versionId: number) {
+    return request.delete<ApiResponse<void>>(`/canvas/${id}/versions/${versionId}`)
   },
 
   /** POST /api/canvas/{id}/nodes/run — 运行单节点（无状态，回 dataPatch 前端合并） */
