@@ -1,11 +1,14 @@
 //! core-state：阶段状态机（YAML 驱动）+ 项目/任务/轮次持久化。
 //! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎（`machine` 模块）。
 
+pub mod agent_config;
 pub mod approval;
 pub mod db;
 pub mod env_profile;
 pub mod machine;
+pub mod plan_chunk;
 pub mod secrets;
+pub mod spec_card;
 
 pub use approval::{create as create_approval, list_unresolved, resolve as resolve_approval};
 pub use db::{Db, DbError, DbResult};
@@ -60,7 +63,8 @@ mod tests {
                 "L3".to_string(),
                 "L4".to_string(),
                 "L5".to_string(),
-                "L6".to_string()
+                "L6".to_string(),
+                "L7".to_string()
             ]
         );
     }

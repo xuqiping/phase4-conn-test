@@ -35,6 +35,10 @@ const MIGRATIONS: &[Migration] = &[
         version: "L6",
         sql: include_str!("../../migrations/L6__secrets.sql"),
     },
+    Migration {
+        version: "L7",
+        sql: include_str!("../../migrations/L7__workflow_artifacts.sql"),
+    },
 ];
 
 /// 应用所有未执行的迁移。重复调用安全（幂等）。
