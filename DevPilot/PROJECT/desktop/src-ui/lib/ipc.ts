@@ -45,6 +45,15 @@ export interface AgentConfigFields {
   naming_style: string;
 }
 
+export interface SpecCardDto {
+  id: number;
+  project_id: number;
+  title: string;
+  detail: string;
+  ac: string[];
+  status: "pending" | "confirmed" | "skipped";
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -91,6 +100,12 @@ export const ipc = {
     invoke<AgentConfigFields>("load_agent_config", { projectId }),
   saveAgentConfig: (projectId: number, fields: AgentConfigFields) =>
     invoke<void>("save_agent_config", { projectId, fields }),
+  saveSpecCards: (projectId: number, cards: Omit<SpecCardDto, "id" | "project_id" | "status">[]) =>
+    invoke<SpecCardDto[]>("save_spec_cards", { projectId, cards }),
+  listSpecCards: (projectId: number) =>
+    invoke<SpecCardDto[]>("list_spec_cards", { projectId }),
+  updateSpecCard: (id: number, patch: Partial<Omit<SpecCardDto, "id" | "project_id">>) =>
+    invoke<SpecCardDto>("update_spec_card", { id, ...patch }),
 };
 
 /** 订阅内核状态推送（事件名对齐 events.rs）；返回取消订阅函数 */

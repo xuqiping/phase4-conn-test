@@ -45,6 +45,9 @@ pub fn run() {
             commands::execute_build,
             commands::load_agent_config,
             commands::save_agent_config,
+            commands::save_spec_cards,
+            commands::list_spec_cards,
+            commands::update_spec_card,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");

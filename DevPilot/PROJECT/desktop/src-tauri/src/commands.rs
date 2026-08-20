@@ -849,6 +849,135 @@ pub fn save_agent_config(
     Ok(())
 }
 
+// ---------- 需求确认卡片（P04 S4 FR-031/AC-034） ----------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SpecCardDto {
+    pub id: i64,
+    pub project_id: i64,
+    pub title: String,
+    pub detail: String,
+    pub ac: Vec<String>,
+    pub status: String,
+}
+
+impl From<core_state::spec_card::SpecCard> for SpecCardDto {
+    fn from(c: core_state::spec_card::SpecCard) -> Self {
+        Self {
+            id: c.id,
+            project_id: c.project_id,
+            title: c.title,
+            detail: c.detail,
+            ac: c.ac,
+            status: match c.status {
+                core_state::spec_card::SpecCardStatus::Confirmed => "confirmed",
+                core_state::spec_card::SpecCardStatus::Skipped => "skipped",
+                core_state::spec_card::SpecCardStatus::Pending => "pending",
+            }
+            .into(),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecCardDraftDto {
+    pub title: String,
+    pub detail: String,
+    pub ac: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SaveSpecCardsReq {
+    pub project_id: i64,
+    pub cards: Vec<SpecCardDraftDto>,
+}
+
+fn parse_spec_status(s: &str) -> Option<core_state::spec_card::SpecCardStatus> {
+    match s {
+        "confirmed" => Some(core_state::spec_card::SpecCardStatus::Confirmed),
+        "skipped" => Some(core_state::spec_card::SpecCardStatus::Skipped),
+        "pending" => Some(core_state::spec_card::SpecCardStatus::Pending),
+        _ => None,
+    }
+}
+
+/// 批量保存需求卡：清空旧卡后插入新卡（重新生成报告后使用）。
+#[tauri::command]
+pub fn save_spec_cards(
+    state: State<'_, AppState>,
+    req: SaveSpecCardsReq,
+) -> CmdResult<Vec<SpecCardDto>> {
+    let cards: Vec<core_state::spec_card::SpecCard> = req
+        .cards
+        .into_iter()
+        .map(|d| core_state::spec_card::SpecCard {
+            project_id: req.project_id,
+            title: d.title,
+            detail: d.detail,
+            ac: d.ac,
+            ..Default::default()
+        })
+        .collect();
+    state
+        .db
+        .write(|c| {
+            core_state::spec_card::clear(c, req.project_id)?;
+            core_state::spec_card::insert_batch(c, req.project_id, &cards)?;
+            core_state::spec_card::list(c, req.project_id)
+        })
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
+/// 列出某项目全部需求卡。
+#[tauri::command]
+pub fn list_spec_cards(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<SpecCardDto>> {
+    state
+        .db
+        .read(|c| core_state::spec_card::list(c, project_id))
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateSpecCardReq {
+    pub id: i64,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub ac: Option<Vec<String>>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// 更新需求卡内容或状态。
+#[tauri::command]
+pub fn update_spec_card(
+    state: State<'_, AppState>,
+    req: UpdateSpecCardReq,
+) -> CmdResult<SpecCardDto> {
+    let status = req.status.as_deref().and_then(parse_spec_status);
+    let updated = state
+        .db
+        .write(|c| {
+            core_state::spec_card::update(
+                c,
+                req.id,
+                req.title.as_deref(),
+                req.detail.as_deref(),
+                req.ac.as_deref(),
+                status,
+            )?;
+            core_state::spec_card::get(c, req.id)
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+    updated
+        .map(Into::into)
+        .ok_or_else(|| err("NOT_FOUND", "需求卡不存在"))
+}
+
 fn latest_commit_hash(project_path: &str) -> Option<String> {
     std::process::Command::new("git")
         .args(["log", "-1", "--pretty=%H"])
