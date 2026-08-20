@@ -1001,6 +1001,80 @@ pub fn rollback_to_checkpoint(
     Ok(dto)
 }
 
+// ---------- 追加指令续跑（P05 S6 FR-015） ----------
+
+/// 在当前 open 轮次末尾追加一条新 task 并立即跑 scheduler（不推进状态机）。
+#[tauri::command]
+pub async fn continue_task(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+    instructions: String,
+    access_token: String,
+    cloud_base: Option<String>,
+) -> CmdResult<StateDto> {
+    let round_id: i64 = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+                [project_id],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let path = project_path(&state.db, project_id)?;
+    let base = cloud_base.unwrap_or_else(|| "http://127.0.0.1:3000/api/v1".into());
+    let llm = HttpLlmClient::new(base, access_token);
+    let scheduler = Scheduler {
+        db: &state.db,
+        project_id,
+        round_id,
+        project_path: std::path::Path::new(&path),
+        llm: &llm,
+    };
+
+    scheduler
+        .append_task("追加指令", &instructions)
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let app_for_events = app.clone();
+    let mut events: Vec<TaskEvent> = Vec::new();
+    let result = scheduler
+        .run_round(|ev| {
+            events.push(ev.clone());
+            events::emit_task_event(&app_for_events, ev);
+        })
+        .await
+        .map_err(|e| err("SCHEDULER", e.to_string()))?;
+
+    state
+        .db
+        .write(|c| {
+            for ev in &events {
+                let _ = task_event::insert(c, ev.task_id, ev.event_type, &ev.message);
+            }
+            Ok(())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let (machine, _) = load_machine(&state.db, project_id)?;
+    let warning = match result {
+        RunResult::Done { .. } => None,
+        RunResult::Failed { task_id } => Some(format!("追加任务 {} 执行失败，已停止", task_id)),
+        RunResult::NeedClarify { task_id, questions } => Some(format!(
+            "追加任务 {} 需要澄清：{}",
+            task_id,
+            questions.join("；")
+        )),
+    };
+    let dto = to_state_dto(&machine, warning);
+    events::emit_state(&app, &dto);
+    Ok(dto)
+}
+
 // ---------- AGENTS.md 大白话表单（P04 S1 FR-008/AC-009） ----------
 
 /// 加载项目约定表单（无记录时返回默认模板）。

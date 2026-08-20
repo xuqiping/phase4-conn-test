@@ -46,6 +46,7 @@ pub fn run() {
             commands::summarize_diff,
             commands::list_checkpoints,
             commands::rollback_to_checkpoint,
+            commands::continue_task,
             commands::load_agent_config,
             commands::save_agent_config,
             commands::save_spec_cards,

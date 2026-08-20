@@ -182,6 +182,18 @@ export const ipc = {
     invoke<CheckpointDto[]>("list_checkpoints", { projectId }),
   rollbackToCheckpoint: (checkpointId: number) =>
     invoke<StateDto>("rollback_to_checkpoint", { checkpointId }),
+  continueTask: (
+    projectId: number,
+    instructions: string,
+    accessToken: string,
+    cloudBase?: string,
+  ) =>
+    invoke<StateDto>("continue_task", {
+      projectId,
+      instructions,
+      accessToken,
+      cloudBase,
+    }),
   runTask: (req: {
     projectId: number;
     taskId: number;

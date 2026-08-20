@@ -278,6 +278,22 @@ impl<'c, 'p> Scheduler<'c, 'p> {
             Ok(())
         })
     }
+
+    /// 在当前轮次末尾追加一个新 task（FR-015 追加指令续跑）。
+    pub fn append_task(&self, title: &str, instructions: &str) -> DbResult<i64> {
+        self.db.write(|c| {
+            let next_chunk: i64 = c.query_row(
+                "SELECT COALESCE(MAX(chunk_no), 0) + 1 FROM tasks WHERE round_id = ?1",
+                [self.round_id],
+                |r| r.get(0),
+            )?;
+            c.execute(
+                "INSERT INTO tasks (round_id, chunk_no, title, instructions, status, source) VALUES (?1, ?2, ?3, ?4, 'pending', 'local')",
+                (self.round_id, next_chunk, title, instructions),
+            )?;
+            Ok(c.last_insert_rowid())
+        })
+    }
 }
 
 fn load_agent_text(c: &Connection, project_id: i64) -> DbResult<String> {
@@ -701,6 +717,39 @@ mod tests {
         };
         let result = scheduler.run_round(|_| {}).await.unwrap();
         assert!(matches!(result, RunResult::NeedClarify { .. }));
+    }
+
+    #[test]
+    fn append_task_adds_pending_task_at_end_of_round() {
+        let tmp = TempDir::new().unwrap();
+        init_git(tmp.path());
+        let (db, _project_id, round_id, _) = fixture();
+        let scheduler = Scheduler {
+            db: &db,
+            project_id: 1,
+            round_id,
+            project_path: tmp.path(),
+            llm: &MockLlm {
+                output: TaskOutput {
+                    files: vec![],
+                    summary: "".into(),
+                    clarifying_questions: vec![],
+                },
+            },
+        };
+        let id = scheduler.append_task("追加", "再加点功能").unwrap();
+        let (chunk, status): (i64, String) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT chunk_no, status FROM tasks WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(chunk, 3); // fixture 已有 2 个 task
+        assert_eq!(status, "pending");
     }
 
     #[test]
