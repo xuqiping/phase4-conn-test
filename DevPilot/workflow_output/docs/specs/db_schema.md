@@ -2,7 +2,7 @@
 
 > 上级：[PRD.md](PRD.md)。本文件是数据库的全局权威版；Feature Map 的建表注解是功能视角速查版。
 > 两库分离：**云端 PostgreSQL**（账号/计费，Flyway 迁移）+ **本地 SQLite**（项目/状态机，sqlx 迁移）。本地库在用户机器上，schema 变更随客户端升级迁移。
-> last_updated: 2026-08-16
+> last_updated: 2026-08-20
 
 ## 1. 云端 PostgreSQL（计费与账号）
 
@@ -110,6 +110,9 @@ erDiagram
 | secrets | id, project_id, name, encrypted_value | 项目级 Secrets；名称落库，值优先 OS keyring，失败回退 AES-256-GCM（FR-012，P03 Step7） |
 | skills_local | id, name, yaml_path, enabled | 技能注册表（FR-025） |
 | mcp_servers | id, name, config JSON, status | MCP server 管理（FR-026） |
+| agent_configs | id, project_id UNIQUE, fields_json | 项目约定大白话字段；AGENTS.md 的渲染源（FR-008，P04 S0） |
+| spec_cards | id, project_id, title, detail, ac_json, status, sort_order | 需求确认卡片；status ∈ pending/confirmed/skipped（FR-031，P04 S0） |
+| plan_chunks | id, project_id, title, goal, estimated_tokens, dependencies_json, status, sort_order | 施工计划 chunk；status ∈ draft/approved/running/done（FR-032，P04 S0） |
 
 ### 本地迁移版本清单
 | 版本 | 内容 |
@@ -120,6 +123,7 @@ erDiagram
 | L4__pending_approvals.sql | pending_approvals（P03 Step3 FR-009） |
 | L5__env_profiles.sql | env_profiles（P03 Step4 FR-005） |
 | L6__secrets.sql | secrets（P03 Step7 FR-012） |
+| L7__workflow_artifacts.sql | agent_configs / spec_cards / plan_chunks（P04 S0 FR-008/031/032） |
 
 ## 3. 设计说明
 

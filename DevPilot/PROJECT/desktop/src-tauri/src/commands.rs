@@ -1234,19 +1234,19 @@ fn auto_unpass_gate(db: &Db, project_id: i64, gate: &str) -> CmdResult<()> {
     db.write(|c| {
         let row: Option<(String, String)> = c
             .query_row(
-                "SELECT current_phase, gates_json FROM workflow_states WHERE project_id = ?1",
+                "SELECT phase, gate_status FROM workflow_states WHERE project_id = ?1",
                 [project_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if let Some((phase, gates_json)) = row {
-            let mut gates: Vec<String> = serde_json::from_str(&gates_json).unwrap_or_default();
+        if let Some((phase, gate_status)) = row {
+            let mut gates: Vec<String> = serde_json::from_str(&gate_status).unwrap_or_default();
             let before = gates.len();
             gates.retain(|g| g != gate);
             if gates.len() != before {
                 let new_json = serde_json::to_string(&gates).unwrap_or_else(|_| "[]".into());
                 c.execute(
-                    "UPDATE workflow_states SET gates_json = ?1, updated_at = datetime('now') WHERE project_id = ?2 AND current_phase = ?3",
+                    "UPDATE workflow_states SET gate_status = ?1, updated_at = datetime('now') WHERE project_id = ?2 AND phase = ?3",
                     [new_json.as_str(), project_id.to_string().as_str(), phase.as_str()],
                 )?;
             }
@@ -1264,4 +1264,90 @@ fn latest_commit_hash(project_path: &str) -> Option<String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_state::spec_card::{SpecCard, SpecCardStatus};
+    use core_state::Db;
+
+    fn project_fixture(db: &Db) -> i64 {
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO projects (name, path, scale, workflow_version) VALUES ('p', '/tmp/p', 'L1', '1.20')",
+                [],
+            )?;
+            Ok(c.last_insert_rowid())
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn auto_pass_requirement_confirm_when_all_spec_resolved() {
+        let db = Db::open_in_memory().unwrap();
+        let pid = project_fixture(&db);
+        db.write(|c| {
+            core_state::spec_card::insert_batch(
+                c,
+                pid,
+                &[
+                    SpecCard {
+                        project_id: pid,
+                        title: "A".into(),
+                        ..Default::default()
+                    },
+                    SpecCard {
+                        project_id: pid,
+                        title: "B".into(),
+                        ..Default::default()
+                    },
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let cards = db.read(|c| core_state::spec_card::list(c, pid)).unwrap();
+        let id = cards[0].id;
+        db.write(|c| {
+            core_state::spec_card::update(c, id, None, None, None, Some(SpecCardStatus::Confirmed))
+        })
+        .unwrap();
+        // 只有一张确认，门禁不应解锁
+        assert!(!db
+            .read(|c| core_state::spec_card::all_resolved(c, pid))
+            .unwrap());
+
+        // 确认第二张并自动过门禁
+        let id2 = cards[1].id;
+        db.write(|c| {
+            core_state::spec_card::update(c, id2, None, None, None, Some(SpecCardStatus::Confirmed))
+        })
+        .unwrap();
+        assert!(db
+            .read(|c| core_state::spec_card::all_resolved(c, pid))
+            .unwrap());
+        auto_pass_gate(&db, pid, "requirement_confirm").unwrap();
+
+        let (machine, _) = load_machine(&db, pid).unwrap();
+        assert!(machine
+            .machine()
+            .gates_passed()
+            .contains("requirement_confirm"));
+    }
+
+    #[test]
+    fn auto_pass_kickoff_and_can_unpass() {
+        let db = Db::open_in_memory().unwrap();
+        let pid = project_fixture(&db);
+        auto_pass_gate(&db, pid, "kickoff").unwrap();
+
+        let (machine, _) = load_machine(&db, pid).unwrap();
+        assert!(machine.machine().gates_passed().contains("kickoff"));
+
+        auto_unpass_gate(&db, pid, "kickoff").unwrap();
+        let (machine, _) = load_machine(&db, pid).unwrap();
+        assert!(!machine.machine().gates_passed().contains("kickoff"));
+    }
 }
