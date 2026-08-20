@@ -83,6 +83,10 @@ export const ipc = {
     invoke<StateDto>("transition", { projectId, to }),
   passGate: (projectId: number, gate: string) =>
     invoke<StateDto>("pass_gate", { projectId, gate }),
+  readProjectFile: (projectId: number, relPath: string) =>
+    invoke<string>("read_project_file", { projectId, relPath }),
+  writeProjectFile: (projectId: number, relPath: string, content: string) =>
+    invoke<void>("write_project_file", { projectId, relPath, content }),
   loadAgentConfig: (projectId: number) =>
     invoke<AgentConfigFields>("load_agent_config", { projectId }),
   saveAgentConfig: (projectId: number, fields: AgentConfigFields) =>
