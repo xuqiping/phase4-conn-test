@@ -54,6 +54,16 @@ export interface SpecCardDto {
   status: "pending" | "confirmed" | "skipped";
 }
 
+export interface PlanChunkDto {
+  id: number;
+  project_id: number;
+  title: string;
+  goal: string;
+  estimated_tokens: number | null;
+  dependencies: string[];
+  status: "draft" | "approved" | "running" | "done";
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -106,6 +116,20 @@ export const ipc = {
     invoke<SpecCardDto[]>("list_spec_cards", { projectId }),
   updateSpecCard: (id: number, patch: Partial<Omit<SpecCardDto, "id" | "project_id">>) =>
     invoke<SpecCardDto>("update_spec_card", { id, ...patch }),
+  savePlanChunks: (
+    projectId: number,
+    chunks: Omit<PlanChunkDto, "id" | "project_id" | "status">[],
+  ) => invoke<PlanChunkDto[]>("save_plan_chunks", { projectId, chunks }),
+  listPlanChunks: (projectId: number) =>
+    invoke<PlanChunkDto[]>("list_plan_chunks", { projectId }),
+  updatePlanChunk: (
+    id: number,
+    patch: Partial<Omit<PlanChunkDto, "id" | "project_id" | "status">>,
+  ) => invoke<PlanChunkDto>("update_plan_chunk", { id, ...patch }),
+  approvePlan: (projectId: number) =>
+    invoke<PlanChunkDto[]>("approve_plan", { projectId }),
+  revokePlanApproval: (projectId: number) =>
+    invoke<PlanChunkDto[]>("revoke_plan_approval", { projectId }),
 };
 
 /** 订阅内核状态推送（事件名对齐 events.rs）；返回取消订阅函数 */

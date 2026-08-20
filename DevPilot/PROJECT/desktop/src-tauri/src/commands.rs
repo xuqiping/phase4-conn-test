@@ -978,6 +978,210 @@ pub fn update_spec_card(
         .ok_or_else(|| err("NOT_FOUND", "需求卡不存在"))
 }
 
+// ---------- 施工计划 chunk 看板（P04 S5 FR-032/AC-035） ----------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PlanChunkDto {
+    pub id: i64,
+    pub project_id: i64,
+    pub title: String,
+    pub goal: String,
+    pub estimated_tokens: Option<i64>,
+    pub dependencies: Vec<String>,
+    pub status: String,
+}
+
+impl From<core_state::plan_chunk::PlanChunk> for PlanChunkDto {
+    fn from(c: core_state::plan_chunk::PlanChunk) -> Self {
+        Self {
+            id: c.id,
+            project_id: c.project_id,
+            title: c.title,
+            goal: c.goal,
+            estimated_tokens: c.estimated_tokens,
+            dependencies: c.dependencies,
+            status: match c.status {
+                core_state::plan_chunk::PlanChunkStatus::Approved => "approved",
+                core_state::plan_chunk::PlanChunkStatus::Running => "running",
+                core_state::plan_chunk::PlanChunkStatus::Done => "done",
+                core_state::plan_chunk::PlanChunkStatus::Draft => "draft",
+            }
+            .into(),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PlanChunkDraftDto {
+    pub title: String,
+    pub goal: String,
+    #[serde(default)]
+    pub estimated_tokens: Option<i64>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SavePlanChunksReq {
+    pub project_id: i64,
+    pub chunks: Vec<PlanChunkDraftDto>,
+}
+
+/// 批量保存施工计划 chunk：清空旧计划后插入新计划（重新生成后使用）。
+#[tauri::command]
+pub fn save_plan_chunks(
+    state: State<'_, AppState>,
+    req: SavePlanChunksReq,
+) -> CmdResult<Vec<PlanChunkDto>> {
+    let chunks: Vec<core_state::plan_chunk::PlanChunk> = req
+        .chunks
+        .into_iter()
+        .map(|d| core_state::plan_chunk::PlanChunk {
+            project_id: req.project_id,
+            title: d.title,
+            goal: d.goal,
+            estimated_tokens: d.estimated_tokens,
+            dependencies: d.dependencies,
+            ..Default::default()
+        })
+        .collect();
+    state
+        .db
+        .write(|c| {
+            core_state::plan_chunk::clear(c, req.project_id)?;
+            core_state::plan_chunk::insert_batch(c, req.project_id, &chunks)?;
+            core_state::plan_chunk::list(c, req.project_id)
+        })
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
+/// 列出某项目全部 chunk。
+#[tauri::command]
+pub fn list_plan_chunks(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<PlanChunkDto>> {
+    state
+        .db
+        .read(|c| core_state::plan_chunk::list(c, project_id))
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdatePlanChunkReq {
+    pub id: i64,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub estimated_tokens: Option<Option<i64>>,
+    #[serde(default)]
+    pub dependencies: Option<Vec<String>>,
+}
+
+/// 更新 chunk 内容（仅 draft 状态可编辑，前端校验）。
+#[tauri::command]
+pub fn update_plan_chunk(
+    state: State<'_, AppState>,
+    req: UpdatePlanChunkReq,
+) -> CmdResult<PlanChunkDto> {
+    let updated = state
+        .db
+        .write(|c| {
+            core_state::plan_chunk::update(
+                c,
+                req.id,
+                req.title.as_deref(),
+                req.goal.as_deref(),
+                req.estimated_tokens,
+                req.dependencies.as_deref(),
+            )?;
+            core_state::plan_chunk::get(c, req.id)
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+    updated
+        .map(Into::into)
+        .ok_or_else(|| err("NOT_FOUND", "施工计划不存在"))
+}
+
+/// 审批计划：所有 draft chunk 变为 approved，并按顺序创建 tasks。
+#[tauri::command]
+pub fn approve_plan(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<PlanChunkDto>> {
+    state
+        .db
+        .write(|c| {
+            core_state::plan_chunk::approve_all(c, project_id)?;
+            let chunks = core_state::plan_chunk::list(c, project_id)?;
+
+            // 取当前 open 轮次，没有则新建。
+            let round_id: Option<i64> = c
+                .query_row(
+                    "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+                    [project_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let round_id = match round_id {
+                Some(id) => id,
+                None => {
+                    c.execute(
+                        "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, (SELECT COALESCE(MAX(seq),0)+1 FROM rounds WHERE project_id = ?1), '计划轮', 'open')",
+                        [project_id],
+                    )?;
+                    c.last_insert_rowid()
+                }
+            };
+
+            // 删除该轮次下由旧计划生成的 tasks（撤销后重批场景）。
+            c.execute(
+                "DELETE FROM tasks WHERE round_id = ?1 AND source = 'local' AND status = 'pending'",
+                [round_id],
+            )?;
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                c.execute(
+                    "INSERT INTO tasks (round_id, chunk_no, title, status, source) VALUES (?1, ?2, ?3, 'pending', 'local')",
+                    (round_id, i as i64 + 1, &chunk.title),
+                )?;
+            }
+            Ok(chunks)
+        })
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
+/// 撤销审批：approved chunk 回到 draft，并删除对应 pending tasks。
+#[tauri::command]
+pub fn revoke_plan_approval(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<PlanChunkDto>> {
+    state
+        .db
+        .write(|c| {
+            core_state::plan_chunk::revoke_approval(c, project_id)?;
+            let round_id: Option<i64> = c
+                .query_row(
+                    "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+                    [project_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(round_id) = round_id {
+                c.execute(
+                    "DELETE FROM tasks WHERE round_id = ?1 AND source = 'local' AND status = 'pending'",
+                    [round_id],
+                )?;
+            }
+            core_state::plan_chunk::list(c, project_id)
+        })
+        .map_err(|e| err("DB", e.to_string()))
+        .map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
 fn latest_commit_hash(project_path: &str) -> Option<String> {
     std::process::Command::new("git")
         .args(["log", "-1", "--pretty=%H"])

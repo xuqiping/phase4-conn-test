@@ -48,6 +48,11 @@ pub fn run() {
             commands::save_spec_cards,
             commands::list_spec_cards,
             commands::update_spec_card,
+            commands::save_plan_chunks,
+            commands::list_plan_chunks,
+            commands::update_plan_chunk,
+            commands::approve_plan,
+            commands::revoke_plan_approval,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");
