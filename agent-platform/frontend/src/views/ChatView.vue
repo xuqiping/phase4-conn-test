@@ -90,9 +90,9 @@
               </div>
               <div class="message-bubble__content">
                 <div class="message-bubble__role">助手</div>
-                <div class="message-bubble__text">
-                  {{ chatStore.streamingContent }}<span class="chat-view__cursor" />
-                </div>
+                <!-- 9x#13：流式正文同步 markdown 渲染（与落库后 MessageBubble 一致） -->
+                <MarkdownContent :text="chatStore.streamingContent" />
+                <span class="chat-view__cursor" />
               </div>
             </div>
           </div>
@@ -103,6 +103,11 @@
           <!-- 5x 四轮 U6：停止生成（abort SSE；已生成部分保留，服务端取消钩子落库） -->
           <div v-if="chatStore.sending" class="chat-view__stop-row">
             <n-button size="tiny" ghost type="error" @click="chatStore.stopStreaming()">⏹ 停止生成</n-button>
+          </div>
+          <!-- 9x#11：排队指示（生成中发出的消息 FIFO 续发；可清空） -->
+          <div v-if="chatStore.messageQueue.length" class="chat-view__queue-row">
+            <span class="chat-view__queue-info">🕐 排队 {{ chatStore.messageQueue.length }} 条，当前回复完成后自动发送</span>
+            <n-button size="tiny" quaternary @click="chatStore.clearMessageQueue()">清空队列</n-button>
           </div>
           <!-- HUMAN_INPUT select 型：内联选项按钮（点选=当答案发送，后端拦截恢复执行）-->
           <div v-if="pendingSelect" class="chat-view__input-options">
@@ -205,7 +210,7 @@
                 <template #icon><n-icon :component="BookmarksOutline" /></template>
               </n-button>
             </n-badge>
-            <MemoryNotificationBadge />
+            <!-- 17x#3/#4：通知铃铛已上页顶 AppHeader（全局可达），聊天栏不再重复挂载 -->
           </template>
         </ChatInput>
       </template>
@@ -248,12 +253,12 @@ import type { ChatAttachmentRef } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 import SessionList from '@/components/chat/SessionList.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
+import MarkdownContent from '@/components/chat/MarkdownContent.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ModelSelector from '@/components/chat/ModelSelector.vue'
 import TargetSelector from '@/components/chat/TargetSelector.vue'
 import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
-import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
 import { useProjectGroupStore } from '@/stores/projectGroup'
 import { useBreakpoints } from '@/composables/useBreakpoints'
@@ -652,6 +657,18 @@ async function handleBatchDeleteSessions(ids: number[]) {
 /* 5x 四轮 U6：停止生成按钮行（流式/思考期间可见） */
 .chat-view__stop-row {
   padding: 0 20px 12px;
+}
+
+.chat-view__queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 12px;
+}
+
+.chat-view__queue-info {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
 .chat-view__cursor {

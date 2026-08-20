@@ -11,16 +11,28 @@
     <div class="message-bubble__content">
       <div class="message-bubble__role">
         <span>{{ message.role === 'USER' ? '你' : '助手' }}</span>
-        <!-- 5x 四轮 U5：用户/助手气泡各自独立复制按钮（复制正文，不含思考块） -->
-        <button
-          v-if="message.content"
-          class="message-bubble__copy"
-          :title="copied ? '已复制' : '复制全文'"
-          @click="copyContent"
-        >
-          <n-icon size="13" :component="copied ? CheckmarkOutline : CopyOutline" />
-          <span>{{ copied ? '已复制' : '复制' }}</span>
-        </button>
+        <span class="message-bubble__actions">
+          <!-- 5x 四轮 U5：用户/助手气泡各自独立复制按钮（复制正文，不含思考块） -->
+          <button
+            v-if="message.content"
+            class="message-bubble__copy"
+            :title="copied ? '已复制' : '复制全文'"
+            @click="copyContent"
+          >
+            <n-icon size="13" :component="copied ? CheckmarkOutline : CopyOutline" />
+            <span>{{ copied ? '已复制' : '复制' }}</span>
+          </button>
+          <!-- 9x#12：助手正文一键入资产库（文本资产，提示词/剧本类） -->
+          <button
+            v-if="message.role === 'ASSISTANT' && message.content"
+            class="message-bubble__copy"
+            title="存入资产库"
+            @click="showSaveAsset = true"
+          >
+            <n-icon size="13" :component="ArchiveOutline" />
+            <span>入库</span>
+          </button>
+        </span>
       </div>
       <!-- Thinking section -->
       <div v-if="thinkingText" class="message-bubble__thinking">
@@ -30,8 +42,9 @@
         </div>
         <div v-show="showThinking" class="message-bubble__thinking-body">{{ thinkingText }}</div>
       </div>
-      <!-- Content -->
-      <div class="message-bubble__text">{{ message.content }}</div>
+      <!-- Content：9x#13 助手正文 markdown 渲染；用户消息保持纯文本（用户输入原样展示） -->
+      <MarkdownContent v-if="message.role === 'ASSISTANT'" :text="message.content" />
+      <div v-else class="message-bubble__text">{{ message.content }}</div>
       <!-- 5x 四轮 U6：停止生成的部分回答标记 -->
       <div v-if="stoppedFlag" class="message-bubble__stopped">⏹ 已停止生成（上为部分回答）</div>
       <!-- 5x #7：收录确认点选（PENDING → 需要回答/不用了；已点选 → 静态状态标） -->
@@ -102,18 +115,26 @@
         </div>
       </div>
     </div>
+    <!-- 9x#12：对话结果入库弹窗 -->
+    <SaveChatToAssetDialog
+      v-model:show="showSaveAsset"
+      :content="message.content"
+      :default-name="defaultAssetName"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { NIcon, useMessage } from 'naive-ui'
-import { PersonOutline, SparklesOutline, CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
+import { PersonOutline, SparklesOutline, CopyOutline, CheckmarkOutline, ArchiveOutline } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
 import { knowledgeApi } from '@/api/knowledge'
 import { fetchFilePreview } from '@/api/file'
 import MessageFileCard from './MessageFileCard.vue'
+import MarkdownContent from './MarkdownContent.vue'
+import SaveChatToAssetDialog from './SaveChatToAssetDialog.vue'
 
 const props = defineProps<{
   message: ChatMessage
@@ -124,6 +145,13 @@ const emit = defineEmits<{
 }>()
 
 const showThinking = ref(true)
+
+/** 9x#12：入库弹窗开关 + 默认资产名（正文首行截 40 字）。 */
+const showSaveAsset = ref(false)
+const defaultAssetName = computed(() => {
+  const firstLine = (props.message.content || '').split('\n').map(s => s.trim()).find(s => s) || ''
+  return firstLine.slice(0, 40) || '对话产出'
+})
 
 /** 5x 四轮 U6：metadata.stopped → 部分回答标记（服务端 doOnCancel / 本地停止收尾都会写）。 */
 const stoppedFlag = computed(() => {
@@ -297,6 +325,12 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.message-bubble__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .message-bubble__copy {

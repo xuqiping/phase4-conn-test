@@ -21,7 +21,7 @@
     <div class="chat-input__row">
       <button
         class="chat-input__attach"
-        :disabled="sending || uploading"
+        :disabled="uploading"
         :title="`添加附件（≤${MAX_ATTACHMENTS} 个，单个 ≤50MB；上传后进入「文件记忆」）`"
         @click="fileInput?.click()"
       >
@@ -37,15 +37,14 @@
       <n-input
         v-model:value="text"
         type="textarea"
-        :placeholder="placeholder"
+        :placeholder="sending ? '生成中…现在发送将进入排队' : placeholder"
         :autosize="{ minRows: 1, maxRows: 4 }"
-        :disabled="sending"
         @keydown.enter.exact.prevent="handleSend"
       />
       <n-button
         type="primary"
-        :disabled="!text.trim() || sending"
-        :loading="sending"
+        :disabled="!text.trim()"
+        :title="sending ? '加入排队（当前回复完成后自动发送）' : '发送'"
         @click="handleSend"
       >
         <template #icon>
@@ -184,7 +183,8 @@ function removeAttachment(memoryId: number) {
 
 function handleSend() {
   const msg = text.value.trim()
-  if (!msg || props.sending) return
+  // 9x#11：生成中不再拦截——emit 后 store 入队，当前轮结束自动续发
+  if (!msg) return
   // 仅携带上传成功的附件（UPLOADING 中/失败占位不带）
   const refs: ChatAttachmentRef[] = attachments.value
     .filter(a => a.memoryId > 0 && a.fileId)

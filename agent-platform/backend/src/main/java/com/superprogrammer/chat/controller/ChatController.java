@@ -44,6 +44,7 @@ public class ChatController {
     private final ChatTargetService chatTargetService;
     private final MemoryAssetUploadService memoryAssetUploadService;
     private final MemoryAssetIngestService memoryAssetIngestService;
+    private final com.superprogrammer.chat.service.ChatConcurrencyGate chatConcurrencyGate;
 
     /** 聊天附件上传（V69 二期 P3，FR-201）：落盘 stored_files(CHAT) + 建文件记忆行（PROCESSING）。 */
     @PostMapping("/attachments")
@@ -202,6 +203,17 @@ public class ChatController {
                                        @Valid @RequestBody com.superprogrammer.chat.dto.InclusionConfirmRequest body) {
         Long userId = getCurrentUserId();
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        // 9x#11 并发闸：与发消息同粒度（收录确认 ANSWER 路径同样调 LLM 生成）
+        if (!chatConcurrencyGate.tryAcquire(userId, id)) {
+            try {
+                emitter.send(SseEmitter.event().data(
+                        com.superprogrammer.chat.dto.StreamEvent.error("上一条回复还在生成中，请稍候再试")));
+                emitter.send(SseEmitter.event().data(
+                        com.superprogrammer.chat.dto.StreamEvent.done()));
+                emitter.complete();
+            } catch (Exception ignored) {}
+            return emitter;
+        }
         SecurityContext securityContext = SecurityContextHolder.getContext();
         java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
         new Thread(() -> {
@@ -240,6 +252,7 @@ public class ChatController {
                     emitter.complete();
                 } catch (Exception ignored) {}
             } finally {
+                chatConcurrencyGate.release(userId, id);
                 SecurityContextHolder.clearContext();
                 com.superprogrammer.billing.context.BillingContext.clear();
                 MDC.clear();
@@ -250,6 +263,17 @@ public class ChatController {
 
     private SseEmitter doStream(Long userId, ChatRequest request) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+        // 9x#11 并发闸：同用户同会话已有生成中请求 → 明确拒答（前端队列正常路径不会撞，兜底多标签/脚本并发）
+        if (!chatConcurrencyGate.tryAcquire(userId, request.getSessionId())) {
+            try {
+                emitter.send(SseEmitter.event().data(
+                        com.superprogrammer.chat.dto.StreamEvent.error("上一条回复还在生成中，请稍候再发（新消息已在页面排队时会自动续发）")));
+                emitter.send(SseEmitter.event().data(
+                        com.superprogrammer.chat.dto.StreamEvent.done()));
+                emitter.complete();
+            } catch (Exception ignored) {}
+            return emitter;
+        }
         // 用户实测④：emitter 超时后连接已死——此时不得再走 sendMessage 同步重答（双倍计费+注定失败）
         AtomicBoolean emitterTimedOut = new AtomicBoolean(false);
         emitter.onTimeout(() -> emitterTimedOut.set(true));
@@ -316,6 +340,7 @@ public class ChatController {
                     } catch (Exception ignored) {}
                 }
             } finally {
+                chatConcurrencyGate.release(userId, request.getSessionId());
                 SecurityContextHolder.clearContext();
                 com.superprogrammer.billing.context.BillingContext.clear();
                 MDC.clear();

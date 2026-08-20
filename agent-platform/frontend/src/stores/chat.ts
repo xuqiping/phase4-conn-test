@@ -36,6 +36,33 @@ export const useChatStore = defineStore('chat', () => {
   let streamAbortController: AbortController | null = null
   const stoppingStream = ref(false)
 
+  // ============================================================
+  // 9x#11 聊天队列：生成中再发消息 → 排队，当前轮结束后 FIFO 自动续发。
+  // 此前 UI 仅靠 sending 禁用输入（store 无闸门），并发两条会互踩 streamAbortController/streamingContent。
+  // ============================================================
+  interface QueuedChatMessage {
+    content: string
+    ragEnabled?: boolean
+    webSearchEnabled?: boolean
+    attachments?: ChatAttachmentRef[]
+    kbIds?: number[]
+    projectGroupId?: number
+  }
+  const messageQueue = ref<QueuedChatMessage[]>([])
+
+  function clearMessageQueue() {
+    messageQueue.value = []
+  }
+
+  /** 一轮结束（DONE/ERROR/停止/REST 收尾）后自动续发下一条；300ms 缓冲等服务端落库/状态收敛。 */
+  function scheduleQueueDrain() {
+    window.setTimeout(() => {
+      if (sending.value || !messageQueue.value.length) return
+      const next = messageQueue.value.shift()!
+      void sendStreamingMessage(next.content, next.ragEnabled, next.webSearchEnabled, next.attachments, next.kbIds, next.projectGroupId)
+    }, 300)
+  }
+
   /**
    * 停止生成：abort 当前 SSE → reader.read() 抛 AbortError → sendStreamingMessage 的 abort 分支
    * 收尾（本地保留已生成部分 + 不走 REST 回退防双倍计费；服务端 doOnCancel 同步落库部分内容）。
@@ -62,6 +89,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingFileCards.value = null
     pendingInclusionConfirm.value = null
     sending.value = false
+    scheduleQueueDrain()
   }
 
   function appendAssistantMessage(content: string, metadata: string | null = null) {
@@ -115,6 +143,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function selectSession(sessionId: number | null) {
+    // 9x#11：切换/新建会话清空待发队列——队列项绑定当时会话上下文，切会话后续发会串会话
+    clearMessageQueue()
     currentSessionId.value = sessionId
     messages.value = []
     streamingContent.value = ''
@@ -204,11 +234,17 @@ export const useChatStore = defineStore('chat', () => {
       return chatRes
     } finally {
       sending.value = false
+      scheduleQueueDrain()
     }
   }
 
   // SSE streaming
   async function sendStreamingMessage(content: string, ragEnabled?: boolean, webSearchEnabled?: boolean, attachments?: ChatAttachmentRef[], kbIds?: number[], projectGroupId?: number) {
+    // 9x#11：生成中 → 入队尾，本轮 DONE/ERROR/停止后自动续发（原无闸门：互踩 streamAbortController/缓冲）
+    if (sending.value) {
+      messageQueue.value.push({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId })
+      return
+    }
     const attachmentFileIds = attachments?.map(a => a.fileId)
     sending.value = true
     streamingContent.value = ''
@@ -342,6 +378,7 @@ export const useChatStore = defineStore('chat', () => {
                   pendingInclusionConfirm.value = null
                   sending.value = false
                   await fetchSessions()
+                  scheduleQueueDrain()
                   break
                 case 'INPUT_REQUIRED':
                   pendingInput.value = evt
@@ -358,8 +395,15 @@ export const useChatStore = defineStore('chat', () => {
                   streamingContent.value = ''
                   streamingThinking.value = ''
                   sending.value = false
-                  appendAssistantError(evt.content)
+                  // 9x#11：后端并发闸拒答（上一轮收尾未完成的竞态）→ 队首重排等续发，不当错误展示
+                  if (typeof evt.content === 'string' && evt.content.includes('生成中，请稍候')) {
+                    messages.value.pop()
+                    messageQueue.value.unshift({ content, ragEnabled, webSearchEnabled, attachments, kbIds, projectGroupId })
+                  } else {
+                    appendAssistantError(evt.content)
+                  }
                   console.error('Stream error:', evt.content)
+                  scheduleQueueDrain()
                   break
               }
             } catch {
@@ -507,11 +551,13 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
       sending.value = false
+      scheduleQueueDrain()
     } catch {
       streamingContent.value = ''
       streamingThinking.value = ''
       sending.value = false
       appendAssistantError('确认失败，请稍后重试。')
+      scheduleQueueDrain()
     }
   }
 
@@ -711,6 +757,8 @@ export const useChatStore = defineStore('chat', () => {
     sendWSMessage,
     sendStreamingMessage,
     stopStreaming,
+    messageQueue,
+    clearMessageQueue,
     confirmInclusion,
     connectWS,
     disconnectWS,
