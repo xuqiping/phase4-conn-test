@@ -894,6 +894,113 @@ pub async fn summarize_diff(
     Ok(DiffSummaryDto::from_summary(summary, raw))
 }
 
+// ---------- 存档点列表与回滚（P05 S5 FR-037） ----------
+
+#[derive(Debug, Serialize)]
+pub struct CheckpointDto {
+    pub id: i64,
+    pub task_id: i64,
+    pub chunk_no: i64,
+    pub round_id: i64,
+    pub title: String,
+    pub status: String,
+    pub git_commit: String,
+    pub summary_plain: String,
+    pub created_at: String,
+}
+
+impl From<core_state::checkpoint::Checkpoint> for CheckpointDto {
+    fn from(cp: core_state::checkpoint::Checkpoint) -> Self {
+        Self {
+            id: cp.id,
+            task_id: cp.task_id,
+            chunk_no: cp.chunk_no.unwrap_or(0),
+            round_id: cp.round_id.unwrap_or(0),
+            title: cp.title.unwrap_or_default(),
+            status: cp.status.unwrap_or_default(),
+            git_commit: cp.git_commit.unwrap_or_default(),
+            summary_plain: cp.summary_plain,
+            created_at: cp.created_at,
+        }
+    }
+}
+
+/// 列出某项目的全部存档点（按 chunk 顺序）。
+#[tauri::command]
+pub fn list_checkpoints(
+    state: State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<Vec<CheckpointDto>> {
+    let rows = state
+        .db
+        .read(|c| checkpoint::list_by_project(c, project_id))?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// 回滚到指定 checkpoint：git reset --hard + 下游 tasks 重置为 pending。
+#[tauri::command]
+pub fn rollback_to_checkpoint(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    checkpoint_id: i64,
+) -> CmdResult<StateDto> {
+    let cp = state
+        .db
+        .read(|c| checkpoint::get(c, checkpoint_id))?
+        .ok_or_else(|| err("NOT_FOUND", "存档点不存在或已被移除"))?;
+    let chunk_no = cp
+        .chunk_no
+        .ok_or_else(|| err("STATE", "存档点缺少 chunk 信息"))?;
+    let round_id = cp
+        .round_id
+        .ok_or_else(|| err("STATE", "存档点缺少轮次信息"))?;
+    let commit = cp
+        .git_commit
+        .ok_or_else(|| err("STATE", "存档点没有 commit 哈希"))?;
+
+    let project_id: i64 = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT r.project_id FROM rounds r JOIN tasks t ON t.round_id = r.id WHERE t.id = ?1",
+                [cp.task_id],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
+    let path = project_path(&state.db, project_id)?;
+    let out = std::process::Command::new("git")
+        .args(["reset", "--hard", &commit])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| err("GIT", e.to_string()))?;
+    if !out.status.success() {
+        return Err(err("GIT", String::from_utf8_lossy(&out.stderr).to_string()));
+    }
+
+    state
+        .db
+        .write(|c| {
+            checkpoint::rollback_downstream(c, round_id, chunk_no)?;
+            Ok(())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let (machine, _) = load_machine(&state.db, project_id)?;
+    let dto = to_state_dto(
+        &machine,
+        Some(format!(
+            "已回滚到 checkpoint {}（commit {}）",
+            checkpoint_id,
+            &commit[..8.min(commit.len())]
+        )),
+    );
+    events::emit_state(&app, &dto);
+    Ok(dto)
+}
+
 // ---------- AGENTS.md 大白话表单（P04 S1 FR-008/AC-009） ----------
 
 /// 加载项目约定表单（无记录时返回默认模板）。

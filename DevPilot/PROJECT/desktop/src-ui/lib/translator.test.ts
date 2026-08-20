@@ -30,7 +30,7 @@ describe("translator（FR-036）", () => {
   });
 
   it("命中缓存不重复调用模型", async () => {
-    vi.mocked(chatComplete).mockResolvedValueOnce({ content: "  人话  " });
+    vi.mocked(chatComplete).mockResolvedValueOnce({ content: "  人话  ", cost_cents: 1, capped: false });
     const first = await translate("error: timeout");
     const second = await translate("error: timeout");
     expect(first).toBe("人话");
@@ -39,7 +39,7 @@ describe("translator（FR-036）", () => {
   });
 
   it("未命中缓存时走 cheap 模型并返回整理后内容", async () => {
-    vi.mocked(chatComplete).mockResolvedValueOnce({ content: "  这是人话  " });
+    vi.mocked(chatComplete).mockResolvedValueOnce({ content: "  这是人话  ", cost_cents: 1, capped: false });
     const out = await translate("Segmentation fault", "报错");
     expect(out).toBe("这是人话");
     expect(chatComplete).toHaveBeenCalledWith(

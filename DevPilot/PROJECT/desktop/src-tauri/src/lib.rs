@@ -44,6 +44,8 @@ pub fn run() {
             commands::delete_secret,
             commands::execute_build,
             commands::summarize_diff,
+            commands::list_checkpoints,
+            commands::rollback_to_checkpoint,
             commands::load_agent_config,
             commands::save_agent_config,
             commands::save_spec_cards,

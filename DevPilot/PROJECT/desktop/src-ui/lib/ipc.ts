@@ -82,6 +82,18 @@ export interface DiffSummaryDto {
   raw_diff: string;
 }
 
+export interface CheckpointDto {
+  id: number;
+  task_id: number;
+  chunk_no: number;
+  round_id: number;
+  title: string;
+  status: string;
+  git_commit: string;
+  summary_plain: string;
+  created_at: string;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -166,6 +178,10 @@ export const ipc = {
       accessToken,
       cloudBase,
     }),
+  listCheckpoints: (projectId: number) =>
+    invoke<CheckpointDto[]>("list_checkpoints", { projectId }),
+  rollbackToCheckpoint: (checkpointId: number) =>
+    invoke<StateDto>("rollback_to_checkpoint", { checkpointId }),
   runTask: (req: {
     projectId: number;
     taskId: number;
