@@ -452,9 +452,20 @@
               style="flex: 1"
             />
           </div>
+          <!-- 4x：反推可选大模型（null=管理员默认对话模型；存 node.data.reverseModel 随快照持久化） -->
+          <n-select
+            :value="(node.data.reverseModel as string) ?? null"
+            size="small"
+            clearable
+            filterable
+            placeholder="反推大模型：默认（管理员默认对话模型）"
+            :options="chatModelOptions"
+            style="margin-top: 6px"
+            @update:value="(v: string | null) => { setReverseModel(v); emit('data-changed') }"
+          />
           <div class="prop-panel__hint">
             帧数默认 12 上限 24；阈值默认 0.3（调低更易识别切镜）。仅勾「关键帧」不调大模型；
-            分镜/剧本按帧计费（≤{{ reverseMaxFrames ?? 12 }} 帧多模态 token）。
+            分镜/剧本按帧计费（≤{{ reverseMaxFrames ?? 12 }} 帧多模态 token，建议选带视觉的模型）。
           </div>
           <div class="prop-panel__row">
             <n-button
@@ -467,7 +478,8 @@
                 node,
                 modes: [...reverseModes],
                 maxFrames: reverseMaxFrames ?? undefined,
-                sceneThreshold: reverseThreshold ?? undefined
+                sceneThreshold: reverseThreshold ?? undefined,
+                model: (node.data.reverseModel as string) ?? undefined
               })"
             >
               开始反推
@@ -669,6 +681,17 @@
           placeholder="如：保留春节团圆情节"
         />
       </div>
+      <div class="prop-panel__field">
+        <label>转绘大模型（可选）</label>
+        <n-select
+          v-model:value="localizeModel"
+          size="small"
+          clearable
+          filterable
+          placeholder="默认（管理员默认对话模型）"
+          :options="chatModelOptions"
+        />
+      </div>
       <div class="prop-panel__hint">
         剧情、分镜数与顺序不变；只替换文化元素（餐具/服饰/建筑/招牌/节庆等）。改写产新剧本节点，附替换清单（changeLog）可核对。
       </div>
@@ -755,11 +778,13 @@ const emit = defineEmits<{
     modes: ReverseMode[]
     maxFrames?: number
     sceneThreshold?: number
+    /** 4x：指定反推用对话大模型（空=管理员默认）。 */
+    model?: string
   }): void
   /** 计划6：取消进行中的反推（AbortController；已落库帧文件保留，节点不产生）。 */
   (e: 'reverse-cancel'): void
   /** 计划6 本土化转绘：script/storyboard 节点文本 → localize → 新 script 节点（changeLog 存 data）。 */
-  (e: 'localize-script', payload: { node: CanvasNode; targetLocale: string; notes?: string }): void
+  (e: 'localize-script', payload: { node: CanvasNode; targetLocale: string; notes?: string; model?: string }): void
   /** S12：存入资产库（开 SaveToAssetDialog，L5）。 */
   (e: 'save-to-asset', node: CanvasNode): void
   /** S12：从库选择（开 AssetPicker，L6）。 */
@@ -794,17 +819,25 @@ const reverseModes = ref<ReverseMode[]>(['KEYFRAMES'])
 /** 帧数（4-24，空=后端默认 12）与场景阈值（0.1-0.9，空=后端默认 0.3）。 */
 const reverseMaxFrames = ref<number | null>(null)
 const reverseThreshold = ref<number | null>(null)
+/** 4x：反推模型写 node.data.reverseModel（随快照持久化，重进画布保持）。 */
+function setReverseModel(model: string | null) {
+  if (!props.node) return
+  ;(props.node.data as Record<string, unknown>).reverseModel = model ?? undefined
+}
 
 /** 转绘弹窗状态 + 发起节点（script 取 synopsis / storyboard 取 description 作输入）。 */
 const localizeOpen = ref(false)
 const localizeLocale = ref('')
 const localizeNotes = ref('')
+/** 4x：转绘大模型（弹窗一次性选择，默认空=管理员默认对话模型）。 */
+const localizeModel = ref<string | null>(null)
 const localizeSourceNode = ref<CanvasNode | null>(null)
 
 function openLocalize(node: CanvasNode) {
   localizeSourceNode.value = node
   localizeLocale.value = ''
   localizeNotes.value = ''
+  localizeModel.value = null
   localizeOpen.value = true
 }
 
@@ -813,7 +846,8 @@ function confirmLocalize() {
   emit('localize-script', {
     node: localizeSourceNode.value,
     targetLocale: localizeLocale.value.trim(),
-    notes: localizeNotes.value.trim() || undefined
+    notes: localizeNotes.value.trim() || undefined,
+    model: localizeModel.value ?? undefined
   })
   localizeOpen.value = false
 }

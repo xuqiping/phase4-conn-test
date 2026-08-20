@@ -321,6 +321,8 @@ export interface ReverseAnalyzeRequest {
   modes: ReverseMode[]
   sceneThreshold?: number
   maxFrames?: number
+  /** 指定反推用对话大模型（可空=管理员默认对话模型，可能非多模态——建议选视觉模型） */
+  model?: string
 }
 
 /** 反推分析响应：keyframes 恒有；storyboard/script 按请求 modes 带（未请求为 null）。 */
@@ -340,6 +342,8 @@ export interface LocalizeRequest {
   script: string
   targetLocale: string
   notes?: string
+  /** 指定转绘用对话大模型（可空=管理员默认对话模型） */
+  model?: string
 }
 
 export interface LocalizeChange extends Record<string, unknown> {

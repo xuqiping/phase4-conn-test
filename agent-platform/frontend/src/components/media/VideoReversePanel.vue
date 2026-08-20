@@ -49,6 +49,17 @@
         <n-input-number v-model:value="maxFrames" size="small" :min="4" :max="24" placeholder="帧数(4-24)" />
         <n-input-number v-model:value="sceneThreshold" size="small" :min="0.1" :max="0.9" :step="0.05" placeholder="阈值0.1-0.9" />
       </div>
+      <!-- 4x：反推可选大模型（默认=管理员默认对话模型，可能非多模态——建议选带视觉的模型） -->
+      <n-select
+        v-model:value="analyzeModel"
+        size="small"
+        clearable
+        filterable
+        placeholder="反推大模型：默认（管理员默认对话模型）"
+        :options="chatModelOptions"
+        :loading="modelsLoading"
+        style="margin-top: 8px"
+      />
       <div class="video-reverse__hint">
         帧数默认 12 上限 24；仅勾「关键帧」不调大模型，分镜/剧本按帧计费（≤{{ maxFrames ?? 12 }} 帧多模态 token）。
       </div>
@@ -112,6 +123,17 @@
         <n-input v-model:value="targetLocale" size="small" placeholder="目标国家/地区，如：美国 / 西方" style="flex: 1" />
         <n-input v-model:value="localizeNotes" size="small" placeholder="保留要求（可选），如：保留春节团圆情节" style="flex: 1" />
       </div>
+      <!-- 4x：转绘可选大模型（与反推独立选择，默认=管理员默认对话模型） -->
+      <n-select
+        v-model:value="localizeModel"
+        size="small"
+        clearable
+        filterable
+        placeholder="转绘大模型：默认（管理员默认对话模型）"
+        :options="chatModelOptions"
+        :loading="modelsLoading"
+        style="margin-top: 8px"
+      />
       <n-space>
         <n-button
           type="primary"
@@ -159,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NCheckbox, NCheckboxGroup, NDataTable, NIcon, NInput, NInputNumber,
   NRadio, NRadioButton, NRadioGroup, NSelect, NSpace, NTag, NUpload,
@@ -173,6 +195,7 @@ import { mediaApi } from '@/api/media'
 import type {
   LocalizeResult, MediaTaskVO, ReverseAnalyzeResult, ReverseMode, ReverseStoryboardShot
 } from '@/api/media'
+import { llmApi, type AvailableModel } from '@/api/llm'
 import { fetchFilePreview } from '@/api/file'
 
 const emit = defineEmits<{
@@ -256,6 +279,32 @@ async function handleUpload({ file, onFinish, onError }: UploadCustomRequestOpti
 const modes = ref<ReverseMode[]>(['KEYFRAMES'])
 const maxFrames = ref<number | null>(null)
 const sceneThreshold = ref<number | null>(null)
+/** 4x：反推/转绘可选大模型（null=管理员默认对话模型；chat 模型列表与画布 PropertyPanel 同源）。 */
+const analyzeModel = ref<string | null>(null)
+const localizeModel = ref<string | null>(null)
+const chatModels = ref<AvailableModel[]>([])
+const modelsLoading = ref(false)
+const chatModelOptions = computed(() => {
+  const grouped = new Map<string, { type: 'group'; label: string; key: string; children: { label: string; value: string }[] }>()
+  for (const m of chatModels.value) {
+    if (!grouped.has(m.providerName)) {
+      grouped.set(m.providerName, { type: 'group', label: m.providerName, key: m.providerName, children: [] })
+    }
+    grouped.get(m.providerName)!.children.push({ label: m.displayName, value: m.modelId })
+  }
+  return Array.from(grouped.values())
+})
+onMounted(async () => {
+  modelsLoading.value = true
+  try {
+    const { data } = await llmApi.listAvailableModels()
+    chatModels.value = data.data ?? []
+  } catch {
+    // 模型列表可选，失败静默（下拉空态不崩，仍可用默认模型）
+  } finally {
+    modelsLoading.value = false
+  }
+})
 const analyzing = ref(false)
 const abortController = ref<AbortController | null>(null)
 const result = ref<ReverseAnalyzeResult | null>(null)
@@ -279,7 +328,8 @@ async function runAnalyze() {
       fileId: sourceKind.value === 'upload' ? uploadedFileId.value : null,
       modes: [...modes.value],
       maxFrames: maxFrames.value ?? undefined,
-      sceneThreshold: sceneThreshold.value ?? undefined
+      sceneThreshold: sceneThreshold.value ?? undefined,
+      model: analyzeModel.value ?? undefined
     }, abortController.value.signal)
     result.value = data.data
     // 帧预览懒加载（鉴权 blob；失败留占位不阻断）
@@ -328,7 +378,8 @@ async function runLocalize() {
     const { data } = await mediaApi.reverseLocalize({
       script: scriptPretty.value,
       targetLocale: targetLocale.value.trim(),
-      notes: localizeNotes.value.trim() || undefined
+      notes: localizeNotes.value.trim() || undefined,
+      model: localizeModel.value ?? undefined
     })
     localized.value = data.data
     genScriptFrom.value = 'localized'

@@ -1738,6 +1738,7 @@ async function onReverseAnalyze(payload: {
   modes: ReverseMode[]
   maxFrames?: number
   sceneThreshold?: number
+  model?: string
 }) {
   if (!editingId.value || !payload.node) return
   const src = payload.node
@@ -1754,7 +1755,8 @@ async function onReverseAnalyze(payload: {
         fileId: srcFileId,
         modes: payload.modes,
         maxFrames: payload.maxFrames,
-        sceneThreshold: payload.sceneThreshold
+        sceneThreshold: payload.sceneThreshold,
+        model: payload.model
       },
       reverseAbort.signal
     )
@@ -1817,7 +1819,7 @@ function onReverseCancel() {
  * 新 script 节点连自原节点（synopsis=美化 JSON，changeLog/localizeWarning 存 data 供详情核对）。
  * warning 非空=场景数不一致：toast 提示但结果仍可用（spec §5.1 / plan L3）。
  */
-async function onLocalizeScript(payload: { node: CanvasNode; targetLocale: string; notes?: string }) {
+async function onLocalizeScript(payload: { node: CanvasNode; targetLocale: string; notes?: string; model?: string }) {
   if (!editingId.value || !payload.node) return
   const src = payload.node
   const key = src.type === 'storyboard' ? 'description' : 'synopsis'
@@ -1831,7 +1833,8 @@ async function onLocalizeScript(payload: { node: CanvasNode; targetLocale: strin
     const res = await mediaApi.reverseLocalize({
       script: scriptText,
       targetLocale: payload.targetLocale,
-      notes: payload.notes
+      notes: payload.notes,
+      model: payload.model
     })
     const r = res.data.data
     addDerivedNode('script', src, 280, 160, {
