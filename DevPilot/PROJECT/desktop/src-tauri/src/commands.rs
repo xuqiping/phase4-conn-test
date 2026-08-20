@@ -132,6 +132,26 @@ fn load_machine(
     Ok((machine, loaded.def))
 }
 
+/// 若指定门禁未过且当前阶段匹配，自动尝试过门禁（P04 S6 联动点）。
+fn auto_pass_gate(db: &Db, project_id: i64, gate: &str) -> CmdResult<()> {
+    let (mut machine, _) = load_machine(db, project_id)?;
+    if machine.machine().gates_passed().contains(gate) {
+        return Ok(());
+    }
+    machine
+        .pass_gate(gate)
+        .map_err(|e| err("STATE", e.to_string()))?;
+    Ok(())
+}
+
+/// 将当前机器状态快照推送给前端（门禁自动解锁后保持 UI 同步）。
+fn emit_current_state(db: &Db, app: &AppHandle, project_id: i64) -> CmdResult<()> {
+    let (machine, _) = load_machine(db, project_id)?;
+    let dto = to_state_dto(&machine, None);
+    events::emit_state(app, &dto);
+    Ok(())
+}
+
 fn to_state_dto(machine: &PersistentMachine, warning: Option<String>) -> StateDto {
     let m = machine.machine();
     let def = m.definition();
@@ -956,6 +976,7 @@ pub struct UpdateSpecCardReq {
 #[tauri::command]
 pub fn update_spec_card(
     state: State<'_, AppState>,
+    app: AppHandle,
     req: UpdateSpecCardReq,
 ) -> CmdResult<SpecCardDto> {
     let status = req.status.as_deref().and_then(parse_spec_status);
@@ -973,9 +994,20 @@ pub fn update_spec_card(
             core_state::spec_card::get(c, req.id)
         })
         .map_err(|e| err("DB", e.to_string()))?;
-    updated
+    let updated: SpecCardDto = updated
         .map(Into::into)
-        .ok_or_else(|| err("NOT_FOUND", "需求卡不存在"))
+        .ok_or_else(|| err("NOT_FOUND", "需求卡不存在"))?;
+
+    // S6：若全部需求卡已确认/跳过，自动解锁「进入计划」门禁。
+    let resolved = state
+        .db
+        .read(|c| core_state::spec_card::all_resolved(c, updated.project_id))
+        .map_err(|e| err("DB", e.to_string()))?;
+    if resolved {
+        auto_pass_gate(&state.db, updated.project_id, "requirement_confirm")?;
+        emit_current_state(&state.db, &app, updated.project_id)?;
+    }
+    Ok(updated)
 }
 
 // ---------- 施工计划 chunk 看板（P04 S5 FR-032/AC-035） ----------
@@ -1109,8 +1141,12 @@ pub fn update_plan_chunk(
 
 /// 审批计划：所有 draft chunk 变为 approved，并按顺序创建 tasks。
 #[tauri::command]
-pub fn approve_plan(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<PlanChunkDto>> {
-    state
+pub fn approve_plan(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<Vec<PlanChunkDto>> {
+    let rows = state
         .db
         .write(|c| {
             core_state::plan_chunk::approve_all(c, project_id)?;
@@ -1150,16 +1186,22 @@ pub fn approve_plan(state: State<'_, AppState>, project_id: i64) -> CmdResult<Ve
             Ok(chunks)
         })
         .map_err(|e| err("DB", e.to_string()))
-        .map(|rows| rows.into_iter().map(Into::into).collect())
+        .map(|rows| rows.into_iter().map(Into::into).collect())?;
+
+    // S6：审批通过后自动解锁「开工」门禁，并推送状态快照。
+    auto_pass_gate(&state.db, project_id, "kickoff")?;
+    emit_current_state(&state.db, &app, project_id)?;
+    Ok(rows)
 }
 
 /// 撤销审批：approved chunk 回到 draft，并删除对应 pending tasks。
 #[tauri::command]
 pub fn revoke_plan_approval(
     state: State<'_, AppState>,
+    app: AppHandle,
     project_id: i64,
 ) -> CmdResult<Vec<PlanChunkDto>> {
-    state
+    let rows = state
         .db
         .write(|c| {
             core_state::plan_chunk::revoke_approval(c, project_id)?;
@@ -1179,7 +1221,39 @@ pub fn revoke_plan_approval(
             core_state::plan_chunk::list(c, project_id)
         })
         .map_err(|e| err("DB", e.to_string()))
-        .map(|rows| rows.into_iter().map(Into::into).collect())
+        .map(|rows| rows.into_iter().map(Into::into).collect())?;
+
+    // S6：撤销审批后回退「开工」门禁，避免无 tasks 也能 transition 到 build。
+    auto_unpass_gate(&state.db, project_id, "kickoff")?;
+    emit_current_state(&state.db, &app, project_id)?;
+    Ok(rows)
+}
+
+/// 若指定门禁已记录在当前阶段，撤销它（撤销计划审批时回退「开工」门禁）。
+fn auto_unpass_gate(db: &Db, project_id: i64, gate: &str) -> CmdResult<()> {
+    db.write(|c| {
+        let row: Option<(String, String)> = c
+            .query_row(
+                "SELECT current_phase, gates_json FROM workflow_states WHERE project_id = ?1",
+                [project_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((phase, gates_json)) = row {
+            let mut gates: Vec<String> = serde_json::from_str(&gates_json).unwrap_or_default();
+            let before = gates.len();
+            gates.retain(|g| g != gate);
+            if gates.len() != before {
+                let new_json = serde_json::to_string(&gates).unwrap_or_else(|_| "[]".into());
+                c.execute(
+                    "UPDATE workflow_states SET gates_json = ?1, updated_at = datetime('now') WHERE project_id = ?2 AND current_phase = ?3",
+                    [new_json.as_str(), project_id.to_string().as_str(), phase.as_str()],
+                )?;
+            }
+        }
+        Ok(())
+    })
+    .map_err(|e| err("DB", e.to_string()))
 }
 
 fn latest_commit_hash(project_path: &str) -> Option<String> {
