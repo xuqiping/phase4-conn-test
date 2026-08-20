@@ -347,6 +347,128 @@ pub fn pass_gate(
     Ok(dto)
 }
 
+// ---------- P06 S1：验收门禁与发布入口（FR-040 / AC-044） ----------
+
+/// 从「建造」阶段进入「验收」阶段。
+/// L2/L3 项目必须已经通过 security 门禁（由 run_security_scan 解锁）；
+/// L0/L1 项目若门禁未过则自动放行（安全扫描为建议不拦截）。
+#[tauri::command]
+pub async fn enter_acceptance(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<StateDto> {
+    let (mut machine, _) = load_machine(&state.db, project_id)?;
+    if machine.machine().phase() != "build" {
+        return Err(err("STATE", "只有「建造」阶段才能进入验收"));
+    }
+
+    // 门禁已解锁：直接转移。
+    if machine.machine().can_transition("accept").is_ok() {
+        return transition_to(&state.db, &app, &mut machine, project_id, "accept").await;
+    }
+
+    // 门禁未解锁：按规模处理。
+    let scale: String = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT scale FROM projects WHERE id = ?1",
+                [project_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
+    if matches!(scale.as_str(), "L2" | "L3") {
+        return Err(err(
+            "GATE_BLOCKED",
+            "L2/L3 项目需先通过安全扫描，才能进入验收阶段",
+        ));
+    }
+
+    // L0/L1：security 门禁自动放行。
+    machine
+        .pass_gate("security")
+        .map_err(|e| err("STATE", e.to_string()))?;
+    transition_to(&state.db, &app, &mut machine, project_id, "accept").await
+}
+
+/// 从「验收」阶段请求发布到「部署」阶段。
+/// 只有全部验收项为 pass/na 时才允许通过 release 门禁。
+#[tauri::command]
+pub async fn request_release(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<StateDto> {
+    let (mut machine, _) = load_machine(&state.db, project_id)?;
+    if machine.machine().phase() != "accept" {
+        return Err(err("STATE", "只有「验收」阶段才能发布"));
+    }
+
+    // 检查是否存在发布目标阶段（L0/L1 无 deploy，直接提示无需发布）。
+    if machine.machine().gate_for("deploy").is_none()
+        && machine.machine().can_transition("deploy").is_err()
+    {
+        return Ok(to_state_dto(
+            &machine,
+            Some("当前项目规模无需发布阶段".into()),
+        ));
+    }
+
+    // 全部验收项通过才可发布。
+    let blocked: bool = state
+        .db
+        .read(|c| {
+            let count: i64 = c.query_row(
+                "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1 AND status NOT IN ('pass', 'na')",
+                [project_id],
+                |r| r.get(0),
+            )?;
+            Ok(count > 0)
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
+    if blocked {
+        return Err(err(
+            "RELEASE_BLOCKED",
+            "还有未通过/未验收的验收项，无法发布",
+        ));
+    }
+
+    machine
+        .pass_gate("release")
+        .map_err(|e| err("STATE", e.to_string()))?;
+    transition_to(&state.db, &app, &mut machine, project_id, "deploy").await
+}
+
+/// 内部辅助：执行状态转移并同步 projects.current_phase、推送状态快照。
+async fn transition_to(
+    db: &Db,
+    app: &AppHandle,
+    machine: &mut PersistentMachine,
+    project_id: i64,
+    to: &str,
+) -> CmdResult<StateDto> {
+    machine
+        .transition(to, "devpilot")
+        .map_err(|e| err("TRANSITION", e.to_string()))?;
+    let phase = machine.machine().phase().to_string();
+    db.write(|c| {
+        c.execute(
+            "UPDATE projects SET current_phase = ?1, updated_at = datetime('now') WHERE id = ?2",
+            (&phase, project_id),
+        )?;
+        Ok(())
+    })
+    .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+    let dto = to_state_dto(machine, None);
+    events::emit_state(app, &dto);
+    Ok(dto)
+}
+
 // ---------- P02 Step8：云端计费客户端半边（vault + 用量镜像） ----------
 
 /// refresh token 存 OS 凭据管理器（Windows 凭据管理器；绝不落明文文件）。

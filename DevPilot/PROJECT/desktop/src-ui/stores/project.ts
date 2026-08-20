@@ -22,6 +22,8 @@ interface ProjectState {
   select: (id: number) => Promise<void>;
   transition: (to: string) => Promise<void>;
   passGate: (gate: string) => Promise<void>;
+  enterAcceptance: () => Promise<void>;
+  requestRelease: () => Promise<void>;
 }
 
 /** 应用内核快照（导出供测试：归位策略是联动点 1 的测试对象） */
@@ -100,6 +102,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (id == null) return;
     try {
       applySnapshot(await ipc.passGate(id, gate));
+    } catch (e) {
+      set({ error: errMessage(e) });
+    }
+  },
+
+  enterAcceptance: async () => {
+    const id = get().currentId;
+    if (id == null) return;
+    try {
+      applySnapshot(await ipc.enterAcceptance(id));
+      set({ error: null });
+    } catch (e) {
+      set({ error: errMessage(e) });
+    }
+  },
+
+  requestRelease: async () => {
+    const id = get().currentId;
+    if (id == null) return;
+    try {
+      applySnapshot(await ipc.requestRelease(id));
+      set({ error: null });
     } catch (e) {
       set({ error: errMessage(e) });
     }

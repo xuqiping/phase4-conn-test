@@ -153,6 +153,10 @@ export const ipc = {
     invoke<StateDto>("transition", { projectId, to }),
   passGate: (projectId: number, gate: string) =>
     invoke<StateDto>("pass_gate", { projectId, gate }),
+  enterAcceptance: (projectId: number) =>
+    invoke<StateDto>("enter_acceptance", { projectId }),
+  requestRelease: (projectId: number) =>
+    invoke<StateDto>("request_release", { projectId }),
   readProjectFile: (projectId: number, relPath: string) =>
     invoke<string>("read_project_file", { projectId, relPath }),
   writeProjectFile: (projectId: number, relPath: string, content: string) =>

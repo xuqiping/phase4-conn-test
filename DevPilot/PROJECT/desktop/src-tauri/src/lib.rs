@@ -25,6 +25,8 @@ pub fn run() {
             commands::get_state,
             commands::transition,
             commands::pass_gate,
+            commands::enter_acceptance,
+            commands::request_release,
             commands::vault_save,
             commands::vault_load,
             commands::vault_clear,

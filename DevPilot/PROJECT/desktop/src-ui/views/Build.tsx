@@ -12,7 +12,7 @@ import { useUiStore } from "../stores/ui";
 export default function Build() {
   const projectId = useProjectStore((s) => s.currentId);
   const snapshot = useProjectStore((s) => s.snapshot);
-  const transition = useProjectStore((s) => s.transition);
+  const enterAcceptance = useProjectStore((s) => s.enterAcceptance);
   const plainMode = useUiStore((s) => s.plainMode);
   const togglePlainMode = useUiStore((s) => s.togglePlainMode);
 
@@ -106,7 +106,7 @@ export default function Build() {
         {allDone && (
           <button
             type="button"
-            onClick={() => void transition("accept")}
+            onClick={() => void enterAcceptance()}
             className="rounded-[9px] bg-gradient-to-br from-brand to-brand2 px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
           >
             进入验收
