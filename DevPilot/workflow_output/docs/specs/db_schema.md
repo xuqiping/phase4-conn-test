@@ -100,8 +100,9 @@ erDiagram
 | projects | id, name, path UNIQUE, scale(L0~L3), workflow_version, current_phase | 项目档案（FR-042/046） |
 | workflow_states | project_id, phase, gate_status JSON, updated_at | 状态机当前态（FR-029/048） |
 | rounds | id, project_id, seq, title, status, snapshot_tag | 迭代轮次（FR-047） |
-| tasks | id, round_id, chunk_no, title, status, source(local/cli/mcp/deeplink), tokens_est, tokens_actual | 任务/chunk（FR-021/027/028/041） |
-| checkpoints | id, task_id, git_commit, snapshot_path, summary_plain, created_at | 存档点（FR-037） |
+| tasks | id, round_id, chunk_no, title, status, source(local/cli/mcp/deeplink), tokens_est, tokens_actual, **instructions, generated_files_json, cost_cents, started_at, finished_at** | 任务/chunk（FR-021/027/028/041）；P05 增加实现指令、产出文件、成本、起止时间 |
+| checkpoints | id, task_id, git_commit, snapshot_path, summary_plain, **title, status**, created_at | 存档点（FR-037）；P05 增加标题与成功/失败状态 |
+| task_events | id, task_id, event_type, message, created_at | 任务事件流（FR-038），只增不改 |
 | artifacts | id, project_id, type(prd/plan/progress/userops...), path, version | 产物索引（FR-030~035） |
 | transition_history | id, project_id, from_phase, to_phase, gate, actor, created_at | 状态机转移历史，只增，可回放排查（FR-029 运维项） |
 | usage_mirror | id, user_id, kind(1扣费/2充值/3退款/4调整), model, amount_cents, idempotency_key UNIQUE, synced_at | Token 消耗本地镜像，幂等键防重放；与云端 token_ledger 对账（FR-041，P02 Step8 实建） |
@@ -124,6 +125,7 @@ erDiagram
 | L5__env_profiles.sql | env_profiles（P03 Step4 FR-005） |
 | L6__secrets.sql | secrets（P03 Step7 FR-012） |
 | L7__workflow_artifacts.sql | agent_configs / spec_cards / plan_chunks（P04 S0 FR-008/031/032） |
+| L8__build_runtime.sql | tasks 扩展字段 + task_events + checkpoints 增强（P05 S0 FR-038/048） |
 
 ## 3. 设计说明
 
