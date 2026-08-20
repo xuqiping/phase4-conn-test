@@ -64,11 +64,10 @@
         <n-button :loading="rerunning" :disabled="batchRunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
           <n-icon :component="RefreshOutline" /> 重跑全链
         </n-button>
-        <!-- 计划5 Step6：参与项目（组池计费）——随快照顶层持久化，运行时注入节点 data/媒体提交 -->
-        <ProjectGroupSelector
-          :model-value="projectGroupId"
-          @update:model-value="onSelectProjectGroup"
-        />
+        <!-- 7x 统一入口：选择已上移页顶 AppHeader；此处只显当前计费去向（随快照顶层持久化） -->
+        <n-tag v-if="projectGroupId != null" size="small" type="info" :bordered="false" title="节点运行/媒体生成计入组池；切换请用页顶「参与项目」选择器">
+          {{ pgStore.currentGroup?.name ?? `组#${projectGroupId}` }}
+        </n-tag>
         <n-button quaternary @click="showStoryboard = true" title="故事板：视频段时间线排列 + 拼接成片">
           <n-icon :component="FilmOutline" /> 故事板
         </n-button>
@@ -359,7 +358,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
-  NButton, NCard, NEmpty, NIcon, NInput, NModal, NPopover, NSpin, useDialog, useMessage
+  NButton, NCard, NEmpty, NIcon, NInput, NModal, NPopover, NSpin, NTag, useDialog, useMessage
 } from 'naive-ui'
 import {
   AddOutline, AppsOutline, ArrowBackOutline, SaveOutline, TrashOutline, RefreshOutline,
@@ -367,6 +366,7 @@ import {
   FilmOutline, CubeOutline, GitBranchOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import { canvasApi, fetchCanvasPreview, type CanvasNodeDTO, type CanvasVO, type CanvasVersionVO, type FrameMode, type ImageTransformOp } from '@/api/canvas'
 import { mediaApi, fetchVideoBlob, fetchMediaBlob } from '@/api/media'
 import type { AttachmentRef, ImageModelVO, ImageSubmitRequest, ReverseMode } from '@/api/media'
@@ -386,7 +386,6 @@ import StoryboardPanel from '@/components/canvas/StoryboardPanel.vue'
 import SaveToAssetDialog from '@/components/canvas/SaveToAssetDialog.vue'
 import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
-import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
@@ -424,13 +423,14 @@ const canvasLoaded = ref(false)
  * 而非用户逐个删除（HMR 子组件重挂载实测触发），自动保存丢弃。
  */
 let lastSavedNodeCount = 0
-/** 计划5 Step6：参与项目组（null=个人钱包；快照顶层持久化，运行时注入节点 data / 媒体提交）。 */
-const projectGroupId = ref<number | null>(null)
-
-function onSelectProjectGroup(v: number | null) {
-  projectGroupId.value = v
-  scheduleSave()
-}
+/** 7x 统一入口：参与项目改全局 store（页顶 AppHeader 唯一选择器）。null=个人钱包；
+ * 旧画布快照里的 projectGroupId 视为遗留选择，载入时一次性收养进 store。
+ * 切组后若正在编辑画布，调度保存让快照顶层计费去向跟上当前选择。 */
+const pgStore = useProjectGroupStore()
+const projectGroupId = computed(() => pgStore.groupId)
+watch(projectGroupId, () => {
+  if (canvasLoaded.value) scheduleSave()
+})
 const currentName = ref('')
 const boardRef = ref<InstanceType<typeof CanvasBoard> | null>(null)
 /** 当前选中节点（属性面板编辑目标；null=未选）。 */
@@ -2093,8 +2093,8 @@ async function loadCanvas(id: number) {
     editingId.value = c.id
     currentName.value = c.name
     const snap = parseSnapshot(c.snapshot)
-    // 计划5 Step6：恢复参与项目选择（老快照无字段 = 个人计费）
-    projectGroupId.value = snap.projectGroupId ?? null
+    // 7x 统一入口：老快照的计费去向一次性收养（store 已有选择则不覆盖——页顶为准）
+    pgStore.adoptLegacy(snap.projectGroupId ?? null)
     // B2：旧画布（C6 前）节点 label 可能空 → 头部显「未命名」。加载时按类型补默认名（uniqueLabel 去重），
     // 下次保存即持久化修复存量数据。
     const usedLabels = snap.nodes.map((n) => String(n.data.label ?? '')).filter(Boolean)
@@ -2331,7 +2331,8 @@ function onRestoreVersion(v: CanvasVersionVO) {
       try {
         const res = await canvasApi.restoreVersion(editingId.value!, v.id)
         const snap = parseSnapshot(res.data.data.snapshot)
-        projectGroupId.value = snap.projectGroupId ?? null
+        // 7x 统一入口：老快照的计费去向一次性收养（store 已有选择则不覆盖——页顶为准）
+        pgStore.adoptLegacy(snap.projectGroupId ?? null)
         await nextTick()
         boardRef.value?.loadSnapshot(snap) // loadSnapshot 清撤销栈=恢复即新时间线
         hydratePreviews(snap.nodes)

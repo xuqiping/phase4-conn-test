@@ -15,8 +15,16 @@
           :options="kbOptions"
           class="rag-ask__kb-select"
         />
-        <!-- 计划5 Step6：参与项目（组池计费）——ask 全链（query 向量化/重排/answer 生成）计入组池 -->
-        <ProjectGroupSelector v-model="projectGroupId" :disabled="asking" style="width: 170px" />
+        <!-- 计划5 Step6 → 7x 统一入口：选择已上移页顶 AppHeader；此处只显当前计费去向 -->
+        <n-tag
+          v-if="projectGroupId != null"
+          size="small"
+          type="info"
+          :bordered="false"
+          title="ask 全链（向量化/重排/生成）计入组池；切换请用页顶「参与项目」选择器"
+        >
+          {{ pgStore.currentGroup?.name ?? `组#${projectGroupId}` }}
+        </n-tag>
       </div>
       <n-input
         v-model:value="query"
@@ -64,18 +72,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, onUnmounted, watch } from 'vue'
+import { computed, onMounted, ref, onUnmounted } from 'vue'
 import { NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import { askStream, knowledgeApi, type RagCitation } from '@/api/knowledge'
-import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
-import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
+import { useProjectGroupStore } from '@/stores/projectGroup'
+import { getStorage, STORAGE_KEYS } from '@/utils/storage'
 
 const message = useMessage()
 
 const kbIds = ref<number[]>([])
-/** 计划5 Step6：参与项目（null=个人；localStorage 偏好，随 ask 请求携带）。 */
-const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.KB_ASK_PROJECT_GROUP_ID) ?? null)
-watch(projectGroupId, v => setStorage(STORAGE_KEYS.KB_ASK_PROJECT_GROUP_ID, v))
+/** 计划5 Step6 → 7x 统一入口：参与项目改全局 store（页顶 AppHeader 唯一选择器），
+ * 随 ask 请求携带；挂载时一次性收养旧入口遗留的 localStorage 选择。 */
+const pgStore = useProjectGroupStore()
+const projectGroupId = computed(() => pgStore.groupId)
+pgStore.adoptLegacy(getStorage<number | null>(STORAGE_KEYS.KB_ASK_PROJECT_GROUP_ID) ?? null)
 const kbOptions = ref<{ label: string; value: number }[]>([])
 const query = ref('')
 const answer = ref('')

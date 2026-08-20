@@ -14,9 +14,11 @@
                 @update:value="onModelChange"
               />
             </NFormItem>
-            <!-- 计划5 Step6：参与项目（组池计费）——预检组池/限额，结算入组池流水 -->
-            <NFormItem label="参与项目" class="form-item">
-              <ProjectGroupSelector v-model="projectGroupId" :disabled="submitting" style="width: 100%" />
+            <!-- 计划5 Step6 → 7x 统一入口：选择已上移页顶 AppHeader；此处只显当前计费去向 -->
+            <NFormItem v-if="projectGroupId != null" label="计费项目" class="form-item">
+              <NTag size="small" type="info" :bordered="false" title="预检组池/限额，结算入组池流水；切换请用页顶「参与项目」选择器">
+                {{ pgStore.currentGroup?.name ?? `组#${projectGroupId}` }}（组池计费）
+              </NTag>
             </NFormItem>
             <NAlert v-if="restoredOfflineModel" type="warning" :show-icon="false" class="form-item">
               历史模型 {{ restoredOfflineModel }} 已下线，仅可回看参数，不能直接重新提交。
@@ -295,8 +297,8 @@ import {
   type ImageSubmitRequest, type MediaTaskVO
 } from '@/api/media'
 import { fetchFilePreview } from '@/api/file'
-import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
-import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
+import { getStorage, STORAGE_KEYS } from '@/utils/storage'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import MediaLightbox from '@/components/media/MediaLightbox.vue'
 import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
@@ -451,9 +453,11 @@ const submitting = ref(false)
 const errorMsg = ref('')
 const canSubmit = computed(() => canGen.value && !!form.model && !!form.prompt?.trim())
 
-/** 计划5 Step6：参与项目（组池计费；localStorage 偏好随提交携带，null=个人钱包）。 */
-const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.IMAGE_GEN_PROJECT_GROUP_ID) ?? null)
-watch(projectGroupId, v => setStorage(STORAGE_KEYS.IMAGE_GEN_PROJECT_GROUP_ID, v))
+/** 计划5 Step6 → 7x 统一入口：参与项目改全局 store（页顶 AppHeader 唯一选择器），
+ * 随提交携带（null=个人钱包）；挂载时一次性收养旧入口遗留的 localStorage 选择。 */
+const pgStore = useProjectGroupStore()
+const projectGroupId = computed(() => pgStore.groupId)
+pgStore.adoptLegacy(getStorage<number | null>(STORAGE_KEYS.IMAGE_GEN_PROJECT_GROUP_ID) ?? null)
 
 function buildRequest(): ImageSubmitRequest {
   const req: ImageSubmitRequest = {

@@ -38,9 +38,11 @@
             </n-alert>
           </n-form-item>
 
-          <!-- 计划5 Step6：参与项目（组池计费）——预检组池/限额，结算入组池流水 -->
-          <n-form-item label="参与项目">
-            <ProjectGroupSelector v-model="projectGroupId" :disabled="submitting" style="width: 100%" />
+          <!-- 计划5 Step6 → 7x 统一入口：选择已上移页顶 AppHeader；此处只显当前计费去向 -->
+          <n-form-item v-if="projectGroupId != null" label="计费项目">
+            <n-tag size="small" type="info" :bordered="false" title="预检组池/限额，结算入组池流水；切换请用页顶「参与项目」选择器">
+              {{ pgStore.currentGroup?.name ?? `组#${projectGroupId}` }}（组池计费）
+            </n-tag>
           </n-form-item>
 
           <n-form-item label="提示词">
@@ -438,8 +440,8 @@ import {
   type MediaModelVO, type AttachmentKind, type AttachmentRef
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
-import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
-import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
+import { getStorage, STORAGE_KEYS } from '@/utils/storage'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import MediaLightbox from '@/components/media/MediaLightbox.vue'
 import HoverPreviewImage from '@/components/media/HoverPreviewImage.vue'
 import MediaTaskVideoPreview from '@/components/media/MediaTaskVideoPreview.vue'
@@ -918,9 +920,11 @@ function removeFrame(slot: 'first' | 'last') {
 
 // === 提交 ===
 const submitting = ref(false)
-/** 计划5 Step6：参与项目（组池计费；localStorage 偏好随提交携带，null=个人钱包）。 */
-const projectGroupId = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID) ?? null)
-watch(projectGroupId, v => setStorage(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID, v))
+/** 计划5 Step6 → 7x 统一入口：参与项目改全局 store（页顶 AppHeader 唯一选择器），
+ * 随提交携带（null=个人钱包）；挂载时一次性收养旧入口遗留的 localStorage 选择。 */
+const pgStore = useProjectGroupStore()
+const projectGroupId = computed(() => pgStore.groupId)
+pgStore.adoptLegacy(getStorage<number | null>(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID) ?? null)
 /** 提示词非空 + 无附件上传中 + 附件总数未超模型上限 */
 const canSubmit = computed(
   () => form.prompt.trim().length > 0

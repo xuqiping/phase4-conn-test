@@ -8,8 +8,31 @@
       <span class="app-header__page-title">{{ pageTitle }}</span>
     </div>
 
-    <!-- 右侧：搜索 + 主题切换 + 用户 -->
+    <!-- 右侧：参与项目 + 积分徽标 + 搜索 + 主题切换 + 用户 -->
     <div class="app-header__right">
+      <!-- 7x/17x：参与项目全局统一入口（五入口分散选择收拢于此）+ 个人/组池积分页顶展示。
+           null=个人钱包计费；选中后所有模型调用（对话/问答/生图/生视频/画布）消耗组池。 -->
+      <div class="app-header__project">
+        <ProjectGroupSelector :model-value="pgStore.groupId" @update:model-value="onSelectGroup" />
+        <n-tag
+          v-if="pgStore.groupId != null && pgStore.groupBalance != null"
+          size="small"
+          type="info"
+          :bordered="false"
+          title="当前项目组池余额"
+        >
+          组池 {{ fmtPoints(pgStore.groupBalance) }}
+        </n-tag>
+        <n-tag
+          v-if="pgStore.personalPoints != null"
+          size="small"
+          :bordered="false"
+          title="个人积分余额"
+        >
+          个人 {{ fmtPoints(pgStore.personalPoints) }}
+        </n-tag>
+      </div>
+
       <!-- 搜索框（占位） -->
       <n-input
         class="app-header__search"
@@ -54,9 +77,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NIcon, NInput, NTooltip, NDropdown, NAvatar } from 'naive-ui'
+import { NIcon, NInput, NTooltip, NDropdown, NAvatar, NTag } from 'naive-ui'
 import {
   MenuOutline,
   SearchOutline,
@@ -65,7 +88,9 @@ import {
   LogOutOutline
 } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
+import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 
 defineEmits<{
   toggleSidebar: []
@@ -74,8 +99,27 @@ defineEmits<{
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const pgStore = useProjectGroupStore()
 
 const showThemeSwitcher = ref(false)
+
+// 7x/17x：页顶统一入口初始化（组列表 + 个人钱包并行；失败静默降级为个人计费），
+// 路由切换轻刷新余额（跨页消耗后徽标跟上；单次一请求，无轮询）
+onMounted(() => { void pgStore.init() })
+watch(() => route.path, () => {
+  void pgStore.loadWallet()
+  void pgStore.loadGroups()
+})
+
+/** 全局切组（唯一写入口；单键持久化，所有入口即时生效）。 */
+function onSelectGroup(id: number | null) {
+  pgStore.setGroup(id)
+}
+
+/** 积分展示：去尾零（后端 DECIMAL 序列化 1000.00 → 1000）。 */
+function fmtPoints(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(n).replace(/\.?0+$/, '')
+}
 
 /** 页面标题（从路由meta获取） */
 const pageTitle = computed(() => (route.meta.title as string) || '多Agent智能体平台')
@@ -172,6 +216,13 @@ async function handleUserMenu(key: string) {
   gap: var(--spacing-3);
 }
 
+// 7x/17x：参与项目统一入口 + 积分徽标组
+.app-header__project {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
 .app-header__search {
   width: 200px;
 }
@@ -223,6 +274,11 @@ async function handleUserMenu(key: string) {
 
   // 搜索框固定 200px，移动端隐藏
   .app-header__search {
+    display: none;
+  }
+
+  // 参与项目选择器保留但积分徽标隐藏（窄屏省位）
+  .app-header__project .n-tag {
     display: none;
   }
 

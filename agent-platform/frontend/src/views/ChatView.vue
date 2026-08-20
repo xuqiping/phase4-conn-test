@@ -181,14 +181,15 @@
                 @update:value="onSelectKb"
               />
             </div>
-            <!-- 计划5 Step6：参与项目（组池计费/个人钱包切换），随每条消息携带 gid -->
-            <div class="chat-view__rag-toggle" title="参与项目：选组后本会话消耗计入组池（RAG 检索+生成），记忆召回/写入保持个人；个人（默认）= 个人钱包计费">
-              <span class="chat-view__rag-label">参与项目</span>
-              <ProjectGroupSelector
-                :model-value="projectGroupPref"
-                :disabled="chatStore.sending"
-                @update:model-value="onSelectProjectGroup"
-              />
+            <!-- 计划5 Step6 → 7x 统一入口：参与项目选择已上移页顶 AppHeader（全局单键控制）；
+                 此处只显当前计费去向（组池名/个人），随每条消息携带 gid -->
+            <div
+              v-if="projectGroupPref != null"
+              class="chat-view__rag-toggle"
+              title="参与项目：本会话消耗计入组池（RAG 检索+生成），记忆召回/写入保持个人；切换请用页顶「参与项目」选择器"
+            >
+              <span class="chat-view__rag-label">计费</span>
+              <n-tag size="small" type="info" :bordered="false">{{ pgStore.currentGroup?.name ?? `组#${projectGroupPref}` }}</n-tag>
             </div>
             <!-- 二期 P1（FR-006）：一期「写目标/读范围」手动控件已下线——
                  turns 纯个人域（写入恒个人流水账），召回范围由 F-6 新栈 scope popover 统一承载 -->
@@ -232,7 +233,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NSpin, NDrawer, NDrawerContent, NBadge, NSelect, useMessage } from 'naive-ui'
+import { NButton, NIcon, NSpin, NDrawer, NDrawerContent, NBadge, NSelect, NTag, useMessage } from 'naive-ui'
 import {
   AddOutline,
   TrashOutline,
@@ -254,7 +255,7 @@ import ProjectManagerModal from '@/components/chat/ProjectManagerModal.vue'
 import MemoryManagerPanel from '@/components/chat/MemoryManagerPanel.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 import MemoryRecallScopePopover from '@/components/memory/MemoryRecallScopePopover.vue'
-import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import { knowledgeApi } from '@/api/knowledge'
 
@@ -348,16 +349,14 @@ function onSelectKb(ids: number[]) {
 }
 
 /**
- * 计划5 Step6：参与项目（组池计费）。null=个人钱包（默认）；选组 → 本会话后续消息带
- * projectGroupId（RAG 检索段/生成均组池计费，记忆召回与写入保持个人——后端口径）。
- * 随 kbPref 模式：localStorage 偏好 + 每条消息携带（后端不持久化 gid 到会话列）。
+ * 计划5 Step6 → 7x 统一入口：参与项目改全局 store（AppHeader 页顶唯一选择器）。
+ * null=个人钱包（默认）；非空 → 本会话后续消息带 projectGroupId（RAG 检索段/生成均
+ * 组池计费，记忆召回与写入保持个人——后端口径）。
+ * 挂载时一次性收养旧入口遗留的 localStorage 选择（全局已有选择则不覆盖）。
  */
-const projectGroupPref = ref<number | null>(getStorage<number | null>(STORAGE_KEYS.CHAT_PROJECT_GROUP_ID) ?? null)
-
-function onSelectProjectGroup(v: number | null) {
-  projectGroupPref.value = v
-  setStorage(STORAGE_KEYS.CHAT_PROJECT_GROUP_ID, v)
-}
+const pgStore = useProjectGroupStore()
+const projectGroupPref = computed(() => pgStore.groupId)
+pgStore.adoptLegacy(getStorage<number | null>(STORAGE_KEYS.CHAT_PROJECT_GROUP_ID) ?? null)
 
 async function loadKbOptions() {
   try {
