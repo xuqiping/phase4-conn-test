@@ -281,6 +281,11 @@ export const ipc = {
         description: req.description,
       },
     }),
+  runSmokeCheck: (projectId: number, baseUrl?: string) =>
+    invoke<{ passed: number; failed: number; skipped: number; warning: string | null }>(
+      "run_smoke_check",
+      { projectId, baseUrl: baseUrl ?? null },
+    ),
   runTask: (req: {
     projectId: number;
     taskId: number;

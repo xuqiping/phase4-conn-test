@@ -659,6 +659,61 @@ pub fn create_fix_task(
     Ok(task_id)
 }
 
+// ---------- P06 S8：Playwright 冒烟执行（FR-052 / AC-058） ----------
+
+#[derive(Debug, Serialize)]
+pub struct SmokeRunDto {
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub warning: Option<String>,
+}
+
+/// 对 auto 验收项跑一次 Playwright 冒烟：结果回写 acceptance_items 并推送状态。
+#[tauri::command]
+pub async fn run_smoke_check(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+    base_url: Option<String>,
+) -> CmdResult<SmokeRunDto> {
+    let path = project_path(&state.db, project_id)?;
+    let url = base_url.unwrap_or_else(|| "http://localhost:5173".into());
+    let run_id = state
+        .db
+        .write(|c| core_state::acceptance_run::start(c, project_id, "smoke"))
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let outcome = core_orchestrator::acceptance::smoke::run_smoke(
+        &state.db,
+        project_id,
+        std::path::Path::new(&path),
+        &url,
+    )
+    .await
+    .map_err(|e| err("DB", e.to_string()))?;
+
+    let summary = serde_json::json!({
+        "passed": outcome.passed,
+        "failed": outcome.failed,
+        "skipped": outcome.skipped,
+    })
+    .to_string();
+    let status = if outcome.failed == 0 { "pass" } else { "fail" };
+    state
+        .db
+        .write(|c| core_state::acceptance_run::finish(c, run_id, status, &summary))
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    emit_current_state(&state.db, &app, project_id)?;
+    Ok(SmokeRunDto {
+        passed: outcome.passed,
+        failed: outcome.failed,
+        skipped: outcome.skipped,
+        warning: outcome.warning,
+    })
+}
+
 // ---------- P06 S2/S3：验收清单解析与持久化（FR-033 / AC-036） ----------
 
 #[derive(Debug, Serialize)]
