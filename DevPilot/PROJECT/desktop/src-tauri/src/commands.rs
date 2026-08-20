@@ -599,6 +599,63 @@ pub struct CreateFixTaskReq {
     pub description: String,
 }
 
+/// 库内插入 fix task 并回写 acceptance_items.fix_task_id（S10 复用）。
+fn insert_fix_task(
+    c: &rusqlite::Connection,
+    project_id: i64,
+    acceptance_item_id: Option<i64>,
+    selector: &str,
+    description: &str,
+) -> core_state::DbResult<i64> {
+    let instructions = format!(
+        "修复验收发现的问题。\n元素定位：{selector}\n问题描述：{description}\n完成后请自测该交互。"
+    );
+    // 取当前 open 轮次；没有则自动开一轮（与 execute_build 同语义）。
+    let round_id: Option<i64> = c
+        .query_row(
+            "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
+            [project_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let round_id = match round_id {
+        Some(id) => id,
+        None => {
+            c.execute(
+                "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, (SELECT COALESCE(MAX(seq),0)+1 FROM rounds WHERE project_id = ?1), '验收修复轮', 'open')",
+                [project_id],
+            )?;
+            c.last_insert_rowid()
+        }
+    };
+    c.execute(
+        "INSERT INTO tasks (round_id, chunk_no, title, status, source, instructions)
+         VALUES (?1, (SELECT COALESCE(MAX(chunk_no),0)+1 FROM tasks WHERE round_id = ?1), ?2, 'pending', 'fix', ?3)",
+        (round_id, format!("修复：{description}"), &instructions),
+    )?;
+    let task_id = c.last_insert_rowid();
+    if let Some(item_id) = acceptance_item_id {
+        acceptance_checklist::set_fix_task(c, item_id, Some(task_id))?;
+    }
+    Ok(task_id)
+}
+
+/// 校验 fix task 输入长度（plan 安全清单）。
+fn validate_fix_input<'a>(
+    selector: &'a str,
+    description: &'a str,
+) -> CmdResult<(&'a str, &'a str)> {
+    let selector = selector.trim();
+    let description = description.trim();
+    if selector.is_empty() || selector.len() > 200 {
+        return Err(err("BAD_INPUT", "元素定位信息需为 1~200 个字符"));
+    }
+    if description.is_empty() || description.len() > 1000 {
+        return Err(err("BAD_INPUT", "问题描述需为 1~1000 个字符"));
+    }
+    Ok((selector, description))
+}
+
 /// 圈选元素后创建修复任务：当前 open round 末尾插入 source='fix' 的 pending task，
 /// 并回写 acceptance_items.fix_task_id（同一 item 只关联最新一个 fix_task）。
 #[tauri::command]
@@ -607,54 +664,19 @@ pub fn create_fix_task(
     app: AppHandle,
     req: CreateFixTaskReq,
 ) -> CmdResult<i64> {
-    // 安全清单：长度限制，防超长注入与 UI 撑爆。
-    let selector = req.selector.trim();
-    let description = req.description.trim();
-    if selector.is_empty() || selector.len() > 200 {
-        return Err(err("BAD_INPUT", "元素定位信息需为 1~200 个字符"));
-    }
-    if description.is_empty() || description.len() > 1000 {
-        return Err(err("BAD_INPUT", "问题描述需为 1~1000 个字符"));
-    }
-
-    let instructions = format!(
-        "修复验收发现的问题。\n元素定位：{selector}\n问题描述：{description}\n完成后请自测该交互。"
-    );
-
+    let (selector, description) = validate_fix_input(&req.selector, &req.description)?;
     let task_id = state
         .db
         .write(|c| {
-            // 取当前 open 轮次；没有则自动开一轮（与 execute_build 同语义）。
-            let round_id: Option<i64> = c
-                .query_row(
-                    "SELECT id FROM rounds WHERE project_id = ?1 AND status = 'open' ORDER BY seq DESC LIMIT 1",
-                    [req.project_id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let round_id = match round_id {
-                Some(id) => id,
-                None => {
-                    c.execute(
-                        "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, (SELECT COALESCE(MAX(seq),0)+1 FROM rounds WHERE project_id = ?1), '验收修复轮', 'open')",
-                        [req.project_id],
-                    )?;
-                    c.last_insert_rowid()
-                }
-            };
-            c.execute(
-                "INSERT INTO tasks (round_id, chunk_no, title, status, source, instructions)
-                 VALUES (?1, (SELECT COALESCE(MAX(chunk_no),0)+1 FROM tasks WHERE round_id = ?1), ?2, 'pending', 'fix', ?3)",
-                (round_id, format!("修复：{description}"), &instructions),
-            )?;
-            let task_id = c.last_insert_rowid();
-            if let Some(item_id) = req.acceptance_item_id {
-                acceptance_checklist::set_fix_task(c, item_id, Some(task_id))?;
-            }
-            Ok(task_id)
+            insert_fix_task(
+                c,
+                req.project_id,
+                req.acceptance_item_id,
+                selector,
+                description,
+            )
         })
-        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
-
+        .map_err(|e| err("DB", e.to_string()))?;
     emit_current_state(&state.db, &app, req.project_id)?;
     Ok(task_id)
 }
@@ -809,9 +831,14 @@ pub struct UpdateAcceptanceItemReq {
     pub status: String,
     #[serde(default)]
     pub evidence_path: Option<String>,
+    /// S10：status=fail 时可携带圈选信息，同步创建修复任务。
+    #[serde(default)]
+    pub selector: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
-/// 更新验收项状态与证据路径。
+/// 更新验收项状态与证据路径；fail 时可顺手生成修复任务（S10 联动）。
 #[tauri::command]
 pub fn update_acceptance_item(
     state: State<'_, AppState>,
@@ -821,6 +848,14 @@ pub fn update_acceptance_item(
     if !matches!(req.status.as_str(), "pending" | "pass" | "fail" | "na") {
         return Err(err("BAD_INPUT", "状态需为 pending/pass/fail/na 之一"));
     }
+    let fix_input = match (req.status.as_str(), &req.selector, &req.description) {
+        ("fail", Some(sel), Some(desc)) => {
+            let (s, d) = validate_fix_input(sel, desc)?;
+            Some((s.to_string(), d.to_string()))
+        }
+        _ => None,
+    };
+
     let updated = state
         .db
         .write(|c| {
@@ -830,6 +865,21 @@ pub fn update_acceptance_item(
                 &req.status,
                 req.evidence_path.as_deref(),
             )?;
+            if let Some((sel, desc)) = &fix_input {
+                insert_fix_task(
+                    c,
+                    /* project 由 item 推导 */
+                    {
+                        let item = acceptance_checklist::get(c, req.id)?.ok_or_else(|| {
+                            core_state::DbError::Io(std::io::Error::other("验收项不存在"))
+                        })?;
+                        item.project_id
+                    },
+                    Some(req.id),
+                    sel,
+                    desc,
+                )?;
+            }
             acceptance_checklist::get(c, req.id)?
                 .ok_or_else(|| core_state::DbError::Io(std::io::Error::other("验收项不存在")))
         })
@@ -1607,12 +1657,27 @@ fn current_open_round_id(
 }
 
 /// 列出某项目任务；不传 round_id 时默认取当前 open round。
+/// S10 联动：source='fix' 的任务已完成 → 关联验收项自动重置 pending（等待重新验收）。
 #[tauri::command]
 pub fn list_tasks(
     state: State<'_, AppState>,
     project_id: i64,
     round_id: Option<i64>,
 ) -> CmdResult<Vec<TaskDto>> {
+    state
+        .db
+        .write(|c| {
+            c.execute(
+                "UPDATE acceptance_items SET status = 'pending'
+                 WHERE status != 'pending' AND fix_task_id IN (
+                   SELECT id FROM tasks WHERE source = 'fix' AND status = 'done'
+                 ) AND project_id = ?1",
+                [project_id],
+            )?;
+            Ok(())
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
     let rid = match round_id {
         Some(r) => r,
         None => state
@@ -2257,5 +2322,120 @@ mod tests {
             .unwrap();
         assert!(item.fix_task_id.is_some());
         assert!(task_id > 0);
+    }
+
+    #[test]
+    fn s10_done_fix_task_resets_item_to_pending() {
+        // S10 联动：fix 任务 done → 关联验收项从 pass/fail 回到 pending。
+        let db = Db::open_in_memory().unwrap();
+        let pid = project_fixture(&db);
+        db.write(|c| {
+            core_state::acceptance_checklist::regenerate(
+                c,
+                pid,
+                &[core_state::acceptance_checklist::NewAcceptanceItem {
+                    source_file: "t.md".into(),
+                    tc_id: "TC-01".into(),
+                    title: "登录可用".into(),
+                    steps: "步骤".into(),
+                    expected: "预期".into(),
+                    method: "manual".into(),
+                    sort_order: 0,
+                }],
+            )?;
+            c.execute(
+                "INSERT INTO rounds (project_id, seq, title, status) VALUES (?1, 1, '轮', 'open')",
+                [pid],
+            )?;
+            let fix_id = insert_fix_task(c, pid, None, "坐标(1,2)", "按钮没反应")?;
+            let item_id = core_state::acceptance_checklist::list(c, pid)?[0].id;
+            core_state::acceptance_checklist::set_fix_task(c, item_id, Some(fix_id))?;
+            // 先验收通过，再完成修复任务 → 应回 pending
+            core_state::acceptance_checklist::update_status(c, item_id, "pass", None)?;
+            c.execute("UPDATE tasks SET status = 'done' WHERE id = ?1", [fix_id])?;
+            Ok(())
+        })
+        .unwrap();
+
+        db.write(|c| {
+            c.execute(
+                "UPDATE acceptance_items SET status = 'pending'
+                 WHERE status != 'pending' AND fix_task_id IN (
+                   SELECT id FROM tasks WHERE source = 'fix' AND status = 'done')
+                 AND project_id = ?1",
+                [pid],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        // 注意：Db 的锁不可重入，嵌套 db.read 会死锁——先取 id 再查详情。
+        let item_id = db
+            .read(|c| core_state::acceptance_checklist::list(c, pid))
+            .unwrap()[0]
+            .id;
+        let item = db
+            .read(|c| core_state::acceptance_checklist::get(c, item_id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.status, "pending");
+    }
+
+    #[test]
+    fn s10_release_blocked_when_item_not_passed() {
+        // S10：存在非 pass/na 项时发布必须被拒（SQL 口径与 request_release 相同）。
+        let db = Db::open_in_memory().unwrap();
+        let pid = project_fixture(&db);
+        db.write(|c| {
+            core_state::acceptance_checklist::regenerate(
+                c,
+                pid,
+                &[
+                    core_state::acceptance_checklist::NewAcceptanceItem {
+                        source_file: "t.md".into(),
+                        tc_id: "TC-01".into(),
+                        title: "A".into(),
+                        steps: "s".into(),
+                        expected: "e".into(),
+                        method: "manual".into(),
+                        sort_order: 0,
+                    },
+                    core_state::acceptance_checklist::NewAcceptanceItem {
+                        source_file: "t.md".into(),
+                        tc_id: "TC-02".into(),
+                        title: "B".into(),
+                        steps: "s".into(),
+                        expected: "e".into(),
+                        method: "manual".into(),
+                        sort_order: 1,
+                    },
+                ],
+            )
+        })
+        .unwrap();
+        let blocked = |db: &Db| {
+            db.read(|c| {
+                let n: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1 AND status NOT IN ('pass','na')",
+                    [pid],
+                    |r| r.get(0),
+                )?;
+                Ok(n > 0)
+            })
+            .unwrap()
+        };
+        assert!(blocked(&db), "全 pending 时必须拦截");
+        let ids = db
+            .read(|c| core_state::acceptance_checklist::list(c, pid))
+            .unwrap()
+            .into_iter()
+            .map(|i| i.id)
+            .collect::<Vec<_>>();
+        db.write(|c| {
+            core_state::acceptance_checklist::update_status(c, ids[0], "pass", None)?;
+            core_state::acceptance_checklist::update_status(c, ids[1], "na", None)?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(!blocked(&db), "pass + na 时放行");
     }
 }
