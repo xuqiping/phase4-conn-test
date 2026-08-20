@@ -43,6 +43,7 @@ pub fn run() {
             commands::load_secret,
             commands::delete_secret,
             commands::execute_build,
+            commands::summarize_diff,
             commands::load_agent_config,
             commands::save_agent_config,
             commands::save_spec_cards,

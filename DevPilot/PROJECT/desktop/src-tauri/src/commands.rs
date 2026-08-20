@@ -1,8 +1,10 @@
 //! IPC commands：前端操作状态机的唯一入口（单一真相源在 Rust，plan 坑点表）。
 //! 错误上抛只带大白话 message + 分类 code，不含路径/堆栈（plan 安全清单）。
 
+use core_orchestrator::diff_summarizer::{self, DiffSummary};
 use core_orchestrator::task_scheduler::{HttpLlmClient, RunResult, Scheduler};
 use core_state::agent_config::AgentConfigFields;
+use core_state::checkpoint;
 use core_state::machine::loader;
 use core_state::machine::{PersistentMachine, TransitionError};
 use core_state::task_event::{self, TaskEvent};
@@ -42,6 +44,16 @@ impl From<TransitionError> for CmdError {
 impl From<core_state::DbError> for CmdError {
     fn from(e: core_state::DbError) -> Self {
         err("DB", e.to_string())
+    }
+}
+
+impl From<diff_summarizer::SummarizerError> for CmdError {
+    fn from(e: diff_summarizer::SummarizerError) -> Self {
+        match e {
+            diff_summarizer::SummarizerError::Git(msg) => err("GIT", msg),
+            diff_summarizer::SummarizerError::Llm(msg) => err("LLM", msg),
+            diff_summarizer::SummarizerError::Parse(msg) => err("PARSE", msg),
+        }
     }
 }
 
@@ -818,6 +830,68 @@ pub async fn execute_build(
     let dto = to_state_dto(&machine, warning);
     events::emit_state(&app, &dto);
     Ok(dto)
+}
+
+// ---------- diff 大白话摘要（P05 S3 FR-013） ----------
+
+#[derive(Debug, Serialize)]
+pub struct DiffSummaryDto {
+    pub what_changed: String,
+    pub why: String,
+    pub impact: String,
+    pub risk: String,
+    pub files: Vec<String>,
+    pub truncated: bool,
+    pub raw_diff: String,
+}
+
+impl DiffSummaryDto {
+    fn from_summary(s: DiffSummary, raw_diff: String) -> Self {
+        Self {
+            what_changed: s.what_changed,
+            why: s.why,
+            impact: s.impact,
+            risk: s.risk,
+            files: s.files,
+            truncated: s.truncated,
+            raw_diff,
+        }
+    }
+}
+
+/// 为某任务的存档点生成 diff 大白话摘要；结果写回 checkpoints.summary_plain。
+#[tauri::command]
+pub async fn summarize_diff(
+    state: State<'_, AppState>,
+    project_id: i64,
+    task_id: i64,
+    access_token: String,
+    cloud_base: Option<String>,
+) -> CmdResult<DiffSummaryDto> {
+    let cp = state
+        .db
+        .read(|c| checkpoint::get_by_task(c, task_id))?
+        .ok_or_else(|| err("NOT_FOUND", "该任务暂无存档点"))?;
+    let commit = cp
+        .git_commit
+        .ok_or_else(|| err("NOT_FOUND", "存档点没有 commit 哈希"))?;
+    let path = project_path(&state.db, project_id)?;
+    let base = cloud_base.unwrap_or_else(|| "http://127.0.0.1:3000/api/v1".into());
+    let llm = HttpLlmClient::new(base, access_token);
+    let (summary, raw) =
+        diff_summarizer::summarize(std::path::Path::new(&path), &commit, &llm).await?;
+
+    let summary_json =
+        serde_json::to_string(&summary).map_err(|e| err("SERIALIZE", e.to_string()))?;
+    state
+        .db
+        .write(|c| {
+            checkpoint::update_summary(c, task_id, &summary_json)?;
+            Ok(())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    Ok(DiffSummaryDto::from_summary(summary, raw))
 }
 
 // ---------- AGENTS.md 大白话表单（P04 S1 FR-008/AC-009） ----------

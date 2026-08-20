@@ -72,6 +72,16 @@ export interface TaskEventDto {
   created_at?: string;
 }
 
+export interface DiffSummaryDto {
+  what_changed: string;
+  why: string;
+  impact: string;
+  risk: string;
+  files: string[];
+  truncated: boolean;
+  raw_diff: string;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -144,6 +154,18 @@ export const ipc = {
     cloudBase?: string,
   ) =>
     invoke<StateDto>("execute_build", { projectId, accessToken, cloudBase }),
+  summarizeDiff: (
+    projectId: number,
+    taskId: number,
+    accessToken: string,
+    cloudBase?: string,
+  ) =>
+    invoke<DiffSummaryDto>("summarize_diff", {
+      projectId,
+      taskId,
+      accessToken,
+      cloudBase,
+    }),
   runTask: (req: {
     projectId: number;
     taskId: number;

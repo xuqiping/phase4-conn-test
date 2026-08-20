@@ -3,6 +3,7 @@
 
 pub mod agent_config;
 pub mod approval;
+pub mod checkpoint;
 pub mod db;
 pub mod env_profile;
 pub mod machine;
