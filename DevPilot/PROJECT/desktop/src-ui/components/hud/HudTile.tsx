@@ -9,7 +9,7 @@ export default function HudTile({
   label: string;
   value: string;
   unit?: string;
-  hint: string;
+  hint: React.ReactNode;
   tone?: "brand" | "success" | "amber" | "coral";
 }) {
   const glow = {
