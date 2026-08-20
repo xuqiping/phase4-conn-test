@@ -114,6 +114,9 @@ erDiagram
 | agent_configs | id, project_id UNIQUE, fields_json | 项目约定大白话字段；AGENTS.md 的渲染源（FR-008，P04 S0） |
 | spec_cards | id, project_id, title, detail, ac_json, status, sort_order | 需求确认卡片；status ∈ pending/confirmed/skipped（FR-031，P04 S0） |
 | plan_chunks | id, project_id, title, goal, estimated_tokens, dependencies_json, status, sort_order | 施工计划 chunk；status ∈ draft/approved/running/done（FR-032，P04 S0） |
+| acceptance_items | id, project_id, source_file, tc_id, title, steps, expected, method(auto/manual), status(pending/pass/fail/na), evidence_path, fix_task_id, sort_order | 验收清单项（FR-033，P06 S0） |
+| acceptance_runs | id, project_id, kind(checklist/smoke/security), status, started_at, finished_at, summary_json | 验收/冒烟/安全扫描运行记录，只增不改（FR-033/040/052，P06 S0） |
+| security_scans | id, project_id, status(pass/fail/partial), findings_json, started_at, finished_at | 安全扫描结果（FR-040，P06 S0） |
 
 ### 本地迁移版本清单
 | 版本 | 内容 |
@@ -126,6 +129,7 @@ erDiagram
 | L6__secrets.sql | secrets（P03 Step7 FR-012） |
 | L7__workflow_artifacts.sql | agent_configs / spec_cards / plan_chunks（P04 S0 FR-008/031/032） |
 | L8__build_runtime.sql | tasks 扩展字段 + task_events + checkpoints 增强（P05 S0 FR-038/048） |
+| L9__acceptance_security.sql | acceptance_items + acceptance_runs + security_scans（P06 S0 FR-033/040/052） |
 
 ## 3. 设计说明
 

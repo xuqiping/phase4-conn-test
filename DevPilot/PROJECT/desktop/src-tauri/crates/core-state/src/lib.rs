@@ -67,7 +67,8 @@ mod tests {
                 "L5".to_string(),
                 "L6".to_string(),
                 "L7".to_string(),
-                "L8".to_string()
+                "L8".to_string(),
+                "L9".to_string()
             ]
         );
     }

@@ -43,6 +43,10 @@ const MIGRATIONS: &[Migration] = &[
         version: "L8",
         sql: include_str!("../../migrations/L8__build_runtime.sql"),
     },
+    Migration {
+        version: "L9",
+        sql: include_str!("../../migrations/L9__acceptance_security.sql"),
+    },
 ];
 
 /// 应用所有未执行的迁移。重复调用安全（幂等）。
