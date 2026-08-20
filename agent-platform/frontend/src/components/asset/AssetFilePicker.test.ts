@@ -51,8 +51,10 @@ describe('AssetFilePicker（2x#4 公共池来源）', () => {
     )
     vi.mocked(publicPoolApi.list).mockResolvedValue(
       response({ code: 200, message: 'ok', data: [
-        pubProject(11, '开放图库', { mediaTypes: '["图片","视频"]' }),
-        pubProject(12, '仅视频库', { mediaTypes: '["视频"]' }),
+        // 2x 五轮：mediaTypes 用后端真实形状（序列化 List<MediaTypeDef> 对象数组，
+        // 旧 fixture 纯字符串数组=假绿，掩盖 includes 恒 false 滤光全部项目的真 bug）
+        pubProject(11, '开放图库', { mediaTypes: '[{"key":"图片","category":"IMAGE"},{"key":"视频","category":"VIDEO"}]' }),
+        pubProject(12, '仅视频库', { mediaTypes: '[{"key":"视频","category":"VIDEO"}]' }),
         pubProject(13, '待审批库', { usable: false, publicAccessMode: 'APPROVAL_REQUIRED', myRequestStatus: 'PENDING' })
       ] })
     )

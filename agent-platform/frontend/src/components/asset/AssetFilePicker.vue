@@ -157,13 +157,26 @@ const selectedIds = ref<number[]>([])
 /** 确认中（逐个 get 取 fileId，按钮 loading）。 */
 const resolving = ref(false)
 
-/** 公共池项目可用性：解析 mediaTypes jsonb 判断项目含当前类型（解析失败视为不过滤）。 */
+/**
+ * 公共池项目可用性：解析 mediaTypes jsonb 判断项目含当前类型（解析失败视为不过滤）。
+ * 2x 五轮复报修复：后端存的是序列化 List<MediaTypeDef> 对象数组
+ * `[{"key":"图片","category":"IMAGE"}]`（AssetProjectService 建项目时写入），
+ * 旧实现 arr.includes('图片') 拿字符串比对对象恒 false → 全部公共项目被滤光。
+ * 兼容两种形状：对象取 .key（现网），字符串本身（防将来改回纯字符串）。
+ */
 function publicProjectMatchesType(p: PublicProjectSummaryVO): boolean {
   if (!p.mediaTypes) return true
   try {
     const arr = JSON.parse(p.mediaTypes) as unknown
     if (!Array.isArray(arr) || arr.length === 0) return true
-    return arr.includes(props.mediaType)
+    return arr.some((it) => {
+      if (typeof it === 'string') return it === props.mediaType
+      if (it && typeof it === 'object') {
+        const key = (it as { key?: unknown }).key
+        return key === props.mediaType
+      }
+      return false
+    })
   } catch {
     return true
   }
