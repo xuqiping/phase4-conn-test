@@ -88,3 +88,50 @@ export async function cloud<T>(method: string, path: string, body?: unknown): Pr
     }
   }
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatCompleteOptions {
+  model?: string;
+  messages: ChatMessage[];
+  nonce?: string;
+  taskId?: string;
+}
+
+export interface ChatCompleteResult {
+  content: string;
+  cost_cents: number;
+  capped: boolean;
+}
+
+function randomNonce(length = 16): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return out;
+}
+
+/** 非流式完成：走 /gateway/complete，自动带 access/401 刷新/402 拦截 */
+export async function chatComplete(
+  options: ChatCompleteOptions,
+): Promise<ChatCompleteResult> {
+  const model =
+    options.model ?? localStorage.getItem("devpilot_chat_model") ?? "claude-sonnet-4";
+  return cloud<ChatCompleteResult>("POST", "/gateway/complete", {
+    model,
+    messages: options.messages,
+    nonce: options.nonce ?? randomNonce(),
+    task_id: options.taskId,
+  });
+}
+
+/** 订阅内核状态推送（事件名对齐 events.rs）；返回取消订阅函数 */
+export async function onState(cb: (dto: import("./ipc").StateDto) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<import("./ipc").StateDto>("kernel://state", (e) => cb(e.payload));
+}

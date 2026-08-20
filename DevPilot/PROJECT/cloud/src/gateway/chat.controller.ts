@@ -5,6 +5,7 @@ import { Response } from "express";
 import { IsArray, IsOptional, IsString, MinLength, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 import { CurrentUser } from "../auth/jwt.guard";
+import { R } from "../common/http.filter";
 import { ProviderRegistry } from "./providers";
 import { MeterService } from "./meter.service";
 import { UpstreamError } from "./provider.interface";
@@ -106,5 +107,38 @@ export class ChatController {
         console.error(`[chat-error] user=${userId} task=${dto.nonce}`, e);
       }
     }
+  }
+
+  /** 非流式完成：内部仍走 chatStream，收集后一次性返回 JSON（供 generator / 脚本调用）。 */
+  @Post("complete")
+  @HttpCode(200)
+  async complete(
+    @CurrentUser() userId: number,
+    @Body() dto: ChatDto,
+  ): Promise<{ code: number; msg: string; data: { content: string; cost_cents: number; capped: boolean } }> {
+    const inputTokens = dto.messages.reduce((n, m) => n + Math.ceil(m.content.length / 2), 0);
+    await this.meter.precheck(userId, dto.model, inputTokens);
+    const chunks = this.providers.resolve().chatStream({
+      model: dto.model,
+      messages: dto.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    let text = "";
+    let usage: { input_tokens: number; output_tokens: number } | null = null;
+    for await (const c of chunks) {
+      if (c.type === "delta" && c.text) {
+        text += c.text;
+      } else if (c.type === "usage" && c.usage) {
+        usage = c.usage;
+      }
+    }
+    if (!usage) usage = { input_tokens: inputTokens, output_tokens: 0 };
+    const settled = await this.meter.settle({
+      userId,
+      nonce: dto.nonce,
+      taskId: dto.task_id ?? dto.nonce,
+      model: dto.model,
+      usage,
+    });
+    return R({ content: text, cost_cents: settled.cost_cents, capped: settled.capped });
   }
 }
