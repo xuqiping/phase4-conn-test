@@ -3,6 +3,7 @@
 
 pub mod acceptance;
 pub mod diff_summarizer;
+pub mod security_scanner;
 pub mod task_scheduler;
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。

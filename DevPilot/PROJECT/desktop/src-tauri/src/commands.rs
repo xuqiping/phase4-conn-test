@@ -471,6 +471,122 @@ async fn transition_to(
     Ok(dto)
 }
 
+// ---------- P06 S4/S5：安全扫描引擎与门禁（FR-040 / AC-044） ----------
+
+#[derive(Debug, Serialize)]
+pub struct SecurityFindingDto {
+    pub severity: String,
+    pub category: String,
+    pub message: String,
+    pub file: String,
+    pub line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    pub suggestion: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SecurityScanDto {
+    pub status: String,
+    pub findings: Vec<SecurityFindingDto>,
+    pub gate_passed: bool,
+    pub warning: Option<String>,
+}
+
+impl From<core_orchestrator::security_scanner::Finding> for SecurityFindingDto {
+    fn from(f: core_orchestrator::security_scanner::Finding) -> Self {
+        Self {
+            severity: f.severity,
+            category: f.category,
+            message: f.message,
+            file: f.file,
+            line: f.line,
+            snippet: f.snippet,
+            suggestion: f.suggestion,
+        }
+    }
+}
+
+fn scan_status_to_string(status: &core_orchestrator::security_scanner::ScanStatus) -> String {
+    use core_orchestrator::security_scanner::ScanStatus;
+    match status {
+        ScanStatus::Pass => "pass".into(),
+        ScanStatus::Fail => "fail".into(),
+        ScanStatus::Partial => "partial".into(),
+    }
+}
+
+/// 对指定项目执行本地安全扫描。
+/// - 结果写入 security_scans 与 acceptance_runs（kind='security'）历史。
+/// - L2/L3 扫描通过时自动解锁 security 门禁；扫描失败仍允许进入验收（前端再点一次进入验收会提示）。
+#[tauri::command]
+pub async fn run_security_scan(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+) -> CmdResult<SecurityScanDto> {
+    let path = project_path(&state.db, project_id)?;
+    let scale: String = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT scale FROM projects WHERE id = ?1",
+                [project_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
+
+    let run_id = state
+        .db
+        .write(|c| core_state::acceptance_run::start(c, project_id, "security"))
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    let scanner = core_orchestrator::security_scanner::SecurityScanner::new(&path, &scale);
+    let report = tokio::task::block_in_place(move || scanner.scan());
+
+    let findings: Vec<SecurityFindingDto> = report.findings.into_iter().map(Into::into).collect();
+    let findings_json =
+        serde_json::to_string(&findings).map_err(|e| err("SERIALIZE", e.to_string()))?;
+    let status_str = scan_status_to_string(&report.status);
+
+    let summary = serde_json::json!({
+        "status": status_str,
+        "finding_count": findings.len(),
+    })
+    .to_string();
+
+    state
+        .db
+        .write(|c| {
+            core_state::security_scan::insert(c, project_id, &status_str, &findings_json)?;
+            core_state::acceptance_run::finish(c, run_id, &status_str, &summary)?;
+            Ok(())
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+
+    // L2/L3 通过时自动解锁 security 门禁，保持状态机同步。
+    let mut gate_passed = false;
+    let mut warning = None;
+    if matches!(scale.as_str(), "L2" | "L3") && status_str == "pass" {
+        if let Err(e) = auto_pass_gate(&state.db, project_id, "security") {
+            warning = Some(format!("扫描通过，但解锁门禁失败：{}", e.message));
+        } else {
+            gate_passed = true;
+        }
+    }
+
+    emit_current_state(&state.db, &app, project_id)?;
+
+    Ok(SecurityScanDto {
+        status: status_str.clone(),
+        findings,
+        gate_passed,
+        warning,
+    })
+}
+
 // ---------- P06 S2/S3：验收清单解析与持久化（FR-033 / AC-036） ----------
 
 #[derive(Debug, Serialize)]

@@ -2,6 +2,7 @@
 //! 对应 FR-029/046/047/048。Step 4 落 SQLite 存储层（`db` 模块），Step 6 落状态机引擎（`machine` 模块）。
 
 pub mod acceptance_checklist;
+pub mod acceptance_run;
 pub mod agent_config;
 pub mod approval;
 pub mod checkpoint;
@@ -10,6 +11,7 @@ pub mod env_profile;
 pub mod machine;
 pub mod plan_chunk;
 pub mod secrets;
+pub mod security_scan;
 pub mod spec_card;
 pub mod task_event;
 

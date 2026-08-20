@@ -130,6 +130,23 @@ export interface AcceptanceItemDto {
   sort_order: number;
 }
 
+export interface SecurityFindingDto {
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  category: string;
+  message: string;
+  file: string;
+  line: number;
+  snippet?: string;
+  suggestion: string;
+}
+
+export interface SecurityScanDto {
+  status: "pass" | "fail" | "partial";
+  findings: SecurityFindingDto[];
+  gate_passed: boolean;
+  warning: string | null;
+}
+
 /** 内核错误（CmdError 序列化形态） */
 export interface CmdError {
   code: string;
@@ -248,6 +265,8 @@ export const ipc = {
     patch: { status?: AcceptanceItemDto["status"]; evidence_path?: string },
   ) =>
     invoke<AcceptanceItemDto>("update_acceptance_item", { id, ...patch }),
+  runSecurityScan: (projectId: number) =>
+    invoke<SecurityScanDto>("run_security_scan", { projectId }),
   runTask: (req: {
     projectId: number;
     taskId: number;

@@ -27,6 +27,7 @@ pub fn run() {
             commands::pass_gate,
             commands::enter_acceptance,
             commands::request_release,
+            commands::run_security_scan,
             commands::get_acceptance_checklist,
             commands::regenerate_acceptance_checklist,
             commands::update_acceptance_item,
