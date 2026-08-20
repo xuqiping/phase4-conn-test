@@ -1,5 +1,7 @@
 //! core-orchestrator：chunk→任务编排、subagent 分派、产物生成器（PRD/plan/AGENTS.md）。
-//! 对应 FR-003/030~035。当前为 Step 2 骨架占位——P05 填实现。
+//! 对应 FR-003/030~035/013/015/036/037/038。
+
+pub mod task_scheduler;
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
 pub const CRATE_NAME: &str = "core-orchestrator";

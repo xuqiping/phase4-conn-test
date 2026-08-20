@@ -6,3 +6,16 @@ rust-version = "1.77"
 description = "chunk→任务编排、subagent 分派、产物生成器（PRD/plan/AGENTS.md）（FR-003/030~035）"
 
 [dependencies]
+async-trait = "0.1"
+core-exec = { path = "../core-exec" }
+core-sandbox = { path = "../core-sandbox" }
+core-state = { path = "../core-state" }
+reqwest = { version = "0.12", features = ["json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt"] }
+
+[dev-dependencies]
+tempfile = "3"

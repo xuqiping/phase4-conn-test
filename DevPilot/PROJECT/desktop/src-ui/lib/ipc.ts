@@ -138,6 +138,25 @@ export const ipc = {
     invoke<PlanChunkDto[]>("approve_plan", { projectId }),
   revokePlanApproval: (projectId: number) =>
     invoke<PlanChunkDto[]>("revoke_plan_approval", { projectId }),
+  executeBuild: (
+    projectId: number,
+    accessToken: string,
+    cloudBase?: string,
+  ) =>
+    invoke<StateDto>("execute_build", { projectId, accessToken, cloudBase }),
+  runTask: (req: {
+    projectId: number;
+    taskId: number;
+    title: string;
+    instructions: string;
+    files: { path: string; content: string }[];
+  }) =>
+    invoke<{
+      success: boolean;
+      phase: string;
+      diff_summary: string;
+      cost_cents: number;
+    }>("run_task", { req: { ...req, project_id: req.projectId, task_id: req.taskId } }),
 };
 
 /** 订阅任务事件流（事件名对齐 events.rs）；返回取消订阅函数 */
