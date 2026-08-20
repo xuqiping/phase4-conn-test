@@ -31,4 +31,5 @@
 - 2026-08-20 前存量库：`media:gen`/`canvas:write`/`asset:write`/`media:edit` 四权限码建表时只授了 admin → 普通用户进图片/视频/画布 403。
 - [V136__user_role_media_canvas_grant.sql](../../backend/src/main/resources/db/migration/V136__user_role_media_canvas_grant.sql)：一次性补授 `user` 角色（`ON CONFLICT DO NOTHING` 幂等）；新库自动生效。
 - 数据归属不受影响：画布/资产仍只能访问自己创建的（服务层 loadOwned 咽喉控制），授予的只是「能用自己的」。
+- [V137__user_role_project_group_grant.sql](../../backend/src/main/resources/db/migration/V137__user_role_project_group_grant.sql)：补授 `project-group:manage`（V134 只授 admin → 普通用户 `/api/project-groups/mine` 403，页顶「参与项目」选择器恒空，2026-08-20 冒烟实测发现）。越权防线不动：组长级资金/成员操作另有 service 层 `requireOwner` 二层校验（只能操作自己是组长的组）。
 
