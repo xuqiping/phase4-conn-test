@@ -4,12 +4,70 @@
     <div v-if="!selected" class="pg-view__list">
       <div class="pg-view__header">
         <h2 class="pg-view__title">项目组</h2>
-        <NButton type="primary" :loading="creating" @click="showCreate = true">
-          <template #icon><NIcon :component="AddOutline" /></template>
-          新建项目组
-        </NButton>
+        <div class="pg-view__header-actions">
+          <NButton :tertiary="!poolMode" :type="poolMode ? 'primary' : 'default'" @click="togglePoolMode">
+            {{ poolMode ? '返回我的组' : '公共池' }}
+          </NButton>
+          <NButton type="primary" :loading="creating" @click="showCreate = true">
+            <template #icon><NIcon :component="AddOutline" /></template>
+            新建项目组
+          </NButton>
+        </div>
       </div>
-      <NSpin :show="loading">
+
+      <!-- 17x#3：我的待处理邀请 -->
+      <div v-if="!poolMode && myInvites.length" class="pg-notice">
+        <div class="pg-notice__title">📨 我的邀请（{{ myInvites.length }}）</div>
+        <div v-for="inv in myInvites" :key="inv.id" class="pg-notice__row">
+          <span>
+            「{{ inv.inviterName || `#${inv.inviterUserId}` }}」邀请你加入
+            <b>{{ inv.groupName || `项目组#${inv.groupId}` }}</b>
+          </span>
+          <NButton size="tiny" type="primary" @click="answerInvite(inv, true)">同意加入</NButton>
+          <NButton size="tiny" quaternary @click="answerInvite(inv, false)">拒绝</NButton>
+        </div>
+      </div>
+
+      <!-- 17x#4：我的入组申请（非 PENDING 也展示状态，PENDING 可取消） -->
+      <div v-if="!poolMode && myJoinRequests.length" class="pg-notice">
+        <div class="pg-notice__title">📋 我的入组申请</div>
+        <div v-for="r in myJoinRequests" :key="r.id" class="pg-notice__row">
+          <span>
+            <b>{{ r.groupName || `项目组#${r.groupId}` }}</b>
+            <NTag size="tiny" :bordered="false" style="margin-left: 6px"
+              :type="r.status === 'APPROVED' ? 'success' : r.status === 'PENDING' ? 'warning' : 'default'">
+              {{ JOIN_STATUS_LABEL[r.status] ?? r.status }}
+            </NTag>
+          </span>
+          <NButton v-if="r.status === 'PENDING'" size="tiny" quaternary @click="cancelMyJoin(r)">取消申请</NButton>
+        </div>
+      </div>
+
+      <!-- 17x#4：公共池浏览 -->
+      <template v-if="poolMode">
+        <NSpin :show="loadingPool">
+          <NEmpty v-if="!poolItems.length" description="公共池暂无招募中的项目组" />
+          <div v-else class="pg-view__grid">
+            <div v-for="g in poolItems" :key="g.id" class="pg-card pg-card--pool">
+              <div class="pg-card__head">
+                <span class="pg-card__name" :title="g.name">{{ g.name }}</span>
+                <NTag size="small" type="success" :bordered="false">招募中</NTag>
+              </div>
+              <div v-if="g.description" class="pg-card__desc" :title="g.description">{{ g.description }}</div>
+              <div class="pg-card__meta">组长 {{ g.ownerUsername ?? '-' }} · {{ g.memberCount }} 成员</div>
+              <div class="pg-card__foot">
+                <NTag v-if="g.alreadyMember" size="small" type="primary" :bordered="false">已加入</NTag>
+                <template v-else-if="g.myRequestStatus === 'PENDING'">
+                  <NTag size="small" type="warning" :bordered="false">待审批</NTag>
+                </template>
+                <NButton v-else size="small" type="primary" @click="openApply(g)">申请加入</NButton>
+              </div>
+            </div>
+          </div>
+        </NSpin>
+      </template>
+
+      <NSpin v-else :show="loading">
         <NEmpty v-if="!groups.length" description="还没有项目组。组长可建组、划拨积分，成员消耗入组池。" />
         <div v-else class="pg-view__grid">
           <div v-for="g in groups" :key="g.id" class="pg-card" @click="openGroup(g)">
@@ -64,9 +122,9 @@
           <NTabPane name="members" tab="成员">
             <div class="pg-members">
               <div class="pg-members__toolbar">
-                <NButton size="small" type="primary" @click="openAddMember">加成员</NButton>
+                <NButton size="small" type="primary" @click="openAddMember">邀请成员</NButton>
                 <span class="pg-members__hint">
-                  限额=成员累计消耗上限（空=不限）；调低不追溯，只约束后续消耗
+                  17x#3：邀请制——对方在「项目组→我的邀请」同意后才入组。限额=成员累计消耗上限（空=不限）
                 </span>
               </div>
               <NDataTable
@@ -77,6 +135,17 @@
                 :row-key="(r: ProjectGroupMemberVO) => r.userId"
                 :max-height="420"
               />
+              <!-- 17x#3：邀请管理（PENDING 可取消） -->
+              <div v-if="invites.length" class="pg-invites">
+                <div class="pg-invites__title">待同意邀请（{{ invites.length }}）</div>
+                <div v-for="inv in invites" :key="inv.id" class="pg-invites__row">
+                  <span>{{ inv.inviteeName || `#${inv.inviteeUserId}` }}</span>
+                  <span class="pg-invites__meta">
+                    限额 {{ inv.quotaLimitPoints == null ? '不限' : fmt(inv.quotaLimitPoints) }} · {{ fmtTime(inv.createdAt) }}
+                  </span>
+                  <NButton size="tiny" quaternary type="error" @click="cancelInvite(inv)">取消邀请</NButton>
+                </div>
+              </div>
             </div>
           </NTabPane>
           <NTabPane name="ledger" tab="组池流水">
@@ -89,6 +158,69 @@
               :pagination="ledgerPagination"
               :max-height="420"
             />
+          </NTabPane>
+          <!-- 17x#4：入组审批（公共池申请） -->
+          <NTabPane name="approvals" tab="入组审批">
+            <div class="pg-approvals">
+              <NEmpty v-if="!joinRequests.length" description="暂无入组申请（组推入公共池后，全平台用户可申请加入）" />
+              <div v-for="r in joinRequests" :key="r.id" class="pg-approvals__row">
+                <div class="pg-approvals__main">
+                  <span class="pg-approvals__user">{{ r.username || `#${r.userId}` }}</span>
+                  <span v-if="r.message" class="pg-approvals__msg" :title="r.message">{{ r.message }}</span>
+                  <span class="pg-approvals__time">{{ fmtTime(r.createdAt) }}</span>
+                </div>
+                <template v-if="r.status === 'PENDING'">
+                  <NButton size="tiny" type="primary" @click="decideJoin(r, true)">通过</NButton>
+                  <NButton size="tiny" quaternary type="error" @click="decideJoin(r, false)">拒绝</NButton>
+                </template>
+                <NTag v-else size="small" :bordered="false"
+                  :type="r.status === 'APPROVED' ? 'success' : 'default'">
+                  {{ JOIN_STATUS_LABEL[r.status] ?? r.status }}
+                </NTag>
+              </div>
+            </div>
+          </NTabPane>
+          <!-- 17x#2/#4：组设置（产出可见性 + 公共池招募） -->
+          <NTabPane name="settings" tab="设置">
+            <div class="pg-settings">
+              <div class="pg-settings__section">
+                <div class="pg-settings__label">成员产出可见性（谁能看到组内产出记录与图片/视频产物）</div>
+                <NRadioGroup v-model:value="visForm.base">
+                  <NRadio value="OWN">各自只见自己（默认）</NRadio>
+                  <NRadio value="ALL">成员互见全组</NRadio>
+                </NRadioGroup>
+                <div class="pg-settings__overrides">
+                  <span class="pg-settings__label">
+                    {{ visForm.base === 'OWN' ? '例外：以下模块全员互见（如 AI 对话）' : '例外：以下模块仅本人+组长可见' }}
+                  </span>
+                  <NCheckbox
+                    v-for="k in kindOptions" :key="k.value"
+                    :checked="visForm.modules.includes(k.value)"
+                    @update:checked="(v: boolean) => toggleVisModule(k.value, v)"
+                  >{{ k.label }}</NCheckbox>
+                </div>
+                <NButton size="small" type="primary" :loading="savingVis" @click="saveVisibility">保存可见性</NButton>
+              </div>
+              <div class="pg-settings__section">
+                <div class="pg-settings__label">公共池招募</div>
+                <div class="pg-settings__hint">
+                  推入后全平台用户可在「项目组→公共池」看到并申请加入；人够了可随时撤出（待审批申请自动失效）。
+                </div>
+                <NButton
+                  v-if="!overview?.group.publicPool"
+                  size="small" type="primary" tertiary :loading="togglingPool"
+                  @click="togglePool(true)"
+                >推入公共池</NButton>
+                <NButton
+                  v-else
+                  size="small" type="warning" tertiary :loading="togglingPool"
+                  @click="togglePool(false)"
+                >撤出公共池</NButton>
+                <NTag v-if="overview?.group.publicPool" size="small" type="success" :bordered="false" style="margin-left: 8px">
+                  招募中
+                </NTag>
+              </div>
+            </div>
           </NTabPane>
         </template>
         <NTabPane name="outputs" tab="产出">
@@ -126,7 +258,7 @@
               />
               <NButton size="small" quaternary :disabled="!hasFilters" @click="clearFilters">清空</NButton>
             </div>
-            <span v-if="!isOwner" class="pg-outputs__hint">成员视角仅显示自己的消耗行</span>
+            <span v-if="!isOwner" class="pg-outputs__hint">可见范围由组长在「设置」中配置（默认仅自己；组长/admin 恒全量）</span>
             <NDataTable
               remote
               size="small"
@@ -187,8 +319,8 @@
       </template>
     </NModal>
 
-    <!-- 加成员弹窗（候选搜索 + 限额） -->
-    <NModal v-model:show="showAddMember" preset="card" title="加成员" style="max-width: 400px">
+    <!-- 邀请成员弹窗（17x#3：候选搜索 + 限额；对方同意后才入组） -->
+    <NModal v-model:show="showAddMember" preset="card" title="邀请成员" style="max-width: 400px">
       <NSelect
         v-model:value="addMemberId"
         filterable
@@ -205,10 +337,28 @@
         placeholder="积分限额（空=不限）"
         style="width: 100%; margin-top: 8px"
       />
+      <div class="pg-view__allocate-hint">发出邀请后，对方在「项目组→我的邀请」同意才入组。</div>
       <template #footer>
         <div class="pg-view__modal-footer">
           <NButton size="small" quaternary @click="showAddMember = false">取消</NButton>
-          <NButton size="small" type="primary" :disabled="!addMemberId" @click="confirmAddMember">添加</NButton>
+          <NButton size="small" type="primary" :disabled="!addMemberId" @click="confirmAddMember">发邀请</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- 17x#4：申请加入弹窗（可选留言） -->
+    <NModal v-model:show="showApply" preset="card" :title="`申请加入「${applyTarget?.name ?? ''}」`" style="max-width: 400px">
+      <NInput
+        v-model:value="applyMessage"
+        type="textarea"
+        :rows="3"
+        maxlength="200"
+        placeholder="申请留言（可选，组长审批时可见）"
+      />
+      <template #footer>
+        <div class="pg-view__modal-footer">
+          <NButton size="small" quaternary @click="showApply = false">取消</NButton>
+          <NButton size="small" type="primary" :loading="applying" @click="confirmApply">提交申请</NButton>
         </div>
       </template>
     </NModal>
@@ -218,7 +368,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue'
 import {
-  NButton, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NInputNumber, NModal, NSelect,
+  NButton, NCheckbox, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NInputNumber, NModal,
+  NRadio, NRadioGroup, NSelect,
   NSpin, NTabs, NTabPane, NTag, useDialog, useMessage,
   type DataTableColumns
 } from 'naive-ui'
@@ -228,8 +379,12 @@ import {
   type ProjectGroupMemberVO,
   type ProjectGroupMineVO,
   type ProjectGroupOutputVO,
-  type ProjectGroupLedgerRowVO
+  type ProjectGroupLedgerRowVO,
+  type ProjectGroupInviteVO,
+  type ProjectGroupPoolItemVO,
+  type ProjectGroupJoinRequestVO
 } from '@/api/projectGroup'
+import GroupOutputPreview from '@/components/projectgroup/GroupOutputPreview.vue'
 
 /**
  * 计划5 Step7：项目组推进页。
@@ -243,6 +398,25 @@ const groups = ref<ProjectGroupMineVO[]>([])
 const loading = ref(false)
 const selected = ref<ProjectGroupMineVO | null>(null)
 const tab = ref('members')
+
+// ---- 17x#3/#4：我的邀请 / 我的入组申请 / 公共池 ----
+const myInvites = ref<ProjectGroupInviteVO[]>([])
+const myJoinRequests = ref<ProjectGroupJoinRequestVO[]>([])
+const poolMode = ref(false)
+const poolItems = ref<ProjectGroupPoolItemVO[]>([])
+const loadingPool = ref(false)
+const JOIN_STATUS_LABEL: Record<string, string> = {
+  PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝', REVOKED: '已失效'
+}
+
+// ---- 17x#3：组邀请管理（组长） / 17x#4：入组审批（组长） ----
+const invites = ref<ProjectGroupInviteVO[]>([])
+const joinRequests = ref<ProjectGroupJoinRequestVO[]>([])
+
+// ---- 17x#2：可见性设置表单 ----
+const visForm = ref<{ base: 'OWN' | 'ALL'; modules: string[] }>({ base: 'OWN', modules: [] })
+const savingVis = ref(false)
+const togglingPool = ref(false)
 
 // ---- 组长总览（overview = 详情+流水分页） ----
 const overview = ref<Awaited<ReturnType<typeof projectGroupApi.overview>>['data']['data'] | null>(null)
@@ -301,6 +475,8 @@ async function loadGroups() {
 function openGroup(g: ProjectGroupMineVO) {
   selected.value = g
   tab.value = isOwner.value ? 'members' : 'outputs'
+  invites.value = []
+  joinRequests.value = []
   onTabChange()
 }
 
@@ -309,7 +485,207 @@ function backToList() {
   overview.value = null
   outputs.value = null
   void loadGroups()
+  void loadMyInvites()
+  void loadMyJoinRequests()
 }
+
+// ==================== 17x#3：我的邀请 ====================
+
+async function loadMyInvites() {
+  try {
+    const res = await projectGroupApi.myInvites()
+    myInvites.value = res.data.data
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+async function answerInvite(inv: ProjectGroupInviteVO, accept: boolean) {
+  try {
+    await (accept ? projectGroupApi.acceptInvite(inv.id) : projectGroupApi.declineInvite(inv.id))
+    message.success(accept ? '已加入项目组' : '已拒绝邀请')
+    await loadMyInvites()
+    await loadGroups()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+// ==================== 17x#4：公共池 / 我的申请 ====================
+
+async function loadMyJoinRequests() {
+  try {
+    const res = await projectGroupApi.myJoinRequests()
+    myJoinRequests.value = res.data.data
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+function togglePoolMode() {
+  poolMode.value = !poolMode.value
+  if (poolMode.value) void loadPool()
+}
+
+async function loadPool() {
+  loadingPool.value = true
+  try {
+    const res = await projectGroupApi.pool()
+    poolItems.value = res.data.data
+  } catch {
+    message.error('公共池加载失败')
+  } finally {
+    loadingPool.value = false
+  }
+}
+
+const showApply = ref(false)
+const applyTarget = ref<ProjectGroupPoolItemVO | null>(null)
+const applyMessage = ref('')
+const applying = ref(false)
+
+function openApply(g: ProjectGroupPoolItemVO) {
+  applyTarget.value = g
+  applyMessage.value = ''
+  showApply.value = true
+}
+
+async function confirmApply() {
+  if (!applyTarget.value) return
+  applying.value = true
+  try {
+    await projectGroupApi.applyJoin(applyTarget.value.id, applyMessage.value.trim() || undefined)
+    message.success('申请已提交，待组长审批')
+    showApply.value = false
+    await loadPool()
+    await loadMyJoinRequests()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    applying.value = false
+  }
+}
+
+async function cancelMyJoin(r: ProjectGroupJoinRequestVO) {
+  try {
+    await projectGroupApi.cancelJoinRequest(r.id)
+    message.success('申请已取消')
+    await loadMyJoinRequests()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+// ==================== 17x#3：组邀请管理（组长） ====================
+
+async function loadInvites() {
+  const g = selected.value
+  if (!g || !isOwner.value) return
+  try {
+    const res = await projectGroupApi.listInvites(g.id)
+    invites.value = res.data.data.filter(i => i.status === 'PENDING')
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+async function cancelInvite(inv: ProjectGroupInviteVO) {
+  try {
+    await projectGroupApi.cancelInvite(inv.id)
+    message.success('邀请已取消')
+    await loadInvites()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+// ==================== 17x#4：入组审批（组长） ====================
+
+async function loadJoinRequests() {
+  const g = selected.value
+  if (!g || !isOwner.value) return
+  try {
+    const res = await projectGroupApi.listJoinRequests(g.id)
+    joinRequests.value = res.data.data
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+async function decideJoin(r: ProjectGroupJoinRequestVO, approve: boolean) {
+  try {
+    await projectGroupApi.decideJoinRequest(r.id, approve)
+    message.success(approve ? '已通过，申请人已入组' : '已拒绝')
+    await loadJoinRequests()
+    if (approve) void loadOverview()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+// ==================== 17x#2/#4：组设置 ====================
+
+function toggleVisModule(kind: string, checked: boolean) {
+  const cur = visForm.value.modules
+  visForm.value.modules = checked ? [...cur, kind] : cur.filter(k => k !== kind)
+}
+
+/** overview 详情 → 设置表单（base=组默认；modules=覆盖表中与 base 相反的模块集）。 */
+function syncVisForm() {
+  const g = overview.value?.group
+  if (!g) return
+  const base = g.memberOutputVisibility === 'ALL' ? 'ALL' : 'OWN'
+  let overrides: Record<string, string> = {}
+  try {
+    overrides = g.moduleVisibilityOverrides ? JSON.parse(g.moduleVisibilityOverrides) : {}
+  } catch {
+    overrides = {}
+  }
+  const inverse = base === 'OWN' ? 'ALL' : 'OWN'
+  visForm.value = {
+    base,
+    modules: Object.entries(overrides).filter(([, v]) => v === inverse).map(([k]) => k)
+  }
+}
+
+async function saveVisibility() {
+  const g = selected.value
+  if (!g) return
+  savingVis.value = true
+  try {
+    // 覆盖表只存「与 base 相反」的模块（稀疏语义；其余模块回落 base）
+    const inverse = visForm.value.base === 'OWN' ? 'ALL' : 'OWN'
+    const overrides: Record<string, 'OWN' | 'ALL'> = {}
+    for (const k of visForm.value.modules) overrides[k] = inverse as 'OWN' | 'ALL'
+    await projectGroupApi.updateVisibility(g.id, {
+      memberOutputVisibility: visForm.value.base,
+      moduleVisibilityOverrides: overrides
+    })
+    message.success('可见性设置已更新')
+    await loadOverview()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    savingVis.value = false
+  }
+}
+
+async function togglePool(publish: boolean) {
+  const g = selected.value
+  if (!g) return
+  togglingPool.value = true
+  try {
+    await (publish ? projectGroupApi.publish(g.id) : projectGroupApi.unpublish(g.id))
+    message.success(publish ? '已推入公共池，全平台可申请加入' : '已撤出公共池，待审批申请已失效')
+    await loadOverview()
+    if (!publish) await loadJoinRequests()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    togglingPool.value = false
+  }
+}
+
 
 // ---- 建组 ----
 const showCreate = ref(false)
@@ -344,6 +720,7 @@ async function loadOverview() {
   try {
     const res = await projectGroupApi.overview(g.id, ledgerPage.value, ledgerSize.value)
     overview.value = res.data.data
+    syncVisForm()
   } catch {
     message.error('组总览加载失败')
   } finally {
@@ -378,8 +755,11 @@ function onTabChange() {
   if (tab.value === 'outputs') {
     outputPage.value = 1
     void loadOutputs()
+  } else if (tab.value === 'approvals') {
+    void loadJoinRequests()
   } else if (isOwner.value) {
     void loadOverview()
+    if (tab.value === 'members') void loadInvites()
   }
 }
 
@@ -463,7 +843,12 @@ const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
     title: '任务状态', key: 'mediaStatus', width: 100,
     render: r => r.taskId != null ? (r.mediaStatus ?? '-') : '-'
   },
-  { title: '积分', key: 'pointsConsumed', width: 90, render: r => fmt(r.pointsConsumed) }
+  { title: '积分', key: 'pointsConsumed', width: 90, render: r => fmt(r.pointsConsumed) },
+  // 17x#1：媒体产物预览（图片缩略图/视频弹窗播放；文件按组可见性设置放行）
+  {
+    title: '预览', key: 'preview', width: 130,
+    render: r => h(GroupOutputPreview, { row: r })
+  }
 ]
 
 const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
@@ -587,10 +972,11 @@ async function searchCandidates(q: string) {
 async function confirmAddMember() {
   if (!addMemberId.value) return
   try {
-    await projectGroupApi.addMember(selected.value!.id, addMemberId.value, addMemberQuota.value)
-    message.success('成员已添加')
+    // 17x#3：邀请制——对方同意后入组
+    await projectGroupApi.inviteMember(selected.value!.id, addMemberId.value, addMemberQuota.value)
+    message.success('邀请已发送，待对方同意后入组')
     showAddMember.value = false
-    void loadOverview()
+    void loadInvites()
   } catch { /* 拦截器已提示 */ }
 }
 
@@ -635,7 +1021,11 @@ async function confirmAllocate() {
 // 划拨/回收后刷新列表态卡片（不影响详情态）
 watch(showAllocate, v => { if (!v) void loadGroups() })
 
-onMounted(() => { void loadGroups() })
+onMounted(() => {
+  void loadGroups()
+  void loadMyInvites()
+  void loadMyJoinRequests()
+})
 </script>
 
 <style lang="scss" scoped>
@@ -774,4 +1164,156 @@ onMounted(() => { void loadGroups() })
 
 .pg-ledger__pos { color: var(--color-success, #63e2b7); }
 .pg-ledger__neg { color: var(--color-error, #e88080); }
+
+/* 17x#3/#4：列表页通知条（我的邀请/我的申请） */
+.pg-view__header-actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.pg-notice {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-2) var(--spacing-3);
+}
+
+.pg-notice__title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1);
+}
+
+.pg-notice__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 4px 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+/* 公共池卡片 */
+.pg-card--pool {
+  cursor: default;
+}
+
+.pg-card__desc {
+  margin-top: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pg-card__foot {
+  margin-top: var(--spacing-2);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+/* 17x#3：邀请管理 */
+.pg-invites {
+  margin-top: var(--spacing-3);
+  border-top: 1px dashed var(--color-border-light);
+  padding-top: var(--spacing-2);
+}
+
+.pg-invites__title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-1);
+}
+
+.pg-invites__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 4px 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.pg-invites__meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-right: auto;
+}
+
+/* 17x#4：入组审批 */
+.pg-approvals__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--color-border-light);
+}
+
+.pg-approvals__main {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.pg-approvals__user {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.pg-approvals__msg {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.pg-approvals__time {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-left: auto;
+}
+
+/* 17x#2/#4：组设置 */
+.pg-settings {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+}
+
+.pg-settings__section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-3);
+}
+
+.pg-settings__label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.pg-settings__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.pg-settings__overrides {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
 </style>

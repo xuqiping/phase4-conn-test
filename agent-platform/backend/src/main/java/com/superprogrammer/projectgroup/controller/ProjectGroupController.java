@@ -69,6 +69,9 @@ public class ProjectGroupController {
     private final ProjectGroupService groupService;
     private final ProjectGroupWalletService walletService;
     private final ProjectGroupQueryService queryService;
+    private final com.superprogrammer.projectgroup.service.ProjectGroupVisibilityService visibilityService;
+    private final com.superprogrammer.projectgroup.service.ProjectGroupInviteService inviteService;
+    private final com.superprogrammer.projectgroup.service.ProjectGroupPoolService poolService;
 
     @PostMapping
     @RequirePermission("project-group:manage")
@@ -114,13 +117,151 @@ public class ProjectGroupController {
         return ResponseEntity.ok(R.ok("项目组已删除", null));
     }
 
+    /**
+     * 邀请成员（17x#3，V138）：原「直接加成员」改「邀请制」——创建 PENDING 邀请 + 通知被邀请人，
+     * 被邀请人在「我的邀请」同意后才落成员行。quota 快照随邀请携带。
+     */
     @PostMapping("/{id}/members")
     @RequirePermission("project-group:manage")
-    @AuditLog(module = "project-group", action = "member_add", targetType = "project_group_member")
+    @AuditLog(module = "project-group", action = "member_invite", targetType = "project_group_member")
     public ResponseEntity<R<Void>> addMember(@PathVariable("id") Long id,
                                              @RequestBody ProjectGroupMemberAddRequest req) {
-        groupService.addMember(id, getCurrentUserId(), isAdmin(), req.getUserId(), req.getQuotaLimitPoints());
-        return ResponseEntity.ok(R.ok("成员已添加", null));
+        inviteService.invite(id, getCurrentUserId(), isAdmin(), req.getUserId(), req.getQuotaLimitPoints());
+        return ResponseEntity.ok(R.ok("邀请已发送，待对方同意后入组", null));
+    }
+
+    // ==================== 17x#3：邀请同意 ====================
+
+    /** 组邀请列表（组长/admin，全状态）。 */
+    @GetMapping("/{id}/invites")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<List<com.superprogrammer.projectgroup.dto.ProjectGroupInviteVO>>> listInvites(
+            @PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(inviteService.listByGroup(id, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 我的待处理邀请（被邀请人视角）。 */
+    @GetMapping("/invites/mine")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<List<com.superprogrammer.projectgroup.dto.ProjectGroupInviteVO>>> myInvites() {
+        return ResponseEntity.ok(R.ok(inviteService.listMinePending(getCurrentUserId())));
+    }
+
+    /** 接受邀请（被邀请人本人）：落成员行。 */
+    @PostMapping("/invites/{inviteId}/accept")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "invite_accept", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> acceptInvite(@PathVariable("inviteId") Long inviteId) {
+        inviteService.accept(inviteId, getCurrentUserId());
+        return ResponseEntity.ok(R.ok("已加入项目组", null));
+    }
+
+    /** 拒绝邀请（被邀请人本人）。 */
+    @PostMapping("/invites/{inviteId}/decline")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "invite_decline", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> declineInvite(@PathVariable("inviteId") Long inviteId) {
+        inviteService.decline(inviteId, getCurrentUserId());
+        return ResponseEntity.ok(R.ok("已拒绝邀请", null));
+    }
+
+    /** 取消邀请（组长/admin，PENDING→CANCELED）。 */
+    @DeleteMapping("/invites/{inviteId}")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "invite_cancel", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> cancelInvite(@PathVariable("inviteId") Long inviteId) {
+        inviteService.cancel(inviteId, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("邀请已取消", null));
+    }
+
+    // ==================== 17x#2：产出可见性设置 ====================
+
+    /** 更新成员产出可见性（组长/admin）：OWN/ALL + 按模块稀疏覆盖。 */
+    @PutMapping("/{id}/visibility")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "visibility_update", targetType = "project_group")
+    public ResponseEntity<R<Void>> updateVisibility(
+            @PathVariable("id") Long id,
+            @RequestBody com.superprogrammer.projectgroup.dto.ProjectGroupVisibilityUpdateRequest req) {
+        visibilityService.updateVisibility(id, getCurrentUserId(), isAdmin(),
+                req.getMemberOutputVisibility(), req.getModuleVisibilityOverrides());
+        return ResponseEntity.ok(R.ok("可见性设置已更新", null));
+    }
+
+    // ==================== 17x#4：公共池招募 ====================
+
+    /** 公共池列表（全平台登录用户）：招募中的组 + 我的身份/我的申请状态。 */
+    @GetMapping("/pool")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<List<com.superprogrammer.projectgroup.dto.ProjectGroupPoolItemVO>>> pool() {
+        return ResponseEntity.ok(R.ok(poolService.listPublic(getCurrentUserId())));
+    }
+
+    /** 推入公共池（组长/admin）。 */
+    @PostMapping("/{id}/publish")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "pool_publish", targetType = "project_group")
+    public ResponseEntity<R<Void>> publish(@PathVariable("id") Long id) {
+        poolService.publish(id, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("已推入公共池，全平台可申请加入", null));
+    }
+
+    /** 撤出公共池（组长/admin）：级联 PENDING 申请失效。 */
+    @DeleteMapping("/{id}/publish")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "pool_unpublish", targetType = "project_group")
+    public ResponseEntity<R<Void>> unpublish(@PathVariable("id") Long id) {
+        poolService.unpublish(id, getCurrentUserId(), isAdmin());
+        return ResponseEntity.ok(R.ok("已撤出公共池", null));
+    }
+
+    /** 申请加入（本人）：PENDING + 通知组长。 */
+    @PostMapping("/{id}/join-requests")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "pool_apply", targetType = "project_group_join_request")
+    public ResponseEntity<R<Void>> applyJoin(@PathVariable("id") Long id,
+                                             @RequestBody(required = false) com.superprogrammer.projectgroup.dto.ProjectGroupJoinApplyRequest req) {
+        poolService.apply(id, getCurrentUserId(), req != null ? req.getMessage() : null);
+        return ResponseEntity.ok(R.ok("申请已提交，待组长审批", null));
+    }
+
+    /** 组的申请列表（组长/admin 审批视角）。 */
+    @GetMapping("/{id}/join-requests")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<List<com.superprogrammer.projectgroup.dto.ProjectGroupJoinRequestVO>>> listJoinRequests(
+            @PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(poolService.listRequests(id, getCurrentUserId(), isAdmin())));
+    }
+
+    /** 我的申请（申请人视角，跨组）。 */
+    @GetMapping("/join-requests/mine")
+    @RequirePermission("project-group:manage")
+    public ResponseEntity<R<List<com.superprogrammer.projectgroup.dto.ProjectGroupJoinRequestVO>>> myJoinRequests() {
+        return ResponseEntity.ok(R.ok(poolService.listMine(getCurrentUserId())));
+    }
+
+    /** 审批（组长/admin）：approve=true→通过落成员行；false→拒绝。 */
+    @PutMapping("/join-requests/{requestId}/decision")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "pool_decide", targetType = "project_group_join_request")
+    public ResponseEntity<R<Void>> decideJoinRequest(
+            @PathVariable("requestId") Long requestId,
+            @RequestBody com.superprogrammer.projectgroup.dto.ProjectGroupJoinDecisionRequest req) {
+        if (req.getApprove() == null) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "approve 必填");
+        }
+        poolService.decide(requestId, getCurrentUserId(), isAdmin(), req.getApprove());
+        return ResponseEntity.ok(R.ok(req.getApprove() ? "已通过，申请人已入组" : "已拒绝", null));
+    }
+
+    /** 取消我的待审批申请（申请人本人）。 */
+    @DeleteMapping("/join-requests/{requestId}")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "pool_apply_cancel", targetType = "project_group_join_request")
+    public ResponseEntity<R<Void>> cancelJoinRequest(@PathVariable("requestId") Long requestId) {
+        poolService.cancelMine(requestId, getCurrentUserId());
+        return ResponseEntity.ok(R.ok("申请已取消", null));
     }
 
     @DeleteMapping("/{id}/members/{uid}")

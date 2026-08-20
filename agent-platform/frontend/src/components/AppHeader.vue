@@ -46,6 +46,9 @@
         </template>
       </n-input>
 
+      <!-- 17x#3/#4：通知铃铛（组邀请/入组申请等波及通知；原仅挂 ChatView，上页顶全局可达） -->
+      <MemoryNotificationBadge />
+
       <!-- 主题切换按钮 -->
       <n-tooltip trigger="hover">
         <template #trigger>
@@ -91,6 +94,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useProjectGroupStore } from '@/stores/projectGroup'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
+import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
 
 defineEmits<{
   toggleSidebar: []

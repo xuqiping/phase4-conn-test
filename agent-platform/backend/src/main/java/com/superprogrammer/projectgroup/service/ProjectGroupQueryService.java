@@ -61,6 +61,7 @@ public class ProjectGroupQueryService {
     private final MediaGenTaskMapper mediaTaskMapper;
     private final UserMapper userMapper;
     private final ProjectGroupService groupService;
+    private final ProjectGroupVisibilityService visibilityService;
 
     /**
      * 组长总览：组详情（requireOwner 复用）+ 组池流水倒序分页（actor 用户名批量补齐）。
@@ -114,8 +115,18 @@ public class ProjectGroupQueryService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "非本项目组成员");
         }
 
-        // 成员视角：不做成员报表，仅看自己的行（拍板边界）
-        Long effectiveUser = owner ? memberUserId : actorUserId;
+        // 17x#2 可见性（V138）：组长/admin 全量可筛；成员视角 = 自己的行 ∪ 「组设置全组互见模块」的全员行
+        // （V133 旧口径「成员恒仅自己」→ 现由 member_output_visibility/module_visibility_overrides 决定）
+        final Long effectiveUser;
+        final List<String> memberVisibleAllKinds;
+        if (owner) {
+            effectiveUser = memberUserId;
+            memberVisibleAllKinds = List.of();
+        } else {
+            List<String> visibleKinds = visibilityService.visibleAllKindsForMember(g);
+            memberVisibleAllKinds = visibleKinds;
+            effectiveUser = visibleKinds.isEmpty() ? actorUserId : null;
+        }
 
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
@@ -124,6 +135,10 @@ public class ProjectGroupQueryService {
                 .orderByDesc(LlmUsageLogEntity::getId);
         if (effectiveUser != null) {
             qw.eq(LlmUsageLogEntity::getUserId, effectiveUser);
+        }
+        if (!memberVisibleAllKinds.isEmpty()) {
+            qw.and(w -> w.eq(LlmUsageLogEntity::getUserId, actorUserId)
+                    .or().in(LlmUsageLogEntity::getKind, memberVisibleAllKinds));
         }
         if (kind != null && !kind.isBlank()) {
             qw.eq(LlmUsageLogEntity::getKind, kind);
@@ -149,6 +164,9 @@ public class ProjectGroupQueryService {
         List<ProjectGroupOutputVO> vos = rows.stream()
                 .map(u -> {
                     MediaGenTask t = u.getTaskId() != null ? tasks.get(u.getTaskId()) : null;
+                    // 17x#1（V138）：产物文件引用仅对「按组可见性可见该行」的请求者透出
+                    boolean canSeeFiles = t != null
+                            && visibilityService.canSeeOutput(g, actorUserId, admin, u.getKind(), u.getUserId());
                     return new ProjectGroupOutputVO(
                             u.getId(), u.getCreatedAt(), u.getUserId(),
                             u.getUserId() != null ? names.get(u.getUserId()) : null,
@@ -156,7 +174,9 @@ public class ProjectGroupQueryService {
                             u.getTaskId(),
                             t != null ? t.getStatus() : null,
                             t != null && t.getRequestConfig() != null
-                                    ? truncate(extractPrompt(t.getRequestConfig())) : null);
+                                    ? truncate(extractPrompt(t.getRequestConfig())) : null,
+                            canSeeFiles ? t.getResultFileId() : null,
+                            canSeeFiles ? extractImageFileIds(t.getResultMeta()) : null);
                 })
                 .toList();
         return PageResult.of(vos, p.getTotal(), safePage, safeSize);
@@ -196,6 +216,25 @@ public class ProjectGroupQueryService {
             return prompt == null ? "" : prompt;
         } catch (Exception e) {
             return "";
+        }
+    }
+
+    /** resultMeta JSONB 的 imageFileIds[] 提取（图片任务；视频/解析失败 → null）。 */
+    private List<String> extractImageFileIds(String resultMetaJson) {
+        if (resultMetaJson == null) {
+            return null;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(resultMetaJson).path("imageFileIds");
+            if (!arr.isArray() || arr.isEmpty()) {
+                return null;
+            }
+            List<String> ids = new java.util.ArrayList<>();
+            arr.forEach(n -> ids.add(n.asText()));
+            return ids;
+        } catch (Exception e) {
+            return null;
         }
     }
 

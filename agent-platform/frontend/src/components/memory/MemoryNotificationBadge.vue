@@ -95,6 +95,13 @@ function typeLabel(t: string): string {
   if (t === 'SUMMARY_AFFECTED_BY_RECALL') return '撤回波及'
   if (t === 'LINK_REQUEST') return '授权申请'
   if (t === 'LINK_RESULT') return '授权结果'
+  // 17x#3/#4（V138）：组邀请 / 公共池入组
+  if (t === 'GROUP_INVITE') return '组邀请'
+  if (t === 'GROUP_INVITE_RESULT') return '邀请结果'
+  if (t === 'GROUP_JOIN_REQUEST') return '入组申请'
+  if (t === 'GROUP_JOIN_RESULT') return '申请结果'
+  if (t === 'USER_GRANT_REQUEST') return '召回申请'
+  if (t === 'USER_GRANT_RESULT') return '召回结果'
   return t
 }
 

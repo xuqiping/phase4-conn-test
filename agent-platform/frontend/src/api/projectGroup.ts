@@ -51,6 +51,12 @@ export interface ProjectGroupDetailVO {
   inflightPoints: number
   members: ProjectGroupMemberVO[]
   createdAt: string
+  /** 成员产出可见性（17x#2，OWN/ALL） */
+  memberOutputVisibility: 'OWN' | 'ALL'
+  /** 按模块可见性覆盖 JSON 串（17x#2；JSON.parse 后 {kind: 'OWN'|'ALL'}） */
+  moduleVisibilityOverrides: string | null
+  /** 公共池招募开关（17x#4） */
+  publicPool: boolean
 }
 
 /** 组池流水行（ProjectGroupLedgerRowVO）。 */
@@ -97,6 +103,53 @@ export interface ProjectGroupOutputVO {
   taskId: number | null
   mediaStatus: string | null
   mediaPrompt: string | null
+  /** 视频产物 fileId（17x#1；按组可见性可见时才有值） */
+  resultFileId: string | null
+  /** 图片产物 fileId 列表（17x#1） */
+  imageFileIds: string[] | null
+}
+
+/** 组邀请行（ProjectGroupInviteVO，17x#3）。 */
+export interface ProjectGroupInviteVO {
+  id: number
+  groupId: number
+  groupName: string | null
+  inviterUserId: number
+  inviterName: string | null
+  inviteeUserId: number
+  inviteeName: string | null
+  quotaLimitPoints: number | null
+  /** PENDING/ACCEPTED/DECLINED/CANCELED */
+  status: string
+  createdAt: string
+  decidedAt: string | null
+}
+
+/** 公共池组行（ProjectGroupPoolItemVO，17x#4）。 */
+export interface ProjectGroupPoolItemVO {
+  id: number
+  name: string
+  description: string | null
+  ownerUsername: string | null
+  memberCount: number
+  publishedAt: string | null
+  alreadyMember: boolean
+  /** 我在该组的申请状态（PENDING/APPROVED/REJECTED/REVOKED；无申请 null） */
+  myRequestStatus: string | null
+}
+
+/** 公共池入组申请行（ProjectGroupJoinRequestVO，17x#4）。 */
+export interface ProjectGroupJoinRequestVO {
+  id: number
+  groupId: number
+  groupName: string | null
+  userId: number
+  username: string | null
+  message: string | null
+  /** PENDING/APPROVED/REJECTED/REVOKED */
+  status: string
+  createdAt: string
+  decidedAt: string | null
 }
 
 /** 组产出筛选参数。 */
@@ -174,5 +227,90 @@ export const projectGroupApi = {
   /** POST /project-groups/{id}/reclaim — 回收（组池→个人）。 */
   reclaim(id: number, points: number, remark?: string) {
     return request.post<ApiResponse<unknown>>(`/project-groups/${id}/reclaim`, { points, remark })
+  },
+
+  // ==================== 17x#3：邀请同意（V138） ====================
+
+  /** POST /project-groups/{id}/members — 现语义=发邀请（被邀请人同意后才入组；quota null=不限）。 */
+  inviteMember(id: number, userId: number, quotaLimitPoints: number | null) {
+    return request.post<ApiResponse<null>>(`/project-groups/${id}/members`,
+      { userId, quotaLimitPoints })
+  },
+
+  /** GET /project-groups/{id}/invites — 组邀请列表（组长，全状态）。 */
+  listInvites(id: number) {
+    return request.get<ApiResponse<ProjectGroupInviteVO[]>>(`/project-groups/${id}/invites`)
+  },
+
+  /** GET /project-groups/invites/mine — 我的待处理邀请。 */
+  myInvites() {
+    return request.get<ApiResponse<ProjectGroupInviteVO[]>>('/project-groups/invites/mine')
+  },
+
+  /** POST /project-groups/invites/{inviteId}/accept — 接受邀请（入组）。 */
+  acceptInvite(inviteId: number) {
+    return request.post<ApiResponse<null>>(`/project-groups/invites/${inviteId}/accept`)
+  },
+
+  /** POST /project-groups/invites/{inviteId}/decline — 拒绝邀请。 */
+  declineInvite(inviteId: number) {
+    return request.post<ApiResponse<null>>(`/project-groups/invites/${inviteId}/decline`)
+  },
+
+  /** DELETE /project-groups/invites/{inviteId} — 取消邀请（组长）。 */
+  cancelInvite(inviteId: number) {
+    return request.delete<ApiResponse<null>>(`/project-groups/invites/${inviteId}`)
+  },
+
+  // ==================== 17x#2：产出可见性设置（V138） ====================
+
+  /** PUT /project-groups/{id}/visibility — 更新成员产出可见性（OWN/ALL + 按模块覆盖）。 */
+  updateVisibility(id: number, payload: {
+    memberOutputVisibility?: 'OWN' | 'ALL'
+    moduleVisibilityOverrides?: Record<string, 'OWN' | 'ALL'>
+  }) {
+    return request.put<ApiResponse<null>>(`/project-groups/${id}/visibility`, payload)
+  },
+
+  // ==================== 17x#4：公共池招募（V138） ====================
+
+  /** GET /project-groups/pool — 公共池列表（全平台）。 */
+  pool() {
+    return request.get<ApiResponse<ProjectGroupPoolItemVO[]>>('/project-groups/pool')
+  },
+
+  /** POST /project-groups/{id}/publish — 推入公共池（组长）。 */
+  publish(id: number) {
+    return request.post<ApiResponse<null>>(`/project-groups/${id}/publish`)
+  },
+
+  /** DELETE /project-groups/{id}/publish — 撤出公共池（组长；级联 PENDING 申请失效）。 */
+  unpublish(id: number) {
+    return request.delete<ApiResponse<null>>(`/project-groups/${id}/publish`)
+  },
+
+  /** POST /project-groups/{id}/join-requests — 申请加入（本人）。 */
+  applyJoin(id: number, message?: string) {
+    return request.post<ApiResponse<null>>(`/project-groups/${id}/join-requests`, { message })
+  },
+
+  /** GET /project-groups/{id}/join-requests — 组的申请列表（组长审批）。 */
+  listJoinRequests(id: number) {
+    return request.get<ApiResponse<ProjectGroupJoinRequestVO[]>>(`/project-groups/${id}/join-requests`)
+  },
+
+  /** GET /project-groups/join-requests/mine — 我的申请。 */
+  myJoinRequests() {
+    return request.get<ApiResponse<ProjectGroupJoinRequestVO[]>>('/project-groups/join-requests/mine')
+  },
+
+  /** PUT /project-groups/join-requests/{rid}/decision — 审批（组长）。 */
+  decideJoinRequest(rid: number, approve: boolean) {
+    return request.put<ApiResponse<null>>(`/project-groups/join-requests/${rid}/decision`, { approve })
+  },
+
+  /** DELETE /project-groups/join-requests/{rid} — 取消我的待审批申请。 */
+  cancelJoinRequest(rid: number) {
+    return request.delete<ApiResponse<null>>(`/project-groups/join-requests/${rid}`)
   }
 }

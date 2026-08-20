@@ -112,7 +112,16 @@ public class ProjectGroupService {
     /** 加成员（组长/admin）：quota null=不限。用户须存在；重复入组 CONFLICT。 */
     @Transactional(rollbackFor = Exception.class)
     public void addMember(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
-        ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
+        requireOwner(groupId, actorUserId, admin);
+        insertMemberRow(groupId, memberUserId, quotaLimitPoints);
+        log.info("加成员 groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
+    }
+
+    /**
+     * 落成员行（V138 抽公共）：重复入组 CONFLICT、用户须存在、quota 非负。
+     * 调用方自行完成授权判定（组长 requireOwner / 邀请接受=被邀请人本人 / 公共池审批=组长）。
+     */
+    public void insertMemberRow(Long groupId, Long memberUserId, BigDecimal quotaLimitPoints) {
         if (memberUserId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成员用户不能为空");
         }
@@ -130,7 +139,6 @@ public class ProjectGroupService {
         m.setUserId(memberUserId);
         m.setQuotaLimitPoints(quotaLimitPoints);
         memberMapper.insert(m);
-        log.info("加成员 groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
     }
 
     /** 移除成员（组长/admin）：组长自身不可移除；used>0 照移（历史流水留痕，对账看流水不看行）。 */
@@ -267,7 +275,8 @@ public class ProjectGroupService {
                 g.getOwnerUserId(), owner != null ? owner.getUsername() : null,
                 w != null ? w.getBalancePoints() : BigDecimal.ZERO,
                 inflight,
-                members, g.getCreatedAt());
+                members, g.getCreatedAt(),
+                g.getMemberOutputVisibility(), g.getModuleVisibilityOverrides(), g.getPublicPool());
     }
 
     /**
@@ -311,8 +320,8 @@ public class ProjectGroupService {
         return m;
     }
 
-    /** 组长校验（admin 放行）；返回组实体供调用方复用。 */
-    private ProjectGroupEntity requireOwner(Long groupId, Long userId, boolean admin) {
+    /** 组长校验（admin 放行）；返回组实体供调用方复用。V138 起 public：邀请/公共池/可见性服务同口径复用。 */
+    public ProjectGroupEntity requireOwner(Long groupId, Long userId, boolean admin) {
         ProjectGroupEntity g = groupMapper.selectById(groupId);
         if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
