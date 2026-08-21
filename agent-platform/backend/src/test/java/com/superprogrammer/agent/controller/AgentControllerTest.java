@@ -322,15 +322,16 @@ class AgentControllerTest {
     }
 
     @Test
-    void objectAccessEndpoints_doNotRequireGlobalAgentReadPermission() throws Exception {
-        assertNoPermission("listAgents", Long.class, String.class);
-        assertNoPermission("getAgentDetail", Long.class);
-        assertNoPermission("getAgentAccess", Long.class);
-        assertNoPermission("listAgentSkills", Long.class);
-        assertNoPermission("getSkillDetail", Long.class);
-        assertNoPermission("listAgentPermissions", Long.class);
-        assertNoPermission("saveAgentPermissions", Long.class, List.class);
-        assertNoPermission("copyAgent", Long.class, AgentCopyRequest.class);
+    void objectAccessEndpoints_requireAgentReadPermission() throws Exception {
+        // 安全加固后对象级读端点也要 agent:read（越权对象由 service 层再判）；授权管理写端点要 agent:update
+        assertPermissionValue("agent:read", "listAgents", Long.class, String.class);
+        assertPermissionValue("agent:read", "getAgentDetail", Long.class);
+        assertPermissionValue("agent:read", "getAgentAccess", Long.class);
+        assertPermissionValue("agent:read", "listAgentSkills", Long.class);
+        assertPermissionValue("agent:read", "getSkillDetail", Long.class);
+        assertPermissionValue("agent:read", "listAgentPermissions", Long.class);
+        assertPermissionValue("agent:update", "saveAgentPermissions", Long.class, List.class);
+        assertPermissionValue("agent:read", "copyAgent", Long.class, AgentCopyRequest.class);
     }
 
     private void assertPermission(String methodName, Class<?>... parameterTypes) throws NoSuchMethodException {
@@ -341,10 +342,11 @@ class AgentControllerTest {
         org.assertj.core.api.Assertions.assertThat(permission.value()).isEqualTo("skill:manage");
     }
 
-    private void assertNoPermission(String methodName, Class<?>... parameterTypes) throws NoSuchMethodException {
+    private void assertPermissionValue(String expected, String methodName, Class<?>... parameterTypes) throws NoSuchMethodException {
         RequirePermission permission = AgentController.class
                 .getDeclaredMethod(methodName, parameterTypes)
                 .getAnnotation(RequirePermission.class);
-        org.assertj.core.api.Assertions.assertThat(permission).isNull();
+        org.assertj.core.api.Assertions.assertThat(permission).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(permission.value()).isEqualTo(expected);
     }
 }

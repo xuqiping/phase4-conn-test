@@ -51,6 +51,8 @@ class AuthIntegrationTest {
     /** 清理本类注册的 integrationuser，使跨 run 可重复（否则残留用户致 step1 收 409）。 */
     @AfterAll
     void cleanup() {
+        // user_credential 等子表 FK 引用 users，先删子表行再删用户（否则 DataIntegrityViolation）
+        jdbc.update("DELETE FROM user_credential WHERE user_id IN (SELECT id FROM users WHERE username = 'integrationuser')");
         jdbc.update("DELETE FROM users WHERE username = 'integrationuser'");
     }
 

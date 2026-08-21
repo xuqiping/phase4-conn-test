@@ -40,6 +40,10 @@ class ChatControllerTest {
 
     @Mock private ChatSessionService chatSessionService;
     @Mock private ChatTargetService chatTargetService;
+    // 9x#11 聊天队列（5a38b6e5）后控制器新增的三依赖：不 mock 则 @InjectMocks 注入 null，流式端点 NPE
+    @Mock private com.superprogrammer.chat.service.ChatConcurrencyGate chatConcurrencyGate;
+    @Mock private com.superprogrammer.chat.service.internal.MemoryAssetUploadService memoryAssetUploadService;
+    @Mock private com.superprogrammer.chat.service.internal.MemoryAssetIngestService memoryAssetIngestService;
 
     @InjectMocks
     private ChatController chatController;
@@ -66,6 +70,9 @@ class ChatControllerTest {
                 .content("Hi!")
                 .mode("CHAT")
                 .build();
+
+        // 流式端点先过并发闸门：默认放行（lenient——非流式用例不碰它）
+        lenient().when(chatConcurrencyGate.tryAcquire(any(), any())).thenReturn(true);
     }
 
     @Test
