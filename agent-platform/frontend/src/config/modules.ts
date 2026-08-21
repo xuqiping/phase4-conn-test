@@ -28,6 +28,8 @@ export type ModuleKey =
   | 'wallet'
   | 'projectGroups'
   | 'feedback'
+  | 'feedbackAdmin'
+  | 'helpAdmin'
   | 'settings'
 
 /**
@@ -52,6 +54,9 @@ export const ENABLED_MODULES: Record<ModuleKey, boolean> = {
   projectGroups: true,
   // 19x：反馈与帮助（建议台/提问台/说明台三合一；用户侧无权限码，登录即可）
   feedback: true,
+  // 19x admin 两页（开关管模块、权限码管人；双码分离——审核与内容管理可分管）
+  feedbackAdmin: true,
+  helpAdmin: true,
   settings: true
 }
 
@@ -71,7 +76,10 @@ export const MODULE_PERMISSION_MAP: Partial<Record<ModuleKey, string>> = {
   canvas: 'canvas:write',
   assets: 'asset:write',
   // 计划5：项目组模块（推进页+选择器数据源同权限码；后端 /api/project-groups/** 全端点同码兜底）
-  projectGroups: 'project-group:manage'
+  projectGroups: 'project-group:manage',
+  // 19x：反馈审核（feedback:manage）与帮助文章（help:manage）双码分离
+  feedbackAdmin: 'feedback:manage',
+  helpAdmin: 'help:manage'
 }
 
 /** 模块是否启用（开关）。 */

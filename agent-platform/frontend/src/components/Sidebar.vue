@@ -65,6 +65,8 @@ import {
   ShieldCheckmarkOutline,
   ChatbubblesOutline,
   ChatboxEllipsesOutline,
+  ClipboardOutline,
+  LibraryOutline,
   BookOutline,
   VideocamOutline,
   ImageOutline,
@@ -171,6 +173,13 @@ const navItems = computed(() => {
   }
   if (canViewUsage.value) {
     items.push({ path: '/admin/billing', label: '账单总览', icon: BarChartOutline, module: 'settings' })
+  }
+  // 19x：反馈处理/帮助文章（module 权限码 feedback:manage / help:manage，双码分离分管）
+  if (canSeeModule('feedbackAdmin')) {
+    items.push({ path: '/admin/feedback', label: '反馈处理', icon: ClipboardOutline, module: 'feedbackAdmin' })
+  }
+  if (canSeeModule('helpAdmin')) {
+    items.push({ path: '/admin/help-articles', label: '帮助文章', icon: LibraryOutline, module: 'helpAdmin' })
   }
   if (canViewAudit.value) {
     items.push({ path: '/admin/logs/audit', label: '审计日志', icon: DocumentTextOutline, module: 'settings' })

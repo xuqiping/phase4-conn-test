@@ -111,4 +111,28 @@ describe('resolveRouteAccess 路由访问判定（问题 10x-3/4/5）', () => {
       expect(d.allow).toBe(true)
     })
   })
+
+  describe('19x 反馈 admin 双码分离（feedbackAdmin/helpAdmin）', () => {
+    it('无 feedback:manage 直输 /admin/feedback → 拦截', () => {
+      const d = decide({ path: '/admin/feedback', module: 'feedbackAdmin', user: userWith([]) })
+      expect(d.allow).toBe(false)
+      if (!d.allow) expect(d.redirect).toBe(LANDING)
+    })
+
+    it('持 feedback:manage → 放行反馈处理页', () => {
+      const d = decide({ path: '/admin/feedback', module: 'feedbackAdmin', user: userWith(['feedback:manage']) })
+      expect(d.allow).toBe(true)
+    })
+
+    it('持 feedback:manage 但无 help:manage → 帮助文章页仍拦截（双码分离）', () => {
+      const d = decide({ path: '/admin/help-articles', module: 'helpAdmin', user: userWith(['feedback:manage']) })
+      expect(d.allow).toBe(false)
+    })
+
+    it('持 help:manage → 放行帮助文章页；admin 两页皆放行', () => {
+      expect(decide({ path: '/admin/help-articles', module: 'helpAdmin', user: userWith(['help:manage']) }).allow).toBe(true)
+      expect(decide({ path: '/admin/feedback', module: 'feedbackAdmin', user: admin() }).allow).toBe(true)
+      expect(decide({ path: '/admin/help-articles', module: 'helpAdmin', user: admin() }).allow).toBe(true)
+    })
+  })
 })

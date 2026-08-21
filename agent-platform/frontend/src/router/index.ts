@@ -232,6 +232,20 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '账单总览' }
       },
       {
+        path: 'admin/feedback',
+        name: 'FeedbackAdmin',
+        component: () => import('@/views/admin/AdminFeedbackView.vue'),
+        // 19x：module=feedbackAdmin → 守卫校验 feedback:manage（accessGuard 第 5 条）
+        meta: { title: '反馈处理', module: 'feedbackAdmin' }
+      },
+      {
+        path: 'admin/help-articles',
+        name: 'HelpArticlesAdmin',
+        component: () => import('@/views/admin/AdminHelpArticlesView.vue'),
+        // 19x：module=helpAdmin → 守卫校验 help:manage
+        meta: { title: '帮助文章', module: 'helpAdmin' }
+      },
+      {
         path: 'admin/billing-pricing',
         name: 'PricingConfig',
         component: () => import('@/views/admin/PricingConfigView.vue'),
