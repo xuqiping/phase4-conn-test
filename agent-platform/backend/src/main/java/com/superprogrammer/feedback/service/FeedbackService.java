@@ -38,6 +38,7 @@ public class FeedbackService {
     private final FeedbackSuggestionMapper suggestionMapper;
     private final FileStorageService fileStorageService;
     private final UserMapper userMapper;
+    private final FeedbackNotificationService notificationService;
 
     /** 提交建议：附件属主校验 → username 快照 → PENDING 落库。返回新单 id。 */
     public Long submitSuggestion(Long userId, CreateSuggestionRequest req) {
@@ -72,6 +73,70 @@ public class FeedbackService {
                         .orderByDesc(FeedbackSuggestionEntity::getId));
         return PageResult.of(p.getRecords().stream().map(FeedbackService::toVo).toList(),
                 p.getTotal(), p.getCurrent(), p.getSize());
+    }
+
+    // ==================== admin（19x#1 审核台） ====================
+
+    /** admin 建议分页（按状态筛，可空=全部；带 username 快照+附件）。 */
+    public PageResult<com.superprogrammer.feedback.dto.AdminSuggestionVO> adminSuggestions(
+            String status, int page, int size) {
+        int capped = Math.min(Math.max(size, 1), MINE_MAX_SIZE);
+        Page<FeedbackSuggestionEntity> p = suggestionMapper.selectPage(
+                new Page<>(Math.max(page, 1), capped),
+                Wrappers.<FeedbackSuggestionEntity>lambdaQuery()
+                        .eq(status != null && !status.isBlank(), FeedbackSuggestionEntity::getStatus, status)
+                        .orderByDesc(FeedbackSuggestionEntity::getId));
+        return PageResult.of(p.getRecords().stream().map(FeedbackService::toAdminVo).toList(),
+                p.getTotal(), p.getCurrent(), p.getSize());
+    }
+
+    /**
+     * 审核（条件 UPDATE 抢态，同 payment 先例——并发双击只一人成功，0 行=409）：
+     * <ul>
+     *   <li>PENDING → ADOPTED/REJECTED/CLOSED</li>
+     *   <li>ADOPTED ↔ REJECTED 改判（重发通知，拍板联动表）</li>
+     *   <li>CLOSED 终态：不可达也不可改（from 集合不含 CLOSED）</li>
+     * </ul>
+     * 抢态成功 → 同事务发 SUGGESTION_REVIEWED 通知（抢态天然保证同一次审核只发一次）。
+     */
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public void reviewSuggestion(Long id, String toStatus, String reply, Long reviewerId) {
+        FeedbackSuggestionEntity cur = suggestionMapper.selectById(id);
+        if (cur == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "建议不存在");
+        }
+        if (FeedbackSuggestionEntity.STATUS_CLOSED.equals(cur.getStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该建议已关闭（终态），不可再审核");
+        }
+        List<String> from = switch (toStatus) {
+            case FeedbackSuggestionEntity.STATUS_ADOPTED ->
+                    List.of(FeedbackSuggestionEntity.STATUS_PENDING, FeedbackSuggestionEntity.STATUS_REJECTED);
+            case FeedbackSuggestionEntity.STATUS_REJECTED ->
+                    List.of(FeedbackSuggestionEntity.STATUS_PENDING, FeedbackSuggestionEntity.STATUS_ADOPTED);
+            case FeedbackSuggestionEntity.STATUS_CLOSED ->
+                    List.of(FeedbackSuggestionEntity.STATUS_PENDING, FeedbackSuggestionEntity.STATUS_ADOPTED,
+                            FeedbackSuggestionEntity.STATUS_REJECTED);
+            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "结论仅支持 ADOPTED/REJECTED/CLOSED");
+        };
+        if (suggestionMapper.reviewIfStatusIn(id, toStatus, reply, reviewerId, from) == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该建议已被其他管理员处理，请刷新");
+        }
+        String conclusion = switch (toStatus) {
+            case FeedbackSuggestionEntity.STATUS_ADOPTED -> "已采纳";
+            case FeedbackSuggestionEntity.STATUS_REJECTED -> "未采纳";
+            default -> "已关闭";
+        };
+        notificationService.notify(cur.getUserId(),
+                com.superprogrammer.feedback.entity.FeedbackNotificationEntity.TYPE_SUGGESTION_REVIEWED,
+                id, "您的建议「" + abbrev(cur.getTitle()) + "」" + conclusion
+                        + (reply != null && !reply.isBlank() ? "：" + abbrev(reply) : ""));
+        log.info("建议审核: id={} {}→{} reviewer={}", id, cur.getStatus(), toStatus, reviewerId);
+    }
+
+    static com.superprogrammer.feedback.dto.AdminSuggestionVO toAdminVo(FeedbackSuggestionEntity e) {
+        return new com.superprogrammer.feedback.dto.AdminSuggestionVO(
+                e.getId(), e.getCreatedAt(), e.getUserId(), e.getUsername(), e.getTitle(), e.getContent(),
+                parseJsonArray(e.getAttachmentFileIds()), e.getStatus(), e.getReply(), e.getReviewedAt());
     }
 
     // ==================== 内部 ====================

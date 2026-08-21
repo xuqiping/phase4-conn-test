@@ -35,6 +35,7 @@ import java.util.Map;
 public class FeedbackController {
 
     private final FeedbackService feedbackService;
+    private final com.superprogrammer.feedback.service.FeedbackNotificationService notificationService;
 
     @PostMapping("/suggestions")
     @RateLimit(action = "feedback_suggestion", max = 5, windowSeconds = 60)
@@ -48,6 +49,33 @@ public class FeedbackController {
     public ResponseEntity<R<PageResult<SuggestionVO>>> mySuggestions(@RequestParam(defaultValue = "1") int page,
                                                                      @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(R.ok(feedbackService.mySuggestions(currentUserId(), page, size)));
+    }
+
+    // ---------- 站内通知（铃铛三件套） ----------
+
+    /** 未读数（铃铛 3s 轮询；部分索引，响应极小）。 */
+    @GetMapping("/notifications/count")
+    public ResponseEntity<R<Map<String, Long>>> unreadCount() {
+        return ResponseEntity.ok(R.ok(Map.of("count", notificationService.countUnread(currentUserId()))));
+    }
+
+    @GetMapping("/notifications")
+    public ResponseEntity<R<PageResult<com.superprogrammer.feedback.entity.FeedbackNotificationEntity>>> notifications(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(R.ok(notificationService.myNotifications(currentUserId(), page, size)));
+    }
+
+    /** 标记已读（幂等；非本人静默）。 */
+    @PostMapping("/notifications/{id}/read")
+    public ResponseEntity<R<Void>> markRead(@org.springframework.web.bind.annotation.PathVariable("id") Long id) {
+        notificationService.markRead(currentUserId(), id);
+        return ResponseEntity.ok(R.ok("已读", null));
+    }
+
+    @PostMapping("/notifications/read-all")
+    public ResponseEntity<R<Map<String, Integer>>> markAllRead() {
+        return ResponseEntity.ok(R.ok("全部已读", Map.of("count", notificationService.markAllRead(currentUserId()))));
     }
 
     private Long currentUserId() {

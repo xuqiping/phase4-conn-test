@@ -34,12 +34,13 @@ class FeedbackServiceTest {
     @Mock private FeedbackSuggestionMapper suggestionMapper;
     @Mock private FileStorageService fileStorageService;
     @Mock private UserMapper userMapper;
+    @Mock private FeedbackNotificationService notificationService;
 
     private FeedbackService service;
 
     @BeforeEach
     void setUp() {
-        service = new FeedbackService(suggestionMapper, fileStorageService, userMapper);
+        service = new FeedbackService(suggestionMapper, fileStorageService, userMapper, notificationService);
     }
 
     private User user(long id, String username) {
@@ -140,5 +141,79 @@ class FeedbackServiceTest {
         assertEquals(List.of(), FeedbackService.parseJsonArray("[]"));
         assertEquals(List.of("x"), FeedbackService.parseJsonArray("[\"x\"]"));
         assertEquals(List.of(), FeedbackService.parseJsonArray("garbage"));
+    }
+
+    // ==================== Step3：admin 审核 + 通知 ====================
+
+    private FeedbackSuggestionEntity suggestion(long id, long userId, String status) {
+        FeedbackSuggestionEntity e = new FeedbackSuggestionEntity();
+        e.setId(id);
+        e.setUserId(userId);
+        e.setUsername("alice");
+        e.setTitle("加个暗黑模式");
+        e.setStatus(status);
+        return e;
+    }
+
+    @Test
+    void 审核_PENDING到ADOPTED_发通知() {
+        when(suggestionMapper.selectById(1L)).thenReturn(suggestion(1L, 7L, "PENDING"));
+        when(suggestionMapper.reviewIfStatusIn(eq(1L), eq("ADOPTED"), any(), eq(99L),
+                eq(List.of("PENDING", "REJECTED")))).thenReturn(1);
+
+        service.reviewSuggestion(1L, "ADOPTED", "下个版本安排", 99L);
+
+        verify(notificationService).notify(eq(7L), eq("SUGGESTION_REVIEWED"), eq(1L),
+                org.mockito.ArgumentMatchers.contains("已采纳"));
+    }
+
+    @Test
+    void 审核_改判REJECTED到ADOPTED_重发通知() {
+        // 拍板联动表：ADOPTED↔REJECTED 可改判且重发通知
+        when(suggestionMapper.selectById(1L)).thenReturn(suggestion(1L, 7L, "REJECTED"));
+        when(suggestionMapper.reviewIfStatusIn(eq(1L), eq("ADOPTED"), any(), eq(99L),
+                eq(List.of("PENDING", "REJECTED")))).thenReturn(1);
+
+        service.reviewSuggestion(1L, "ADOPTED", null, 99L);
+
+        verify(notificationService).notify(eq(7L), eq("SUGGESTION_REVIEWED"), eq(1L), any());
+    }
+
+    @Test
+    void 审核_CLOSED终态拒改_409() {
+        when(suggestionMapper.selectById(1L)).thenReturn(suggestion(1L, 7L, "CLOSED"));
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                service.reviewSuggestion(1L, "ADOPTED", null, 99L));
+        assertTrue(ex.getMessage().contains("终态"));
+        verify(notificationService, org.mockito.Mockito.never()).notify(any(), any(), any(), any());
+    }
+
+    @Test
+    void 审核_并发抢态失败_409且不发通知() {
+        // 两 admin 同审：mapper 返 0 = 被对方抢先
+        when(suggestionMapper.selectById(1L)).thenReturn(suggestion(1L, 7L, "PENDING"));
+        when(suggestionMapper.reviewIfStatusIn(any(), any(), any(), any(), any())).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                service.reviewSuggestion(1L, "ADOPTED", null, 99L));
+        assertTrue(ex.getMessage().contains("已被其他管理员处理"));
+        verify(notificationService, org.mockito.Mockito.never()).notify(any(), any(), any(), any());
+    }
+
+    @Test
+    void 审核_不存在_404() {
+        when(suggestionMapper.selectById(1L)).thenReturn(null);
+
+        assertThrows(BusinessException.class, () ->
+                service.reviewSuggestion(1L, "ADOPTED", null, 99L));
+    }
+
+    @Test
+    void 审核_非法结论_400() {
+        when(suggestionMapper.selectById(1L)).thenReturn(suggestion(1L, 7L, "PENDING"));
+
+        assertThrows(BusinessException.class, () ->
+                service.reviewSuggestion(1L, "MAYBE", null, 99L));
     }
 }
