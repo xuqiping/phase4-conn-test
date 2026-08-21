@@ -49,7 +49,7 @@ pub fn latest(
 ) -> DbResult<Option<AcceptanceRun>> {
     conn.query_row(
         "SELECT id, project_id, kind, status, started_at, finished_at, summary_json
-         FROM acceptance_runs WHERE project_id = ?1 AND kind = ?2 ORDER BY started_at DESC LIMIT 1",
+         FROM acceptance_runs WHERE project_id = ?1 AND kind = ?2 ORDER BY id DESC LIMIT 1",
         params![project_id, kind],
         |r| {
             Ok(AcceptanceRun {

@@ -683,10 +683,11 @@ fn validate_fix_input<'a>(
 ) -> CmdResult<(&'a str, &'a str)> {
     let selector = selector.trim();
     let description = description.trim();
-    if selector.is_empty() || selector.len() > 200 {
+    // Phase4 修复：按字符数限长（与前端 maxLength 同口径），字节长度会把中文提前拦掉。
+    if selector.is_empty() || selector.chars().count() > 200 {
         return Err(err("BAD_INPUT", "元素定位信息需为 1~200 个字符"));
     }
-    if description.is_empty() || description.len() > 1000 {
+    if description.is_empty() || description.chars().count() > 1000 {
         return Err(err("BAD_INPUT", "问题描述需为 1~1000 个字符"));
     }
     Ok((selector, description))

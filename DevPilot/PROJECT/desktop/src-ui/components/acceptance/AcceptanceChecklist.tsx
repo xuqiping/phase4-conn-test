@@ -59,6 +59,13 @@ export default function AcceptanceChecklist({
 
   const regenerate = async () => {
     if (projectId == null || busy) return;
+    // Phase4 审查修复（C7）：重新生成会重置所有验收状态，必须二次确认。
+    if (
+      items.length > 0 &&
+      !window.confirm("重新生成将清空当前验收清单（含已通过/NA 状态），确定继续？")
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       setItems(await ipc.regenerateAcceptanceChecklist(projectId));

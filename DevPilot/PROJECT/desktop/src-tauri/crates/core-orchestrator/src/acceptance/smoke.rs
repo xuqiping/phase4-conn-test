@@ -20,13 +20,19 @@ pub struct SmokeOutcome {
 /// 每个自动项一个 test()：打开 base_url → 截图 → 断言页面可用（title 非空）。
 /// steps/expected 写进注释，供用户在报告里对照。
 pub fn generate_script(items: &[(i64, String, String, String)], base_url: &str) -> String {
+    // Phase4 审查修复：base_url 内插进 JS 单引号字符串，先剥掉引号与反斜杠防注入。
+    let base_url = base_url.replace([char::from(39), char::from(92)], "");
     let mut js = String::from(
         "// DevPilot 自动生成的验收冒烟脚本（执行后自动清理）\n\
          const { test, expect } = require('@playwright/test');\n",
     );
     for (id, tc_id, steps, expected) in items {
-        let steps = steps.replace('\n', " ");
-        let expected = expected.replace('\n', " ");
+        let steps = steps
+            .replace('\n', " ")
+            .replace([char::from(39), char::from(92)], "");
+        let expected = expected
+            .replace('\n', " ")
+            .replace([char::from(39), char::from(92)], "");
         js.push_str(&format!(
             "\ntest('{tc_id}', async ({{ page }}) => {{\n\
                // 步骤：{steps}\n\
@@ -165,6 +171,15 @@ pub async fn run_smoke(
         });
     }
 
+    // Phase4 审查修复：base_url 只放行本机地址（与预览窗格白名单同一口径）。
+    if !is_local_base_url(base_url) {
+        return Ok(SmokeOutcome {
+            skipped: auto_items.len(),
+            warning: Some("自动验收只允许访问 localhost / 127.0.0.1 的测试服务器".into()),
+            ..Default::default()
+        });
+    }
+
     // 前置探测：Node 不可用直接降级，不执行任何脚本（plan 安全清单）。
     if !node_available() {
         return Ok(SmokeOutcome {
@@ -203,8 +218,11 @@ pub async fn run_smoke(
 
     db.write(|c| {
         for o in &outcomes {
-            // 用例 title 即 tc_id（generate_script 保证）。
-            let Some((&item_id, _)) = tc_map.iter().find(|(_, tc)| o.title.contains(tc.as_str()))
+            // 用例 title 即 tc_id（generate_script 保证）。Phase4 修复：必须精确相等，
+            // contains 会把 TC-1 错配到 TC-10、空 tc_id 恒命中。
+            let Some((&item_id, _)) = tc_map
+                .iter()
+                .find(|(_, tc)| !tc.is_empty() && *tc == &o.title)
             else {
                 continue;
             };
@@ -229,22 +247,42 @@ pub async fn run_smoke(
 }
 
 async fn execute_playwright(project_path: &Path, script_path: &Path) -> String {
-    let output = tokio::process::Command::new("npx")
-        .args([
-            "playwright",
-            "test",
-            &script_path.to_string_lossy(),
-            "--reporter=json",
-        ])
-        .current_dir(project_path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .await;
+    // Windows 下 npx 是 .cmd 批处理，Command::new("npx") 找不到（Phase4 审查修复）。
+    #[cfg(windows)]
+    let npx = "npx.cmd";
+    #[cfg(not(windows))]
+    let npx = "npx";
+    let mut cmd = tokio::process::Command::new(npx);
+    cmd.args([
+        "playwright",
+        "test",
+        &script_path.to_string_lossy(),
+        "--reporter=json",
+    ])
+    .current_dir(project_path)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true);
+    // plan 安全清单：子进程 60s 强制 kill，dev server 挂起不能拖死整个验收。
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), cmd.output()).await;
     match output {
-        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
-        Err(e) => format!("{{\"exec_error\": \"{e}\"}}"),
+        Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Ok(Err(e)) => format!("{{\"exec_error\": \"{e}\"}}"),
+        Err(_) => "{\"exec_error\": \"playwright 执行超时（60s），已强制终止\"}".into(),
     }
+}
+
+/// base_url 白名单：只允许 http(s)://localhost / 127.0.0.1（任意端口）。
+fn is_local_base_url(url: &str) -> bool {
+    let rest = match url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    {
+        Some(r) => r,
+        None => return false,
+    };
+    let host = rest.split(':').next().unwrap_or("");
+    host == "localhost" || host == "127.0.0.1"
 }
 
 fn node_available() -> bool {
@@ -255,15 +293,6 @@ fn node_available() -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-/// 兼容旧签名（无 base_url）：默认 5173。
-pub async fn run_smoke_default(
-    db: &Db,
-    project_id: i64,
-    project_path: &Path,
-) -> DbResult<SmokeOutcome> {
-    run_smoke(db, project_id, project_path, "http://localhost:5173").await
 }
 
 #[cfg(test)]
@@ -314,5 +343,18 @@ mod tests {
     #[test]
     fn parse_report_garbage_returns_empty() {
         assert!(parse_report("not json").is_empty());
+    }
+
+    #[test]
+    fn base_url_whitelist_blocks_remote_and_injection() {
+        // Phase4 审查修复：外网地址必须被拒；引号注入必须被剥掉。
+        assert!(is_local_base_url("http://localhost:5173"));
+        assert!(is_local_base_url("https://127.0.0.1:3000"));
+        assert!(!is_local_base_url("http://evil.com"));
+        assert!(!is_local_base_url("javascript:alert(1)"));
+        assert!(!is_local_base_url(""));
+        let items = vec![(1, "TC-01".into(), "s".into(), "e".into())];
+        let js = generate_script(&items, "http://localhost:5173'});require('fs')");
+        assert!(!js.contains("require('fs')"), "引号注入必须被剥掉：{js}");
     }
 }

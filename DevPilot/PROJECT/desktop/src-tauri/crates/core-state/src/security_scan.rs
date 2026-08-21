@@ -35,7 +35,7 @@ pub fn insert(
 pub fn latest(conn: &rusqlite::Connection, project_id: i64) -> DbResult<Option<SecurityScan>> {
     conn.query_row(
         "SELECT id, project_id, status, findings_json, started_at, finished_at
-         FROM security_scans WHERE project_id = ?1 ORDER BY started_at DESC LIMIT 1",
+         FROM security_scans WHERE project_id = ?1 ORDER BY id DESC LIMIT 1",
         [project_id],
         |r| {
             Ok(SecurityScan {
