@@ -34,4 +34,18 @@ public interface ProjectGroupMemberMapper extends BaseMapper<ProjectGroupMemberE
     @Update("UPDATE project_group_members SET used_points = GREATEST(used_points - #{cost}, 0), updated_at = NOW(), version = version + 1 "
             + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0")
     int subtractUsed(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("cost") BigDecimal cost);
+
+    /**
+     * 复活软删成员行（17x#1 修 uk_pgm_group_user 409）：回归即重置——
+     * quota=新邀请值、used=0（限额周期重新起算，历史消耗在组流水/usage_log 仍可查）、
+     * role=MEMBER、allowed_kinds/member_visibility_overrides 清空（不继承移除前状态）。
+     * 条件 UPDATE 天然互斥：并发双接受恰一线程命中。
+     *
+     * @return 1=复活成功；0=无软删残留行（调用方走探针/新插）
+     */
+    @Update("UPDATE project_group_members SET deleted = 0, quota_limit_points = #{quota}, used_points = 0, "
+            + "role = 'MEMBER', allowed_kinds = NULL, member_visibility_overrides = NULL, "
+            + "updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 1")
+    int reviveRow(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("quota") BigDecimal quota);
 }

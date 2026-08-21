@@ -4,6 +4,7 @@ import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.projectgroup.entity.ProjectGroupEntity;
+import com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity;
 import com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity;
 import com.superprogrammer.projectgroup.entity.ProjectGroupWalletEntity;
 import com.superprogrammer.projectgroup.mapper.ProjectGroupLedgerMapper;
@@ -172,5 +173,52 @@ class ProjectGroupServiceTest {
 
         group.setDeleted(1);
         assertThat(service.findMember(GROUP_ID, MEMBER)).isNull();
+    }
+
+    // ==================== 17x#1 复活（V139） ====================
+
+    @Test
+    void 复活_软删残留行命中_记流水不新插() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        User u = new User();
+        u.setId(MEMBER);
+        when(userMapper.selectById(MEMBER)).thenReturn(u);
+        when(memberMapper.reviveRow(GROUP_ID, MEMBER, null)).thenReturn(1);
+        ProjectGroupWalletEntity w = new ProjectGroupWalletEntity();
+        w.setBalancePoints(new BigDecimal("50"));
+        when(walletMapper.selectByGroupId(GROUP_ID)).thenReturn(w);
+
+        service.addMember(GROUP_ID, OWNER, false, MEMBER, null);
+
+        // 复活成功：ADMIN_ADJUST 流水留痕（delta=0，balance_after=组池现值），不再走探针/新插
+        org.mockito.ArgumentCaptor<ProjectGroupLedgerEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ProjectGroupLedgerEntity.class);
+        verify(ledgerMapper).insert(cap.capture());
+        assertThat(cap.getValue().getType()).isEqualTo(ProjectGroupLedgerEntity.TYPE_ADMIN_ADJUST);
+        assertThat(cap.getValue().getDeltaPoints()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(cap.getValue().getBalanceAfter()).isEqualByComparingTo(new BigDecimal("50"));
+        assertThat(cap.getValue().getRemark()).contains("复活");
+        verify(memberMapper, never()).selectByGroupUser(anyLong(), anyLong());
+        verify(memberMapper, never()).insert(any(ProjectGroupMemberEntity.class));
+    }
+
+    @Test
+    void 复活未命中_走探针新插() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        User u = new User();
+        u.setId(MEMBER);
+        when(userMapper.selectById(MEMBER)).thenReturn(u);
+        when(memberMapper.reviveRow(GROUP_ID, MEMBER, BigDecimal.TEN)).thenReturn(0);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(null);
+
+        service.addMember(GROUP_ID, OWNER, false, MEMBER, BigDecimal.TEN);
+
+        org.mockito.ArgumentCaptor<ProjectGroupMemberEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ProjectGroupMemberEntity.class);
+        verify(memberMapper).insert(cap.capture());
+        // 新插行角色显式 MEMBER（不依赖 DB 默认值漂移）
+        assertThat(cap.getValue().getRole()).isEqualTo(ProjectGroupMemberEntity.ROLE_MEMBER);
+        assertThat(cap.getValue().getQuotaLimitPoints()).isEqualByComparingTo(BigDecimal.TEN);
+        verify(ledgerMapper, never()).insert(any(ProjectGroupLedgerEntity.class));
     }
 }

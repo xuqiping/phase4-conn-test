@@ -119,7 +119,11 @@ public class ProjectGroupService {
     }
 
     /**
-     * 落成员行（V138 抽公共）：重复入组 CONFLICT、用户须存在、quota 非负。
+     * 落成员行（V138 抽公共；V139 复活两段式修 17x#1）：重复入组 CONFLICT、用户须存在、quota 非负。
+     * <p>两段式：①先条件 UPDATE 复活软删残留行（移除后再邀请/公共池再批准路径——
+     * uk_pgm_group_user 是全量唯一，软删行仍占位，直接 INSERT 必撞 409）；
+     * 复活命中即重置 quota/used=0/role=MEMBER/开关/覆盖，记 ADMIN_ADJUST 流水留痕后返回；
+     * ②未命中走活行探针 + 新插。并发双接受：复活条件 UPDATE 互斥，恰一方成功。
      * 调用方自行完成授权判定（组长 requireOwner / 邀请接受=被邀请人本人 / 公共池审批=组长）。
      */
     public void insertMemberRow(Long groupId, Long memberUserId, BigDecimal quotaLimitPoints) {
@@ -132,6 +136,24 @@ public class ProjectGroupService {
         if (userMapper.selectById(memberUserId) == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
+        // ① 复活优先（软删残留行）
+        if (memberMapper.reviveRow(groupId, memberUserId, quotaLimitPoints) > 0) {
+            ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
+            com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity l =
+                    new com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity();
+            l.setGroupId(groupId);
+            l.setActorUserId(memberUserId);
+            l.setType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_ADMIN_ADJUST);
+            l.setDeltaPoints(BigDecimal.ZERO);
+            l.setBalanceAfter(w != null ? w.getBalancePoints() : BigDecimal.ZERO);
+            l.setRefType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.REF_ADMIN);
+            l.setRefId(String.valueOf(memberUserId));
+            l.setRemark("成员回归复活：used 清零，限额/角色/功能开关/可见性覆盖重置默认");
+            ledgerMapper.insert(l);
+            log.info("成员复活 groupId={} member={} quota={}", groupId, memberUserId, quotaLimitPoints);
+            return;
+        }
+        // ② 活行探针 + 新插
         if (memberMapper.selectByGroupUser(groupId, memberUserId) != null) {
             throw new BusinessException(ErrorCode.CONFLICT, "该用户已是组成员");
         }
@@ -139,6 +161,7 @@ public class ProjectGroupService {
         m.setGroupId(groupId);
         m.setUserId(memberUserId);
         m.setQuotaLimitPoints(quotaLimitPoints);
+        m.setRole(ProjectGroupMemberEntity.ROLE_MEMBER);
         memberMapper.insert(m);
     }
 
