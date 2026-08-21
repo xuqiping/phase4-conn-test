@@ -384,9 +384,31 @@ pub async fn enter_acceptance(
         .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
 
     if matches!(scale.as_str(), "L2" | "L3") {
+        // Phase4 审查修复（AC-044 UI 死锁）：扫描入口原本只在验收视图里，
+        // 而门禁未过进不了验收视图 → 用户无路可走。改为进入验收时自动扫描：
+        // 通过则解锁并进入；未通过则拦截并列出问题数。
+        let scan = perform_security_scan(&state, project_id).await?;
+        if scan.status == "pass" {
+            if let Some(w) = scan.warning {
+                return Err(err("STATE", w));
+            }
+            machine
+                .pass_gate("security")
+                .map_err(|e| err("STATE", e.to_string()))?;
+            return transition_to(&state.db, &app, &mut machine, project_id, "accept").await;
+        }
+        let critical = scan
+            .findings
+            .iter()
+            .filter(|f| matches!(f.severity.as_str(), "critical" | "high"))
+            .count();
         return Err(err(
             "GATE_BLOCKED",
-            "L2/L3 项目需先通过安全扫描，才能进入验收阶段",
+            format!(
+                "安全扫描未通过（共 {} 条风险，其中高危 {} 条），请先修复再进入验收。详情可在验收视图安全面板查看",
+                scan.findings.len(),
+                critical
+            ),
         ));
     }
 
@@ -424,19 +446,25 @@ pub async fn request_release(
     let blocked: bool = state
         .db
         .read(|c| {
-            let count: i64 = c.query_row(
+            // Phase4 审查 C6：清单为空同样拦截（空清单 ≠ 全部通过），与前端口径对齐。
+            let unresolved: i64 = c.query_row(
                 "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1 AND status NOT IN ('pass', 'na')",
                 [project_id],
                 |r| r.get(0),
             )?;
-            Ok(count > 0)
+            let total: i64 = c.query_row(
+                "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1",
+                [project_id],
+                |r| r.get(0),
+            )?;
+            Ok(unresolved > 0 || total == 0)
         })
         .map_err(|e: core_state::DbError| err("DB", e.to_string()))?;
 
     if blocked {
         return Err(err(
             "RELEASE_BLOCKED",
-            "还有未通过/未验收的验收项，无法发布",
+            "还有未通过/未验收的验收项，或验收清单为空，无法发布",
         ));
     }
 
@@ -525,6 +553,16 @@ pub async fn run_security_scan(
     app: AppHandle,
     project_id: i64,
 ) -> CmdResult<SecurityScanDto> {
+    let dto = perform_security_scan(&state, project_id).await?;
+    emit_current_state(&state.db, &app, project_id)?;
+    Ok(dto)
+}
+
+/// 扫描主体（run_security_scan 与 enter_acceptance 自动扫描共用）。
+async fn perform_security_scan(
+    state: &State<'_, AppState>,
+    project_id: i64,
+) -> CmdResult<SecurityScanDto> {
     let path = project_path(&state.db, project_id)?;
     let scale: String = state
         .db
@@ -576,8 +614,6 @@ pub async fn run_security_scan(
             gate_passed = true;
         }
     }
-
-    emit_current_state(&state.db, &app, project_id)?;
 
     Ok(SecurityScanDto {
         status: status_str.clone(),
@@ -1668,7 +1704,7 @@ pub fn list_tasks(
         .db
         .write(|c| {
             c.execute(
-                "UPDATE acceptance_items SET status = 'pending'
+                "UPDATE acceptance_items SET status = 'pending', fix_task_id = NULL
                  WHERE status != 'pending' AND fix_task_id IN (
                    SELECT id FROM tasks WHERE source = 'fix' AND status = 'done'
                  ) AND project_id = ?1",
@@ -2359,7 +2395,7 @@ mod tests {
 
         db.write(|c| {
             c.execute(
-                "UPDATE acceptance_items SET status = 'pending'
+                "UPDATE acceptance_items SET status = 'pending', fix_task_id = NULL
                  WHERE status != 'pending' AND fix_task_id IN (
                    SELECT id FROM tasks WHERE source = 'fix' AND status = 'done')
                  AND project_id = ?1",
@@ -2378,13 +2414,53 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(item.status, "pending");
+        assert!(item.fix_task_id.is_none(), "重置时必须解绑 fix_task_id");
+
+        // Phase4 审查 C1 回归：重置后重新标 pass，联动 SQL 不得再次打回 pending
+        // （否则该项目发布被永久卡死）。fix_task_id 已清空，第二次联动是空操作。
+        db.write(|c| {
+            core_state::acceptance_checklist::update_status(c, item_id, "pass", None)?;
+            c.execute(
+                "UPDATE acceptance_items SET status = 'pending', fix_task_id = NULL
+                 WHERE status != 'pending' AND fix_task_id IN (
+                   SELECT id FROM tasks WHERE source = 'fix' AND status = 'done')
+                 AND project_id = ?1",
+                [pid],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let item = db
+            .read(|c| core_state::acceptance_checklist::get(c, item_id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.status, "pass", "重新验收 pass 后不能被联动 SQL 打回");
     }
 
     #[test]
     fn s10_release_blocked_when_item_not_passed() {
-        // S10：存在非 pass/na 项时发布必须被拒（SQL 口径与 request_release 相同）。
+        // S10：空清单或未通过项 → 发布拦截；全部 pass/na → 放行（口径同 request_release）。
         let db = Db::open_in_memory().unwrap();
         let pid = project_fixture(&db);
+        // 口径与 request_release 一致（Phase4 C6）：未决>0 或 清单为空 都拦截。
+        let blocked = |db: &Db| {
+            db.read(|c| {
+                let unresolved: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1 AND status NOT IN ('pass','na')",
+                    [pid],
+                    |r| r.get(0),
+                )?;
+                let total: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1",
+                    [pid],
+                    |r| r.get(0),
+                )?;
+                Ok(unresolved > 0 || total == 0)
+            })
+            .unwrap()
+        };
+        // 空清单：必须拦截（空清单 ≠ 全部通过）。
+        assert!(blocked(&db), "空清单时必须拦截");
         db.write(|c| {
             core_state::acceptance_checklist::regenerate(
                 c,
@@ -2409,20 +2485,10 @@ mod tests {
                         sort_order: 1,
                     },
                 ],
-            )
+            )?;
+            Ok(())
         })
         .unwrap();
-        let blocked = |db: &Db| {
-            db.read(|c| {
-                let n: i64 = c.query_row(
-                    "SELECT COUNT(*) FROM acceptance_items WHERE project_id = ?1 AND status NOT IN ('pass','na')",
-                    [pid],
-                    |r| r.get(0),
-                )?;
-                Ok(n > 0)
-            })
-            .unwrap()
-        };
         assert!(blocked(&db), "全 pending 时必须拦截");
         let ids = db
             .read(|c| core_state::acceptance_checklist::list(c, pid))
