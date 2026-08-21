@@ -37,6 +37,7 @@ public class FeedbackController {
     private final FeedbackService feedbackService;
     private final com.superprogrammer.feedback.service.FeedbackNotificationService notificationService;
     private final com.superprogrammer.feedback.service.FeedbackQuestionService questionService;
+    private final com.superprogrammer.feedback.service.HelpArticleService articleService;
 
     @PostMapping("/suggestions")
     @RateLimit(action = "feedback_suggestion", max = 5, windowSeconds = 60)
@@ -106,6 +107,22 @@ public class FeedbackController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(R.ok(questionService.faq(kw, page, size)));
+    }
+
+    // ---------- 说明台·用户阅读（19x#3） ----------
+
+    /** 已发布文章目录（仅目录字段；可选分类筛）。 */
+    @GetMapping("/help/articles")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.feedback.dto.ArticleListItemVO>>> helpArticles(
+            @RequestParam(required = false) String category) {
+        return ResponseEntity.ok(R.ok(articleService.listPublished(category)));
+    }
+
+    /** 文章正文（slug 直达；未发布/不存在 404 不泄露）。 */
+    @GetMapping("/help/articles/{slug}")
+    public ResponseEntity<R<com.superprogrammer.feedback.dto.ArticleDetailVO>> helpArticle(
+            @org.springframework.web.bind.annotation.PathVariable("slug") String slug) {
+        return ResponseEntity.ok(R.ok(articleService.getPublishedBySlug(slug)));
     }
 
     private Long currentUserId() {
