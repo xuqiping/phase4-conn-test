@@ -52,4 +52,12 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
     @Select("SELECT COUNT(*) FROM payment_order WHERE status = 'PENDING' "
             + "AND created_at < NOW() - (#{thresholdMinutes} || ' minutes')::INTERVAL")
     long countStalePending(@Param("thresholdMinutes") int thresholdMinutes);
+
+    /** 7x#1 累计条：用户 Σ已付金额。 */
+    @Select("SELECT COALESCE(SUM(amount_yuan), 0) FROM payment_order WHERE user_id = #{userId} AND status = 'PAID'")
+    BigDecimal sumPaidAmountByUser(@Param("userId") Long userId);
+
+    /** 7x#1 累计条：用户 Σ已付积分。 */
+    @Select("SELECT COALESCE(SUM(points_granted), 0) FROM payment_order WHERE user_id = #{userId} AND status = 'PAID'")
+    BigDecimal sumPaidPointsByUser(@Param("userId") Long userId);
 }

@@ -98,6 +98,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/password/forgot").permitAll()
                         .requestMatchers("/api/auth/password/reset").permitAll()
                         .requestMatchers("/api/runtime/callbacks/**").permitAll()
+                        // 7x#3 支付渠道回调：匿名放行精确 /notify/**（安全靠渠道验签，verifyAndParse 第一道；
+                        // mock/trigger 不放行——需登录+仅本人单）
+                        .requestMatchers("/api/billing/payment/notify/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()
                         // WebSocket端点（通过拦截器认证）

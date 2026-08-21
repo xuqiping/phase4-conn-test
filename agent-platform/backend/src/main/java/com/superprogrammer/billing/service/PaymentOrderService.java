@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,6 +42,7 @@ import java.util.Map;
 public class PaymentOrderService {
 
     private final PaymentOrderMapper orderMapper;
+    private final com.superprogrammer.billing.mapper.PointsLedgerMapper ledgerMapper;
     private final PaymentChannelRouter channelRouter;
     private final PointsRatioService ratioService;
     private final PointsWalletService walletService;
@@ -231,6 +233,47 @@ public class PaymentOrderService {
             log.info("过期充值订单批量关闭: {} 单", closed);
         }
         return closed;
+    }
+
+    // ==================== 充值记录（7x#1 六字段） ====================
+
+    /**
+     * 我的充值记录分页（六字段：时间/渠道/付款账号/金额/积分/充值后余额）+ 累计汇总条。
+     * balanceAfter 由 points_ledger（ref=PAYMENT/orderId，type∈RECHARGE/ADMIN_GRANT）批查补齐；
+     * PENDING/FAILED/CLOSED 无流水 → null（前端显「—」）。累计仅统计 PAID。
+     */
+    public com.superprogrammer.billing.dto.RechargePageVO myRecharges(Long userId, int page, int size) {
+        int capped = Math.min(Math.max(size, 1), 50);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<PaymentOrderEntity> p = orderMapper.selectPage(
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(Math.max(page, 1), capped),
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<PaymentOrderEntity>lambdaQuery()
+                        .eq(PaymentOrderEntity::getUserId, userId)
+                        .orderByDesc(PaymentOrderEntity::getCreatedAt));
+        List<PaymentOrderEntity> rows = p.getRecords();
+        // 批查充值后余额（一单一流水，uq_ledger_ref 保证至多一行）
+        Map<Long, BigDecimal> afterByOrder = new java.util.HashMap<>();
+        List<Long> paidIds = rows.stream()
+                .filter(o -> PaymentOrderEntity.STATUS_PAID.equals(o.getStatus()))
+                .map(PaymentOrderEntity::getId).toList();
+        if (!paidIds.isEmpty()) {
+            ledgerMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers
+                    .<com.superprogrammer.billing.entity.PointsLedgerEntity>lambdaQuery()
+                    .eq(com.superprogrammer.billing.entity.PointsLedgerEntity::getRefType,
+                            com.superprogrammer.billing.entity.PointsLedgerEntity.REF_PAYMENT)
+                    .in(com.superprogrammer.billing.entity.PointsLedgerEntity::getRefId, paidIds)
+                    .in(com.superprogrammer.billing.entity.PointsLedgerEntity::getType,
+                            com.superprogrammer.billing.entity.PointsLedgerEntity.TYPE_RECHARGE,
+                            com.superprogrammer.billing.entity.PointsLedgerEntity.TYPE_ADMIN_GRANT))
+                    .forEach(l -> afterByOrder.put(l.getRefId(), l.getBalanceAfter()));
+        }
+        List<com.superprogrammer.billing.dto.RechargeRecordVO> records = rows.stream()
+                .map(o -> new com.superprogrammer.billing.dto.RechargeRecordVO(
+                        o.getId(), o.getCreatedAt(), o.getChannel(), o.getPayerAccount(),
+                        o.getAmountYuan(), o.getPointsGranted(), afterByOrder.get(o.getId()), o.getStatus()))
+                .toList();
+        return new com.superprogrammer.billing.dto.RechargePageVO(
+                com.superprogrammer.common.result.PageResult.of(records, p.getTotal(), p.getCurrent(), p.getSize()),
+                orderMapper.sumPaidAmountByUser(userId), orderMapper.sumPaidPointsByUser(userId));
     }
 
     // ==================== 内部 ====================

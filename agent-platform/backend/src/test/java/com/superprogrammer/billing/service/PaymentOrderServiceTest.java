@@ -42,6 +42,7 @@ class PaymentOrderServiceTest {
     private static final long UID = 7L;
 
     @Mock private PaymentOrderMapper orderMapper;
+    @Mock private com.superprogrammer.billing.mapper.PointsLedgerMapper ledgerMapper;
     @Mock private PointsRatioService ratioService;
     @Mock private PointsWalletService walletService;
     @Mock private AuditLogService auditLogService;
@@ -59,7 +60,7 @@ class PaymentOrderServiceTest {
         router = new PaymentChannelRouter(List.of(mockChannel,
                 new com.superprogrammer.billing.service.channel.AlipayPaymentChannel(),
                 new com.superprogrammer.billing.service.channel.WechatPaymentChannel()));
-        service = new PaymentOrderService(orderMapper, router, ratioService, walletService, auditLogService);
+        service = new PaymentOrderService(orderMapper, ledgerMapper, router, ratioService, walletService, auditLogService);
         ReflectionTestUtils.setField(service, "orderExpireMinutes", 30);
         ReflectionTestUtils.setField(service, "notifyUrl", "https://example/notify");
         lenient().when(ratioService.toPoints(any())).thenAnswer(inv ->
@@ -271,5 +272,38 @@ class PaymentOrderServiceTest {
         when(orderMapper.closeIfPending(2L)).thenReturn(0); // 被回调抢走
         when(orderMapper.closeIfPending(3L)).thenReturn(1);
         assertThat(service.expireBatch(200)).isEqualTo(2);
+    }
+
+    // ==================== 充值记录（7x#1 六字段） ====================
+
+    @Test
+    void 我的充值记录_余额JOIN与累计口径() {
+        PaymentOrderEntity paid = pendingOrder(42L);
+        paid.setStatus(PaymentOrderEntity.STATUS_PAID);
+        paid.setCreatedAt(OffsetDateTime.now());
+        paid.setPayerAccount("payer@mock");
+        PaymentOrderEntity pending = pendingOrder(43L);
+        pending.setCreatedAt(OffsetDateTime.now());
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<PaymentOrderEntity> p =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        p.setRecords(List.of(paid, pending));
+        p.setTotal(2);
+        when(orderMapper.selectPage(any(), any())).thenReturn(p);
+        com.superprogrammer.billing.entity.PointsLedgerEntity ledger =
+                new com.superprogrammer.billing.entity.PointsLedgerEntity();
+        ledger.setRefId(42L);
+        ledger.setBalanceAfter(new BigDecimal("1500"));
+        when(ledgerMapper.selectList(any())).thenReturn(List.of(ledger));
+        when(orderMapper.sumPaidAmountByUser(UID)).thenReturn(new BigDecimal("10.00"));
+        when(orderMapper.sumPaidPointsByUser(UID)).thenReturn(new BigDecimal("1000"));
+
+        var vo = service.myRecharges(UID, 1, 10);
+
+        assertThat(vo.page().getRecords()).hasSize(2);
+        assertThat(vo.page().getRecords().get(0).balanceAfter()).isEqualByComparingTo("1500"); // PAID 有流水
+        assertThat(vo.page().getRecords().get(0).payerAccount()).isEqualTo("payer@mock");
+        assertThat(vo.page().getRecords().get(1).balanceAfter()).isNull(); // PENDING 无流水显「—」
+        assertThat(vo.totalPaidAmount()).isEqualByComparingTo("10.00");
+        assertThat(vo.totalPaidPoints()).isEqualByComparingTo("1000");
     }
 }
