@@ -64,6 +64,7 @@ import {
   PeopleOutline,
   ShieldCheckmarkOutline,
   ChatbubblesOutline,
+  ChatboxEllipsesOutline,
   BookOutline,
   VideocamOutline,
   ImageOutline,
@@ -189,6 +190,8 @@ const navItems = computed(() => {
   if (canSeeModule('projectGroups')) {
     items.push({ path: '/project-groups', label: '项目组', icon: PeopleOutline, module: 'projectGroups' })
   }
+  // 19x：反馈与帮助（建议/提问/说明三合一；无权限码，登录即可，开关兜底）
+  items.push({ path: '/feedback', label: '反馈与帮助', icon: ChatboxEllipsesOutline, module: 'feedback' })
   // 设置入口：开关 ON 且用户是 admin（10x-3：非 admin 不开放设置）
   if (isModuleEnabled('settings') && authStore.isAdmin) {
     items.push({ path: '/settings', label: '设置', icon: SettingsOutline, module: 'settings' })

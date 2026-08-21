@@ -49,6 +49,9 @@
       <!-- 17x#3/#4：通知铃铛（组邀请/入组申请等波及通知；原仅挂 ChatView，上页顶全局可达） -->
       <MemoryNotificationBadge />
 
+      <!-- 19x：反馈通知铃铛（建议审核/提问回答；点击跳反馈中心对应 tab） -->
+      <FeedbackNotificationBadge />
+
       <!-- 主题切换按钮 -->
       <n-tooltip trigger="hover">
         <template #trigger>
@@ -95,6 +98,7 @@ import { useProjectGroupStore } from '@/stores/projectGroup'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import ProjectGroupSelector from '@/components/projectgroup/ProjectGroupSelector.vue'
 import MemoryNotificationBadge from '@/components/memory/MemoryNotificationBadge.vue'
+import FeedbackNotificationBadge from '@/components/feedback/FeedbackNotificationBadge.vue'
 
 defineEmits<{
   toggleSidebar: []

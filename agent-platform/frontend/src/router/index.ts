@@ -206,6 +206,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '项目组', module: 'projectGroups' }
       },
       {
+        path: 'feedback',
+        name: 'FeedbackCenter',
+        component: () => import('@/views/FeedbackCenterView.vue'),
+        // 19x：反馈与帮助（建议/提问/说明三 tab）；所有登录用户可见，后端限流+属主校验兜底
+        meta: { title: '反馈与帮助', module: 'feedback' }
+      },
+      {
         path: 'admin/users',
         name: 'UserManage',
         component: () => import('@/views/admin/UserManageView.vue'),

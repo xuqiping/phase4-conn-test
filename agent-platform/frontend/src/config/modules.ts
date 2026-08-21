@@ -27,6 +27,7 @@ export type ModuleKey =
   | 'assets'
   | 'wallet'
   | 'projectGroups'
+  | 'feedback'
   | 'settings'
 
 /**
@@ -49,6 +50,8 @@ export const ENABLED_MODULES: Record<ModuleKey, boolean> = {
   assets: true,
   wallet: true,
   projectGroups: true,
+  // 19x：反馈与帮助（建议台/提问台/说明台三合一；用户侧无权限码，登录即可）
+  feedback: true,
   settings: true
 }
 
