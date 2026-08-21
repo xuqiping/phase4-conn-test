@@ -62,6 +62,10 @@ public class BillingQueryService {
     private final PointsWalletService walletService;
     /** 计划5 Step8：账单页项目组筛选项数据源（跨模块只读）。 */
     private final ProjectGroupMapper groupMapper;
+    /** 20x#1：admin 充值记录。 */
+    private final com.superprogrammer.billing.mapper.PaymentOrderMapper paymentOrderMapper;
+    /** 20x#1：admin 用户余额视图。 */
+    private final com.superprogrammer.billing.mapper.UserPointsBalanceMapper balanceMapper;
 
     // ---------- admin ----------
 
@@ -125,6 +129,76 @@ public class BillingQueryService {
                 .stream()
                 .map(g -> new ProjectGroupOptionVO(g.getId(), g.getName()))
                 .toList();
+    }
+
+    // ---------- admin 充值/余额（20x#1） ----------
+
+    /** admin 充值记录默认每页。 */
+    static final int RECHARGE_PAGE_SIZE = 20;
+    /** admin 充值记录每页上限。 */
+    static final int RECHARGE_MAX_SIZE = 100;
+
+    /**
+     * admin 充值记录分页 + 当前筛选下 Σ（仅 PAID 计入，与明细同 WHERE 口径）。
+     * 行=六字段（时间/渠道/付款账号/金额/积分/充值后余额）+ userId/username；
+     * 未入账状态（PENDING/FAILED/CLOSED）balanceAfter=null。
+     */
+    public com.superprogrammer.billing.dto.AdminRechargePageVO adminRecharges(
+            Long userId, String keyword, String channel, String status,
+            OffsetDateTime from, OffsetDateTime to, long page, long size) {
+        long sz = size <= 0 ? RECHARGE_PAGE_SIZE : Math.min(size, RECHARGE_MAX_SIZE);
+        long pg = Math.max(page, 1);
+        long total = paymentOrderMapper.countAdminRecharges(userId, keyword, channel, status, from, to);
+        List<com.superprogrammer.billing.dto.AdminRechargeRecordVO> records = total == 0
+                ? List.of()
+                : paymentOrderMapper.pageAdminRecharges(userId, keyword, channel, status, from, to,
+                        (pg - 1) * sz, sz);
+        return new com.superprogrammer.billing.dto.AdminRechargePageVO(
+                PageResult.of(records, total, pg, sz),
+                paymentOrderMapper.sumPaidAmountFiltered(userId, keyword, channel, status, from, to),
+                paymentOrderMapper.sumPaidPointsFiltered(userId, keyword, channel, status, from, to));
+    }
+
+    /**
+     * admin 用户余额视图分页 + 全平台合计卡（合计不受 keyword 影响，页头恒定全平台口径）。
+     * 排序白名单（防注入）：balance（余额）/rechargePoints（累计充值积分）/rechargeAmount（累计充值金额），
+     * 缺省按余额降序；方向仅 asc/desc。
+     */
+    public com.superprogrammer.billing.dto.UserBalancePageVO userBalances(
+            String keyword, String sortBy, String order, long page, long size) {
+        long sz = size <= 0 ? RECHARGE_PAGE_SIZE : Math.min(size, RECHARGE_MAX_SIZE);
+        long pg = Math.max(page, 1);
+        String orderClause = balanceOrderClause(sortBy, order);
+        long total = balanceMapper.countUserBalances(keyword);
+        List<com.superprogrammer.billing.dto.UserBalanceRowVO> records = total == 0
+                ? List.of()
+                : balanceMapper.pageUserBalances(keyword, orderClause, (pg - 1) * sz, sz);
+        java.util.Map<String, Object> t = balanceMapper.platformBalanceTotals();
+        return new com.superprogrammer.billing.dto.UserBalancePageVO(
+                PageResult.of(records, total, pg, sz),
+                toLong(t.get("totalusers")),
+                toBd(t.get("sumbalance")),
+                toBd(t.get("sumrechargepoints")),
+                toBd(t.get("sumrechargeamount")));
+    }
+
+    /** 余额视图排序白名单映射（仅允许三列 + asc/desc，其余回落默认）。 */
+    private static String balanceOrderClause(String sortBy, String order) {
+        String col = switch (sortBy == null ? "" : sortBy) {
+            case "rechargePoints" -> "COALESCE(r.totalPoints, 0)";
+            case "rechargeAmount" -> "COALESCE(r.totalAmount, 0)";
+            default -> "COALESCE(b.balance_points, 0)";
+        };
+        String dir = "asc".equalsIgnoreCase(order) ? "ASC" : "DESC";
+        return "ORDER BY " + col + " " + dir + ", u.id ASC";
+    }
+
+    private static long toLong(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static java.math.BigDecimal toBd(Object o) {
+        return o instanceof java.math.BigDecimal b ? b : java.math.BigDecimal.ZERO;
     }
 
     // ---------- user（ownership 由 controller 传 current userId，无外部旁路） ----------

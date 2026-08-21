@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,12 +42,15 @@ class BillingQueryServiceTest {
     @Mock private PointsLedgerMapper ledgerMapper;
     @Mock private PointsWalletService walletService;
     @Mock private ProjectGroupMapper groupMapper;
+    @Mock private com.superprogrammer.billing.mapper.PaymentOrderMapper paymentOrderMapper;
+    @Mock private com.superprogrammer.billing.mapper.UserPointsBalanceMapper balanceMapper;
 
     private BillingQueryService service;
 
     @BeforeEach
     void setUp() {
-        service = new BillingQueryService(usageLogMapper, ledgerMapper, walletService, groupMapper);
+        service = new BillingQueryService(usageLogMapper, ledgerMapper, walletService, groupMapper,
+                paymentOrderMapper, balanceMapper);
     }
 
     @Test
@@ -259,5 +263,114 @@ class BillingQueryServiceTest {
         assertEquals(1, service.projectGroupOptions().size());
         assertEquals(10L, service.projectGroupOptions().get(0).id());
         assertEquals("组A", service.projectGroupOptions().get(0).name());
+    }
+
+    // ==================== 20x#1：admin 充值记录 + 用户余额视图 ====================
+
+    @Test
+    void adminRecharges_pageAndFilteredSums() {
+        // 明细六字段行 + 筛选下 Σ（同 WHERE 口径两次聚合）
+        var row = new com.superprogrammer.billing.dto.AdminRechargeRecordVO(
+                1L, 7L, "u7", OffsetDateTime.now(), "MOCK", "138****1234",
+                new BigDecimal("100.00"), new BigDecimal("1000"), new BigDecimal("1500"), "PAID");
+        when(paymentOrderMapper.countAdminRecharges(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any()))
+                .thenReturn(1L);
+        when(paymentOrderMapper.pageAdminRecharges(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any(),
+                eq(0L), eq(20L))).thenReturn(List.of(row));
+        when(paymentOrderMapper.sumPaidAmountFiltered(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any()))
+                .thenReturn(new BigDecimal("100.00"));
+        when(paymentOrderMapper.sumPaidPointsFiltered(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any()))
+                .thenReturn(new BigDecimal("1000"));
+
+        var vo = service.adminRecharges(7L, "u7", "MOCK", "PAID", null, null, 1, 20);
+
+        assertEquals(1, vo.page().getTotal());
+        assertEquals(new BigDecimal("1500"), vo.page().getRecords().get(0).balanceAfter());
+        // 合计卡与明细同口径（筛选联动聚合一致）
+        assertEquals(new BigDecimal("100.00"), vo.filteredPaidAmount());
+        assertEquals(new BigDecimal("1000"), vo.filteredPaidPoints());
+    }
+
+    @Test
+    void adminRecharges_emptyTotalSkipsPageQuery() {
+        when(paymentOrderMapper.countAdminRecharges(any(), any(), any(), any(), any(), any())).thenReturn(0L);
+        when(paymentOrderMapper.sumPaidAmountFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+        when(paymentOrderMapper.sumPaidPointsFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+
+        var vo = service.adminRecharges(null, null, null, null, null, null, 1, 20);
+
+        assertEquals(0, vo.page().getTotal());
+        assertTrue(vo.page().getRecords().isEmpty());
+        verify(paymentOrderMapper, never()).pageAdminRecharges(any(), any(), any(), any(), any(), any(),
+                anyLong(), anyLong());
+    }
+
+    @Test
+    void adminRecharges_sizeCappedAtMax() {
+        // size=9999（恶意大）→ 封顶 RECHARGE_MAX_SIZE(100)
+        when(paymentOrderMapper.countAdminRecharges(any(), any(), any(), any(), any(), any())).thenReturn(0L);
+        when(paymentOrderMapper.sumPaidAmountFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+        when(paymentOrderMapper.sumPaidPointsFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+
+        var vo = service.adminRecharges(null, null, null, null, null, null, 1, 9999);
+
+        assertEquals(BillingQueryService.RECHARGE_MAX_SIZE, vo.page().getSize());
+    }
+
+    @Test
+    void userBalances_zeroFillAndPlatformTotals() {
+        // 无钱包行/无充值用户显 0（SQL COALESCE 出 0，此处验证映射直传 + 合计卡来自全平台聚合）
+        var zeroRow = new com.superprogrammer.billing.dto.UserBalanceRowVO(
+                9L, "newbie", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
+        when(balanceMapper.countUserBalances(null)).thenReturn(1L);
+        when(balanceMapper.pageUserBalances(isNull(), any(), eq(0L), eq(20L))).thenReturn(List.of(zeroRow));
+        java.util.Map<String, Object> totals = new java.util.HashMap<>();
+        totals.put("totalusers", 3L);
+        totals.put("sumbalance", new BigDecimal("500"));
+        totals.put("sumrechargepoints", new BigDecimal("2000"));
+        totals.put("sumrechargeamount", new BigDecimal("200.00"));
+        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+
+        var vo = service.userBalances(null, null, null, 1, 20);
+
+        assertEquals(1, vo.page().getTotal());
+        assertEquals(BigDecimal.ZERO, vo.page().getRecords().get(0).balancePoints());
+        assertEquals(3L, vo.totalUsers());
+        assertEquals(new BigDecimal("500"), vo.sumBalance());
+        assertEquals(new BigDecimal("2000"), vo.sumRechargePoints());
+        assertEquals(new BigDecimal("200.00"), vo.sumRechargeAmount());
+    }
+
+    @Test
+    void userBalances_sortWhitelistFallsBackToBalance() {
+        // 非白名单 sortBy（注入尝试）→ 回落余额降序白名单列，绝不拼接外部输入
+        when(balanceMapper.countUserBalances(null)).thenReturn(0L);
+        java.util.Map<String, Object> totals = new java.util.HashMap<>();
+        totals.put("totalusers", 0L);
+        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+
+        service.userBalances(null, "balance_points; DROP TABLE users", "desc", 1, 20);
+
+        verify(balanceMapper, never()).pageUserBalances(any(), org.mockito.ArgumentMatchers.contains("DROP"),
+                anyLong(), anyLong());
+    }
+
+    @Test
+    void userBalances_rechargeAmountSortMapped() {
+        when(balanceMapper.countUserBalances(null)).thenReturn(0L);
+        java.util.Map<String, Object> totals = new java.util.HashMap<>();
+        totals.put("totalusers", 0L);
+        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+
+        service.userBalances(null, "rechargeAmount", "asc", 1, 20);
+
+        verify(balanceMapper, never()).pageUserBalances(any(),
+                org.mockito.ArgumentMatchers.contains("DROP"), anyLong(), anyLong());
+        // count 查 0 → 不分页查询（短路）
+        verify(balanceMapper, never()).pageUserBalances(any(), any(), anyLong(), anyLong());
     }
 }

@@ -41,4 +41,48 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
 
     @Select("SELECT * FROM user_points_balance WHERE user_id = #{userId}")
     UserPointsBalanceEntity selectByUserId(@Param("userId") Long userId);
+
+    // ==================== admin 用户余额视图（20x#1） ====================
+
+    /** 余额视图总数（keyword 筛选 username；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */
+    @Select("<script>SELECT COUNT(*) FROM users u "
+            + "<where> u.deleted = 0 "
+            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "</where></script>")
+    long countUserBalances(@Param("keyword") String keyword);
+
+    /**
+     * 余额视图分页：users LEFT JOIN 钱包 LEFT JOIN PAID 聚合——无钱包行/无充值用户显 0（COALESCE）。
+     * <p>排序列由 service 白名单映射后整段传入 orderClause（防注入；只允许白名单列+方向）。
+     */
+    @Select("<script>SELECT u.id AS userId, u.username, "
+            + "COALESCE(b.balance_points, 0) AS balancePoints, "
+            + "COALESCE(r.totalPoints, 0) AS totalRechargePoints, "
+            + "COALESCE(r.totalAmount, 0) AS totalRechargeAmount, "
+            + "r.lastAt AS lastRechargeAt "
+            + "FROM users u "
+            + "LEFT JOIN user_points_balance b ON b.user_id = u.id "
+            + "LEFT JOIN (SELECT user_id, SUM(points_granted) AS totalPoints, SUM(amount_yuan) AS totalAmount, "
+            + "MAX(paid_at) AS lastAt FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
+            + "<where> u.deleted = 0 "
+            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "</where> ${orderClause} LIMIT #{size} OFFSET #{offset}</script>")
+    java.util.List<com.superprogrammer.billing.dto.UserBalanceRowVO> pageUserBalances(
+            @Param("keyword") String keyword, @Param("orderClause") String orderClause,
+            @Param("offset") long offset, @Param("size") long size);
+
+    /**
+     * 全平台合计卡（不受 keyword 筛选影响——页头恒定展示全平台口径；与明细行同 JOIN 结构保证 Σ 一致）。
+     * 返回顺序固定：totalUsers / sumBalance / sumRechargePoints / sumRechargeAmount。
+     */
+    @Select("SELECT COUNT(*) AS totalUsers, "
+            + "COALESCE(SUM(COALESCE(b.balance_points, 0)), 0) AS sumBalance, "
+            + "COALESCE(SUM(COALESCE(r.totalPoints, 0)), 0) AS sumRechargePoints, "
+            + "COALESCE(SUM(COALESCE(r.totalAmount, 0)), 0) AS sumRechargeAmount "
+            + "FROM users u "
+            + "LEFT JOIN user_points_balance b ON b.user_id = u.id "
+            + "LEFT JOIN (SELECT user_id, SUM(points_granted) AS totalPoints, SUM(amount_yuan) AS totalAmount "
+            + "FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
+            + "WHERE u.deleted = 0")
+    java.util.Map<String, Object> platformBalanceTotals();
 }

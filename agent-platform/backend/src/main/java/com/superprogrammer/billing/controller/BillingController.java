@@ -145,6 +145,38 @@ public class BillingController {
         return ResponseEntity.ok(R.ok(reconcileService.paymentAnomalies()));
     }
 
+    /**
+     * admin 充值记录（20x#1）：六字段分页 + 用户/渠道/状态/日期筛选 + 当前筛选下 Σ金额/Σ积分。
+     */
+    @GetMapping("/admin/recharges")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<com.superprogrammer.billing.dto.AdminRechargePageVO>> adminRecharges(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String channel,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.adminRecharges(userId, keyword, channel, status, from, to, page, size)));
+    }
+
+    /**
+     * admin 用户余额视图（20x#1）：余额/累计充值积分/累计充值金额/最近充值时间 + 全平台合计卡。
+     * 排序 sortBy∈{balance,rechargePoints,rechargeAmount}（白名单），order∈{asc,desc}。
+     */
+    @GetMapping("/admin/user-balances")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<com.superprogrammer.billing.dto.UserBalancePageVO>> userBalances(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String order) {
+        return ResponseEntity.ok(R.ok(queryService.userBalances(keyword, sortBy, order, page, size)));
+    }
+
     // ---------- user（ownership = current userId，无外部旁路） ----------
 
     @GetMapping("/me/wallet")
