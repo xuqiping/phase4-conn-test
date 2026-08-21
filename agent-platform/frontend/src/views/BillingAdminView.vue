@@ -104,6 +104,91 @@
               @update:page-size="onDetailPageSize"
             />
           </n-tab-pane>
+
+          <!-- 20x#1：充值记录（筛选+分页+当前筛选下 Σ 条） -->
+          <n-tab-pane name="recharges" tab="充值记录">
+            <div class="billing-admin__detail-filter">
+              <n-input
+                v-model:value="rechargeKeyword"
+                placeholder="用户名（回车筛选）"
+                clearable
+                style="width: 180px"
+                @keyup.enter="loadRecharges(1)"
+              />
+              <n-select
+                v-model:value="rechargeChannel"
+                :options="rechargeChannelOptions"
+                placeholder="全部渠道"
+                clearable
+                style="width: 140px"
+              />
+              <n-select
+                v-model:value="rechargeStatus"
+                :options="rechargeStatusOptions"
+                placeholder="全部状态"
+                clearable
+                style="width: 140px"
+              />
+              <n-date-picker
+                v-model:value="rechargeRange"
+                type="daterange"
+                clearable
+                :update-value-on-close="true"
+                style="width: 260px"
+              />
+              <n-button size="small" @click="loadRecharges(1)">查询</n-button>
+            </div>
+            <!-- 筛选联动 Σ（PAID 口径；筛非 PAID 状态归 0） -->
+            <div class="billing-admin__recharge-summary">
+              当前筛选：已付金额 <b>¥{{ fmtNum(rechargeSums?.filteredPaidAmount) }}</b>，
+              已付积分 <b>{{ fmtNum(rechargeSums?.filteredPaidPoints) }}</b>
+            </div>
+            <n-data-table
+              remote
+              :columns="rechargeColumns"
+              :data="recharges"
+              :loading="rechargeLoading"
+              :pagination="rechargePagination"
+              :scroll-x="1080"
+              size="small"
+              :max-height="480"
+              @update:page="onRechargePage"
+              @update:page-size="onRechargePageSize"
+            />
+          </n-tab-pane>
+
+          <!-- 20x#1：用户余额（三合计卡 + 排序分页表格） -->
+          <n-tab-pane name="balances" tab="用户余额">
+            <n-grid :cols="4" :x-gap="12" responsive="screen" style="margin-bottom: 12px">
+              <n-gi><n-card size="small"><n-statistic label="用户数" :value="balanceTotals?.totalUsers ?? 0" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="余额合计" :value="fmtNum(balanceTotals?.sumBalance)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="累计充值积分" :value="fmtNum(balanceTotals?.sumRechargePoints)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="累计充值金额 ¥" :value="fmtNum(balanceTotals?.sumRechargeAmount)" /></n-card></n-gi>
+            </n-grid>
+            <div class="billing-admin__detail-filter">
+              <n-input
+                v-model:value="balanceKeyword"
+                placeholder="用户名（回车筛选）"
+                clearable
+                style="width: 200px"
+                @keyup.enter="loadBalances(1)"
+              />
+              <n-button size="small" @click="loadBalances(1)">查询</n-button>
+              <span class="billing-admin__balance-hint">合计卡为全平台口径，不受筛选影响</span>
+            </div>
+            <n-data-table
+              remote
+              :columns="balanceColumns"
+              :data="balances"
+              :loading="balanceLoading"
+              :pagination="balancePagination"
+              size="small"
+              :max-height="480"
+              @update:page="onBalancePage"
+              @update:page-size="onBalancePageSize"
+              @update:sorter="onBalanceSorter"
+            />
+          </n-tab-pane>
         </n-tabs>
       </template>
     </n-card>
@@ -118,10 +203,13 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns, PaginationProps, SelectOption } from 'naive-ui'
 import {
-  billingApi, KIND_LABEL, KIND_TAG_TYPE, USAGE_STATUS_LABEL, USAGE_STATUS_TAG_TYPE
+  billingApi, KIND_LABEL, KIND_TAG_TYPE, USAGE_STATUS_LABEL, USAGE_STATUS_TAG_TYPE,
+  PAYMENT_STATUS_LABEL, PAYMENT_STATUS_TAG_TYPE, PAYMENT_CHANNEL_LABEL
 } from '@/api/billing'
 import type {
-  UsageOverviewVO, UsageDimensionVO, DailyTrendVO, BillingKind, UsageDetailVO, UsageDetailQuery
+  UsageOverviewVO, UsageDimensionVO, DailyTrendVO, BillingKind, UsageDetailVO, UsageDetailQuery,
+  AdminRechargeRecordVO, AdminRechargeQuery, UserBalanceRowVO, UserBalanceQuery, UserBalanceSortBy,
+  PaymentStatus
 } from '@/api/billing'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -317,11 +405,190 @@ function clearDrill() {
   loadDetail(1)
 }
 
-/** tab 首次切到「调用明细」懒加载。 */
+/** tab 首次切到「调用明细/充值记录/用户余额」懒加载。 */
 function onTabChange(name: string | number) {
   if (name === 'detail' && detail.value.length === 0 && detailPagination.itemCount === 0) {
     loadDetail(1)
   }
+  if (name === 'recharges' && recharges.value.length === 0 && rechargePagination.itemCount === 0) {
+    loadRecharges(1)
+  }
+  if (name === 'balances' && balances.value.length === 0 && balancePagination.itemCount === 0) {
+    loadBalances(1)
+  }
+}
+
+// ---------- 20x#1：充值记录 tab ----------
+const recharges = ref<AdminRechargeRecordVO[]>([])
+const rechargeSums = ref<{ filteredPaidAmount: number; filteredPaidPoints: number } | null>(null)
+const rechargeLoading = ref(false)
+const rechargePagination = reactive<PaginationProps>({
+  page: 1, pageSize: 20, itemCount: 0, showSizePicker: true, pageSizes: [20, 50, 100]
+})
+const rechargeKeyword = ref('')
+const rechargeChannel = ref<string | null>(null)
+const rechargeStatus = ref<PaymentStatus | null>(null)
+const rechargeRange = ref<[number, number] | null>(null)
+
+const rechargeChannelOptions: SelectOption[] =
+  (['MOCK', 'ALIPAY', 'WECHAT'] as const).map(c => ({ label: PAYMENT_CHANNEL_LABEL[c], value: c }))
+const rechargeStatusOptions: SelectOption[] =
+  (['PENDING', 'PAID', 'FAILED', 'CLOSED'] as PaymentStatus[]).map(s => ({
+    label: PAYMENT_STATUS_LABEL[s], value: s
+  }))
+
+const rechargeColumns: DataTableColumns<AdminRechargeRecordVO> = [
+  {
+    title: '时间', key: 'createdAt', width: 165,
+    render: r => r.createdAt ? new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'
+  },
+  { title: '用户', key: 'username', width: 120 },
+  {
+    title: '渠道', key: 'channel', width: 90,
+    render: r => PAYMENT_CHANNEL_LABEL[r.channel] ?? r.channel
+  },
+  { title: '付款账号', key: 'payerAccount', width: 150, ellipsis: { tooltip: true }, render: r => r.payerAccount || '—' },
+  { title: '金额 ¥', key: 'amountYuan', width: 100, render: r => fmtNum(r.amountYuan) },
+  { title: '积分', key: 'pointsGranted', width: 100, render: r => fmtNum(r.pointsGranted) },
+  { title: '充值后余额', key: 'balanceAfter', width: 110, render: r => fmtNum(r.balanceAfter) },
+  {
+    title: '状态', key: 'status', width: 90,
+    render: r => h(NTag, {
+      size: 'small', round: true,
+      type: PAYMENT_STATUS_TAG_TYPE[r.status] ?? 'default'
+    }, { default: () => PAYMENT_STATUS_LABEL[r.status] ?? r.status })
+  }
+]
+
+async function loadRecharges(page = 1) {
+  if (!canView.value) return
+  rechargeLoading.value = true
+  try {
+    const q: AdminRechargeQuery = { page, size: rechargePagination.pageSize }
+    const kw = rechargeKeyword.value.trim()
+    if (kw) q.keyword = kw
+    if (rechargeChannel.value) q.channel = rechargeChannel.value
+    if (rechargeStatus.value) q.status = rechargeStatus.value
+    if (rechargeRange.value) {
+      const [s, e] = rechargeRange.value
+      q.from = new Date(s).toISOString()
+      q.to = new Date(e + 86400000).toISOString()
+    }
+    const res = await billingApi.adminRecharges(q)
+    const data = res.data.data
+    recharges.value = data?.page.records ?? []
+    rechargePagination.itemCount = data?.page.total ?? 0
+    rechargePagination.page = page
+    rechargeSums.value = data
+      ? { filteredPaidAmount: data.filteredPaidAmount, filteredPaidPoints: data.filteredPaidPoints }
+      : null
+  } catch {
+    recharges.value = []
+    rechargePagination.itemCount = 0
+    rechargeSums.value = null
+  } finally {
+    rechargeLoading.value = false
+  }
+}
+
+function onRechargePage(page: number) {
+  loadRecharges(page)
+}
+function onRechargePageSize(pageSize: number) {
+  rechargePagination.pageSize = pageSize
+  loadRecharges(1)
+}
+
+// ---------- 20x#1：用户余额 tab ----------
+const balances = ref<UserBalanceRowVO[]>([])
+const balanceTotals = ref<{
+  totalUsers: number; sumBalance: number; sumRechargePoints: number; sumRechargeAmount: number
+} | null>(null)
+const balanceLoading = ref(false)
+const balancePagination = reactive<PaginationProps>({
+  page: 1, pageSize: 20, itemCount: 0, showSizePicker: true, pageSizes: [20, 50, 100]
+})
+const balanceKeyword = ref('')
+const balanceSortBy = ref<UserBalanceSortBy>('balance')
+const balanceSortOrder = ref<'asc' | 'desc'>('desc')
+
+const balanceColumns: DataTableColumns<UserBalanceRowVO> = [
+  { title: '用户名', key: 'username', width: 160 },
+  {
+    title: '当前余额', key: 'balancePoints', width: 130,
+    sorter: true, sortOrder: false,
+    render: r => fmtNum(r.balancePoints)
+  },
+  {
+    title: '累计充值积分', key: 'totalRechargePoints', width: 140,
+    sorter: true, sortOrder: false,
+    render: r => fmtNum(r.totalRechargePoints)
+  },
+  {
+    title: '累计充值金额 ¥', key: 'totalRechargeAmount', width: 150,
+    sorter: true, sortOrder: false,
+    render: r => fmtNum(r.totalRechargeAmount)
+  },
+  {
+    title: '最近充值时间', key: 'lastRechargeAt', width: 170,
+    render: r => r.lastRechargeAt ? new Date(r.lastRechargeAt).toLocaleString('zh-CN', { hour12: false }) : '—'
+  }
+]
+
+/** 前端列 key → 后端排序白名单字段（仅三列，其余不落参）。 */
+const BALANCE_SORT_KEY_MAP: Record<string, UserBalanceSortBy> = {
+  balancePoints: 'balance',
+  totalRechargePoints: 'rechargePoints',
+  totalRechargeAmount: 'rechargeAmount'
+}
+
+async function loadBalances(page = 1) {
+  if (!canView.value) return
+  balanceLoading.value = true
+  try {
+    const q: UserBalanceQuery = {
+      page, size: balancePagination.pageSize,
+      sortBy: balanceSortBy.value, order: balanceSortOrder.value
+    }
+    const kw = balanceKeyword.value.trim()
+    if (kw) q.keyword = kw
+    const res = await billingApi.adminUserBalances(q)
+    const data = res.data.data
+    balances.value = data?.page.records ?? []
+    balancePagination.itemCount = data?.page.total ?? 0
+    balancePagination.page = page
+    balanceTotals.value = data
+      ? {
+          totalUsers: data.totalUsers, sumBalance: data.sumBalance,
+          sumRechargePoints: data.sumRechargePoints, sumRechargeAmount: data.sumRechargeAmount
+        }
+      : null
+  } catch {
+    balances.value = []
+    balancePagination.itemCount = 0
+  } finally {
+    balanceLoading.value = false
+  }
+}
+
+function onBalancePage(page: number) {
+  loadBalances(page)
+}
+function onBalancePageSize(pageSize: number) {
+  balancePagination.pageSize = pageSize
+  loadBalances(1)
+}
+
+/** 服务端排序：sorter 变化 → 映射白名单字段重查（false=清除排序回落默认）。 */
+function onBalanceSorter(sorter: { columnKey?: string; order?: 'ascend' | 'descend' | false } | null) {
+  if (sorter?.columnKey && sorter.order && BALANCE_SORT_KEY_MAP[sorter.columnKey]) {
+    balanceSortBy.value = BALANCE_SORT_KEY_MAP[sorter.columnKey]
+    balanceSortOrder.value = sorter.order === 'ascend' ? 'asc' : 'desc'
+  } else {
+    balanceSortBy.value = 'balance'
+    balanceSortOrder.value = 'desc'
+  }
+  loadBalances(1)
 }
 
 /** 用户筛选下拉：取用户列表（需 user 权限；403 容错→空下拉，表格用户名仍由后端 JOIN 返）。 */
@@ -390,5 +657,15 @@ onMounted(() => {
   background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
   border-radius: 6px;
   font-size: 13px;
+}
+.billing-admin__recharge-summary {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
+}
+.billing-admin__balance-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary, rgba(255, 255, 255, 0.45));
+  align-self: center;
 }
 </style>

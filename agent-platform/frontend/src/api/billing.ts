@@ -203,6 +203,127 @@ export interface UsageDetailQuery {
   to?: string
 }
 
+// === 自助充值支付（7x#3 / 20x#1） ===
+
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'CLOSED'
+
+/** 支付订单（用户侧；payToken 仅 PENDING 下发） */
+export interface PaymentOrderVO {
+  id: number
+  createdAt: string
+  amountYuan: number
+  pointsGranted: number
+  status: PaymentStatus
+  channel: string
+  payerAccount: string | null
+  expireAt: string | null
+  paidAt: string | null
+  payToken: string | null
+}
+
+export interface CreatePaymentOrderRequest {
+  amountYuan: number
+  channel: string
+  /** 表单会话 UUID——同键同金额返原单，不同金额 409 */
+  idemKey?: string
+}
+
+/** 我的充值记录行（六字段；未入账状态 balanceAfter=null 显「—」） */
+export interface RechargeRecordVO {
+  id: number
+  createdAt: string
+  channel: string
+  payerAccount: string | null
+  amountYuan: number
+  pointsGranted: number
+  balanceAfter: number | null
+  status: PaymentStatus
+}
+
+/** 我的充值记录分页 + 累计条（仅 PAID 计入） */
+export interface RechargePageVO {
+  page: PageResult<RechargeRecordVO>
+  totalPaidAmount: number
+  totalPaidPoints: number
+}
+
+/** admin 充值记录行（六字段 + userId/username） */
+export interface AdminRechargeRecordVO extends RechargeRecordVO {
+  userId: number
+  username: string
+}
+
+/** admin 充值记录分页 + 当前筛选下 Σ（PAID 口径；筛非 PAID 状态自然归 0） */
+export interface AdminRechargePageVO {
+  page: PageResult<AdminRechargeRecordVO>
+  filteredPaidAmount: number
+  filteredPaidPoints: number
+}
+
+export interface AdminRechargeQuery {
+  page?: number
+  size?: number
+  userId?: number
+  /** 用户名模糊 */
+  keyword?: string
+  channel?: string
+  status?: PaymentStatus
+  from?: string
+  to?: string
+}
+
+/** 用户余额视图行（无钱包行/无充值用户各项为 0） */
+export interface UserBalanceRowVO {
+  userId: number
+  username: string
+  balancePoints: number
+  totalRechargePoints: number
+  totalRechargeAmount: number
+  lastRechargeAt: string | null
+}
+
+/** 用户余额视图分页 + 全平台合计卡（不受 keyword 筛选影响） */
+export interface UserBalancePageVO {
+  page: PageResult<UserBalanceRowVO>
+  totalUsers: number
+  sumBalance: number
+  sumRechargePoints: number
+  sumRechargeAmount: number
+}
+
+export type UserBalanceSortBy = 'balance' | 'rechargePoints' | 'rechargeAmount'
+
+export interface UserBalanceQuery {
+  page?: number
+  size?: number
+  keyword?: string
+  sortBy?: UserBalanceSortBy
+  order?: 'asc' | 'desc'
+}
+
+/** 支付状态 → 中文 */
+export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
+  PENDING: '待支付',
+  PAID: '已支付',
+  FAILED: '支付失败',
+  CLOSED: '已关闭'
+}
+
+/** 支付状态 → NTag 色调 */
+export const PAYMENT_STATUS_TAG_TYPE: Record<PaymentStatus, 'info' | 'success' | 'error' | 'warning'> = {
+  PENDING: 'info',
+  PAID: 'success',
+  FAILED: 'error',
+  CLOSED: 'warning'
+}
+
+/** 支付渠道 → 中文 */
+export const PAYMENT_CHANNEL_LABEL: Record<string, string> = {
+  MOCK: '模拟支付',
+  ALIPAY: '支付宝',
+  WECHAT: '微信支付'
+}
+
 // === API 函数 ===
 
 export const billingApi = {
@@ -282,6 +403,39 @@ export const billingApi = {
   },
   myUsage(params: BillingQueryParams) {
     return request.get<ApiResponse<UserUsageVO[]>>('/billing/me/usage', { params })
+  },
+  // ---- 自助充值支付（7x#3，/billing/payment/**） ----
+  /** 当前可用支付渠道（空数组=隐藏充值入口） */
+  paymentChannels() {
+    return request.get<ApiResponse<string[]>>('/billing/payment/channels')
+  },
+  /** 下单（idemKey=表单会话 UUID，防双击/重试双扣） */
+  createPaymentOrder(data: CreatePaymentOrderRequest) {
+    return request.post<ApiResponse<PaymentOrderVO>>('/billing/payment/orders', data)
+  },
+  /** 查单（PENDING 单响应带 payToken 供续付） */
+  getPaymentOrder(id: number) {
+    return request.get<ApiResponse<PaymentOrderVO>>(`/billing/payment/orders/${id}`)
+  },
+  cancelPaymentOrder(id: number) {
+    return request.post<ApiResponse<null>>(`/billing/payment/orders/${id}/cancel`)
+  },
+  /** mock 收银台模拟支付（仅 mock-enabled 环境可用；走真实回调链路） */
+  mockTrigger(data: { orderId: number; success: boolean; payerAccount?: string }) {
+    return request.post<ApiResponse<{ orderId: number; accepted: boolean }>>('/billing/payment/mock/trigger', data)
+  },
+  /** 我的充值记录（六字段分页 + 累计条） */
+  myRecharges(params: { page?: number; size?: number }) {
+    return request.get<ApiResponse<RechargePageVO>>('/billing/payment/me/recharges', { params })
+  },
+  // ---- admin 充值/余额（20x#1，usage:view） ----
+  /** admin 充值记录（分页 + 筛选 + 当前筛选下 Σ） */
+  adminRecharges(params: AdminRechargeQuery) {
+    return request.get<ApiResponse<AdminRechargePageVO>>('/billing/admin/recharges', { params })
+  },
+  /** admin 用户余额视图（分页 + 排序 + 全平台合计卡） */
+  adminUserBalances(params: UserBalanceQuery) {
+    return request.get<ApiResponse<UserBalancePageVO>>('/billing/admin/user-balances', { params })
   }
 }
 
