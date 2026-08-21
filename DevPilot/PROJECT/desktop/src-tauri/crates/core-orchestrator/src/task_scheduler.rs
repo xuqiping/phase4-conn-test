@@ -505,7 +505,16 @@ impl LlmClient for HttpLlmClient {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::OnceLock;
     use tempfile::TempDir;
+    use tokio::sync::Mutex;
+
+    /// 串行化「嵌套真实 cargo test」的两个用例：并发跑会争抢 cargo 注册表锁/CPU，
+    /// 偶发编译超时导致对方用例的 cargo test 意外失败（Phase4 冒烟实测的偶发根因）。
+    fn nested_cargo_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     struct MockLlm {
         output: TaskOutput,
@@ -576,6 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_runs_pending_tasks_in_order() {
+        let _nested = nested_cargo_lock().lock().await;
         let tmp = TempDir::new().unwrap();
         init_git(tmp.path());
         let (db, project_id, round_id, _) = fixture();
@@ -634,6 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_stops_on_failure() {
+        let _nested = nested_cargo_lock().lock().await;
         let tmp = TempDir::new().unwrap();
         init_git(tmp.path());
         let (db, project_id, round_id, _) = fixture();
