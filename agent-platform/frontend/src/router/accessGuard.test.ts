@@ -135,4 +135,13 @@ describe('resolveRouteAccess 路由访问判定（问题 10x-3/4/5）', () => {
       expect(decide({ path: '/admin/help-articles', module: 'helpAdmin', user: admin() }).allow).toBe(true)
     })
   })
+
+  describe('7x 追加 支付渠道配置（paymentAdmin→payment:config）', () => {
+    it('无 payment:config 直输 /admin/payment-channels → 拦截；持码放行', () => {
+      const denied = decide({ path: '/admin/payment-channels', module: 'paymentAdmin', user: userWith([]) })
+      expect(denied.allow).toBe(false)
+      expect(decide({ path: '/admin/payment-channels', module: 'paymentAdmin', user: userWith(['payment:config']) }).allow).toBe(true)
+      expect(decide({ path: '/admin/payment-channels', module: 'paymentAdmin', user: admin() }).allow).toBe(true)
+    })
+  })
 })

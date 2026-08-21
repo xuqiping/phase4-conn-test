@@ -246,6 +246,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '帮助文章', module: 'helpAdmin' }
       },
       {
+        path: 'admin/payment-channels',
+        name: 'PaymentChannelConfig',
+        component: () => import('@/views/admin/PaymentChannelConfigView.vue'),
+        // 7x 追加：module=paymentAdmin → 守卫校验 payment:config
+        meta: { title: '支付渠道', module: 'paymentAdmin' }
+      },
+      {
         path: 'admin/billing-pricing',
         name: 'PricingConfig',
         component: () => import('@/views/admin/PricingConfigView.vue'),

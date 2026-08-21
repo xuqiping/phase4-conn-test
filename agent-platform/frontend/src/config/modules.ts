@@ -30,6 +30,7 @@ export type ModuleKey =
   | 'feedback'
   | 'feedbackAdmin'
   | 'helpAdmin'
+  | 'paymentAdmin'
   | 'settings'
 
 /**
@@ -57,6 +58,8 @@ export const ENABLED_MODULES: Record<ModuleKey, boolean> = {
   // 19x admin 两页（开关管模块、权限码管人；双码分离——审核与内容管理可分管）
   feedbackAdmin: true,
   helpAdmin: true,
+  // 7x 追加：支付渠道密钥网页配置（payment:config）
+  paymentAdmin: true,
   settings: true
 }
 
@@ -79,7 +82,8 @@ export const MODULE_PERMISSION_MAP: Partial<Record<ModuleKey, string>> = {
   projectGroups: 'project-group:manage',
   // 19x：反馈审核（feedback:manage）与帮助文章（help:manage）双码分离
   feedbackAdmin: 'feedback:manage',
-  helpAdmin: 'help:manage'
+  helpAdmin: 'help:manage',
+  paymentAdmin: 'payment:config'
 }
 
 /** 模块是否启用（开关）。 */

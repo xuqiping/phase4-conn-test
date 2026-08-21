@@ -67,6 +67,7 @@ import {
   ChatboxEllipsesOutline,
   ClipboardOutline,
   LibraryOutline,
+  KeyOutline,
   BookOutline,
   VideocamOutline,
   ImageOutline,
@@ -180,6 +181,10 @@ const navItems = computed(() => {
   }
   if (canSeeModule('helpAdmin')) {
     items.push({ path: '/admin/help-articles', label: '帮助文章', icon: LibraryOutline, module: 'helpAdmin' })
+  }
+  // 7x 追加：支付渠道密钥配置（module 权限码 payment:config）
+  if (canSeeModule('paymentAdmin')) {
+    items.push({ path: '/admin/payment-channels', label: '支付渠道', icon: KeyOutline, module: 'paymentAdmin' })
   }
   if (canViewAudit.value) {
     items.push({ path: '/admin/logs/audit', label: '审计日志', icon: DocumentTextOutline, module: 'settings' })

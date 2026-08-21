@@ -436,7 +436,39 @@ export const billingApi = {
   /** admin 用户余额视图（分页 + 排序 + 全平台合计卡） */
   adminUserBalances(params: UserBalanceQuery) {
     return request.get<ApiResponse<UserBalancePageVO>>('/billing/admin/user-balances', { params })
+  },
+  // ---- admin 支付渠道配置（7x 追加，payment:config） ----
+  /** 两渠道脱敏配置状态（tails 永不含明文） */
+  adminPaymentChannels() {
+    return request.get<ApiResponse<PaymentChannelConfigVO[]>>('/billing/admin/payment-channels')
+  },
+  /** 保存渠道密钥（merge：留空字段保持原值；整体 AES 落库） */
+  savePaymentChannelConfig(channel: string, config: Record<string, string>) {
+    return request.put<ApiResponse<null>>(`/billing/admin/payment-channels/${channel}`, config)
   }
+}
+
+/** 支付渠道配置·脱敏视图（admin；tails 每字段形如 "****3f2a"） */
+export interface PaymentChannelConfigVO {
+  channel: 'ALIPAY' | 'WECHAT'
+  configured: boolean
+  tails: Record<string, string>
+  updatedAt: string | null
+  updatedBy: number | null
+}
+
+/** 渠道表单字段说明（前端表单顺序/标签真相源，与后端 REQUIRED_KEYS 对齐） */
+export const PAYMENT_CHANNEL_FIELDS: Record<string, { key: string; label: string; secret: boolean }[]> = {
+  ALIPAY: [
+    { key: 'appId', label: 'APPID（开放平台我的应用）', secret: false },
+    { key: 'privateKey', label: '应用私钥（密钥工具生成）', secret: true },
+    { key: 'alipayPublicKey', label: '支付宝公钥（上传应用公钥后页面显示）', secret: true }
+  ],
+  WECHAT: [
+    { key: 'mchId', label: '商户号（10 位数字）', secret: false },
+    { key: 'appId', label: 'AppID（服务号 wx... 开头）', secret: false },
+    { key: 'apiV3Key', label: 'APIv3 密钥（商户平台自设 32 位）', secret: true }
+  ]
 }
 
 /** 计划5 Step8：账单筛选下拉的项目组选项 */
