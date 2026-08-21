@@ -289,6 +289,16 @@ public class ProjectGroupController {
         return ResponseEntity.ok(R.ok("成员已用已重置", null));
     }
 
+    /** 任免组内角色（17x#2，V139，仅组长/admin）：MEMBER↔MANAGER；OWNER 行 400。 */
+    @PutMapping("/{id}/members/{uid}/role")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "member_role", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> updateMemberRole(@PathVariable("id") Long id, @PathVariable("uid") Long uid,
+                                                    @RequestBody com.superprogrammer.projectgroup.dto.ProjectGroupRoleRequest req) {
+        groupService.updateMemberRole(id, getCurrentUserId(), isAdmin(), uid, req.getRole());
+        return ResponseEntity.ok(R.ok("成员角色已更新", null));
+    }
+
     @PostMapping("/{id}/allocate")
     @RequirePermission("project-group:manage")
     @AuditLog(module = "project-group", action = "wallet_allocate", targetType = "project_group_wallet")

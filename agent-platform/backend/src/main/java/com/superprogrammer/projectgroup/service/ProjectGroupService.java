@@ -165,26 +165,26 @@ public class ProjectGroupService {
         memberMapper.insert(m);
     }
 
-    /** 移除成员（组长/admin）：组长自身不可移除；used>0 照移（历史流水留痕，对账看流水不看行）。 */
+    /** 移除成员（组长/管理/admin）：组长自身不可移除；MANAGER/OWNER 行不可被运营移除；used>0 照移（历史流水留痕）。 */
     @Transactional(rollbackFor = Exception.class)
     public void removeMember(Long groupId, Long actorUserId, boolean admin, Long memberUserId) {
-        ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
+        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         if (g.getOwnerUserId().equals(memberUserId)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长不可移除，请先删除组");
         }
-        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
         memberMapper.deleteById(m.getId());
         log.info("移除成员 groupId={} member={} actor={}", groupId, memberUserId, actorUserId);
     }
 
-    /** 调整成员限额（组长/admin）：null=改为不限；调低不追偿（V133 列注释口径），仅约束后续消耗。 */
+    /** 调整成员限额（组长/管理/admin）：null=改为不限；调低不追偿（V133 列注释口径），仅约束后续消耗。 */
     @Transactional(rollbackFor = Exception.class)
     public void updateQuota(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
-        requireOwner(groupId, actorUserId, admin);
+        requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         if (quotaLimitPoints != null && quotaLimitPoints.signum() < 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成员限额不能为负");
         }
-        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
         m.setQuotaLimitPoints(quotaLimitPoints);
         memberMapper.updateById(m);
         log.info("调限额 groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
@@ -197,8 +197,8 @@ public class ProjectGroupService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void resetUsed(Long groupId, Long actorUserId, boolean admin, Long memberUserId) {
-        requireOwner(groupId, actorUserId, admin);
-        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
         BigDecimal before = m.getUsedPoints();
         m.setUsedPoints(BigDecimal.ZERO);
         memberMapper.updateById(m);
@@ -254,9 +254,12 @@ public class ProjectGroupService {
             ProjectGroupWalletEntity w = walletMapper.selectByGroupId(g.getId());
             Long memberCount = memberMapper.selectCount(new LambdaQueryWrapper<ProjectGroupMemberEntity>()
                     .eq(ProjectGroupMemberEntity::getGroupId, g.getId()));
+            // V139：身份取成员行 role（OWNER/MANAGER/MEMBER）；组长恒 OWNER（兜底行缺失场景）
+            String myRole = owner ? ProjectGroupMemberEntity.ROLE_OWNER
+                    : (myRow != null && myRow.getRole() != null ? myRow.getRole() : ProjectGroupMemberEntity.ROLE_MEMBER);
             result.add(new ProjectGroupMineVO(
                     g.getId(), g.getName(), g.getDescription(), g.getOwnerUserId(),
-                    owner ? "OWNER" : "MEMBER",
+                    myRole,
                     w != null ? w.getBalancePoints() : BigDecimal.ZERO,
                     myRow != null ? myRow.getQuotaLimitPoints() : null,
                     myRow != null ? myRow.getUsedPoints() : BigDecimal.ZERO,
@@ -266,10 +269,11 @@ public class ProjectGroupService {
     }
 
     /**
-     * 组详情（组长/admin，管理页）：组基本信息 + 组池余额/在途占用 + 成员列表（含 username/used/quota）。
+     * 组详情（组长/管理/admin，管理页）：组基本信息 + 组池余额/在途占用 + 成员列表（含 username/role/used/quota）。
+     * V139 放宽 MANAGER 可读（管理页成员/流水/审批 tab 数据源）；写操作仍按各自闸口。
      */
     public ProjectGroupDetailVO getDetail(Long groupId, Long actorUserId, boolean admin) {
-        ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
+        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
         BigDecimal inflight = walletMapper.sumInflightEstimated(groupId);
 
@@ -288,6 +292,7 @@ public class ProjectGroupService {
                     u != null ? u.getUsername() : null,
                     u != null && u.getName() != null ? u.getName() : (u != null ? u.getUsername() : null),
                     m.getUserId().equals(g.getOwnerUserId()),
+                    m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole(),
                     m.getQuotaLimitPoints(),
                     m.getUsedPoints(),
                     m.getCreatedAt());
@@ -336,12 +341,80 @@ public class ProjectGroupService {
 
     // ==================== 内部 ====================
 
+    /**
+     * 任免组内角色（V139，仅组长/admin）：MEMBER↔MANAGER 互转。
+     * OWNER 行不可动（GROUP_OWNER_IMMUTABLE 语义；uk_pgm_owner 兜底多 OWNER）。
+     * 同角色重复任免幂等返回。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateMemberRole(Long groupId, Long actorUserId, boolean admin, Long memberUserId, String role) {
+        ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
+        if (!ProjectGroupMemberEntity.ROLE_MANAGER.equals(role) && !ProjectGroupMemberEntity.ROLE_MEMBER.equals(role)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "角色仅支持 MANAGER/MEMBER");
+        }
+        if (g.getOwnerUserId().equals(memberUserId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长角色不可变更");
+        }
+        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        String cur = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+        if (ProjectGroupMemberEntity.ROLE_OWNER.equals(cur)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长角色不可变更");
+        }
+        if (role.equals(cur)) {
+            return;
+        }
+        m.setRole(role);
+        memberMapper.updateById(m);
+        log.info("任免角色 groupId={} member={} {}->{} actor={}", groupId, memberUserId, cur, role, actorUserId);
+    }
+
     private ProjectGroupMemberEntity requireMember(Long groupId, Long userId) {
         ProjectGroupMemberEntity m = memberMapper.selectByGroupUser(groupId, userId);
         if (m == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "该用户不是组成员");
         }
         return m;
+    }
+
+    /**
+     * 运营目标校验（V139）：移除/调限额/重置/开关/覆盖只允许落在 MEMBER 行——
+     * MANAGER 不可被动（防管理互踢），OWNER 行走 updateMemberRole 之外的专属拦截。
+     */
+    private ProjectGroupMemberEntity requireOperatableMember(Long groupId, Long userId) {
+        ProjectGroupMemberEntity m = requireMember(groupId, userId);
+        String role = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+        if (!ProjectGroupMemberEntity.ROLE_MEMBER.equals(role)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅可管理普通成员（MEMBER）");
+        }
+        return m;
+    }
+
+    /**
+     * 组内角色校验（V139）：admin 恒放行；组长恒满足；否则成员活行 role 须∈allowedRoles。
+     * 钱（allocate/reclaim）与组级设置仍走 {@link #requireOwner}，本方法只放宽运营/查询类。
+     *
+     * @param allowedRoles 额外放行的组内角色（如 ROLE_MANAGER）
+     * @return 组实体供调用方复用
+     */
+    public ProjectGroupEntity requireRole(Long groupId, Long userId, boolean admin, String... allowedRoles) {
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
+        }
+        if (admin || g.getOwnerUserId().equals(Objects.requireNonNull(userId, "actorUserId"))) {
+            return g;
+        }
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUser(groupId, userId);
+        if (m == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非本项目组成员");
+        }
+        String role = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+        for (String r : allowedRoles) {
+            if (r.equals(role)) {
+                return g;
+            }
+        }
+        throw new BusinessException(ErrorCode.FORBIDDEN, "组内角色无权操作（需要组长/管理）");
     }
 
     /** 组长校验（admin 放行）；返回组实体供调用方复用。V138 起 public：邀请/公共池/可见性服务同口径复用。 */

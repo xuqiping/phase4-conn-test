@@ -61,12 +61,12 @@ class ProjectGroupMemberReviveIT {
 
     @Test
     void 移除后再加入_复活不409_状态重置() {
-        // 旧状态：限额 100、已用 40、MANAGER、禁 VIDEO、可见性覆盖——复活后应全部复位
         groupService.addMember(groupId, OWNER, false, MEMBER, new BigDecimal("100"));
+        groupService.removeMember(groupId, OWNER, false, MEMBER);
+        // 软删行上造脏状态：已用 40、MANAGER、仅 CHAT、可见性覆盖——复活后应全部复位
         jdbc.update("UPDATE project_group_members SET used_points = 40, role = 'MANAGER', "
                 + "allowed_kinds = '[\"CHAT\"]', member_visibility_overrides = '{\"VIDEO\":\"OWN\"}' "
                 + "WHERE group_id = ? AND user_id = ?", groupId, MEMBER);
-        groupService.removeMember(groupId, OWNER, false, MEMBER);
 
         // 再加入（模拟邀请接受/公共池审批共用 insertMemberRow）：新限额 200
         groupService.addMember(groupId, OWNER, false, MEMBER, new BigDecimal("200"));

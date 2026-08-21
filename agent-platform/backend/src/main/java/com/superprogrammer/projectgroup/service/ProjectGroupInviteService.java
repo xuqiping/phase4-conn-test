@@ -54,10 +54,11 @@ public class ProjectGroupInviteService {
     private final UserMapper userMapper;
     private final MemoryNotificationMapper notificationMapper;
 
-    /** 发起邀请（组长/admin）。 */
+    /** 发起邀请（组长/管理/admin，V139 放宽 MANAGER）。 */
     @Transactional(rollbackFor = Exception.class)
     public void invite(Long groupId, Long actorUserId, boolean admin, Long inviteeUserId, BigDecimal quotaLimitPoints) {
-        ProjectGroupEntity g = groupService.requireOwner(groupId, actorUserId, admin);
+        ProjectGroupEntity g = groupService.requireRole(groupId, actorUserId, admin,
+                com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         if (inviteeUserId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "被邀请人不能为空");
         }
@@ -108,9 +109,10 @@ public class ProjectGroupInviteService {
         return toVOs(rows);
     }
 
-    /** 组邀请列表（组长/admin 管理视角，全状态倒序）。 */
+    /** 组邀请列表（组长/管理/admin 管理视角，全状态倒序）。 */
     public List<ProjectGroupInviteVO> listByGroup(Long groupId, Long actorUserId, boolean admin) {
-        groupService.requireOwner(groupId, actorUserId, admin);
+        groupService.requireRole(groupId, actorUserId, admin,
+                com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         List<ProjectGroupInviteEntity> rows = inviteMapper.selectList(new LambdaQueryWrapper<ProjectGroupInviteEntity>()
                 .eq(ProjectGroupInviteEntity::getGroupId, groupId)
                 .orderByDesc(ProjectGroupInviteEntity::getId));
@@ -138,14 +140,15 @@ public class ProjectGroupInviteService {
         notifyInviter(inv, "「" + userName(userId) + "」拒绝了项目组「" + groupName(inv.getGroupId()) + "」的邀请");
     }
 
-    /** 取消邀请（组长/admin）：PENDING→CANCELED。 */
+    /** 取消邀请（组长/管理/admin）：PENDING→CANCELED。 */
     @Transactional(rollbackFor = Exception.class)
     public void cancel(Long inviteId, Long actorUserId, boolean admin) {
         ProjectGroupInviteEntity inv = inviteMapper.selectById(inviteId);
         if (inv == null || (inv.getDeleted() != null && inv.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "邀请不存在");
         }
-        groupService.requireOwner(inv.getGroupId(), actorUserId, admin);
+        groupService.requireRole(inv.getGroupId(), actorUserId, admin,
+                com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         transition(inv, ProjectGroupInviteEntity.STATUS_CANCELED);
         log.info("组邀请取消 inviteId={} groupId={} actor={}", inviteId, inv.getGroupId(), actorUserId);
     }

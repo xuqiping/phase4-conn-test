@@ -183,9 +183,10 @@ public class ProjectGroupPoolService {
                 "「" + userName(userId) + "」申请加入项目组「" + g.getName() + "」，请到 项目组→入组审批 处理");
     }
 
-    /** 组的申请列表（组长/admin 审批视角，PENDING 优先再按 id 倒序）。 */
+    /** 组的申请列表（组长/管理/admin 审批视角，PENDING 优先再按 id 倒序）。 */
     public List<ProjectGroupJoinRequestVO> listRequests(Long groupId, Long actorUserId, boolean admin) {
-        groupService.requireOwner(groupId, actorUserId, admin);
+        groupService.requireRole(groupId, actorUserId, admin,
+                com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         List<ProjectGroupJoinRequestEntity> rows = requestMapper.selectList(
                 new LambdaQueryWrapper<ProjectGroupJoinRequestEntity>()
                         .eq(ProjectGroupJoinRequestEntity::getGroupId, groupId)
@@ -202,14 +203,15 @@ public class ProjectGroupPoolService {
         return toVOs(rows);
     }
 
-    /** 审批（组长/admin）：approve=true→APPROVED+落成员行（已入组幂等跳过）；false→REJECTED（30 天防刷生效）。 */
+    /** 审批（组长/管理/admin）：approve=true→APPROVED+落成员行（已入组幂等跳过）；false→REJECTED（30 天防刷生效）。 */
     @Transactional(rollbackFor = Exception.class)
     public void decide(Long requestId, Long actorUserId, boolean admin, boolean approve) {
         ProjectGroupJoinRequestEntity r = requestMapper.selectById(requestId);
         if (r == null || (r.getDeleted() != null && r.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "申请不存在");
         }
-        groupService.requireOwner(r.getGroupId(), actorUserId, admin);
+        groupService.requireRole(r.getGroupId(), actorUserId, admin,
+                com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         if (!ProjectGroupJoinRequestEntity.STATUS_PENDING.equals(r.getStatus())) {
             throw new BusinessException(ErrorCode.CONFLICT, "申请已处理，请刷新查看");
         }

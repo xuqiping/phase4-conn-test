@@ -82,14 +82,91 @@ class ProjectGroupServiceTest {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
         assertThatThrownBy(() -> service.addMember(GROUP_ID, OUTSIDER, false, MEMBER, null))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
+        // V139：运营/查询类改 requireRole——非成员先撞「非本项目组成员」
         assertThatThrownBy(() -> service.removeMember(GROUP_ID, OUTSIDER, false, MEMBER))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("非本项目组成员");
         assertThatThrownBy(() -> service.updateQuota(GROUP_ID, OUTSIDER, false, MEMBER, BigDecimal.TEN))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("非本项目组成员");
         assertThatThrownBy(() -> service.resetUsed(GROUP_ID, OUTSIDER, false, MEMBER))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("非本项目组成员");
         assertThatThrownBy(() -> service.getDetail(GROUP_ID, MEMBER, false))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("非本项目组成员");
+    }
+
+    // ==================== 17x#2 角色体系（V139） ====================
+
+    private static final long MANAGER_UID = 4L;
+
+    private ProjectGroupMemberEntity roleRow(long userId, String role) {
+        ProjectGroupMemberEntity m = member(userId);
+        m.setRole(role);
+        return m;
+    }
+
+    @Test
+    void 角色矩阵_MANAGER可运营MEMBER行() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID))
+                .thenReturn(roleRow(MANAGER_UID, ProjectGroupMemberEntity.ROLE_MANAGER));
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+
+        assertThatCode(() -> service.updateQuota(GROUP_ID, MANAGER_UID, false, MEMBER, BigDecimal.TEN))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> service.resetUsed(GROUP_ID, MANAGER_UID, false, MEMBER))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> service.removeMember(GROUP_ID, MANAGER_UID, false, MEMBER))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> service.getDetail(GROUP_ID, MANAGER_UID, false))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void 角色矩阵_MEMBER运营403_MANAGER动MANAGER行403() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+        // MEMBER 运营他人：角色不足
+        assertThatThrownBy(() -> service.updateQuota(GROUP_ID, MEMBER, false, OUTSIDER, BigDecimal.TEN))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作");
+        // MANAGER 动 MANAGER 行：目标不可运营
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID))
+                .thenReturn(roleRow(MANAGER_UID, ProjectGroupMemberEntity.ROLE_MANAGER));
+        assertThatThrownBy(() -> service.removeMember(GROUP_ID, MANAGER_UID, false, MANAGER_UID))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅可管理普通成员");
+    }
+
+    @Test
+    void 任免角色_仅组长_MEMBER与MANAGER互转() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+        // 非组长（MEMBER 行）任免 → requireOwner 拦
+        assertThatThrownBy(() -> service.updateMemberRole(GROUP_ID, MEMBER, false, OUTSIDER,
+                ProjectGroupMemberEntity.ROLE_MANAGER))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("仅组长");
+        // 组长升 MANAGER
+        assertThatCode(() -> service.updateMemberRole(GROUP_ID, OWNER, false, MEMBER,
+                ProjectGroupMemberEntity.ROLE_MANAGER)).doesNotThrowAnyException();
+        verify(memberMapper).updateById(any(ProjectGroupMemberEntity.class));
+    }
+
+    @Test
+    void 任免角色_边界_组长行不可动_非法角色_同角色幂等() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        // 目标=组长本人
+        assertThatThrownBy(() -> service.updateMemberRole(GROUP_ID, OWNER, false, OWNER,
+                ProjectGroupMemberEntity.ROLE_MEMBER))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("组长角色不可变更");
+        // 非法角色
+        assertThatThrownBy(() -> service.updateMemberRole(GROUP_ID, OWNER, false, MEMBER, "SUPER"))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅支持");
+        // 同角色幂等：不触发 update
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+        assertThatCode(() -> service.updateMemberRole(GROUP_ID, OWNER, false, MEMBER,
+                ProjectGroupMemberEntity.ROLE_MEMBER)).doesNotThrowAnyException();
+        verify(memberMapper, never()).updateById(any(ProjectGroupMemberEntity.class));
     }
 
     @Test
