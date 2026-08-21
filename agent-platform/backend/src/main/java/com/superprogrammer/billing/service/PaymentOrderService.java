@@ -113,6 +113,11 @@ public class PaymentOrderService {
             throw new BusinessException(ErrorCode.CONFLICT, "重复提交，请刷新后重试");
         }
         PaymentPrecreateResult precreate = channelService.precreate(order, notifyUrl);
+        // 渠道单号落库（回调按它反查订单；幂等第一道 uk_payment_channel_order 的键）
+        if (precreate.channelOrderId() != null && order.getChannelOrderId() == null) {
+            order.setChannelOrderId(precreate.channelOrderId());
+            orderMapper.updateById(order);
+        }
         audit(userId, "payment_order_create", String.valueOf(order.getId()),
                 "{\"amount\":" + amountYuan + ",\"points\":" + order.getPointsGranted()
                         + ",\"channel\":\"" + order.getChannel() + "\"}", "SUCCESS");

@@ -60,7 +60,7 @@ public class MockPaymentChannel implements PaymentChannelService {
                 ? order.getExpireAt().toEpochSecond()
                 : OffsetDateTime.now().plusMinutes(30).toEpochSecond();
         String token = hmacHex("PRE|" + order.getId() + "|" + order.getAmountYuan() + "|" + expire);
-        return new PaymentPrecreateResult(token, null);
+        return new PaymentPrecreateResult(token, null, channelOrderIdOf(order.getId()));
     }
 
     @Override

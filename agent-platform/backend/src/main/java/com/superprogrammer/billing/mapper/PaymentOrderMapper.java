@@ -60,4 +60,30 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
     /** 7x#1 累计条：用户 Σ已付积分。 */
     @Select("SELECT COALESCE(SUM(points_granted), 0) FROM payment_order WHERE user_id = #{userId} AND status = 'PAID'")
     BigDecimal sumPaidPointsByUser(@Param("userId") Long userId);
+
+    // ==================== 对账「渠道异常」三节（7x#3 运维入口，只读） ====================
+
+    /** 异常①：PENDING 超阈值未关（过期 job 停滞线索；限 100 行）。 */
+    @Select("SELECT id AS orderId, user_id AS userId, amount_yuan AS amountYuan, points_granted AS pointsGranted, "
+            + "status, channel, created_at AS createdAt, paid_at AS paidAt FROM payment_order "
+            + "WHERE status = 'PENDING' AND created_at < NOW() - (#{thresholdMinutes} || ' minutes')::INTERVAL "
+            + "ORDER BY id LIMIT 100")
+    List<com.superprogrammer.billing.dto.PaymentAnomalyRowVO> selectStalePending(@Param("thresholdMinutes") int thresholdMinutes);
+
+    /** 异常②：PAID 但无 RECHARGE/ADMIN_GRANT 流水（入账半截=脏数据；限 100 行）。 */
+    @Select("SELECT o.id AS orderId, o.user_id AS userId, o.amount_yuan AS amountYuan, "
+            + "o.points_granted AS pointsGranted, o.status, o.channel, o.created_at AS createdAt, o.paid_at AS paidAt "
+            + "FROM payment_order o WHERE o.status = 'PAID' AND NOT EXISTS ("
+            + "  SELECT 1 FROM points_ledger l WHERE l.ref_type = 'PAYMENT' AND l.ref_id = o.id "
+            + "  AND l.type IN ('RECHARGE','ADMIN_GRANT')) ORDER BY o.id LIMIT 100")
+    List<com.superprogrammer.billing.dto.PaymentAnomalyRowVO> selectPaidNoLedger();
+
+    /** 异常③：终态单（CLOSED/FAILED）后渠道仍推真实付款（审计留痕反查；近 7 天，限 100 行）。 */
+    @Select("SELECT o.id AS orderId, o.user_id AS userId, o.amount_yuan AS amountYuan, "
+            + "o.points_granted AS pointsGranted, o.status, o.channel, o.created_at AS createdAt, o.paid_at AS paidAt "
+            + "FROM payment_order o WHERE o.id IN ("
+            + "  SELECT DISTINCT CAST(a.target_id AS BIGINT) FROM audit_logs a "
+            + "  WHERE a.action = 'payment_notify_terminal_order' AND a.target_type = 'payment_order' "
+            + "  AND a.created_at > NOW() - INTERVAL '7 days') ORDER BY o.id DESC LIMIT 100")
+    List<com.superprogrammer.billing.dto.PaymentAnomalyRowVO> selectClosedButPaid();
 }

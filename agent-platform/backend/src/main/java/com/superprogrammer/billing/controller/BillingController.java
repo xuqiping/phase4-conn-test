@@ -135,6 +135,16 @@ public class BillingController {
         return ResponseEntity.ok(R.ok(reconcileService.reconcile()));
     }
 
+    /**
+     * 支付渠道异常（7x#3 对账扩展）：PENDING 超 10min 未关 / PAID 无流水 / 终态后仍付款 三节。
+     * 只读不自动修——人工补单线索（mock 通道可精确复现「已付已关单」时序验证本列表）。
+     */
+    @GetMapping("/admin/reconcile/payment-anomalies")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<com.superprogrammer.billing.dto.PaymentAnomalyVO>> paymentAnomalies() {
+        return ResponseEntity.ok(R.ok(reconcileService.paymentAnomalies()));
+    }
+
     // ---------- user（ownership = current userId，无外部旁路） ----------
 
     @GetMapping("/me/wallet")

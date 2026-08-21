@@ -26,6 +26,23 @@ public class BillingReconcileService {
 
     private final PointsLedgerMapper ledgerMapper;
     private final AuditLogService auditLogService;
+    private final com.superprogrammer.billing.mapper.PaymentOrderMapper paymentOrderMapper;
+
+    /**
+     * 支付渠道异常三节（7x#3 运维入口，只读）：PENDING 超 10min 未关 / PAID 无流水 / 终态后仍付款。
+     * 任一节非空打 WARN（补单/排查线索）；人工补单本期走 SQL+审计，不做页面。
+     */
+    public com.superprogrammer.billing.dto.PaymentAnomalyVO paymentAnomalies() {
+        var vo = new com.superprogrammer.billing.dto.PaymentAnomalyVO(
+                paymentOrderMapper.selectStalePending(10),
+                paymentOrderMapper.selectPaidNoLedger(),
+                paymentOrderMapper.selectClosedButPaid());
+        if (!vo.stalePending().isEmpty() || !vo.paidNoLedger().isEmpty() || !vo.closedButPaid().isEmpty()) {
+            log.warn("支付渠道异常: stalePending={} paidNoLedger={} closedButPaid={}",
+                    vo.stalePending().size(), vo.paidNoLedger().size(), vo.closedButPaid().size());
+        }
+        return vo;
+    }
 
     /** 每日 03:20 全量对账（cron 可配，6 段秒分時日月周）。 */
     @Scheduled(cron = "${billing.reconcile.cron:0 20 3 * * *}")
