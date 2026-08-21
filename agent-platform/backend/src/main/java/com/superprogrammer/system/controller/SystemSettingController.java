@@ -52,13 +52,13 @@ public class SystemSettingController {
     }
 
     @GetMapping("/llm-model-defaults")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<LlmModelDefaultsVO>> getLlmModelDefaults() {
         return ResponseEntity.ok(R.ok(buildLlmModelDefaults()));
     }
 
     @PutMapping("/llm-model-defaults")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     @AuditLog(module = "system", action = "update_llm_model_defaults", targetType = "setting")
     public ResponseEntity<R<LlmModelDefaultsVO>> updateLlmModelDefaults(
             @RequestBody LlmModelDefaultsUpdateRequest request) {

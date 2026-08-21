@@ -118,10 +118,10 @@ public class MediaGenController {
     /**
      * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
      * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
-     * 权限与 /api/llm/providers 管理端点一致（role:manage），非 media:gen。
+     * 权限与 /api/llm/providers 管理端点一致（16x 起 llm:config 独立码），非 media:gen。
      */
     @PostMapping("/providers/{id}/test")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<com.superprogrammer.llm.dto.TestConnectionResult>> testMediaProvider(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok(arkSeedanceProvider.testConnection(id)));
     }

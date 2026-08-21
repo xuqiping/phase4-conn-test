@@ -10,7 +10,10 @@
       </n-tab-pane>
       <!-- 10x-1：不再开放「我的模型」个人配置大模型，移除该 Tab 入口。
            UserProviderTab.vue / UserLlmController / user_llm_providers 表保留不删（备用）。 -->
-      <n-tab-pane v-if="authStore.isAdmin" name="global" tab="全局模型供应商">
+      <!-- 16x：全局模型供应商 tab 仅「大模型配置员」(llm:config) 可见；
+           admin 失去该权限（后端端点同步改挂 llm:config，admin 调即 403）——
+           admin 需配模型时，先给自己/他人加挂 llm_config 角色。其余 tab 仍仅 admin。 -->
+      <n-tab-pane v-if="canConfigLlm" name="global" tab="全局模型供应商">
         <ProviderManageTab />
       </n-tab-pane>
       <n-tab-pane v-if="authStore.isAdmin" name="auth" tab="认证设置">
@@ -34,6 +37,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NTabs, NTabPane } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import ProviderManageTab from '@/components/settings/ProviderManageTab.vue'
@@ -45,6 +49,8 @@ import WebSearchSettingsTab from '@/components/settings/WebSearchSettingsTab.vue
 import SecuritySettingsTab from '@/components/settings/SecuritySettingsTab.vue'
 
 const authStore = useAuthStore()
+/** 16x：仅持 llm:config 的大模型配置员可见「全局模型供应商」tab（admin 刻意不授该码） */
+const canConfigLlm = computed(() => authStore.hasPermission('llm:config'))
 </script>
 
 <style lang="scss" scoped>

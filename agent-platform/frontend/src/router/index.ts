@@ -24,6 +24,8 @@ declare module 'vue-router' {
     module?: ModuleKey
     /** 仅 admin 可访问（10x-3 设置模块） */
     requireAdmin?: boolean
+    /** requireAdmin 的豁免权限码：命中其一的非 admin 也放行（16x llm_config 进设置） */
+    requireAnyPerm?: string[]
   }
 }
 
@@ -189,7 +191,7 @@ const routes: RouteRecordRaw[] = [
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),
         // 10x-3：设置仅 admin 可见（非 admin 守卫拦截重定向首页）
-        meta: { title: '设置', module: 'settings', requireAdmin: true }
+        meta: { title: '设置', module: 'settings', requireAdmin: true, requireAnyPerm: ['llm:config'] }
       },
       {
         path: 'wallet',
@@ -342,6 +344,7 @@ router.beforeEach((to, _from, next) => {
     hasToken: !!getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN),
     module: to.meta.module,
     requireAdmin: to.meta.requireAdmin,
+    requireAnyPerm: to.meta.requireAnyPerm,
     user: readUserContext(),
     defaultLanding: defaultLanding(),
     loginPath: LOGIN_PATH

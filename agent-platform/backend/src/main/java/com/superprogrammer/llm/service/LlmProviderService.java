@@ -184,7 +184,7 @@ public class LlmProviderService {
 
     /**
      * 导出全量供应商为明文 Key 列表（问题 10x-2）。
-     * <p>仅 admin 可调（Controller 层 @RequirePermission("role:manage")）。
+     * <p>持 llm:config 可调（Controller 层 @RequirePermission("llm:config")，16x 起独立码）。
      * 解密 apiKeyEnc 填入 apiKey 明文——导出文件含明文密钥，调用方须妥善保管。
      * 解密失败的条目 apiKey 置 null 并 warn（不中断整体导出）。
      */

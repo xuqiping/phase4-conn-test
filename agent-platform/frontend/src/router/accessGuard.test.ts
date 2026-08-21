@@ -144,4 +144,36 @@ describe('resolveRouteAccess 路由访问判定（问题 10x-3/4/5）', () => {
       expect(decide({ path: '/admin/payment-channels', module: 'paymentAdmin', user: admin() }).allow).toBe(true)
     })
   })
+
+  describe('16x requireAnyPerm 豁免（大模型配置员进设置）', () => {
+    it('非 admin 持 llm:config 访问 /settings → 放行', () => {
+      const d = decide({
+        path: '/settings', module: 'settings', requireAdmin: true,
+        requireAnyPerm: ['llm:config'], user: userWith(['llm:config'])
+      })
+      expect(d.allow).toBe(true)
+    })
+
+    it('非 admin 无 llm:config 访问 /settings → 仍拦截', () => {
+      const d = decide({
+        path: '/settings', module: 'settings', requireAdmin: true,
+        requireAnyPerm: ['llm:config'], user: userWith(['pricing:manage'])
+      })
+      expect(d.allow).toBe(false)
+      if (!d.allow) expect(d.redirect).toBe(LANDING)
+    })
+
+    it('requireAdmin 路由不带 requireAnyPerm 时行为不变（回归）', () => {
+      const d = decide({ path: '/settings', module: 'settings', requireAdmin: true, user: userWith(['llm:config']) })
+      expect(d.allow).toBe(false)
+    })
+
+    it('admin 访问带 requireAnyPerm 的路由 → 放行（不受影响）', () => {
+      const d = decide({
+        path: '/settings', module: 'settings', requireAdmin: true,
+        requireAnyPerm: ['llm:config'], user: admin()
+      })
+      expect(d.allow).toBe(true)
+    })
+  })
 })

@@ -33,3 +33,10 @@
 - 数据归属不受影响：画布/资产仍只能访问自己创建的（服务层 loadOwned 咽喉控制），授予的只是「能用自己的」。
 - [V137__user_role_project_group_grant.sql](../../backend/src/main/resources/db/migration/V137__user_role_project_group_grant.sql)：补授 `project-group:manage`（V134 只授 admin → 普通用户 `/api/project-groups/mine` 403，页顶「参与项目」选择器恒空，2026-08-20 冒烟实测发现）。越权防线不动：组长级资金/成员操作另有 service 层 `requireOwner` 二层校验（只能操作自己是组长的组）。
 
+## 大模型配置独立角色（16x-3，V145 变更，2026-08-22）
+- 拍板：「配置大模型」从 admin 拆分——新增角色 **大模型配置员（`llm_config`）**，只持 `llm:config` 一码；**admin 刻意不授该码**，设置里不再能配大模型（价表 `pricing:manage` 仍归 admin）。
+- 改挂 `llm:config` 的端点（13 处）：`LlmController` 供应商 CRUD/测试/reload/导出/导入 ×10、`MediaGenController` 媒体供应商连通性测试 ×1、`SystemSettingController` 默认模型读写 ×2。
+- 前端：`/settings` 路由加 `requireAnyPerm: ['llm:config']` 豁免（accessGuard 规则 4 例外）；「全局模型供应商」tab 仅 `llm:config` 持有者可见（admin 不可见）；Sidebar 设置入口对配置员放开。
+- **操作**：系统管理 → 用户管理 → 目标用户「分配角色」→ 勾选「大模型配置员」→ 保存；用户**重新登录**生效。不勾选任何人则全平台无人能配大模型（刻意保护）。
+- 契约测试：[LlmControllerContractTest.java](../../backend/src/test/java/com/superprogrammer/llm/controller/LlmControllerContractTest.java)（13 端点锁码，防回改）。
+

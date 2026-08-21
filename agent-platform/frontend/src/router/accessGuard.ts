@@ -26,6 +26,7 @@ export interface UserContext {
  * 2. 已登录访问 /login → 跳默认落地页；
  * 3. 关闭模块路由（meta.module 对应开关 false）→ 跳默认落地页（含 admin，10x-5）；
  * 4. requireAdmin 路由非 admin → 跳默认落地页（10x-3）；
+ *    例外：meta.requireAnyPerm 命中其一即放行（16x：llm_config 角色可进 /settings 配大模型）；
  * 5. 模块有权限码且用户未持有（admin 视为持有）→ 跳默认落地页（10x-4）；
  * 6. 其余放行。
  *
@@ -38,11 +39,13 @@ export function resolveRouteAccess(params: {
   hasToken: boolean
   module?: ModuleKey
   requireAdmin?: boolean
+  /** requireAdmin 的豁免白名单：持有其中任一权限码的非 admin 也放行（16x） */
+  requireAnyPerm?: string[]
   user: UserContext
   defaultLanding: string
   loginPath: string
 }): AccessDecision {
-  const { path, requiresAuth, hasToken, module: moduleKey, requireAdmin, user, defaultLanding, loginPath } = params
+  const { path, requiresAuth, hasToken, module: moduleKey, requireAdmin, requireAnyPerm, user, defaultLanding, loginPath } = params
 
   // 1. 未登录访问受保护路由 → 登录页
   if (requiresAuth && !hasToken) {
@@ -59,9 +62,12 @@ export function resolveRouteAccess(params: {
     return { allow: false, redirect: defaultLanding }
   }
 
-  // 4. requireAdmin 非 admin 拦截（10x-3）
+  // 4. requireAdmin 非 admin 拦截（10x-3）；requireAnyPerm 命中其一豁免（16x）
   if (requireAdmin && !user.isAdmin) {
-    return { allow: false, redirect: defaultLanding }
+    const exempt = requireAnyPerm?.some(p => user.permissions.includes(p)) ?? false
+    if (!exempt) {
+      return { allow: false, redirect: defaultLanding }
+    }
   }
 
   // 5. 模块权限码校验（admin 视为持有，10x-4）

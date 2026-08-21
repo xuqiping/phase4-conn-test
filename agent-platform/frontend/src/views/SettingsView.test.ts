@@ -27,7 +27,7 @@ vi.mock('@/components/settings/SecuritySettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
 
-describe('SettingsView（问题 10x-1）', () => {
+describe('SettingsView（问题 10x-1 / 16x 大模型配置员）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
   it('不再展示「我的模型」Tab（入口移除）', () => {
@@ -39,9 +39,31 @@ describe('SettingsView（问题 10x-1）', () => {
     const wrapper = mount(SettingsView)
     const html = wrapper.html()
     expect(html).not.toContain('我的模型')
-    // admin 仍可见其余 Tab
-    expect(html).toContain('全局模型供应商')
+    // admin 仍可见其余管理 Tab
     expect(html).toContain('认证设置')
     expect(html).toContain('认证通道')
+  })
+
+  it('16x：admin 无 llm:config → 不见「全局模型供应商」tab', () => {
+    const auth = useAuthStore()
+    auth.userInfo = {
+      id: 1, username: 'admin', email: null, avatar: null,
+      roles: ['admin'], permissions: []
+    }
+    const html = mount(SettingsView).html()
+    expect(html).not.toContain('全局模型供应商')
+  })
+
+  it('16x：持 llm:config 的非 admin → 见「全局模型供应商」tab，不见其余 admin tab', () => {
+    const auth = useAuthStore()
+    auth.userInfo = {
+      id: 9, username: 'llmops', email: null, avatar: null,
+      roles: ['llm_config'], permissions: ['llm:config']
+    }
+    const html = mount(SettingsView).html()
+    expect(html).toContain('全局模型供应商')
+    expect(html).toContain('安全设置')
+    expect(html).not.toContain('认证设置')
+    expect(html).not.toContain('计费设置')
   })
 })

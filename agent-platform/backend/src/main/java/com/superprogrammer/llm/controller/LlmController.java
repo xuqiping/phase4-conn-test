@@ -33,7 +33,7 @@ public class LlmController {
     private final ObjectMapper objectMapper;
 
     @GetMapping("/providers")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<List<LlmProviderVO>>> listProviders() {
         return ResponseEntity.ok(R.ok(providerService.listAll()));
     }
@@ -45,7 +45,7 @@ public class LlmController {
     }
 
     @PostMapping("/providers")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<LlmProviderVO>> createProvider(
             @Valid @RequestBody LlmProviderCreateRequest request) {
         LlmProviderEntity entity = toEntity(request);
@@ -57,7 +57,7 @@ public class LlmController {
     }
 
     @PutMapping("/providers/{id}")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<LlmProviderVO>> updateProvider(
             @PathVariable Long id,
             @Valid @RequestBody LlmProviderCreateRequest request) {
@@ -69,34 +69,34 @@ public class LlmController {
     }
 
     @DeleteMapping("/providers/{id}")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<Void>> deleteProvider(@PathVariable Long id) {
         providerService.delete(id);
         return ResponseEntity.ok(R.ok());
     }
 
     @PostMapping("/providers/{id}/test")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<TestConnectionResult>> testConnection(@PathVariable Long id) {
         TestConnectionResult result = providerService.testConnection(id);
         return ResponseEntity.ok(R.ok(result));
     }
 
     @PostMapping("/providers/{id}/test-embed")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<TestConnectionResult>> testEmbedding(@PathVariable Long id) {
         TestConnectionResult result = providerService.testEmbedding(id);
         return ResponseEntity.ok(R.ok(result));
     }
 
     @PostMapping("/providers/{id}/test-rerank")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<TestConnectionResult>> testRerank(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok(providerService.testRerank(id)));
     }
 
     @PostMapping("/providers/reload")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     public ResponseEntity<R<Void>> reloadProviders() {
         llmConfig.reload();
         return ResponseEntity.ok(R.ok());
@@ -104,11 +104,11 @@ public class LlmController {
 
     /**
      * 导出全量供应商为 JSON 文件下载（问题 10x-2）。
-     * <p>仅 admin（@RequirePermission role:manage）；导出文件含<b>明文 API Key</b>，
+     * <p>持 llm:config 可调（16x 起独立码，admin 不再天然持有）；导出文件含<b>明文 API Key</b>，
      * 响应头 Content-Disposition 触发浏览器下载；@AuditLog 留痕（明文 key 外流必须可追溯）。
      */
     @GetMapping("/providers/export")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     @AuditLog(module = "llm", action = "provider_export", targetType = "llm_provider")
     public ResponseEntity<byte[]> exportProviders() {
         var items = providerService.exportAll();
@@ -130,10 +130,10 @@ public class LlmController {
 
     /**
      * 批量导入供应商（问题 10x-2）：按 name upsert，返回 created/updated/failed 统计。
-     * <p>仅 admin；非法行不中断整体导入；导入后自动 reload 让配置即时生效。
+     * <p>持 llm:config 可调；非法行不中断整体导入；导入后自动 reload 让配置即时生效。
      */
     @PostMapping("/providers/import")
-    @RequirePermission("role:manage")
+    @RequirePermission("llm:config")
     @AuditLog(module = "llm", action = "provider_import", targetType = "llm_provider")
     public ResponseEntity<R<ProviderImportResult>> importProviders(
             @RequestBody List<LlmProviderExportItem> items) {

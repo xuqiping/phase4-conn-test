@@ -206,8 +206,9 @@ const navItems = computed(() => {
   }
   // 19x：反馈与帮助（建议/提问/说明三合一；无权限码，登录即可，开关兜底）
   items.push({ path: '/feedback', label: '反馈与帮助', icon: ChatboxEllipsesOutline, module: 'feedback' })
-  // 设置入口：开关 ON 且用户是 admin（10x-3：非 admin 不开放设置）
-  if (isModuleEnabled('settings') && authStore.isAdmin) {
+  // 设置入口：开关 ON 且（用户是 admin 或持 llm:config 的大模型配置员）
+  //（10x-3：非 admin 不开放设置；16x：配置员可进设置但只见「全局模型供应商」tab）
+  if (isModuleEnabled('settings') && (authStore.isAdmin || authStore.hasPermission('llm:config'))) {
     items.push({ path: '/settings', label: '设置', icon: SettingsOutline, module: 'settings' })
   }
   // 统一闸：前5项（Agent大厅/对话/工作流/执行监控/知识库）也在这一关过滤，
