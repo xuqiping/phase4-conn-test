@@ -131,7 +131,7 @@ public class MediaGenTaskService {
         // 计划5 Step5：带 gid → 组池预检（非成员 403/组池尽 40201），组池余额喂闸门（语义同个人）
         java.math.BigDecimal balance = projectGroupId == null
                 ? walletService.requireAffordable(userId)
-                : groupWalletService.requireAffordableGroup(projectGroupId, userId);
+                : groupWalletService.requireAffordableGroup(projectGroupId, userId, "VIDEO");
         // L7：低余额用户超在途上限 → 42902（计数由 worker 终态 release 配对释放）；
         // 但 acquire 之后、task 落库之前的任何异常（provider 缺失/参数校验/DB 异常）都不会有 worker
         // 接手 → 此处配对释放，否则低余额用户一次失败提交即自我锁死至 TTL（30min）
@@ -314,7 +314,7 @@ public class MediaGenTaskService {
         // 计划5 Step5：带 gid → 组池预检（非成员 403/组池尽 40201）
         java.math.BigDecimal poolBalance = projectGroupId == null
                 ? walletService.requireAffordable(userId)
-                : groupWalletService.requireAffordableGroup(projectGroupId, userId);
+                : groupWalletService.requireAffordableGroup(projectGroupId, userId, "IMAGE");
         // C3：每用户生图并发上限（15x 落地，D5 默认 3 可调）→ 42904；落库前异常配对释放（同视频）
         boolean mediaHeld = false;
         try {

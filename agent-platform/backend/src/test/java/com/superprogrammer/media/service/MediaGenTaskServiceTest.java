@@ -501,7 +501,7 @@ class MediaGenTaskServiceTest {
     @Test
     void submit_withGroup_prechecksPoolAndStampsTask() {
         // 选组提交：组池预检替代个人预检（requireAffordableGroup）；task 落 projectGroupId + estimatedCost
-        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("1000"));
         stubEstimate(new java.math.BigDecimal("50"));
 
@@ -522,7 +522,7 @@ class MediaGenTaskServiceTest {
         when(mediaInflightGate.acquire(USER_ID,
                 com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_VIDEO))
                 .thenReturn(true);
-        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("10"));
         stubEstimate(new java.math.BigDecimal("50"));
 
@@ -539,7 +539,7 @@ class MediaGenTaskServiceTest {
     @Test
     void submit_memberQuotaExceeded_rejected() {
         // used(100)+预估(50) > 组长限额(120) → 400 拒；组池余量本身够（隔离两道预检）
-        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("1000"));
         stubEstimate(new java.math.BigDecimal("50"));
         com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity member =
@@ -559,7 +559,7 @@ class MediaGenTaskServiceTest {
     @Test
     void submit_estimateMissingPrice_storesZeroAndProceeds() {
         // TOKEN 模式无秒维度/价表缺价 → 估价记 0（保守容忍）：预检放行、task 照建、estimated_cost=0
-        when(groupWalletService.requireAffordableGroup(5L, USER_ID))
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("10"));
         when(pricingService.computeCost(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));

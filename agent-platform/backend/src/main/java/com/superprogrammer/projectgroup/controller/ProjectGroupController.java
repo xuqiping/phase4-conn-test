@@ -299,6 +299,16 @@ public class ProjectGroupController {
         return ResponseEntity.ok(R.ok("成员角色已更新", null));
     }
 
+    /** 设成员功能开关（17x#2，V139，组长/管理/admin，目标仅 MEMBER 行）：null=不限，[]=全禁。 */
+    @PutMapping("/{id}/members/{uid}/kinds")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "member_kinds", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> updateMemberKinds(@PathVariable("id") Long id, @PathVariable("uid") Long uid,
+                                                     @RequestBody com.superprogrammer.projectgroup.dto.ProjectGroupMemberKindsRequest req) {
+        groupService.updateMemberKinds(id, getCurrentUserId(), isAdmin(), uid, req.getAllowedKinds());
+        return ResponseEntity.ok(R.ok("成员可用模块已更新", null));
+    }
+
     @PostMapping("/{id}/allocate")
     @RequirePermission("project-group:manage")
     @AuditLog(module = "project-group", action = "wallet_allocate", targetType = "project_group_wallet")

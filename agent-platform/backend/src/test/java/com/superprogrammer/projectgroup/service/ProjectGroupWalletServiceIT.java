@@ -127,6 +127,35 @@ class ProjectGroupWalletServiceIT {
     }
 
     @Test
+    void 功能开关_白名单拦截与放行_V139() {
+        fundOwner("100");
+        walletService.allocate(groupId, OWNER, false, new BigDecimal("50"), null);
+
+        // 全禁 []：结算 chargeGroup 与入口预检 requireAffordableGroup 双卡均拒，组池分文未动
+        jdbc.update("UPDATE project_group_members SET allowed_kinds = '[]' WHERE group_id = ? AND user_id = ?",
+                groupId, MEMBER);
+        assertThatThrownBy(() -> walletService.chargeGroup(groupId, MEMBER, new BigDecimal("5"), "CHAT", "kb1", null))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("限制");
+        assertThatThrownBy(() -> walletService.requireAffordableGroup(groupId, MEMBER, "CHAT"))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("限制");
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("50"));
+
+        // 白名单仅 CHAT：CHAT 通、VIDEO 拒
+        jdbc.update("UPDATE project_group_members SET allowed_kinds = '[\"CHAT\"]' WHERE group_id = ? AND user_id = ?",
+                groupId, MEMBER);
+        walletService.chargeGroup(groupId, MEMBER, new BigDecimal("5"), "CHAT", "kb2", null);
+        assertThatThrownBy(() -> walletService.chargeGroup(groupId, MEMBER, new BigDecimal("5"), "VIDEO", "kb3", null))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("限制");
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("45"));
+
+        // 恢复不限：VIDEO 通
+        jdbc.update("UPDATE project_group_members SET allowed_kinds = NULL WHERE group_id = ? AND user_id = ?",
+                groupId, MEMBER);
+        walletService.chargeGroup(groupId, MEMBER, new BigDecimal("5"), "VIDEO", "kb4", null);
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("40"));
+    }
+
+    @Test
     void 划拨_个人余额不足_整体回滚() {
         fundOwner("10");
         assertThatThrownBy(() -> walletService.allocate(groupId, OWNER, false, new BigDecimal("40"), "超扣"))

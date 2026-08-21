@@ -293,6 +293,7 @@ public class ProjectGroupService {
                     u != null && u.getName() != null ? u.getName() : (u != null ? u.getUsername() : null),
                     m.getUserId().equals(g.getOwnerUserId()),
                     m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole(),
+                    MemberAllowedKinds.parse(m.getAllowedKinds()),
                     m.getQuotaLimitPoints(),
                     m.getUsedPoints(),
                     m.getCreatedAt());
@@ -345,8 +346,7 @@ public class ProjectGroupService {
      * 任免组内角色（V139，仅组长/admin）：MEMBER↔MANAGER 互转。
      * OWNER 行不可动（GROUP_OWNER_IMMUTABLE 语义；uk_pgm_owner 兜底多 OWNER）。
      * 同角色重复任免幂等返回。
-     */
-    @Transactional(rollbackFor = Exception.class)
+     */    @Transactional(rollbackFor = Exception.class)
     public void updateMemberRole(Long groupId, Long actorUserId, boolean admin, Long memberUserId, String role) {
         ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
         if (!ProjectGroupMemberEntity.ROLE_MANAGER.equals(role) && !ProjectGroupMemberEntity.ROLE_MEMBER.equals(role)) {
@@ -366,6 +366,21 @@ public class ProjectGroupService {
         m.setRole(role);
         memberMapper.updateById(m);
         log.info("任免角色 groupId={} member={} {}->{} actor={}", groupId, memberUserId, cur, role, actorUserId);
+    }
+
+    /**
+     * 设成员功能开关（17x#2，V139，组长/管理/admin，目标仅 MEMBER 行）：
+     * kinds=null → 不限；空数组 → 全禁；否则白名单（元素∈CHAT/EMBED/RERANK/IMAGE/VIDEO，非法 400）。
+     * 只挡新提交/新调用；在途任务正常结算退款（见规格 §6）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateMemberKinds(Long groupId, Long actorUserId, boolean admin, Long memberUserId, List<String> kinds) {
+        requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
+        MemberAllowedKinds.validate(kinds);
+        m.setAllowedKinds(MemberAllowedKinds.toJson(kinds));
+        memberMapper.updateById(m);
+        log.info("成员功能开关 groupId={} member={} kinds={} actor={}", groupId, memberUserId, kinds, actorUserId);
     }
 
     private ProjectGroupMemberEntity requireMember(Long groupId, Long userId) {

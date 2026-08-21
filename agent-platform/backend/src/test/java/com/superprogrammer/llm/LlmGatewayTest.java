@@ -476,7 +476,7 @@ class LlmGatewayTest {
                 .content("ans").model("deepseek-chat").usage(usage).duration(1L).build());
         when(deepseekProvider.getId()).thenReturn(7L);
         when(deepseekProvider.getProviderScope()).thenReturn("GLOBAL");
-        when(groupWalletService.requireAffordableGroup(5L, 42L)).thenReturn(java.math.BigDecimal.TEN);
+        when(groupWalletService.requireAffordableGroup(5L, 42L, "CHAT")).thenReturn(java.math.BigDecimal.TEN);
 
         LlmRequest request = LlmRequest.builder().model("deepseek-chat")
                 .messages(List.of(LlmMessage.builder().role("user").content("hi").build()))
@@ -484,7 +484,7 @@ class LlmGatewayTest {
                 .build();
         gateway.chat(request, 42L);
 
-        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(groupWalletService).requireAffordableGroup(5L, 42L, "CHAT");
         verify(walletService, never()).requireAffordable(any());
         verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
                 eq("CHAT"), eq(10), eq(5), eq("SUCCESS"), isNull(), eq(5L));
@@ -493,7 +493,7 @@ class LlmGatewayTest {
     /** 非成员带 gid → 组池预检抛 403 透传前端；provider 不被调用（未调用不记 FAILED）。 */
     @Test
     void chat_nonMemberGroup_throws403WithoutProviderCall() {
-        when(groupWalletService.requireAffordableGroup(5L, 42L)).thenThrow(
+        when(groupWalletService.requireAffordableGroup(5L, 42L, "CHAT")).thenThrow(
                 new com.superprogrammer.common.exception.BusinessException(
                         com.superprogrammer.common.exception.ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费"));
 
@@ -516,7 +516,7 @@ class LlmGatewayTest {
         when(deepseekProvider.chat(any())).thenReturn(LlmResponse.builder()
                 .content("ans").model("deepseek-chat").usage(usage).duration(1L).build());
         when(deepseekProvider.getId()).thenReturn(7L);
-        when(groupWalletService.requireAffordableGroup(9L, 42L)).thenReturn(java.math.BigDecimal.TEN);
+        when(groupWalletService.requireAffordableGroup(9L, 42L, "CHAT")).thenReturn(java.math.BigDecimal.TEN);
 
         com.superprogrammer.billing.context.BillingContext.set(42L, 9L);
         try {
@@ -525,7 +525,7 @@ class LlmGatewayTest {
                     .build();
             gateway.chat(request, 42L);
 
-            verify(groupWalletService).requireAffordableGroup(9L, 42L);
+            verify(groupWalletService).requireAffordableGroup(9L, 42L, "CHAT");
             verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
                     eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), eq(9L));
         } finally {
@@ -547,7 +547,7 @@ class LlmGatewayTest {
 
         gateway.embed("hello", "text-embedding-3", 42L, 5L);
 
-        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(groupWalletService).requireAffordableGroup(5L, 42L, "EMBED");
         verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("text-embedding-3"),
                 eq("EMBED"), eq(8), eq(0), eq("SUCCESS"), isNull(), eq(5L));
     }
@@ -568,7 +568,7 @@ class LlmGatewayTest {
                 .documents(List.of("doc a", "doc b"))
                 .build(), 42L, 5L);
 
-        verify(groupWalletService).requireAffordableGroup(5L, 42L);
+        verify(groupWalletService).requireAffordableGroup(5L, 42L, "RERANK");
         verify(billingService).onSuccess(eq(42L), eq(9L), eq("GLOBAL"), eq("configured-rerank-model"),
                 eq("RERANK"), eq(11), eq(0), eq("SUCCESS"), isNull(), eq(5L));
     }

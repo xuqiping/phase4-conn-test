@@ -169,6 +169,43 @@ class ProjectGroupServiceTest {
         verify(memberMapper, never()).updateById(any(ProjectGroupMemberEntity.class));
     }
 
+    // ==================== 17x#2 功能开关（V139） ====================
+
+    @Test
+    void 功能开关_设置与非法值() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+        // 组长设置白名单
+        assertThatCode(() -> service.updateMemberKinds(GROUP_ID, OWNER, false, MEMBER, List.of("CHAT", "IMAGE")))
+                .doesNotThrowAnyException();
+        org.mockito.ArgumentCaptor<ProjectGroupMemberEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ProjectGroupMemberEntity.class);
+        verify(memberMapper).updateById(cap.capture());
+        assertThat(cap.getValue().getAllowedKinds()).isEqualTo("[\"CHAT\",\"IMAGE\"]");
+        // null=不限
+        assertThatCode(() -> service.updateMemberKinds(GROUP_ID, OWNER, false, MEMBER, null))
+                .doesNotThrowAnyException();
+        // 非法模块 400
+        assertThatThrownBy(() -> service.updateMemberKinds(GROUP_ID, OWNER, false, MEMBER, List.of("HACK")))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("非法模块");
+    }
+
+    @Test
+    void 功能开关_MANAGER可设但不能动MANAGER行() {
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID))
+                .thenReturn(roleRow(MANAGER_UID, ProjectGroupMemberEntity.ROLE_MANAGER));
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER))
+                .thenReturn(roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER));
+        // MANAGER 设 MEMBER 行：通
+        assertThatCode(() -> service.updateMemberKinds(GROUP_ID, MANAGER_UID, false, MEMBER, List.of()))
+                .doesNotThrowAnyException();
+        // MANAGER 设 MANAGER 行（自己）：403
+        assertThatThrownBy(() -> service.updateMemberKinds(GROUP_ID, MANAGER_UID, false, MANAGER_UID, List.of()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅可管理普通成员");
+    }
+
     @Test
     void 权限矩阵_组长通_admin越组长通() {
         when(groupMapper.selectById(GROUP_ID)).thenReturn(group);

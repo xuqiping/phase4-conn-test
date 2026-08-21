@@ -106,6 +106,7 @@ public class ProjectGroupWalletService {
 
     private BigDecimal doChargeGroup(Long groupId, Long memberUserId, BigDecimal cost,
                                      String refType, String refId) {
+        enforceKindAllowed(groupId, memberUserId, refType);                          // 17x#2 功能开关（先拦，不动钱包）
         if (walletMapper.deduct(groupId, cost) == 0) {                              // 锁①组池
             throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足");
         }
@@ -174,6 +175,14 @@ public class ProjectGroupWalletService {
      * @return 组池余额（L7 闸门/前端提示复用）
      */
     public BigDecimal requireAffordableGroup(Long groupId, Long userId) {
+        return requireAffordableGroup(groupId, userId, null);
+    }
+
+    /**
+     * 组池预检 + 成员功能开关（17x#2，V139 重载）：kind 非空且被成员 allowed_kinds 白名单排除 → 400。
+     * 入口体验层拦截（真防线在 {@link #doChargeGroup} 同事务校验）。
+     */
+    public BigDecimal requireAffordableGroup(Long groupId, Long userId, String kind) {
         if (userId == null) {
             // 系统调用（uid=null）带 gid 属配置错误——组计费必须归属到人（used 记账）
             throw new BusinessException(ErrorCode.BAD_REQUEST, "项目组计费必须归属到成员");
@@ -182,14 +191,38 @@ public class ProjectGroupWalletService {
         if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
         }
-        if (memberMapper.selectByGroupUser(groupId, userId) == null) {
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity m =
+                memberMapper.selectByGroupUser(groupId, userId);
+        if (m == null) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费");
+        }
+        if (!MemberAllowedKinds.isAllowed(m.getAllowedKinds(), kind)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长已限制你在本组使用该类模型（" + kind + "）");
         }
         ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
         if (w == null || w.getBalancePoints().signum() <= 0) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足");
         }
         return w.getBalancePoints();
+    }
+
+    /**
+     * 成员功能开关硬卡（17x#2，V139）：消耗结算同事务校验——白名单排除即拒，整体回滚。
+     * 非 5 模块 refType（GROUP/MEDIA 等结算类）不约束；非成员明确 403（原 quota 守卫文案误导）。
+     */
+    private void enforceKindAllowed(Long groupId, Long memberUserId, String refType) {
+        if (refType == null || !ProjectGroupVisibilityService.OUTPUT_KINDS.contains(refType)) {
+            return;
+        }
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity m =
+                memberMapper.selectByGroupUser(groupId, memberUserId);
+        if (m == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费");
+        }
+        if (!MemberAllowedKinds.isAllowed(m.getAllowedKinds(), refType)) {
+            log.warn("组成员功能开关拦截 groupId={} member={} kind={}", groupId, memberUserId, refType);
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长已限制你在本组使用该类模型（" + refType + "）");
+        }
     }
 
     // ==================== 内部 ====================

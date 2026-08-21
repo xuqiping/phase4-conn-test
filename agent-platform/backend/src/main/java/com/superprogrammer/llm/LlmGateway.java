@@ -82,7 +82,7 @@ public class LlmGateway {
         // 入口预检：余额≤0 抛 INSUFFICIENT_POINTS（disabled/系统调用自短路）。在 try 外，未调用不记 FAILED。
         // 余额复用：返回值直接喂给闸门，省一次重复查库
         // 计划5 Step4：带 projectGroupId → 组池预检（非成员 403/组池尽 40201），组池计费
-        java.math.BigDecimal balance = requireAffordableFor(uid, gid);
+        java.math.BigDecimal balance = requireAffordableFor(uid, gid, LlmUsageLogEntity.KIND_CHAT);
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
@@ -143,7 +143,7 @@ public class LlmGateway {
         Long gid = resolveBillingGid(request.getProjectGroupId());
         LlmProviderInterface provider = findProvider(request.getModel(), uid);
         log.info("LLM流式调用 model={} provider={} userId={}", request.getModel(), provider.getName(), uid);
-        java.math.BigDecimal balance = requireAffordableFor(uid, gid);
+        java.math.BigDecimal balance = requireAffordableFor(uid, gid, LlmUsageLogEntity.KIND_CHAT);
         Long providerId = provider.getId();
         String providerScope = provider.getProviderScope();
         String providerName = provider.getName();
@@ -246,7 +246,7 @@ public class LlmGateway {
         Long gid = resolveBillingGid(projectGroupId);
         LlmProviderInterface provider = findEmbedProvider(model);
         log.info("embedding 调用 model={} provider={} userId={}", model, provider.getName(), uid);
-        requireAffordableFor(uid, gid);
+        requireAffordableFor(uid, gid, LlmUsageLogEntity.KIND_EMBED);
         long startNanos = System.nanoTime();
         var ragCall = ragTraceService.beginModelCall(model, provider.getName(), text, "QUERY_EMBEDDING");
         try (ragCall) {
@@ -299,7 +299,7 @@ public class LlmGateway {
         int topN = request.getTopN() == null ? request.getDocuments().size() : request.getTopN();
         String summary = "documents=" + request.getDocuments().size() + ",topN=" + topN;
         log.info("rerank 调用 model={} provider={} userId={} {}", model, provider.getName(), uid, summary);
-        requireAffordableFor(uid, gid);
+        requireAffordableFor(uid, gid, LlmUsageLogEntity.KIND_RERANK);
         long startNanos = System.nanoTime();
         var ragCall = ragTraceService.beginModelCall(model, provider.getName(), summary, "RERANK");
         try (ragCall) {
@@ -346,10 +346,19 @@ public class LlmGateway {
      * 组路径的组池余额同样回喂 L7 闸门（低组池用户超在途上限在此拦，语义同个人）。
      */
     private java.math.BigDecimal requireAffordableFor(Long uid, Long projectGroupId) {
+        return requireAffordableFor(uid, projectGroupId, null);
+    }
+
+    /**
+     * 计划5 Step4：计费入口预检统一分派——gid 空 → 个人余额；有值 → 组池（成员身份+组池余额）。
+     * 组路径的组池余额同样回喂 L7 闸门（低组池用户超在途上限在此拦，语义同个人）。
+     * 17x#2（V139）：kind 非空时组路径加成员功能开关预检（真防线在 chargeGroup 同事务校验）。
+     */
+    private java.math.BigDecimal requireAffordableFor(Long uid, Long projectGroupId, String kind) {
         if (projectGroupId == null) {
             return walletService.requireAffordable(uid);
         }
-        return groupWalletService.requireAffordableGroup(projectGroupId, uid);
+        return groupWalletService.requireAffordableGroup(projectGroupId, uid, kind);
     }
 
     /**
