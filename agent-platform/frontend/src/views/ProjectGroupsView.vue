@@ -74,7 +74,7 @@
             <div class="pg-card__head">
               <span class="pg-card__name" :title="g.name">{{ g.name }}</span>
               <NTag size="small" :type="g.myRole === 'OWNER' ? 'primary' : 'default'" :bordered="false">
-                {{ g.myRole === 'OWNER' ? '组长' : '成员' }}
+                {{ ROLE_LABEL[g.myRole] ?? '成员' }}
               </NTag>
             </div>
             <div class="pg-card__balance">组池 {{ fmt(g.balancePoints) }} 分</div>
@@ -98,7 +98,7 @@
         </NButton>
         <span class="pg-view__detail-name">{{ selected.name }}</span>
         <NTag size="small" :type="isOwner ? 'primary' : 'default'" :bordered="false">
-          {{ isOwner ? '组长' : '成员' }}
+          {{ ROLE_LABEL[selected.myRole] ?? '成员' }}
         </NTag>
         <!-- 组长资金操作（成员不可见） -->
         <template v-if="isOwner">
@@ -117,8 +117,8 @@
       </div>
 
       <NTabs type="line" :value="tab" @update:value="(v: string) => { tab = v; onTabChange() }">
-        <!-- 成员/流水：组长专属（成员视角只有产出 tab） -->
-        <template v-if="isOwner">
+        <!-- 成员/流水/审批：组长+管理可见（管理只读流水、无资金与设置权）；普通成员只有产出 tab -->
+        <template v-if="canManage">
           <NTabPane name="members" tab="成员">
             <div class="pg-members">
               <div class="pg-members__toolbar">
@@ -180,8 +180,8 @@
               </div>
             </div>
           </NTabPane>
-          <!-- 17x#2/#4：组设置（产出可见性 + 公共池招募） -->
-          <NTabPane name="settings" tab="设置">
+          <!-- 17x#2/#4：组设置（产出可见性 + 公共池招募）——管钱/管设置组长专属，管理不可见 -->
+          <NTabPane v-if="isOwner" name="settings" tab="设置">
             <div class="pg-settings">
               <div class="pg-settings__section">
                 <div class="pg-settings__label">成员产出可见性（谁能看到组内产出记录与图片/视频产物）</div>
@@ -227,7 +227,7 @@
           <div class="pg-outputs">
             <div class="pg-outputs__filters">
               <NSelect
-                v-if="isOwner"
+                v-if="canManage"
                 v-model:value="outputFilter.memberUserId"
                 size="small"
                 clearable
@@ -258,7 +258,7 @@
               />
               <NButton size="small" quaternary :disabled="!hasFilters" @click="clearFilters">清空</NButton>
             </div>
-            <span v-if="!isOwner" class="pg-outputs__hint">可见范围由组长在「设置」中配置（默认仅自己；组长/admin 恒全量）</span>
+            <span v-if="!canManage" class="pg-outputs__hint">可见范围由组长在「设置」中配置（默认仅自己；组长/管理/admin 恒全量）</span>
             <NDataTable
               remote
               size="small"
@@ -287,6 +287,59 @@
         <div class="pg-view__modal-footer">
           <NButton size="small" quaternary @click="showCreate = false">取消</NButton>
           <NButton size="small" type="primary" :loading="creating" @click="confirmCreate">建组</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- 17x#2（V139）：成员功能开关弹窗 —— 不限制开关 + 5 模块白名单；全不勾=全禁 -->
+    <NModal v-model:show="showKinds" preset="card" :title="`功能开关 · ${kindsTargetName}`" style="max-width: 420px">
+      <div class="pg-kinds">
+        <div class="pg-kinds__row">
+          <span>不限制（可用全部模块）</span>
+          <NSwitch v-model:value="kindsForm.unlimited" />
+        </div>
+        <template v-if="!kindsForm.unlimited">
+          <NCheckbox
+            v-for="k in kindOptions" :key="k.value"
+            :checked="kindsForm.kinds.includes(k.value)"
+            @update:checked="(v: boolean) => toggleKind(k.value, v)"
+          >{{ k.label }}</NCheckbox>
+          <div v-if="!kindsForm.kinds.length" class="pg-kinds__warn">
+            ⚠️ 全不勾 = 全禁：该成员将无法在本组消耗任何模型（组池扣费会被拦截）。
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <div class="pg-view__modal-footer">
+          <NButton size="small" quaternary @click="showKinds = false">取消</NButton>
+          <NButton size="small" type="primary" :loading="savingKinds" @click="saveKinds">保存</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- 17x#2（V139）：成员级可见性弹窗 —— 每模块三态：跟随组默认/仅自己/全员；优先级高于组设置 -->
+    <NModal v-model:show="showVis" preset="card" :title="`可见性 · ${visTargetName}`" style="max-width: 460px">
+      <div class="pg-vis">
+        <div class="pg-vis__hint">
+          对该成员的产出按模块单独设置，优先级高于组「设置」页；全部「跟随组默认」= 清除个人覆盖。
+        </div>
+        <div v-for="k in kindOptions" :key="k.value" class="pg-vis__row">
+          <span class="pg-vis__kind">{{ k.label }}</span>
+          <NRadioGroup
+            size="small"
+            :value="memberVisForm[k.value as GroupKind]"
+            @update:value="(v: string) => { memberVisForm[k.value as GroupKind] = v as VisChoice }"
+          >
+            <NRadio value="FOLLOW">跟随组默认</NRadio>
+            <NRadio value="OWN">仅自己</NRadio>
+            <NRadio value="ALL">全员可见</NRadio>
+          </NRadioGroup>
+        </div>
+      </div>
+      <template #footer>
+        <div class="pg-view__modal-footer">
+          <NButton size="small" quaternary @click="showVis = false">取消</NButton>
+          <NButton size="small" type="primary" :loading="savingMemberVis" @click="saveMemberVisibility">保存</NButton>
         </div>
       </template>
     </NModal>
@@ -369,7 +422,7 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCheckbox, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NInputNumber, NModal,
-  NRadio, NRadioGroup, NSelect,
+  NRadio, NRadioGroup, NSelect, NSwitch,
   NSpin, NTabs, NTabPane, NTag, useDialog, useMessage,
   type DataTableColumns
 } from 'naive-ui'
@@ -385,6 +438,11 @@ import {
   type ProjectGroupJoinRequestVO
 } from '@/api/projectGroup'
 import GroupOutputPreview from '@/components/projectgroup/GroupOutputPreview.vue'
+import {
+  kindsFormFromAllowed, allowedFromKindsForm,
+  visFormFromOverrides, overridesFromVisForm,
+  type KindsForm, type VisForm, type VisChoice, type GroupKind
+} from '@/utils/groupPerms'
 
 /**
  * 计划5 Step7：项目组推进页。
@@ -436,6 +494,10 @@ const outputFilter = ref<{
 }>({ memberUserId: null, kind: null, range: null })
 
 const isOwner = computed(() => selected.value?.myRole === 'OWNER')
+/** 17x#2（V139）：MANAGER 管人不管钱——可见成员/流水（只读）/审批 tab，不见设置 tab 与划拨回收按钮。 */
+const isManager = computed(() => selected.value?.myRole === 'MANAGER')
+const canManage = computed(() => isOwner.value || isManager.value)
+const ROLE_LABEL: Record<string, string> = { OWNER: '组长', MANAGER: '管理', MEMBER: '成员' }
 const hasFilters = computed(() =>
   outputFilter.value.memberUserId != null || !!outputFilter.value.kind || !!outputFilter.value.range)
 
@@ -474,7 +536,7 @@ async function loadGroups() {
 
 function openGroup(g: ProjectGroupMineVO) {
   selected.value = g
-  tab.value = isOwner.value ? 'members' : 'outputs'
+  tab.value = (g.myRole === 'OWNER' || g.myRole === 'MANAGER') ? 'members' : 'outputs'
   invites.value = []
   joinRequests.value = []
   onTabChange()
@@ -580,7 +642,7 @@ async function cancelMyJoin(r: ProjectGroupJoinRequestVO) {
 
 async function loadInvites() {
   const g = selected.value
-  if (!g || !isOwner.value) return
+  if (!g || !canManage.value) return
   try {
     const res = await projectGroupApi.listInvites(g.id)
     invites.value = res.data.data.filter(i => i.status === 'PENDING')
@@ -603,7 +665,7 @@ async function cancelInvite(inv: ProjectGroupInviteVO) {
 
 async function loadJoinRequests() {
   const g = selected.value
-  if (!g || !isOwner.value) return
+  if (!g || !canManage.value) return
   try {
     const res = await projectGroupApi.listJoinRequests(g.id)
     joinRequests.value = res.data.data
@@ -715,7 +777,7 @@ async function confirmCreate() {
 
 async function loadOverview() {
   const g = selected.value
-  if (!g || !isOwner.value) return
+  if (!g || !canManage.value) return
   loadingOverview.value = true
   try {
     const res = await projectGroupApi.overview(g.id, ledgerPage.value, ledgerSize.value)
@@ -735,7 +797,7 @@ async function loadOutputs() {
   try {
     const f = outputFilter.value
     const res = await projectGroupApi.outputs(g.id, {
-      memberUserId: isOwner.value ? (f.memberUserId ?? undefined) : undefined,
+      memberUserId: canManage.value ? (f.memberUserId ?? undefined) : undefined,
       kind: f.kind ?? undefined,
       // daterange：to=尾日 23:59:59.999（含整天）
       from: f.range ? new Date(f.range[0]).toISOString() : undefined,
@@ -757,7 +819,7 @@ function onTabChange() {
     void loadOutputs()
   } else if (tab.value === 'approvals') {
     void loadJoinRequests()
-  } else if (isOwner.value) {
+  } else if (canManage.value) {
     void loadOverview()
     if (tab.value === 'members') void loadInvites()
   }
@@ -856,21 +918,43 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
     const name = r.displayName || r.username || `#${r.userId}`
     return h('span', null, [
       name,
-      r.isOwner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null
+      r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null
     ])
+  } },
+  // 17x#2（V139）：角色列——OWNER 视角可下拉任免（MEMBER↔MANAGER）；MANAGER 只读标签
+  { title: '角色', key: 'role', width: 110, render: r => {
+    if (r.owner) return h(NTag, { size: 'tiny', type: 'primary', bordered: false }, () => '组长')
+    if (isOwner.value) {
+      return h(NSelect, {
+        size: 'tiny',
+        style: 'width: 88px',
+        value: r.role,
+        options: [
+          { label: '成员', value: 'MEMBER' },
+          { label: '管理', value: 'MANAGER' }
+        ],
+        onUpdateValue: (v: string) => void changeRole(r, v as 'MEMBER' | 'MANAGER')
+      })
+    }
+    return h(NTag, { size: 'tiny', bordered: false, type: r.role === 'MANAGER' ? 'warning' : 'default' },
+      () => ROLE_LABEL[r.role] ?? r.role)
   } },
   { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限' : fmt(r.quotaLimitPoints) },
   { title: '已用', key: 'usedPoints', width: 100, render: r => fmt(r.usedPoints) },
-  { title: '加入时间', key: 'createdAt', width: 140, render: r => fmtTime(r.createdAt) },
+  { title: '加入时间', key: 'joinedAt', width: 140, render: r => fmtTime(r.joinedAt) },
   {
-    title: '操作', key: 'actions', width: 220,
+    title: '操作', key: 'actions', width: 320,
     render: r => {
-      if (r.isOwner) return h('span', { class: 'pg-members__hint' }, '—')
+      if (r.owner) return h('span', { class: 'pg-members__hint' }, '—')
+      // 后端 requireOperatableMember：quota/重置/移除/开关/可见性仅作用 MEMBER 行；MANAGER 行只有组长任免（角色列）
+      if (r.role !== 'MEMBER') return h('span', { class: 'pg-members__hint' }, '管理行：仅组长可任免')
       const btn = (label: string, onClick: () => void, type: 'primary' | 'default' | 'error' = 'default') =>
         h(NButton, { size: 'tiny', quaternary: true, type, onClick }, () => label)
-      return h('div', { style: 'display:flex;gap:4px' }, [
+      return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap' }, [
         btn('调限额', () => openQuota(r), 'primary'),
         btn('重置已用', () => confirmResetUsed(r)),
+        btn('功能开关', () => openKinds(r)),
+        btn('可见性', () => openVis(r)),
         btn('移除', () => confirmRemove(r), 'error')
       ])
     }
@@ -934,6 +1018,78 @@ function confirmRemove(m: ProjectGroupMemberVO) {
       } catch { /* 拦截器已提示 */ }
     }
   })
+}
+
+// ==================== 17x#2（V139）：角色任免 / 功能开关 / 成员级可见性 ====================
+
+async function changeRole(m: ProjectGroupMemberVO, role: 'MEMBER' | 'MANAGER') {
+  if (m.role === role) return
+  try {
+    await projectGroupApi.updateMemberRole(selected.value!.id, m.userId, role)
+    message.success(role === 'MANAGER' ? '已任命为管理（可管人/审批/看流水，不管钱）' : '已降为普通成员')
+    void loadOverview()
+  } catch { /* 拦截器已提示 */ }
+}
+
+// ---- 功能开关弹窗 ----
+const showKinds = ref(false)
+const kindsTarget = ref<ProjectGroupMemberVO | null>(null)
+const kindsForm = ref<KindsForm>({ unlimited: true, kinds: [] })
+const savingKinds = ref(false)
+const kindsTargetName = computed(() =>
+  kindsTarget.value ? (kindsTarget.value.displayName || kindsTarget.value.username || `#${kindsTarget.value.userId}`) : '')
+
+function openKinds(m: ProjectGroupMemberVO) {
+  kindsTarget.value = m
+  kindsForm.value = kindsFormFromAllowed(m.allowedKinds)
+  showKinds.value = true
+}
+
+function toggleKind(kind: string, checked: boolean) {
+  const cur = kindsForm.value.kinds
+  kindsForm.value.kinds = checked ? [...cur, kind] : cur.filter(k => k !== kind)
+}
+
+async function saveKinds() {
+  const t = kindsTarget.value
+  if (!t) return
+  savingKinds.value = true
+  try {
+    await projectGroupApi.updateMemberKinds(selected.value!.id, t.userId, allowedFromKindsForm(kindsForm.value))
+    message.success('成员可用模块已更新')
+    showKinds.value = false
+    void loadOverview()
+  } catch { /* 拦截器已提示 */ } finally {
+    savingKinds.value = false
+  }
+}
+
+// ---- 成员级可见性弹窗 ----
+const showVis = ref(false)
+const visTarget = ref<ProjectGroupMemberVO | null>(null)
+const memberVisForm = ref<VisForm>(visFormFromOverrides(null))
+const savingMemberVis = ref(false)
+const visTargetName = computed(() =>
+  visTarget.value ? (visTarget.value.displayName || visTarget.value.username || `#${visTarget.value.userId}`) : '')
+
+function openVis(m: ProjectGroupMemberVO) {
+  visTarget.value = m
+  memberVisForm.value = visFormFromOverrides(m.memberVisibilityOverrides)
+  showVis.value = true
+}
+
+async function saveMemberVisibility() {
+  const t = visTarget.value
+  if (!t) return
+  savingMemberVis.value = true
+  try {
+    await projectGroupApi.updateMemberVisibility(selected.value!.id, t.userId, overridesFromVisForm(memberVisForm.value))
+    message.success('成员可见性覆盖已更新')
+    showVis.value = false
+    void loadOverview()
+  } catch { /* 拦截器已提示 */ } finally {
+    savingMemberVis.value = false
+  }
 }
 
 // ---- 加成员 ----
@@ -1315,5 +1471,50 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-1);
+}
+
+/* 17x#2（V139）：功能开关 / 成员级可见性弹窗 */
+.pg-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.pg-kinds__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.pg-kinds__warn {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning, #f2c97d);
+  line-height: 1.5;
+}
+
+.pg-vis {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.pg-vis__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.pg-vis__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.pg-vis__kind {
+  width: 48px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
 }
 </style>

@@ -197,12 +197,24 @@ function redirectToLogin() {
 }
 
 /**
+ * 17x#2 成员功能开关（V139）：后端拦截文案带 kind 英文码（如「该类模型（CHAT）」），
+ * 统一翻成中文模块名再弹，用户不用猜码。只动已知码，其余原文。
+ */
+const GROUP_KIND_ZH: Record<string, string> = {
+  CHAT: '对话', EMBED: '嵌入', RERANK: '重排', IMAGE: '图片', VIDEO: '视频'
+}
+function localizeKindCode(msg: string): string {
+  return msg.replace(/（(CHAT|EMBED|RERANK|IMAGE|VIDEO)）/g, (_m, k: string) => `（${GROUP_KIND_ZH[k] ?? k}）`)
+}
+
+/**
  * 显示错误消息（使用Naive UI的discrete message API）
  * 因为拦截器在组件外部运行，需要使用discrete方式创建message实例
  */
 let messageApi: ReturnType<typeof createDiscreteApi>['message'] | null = null
 
 function showErrorMessage(msg: string) {
+  msg = localizeKindCode(msg)
   import('naive-ui').then(({ createDiscreteApi, darkTheme }) => {
     if (!messageApi) {
       const api = createDiscreteApi(['message'], {

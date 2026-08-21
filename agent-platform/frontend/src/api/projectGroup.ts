@@ -16,8 +16,8 @@ export interface ProjectGroupMineVO {
   name: string
   description: string | null
   ownerUserId: number
-  /** OWNER=我建的组长 / MEMBER=我加入的成员 */
-  myRole: 'OWNER' | 'MEMBER'
+  /** OWNER=我建的组长 / MANAGER=组管理（管人不管钱） / MEMBER=普通成员（V139） */
+  myRole: 'OWNER' | 'MANAGER' | 'MEMBER'
   /** 组池余额（积分） */
   balancePoints: number
   /** 组长给我配的积分限额（null=不限） */
@@ -28,15 +28,21 @@ export interface ProjectGroupMineVO {
   createdAt: string
 }
 
-/** 组成员行（ProjectGroupMemberVO，详情/总览共用）。 */
+/** 组成员行（ProjectGroupMemberVO，详情/总览共用；V139 起带角色/功能开关/可见性覆盖）。 */
 export interface ProjectGroupMemberVO {
   userId: number
   username: string | null
   displayName: string | null
-  isOwner: boolean
+  owner: boolean
+  /** OWNER/MANAGER/MEMBER（V139；OWNER 恒为组长行） */
+  role: 'OWNER' | 'MANAGER' | 'MEMBER'
+  /** 可用功能开关（V139）：null=不限，[]=全禁，否则为 CHAT/EMBED/RERANK/IMAGE/VIDEO 子集 */
+  allowedKinds: string[] | null
+  /** 成员级可见性覆盖（V139）：{kind: 'OWN'|'ALL'}，null/缺 key=跟随组设置 */
+  memberVisibilityOverrides: Record<string, 'OWN' | 'ALL'> | null
   quotaLimitPoints: number | null
   usedPoints: number
-  createdAt: string
+  joinedAt: string
 }
 
 /** 组详情（ProjectGroupDetailVO）。 */
@@ -217,6 +223,23 @@ export const projectGroupApi = {
   /** POST /project-groups/{id}/members/{uid}/reset-used — 重置成员已用。 */
   resetUsed(id: number, uid: number) {
     return request.post<ApiResponse<null>>(`/project-groups/${id}/members/${uid}/reset-used`)
+  },
+
+  // ==================== 17x#2 成员权限（V139）：角色任免 / 功能开关 / 成员级可见性 ====================
+
+  /** PUT /project-groups/{id}/members/{uid}/role — 任免角色（仅组长；MEMBER↔MANAGER）。 */
+  updateMemberRole(id: number, uid: number, role: 'MEMBER' | 'MANAGER') {
+    return request.put<ApiResponse<null>>(`/project-groups/${id}/members/${uid}/role`, { role })
+  },
+
+  /** PUT /project-groups/{id}/members/{uid}/kinds — 功能开关（组长/管理；null=不限，[]=全禁）。 */
+  updateMemberKinds(id: number, uid: number, allowedKinds: string[] | null) {
+    return request.put<ApiResponse<null>>(`/project-groups/${id}/members/${uid}/kinds`, { allowedKinds })
+  },
+
+  /** PUT /project-groups/{id}/members/{uid}/visibility-overrides — 成员级可见性覆盖（组长/管理；{}=清空跟随组设置）。 */
+  updateMemberVisibility(id: number, uid: number, overrides: Record<string, 'OWN' | 'ALL'>) {
+    return request.put<ApiResponse<null>>(`/project-groups/${id}/members/${uid}/visibility-overrides`, { overrides })
   },
 
   /** POST /project-groups/{id}/allocate — 划拨（个人→组池）。 */
