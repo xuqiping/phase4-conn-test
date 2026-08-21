@@ -26,4 +26,23 @@ public interface FeedbackQuestionMapper extends BaseMapper<FeedbackQuestionEntit
     @Update("UPDATE feedback_questions SET status = 'CLOSED' "
             + "WHERE id = #{id} AND deleted = 0 AND status IN ('OPEN','ANSWERED')")
     int closeIfNotClosed(@Param("id") Long id);
+
+    // ==================== FAQ 公开检索（脱敏：不 SELECT username/user_id） ====================
+
+    /** FAQ 总数：is_public=true；kw 非空时标题+内容 LIKE 前缀（百级数据量无压力，量上万再评估 pg_trgm）。 */
+    @org.apache.ibatis.annotations.Select("<script>SELECT COUNT(*) FROM feedback_questions "
+            + "WHERE deleted = 0 AND is_public = TRUE "
+            + "<if test='kw != null and kw != \"\"'> AND (title LIKE CONCAT(#{kw}, '%') ESCAPE '\\' "
+            + "OR content LIKE CONCAT(#{kw}, '%') ESCAPE '\\')</if></script>")
+    long countFaq(@Param("kw") String kw);
+
+    /** FAQ 分页（按回答时间倒序）。列清单刻意无 username/user_id——公开视图字段不存在层脱敏。 */
+    @org.apache.ibatis.annotations.Select("<script>SELECT id, title, content, answer, answered_at AS answeredAt "
+            + "FROM feedback_questions WHERE deleted = 0 AND is_public = TRUE "
+            + "<if test='kw != null and kw != \"\"'> AND (title LIKE CONCAT(#{kw}, '%') ESCAPE '\\' "
+            + "OR content LIKE CONCAT(#{kw}, '%') ESCAPE '\\')</if> "
+            + "ORDER BY answered_at DESC LIMIT #{size} OFFSET #{offset}</script>")
+    java.util.List<com.superprogrammer.feedback.dto.FaqVO> pageFaq(@Param("kw") String kw,
+                                                                   @Param("offset") long offset,
+                                                                   @Param("size") long size);
 }

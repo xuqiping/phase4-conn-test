@@ -36,6 +36,7 @@ public class FeedbackController {
 
     private final FeedbackService feedbackService;
     private final com.superprogrammer.feedback.service.FeedbackNotificationService notificationService;
+    private final com.superprogrammer.feedback.service.FeedbackQuestionService questionService;
 
     @PostMapping("/suggestions")
     @RateLimit(action = "feedback_suggestion", max = 5, windowSeconds = 60)
@@ -76,6 +77,35 @@ public class FeedbackController {
     @PostMapping("/notifications/read-all")
     public ResponseEntity<R<Map<String, Integer>>> markAllRead() {
         return ResponseEntity.ok(R.ok("全部已读", Map.of("count", notificationService.markAllRead(currentUserId()))));
+    }
+
+    // ---------- 提问台（19x#2） ----------
+
+    /** 提问（限流 5/60s/用户）。 */
+    @PostMapping("/questions")
+    @RateLimit(action = "feedback_question", max = 5, windowSeconds = 60)
+    @AuditLog(module = "feedback", action = "question_submit", targetType = "feedback_question")
+    public ResponseEntity<R<Map<String, Long>>> submitQuestion(
+            @Valid @RequestBody com.superprogrammer.feedback.dto.CreateQuestionRequest req) {
+        Long id = questionService.submitQuestion(currentUserId(), req);
+        return ResponseEntity.ok(R.ok("提问已提交", Map.of("id", id)));
+    }
+
+    /** 我的提问分页（强制 self；含答案 markdown 原文）。 */
+    @GetMapping("/questions/mine")
+    public ResponseEntity<R<PageResult<com.superprogrammer.feedback.dto.QuestionVO>>> myQuestions(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(R.ok(questionService.myQuestions(currentUserId(), page, size)));
+    }
+
+    /** FAQ 公开检索（登录即可；VO 无 username——脱敏字段不存在层）。kw=标题/内容 LIKE 前缀。 */
+    @GetMapping("/questions/faq")
+    public ResponseEntity<R<PageResult<com.superprogrammer.feedback.dto.FaqVO>>> faq(
+            @RequestParam(required = false) String kw,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(R.ok(questionService.faq(kw, page, size)));
     }
 
     private Long currentUserId() {

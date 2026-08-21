@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class FeedbackAdminController {
 
     private final FeedbackService feedbackService;
+    private final com.superprogrammer.feedback.service.FeedbackQuestionService questionService;
 
     @GetMapping("/suggestions")
     @RequirePermission("feedback:manage")
@@ -51,6 +52,35 @@ public class FeedbackAdminController {
                                           @Valid @RequestBody ReviewSuggestionRequest req) {
         feedbackService.reviewSuggestion(id, req.toStatus(), req.reply(), currentUserId());
         return ResponseEntity.ok(R.ok("审核完成", null));
+    }
+
+    // ---------- 提问台（19x#2） ----------
+
+    @GetMapping("/questions")
+    @RequirePermission("feedback:manage")
+    public ResponseEntity<R<PageResult<com.superprogrammer.feedback.dto.AdminQuestionVO>>> questions(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(R.ok(questionService.adminQuestions(status, page, size)));
+    }
+
+    /** 回答：首答发通知，改答案不发；isPublic 随答案落（勾选即 FAQ 可见，取消即消失）。 */
+    @PostMapping("/questions/{id}/answer")
+    @RequirePermission("feedback:manage")
+    @AuditLog(module = "feedback", action = "question_answer", targetType = "feedback_question")
+    public ResponseEntity<R<Void>> answer(@PathVariable("id") Long id,
+                                          @Valid @RequestBody com.superprogrammer.feedback.dto.AnswerQuestionRequest req) {
+        questionService.answerQuestion(id, req.answer(), Boolean.TRUE.equals(req.isPublic()), currentUserId());
+        return ResponseEntity.ok(R.ok("回答已保存", null));
+    }
+
+    @PostMapping("/questions/{id}/close")
+    @RequirePermission("feedback:manage")
+    @AuditLog(module = "feedback", action = "question_close", targetType = "feedback_question")
+    public ResponseEntity<R<Void>> closeQuestion(@PathVariable("id") Long id) {
+        questionService.closeQuestion(id);
+        return ResponseEntity.ok(R.ok("已关闭", null));
     }
 
     private Long currentUserId() {
