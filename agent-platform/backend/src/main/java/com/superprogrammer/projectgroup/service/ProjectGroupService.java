@@ -70,6 +70,7 @@ public class ProjectGroupService {
         ownerRow.setGroupId(g.getId());
         ownerRow.setUserId(ownerUserId);
         ownerRow.setQuotaLimitPoints(null);
+        ownerRow.setRole(ProjectGroupMemberEntity.ROLE_OWNER);   // V139：建组即 OWNER（uk_pgm_owner 每组唯一）
         memberMapper.insert(ownerRow);
 
         ProjectGroupWalletEntity w = new ProjectGroupWalletEntity();

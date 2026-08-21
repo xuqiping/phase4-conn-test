@@ -61,6 +61,7 @@ class ProjectGroupQueryServiceTest {
     @Mock private MediaGenTaskMapper mediaTaskMapper;
     @Mock private UserMapper userMapper;
     @Mock private ProjectGroupService groupService;
+    @Mock private ProjectGroupVisibilityService visibilityService;
 
     @InjectMocks
     private ProjectGroupQueryService service;
@@ -74,6 +75,10 @@ class ProjectGroupQueryServiceTest {
         group.setOwnerUserId(OWNER);
         group.setDeleted(0);
         lenient().when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        // V138 可见性服务默认放行（本类只验 outputs 编排，可见性规则自身在 VisibilityServiceTest 覆盖）
+        lenient().when(visibilityService.canSeeOutput(any(), any(), eq(false), any(), any())).thenReturn(true);
+        lenient().when(visibilityService.visibleAllKindsForMember(any()))
+                .thenReturn(List.of("CHAT", "EMBED", "RERANK", "IMAGE", "VIDEO"));
     }
 
     private ProjectGroupMemberEntity memberRow(long uid) {
@@ -107,7 +112,7 @@ class ProjectGroupQueryServiceTest {
     void overview_delegatesDetailAndPagesLedgerWithUsernames() {
         ProjectGroupDetailVO detail = new ProjectGroupDetailVO(
                 GROUP_ID, "组A", null, OWNER, "owner", new BigDecimal("100"), BigDecimal.ZERO,
-                List.of(), OffsetDateTime.now());
+                List.of(), OffsetDateTime.now(), "OWN", null, false);
         when(groupService.getDetail(GROUP_ID, OWNER, false)).thenReturn(detail);
 
         ProjectGroupLedgerEntity l = new ProjectGroupLedgerEntity();
@@ -137,7 +142,7 @@ class ProjectGroupQueryServiceTest {
     void overview_capsPageSizeAt50() {
         when(groupService.getDetail(anyLong(), anyLong(), eq(false)))
                 .thenReturn(new ProjectGroupDetailVO(GROUP_ID, "g", null, OWNER, "o",
-                        BigDecimal.ZERO, BigDecimal.ZERO, List.of(), OffsetDateTime.now()));
+                        BigDecimal.ZERO, BigDecimal.ZERO, List.of(), OffsetDateTime.now(), "OWN", null, false));
         Page<ProjectGroupLedgerEntity> p = new Page<>(1, 500);
         p.setRecords(List.of());
         p.setTotal(0);

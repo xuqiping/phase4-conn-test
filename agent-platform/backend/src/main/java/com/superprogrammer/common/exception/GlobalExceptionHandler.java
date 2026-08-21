@@ -153,6 +153,7 @@ public class GlobalExceptionHandler {
             case "uk_kb_tenant_name" -> "同名知识库已存在，请更换名称";
             case "uk_user_memories_user_key_home" -> "该记忆已存在，请勿重复添加";
             case "uk_users_username" -> "用户名已存在，请更换";
+            case "uk_pgm_group_user" -> "该用户已在项目组中，请勿重复添加";
             default -> "数据已存在（唯一约束：" + constraint + "），请勿重复创建";
         };
     }
