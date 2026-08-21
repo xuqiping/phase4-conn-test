@@ -39,6 +39,8 @@ public class ApplicationSecurityEvent extends ApplicationEvent {
     public static final String KIND_LLM_SESSION_CAP = "LLM_SESSION_CAP";
     /** 已被旋转的 refresh token 再次使用（安全体系 S5 · SEC-FR-004+；payload: jti——不带 token 原文）。 */
     public static final String KIND_TOKEN_REUSE = "TOKEN_REUSE";
+    /** 支付回调异常（7x#3；payload: channel, reason——验签失败/金额不符/已付已关单；不带签名原文）。 */
+    public static final String KIND_PAYMENT_NOTIFY_REJECT = "PAYMENT_NOTIFY_REJECT";
 
     private final String kind;
     private final Long userId;

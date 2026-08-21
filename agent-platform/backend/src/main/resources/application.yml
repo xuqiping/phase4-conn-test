@@ -277,3 +277,24 @@ aj:
     # 滑块缺口容差（px）——用户拖动误差范围内判定通过
     slip:
       offset: 5
+
+# 自助充值支付（7x#3，V140）：密钥全走环境变量，此处仅占位 key 名
+billing:
+  payment:
+    # mock 通道总闸：默认关；prod profile 开启 = 启动即炸（PaymentConfigGuard）
+    mock-enabled: ${PAYMENT_MOCK_ENABLED:false}
+    # mock 回调 HMAC 密钥（仅服务端；notify 链路验签用）
+    mock-secret: ${PAYMENT_MOCK_SECRET:dev-mock-secret-do-not-use-in-prod}
+    # PENDING 单过期分钟数（过期 job 每分钟批量 CLOSED）
+    order-expire-minutes: ${PAYMENT_ORDER_EXPIRE_MINUTES:30}
+    # 渠道回调接收地址（部署必须 HTTPS——见部署 checklist）
+    notify-url: ${PAYMENT_NOTIFY_URL:}
+    # 真实渠道骨架留位（商户号到位后填环境变量即激活，无需改码）
+    alipay:
+      app-id: ${ALIPAY_APP_ID:}
+      private-key: ${ALIPAY_PRIVATE_KEY:}
+      alipay-public-key: ${ALIPAY_PUBLIC_KEY:}
+    wechat:
+      mch-id: ${WECHAT_MCH_ID:}
+      app-id: ${WECHAT_APP_ID:}
+      api-v3-key: ${WECHAT_API_V3_KEY:}

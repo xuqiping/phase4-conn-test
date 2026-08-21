@@ -308,6 +308,26 @@ public class PointsWalletService {
                 null, PointsLedgerEntity.REF_GROUP, groupId, remark, "从项目组回收").getBalanceAfter();
     }
 
+    /**
+     * V140 自助支付回调入账：只为「已存在的 PENDING 订单」贷记余额+RECHARGE 流水——不新建订单行
+     * （与 grant 的本质差别；订单由 PaymentOrderService 下单时落库，回调仅做条件 UPDATE 抢态）。
+     * <p>幂等第三道：points_ledger uq_ledger_ref(PAYMENT, orderId, RECHARGE) 唯一约束兜底，
+     * 撞键抛 DuplicateKeyException 由调用方按「已入账」处理。调用须在 PaymentOrderService 的外层事务内
+     * （REQUIRED 传播），与订单状态翻转同生共死。
+     *
+     * @return 入账后余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal creditRechargeForOrder(Long userId, BigDecimal points, BigDecimal moneyYuan,
+                                             Long orderId, String remark) {
+        if (userId == null || points == null || points.signum() <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "入账积分必须大于0");
+        }
+        return adjust(userId, points, PointsLedgerEntity.TYPE_RECHARGE, moneyYuan,
+                PointsLedgerEntity.REF_PAYMENT, orderId,
+                remark != null && !remark.isBlank() ? remark : "自助充值", "支付入账").getBalanceAfter();
+    }
+
     /** 查余额（用户钱包页）。无行返 0。 */
     public BigDecimal getBalance(Long userId) {
         if (userId == null) {
