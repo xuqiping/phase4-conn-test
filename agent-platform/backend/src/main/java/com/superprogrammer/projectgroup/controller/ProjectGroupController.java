@@ -309,6 +309,16 @@ public class ProjectGroupController {
         return ResponseEntity.ok(R.ok("成员可用模块已更新", null));
     }
 
+    /** 设成员级可见性覆盖（17x#2，V139，组长/管理/admin，目标仅 MEMBER 行）：空 map=清空回落组级。 */
+    @PutMapping("/{id}/members/{uid}/visibility-overrides")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "member_visibility", targetType = "project_group_member")
+    public ResponseEntity<R<Void>> updateMemberVisibility(@PathVariable("id") Long id, @PathVariable("uid") Long uid,
+                                                          @RequestBody com.superprogrammer.projectgroup.dto.ProjectGroupMemberVisibilityRequest req) {
+        visibilityService.updateMemberVisibility(id, getCurrentUserId(), isAdmin(), uid, req.getOverrides());
+        return ResponseEntity.ok(R.ok("成员可见性覆盖已更新", null));
+    }
+
     @PostMapping("/{id}/allocate")
     @RequirePermission("project-group:manage")
     @AuditLog(module = "project-group", action = "wallet_allocate", targetType = "project_group_wallet")

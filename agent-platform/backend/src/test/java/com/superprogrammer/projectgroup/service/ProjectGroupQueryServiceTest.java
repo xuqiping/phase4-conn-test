@@ -76,7 +76,9 @@ class ProjectGroupQueryServiceTest {
         group.setDeleted(0);
         lenient().when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
         // V138 可见性服务默认放行（本类只验 outputs 编排，可见性规则自身在 VisibilityServiceTest 覆盖）
-        lenient().when(visibilityService.canSeeOutput(any(), any(), eq(false), any(), any())).thenReturn(true);
+        // V139：outputs 改走预取版 canSeeOutputResolved（7 参），旧 5 参不再被本类调用
+        lenient().when(visibilityService.canSeeOutputResolved(any(), any(), eq(false), any(), any(), any(), any()))
+                .thenReturn(true);
         lenient().when(visibilityService.visibleAllKindsForMember(any()))
                 .thenReturn(List.of("CHAT", "EMBED", "RERANK", "IMAGE", "VIDEO"));
     }
@@ -219,5 +221,53 @@ class ProjectGroupQueryServiceTest {
         assertThatThrownBy(() -> service.outputs(GROUP_ID, OWNER, false, null, null, null, null, 1, 10))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("项目组不存在");
+    }
+
+    // ==================== 17x#2 成员级覆盖（V139） ====================
+
+    @Test
+    void outputs_memberOverride_prefilterWidens_memoryFiltersExactly() {
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(memberRow(MEMBER));
+        // 组级无 ALL 模块（默认 OWN），成员覆盖里有 VIDEO=ALL → 预过滤放宽含 VIDEO
+        when(visibilityService.visibleAllKindsForMember(any())).thenReturn(List.of());
+        when(memberMapper.selectList(any()))
+                .thenReturn(List.of(memberRow(MEMBER), memberRow(OTHER_MEMBER)));
+        when(visibilityService.kindsAnyMemberOverrideAll(any())).thenReturn(List.of("VIDEO"));
+        Page<LlmUsageLogEntity> p = new Page<>(1, 10);
+        p.setRecords(List.of(usage(1, OTHER_MEMBER, "VIDEO", null), usage(2, OTHER_MEMBER, "IMAGE", null)));
+        p.setTotal(2);
+        when(usageLogMapper.selectPage(any(), any())).thenReturn(p);
+        when(userMapper.selectBatchIds(anyCollection())).thenReturn(List.of(user(OTHER_MEMBER, "m3")));
+        // 行级精判：归属人覆盖 VIDEO=ALL 放行 / IMAGE 无覆盖落组默认 OWN 拒
+        when(visibilityService.canSeeOutputResolved(any(), eq(MEMBER), eq(false), eq("VIDEO"), eq(OTHER_MEMBER), any(), any()))
+                .thenReturn(true);
+        when(visibilityService.canSeeOutputResolved(any(), eq(MEMBER), eq(false), eq("IMAGE"), eq(OTHER_MEMBER), any(), any()))
+                .thenReturn(false);
+
+        PageResult<ProjectGroupOutputVO> out = service.outputs(
+                GROUP_ID, MEMBER, false, null, null, null, null, 1, 10);
+
+        assertThat(out.getRecords()).hasSize(1);
+        assertThat(out.getRecords().get(0).kind()).isEqualTo("VIDEO");
+    }
+
+    @Test
+    void outputs_managerSeesAllLikeOwner() {
+        ProjectGroupMemberEntity mgr = memberRow(MEMBER);
+        mgr.setRole("MANAGER");
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(mgr);
+        Page<LlmUsageLogEntity> p = new Page<>(1, 10);
+        p.setRecords(List.of(usage(1, OTHER_MEMBER, "CHAT", null)));
+        p.setTotal(1);
+        when(usageLogMapper.selectPage(any(), any())).thenReturn(p);
+        when(userMapper.selectBatchIds(anyCollection())).thenReturn(List.of(user(OTHER_MEMBER, "m3")));
+
+        // MANAGER 视同组长：不强制 self、不走行级过滤
+        PageResult<ProjectGroupOutputVO> out = service.outputs(
+                GROUP_ID, MEMBER, false, null, null, null, null, 1, 10);
+
+        assertThat(out.getRecords()).hasSize(1);
+        assertThat(out.getRecords().get(0).userId()).isEqualTo(OTHER_MEMBER);
+        verify(visibilityService, never()).canSeeOutputResolved(any(), any(), eq(false), any(), any(), any(), any());
     }
 }

@@ -294,6 +294,7 @@ public class ProjectGroupService {
                     m.getUserId().equals(g.getOwnerUserId()),
                     m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole(),
                     MemberAllowedKinds.parse(m.getAllowedKinds()),
+                    ProjectGroupVisibilityService.parseOverrides(m.getMemberVisibilityOverrides()),
                     m.getQuotaLimitPoints(),
                     m.getUsedPoints(),
                     m.getCreatedAt());

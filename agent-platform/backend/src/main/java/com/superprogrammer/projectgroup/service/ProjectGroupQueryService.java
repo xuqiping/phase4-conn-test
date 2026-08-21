@@ -26,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -109,21 +110,41 @@ public class ProjectGroupQueryService {
         if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
         }
-        boolean owner = admin || g.getOwnerUserId().equals(actorUserId);
-        boolean member = memberMapper.selectByGroupUser(groupId, actorUserId) != null;
-        if (!owner && !member) {
+        ProjectGroupMemberEntity viewerRow = memberMapper.selectByGroupUser(groupId, actorUserId);
+        String viewerRole = viewerRow == null ? null
+                : (viewerRow.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : viewerRow.getRole());
+        // V139：MANAGER 视同组长全量视角（管人需要）；admin/组长恒全量
+        boolean owner = admin || g.getOwnerUserId().equals(actorUserId)
+                || ProjectGroupMemberEntity.ROLE_MANAGER.equals(viewerRole);
+        if (!owner && viewerRow == null) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "非本项目组成员");
         }
 
-        // 17x#2 可见性（V138）：组长/admin 全量可筛；成员视角 = 自己的行 ∪ 「组设置全组互见模块」的全员行
-        // （V133 旧口径「成员恒仅自己」→ 现由 member_output_visibility/module_visibility_overrides 决定）
+        // 17x#2 可见性：组长/管理/admin 全量可筛；成员视角 = 自己的行 ∪ 「可见模块」的全员行。
+        // V139 成员级覆盖：SQL 预过滤放宽（组级 ALL ∪ 任一成员覆盖 ALL 的模块——宁多取不漏取），
+        // 行级精判在内存按「归属人成员覆盖 > 组模块覆盖 > 组默认」逐行过滤（分页 total 为预过滤口径，
+        // 成员收紧场景页内行数可能少于 size——可接受，见 plan 坑表）。
         final Long effectiveUser;
         final List<String> memberVisibleAllKinds;
+        final Map<Long, String> ownerOverrides;
         if (owner) {
             effectiveUser = memberUserId;
             memberVisibleAllKinds = List.of();
+            ownerOverrides = Map.of();
         } else {
-            List<String> visibleKinds = visibilityService.visibleAllKindsForMember(g);
+            List<ProjectGroupMemberEntity> memberRows = memberMapper.selectList(
+                    new LambdaQueryWrapper<ProjectGroupMemberEntity>()
+                            .eq(ProjectGroupMemberEntity::getGroupId, groupId));
+            ownerOverrides = memberRows.stream().collect(Collectors.toMap(
+                    ProjectGroupMemberEntity::getUserId,
+                    m -> m.getMemberVisibilityOverrides() == null ? "" : m.getMemberVisibilityOverrides(),
+                    (a, b) -> a));
+            List<String> visibleKinds = new ArrayList<>(visibilityService.visibleAllKindsForMember(g));
+            for (String k : visibilityService.kindsAnyMemberOverrideAll(ownerOverrides.values())) {
+                if (!visibleKinds.contains(k)) {
+                    visibleKinds.add(k);
+                }
+            }
             memberVisibleAllKinds = visibleKinds;
             effectiveUser = visibleKinds.isEmpty() ? actorUserId : null;
         }
@@ -161,12 +182,20 @@ public class ProjectGroupQueryService {
                 .filter(Objects::nonNull)
                 .toList());
 
+        final String finalViewerRole = viewerRole;
         List<ProjectGroupOutputVO> vos = rows.stream()
+                // V139：成员视角行级精判（预过滤放宽的回补）——按归属人三层有效可见性逐行过滤
+                .filter(u -> owner || visibilityService.canSeeOutputResolved(
+                        g, actorUserId, false, u.getKind(), u.getUserId(),
+                        finalViewerRole, ownerOverrides.get(u.getUserId())))
                 .map(u -> {
                     MediaGenTask t = u.getTaskId() != null ? tasks.get(u.getTaskId()) : null;
                     // 17x#1（V138）：产物文件引用仅对「按组可见性可见该行」的请求者透出
+                    // V139：走预取判定（防逐行 N+1），成员覆盖/观察者角色与列表过滤同口径
                     boolean canSeeFiles = t != null
-                            && visibilityService.canSeeOutput(g, actorUserId, admin, u.getKind(), u.getUserId());
+                            && (admin || visibilityService.canSeeOutputResolved(
+                                    g, actorUserId, false, u.getKind(), u.getUserId(),
+                                    finalViewerRole, ownerOverrides.get(u.getUserId())));
                     return new ProjectGroupOutputVO(
                             u.getId(), u.getCreatedAt(), u.getUserId(),
                             u.getUserId() != null ? names.get(u.getUserId()) : null,

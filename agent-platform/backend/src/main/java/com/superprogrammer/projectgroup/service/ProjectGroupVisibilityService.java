@@ -17,9 +17,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 组产出可见性判定（17x#1/#2，V138）。
@@ -59,18 +63,101 @@ public class ProjectGroupVisibilityService {
 
     /** 覆盖表中该模块的显式值（OWN/ALL），无覆盖/非法 JSON → null。 */
     private String overrideFor(ProjectGroupEntity g, String kind) {
-        String json = g.getModuleVisibilityOverrides();
-        if (json == null || json.isBlank() || kind == null) {
+        return overrideValue(g.getModuleVisibilityOverrides(), kind);
+    }
+
+    /** JSON 稀疏覆盖取值（组级/成员级共用）：key 命中且值∈OWN/ALL → 值；否则 null。 */
+    private static String overrideValue(String overridesJson, String kind) {
+        if (overridesJson == null || overridesJson.isBlank() || kind == null) {
             return null;
         }
         try {
-            JsonNode node = MAPPER.readTree(json).path(kind);
+            JsonNode node = MAPPER.readTree(overridesJson).path(kind);
             String v = node.isTextual() ? node.asText() : null;
             return (ProjectGroupEntity.VIS_ALL.equals(v) || ProjectGroupEntity.VIS_OWN.equals(v)) ? v : null;
         } catch (Exception e) {
-            log.warn("组可见性覆盖 JSON 解析失败 groupId={} json={}", g.getId(), json);
+            log.warn("可见性覆盖 JSON 解析失败按无覆盖回落: {}", overridesJson);
             return null;
         }
+    }
+
+    /** 覆盖 JSON → Map 解析（VO 透出用）；null/坏 JSON → null。 */
+    public static Map<String, String> parseOverrides(String overridesJson) {
+        if (overridesJson == null || overridesJson.isBlank()) {
+            return null;
+        }
+        try {
+            Map<String, String> out = new LinkedHashMap<>();
+            MAPPER.readTree(overridesJson).fields().forEachRemaining(e -> {
+                if (OUTPUT_KINDS.contains(e.getKey()) && e.getValue().isTextual()
+                        && (ProjectGroupEntity.VIS_ALL.equals(e.getValue().asText())
+                            || ProjectGroupEntity.VIS_OWN.equals(e.getValue().asText()))) {
+                    out.put(e.getKey(), e.getValue().asText());
+                }
+            });
+            return out.isEmpty() ? null : out;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 三层有效可见性（17x#2，V139）：归属人成员覆盖 > 组模块覆盖 > 组默认。
+     *
+     * @param ownerOverridesJson 产出归属人成员行的 member_visibility_overrides（可空）
+     */
+    public String effectiveVisibilityForOwner(ProjectGroupEntity g, String ownerOverridesJson, String kind) {
+        String memberOverride = overrideValue(ownerOverridesJson, kind);
+        if (memberOverride != null) {
+            return memberOverride;
+        }
+        return effectiveVisibility(g, kind);
+    }
+
+    /**
+     * 产出行可见判定（预取版，V139）：调用方批量预取观察者角色与归属人覆盖，防 outputs 循环 N+1。
+     *
+     * @param viewerRole         观察者组内角色（OWNER/MANAGER/MEMBER；可空=MEMBER）
+     * @param ownerOverridesJson 归属人成员级覆盖 JSON（可空）
+     */
+    public boolean canSeeOutputResolved(ProjectGroupEntity g, Long viewerUserId, boolean admin, String kind,
+                                        Long ownerUserId, String viewerRole, String ownerOverridesJson) {
+        if (admin || g.getOwnerUserId().equals(viewerUserId) || viewerUserId.equals(ownerUserId)) {
+            return true;
+        }
+        // MANAGER 恒可见（管理需要，视同组长；V139 拍板）
+        if (ProjectGroupMemberEntity.ROLE_MANAGER.equals(viewerRole)) {
+            return true;
+        }
+        return ProjectGroupEntity.VIS_ALL.equals(effectiveVisibilityForOwner(g, ownerOverridesJson, kind));
+    }
+
+    /** 组内全部成员覆盖中「显式 ALL」的模块集（outputs SQL 预过滤放宽用：宁多取不漏取，内存再精判）。 */
+    public List<String> kindsAnyMemberOverrideAll(Collection<String> overridesJsons) {
+        Set<String> kinds = new HashSet<>();
+        for (String json : overridesJsons) {
+            Map<String, String> m = parseOverrides(json);
+            if (m != null) {
+                m.forEach((k, v) -> {
+                    if (ProjectGroupEntity.VIS_ALL.equals(v)) {
+                        kinds.add(k);
+                    }
+                });
+            }
+        }
+        return kinds.stream().filter(OUTPUT_KINDS::contains).sorted().toList();
+    }
+
+    /** 成员行 role 读取（null 安全→MEMBER）；非成员/已删行 → null。 */
+    public String roleOfMember(Long groupId, Long userId) {
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUser(groupId, userId);
+        return m == null ? null : (m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole());
+    }
+
+    /** 成员行覆盖 JSON 读取；非成员/已删行 → null。 */
+    public String overridesOfMember(Long groupId, Long userId) {
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUser(groupId, userId);
+        return m == null ? null : m.getMemberVisibilityOverrides();
     }
 
     /**
@@ -83,7 +170,9 @@ public class ProjectGroupVisibilityService {
         if (admin || g.getOwnerUserId().equals(viewerUserId) || viewerUserId.equals(ownerUserId)) {
             return true;
         }
-        return ProjectGroupEntity.VIS_ALL.equals(effectiveVisibility(g, kind));
+        // V139：补观察者角色 + 归属人成员级覆盖后走统一判定
+        return canSeeOutputResolved(g, viewerUserId, false, kind, ownerUserId,
+                roleOfMember(g.getId(), viewerUserId), overridesOfMember(g.getId(), ownerUserId));
     }
 
     /** 成员视角下「全组互见」的模块集（outputs 列表 SQL 用：own 行 ∪ 这些 kind 的全员行）。 */
@@ -134,6 +223,46 @@ public class ProjectGroupVisibilityService {
         }
         groupMapper.updateById(g);
         log.info("组可见性更新 groupId={} base={} overrides={} actor={}", groupId, base, overrides, actorUserId);
+    }
+
+    /**
+     * 设成员级可见性覆盖（17x#2，V139，组长/管理/admin，目标仅 MEMBER 行——OWNER/MANAGER 恒可见无需覆盖）。
+     * 判定优先级：成员覆盖 > 组模块覆盖 > 组默认。overrides=null 不动；空 map=清空回落组级。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateMemberVisibility(Long groupId, Long actorUserId, boolean admin, Long memberUserId,
+                                       Map<String, String> overrides) {
+        groupService.requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUser(groupId, memberUserId);
+        if (m == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "该用户不是组成员");
+        }
+        String role = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+        if (!ProjectGroupMemberEntity.ROLE_MEMBER.equals(role)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅可对普通成员设置覆盖（OWNER/MANAGER 恒可见）");
+        }
+        if (overrides == null) {
+            return;   // 不动
+        }
+        if (overrides.isEmpty()) {
+            m.setMemberVisibilityOverrides(null);
+        } else {
+            for (Map.Entry<String, String> e : overrides.entrySet()) {
+                if (!OUTPUT_KINDS.contains(e.getKey())) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "未知产出模块: " + e.getKey());
+                }
+                if (!ProjectGroupEntity.VIS_OWN.equals(e.getValue()) && !ProjectGroupEntity.VIS_ALL.equals(e.getValue())) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "覆盖值仅支持 OWN/ALL: " + e.getKey());
+                }
+            }
+            try {
+                m.setMemberVisibilityOverrides(MAPPER.writeValueAsString(overrides));
+            } catch (Exception e) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "覆盖配置序列化失败");
+            }
+        }
+        memberMapper.updateById(m);
+        log.info("成员可见性覆盖 groupId={} member={} overrides={} actor={}", groupId, memberUserId, overrides, actorUserId);
     }
 
     /**
