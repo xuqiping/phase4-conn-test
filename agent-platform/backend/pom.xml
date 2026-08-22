@@ -254,6 +254,12 @@
             <version>2.2.1</version>
         </dependency>
 
+        <!-- SMTP 通用邮件通道（12x：腾讯/网易等任意邮箱接入，SmtpMailSender 动态构建 JavaMailSender） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- ip2region：11x 加固 P2-C7 GeoIpService 复用认证系统增强引入的 2.7.0（见文件尾部），
              本处不重复声明（Maven 重复 dependency 仅取首个，告警且版本漂移风险）。
              xdb 库文件（resources/ip2region_v4.xdb）缺失 → GeoIpService 降级返回空（不阻登录主链）。 -->

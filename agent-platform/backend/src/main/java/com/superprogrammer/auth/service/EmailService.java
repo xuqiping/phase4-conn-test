@@ -1,12 +1,7 @@
 // agent-platform/backend/src/main/java/com/superprogrammer/auth/service/EmailService.java
 package com.superprogrammer.auth.service;
 
-import com.aliyuncs.DefaultAcsClient;
-import com.aliyuncs.IAcsClient;
-import com.aliyuncs.dm.model.v20151123.SingleSendMailRequest;
-import com.aliyuncs.dm.model.v20151123.SingleSendMailResponse;
-import com.aliyuncs.profile.DefaultProfile;
-import com.aliyuncs.profile.IClientProfile;
+import com.superprogrammer.auth.service.mail.MailSender;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -15,14 +10,20 @@ import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 邮件服务（通道 A：邮箱验证注册 + 通道 D 找回密码发邮件）。
  *
  * <p>职责：发验证邮件/发重置邮件/激活 token 生成校验/重发限流。
  *
- * <p>安全语义：token 用 SecureRandom 32 字节 + Base64URL；用完即删；统一话术防枚举；阿里云超时降级。
+ * <p>安全语义：token 用 SecureRandom 32 字节 + Base64URL；用完即删；统一话术防枚举；通道超时降级。
+ *
+ * <p>12x 运输层抽象：实际发信委托 {@link MailSender}（ALIYUN / SMTP），按配置 provider 路由。</p>
  */
 @Slf4j
 @Service
@@ -31,6 +32,7 @@ public class EmailService {
     private final AuthChannelSettingService channelSettings;
     private final StringRedisTemplate redisTemplate;
     private final CredentialService credentialService;
+    private final Map<String, MailSender> senders;
 
     private static final String VERIFY_TOKEN_PREFIX = "verify:email:";
     public static final String RESET_TOKEN_PREFIX = "reset:pwd:";
@@ -42,16 +44,17 @@ public class EmailService {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
-                        CredentialService credentialService) {
+                        CredentialService credentialService, List<MailSender> mailSenders) {
         this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
+        this.senders = mailSenders.stream().collect(Collectors.toMap(MailSender::provider, Function.identity()));
     }
 
     /** 发验证邮件（注册时调用）。 */
     public boolean sendVerifyEmail(Long userId, String email) {
         var config = channelSettings.mailSnapshot();
-        if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
+        if (!config.enabled() || !isConfigured(config)) {
             log.warn("邮件推送未开启或未配置，跳过发验证邮件 userId={}", userId);
             return false;
         }
@@ -75,7 +78,7 @@ public class EmailService {
     /** 发重置密码邮件（通道 D 用）。 */
     public boolean sendResetEmail(Long userId, String email) {
         var config = channelSettings.mailSnapshot();
-        if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
+        if (!config.enabled() || !isConfigured(config)) {
             log.warn("邮件推送未开启，跳过发重置邮件 userId={}", userId);
             return false;
         }
@@ -166,35 +169,54 @@ public class EmailService {
         return sent ? "若该邮箱已注册且未验证，验证邮件已发送" : "发送失败，请稍后重试";
     }
 
+    /**
+     * 测试发信（认证通道页「发送测试邮件」按钮，12x）。
+     * <p>不要求 enabled=true——先测通再开开关；但要求所选通道配置完整。
+     * 不看 provider 的 enabled 语义，直接按当前快照路由发送。</p>
+     */
+    public boolean sendTestMail(String toEmail) {
+        var config = channelSettings.mailSnapshot();
+        if (!isConfigured(config)) {
+            log.warn("测试发信：通道未配置完整 provider={}", config.provider());
+            return false;
+        }
+        String subject = "【多Agent智能体平台】邮件通道测试";
+        String htmlBody = "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;'>"
+                + "<h2 style='color:#333;'>邮件通道配置成功</h2>"
+                + "<p>这是一封测试邮件。收到它说明当前邮件通道（" + config.provider() + "）配置正确，验证邮件与找回密码邮件将由此发出。</p>"
+                + "</div>";
+        return sendMail(config, toEmail, subject, htmlBody);
+    }
+
+    /** 通道是否配置完整（按 provider 分流校验）。 */
+    private boolean isConfigured(AuthChannelSettingService.MailSnapshot config) {
+        if ("SMTP".equalsIgnoreCase(config.provider())) {
+            var smtp = config.smtp();
+            return smtp != null && hasText(smtp.host()) && hasText(smtp.username()) && hasText(smtp.password());
+        }
+        return hasText(config.accessKeyId());
+    }
+
+    private static boolean hasText(String s) {
+        return s != null && !s.isBlank();
+    }
+
     private String generateToken() {
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
+    /** 按 provider 路由到具体通道发信（12x 抽象）。 */
     private boolean sendMail(AuthChannelSettingService.MailSnapshot config,
                              String toEmail, String subject, String htmlBody) {
-        try {
-            IClientProfile profile = DefaultProfile.getProfile(config.region(),
-                    config.accessKeyId(), config.accessKeySecret());
-            IAcsClient client = new DefaultAcsClient(profile);
-
-            SingleSendMailRequest request = new SingleSendMailRequest();
-            request.setAccountName(config.accountName());
-            request.setAddressType(1);
-            request.setReplyToAddress(config.replyToAddress() != null && !config.replyToAddress().isBlank());
-            request.setToAddress(toEmail);
-            request.setSubject(subject);
-            request.setHtmlBody(htmlBody);
-            request.setFromAlias(config.fromAlias());
-
-            SingleSendMailResponse response = client.getAcsResponse(request);
-            log.info("邮件发送成功 to={} subject={} requestId={}", maskEmail(toEmail), subject, response.getRequestId());
-            return true;
-        } catch (Exception e) {
-            log.error("邮件发送失败 to={} subject={} : {}", maskEmail(toEmail), subject, e.toString());
+        String provider = hasText(config.provider()) ? config.provider().toUpperCase() : "ALIYUN";
+        MailSender sender = senders.get(provider);
+        if (sender == null) {
+            log.error("未知邮件通道 provider={}，可用={}", provider, senders.keySet());
             return false;
         }
+        return sender.send(config, toEmail, subject, htmlBody);
     }
 
     private Long findUserIdByEmail(String email) {
@@ -209,13 +231,6 @@ public class EmailService {
                 .map(com.superprogrammer.auth.entity.UserCredential::getIdentifier)
                 .findFirst()
                 .orElse(null);
-    }
-
-    private String maskEmail(String email) {
-        if (email == null || email.isBlank()) return "";
-        int at = email.indexOf('@');
-        if (at <= 1) return email.charAt(0) + "***" + (at > 0 ? email.substring(at) : "");
-        return email.charAt(0) + "***" + email.substring(at);
     }
 
     private String buildVerifyEmailHtml(String verifyLink) {

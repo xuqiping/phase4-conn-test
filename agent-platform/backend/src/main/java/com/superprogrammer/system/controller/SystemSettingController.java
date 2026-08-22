@@ -18,7 +18,9 @@ import com.superprogrammer.system.dto.LlmModelDefaultsVO;
 import com.superprogrammer.system.dto.LlmModelDefaultsUpdateRequest;
 import com.superprogrammer.system.dto.AuthChannelSettingsUpdateRequest;
 import com.superprogrammer.system.dto.AuthChannelSettingsVO;
+import com.superprogrammer.system.dto.MailTestRequest;
 import com.superprogrammer.auth.service.AuthChannelSettingService;
+import com.superprogrammer.auth.service.EmailService;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -36,11 +38,27 @@ public class SystemSettingController {
     private final WebSearchService webSearchService;
     private final LlmProviderService llmProviderService;
     private final AuthChannelSettingService authChannelSettingService;
+    private final EmailService emailService;
 
     @GetMapping("/auth-channels")
     @RequirePermission("role:manage")
     public ResponseEntity<R<AuthChannelSettingsVO>> getAuthChannels() {
         return ResponseEntity.ok(R.ok(authChannelSettingService.getSettings()));
+    }
+
+    /**
+     * 邮件通道测试发信（12x）：给指定邮箱发一封测试信，先测通再开开关。
+     * <p>走当前配置快照（不要求 enabled=true），失败返 400 提示查配置/日志。</p>
+     */
+    @PostMapping("/auth-channels/mail-test")
+    @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "mail_channel_test", targetType = "setting")
+    public ResponseEntity<R<String>> testMailChannel(@Valid @RequestBody MailTestRequest request) {
+        boolean ok = emailService.sendTestMail(request.getTo());
+        if (!ok) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "测试邮件发送失败：请检查通道类型/服务器/账号/授权码配置（详见服务端日志）");
+        }
+        return ResponseEntity.ok(R.ok("测试邮件已发送，请查收（含垃圾箱）", null));
     }
 
     @PutMapping("/auth-channels")

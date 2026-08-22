@@ -27,6 +27,14 @@ public class AuthChannelSettingService {
     @Value("${app.auth.sms.code-ttl-minutes:5}") private int smsCodeTtlFallback = 5;
     @Value("${app.auth.sms.limit-per-phone-per-day:10}") private int smsPhoneLimitFallback = 10;
     @Value("${app.auth.sms.limit-per-ip-per-day:30}") private int smsIpLimitFallback = 30;
+    // 12x SMTP 通道 env 兜底（网页配置优先）
+    @Value("${app.auth.email.provider:ALIYUN}") private String mailProviderFallback;
+    @Value("${app.auth.email.smtp.host:}") private String smtpHostFallback;
+    @Value("${app.auth.email.smtp.port:465}") private int smtpPortFallback;
+    @Value("${app.auth.email.smtp.ssl:true}") private boolean smtpSslFallback;
+    @Value("${app.auth.email.smtp.username:}") private String smtpUsernameFallback;
+    @Value("${app.auth.email.smtp.password:}") private String smtpPasswordFallback;
+    @Value("${app.auth.email.smtp.from-alias:}") private String smtpFromAliasFallback;
 
     public MailSnapshot mailSnapshot() {
         return new MailSnapshot(
@@ -38,7 +46,15 @@ public class AuthChannelSettingService {
                 text(MAIL + "from-alias", mailFallback.getFromAlias()),
                 text(MAIL + "reply-to-address", mailFallback.getReplyToAddress()),
                 text(MAIL + "verify-url", verifyUrlFallback),
-                text(MAIL + "reset-url", resetUrlFallback));
+                text(MAIL + "reset-url", resetUrlFallback),
+                text(MAIL + "provider", mailProviderFallback),
+                new Smtp(
+                        text(MAIL + "smtp-host", smtpHostFallback),
+                        positiveInt(MAIL + "smtp-port", smtpPortFallback),
+                        bool(MAIL + "smtp-ssl", smtpSslFallback),
+                        text(MAIL + "smtp-username", smtpUsernameFallback),
+                        secret(MAIL + "smtp-password", smtpPasswordFallback),
+                        text(MAIL + "smtp-from-alias", smtpFromAliasFallback)));
     }
 
     public SmsSnapshot smsSnapshot() {
@@ -63,7 +79,13 @@ public class AuthChannelSettingService {
                         .enabled(mail.enabled()).region(mail.region()).accessKeyId(mail.accessKeyId())
                         .secretConfigured(hasText(mail.accessKeySecret())).accountName(mail.accountName())
                         .fromAlias(mail.fromAlias()).replyToAddress(mail.replyToAddress())
-                        .verifyUrl(mail.verifyUrl()).resetUrl(mail.resetUrl()).build())
+                        .verifyUrl(mail.verifyUrl()).resetUrl(mail.resetUrl())
+                        .provider(mail.provider())
+                        .smtpHost(mail.smtp().host()).smtpPort(mail.smtp().port()).smtpSsl(mail.smtp().ssl())
+                        .smtpUsername(mail.smtp().username())
+                        .smtpPasswordConfigured(hasText(mail.smtp().password()))
+                        .smtpFromAlias(mail.smtp().fromAlias())
+                        .build())
                 .sms(AuthChannelSettingsVO.Sms.builder()
                         .enabled(sms.enabled()).region(sms.region()).accessKeyId(sms.accessKeyId())
                         .secretConfigured(hasText(sms.accessKeySecret())).signName(sms.signName())
@@ -89,6 +111,13 @@ public class AuthChannelSettingService {
         plain(MAIL + "reply-to-address", v.getReplyToAddress(), "邮件回信地址");
         plain(MAIL + "verify-url", v.getVerifyUrl(), "邮箱验证链接前缀");
         plain(MAIL + "reset-url", v.getResetUrl(), "密码重置链接前缀");
+        plain(MAIL + "provider", v.getProvider(), "邮件通道类型（ALIYUN/SMTP）");
+        plain(MAIL + "smtp-host", v.getSmtpHost(), "SMTP 服务器");
+        plain(MAIL + "smtp-port", v.getSmtpPort(), "SMTP 端口");
+        plain(MAIL + "smtp-ssl", v.getSmtpSsl(), "SMTP SSL 直连");
+        plain(MAIL + "smtp-username", v.getSmtpUsername(), "SMTP 用户名（邮箱地址）");
+        secretUpdate(MAIL + "smtp-password", v.getSmtpPassword(), "SMTP 密码/授权码（AES 加密）");
+        plain(MAIL + "smtp-from-alias", v.getSmtpFromAlias(), "SMTP 发件人昵称");
     }
 
     private void updateSms(AuthChannelSettingsUpdateRequest.Sms v) {
@@ -144,7 +173,11 @@ public class AuthChannelSettingService {
 
     public record MailSnapshot(boolean enabled, String region, String accessKeyId, String accessKeySecret,
                                String accountName, String fromAlias, String replyToAddress,
-                               String verifyUrl, String resetUrl) {}
+                               String verifyUrl, String resetUrl,
+                               String provider, Smtp smtp) {}
+
+    /** SMTP 通道参数（12x：腾讯/网易等任意邮箱；password=授权码/客户端专用密码，AES 落库）。 */
+    public record Smtp(String host, int port, boolean ssl, String username, String password, String fromAlias) {}
 
     public record SmsSnapshot(boolean enabled, String region, String accessKeyId, String accessKeySecret,
                               String signName, String templateCodeVerify, String templateCodeReset,

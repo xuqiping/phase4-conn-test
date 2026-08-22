@@ -21,6 +21,14 @@ public class AuthChannelSettingsVO {
         private String replyToAddress;
         private String verifyUrl;
         private String resetUrl;
+        /** 通道类型：ALIYUN（阿里云 DM）/ SMTP（通用邮箱，12x） */
+        private String provider;
+        private String smtpHost;
+        private Integer smtpPort;
+        private Boolean smtpSsl;
+        private String smtpUsername;
+        private Boolean smtpPasswordConfigured;
+        private String smtpFromAlias;
     }
 
     @Data

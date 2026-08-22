@@ -22,6 +22,15 @@ public class AuthChannelSettingsUpdateRequest {
         private String replyToAddress;
         @Pattern(regexp = "^$|^https?://.+", message = "验证链接必须是 HTTP/HTTPS URL") private String verifyUrl;
         @Pattern(regexp = "^$|^https?://.+", message = "重置链接必须是 HTTP/HTTPS URL") private String resetUrl;
+        /** 通道类型（12x）：留空不修改 */
+        @Pattern(regexp = "^$|^(ALIYUN|SMTP)$", message = "通道类型只能是 ALIYUN 或 SMTP") private String provider;
+        private String smtpHost;
+        @Min(1) @Max(65535) private Integer smtpPort;
+        private Boolean smtpSsl;
+        private String smtpUsername;
+        /** SMTP 密码/授权码：null=不修改，空白=清除，其他=更新（AES 落库） */
+        private String smtpPassword;
+        private String smtpFromAlias;
     }
 
     @Data

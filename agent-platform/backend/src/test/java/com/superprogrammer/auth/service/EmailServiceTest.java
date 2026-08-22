@@ -50,18 +50,20 @@ class EmailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new EmailService(channelSettings, redisTemplate, credentialService);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of());
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         lenient().when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
                 true, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
-                null, "https://test.com/verify-email", "https://test.com/reset-password"));
+                null, "https://test.com/verify-email", "https://test.com/reset-password",
+                "ALIYUN", null));
     }
 
     @Test
     void sendVerifyEmail_notEnabled_returnsFalse() {
         when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
                 false, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
-                null, "https://test.com/verify-email", "https://test.com/reset-password"));
+                null, "https://test.com/verify-email", "https://test.com/reset-password",
+                "ALIYUN", null));
         assertFalse(service.sendVerifyEmail(1L, "a@b.com"));
         verifyNoInteractions(valueOps);
     }
@@ -107,5 +109,58 @@ class EmailServiceTest {
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "not@exist.com")).thenReturn(null);
         String msg = service.resendVerifyEmail("not@exist.com");
         assertEquals("若该邮箱已注册且未验证，验证邮件已发送", msg);
+    }
+
+    // ==================== 12x：通道路由 + 测试发信 ====================
+
+    @Test
+    void sendVerifyEmail_smtpProviderIncompleteConfig_returnsFalse() {
+        when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
+                true, "", "", "", "", "", null, "", "",
+                "SMTP", new AuthChannelSettingService.Smtp("smtp.qq.com", 465, true, "me@qq.com", "", null)));
+        assertFalse(service.sendVerifyEmail(1L, "a@b.com"));
+        verifyNoInteractions(valueOps);
+    }
+
+    @Test
+    void sendVerifyEmail_routesToSmtpSender() {
+        com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        com.superprogrammer.auth.service.mail.MailSender smtp = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(smtp.provider()).thenReturn("SMTP");
+        when(smtp.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of(aliyun, smtp));
+
+        var cfg = new AuthChannelSettingService.MailSnapshot(
+                true, "", "", "", "", "", null, "https://t.com/v", "",
+                "SMTP", new AuthChannelSettingService.Smtp("smtp.qq.com", 465, true, "me@qq.com", "auth16", null));
+        when(channelSettings.mailSnapshot()).thenReturn(cfg);
+
+        assertTrue(service.sendVerifyEmail(1L, "a@b.com"));
+        verify(smtp).send(eq(cfg), eq("a@b.com"), anyString(), contains("https://t.com/v?token="));
+        verify(aliyun, never()).send(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void sendTestMail_notConfigured_returnsFalse() {
+        when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
+                false, "", "", "", "", "", null, "", "", "ALIYUN", null));
+        assertFalse(service.sendTestMail("a@b.com"));
+    }
+
+    @Test
+    void sendTestMail_configured_delegatesToSenderEvenWhenDisabled() {
+        com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of(aliyun));
+
+        // enabled=false 也应能测试（先测通再开开关）
+        var cfg = new AuthChannelSettingService.MailSnapshot(
+                false, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null);
+        when(channelSettings.mailSnapshot()).thenReturn(cfg);
+
+        assertTrue(service.sendTestMail("a@b.com"));
+        verify(aliyun).send(eq(cfg), eq("a@b.com"), contains("测试"), anyString());
     }
 }

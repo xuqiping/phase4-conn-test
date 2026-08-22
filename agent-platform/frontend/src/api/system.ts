@@ -87,6 +87,11 @@ export const systemApi = {
     return request.put<ApiResponse<AuthChannelSettings>>('/system/settings/auth-channels', data)
   },
 
+  /** 邮件通道测试发信（12x）：先测通再开开关 */
+  testMailChannel(to: string) {
+    return request.post<ApiResponse<string>>('/system/settings/auth-channels/mail-test', { to })
+  },
+
   // L7 低余额并行闸门（SEC-FR-126）
   getBillingSettings() {
     return request.get<ApiResponse<BillingSettings>>('/system/settings/billing')
@@ -147,6 +152,10 @@ export interface AuthChannelSettings {
   mail: {
     enabled: boolean; region?: string; accessKeyId?: string; secretConfigured: boolean
     accountName?: string; fromAlias?: string; replyToAddress?: string; verifyUrl?: string; resetUrl?: string
+    /** 通道类型（12x）：ALIYUN 阿里云 DM / SMTP 通用邮箱（腾讯/网易等） */
+    provider?: 'ALIYUN' | 'SMTP'
+    smtpHost?: string; smtpPort?: number; smtpSsl?: boolean
+    smtpUsername?: string; smtpPasswordConfigured?: boolean; smtpFromAlias?: string
   }
   sms: {
     enabled: boolean; region?: string; accessKeyId?: string; secretConfigured: boolean
@@ -156,7 +165,7 @@ export interface AuthChannelSettings {
 }
 
 export interface AuthChannelSettingsUpdate {
-  mail?: Partial<AuthChannelSettings['mail']> & { accessKeySecret?: string }
+  mail?: Partial<AuthChannelSettings['mail']> & { accessKeySecret?: string; smtpPassword?: string }
   sms?: Partial<AuthChannelSettings['sms']> & { accessKeySecret?: string }
 }
 
