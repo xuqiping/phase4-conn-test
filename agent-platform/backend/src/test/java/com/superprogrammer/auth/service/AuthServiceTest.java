@@ -94,6 +94,10 @@ class AuthServiceTest {
     @Mock
     private com.superprogrammer.auth.service.EmailService emailService;
 
+    // 12x B2：渐进式滑块门槛
+    @Mock
+    private com.superprogrammer.auth.service.ProgressiveCaptchaGuard captchaGuard;
+
     @Mock
     private ValueOperations<String, String> valueOperations;
 
@@ -216,6 +220,36 @@ class AuthServiceTest {
         when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+    }
+
+    // ===== 12x B2 渐进式滑块接线 =====
+
+    @Test
+    void login_wrongPassword_recordsCaptchaFailure() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
+
+        assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        verify(captchaGuard).check("login", "testuser", null);
+        verify(captchaGuard).recordFailure("login", "testuser");
+        verify(captchaGuard, never()).clear(anyString(), anyString());
+    }
+
+    @Test
+    void login_success_clearsCaptchaGuard() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+
+        authService.login(loginRequest);
+
+        verify(captchaGuard).clear("login", "testuser");
     }
 
     // ===== OPS-FR-07 登录/限流指标 =====

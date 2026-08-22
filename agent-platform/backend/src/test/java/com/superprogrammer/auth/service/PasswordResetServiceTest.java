@@ -36,6 +36,7 @@ class PasswordResetServiceTest {
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
     @Mock private SessionService sessionService;
+    @Mock private ProgressiveCaptchaGuard captchaGuard;
 
     private PasswordResetService service;
 
@@ -50,7 +51,7 @@ class PasswordResetServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new PasswordResetService(userMapper, credentialService, emailService,
-                smsService, passwordEncoder, redisTemplate, sessionService);
+                smsService, passwordEncoder, redisTemplate, sessionService, captchaGuard);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
     }
 
@@ -58,7 +59,7 @@ class PasswordResetServiceTest {
     void forgot_userNotFound_returnsUnifiedMessage() {
         when(valueOps.increment(anyString())).thenReturn(1L);
         when(credentialService.findForLogin(anyString(), anyString())).thenReturn(null);
-        String msg = service.forgot("nonexistent", "EMAIL", "127.0.0.1");
+        String msg = service.forgot("nonexistent", "EMAIL", "127.0.0.1", null);
         assertEquals("若账号存在，重置链接/码已发送", msg);
         verify(emailService, never()).sendResetEmail(anyLong(), anyString());
     }
@@ -67,7 +68,7 @@ class PasswordResetServiceTest {
     void forgot_rateLimited_throws() {
         when(valueOps.increment(anyString())).thenReturn(4L);
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.forgot("someone", "EMAIL", "127.0.0.1"));
+                () -> service.forgot("someone", "EMAIL", "127.0.0.1", null));
         assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
     }
 

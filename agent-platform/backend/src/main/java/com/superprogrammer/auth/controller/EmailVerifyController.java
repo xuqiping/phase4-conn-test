@@ -60,7 +60,8 @@ public class EmailVerifyController {
     @PostMapping("/register/email-code")
     public ResponseEntity<R<Void>> sendRegisterEmailCode(@Valid @RequestBody RegisterEmailCodeRequest request,
                                                          HttpServletRequest httpRequest) {
-        emailService.sendRegisterCode(request.getEmail(), clientIpResolver.resolve(httpRequest));
+        emailService.sendRegisterCode(request.getEmail(), clientIpResolver.resolve(httpRequest),
+                request.getCaptchaVerification());
         return ResponseEntity.ok(R.ok("验证码已发送，10 分钟内有效", null));
     }
 }

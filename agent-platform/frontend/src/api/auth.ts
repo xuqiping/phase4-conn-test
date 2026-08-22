@@ -66,8 +66,9 @@ export const authApi = {
   /**
    * 用户登录
    * POST /api/auth/login
+   * 12x B2：同账号连续失败 ≥2 次后 captchaVerification 必填（后端返 40107 触发前端滑块）
    */
-  login(params: { username: string; password: string }) {
+  login(params: { username: string; password: string; captchaVerification?: string }) {
     return request.post<ApiResponse<LoginResponse>>('/auth/login', params)
   },
 
@@ -75,8 +76,9 @@ export const authApi = {
    * 用户注册
    * POST /api/auth/register
    * 12x B1：emailCode 必填（注册前置邮箱验证码，凭证直接 verified=TRUE）
+   * 12x B2：同 IP 连续失败 ≥2 次后 captchaVerification 必填
    */
-  register(params: { username: string; email: string; password: string; emailCode: string }) {
+  register(params: { username: string; email: string; password: string; emailCode: string; captchaVerification?: string }) {
     return request.post<ApiResponse<void>>('/auth/register', params)
   },
 
@@ -84,9 +86,10 @@ export const authApi = {
    * 发送注册邮箱验证码（12x B1，注册前置闸）
    * POST /api/auth/register/email-code
    * 限流：同邮箱 60s + 同 IP 10 封/h；通道未开启直接 400
+   * 12x B2：同 IP 连续失败 ≥2 次后 captchaVerification 必填
    */
-  sendRegisterEmailCode(email: string) {
-    return request.post<ApiResponse<void>>('/auth/register/email-code', { email })
+  sendRegisterEmailCode(email: string, captchaVerification?: string) {
+    return request.post<ApiResponse<void>>('/auth/register/email-code', { email, captchaVerification })
   },
 
   /**
@@ -196,9 +199,10 @@ export const authApi = {
    * POST /api/auth/password/forgot
    * @param identifier 用户名/邮箱/手机号
    * @param channel EMAIL（邮件链接）| SMS（短信码）
+   * @param captchaVerification 12x B2：同 IP 连续失败 ≥2 次后必填
    */
-  forgotPassword(identifier: string, channel: 'EMAIL' | 'SMS' = 'EMAIL') {
-    return request.post<ApiResponse<string>>('/auth/password/forgot', { identifier, channel })
+  forgotPassword(identifier: string, channel: 'EMAIL' | 'SMS' = 'EMAIL', captchaVerification?: string) {
+    return request.post<ApiResponse<string>>('/auth/password/forgot', { identifier, channel, captchaVerification })
   },
 
   /**

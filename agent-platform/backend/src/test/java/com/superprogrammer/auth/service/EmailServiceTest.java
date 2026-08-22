@@ -41,6 +41,8 @@ class EmailServiceTest {
     private CredentialService credentialService;
     @Mock
     private com.superprogrammer.auth.service.mail.MailSendQuotaService mailQuota;
+    @Mock
+    private ProgressiveCaptchaGuard captchaGuard;
 
     private EmailService service;
 
@@ -53,7 +55,7 @@ class EmailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of());
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of());
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         lenient().when(mailQuota.tryConsumeDaily()).thenReturn(true);
         lenient().when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
@@ -142,7 +144,7 @@ class EmailServiceTest {
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(smtp.provider()).thenReturn("SMTP");
         when(smtp.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun, smtp));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun, smtp));
 
         var cfg = new AuthChannelSettingService.MailSnapshot(
                 true, "", "", "", "", "", null, "https://t.com/v", "",
@@ -166,7 +168,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
 
         // enabled=false 也应能测试（先测通再开开关）
         var cfg = new AuthChannelSettingService.MailSnapshot(
@@ -183,7 +185,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(mailQuota.tryConsumeDaily()).thenReturn(false);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
 
         var cfg = new AuthChannelSettingService.MailSnapshot(
                 true, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null);
@@ -201,7 +203,7 @@ class EmailServiceTest {
         when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
                 false, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null));
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
         assertTrue(ex.getMessage().contains("邮件通道未开启"));
     }
 
@@ -210,7 +212,7 @@ class EmailServiceTest {
         UserCredential cred = mock(UserCredential.class);
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "taken@b.com")).thenReturn(cred);
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.sendRegisterCode("taken@b.com", "1.2.3.4"));
+                () -> service.sendRegisterCode("taken@b.com", "1.2.3.4", null));
         assertEquals(ErrorCode.CONFLICT.getCode(), ex.getCode());
     }
 
@@ -219,7 +221,7 @@ class EmailServiceTest {
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
         when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
         assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
     }
 
@@ -228,12 +230,12 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
 
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
         when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
 
-        assertDoesNotThrow(() -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+        assertDoesNotThrow(() -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
 
         verify(valueOps).set(eq("regcode:email:a@b.com"), matches("\\d{6}"), eq(600L), any());
         verify(valueOps).set(eq("regcode:try:a@b.com"), eq("0"), eq(600L), any());

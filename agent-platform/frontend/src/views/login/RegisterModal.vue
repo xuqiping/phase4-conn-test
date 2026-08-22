@@ -88,12 +88,18 @@
         </n-checkbox>
       </n-form-item>
 
+      <!-- 12x B2：同 IP 连续失败 ≥2 次 → 滑块闸（后端 40107 触发展示） -->
+      <div v-if="needCaptcha" class="register-modal__captcha">
+        <SliderCaptcha ref="captchaRef" :width="290" @success="onCaptchaSuccess" @fail="onCaptchaFail" />
+        <p class="register-modal__captcha-hint">操作过于频繁，请完成滑块验证后再试</p>
+      </div>
+
       <n-button
         type="primary"
         block
         size="large"
         :loading="authStore.loading"
-        :disabled="!form.agreeTerms"
+        :disabled="!form.agreeTerms || (needCaptcha && !captchaToken)"
         attr-type="submit"
       >
         注册
@@ -132,6 +138,7 @@ import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, us
 import { PersonOutline, MailOutline, LockClosedOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
+import SliderCaptcha from './SliderCaptcha.vue'
 
 const props = defineProps<{
   show: boolean
@@ -161,6 +168,24 @@ const codeSending = ref(false)
 const codeCountdown = ref(0)
 let codeTimer: ReturnType<typeof setInterval> | null = null
 
+// 12x B2：渐进式滑块——后端返 40107 才展示；token 单次有效，每次提交后刷新
+const needCaptcha = ref(false)
+const captchaToken = ref('')
+const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
+
+function onCaptchaSuccess(token: string) {
+  captchaToken.value = token
+}
+function onCaptchaFail() {
+  captchaToken.value = ''
+}
+/** 每次提交后调用：滑块 token 已被后端消费（单次有效），强制重滑。 */
+function consumeCaptcha() {
+  if (!needCaptcha.value) return
+  captchaToken.value = ''
+  captchaRef.value?.fetchCaptcha()
+}
+
 function startCodeCountdown() {
   codeCountdown.value = 60
   codeTimer = setInterval(() => {
@@ -182,12 +207,22 @@ async function handleSendCode() {
     message.error('请先填写正确的邮箱地址')
     return
   }
+  if (needCaptcha.value && !captchaToken.value) {
+    message.warning('请先完成滑块验证')
+    return
+  }
   codeSending.value = true
   try {
-    await authApi.sendRegisterEmailCode(email)
+    await authApi.sendRegisterEmailCode(email, captchaToken.value || undefined)
     message.success('验证码已发送，10 分钟内有效')
+    needCaptcha.value = false
+    captchaToken.value = ''
     startCodeCountdown()
   } catch (error: unknown) {
+    if ((error as { code?: number }).code === 40107) {
+      needCaptcha.value = true
+    }
+    consumeCaptcha()
     const msg = error instanceof Error ? error.message : '发送失败'
     message.error(msg)
   } finally {
@@ -255,6 +290,8 @@ watch(
         codeTimer = null
       }
       codeCountdown.value = 0
+      needCaptcha.value = false
+      captchaToken.value = ''
     }
   }
 )
@@ -270,12 +307,19 @@ async function handleRegister() {
       username: form.username,
       email: form.email.trim(),
       password: form.password,
-      emailCode: form.emailCode.trim()
+      emailCode: form.emailCode.trim(),
+      captchaVerification: captchaToken.value || undefined
     })
     message.success('注册成功，请登录')
+    needCaptcha.value = false
+    captchaToken.value = ''
     emit('registered', form.username)
     emit('update:show', false)
   } catch (error: unknown) {
+    if ((error as { code?: number }).code === 40107) {
+      needCaptcha.value = true
+    }
+    consumeCaptcha()
     const msg = error instanceof Error ? error.message : '注册失败'
     message.error(msg)
   }
@@ -292,6 +336,14 @@ async function handleRegister() {
 .register-modal__code-btn {
   flex-shrink: 0;
   min-width: 112px;
+}
+.register-modal__captcha {
+  margin-bottom: 12px;
+}
+.register-modal__captcha-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-warning, #f0a020);
 }
 .register-modal__notice {
   margin-top: 12px;

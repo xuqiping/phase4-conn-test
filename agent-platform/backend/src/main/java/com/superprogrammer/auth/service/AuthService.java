@@ -68,6 +68,8 @@ public class AuthService {
     private final MfaService mfaService;
     /** 12x B1：注册前置邮箱验证码校验（码过才建号，EMAIL 凭证直接 verified=TRUE）。 */
     private final EmailService emailService;
+    /** 12x B2：渐进式滑块门槛（登录/注册连续失败 ≥2 次强制滑块）。 */
+    private final ProgressiveCaptchaGuard captchaGuard;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
     /**
@@ -99,9 +101,22 @@ public class AuthService {
 
     @Transactional
     public void register(RegisterRequest request) {
+        String clientIp = currentClientIp();
+        // 12x B2：同 IP 连续失败 ≥2 次 → 必须先过滑块
+        captchaGuard.check("register", clientIp, request.getCaptchaVerification());
+        try {
+            registerInternal(request, clientIp);
+        } catch (BusinessException e) {
+            captchaGuard.recordFailure("register", clientIp);
+            throw e;
+        }
+        captchaGuard.clear("register", clientIp);
+    }
+
+    private void registerInternal(RegisterRequest request, String clientIp) {
         // 限流（安全审计 #9）：IP + 用户名双维度，超阈值 → 429
         try {
-            checkRegisterRateLimit(currentClientIp(), request.getUsername());
+            checkRegisterRateLimit(clientIp, request.getUsername());
         } catch (BusinessException e) {
             // OPS-FR-07：限流触发计数（每次被拒注册正好一次；IP/用户名双窗口可能双中，这里只记一次）
             if (e.getCode() == ErrorCode.RATE_LIMIT.getCode()) {
@@ -237,6 +252,8 @@ public class AuthService {
         String usernameKey = request.getUsername() == null ? "" : request.getUsername().toLowerCase(java.util.Locale.ROOT);
         String clientIp = currentClientIp();
         assertLoginAllowed(usernameKey, clientIp);
+        // 12x B2：同账号连续失败 ≥2 次 → 必须先过滑块
+        captchaGuard.check("login", usernameKey, request.getCaptchaVerification());
 
         // 查询用户
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
@@ -248,6 +265,7 @@ public class AuthService {
             // 即账号存在性 oracle（40103 统一话术堵了内容侧，时间侧也得堵）。
             passwordEncoder.matches(request.getPassword(), DUMMY_BCRYPT_HASH);
             recordLoginFailure(usernameKey, clientIp, null, request.getUsername());
+            captchaGuard.recordFailure("login", usernameKey);
             loginAttemptsService.recordAsync(usernameKey, null, clientIp, false, "no_such_user");
             auditAuth("login", null, request.getUsername(), AuditLogEntity.RESULT_FAIL, "user_not_found");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
@@ -257,6 +275,7 @@ public class AuthService {
         // 验证密码
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             recordLoginFailure(usernameKey, clientIp, user.getId(), user.getUsername());
+            captchaGuard.recordFailure("login", usernameKey);
             loginAttemptsService.recordAsync(usernameKey, user.getId(), clientIp, false, "bad_password");
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "bad_password");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
@@ -276,6 +295,7 @@ public class AuthService {
 
         // 登录成功清账号失败计数（IP 计数保留：防多账号轮试）
         clearLoginFailure(usernameKey);
+        captchaGuard.clear("login", usernameKey);
         loginAttemptsService.recordAsync(usernameKey, user.getId(), clientIp, true, null);
 
         // 生成JWT Token（走公共方法）

@@ -28,6 +28,10 @@ public class RegisterRequest {
     @Pattern(regexp = "\\d{6}", message = "邮箱验证码为 6 位数字")
     private String emailCode;
 
+    /** 12x B2：同 IP 连续失败 ≥2 次后必填（AJ-Captcha 滑块 token，单次有效）。 */
+    @Size(max = 2048)
+    private String captchaVerification;
+
     /** 协议勾选（合规要求：注册前必须同意《用户协议》《隐私政策》）。 */
     @AssertTrue(message = "请先阅读并同意《用户协议》和《隐私政策》")
     private Boolean agreeTerms;

@@ -48,6 +48,8 @@ public class PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
     private final SessionService sessionService;
+    /** 12x B2：渐进式滑块门槛（同 IP 连续失败/探测 ≥2 次强制滑块）。 */
+    private final ProgressiveCaptchaGuard captchaGuard;
 
     private static final String RESET_LIMIT_ACCOUNT_PREFIX = "reset:limit:account:";
     private static final String RESET_LIMIT_IP_PREFIX = "reset:limit:ip:";
@@ -58,18 +60,29 @@ public class PasswordResetService {
     /**
      * 发起找回密码（统一话术防枚举）。
      *
+     * <p>12x B2：同 IP 连续「失败/探测」≥2 次 → 强制滑块。失败口径：限流触发 / 账号不存在 /
+     * 无可用已验证渠道（枚举探测行为——统一话术不泄露但计数照记）。</p>
+     *
      * @param identifier 账号标识（用户名/邮箱/手机号）
      * @param channel    渠道：EMAIL 或 SMS
-     * @param clientIp   客户端 IP（限流用）
+     * @param clientIp   客户端 IP（限流+滑块门槛用）
+     * @param captchaVerification 滑块 token（触发门槛时必填）
      * @return 统一话术"若账号存在，重置链接/码已发送"
      */
-    public String forgot(String identifier, String channel, String clientIp) {
+    public String forgot(String identifier, String channel, String clientIp, String captchaVerification) {
+        captchaGuard.check("forgot", clientIp, captchaVerification);
         // 限流
-        checkRateLimit(identifier, clientIp);
+        try {
+            checkRateLimit(identifier, clientIp);
+        } catch (BusinessException e) {
+            captchaGuard.recordFailure("forgot", clientIp);
+            throw e;
+        }
 
         User user = findUserByIdentifier(identifier);
         if (user == null) {
-            // 统一话术：不泄露账号是否存在（防枚举）
+            // 统一话术：不泄露账号是否存在（防枚举）；探测计数（B2）
+            captchaGuard.recordFailure("forgot", clientIp);
             return "若账号存在，重置链接/码已发送";
         }
 
@@ -77,6 +90,7 @@ public class PasswordResetService {
             // 短信找回：需用户绑了已验证手机
             UserCredential phoneCredential = credentialService.findForLogin(UserCredential.TYPE_PHONE, user.getPhone());
             if (phoneCredential == null || !Boolean.TRUE.equals(phoneCredential.getVerified()) || user.getPhone() == null) {
+                captchaGuard.recordFailure("forgot", clientIp);
                 return "若账号存在，重置链接/码已发送"; // 未绑手机/未验证 → 不发但仍返统一话术
             }
             // 发短信重置码（复用 SmsService 的发码能力，但用 reset 模板）
@@ -86,11 +100,13 @@ public class PasswordResetService {
             // 邮件找回：需用户绑了已验证邮箱
             UserCredential emailCredential = findVerifiedEmailCredential(user.getId());
             if (emailCredential == null) {
+                captchaGuard.recordFailure("forgot", clientIp);
                 return "若账号存在，重置链接/码已发送"; // 未验证邮箱 → 不发但仍返统一话术
             }
             emailService.sendResetEmail(user.getId(), emailCredential.getIdentifier());
         }
 
+        captchaGuard.clear("forgot", clientIp);
         return "若账号存在，重置链接/码已发送";
     }
 

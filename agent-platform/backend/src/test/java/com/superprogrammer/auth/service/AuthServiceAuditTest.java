@@ -60,6 +60,8 @@ class AuthServiceAuditTest {
     @Mock private MfaService mfaService;
     // 12x B1：注册前置邮箱验证码校验
     @Mock private com.superprogrammer.auth.service.EmailService emailService;
+    // 12x B2：渐进式滑块门槛
+    @Mock private com.superprogrammer.auth.service.ProgressiveCaptchaGuard captchaGuard;
 
     @InjectMocks
     private AuthService authService;

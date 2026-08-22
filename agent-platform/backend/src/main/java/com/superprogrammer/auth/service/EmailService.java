@@ -34,6 +34,7 @@ public class EmailService {
     private final StringRedisTemplate redisTemplate;
     private final CredentialService credentialService;
     private final MailSendQuotaService mailQuota;
+    private final ProgressiveCaptchaGuard captchaGuard;
     private final Map<String, MailSender> senders;
 
     private static final String VERIFY_TOKEN_PREFIX = "verify:email:";
@@ -55,11 +56,12 @@ public class EmailService {
 
     public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
                         CredentialService credentialService, MailSendQuotaService mailQuota,
-                        List<MailSender> mailSenders) {
+                        ProgressiveCaptchaGuard captchaGuard, List<MailSender> mailSenders) {
         this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
         this.mailQuota = mailQuota;
+        this.captchaGuard = captchaGuard;
         this.senders = mailSenders.stream().collect(Collectors.toMap(MailSender::provider, Function.identity()));
     }
 
@@ -228,9 +230,21 @@ public class EmailService {
     /**
      * 发注册验证码（公开端点，注册前置）。
      * <p>强校验语义：邮件通道未开启/未配置完整 → 直接拒绝（注册必须验邮箱，通道坏了=注册暂停，宁缺毋滥）。
-     * 邮箱已被注册 → CONFLICT（不防枚举——发码行为本身要求证明邮箱归属，泄露成本可接受且话术指引找回）。</p>
+     * 邮箱已被注册 → CONFLICT（不防枚举——发码行为本身要求证明邮箱归属，泄露成本可接受且话术指引找回）。
+     * 12x B2：同 IP 连续失败 ≥2 次 → 强制滑块。</p>
      */
-    public void sendRegisterCode(String email, String clientIp) {
+    public void sendRegisterCode(String email, String clientIp, String captchaVerification) {
+        captchaGuard.check("mailcode", clientIp, captchaVerification);
+        try {
+            doSendRegisterCode(email, clientIp);
+        } catch (BusinessException e) {
+            captchaGuard.recordFailure("mailcode", clientIp);
+            throw e;
+        }
+        captchaGuard.clear("mailcode", clientIp);
+    }
+
+    private void doSendRegisterCode(String email, String clientIp) {
         String normalized = email == null ? "" : email.trim().toLowerCase();
         var config = channelSettings.mailSnapshot();
         if (!config.enabled() || !isConfigured(config)) {

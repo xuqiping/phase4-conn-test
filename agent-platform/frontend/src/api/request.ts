@@ -119,7 +119,10 @@ request.interceptors.response.use(
     // 业务错误码处理
     if (res.code !== 200 && res.code !== 201 && res.code !== 202) {
       showErrorMessage(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+      // 12x B2：错误对象挂业务码（如 40107 滑块门槛），UI 可据此分支处理
+      const err = new Error(res.message || '请求失败') as Error & { code?: number }
+      err.code = res.code
+      return Promise.reject(err)
     }
 
     return response

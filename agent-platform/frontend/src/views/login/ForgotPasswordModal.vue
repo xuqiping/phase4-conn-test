@@ -40,11 +40,18 @@
         </n-input>
       </n-form-item>
 
+      <!-- 12x B2：同 IP 连续失败/探测 ≥2 次 → 滑块闸（后端 40107 触发展示） -->
+      <div v-if="needCaptcha" class="forgot-modal__captcha">
+        <SliderCaptcha ref="captchaRef" :width="290" @success="onCaptchaSuccess" @fail="onCaptchaFail" />
+        <p class="forgot-modal__captcha-hint">操作过于频繁，请完成滑块验证后再试</p>
+      </div>
+
       <n-button
         type="primary"
         block
         size="large"
         :loading="submitting"
+        :disabled="needCaptcha && !captchaToken"
         attr-type="submit"
       >
         发送重置链接/验证码
@@ -66,6 +73,7 @@ import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NRadioGroup, NRadio, NAlert, useMessage } from 'naive-ui'
 import { PersonOutline, CallOutline } from '@vicons/ionicons5'
 import { authApi } from '@/api/auth'
+import SliderCaptcha from './SliderCaptcha.vue'
 
 const props = defineProps<{
   show: boolean
@@ -96,9 +104,23 @@ watch(
       form.channel = props.emailEnabled ? 'EMAIL' : 'SMS'
       form.identifier = ''
       form.phone = ''
+      needCaptcha.value = false
+      captchaToken.value = ''
     }
   }
 )
+
+// 12x B2：渐进式滑块——后端返 40107 才展示；token 单次有效，每次提交后刷新
+const needCaptcha = ref(false)
+const captchaToken = ref('')
+const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
+
+function onCaptchaSuccess(token: string) {
+  captchaToken.value = token
+}
+function onCaptchaFail() {
+  captchaToken.value = ''
+}
 
 const rules = computed<FormRules>(() => ({
   identifier: [
@@ -123,11 +145,18 @@ async function handleForgot() {
   submitting.value = true
   try {
     const identifier = form.channel === 'SMS' ? form.phone : form.identifier
-    const res = await authApi.forgotPassword(identifier, form.channel)
+    const res = await authApi.forgotPassword(identifier, form.channel, captchaToken.value || undefined)
     // 统一话术（防账号枚举）：无论账号是否存在都返回相同提示
     message.success(res.data.data || '若账号存在，重置链接/验证码已发送')
+    needCaptcha.value = false
+    captchaToken.value = ''
     emit('update:show', false)
   } catch (error: unknown) {
+    if ((error as { code?: number }).code === 40107) {
+      needCaptcha.value = true
+      captchaToken.value = ''
+      captchaRef.value?.fetchCaptcha()
+    }
     const msg = error instanceof Error ? error.message : '操作失败，请稍后重试'
     message.error(msg)
   } finally {
@@ -137,6 +166,14 @@ async function handleForgot() {
 </script>
 
 <style lang="scss" scoped>
+.forgot-modal__captcha {
+  margin-bottom: 12px;
+}
+.forgot-modal__captcha-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-warning, #f0a020);
+}
 .forgot-modal__notice {
   margin-top: 12px;
   font-size: 13px;

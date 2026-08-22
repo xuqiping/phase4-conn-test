@@ -33,7 +33,8 @@ public class PasswordResetController {
     public ResponseEntity<R<String>> forgot(@Valid @RequestBody PasswordForgotRequest request,
                                              HttpServletRequest httpRequest) {
         String message = passwordResetService.forgot(
-                request.getIdentifier(), request.getChannel(), httpRequest.getRemoteAddr());
+                request.getIdentifier(), request.getChannel(), httpRequest.getRemoteAddr(),
+                request.getCaptchaVerification());
         return ResponseEntity.ok(R.ok(message, null));
     }
 

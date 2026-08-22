@@ -31,6 +31,8 @@ export interface UserInfo {
 export interface LoginParams {
   username: string
   password: string
+  /** 12x B2：同账号连续失败 ≥2 次后必填（滑块 token） */
+  captchaVerification?: string
 }
 
 /** 注册请求参数 */
@@ -40,6 +42,8 @@ export interface RegisterParams {
   password: string
   /** 12x B1：注册邮箱 6 位验证码（先调 sendRegisterEmailCode 获取） */
   emailCode: string
+  /** 12x B2：同 IP 连续失败 ≥2 次后必填（滑块 token） */
+  captchaVerification?: string
 }
 
 export const useAuthStore = defineStore('auth', () => {

@@ -40,11 +40,18 @@
       <n-button text type="primary" size="small" @click="emit('forgot')">忘记密码？</n-button>
     </div>
 
+    <!-- 12x B2：同账号连续失败 ≥2 次 → 滑块闸（后端 40107 触发展示） -->
+    <div v-if="needCaptcha" class="pwd-tab__captcha">
+      <SliderCaptcha ref="captchaRef" :width="290" @success="onCaptchaSuccess" @fail="onCaptchaFail" />
+      <p class="pwd-tab__captcha-hint">失败次数过多，请完成滑块验证后再登录</p>
+    </div>
+
     <n-button
       type="primary"
       block
       size="large"
       :loading="authStore.loading"
+      :disabled="needCaptcha && !captchaToken"
       attr-type="submit"
       class="pwd-tab__submit"
     >
@@ -95,6 +102,7 @@ import type { FormInst, FormRules } from 'naive-ui'
 import { NForm, NFormItem, NInput, NButton, NIcon, NAlert, useMessage } from 'naive-ui'
 import { PersonOutline, LockClosedOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import SliderCaptcha from './SliderCaptcha.vue'
 
 const emit = defineEmits<{
   /** 登录成功（父组件跳转） */
@@ -113,6 +121,24 @@ const form = reactive({ username: '', password: '' })
 const mfaToken = ref('')
 const mfaCode = ref('')
 
+// 12x B2：渐进式滑块——后端返 40107 才展示；token 单次有效，每次提交后刷新
+const needCaptcha = ref(false)
+const captchaToken = ref('')
+const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
+
+function onCaptchaSuccess(token: string) {
+  captchaToken.value = token
+}
+function onCaptchaFail() {
+  captchaToken.value = ''
+}
+/** 每次登录提交后调用：滑块 token 已被后端消费（单次有效），强制重滑。 */
+function consumeCaptcha() {
+  if (!needCaptcha.value) return
+  captchaToken.value = ''
+  captchaRef.value?.fetchCaptcha()
+}
+
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [
@@ -128,7 +154,11 @@ async function handleLogin() {
     return
   }
   try {
-    const result = await authStore.login({ username: form.username, password: form.password })
+    const result = await authStore.login({
+      username: form.username,
+      password: form.password,
+      captchaVerification: captchaToken.value || undefined
+    })
     if (result.mfaRequired && result.mfaToken) {
       // 密码因子已过 → 进第二屏（未落任何登录态）
       mfaToken.value = result.mfaToken
@@ -139,8 +169,16 @@ async function handleLogin() {
       message.warning('平台建议管理员开启两步验证：设置 → 安全设置 → 两步验证')
     }
     message.success('登录成功')
+    // 成功即回归无验证态
+    needCaptcha.value = false
+    captchaToken.value = ''
     emit('success')
   } catch (error: unknown) {
+    // 12x B2：40107 = 滑块门槛触发 → 展示滑块
+    if ((error as { code?: number }).code === 40107) {
+      needCaptcha.value = true
+    }
+    consumeCaptcha()
     const msg = error instanceof Error ? error.message : '登录失败，请检查用户名和密码'
     message.error(msg)
   }
@@ -181,6 +219,14 @@ defineExpose({
   display: flex;
   justify-content: flex-end;
   margin: -8px 0 16px;
+}
+.pwd-tab__captcha {
+  margin-bottom: 12px;
+}
+.pwd-tab__captcha-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-warning, #f0a020);
 }
 .pwd-tab__submit {
   height: 44px;

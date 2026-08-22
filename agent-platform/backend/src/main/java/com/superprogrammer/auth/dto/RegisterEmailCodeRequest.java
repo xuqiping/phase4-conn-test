@@ -3,6 +3,7 @@ package com.superprogrammer.auth.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -15,4 +16,8 @@ public class RegisterEmailCodeRequest {
     @NotBlank(message = "邮箱不能为空")
     @Email(message = "邮箱格式不正确")
     private String email;
+
+    /** 12x B2：同 IP 连续失败 ≥2 次后必填（AJ-Captcha 滑块 token，单次有效）。 */
+    @Size(max = 2048)
+    private String captchaVerification;
 }
