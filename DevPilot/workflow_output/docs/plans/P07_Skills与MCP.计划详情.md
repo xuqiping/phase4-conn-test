@@ -111,7 +111,7 @@ core-mcp/src/market.rs:
 ```
 src-ui/components/input/SkillAutocomplete.tsx:
   输入以 '/' 开头且光标在首词 → 查 ipc.list_skills(enabled) 前缀过滤弹层
-  ↑↓ 选择、Enter 回填 `[/name](展开)`、Esc 关闭；输入 '/usr/xxx' 不弹（规则：首词不含 '/' 后第二段字符即路径态——简化：仅当'/'后字符与某技能前缀匹配才弹）
+  ↑↓ 选择、Enter 回填 `/name` 展开态、Esc 关闭；输入 '/usr/xxx' 不弹（规则：仅当 '/' 后字符与某技能前缀匹配才弹）
 src-ui/components/input/TaskInputBox.tsx（抽取现有任务输入为组件）:
   提交时若选中技能 → prompt = 技能 body + '\n\n' + 用户文本；chip 显示已挂技能
 src-tauri/src/commands.rs: list_skills / invoke_skill(返回展开文本，纯前端拼接也可——选 IPC 返回文本，便于审计日志记一次调用)
