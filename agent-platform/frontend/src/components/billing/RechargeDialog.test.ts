@@ -50,7 +50,8 @@ const stubs = {
   NSpace: { template: '<div><slot /></div>' },
   NAlert: { template: '<div><slot /></div>' },
   NStatistic: true,
-  NSpin: true
+  NSpin: true,
+  RouterLink: { template: '<a><slot /></a>' }
 }
 
 async function openDialog(props: Record<string, unknown> = {}) {
@@ -170,5 +171,25 @@ describe('RechargeDialog（7x#3 充值全链）', () => {
     await wrapper.setProps({ show: false })
     await vi.advanceTimersByTimeAsync(10000)
     expect(vi.mocked(billingApi.getPaymentOrder).mock.calls.length).toBe(calls)
+  })
+
+  // 12x B5：下单被「未验证邮箱」门槛拦截 → 错误框给去绑定引导
+  // （NModal 真实组件走 teleport，DOM 断言不可靠——按项目惯例直接探 vm 状态）
+  it('B5 邮箱门槛：后端 400 话术命中 → formError+引导标记置位', async () => {
+    const wrapper = await openDialog()
+    vi.mocked(billingApi.createPaymentOrder).mockRejectedValue({
+      response: { data: { msg: '充值前请先绑定并验证邮箱（设置 → 安全设置），邮箱是账号资金找回的兜底通道' } }
+    } as never)
+    const vm = wrapper.vm as unknown as {
+      amountYuan: number; channel: string; formError: string; emailGateBlocked: boolean
+      submit: () => Promise<void>
+    }
+    vm.amountYuan = 100
+    vm.channel = 'MOCK'
+    await vm.submit()
+    await nextTick()
+
+    expect(vm.formError).toContain('绑定并验证邮箱')
+    expect(vm.emailGateBlocked).toBe(true)
   })
 })

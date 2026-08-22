@@ -47,6 +47,8 @@ public class PaymentOrderService {
     private final PointsRatioService ratioService;
     private final PointsWalletService walletService;
     private final AuditLogService auditLogService;
+    /** 12x B5：充值下单前置校验——账号须有已验证邮箱（资金找回兜底通道）。 */
+    private final com.superprogrammer.auth.service.CredentialService credentialService;
 
     /** 可选横切（同 PointsWalletService 惯例：@InjectMocks 单测无此 Bean 时 null 跳过）。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -72,6 +74,15 @@ public class PaymentOrderService {
     public PaymentOrderVO createOrder(Long userId, BigDecimal amountYuan, String channel, String idemKey) {
         if (userId == null) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+        // 12x B5：充值下单前强制已验证邮箱——丢号即丢积分，邮箱是资金找回的最后兜底通道。
+        // 在金额校验/幂等查重之前拒，不产生任何订单副作用。
+        boolean hasVerifiedEmail = credentialService.findByUserIdRaw(userId).stream()
+                .anyMatch(c -> com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL.equals(c.getCredentialType())
+                        && Boolean.TRUE.equals(c.getVerified()));
+        if (!hasVerifiedEmail) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "充值前请先绑定并验证邮箱（设置 → 安全设置），邮箱是账号资金找回的兜底通道");
         }
         if (amountYuan == null || amountYuan.compareTo(MIN_AMOUNT) < 0 || amountYuan.compareTo(MAX_AMOUNT) > 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,

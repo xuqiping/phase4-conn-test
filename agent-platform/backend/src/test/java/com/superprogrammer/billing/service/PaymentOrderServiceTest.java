@@ -46,6 +46,7 @@ class PaymentOrderServiceTest {
     @Mock private PointsRatioService ratioService;
     @Mock private PointsWalletService walletService;
     @Mock private AuditLogService auditLogService;
+    @Mock private com.superprogrammer.auth.service.CredentialService credentialService;
 
     private MockPaymentChannel mockChannel;
     private PaymentChannelRouter router;
@@ -60,11 +61,19 @@ class PaymentOrderServiceTest {
         router = new PaymentChannelRouter(List.of(mockChannel,
                 new com.superprogrammer.billing.service.channel.AlipayPaymentChannel(),
                 new com.superprogrammer.billing.service.channel.WechatPaymentChannel()));
-        service = new PaymentOrderService(orderMapper, ledgerMapper, router, ratioService, walletService, auditLogService);
+        service = new PaymentOrderService(orderMapper, ledgerMapper, router, ratioService, walletService,
+                auditLogService, credentialService);
         ReflectionTestUtils.setField(service, "orderExpireMinutes", 30);
         ReflectionTestUtils.setField(service, "notifyUrl", "https://example/notify");
         lenient().when(ratioService.toPoints(any())).thenAnswer(inv ->
                 ((BigDecimal) inv.getArgument(0)).multiply(new BigDecimal("100")));
+        // 12x B5：默认放行——已验证邮箱（单测聚焦下单主链；门槛语义由专项用例覆盖）
+        lenient().when(credentialService.findByUserIdRaw(anyLong())).thenAnswer(inv -> {
+            com.superprogrammer.auth.entity.UserCredential c = new com.superprogrammer.auth.entity.UserCredential();
+            c.setCredentialType(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL);
+            c.setVerified(true);
+            return List.of(c);
+        });
     }
 
     private PaymentOrderEntity pendingOrder(long id) {
@@ -80,6 +89,29 @@ class PaymentOrderServiceTest {
     }
 
     // ==================== 下单 ====================
+
+    // 12x B5：充值下单前强制已验证邮箱
+    @Test
+    void createOrder_noVerifiedEmail_rejected() {
+        when(credentialService.findByUserIdRaw(UID)).thenReturn(List.of());
+        com.superprogrammer.common.exception.BusinessException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.superprogrammer.common.exception.BusinessException.class,
+                () -> service.createOrder(UID, new BigDecimal("10.00"), "MOCK", null));
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("绑定并验证邮箱"));
+        verify(orderMapper, never()).insert(any());
+    }
+
+    @Test
+    void createOrder_unverifiedEmailOnly_rejected() {
+        com.superprogrammer.auth.entity.UserCredential c = new com.superprogrammer.auth.entity.UserCredential();
+        c.setCredentialType(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL);
+        c.setVerified(false);
+        when(credentialService.findByUserIdRaw(UID)).thenReturn(List.of(c));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.superprogrammer.common.exception.BusinessException.class,
+                () -> service.createOrder(UID, new BigDecimal("10.00"), "MOCK", null));
+        verify(orderMapper, never()).insert(any());
+    }
 
     @Test
     void 下单_快照积分_and_PENDING带过期() {

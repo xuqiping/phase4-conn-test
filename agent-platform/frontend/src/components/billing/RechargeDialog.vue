@@ -28,6 +28,15 @@
       </n-form>
       <n-alert v-if="formError" type="error" :bordered="false" style="margin-bottom: 12px">
         {{ formError }}
+        <!-- 12x B5：邮箱门槛被拒 → 给出直达安全设置的引导 -->
+        <router-link
+          v-if="emailGateBlocked"
+          to="/settings"
+          style="display: block; margin-top: 6px; color: inherit; text-decoration: underline"
+          @click="onClose"
+        >
+          去「设置 → 安全设置」绑定邮箱 →
+        </router-link>
       </n-alert>
       <n-space justify="end">
         <n-button @click="onClose">取消</n-button>
@@ -104,6 +113,8 @@ const amountYuan = ref<number | null>(100)
 const channel = ref<string | null>(null)
 const creating = ref(false)
 const formError = ref('')
+/** 12x B5：下单被「未验证邮箱」门槛拦截 → 错误框内给去绑定引导链接 */
+const emailGateBlocked = ref(false)
 const order = ref<PaymentOrderVO | null>(null)
 const mockPaying = ref(false)
 const polling = ref(false)
@@ -134,6 +145,7 @@ watch(() => props.show, v => {
   if (v) {
     stage.value = 'form'
     formError.value = ''
+    emailGateBlocked.value = false
     order.value = null
     idemKey = crypto.randomUUID()
     if (!channel.value && props.channels.length > 0) {
@@ -161,6 +173,8 @@ async function submit() {
     // 错误文案映射（限额/渠道未开通/重复提交由后端 msg 直出，axios 层已 toast）
     formError.value = (e as { response?: { data?: { msg?: string } } })?.response?.data?.msg
       ?? '下单失败，请稍后重试'
+    // 12x B5：后端邮箱门槛话术命中 → 展示去绑定引导
+    emailGateBlocked.value = formError.value.includes('绑定并验证邮箱')
   } finally {
     creating.value = false
   }
