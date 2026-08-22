@@ -39,6 +39,8 @@ public final class SecurityEndpointRegistry {
             // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
             "/api/auth/verify/email",
             "/api/auth/resend/email",
+            // 12x B1：注册邮箱验证码发送（公开端点，注册前置闸；同邮箱 60s + IP 10封/h 限流）
+            "/api/auth/register/email-code",
             // 认证系统增强：手机验证码登录/发码 + 滑块验证码（公开端点）
             "/api/auth/sms/code",
             "/api/auth/login/sms",

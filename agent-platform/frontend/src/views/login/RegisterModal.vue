@@ -23,11 +23,33 @@
       </n-form-item>
 
       <n-form-item path="email" label="邮箱">
-        <n-input v-model:value="form.email" placeholder="请输入邮箱地址（用于验证和找回密码）" size="large">
+        <n-input v-model:value="form.email" placeholder="请输入邮箱地址（注册即验证，用于找回密码）" size="large">
           <template #prefix>
             <n-icon :component="MailOutline" color="var(--color-text-tertiary)" />
           </template>
         </n-input>
+      </n-form-item>
+
+      <!-- 12x B1：注册前置邮箱验证码（证明邮箱归属才建号） -->
+      <n-form-item path="emailCode" label="邮箱验证码">
+        <div class="register-modal__code-row">
+          <n-input
+            v-model:value="form.emailCode"
+            placeholder="6 位数字验证码"
+            size="large"
+            maxlength="6"
+            :input-props="{ inputmode: 'numeric', autocomplete: 'one-time-code' }"
+          />
+          <n-button
+            size="large"
+            :disabled="codeCountdown > 0 || codeSending"
+            :loading="codeSending"
+            class="register-modal__code-btn"
+            @click="handleSendCode"
+          >
+            {{ codeCountdown > 0 ? `${codeCountdown}s 后重发` : '获取验证码' }}
+          </n-button>
+        </div>
       </n-form-item>
 
       <n-form-item path="password" label="密码">
@@ -79,7 +101,8 @@
     </n-form>
 
     <n-alert type="info" :bordered="false" class="register-modal__notice">
-      注册成功后即可登录。系统将向您的邮箱发送验证邮件，<b>未验证邮箱不可用于找回密码</b>，请及时验证。
+      注册前需先验证邮箱：填邮箱 → 点「获取验证码」→ 查收邮件填 6 位数字码（10 分钟内有效）。
+      验证通过的邮箱可直接用于找回密码。
     </n-alert>
   </n-modal>
 
@@ -103,11 +126,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, onBeforeUnmount } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, useMessage } from 'naive-ui'
 import { PersonOutline, MailOutline, LockClosedOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api/auth'
 
 const props = defineProps<{
   show: boolean
@@ -126,10 +150,50 @@ const showTerms = ref(false)
 const form = reactive({
   username: '',
   email: '',
+  emailCode: '',
   password: '',
   confirmPassword: '',
   agreeTerms: false
 })
+
+// 12x B1：发码按钮 60s 倒计时（与后端 regcode:resend 60s 窗口一致）
+const codeSending = ref(false)
+const codeCountdown = ref(0)
+let codeTimer: ReturnType<typeof setInterval> | null = null
+
+function startCodeCountdown() {
+  codeCountdown.value = 60
+  codeTimer = setInterval(() => {
+    codeCountdown.value -= 1
+    if (codeCountdown.value <= 0 && codeTimer) {
+      clearInterval(codeTimer)
+      codeTimer = null
+    }
+  }, 1000)
+}
+
+onBeforeUnmount(() => {
+  if (codeTimer) clearInterval(codeTimer)
+})
+
+async function handleSendCode() {
+  const email = form.email.trim()
+  if (!/^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
+    message.error('请先填写正确的邮箱地址')
+    return
+  }
+  codeSending.value = true
+  try {
+    await authApi.sendRegisterEmailCode(email)
+    message.success('验证码已发送，10 分钟内有效')
+    startCodeCountdown()
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '发送失败'
+    message.error(msg)
+  } finally {
+    codeSending.value = false
+  }
+}
 
 const rules: FormRules = {
   username: [
@@ -139,6 +203,16 @@ const rules: FormRules = {
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
     { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' }
+  ],
+  emailCode: [
+    { required: true, message: '请输入邮箱验证码', trigger: 'blur' },
+    {
+      validator: (_rule, value) => {
+        if (value && !/^\d{6}$/.test(value)) return new Error('验证码为 6 位数字')
+        return true
+      },
+      trigger: 'blur'
+    }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -172,9 +246,15 @@ watch(
     if (!v) {
       form.username = ''
       form.email = ''
+      form.emailCode = ''
       form.password = ''
       form.confirmPassword = ''
       form.agreeTerms = false
+      if (codeTimer) {
+        clearInterval(codeTimer)
+        codeTimer = null
+      }
+      codeCountdown.value = 0
     }
   }
 )
@@ -188,10 +268,11 @@ async function handleRegister() {
   try {
     await authStore.register({
       username: form.username,
-      email: form.email,
-      password: form.password
+      email: form.email.trim(),
+      password: form.password,
+      emailCode: form.emailCode.trim()
     })
-    message.success('注册成功，请登录并完成邮箱验证')
+    message.success('注册成功，请登录')
     emit('registered', form.username)
     emit('update:show', false)
   } catch (error: unknown) {
@@ -202,6 +283,16 @@ async function handleRegister() {
 </script>
 
 <style lang="scss" scoped>
+.register-modal__code-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  .n-input { flex: 1; }
+}
+.register-modal__code-btn {
+  flex-shrink: 0;
+  min-width: 112px;
+}
 .register-modal__notice {
   margin-top: 12px;
   font-size: 13px;

@@ -45,6 +45,10 @@ class AuthIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    /** 12x B1：注册需邮箱验证码——IT 直接向 Redis 预置注册码（不走真实发信）。 */
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate redis;
+
     private static String accessToken;
     private static String refreshToken;
 
@@ -54,15 +58,20 @@ class AuthIntegrationTest {
         // user_credential 等子表 FK 引用 users，先删子表行再删用户（否则 DataIntegrityViolation）
         jdbc.update("DELETE FROM user_credential WHERE user_id IN (SELECT id FROM users WHERE username = 'integrationuser')");
         jdbc.update("DELETE FROM users WHERE username = 'integrationuser'");
+        redis.delete(java.util.List.of("regcode:email:integration@test.com",
+                "regcode:try:integration@test.com", "regcode:resend:integration@test.com"));
     }
 
     @Test
     @Order(1)
     void step1_register_newUser_returnsCreated() throws Exception {
+        redis.opsForValue().set("regcode:email:integration@test.com", "654321",
+                java.time.Duration.ofMinutes(10));
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
         request.setPassword("Str0ng#Pass");
         request.setEmail("integration@test.com");
+        request.setEmailCode("654321");
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -74,9 +83,12 @@ class AuthIntegrationTest {
     @Test
     @Order(2)
     void step2_register_duplicateUser_returnsConflict() throws Exception {
+        // 用户名查重在校验码之前——重复用户名直接 409，不消耗验证码（emailCode 仅需过 @NotBlank）
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
         request.setPassword("Str0ng#Pass");
+        request.setEmail("integration@test.com");
+        request.setEmailCode("000000");
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)

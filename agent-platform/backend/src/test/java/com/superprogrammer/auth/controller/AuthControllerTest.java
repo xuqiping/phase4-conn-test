@@ -51,6 +51,7 @@ class AuthControllerTest {
         request.setUsername("newuser");
         request.setPassword("password123");
         request.setEmail("new@example.com");
+        request.setEmailCode("123456");
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)

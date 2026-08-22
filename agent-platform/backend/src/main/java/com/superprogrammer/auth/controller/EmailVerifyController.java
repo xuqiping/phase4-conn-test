@@ -2,6 +2,7 @@
 package com.superprogrammer.auth.controller;
 
 import com.superprogrammer.auth.dto.EmailVerifyRequest;
+import com.superprogrammer.auth.dto.RegisterEmailCodeRequest;
 import com.superprogrammer.auth.dto.ResendEmailRequest;
 import com.superprogrammer.auth.service.EmailService;
 import com.superprogrammer.common.result.R;
@@ -50,5 +51,16 @@ public class EmailVerifyController {
                                                  HttpServletRequest httpRequest) {
         String message = emailService.resendVerifyEmail(request.getEmail(), clientIpResolver.resolve(httpRequest));
         return ResponseEntity.ok(R.ok(message, null));
+    }
+
+    /**
+     * 12x B1：注册邮箱验证码发送（注册前置闸）。
+     * <p>限流：同邮箱 60s + 同 IP 10 封/h；通道未开启直接拒绝（注册必须验邮箱）。</p>
+     */
+    @PostMapping("/register/email-code")
+    public ResponseEntity<R<Void>> sendRegisterEmailCode(@Valid @RequestBody RegisterEmailCodeRequest request,
+                                                         HttpServletRequest httpRequest) {
+        emailService.sendRegisterCode(request.getEmail(), clientIpResolver.resolve(httpRequest));
+        return ResponseEntity.ok(R.ok("验证码已发送，10 分钟内有效", null));
     }
 }

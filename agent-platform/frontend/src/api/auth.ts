@@ -74,9 +74,19 @@ export const authApi = {
   /**
    * 用户注册
    * POST /api/auth/register
+   * 12x B1：emailCode 必填（注册前置邮箱验证码，凭证直接 verified=TRUE）
    */
-  register(params: { username: string; email: string; password: string }) {
+  register(params: { username: string; email: string; password: string; emailCode: string }) {
     return request.post<ApiResponse<void>>('/auth/register', params)
+  },
+
+  /**
+   * 发送注册邮箱验证码（12x B1，注册前置闸）
+   * POST /api/auth/register/email-code
+   * 限流：同邮箱 60s + 同 IP 10 封/h；通道未开启直接 400
+   */
+  sendRegisterEmailCode(email: string) {
+    return request.post<ApiResponse<void>>('/auth/register/email-code', { email })
   },
 
   /**

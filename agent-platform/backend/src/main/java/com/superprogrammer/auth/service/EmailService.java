@@ -43,6 +43,14 @@ public class EmailService {
     public static final long RESET_TOKEN_TTL_SECONDS = 30 * 60;
     private static final long RESEND_WINDOW_SECONDS = 60;
 
+    // 12x B1：注册邮箱 6 位数字码（取代注册后链接激活——注册即证明邮箱归属，EMAIL 凭证直接 verified=TRUE）。
+    // 码 10min TTL；同码错 5 次锁（防 6 位码暴破）；同邮箱 60s 重发 + IP 10 封/h（复用 B3 配额）。
+    private static final String REG_CODE_PREFIX = "regcode:email:";
+    private static final String REG_TRY_PREFIX = "regcode:try:";
+    private static final String REG_RESEND_PREFIX = "regcode:resend:";
+    private static final long REG_CODE_TTL_SECONDS = 10 * 60;
+    private static final long REG_CODE_MAX_TRIES = 5;
+
     private final SecureRandom secureRandom = new SecureRandom();
 
     public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
@@ -213,6 +221,101 @@ public class EmailService {
                 + "<p style='color:#999;font-size:12px;'>若这是您本人操作，请忽略本邮件。若非本人操作，您的邮箱可能已泄露，请立即修改邮箱密码并联系平台管理员冻结账号。</p>"
                 + "</div>";
         sendMail(config, email, subject, htmlBody);
+    }
+
+    // ==================== 12x B1：注册邮箱验证码 ====================
+
+    /**
+     * 发注册验证码（公开端点，注册前置）。
+     * <p>强校验语义：邮件通道未开启/未配置完整 → 直接拒绝（注册必须验邮箱，通道坏了=注册暂停，宁缺毋滥）。
+     * 邮箱已被注册 → CONFLICT（不防枚举——发码行为本身要求证明邮箱归属，泄露成本可接受且话术指引找回）。</p>
+     */
+    public void sendRegisterCode(String email, String clientIp) {
+        String normalized = email == null ? "" : email.trim().toLowerCase();
+        var config = channelSettings.mailSnapshot();
+        if (!config.enabled() || !isConfigured(config)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "邮件通道未开启，暂无法注册，请联系管理员");
+        }
+        if (findUserIdByEmail(normalized) != null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被注册，请直接登录或使用找回密码");
+        }
+
+        mailQuota.checkIpHourly(clientIp);
+
+        String resendKey = REG_RESEND_PREFIX + normalized;
+        try {
+            Long n = redisTemplate.opsForValue().increment(resendKey);
+            if (n != null && n == 1L) {
+                redisTemplate.expire(resendKey, RESEND_WINDOW_SECONDS, TimeUnit.SECONDS);
+            }
+            if (n != null && n > 1) {
+                throw new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请 60 秒后再试");
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("注册发码限流 Redis 失败(降级放行) : {}", e.toString());
+        }
+
+        String code = String.format("%06d", secureRandom.nextInt(1_000_000));
+        try {
+            redisTemplate.opsForValue().set(REG_CODE_PREFIX + normalized, code, REG_CODE_TTL_SECONDS, TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(REG_TRY_PREFIX + normalized, "0", REG_CODE_TTL_SECONDS, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.error("注册验证码存 Redis 失败 : {}", e.toString());
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码发送失败，请稍后重试");
+        }
+
+        String subject = "【多Agent智能体平台】注册验证码";
+        String htmlBody = "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;'>"
+                + "<h2 style='color:#333;'>注册验证码</h2>"
+                + "<p>您正在注册多Agent智能体平台账号，验证码为：</p>"
+                + "<p style='font-size:32px;font-weight:bold;letter-spacing:6px;color:#4A90D9;'>" + code + "</p>"
+                + "<p style='color:#999;font-size:12px;'>验证码 10 分钟内有效，输错 5 次作废。若非本人操作，请忽略本邮件。</p>"
+                + "</div>";
+        if (!sendMail(config, normalized, subject, htmlBody)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码发送失败，请稍后重试");
+        }
+    }
+
+    /**
+     * 校验注册验证码（AuthService.register 建号前调）。
+     * <p>成功即删码（一次性）；错 5 次作废须重新获取。Redis 故障 → fail closed（注册必须证明邮箱归属，不降级放行）。</p>
+     */
+    public void verifyRegisterCode(String email, String code) {
+        String normalized = email == null ? "" : email.trim().toLowerCase();
+        String codeKey = REG_CODE_PREFIX + normalized;
+        String stored;
+        try {
+            stored = redisTemplate.opsForValue().get(codeKey);
+        } catch (Exception e) {
+            log.error("注册验证码查 Redis 失败(fail closed) : {}", e.toString());
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码校验服务异常，请稍后重试");
+        }
+        if (stored == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码已过期，请重新获取");
+        }
+
+        String tryKey = REG_TRY_PREFIX + normalized;
+        try {
+            Long tries = redisTemplate.opsForValue().increment(tryKey);
+            if (tries != null && tries > REG_CODE_MAX_TRIES) {
+                redisTemplate.delete(codeKey);
+                redisTemplate.delete(tryKey);
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码错误次数过多，请重新获取");
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("注册验证码试错计数 Redis 失败(fail closed) : {}", e.toString());
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码校验服务异常，请稍后重试");
+        }
+
+        if (!stored.equals(code == null ? "" : code.trim())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "验证码错误");
+        }
+        redisTemplate.delete(codeKey);
+        redisTemplate.delete(tryKey);
     }
 
     /** 通道是否配置完整（按 provider 分流校验）。 */

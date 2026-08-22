@@ -58,6 +58,8 @@ class AuthServiceAuditTest {
     @Mock private com.superprogrammer.common.security.BanService banService;
     /** 安全体系 S5 · A6：登录分流依赖（未绑定 → mock 默认 false=单步登录，与旧行为一致） */
     @Mock private MfaService mfaService;
+    // 12x B1：注册前置邮箱验证码校验
+    @Mock private com.superprogrammer.auth.service.EmailService emailService;
 
     @InjectMocks
     private AuthService authService;
@@ -164,6 +166,7 @@ class AuthServiceAuditTest {
         req.setUsername("newbie");
         req.setPassword("Str0ng#Pass");
         req.setEmail("n@e.com");
+        req.setEmailCode("123456");
         authService.register(req);
 
         ArgumentCaptor<AuditLogEntity> captor = ArgumentCaptor.forClass(AuditLogEntity.class);

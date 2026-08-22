@@ -83,6 +83,8 @@ public class SecurityConfig {
                         // 认证系统增强：邮箱激活/重发（公开端点，注册后激活场景）
                         .requestMatchers("/api/auth/verify/email").permitAll()
                         .requestMatchers("/api/auth/resend/email").permitAll()
+                        // 12x B1：注册邮箱验证码发送（公开端点，注册前置闸）
+                        .requestMatchers("/api/auth/register/email-code").permitAll()
                         // 认证系统增强：手机验证码登录/发码 + 滑块验证码（公开端点）
                         .requestMatchers("/api/auth/sms/code").permitAll()
                         .requestMatchers("/api/auth/login/sms").permitAll()

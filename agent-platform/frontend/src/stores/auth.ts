@@ -38,6 +38,8 @@ export interface RegisterParams {
   username: string
   email: string
   password: string
+  /** 12x B1：注册邮箱 6 位验证码（先调 sendRegisterEmailCode 获取） */
+  emailCode: string
 }
 
 export const useAuthStore = defineStore('auth', () => {

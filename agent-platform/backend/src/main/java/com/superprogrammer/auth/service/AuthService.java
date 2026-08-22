@@ -66,6 +66,8 @@ public class AuthService {
     private final LoginAlertService loginAlertService;
     /** 安全体系 S5 · SEC-FR-006（A6 TOTP）：已绑定用户两步登录 + 验证码校验。 */
     private final MfaService mfaService;
+    /** 12x B1：注册前置邮箱验证码校验（码过才建号，EMAIL 凭证直接 verified=TRUE）。 */
+    private final EmailService emailService;
 
     private static final String TOKEN_BLACKLIST_PREFIX = "token:blacklist:";
     /**
@@ -119,6 +121,10 @@ public class AuthService {
         // 密码策略（复杂度/弱密码字典/与用户名相同/bcrypt 72 字节上限）
         PasswordPolicy.validate(request.getUsername(), request.getPassword());
 
+        // 12x B1：注册前置校验邮箱 6 位码（验过即删，一次性）。
+        // 放在查重/密码策略之后——这两类失败不烧码，用户改完可直接重提。
+        emailService.verifyRegisterCode(request.getEmail(), request.getEmailCode());
+
         // 创建用户
         User user = new User();
         user.setUsername(request.getUsername());
@@ -136,8 +142,9 @@ public class AuthService {
             userRoleMapper.insert(userRole);
         }
 
-        // 认证系统增强 Chunk A/B：建多凭证（PASSWORD verified=TRUE，EMAIL verified=FALSE）。
-        // 注意：发验证邮件不放本事务（阿里云调用可能慢，拉长事务），由 Controller 层 register 成功后调用。
+        // 认证系统增强 Chunk A/B：建多凭证（PASSWORD verified=TRUE）。
+        // 12x B1：EMAIL 验证码已过 → 直接 verified=TRUE（无需注册后再点激活链接）。
+        // 注意：发验证邮件不放本事务（外部 SMTP 调用可能慢，拉长事务），B1 后注册流程已不再需要。
         try {
             credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_PASSWORD,
                     user.getUsername(), user.getPassword(), true);
@@ -147,15 +154,13 @@ public class AuthService {
             throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
         }
 
-        if (request.getEmail() != null && !request.getEmail().isBlank()) {
-            try {
-                credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
-                        request.getEmail(), null, false);
-            } catch (BusinessException e) {
-                // 邮箱已被他人使用（并发注册同邮箱）：users.uk_users_email 已兜底，这里不应触发；防御性转 CONFLICT
-                log.warn("建 EMAIL 凭证冲突 userId={} email={} : {}", user.getId(), request.getEmail(), e.toString());
-                throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被使用");
-            }
+        try {
+            credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
+                    request.getEmail(), null, true);
+        } catch (BusinessException e) {
+            // 邮箱已被他人使用（并发注册同邮箱）：users.uk_users_email 已兜底，这里不应触发；防御性转 CONFLICT
+            log.warn("建 EMAIL 凭证冲突 userId={} email={} : {}", user.getId(), request.getEmail(), e.toString());
+            throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被使用");
         }
 
         log.info("用户注册成功: {}", user.getUsername());

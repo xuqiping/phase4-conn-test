@@ -90,6 +90,10 @@ class AuthServiceTest {
     @Mock
     private com.superprogrammer.auth.service.MfaService mfaService;
 
+    // 12x B1：注册前置邮箱验证码校验
+    @Mock
+    private com.superprogrammer.auth.service.EmailService emailService;
+
     @Mock
     private ValueOperations<String, String> valueOperations;
 
@@ -115,6 +119,7 @@ class AuthServiceTest {
         registerRequest.setUsername("newuser");
         registerRequest.setPassword("Str0ng#Pass");
         registerRequest.setEmail("new@example.com");
+        registerRequest.setEmailCode("123456");
 
         loginRequest = new LoginRequest();
         loginRequest.setUsername("testuser");
@@ -141,6 +146,33 @@ class AuthServiceTest {
         when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
 
         assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+    }
+
+    // 12x B1：验证码不过 → 直接拒（不建用户）；且 EMAIL 凭证带 verified=TRUE 建
+    @Test
+    void register_emailCodeInvalid_throwsAndSkipsInsert() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        doThrow(new BusinessException(ErrorCode.BAD_REQUEST, "验证码错误"))
+                .when(emailService).verifyRegisterCode("new@example.com", "123456");
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+
+        assertEquals(400, e.getCode());
+        verify(userMapper, never()).insert(any(User.class));
+    }
+
+    @Test
+    void register_emailCredentialCreatedVerified() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
+        when(userMapper.insert(any(User.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        authService.register(registerRequest);
+
+        verify(emailService).verifyRegisterCode("new@example.com", "123456");
+        verify(credentialService).createCredential(any(), eq(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL),
+                eq("new@example.com"), isNull(), eq(true));
     }
 
     // 密码策略：弱密码在查重之后、写库之前被拒（不落库不审计成功）

@@ -192,4 +192,90 @@ class EmailServiceTest {
         assertFalse(service.sendVerifyEmail(1L, "a@b.com"));
         verify(aliyun, never()).send(any(), anyString(), anyString(), anyString());
     }
+
+    // ==================== 12x B1：注册邮箱验证码 ====================
+
+    @Test
+    void sendRegisterCode_mailDisabled_throws() {
+        // B1 强校验：通道未开启 → 注册暂停（宁缺毋滥，不放行无验证注册）
+        when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
+                false, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+        assertTrue(ex.getMessage().contains("邮件通道未开启"));
+    }
+
+    @Test
+    void sendRegisterCode_emailAlreadyRegistered_throwsConflict() {
+        UserCredential cred = mock(UserCredential.class);
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "taken@b.com")).thenReturn(cred);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("taken@b.com", "1.2.3.4"));
+        assertEquals(ErrorCode.CONFLICT.getCode(), ex.getCode());
+    }
+
+    @Test
+    void sendRegisterCode_resendWithin60s_throwsRateLimit() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+        assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+    }
+
+    @Test
+    void sendRegisterCode_success_storesCodeAndSends() {
+        com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
+
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
+
+        assertDoesNotThrow(() -> service.sendRegisterCode("a@b.com", "1.2.3.4"));
+
+        verify(valueOps).set(eq("regcode:email:a@b.com"), matches("\\d{6}"), eq(600L), any());
+        verify(valueOps).set(eq("regcode:try:a@b.com"), eq("0"), eq(600L), any());
+        verify(mailQuota).checkIpHourly("1.2.3.4");
+        verify(aliyun).send(any(), eq("a@b.com"), contains("注册验证码"), anyString());
+    }
+
+    @Test
+    void verifyRegisterCode_expired_throws() {
+        when(valueOps.get("regcode:email:a@b.com")).thenReturn(null);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.verifyRegisterCode("a@b.com", "123456"));
+        assertTrue(ex.getMessage().contains("已过期"));
+    }
+
+    @Test
+    void verifyRegisterCode_wrongCode_throwsAndCounts() {
+        when(valueOps.get("regcode:email:a@b.com")).thenReturn("123456");
+        when(valueOps.increment("regcode:try:a@b.com")).thenReturn(1L);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.verifyRegisterCode("a@b.com", "000000"));
+        assertTrue(ex.getMessage().contains("验证码错误"));
+        verify(redisTemplate, never()).delete("regcode:email:a@b.com");
+    }
+
+    @Test
+    void verifyRegisterCode_tooManyTries_invalidates() {
+        when(valueOps.get("regcode:email:a@b.com")).thenReturn("123456");
+        when(valueOps.increment("regcode:try:a@b.com")).thenReturn(6L);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.verifyRegisterCode("a@b.com", "123456"));
+        assertTrue(ex.getMessage().contains("错误次数过多"));
+        verify(redisTemplate).delete("regcode:email:a@b.com");
+        verify(redisTemplate).delete("regcode:try:a@b.com");
+    }
+
+    @Test
+    void verifyRegisterCode_success_consumesCode() {
+        when(valueOps.get("regcode:email:a@b.com")).thenReturn("123456");
+        when(valueOps.increment("regcode:try:a@b.com")).thenReturn(1L);
+        assertDoesNotThrow(() -> service.verifyRegisterCode("a@b.com", "123456"));
+        verify(redisTemplate).delete("regcode:email:a@b.com");
+        verify(redisTemplate).delete("regcode:try:a@b.com");
+    }
 }
