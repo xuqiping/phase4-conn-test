@@ -3,6 +3,7 @@
 //! S2 = rpc（编解码）+ manager（进程生命周期）。FR-027（对外 MCP Server）归二期。
 
 pub mod manager;
+pub mod market;
 pub mod rpc;
 
 pub use manager::Manager;

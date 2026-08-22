@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "servers": [
+    { "name": "filesystem", "description": "读写指定目录的文件（官方参考 server）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"], "env": [] },
+    { "name": "fetch", "description": "抓网页转 markdown 给模型看（官方参考 server）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-fetch"], "env": [] },
+    { "name": "memory", "description": "给模型一块可读写的记忆便签（官方参考 server）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"], "env": [] },
+    { "name": "git", "description": "查 git 仓库状态/日志/分支（官方参考 server）", "runtime": "uvx", "command": "uvx", "args": ["mcp-server-git"], "env": [] },
+    { "name": "sqlite", "description": "安全查询本地 SQLite 库（官方参考 server）", "runtime": "uvx", "command": "uvx", "args": ["mcp-server-sqlite", "--db-path"], "env": [] },
+    { "name": "puppeteer", "description": "控制无头浏览器：截图/点击/填表", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"], "env": [] },
+    { "name": "github", "description": "查 GitHub 仓库/议题/PR（需登录令牌）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": [{ "key": "GITHUB_PERSONAL_ACCESS_TOKEN", "description": "GitHub 个人访问令牌", "required": true }] },
+    { "name": "brave-search", "description": "Brave 网页搜索（需 API key）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"], "env": [{ "key": "BRAVE_API_KEY", "description": "Brave Search API key", "required": true }] },
+    { "name": "slack", "description": "读写 Slack 频道消息（需机器人令牌）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-slack"], "env": [{ "key": "SLACK_BOT_TOKEN", "description": "Slack 机器人令牌（xoxb- 开头）", "required": true }] },
+    { "name": "postgres", "description": "只读查询 PostgreSQL（官方参考 server）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres"], "env": [] },
+    { "name": "sequential-thinking", "description": "给模型一块分步推理的草稿纸", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"], "env": [] },
+    { "name": "everything", "description": "测试用全家桶 server（验证各种能力用）", "runtime": "npx", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything"], "env": [] },
+    { "name": "time", "description": "查时间/时区转换（官方参考 server）", "runtime": "uvx", "command": "uvx", "args": ["mcp-server-time"], "env": [] },
+    { "name": "context7", "description": "查各种库的最新文档（Upstash 出品，建议带 key）", "runtime": "npx", "command": "npx", "args": ["-y", "@upstash/context7-mcp"], "env": [{ "key": "CONTEXT7_API_KEY", "description": "Context7 API key（不填有限流）", "required": false }] },
+    { "name": "playwright", "description": "微软官方浏览器自动化 server：截图/点击/断言", "runtime": "npx", "command": "npx", "args": ["-y", "@playwright/mcp@latest"], "env": [] }
+  ]
+}

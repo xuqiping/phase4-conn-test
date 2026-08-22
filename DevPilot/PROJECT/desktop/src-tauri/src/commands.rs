@@ -17,9 +17,10 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::events;
 
-/// 内核共享状态：本地库句柄（Db 内部已串行化，可直接共享）。
+/// 内核共享状态：本地库句柄（Db 内部已串行化，可直接共享）+ MCP 进程管理器。
 pub struct AppState {
     pub db: Db,
+    pub mcp: core_mcp::Manager,
 }
 
 #[derive(Debug, Serialize)]
@@ -2299,6 +2300,70 @@ pub fn import_skills(
         .into_iter()
         .map(|(name, result)| SkillImportItemDto { name, result })
         .collect())
+}
+
+// ---------- MCP 市场 + 手动添加（P07 S4 FR-010/AC-012） ----------
+
+/// 内置市场目录（MVP：离线内置；在线刷新后续接网络层，失败降级回内置）。
+#[tauri::command]
+pub fn list_mcp_market() -> CmdResult<Vec<core_mcp::market::MarketEntry>> {
+    core_mcp::market::builtin_catalog().map_err(|e| err("BAD_INPUT", e))
+}
+
+#[derive(Debug, Serialize)]
+pub struct McpInstallDto {
+    pub id: i64,
+    pub outcome: String,
+    pub message: String,
+}
+
+/// 从市场安装一个 server（点选安装免改配置，AC-012）。
+#[tauri::command]
+pub async fn install_mcp_server(
+    state: State<'_, AppState>,
+    name: String,
+    user_env: std::collections::HashMap<String, String>,
+) -> CmdResult<McpInstallDto> {
+    let entry = core_mcp::market::builtin_catalog()
+        .map_err(|e| err("BAD_INPUT", e))?
+        .into_iter()
+        .find(|e| e.name == name)
+        .ok_or_else(|| err("NOT_FOUND", format!("市场里没有「{name}」")))?;
+    let params =
+        core_mcp::market::params_from_entry(&entry, &user_env).map_err(|e| err("BAD_INPUT", e))?;
+    let out = core_mcp::market::install(&state.db, Some(&state.mcp), params, None)
+        .await
+        .map_err(|e| err("INSTALL", e))?;
+    Ok(McpInstallDto {
+        id: out.id,
+        outcome: out.outcome,
+        message: out.message,
+    })
+}
+
+/// 手填 JSON 添加 server（schema 校验后走同一条安装链路）。
+#[tauri::command]
+pub async fn add_mcp_manual(
+    state: State<'_, AppState>,
+    config_json: String,
+) -> CmdResult<McpInstallDto> {
+    let cfg =
+        core_mcp::market::parse_manual_config(&config_json).map_err(|e| err("BAD_INPUT", e))?;
+    let params = core_mcp::market::InstallParams {
+        name: cfg.name,
+        description: cfg.description,
+        command: cfg.command,
+        args: cfg.args,
+        env: cfg.env,
+    };
+    let out = core_mcp::market::install(&state.db, Some(&state.mcp), params, None)
+        .await
+        .map_err(|e| err("INSTALL", e))?;
+    Ok(McpInstallDto {
+        id: out.id,
+        outcome: out.outcome,
+        message: out.message,
+    })
 }
 
 #[cfg(test)]

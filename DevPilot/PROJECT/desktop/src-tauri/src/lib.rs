@@ -16,7 +16,8 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db = Db::open(dir.join("devpilot.db"))?;
-            app.manage(AppState { db });
+            let mcp = core_mcp::Manager::new(db.clone());
+            app.manage(AppState { db, mcp });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,6 +72,9 @@ pub fn run() {
             commands::save_skill_from_context,
             commands::export_skill,
             commands::import_skills,
+            commands::list_mcp_market,
+            commands::install_mcp_server,
+            commands::add_mcp_manual,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");
