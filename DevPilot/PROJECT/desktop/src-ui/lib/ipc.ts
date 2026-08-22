@@ -338,7 +338,20 @@ export const ipc = {
   mcpRestart: (id: number) => invoke<string>("mcp_restart", { id }),
   mcpUninstall: (id: number) => invoke<string>("mcp_uninstall", { id }),
   mcpLogs: (id: number) => invoke<string[]>("mcp_logs", { id }),
+  // P07 S7：多模态输入
+  saveAttachment: (projectId: number, bytes: Uint8Array) =>
+    invoke<AttachmentDto>("save_attachment", { projectId, bytes: Array.from(bytes) }),
+  deleteAttachment: (id: number) => invoke<void>("delete_attachment", { id }),
+  voiceProbe: () => invoke<boolean>("voice_probe"),
+  voiceTranscribe: (audio: Uint8Array) =>
+    invoke<string>("voice_transcribe", { audio: Array.from(audio) }),
 };
+
+export interface AttachmentDto {
+  id: number;
+  path: string;
+  source_kb: number;
+}
 
 export interface McpServerDto {
   id: number;

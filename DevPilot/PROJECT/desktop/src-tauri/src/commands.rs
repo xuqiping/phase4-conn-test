@@ -2516,6 +2516,133 @@ pub async fn mcp_logs(state: State<'_, AppState>, id: i64) -> CmdResult<Vec<Stri
         .collect())
 }
 
+// ---------- 多模态输入：图片附件 + 语音听写（P07 S7 FR-011/AC-013） ----------
+
+const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 源图 ≤10MB
+const MAX_STORED_BYTES: usize = 1024 * 1024; // 存盘 ≤1MB
+
+#[derive(Debug, Serialize)]
+pub struct AttachmentDto {
+    pub id: i64,
+    pub path: String,
+    pub source_kb: i64,
+}
+
+/// 保存一张图片附件：校验（图片 + ≤10MB）→ 压缩成 ≤1MB JPEG →
+/// 存 ~/.devpilot/projects/<id>/attachments/ → 登记 input_attachments。
+#[tauri::command]
+pub fn save_attachment(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    project_id: i64,
+    bytes: Vec<u8>,
+) -> CmdResult<AttachmentDto> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(err("BAD_INPUT", "图片超过 10MB，太大啦，请裁小一点再拖"));
+    }
+    // 解码（png/jpeg；解不开就当成不是图片拒绝）
+    let img = image::load_from_memory(&bytes)
+        .map_err(|_| err("BAD_INPUT", "这个文件不是能识别的图片（支持 png/jpg）"))?;
+    // 压缩循环：质量从高到低试，直到 ≤1MB
+    let mut stored: Vec<u8> = Vec::new();
+    for quality in [85u8, 70, 55, 40, 25] {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
+        img.write_with_encoder(enc)
+            .map_err(|e| err("IO", format!("图片压缩失败：{e}")))?;
+        stored = buf.into_inner();
+        if stored.len() <= MAX_STORED_BYTES {
+            break;
+        }
+    }
+    if stored.len() > MAX_STORED_BYTES {
+        return Err(err("BAD_INPUT", "图片压到质量 25 仍超 1MB，请先裁剪尺寸"));
+    }
+    // 落盘到项目目录
+    let project_dir = {
+        let (path,): (String,) = state
+            .db
+            .read(|c| {
+                c.query_row(
+                    "SELECT path FROM projects WHERE id = ?1",
+                    [project_id],
+                    |r| Ok((r.get(0)?,)),
+                )
+                .map(Some)
+                .or(Ok(None))
+            })
+            .map_err(|e| err("DB", e.to_string()))?
+            .ok_or_else(|| err("NOT_FOUND", "项目不存在"))?;
+        std::path::PathBuf::from(path)
+    };
+    let dir = project_dir.join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|e| err("IO", format!("建附件目录失败：{e}")))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let file = dir.join(format!("img-{stamp}.jpg"));
+    std::fs::write(&file, &stored).map_err(|e| err("IO", format!("写图片失败：{e}")))?;
+    let id = state
+        .db
+        .write(|c| {
+            core_state::attachments::insert(
+                c,
+                project_id,
+                "image",
+                &file.to_string_lossy(),
+                (bytes.len() / 1024).max(1) as i64,
+            )
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+    let _ = app; // 预留：后续状态事件推送
+    Ok(AttachmentDto {
+        id,
+        path: file.to_string_lossy().to_string(),
+        source_kb: (bytes.len() / 1024).max(1) as i64,
+    })
+}
+
+/// 删除附件（chip × 按钮）：删记录 + 尽力删文件。
+#[tauri::command]
+pub fn delete_attachment(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let path: Option<String> = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT path FROM input_attachments WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or(Ok(None))
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
+    if let Some(p) = &path {
+        std::fs::remove_file(p).ok(); // 文件没了不报错（可能已被清理）
+    }
+    state
+        .db
+        .write(|c| core_state::attachments::delete(c, id))
+        .map_err(|e| err("DB", e.to_string()))?;
+    Ok(())
+}
+
+/// 语音听写能力探测：MVP 未接入 OS 听写（SAPI/WinRT 二期接），返回不可用 → UI 隐藏按钮。
+#[tauri::command]
+pub fn voice_probe() -> CmdResult<bool> {
+    Ok(false)
+}
+
+/// 语音转写（占位）：能力探测未通过时 UI 不会走到这里；走到也给大白话。
+#[tauri::command]
+pub fn voice_transcribe(_audio: Vec<u8>) -> CmdResult<String> {
+    Err(err(
+        "UNSUPPORTED",
+        "语音听写还没接入这台系统（Windows 听写排队二期）",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

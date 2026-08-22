@@ -30,3 +30,5 @@ core-meter = { path = "crates/core-meter" }
 core-skills = { path = "crates/core-skills" }
 core-mcp = { path = "crates/core-mcp" }
 core-cli = { path = "crates/core-cli" }
+# P07 S7 附件图片压缩（≤1MB JPEG 存盘）
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

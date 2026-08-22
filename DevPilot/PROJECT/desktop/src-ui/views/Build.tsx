@@ -177,7 +177,7 @@ export default function Build() {
 
       <div className="panel space-y-3 rounded-[9px] p-4">
         <h3 className="text-sm font-semibold">追加指令续跑</h3>
-        <TaskInputBox busy={continuing} onSubmit={submitInstructions} />
+        <TaskInputBox busy={continuing} projectId={projectId ?? undefined} onSubmit={submitInstructions} />
         {error && <div className="text-xs text-red-400">{error}</div>}
       </div>
 

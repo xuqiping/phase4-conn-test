@@ -2,8 +2,10 @@
 // '/' 弹技能候选 → 选中展开为 chip → 提交时 prompt = 技能正文 + 用户文本。
 
 import { useEffect, useState } from "react";
-import { ipc, type SkillDto } from "../../lib/ipc";
+import { ipc, type AttachmentDto, type SkillDto } from "../../lib/ipc";
+import AttachmentChips, { validateImageFile } from "./AttachmentChips";
 import SkillAutocomplete, { filterSkills, slashQuery } from "./SkillAutocomplete";
+import VoiceDictation from "./VoiceDictation";
 
 export interface TaskInputBoxProps {
   placeholder?: string;
@@ -11,6 +13,8 @@ export interface TaskInputBoxProps {
   busy?: boolean;
   busyLabel?: string;
   submitLabel?: string;
+  /** 图片附件归属的项目（不传则不启用拖图） */
+  projectId?: number;
   /** 提交：拿到最终 prompt（技能正文已拼好） */
   onSubmit: (prompt: string) => Promise<void>;
 }
@@ -22,6 +26,34 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [open, setOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentDto[]>([]);
+  const canAttach = props.projectId != null;
+
+  /** 拖入/粘贴的图片先过本地校验（快速拒绝），再交给 AttachmentChips 存。 */
+  const acceptDropped = (files: FileList | null) => {
+    if (!canAttach || !files || files.length === 0) return;
+    for (const f of Array.from(files)) {
+      const bad = validateImageFile(f);
+      if (typeof bad === "string") setError(bad);
+      else void addFile(f);
+    }
+  };
+
+  const addFile = async (f: File) => {
+    if (props.projectId == null) return;
+    setError(null);
+    try {
+      // jsdom 等环境 File.arrayBuffer 可能缺失：兜底空字节（真浏览器不受影响）
+      const buf = await Promise.resolve(f.arrayBuffer?.()).catch(
+        () => new ArrayBuffer(0),
+      );
+      const bytes = new Uint8Array(buf);
+      const dto = await ipc.saveAttachment(props.projectId, bytes);
+      setAttachments((prev) => [...prev, dto]);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     ipc.listSkills().then(setSkills).catch(() => setSkills([]));
@@ -92,6 +124,17 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
 
   return (
     <div className="relative space-y-2" data-testid="task-input-box">
+      {canAttach && props.projectId != null && (
+        <div className="flex items-center gap-2">
+          <AttachmentChips
+            projectId={props.projectId}
+            attachments={attachments}
+            onChange={setAttachments}
+            onError={setError}
+          />
+          <VoiceDictation />
+        </div>
+      )}
       {skill && (
         <div
           data-testid="skill-chip"
@@ -118,6 +161,16 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
             setOpen(true);
           }}
           onKeyDown={onKeyDown}
+          onDrop={(e) => {
+            acceptDropped(e.dataTransfer?.files ?? null);
+          }}
+          onPaste={(e) => {
+            const files = e.clipboardData?.files ?? null;
+            if (files && files.length > 0) {
+              e.preventDefault();
+              acceptDropped(files);
+            }
+          }}
           placeholder={props.placeholder ?? "例如：再帮我加个登录表单的白底版本（输入 / 调用技能）"}
           rows={3}
           disabled={props.disabled}

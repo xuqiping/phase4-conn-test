@@ -18,6 +18,7 @@ vi.mock("../../lib/ipc", () => ({
   ipc: {
     listSkills: () => listSkills(),
     invokeSkill: (name: string) => invokeSkill(name),
+    voiceProbe: async () => false,
   },
 }));
 
