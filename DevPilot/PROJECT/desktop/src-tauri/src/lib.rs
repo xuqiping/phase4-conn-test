@@ -68,6 +68,9 @@ pub fn run() {
             commands::update_plan_chunk,
             commands::approve_plan,
             commands::revoke_plan_approval,
+            commands::save_skill_from_context,
+            commands::export_skill,
+            commands::import_skills,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");

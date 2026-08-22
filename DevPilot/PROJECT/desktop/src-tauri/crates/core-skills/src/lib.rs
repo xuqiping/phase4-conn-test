@@ -1,6 +1,7 @@
 //! core-skills：Skills 解析/生成/注册/斜杠调用。
 //! 对应 FR-025。S1 = SKILL.md 解析（skill_file）+ 注册表同步（registry）。
 
+pub mod generator;
 pub mod registry;
 pub mod skill_file;
 

@@ -9,7 +9,7 @@ use core_state::agent_config::AgentConfigFields;
 use core_state::checkpoint;
 use core_state::machine::loader;
 use core_state::machine::{PersistentMachine, TransitionError};
-use core_state::task_event::{self, TaskEvent};
+use core_state::task_event::{self, TaskEvent, TaskEventType};
 use core_state::Db;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto_unpass_gate(db: &Db, project_id: i64, gate: &str) -> CmdResult<()> {
         Ok(())
     })
     .map_err(|e| err("DB", e.to_string()))
+}
+
+// ---------- 技能生成器 + 导入导出（P07 S3 FR-025/AC-028） ----------
+
+fn skills_dir() -> std::path::PathBuf {
+    core_skills::registry::default_skills_dir()
+}
+
+/// 审计：技能操作记 task_events（只增不改，可回放）；task_id 缺省时跳过。
+fn audit_skill(db: &Db, task_id: Option<i64>, message: &str) {
+    if let Some(tid) = task_id {
+        db.write(|c| {
+            task_event::insert(c, tid, TaskEventType::Checkpoint, message)?;
+            Ok(())
+        })
+        .ok();
+    }
+}
+
+/// 对话/任务上下文一键存成技能：生成 → 落盘 → 注册，立即可 /name 调用。
+#[tauri::command]
+pub fn save_skill_from_context(
+    state: State<'_, AppState>,
+    task_id: Option<i64>,
+    name: String,
+    description: String,
+    task_prompt: String,
+    rounds_summary: String,
+) -> CmdResult<String> {
+    let text = core_skills::generator::generate_from_context(&core_skills::generator::GenInput {
+        name: name.trim(),
+        description: &description,
+        task_prompt: &task_prompt,
+        rounds_summary: &rounds_summary,
+    })
+    .map_err(|e| err("BAD_INPUT", e))?;
+    let msg = core_skills::generator::save_skill(&state.db, &skills_dir(), &text)
+        .map_err(|e| err("IO", e))?;
+    audit_skill(&state.db, task_id, &msg);
+    Ok(msg)
+}
+
+/// 导出一个技能目录到用户选的目标目录（前端负责选目录）。
+#[tauri::command]
+pub fn export_skill(
+    state: State<'_, AppState>,
+    task_id: Option<i64>,
+    skill_id: i64,
+    dest_dir: String,
+) -> CmdResult<String> {
+    let dest = std::path::PathBuf::from(dest_dir.trim());
+    if dest.as_os_str().is_empty() {
+        return Err(err("BAD_INPUT", "请选择导出目录"));
+    }
+    let path = core_skills::generator::export_skill(&state.db, skill_id, &dest)
+        .map_err(|e| err("IO", e))?;
+    audit_skill(&state.db, task_id, &format!("导出技能到 {path}"));
+    Ok(path)
+}
+
+/// 导入技能（单个技能目录或装多个的文件夹），返回逐项结果。
+#[derive(Debug, Serialize)]
+pub struct SkillImportItemDto {
+    pub name: String,
+    pub result: String,
+}
+
+#[tauri::command]
+pub fn import_skills(
+    state: State<'_, AppState>,
+    task_id: Option<i64>,
+    src_dir: String,
+) -> CmdResult<Vec<SkillImportItemDto>> {
+    let src = std::path::PathBuf::from(src_dir.trim());
+    if !src.is_dir() {
+        return Err(err("BAD_INPUT", "路径不存在或不是文件夹"));
+    }
+    let results = core_skills::generator::import_skills(&state.db, &skills_dir(), &src)
+        .map_err(|e| err("IO", e))?;
+    audit_skill(
+        &state.db,
+        task_id,
+        &format!(
+            "导入技能：{}",
+            results
+                .iter()
+                .map(|(n, _)| n)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
+        ),
+    );
+    Ok(results
+        .into_iter()
+        .map(|(name, result)| SkillImportItemDto { name, result })
+        .collect())
 }
 
 #[cfg(test)]
