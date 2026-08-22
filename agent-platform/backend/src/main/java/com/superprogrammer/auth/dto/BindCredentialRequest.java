@@ -19,4 +19,11 @@ public class BindCredentialRequest {
     @Email(message = "邮箱格式不正确")
     @Size(max = 200, message = "邮箱过长")
     private String email;
+
+    /**
+     * 两步验证码（12x B4）：账号已绑 TOTP 时改绑/新绑邮箱必填——
+     * 防「会话被劫持 → 偷换找回邮箱 → 找回密码卷号」。
+     */
+    @Size(max = 20, message = "验证码过长")
+    private String totpCode;
 }

@@ -226,9 +226,10 @@ export const authApi = {
   /**
    * 绑定邮箱（建 EMAIL 凭证 verified=FALSE + 触发激活邮件）
    * POST /api/me/credential/bind-email
+   * 12x B4：账号已开 TOTP 时 totpCode 必填（后端强校验）
    */
-  bindEmail(email: string) {
-    return request.post<ApiResponse<void>>('/me/credential/bind-email', { email })
+  bindEmail(email: string, totpCode?: string) {
+    return request.post<ApiResponse<void>>('/me/credential/bind-email', { email, totpCode })
   },
 
   /**

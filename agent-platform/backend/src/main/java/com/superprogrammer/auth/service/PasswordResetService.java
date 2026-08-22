@@ -143,6 +143,18 @@ public class PasswordResetService {
         // 改走 SessionService.kickAllSessions 统一正确的键前缀 + 降级范式。
         sessionService.kickAllSessions(userId);
         log.info("重置密码后踢所有会话 userId={}", userId);
+
+        // 12x B4：重置成功告警信（防盗号链无感知；失败只记日志不回滚）
+        try {
+            UserCredential emailCredential = findVerifiedEmailCredential(userId);
+            if (emailCredential != null) {
+                emailService.sendPasswordResetAlertEmail(emailCredential.getIdentifier(),
+                        java.time.LocalDateTime.now().format(
+                                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            }
+        } catch (Exception e) {
+            log.warn("重置告警信发送失败(已吞,不影响重置结果) userId={} : {}", userId, e.toString());
+        }
     }
 
     // ==================== 内部方法 ====================

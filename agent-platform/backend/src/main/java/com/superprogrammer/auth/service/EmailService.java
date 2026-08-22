@@ -1,6 +1,7 @@
 // agent-platform/backend/src/main/java/com/superprogrammer/auth/service/EmailService.java
 package com.superprogrammer.auth.service;
 
+import com.superprogrammer.auth.service.mail.MailSendQuotaService;
 import com.superprogrammer.auth.service.mail.MailSender;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
@@ -32,6 +33,7 @@ public class EmailService {
     private final AuthChannelSettingService channelSettings;
     private final StringRedisTemplate redisTemplate;
     private final CredentialService credentialService;
+    private final MailSendQuotaService mailQuota;
     private final Map<String, MailSender> senders;
 
     private static final String VERIFY_TOKEN_PREFIX = "verify:email:";
@@ -44,10 +46,12 @@ public class EmailService {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
-                        CredentialService credentialService, List<MailSender> mailSenders) {
+                        CredentialService credentialService, MailSendQuotaService mailQuota,
+                        List<MailSender> mailSenders) {
         this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
+        this.mailQuota = mailQuota;
         this.senders = mailSenders.stream().collect(Collectors.toMap(MailSender::provider, Function.identity()));
     }
 
@@ -131,11 +135,14 @@ public class EmailService {
         }
     }
 
-    /** 重发验证邮件（限流：同邮箱 60s）。统一话术防枚举。 */
-    public String resendVerifyEmail(String email) {
+    /** 重发验证邮件（限流：同邮箱 60s + 同 IP 10 封/h〔12x B3〕）。统一话术防枚举。 */
+    public String resendVerifyEmail(String email, String clientIp) {
         if (email == null || email.isBlank()) {
             return "若该邮箱已注册且未验证，验证邮件已发送";
         }
+
+        // 12x B3：IP 维度补闸（原只有邮箱维度，轰炸机换邮箱即绕）
+        mailQuota.checkIpHourly(clientIp);
 
         String limitKey = RESEND_LIMIT_PREFIX + email.toLowerCase();
         try {
@@ -188,6 +195,26 @@ public class EmailService {
         return sendMail(config, toEmail, subject, htmlBody);
     }
 
+    /**
+     * B4：密码重置成功告警信（发给被重置账号的已验证邮箱）。
+     * <p>防盗号链「邮箱失陷→重置→换密→卷积分」无感知——受害者收信可及时申诉。
+     * 发送失败只记日志，不回滚重置主流程。</p>
+     */
+    public void sendPasswordResetAlertEmail(String email, String resetTimeText) {
+        var config = channelSettings.mailSnapshot();
+        if (!config.enabled() || !isConfigured(config)) {
+            log.warn("邮件推送未开启，跳过重置告警信");
+            return;
+        }
+        String subject = "【多Agent智能体平台】您的账号密码已重置";
+        String htmlBody = "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;'>"
+                + "<h2 style='color:#E74C3C;'>密码已重置</h2>"
+                + "<p>您的账号密码已于 <b>" + resetTimeText + "</b> 通过「找回密码」完成重置，全部登录会话已强制退出。</p>"
+                + "<p style='color:#999;font-size:12px;'>若这是您本人操作，请忽略本邮件。若非本人操作，您的邮箱可能已泄露，请立即修改邮箱密码并联系平台管理员冻结账号。</p>"
+                + "</div>";
+        sendMail(config, email, subject, htmlBody);
+    }
+
     /** 通道是否配置完整（按 provider 分流校验）。 */
     private boolean isConfigured(AuthChannelSettingService.MailSnapshot config) {
         if ("SMTP".equalsIgnoreCase(config.provider())) {
@@ -207,13 +234,16 @@ public class EmailService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    /** 按 provider 路由到具体通道发信（12x 抽象）。 */
+    /** 按 provider 路由到具体通道发信（12x 抽象）；B3：全局日总量封顶防超额封号。 */
     private boolean sendMail(AuthChannelSettingService.MailSnapshot config,
                              String toEmail, String subject, String htmlBody) {
         String provider = hasText(config.provider()) ? config.provider().toUpperCase() : "ALIYUN";
         MailSender sender = senders.get(provider);
         if (sender == null) {
             log.error("未知邮件通道 provider={}，可用={}", provider, senders.keySet());
+            return false;
+        }
+        if (!mailQuota.tryConsumeDaily()) {
             return false;
         }
         return sender.send(config, toEmail, subject, htmlBody);

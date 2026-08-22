@@ -173,6 +173,14 @@
             :input-props="{ autocomplete: 'email' }"
           />
         </n-form-item>
+        <!-- 12x B4：账号已开 TOTP 时改绑/绑定邮箱必须过两步码（防会话劫持偷换找回邮箱） -->
+        <n-form-item path="totpCode" label="两步验证码（已开启两步验证的账号必填）">
+          <n-input
+            v-model:value="bindForm.totpCode"
+            placeholder="身份验证器 6 位数字（未开启可留空）"
+            :input-props="{ autocomplete: 'one-time-code', inputmode: 'numeric' }"
+          />
+        </n-form-item>
         <n-alert type="info" :show-icon="true" style="margin-top: 4px">
           绑定后将发送激活邮件，激活后该邮箱方可用于找回密码。
         </n-alert>
@@ -263,7 +271,7 @@ async function handleUnbind(credentialType: string) {
 const showBindEmail = ref(false)
 const binding = ref(false)
 const bindFormRef = ref<FormInst | null>(null)
-const bindForm = reactive({ email: '' })
+const bindForm = reactive({ email: '', totpCode: '' })
 const bindRules: FormRules = {
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
@@ -287,10 +295,11 @@ async function confirmBindEmail() {
   }
   binding.value = true
   try {
-    await authApi.bindEmail(bindForm.email.trim())
+    await authApi.bindEmail(bindForm.email.trim(), bindForm.totpCode.trim() || undefined)
     message.success('绑定成功，请查收激活邮件完成验证')
     showBindEmail.value = false
     bindForm.email = ''
+    bindForm.totpCode = ''
     await loadCredentials()
   } catch {
     // 拦截器已提示

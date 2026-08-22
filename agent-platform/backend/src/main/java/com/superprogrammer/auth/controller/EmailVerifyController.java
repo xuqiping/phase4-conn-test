@@ -5,6 +5,8 @@ import com.superprogrammer.auth.dto.EmailVerifyRequest;
 import com.superprogrammer.auth.dto.ResendEmailRequest;
 import com.superprogrammer.auth.service.EmailService;
 import com.superprogrammer.common.result.R;
+import com.superprogrammer.common.security.ClientIpResolver;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class EmailVerifyController {
 
     private final EmailService emailService;
+    private final ClientIpResolver clientIpResolver;
 
     /**
      * 邮箱激活（用户点激活链接后前端调）。
@@ -43,8 +46,9 @@ public class EmailVerifyController {
      * 审计：EmailService.resendVerifyEmail 内部手工建行。
      */
     @PostMapping("/resend/email")
-    public ResponseEntity<R<String>> resendEmail(@Valid @RequestBody ResendEmailRequest request) {
-        String message = emailService.resendVerifyEmail(request.getEmail());
+    public ResponseEntity<R<String>> resendEmail(@Valid @RequestBody ResendEmailRequest request,
+                                                 HttpServletRequest httpRequest) {
+        String message = emailService.resendVerifyEmail(request.getEmail(), clientIpResolver.resolve(httpRequest));
         return ResponseEntity.ok(R.ok(message, null));
     }
 }

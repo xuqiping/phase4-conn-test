@@ -6,6 +6,7 @@ import com.superprogrammer.auth.config.AliyunMailConfig;
 import com.superprogrammer.auth.dto.CredentialVO;
 import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,8 @@ class EmailServiceTest {
     private ValueOperations<String, String> valueOps;
     @Mock
     private CredentialService credentialService;
+    @Mock
+    private com.superprogrammer.auth.service.mail.MailSendQuotaService mailQuota;
 
     private EmailService service;
 
@@ -50,8 +53,9 @@ class EmailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of());
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of());
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        lenient().when(mailQuota.tryConsumeDaily()).thenReturn(true);
         lenient().when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
                 true, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
                 null, "https://test.com/verify-email", "https://test.com/reset-password",
@@ -99,7 +103,7 @@ class EmailServiceTest {
     @Test
     void resendVerifyEmail_rateLimited_returnsMessage() {
         when(valueOps.increment(startsWith("resend:email:"))).thenReturn(2L);
-        String msg = service.resendVerifyEmail("a@b.com");
+        String msg = service.resendVerifyEmail("a@b.com", "1.2.3.4");
         assertTrue(msg.contains("发送过于频繁"));
     }
 
@@ -107,8 +111,17 @@ class EmailServiceTest {
     void resendVerifyEmail_emailNotRegistered_returnsUnifiedMessage() {
         when(valueOps.increment(anyString())).thenReturn(1L);
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "not@exist.com")).thenReturn(null);
-        String msg = service.resendVerifyEmail("not@exist.com");
+        String msg = service.resendVerifyEmail("not@exist.com", "1.2.3.4");
         assertEquals("若该邮箱已注册且未验证，验证邮件已发送", msg);
+    }
+
+    @Test
+    void resendVerifyEmail_ipQuotaExceeded_throwsRateLimit() {
+        doThrow(new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请稍后再试"))
+                .when(mailQuota).checkIpHourly("9.9.9.9");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.resendVerifyEmail("a@b.com", "9.9.9.9"));
+        assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
     }
 
     // ==================== 12x：通道路由 + 测试发信 ====================
@@ -129,7 +142,7 @@ class EmailServiceTest {
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(smtp.provider()).thenReturn("SMTP");
         when(smtp.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of(aliyun, smtp));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun, smtp));
 
         var cfg = new AuthChannelSettingService.MailSnapshot(
                 true, "", "", "", "", "", null, "https://t.com/v", "",
@@ -153,7 +166,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
 
         // enabled=false 也应能测试（先测通再开开关）
         var cfg = new AuthChannelSettingService.MailSnapshot(
@@ -162,5 +175,21 @@ class EmailServiceTest {
 
         assertTrue(service.sendTestMail("a@b.com"));
         verify(aliyun).send(eq(cfg), eq("a@b.com"), contains("测试"), anyString());
+    }
+
+    @Test
+    void sendMail_dailyCapExhausted_returnsFalse() {
+        // B3：日总量封顶 → 委托前即拒（不再调通道）
+        com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(mailQuota.tryConsumeDaily()).thenReturn(false);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, List.of(aliyun));
+
+        var cfg = new AuthChannelSettingService.MailSnapshot(
+                true, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null);
+        when(channelSettings.mailSnapshot()).thenReturn(cfg);
+
+        assertFalse(service.sendVerifyEmail(1L, "a@b.com"));
+        verify(aliyun, never()).send(any(), anyString(), anyString(), anyString());
     }
 }

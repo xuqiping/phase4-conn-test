@@ -112,4 +112,44 @@ class PasswordResetServiceTest {
                 () -> service.reset("valid", "OldPass123!", "EMAIL", null));
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
+
+    @Test
+    void reset_validTokenWithVerifiedEmail_sendsAlertMail() {
+        // 12x B4：重置成功 → 给已验证邮箱发告警信
+        when(valueOps.get(EmailService.RESET_TOKEN_PREFIX + "valid")).thenReturn("1");
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("testuser");
+        user.setPassword("$2b$oldhash");
+        when(userMapper.selectById(1L)).thenReturn(user);
+        when(passwordEncoder.matches("NewPass123!", "$2b$oldhash")).thenReturn(false);
+        when(passwordEncoder.encode("NewPass123!")).thenReturn("$2b$newhash");
+        com.superprogrammer.auth.entity.UserCredential emailCred =
+                new com.superprogrammer.auth.entity.UserCredential();
+        emailCred.setCredentialType(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL);
+        emailCred.setIdentifier("victim@x.com");
+        emailCred.setVerified(true);
+        when(credentialService.findByUserIdRaw(1L)).thenReturn(java.util.List.of(emailCred));
+
+        service.reset("valid", "NewPass123!", "EMAIL", null);
+
+        verify(emailService).sendPasswordResetAlertEmail(eq("victim@x.com"), anyString());
+    }
+
+    @Test
+    void reset_noVerifiedEmail_skipsAlertMail() {
+        // 12x B4：无已验证邮箱 → 不发告警但不影响重置
+        when(valueOps.get(EmailService.RESET_TOKEN_PREFIX + "valid")).thenReturn("1");
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("testuser");
+        user.setPassword("$2b$oldhash");
+        when(userMapper.selectById(1L)).thenReturn(user);
+        when(passwordEncoder.matches("NewPass123!", "$2b$oldhash")).thenReturn(false);
+        when(passwordEncoder.encode("NewPass123!")).thenReturn("$2b$newhash");
+
+        service.reset("valid", "NewPass123!", "EMAIL", null);
+
+        verify(emailService, never()).sendPasswordResetAlertEmail(anyString(), anyString());
+    }
 }

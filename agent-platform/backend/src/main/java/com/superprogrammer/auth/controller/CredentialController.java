@@ -8,7 +8,10 @@ import com.superprogrammer.auth.dto.UnbindCredentialRequest;
 import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.auth.service.CredentialService;
 import com.superprogrammer.auth.service.EmailService;
+import com.superprogrammer.auth.service.MfaService;
 import com.superprogrammer.common.audit.AuditLog;
+import com.superprogrammer.common.exception.BusinessException;
+import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +53,8 @@ public class CredentialController {
     private final CredentialService credentialService;
     /** 绑定邮箱后触发激活邮件（Controller 层编排，避免 CredentialService ↔ EmailService 循环依赖）。 */
     private final EmailService emailService;
+    /** 12x B4：改绑邮箱前的 TOTP 校验。 */
+    private final MfaService mfaService;
 
     /** 当前登录用户凭证列表（设置页展示，identifier 脱敏）。 */
     @GetMapping("/credentials")
@@ -62,11 +67,22 @@ public class CredentialController {
      * 绑定邮箱：建 EMAIL 凭证 verified=FALSE → 异步触发激活邮件。
      *
      * <p>激活邮件发送失败不阻断绑定（凭证已建，用户可在登录页 /resend/email 重发）。
+     *
+     * <p>12x B4：账号已绑 TOTP 时本操作属高危（改绑找回邮箱=夺号前置），必须过两步验证码。</p>
      */
     @AuditLog(module = "auth", action = "credential_bind", targetType = "credential")
     @PostMapping("/credential/bind-email")
     public ResponseEntity<R<Void>> bindEmail(@Valid @RequestBody BindCredentialRequest request) {
         Long userId = currentUserId();
+        // 12x B4：已绑 TOTP → 改绑邮箱必须过码（防会话劫持偷换找回邮箱）
+        if (mfaService.isBound(userId)) {
+            if (request.getTotpCode() == null || request.getTotpCode().isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "已开启两步验证，绑定/改绑邮箱请输入身份验证器验证码");
+            }
+            if (!mfaService.verifyAndConsume(userId, request.getTotpCode().trim(), true)) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "两步验证码错误或已过期");
+            }
+        }
         UserCredential cred = credentialService.bindEmail(userId, request.getEmail());
         // 触发激活邮件（异步语义：失败仅 WARN，不阻断——用户可重发）
         boolean sent = emailService.sendVerifyEmail(userId, cred.getIdentifier());
