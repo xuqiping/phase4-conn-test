@@ -299,4 +299,33 @@ mod tests {
         let empty = temp_dir("imp-empty");
         assert!(import_skills(&db, &dst, &empty).is_err());
     }
+
+    /// AC-028 e2e：保存 → 注册表立即可见 → 斜杠调用能取到展开文本。
+    #[test]
+    fn ac028_save_then_list_then_invoke_e2e() {
+        let db = Db::open_in_memory().unwrap();
+        let dir = temp_dir("e2e");
+        let text = gen("e2e-skill", "端到端验证");
+        save_skill(&db, &dir, &text).expect("保存成功");
+
+        // list：enabled + valid，立即可见
+        let rows = db
+            .read(|c| core_state::skills_local::list(c, true))
+            .unwrap();
+        assert_eq!(rows.len(), 1, "保存后注册表立即可见");
+        assert_eq!(rows[0].status, "valid");
+
+        // invoke：按名字取正文（模拟 commands::invoke_skill 的展开路径）
+        let row = db
+            .read(|c| core_state::skills_local::by_name(c, "e2e-skill"))
+            .unwrap()
+            .unwrap();
+        assert!(row.enabled);
+        let file_text = std::fs::read_to_string(&row.yaml_path).unwrap();
+        let body = crate::skill_file::extract_body(&file_text).unwrap();
+        assert!(
+            body.contains("发版检查流程"),
+            "展开文本要含任务原文：{body}"
+        );
+    }
 }

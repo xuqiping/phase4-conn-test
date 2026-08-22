@@ -25,7 +25,9 @@ DevPilot/
 ├── PROJECT/                    # 实际代码（Phase 3 起建）
 │   ├── desktop/                # Tauri 2 客户端（Rust workspace + React UI）
 │   │   ├── src-tauri/          # Rust 内核：crates（core-state/orchestrator/sandbox/exec/meter/skills/mcp/cli）
+│   │   │   └── crates/         # P07 新增：core-skills（skill_file/registry/generator）、core-mcp（manager/rpc/market + assets/market_catalog.json + tests/ 真进程集成测试）
 │   │   └── src-ui/             # React 前端：views / components / stores / lib
+│   │       └── components/     # P07 新增：input/（SkillAutocomplete/TaskInputBox/AttachmentChips/VoiceDictation）、settings/（McpPanel/McpMarket）、views/Mcp.tsx
 │   ├── cloud/                  # NestJS 云端：auth / billing / gateway / skills-market
 │   └── cli/                    # devpilot CLI 入口（薄壳，转发 core-cli）
 ├── scripts/                    # check_all 最小质量门 + check_docs
