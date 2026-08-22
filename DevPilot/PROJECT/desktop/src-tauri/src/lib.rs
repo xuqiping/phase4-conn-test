@@ -77,6 +77,12 @@ pub fn run() {
             commands::add_mcp_manual,
             commands::list_skills,
             commands::invoke_skill,
+            commands::list_mcp_servers,
+            commands::mcp_start,
+            commands::mcp_stop,
+            commands::mcp_restart,
+            commands::mcp_uninstall,
+            commands::mcp_logs,
         ])
         .run(tauri::generate_context!())
         .expect("DevPilot 客户端启动失败");

@@ -5,6 +5,7 @@ import Build from "../views/Build";
 import Dashboard from "../views/dashboard/Dashboard";
 import Deploy from "../views/Deploy";
 import Idea from "../views/Idea";
+import Mcp from "../views/Mcp";
 import Plan from "../views/Plan";
 import Spec from "../views/Spec";
 import { VIEW_META, type ViewKey, type ViewMeta } from "./viewMeta";
@@ -23,6 +24,7 @@ const COMPONENTS: Record<ViewKey, ComponentType> = {
   build: Build,
   accept: Accept,
   deploy: Deploy,
+  mcp: Mcp,
 };
 
 export const VIEW_REGISTRY: readonly ViewDef[] = VIEW_META.map((m) => ({

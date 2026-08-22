@@ -331,7 +331,25 @@ export const ipc = {
     invoke<McpInstallDto>("install_mcp_server", { name, userEnv }),
   addMcpManual: (configJson: string) =>
     invoke<McpInstallDto>("add_mcp_manual", { configJson }),
+  // P07 S6：MCP 管理页
+  listMcpServers: () => invoke<McpServerDto[]>("list_mcp_servers"),
+  mcpStart: (id: number) => invoke<string>("mcp_start", { id }),
+  mcpStop: (id: number) => invoke<string>("mcp_stop", { id }),
+  mcpRestart: (id: number) => invoke<string>("mcp_restart", { id }),
+  mcpUninstall: (id: number) => invoke<string>("mcp_uninstall", { id }),
+  mcpLogs: (id: number) => invoke<string[]>("mcp_logs", { id }),
 };
+
+export interface McpServerDto {
+  id: number;
+  name: string;
+  description: string;
+  command: string;
+  status: string;
+  enabled: boolean;
+  restart_count: number;
+  last_error: string;
+}
 
 export interface SkillDto {
   id: number;

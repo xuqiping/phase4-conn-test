@@ -8,7 +8,8 @@ export type ViewKey =
   | "plan"
   | "build"
   | "accept"
-  | "deploy";
+  | "deploy"
+  | "mcp";
 
 export type RightTab = "spec" | "changes" | "logs" | "preview" | "files";
 
@@ -30,6 +31,7 @@ export const VIEW_META: readonly ViewMeta[] = [
   { key: "build", label: "建造", icon: "🔨", isStage: true, defaultRightTab: "logs" },
   { key: "accept", label: "验收", icon: "✅", isStage: true, defaultRightTab: "preview" },
   { key: "deploy", label: "部署", icon: "🚀", isStage: true, defaultRightTab: "logs" },
+  { key: "mcp", label: "MCP 管理", icon: "🔌", isStage: false, defaultRightTab: "logs" },
 ] as const;
 
 /** 管道条阶段序列（按注册顺序） */

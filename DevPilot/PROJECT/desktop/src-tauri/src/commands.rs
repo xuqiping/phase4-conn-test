@@ -2418,7 +2418,10 @@ pub fn invoke_skill(
         return Err(err("BAD_INPUT", format!("技能「{name}」已停用")));
     }
     if row.status != "valid" {
-        return Err(err("BAD_INPUT", format!("技能「{name}」配置有问题：{}", row.status_msg)));
+        return Err(err(
+            "BAD_INPUT",
+            format!("技能「{name}」配置有问题：{}", row.status_msg),
+        ));
     }
     let text = std::fs::read_to_string(&row.yaml_path)
         .map_err(|_| err("IO", format!("技能文件读不到：{name}（可能被移动过）")))?;
@@ -2426,6 +2429,91 @@ pub fn invoke_skill(
         .ok_or_else(|| err("PARSE", format!("技能「{name}」文件格式异常")))?;
     audit_skill(&state.db, task_id, &format!("斜杠调用技能 /{name}"));
     Ok(body.to_string())
+}
+
+// ---------- MCP 管理页（P07 S6 FR-026/AC-029 展示侧） ----------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct McpServerDto {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub status: String,
+    pub enabled: bool,
+    pub restart_count: i64,
+    /// 已脱敏：只展示错误消息，不含 stderr 原文
+    pub last_error: String,
+}
+
+fn to_mcp_dto(r: core_state::mcp_store::McpServerRow) -> McpServerDto {
+    // 脱敏（plan 安全清单）：命令参数可能含 key，只展示命令名
+    let command = r.command.clone();
+    McpServerDto {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        command,
+        status: r.status,
+        enabled: r.enabled,
+        restart_count: r.restart_count,
+        last_error: if r.last_error.len() > 200 {
+            format!(
+                "{}…（已截断）",
+                r.last_error.chars().take(100).collect::<String>()
+            )
+        } else {
+            r.last_error
+        },
+    }
+}
+
+#[tauri::command]
+pub fn list_mcp_servers(state: State<'_, AppState>) -> CmdResult<Vec<McpServerDto>> {
+    let rows = state
+        .db
+        .read(core_state::mcp_store::list)
+        .map_err(|e| err("DB", e.to_string()))?;
+    Ok(rows.into_iter().map(to_mcp_dto).collect())
+}
+
+#[tauri::command]
+pub async fn mcp_start(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    state.mcp.start(id).await.map_err(|e| err("MCP", e))
+}
+
+#[tauri::command]
+pub async fn mcp_stop(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    state.mcp.stop(id).await.map_err(|e| err("MCP", e))
+}
+
+#[tauri::command]
+pub async fn mcp_restart(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    state.mcp.restart(id).await.map_err(|e| err("MCP", e))
+}
+
+/// 卸载：先停进程再删记录（文件系统无残留——server 本体在 npm/pip 缓存里，不代删）。
+#[tauri::command]
+pub async fn mcp_uninstall(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    state.mcp.stop(id).await.map_err(|e| err("MCP", e))?;
+    state
+        .db
+        .write(|c| core_state::mcp_store::delete(c, id))
+        .map_err(|e| err("DB", e.to_string()))?;
+    Ok("已卸载".into())
+}
+
+/// 环形日志快照（日志抽屉；截断限长，不泄露超长 stderr）。
+#[tauri::command]
+pub async fn mcp_logs(state: State<'_, AppState>, id: i64) -> CmdResult<Vec<String>> {
+    let mut logs = state.mcp.logs(id).await;
+    if logs.len() > 200 {
+        logs = logs.split_off(logs.len() - 200);
+    }
+    Ok(logs
+        .into_iter()
+        .map(|l| l.chars().take(500).collect())
+        .collect())
 }
 
 #[cfg(test)]
