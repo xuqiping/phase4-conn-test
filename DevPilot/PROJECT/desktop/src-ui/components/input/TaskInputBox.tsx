@@ -59,6 +59,11 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
     ipc.listSkills().then(setSkills).catch(() => setSkills([]));
   }, []);
 
+  /** 聚焦时刷新技能列表——新建/导入技能后无需重开视图，「保存后立即可 / 调用」在同会话内成立。 */
+  const refreshSkills = () => {
+    ipc.listSkills().then(setSkills).catch(() => {});
+  };
+
   const query = slashQuery(text);
   const candidates = query == null ? [] : filterSkills(skills, query);
   const showPopup = open && query != null && candidates.length > 0;
@@ -113,9 +118,16 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
           return;
         }
       }
+      // 附件纳入任务输入（AC-013）：把已存盘的图片路径拼进 prompt，
+      // 模型/执行层按路径读取——此前附件只落库不进输入，链路断在最后一米。
+      if (attachments.length > 0) {
+        const lines = attachments.map((a) => `- ${a.path}（原图约 ${a.source_kb}KB）`);
+        prompt += `\n\n[附图输入] 本次追加了 ${attachments.length} 张截图（已压缩存盘）：\n${lines.join("\n")}`;
+      }
       await props.onSubmit(prompt);
       setText("");
       setSkill(null);
+      setAttachments([]);
       setOpen(true);
     } catch (e: unknown) {
       setError((e as Error)?.message ?? "提交失败");
@@ -160,6 +172,7 @@ export default function TaskInputBox(props: TaskInputBoxProps) {
             setText(e.target.value);
             setOpen(true);
           }}
+          onFocus={refreshSkills}
           onKeyDown={onKeyDown}
           onDrop={(e) => {
             acceptDropped(e.dataTransfer?.files ?? null);

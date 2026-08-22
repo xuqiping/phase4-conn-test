@@ -71,6 +71,28 @@ describe("TaskInputBox 附件集成", () => {
     await waitFor(() => expect(screen.getByTestId("task-input-textarea")).toBeTruthy());
     expect(screen.queryByTestId("attachment-chips")).toBeNull();
   });
+
+  it("AC-013：附件路径拼进提交的 prompt", async () => {
+    const onSubmit = vi.fn(async (_p: string) => {});
+    render(<TaskInputBox projectId={1} onSubmit={onSubmit} />);
+    await waitFor(() => expect(screen.getByTestId("task-input-textarea")).toBeTruthy());
+    const png = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    fireEvent.drop(screen.getByTestId("task-input-textarea"), {
+      dataTransfer: { files: [png] },
+    });
+    await waitFor(() => expect(screen.getByTestId("attachment-chip-7")).toBeTruthy());
+    fireEvent.change(screen.getByTestId("task-input-textarea"), {
+      target: { value: "看图改一下" },
+    });
+    fireEvent.click(screen.getByTestId("task-input-submit"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const prompt = String(onSubmit.mock.calls[0]?.[0]);
+    expect(prompt).toContain("看图改一下");
+    expect(prompt.includes("/tmp/img-1.jpg")).toBe(true);
+    expect(prompt).toContain("[附图输入]");
+    // 提交后附件清空（已随任务交付）
+    await waitFor(() => expect(screen.queryByTestId("attachment-chip-7")).toBeNull());
+  });
 });
 
 describe("VoiceDictation 降级", () => {

@@ -31,4 +31,5 @@
 - **MCP stdio**：起子进程后按「一行一个 JSON」对话：initialize 握手（超时 kill）→ initialized 通知 → tools/list。危险启动命令过 P03 沙箱审批门，非 Allow 一律拒（后台进程没法弹窗问人）。
 - **异常退出判定**：`stop()` 先把句柄移出 map 再杀进程；退出监听发现「进程死了但还在 map」= 异常退出 → 标 error → 自动重启（>3 次转 manual_required）。
 - **死锁坑**：监听不能 hold 子进程锁调 `wait().await`——`stop()` 的 kill 拿不到锁会互相等死。改成 `try_wait` 轮询（每轮放锁）。
-- **图片压缩**：质量 85→25 逐档试编码 JPEG，≤1MB 落盘；源图 >10MB 直接拒。
+- **图片压缩**：质量 85→25 逐档试编码 JPEG，≤1MB 落盘；源图 >10MB 直接拒；解码带限额（≤8000px、≤64MB 分配）防解压炸弹（P4 修复）。存 `~/.devpilot/projects/<id>/attachments/`，不写用户项目目录（P4 修复：避免污染用户 git status）。附件路径提交时拼进 prompt（`[附图输入]` 段，AC-013 闭环）。
+- **P4 审查修复要点**：env_json 注入子进程（此前 token 落库但进程拿不到）；探测只对 npx/uvx 等白名单运行时执行（防审批门前执行任意命令）；句柄代次号防 stop→start 竞态误判；MCP 安装/启停/重启/卸载进 audit_log（L12 新表）；frontmatter 结束标记按行匹配（正文 `---` 分隔线不再截断）。

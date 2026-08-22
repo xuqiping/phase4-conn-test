@@ -35,6 +35,25 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// 找 frontmatter 结束位置：返回「结束 --- 行」在 rest 里的字节偏移。
+/// 按行匹配行首 `---`——description/正文里出现 markdown 分隔线（`---`）不会误截
+/// （旧实现 find("\n---") 会把正文里的分隔线当成结束标记，P4 审查修正）。
+fn frontmatter_end(rest: &str) -> Option<usize> {
+    let mut offset = 0usize;
+    for line in rest.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.starts_with("---") && trimmed.trim_matches('-').is_empty() {
+            return Some(offset);
+        }
+        offset += line.len();
+        // frontmatter 不会太长，超过 64 行还没结束就当没有
+        if offset > 8 * 1024 {
+            return None;
+        }
+    }
+    None
+}
+
 /// 解析 SKILL.md 全文。
 pub fn parse_skill_md(text: &str) -> ParsedSkill {
     let rest = match text
@@ -46,14 +65,11 @@ pub fn parse_skill_md(text: &str) -> ParsedSkill {
             return ParsedSkill::Invalid("文件开头必须是 --- 包起来的说明块（frontmatter）".into());
         }
     };
-    let end = match rest.find("\n---") {
+    let end = match frontmatter_end(rest) {
         Some(i) => i,
         None => return ParsedSkill::Invalid("说明块没有结束：缺少第二个 ---".into()),
     };
     let yaml = &rest[..end];
-    // 正文 = 结束标记之后的全部内容（去掉首个换行）。
-    let body = rest[end + 4..].trim_start_matches(['\r', '\n']);
-    let _ = body; // 正文由调用方按行号再取（parse 只管元数据校验）
     let meta: SkillMeta = match serde_yaml::from_str(yaml) {
         Ok(m) => m,
         Err(e) => {
@@ -80,8 +96,11 @@ pub fn extract_body(text: &str) -> Option<&str> {
     let rest = text
         .strip_prefix("---\n")
         .or_else(|| text.strip_prefix("---\r\n"))?;
-    let end = rest.find("\n---")?;
-    Some(rest[end + 4..].trim_start_matches(['\r', '\n']))
+    let end = frontmatter_end(rest)?;
+    // 跳过结束 --- 行本身
+    let after = &rest[end..];
+    let after = after.strip_prefix("---")?;
+    Some(after.trim_start_matches(['\r', '\n']))
 }
 
 /// 渲染 SKILL.md（生成器复用，保证写出的一定能被 parse 读回）。
@@ -165,6 +184,17 @@ mod tests {
                 version: "0.1.0".into(),
             })
         );
+    }
+
+    #[test]
+    fn body_separator_line_does_not_truncate() {
+        // 正文里出现 markdown 分隔线（--- 独立行）不能被当成 frontmatter 结束
+        let text =
+            "---\nname: sep-skill\ndescription: 带分隔线的正文\n---\n\n上半\n\n---\n\n下半\n";
+        assert!(matches!(parse_skill_md(text), ParsedSkill::Valid(_)));
+        let body = extract_body(text).unwrap();
+        assert!(body.contains("上半"), "{body}");
+        assert!(body.contains("下半"), "分隔线后内容不能丢：{body}");
     }
 
     #[test]

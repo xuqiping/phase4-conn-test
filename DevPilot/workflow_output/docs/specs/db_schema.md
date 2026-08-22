@@ -133,6 +133,7 @@ erDiagram
 | L9__acceptance_security.sql | acceptance_items + acceptance_runs + security_scans（P06 S0 FR-033/040/052） |
 | L10__task_source_fix.sql | tasks 重建：source 增加 'fix'（P06 S7 验收圈选修复任务 FR-033） |
 | L11__skills_mcp_attachments.sql | skills_local + mcp_servers + input_attachments（P07 S0 FR-025/026/010/011） |
+| L12__audit_log.sql | audit_log 全局审计（P07 P4 修复：MCP 安装/启停/重启/卸载审计，task_events 挂 task_id 装不下） |
 
 ## 3. 设计说明
 

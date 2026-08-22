@@ -2223,6 +2223,15 @@ fn audit_skill(db: &Db, task_id: Option<i64>, message: &str) {
     }
 }
 
+/// 审计：无任务上下文的操作（MCP 等）进全局 audit_log（L12，plan 安全清单 source 字段）。
+fn audit_global(db: &Db, source: &str, action: &str, message: &str) {
+    db.write(|c| {
+        core_state::audit_log::insert(c, source, action, message)?;
+        Ok(())
+    })
+    .ok();
+}
+
 /// 对话/任务上下文一键存成技能：生成 → 落盘 → 注册，立即可 /name 调用。
 #[tauri::command]
 pub fn save_skill_from_context(
@@ -2257,6 +2266,13 @@ pub fn export_skill(
     let dest = std::path::PathBuf::from(dest_dir.trim());
     if dest.as_os_str().is_empty() {
         return Err(err("BAD_INPUT", "请选择导出目录"));
+    }
+    // 只允许导出到用户主目录内（前端目录对话框的常规范围）——任意路径写入是越权面。
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .unwrap_or_default();
+    if !dest.starts_with(std::path::Path::new(&home)) {
+        return Err(err("BAD_INPUT", "导出目录请在你的用户目录里选"));
     }
     let path = core_skills::generator::export_skill(&state.db, skill_id, &dest)
         .map_err(|e| err("IO", e))?;
@@ -2334,6 +2350,12 @@ pub async fn install_mcp_server(
     let out = core_mcp::market::install(&state.db, Some(&state.mcp), params, None)
         .await
         .map_err(|e| err("INSTALL", e))?;
+    audit_global(
+        &state.db,
+        "mcp",
+        "install",
+        &format!("市场安装「{name}」：{}", out.message),
+    );
     Ok(McpInstallDto {
         id: out.id,
         outcome: out.outcome,
@@ -2359,6 +2381,12 @@ pub async fn add_mcp_manual(
     let out = core_mcp::market::install(&state.db, Some(&state.mcp), params, None)
         .await
         .map_err(|e| err("INSTALL", e))?;
+    audit_global(
+        &state.db,
+        "mcp",
+        "install",
+        &format!("手动添加「{}」：{}", out.id, out.message),
+    );
     Ok(McpInstallDto {
         id: out.id,
         outcome: out.outcome,
@@ -2479,27 +2507,49 @@ pub fn list_mcp_servers(state: State<'_, AppState>) -> CmdResult<Vec<McpServerDt
 
 #[tauri::command]
 pub async fn mcp_start(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
-    state.mcp.start(id).await.map_err(|e| err("MCP", e))
+    let msg = state.mcp.start(id).await.map_err(|e| err("MCP", e))?;
+    audit_global(&state.db, "mcp", "start", &format!("server#{id}：{msg}"));
+    Ok(msg)
 }
 
 #[tauri::command]
 pub async fn mcp_stop(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
-    state.mcp.stop(id).await.map_err(|e| err("MCP", e))
+    let msg = state.mcp.stop(id).await.map_err(|e| err("MCP", e))?;
+    audit_global(&state.db, "mcp", "stop", &format!("server#{id}：{msg}"));
+    Ok(msg)
 }
 
 #[tauri::command]
 pub async fn mcp_restart(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
-    state.mcp.restart(id).await.map_err(|e| err("MCP", e))
+    let msg = state.mcp.restart(id).await.map_err(|e| err("MCP", e))?;
+    audit_global(&state.db, "mcp", "restart", &format!("server#{id}：{msg}"));
+    Ok(msg)
 }
 
 /// 卸载：先停进程再删记录（文件系统无残留——server 本体在 npm/pip 缓存里，不代删）。
 #[tauri::command]
 pub async fn mcp_uninstall(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     state.mcp.stop(id).await.map_err(|e| err("MCP", e))?;
+    let name: Option<String> = state
+        .db
+        .read(|c| {
+            c.query_row("SELECT name FROM mcp_servers WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .map(Some)
+            .or(Ok(None))
+        })
+        .map_err(|e| err("DB", e.to_string()))?;
     state
         .db
         .write(|c| core_state::mcp_store::delete(c, id))
         .map_err(|e| err("DB", e.to_string()))?;
+    audit_global(
+        &state.db,
+        "mcp",
+        "uninstall",
+        &format!("server#{id}（{}）已卸载", name.unwrap_or_default()),
+    );
     Ok("已卸载".into())
 }
 
@@ -2540,9 +2590,21 @@ pub fn save_attachment(
     if bytes.len() > MAX_SOURCE_BYTES {
         return Err(err("BAD_INPUT", "图片超过 10MB，太大啦，请裁小一点再拖"));
     }
-    // 解码（png/jpeg；解不开就当成不是图片拒绝）
-    let img = image::load_from_memory(&bytes)
-        .map_err(|_| err("BAD_INPUT", "这个文件不是能识别的图片（支持 png/jpg）"))?;
+    // 解码（png/jpeg/webp；带内存限额——10MB 高压缩图解码后可达数 GB，必须设上限防 OOM）
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|_| err("BAD_INPUT", "这个文件不是能识别的图片（支持 png/jpg/webp）"))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8_000);
+    limits.max_image_height = Some(8_000);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader.decode().map_err(|_| {
+        err(
+            "BAD_INPUT",
+            "这个文件不是能识别的图片，或尺寸/像素量过大（支持 png/jpg/webp，最长边 ≤8000 像素）",
+        )
+    })?;
     // 压缩循环：质量从高到低试，直到 ≤1MB
     let mut stored: Vec<u8> = Vec::new();
     for quality in [85u8, 70, 55, 40, 25] {
@@ -2558,24 +2620,32 @@ pub fn save_attachment(
     if stored.len() > MAX_STORED_BYTES {
         return Err(err("BAD_INPUT", "图片压到质量 25 仍超 1MB，请先裁剪尺寸"));
     }
-    // 落盘到项目目录
-    let project_dir = {
-        let (path,): (String,) = state
-            .db
-            .read(|c| {
-                c.query_row(
-                    "SELECT path FROM projects WHERE id = ?1",
-                    [project_id],
-                    |r| Ok((r.get(0)?,)),
-                )
-                .map(Some)
-                .or(Ok(None))
-            })
-            .map_err(|e| err("DB", e.to_string()))?
-            .ok_or_else(|| err("NOT_FOUND", "项目不存在"))?;
-        std::path::PathBuf::from(path)
-    };
-    let dir = project_dir.join("attachments");
+    // 落盘到 DevPilot 自己的数据目录（~/.devpilot/projects/<id>/attachments/），
+    // 不写用户项目目录——拖张截图就污染用户仓库的 git status 是事故（P4 审查修正）。
+    let exists: bool = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = ?1",
+                [project_id],
+                |r| r.get::<_, i64>(0).map(|n| n > 0),
+            )
+            .map(Some)
+            .or(Ok(None))
+        })
+        .map_err(|e| err("DB", e.to_string()))?
+        .unwrap_or(false);
+    if !exists {
+        return Err(err("NOT_FOUND", "项目不存在"));
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .unwrap_or_default();
+    let dir = std::path::PathBuf::from(home)
+        .join(".devpilot")
+        .join("projects")
+        .join(project_id.to_string())
+        .join("attachments");
     std::fs::create_dir_all(&dir).map_err(|e| err("IO", format!("建附件目录失败：{e}")))?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

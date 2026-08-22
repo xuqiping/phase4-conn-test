@@ -87,8 +87,8 @@ fn read_skill_dir(
     };
     match parse_skill_md(&text) {
         ParsedSkill::Valid(meta) => Some((
+            meta.name.clone(),
             meta.name,
-            meta.description.clone(),
             meta.description,
             skill_md.to_string_lossy().to_string(),
             meta.version,

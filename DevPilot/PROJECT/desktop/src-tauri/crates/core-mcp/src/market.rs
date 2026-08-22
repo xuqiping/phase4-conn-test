@@ -95,9 +95,17 @@ pub fn parse_manual_config(text: &str) -> Result<ManualConfig, String> {
     Ok(cfg)
 }
 
+/// 允许真跑 `--version` 探测的运行时白名单——手填任意 command 不在此列：
+/// 在沙箱审批门之前执行用户命令等于绕门半圈（P4 审查发现），非白名单直接跳过探测，
+/// 交给 manager.start 的审批门 + spawn 去暴露问题。
+const PROBE_WHITELIST: [&str; 6] = ["npx", "node", "npm", "uvx", "uv", "python"];
+
 /// 探测运行时是否可用（node/npx、uv/uvx 等）。
 /// `probe_cmd` 供测试注入（真探测跑 `<command> --version`）。
 pub fn detect_runtime(command: &str, probe_cmd: Option<&str>) -> Result<(), String> {
+    if probe_cmd.is_none() && !PROBE_WHITELIST.contains(&command) {
+        return Ok(()); // 非白名单命令不预执行，由启动链路兜底
+    }
     let probe = probe_cmd
         .map(|c| c.to_string())
         .unwrap_or_else(|| format!("{command} --version"));
@@ -270,16 +278,13 @@ mod tests {
 
     #[test]
     fn runtime_missing_gives_install_hint() {
-        let err = detect_runtime("definitely-not-a-real-cmd-xyz", None).unwrap_err();
-        assert!(err.contains("没找到"), "要大白话：{err}");
-        let npx_err =
+        let err =
             detect_runtime("npx", Some("definitely-not-a-real-cmd-xyz --version")).unwrap_err();
-        assert!(
-            npx_err.contains("Node.js"),
-            "npx 缺失要指到 nodejs.org：{npx_err}"
-        );
+        assert!(err.contains("Node.js"), "npx 缺失要指到 nodejs.org：{err}");
         // 有探测命令且成功 → 通过
         assert!(detect_runtime("whatever", Some("cmd /c exit 0")).is_ok());
+        // 非白名单命令不预执行（防审批门被绕），直接放行给启动链路兜底
+        assert!(detect_runtime("definitely-not-a-real-cmd-xyz", None).is_ok());
     }
 
     #[test]
@@ -345,15 +350,22 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("重复"), "{err}");
-        // 运行时缺失 → 不落库
+        // 运行时缺失 → 不落库（探测命令注入不存在的程序）
         let missing = InstallParams {
             name: "no-runtime".into(),
             description: "d".into(),
-            command: "definitely-not-a-real-cmd-xyz".into(),
+            command: "npx".into(),
             args: vec![],
             env: HashMap::new(),
         };
-        assert!(install(&db, None, missing, None).await.is_err());
+        assert!(install(
+            &db,
+            None,
+            missing,
+            Some("definitely-not-a-real-cmd-xyz --version")
+        )
+        .await
+        .is_err());
         let rows = db.read(core_state::mcp_store::list).unwrap();
         assert_eq!(rows.len(), 1, "探测失败不落库");
     }
