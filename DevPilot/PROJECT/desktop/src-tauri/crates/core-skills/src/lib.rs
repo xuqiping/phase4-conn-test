@@ -1,5 +1,8 @@
 //! core-skills：Skills 解析/生成/注册/斜杠调用。
-//! 对应 FR-025。当前为 Step 2 骨架占位——P07 填实现。
+//! 对应 FR-025。S1 = SKILL.md 解析（skill_file）+ 注册表同步（registry）。
+
+pub mod registry;
+pub mod skill_file;
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
 pub const CRATE_NAME: &str = "core-skills";

@@ -6,3 +6,8 @@ rust-version = "1.77"
 description = "Skills 解析/生成/注册/斜杠调用（FR-025）"
 
 [dependencies]
+core-state = { path = "../core-state" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+thiserror = "2"
