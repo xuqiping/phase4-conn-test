@@ -2366,6 +2366,68 @@ pub async fn add_mcp_manual(
     })
 }
 
+// ---------- 技能斜杠调用（P07 S5 FR-025/AC-028 后半） ----------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillDto {
+    pub id: i64,
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub version: String,
+    /// valid / invalid
+    pub status: String,
+}
+
+/// 技能列表（输入框 '/' 候选用）：先同步一次目录再取 enabled。
+#[tauri::command]
+pub fn list_skills(state: State<'_, AppState>) -> CmdResult<Vec<SkillDto>> {
+    let dir = core_skills::registry::default_skills_dir();
+    core_skills::registry::scan_and_register(&state.db, &dir)
+        .map_err(|e| err("IO", format!("扫描技能目录失败：{e}")))?;
+    let rows = state
+        .db
+        .read(|c| core_state::skills_local::list(c, true))
+        .map_err(|e| err("DB", e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SkillDto {
+            id: r.id,
+            name: r.name,
+            display_name: r.display_name,
+            description: r.description,
+            version: r.version,
+            status: r.status,
+        })
+        .collect())
+}
+
+/// 斜杠调用：返回技能正文（前端拼到用户输入前面）。审计记一次调用。
+#[tauri::command]
+pub fn invoke_skill(
+    state: State<'_, AppState>,
+    task_id: Option<i64>,
+    name: String,
+) -> CmdResult<String> {
+    let row = state
+        .db
+        .read(|c| core_state::skills_local::by_name(c, &name))
+        .map_err(|e| err("DB", e.to_string()))?
+        .ok_or_else(|| err("NOT_FOUND", format!("没有技能「{name}」")))?;
+    if !row.enabled {
+        return Err(err("BAD_INPUT", format!("技能「{name}」已停用")));
+    }
+    if row.status != "valid" {
+        return Err(err("BAD_INPUT", format!("技能「{name}」配置有问题：{}", row.status_msg)));
+    }
+    let text = std::fs::read_to_string(&row.yaml_path)
+        .map_err(|_| err("IO", format!("技能文件读不到：{name}（可能被移动过）")))?;
+    let body = core_skills::skill_file::extract_body(&text)
+        .ok_or_else(|| err("PARSE", format!("技能「{name}」文件格式异常")))?;
+    audit_skill(&state.db, task_id, &format!("斜杠调用技能 /{name}"));
+    Ok(body.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -299,7 +299,63 @@ export const ipc = {
       diff_summary: string;
       cost_cents: number;
     }>("run_task", { req: { ...req, project_id: req.projectId, task_id: req.taskId } }),
+  // P07：技能斜杠调用
+  listSkills: () => invoke<SkillDto[]>("list_skills"),
+  invokeSkill: (name: string, taskId?: number) =>
+    invoke<string>("invoke_skill", { name, taskId: taskId ?? null }),
+  // P07：技能生成器 + 导入导出
+  saveSkillFromContext: (req: {
+    name: string;
+    description: string;
+    taskPrompt: string;
+    roundsSummary: string;
+    taskId?: number;
+  }) =>
+    invoke<string>("save_skill_from_context", {
+      name: req.name,
+      description: req.description,
+      taskPrompt: req.taskPrompt,
+      roundsSummary: req.roundsSummary,
+      taskId: req.taskId ?? null,
+    }),
+  exportSkill: (skillId: number, destDir: string, taskId?: number) =>
+    invoke<string>("export_skill", { skillId, destDir, taskId: taskId ?? null }),
+  importSkills: (srcDir: string, taskId?: number) =>
+    invoke<{ name: string; result: string }[]>("import_skills", {
+      srcDir,
+      taskId: taskId ?? null,
+    }),
+  // P07：MCP 市场
+  listMcpMarket: () => invoke<MarketEntryDto[]>("list_mcp_market"),
+  installMcpServer: (name: string, userEnv: Record<string, string>) =>
+    invoke<McpInstallDto>("install_mcp_server", { name, userEnv }),
+  addMcpManual: (configJson: string) =>
+    invoke<McpInstallDto>("add_mcp_manual", { configJson }),
 };
+
+export interface SkillDto {
+  id: number;
+  name: string;
+  display_name: string;
+  description: string;
+  version: string;
+  status: string;
+}
+
+export interface MarketEntryDto {
+  name: string;
+  description: string;
+  runtime: string;
+  command: string;
+  args: string[];
+  env: { key: string; description: string; required: boolean }[];
+}
+
+export interface McpInstallDto {
+  id: number;
+  outcome: string;
+  message: string;
+}
 
 /** 订阅任务事件流（事件名对齐 events.rs）；返回取消订阅函数 */
 export function onTaskEvent(

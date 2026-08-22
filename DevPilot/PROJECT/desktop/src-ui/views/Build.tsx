@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import CheckpointTimeline from "../components/checkpoint/CheckpointTimeline";
+import TaskInputBox from "../components/input/TaskInputBox";
 import PlainText from "../components/plain/PlainText";
 import { cloudBase, getAccessToken } from "../lib/cloudApi";
 import { ipc, type TaskDto, type TaskEventDto } from "../lib/ipc";
@@ -19,7 +20,6 @@ export default function Build() {
   const [tasks, setTasks] = useState<TaskDto[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [events, setEvents] = useState<TaskEventDto[]>([]);
-  const [instructions, setInstructions] = useState("");
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,18 +59,12 @@ export default function Build() {
     return () => cancel();
   }, [selectedTaskId]);
 
-  const continueTask = async () => {
-    if (!projectId || !instructions.trim()) return;
+  const submitInstructions = async (prompt: string) => {
+    if (!projectId) return;
     setContinuing(true);
     setError(null);
     try {
-      await ipc.continueTask(
-        projectId,
-        instructions.trim(),
-        getAccessToken() ?? "",
-        cloudBase(),
-      );
-      setInstructions("");
+      await ipc.continueTask(projectId, prompt, getAccessToken() ?? "", cloudBase());
     } catch (e: unknown) {
       setError((e as Error)?.message ?? "追加指令执行失败");
     } finally {
@@ -183,21 +177,7 @@ export default function Build() {
 
       <div className="panel space-y-3 rounded-[9px] p-4">
         <h3 className="text-sm font-semibold">追加指令续跑</h3>
-        <textarea
-          value={instructions}
-          onChange={(e) => setInstructions(e.target.value)}
-          placeholder="例如：再帮我加个登录表单的白底版本"
-          rows={3}
-          className="w-full rounded-[9px] border border-border bg-card px-3 py-2 text-xs text-text placeholder:text-text-faint"
-        />
-        <button
-          type="button"
-          disabled={continuing || !instructions.trim()}
-          onClick={() => void continueTask()}
-          className="w-full rounded-[9px] bg-brand px-3 py-2 text-sm font-medium text-white transition hover:bg-brand2 disabled:opacity-50"
-        >
-          {continuing ? "执行中…" : "追加并续跑"}
-        </button>
+        <TaskInputBox busy={continuing} onSubmit={submitInstructions} />
         {error && <div className="text-xs text-red-400">{error}</div>}
       </div>
 
