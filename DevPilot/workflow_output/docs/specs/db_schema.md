@@ -92,7 +92,7 @@ erDiagram
     rounds ||--o{ tasks : contains
     tasks ||--o{ checkpoints : produces
     tasks ||--o{ usage_mirror : mirrors
-    projects ||--o{ skills_local : registers
+    projects ||--o{ input_attachments : has
 ```
 
 | 表 | 关键字段 | 职责 |
@@ -109,8 +109,9 @@ erDiagram
 | pending_approvals | id, project_id, task_id, kind, title, detail, risk_level, decision, resolved_at | 两档审批待决记录（FR-009，P03 Step3） |
 | env_profiles | path_hash UNIQUE, lockfile_hash, profile_json, updated_at | 项目技术栈画像缓存，命中则跳过文件系统探测（FR-005，P03 Step4） |
 | secrets | id, project_id, name, encrypted_value | 项目级 Secrets；名称落库，值优先 OS keyring，失败回退 AES-256-GCM（FR-012，P03 Step7） |
-| skills_local | id, name, yaml_path, enabled | 技能注册表（FR-025） |
-| mcp_servers | id, name, config JSON, status | MCP server 管理（FR-026） |
+| skills_local | id, name UNIQUE, display_name, description, yaml_path, version, enabled, status(valid/invalid), status_msg | 本地技能注册表，全局共享；文件在 ~/.devpilot/skills/<name>/SKILL.md（FR-025，P07 S0） |
+| mcp_servers | id, name UNIQUE, transport(stdio), command, args_json, env_json, status(installed/running/stopped/error/manual_required), pid, last_error, restart_count | MCP server 管理；error=异常退出（AC-029），manual_required=自动重启超限转人工（FR-026，P07 S0） |
+| input_attachments | id, project_id, kind(image), path, source_kb, created_at | 任务输入附件（截图/线框图）；文件在 ~/.devpilot/projects/<id>/attachments/（FR-011，P07 S0） |
 | agent_configs | id, project_id UNIQUE, fields_json | 项目约定大白话字段；AGENTS.md 的渲染源（FR-008，P04 S0） |
 | spec_cards | id, project_id, title, detail, ac_json, status, sort_order | 需求确认卡片；status ∈ pending/confirmed/skipped（FR-031，P04 S0） |
 | plan_chunks | id, project_id, title, goal, estimated_tokens, dependencies_json, status, sort_order | 施工计划 chunk；status ∈ draft/approved/running/done（FR-032，P04 S0） |
@@ -131,6 +132,7 @@ erDiagram
 | L8__build_runtime.sql | tasks 扩展字段 + task_events + checkpoints 增强（P05 S0 FR-038/048） |
 | L9__acceptance_security.sql | acceptance_items + acceptance_runs + security_scans（P06 S0 FR-033/040/052） |
 | L10__task_source_fix.sql | tasks 重建：source 增加 'fix'（P06 S7 验收圈选修复任务 FR-033） |
+| L11__skills_mcp_attachments.sql | skills_local + mcp_servers + input_attachments（P07 S0 FR-025/026/010/011） |
 
 ## 3. 设计说明
 

@@ -5,13 +5,16 @@ pub mod acceptance_checklist;
 pub mod acceptance_run;
 pub mod agent_config;
 pub mod approval;
+pub mod attachments;
 pub mod checkpoint;
 pub mod db;
 pub mod env_profile;
 pub mod machine;
+pub mod mcp_store;
 pub mod plan_chunk;
 pub mod secrets;
 pub mod security_scan;
+pub mod skills_local;
 pub mod spec_card;
 pub mod task_event;
 
@@ -63,9 +66,10 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                // applied_versions 按字母序返回：L1 < L10 < L2
+                // applied_versions 按字母序返回：L1 < L10 < L11 < L2
                 "L1".to_string(),
                 "L10".to_string(),
+                "L11".to_string(),
                 "L2".to_string(),
                 "L3".to_string(),
                 "L4".to_string(),
