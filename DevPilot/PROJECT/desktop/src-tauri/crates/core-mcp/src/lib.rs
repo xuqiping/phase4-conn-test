@@ -1,5 +1,11 @@
-//! core-mcp：MCP 客户端 + MCP Server（对外委派接口）。
-//! 对应 FR-010/026/027。当前为 Step 2 骨架占位——P07 填实现。
+//! core-mcp：MCP 客户端——进程管理 + stdio JSON-RPC。
+//! 对应 FR-010（市场安装）/ FR-026（server 管理，AC-029）。
+//! S2 = rpc（编解码）+ manager（进程生命周期）。FR-027（对外 MCP Server）归二期。
+
+pub mod manager;
+pub mod rpc;
+
+pub use manager::Manager;
 
 /// crate 名常量，供主程序装配自检（冒烟测试用）。
 pub const CRATE_NAME: &str = "core-mcp";
