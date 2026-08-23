@@ -40,3 +40,9 @@
 - **操作**：系统管理 → 用户管理 → 目标用户「分配角色」→ 勾选「大模型配置员」→ 保存；用户**重新登录**生效。不勾选任何人则全平台无人能配大模型（刻意保护）。
 - 契约测试：[LlmControllerContractTest.java](../../backend/src/test/java/com/superprogrammer/llm/controller/LlmControllerContractTest.java)（13 端点锁码，防回改）。
 
+### V147 追加（2026-08-23）：内置配置员账号 + 角色/权限码 UI 隐藏
+- [V147__builtin_llm_config_user.sql](../../backend/src/main/resources/db/migration/V147__builtin_llm_config_user.sql)：预置账号 `zgdx18158690628`（bcrypt 落库，明文见 数据库设计文档.md「初始数据汇总」），授 `llm_config` 角色——部署自动创建，幂等（ON CONFLICT）。
+- **UI 隐藏（库里保留）**：`RoleController` 列表查询过滤——`GET /api/roles`、`/api/roles/all` 排除 `llm_config`，`/api/roles/permissions/all` 排除 `llm:config`。效果：角色管理页/分配角色弹窗/权限配置树均看不到，**无人能从界面分配、摘除或改权**；上文「操作」一节的勾选分配方式自此失效。
+- 隐藏仅是 UI 层：持有者的 JWT 权限烘焙走 user_roles 直查，不受影响；绕过 UI 直调 API 改权理论上仍可达（role:manage 持有者），如需硬封另行加固。
+- 单测：[RoleControllerHiddenFilterTest.java](../../backend/src/test/java/com/superprogrammer/auth/controller/RoleControllerHiddenFilterTest.java)（3 例：两处角色列表 + 权限列表均带隐藏过滤条件）。
+

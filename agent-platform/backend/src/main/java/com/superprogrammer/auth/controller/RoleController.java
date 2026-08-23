@@ -24,6 +24,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RoleController {
 
+    /** 内置隐藏角色（V147）：大模型配置员——不出现在角色管理/分配角色列表，仅预置账号持有 */
+    private static final String HIDDEN_ROLE_CODE = "llm_config";
+    /** 内置隐藏权限码（V147）：配置大模型——不出现在权限配置树，防 UI 改权 */
+    private static final String HIDDEN_PERMISSION_CODE = "llm:config";
+
     private final RoleMapper roleMapper;
     private final RolePermissionMapper rolePermissionMapper;
     private final PermissionMapper permissionMapper;
@@ -35,7 +40,9 @@ public class RoleController {
             @RequestParam(defaultValue = "10") int size) {
         Page<Role> rolePage = roleMapper.selectPage(
                 new Page<>(page, size),
-                new LambdaQueryWrapper<Role>().orderByAsc(Role::getId)
+                new LambdaQueryWrapper<Role>()
+                        .ne(Role::getCode, HIDDEN_ROLE_CODE)
+                        .orderByAsc(Role::getId)
         );
         PageResult<Role> result = PageResult.of(
                 rolePage.getRecords(), rolePage.getTotal(), page, size);
@@ -46,7 +53,9 @@ public class RoleController {
     @PreAuthorize("hasAuthority('role:manage')")
     public ResponseEntity<R<List<Role>>> listAllRoles() {
         List<Role> roles = roleMapper.selectList(
-                new LambdaQueryWrapper<Role>().orderByAsc(Role::getId));
+                new LambdaQueryWrapper<Role>()
+                        .ne(Role::getCode, HIDDEN_ROLE_CODE)
+                        .orderByAsc(Role::getId));
         return ResponseEntity.ok(R.ok(roles));
     }
 
@@ -87,7 +96,9 @@ public class RoleController {
     @PreAuthorize("hasAuthority('role:manage')")
     public ResponseEntity<R<List<Permission>>> listAllPermissions() {
         List<Permission> permissions = permissionMapper.selectList(
-                new LambdaQueryWrapper<Permission>().orderByAsc(Permission::getId));
+                new LambdaQueryWrapper<Permission>()
+                        .ne(Permission::getCode, HIDDEN_PERMISSION_CODE)
+                        .orderByAsc(Permission::getId));
         return ResponseEntity.ok(R.ok(permissions));
     }
 }
