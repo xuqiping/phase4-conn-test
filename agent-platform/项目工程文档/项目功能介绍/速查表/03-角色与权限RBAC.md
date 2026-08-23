@@ -46,3 +46,8 @@
 - 隐藏仅是 UI 层：持有者的 JWT 权限烘焙走 user_roles 直查，不受影响；绕过 UI 直调 API 改权理论上仍可达（role:manage 持有者），如需硬封另行加固。
 - 单测：[RoleControllerHiddenFilterTest.java](../../backend/src/test/java/com/superprogrammer/auth/controller/RoleControllerHiddenFilterTest.java)（3 例：两处角色列表 + 权限列表均带隐藏过滤条件）。
 
+## Agent/工作流权限码删除（V148 变更，2026-08-23）
+- [V148__drop_agent_workflow_permissions.sql](../../backend/src/main/resources/db/migration/V148__drop_agent_workflow_permissions.sql)：两模块前端已关停（modules.ts 关闭），真删 `agent:*`×5 + `workflow:*`×5；role_permissions 关联随 FK `ON DELETE CASCADE` 自清。
+- 效果：权限配置树「Agent管理」「工作流管理」两组消失（RoleManageView 分组数据驱动，死标签已移除）；AgentController/WorkflowController 的对应 `@RequirePermission` 成死闸（无人能过=纵深锁死，刻意）；聊天侧 workflow:read 门恒 false → 工作流对话目标消失。
+- 保留：`execution:*`（执行管理）、`skill:manage`（技能管理）独立分组未删；`agent_admin` 角色未删（现零权限空角色）。
+

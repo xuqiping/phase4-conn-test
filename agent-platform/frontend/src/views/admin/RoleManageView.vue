@@ -62,9 +62,8 @@ const rolePermMap = ref<Record<number, number[]>>({})
 const saving = ref(false)
 
 const resourceLabels: Record<string, string> = {
-  agent: 'Agent管理',
+  // V148：agent（Agent管理）/ workflow（工作流管理）权限码已删，两组不再渲染，标签一并移除
   skill: '技能管理',
-  workflow: '工作流管理',
   execution: '执行管理',
   user: '用户管理',
   role: '角色管理'

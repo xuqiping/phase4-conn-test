@@ -1,0 +1,25 @@
+-- ============================================================
+-- V148: 下线 Agent 管理 + 工作流管理权限码（模块已关停）
+--   背景：Agent 大厅（10x-5 起 modules.ts 关闭 /agents）与工作流模块
+--   （modules.ts workflow=false）前端入口已关停，两组权限码成死重，
+--   仍挂在角色管理的权限配置树上误导操作。
+--   拍板（2026-08-23）：真删（非隐藏）——
+--     ① 删除 agent:* ×5（read/create/update/delete/publish）
+--        与 workflow:* ×5（read/create/update/delete/publish）权限码；
+--     ② role_permissions 关联行由 FK ON DELETE CASCADE 自动清理；
+--     ③ 保留 execution:*（执行管理）与 skill:manage（技能管理）——
+--        这两组在权限树里是独立分组，用户未要求删除。
+--   影响：
+--     - 权限配置树「Agent管理」「工作流管理」两组从此不渲染（数据驱动）；
+--     - AgentController/WorkflowController 上的 @RequirePermission("agent:*"/
+--       "workflow:*") 成为无人能过的死闸（模块已关，等于纵深锁死，刻意保留）；
+--     - 聊天侧 ChatTargetService 的 workflow:read 门随之恒 false →
+--       工作流对话目标不再出现（模块关停语义一致）；Agent 对话目标不挂权限码，
+--       行为不变。
+--     - 存量用户重新登录后 JWT 权限集自动不含已删码。
+--
+-- 回滚（rollback）：重跑 V2__seed_data.sql 中对应 INSERT 段即可恢复码，
+--   再按 V2 姿势给 admin/user 补授 role_permissions。
+-- ============================================================
+
+DELETE FROM permissions WHERE resource IN ('agent', 'workflow');
