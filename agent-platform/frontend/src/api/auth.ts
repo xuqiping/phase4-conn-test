@@ -39,6 +39,8 @@ export interface AuthChannels {
   smsEnabled: boolean
   /** 微信扫码登录通道 */
   wechatEnabled: boolean
+  /** 12x 开关回退：注册是否强制邮箱验证码（邮箱验证总开关；关=注册弹窗隐藏验证码行） */
+  registerEmailCodeRequired: boolean
 }
 
 /** 滑块验证码结果（AJ-Captcha）。 */
@@ -75,10 +77,11 @@ export const authApi = {
   /**
    * 用户注册
    * POST /api/auth/register
-   * 12x B1：emailCode 必填（注册前置邮箱验证码，凭证直接 verified=TRUE）
+   * 12x B1：emailCode 在「邮箱验证总开关」开时必填（注册前置邮箱验证码，凭证直接 verified=TRUE）
+   * 12x 开关回退：总开关关时 email/emailCode 均可省（邮箱选填、不验码）
    * 12x B2：同 IP 连续失败 ≥2 次后 captchaVerification 必填
    */
-  register(params: { username: string; email: string; password: string; emailCode: string; captchaVerification?: string }) {
+  register(params: { username: string; email?: string; password: string; emailCode?: string; captchaVerification?: string }) {
     return request.post<ApiResponse<void>>('/auth/register', params)
   },
 

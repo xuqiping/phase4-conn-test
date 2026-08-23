@@ -62,6 +62,8 @@ class EmailServiceTest {
                 true, "cn-hangzhou", "test-ak", "test-sk", "noreply@test.com", "测试",
                 null, "https://test.com/verify-email", "https://test.com/reset-password",
                 "ALIYUN", null));
+        // 12x 开关回退：默认开（保持 B1 既有语义）；「关」场景由专项用例覆盖
+        lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
     }
 
     @Test
@@ -196,6 +198,16 @@ class EmailServiceTest {
     }
 
     // ==================== 12x B1：注册邮箱验证码 ====================
+
+    // 12x 开关回退：总开关关 → 发码端点直接拒（注册不验码，前端不展示该入口）
+    @Test
+    void sendRegisterCode_switchOff_rejected() {
+        when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        assertTrue(ex.getMessage().contains("无需邮箱验证码"));
+        verifyNoInteractions(captchaGuard);
+    }
 
     @Test
     void sendRegisterCode_mailDisabled_throws() {

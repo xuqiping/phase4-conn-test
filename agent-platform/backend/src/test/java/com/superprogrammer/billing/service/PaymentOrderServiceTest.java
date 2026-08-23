@@ -47,6 +47,8 @@ class PaymentOrderServiceTest {
     @Mock private PointsWalletService walletService;
     @Mock private AuditLogService auditLogService;
     @Mock private com.superprogrammer.auth.service.CredentialService credentialService;
+    // 12x 开关回退：邮箱验证总开关（默认开，保持 B5 既有语义）
+    @Mock private com.superprogrammer.auth.service.AuthChannelSettingService channelSettings;
 
     private MockPaymentChannel mockChannel;
     private PaymentChannelRouter router;
@@ -62,9 +64,11 @@ class PaymentOrderServiceTest {
                 new com.superprogrammer.billing.service.channel.AlipayPaymentChannel(),
                 new com.superprogrammer.billing.service.channel.WechatPaymentChannel()));
         service = new PaymentOrderService(orderMapper, ledgerMapper, router, ratioService, walletService,
-                auditLogService, credentialService);
+                auditLogService, credentialService, channelSettings);
         ReflectionTestUtils.setField(service, "orderExpireMinutes", 30);
         ReflectionTestUtils.setField(service, "notifyUrl", "https://example/notify");
+        // 12x 开关回退：默认开（B5 门启用）；「关」场景由专项用例覆盖
+        lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
         lenient().when(ratioService.toPoints(any())).thenAnswer(inv ->
                 ((BigDecimal) inv.getArgument(0)).multiply(new BigDecimal("100")));
         // 12x B5：默认放行——已验证邮箱（单测聚焦下单主链；门槛语义由专项用例覆盖）
@@ -111,6 +115,23 @@ class PaymentOrderServiceTest {
                 com.superprogrammer.common.exception.BusinessException.class,
                 () -> service.createOrder(UID, new BigDecimal("10.00"), "MOCK", null));
         verify(orderMapper, never()).insert(any());
+    }
+
+    // 12x 开关回退：总开关关 → B5 门整体跳过（邮件通道未接时无人能验证邮箱，硬门=充值全废）
+    @Test
+    void createOrder_switchOff_emailGateSkipped() {
+        when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        when(orderMapper.insert(any())).thenAnswer(inv -> {
+            PaymentOrderEntity o = inv.getArgument(0);
+            o.setId(42L);
+            o.setCreatedAt(OffsetDateTime.now());
+            return 1;
+        });
+
+        PaymentOrderVO vo = service.createOrder(UID, new BigDecimal("10.00"), "MOCK", null);
+
+        org.junit.jupiter.api.Assertions.assertEquals("PENDING", vo.status());
+        verify(orderMapper).insert(any());
     }
 
     @Test

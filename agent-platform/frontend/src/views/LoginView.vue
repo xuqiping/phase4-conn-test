@@ -86,7 +86,11 @@
     </div>
 
     <!-- 注册弹窗 -->
-    <RegisterModal v-model:show="showRegisterModal" @registered="onRegistered" />
+    <RegisterModal
+      v-model:show="showRegisterModal"
+      :email-code-required="channels.registerEmailCodeRequired"
+      @registered="onRegistered"
+    />
 
     <!-- 找回密码弹窗 -->
     <ForgotPasswordModal
@@ -131,7 +135,8 @@ const channels = reactive<AuthChannels>({
   passwordEnabled: true,
   emailEnabled: false,
   smsEnabled: false,
-  wechatEnabled: false
+  wechatEnabled: false,
+  registerEmailCodeRequired: false
 })
 
 // Tab 激活态（默认账密）

@@ -31,6 +31,8 @@ public class AuthChannelSettingsUpdateRequest {
         /** SMTP 密码/授权码：null=不修改，空白=清除，其他=更新（AES 落库） */
         private String smtpPassword;
         private String smtpFromAlias;
+        /** 邮箱验证总开关（12x）：null=不修改 */
+        private Boolean verificationRequired;
     }
 
     @Data

@@ -52,12 +52,21 @@ class AuthIntegrationTest {
     private static String accessToken;
     private static String refreshToken;
 
+    /** 12x 开关回退：IT 显式打开邮箱验证总开关（库默认关=人工测试态），保持 B1 注册验码链路被 IT 覆盖。 */
+    @org.junit.jupiter.api.BeforeAll
+    void enableEmailVerification() {
+        jdbc.update("INSERT INTO system_settings(setting_key, setting_value, description) "
+                + "VALUES ('auth.channel.mail.verification-required', 'true', 'IT 显式开启') "
+                + "ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true'");
+    }
+
     /** 清理本类注册的 integrationuser，使跨 run 可重复（否则残留用户致 step1 收 409）。 */
     @AfterAll
     void cleanup() {
         // user_credential 等子表 FK 引用 users，先删子表行再删用户（否则 DataIntegrityViolation）
         jdbc.update("DELETE FROM user_credential WHERE user_id IN (SELECT id FROM users WHERE username = 'integrationuser')");
         jdbc.update("DELETE FROM users WHERE username = 'integrationuser'");
+        jdbc.update("DELETE FROM system_settings WHERE setting_key = 'auth.channel.mail.verification-required'");
         redis.delete(java.util.List.of("regcode:email:integration@test.com",
                 "regcode:try:integration@test.com", "regcode:resend:integration@test.com"));
     }
@@ -83,7 +92,7 @@ class AuthIntegrationTest {
     @Test
     @Order(2)
     void step2_register_duplicateUser_returnsConflict() throws Exception {
-        // 用户名查重在校验码之前——重复用户名直接 409，不消耗验证码（emailCode 仅需过 @NotBlank）
+        // 用户名查重在校验码之前——重复用户名直接 409，不消耗验证码（emailCode 服务端判，不重先查库）
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
         request.setPassword("Str0ng#Pass");

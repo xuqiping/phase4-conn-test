@@ -62,6 +62,8 @@ class AuthServiceAuditTest {
     @Mock private com.superprogrammer.auth.service.EmailService emailService;
     // 12x B2：渐进式滑块门槛
     @Mock private com.superprogrammer.auth.service.ProgressiveCaptchaGuard captchaGuard;
+    // 12x 开关回退：邮箱验证总开关（默认开，保持 B1 语义）
+    @Mock private com.superprogrammer.auth.service.AuthChannelSettingService channelSettings;
 
     @InjectMocks
     private AuthService authService;
@@ -163,6 +165,7 @@ class AuthServiceAuditTest {
             return 1;
         });
         when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
 
         RegisterRequest req = new RegisterRequest();
         req.setUsername("newbie");

@@ -76,4 +76,21 @@ class AuthChannelSettingServiceTest {
         verify(settings).upsertEncrypted("auth.channel.mail.access-key-secret", "new-secret",
                 "邮件 AccessKey Secret（AES 加密）");
     }
+
+    // 12x 开关回退：邮箱验证总开关——默认关；DB 显式 true 才开；update 落库后 getSettings 回读一致
+    @Test
+    void AC_AUTH_CHANNEL_006_verificationRequiredSwitchRoundtrip() {
+        assertFalse(service.isEmailVerificationRequired()); // 未配置 → 默认关
+
+        var request = new com.superprogrammer.system.dto.AuthChannelSettingsUpdateRequest();
+        var mail = new com.superprogrammer.system.dto.AuthChannelSettingsUpdateRequest.Mail();
+        mail.setVerificationRequired(true);
+        request.setMail(mail);
+        service.update(request);
+        verify(settings).upsertSettingValue(eq("auth.channel.mail.verification-required"), eq("true"), anyString());
+
+        when(settings.getSettingValue("auth.channel.mail.verification-required")).thenReturn("true");
+        assertTrue(service.isEmailVerificationRequired());
+        assertTrue(service.getSettings().getMail().getVerificationRequired());
+    }
 }

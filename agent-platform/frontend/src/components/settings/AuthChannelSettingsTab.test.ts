@@ -36,7 +36,8 @@ function settingsOf(provider: 'ALIYUN' | 'SMTP') {
           enabled: true, provider, region: 'cn-hangzhou', accessKeyId: 'ak', secretConfigured: true,
           accountName: 'noreply@t.com', verifyUrl: 'https://t.com/v', resetUrl: 'https://t.com/r',
           smtpHost: 'smtp.qq.com', smtpPort: 465, smtpSsl: true,
-          smtpUsername: 'me@qq.com', smtpPasswordConfigured: true, smtpFromAlias: '平台'
+          smtpUsername: 'me@qq.com', smtpPasswordConfigured: true, smtpFromAlias: '平台',
+          verificationRequired: false
         },
         sms: { enabled: false, secretConfigured: false, codeTtlMinutes: 5, limitPerPhonePerDay: 10, limitPerIpPerDay: 30 }
       }
@@ -95,5 +96,25 @@ describe('AuthChannelSettingsTab（12x 邮件通道 SMTP）', () => {
     vm.mailTestTo = 'target@x.com'
     await vm.sendMailTest()
     expect(apiMock.testMailChannel).toHaveBeenCalledWith('target@x.com')
+  })
+
+  // 12x 开关回退：邮箱验证总开关——页面有开关行；保存时 verificationRequired 随 mail 组提交
+  it('邮箱验证总开关：渲染开关行 + 保存携带 verificationRequired', async () => {
+    apiMock.getAuthChannelSettings.mockResolvedValue(settingsOf('SMTP'))
+    apiMock.updateAuthChannelSettings.mockResolvedValue(settingsOf('SMTP'))
+    const wrapper = mount(AuthChannelSettingsTab)
+    await flushPromises()
+    expect(wrapper.html()).toContain('邮箱验证总开关')
+
+    const vm = wrapper.vm as unknown as {
+      form: { mail: { verificationRequired?: boolean } }
+      save: () => Promise<void>
+    }
+    vm.form.mail.verificationRequired = true
+    await vm.save()
+    const payload = apiMock.updateAuthChannelSettings.mock.calls[0][0] as {
+      mail: Record<string, unknown>
+    }
+    expect(payload.mail.verificationRequired).toBe(true)
   })
 })

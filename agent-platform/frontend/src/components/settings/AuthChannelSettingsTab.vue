@@ -54,6 +54,13 @@
           <n-button :loading="mailTesting" :disabled="!mailTestTo" @click="sendMailTest">发送测试邮件</n-button>
         </n-form-item>
 
+        <!-- 12x 开关回退：邮箱验证总开关——默认关（人工测试态：注册不验码/充值不卡邮箱）；
+             真实邮箱通道接入并测通后翻开，B1 注册验码 + B5 充值邮箱门整体复活 -->
+        <n-form-item label="邮箱验证总开关">
+          <n-switch v-model:value="form.mail.verificationRequired" />
+          <span class="unit">开 = 注册强制邮箱验证码 + 充值需已验证邮箱；请先确认测试发信成功再开</span>
+        </n-form-item>
+
         <n-divider title-placement="left">短信（阿里云 SMS）</n-divider>
         <n-form-item label="启用短信"><n-switch v-model:value="form.sms.enabled" /></n-form-item>
         <n-form-item label="区域"><n-input v-model:value="form.sms.region" placeholder="cn-hangzhou" /></n-form-item>

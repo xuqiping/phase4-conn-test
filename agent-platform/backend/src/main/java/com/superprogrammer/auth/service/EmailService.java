@@ -234,6 +234,10 @@ public class EmailService {
      * 12x B2：同 IP 连续失败 ≥2 次 → 强制滑块。</p>
      */
     public void sendRegisterCode(String email, String clientIp, String captchaVerification) {
+        // 12x 开关回退：邮箱验证总开关关闭时注册不验码，发码端点直接拒（前端不展示该入口）
+        if (!channelSettings.isEmailVerificationRequired()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前注册无需邮箱验证码，请直接填写注册信息");
+        }
         captchaGuard.check("mailcode", clientIp, captchaVerification);
         try {
             doSendRegisterCode(email, clientIp);

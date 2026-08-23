@@ -98,6 +98,10 @@ class AuthServiceTest {
     @Mock
     private com.superprogrammer.auth.service.ProgressiveCaptchaGuard captchaGuard;
 
+    // 12x 开关回退：邮箱验证总开关
+    @Mock
+    private com.superprogrammer.auth.service.AuthChannelSettingService channelSettings;
+
     @Mock
     private ValueOperations<String, String> valueOperations;
 
@@ -124,6 +128,9 @@ class AuthServiceTest {
         registerRequest.setPassword("Str0ng#Pass");
         registerRequest.setEmail("new@example.com");
         registerRequest.setEmailCode("123456");
+
+        // 12x 开关回退：默认开（保持 B1 既有语义）；「关」场景由专项用例覆盖
+        org.mockito.Mockito.lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
 
         loginRequest = new LoginRequest();
         loginRequest.setUsername("testuser");
@@ -177,6 +184,55 @@ class AuthServiceTest {
         verify(emailService).verifyRegisterCode("new@example.com", "123456");
         verify(credentialService).createCredential(any(), eq(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL),
                 eq("new@example.com"), isNull(), eq(true));
+    }
+
+    // 12x 开关回退：总开关关 → 不验码直接注册；邮箱填了建 EMAIL 凭证但 verified=FALSE（留待后验）
+    @Test
+    void register_switchOff_skipsCode_emailCredentialUnverified() {
+        when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
+        when(userMapper.insert(any(User.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        registerRequest.setEmailCode(null);
+
+        authService.register(registerRequest);
+
+        verify(emailService, never()).verifyRegisterCode(any(), any());
+        verify(credentialService).createCredential(any(), eq(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL),
+                eq("new@example.com"), isNull(), eq(false));
+    }
+
+    // 12x 开关回退：总开关关 → 邮箱可留空注册（不建 EMAIL 凭证）
+    @Test
+    void register_switchOff_emailBlank_ok() {
+        when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
+        when(userMapper.insert(any(User.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        registerRequest.setEmail(null);
+        registerRequest.setEmailCode(null);
+
+        authService.register(registerRequest);
+
+        verify(userMapper).insert(argThat(user -> user.getEmail() == null));
+        verify(credentialService, never()).createCredential(any(),
+                eq(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL), any(), any(), any(Boolean.class));
+    }
+
+    // 12x 开关回退：总开关开 → 邮箱/验证码缺失直接 400（DTO 不再静态 @NotBlank，服务端判）
+    @Test
+    void register_switchOn_emailOrCodeBlank_rejected() {
+        registerRequest.setEmail(" ");
+        BusinessException e1 = assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+        assertEquals(400, e1.getCode());
+
+        registerRequest.setEmail("new@example.com");
+        registerRequest.setEmailCode(null);
+        BusinessException e2 = assertThrows(BusinessException.class, () -> authService.register(registerRequest));
+        assertEquals(400, e2.getCode());
+        verify(userMapper, never()).insert(any(User.class));
     }
 
     // 密码策略：弱密码在查重之后、写库之前被拒（不落库不审计成功）

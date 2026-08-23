@@ -156,6 +156,8 @@ export interface AuthChannelSettings {
     provider?: 'ALIYUN' | 'SMTP'
     smtpHost?: string; smtpPort?: number; smtpSsl?: boolean
     smtpUsername?: string; smtpPasswordConfigured?: boolean; smtpFromAlias?: string
+    /** 邮箱验证总开关（12x 开关回退）：开=注册强制邮箱验证码+充值需已验证邮箱；默认关 */
+    verificationRequired?: boolean
   }
   sms: {
     enabled: boolean; region?: string; accessKeyId?: string; secretConfigured: boolean

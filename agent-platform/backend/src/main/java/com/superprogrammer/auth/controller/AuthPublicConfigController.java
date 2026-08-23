@@ -42,6 +42,8 @@ public class AuthPublicConfigController {
         vo.setSmsEnabled(channelSettingService.smsSnapshot().enabled());
         // 微信通道：仅环境变量开关（无 DB 配置）
         vo.setWechatEnabled(wechatEnabled);
+        // 12x 开关回退：注册邮箱验证码是否强制（前端注册弹窗显隐验证码行）
+        vo.setRegisterEmailCodeRequired(channelSettingService.isEmailVerificationRequired());
         return ResponseEntity.ok(R.ok(vo));
     }
 
@@ -56,5 +58,7 @@ public class AuthPublicConfigController {
         private boolean smsEnabled;
         /** 微信扫码登录通道。 */
         private boolean wechatEnabled;
+        /** 12x：注册是否强制邮箱验证码（邮箱验证总开关）。 */
+        private boolean registerEmailCodeRequired;
     }
 }

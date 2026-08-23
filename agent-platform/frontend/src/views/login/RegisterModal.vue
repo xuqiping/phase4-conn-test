@@ -23,15 +23,20 @@
       </n-form-item>
 
       <n-form-item path="email" label="邮箱">
-        <n-input v-model:value="form.email" placeholder="请输入邮箱地址（注册即验证，用于找回密码）" size="large">
+        <n-input
+          v-model:value="form.email"
+          :placeholder="emailCodeRequired ? '请输入邮箱地址（注册即验证，用于找回密码）' : '请输入邮箱地址（可选，用于找回密码）'"
+          size="large"
+        >
           <template #prefix>
             <n-icon :component="MailOutline" color="var(--color-text-tertiary)" />
           </template>
         </n-input>
       </n-form-item>
 
-      <!-- 12x B1：注册前置邮箱验证码（证明邮箱归属才建号） -->
-      <n-form-item path="emailCode" label="邮箱验证码">
+      <!-- 12x B1：注册前置邮箱验证码（证明邮箱归属才建号）。
+           12x 开关回退：邮箱验证总开关关 → 整行隐藏，邮箱可选填不验码 -->
+      <n-form-item v-if="emailCodeRequired" path="emailCode" label="邮箱验证码">
         <div class="register-modal__code-row">
           <n-input
             v-model:value="form.emailCode"
@@ -107,8 +112,13 @@
     </n-form>
 
     <n-alert type="info" :bordered="false" class="register-modal__notice">
-      注册前需先验证邮箱：填邮箱 → 点「获取验证码」→ 查收邮件填 6 位数字码（10 分钟内有效）。
-      验证通过的邮箱可直接用于找回密码。
+      <template v-if="emailCodeRequired">
+        注册前需先验证邮箱：填邮箱 → 点「获取验证码」→ 查收邮件填 6 位数字码（10 分钟内有效）。
+        验证通过的邮箱可直接用于找回密码。
+      </template>
+      <template v-else>
+        邮箱可选填：填写后可在「设置 → 安全设置」完成验证，用于找回密码；不填也能注册登录。
+      </template>
     </n-alert>
   </n-modal>
 
@@ -132,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onBeforeUnmount } from 'vue'
+import { ref, reactive, watch, computed, onBeforeUnmount } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, useMessage } from 'naive-ui'
 import { PersonOutline, MailOutline, LockClosedOutline } from '@vicons/ionicons5'
@@ -140,9 +150,14 @@ import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import SliderCaptcha from './SliderCaptcha.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean
-}>()
+  /** 12x 开关回退：邮箱验证总开关（父组件从 /api/auth/channels 取）。
+      开=邮箱+验证码必填；关=邮箱选填、隐藏验证码行。 */
+  emailCodeRequired?: boolean
+}>(), {
+  emailCodeRequired: false
+})
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
   /** 注册成功，回传用户名（父组件自动填入登录表单） */
@@ -230,20 +245,21 @@ async function handleSendCode() {
   }
 }
 
-const rules: FormRules = {
+const rules = computed<FormRules>(() => ({
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 3, max: 20, message: '用户名长度3-20个字符', trigger: 'blur' }
   ],
+  // 12x 开关回退：总开关开 → 邮箱必填；关 → 选填（填了仍校验格式）
   email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' }
+    ...(props.emailCodeRequired ? [{ required: true, message: '请输入邮箱', trigger: 'blur' as const }] : []),
+    { type: 'email' as const, message: '请输入有效的邮箱地址', trigger: 'blur' }
   ],
   emailCode: [
-    { required: true, message: '请输入邮箱验证码', trigger: 'blur' },
+    { required: props.emailCodeRequired, message: '请输入邮箱验证码', trigger: 'blur' },
     {
       validator: (_rule, value) => {
-        if (value && !/^\d{6}$/.test(value)) return new Error('验证码为 6 位数字')
+        if (props.emailCodeRequired && value && !/^\d{6}$/.test(value)) return new Error('验证码为 6 位数字')
         return true
       },
       trigger: 'blur'
@@ -272,7 +288,7 @@ const rules: FormRules = {
       trigger: 'change'
     }
   ]
-}
+}))
 
 // 弹窗关闭时重置表单
 watch(
@@ -305,9 +321,10 @@ async function handleRegister() {
   try {
     await authStore.register({
       username: form.username,
-      email: form.email.trim(),
+      email: form.email.trim() || undefined,
       password: form.password,
-      emailCode: form.emailCode.trim(),
+      // 12x 开关回退：总开关关时不传码（后端忽略）
+      emailCode: props.emailCodeRequired ? form.emailCode.trim() : undefined,
       captchaVerification: captchaToken.value || undefined
     })
     message.success('注册成功，请登录')
@@ -324,6 +341,9 @@ async function handleRegister() {
     message.error(msg)
   }
 }
+
+// 测试可驱动入口（vitest：探表单状态/直接触发提交）
+defineExpose({ form, needCaptcha, captchaToken, handleRegister, handleSendCode })
 </script>
 
 <style lang="scss" scoped>

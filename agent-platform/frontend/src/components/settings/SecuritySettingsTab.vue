@@ -214,7 +214,7 @@ const authStore = useAuthStore()
 
 // 凭证列表
 const credentials = ref<CredentialItem[]>([])
-const channels = ref<AuthChannels>({ passwordEnabled: true, emailEnabled: false, smsEnabled: false, wechatEnabled: false })
+const channels = ref<AuthChannels>({ passwordEnabled: true, emailEnabled: false, smsEnabled: false, wechatEnabled: false, registerEmailCodeRequired: false })
 const loading = ref(false)
 
 const hasEmail = computed(() => credentials.value.some(c => c.credentialType === 'EMAIL'))

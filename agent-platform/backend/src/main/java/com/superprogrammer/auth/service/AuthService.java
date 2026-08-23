@@ -68,6 +68,8 @@ public class AuthService {
     private final MfaService mfaService;
     /** 12x B1：注册前置邮箱验证码校验（码过才建号，EMAIL 凭证直接 verified=TRUE）。 */
     private final EmailService emailService;
+    /** 12x 开关回退：邮箱验证总开关读取（注册验码/充值邮箱门共用）。 */
+    private final AuthChannelSettingService channelSettings;
     /** 12x B2：渐进式滑块门槛（登录/注册连续失败 ≥2 次强制滑块）。 */
     private final ProgressiveCaptchaGuard captchaGuard;
 
@@ -136,15 +138,26 @@ public class AuthService {
         // 密码策略（复杂度/弱密码字典/与用户名相同/bcrypt 72 字节上限）
         PasswordPolicy.validate(request.getUsername(), request.getPassword());
 
-        // 12x B1：注册前置校验邮箱 6 位码（验过即删，一次性）。
-        // 放在查重/密码策略之后——这两类失败不烧码，用户改完可直接重提。
-        emailService.verifyRegisterCode(request.getEmail(), request.getEmailCode());
+        // 12x B1 + 开关回退：邮箱验证总开关（auth.channel.mail.verification-required）。
+        // 开=注册前置校验邮箱 6 位码（验过即删，一次性），放在查重/密码策略之后——这两类失败不烧码；
+        // 关=邮箱可选填不验码（真实邮箱通道接入前的人工测试态），EMAIL 凭证 verified=FALSE 留待后验。
+        boolean verificationRequired = channelSettings.isEmailVerificationRequired();
+        String email = request.getEmail() == null ? "" : request.getEmail().trim();
+        if (verificationRequired) {
+            if (email.isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "请输入邮箱");
+            }
+            if (request.getEmailCode() == null || request.getEmailCode().isBlank()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "请输入邮箱验证码");
+            }
+            emailService.verifyRegisterCode(email, request.getEmailCode());
+        }
 
         // 创建用户
         User user = new User();
         user.setUsername(request.getUsername());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user.setEmail(request.getEmail());
+        user.setEmail(email.isBlank() ? null : email);
         user.setStatus("ACTIVE");
         userMapper.insert(user);
 
@@ -158,7 +171,8 @@ public class AuthService {
         }
 
         // 认证系统增强 Chunk A/B：建多凭证（PASSWORD verified=TRUE）。
-        // 12x B1：EMAIL 验证码已过 → 直接 verified=TRUE（无需注册后再点激活链接）。
+        // 12x B1：总开关开 → EMAIL 验证码已过 → verified=TRUE（无需注册后再点激活链接）；
+        // 开关关 → 邮箱未验真伪 → verified=FALSE，用户后续可在「设置→安全设置」走链接验证。
         // 注意：发验证邮件不放本事务（外部 SMTP 调用可能慢，拉长事务），B1 后注册流程已不再需要。
         try {
             credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_PASSWORD,
@@ -169,13 +183,15 @@ public class AuthService {
             throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
         }
 
-        try {
-            credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
-                    request.getEmail(), null, true);
-        } catch (BusinessException e) {
-            // 邮箱已被他人使用（并发注册同邮箱）：users.uk_users_email 已兜底，这里不应触发；防御性转 CONFLICT
-            log.warn("建 EMAIL 凭证冲突 userId={} email={} : {}", user.getId(), request.getEmail(), e.toString());
-            throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被使用");
+        if (!email.isBlank()) {
+            try {
+                credentialService.createCredential(user.getId(), com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
+                        email, null, verificationRequired);
+            } catch (BusinessException e) {
+                // 邮箱已被他人使用（并发注册同邮箱）：users.uk_users_email 已兜底，这里不应触发；防御性转 CONFLICT
+                log.warn("建 EMAIL 凭证冲突 userId={} email={} : {}", user.getId(), email, e.toString());
+                throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被使用");
+            }
         }
 
         log.info("用户注册成功: {}", user.getUsername());

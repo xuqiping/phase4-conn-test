@@ -38,10 +38,11 @@ export interface LoginParams {
 /** 注册请求参数 */
 export interface RegisterParams {
   username: string
-  email: string
+  /** 12x 开关回退：总开关开时必填；关时可选填 */
+  email?: string
   password: string
-  /** 12x B1：注册邮箱 6 位验证码（先调 sendRegisterEmailCode 获取） */
-  emailCode: string
+  /** 12x B1：注册邮箱 6 位验证码（总开关开时必填，先调 sendRegisterEmailCode 获取） */
+  emailCode?: string
   /** 12x B2：同 IP 连续失败 ≥2 次后必填（滑块 token） */
   captchaVerification?: string
 }

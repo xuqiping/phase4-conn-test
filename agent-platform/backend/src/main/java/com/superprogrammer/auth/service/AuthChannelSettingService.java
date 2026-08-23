@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 public class AuthChannelSettingService {
     private static final String MAIL = "auth.channel.mail.";
     private static final String SMS = "auth.channel.sms.";
+    /** 12x 开关回退：邮箱验证总开关（注册强制邮箱验证码 + 充值需已验证邮箱）。
+     *  默认关——真实邮箱通道（腾讯 SMTP 等）接入并测通后再开。 */
+    public static final String KEY_MAIL_VERIFICATION_REQUIRED = MAIL + "verification-required";
 
     private final SystemSettingService settings;
     private final AliyunMailConfig mailFallback;
@@ -71,6 +74,11 @@ public class AuthChannelSettingService {
                 positiveInt(SMS + "limit-per-ip-per-day", smsIpLimitFallback));
     }
 
+    /** 邮箱验证总开关（12x）：开=注册强制邮箱验证码 + 充值需已验证邮箱；关=邮箱可选填不验码。 */
+    public boolean isEmailVerificationRequired() {
+        return bool(KEY_MAIL_VERIFICATION_REQUIRED, false);
+    }
+
     public AuthChannelSettingsVO getSettings() {
         MailSnapshot mail = mailSnapshot();
         SmsSnapshot sms = smsSnapshot();
@@ -85,6 +93,7 @@ public class AuthChannelSettingService {
                         .smtpUsername(mail.smtp().username())
                         .smtpPasswordConfigured(hasText(mail.smtp().password()))
                         .smtpFromAlias(mail.smtp().fromAlias())
+                        .verificationRequired(isEmailVerificationRequired())
                         .build())
                 .sms(AuthChannelSettingsVO.Sms.builder()
                         .enabled(sms.enabled()).region(sms.region()).accessKeyId(sms.accessKeyId())
@@ -118,6 +127,8 @@ public class AuthChannelSettingService {
         plain(MAIL + "smtp-username", v.getSmtpUsername(), "SMTP 用户名（邮箱地址）");
         secretUpdate(MAIL + "smtp-password", v.getSmtpPassword(), "SMTP 密码/授权码（AES 加密）");
         plain(MAIL + "smtp-from-alias", v.getSmtpFromAlias(), "SMTP 发件人昵称");
+        plain(KEY_MAIL_VERIFICATION_REQUIRED, v.getVerificationRequired(),
+                "邮箱验证总开关（12x）：开=注册强制邮箱验证码+充值需已验证邮箱");
     }
 
     private void updateSms(AuthChannelSettingsUpdateRequest.Sms v) {
