@@ -1,6 +1,9 @@
 package com.superprogrammer.device;
 
+import com.superprogrammer.common.BusinessException;
+import com.superprogrammer.device.service.DeviceBindingService;
 import com.superprogrammer.support.TestStoreConfig;
+import java.sql.Timestamp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,7 +18,9 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -37,6 +42,9 @@ class DeviceBindingTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private DeviceBindingService deviceBindingService;
 
     @BeforeEach
     void cleanUp() {
@@ -83,19 +91,19 @@ class DeviceBindingTest {
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].deviceId").value("device-001"));
 
-        // Device limit exceeded (device_limit=1)
+        // The legacy device_limit no longer blocks additional devices.
         mockMvc.perform(post("/api/client/devices/register")
                         .header("Authorization", "Bearer " + userToken)
                         .contentType("application/json")
                         .content("{\"deviceId\":\"device-002\",\"fingerprintHash\":\"hash002\",\"deviceName\":\"My Phone\"}"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value(409));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deviceId").value("device-002"));
 
         // Admin lists user devices
         mockMvc.perform(get("/api/admin/users/" + userId + "/devices")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1));
+                .andExpect(jsonPath("$.data.length()").value(2));
 
         // Admin disables device
         mockMvc.perform(post("/api/admin/users/" + userId + "/devices/device-001/disable")
@@ -115,6 +123,37 @@ class DeviceBindingTest {
                 "select count(*) from admin_audit_logs where admin_user_id = ? and action = 'device.disable'",
                 Integer.class, adminId);
         assertEquals(1, auditCount);
+    }
+
+    @Test
+    void disabledDeviceCannotHeartbeatAndLastSeenRemainsUnchanged() throws Exception {
+        Long userId = insertUser("disabled-device@example.com", "user", "active", 1);
+        String userToken = userAccessToken("disabled-device@example.com");
+        Timestamp originalLastSeen = Timestamp.valueOf("2026-01-01 00:00:00");
+        insertDevice(userId, "device-disabled", "disabled", originalLastSeen);
+
+        mockMvc.perform(post("/api/client/devices/register")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType("application/json")
+                        .content("{\"deviceId\":\"device-disabled\",\"fingerprintHash\":\"hash-disabled\",\"deviceName\":\"Disabled Laptop\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403));
+
+        Timestamp lastSeenAfter = jdbcTemplate.queryForObject(
+                "select last_seen_at from user_devices where user_id = ? and device_id = ?",
+                Timestamp.class, userId, "device-disabled");
+        assertEquals(originalLastSeen, lastSeenAfter);
+    }
+
+    @Test
+    void activeDeviceMustBelongToAuthenticatedUser() {
+        Long ownerId = insertUser("device-owner@example.com", "user", "active", 1);
+        Long otherUserId = insertUser("device-other@example.com", "user", "active", 1);
+        insertDevice(ownerId, "device-owned", "active", Timestamp.valueOf("2026-01-01 00:00:00"));
+
+        assertDoesNotThrow(() -> deviceBindingService.requireActiveDevice(ownerId, "device-owned"));
+        assertThrows(BusinessException.class,
+                () -> deviceBindingService.requireActiveDevice(otherUserId, "device-owned"));
     }
 
     private String adminAccessToken() throws Exception {
@@ -142,5 +181,13 @@ class DeviceBindingTest {
                 email, passwordEncoder.encode("Password123!"), role, status, deviceLimit
         );
         return jdbcTemplate.queryForObject("select id from users where email = ? order by id desc limit 1", Long.class, email);
+    }
+
+    private void insertDevice(Long userId, String deviceId, String status, Timestamp lastSeenAt) {
+        jdbcTemplate.update(
+                "insert into user_devices (user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
+                userId, deviceId, "hash-" + deviceId, "Device " + deviceId, status, lastSeenAt
+        );
     }
 }

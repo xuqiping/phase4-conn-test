@@ -28,15 +28,20 @@ public class DeviceBindingService {
         // Check if already bound
         var existing = deviceRepository.findByUserIdAndDeviceId(userId, deviceId);
         if (existing.isPresent()) {
-            deviceRepository.updateLastSeenAt(existing.get().id());
+            DeviceDto activeDevice = requireActiveDevice(userId, deviceId);
+            deviceRepository.updateLastSeenAt(activeDevice.id());
             return deviceRepository.findByUserIdAndDeviceId(userId, deviceId).orElseThrow();
         }
-        // Check device limit
-        long activeCount = deviceRepository.countActiveByUserId(userId);
-        if (activeCount >= user.getDeviceLimit()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "已达到设备绑定上限（" + user.getDeviceLimit() + " 台）");
-        }
         return deviceRepository.insert(userId, deviceId, fingerprintHash, deviceName);
+    }
+
+    public DeviceDto requireActiveDevice(Long userId, String deviceId) {
+        DeviceDto device = deviceRepository.findByUserIdAndDeviceId(userId, deviceId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "设备不可用"));
+        if (!"active".equals(device.status())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "设备已禁用");
+        }
+        return device;
     }
 
     public List<DeviceDto> listByUserId(Long userId) {

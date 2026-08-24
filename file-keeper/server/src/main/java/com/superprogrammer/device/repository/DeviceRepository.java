@@ -34,14 +34,6 @@ public class DeviceRepository {
         return results.stream().findFirst();
     }
 
-    public long countActiveByUserId(Long userId) {
-        Long count = jdbcTemplate.queryForObject(
-                "select count(*) from user_devices where user_id = ? and status = 'active' and deleted = 0",
-                Long.class, userId
-        );
-        return count != null ? count : 0;
-    }
-
     public DeviceDto insert(Long userId, String deviceId, String fingerprintHash, String deviceName) {
         jdbcTemplate.update(
                 "insert into user_devices (user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, created_by, created_at, updated_by, updated_at, deleted) " +
