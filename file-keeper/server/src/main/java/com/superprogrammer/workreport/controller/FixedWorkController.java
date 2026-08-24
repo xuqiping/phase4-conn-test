@@ -1,11 +1,8 @@
 package com.superprogrammer.workreport.controller;
 
-import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.R;
-import com.superprogrammer.security.AuthConstants;
+import com.superprogrammer.device.service.DeviceBindingService;
 import com.superprogrammer.security.AuthPrincipal;
-import com.superprogrammer.authorization.dto.AuthorizationSnapshot;
-import com.superprogrammer.authorization.service.AuthorizationService;
 import com.superprogrammer.workreport.dto.CreateFixedWorkItemRequest;
 import com.superprogrammer.workreport.dto.FixedWorkItemDto;
 import com.superprogrammer.workreport.dto.UpdateFixedWorkItemRequest;
@@ -25,16 +22,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class FixedWorkController {
 
-    private final AuthorizationService authorizationService;
+    private final DeviceBindingService deviceBindingService;
     private final FixedWorkService fixedWorkService;
 
-    private boolean checkModuleAuth(Authentication auth, String deviceId) {
+    private AuthPrincipal requireActiveDevice(Authentication auth, String deviceId) {
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
-        AuthorizationSnapshot snapshot = authorizationService.authenticatedSnapshot(
-                principal.userId(), deviceId, System.currentTimeMillis()
-        );
-        return snapshot.modules().stream()
-                .anyMatch(m -> AuthConstants.MODULE_WORK_REPORT.equals(m.moduleCode()) && m.allowed());
+        deviceBindingService.requireActiveDevice(principal.userId(), deviceId);
+        return principal;
     }
 
     @GetMapping
@@ -43,10 +37,7 @@ public class FixedWorkController {
             @RequestParam String deviceId,
             @RequestParam String type,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         if (date != null) {
             return R.ok(fixedWorkService.listByUserAndDate(principal.userId(), date));
         }
@@ -59,10 +50,7 @@ public class FixedWorkController {
             @RequestParam String deviceId,
             @PathVariable Long id,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(fixedWorkService.toggleComplete(principal.userId(), id, date));
     }
 
@@ -71,10 +59,7 @@ public class FixedWorkController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid CreateFixedWorkItemRequest request) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(fixedWorkService.create(principal.userId(), request));
     }
 
@@ -84,10 +69,7 @@ public class FixedWorkController {
             @RequestParam String deviceId,
             @PathVariable Long id,
             @RequestBody @Valid UpdateFixedWorkItemRequest request) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(fixedWorkService.update(principal.userId(), id, request));
     }
 
@@ -96,10 +78,7 @@ public class FixedWorkController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        if (!checkModuleAuth(auth, deviceId)) {
-            return R.fail(ErrorCode.FORBIDDEN.getCode(), "未授权访问工作汇报模块");
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         fixedWorkService.delete(principal.userId(), id);
         return R.ok();
     }

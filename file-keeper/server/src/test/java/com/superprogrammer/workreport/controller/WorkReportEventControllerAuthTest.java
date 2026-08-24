@@ -15,8 +15,6 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.time.OffsetDateTime;
-
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -46,12 +44,22 @@ class WorkReportEventControllerAuthTest {
     }
 
     @Test
-    void shouldRejectEventStreamWhenModuleNotEntitled() throws Exception {
-        Long userId = insertUser("events-no-auth@example.com", "active");
+    void activeUserWithoutEntitlementCanOpenEventStream() throws Exception {
+        Long userId = insertUser("events-open-access@example.com", "active");
         insertDevice(userId, "test-device", "active");
-        // 仅授权 files，不授权 work-report
-        insertEntitlement(userId, "files", OffsetDateTime.now().plusDays(10));
-        String token = userAccessToken("events-no-auth@example.com");
+        String token = userAccessToken("events-open-access@example.com");
+
+        mockMvc.perform(get("/api/client/work-report/events/stream")
+                        .param("deviceId", "test-device")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void disabledDeviceCannotOpenEventStream() throws Exception {
+        Long userId = insertUser("events-disabled-device@example.com", "active");
+        insertDevice(userId, "test-device", "disabled");
+        String token = userAccessToken("events-disabled-device@example.com");
 
         mockMvc.perform(get("/api/client/work-report/events/stream")
                         .param("deviceId", "test-device")
@@ -85,11 +93,4 @@ class WorkReportEventControllerAuthTest {
         );
     }
 
-    private void insertEntitlement(Long userId, String moduleCode, OffsetDateTime expiresAt) {
-        jdbcTemplate.update(
-                "insert into user_module_entitlements (user_id, module_code, enabled, expires_at, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, true, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
-                userId, moduleCode, expiresAt
-        );
-    }
 }

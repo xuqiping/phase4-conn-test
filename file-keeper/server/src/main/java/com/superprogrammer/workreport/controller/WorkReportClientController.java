@@ -3,10 +3,7 @@ package com.superprogrammer.workreport.controller;
 import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.PageResult;
 import com.superprogrammer.common.R;
-import com.superprogrammer.authorization.dto.AuthorizationSnapshot;
-import com.superprogrammer.authorization.dto.ModuleAccess;
-import com.superprogrammer.authorization.service.AuthorizationService;
-import com.superprogrammer.security.AuthConstants;
+import com.superprogrammer.device.service.DeviceBindingService;
 import com.superprogrammer.security.AuthPrincipal;
 import com.superprogrammer.workreport.dto.CreateWorkLogRequest;
 import com.superprogrammer.workreport.dto.GenerateReportRequest;
@@ -45,7 +42,7 @@ import java.util.List;
 @Slf4j
 public class WorkReportClientController {
 
-    private final AuthorizationService authorizationService;
+    private final DeviceBindingService deviceBindingService;
     private final WorkLogService workLogService;
     private final ReportTemplateService reportTemplateService;
     private final ReportConfigService reportConfigService;
@@ -54,20 +51,10 @@ public class WorkReportClientController {
     private final PushCredentialService pushCredentialService;
     private final PushTargetService pushTargetService;
 
-    private ModuleAccess checkModuleAuth(Authentication auth, String deviceId) {
+    private AuthPrincipal requireActiveDevice(Authentication auth, String deviceId) {
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
-        AuthorizationSnapshot snapshot = authorizationService.authenticatedSnapshot(
-                principal.userId(), deviceId, System.currentTimeMillis()
-        );
-        return snapshot.modules().stream()
-                .filter(m -> AuthConstants.MODULE_WORK_REPORT.equals(m.moduleCode()))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private <T> R<T> forbidden(ModuleAccess access) {
-        String reason = access != null && access.reason() != null ? access.reason() : "未授权访问工作汇报模块";
-        return R.fail(ErrorCode.FORBIDDEN.getCode(), reason);
+        deviceBindingService.requireActiveDevice(principal.userId(), deviceId);
+        return principal;
     }
 
     // ==================== 工作记录 ====================
@@ -77,11 +64,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         if (startDate == null && endDate == null) {
             LocalDate today = LocalDate.now();
             return R.ok(workLogService.listByUserAndDate(principal.userId(), today));
@@ -99,11 +82,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid CreateWorkLogRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(workLogService.create(principal.userId(), request));
     }
 
@@ -113,11 +92,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @PathVariable Long id,
             @RequestBody @Valid UpdateWorkLogRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(workLogService.update(principal.userId(), id, request));
     }
 
@@ -126,11 +101,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         workLogService.delete(principal.userId(), id);
         return R.ok();
     }
@@ -140,11 +111,7 @@ public class WorkReportClientController {
     public R<List<ReportTemplateDto>> listTemplates(
             Authentication auth,
             @RequestParam String deviceId) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(reportTemplateService.listAvailable(principal.userId()));
     }
 
@@ -153,11 +120,7 @@ public class WorkReportClientController {
     public R<List<ReportConfigDto>> listConfigs(
             Authentication auth,
             @RequestParam String deviceId) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(reportConfigService.listByUser(principal.userId()));
     }
 
@@ -166,11 +129,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(reportConfigService.getById(principal.userId(), id));
     }
 
@@ -179,11 +138,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid SaveReportConfigRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(reportConfigService.save(principal.userId(), request));
     }
 
@@ -192,11 +147,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         reportConfigService.delete(principal.userId(), id);
         return R.ok();
     }
@@ -206,11 +157,7 @@ public class WorkReportClientController {
     public R<List<PushCredentialDto>> listPushCredentials(
             Authentication auth,
             @RequestParam String deviceId) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushCredentialService.listByUser(principal.userId()));
     }
 
@@ -219,11 +166,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid PushCredentialCreateRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushCredentialService.create(principal.userId(), request));
     }
 
@@ -233,11 +176,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @PathVariable Long id,
             @RequestBody @Valid PushCredentialUpdateRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushCredentialService.update(principal.userId(), id, request));
     }
 
@@ -246,11 +185,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         pushCredentialService.delete(principal.userId(), id);
         return R.ok();
     }
@@ -259,11 +194,7 @@ public class WorkReportClientController {
     public R<List<PushTargetDto>> listPushTargets(
             Authentication auth,
             @RequestParam String deviceId) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushTargetService.listByUser(principal.userId()));
     }
 
@@ -272,11 +203,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid PushTargetCreateRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushTargetService.create(principal.userId(), request));
     }
 
@@ -286,11 +213,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @PathVariable Long id,
             @RequestBody @Valid PushTargetUpdateRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(pushTargetService.update(principal.userId(), id, request));
     }
 
@@ -299,11 +222,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         pushTargetService.delete(principal.userId(), id);
         return R.ok();
     }
@@ -314,11 +233,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid GenerateReportRequest request) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(workReportService.generate(principal.userId(), request.configId()));
     }
 
@@ -328,11 +243,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @PathVariable Long id) {
         log.info("[pushReport] 收到推送请求 reportId={} deviceId={}", id, deviceId);
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         WorkReportDto report = workReportService.getById(principal.userId(), id);
         log.info("[pushReport] 准备异步推送 reportId={}", id);
         reportPushService.pushReport(report.id());
@@ -345,11 +256,7 @@ public class WorkReportClientController {
             @RequestParam String deviceId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(workReportService.pageByUser(principal.userId(), page, size));
     }
 
@@ -358,11 +265,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(workReportService.getById(principal.userId(), id));
     }
 
@@ -371,11 +274,7 @@ public class WorkReportClientController {
             Authentication auth,
             @RequestParam String deviceId,
             @PathVariable Long id) {
-        ModuleAccess access = checkModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         workReportService.delete(principal.userId(), id);
         return R.ok();
     }

@@ -36,6 +36,10 @@ public class DeviceBindingService {
     }
 
     public DeviceDto requireActiveDevice(Long userId, String deviceId) {
+        User user = userRepository.requireById(userId);
+        if (!"active".equals(user.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "账号不可用");
+        }
         DeviceDto device = deviceRepository.findByUserIdAndDeviceId(userId, deviceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "设备不可用"));
         if (!"active".equals(device.status())) {

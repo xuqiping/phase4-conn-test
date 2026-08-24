@@ -16,7 +16,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -60,15 +59,40 @@ class WorkReportClientControllerTest {
     }
 
     @Test
-    void unauthorizedUserGetsForbiddenWhenModuleNotEntitled() throws Exception {
-        Long userId = insertUser("unauthorized@example.com", "active");
+    void activeUserWithoutEntitlementCanAccessWorkReport() throws Exception {
+        Long userId = insertUser("open-access@example.com", "active");
         insertDevice(userId, "device-001", "active");
-        // no work-report entitlement
-        String token = userAccessToken("unauthorized@example.com");
+        String token = userAccessToken("open-access@example.com");
 
         mockMvc.perform(get("/api/client/work-report/logs?deviceId=device-001&date=2026-06-21")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void disabledDeviceCannotAccessWorkReport() throws Exception {
+        Long userId = insertUser("disabled-work-report-device@example.com", "active");
+        insertDevice(userId, "device-disabled", "disabled");
+        String token = userAccessToken("disabled-work-report-device@example.com");
+
+        mockMvc.perform(get("/api/client/work-report/logs?deviceId=device-disabled&date=2026-06-21")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403));
+    }
+
+    @Test
+    void disabledAccountCannotUseExistingAccessToken() throws Exception {
+        Long userId = insertUser("disabled-after-login@example.com", "active");
+        insertDevice(userId, "device-001", "active");
+        String token = userAccessToken("disabled-after-login@example.com");
+        jdbcTemplate.update("update users set status = 'disabled' where id = ?", userId);
+
+        mockMvc.perform(get("/api/client/work-report/logs?deviceId=device-001&date=2026-06-21")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(403));
     }
 
@@ -187,7 +211,6 @@ class WorkReportClientControllerTest {
     private String prepareAuthorizedUser() throws Exception {
         Long userId = insertUser("wr-user@example.com", "active");
         insertDevice(userId, "device-001", "active");
-        insertEntitlement(userId, "work-report", true, OffsetDateTime.now().plusDays(30));
         return userAccessToken("wr-user@example.com");
     }
 
@@ -214,14 +237,6 @@ class WorkReportClientControllerTest {
                 "insert into user_devices (user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, created_by, created_at, updated_by, updated_at, deleted) " +
                         "values (?, ?, 'fp', 'Laptop', ?, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
                 userId, deviceId, status
-        );
-    }
-
-    private void insertEntitlement(Long userId, String moduleCode, boolean enabled, OffsetDateTime expiresAt) {
-        jdbcTemplate.update(
-                "insert into user_module_entitlements (user_id, module_code, enabled, expires_at, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
-                userId, moduleCode, enabled, expiresAt
         );
     }
 

@@ -15,8 +15,6 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.time.OffsetDateTime;
-
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,34 +45,32 @@ class InboundMessageControllerAuthTest {
     }
 
     @Test
-    void shouldRejectInboxListWhenModuleNotEntitled() throws Exception {
-        Long userId = insertUser("inbox-no-auth@example.com", "active");
+    void activeUserWithoutEntitlementCanListInbox() throws Exception {
+        Long userId = insertUser("inbox-open-access@example.com", "active");
         insertDevice(userId, "test-device", "active");
-        // 仅授权 files，不授权 work-report
-        insertEntitlement(userId, "files", OffsetDateTime.now().plusDays(10));
-        String token = userAccessToken("inbox-no-auth@example.com");
+        String token = userAccessToken("inbox-open-access@example.com");
 
         mockMvc.perform(get("/api/client/work-report/inbox")
                         .param("deviceId", "test-device")
                         .param("limit", "50")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(403));
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.length()").value(0));
     }
 
     @Test
-    void shouldRejectInboxConfirmWhenModuleNotEntitled() throws Exception {
-        Long userId = insertUser("inbox-confirm-no-auth@example.com", "active");
-        insertDevice(userId, "test-device", "active");
-        insertEntitlement(userId, "files", OffsetDateTime.now().plusDays(10));
-        String token = userAccessToken("inbox-confirm-no-auth@example.com");
+    void disabledDeviceCannotConfirmInboxMessage() throws Exception {
+        Long userId = insertUser("inbox-disabled-device@example.com", "active");
+        insertDevice(userId, "test-device", "disabled");
+        String token = userAccessToken("inbox-disabled-device@example.com");
 
         mockMvc.perform(post("/api/client/work-report/inbox/1/confirm")
                         .param("deviceId", "test-device")
                         .contentType("application/json")
                         .content("{\"action\":\"CONFIRM\"}")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(403));
     }
 
@@ -104,11 +100,4 @@ class InboundMessageControllerAuthTest {
         );
     }
 
-    private void insertEntitlement(Long userId, String moduleCode, OffsetDateTime expiresAt) {
-        jdbcTemplate.update(
-                "insert into user_module_entitlements (user_id, module_code, enabled, expires_at, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, true, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
-                userId, moduleCode, expiresAt
-        );
-    }
 }

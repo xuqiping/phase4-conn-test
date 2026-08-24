@@ -5,13 +5,10 @@ import com.superprogrammer.ai.dto.AiConfigTestRequest;
 import com.superprogrammer.ai.dto.AiConfigUpdateRequest;
 import com.superprogrammer.ai.dto.AiConfigVO;
 import com.superprogrammer.ai.service.AiConfigService;
-import com.superprogrammer.authorization.dto.AuthorizationSnapshot;
-import com.superprogrammer.authorization.dto.ModuleAccess;
-import com.superprogrammer.authorization.service.AuthorizationService;
 import com.superprogrammer.common.BusinessException;
 import com.superprogrammer.common.ErrorCode;
 import com.superprogrammer.common.R;
-import com.superprogrammer.security.AuthConstants;
+import com.superprogrammer.device.service.DeviceBindingService;
 import com.superprogrammer.security.AuthPrincipal;
 import com.superprogrammer.workreport.service.AiSummaryService;
 import jakarta.validation.Valid;
@@ -28,43 +25,25 @@ import java.util.List;
 @Slf4j
 public class AiConfigController {
 
-    private final AuthorizationService authorizationService;
+    private final DeviceBindingService deviceBindingService;
     private final AiConfigService aiConfigService;
     private final AiSummaryService aiSummaryService;
 
-    private ModuleAccess checkAiModuleAuth(Authentication auth, String deviceId) {
+    private AuthPrincipal requireActiveDevice(Authentication auth, String deviceId) {
         AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
-        AuthorizationSnapshot snapshot = authorizationService.authenticatedSnapshot(
-                principal.userId(), deviceId, System.currentTimeMillis()
-        );
-        return snapshot.modules().stream()
-                .filter(m -> AuthConstants.MODULE_AI.equals(m.moduleCode()))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private <T> R<T> forbidden(ModuleAccess access) {
-        String reason = access != null && access.reason() != null ? access.reason() : "未授权访问 AI 能力";
-        return R.fail(ErrorCode.FORBIDDEN.getCode(), reason);
+        deviceBindingService.requireActiveDevice(principal.userId(), deviceId);
+        return principal;
     }
 
     @GetMapping
     public R<List<AiConfigVO>> list(Authentication auth, @RequestParam String deviceId) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(aiConfigService.listByUserId(principal.userId()));
     }
 
     @GetMapping("/{id}")
     public R<AiConfigVO> get(Authentication auth, @PathVariable Long id, @RequestParam String deviceId) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(aiConfigService.getByIdAndUserId(id, principal.userId()));
     }
 
@@ -73,11 +52,7 @@ public class AiConfigController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid AiConfigCreateRequest request) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(aiConfigService.create(principal.userId(), request));
     }
 
@@ -87,32 +62,20 @@ public class AiConfigController {
             @PathVariable Long id,
             @RequestParam String deviceId,
             @RequestBody @Valid AiConfigUpdateRequest request) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(aiConfigService.update(principal.userId(), id, request));
     }
 
     @DeleteMapping("/{id}")
     public R<Void> delete(Authentication auth, @PathVariable Long id, @RequestParam String deviceId) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         aiConfigService.delete(principal.userId(), id);
         return R.ok();
     }
 
     @PutMapping("/{id}/default")
     public R<AiConfigVO> setDefault(Authentication auth, @PathVariable Long id, @RequestParam String deviceId) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         return R.ok(aiConfigService.setDefault(principal.userId(), id));
     }
 
@@ -121,11 +84,7 @@ public class AiConfigController {
             Authentication auth,
             @RequestParam String deviceId,
             @RequestBody @Valid AiConfigTestRequest request) {
-        ModuleAccess access = checkAiModuleAuth(auth, deviceId);
-        if (access == null || !access.allowed()) {
-            return forbidden(access);
-        }
-        AuthPrincipal principal = (AuthPrincipal) auth.getPrincipal();
+        AuthPrincipal principal = requireActiveDevice(auth, deviceId);
         AiConfigVO testConfig = new AiConfigVO(
                 null,
                 null,
