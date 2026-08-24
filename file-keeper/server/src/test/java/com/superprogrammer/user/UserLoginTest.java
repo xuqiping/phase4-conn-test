@@ -33,8 +33,8 @@ class UserLoginTest {
     private PasswordEncoder passwordEncoder;
 
     @Test
-    void pendingReviewUserCanLoginAndRefreshAndLogout() throws Exception {
-        insertUser("login@example.com", "pending_review");
+    void activeUserCanLoginAndRefreshAndLogout() throws Exception {
+        insertUser("login@example.com", "active");
 
         MvcResult loginResult = mockMvc.perform(post("/api/client/auth/login")
                         .contentType("application/json")
@@ -42,8 +42,8 @@ class UserLoginTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accessToken").isString())
                 .andExpect(jsonPath("$.data.refreshToken").isString())
-                .andExpect(jsonPath("$.data.expiresInSeconds").value(900))
-                .andExpect(jsonPath("$.data.user.status").value("pending_review"))
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(86400))
+                .andExpect(jsonPath("$.data.user.status").value("active"))
                 .andReturn();
 
         String body = loginResult.getResponse().getContentAsString();
@@ -67,6 +67,17 @@ class UserLoginTest {
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(401));
+    }
+
+    @Test
+    void pendingReviewUserCannotLogin() throws Exception {
+        insertUser("pending@example.com", "pending_review");
+
+        mockMvc.perform(post("/api/client/auth/login")
+                        .contentType("application/json")
+                        .content("{\"identifier\":\"pending@example.com\",\"password\":\"Password123!\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403));
     }
 
     @Test

@@ -46,7 +46,7 @@ public class UserAuthService {
             throw new BusinessException(ErrorCode.CONFLICT, "联系方式已注册");
         }
         verificationService.consumeVerified(contactType, contact);
-        return userRepository.insertPendingReviewUser(email, phone, passwordEncoder.encode(request.password()),
+        return userRepository.insertActiveUser(email, phone, passwordEncoder.encode(request.password()),
                 systemSettingService.getDefaultDeviceLimit(),
                 systemSettingService.getDefaultOfflineCacheMinutes());
     }
@@ -60,6 +60,7 @@ public class UserAuthService {
         if (AuthConstants.STATUS_DISABLED.equals(user.getStatus())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "账号已禁用");
         }
+        requireActiveClientUser(user);
         return createAuthResponse(user, refreshTokenService.create(user.getId()));
     }
 
@@ -69,6 +70,12 @@ public class UserAuthService {
         if (AuthConstants.STATUS_DISABLED.equals(user.getStatus())) {
             refreshTokenService.delete(refreshToken);
             throw new BusinessException(ErrorCode.FORBIDDEN, "账号已禁用");
+        }
+        try {
+            requireActiveClientUser(user);
+        } catch (BusinessException exception) {
+            refreshTokenService.delete(refreshToken);
+            throw exception;
         }
         return createAuthResponse(user, refreshToken);
     }
@@ -111,5 +118,12 @@ public class UserAuthService {
                 ? authProperties.getJwt().getAccessTokenMinutes() * 60
                 : authProperties.getJwt().getClientAccessTokenHours() * 60 * 60;
         return new AuthResponse(accessToken, refreshToken, expiresInSeconds, userRepository.toSummary(user));
+    }
+
+    private void requireActiveClientUser(User user) {
+        if (AuthConstants.ROLE_USER.equals(user.getRole())
+                && !AuthConstants.STATUS_ACTIVE.equals(user.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "账号尚未激活");
+        }
     }
 }

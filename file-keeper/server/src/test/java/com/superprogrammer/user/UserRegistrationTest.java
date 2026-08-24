@@ -58,11 +58,11 @@ class UserRegistrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.email").value("new-user@example.com"))
                 .andExpect(jsonPath("$.data.role").value("user"))
-                .andExpect(jsonPath("$.data.status").value("pending_review"))
+                .andExpect(jsonPath("$.data.status").value("active"))
                 .andExpect(jsonPath("$.data.emailVerified").value(true));
 
         Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from users where email = 'new-user@example.com' and status = 'pending_review' and email_verified = true",
+                "select count(*) from users where email = 'new-user@example.com' and status = 'active' and email_verified = true",
                 Integer.class
         );
         assertEquals(1, count);
