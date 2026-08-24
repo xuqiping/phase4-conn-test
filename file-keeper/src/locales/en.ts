@@ -14,6 +14,12 @@ export default {
     off: 'Off',
     delete: 'Delete'
   },
+  access: {
+    loginRequiredTitle: 'Sign in to continue',
+    workReportLoginDescription: 'Work reports, inbox, inspirations, and push settings use your account for synchronization.',
+    aiLoginDescription: 'AI configurations are stored under your account. Sign in to manage them.',
+    loginAction: 'Sign in'
+  },
   file: {
     searchPlaceholder: 'Search files, paths, or tags...',
     sortLabel: 'Sort',

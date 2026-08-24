@@ -14,6 +14,12 @@ export default {
     off: '关闭',
     delete: '删除'
   },
+  access: {
+    loginRequiredTitle: '请先登录',
+    workReportLoginDescription: '工作汇报、互动收件箱、灵感和推送配置使用账号同步，请登录后继续。',
+    aiLoginDescription: 'AI 配置保存在你的账号下，请登录后管理。',
+    loginAction: '登录账号'
+  },
   file: {
     searchPlaceholder: '搜索文件、路径或标签...',
     sortLabel: '排序',

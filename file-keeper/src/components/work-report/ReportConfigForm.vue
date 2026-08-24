@@ -41,7 +41,7 @@
               <span>{{ t('workReport.aiEnabled') }}</span>
             </label>
           </div>
-          <div v-if="aiModuleAllowed" class="space-y-2">
+          <div class="space-y-2">
             <label class="block text-sm text-gray-700 dark:text-gray-300">{{ t('workReport.aiConfig') }}</label>
             <select
               v-model="editingConfig.aiConfigId"
@@ -160,7 +160,7 @@
             <span>{{ t('workReport.aiEnabled') }}</span>
           </label>
         </div>
-        <div v-if="aiModuleAllowed" class="space-y-2">
+        <div class="space-y-2">
           <label class="block text-sm text-gray-700 dark:text-gray-300">{{ t('workReport.aiConfig') }}</label>
           <select
             v-model="newConfig.aiConfigId"
@@ -239,17 +239,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import { useWorkReportStore } from '@/stores/workReportStore'
 import { useI18n } from '@/composables/useI18n'
 import { useAiConfigStore } from '@/stores/aiConfigStore'
-import { useCommercialAuthStore } from '@/stores/commercialAuthStore'
 import type { ReportConfig, PushTarget } from '@/types/workReport'
 
 const store = useWorkReportStore()
 const aiConfigStore = useAiConfigStore()
-const commercialAuthStore = useCommercialAuthStore()
 const { t } = useI18n()
 
 const emit = defineEmits<{
@@ -282,17 +280,13 @@ function defaultConfig(): Partial<ReportConfig> {
   }
 }
 
-const aiModuleAllowed = computed(() => commercialAuthStore.isModuleAllowed('ai'))
-
 onMounted(async () => {
   await store.loadTemplates()
   await store.loadConfigs()
   await store.loadPushTargets()
-  if (aiModuleAllowed.value) {
-    aiConfigStore.loadConfigs().catch(() => {
-      // 错误已在 store 中记录
-    })
-  }
+  aiConfigStore.loadConfigs().catch(() => {
+    // 错误已在 store 中记录
+  })
   if (store.templates.length > 0 && !newConfig.value.templateId) {
     newConfig.value.templateId = store.templates[0].id
   }

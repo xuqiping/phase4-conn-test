@@ -188,7 +188,22 @@
 
           <!-- AI 模型设置 -->
           <template v-else-if="activeTab === 'ai'">
-            <AiConfigSettings />
+            <AiConfigSettings v-if="authStore.isAuthenticated" />
+            <div
+              v-else
+              data-test="ai-login-prompt"
+              class="flex flex-col items-center gap-3 py-8 text-center"
+            >
+              <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ t('access.loginRequiredTitle') }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('access.aiLoginDescription') }}</p>
+              <button
+                data-test="ai-login-button"
+                @click="$emit('login')"
+                class="px-4 py-2 rounded-md bg-primary text-white hover:bg-[#369b6e] transition-colors text-sm font-medium"
+              >
+                {{ t('access.loginAction') }}
+              </button>
+            </div>
           </template>
         </div>
 
@@ -226,7 +241,8 @@
 import { ref, watch, computed } from 'vue'
 import { X } from 'lucide-vue-next'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useCommercialAuthStore } from '../stores/commercialAuthStore'
+import { useAuthStore } from '../stores/authStore'
+import { useI18n } from '../composables/useI18n'
 import AiConfigSettings from './AiConfigSettings.vue'
 
 const props = defineProps<{
@@ -235,20 +251,21 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  login: []
   save: [settings: { globalShortcut: string; clipboardShortcut: string; screenshotShortcut: string; minimizeToTray: boolean; theme: 'light' | 'dark' | 'auto' }]
 }>()
 
 const settingsStore = useSettingsStore()
-const commercialAuthStore = useCommercialAuthStore()
+const authStore = useAuthStore()
+const { t } = useI18n()
 
 const activeTab = ref('general')
 
 const visibleTabs = computed(() => {
-  const tabs = [{ key: 'general', label: '通用' }]
-  if (commercialAuthStore.isModuleAllowed('ai')) {
-    tabs.push({ key: 'ai', label: 'AI 模型' })
-  }
-  return tabs
+  return [
+    { key: 'general', label: '通用' },
+    { key: 'ai', label: 'AI 模型' }
+  ]
 })
 
 const localShortcut = ref(settingsStore.settings.globalShortcut)
