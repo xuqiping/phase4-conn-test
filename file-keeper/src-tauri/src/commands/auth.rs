@@ -1,3 +1,8 @@
+#![allow(dead_code)]
+
+//! 废弃兼容层：新客户端不再注册这些 Tauri 命令，也不再以授权凭据保护本地能力。
+//! 保留签名解析与验签测试，供兼容期排查旧客户端问题；后续物理清理阶段删除。
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::sync::Mutex;

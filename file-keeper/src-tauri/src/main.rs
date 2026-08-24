@@ -37,7 +37,6 @@ use commands::clipboard::{
     update_clipboard_settings,
 };
 use commands::screenshot::{capture_screenshot_region, get_screenshot_ocr_status};
-use commands::auth::{set_signed_entitlement, clear_signed_entitlement, check_signed_entitlement_access, SignedEntitlementState};
 use commands::work_report::{fetch_git_logs, show_work_report_notification, export_report_markdown};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -56,8 +55,6 @@ fn main() {
             let clipboard_service = ClipboardService::new(database_path)
                 .map_err(|err| Box::<dyn std::error::Error>::from(err))?;
             app.manage(clipboard_service);
-            app.manage(SignedEntitlementState::new());
-
             // Build tray menu
             let show_item = MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
             let hide_item = MenuItemBuilder::with_id("hide", "隐藏窗口").build(app)?;
@@ -148,9 +145,6 @@ fn main() {
             retry_link_preview,
             capture_screenshot_region,
             get_screenshot_ocr_status,
-            set_signed_entitlement,
-            clear_signed_entitlement,
-            check_signed_entitlement_access,
             fetch_git_logs,
             show_work_report_notification,
             export_report_markdown

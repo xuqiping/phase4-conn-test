@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
-use crate::commands::auth::SignedEntitlementState;
 use crate::clipboard::ClipboardService;
-
-const MODULE_CODE: &str = "clipboard";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,15 +48,10 @@ fn physical_region(region: &ScreenshotRegion) -> Result<crate::platform::windows
 
 #[tauri::command]
 pub fn capture_screenshot_region(
-    entitlement_state: State<'_, SignedEntitlementState>,
     app: AppHandle,
     region: ScreenshotRegion,
     service: State<'_, ClipboardService>,
 ) -> Result<ScreenshotCaptureResult, String> {
-    entitlement_state
-        .require_module(MODULE_CODE)
-        .map_err(|e| e.user_message())?;
-
     let region = physical_region(&region)?;
     let png_bytes = crate::platform::windows::screenshot::capture_screen_region(&region)?;
     let app_for_ocr = app.clone();
@@ -86,6 +78,15 @@ pub fn get_screenshot_ocr_status() -> Result<ScreenshotOcrStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_command_does_not_require_entitlement_state() {
+        let _: fn(
+            AppHandle,
+            ScreenshotRegion,
+            State<'_, ClipboardService>,
+        ) -> Result<ScreenshotCaptureResult, String> = capture_screenshot_region;
+    }
 
     #[test]
     fn screenshot_region_rejects_invalid_size() {

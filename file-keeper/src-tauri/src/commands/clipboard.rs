@@ -1,4 +1,3 @@
-use crate::commands::auth::SignedEntitlementState;
 use crate::clipboard::{
     ClipboardItemSummary, ClipboardQuery, ClipboardService, ClipboardSettings,
     ClipboardStorageTypeUsage, ClipboardStorageUsage,
@@ -6,18 +5,11 @@ use crate::clipboard::{
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-const MODULE_CODE: &str = "clipboard";
-
 #[tauri::command]
 pub fn start_clipboard_monitor(
-    entitlement_state: State<'_, SignedEntitlementState>,
     app: AppHandle,
     service: State<'_, ClipboardService>,
 ) -> Result<(), String> {
-    entitlement_state
-        .require_module(MODULE_CODE)
-        .map_err(|e| e.user_message())?;
-
     let running = service.monitor_flag();
     if running.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
@@ -74,13 +66,8 @@ pub fn start_clipboard_monitor(
 
 #[tauri::command]
 pub fn stop_clipboard_monitor(
-    entitlement_state: State<'_, SignedEntitlementState>,
     service: State<'_, ClipboardService>,
 ) -> Result<(), String> {
-    entitlement_state
-        .require_module(MODULE_CODE)
-        .map_err(|e| e.user_message())?;
-
     service
         .monitor_flag()
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -391,4 +378,16 @@ fn hash_bytes(bytes: &[u8]) -> String {
 pub fn clipboard_database_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let app_data = app.path().app_data_dir().map_err(|err| err.to_string())?;
     Ok(app_data.join("clipboard-history.sqlite"))
+}
+
+#[cfg(test)]
+mod access_mode_tests {
+    use super::*;
+
+    #[test]
+    fn monitor_commands_do_not_require_entitlement_state() {
+        let _: fn(AppHandle, State<'_, ClipboardService>) -> Result<(), String> =
+            start_clipboard_monitor;
+        let _: fn(State<'_, ClipboardService>) -> Result<(), String> = stop_clipboard_monitor;
+    }
 }

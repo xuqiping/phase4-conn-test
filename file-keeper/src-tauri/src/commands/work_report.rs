@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::State;
 use serde::{Deserialize, Serialize};
-use crate::commands::auth::SignedEntitlementState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitLogEntry {
@@ -17,19 +15,14 @@ pub struct ExportReportResult {
     pub path: String,
 }
 
-const MODULE_CODE: &str = "work-report";
-
 /// 读取本地 Git 日志
-/// 敏感操作：访问本地文件系统，必须校验模块授权
+/// 敏感操作：访问本地文件系统，保留仓库路径存在性校验。
 #[tauri::command]
 pub fn fetch_git_logs(
-    entitlement_state: State<SignedEntitlementState>,
     repo_path: String,
     since: String,
     until: Option<String>,
 ) -> Result<Vec<GitLogEntry>, String> {
-    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
-
     let path = PathBuf::from(&repo_path);
     if !path.exists() {
         return Err("仓库路径不存在".into());
@@ -85,12 +78,9 @@ fn parse_git_log(output: &str) -> Vec<GitLogEntry> {
 /// 显示本地系统通知
 #[tauri::command]
 pub fn show_work_report_notification(
-    entitlement_state: State<SignedEntitlementState>,
     title: String,
     body: String,
 ) -> Result<(), String> {
-    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
-
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
@@ -125,12 +115,9 @@ pub fn show_work_report_notification(
 /// 导出报告为本地 Markdown 文件
 #[tauri::command]
 pub fn export_report_markdown(
-    entitlement_state: State<SignedEntitlementState>,
     title: String,
     content: String,
 ) -> Result<ExportReportResult, String> {
-    entitlement_state.require_module(MODULE_CODE).map_err(|e| e.user_message())?;
-
     let downloads_dir = dirs::download_dir()
         .ok_or("无法获取下载目录")?;
 
@@ -152,6 +139,15 @@ fn sanitize_filename(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_work_report_commands_do_not_require_entitlement_state() {
+        let _: fn(String, String, Option<String>) -> Result<Vec<GitLogEntry>, String> =
+            fetch_git_logs;
+        let _: fn(String, String) -> Result<(), String> = show_work_report_notification;
+        let _: fn(String, String) -> Result<ExportReportResult, String> =
+            export_report_markdown;
+    }
 
     #[test]
     fn test_parse_git_log() {
