@@ -77,8 +77,20 @@ export interface ArticleDetailVO extends ArticleListItemVO {
 export interface AdminArticleVO extends ArticleDetailVO {
   id: number
   published: boolean
+  /** 可见性权限码（V149）：null=全员；否则须持该码或 admin */
+  requiredPermission: string | null
   createdAt: string
   updatedAt: string | null
+}
+
+/** 新建/更新文章载荷（V149 起支持 requiredPermission） */
+export interface UpsertArticlePayload {
+  slug: string
+  title: string
+  category?: string
+  sortOrder?: number
+  requiredPermission?: string
+  contentMd: string
 }
 
 export type FeedbackNotificationType = 'SUGGESTION_REVIEWED' | 'QUESTION_ANSWERED'
@@ -193,10 +205,10 @@ export const feedbackApi = {
   adminArticles(params: { page?: number; size?: number }) {
     return request.get<ApiResponse<PageResult<AdminArticleVO>>>('/feedback/admin/help/articles', { params })
   },
-  createArticle(data: { slug: string; title: string; category?: string; sortOrder?: number; contentMd: string }) {
+  createArticle(data: UpsertArticlePayload) {
     return request.post<ApiResponse<{ id: number }>>('/feedback/admin/help/articles', data)
   },
-  updateArticle(id: number, data: { slug: string; title: string; category?: string; sortOrder?: number; contentMd: string }) {
+  updateArticle(id: number, data: UpsertArticlePayload) {
     return request.put<ApiResponse<null>>(`/feedback/admin/help/articles/${id}`, data)
   },
   setArticlePublished(id: number, published: boolean) {

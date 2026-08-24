@@ -39,6 +39,7 @@ const articleRow = (over: Partial<AdminArticleVO> = {}): AdminArticleVO => ({
   sortOrder: 1,
   contentMd: '# 正文',
   published: false,
+  requiredPermission: null,
   publishedAt: null,
   createdAt: '2026-08-21T10:00:00Z',
   updatedAt: null,

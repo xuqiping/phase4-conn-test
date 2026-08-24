@@ -12,5 +12,8 @@ public record UpsertArticleRequest(
         @NotBlank(message = "标题必填") @Size(max = 120, message = "标题最长 120 字") String title,
         @Size(max = 40, message = "分类最长 40 字") String category,
         Integer sortOrder,
+        @Size(max = 64, message = "所需权限码最长 64 字符")
+        @Pattern(regexp = "^$|^[A-Za-z0-9:_*-]+$", message = "所需权限码仅允许字母/数字/冒号/下划线/连字符")
+        String requiredPermission,
         @NotBlank(message = "正文必填") String contentMd) {
 }

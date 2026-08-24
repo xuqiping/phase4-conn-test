@@ -32,4 +32,10 @@ public class HelpArticleEntity extends BaseEntity {
     private Boolean published;
 
     private OffsetDateTime publishedAt;
+
+    /**
+     * 可见性权限码（V149）：NULL=全体登录用户；否则须持有该码或 ROLE_admin。
+     * 用户侧目录与 slug 直链同闸过滤（直链按 404 处理，不泄露存在性）。
+     */
+    private String requiredPermission;
 }

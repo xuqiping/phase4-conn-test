@@ -41,6 +41,16 @@
         <n-form-item label="排序">
           <n-input-number v-model:value="form.sortOrder" :min="0" :max="9999" style="width: 140px" />
         </n-form-item>
+        <n-form-item label="所需权限">
+          <n-select
+            v-model:value="form.requiredPermission"
+            :options="permissionOptions"
+            filterable
+            tag
+            clearable
+            placeholder="留空 = 全体登录用户可见"
+          />
+        </n-form-item>
         <n-form-item label="正文">
           <n-input
             v-model:value="form.contentMd"
@@ -70,7 +80,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NButton, NCard, NDataTable, NForm, NFormItem, NInput, NInputNumber, NModal, NSpace, NSwitch,
+  NButton, NCard, NDataTable, NForm, NFormItem, NInput, NInputNumber, NModal, NSelect, NSpace, NSwitch,
   useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, PaginationProps } from 'naive-ui'
@@ -89,7 +99,29 @@ const showEditor = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const showPreview = ref(false)
-const form = reactive({ slug: '', title: '', category: '', sortOrder: 0, contentMd: '' })
+const form = reactive({ slug: '', title: '', category: '', sortOrder: 0, requiredPermission: null as string | null, contentMd: '' })
+
+// 所需权限预设选项（可自由输入其他码；留空=全员可见，V149）
+const permissionOptions = [
+  { label: 'media:gen（视频/图片生成）', value: 'media:gen' },
+  { label: 'media:edit（视频剪辑）', value: 'media:edit' },
+  { label: 'canvas:write（无限画布）', value: 'canvas:write' },
+  { label: 'asset:write（资产库）', value: 'asset:write' },
+  { label: 'project-group:manage（项目组）', value: 'project-group:manage' },
+  { label: 'knowledge:manage（知识库管理）', value: 'knowledge:manage' },
+  { label: 'user:manage（用户管理）', value: 'user:manage' },
+  { label: 'role:manage（角色权限）', value: 'role:manage' },
+  { label: 'usage:view（账单总览）', value: 'usage:view' },
+  { label: 'pricing:manage（价表配置）', value: 'pricing:manage' },
+  { label: 'points:recharge（积分充值）', value: 'points:recharge' },
+  { label: 'payment:config（支付渠道）', value: 'payment:config' },
+  { label: 'system:audit:read（审计日志）', value: 'system:audit:read' },
+  { label: 'security:event:read（安全事件）', value: 'security:event:read' },
+  { label: 'feedback:manage（反馈处理）', value: 'feedback:manage' },
+  { label: 'help:manage（帮助文章）', value: 'help:manage' },
+  { label: 'llm:config（模型配置）', value: 'llm:config' },
+  { label: 'ROLE_admin（仅系统管理员）', value: 'ROLE_admin' }
+]
 
 const canSave = computed(() =>
   !!form.title.trim() && !!form.contentMd.trim() &&
@@ -104,6 +136,8 @@ const columns: DataTableColumns<AdminArticleVO> = [
   { title: 'slug', key: 'slug', width: 160, ellipsis: { tooltip: true } },
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
   { title: '分类', key: 'category', width: 100 },
+  { title: '所需权限', key: 'requiredPermission', width: 150, ellipsis: { tooltip: true },
+    render: r => r.requiredPermission ?? '全员' },
   { title: '排序', key: 'sortOrder', width: 70 },
   {
     title: '发布', key: 'published', width: 80,
@@ -144,6 +178,7 @@ function openCreate() {
   form.title = ''
   form.category = ''
   form.sortOrder = 0
+  form.requiredPermission = null
   form.contentMd = ''
   showPreview.value = false
   showEditor.value = true
@@ -155,6 +190,7 @@ function openEdit(row: AdminArticleVO) {
   form.title = row.title
   form.category = row.category
   form.sortOrder = row.sortOrder
+  form.requiredPermission = row.requiredPermission ?? null
   form.contentMd = row.contentMd
   showPreview.value = false
   showEditor.value = true
@@ -169,6 +205,7 @@ async function save() {
       title: form.title.trim(),
       category: form.category.trim() || undefined,
       sortOrder: form.sortOrder,
+      requiredPermission: form.requiredPermission?.trim() || undefined,
       contentMd: form.contentMd
     }
     if (editingId.value == null) {

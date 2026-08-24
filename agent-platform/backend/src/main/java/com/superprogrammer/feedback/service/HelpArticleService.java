@@ -13,9 +13,14 @@ import com.superprogrammer.feedback.mapper.HelpArticleMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 说明台·帮助文章（19x#3）。
@@ -58,6 +63,7 @@ public class HelpArticleService {
         e.setTitle(req.title());
         e.setCategory(req.category() == null || req.category().isBlank() ? "通用" : req.category().trim());
         e.setSortOrder(req.sortOrder() == null ? 0 : req.sortOrder());
+        e.setRequiredPermission(normalizePerm(req.requiredPermission()));
         e.setContentMd(req.contentMd());
         e.setPublished(false);
         try {
@@ -78,6 +84,7 @@ public class HelpArticleService {
         e.setTitle(req.title());
         e.setCategory(req.category() == null || req.category().isBlank() ? "通用" : req.category().trim());
         e.setSortOrder(req.sortOrder() == null ? 0 : req.sortOrder());
+        e.setRequiredPermission(normalizePerm(req.requiredPermission()));
         e.setContentMd(req.contentMd());
         articleMapper.updateById(e);
         log.info("帮助文章更新: id={} slug={}", id, e.getSlug());
@@ -103,30 +110,66 @@ public class HelpArticleService {
 
     // ==================== 用户侧 ====================
 
-    /** 已发布目录（可选分类筛；仅目录字段，无 content_md）。 */
+    /**
+     * 已发布目录（可选分类筛；仅目录字段，无 content_md）。
+     * V149：按当前用户权限过滤——用户只能看到自己持有权限模块的文章
+     * （requiredPermission 为 NULL=全员；否则须持有该码或 ROLE_admin）。
+     */
     public List<ArticleListItemVO> listPublished(String category) {
+        Set<String> authorities = currentAuthorities();
         return articleMapper.selectList(Wrappers.<HelpArticleEntity>lambdaQuery()
                         .select(HelpArticleEntity::getSlug, HelpArticleEntity::getTitle,
                                 HelpArticleEntity::getCategory, HelpArticleEntity::getSortOrder,
-                                HelpArticleEntity::getPublishedAt)
+                                HelpArticleEntity::getPublishedAt,
+                                HelpArticleEntity::getRequiredPermission)
                         .eq(HelpArticleEntity::getPublished, true)
                         .eq(category != null && !category.isBlank(), HelpArticleEntity::getCategory, category)
                         .orderByAsc(HelpArticleEntity::getCategory)
                         .orderByAsc(HelpArticleEntity::getSortOrder)
                         .orderByAsc(HelpArticleEntity::getId))
                 .stream()
+                .filter(e -> visibleTo(e.getRequiredPermission(), authorities))
                 .map(e -> new ArticleListItemVO(e.getSlug(), e.getTitle(), e.getCategory(),
                         e.getSortOrder(), e.getPublishedAt()))
                 .toList();
     }
 
-    /** 正文（slug 直达；未发布/不存在 → 404 不泄露）。 */
+    /** 正文（slug 直达；未发布/不存在/无权限 → 404 不泄露）。 */
     public ArticleDetailVO getPublishedBySlug(String slug) {
         HelpArticleEntity e = articleMapper.selectBySlug(slug);
         if (e == null || !Boolean.TRUE.equals(e.getPublished())) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "文章不存在或未发布");
         }
+        if (!visibleTo(e.getRequiredPermission(), currentAuthorities())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文章不存在或未发布");
+        }
         return new ArticleDetailVO(e.getSlug(), e.getTitle(), e.getCategory(),
                 e.getContentMd(), e.getPublishedAt());
+    }
+
+    // ==================== V149 权限门控 ====================
+
+    /** 空串归一为 null（NULL=全员可见）。 */
+    private static String normalizePerm(String perm) {
+        return perm == null || perm.isBlank() ? null : perm.trim();
+    }
+
+    /** 当前用户 authorities（权限码 + ROLE_ 角色，与 JwtAuthenticationFilter 同源）。 */
+    private static Set<String> currentAuthorities() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            return Set.of();
+        }
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.toSet());
+    }
+
+    /** 文章对该 authorities 是否可见：NULL=全员；admin 全见；否则须持有该码。 */
+    private static boolean visibleTo(String requiredPermission, Set<String> authorities) {
+        if (requiredPermission == null || requiredPermission.isBlank()) {
+            return true;
+        }
+        return authorities.contains("ROLE_admin") || authorities.contains(requiredPermission);
     }
 }
