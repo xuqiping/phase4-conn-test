@@ -34,6 +34,17 @@ export const GetClientRect = user32.func("bool __stdcall GetClientRect(HWND hwnd
 export const PrintWindow = user32.func("bool __stdcall PrintWindow(HWND hwnd, HDC hdc, uint32 flags)");
 export const SetProcessDPIAware = user32.func("bool __stdcall SetProcessDPIAware()");
 export const GetForegroundWindow = user32.func("HWND __stdcall GetForegroundWindow()");
+export const SetForegroundWindow = user32.func("bool __stdcall SetForegroundWindow(HWND hwnd)");
+export const SetCursorPos = user32.func("bool __stdcall SetCursorPos(int x, int y)");
+koffi.struct("POINT", { x: "long", y: "long" });
+export const GetCursorPos = user32.func("bool __stdcall GetCursorPos(_Out_ POINT* pt)");
+// 简化输入注入：legacy mouse_event/keybd_event（原型简单，行为与 SendInput 等价）
+export const mouse_event = user32.func(
+  "void __stdcall mouse_event(uint32 flags, uint32 dx, uint32 dy, uint32 data, void* extra)"
+);
+export const keybd_event = user32.func(
+  "void __stdcall keybd_event(uint8 vk, uint8 scan, uint32 flags, void* extra)"
+);
 
 // ---- gdi32：位图 ----
 export const CreateCompatibleDC = gdi32.func("HDC __stdcall CreateCompatibleDC(HDC hdc)");
