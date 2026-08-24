@@ -16,8 +16,7 @@ const mocks = vi.hoisted(() => ({
   authRegister: vi.fn(),
   authSendVerificationCode: vi.fn(),
   authCheckVerificationCode: vi.fn(),
-  initializeAuthenticated: vi.fn(),
-  initializeAnonymous: vi.fn()
+  registerAuthenticatedDevice: vi.fn()
 }))
 
 vi.mock('@tauri-apps/plugin-store', () => ({
@@ -35,10 +34,9 @@ vi.mock('@/api/auth', () => ({
   checkVerificationCode: mocks.authCheckVerificationCode
 }))
 
-vi.mock('@/stores/commercialAuthStore', () => ({
-  useCommercialAuthStore: () => ({
-    initializeAuthenticated: mocks.initializeAuthenticated,
-    initializeAnonymous: mocks.initializeAnonymous
+vi.mock('@/stores/deviceStore', () => ({
+  useDeviceStore: () => ({
+    registerAuthenticatedDevice: mocks.registerAuthenticatedDevice
   })
 }))
 
@@ -67,8 +65,7 @@ describe('authStore', () => {
     mocks.authRegister.mockReset()
     mocks.authSendVerificationCode.mockReset()
     mocks.authCheckVerificationCode.mockReset()
-    mocks.initializeAuthenticated.mockReset()
-    mocks.initializeAnonymous.mockReset()
+    mocks.registerAuthenticatedDevice.mockReset()
     mocks.storeLoad.mockResolvedValue({
       get: mocks.storeGet,
       set: mocks.storeSet,
@@ -117,7 +114,7 @@ describe('authStore', () => {
     expect(mocks.storeSave).toHaveBeenCalled()
   })
 
-  it('initializes authenticated commercial authorization on login', async () => {
+  it('registers or heartbeats the authenticated device on login', async () => {
     mocks.authLogin.mockResolvedValueOnce({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -128,21 +125,21 @@ describe('authStore', () => {
 
     await store.login('http://localhost:8080', 'user@example.com', 'secret')
 
-    expect(mocks.initializeAuthenticated).toHaveBeenCalledWith('http://localhost:8080', 'access-token')
+    expect(mocks.registerAuthenticatedDevice).toHaveBeenCalledWith('http://localhost:8080', 'access-token')
   })
 
-  it('clears and persists cleared session when authenticated authorization initialization fails on login', async () => {
+  it('clears and persists the session when authenticated device registration fails on login', async () => {
     mocks.authLogin.mockResolvedValueOnce({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
       expiresInSeconds: 900,
       user
     })
-    mocks.initializeAuthenticated.mockRejectedValueOnce(new Error('authorization init failed'))
+    mocks.registerAuthenticatedDevice.mockRejectedValueOnce(new Error('设备已禁用'))
     const store = useAuthStore()
 
     await expect(store.login('http://localhost:8080', 'user@example.com', 'secret')).rejects.toThrow(
-      'authorization init failed'
+      '设备已禁用'
     )
 
     expect(store.accessToken).toBeNull()
@@ -169,7 +166,7 @@ describe('authStore', () => {
     expect(store.refreshToken).toBeNull()
     expect(store.user).toBeNull()
     expect(store.isAuthenticated).toBe(false)
-    expect(mocks.initializeAuthenticated).not.toHaveBeenCalled()
+    expect(mocks.registerAuthenticatedDevice).not.toHaveBeenCalled()
   })
 
   it('calls logout API when refresh token exists, clears login state, and persists cleared session', async () => {
@@ -195,7 +192,7 @@ describe('authStore', () => {
     expect(mocks.storeSave).toHaveBeenCalled()
   })
 
-  it('initializes anonymous commercial authorization after clearing login state on logout', async () => {
+  it('does not delete or re-register device identity when logging out', async () => {
     mocks.authLogin.mockResolvedValueOnce({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -204,59 +201,26 @@ describe('authStore', () => {
     })
     const store = useAuthStore()
     await store.login('http://localhost:8080', 'user@example.com', 'secret')
-    mocks.initializeAnonymous.mockClear()
+    mocks.registerAuthenticatedDevice.mockClear()
 
     await store.logout('http://localhost:8080')
 
-    expect(mocks.initializeAnonymous).toHaveBeenCalledWith('http://localhost:8080')
+    expect(mocks.registerAuthenticatedDevice).not.toHaveBeenCalled()
     expect(store.accessToken).toBeNull()
   })
 
-  it('resets loading and keeps login state cleared when anonymous authorization initialization fails on logout', async () => {
-    mocks.authLogin.mockResolvedValueOnce({
-      accessToken: 'access-token',
-      refreshToken: 'refresh-token',
-      expiresInSeconds: 900,
-      user
-    })
-    const store = useAuthStore()
-    await store.login('http://localhost:8080', 'user@example.com', 'secret')
-    mocks.initializeAnonymous.mockRejectedValueOnce(new Error('anonymous init failed'))
-
-    await expect(store.logout('http://localhost:8080')).rejects.toThrow('anonymous init failed')
-
-    expect(store.loading).toBe(false)
-    expect(store.accessToken).toBeNull()
-    expect(store.refreshToken).toBeNull()
-    expect(store.user).toBeNull()
-    expect(store.isAuthenticated).toBe(false)
-    expect(mocks.storeSet).toHaveBeenLastCalledWith('authSession', null)
-  })
-
-  it('initializes anonymous commercial authorization when no local session exists on restore', async () => {
+  it('restores the logged-out state without starting anonymous authorization', async () => {
     mocks.storeGet.mockResolvedValueOnce(null)
     const store = useAuthStore()
 
     await store.restoreSession('http://localhost:8080')
 
     expect(mocks.storeGet).toHaveBeenCalledWith('authSession')
-    expect(mocks.initializeAnonymous).toHaveBeenCalledWith('http://localhost:8080')
+    expect(mocks.registerAuthenticatedDevice).not.toHaveBeenCalled()
     expect(authApi.refresh).not.toHaveBeenCalled()
   })
 
-  it('does not retry anonymous authorization initialization when restore has no local session and anonymous initialization fails', async () => {
-    mocks.storeGet.mockResolvedValueOnce(null)
-    mocks.initializeAnonymous.mockRejectedValueOnce(new Error('anonymous init failed'))
-    const store = useAuthStore()
-
-    await expect(store.restoreSession('http://localhost:8080')).rejects.toThrow('anonymous init failed')
-
-    expect(mocks.initializeAnonymous).toHaveBeenCalledTimes(1)
-    expect(store.loading).toBe(false)
-    expect(authApi.refresh).not.toHaveBeenCalled()
-  })
-
-  it('uses local refresh token to refresh the session and initialize authenticated authorization on restore', async () => {
+  it('uses local refresh token and registers the authenticated device on restore', async () => {
     mocks.storeGet.mockResolvedValueOnce({
       accessToken: 'old-access-token',
       refreshToken: 'local-refresh-token',
@@ -281,10 +245,10 @@ describe('authStore', () => {
       refreshToken: 'new-refresh-token',
       user
     }))
-    expect(mocks.initializeAuthenticated).toHaveBeenCalledWith('http://localhost:8080', 'new-access-token')
+    expect(mocks.registerAuthenticatedDevice).toHaveBeenCalledWith('http://localhost:8080', 'new-access-token')
   })
 
-  it('clears login state and falls back to anonymous authorization when restore refresh fails', async () => {
+  it('clears login state without anonymous fallback when restore refresh fails', async () => {
     mocks.storeGet.mockResolvedValueOnce({
       accessToken: 'old-access-token',
       refreshToken: 'local-refresh-token',
@@ -300,7 +264,7 @@ describe('authStore', () => {
     expect(store.user).toBeNull()
     expect(store.error).toBe('refresh failed')
     expect(mocks.storeSet).toHaveBeenCalledWith('authSession', null)
-    expect(mocks.initializeAnonymous).toHaveBeenCalledWith('http://localhost:8080')
+    expect(mocks.registerAuthenticatedDevice).not.toHaveBeenCalled()
   })
 
   it('returns registered user without logging in automatically', async () => {
@@ -316,7 +280,7 @@ describe('authStore', () => {
     expect(store.accessToken).toBeNull()
     expect(store.refreshToken).toBeNull()
     expect(store.user).toBeNull()
-    expect(mocks.initializeAuthenticated).not.toHaveBeenCalled()
+    expect(mocks.registerAuthenticatedDevice).not.toHaveBeenCalled()
   })
 
   it('delegates verification wrappers to auth API functions', async () => {

@@ -269,6 +269,7 @@ export const useCommercialAuthStore = defineStore('commercialAuth', () => {
     changeFreeModule,
     refreshAnonymousAuthorization,
     refreshAuthenticatedAuthorization,
+    getUsableClientAuthorization,
     isModuleAllowed,
     denialReason
   }

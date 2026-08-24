@@ -3,20 +3,20 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AiConfigSettings from '../AiConfigSettings.vue'
 import { useAuthStore } from '../../stores/authStore'
-import { useCommercialAuthStore } from '../../stores/commercialAuthStore'
+import { useDeviceStore } from '../../stores/deviceStore'
 
 function mountComponent() {
   setActivePinia(createPinia())
   const authStore = useAuthStore()
   authStore.accessToken = 'access-token'
-  const commercialAuthStore = useCommercialAuthStore()
-  commercialAuthStore.deviceIdentity = {
+  const deviceStore = useDeviceStore()
+  deviceStore.identity = {
     deviceId: 'device-1',
     fingerprintHash: 'fingerprint-hash',
     deviceName: 'test-device',
   }
   const wrapper = mount(AiConfigSettings)
-  return { wrapper, authStore, commercialAuthStore }
+  return { wrapper, authStore, deviceStore }
 }
 
 describe('AiConfigSettings', () => {
@@ -36,6 +36,12 @@ describe('AiConfigSettings', () => {
     const { wrapper } = mountComponent()
     await flushPromises()
 
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://localhost:8088/api/client/ai-configs?deviceId=device-1',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer access-token' })
+      })
+    )
     expect(wrapper.find('[data-test="add-ai-config"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('暂无 AI 配置')
   })

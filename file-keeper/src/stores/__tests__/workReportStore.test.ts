@@ -71,9 +71,9 @@ vi.mock('../authStore', () => ({
   }),
 }))
 
-vi.mock('../commercialAuthStore', () => ({
-  useCommercialAuthStore: () => ({
-    deviceIdentity: { deviceId: 'device-1' },
+vi.mock('../deviceStore', () => ({
+  useDeviceStore: () => ({
+    deviceId: 'device-1',
   }),
 }))
 

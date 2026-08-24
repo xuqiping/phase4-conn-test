@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAuthStore } from './authStore'
-import { useCommercialAuthStore } from './commercialAuthStore'
+import { useDeviceStore } from './deviceStore'
 import * as api from '@/api/workReport'
 import * as inboxApi from '@/api/inbox'
 import * as inspirationApi from '@/api/inspiration'
@@ -66,16 +66,16 @@ export const useWorkReportStore = defineStore('work-report', () => {
 
   function getAuthContext() {
     const authStore = useAuthStore()
-    const commercialStore = useCommercialAuthStore()
+    const deviceStore = useDeviceStore()
     const token = authStore.accessToken
-    const deviceIdentity = commercialStore.deviceIdentity
+    const deviceId = deviceStore.deviceId
     if (!token) {
       throw new Error('未登录')
     }
-    if (!deviceIdentity) {
+    if (!deviceId) {
       throw new Error('未获取设备身份')
     }
-    return { baseUrl: COMMERCIAL_SERVER_URL, token, deviceId: deviceIdentity.deviceId }
+    return { baseUrl: COMMERCIAL_SERVER_URL, token, deviceId }
   }
 
   async function loadLogs(dateRangeStart?: string, dateRangeEnd?: string) {

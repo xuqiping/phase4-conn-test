@@ -8,7 +8,7 @@ import type {
   SendVerificationRequest,
   UserSummary
 } from '@/api/auth'
-import { useCommercialAuthStore } from '@/stores/commercialAuthStore'
+import { useDeviceStore } from '@/stores/deviceStore'
 
 interface AuthSession {
   accessToken: string
@@ -44,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         setSession(session)
         await persistSession(session)
-        await useCommercialAuthStore().initializeAuthenticated(baseUrl, response.accessToken)
+        await useDeviceStore().registerAuthenticatedDevice(baseUrl, response.accessToken)
       } catch (err) {
         clearSession()
         try {
@@ -76,7 +76,6 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         clearSession()
         await persistSession(null)
-        await useCommercialAuthStore().initializeAnonymous(baseUrl)
       } finally {
         loading.value = false
       }
@@ -86,13 +85,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function restoreSession(baseUrl: string): Promise<void> {
     loading.value = true
     error.value = null
-    let restoringAnonymous = false
     try {
       const storedSession = await loadSession()
       if (!storedSession?.refreshToken) {
         clearSession()
-        restoringAnonymous = true
-        await useCommercialAuthStore().initializeAnonymous(baseUrl)
         return
       }
 
@@ -108,15 +104,11 @@ export const useAuthStore = defineStore('auth', () => {
       } else {
         await persistSession(session)
       }
-      await useCommercialAuthStore().initializeAuthenticated(baseUrl, accessToken.value!)
+      await useDeviceStore().registerAuthenticatedDevice(baseUrl, accessToken.value!)
     } catch (err) {
       error.value = errorMessage(err)
-      if (restoringAnonymous) {
-        throw err
-      }
       clearSession()
       await persistSession(null)
-      await useCommercialAuthStore().initializeAnonymous(baseUrl)
     } finally {
       loading.value = false
     }
@@ -194,7 +186,6 @@ export const useAuthStore = defineStore('auth', () => {
         error.value = errorMessage(err)
         clearSession()
         await persistSession(null)
-        await useCommercialAuthStore().initializeAnonymous(baseUrl)
         throw err
       } finally {
         refreshPromise = null
