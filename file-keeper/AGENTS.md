@@ -7,7 +7,7 @@
 ## 项目一句话定位
 
 file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：一键打开 / 关闭 / 批量管理常用文件与程序，叠加剪贴板、截图、工作汇报、AI 接入等模块。
-**商业模式 = 按账号 / 设备 / 时间售卖的模块授权 + 匿名试用 + 离线 Token**。授权体系是项目地基，任何新模块都必须先接入它。
+本地模块始终开放且不要求登录；工作汇报、AI 等服务端模块使用账号登录、用户数据隔离和设备禁用，不再按模块、设备数量或时间做商业授权。
 
 ## 技术栈（五件套全栈）
 
@@ -31,20 +31,20 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - 错误码复用 `ErrorCode` 枚举（`FORBIDDEN 403` / `UNPROCESSABLE 422` …）。
 
 ### 前端约定
-- **桌面端 `src/`**：Vue 3 `<script setup>` + TS + **Tailwind**（用已有 dark 类如 `dark:bg-dark-panel`）；**不引入 Naive UI、不引入 vue-router**（单 `App.vue` 架构，Tab 由 `currentTab` ref 控制，入口用 `commercialAuthStore.isModuleAllowed()` 门禁）。
+- **桌面端 `src/`**：Vue 3 `<script setup>` + TS + **Tailwind**（用已有 dark 类如 `dark:bg-dark-panel`）；**不引入 Naive UI、不引入 vue-router**（单 `App.vue` 架构，Tab 由 `currentTab` ref 控制）。文件、进程、剪贴板、截图始终开放；工作汇报与 AI 只检查登录态。
 - **管理后台 `admin-web/`**：Vue 3 + Naive UI + vue-router，请求走 `admin-web/src/api/request.ts`。
 - 国际化文本进 `src/locales/{zh-CN.ts,en.ts}`，不硬编码中文；状态用 Pinia；调 Tauri 命令走 `src/api/*.ts` 封装。
 
 ### Rust 约定
 - 命令用 `#[tauri::command]`，在 `src-tauri/src/main.rs` 的 `invoke_handler` 注册。
-- 敏感能力（结束进程 / 截图 / 剪贴板监听 / 文件写）**必须二次校验离线 Token**（参考 `commands/auth.rs`）。
+- 本地原生命令不检查商业授权 Token；必须保留路径、截图区域、PID、窗口句柄、剪贴板敏感内容等业务与安全校验。
 - 平台差异下沉 `src-tauri/src/platform/`；**绝不用固定屏幕坐标**定位控件。
 
 ### 禁忌（不要做）
 - ❌ 桌面端 `src/` 引入 Naive UI / vue-router（破坏单 `App.vue` 架构）。
 - ❌ 直接在数据库执行 `CREATE TABLE`（必须走 Flyway）；改已执行的 Flyway 脚本（加新版本号）。
 - ❌ 业务数据（文件路径 / 剪贴板 / 截图 / 进程列表）上传服务端。
-- ❌ 新增模块不做授权校验就放行（顺序：后端授权 → 管理后台 → 桌面端 → Rust 二次校验）。
+- ❌ 用 `deviceId` 替代 JWT 身份认证；服务端模块必须同时校验登录身份、active 设备和资源归属。
 - ❌ 密码 / 密钥 / JWT secret 明文写进文档或代码。
 
 ### 偏好（优先这么做）
@@ -73,8 +73,7 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - **敏感信息**：账号 / 密码 / 密钥不进 `workflow_output`，用占位符 + 独立安全存储。
 
 ## 模块级约束（索引）
-- [新增业务模块规范](workflow_output/项目规范约束/新增业务模块规范.md) —— moduleCode 注册 / 离线 Token / 匿名试用体系（**新增任何模块必读**）。
-- [新增模块实施指导](workflow_output/项目规范约束/新增模块实施指导.md) —— 上述规范的分步实操版。
+- `workflow_output/项目规范约束/新增业务模块规范.md` 与 `新增模块实施指导.md` 中的商业授权接入规则已废弃，待兼容清理阶段重写；新功能不得继续接入 moduleCode、匿名试用或离线 Token。
 - 上层 [`../CLAUDE.md`](../CLAUDE.md) —— 多 Agent 平台通用约定。
 
 ## 参考文档
