@@ -1,0 +1,4 @@
+# computer-use-skill 配置模板（复制为 config.toml 使用；真配置不进 git）
+# FR-013：白名单内的 App 操作前不再询问
+[computer_use]
+always_allowed_app_ids = ["notepad.exe", "calc.exe"]
