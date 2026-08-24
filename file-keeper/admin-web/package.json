@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "test:commercial-removal": "node scripts/verify-commercial-ui-removal.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

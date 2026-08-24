@@ -17,8 +17,7 @@ const router = createRouter({
         { path: '', name: 'dashboard', component: () => import('@/views/DashboardView.vue') },
         { path: 'users', name: 'users', component: () => import('@/views/UserListView.vue') },
         { path: 'users/:id', name: 'user-detail', component: () => import('@/views/UserDetailView.vue'), props: true },
-        { path: 'anonymous-devices', name: 'anonymous-devices', component: () => import('@/views/AnonymousDevicesView.vue') },
-        { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue') }
+        { path: ':pathMatch(.*)*', redirect: '/' }
       ]
     }
   ]

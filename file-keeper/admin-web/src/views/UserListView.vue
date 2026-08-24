@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, h, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import {
   NDataTable, NSpace, NH2, NSelect, NButton, NTag, useMessage, useDialog,
   type DataTableColumns
@@ -38,7 +38,6 @@ import type { UserSummary } from '@/types'
 import { USER_STATUS_MAP } from '@/types'
 
 const router = useRouter()
-const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
 
@@ -49,8 +48,6 @@ const statusFilter = ref<string | null>(null)
 const pagination = reactive({ page: 1, pageSize: 20, itemCount: 0, showSizePicker: true, pageSizes: [10, 20, 50] })
 
 const statusOptions = [
-  { label: '待验证', value: 'pending_verification' },
-  { label: '待审核', value: 'pending_review' },
   { label: '正常', value: 'active' },
   { label: '已禁用', value: 'disabled' }
 ]
@@ -67,16 +64,11 @@ const columns: DataTableColumns<UserSummary> = [
       return h(NTag, { type: info.type, size: 'small' }, () => info.label)
     }
   },
-  { title: '设备上限', key: 'deviceLimit', width: 80 },
-  { title: '离线缓存(分)', key: 'offlineCacheMinutes', width: 110 },
   {
-    title: '操作', key: 'actions', width: 280,
+    title: '操作', key: 'actions', width: 200,
     render: (row) =>
       h(NSpace, { size: 'small' }, () => [
         h(NButton, { text: true, type: 'primary', onClick: () => router.push({ name: 'user-detail', params: { id: row.id } }) }, () => '详情'),
-        row.status === 'pending_review'
-          ? h(NButton, { text: true, type: 'success', onClick: () => handleAction(row.id, 'approve') }, () => '审批')
-          : null,
         row.status === 'active'
           ? h(NButton, { text: true, type: 'warning', onClick: () => handleAction(row.id, 'disable') }, () => '禁用')
           : null,
@@ -108,8 +100,8 @@ function handlePageChange(page: number) { pagination.page = page; loadUsers() }
 function handlePageSizeChange(size: number) { pagination.pageSize = size; pagination.page = 1; loadUsers() }
 function handleSearch() { pagination.page = 1; loadUsers() }
 
-function handleAction(id: number, action: 'approve' | 'disable' | 'enable') {
-  const actionLabel = { approve: '审批通过', disable: '禁用', enable: '启用' }[action]
+function handleAction(id: number, action: 'disable' | 'enable') {
+  const actionLabel = { disable: '禁用', enable: '启用' }[action]
   dialog.warning({
     title: '确认操作',
     content: `确定要${actionLabel}该用户吗？`,
@@ -117,7 +109,7 @@ function handleAction(id: number, action: 'approve' | 'disable' | 'enable') {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        const fn = { approve: usersApi.approveUser, disable: usersApi.disableUser, enable: usersApi.enableUser }[action]
+        const fn = { disable: usersApi.disableUser, enable: usersApi.enableUser }[action]
         await fn(id, `管理员${actionLabel}`)
         message.success('操作成功')
         loadUsers()
@@ -128,11 +120,5 @@ function handleAction(id: number, action: 'approve' | 'disable' | 'enable') {
   })
 }
 
-onMounted(() => {
-  const q = route.query.status
-  if (q && typeof q === 'string') {
-    statusFilter.value = q
-  }
-  loadUsers()
-})
+onMounted(loadUsers)
 </script>
