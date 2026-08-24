@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "bin": { "computer-use-skill": "dist/index.js" },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"const fs=require('fs');fs.copyFileSync('src/driver/win/uia.ps1','dist/driver/win/uia.ps1')\"",
     "start": "node dist/index.js",
     "lint": "eslint src test",
     "test": "vitest run",
