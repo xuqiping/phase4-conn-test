@@ -8,8 +8,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
-import java.security.KeyPair;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AuthPropertiesValidationTest {
@@ -66,6 +64,21 @@ class AuthPropertiesValidationTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(AuthProperties.class);
+                });
+    }
+
+    @Test
+    void acceptsMissingEntitlementPrivateKey() {
+        contextRunner
+                .withPropertyValues(
+                        "spring.profiles.active=prod",
+                        "file-keeper.auth.jwt.secret=production-file-keeper-jwt-secret-at-least-32-bytes",
+                        "file-keeper.auth.entitlement.private-key-pem="
+                )
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(AuthProperties.class);
+                    assertThat(context.getBean(AuthProperties.class).getEntitlementPrivateKey()).isNull();
                 });
     }
 

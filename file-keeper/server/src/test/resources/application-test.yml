@@ -36,8 +36,3 @@ file-keeper:
       code-minutes: 10
       verified-minutes: 30
       dev-fixed-code: "123456"
-    entitlement:
-      private-key-pem: |
-        -----BEGIN PRIVATE KEY-----
-        MC4CAQAwBQYDK2VwBCIEINU2zVBgZ1S9zMScs+2hIv4qVFDamfF4pKpKv3sWfV/U
-        -----END PRIVATE KEY-----

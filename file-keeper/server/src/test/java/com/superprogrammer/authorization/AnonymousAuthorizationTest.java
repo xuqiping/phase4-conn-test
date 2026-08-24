@@ -39,92 +39,28 @@ class AnonymousAuthorizationTest {
     }
 
     @Test
-    void deviceWithoutTrialGetsAllModulesDenied() throws Exception {
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-missing&fingerprintHash=fp-missing"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.mode").value("anonymous"))
-                .andExpect(jsonPath("$.data.onlineRequired").value(true))
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[0].reason").value("未开始试用"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
-    }
+    void anonymousSnapshotAlwaysAllowsLocalModulesAndRequiresLoginForServerModules() throws Exception {
+        insertDisabledLegacyTrial();
 
-    @Test
-    void fullTrialAllowsAllModules() throws Exception {
-        insertTrial("anon-001", "fp-001", OffsetDateTime.now().plusDays(6), null, "active");
-
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-001&fingerprintHash=fp-001"))
+        mockMvc.perform(get("/api/anonymous/authorization?deviceId=legacy-device&fingerprintHash=any-fingerprint"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mode").value("anonymous"))
                 .andExpect(jsonPath("$.data.onlineRequired").value(true))
                 .andExpect(jsonPath("$.data.modules[0].moduleCode").value("files"))
                 .andExpect(jsonPath("$.data.modules[0].allowed").value(true))
-                .andExpect(jsonPath("$.data.modules[1].moduleCode").value("processes"))
                 .andExpect(jsonPath("$.data.modules[1].allowed").value(true))
-                .andExpect(jsonPath("$.data.modules[2].moduleCode").value("clipboard"))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(true));
+                .andExpect(jsonPath("$.data.modules[2].allowed").value(true))
+                .andExpect(jsonPath("$.data.modules[3].allowed").value(false))
+                .andExpect(jsonPath("$.data.modules[3].reason").value("请先登录"))
+                .andExpect(jsonPath("$.data.modules[4].allowed").value(false))
+                .andExpect(jsonPath("$.data.modules[4].reason").value("请先登录"));
     }
 
-    @Test
-    void expiredTrialWithFreeModuleAllowsOnlySelectedModule() throws Exception {
-        insertTrial("anon-002", "fp-002", OffsetDateTime.now().minusDays(1), "clipboard", "active");
-
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-002&fingerprintHash=fp-002"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.modules[0].moduleCode").value("files"))
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[1].moduleCode").value("processes"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].moduleCode").value("clipboard"))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(true));
-    }
-
-    @Test
-    void expiredTrialWithoutFreeModuleAndDisabledTrialDenyAllModules() throws Exception {
-        insertTrial("anon-003", "fp-003", OffsetDateTime.now().minusDays(1), null, "active");
-
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-003&fingerprintHash=fp-003"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[0].reason").value("试用期已结束，请选择免费模块"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
-
-        jdbcTemplate.update("update anonymous_device_trials set status = 'disabled' where device_id = 'anon-003'");
-
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-003&fingerprintHash=fp-003"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[0].reason").value("匿名设备已禁用"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
-    }
-
-    @Test
-    void fingerprintMismatchDeniesAllModules() throws Exception {
-        insertTrial("anon-004", "fp-004", OffsetDateTime.now().plusDays(6), null, "active");
-
-        mockMvc.perform(get("/api/anonymous/authorization?deviceId=anon-004&fingerprintHash=wrong"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[0].reason").value("设备指纹不匹配"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
-    }
-
-    private void insertTrial(String deviceId, String fingerprintHash, OffsetDateTime trialExpiresAt, String freeModuleCode, String status) {
+    private void insertDisabledLegacyTrial() {
         jdbcTemplate.update(
-                "insert into anonymous_device_trials (device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, free_module_code, free_module_selected_at, last_free_module_changed_at, status, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, 'Laptop', ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
-                deviceId,
-                fingerprintHash,
-                OffsetDateTime.now().minusDays(8),
-                trialExpiresAt,
-                freeModuleCode,
-                freeModuleCode != null ? OffsetDateTime.now().minusDays(1) : null,
-                freeModuleCode != null ? OffsetDateTime.now().minusDays(1) : null,
-                status
+                "insert into anonymous_device_trials (device_id, fingerprint_hash, device_name, trial_started_at, trial_expires_at, status, created_by, created_at, updated_by, updated_at, deleted) " +
+                        "values ('legacy-device', 'legacy-fingerprint', 'Laptop', ?, ?, 'disabled', 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
+                OffsetDateTime.now().minusDays(10), OffsetDateTime.now().minusDays(1)
         );
     }
 }

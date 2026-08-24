@@ -49,7 +49,8 @@ public class AuthProperties {
     void validateEntitlementPrivateKey() {
         String pem = entitlement == null ? null : entitlement.getPrivateKeyPem();
         if (pem == null || pem.isBlank()) {
-            throw new IllegalStateException("Entitlement signing private key must not be blank (FILE_KEEPER_AUTH_PRIVATE_KEY)");
+            entitlementPrivateKey = null;
+            return;
         }
         entitlementPrivateKey = SignedEntitlementSigner.decodePrivateKeyPem(pem);
         if (entitlementPrivateKey == null) {
@@ -58,9 +59,14 @@ public class AuthProperties {
     }
 
     public PrivateKey getEntitlementPrivateKey() {
-        if (entitlementPrivateKey == null) {
-            entitlementPrivateKey = SignedEntitlementSigner.decodePrivateKeyPem(entitlement.getPrivateKeyPem());
+        if (entitlementPrivateKey != null) {
+            return entitlementPrivateKey;
         }
+        String pem = entitlement == null ? null : entitlement.getPrivateKeyPem();
+        if (pem == null || pem.isBlank()) {
+            return null;
+        }
+        entitlementPrivateKey = SignedEntitlementSigner.decodePrivateKeyPem(pem);
         return entitlementPrivateKey;
     }
 
@@ -87,8 +93,8 @@ public class AuthProperties {
     @Data
     public static class Entitlement {
         /**
-         * Ed25519 私钥（PKCS#8 PEM），用于签发授权凭据。
-         * 生产环境必须配置，缺失则服务拒绝启动。
+         * 旧客户端兼容配置：Ed25519 私钥（PKCS#8 PEM），用于签发全模块凭据。
+         * 新客户端不依赖该凭据；未配置时服务正常启动且不返回离线 Token。
          */
         private String privateKeyPem;
     }

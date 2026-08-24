@@ -15,8 +15,6 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.time.OffsetDateTime;
-
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -58,11 +56,10 @@ class ClientAuthorizationTest {
     }
 
     @Test
-    void activeUserWithEntitlementAndBoundDeviceGetsAuthorizationSnapshot() throws Exception {
-        Long userId = insertUser("user@example.com", "active", 2, 60);
+    void activeUserAndDeviceGetAllModulesWithoutEntitlements() throws Exception {
+        Long userId = insertUser("open-access@example.com", "active", 1, 60);
         insertDevice(userId, "device-001", "active");
-        insertEntitlement(userId, "files", true, OffsetDateTime.now().plusDays(10));
-        String token = userAccessToken("user@example.com");
+        String token = userAccessToken("open-access@example.com");
 
         mockMvc.perform(get("/api/client/authorization?deviceId=device-001")
                         .header("Authorization", "Bearer " + token))
@@ -70,43 +67,24 @@ class ClientAuthorizationTest {
                 .andExpect(jsonPath("$.data.mode").value("authenticated"))
                 .andExpect(jsonPath("$.data.userId").value(userId))
                 .andExpect(jsonPath("$.data.accountStatus").value("active"))
-                .andExpect(jsonPath("$.data.deviceLimit").value(2))
-                .andExpect(jsonPath("$.data.onlineRequired").value(false))
-                .andExpect(jsonPath("$.data.offlineUsableUntil").exists())
-                .andExpect(jsonPath("$.data.deviceBinding.deviceId").value("device-001"))
-                .andExpect(jsonPath("$.data.deviceBinding.bound").value(true))
-                .andExpect(jsonPath("$.data.deviceBinding.active").value(true))
-                .andExpect(jsonPath("$.data.modules[0].moduleCode").value("files"))
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(true))
-                .andExpect(jsonPath("$.data.modules[1].moduleCode").value("processes"))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].moduleCode").value("clipboard"))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
-    }
-
-    @Test
-    void userWithoutEntitlementsGetsAllModulesDeniedAndOnlineRequired() throws Exception {
-        Long userId = insertUser("no-entitlement@example.com", "active", 1, 0);
-        insertDevice(userId, "device-001", "active");
-        String token = userAccessToken("no-entitlement@example.com");
-
-        mockMvc.perform(get("/api/client/authorization?deviceId=device-001")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.onlineRequired").value(true))
                 .andExpect(jsonPath("$.data.offlineUsableUntil").doesNotExist())
-                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
+                .andExpect(jsonPath("$.data.offlineToken").doesNotExist())
+                .andExpect(jsonPath("$.data.deviceBinding.bound").value(true))
+                .andExpect(jsonPath("$.data.deviceBinding.active").value(true))
+                .andExpect(jsonPath("$.data.modules.length()").value(5))
+                .andExpect(jsonPath("$.data.modules[0].allowed").value(true))
+                .andExpect(jsonPath("$.data.modules[1].allowed").value(true))
+                .andExpect(jsonPath("$.data.modules[2].allowed").value(true))
+                .andExpect(jsonPath("$.data.modules[3].allowed").value(true))
+                .andExpect(jsonPath("$.data.modules[4].allowed").value(true));
     }
 
     @Test
-    void expiredEntitlementAndDisabledDeviceDenyAllModules() throws Exception {
-        Long userId = insertUser("expired@example.com", "active", 1, 0);
+    void disabledDeviceGetsCompatibilitySnapshotWithAllModulesDenied() throws Exception {
+        Long userId = insertUser("disabled-device@example.com", "active", 1, 0);
         insertDevice(userId, "device-001", "disabled");
-        insertEntitlement(userId, "files", true, OffsetDateTime.now().minusDays(1));
-        insertEntitlement(userId, "processes", true, OffsetDateTime.now().plusDays(10));
-        String token = userAccessToken("expired@example.com");
+        String token = userAccessToken("disabled-device@example.com");
 
         mockMvc.perform(get("/api/client/authorization?deviceId=device-001")
                         .header("Authorization", "Bearer " + token))
@@ -114,8 +92,20 @@ class ClientAuthorizationTest {
                 .andExpect(jsonPath("$.data.deviceBinding.bound").value(true))
                 .andExpect(jsonPath("$.data.deviceBinding.active").value(false))
                 .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[1].allowed").value(false))
-                .andExpect(jsonPath("$.data.modules[2].allowed").value(false));
+                .andExpect(jsonPath("$.data.modules[4].allowed").value(false));
+    }
+
+    @Test
+    void unboundDeviceGetsCompatibilitySnapshotWithAllModulesDenied() throws Exception {
+        insertUser("unbound-device@example.com", "active", 1, 0);
+        String token = userAccessToken("unbound-device@example.com");
+
+        mockMvc.perform(get("/api/client/authorization?deviceId=missing-device")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deviceBinding.bound").value(false))
+                .andExpect(jsonPath("$.data.modules[0].allowed").value(false))
+                .andExpect(jsonPath("$.data.modules[4].allowed").value(false));
     }
 
     private String userAccessToken(String email) throws Exception {
@@ -124,7 +114,8 @@ class ClientAuthorizationTest {
                         .content("{\"identifier\":\"" + email + "\",\"password\":\"Password123!\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        return result.getResponse().getContentAsString().replaceAll(".*\\\"accessToken\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        return result.getResponse().getContentAsString()
+                .replaceAll(".*\\\"accessToken\\\":\\\"([^\\\"]+)\\\".*", "$1");
     }
 
     private Long insertUser(String email, String status, int deviceLimit, int offlineCacheMinutes) {
@@ -133,7 +124,7 @@ class ClientAuthorizationTest {
                         "values (?, ?, 'user', ?, true, false, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
                 email, passwordEncoder.encode("Password123!"), status, deviceLimit, offlineCacheMinutes
         );
-        return jdbcTemplate.queryForObject("select id from users where email = ? order by id desc limit 1", Long.class, email);
+        return jdbcTemplate.queryForObject("select id from users where email = ?", Long.class, email);
     }
 
     private void insertDevice(Long userId, String deviceId, String status) {
@@ -141,14 +132,6 @@ class ClientAuthorizationTest {
                 "insert into user_devices (user_id, device_id, fingerprint_hash, device_name, status, last_seen_at, created_by, created_at, updated_by, updated_at, deleted) " +
                         "values (?, ?, 'fp', 'Laptop', ?, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
                 userId, deviceId, status
-        );
-    }
-
-    private void insertEntitlement(Long userId, String moduleCode, boolean enabled, OffsetDateTime expiresAt) {
-        jdbcTemplate.update(
-                "insert into user_module_entitlements (user_id, module_code, enabled, expires_at, created_by, created_at, updated_by, updated_at, deleted) " +
-                        "values (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, 0)",
-                userId, moduleCode, enabled, expiresAt
         );
     }
 }
