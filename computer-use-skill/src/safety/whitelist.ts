@@ -6,10 +6,9 @@
 import { DriverError } from "../driver/types.js";
 import { loadConfig, rememberApp } from "./config.js";
 
-/** 校验 app 是否已放行；未放行抛 CONFIRMATION_REQUIRED */
+/** 校验 app 是否已放行；未放行抛 CONFIRMATION_REQUIRED（config ∪ 本次会话放行） */
 export function requireAllowed(appId: string): void {
-  const cfg = loadConfig();
-  if (cfg.alwaysAllowedAppIds.includes(appId)) return;
+  if (isAllowed(appId)) return;
   throw new DriverError(
     "CONFIRMATION_REQUIRED",
     `应用 ${appId} 未在白名单。请向用户确认后调用 confirm_app 工具放行`,

@@ -11,7 +11,8 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 );
 
-// TODO(Step 8): registerTools(server) —— 11 个工具注册
+import { registerTools } from "./tools/index.js";
+registerTools(server);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
