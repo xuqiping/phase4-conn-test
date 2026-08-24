@@ -1,0 +1,30 @@
+{
+  "name": "computer-use-skill",
+  "version": "0.1.0",
+  "description": "Windows 本机 Computer Use MCP Server + Claude Skill 技能包",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "computer-use-skill": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "check:audit": "npm audit --audit-level=high"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "koffi": "^2.9.0",
+    "@iarna/toml": "^2.2.5",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}
