@@ -5,6 +5,7 @@ import App from '../../App.vue'
 import * as shortcutApi from '../../api/shortcuts'
 import * as screenshotApi from '../../api/screenshot'
 import * as screenshotOverlayApi from '../../api/screenshotOverlay'
+import * as commercialAuthApi from '../../api/commercialAuth'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { ScreenshotRegion } from '../../types/screenshot'
@@ -251,6 +252,25 @@ describe('app screenshot shortcut', () => {
     expect(appWindowMock.show).not.toHaveBeenCalled()
     expect(appWindowMock.setFocus).not.toHaveBeenCalled()
     expect(appWindowMock.setFullscreen).not.toHaveBeenCalled()
+  })
+
+  it('opens the screenshot overlay even when the legacy commercial snapshot denies clipboard access', async () => {
+    vi.mocked(commercialAuthApi.getAnonymousAuthorization).mockResolvedValueOnce({
+      mode: 'anonymous',
+      onlineRequired: true,
+      deviceId: 'test-device',
+      modules: [
+        { moduleCode: 'clipboard', allowed: false, reason: 'legacy entitlement denied', expiresAt: null }
+      ]
+    })
+    mountApp()
+    const registered = await waitForScreenshotRegistration('CommandOrControl+Shift+X')
+    const handler = registered?.[1]
+    expect(handler).toBeTypeOf('function')
+
+    await handler?.()
+
+    expect(screenshotOverlayApi.openScreenshotOverlayWindow).toHaveBeenCalledOnce()
   })
 
   it('closes the overlay window before capture and refreshes clipboard on screenshot success', async () => {
