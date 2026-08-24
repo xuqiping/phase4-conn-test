@@ -66,8 +66,6 @@ public class AdminUserService {
 
     @Transactional
     public UserSummary updateSettings(Long adminUserId, Long userId, UserSettingsUpdateRequest request) {
-        UserSummary summary = userRepository.updateSettings(userId, request.deviceLimit(), request.offlineCacheMinutes(), adminUserId);
-        auditLogService.record(adminUserId, "user.update_settings", "user", String.valueOf(userId), "deviceLimit=" + request.deviceLimit() + ", offlineCacheMinutes=" + request.offlineCacheMinutes());
-        return summary;
+        throw new BusinessException(ErrorCode.UNPROCESSABLE, "用户设备额度与离线授权设置已废弃");
     }
 }

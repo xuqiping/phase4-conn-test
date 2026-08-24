@@ -20,6 +20,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/anonymous-devices")
 @RequiredArgsConstructor
+@Deprecated(forRemoval = true)
 public class AdminAnonymousDeviceController {
 
     private final AdminAnonymousDeviceService adminAnonymousDeviceService;

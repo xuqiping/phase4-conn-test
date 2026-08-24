@@ -59,6 +59,7 @@ public class AdminUserController {
     }
 
     @PutMapping("/{id}/settings")
+    @Deprecated(forRemoval = true)
     public R<UserSummary> updateSettings(Authentication authentication, @PathVariable Long id,
                                          @Valid @RequestBody UserSettingsUpdateRequest request) {
         AuthPrincipal principal = (AuthPrincipal) authentication.getPrincipal();
