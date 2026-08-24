@@ -43,22 +43,16 @@ export interface AuthChannels {
   registerEmailCodeRequired: boolean
 }
 
-/** 滑块验证码结果（AJ-Captcha）。 */
+/** 滑块验证码结果（AJ-Captcha 1.3.0 CaptchaVO 直出）。 */
 export interface CaptchaResult {
-  /** 后端 Redis key（标识本次验证码会话） */
-  id?: string
-  /** 背景图 base64（带缺口） */
-  bgImgPath?: string
-  /** 滑块缺口图 base64 */
-  cutoutImgPath?: string
+  /** 背景图 base64（带缺口，无前缀） */
+  originalImageBase64?: string
+  /** 滑块条 base64（全高竖条，无前缀） */
+  jigsawImageBase64?: string
   /** AES 加密密钥（前端加密滑动轨迹用） */
   secretKey?: string
-  /** token */
+  /** token（验证码会话标识，check/轨迹加密用） */
   token?: string | null
-  /** 图片宽（用于轨迹加密） */
-  imgX?: number
-  /** 图片高 */
-  imgY?: number
   /** 原始透传字段（AJ-Captcha 不同版本字段名差异） */
   [key: string]: unknown
 }
@@ -153,6 +147,17 @@ export const authApi = {
    */
   verifyCaptcha(captchaVerification: string) {
     return request.post<ApiResponse<void>>('/auth/captcha/verify', { captchaVerification })
+  },
+
+  /**
+   * 12x B2 修复：滑块一次校验（坐标核验）。
+   * POST /api/auth/captcha/check
+   * 通过 → 后端写二次 key（二次复验 verify 只认它）；前端再自算 captchaVerification emit 给父组件。
+   * @param token 验证码 token
+   * @param pointJson AES({x,y}, secretKey) 加密轨迹
+   */
+  checkCaptcha(token: string, pointJson: string) {
+    return request.post<ApiResponse<void>>('/auth/captcha/check', { token, pointJson })
   },
 
   /**

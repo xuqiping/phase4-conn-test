@@ -27,14 +27,42 @@ public class CaptchaService {
      *
      * @return CaptchaVO 含 base64 图片 + token
      */
+    /** 滑块拼图类型（AJ-Captcha get/check/verification 均强制要求 captchaType 非空，否则 repCode=0011）。 */
+    private static final String CAPTCHA_TYPE_BLOCK_PUZZLE = "blockPuzzle";
+
     public CaptchaVO get() {
         CaptchaVO input = new CaptchaVO();
+        input.setCaptchaType(CAPTCHA_TYPE_BLOCK_PUZZLE);
         ResponseModel response = ajCaptchaService.get(input);
         if (!response.isSuccess()) {
             log.error("获取滑块验证码失败 : {}", response.getRepMsg());
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取验证码失败");
         }
         return (CaptchaVO) response.getRepData();
+    }
+
+    /**
+     * 一次校验（坐标核验）：前端拖动结束提交 token + 加密轨迹，AJ-Captcha 校验 x±slipOffset / y 精确相等，
+     * 通过后写二次缓存 key（RUNNING:CAPTCHA:second-*）——{@link #verify} 只认该 key，
+     * 所以本步是滑块链路不可绕过的前置闸。
+     *
+     * @param token     验证码 token（get 时下发）
+     * @param pointJson AES({x,y}, secretKey) 加密轨迹
+     * @throws BusinessException 坐标不符 / token 过期
+     */
+    public void check(String token, String pointJson) {
+        if (token == null || token.isBlank() || pointJson == null || pointJson.isBlank()) {
+            throw new BusinessException(ErrorCode.CAPTCHA_INVALID);
+        }
+        CaptchaVO vo = new CaptchaVO();
+        vo.setCaptchaType(CAPTCHA_TYPE_BLOCK_PUZZLE);
+        vo.setToken(token);
+        vo.setPointJson(pointJson);
+        ResponseModel response = ajCaptchaService.check(vo);
+        if (!response.isSuccess()) {
+            log.warn("滑块坐标校验失败 : {}", response.getRepMsg());
+            throw new BusinessException(ErrorCode.CAPTCHA_INVALID);
+        }
     }
 
     /**
@@ -49,6 +77,7 @@ public class CaptchaService {
         }
         // AJ-Captcha verification 形参为 CaptchaVO（captchaVerification 字段承载 token），非裸 String
         CaptchaVO vo = new CaptchaVO();
+        vo.setCaptchaType(CAPTCHA_TYPE_BLOCK_PUZZLE);
         vo.setCaptchaVerification(captchaVerification);
         ResponseModel response = ajCaptchaService.verification(vo);
         if (!response.isSuccess()) {

@@ -128,9 +128,9 @@ async function fetchCaptcha() {
     const res = await authApi.getCaptcha()
     const data = res.data.data
     captchaData.value = data
-    // AJ-Captcha 不同版本字段名差异：bgImgPath/cutoutImgPath 或 repData 嵌套
-    bgSrc.value = (data.bgImgPath as string) || ''
-    pieceSrc.value = (data.cutoutImgPath as string) || ''
+    // AJ-Captcha 1.3.0 CaptchaVO：originalImageBase64/jigsawImageBase64（裸 base64，需补 dataURL 前缀）
+    bgSrc.value = data.originalImageBase64 ? `data:image/png;base64,${data.originalImageBase64}` : ''
+    pieceSrc.value = data.jigsawImageBase64 ? `data:image/png;base64,${data.jigsawImageBase64}` : ''
     captchaLoaded.value = true
     status.value = 'idle'
   } catch (e) {
@@ -186,10 +186,10 @@ function onDragEnd() {
   submitVerification()
 }
 
-/** 组装并加密 captchaVerification，emit success。 */
-function submitVerification() {
+/** 组装加密轨迹 → 后端一次校验（写二次 key）→ 自算 captchaVerification emit。 */
+async function submitVerification() {
   const data = captchaData.value
-  if (!data || !data.secretKey || !data.id) {
+  if (!data || !data.secretKey || !data.token) {
     status.value = 'fail'
     statusText.value = '验证码数据缺失，请刷新'
     emit('fail', '验证码数据缺失')
@@ -199,11 +199,24 @@ function submitVerification() {
   // 把屏幕拖动距离映射回原图坐标
   const scale = ORIG_IMG_WIDTH / props.width
   const mappedX = Math.round(btnLeft.value * scale)
+  // AJ-Captcha 1.3.0 标准：pointJson = AES({x,y}, secretKey)；y 固定 5（全高滑块条约定）
+  const pointPlain = JSON.stringify({ x: mappedX, y: FIXED_Y })
+  const pointJson = aesEncrypt(pointPlain, data.secretKey)
 
-  // pointJson = AES({x, y}, secretKey)
-  const pointJson = aesEncrypt(JSON.stringify({ x: mappedX, y: FIXED_Y }), data.secretKey)
-  // captchaVerification = AES({id, pointJson}, secretKey)
-  const captchaVerification = aesEncrypt(JSON.stringify({ id: data.id, pointJson }), data.secretKey)
+  try {
+    // 一次校验（坐标核验）——通过后后端才写二次 key，二次复验（业务端点）只认该 key，不可绕过
+    await authApi.checkCaptcha(data.token, pointJson)
+  } catch {
+    status.value = 'fail'
+    statusText.value = '验证失败，请重试'
+    emit('fail', '滑块坐标校验失败')
+    // 坐标不符后旧 token 已被后端作废（check 无论成败都删一次 key），强制刷新
+    fetchCaptcha()
+    return
+  }
+
+  // captchaVerification = AES(token + '---' + point明文, secretKey)（与后端二次 key 同值）
+  const captchaVerification = aesEncrypt(`${data.token}---${pointPlain}`, data.secretKey)
 
   status.value = 'success'
   statusText.value = '验证通过'

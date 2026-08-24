@@ -51,6 +51,30 @@ let isRedirectingToLogin = false
  */
 let refreshPromise: Promise<string | null> | null = null
 
+/**
+ * 匿名认证端点（无需登录即可调）：这些端点回的 401 是**业务拒绝**（如 40107 滑块门槛、
+ * 凭证错误），不是会话过期——不走静默刷新/跳登录，直接落「其他错误」分支组装业务码错误，
+ * UI 才能凭 code 弹滑块。否则注册弹窗点「获取验证码」命中 40107 → 整页跳登录、弹窗被卸载。
+ */
+const ANONYMOUS_AUTH_PATHS = new Set([
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/register',
+  '/auth/register/email-code',
+  '/auth/password/forgot',
+  '/auth/password/reset',
+  '/auth/verify/email',
+  '/auth/resend/email',
+  '/auth/sms/code',
+  '/auth/login/sms',
+  '/auth/captcha',
+  '/auth/captcha/check',
+  '/auth/captcha/verify',
+  '/auth/mfa/verify',
+  '/auth/login/dingtalk',
+  '/auth/channels'
+])
+
 async function tryRefreshAccessToken(): Promise<string | null> {
   const rt = getStorage<string>(STORAGE_KEYS.REFRESH_TOKEN)
   if (!rt) return null
@@ -131,8 +155,7 @@ request.interceptors.response.use(
     const originalRequest = error.config
 
     if (error.response?.status === 401
-        && originalRequest?.url !== '/auth/login'
-        && originalRequest?.url !== '/auth/refresh') {
+        && !ANONYMOUS_AUTH_PATHS.has(originalRequest?.url ?? '')) {
       // Phase4：静默刷新一次并重放原请求；刷新失败或已重放过 → 跳登录
       if (!originalRequest._retry) {
         const newAt = await tryRefreshAccessToken()
@@ -181,7 +204,16 @@ request.interceptors.response.use(
     const errMsg = serverMsg || error.message || '网络错误'
     const displayMsg = status ? `${status} · ${errMsg}` : errMsg
     showErrorMessage(displayMsg)
-    return Promise.reject(error)
+    // 12x B2 修复：HTTP 非 2xx 但响应体带业务码（如登录/注册/找回 40107 滑块门槛）→
+    // 用业务 message + code 组装错误对象抛出，UI 才能凭 code 分支弹滑块；
+    // 保留 response 引用（batchRunner 等靠 err.response.status 判 429）。
+    const bizCode = (error.response?.data as Partial<ApiResponse> | undefined)?.code
+    const coded = new Error(serverMsg || errMsg) as Error & { code?: number; response?: unknown }
+    if (typeof bizCode === 'number') {
+      coded.code = bizCode
+    }
+    coded.response = error.response
+    return Promise.reject(coded)
   }
 )
 

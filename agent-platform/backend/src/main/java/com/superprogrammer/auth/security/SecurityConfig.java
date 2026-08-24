@@ -89,6 +89,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/sms/code").permitAll()
                         .requestMatchers("/api/auth/login/sms").permitAll()
                         .requestMatchers("/api/auth/captcha").permitAll()
+                        .requestMatchers("/api/auth/captcha/check").permitAll()
                         .requestMatchers("/api/auth/captcha/verify").permitAll()
                         // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
                         .requestMatchers("/api/auth/login/wechat/redirect").permitAll()

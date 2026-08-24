@@ -14,7 +14,7 @@ public class AuthChannelSettingsUpdateRequest {
     @Data
     public static class Mail {
         private Boolean enabled;
-        @Pattern(regexp = "^[a-z]{2}-[a-z]+-\\d+$", message = "邮件区域格式不正确") private String region;
+        @Pattern(regexp = "^$|^[a-z]{2}-[a-z]+(-\\d+)?$", message = "邮件区域格式不正确") private String region;
         private String accessKeyId;
         private String accessKeySecret;
         private String accountName;
@@ -38,7 +38,7 @@ public class AuthChannelSettingsUpdateRequest {
     @Data
     public static class Sms {
         private Boolean enabled;
-        @Pattern(regexp = "^[a-z]{2}-[a-z]+-\\d+$", message = "短信区域格式不正确") private String region;
+        @Pattern(regexp = "^$|^[a-z]{2}-[a-z]+(-\\d+)?$", message = "短信区域格式不正确") private String region;
         private String accessKeyId;
         private String accessKeySecret;
         private String signName;

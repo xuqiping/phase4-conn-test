@@ -45,6 +45,7 @@ public final class SecurityEndpointRegistry {
             "/api/auth/sms/code",
             "/api/auth/login/sms",
             "/api/auth/captcha",
+            "/api/auth/captcha/check",
             "/api/auth/captcha/verify",
             // 认证系统增强：微信扫码登录（公开端点，微信回调 GET）
             "/api/auth/login/wechat/redirect",
