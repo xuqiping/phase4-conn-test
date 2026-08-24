@@ -91,8 +91,10 @@ function Cmd-Act($cmd) {
 }
 
 # ---- 主循环：逐行读 JSON 命令 ----
+# stdin/stdout 统一 UTF-8（宿主 Node 写 UTF-8；PS5.1 默认按 GBK 解码管道会乱码）
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$stdin = [Console]::In
+try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+$stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8)
 while ($true) {
   $line = $stdin.ReadLine()
   if ($null -eq $line) { break }
