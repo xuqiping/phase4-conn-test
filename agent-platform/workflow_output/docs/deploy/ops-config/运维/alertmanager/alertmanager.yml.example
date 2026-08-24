@@ -1,0 +1,56 @@
+# 运维系统 OPS-FR-12：Alertmanager 通知通道配置模板（Step 10）
+# ⚠️ 本文件是「模板」，不含真实密钥；真实配置在服务器 E:\IT\ops\alertmanager\alertmanager.yml，不入 git。
+#
+# 通道结构：Prometheus 触发告警 → Alertmanager（:9093 分拣/分组/抑制）
+#   → 主通道：钉钉群机器人（经 dingtalk-webhook 适配器 :8060 转译成钉钉格式）
+#   → 兜底通道：SMTP 邮件（可选，取消注释并填真实账号）
+#
+# 部署方式（二选一）：
+#   A. 双击运行「配置钉钉告警.bat」（同目录，全中文引导），自动生成本文件内容+适配器配置+重启服务+发测试消息；
+#   B. 手工：把 __钉钉WEBHOOK地址__ 占位替换后拷到 E:\IT\ops\alertmanager\alertmanager.yml，
+#      适配器配置参考 E:\IT\ops\dingtalk-webhook\config.yml.example。
+
+global:
+  resolve_timeout: 5m
+  # ── 邮件兜底通道（可选）：取消注释并填真实 SMTP 账号（密码绝不入库，只写服务器本地文件）──
+  # smtp_smarthost: 'smtp.exmail.qq.com:465'
+  # smtp_from: 'alert@example.com'
+  # smtp_auth_username: 'alert@example.com'
+  # smtp_auth_password: '__SMTP密码__'
+  # smtp_require_tls: true
+
+route:
+  receiver: dingtalk
+  group_by: [alertname, severity]
+  group_wait: 30s        # 同组第一条告警等 30s 凑批（避免刷屏）
+  group_interval: 5m     # 同组后续告警 5 分钟一批
+  repeat_interval: 4h    # 未恢复的告警 4 小时重发一次提醒
+  # 邮件兜底示例：critical 级别同时抄送邮件
+  # routes:
+  #   - match:
+  #       severity: critical
+  #     receiver: dingtalk
+  #     continue: true
+  #   - match:
+  #       severity: critical
+  #     receiver: email
+
+receivers:
+  # 主通道：钉钉（经本机适配器转译；适配器配置在 E:\IT\ops\dingtalk-webhook\config.yml）
+  - name: dingtalk
+    webhook_configs:
+      - url: http://127.0.0.1:8060/dingtalk/ops/send
+        send_resolved: true   # 告警恢复时也发「已恢复」通知
+
+  # 兜底通道：邮件（与 global 段 SMTP 配置配套，按需启用）
+  # - name: email
+  #   email_configs:
+  #     - to: 'ops@example.com'
+  #       send_resolved: true
+
+# 抑制规则（暂未启用）：当前 8 条规则之间没有「同一告警分两级」的关系，
+# 以后若加（如同一指标 warning+critical 双阈值），用下面模板让 critical 压住 warning：
+# inhibit_rules:
+#   - source_match: { severity: critical }
+#     target_match: { severity: warning }
+#     equal: [alertname]

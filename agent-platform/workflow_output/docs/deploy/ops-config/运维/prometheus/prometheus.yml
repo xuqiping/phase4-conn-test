@@ -1,0 +1,50 @@
+# 运维系统 OPS-FR-10：Prometheus 抓取配置（Step 8）
+# 4 个 job：backend actuator / sidecar / windows_exporter / 自身
+# 安装位置（本机/服务器统一约定）：E:\IT\ops\prometheus\prometheus.exe --config.file=E:\IT\ops\prometheus\prometheus.yml
+# 本文件入库版本化；部署时原样拷到安装目录即可（路径已按约定目录写死，换机器只改 OPS_ROOT 约定）。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: prod-local          # 本机即服务器；迁真服务器时改机器名
+
+# Step 10 已落地：告警规则 + 推送 Alertmanager（规则文件见同目录 alert-rules.yml）
+rule_files:
+  - alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["localhost:9093"]
+
+scrape_configs:
+  # ① 后端 Spring Boot Actuator（Step 1 已暴露 /actuator/prometheus，permitAll）
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["localhost:8080"]
+        labels:
+          component: agent-platform-backend
+
+  # ② sidecar（Step 6 instrumentator 6.0.0 挂 /metrics）
+  - job_name: sidecar
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:8090"]
+        labels:
+          component: agent-platform-sidecar
+
+  # ③ 主机指标（windows_exporter 默认 9182）
+  - job_name: windows_exporter
+    static_configs:
+      - targets: ["localhost:9182"]
+        labels:
+          component: host
+
+  # ④ Prometheus 自身
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          component: prometheus

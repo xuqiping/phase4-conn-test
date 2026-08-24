@@ -1,0 +1,31 @@
+<!-- 运维系统 Step 13：后端 jar WinSW 服务定义模板（OPS-FR-22） -->
+<!-- 部署（服务器、管理员）：
+     1. WinSW.NET461.exe 改名 agent-backend.exe，与本 xml 一起放 E:\agent-platform\backend\
+     2. 把下面 <env> 占位改成真实值（密钥只写服务器本地 xml，绝不入库；或用 setx /M 机器级环境变量后删掉 env 段）
+     3. agent-backend.exe install && agent-backend.exe start -->
+<service>
+  <id>agent-backend</id>
+  <name>agent-backend</name>
+  <description>agent-platform 后端（Spring Boot），监听 8080，仅经 Nginx 反代对外</description>
+  <executable>java</executable>
+  <arguments>-jar E:\agent-platform\backend\agent-platform-0.1.0-SNAPSHOT.jar</arguments>
+  <workingdirectory>E:\agent-platform\backend</workingdirectory>
+  <logpath>E:\agent-platform\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <!-- 生产环境变量（99-部署要求 §八）：占位符部署时替换，真实值不入库 -->
+  <env name="DB_HOST" value="localhost"/>
+  <env name="DB_PORT" value="5432"/>
+  <env name="DB_NAME" value="agent_platform"/>
+  <env name="DB_USER" value="postgres"/>
+  <env name="DB_PASSWORD" value="__填服务器真实密码__"/>
+  <env name="REDIS_HOST" value="localhost"/>
+  <env name="REDIS_PORT" value="6379"/>
+  <env name="JWT_SECRET" value="__openssl rand -base64 64 生成__"/>
+  <env name="LOG_FILE" value="E:\agent-platform\logs\agent-platform.log"/>
+  <env name="ERROR_LOG_FILE" value="E:\agent-platform\logs\error.log"/>
+</service>
