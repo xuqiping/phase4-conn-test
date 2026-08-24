@@ -90,7 +90,10 @@ class AdminTokenRefreshVerificationTest {
 
         String newAccessToken = extractToken(refreshResult.getResponse().getContentAsString(), ACCESS_TOKEN_PATTERN);
         assertNotNull(newAccessToken);
-        assertNotEquals(accessToken, newAccessToken, "刷新后应返回新的 access token");
+        Claims refreshedClaims = parseAccessToken(newAccessToken);
+        long refreshedExpirationSeconds =
+                (refreshedClaims.getExpiration().getTime() - refreshedClaims.getIssuedAt().getTime()) / 1000;
+        assertEquals(60, refreshedExpirationSeconds, "刷新后的超管 access token 应 60 秒过期");
 
         // 4. 用新的 access token 访问需要认证的 admin 接口，验证不需要重新登录
         mockMvc.perform(get("/api/admin/users")
