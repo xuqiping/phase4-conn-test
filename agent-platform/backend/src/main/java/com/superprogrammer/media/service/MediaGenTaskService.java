@@ -78,6 +78,9 @@ public class MediaGenTaskService {
     private final com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
     /** 7x（V155）：提交即预扣预估积分，完工按实多退少补。 */
     private final com.superprogrammer.billing.service.MediaBillingService mediaBillingService;
+    /** C1（17x-2）：预估个人口径——成员/管理双卡可用读数。 */
+    private final com.superprogrammer.projectgroup.mapper.ProjectGroupMemberMapper memberMapper;
+    private final com.superprogrammer.projectgroup.service.MemberBudgetService memberBudgetService;
 
     /**
      * 提交生成任务。
@@ -244,6 +247,13 @@ public class MediaGenTaskService {
                 .anyMatch(a -> a.getKind() != null && "video".equalsIgnoreCase(a.getKind().trim()));
         java.math.BigDecimal estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
                 duration, hasRefVideo, resolution);
+        // 2026-08-25 fail-closed 硬闸：估不出价/估价为 0 → 一律拒提交（个人/组池同闸）。
+        // 估价 0 会跳过下方三重预检与预扣——余额不足用户可无限白嫖真实生成的视频（17x 安全审计后续发现）。
+        // 系统调用（userId=null）/计费开关关 跳过；免费模型请配极小正值价。
+        if (userId != null && walletService.isEnabled() && estimatedPoints.signum() <= 0) {
+            throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
+                    "该模型未配置有效预估价（est_per_resolution/秒价），任务未提交——请联系管理员在价表配置中补齐");
+        }
         if (projectGroupId == null) {
             // 7x-2（V152）：个人钱包同组池口径——余额 < 预估消耗即拒（task 不建），
             // 防「100 积分提交 2000 积分任务」。估价值 0（无价表/TOKEN 未配预估秒价）不拦，与组池同。
@@ -407,6 +417,11 @@ public class MediaGenTaskService {
         // 计划5 Step5：估价快照（组图按 maxImages 估；价表缺价记 0+WARN）
         java.math.BigDecimal estimatedPoints = estimateImagePoints(provider.getId(), model,
                 maxImages == null || maxImages <= 0 ? 1 : maxImages);
+        // 2026-08-25 fail-closed 硬闸（同视频）：估价为 0 → 拒提交，防估 0 跳过预检/预扣白嫖。
+        if (userId != null && walletService.isEnabled() && estimatedPoints.signum() <= 0) {
+            throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
+                    "该模型未配置有效单价（price_per_image），任务未提交——请联系管理员在价表配置中补齐");
+        }
         if (projectGroupId == null) {
             // 7x-2（V152）：个人钱包余额 < 预估消耗即拒（与视频/组池同口径）
             if (poolBalance != null && estimatedPoints.signum() > 0
@@ -774,45 +789,79 @@ public class MediaGenTaskService {
         java.math.BigDecimal balance = projectGroupId != null
                 ? groupWalletService.getGroupBalance(projectGroupId)
                 : (userId == null ? java.math.BigDecimal.ZERO : walletService.getBalance(userId));
+        // C1（17x-2）：组内预估个人口径——balance 是组池（全组共享），成员还有自己的限额卡，
+        // 老预览只看池导致「预估可提交、提交被限额拒」。补 personalScope：限额内可用 + 卡点归因
+        // （bindingConstraint=MEMBER 限额卡 / POOL 组池卡 / NONE 都够），前端按卡点分层提示。
+        Map<String, Object> personalScope = null;
+        boolean affordableMember = true;
+        if (projectGroupId != null && userId != null) {
+            com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity row =
+                    memberMapper.selectByGroupUser(projectGroupId, userId);
+            if (row != null) {
+                java.math.BigDecimal quota = row.getQuotaLimitPoints();
+                java.math.BigDecimal used = row.getUsedPoints() == null
+                        ? java.math.BigDecimal.ZERO : row.getUsedPoints();
+                java.math.BigDecimal avail = null;
+                if (quota != null) {
+                    avail = quota.subtract(used);
+                    // 管理双卡：限额卡之外还有「可分配额度」硬卡（子树预留须保留），取两者更紧者
+                    if (com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER
+                            .equals(row.getRole())) {
+                        java.math.BigDecimal allocatable = memberBudgetService
+                                .allocatable(projectGroupId, row, null);
+                        if (allocatable != null && allocatable.compareTo(avail) < 0) {
+                            avail = allocatable;
+                        }
+                    }
+                }
+                affordableMember = avail == null || avail.compareTo(est) >= 0;
+                String bindingConstraint = !affordableMember ? "MEMBER"
+                        : balance.compareTo(est) < 0 ? "POOL" : "NONE";
+                personalScope = new LinkedHashMap<>();
+                personalScope.put("quota", quota);
+                personalScope.put("used", used);
+                personalScope.put("inProjectAvailable", avail);
+                personalScope.put("affordableMember", affordableMember);
+                personalScope.put("bindingConstraint", bindingConstraint);
+            }
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("estimatedPoints", est);
         out.put("balance", balance);
-        out.put("affordable", est.signum() <= 0 || balance.compareTo(est) >= 0);
+        // 2026-08-25 fail-closed：est≤0 提交侧必拒（PRICING_NOT_FOUND），预览同步显示不可提交
+        // C1：组内场景同时要求 限额内可用（无限额视为可用）+ 组池够
+        boolean poolOk = est.signum() > 0 && balance.compareTo(est) >= 0;
+        out.put("affordable", personalScope == null ? poolOk : (affordableMember && poolOk));
+        if (personalScope != null) {
+            out.put("personalScope", personalScope);
+        }
         return out;
     }
 
     /**
-     * 计划5 Step5：视频提交期估价（积分口径）。7x-1/2（V152）改走
+     * 计划5 Step5：视频提交期估价（积分口径）。走
      * {@link com.superprogrammer.billing.service.PricingService#estimateVideoYuan}：
-     * SECOND 模式 = 分辨率秒价（精确行→通用行兜底）× duration；TOKEN 模式 = 价表
-     * est_yuan_per_second × duration（补提交期无 token 维度）。价表缺/估价字段未配 → 记 0 + WARN
-     * （口径保守：预检/回收在途上限容忍 0，见 plan 坑表）。
+     * SECOND 模式 = 分辨率秒价 × duration；TOKEN 模式 = 价表 est_yuan_per_second × duration。
+     * 2026-08-25 fail-closed：价表缺/估价字段未配 <b>抛 PRICING_NOT_FOUND</b>（不再静默记 0——
+     * 估价 0 会跳过预检与预扣，余额不足的用户可无限白嫖生成）。预估预览 caller 自行 catch 记 0。
      */
     private java.math.BigDecimal estimateVideoPoints(Long providerId, String model,
                                                      Integer duration, boolean hasRefVideo,
                                                      String resolution) {
-        try {
-            java.math.BigDecimal yuan = pricingService.estimateVideoYuan(
-                    providerId, model, duration == null ? 0 : duration, resolution, hasRefVideo);
-            return pointsRatioService.toPoints(yuan);
-        } catch (Exception e) {
-            log.warn("视频提交估价失败记0 model={} duration={} resolution={} : {}",
-                    model, duration, resolution, e.getMessage());
-            return java.math.BigDecimal.ZERO;
-        }
+        java.math.BigDecimal yuan = pricingService.estimateVideoYuan(
+                providerId, model, duration == null ? 0 : duration, resolution, hasRefVideo);
+        return pointsRatioService.toPoints(yuan);
     }
 
-    /** 计划5 Step5：图片提交期估价（积分口径，按 maxImages 张数）；价表缺价记 0 + WARN。 */
+    /**
+     * 计划5 Step5：图片提交期估价（积分口径，按 maxImages 张数）。
+     * 2026-08-25 fail-closed：无价表行抛 PRICING_NOT_FOUND（同视频口径，防估 0 白嫖）。
+     */
     private java.math.BigDecimal estimateImagePoints(Long providerId, String model, int imageCount) {
-        try {
-            java.math.BigDecimal yuan = pricingService.computeCost(
-                    com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
-                    providerId, model, null, null, null, imageCount, false);
-            return pointsRatioService.toPoints(yuan);
-        } catch (Exception e) {
-            log.warn("图片提交估价失败记0 model={} count={} : {}", model, imageCount, e.getMessage());
-            return java.math.BigDecimal.ZERO;
-        }
+        java.math.BigDecimal yuan = pricingService.computeCost(
+                com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
+                providerId, model, null, null, null, imageCount, false);
+        return pointsRatioService.toPoints(yuan);
     }
 
     private String toJson(Map<String, Object> config) {

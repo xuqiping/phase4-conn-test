@@ -26,6 +26,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -77,6 +78,11 @@ class MediaGenTaskServiceTest {
     private com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
     @Mock
     private com.superprogrammer.billing.service.MediaBillingService mediaBillingService;
+    /** C1（17x-2）：预估个人口径——成员行 + 管理可分配额度 mock。 */
+    @Mock
+    private com.superprogrammer.projectgroup.mapper.ProjectGroupMemberMapper memberMapper;
+    @Mock
+    private com.superprogrammer.projectgroup.service.MemberBudgetService memberBudgetService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -97,7 +103,7 @@ class MediaGenTaskServiceTest {
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
                 inflightGate, mediaInflightGate, bizMetrics, auditLogService,
                 groupWalletService, projectGroupService, pricingService, pointsRatioService,
-                mediaBillingService);
+                mediaBillingService, memberMapper, memberBudgetService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);
@@ -559,20 +565,37 @@ class MediaGenTaskServiceTest {
     }
 
     @Test
-    void submit_estimateMissingPrice_storesZeroAndProceeds() {
-        // TOKEN 模式无秒维度/价表缺价 → 估价记 0（保守容忍）：预检放行、task 照建、estimated_cost=0
+    void submit_estimateMissingPrice_rejected() {
+        // 2026-08-25 fail-closed：价表缺价 → 估价抛 PRICING_NOT_FOUND，提交直接拒（task 不建）。
+        // 旧口径「记 0 容忍」会跳过预检/预扣放白嫖，已废。
         when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("10"));
         when(pricingService.estimateVideoYuan(any(), any(), any(), any(), anyBoolean()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
 
-        service.submit("p", "16:9", 5, "720p", false, false,
-                null, null, null, SEEDANCE_2, USER_ID, false, null, 5L);
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false, null, 5L));
 
-        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
-        verify(taskMapper).insert(captor.capture());
-        assertEquals(0, captor.getValue().getEstimatedCost()
-                .compareTo(java.math.BigDecimal.ZERO));
+        assertEquals(ErrorCode.PRICING_NOT_FOUND.getCode(), e.getCode());
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submit_estimateZero_hardGateRejects() {
+        // 2026-08-25 fail-closed 硬闸：估价为 0（显式 0 价等）→ PRICING_NOT_FOUND 拒，task 不建。
+        when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
+                .thenReturn(new java.math.BigDecimal("1000"));
+        stubEstimate(java.math.BigDecimal.ZERO);
+        when(walletService.isEnabled()).thenReturn(true);
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false, null, 5L));
+
+        assertEquals(ErrorCode.PRICING_NOT_FOUND.getCode(), e.getCode());
+        assertTrue(e.getMessage().contains("预估价"));
+        verify(taskMapper, never()).insert(any());
     }
 
     // ---------- 7x-2（V152）：个人钱包预估消耗预检 ----------
@@ -605,5 +628,95 @@ class MediaGenTaskServiceTest {
         verify(taskMapper).insert(captor.capture());
         assertEquals(0, captor.getValue().getEstimatedCost()
                 .compareTo(new java.math.BigDecimal("50")));
+    }
+
+    // ---------- C1（17x-2）：预估预览个人口径（组内限额卡归因） ----------
+
+    @SuppressWarnings("unchecked")
+    private java.util.Map<String, Object> scopeOf(java.util.Map<String, Object> out) {
+        return (java.util.Map<String, Object>) out.get("personalScope");
+    }
+
+    @Test
+    void estimate_groupMemberQuotaBinds_memberConstraint() {
+        // 限额成员：quota 60 - used 50 = 10 < est 50 → 卡在 MEMBER（池 1000 够），affordable=false
+        stubEstimate(new java.math.BigDecimal("50"));
+        when(groupWalletService.getGroupBalance(5L)).thenReturn(new java.math.BigDecimal("1000"));
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity member =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity();
+        member.setRole(com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MEMBER);
+        member.setQuotaLimitPoints(new java.math.BigDecimal("60"));
+        member.setUsedPoints(new java.math.BigDecimal("50"));
+        when(memberMapper.selectByGroupUser(5L, USER_ID)).thenReturn(member);
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", SEEDANCE_2, 5, "720p",
+                false, null, USER_ID, 5L);
+
+        assertEquals(Boolean.FALSE, out.get("affordable"));
+        java.util.Map<String, Object> scope = scopeOf(out);
+        assertEquals("MEMBER", scope.get("bindingConstraint"));
+        assertEquals(Boolean.FALSE, scope.get("affordableMember"));
+        assertEquals(0, ((java.math.BigDecimal) scope.get("inProjectAvailable"))
+                .compareTo(new java.math.BigDecimal("10")));
+    }
+
+    @Test
+    void estimate_groupMemberUnlimited_poolConstraint() {
+        // 不限额成员（quota=null）：只看组池；池 30 < est 50 → 卡在 POOL，personalScope 照返
+        stubEstimate(new java.math.BigDecimal("50"));
+        when(groupWalletService.getGroupBalance(5L)).thenReturn(new java.math.BigDecimal("30"));
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity member =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity();
+        member.setRole(com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MEMBER);
+        member.setQuotaLimitPoints(null);
+        member.setUsedPoints(new java.math.BigDecimal("10"));
+        when(memberMapper.selectByGroupUser(5L, USER_ID)).thenReturn(member);
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", SEEDANCE_2, 5, "720p",
+                false, null, USER_ID, 5L);
+
+        assertEquals(Boolean.FALSE, out.get("affordable"));
+        java.util.Map<String, Object> scope = scopeOf(out);
+        assertEquals("POOL", scope.get("bindingConstraint"));
+        assertEquals(Boolean.TRUE, scope.get("affordableMember"));
+        assertNull(scope.get("inProjectAvailable"));
+        assertNull(scope.get("quota"));
+    }
+
+    @Test
+    void estimate_groupManagerTakesMinOfTwoCards() {
+        // 限额管理双卡：quota−used=40，可分配额度=25 → 取更紧 25 < est 50 → MEMBER 卡
+        stubEstimate(new java.math.BigDecimal("50"));
+        when(groupWalletService.getGroupBalance(5L)).thenReturn(new java.math.BigDecimal("1000"));
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity mgr =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity();
+        mgr.setRole(com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
+        mgr.setQuotaLimitPoints(new java.math.BigDecimal("100"));
+        mgr.setUsedPoints(new java.math.BigDecimal("60"));
+        when(memberMapper.selectByGroupUser(5L, USER_ID)).thenReturn(mgr);
+        when(memberBudgetService.allocatable(5L, mgr, null)).thenReturn(new java.math.BigDecimal("25"));
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", SEEDANCE_2, 5, "720p",
+                false, null, USER_ID, 5L);
+
+        java.util.Map<String, Object> scope = scopeOf(out);
+        assertEquals("MEMBER", scope.get("bindingConstraint"));
+        assertEquals(0, ((java.math.BigDecimal) scope.get("inProjectAvailable"))
+                .compareTo(new java.math.BigDecimal("25")));
+        assertEquals(Boolean.FALSE, out.get("affordable"));
+    }
+
+    @Test
+    void estimate_groupNoMemberRow_noPersonalScope() {
+        // 非成员（行缺失，理论走不到——上游已 403）：退化为只看池，兼容旧口径
+        stubEstimate(new java.math.BigDecimal("50"));
+        when(groupWalletService.getGroupBalance(5L)).thenReturn(new java.math.BigDecimal("1000"));
+        when(memberMapper.selectByGroupUser(5L, USER_ID)).thenReturn(null);
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", SEEDANCE_2, 5, "720p",
+                false, null, USER_ID, 5L);
+
+        assertEquals(Boolean.TRUE, out.get("affordable"));
+        assertNull(out.get("personalScope"));
     }
 }
