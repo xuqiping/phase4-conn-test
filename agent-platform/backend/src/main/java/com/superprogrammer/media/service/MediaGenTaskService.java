@@ -241,8 +241,17 @@ public class MediaGenTaskService {
         boolean hasRefVideo = attachments != null && attachments.stream()
                 .anyMatch(a -> a.getKind() != null && "video".equalsIgnoreCase(a.getKind().trim()));
         java.math.BigDecimal estimatedPoints = estimateVideoPoints(provider.getId(), resolvedModel,
-                duration, hasRefVideo);
-        if (projectGroupId != null) {
+                duration, hasRefVideo, resolution);
+        if (projectGroupId == null) {
+            // 7x-2（V152）：个人钱包同组池口径——余额 < 预估消耗即拒（task 不建），
+            // 防「100 积分提交 2000 积分任务」。估价值 0（无价表/TOKEN 未配预估秒价）不拦，与组池同。
+            if (poolBalance != null && estimatedPoints.signum() > 0
+                    && poolBalance.compareTo(estimatedPoints) < 0) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
+                        "积分不足（预估消耗 " + estimatedPoints.stripTrailingZeros().toPlainString()
+                                + "），任务未提交");
+            }
+        } else {
             // 组任务三重预检（估价值）：成员身份已在 submit 入口验；此处=组池余量 + 成员限额余量，不足即拒 task 不建
             if (poolBalance != null && estimatedPoints.signum() > 0
                     && poolBalance.compareTo(estimatedPoints) < 0) {
@@ -379,7 +388,15 @@ public class MediaGenTaskService {
         // 计划5 Step5：估价快照（组图按 maxImages 估；价表缺价记 0+WARN）
         java.math.BigDecimal estimatedPoints = estimateImagePoints(provider.getId(), model,
                 maxImages == null || maxImages <= 0 ? 1 : maxImages);
-        if (projectGroupId != null) {
+        if (projectGroupId == null) {
+            // 7x-2（V152）：个人钱包余额 < 预估消耗即拒（与视频/组池同口径）
+            if (poolBalance != null && estimatedPoints.signum() > 0
+                    && poolBalance.compareTo(estimatedPoints) < 0) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
+                        "积分不足（预估消耗 " + estimatedPoints.stripTrailingZeros().toPlainString()
+                                + "），任务未提交");
+            }
+        } else {
             if (poolBalance != null && estimatedPoints.signum() > 0
                     && poolBalance.compareTo(estimatedPoints) < 0) {
                 throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
@@ -687,19 +704,22 @@ public class MediaGenTaskService {
     }
 
     /**
-     * 计划5 Step5：视频提交期估价（积分口径）。SECOND 模式按 duration 估；TOKEN 模式提交期无
-     * token 维度 / 价表缺价 → 记 0 + WARN（口径保守：预检/回收在途上限容忍 0，见 plan 坑表）。
+     * 计划5 Step5：视频提交期估价（积分口径）。7x-1/2（V152）改走
+     * {@link com.superprogrammer.billing.service.PricingService#estimateVideoYuan}：
+     * SECOND 模式 = 分辨率秒价（精确行→通用行兜底）× duration；TOKEN 模式 = 价表
+     * est_yuan_per_second × duration（补提交期无 token 维度）。价表缺/估价字段未配 → 记 0 + WARN
+     * （口径保守：预检/回收在途上限容忍 0，见 plan 坑表）。
      */
     private java.math.BigDecimal estimateVideoPoints(Long providerId, String model,
-                                                     Integer duration, boolean hasRefVideo) {
+                                                     Integer duration, boolean hasRefVideo,
+                                                     String resolution) {
         try {
-            java.math.BigDecimal yuan = pricingService.computeCost(
-                    com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_VIDEO,
-                    providerId, model, null, null,
-                    duration == null ? 0 : duration, 0, hasRefVideo);
+            java.math.BigDecimal yuan = pricingService.estimateVideoYuan(
+                    providerId, model, duration == null ? 0 : duration, resolution, hasRefVideo);
             return pointsRatioService.toPoints(yuan);
         } catch (Exception e) {
-            log.warn("视频提交估价失败记0 model={} duration={} : {}", model, duration, e.getMessage());
+            log.warn("视频提交估价失败记0 model={} duration={} resolution={} : {}",
+                    model, duration, resolution, e.getMessage());
             return java.math.BigDecimal.ZERO;
         }
     }

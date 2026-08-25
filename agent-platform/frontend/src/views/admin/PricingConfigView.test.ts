@@ -74,7 +74,8 @@ describe('PricingConfigView FR-F20-01', () => {
     await flushPromises()
     expect(billingApi.availablePricingModels).toHaveBeenCalledOnce()
 
-    vm.onCandidateChange('7\u0000seed-chat')
+    // 7x-1（V152）：候选 key 现为 4 段（provider/model/参考面/分辨率槽位）
+    vm.onCandidateChange('7\u0000seed-chat\u00000\u0000')
     expect(vm.pricingForm).toMatchObject({ providerId: 7, model: 'seed-chat', kind: 'CHAT' })
   })
 

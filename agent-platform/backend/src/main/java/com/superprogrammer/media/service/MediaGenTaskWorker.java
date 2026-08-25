@@ -250,10 +250,11 @@ public class MediaGenTaskWorker {
         // 7x-3：按是否带参考视频选价表行（kind=="video" 附件才算参考视频；首尾帧图 kind=="image" 不算）
         boolean hasReference = hasReferenceVideo(request);
         // 计费扣减（返回实扣积分；null=未扣，disabled/系统调用/计费失败均吞不抛）
+        // 7x-1（V152）：透传任务实际分辨率——SECOND 模式按分辨率价行计价（未单列回落通用行）
         BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
                 request.getDuration(), 0, usageStatus(flag), taskId, hasReference,
-                task.getProjectGroupId());
+                task.getProjectGroupId(), request.getResolution());
         boolean transitioned;
         try {
             transitioned = txService.markSucceeded(taskId, fileId, tokensCost, flag);

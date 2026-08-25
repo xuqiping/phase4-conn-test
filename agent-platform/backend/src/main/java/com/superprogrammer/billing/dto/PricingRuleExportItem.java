@@ -28,6 +28,10 @@ public class PricingRuleExportItem {
     private String model;
     /** 7x-3：仅 VIDEO 有意义；true=带参考视频价，false=无参考/兜底。null 视为 false */
     private Boolean hasReference;
+    /** 7x-1（V152）：仅 VIDEO SECOND 有意义（480p/720p/1080p/4k；null=通用行），upsert 匹配键之一 */
+    private String resolution;
+    /** 7x-2（V152）：仅 VIDEO TOKEN 有意义——提交期预估秒价 ¥/秒（仅预检，不计费） */
+    private BigDecimal estYuanPerSecond;
     /** 文本/embed 每 1M input token 价（¥） */
     private BigDecimal priceInputPerMillion;
     /** 文本 每 1M output token 价（¥） */

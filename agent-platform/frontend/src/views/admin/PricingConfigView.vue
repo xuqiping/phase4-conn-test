@@ -73,7 +73,7 @@
             <n-input v-model:value="pricingForm.model" disabled />
           </n-form-item>
         </template>
-        <n-form-item label="输入价 ¥/百万" v-if="pricingForm.kind === 'CHAT' || pricingForm.kind === 'EMBED' || pricingForm.kind === 'RERANK'"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
+        <n-form-item label="输入价 ¥/百万" v-if="pricingForm.kind === 'CHAT' || pricingForm.kind === 'EMBED' || pricingForm.kind === 'RERANK' || (pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'TOKEN')"><n-input-number v-model:value="pricingForm.priceInputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="输出价 ¥/百万" v-if="pricingForm.kind === 'CHAT'"><n-input-number v-model:value="pricingForm.priceOutputPerMillion" :precision="6" /></n-form-item>
         <n-form-item label="视频计费模式" v-if="pricingForm.kind === 'VIDEO'">
           <n-select v-model:value="pricingForm.videoBillingMode" :options="modeOptions" />
@@ -82,7 +82,17 @@
           <n-switch v-model:value="pricingForm.hasReference" :disabled="pricingEditId != null" />
           <span class="pricing-config__hint" style="margin-left: 8px">同一视频模型可分别配「无参考」和「有参考」两行价；身份字段编辑时不可改</span>
         </n-form-item>
-        <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
+        <!-- 7x-1（V152）：SECOND 模式按分辨率分行配秒价；通用=未单列分辨率的兜底行 -->
+        <n-form-item label="分辨率" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'SECOND'">
+          <n-select v-model:value="pricingForm.resolution" :options="resolutionOptions" :disabled="pricingEditId != null" />
+          <span class="pricing-config__hint" style="margin-left: 8px">不同分辨率可各配一行（分有无参考）；「通用」兜底未单列的分辨率</span>
+        </n-form-item>
+        <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'SECOND'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
+        <!-- 7x-2（V152）：TOKEN 模式提交期无 token 维度，预估秒价供余额预检（不参与真实扣费） -->
+        <n-form-item label="预估秒价 ¥/秒" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'TOKEN'">
+          <n-input-number v-model:value="pricingForm.estYuanPerSecond" :precision="6" />
+          <span class="pricing-config__hint" style="margin-left: 8px">仅提交前余额预检用（预估=秒价×时长）；真实扣费仍按 token</span>
+        </n-form-item>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
       </n-form>
       <template #footer>
@@ -136,11 +146,28 @@ const modeOptions: { label: string; value: VideoBillingMode }[] = [
   { label: 'SECOND（按秒）', value: 'SECOND' }
 ]
 
+// 7x-1（V152）：VIDEO SECOND 分辨率槽位；''=通用兜底行（提交前转 null）
+const resolutionOptions: { label: string; value: string }[] = [
+  { label: '通用（未单列分辨率的兜底）', value: '' },
+  { label: '480p', value: '480p' },
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+  { label: '4K', value: '4k' }
+]
+function resolutionLabel(resolution: string | null | undefined): string {
+  if (resolution == null || resolution === '') return '通用'
+  return resolution === '4k' ? '4K' : resolution
+}
+
 const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '类型', key: 'kind', render: r => KIND_LABEL[r.kind] ?? r.kind },
   { title: 'providerId', key: 'providerId', render: r => r.providerId == null ? '全局' : String(r.providerId) },
   { title: 'model', key: 'model', render: r => r.model ?? '—' },
   { title: '参考视频', key: 'hasReference', render: r => r.kind === 'VIDEO' ? (r.hasReference ? '有参考' : '无参考') : '—' },
+  // 7x-1（V152）：VIDEO SECOND 分辨率行；null=通用兜底
+  { title: '分辨率', key: 'resolution', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'SECOND' ? resolutionLabel(r.resolution) : '—' },
+  // 7x-2（V152）：VIDEO TOKEN 预估秒价（仅预检）
+  { title: '预估秒价 ¥', key: 'estYuanPerSecond', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'TOKEN' ? fmt(r.estYuanPerSecond) : '—' },
   { title: '输入价 ¥/百万', key: 'priceInputPerMillion', render: r => fmt(r.priceInputPerMillion) },
   { title: '输出价 ¥/百万', key: 'priceOutputPerMillion', render: r => fmt(r.priceOutputPerMillion) },
   { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => fmt(r.pricePerSecond) },
@@ -187,7 +214,7 @@ function fmt(n: number | null | undefined): string {
 // 价表表单
 const pricingShow = ref(false)
 const pricingEditId = ref<number | null>(null)
-const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false })
+const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estYuanPerSecond: null })
 const availableModels = ref<AvailablePricingModelVO[]>([])
 const candidateLoading = ref(false)
 const candidateError = ref('')
@@ -198,8 +225,9 @@ const candidateOptions = computed(() => availableModels.value.map(candidate => (
   value: candidateKey(candidate)
 })))
 
-function candidateKey(candidate: Pick<AvailablePricingModelVO, 'providerId' | 'model'>): string {
-  return `${candidate.providerId}\u0000${candidate.model}`
+// 7x-1（V152）：VIDEO 候选身份=模型+参考面+分辨率槽位，key 须带全维度才唯一
+function candidateKey(candidate: Pick<AvailablePricingModelVO, 'providerId' | 'model' | 'hasReference' | 'resolution'>): string {
+  return `${candidate.providerId}\u0000${candidate.model}\u0000${candidate.hasReference ? '1' : '0'}\u0000${candidate.resolution ?? ''}`
 }
 
 async function loadAvailableModels() {
@@ -219,10 +247,11 @@ async function loadAvailableModels() {
 function onCandidateChange(value: string | null) {
   selectedCandidateKey.value = value
   const candidate = availableModels.value.find(item => candidateKey(item) === value)
-  // hasReference 属于身份字段，切候选必须复位，避免上一行遗留的值泄漏进新行（7x-1）
+  // 7x-1（V152）：候选自带身份（参考面/分辨率槽位），切候选整体复位防上一行遗留泄漏
   Object.assign(pricingForm, candidate
-    ? { providerId: candidate.providerId, model: candidate.model, kind: candidate.kind, hasReference: false }
-    : { providerId: null, model: null, kind: 'CHAT' as BillingKind, hasReference: false })
+    ? { providerId: candidate.providerId, model: candidate.model, kind: candidate.kind,
+        hasReference: candidate.hasReference === true, resolution: candidate.resolution ?? '' }
+    : { providerId: null, model: null, kind: 'CHAT' as BillingKind, hasReference: false, resolution: '' })
 }
 
 async function openPricingModal(rule?: PricingRuleVO) {
@@ -232,12 +261,13 @@ async function openPricingModal(rule?: PricingRuleVO) {
       kind: rule.kind, providerId: rule.providerId, model: rule.model,
       priceInputPerMillion: rule.priceInputPerMillion, priceOutputPerMillion: rule.priceOutputPerMillion,
       videoBillingMode: rule.videoBillingMode ?? 'TOKEN', pricePerSecond: rule.pricePerSecond, pricePerImage: rule.pricePerImage,
-      hasReference: rule.hasReference ?? false
+      hasReference: rule.hasReference ?? false,
+      resolution: rule.resolution ?? '', estYuanPerSecond: rule.estYuanPerSecond ?? null
     })
   } else {
     pricingEditId.value = null
     selectedCandidateKey.value = null
-    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false })
+    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estYuanPerSecond: null })
   }
   pricingShow.value = true
   if (!rule) await loadAvailableModels()
@@ -250,8 +280,8 @@ async function openPricingModal(rule?: PricingRuleVO) {
 function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
   const out: PricingRuleRequest = { ...form }
   const k = out.kind
-  // 非文本/embed：清掉 token 价
-  if (k !== 'CHAT' && k !== 'EMBED' && k !== 'RERANK') {
+  // 非文本/embed（且非 VIDEO——VIDEO TOKEN 模式的 token 价复用 priceInputPerMillion，下方模式块处理）：清掉 token 价
+  if (k !== 'CHAT' && k !== 'EMBED' && k !== 'RERANK' && k !== 'VIDEO') {
     out.priceInputPerMillion = null
     out.priceOutputPerMillion = null
   }
@@ -262,8 +292,21 @@ function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
     out.videoBillingMode = null
     out.pricePerSecond = null
     out.hasReference = false
+    out.resolution = null
+    out.estYuanPerSecond = null
   } else {
     out.hasReference = out.hasReference === true
+    // 7x-1/2（V152）：模式联动——TOKEN 清秒价/分辨率（token 价用 priceInputPerMillion）；
+    // SECOND 清 token 价/预估秒价（SECOND 估价直接用秒价）；'' 分辨率归一为 null（=通用行）
+    if (out.videoBillingMode === 'TOKEN') {
+      out.pricePerSecond = null
+      out.resolution = null
+    } else {
+      out.priceInputPerMillion = null
+      out.priceOutputPerMillion = null
+      out.estYuanPerSecond = null
+      out.resolution = out.resolution ? out.resolution : null
+    }
   }
   return out
 }

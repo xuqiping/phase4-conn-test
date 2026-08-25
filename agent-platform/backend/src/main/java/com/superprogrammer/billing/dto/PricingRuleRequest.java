@@ -45,5 +45,20 @@ public class PricingRuleRequest {
      */
     private Boolean hasReference;
 
+    /**
+     * 7x-1（V152）：分辨率定价维度，仅 VIDEO SECOND 有效（480p/720p/1080p/4k，大小写不敏感，
+     * 落库统一小写）；null=通用行（未单列分辨率的兜底）。其他 kind / VIDEO TOKEN 必须为 null。
+     */
+    @Size(max = 16, message = "resolution 长度不能超过 16")
+    private String resolution;
+
+    /**
+     * 7x-2（V152）：提交期预估秒价（¥/秒），仅 VIDEO TOKEN 模式有效——TOKEN 提交期无 token
+     * 维度，余额预检用本字段×时长估价；真实扣费仍按 total_tokens。其他 kind/SECOND 必须为 null。
+     */
+    @DecimalMin(value = "0", message = "estYuanPerSecond 须≥0")
+    @DecimalMax(value = "100000000", message = "estYuanPerSecond 超出上限")
+    private BigDecimal estYuanPerSecond;
+
     private OffsetDateTime effectiveFrom;
 }

@@ -90,7 +90,9 @@ public class PricingConfigService {
                     item.setProviderId(c.getProviderId());
                     item.setProviderName(c.getProviderName());
                     item.setModel(c.getModel());
-                    item.setHasReference(false);
+                    // 7x-1（V152）：VIDEO 候选带参考面/分辨率槽位身份（upsert 匹配键）
+                    item.setHasReference(Boolean.TRUE.equals(c.getHasReference()));
+                    item.setResolution(c.getResolution());
                     // 价格字段全留 null（由用户填）
                     return item;
                 })
@@ -161,12 +163,13 @@ public class PricingConfigService {
             return;
         }
         boolean hasRef = effectiveHasReference(req);
-        long dup = pricingRuleMapper.countConflictingProviderModelHasRef(
-                req.getProviderId(), req.getModel().trim(), hasRef);
+        String resolution = effectiveResolution(req);
+        long dup = pricingRuleMapper.countConflictingProviderModelHasRefResolution(
+                req.getProviderId(), req.getModel().trim(), hasRef, resolution);
         if (dup > 0) {
             // upsert：覆盖价格，刷新 effective_from=now（生效即按新价）
-            PricingRuleEntity existing = pricingRuleMapper.findEffective(
-                    req.getKind(), req.getProviderId(), req.getModel().trim(), hasRef);
+            PricingRuleEntity existing = pricingRuleMapper.findEffectiveWithResolution(
+                    req.getKind(), req.getProviderId(), req.getModel().trim(), hasRef, resolution);
             if (existing == null) {
                 // 命中 count 但 findEffective 取不到（如 effective_from 未来态）：按新建
                 PricingRuleEntity e = new PricingRuleEntity();
@@ -194,6 +197,8 @@ public class PricingConfigService {
         req.setProviderId(item.getProviderId());
         req.setModel(item.getModel());
         req.setHasReference(item.getHasReference());
+        req.setResolution(item.getResolution());
+        req.setEstYuanPerSecond(item.getEstYuanPerSecond());
         req.setPriceInputPerMillion(item.getPriceInputPerMillion());
         req.setPriceOutputPerMillion(item.getPriceOutputPerMillion());
         req.setVideoBillingMode(item.getVideoBillingMode());
@@ -208,6 +213,8 @@ public class PricingConfigService {
         item.setProviderId(e.getProviderId());
         item.setModel(e.getModel());
         item.setHasReference(e.getHasReference() != null && e.getHasReference());
+        item.setResolution(e.getResolution());
+        item.setEstYuanPerSecond(e.getEstYuanPerSecond());
         item.setPriceInputPerMillion(e.getPriceInputPerMillion());
         item.setPriceOutputPerMillion(e.getPriceOutputPerMillion());
         item.setVideoBillingMode(e.getVideoBillingMode());
@@ -216,58 +223,90 @@ public class PricingConfigService {
         return item;
     }
 
+    /** 7x-1（V152）：VIDEO SECOND 分辨率槽位（null=通用行）。与 MediaGenRequest 支持集一致。 */
+    private static final List<String> VIDEO_RESOLUTION_SLOTS =
+            List.of("480p", "720p", "1080p", "4k");
+
     public List<AvailablePricingModelVO> availablePricingModels() {
+        // 已配身份集合：provider+model+hasRef+resolution（resolution 仅 VIDEO SECOND 行非 null）
         Set<String> configured = new HashSet<>();
+        // V66 历史全局价（provider_id IS NULL）：其同名模型同 (hasRef=false, resolution) 槽位
+        // 对所有供应商视为已配置；非 VIDEO 维持旧语义——同名模型整体占用。
         Set<String> configuredGlobalModels = new HashSet<>();
+        Set<String> configuredGlobalVideoSlots = new HashSet<>();
         for (PricingRuleEntity rule : pricingRuleMapper.selectList(new LambdaQueryWrapper<>())) {
             if (rule.getModel() == null || rule.getModel().isBlank()) {
                 continue;
             }
+            boolean isVideo = PricingRuleEntity.KIND_VIDEO.equals(rule.getKind());
+            boolean hasRef = isVideo && Boolean.TRUE.equals(rule.getHasReference());
+            String resolution = isVideo ? PricingService.normalizeResolution(rule.getResolution()) : null;
             if (rule.getProviderId() == null) {
-                // 兼容 V66 历史全局价：其同名模型对所有供应商都已配置。
-                configuredGlobalModels.add(rule.getModel().trim());
+                if (isVideo) {
+                    configuredGlobalVideoSlots.add(globalVideoSlotKey(rule.getModel(), resolution));
+                } else {
+                    configuredGlobalModels.add(rule.getModel().trim());
+                }
             } else {
-                // 7x-3：VIDEO 的 has_reference=true/false 视为不同配置行——
-                // 一个 VIDEO 模型只配了 false 不应阻止 admin 再配 true，故候选身份带 has_reference 维度。
-                // 非 VIDEO 行 has_reference 恒 false，身份退化为原 provider+model（行为不变）。
-                configured.add(pricingIdentity(rule.getProviderId(), rule.getModel(),
-                        PricingRuleEntity.KIND_VIDEO.equals(rule.getKind())
-                                && Boolean.TRUE.equals(rule.getHasReference())));
+                configured.add(pricingIdentity(rule.getProviderId(), rule.getModel(), hasRef, resolution));
             }
         }
-        // 7x-1 修复：VIDEO 模型 has_reference=true/false 是两行独立身份，只配了一面时候选必须保留，
-        // 否则配完「无参考」价后模型从下拉消失，而编辑又禁止改身份 → 用户永远配不出「有参考」价。
-        // 非 VIDEO 行为不变（全局同名模型或已配行即排除）。
         return llmProviderMapper.selectList(new LambdaQueryWrapper<LlmProviderEntity>()
                         .eq(LlmProviderEntity::getStatus, "ACTIVE"))
                 .stream()
                 .filter(provider -> "ACTIVE".equals(provider.getStatus()))
                 .flatMap(provider -> toAvailableModels(provider))
-                .map(candidate -> {
+                .flatMap(candidate -> {
                     if (!PricingRuleEntity.KIND_VIDEO.equals(candidate.getKind())) {
                         boolean blocked = configuredGlobalModels.contains(candidate.getModel())
                                 || configured.contains(pricingIdentity(
-                                        candidate.getProviderId(), candidate.getModel(), false));
-                        return blocked ? null : candidate;
+                                        candidate.getProviderId(), candidate.getModel(), false, null));
+                        return blocked ? Stream.empty() : Stream.of(candidate);
                     }
-                    // 无参考维度已配 = 全局同名价（V66 只可能覆盖 false 维）或 provider 专属 false 行
-                    boolean falseDone = configuredGlobalModels.contains(candidate.getModel())
-                            || configured.contains(pricingIdentity(
-                                    candidate.getProviderId(), candidate.getModel(), false));
-                    boolean trueDone = configured.contains(pricingIdentity(
-                            candidate.getProviderId(), candidate.getModel(), true));
-                    if (falseDone && trueDone) {
-                        return null;
+                    // 7x-1（V152）：VIDEO 展开为 (参考面 × 分辨率槽位) 候选——
+                    // SECOND 模式同模型同参考面可按分辨率配多行，已配槽位才排除。
+                    List<AvailablePricingModelVO> out = new ArrayList<>();
+                    for (boolean side : new boolean[]{false, true}) {
+                        // 通用槽位（resolution=null，兼作 TOKEN 模式行槽位）
+                        addVideoSlotIfAbsent(out, candidate, side, null, configured,
+                                configuredGlobalVideoSlots);
+                        for (String slot : VIDEO_RESOLUTION_SLOTS) {
+                            addVideoSlotIfAbsent(out, candidate, side, slot, configured,
+                                    configuredGlobalVideoSlots);
+                        }
                     }
-                    candidate.setHint(falseDone
-                            ? "已配「无参考」价，本次新增为「有参考」价行"
-                            : "已配「有参考」价，本次新增为「无参考」价行");
-                    return candidate;
+                    return out.stream();
                 })
-                .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(AvailablePricingModelVO::getProviderName)
-                        .thenComparing(AvailablePricingModelVO::getModel))
+                        .thenComparing(AvailablePricingModelVO::getModel)
+                        .thenComparing(c -> Boolean.TRUE.equals(c.getHasReference()))
+                        .thenComparing(c -> c.getResolution() == null ? "" : c.getResolution()))
                 .toList();
+    }
+
+    /** VIDEO 单槽位候选：未配置（含全局同槽位占用）才加入，hint 标明本候选身份。 */
+    private void addVideoSlotIfAbsent(List<AvailablePricingModelVO> out,
+                                      AvailablePricingModelVO base, boolean hasRef, String resolution,
+                                      Set<String> configured, Set<String> configuredGlobalVideoSlots) {
+        if (configured.contains(pricingIdentity(base.getProviderId(), base.getModel(), hasRef, resolution))
+                || (!hasRef && configuredGlobalVideoSlots.contains(
+                        globalVideoSlotKey(base.getModel(), resolution)))) {
+            return;
+        }
+        out.add(AvailablePricingModelVO.builder()
+                .providerId(base.getProviderId())
+                .providerName(base.getProviderName())
+                .model(base.getModel())
+                .kind(base.getKind())
+                .hasReference(hasRef)
+                .resolution(resolution)
+                .hint("本次新增「" + (hasRef ? "有参考" : "无参考") + "·"
+                        + (resolution == null ? "通用" : resolution) + "」价行")
+                .build());
+    }
+
+    private String globalVideoSlotKey(String model, String resolution) {
+        return model.trim() + "\u0000" + (resolution == null ? "" : resolution);
     }
 
     private Stream<AvailablePricingModelVO> toAvailableModels(LlmProviderEntity provider) {
@@ -287,8 +326,10 @@ public class PricingConfigService {
                         .build());
     }
 
-    private String pricingIdentity(Long providerId, String model, boolean hasReference) {
-        return providerId + "\u0000" + model.trim() + "\u0000" + (hasReference ? "1" : "0");
+    private String pricingIdentity(Long providerId, String model, boolean hasReference,
+                                   String resolution) {
+        return providerId + "\u0000" + model.trim() + "\u0000" + (hasReference ? "1" : "0")
+                + "\u0000" + (resolution == null ? "" : resolution);
     }
 
     private List<String> parseProviderModels(LlmProviderEntity provider) {
@@ -343,10 +384,12 @@ public class PricingConfigService {
         if (expectedKind == null || !expectedKind.equals(req.getKind())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "kind 与全局供应商类别不匹配");
         }
-        long duplicateCount = pricingRuleMapper.countConflictingProviderModelHasRef(
-                req.getProviderId(), req.getModel().trim(), effectiveHasReference(req));
+        long duplicateCount = pricingRuleMapper.countConflictingProviderModelHasRefResolution(
+                req.getProviderId(), req.getModel().trim(), effectiveHasReference(req),
+                effectiveResolution(req));
         if (duplicateCount > 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "该全局模型已配置价表（相同参考视频维度）");
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "该全局模型已配置价表（相同参考视频/分辨率维度）");
         }
         PricingRuleEntity e = new PricingRuleEntity();
         applyRequest(req, e);
@@ -365,9 +408,12 @@ public class PricingConfigService {
         if (!Objects.equals(e.getProviderId(), req.getProviderId())
                 || !Objects.equals(e.getModel(), req.getModel().trim())
                 || !Objects.equals(e.getKind(), req.getKind())
-                || !Objects.equals(e.getHasReference(), effectiveHasReference(req))) {
+                || !Objects.equals(e.getHasReference(), effectiveHasReference(req))
+                || !Objects.equals(e.getResolution(), effectiveResolution(req))) {
             // 7x-3：has_reference 视为身份的一部分（VIDEO 不同参考维度是不同行），编辑不可改
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "编辑时不可修改 provider/model/kind/hasReference");
+            // 7x-1（V152）：resolution 同为身份（VIDEO SECOND 不同分辨率是不同行），编辑不可改
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "编辑时不可修改 provider/model/kind/hasReference/resolution");
         }
         applyRequest(req, e);
         pricingRuleMapper.updateById(e);
@@ -402,14 +448,36 @@ public class PricingConfigService {
         nonNegative(req.getPriceOutputPerMillion(), "priceOutputPerMillion");
         nonNegative(req.getPricePerSecond(), "pricePerSecond");
         nonNegative(req.getPricePerImage(), "pricePerImage");
+        nonNegative(req.getEstYuanPerSecond(), "estYuanPerSecond");
+        // 7x-1（V152）：resolution 归一化（trim+小写，空串→null）
+        req.setResolution(PricingService.normalizeResolution(req.getResolution()));
         if (PricingRuleEntity.KIND_VIDEO.equals(req.getKind())) {
             if (req.getVideoBillingMode() == null || !VIDEO_MODES.contains(req.getVideoBillingMode())) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "VIDEO 须指定 videoBillingMode: TOKEN|SECOND");
             }
-            if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(req.getVideoBillingMode())
-                    && (req.getPricePerSecond() == null || req.getPricePerSecond().signum() < 0)) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "SECOND 模式须配 pricePerSecond");
+            if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(req.getVideoBillingMode())) {
+                if (req.getPricePerSecond() == null || req.getPricePerSecond().signum() < 0) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "SECOND 模式须配 pricePerSecond");
+                }
+                // 7x-1：SECOND 分辨率行——null=通用兜底；非空须为支持集（480p/720p/1080p/4k）
+                if (req.getResolution() != null && !VIDEO_RESOLUTION_SLOTS.contains(req.getResolution())) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "resolution 须为 480p/720p/1080p/4k（或留空=通用行）");
+                }
+                if (req.getEstYuanPerSecond() != null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "estYuanPerSecond 仅 VIDEO TOKEN 模式有效（SECOND 估价直接用秒价）");
+                }
+            } else {
+                // TOKEN 模式：不按分辨率计价，resolution 强制 null；预估秒价可选（提交期预检用）
+                if (req.getResolution() != null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "TOKEN 模式不按分辨率计价，resolution 须留空");
+                }
             }
+        } else if (req.getResolution() != null || req.getEstYuanPerSecond() != null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "resolution/estYuanPerSecond 仅 VIDEO kind 有效");
         }
         if (PricingRuleEntity.KIND_IMAGE.equals(req.getKind())
                 && (req.getPricePerImage() == null || req.getPricePerImage().signum() < 0)) {
@@ -429,6 +497,15 @@ public class PricingConfigService {
         return Boolean.TRUE.equals(req.getHasReference());
     }
 
+    /** 7x-1（V152）：resolution 归一化——仅 VIDEO SECOND 保留；其余恒 null（身份一致）。 */
+    private String effectiveResolution(PricingRuleRequest req) {
+        if (!PricingRuleEntity.KIND_VIDEO.equals(req.getKind())
+                || !PricingRuleEntity.VIDEO_MODE_SECOND.equals(req.getVideoBillingMode())) {
+            return null;
+        }
+        return PricingService.normalizeResolution(req.getResolution());
+    }
+
     private void applyRequest(PricingRuleRequest req, PricingRuleEntity e) {
         e.setKind(req.getKind());
         e.setProviderId(req.getProviderId());
@@ -439,6 +516,11 @@ public class PricingConfigService {
         e.setPricePerSecond(req.getPricePerSecond());
         e.setPricePerImage(req.getPricePerImage());
         e.setHasReference(effectiveHasReference(req));
+        // 7x-1/2（V152）：resolution 仅 VIDEO SECOND 保留；estYuanPerSecond 仅 VIDEO TOKEN 保留
+        e.setResolution(effectiveResolution(req));
+        e.setEstYuanPerSecond(PricingRuleEntity.KIND_VIDEO.equals(req.getKind())
+                && PricingRuleEntity.VIDEO_MODE_TOKEN.equals(req.getVideoBillingMode())
+                ? req.getEstYuanPerSecond() : null);
         e.setEffectiveFrom(req.getEffectiveFrom() != null ? req.getEffectiveFrom() : OffsetDateTime.now());
     }
 
@@ -451,6 +533,8 @@ public class PricingConfigService {
                 .pricePerSecond(e.getPricePerSecond())
                 .pricePerImage(e.getPricePerImage())
                 .hasReference(e.getHasReference() != null && e.getHasReference())
+                .resolution(e.getResolution())
+                .estYuanPerSecond(e.getEstYuanPerSecond())
                 .effectiveFrom(e.getEffectiveFrom())
                 .build();
     }

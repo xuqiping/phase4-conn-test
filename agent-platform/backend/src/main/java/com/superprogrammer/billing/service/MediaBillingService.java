@@ -96,12 +96,24 @@ public class MediaBillingService {
     public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
                                   Integer tokensInput, Integer videoSeconds, Integer imageCount,
                                   String status, Long refId, boolean hasReference, Long projectGroupId) {
+        return chargeMedia(userId, providerId, model, kind, tokensInput, videoSeconds, imageCount,
+                status, refId, hasReference, projectGroupId, null);
+    }
+
+    /**
+     * 7x-1（V152）：+resolution 版本。VIDEO SECOND 模式按任务实际分辨率命中分辨率价行
+     * （未单列回落通用 NULL 行）；其他 kind / TOKEN 模式传 null 即可（行为同前）。
+     */
+    public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
+                                  Integer tokensInput, Integer videoSeconds, Integer imageCount,
+                                  String status, Long refId, boolean hasReference, Long projectGroupId,
+                                  String resolution) {
         if (!walletService.isEnabled()) {
             return null;
         }
         try {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
-                    tokensInput, null, videoSeconds, imageCount, hasReference);
+                    tokensInput, null, videoSeconds, imageCount, hasReference, resolution);
             BigDecimal points = ratioService.toPoints(yuan);
             if (projectGroupId != null && userId != null && points != null && points.signum() > 0) {
                 try {

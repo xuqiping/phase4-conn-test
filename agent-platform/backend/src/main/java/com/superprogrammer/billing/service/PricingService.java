@@ -66,16 +66,28 @@ public class PricingService {
                                   Integer tokensInput, Integer tokensOutput,
                                   Integer videoSeconds, Integer imageCount,
                                   boolean hasReference) {
-        boolean effectiveHasRef = PricingRuleEntity.KIND_VIDEO.equals(kind) && hasReference;
-        PricingRuleEntity rule = pricingRuleMapper.findEffective(kind, providerId, model, effectiveHasRef);
-        // 7x-3 fallback：VIDEO 精确查不到（如只配了 false 行却来了个 true 任务）→ 回退 false 行兜底
-        if (rule == null && effectiveHasRef) {
-            rule = pricingRuleMapper.findEffective(kind, providerId, model, false);
-        }
+        return computeCost(kind, providerId, model, tokensInput, tokensOutput,
+                videoSeconds, imageCount, hasReference, null);
+    }
+
+    /**
+     * 7x-1（V152）：+resolution 版本。VIDEO SECOND 模式按分辨率行计价；
+     * 其他 kind / VIDEO TOKEN 忽略（其行 resolution 恒 NULL，传值不命中也无妨——归一为 null 查）。
+     * <p>VIDEO 命中链：精确(参考面,分辨率) → (参考面,通用NULL行) → (无参考,分辨率) → (无参考,通用)。
+     */
+    public BigDecimal computeCost(String kind, Long providerId, String model,
+                                  Integer tokensInput, Integer tokensOutput,
+                                  Integer videoSeconds, Integer imageCount,
+                                  boolean hasReference, String resolution) {
+        boolean isVideo = PricingRuleEntity.KIND_VIDEO.equals(kind);
+        boolean effectiveHasRef = isVideo && hasReference;
+        String effectiveResolution = isVideo ? normalizeResolution(resolution) : null;
+        PricingRuleEntity rule = resolveRule(kind, providerId, model, effectiveHasRef, effectiveResolution);
         if (rule == null) {
             throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
                     "未配置价表: kind=" + kind + " providerId=" + providerId
-                            + " model=" + model + " hasReference=" + hasReference);
+                            + " model=" + model + " hasReference=" + hasReference
+                            + " resolution=" + resolution);
         }
         return switch (kind) {
             case PricingRuleEntity.KIND_CHAT ->
@@ -85,9 +97,75 @@ public class PricingService {
             case PricingRuleEntity.KIND_RERANK ->
                     textCost(rule, tokensInput, tokensOutput, false);
             case PricingRuleEntity.KIND_VIDEO -> videoCost(rule, tokensInput, videoSeconds);
+            // resolution 已在 resolveRule 命中行时体现（SECOND 分辨率行/通用行），计价本身只看行内价格
             case PricingRuleEntity.KIND_IMAGE -> imageCost(rule, imageCount);
             default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "未知计费 kind: " + kind);
         };
+    }
+
+    /**
+     * 7x-1（V152）：VIDEO 价表行命中链——
+     * 精确(参考面,分辨率) → (参考面,通用NULL行) → (无参考,分辨率) → (无参考,通用NULL行)。
+     * 非 VIDEO 退化为原 (kind,provider,model,false,NULL) 单次精确查。
+     */
+    private PricingRuleEntity resolveRule(String kind, Long providerId, String model,
+                                          boolean hasRef, String resolution) {
+        PricingRuleEntity rule = pricingRuleMapper.findEffectiveWithResolution(
+                kind, providerId, model, hasRef, resolution);
+        if (rule == null && resolution != null) {
+            // 该分辨率未单列 → 通用行兜底（admin 只配一行 NULL 即可覆盖所有分辨率）
+            rule = pricingRuleMapper.findEffectiveWithResolution(kind, providerId, model, hasRef, null);
+        }
+        // 7x-3 fallback：有参考精确查不到 → 回退无参考行（分辨率同样先精确后通用）
+        if (rule == null && hasRef) {
+            rule = pricingRuleMapper.findEffectiveWithResolution(kind, providerId, model, false, resolution);
+            if (rule == null && resolution != null) {
+                rule = pricingRuleMapper.findEffectiveWithResolution(kind, providerId, model, false, null);
+            }
+        }
+        return rule;
+    }
+
+    /** resolution 归一化：trim+小写（4K→4k，与价表落库口径一致）；空串视 null（=通用行）。 */
+    static String normalizeResolution(String resolution) {
+        if (resolution == null || resolution.isBlank()) {
+            return null;
+        }
+        return resolution.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * 7x-2（V152）：视频提交期估价（¥ 口径，caller 折积分）。
+     * SECOND 模式 = 命中行 pricePerSecond × 时长（分辨率精确/通用兜底同真实扣费链）；
+     * TOKEN 模式提交期无 token 维度 = 命中行 estYuanPerSecond × 时长（未配 → 0，caller 记 WARN
+     * 按「不可估」放行，与计划5 坑表「预检容忍 0」口径一致）。
+     * 无价表行抛 {@link ErrorCode#PRICING_NOT_FOUND}（caller catch 记 0+WARN）。
+     */
+    public BigDecimal estimateVideoYuan(Long providerId, String model,
+                                        Integer seconds, String resolution, boolean hasReference) {
+        PricingRuleEntity rule = resolveRule(PricingRuleEntity.KIND_VIDEO, providerId, model,
+                hasReference, normalizeResolution(resolution));
+        if (rule == null) {
+            throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
+                    "未配置价表: kind=VIDEO providerId=" + providerId + " model=" + model
+                            + " hasReference=" + hasReference + " resolution=" + resolution);
+        }
+        if (seconds == null || seconds <= 0) {
+            return BigDecimal.ZERO;
+        }
+        if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(rule.getVideoBillingMode())) {
+            if (rule.getPricePerSecond() == null) {
+                return BigDecimal.ZERO;
+            }
+            return rule.getPricePerSecond().multiply(BigDecimal.valueOf(seconds))
+                    .setScale(6, RoundingMode.HALF_UP);
+        }
+        // TOKEN 模式：预估秒价 × 时长（仅估价，不参与真实扣费）
+        if (rule.getEstYuanPerSecond() == null) {
+            return BigDecimal.ZERO;
+        }
+        return rule.getEstYuanPerSecond().multiply(BigDecimal.valueOf(seconds))
+                .setScale(6, RoundingMode.HALF_UP);
     }
 
     /** 文本/embed 询价。billOutput=false（embed）时忽略 output。 */

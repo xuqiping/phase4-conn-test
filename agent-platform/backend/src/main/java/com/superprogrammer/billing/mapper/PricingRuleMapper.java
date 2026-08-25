@@ -40,6 +40,22 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
                                              @Param("hasReference") boolean hasReference);
 
     /**
+     * 7x-1（V152）：判重再加 resolution 维度——VIDEO SECOND 同模型同参考面可按分辨率配多行。
+     * resolution 归一化（trim，空串视 null）后按 IS NOT DISTINCT FROM 语义比对（NULL=通用行）。
+     */
+    @Select("""
+            SELECT COUNT(*) FROM pricing_rule
+            WHERE model = #{model}
+              AND (provider_id = #{providerId} OR provider_id IS NULL)
+              AND has_reference = #{hasReference}
+              AND resolution IS NOT DISTINCT FROM #{resolution}
+            """)
+    long countConflictingProviderModelHasRefResolution(@Param("providerId") Long providerId,
+                                                       @Param("model") String model,
+                                                       @Param("hasReference") boolean hasReference,
+                                                       @Param("resolution") String resolution);
+
+    /**
      * 询价取生效价表（含 has_reference 精确匹配）。
      * <p>命中策略：(kind+model+has_reference+effective&lt;=now) AND (provider_id=给定 OR 全局)，
      * <code>ORDER BY (provider_id IS NULL) ASC</code> 让 provider 专属价（非空）排前，
@@ -57,6 +73,25 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
                                     @Param("providerId") Long providerId,
                                     @Param("model") String model,
                                     @Param("hasReference") boolean hasReference);
+
+    /**
+     * 7x-1（V152）：+resolution 精确匹配（VIDEO SECOND 分辨率行；其他场景传 null 即等价旧行为，
+     * 因非 SECOND 行 resolution 恒 NULL）。
+     * <p>fallback 链（精确分辨率→通用 NULL 行→has_reference=false 行）由
+     * {@link com.superprogrammer.billing.service.PricingService#computeCost} 编排，本 SQL 只做精确匹配。
+     */
+    @Select("SELECT * FROM pricing_rule "
+            + "WHERE kind = #{kind} AND model = #{model} AND effective_from <= NOW() "
+            + "AND (provider_id = #{providerId} OR provider_id IS NULL) "
+            + "AND has_reference = #{hasReference} "
+            + "AND resolution IS NOT DISTINCT FROM #{resolution} "
+            + "ORDER BY (provider_id IS NULL) ASC, effective_from DESC "
+            + "LIMIT 1")
+    PricingRuleEntity findEffectiveWithResolution(@Param("kind") String kind,
+                                                  @Param("providerId") Long providerId,
+                                                  @Param("model") String model,
+                                                  @Param("hasReference") boolean hasReference,
+                                                  @Param("resolution") String resolution);
 
     /**
      * 兼容旧调用方（无 has_reference）：恒按 false 查。

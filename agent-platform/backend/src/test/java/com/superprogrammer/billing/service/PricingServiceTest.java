@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,7 +50,7 @@ class PricingServiceTest {
         PricingRuleEntity r = rule("CHAT");
         r.setPriceInputPerMillion(new BigDecimal("1.00"));
         r.setPriceOutputPerMillion(new BigDecimal("2.00"));
-        when(pricingRuleMapper.findEffective("CHAT", 1L, "gpt", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("CHAT", 1L, "gpt",
                 1_000_000, 1_000_000, null, null, false);
@@ -62,7 +63,7 @@ class PricingServiceTest {
     void embed_cost_ignores_output() {
         PricingRuleEntity r = rule("EMBED");
         r.setPriceInputPerMillion(new BigDecimal("0.50"));
-        when(pricingRuleMapper.findEffective("EMBED", null, "embed-model", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("EMBED", null, "embed-model", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("EMBED", null, "embed-model",
                 2_000_000, 999_999, null, null, false);
@@ -75,7 +76,7 @@ class PricingServiceTest {
     void rerank_cost_uses_input_tokens_only() {
         PricingRuleEntity r = rule("RERANK");
         r.setPriceInputPerMillion(new BigDecimal("0.80"));
-        when(pricingRuleMapper.findEffective("RERANK", 9L, "rerank-model", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("RERANK", 9L, "rerank-model", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("RERANK", 9L, "rerank-model",
                 2_000_000, 999_999, null, null, false);
@@ -87,7 +88,7 @@ class PricingServiceTest {
     void video_token_mode_uses_tokens_times_input_rate() {
         PricingRuleEntity r = rule("VIDEO");
         r.setPriceInputPerMillion(new BigDecimal("3.00"));
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "seedance", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
                 1_000_000, null, 10, null, false);
@@ -101,7 +102,7 @@ class PricingServiceTest {
         PricingRuleEntity r = rule("VIDEO");
         r.setVideoBillingMode("SECOND");
         r.setPricePerSecond(new BigDecimal("0.50"));
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "seedance", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
                 999, null, 10, null, false);
@@ -114,7 +115,7 @@ class PricingServiceTest {
     void image_cost_count_times_unit_price() {
         PricingRuleEntity r = rule("IMAGE");
         r.setPricePerImage(new BigDecimal("0.10"));
-        when(pricingRuleMapper.findEffective("IMAGE", null, "dalle", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("IMAGE", null, "dalle", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("IMAGE", null, "dalle",
                 null, null, null, 4, false);
@@ -125,7 +126,7 @@ class PricingServiceTest {
 
     @Test
     void no_rule_throws_pricing_not_found() {
-        when(pricingRuleMapper.findEffective("CHAT", null, "ghost", false)).thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", null, "ghost", false, null)).thenReturn(null);
 
         assertThatThrownBy(() -> pricingService.computeCost("CHAT", null, "ghost",
                 100, 100, null, null, false))
@@ -138,7 +139,7 @@ class PricingServiceTest {
     void zero_tokens_yield_zero_cost() {
         PricingRuleEntity r = rule("CHAT");
         r.setPriceInputPerMillion(new BigDecimal("1.00"));
-        when(pricingRuleMapper.findEffective("CHAT", null, "gpt", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", null, "gpt", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("CHAT", null, "gpt",
                 0, 0, null, null, false);
@@ -153,7 +154,7 @@ class PricingServiceTest {
         // seeddance 配了 true=10元/百万 → 带参考视频任务命中
         PricingRuleEntity refRow = rule("VIDEO");
         refRow.setPriceInputPerMillion(new BigDecimal("10"));
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "seedance", true)).thenReturn(refRow);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", true, null)).thenReturn(refRow);
 
         BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
                 1_000_000, null, null, null, true);
@@ -162,7 +163,7 @@ class PricingServiceTest {
         assertThat(cost).isEqualByComparingTo("10.000000");
         // 不应回退查 false 行
         verify(pricingRuleMapper, org.mockito.Mockito.never())
-                .findEffective(eq("VIDEO"), eq(7L), eq("seedance"), eq(false));
+                .findEffectiveWithResolution(eq("VIDEO"), eq(7L), eq("seedance"), eq(false), isNull());
     }
 
     @Test
@@ -170,8 +171,8 @@ class PricingServiceTest {
         // 只配了 false=20元，没配 true → 带参考任务 fallback 到 false 行
         PricingRuleEntity noRefRow = rule("VIDEO");
         noRefRow.setPriceInputPerMillion(new BigDecimal("20"));
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "seedance", true)).thenReturn(null);
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "seedance", false)).thenReturn(noRefRow);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", true, null)).thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null)).thenReturn(noRefRow);
 
         BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
                 1_000_000, null, null, null, true);
@@ -183,8 +184,8 @@ class PricingServiceTest {
     @Test
     void video_withReference_noRuleAtAll_throws() {
         // true 和 false 行都没配 → 抛 PRICING_NOT_FOUND（fallback 不无限兜底）
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "ghost", true)).thenReturn(null);
-        when(pricingRuleMapper.findEffective("VIDEO", 7L, "ghost", false)).thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "ghost", true, null)).thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "ghost", false, null)).thenReturn(null);
 
         assertThatThrownBy(() -> pricingService.computeCost("VIDEO", 7L, "ghost",
                 1_000_000, null, null, null, true))
@@ -192,12 +193,95 @@ class PricingServiceTest {
                 .hasMessageContaining("hasReference=true");
     }
 
+    // ---------------- 7x-1（V152）：VIDEO SECOND 分辨率价 ----------------
+
+    @Test
+    void videoSecond_exactResolutionRow_used() {
+        // 1080p 任务命中 1080p 分辨率行（0.2/秒 × 5s = 1.0），不吃通用行价
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.2"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "1080p"))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "1080p");
+
+        assertThat(cost).isEqualByComparingTo("1.000000");
+    }
+
+    @Test
+    void videoSecond_unlistedResolution_fallsBackToGeneralRow() {
+        // 480p 未单列 → 通用（resolution=NULL）行兜底（0.1/秒 × 5s = 0.5）
+        PricingRuleEntity general = rule("VIDEO");
+        general.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        general.setPricePerSecond(new BigDecimal("0.1"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "480p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(general);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "480p");
+
+        assertThat(cost).isEqualByComparingTo("0.500000");
+    }
+
+    // ---------------- 7x-2（V152）：estimateVideoYuan 提交期估价 ----------------
+
+    @Test
+    void estimateVideoYuan_tokenMode_usesEstYuanPerSecond() {
+        // TOKEN 提交期无 token 维度 → 预估秒价×时长（0.2×5=1.0），与真实扣费字段无关
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        row.setEstYuanPerSecond(new BigDecimal("0.2"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
+                .isEqualByComparingTo("1.000000");
+    }
+
+    @Test
+    void estimateVideoYuan_secondMode_usesResolutionPrice() {
+        // SECOND 估价 = 分辨率秒价×时长（与真实扣费同命中链）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "720p"))
+                .thenReturn(row);
+
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, "720p", false))
+                .isEqualByComparingTo("0.500000");
+    }
+
+    @Test
+    void estimateVideoYuan_tokenWithoutEst_returnsZero() {
+        // TOKEN 未配预估秒价 → 0（caller 记 WARN 按「不可估」放行，口径同计划5 坑表）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
+                .isEqualByComparingTo("0");
+    }
+
+    @Test
+    void estimateVideoYuan_noRule_throwsPricingNotFound() {
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "ghost", false, null))
+                .thenReturn(null);
+        assertThatThrownBy(() -> pricingService.estimateVideoYuan(7L, "ghost", 5, null, false))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未配置价表");
+    }
+
     @Test
     void nonVideo_kind_ignores_hasReference_flag() {
         // CHAT 带 hasReference=true：仍按 false 查（effectiveHasRef 对非 VIDEO 恒 false）
         PricingRuleEntity r = rule("CHAT");
         r.setPriceInputPerMillion(new BigDecimal("1"));
-        when(pricingRuleMapper.findEffective("CHAT", 1L, "gpt", false)).thenReturn(r);
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
 
         BigDecimal cost = pricingService.computeCost("CHAT", 1L, "gpt",
                 1_000_000, 0, null, null, true);

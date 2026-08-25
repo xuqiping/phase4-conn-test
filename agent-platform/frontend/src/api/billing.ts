@@ -26,6 +26,10 @@ export interface AvailablePricingModelVO {
   kind: BillingKind
   /** VIDEO 只配了一面参考维度时提示本次新增的是哪一面（7x-1） */
   hint?: string
+  /** 7x-1（V152）：VIDEO 候选的参考视频维度（true=本候选配「有参考」价行）；非 VIDEO 恒 false */
+  hasReference?: boolean
+  /** 7x-1（V152）：VIDEO 候选的分辨率槽位（null=通用行；480p/720p/1080p/4k）；非 VIDEO 恒 null */
+  resolution?: string | null
 }
 
 /** 价表行（GET /billing/pricing） */
@@ -41,6 +45,10 @@ export interface PricingRuleVO {
   pricePerImage: number | null
   /** 7x-3：VIDEO 行才有意义（true=有参考视频价），其他 kind 始终 false */
   hasReference: boolean
+  /** 7x-1（V152）：VIDEO SECOND 分辨率行（null=通用兜底）；其他行恒 null */
+  resolution?: string | null
+  /** 7x-2（V152）：VIDEO TOKEN 提交期预估秒价 ¥/秒（仅预检，不计费）；其他行恒 null */
+  estYuanPerSecond?: number | null
   effectiveFrom: string
 }
 
@@ -56,6 +64,10 @@ export interface PricingRuleRequest {
   pricePerImage?: number | null
   /** 7x-3：视频任务「是否带参考视频」的定价维度（仅 VIDEO kind 有效，其他强制 false） */
   hasReference?: boolean | null
+  /** 7x-1（V152）：分辨率定价维度，仅 VIDEO SECOND 有效（480p/720p/1080p/4k；null=通用行） */
+  resolution?: string | null
+  /** 7x-2（V152）：提交期预估秒价 ¥/秒，仅 VIDEO TOKEN 有效（余额预检用，不参与真实扣费） */
+  estYuanPerSecond?: number | null
   effectiveFrom?: string | null
 }
 
@@ -77,6 +89,10 @@ export interface PricingRuleExportItem {
   model: string
   /** 仅 VIDEO 有意义；true=带参考视频价，false=无参考/兜底 */
   hasReference?: boolean | null
+  /** 7x-1（V152）：仅 VIDEO SECOND 有意义（480p/720p/1080p/4k；null=通用行），upsert 匹配键之一 */
+  resolution?: string | null
+  /** 7x-2（V152）：仅 VIDEO TOKEN 有意义——提交期预估秒价 ¥/秒（仅预检，不计费） */
+  estYuanPerSecond?: number | null
   priceInputPerMillion?: number | null
   priceOutputPerMillion?: number | null
   videoBillingMode?: VideoBillingMode | null
@@ -370,6 +386,12 @@ export const billingApi = {
     return request.delete<ApiResponse<void>>(`/billing/ratio/${id}`)
   },
   // 充值
+  /** 7x#2：admin 充值页用户下拉选项（账号+昵称/姓名，远端搜索，限 20 条） */
+  rechargeUserOptions(keyword = '') {
+    return request.get<ApiResponse<{ userId: number; username: string; name: string | null }[]>>(
+      '/billing/admin/user-options', { params: { keyword } })
+  },
+
   recharge(data: RechargeRequest) {
     return request.post<ApiResponse<{ userId: number; balanceAfter: number }>>('/billing/recharge', data)
   },

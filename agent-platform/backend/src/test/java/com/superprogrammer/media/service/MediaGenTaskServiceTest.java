@@ -490,10 +490,9 @@ class MediaGenTaskServiceTest {
 
     // ---------- 计划5 Step5：组池提交预检 + 估价快照 ----------
 
-    /** 估价桩：estimateVideoPoints 传 (tokens=null, output=null, seconds=5, 0, hasRef=false)。 */
+    /** 估价桩（V152）：estimateVideoPoints 改走 estimateVideoYuan(providerId, model, seconds, resolution, hasRef)。 */
     private void stubEstimate(java.math.BigDecimal points) {
-        String kind = com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_VIDEO;
-        lenient().when(pricingService.computeCost(kind, 7L, SEEDANCE_2, null, null, 5, 0, false))
+        lenient().when(pricingService.estimateVideoYuan(7L, SEEDANCE_2, 5, "720p", false))
                 .thenReturn(new java.math.BigDecimal("0.5"));
         lenient().when(pointsRatioService.toPoints(new java.math.BigDecimal("0.5"))).thenReturn(points);
     }
@@ -561,7 +560,7 @@ class MediaGenTaskServiceTest {
         // TOKEN 模式无秒维度/价表缺价 → 估价记 0（保守容忍）：预检放行、task 照建、estimated_cost=0
         when(groupWalletService.requireAffordableGroup(5L, USER_ID, "VIDEO"))
                 .thenReturn(new java.math.BigDecimal("10"));
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
+        when(pricingService.estimateVideoYuan(any(), any(), any(), any(), anyBoolean()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
 
         service.submit("p", "16:9", 5, "720p", false, false,
@@ -571,5 +570,37 @@ class MediaGenTaskServiceTest {
         verify(taskMapper).insert(captor.capture());
         assertEquals(0, captor.getValue().getEstimatedCost()
                 .compareTo(java.math.BigDecimal.ZERO));
+    }
+
+    // ---------- 7x-2（V152）：个人钱包预估消耗预检 ----------
+
+    @Test
+    void submit_personalBalanceBelowEstimate_rejected() {
+        // 7x-2：个人余额(10) < 预估消耗(50) → 40201 拒，task 不建（防 100 积分跑 2000 积分任务）
+        when(walletService.requireAffordable(USER_ID)).thenReturn(new java.math.BigDecimal("10"));
+        stubEstimate(new java.math.BigDecimal("50"));
+
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submit("p", "16:9", 5, "720p", false, false,
+                        null, null, null, SEEDANCE_2, USER_ID, false));
+
+        assertEquals(ErrorCode.INSUFFICIENT_POINTS.getCode(), e.getCode());
+        assertTrue(e.getMessage().contains("预估消耗"));
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submit_personalBalanceCoversEstimate_proceeds() {
+        // 7x-2：个人余额(1000) ≥ 预估(50) → 放行，estimated_cost 落快照
+        when(walletService.requireAffordable(USER_ID)).thenReturn(new java.math.BigDecimal("1000"));
+        stubEstimate(new java.math.BigDecimal("50"));
+
+        service.submit("p", "16:9", 5, "720p", false, false,
+                null, null, null, SEEDANCE_2, USER_ID, false);
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertEquals(0, captor.getValue().getEstimatedCost()
+                .compareTo(new java.math.BigDecimal("50")));
     }
 }

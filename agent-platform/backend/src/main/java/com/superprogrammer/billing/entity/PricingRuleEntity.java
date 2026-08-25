@@ -54,5 +54,19 @@ public class PricingRuleEntity {
      */
     private Boolean hasReference;
 
+    /**
+     * 7x-1（V152）：仅 VIDEO SECOND 行有意义——分辨率定价维度（480p/720p/1080p/4K）；
+     * NULL=通用行（未单列分辨率的任务回落此行，与 has_reference=false 兜底同范式）。
+     * CHAT/EMBED/RERANK/IMAGE/VIDEO TOKEN 行恒 NULL。
+     */
+    private String resolution;
+
+    /**
+     * 7x-2（V152）：仅 VIDEO TOKEN 模式有意义——提交期预估秒价（¥/秒）。
+     * TOKEN 模式提交期无 token 维度，估价预检（余额≥预估才放行）用本字段×时长估算；
+     * 真实扣费仍按 Ark 返的 total_tokens，本字段不参与计费。
+     */
+    private java.math.BigDecimal estYuanPerSecond;
+
     private OffsetDateTime effectiveFrom;
 }
