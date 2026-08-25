@@ -132,9 +132,12 @@ export interface UsageOverviewVO {
   callCount: number
 }
 
-/** admin 排行维度行（by-user 的 dimensionKey=user_id，by-model=模型名，by-kind=CHAT 等） */
+/** admin 排行维度行（by-user 的 dimensionKey=user_id，by-model=模型名，by-kind=CHAT 等）
+ *  D2（20x-1）：by-user 行附 username/displayName；by-model/by-kind 恒 null */
 export interface UsageDimensionVO {
   dimensionKey: string
+  username?: string | null
+  displayName?: string | null
   tokensInput: number
   tokensOutput: number
   costYuan: number
@@ -265,10 +268,11 @@ export interface RechargePageVO {
   totalPaidPoints: number
 }
 
-/** admin 充值记录行（六字段 + userId/username） */
+/** admin 充值记录行（六字段 + userId/username/name；D2：name=昵称/姓名可空） */
 export interface AdminRechargeRecordVO extends RechargeRecordVO {
   userId: number
   username: string
+  name?: string | null
 }
 
 /** admin 充值记录分页 + 当前筛选下 Σ（PAID 口径；筛非 PAID 状态自然归 0） */
@@ -290,10 +294,11 @@ export interface AdminRechargeQuery {
   to?: string
 }
 
-/** 用户余额视图行（无钱包行/无充值用户各项为 0） */
+/** 用户余额视图行（无钱包行/无充值用户各项为 0；D2：name=昵称/姓名可空） */
 export interface UserBalanceRowVO {
   userId: number
   username: string
+  name?: string | null
   balancePoints: number
   totalRechargePoints: number
   totalRechargeAmount: number

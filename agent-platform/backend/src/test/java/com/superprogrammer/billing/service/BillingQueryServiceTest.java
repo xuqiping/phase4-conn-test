@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -271,7 +272,7 @@ class BillingQueryServiceTest {
     void adminRecharges_pageAndFilteredSums() {
         // 明细六字段行 + 筛选下 Σ（同 WHERE 口径两次聚合）
         var row = new com.superprogrammer.billing.dto.AdminRechargeRecordVO(
-                1L, 7L, "u7", OffsetDateTime.now(), "MOCK", "138****1234",
+                1L, 7L, "u7", "小七", OffsetDateTime.now(), "MOCK", "138****1234",
                 new BigDecimal("100.00"), new BigDecimal("1000"), new BigDecimal("1500"), "PAID");
         when(paymentOrderMapper.countAdminRecharges(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any()))
                 .thenReturn(1L);
@@ -325,7 +326,7 @@ class BillingQueryServiceTest {
     void userBalances_zeroFillAndPlatformTotals() {
         // 无钱包行/无充值用户显 0（SQL COALESCE 出 0，此处验证映射直传 + 合计卡来自全平台聚合）
         var zeroRow = new com.superprogrammer.billing.dto.UserBalanceRowVO(
-                9L, "newbie", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
+                9L, "newbie", null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
         when(balanceMapper.countUserBalances(null)).thenReturn(1L);
         when(balanceMapper.pageUserBalances(isNull(), any(), eq(0L), eq(20L))).thenReturn(List.of(zeroRow));
         java.util.Map<String, Object> totals = new java.util.HashMap<>();
@@ -372,5 +373,40 @@ class BillingQueryServiceTest {
                 org.mockito.ArgumentMatchers.contains("DROP"), anyLong(), anyLong());
         // count 查 0 → 不分页查询（短路）
         verify(balanceMapper, never()).pageUserBalances(any(), any(), anyLong(), anyLong());
+    }
+
+    // ==================== D2（20x-1）：keyword 转义 + 昵称直出 ====================
+
+    @Test
+    void keywordWildcards_escapedBeforeQuery() {
+        // %/_ 当普通字符匹配（防「输入 % 全表命中」）；mapper 侧 SQL 声明 ESCAPE '\'
+        assertEquals("\\%100\\%", BillingQueryService.escapeLikeKeyword("%100%"));
+        assertEquals("A\\_班", BillingQueryService.escapeLikeKeyword("A_班"));
+        assertEquals("C:\\\\path", BillingQueryService.escapeLikeKeyword("C:\\path"));
+        // null/空白原样返回（=不筛选）
+        assertNull(BillingQueryService.escapeLikeKeyword(null));
+        assertEquals("", BillingQueryService.escapeLikeKeyword(""));
+
+        // 接线：userBalances/adminRecharges 传入 mapper 的已是转义后的串
+        when(balanceMapper.countUserBalances(any())).thenReturn(0L);
+        java.util.Map<String, Object> totals = new java.util.HashMap<>();
+        totals.put("totalusers", 0L);
+        when(balanceMapper.platformBalanceTotals(any())).thenReturn(totals);
+        service.userBalances("%张%", null, null, 1, 20);
+        verify(balanceMapper).countUserBalances("\\%张\\%");
+    }
+
+    @Test
+    void adminRecharges_keywordEscapedAndNameCarried() {
+        when(paymentOrderMapper.countAdminRecharges(any(), eq("小\\_七"), any(), any(), any(), any())).thenReturn(0L);
+        when(paymentOrderMapper.sumPaidAmountFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+        when(paymentOrderMapper.sumPaidPointsFiltered(any(), any(), any(), any(), any(), any()))
+                .thenReturn(BigDecimal.ZERO);
+
+        var vo = service.adminRecharges(null, "小_七", null, null, null, null, 1, 20);
+
+        assertEquals(0, vo.page().getTotal());
+        verify(paymentOrderMapper).countAdminRecharges(isNull(), eq("小\\_七"), isNull(), isNull(), isNull(), isNull());
     }
 }

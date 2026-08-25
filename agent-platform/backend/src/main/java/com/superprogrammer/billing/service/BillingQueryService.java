@@ -140,7 +140,7 @@ public class BillingQueryService {
 
     /**
      * admin 充值记录分页 + 当前筛选下 Σ（仅 PAID 计入，与明细同 WHERE 口径）。
-     * 行=六字段（时间/渠道/付款账号/金额/积分/充值后余额）+ userId/username；
+     * 行=六字段（时间/渠道/付款账号/金额/积分/充值后余额）+ userId/username/name（D2）；
      * 未入账状态（PENDING/FAILED/CLOSED）balanceAfter=null。
      */
     public com.superprogrammer.billing.dto.AdminRechargePageVO adminRecharges(
@@ -148,19 +148,21 @@ public class BillingQueryService {
             OffsetDateTime from, OffsetDateTime to, long page, long size) {
         long sz = size <= 0 ? RECHARGE_PAGE_SIZE : Math.min(size, RECHARGE_MAX_SIZE);
         long pg = Math.max(page, 1);
-        long total = paymentOrderMapper.countAdminRecharges(userId, keyword, channel, status, from, to);
+        String kw = escapeLikeKeyword(keyword);
+        long total = paymentOrderMapper.countAdminRecharges(userId, kw, channel, status, from, to);
         List<com.superprogrammer.billing.dto.AdminRechargeRecordVO> records = total == 0
                 ? List.of()
-                : paymentOrderMapper.pageAdminRecharges(userId, keyword, channel, status, from, to,
+                : paymentOrderMapper.pageAdminRecharges(userId, kw, channel, status, from, to,
                         (pg - 1) * sz, sz);
         return new com.superprogrammer.billing.dto.AdminRechargePageVO(
                 PageResult.of(records, total, pg, sz),
-                paymentOrderMapper.sumPaidAmountFiltered(userId, keyword, channel, status, from, to),
-                paymentOrderMapper.sumPaidPointsFiltered(userId, keyword, channel, status, from, to));
+                paymentOrderMapper.sumPaidAmountFiltered(userId, kw, channel, status, from, to),
+                paymentOrderMapper.sumPaidPointsFiltered(userId, kw, channel, status, from, to));
     }
 
     /**
      * admin 用户余额视图分页 + 合计卡（7x 反馈：合计卡跟随 keyword 筛选——筛选谁合计谁，未筛选=全平台）。
+     * D2（20x-1）：keyword 匹配 username/name 任一；行带 name（昵称/姓名）。
      * 排序白名单（防注入）：balance（余额）/rechargePoints（累计充值积分）/rechargeAmount（累计充值金额），
      * 缺省按余额降序；方向仅 asc/desc。
      */
@@ -169,11 +171,12 @@ public class BillingQueryService {
         long sz = size <= 0 ? RECHARGE_PAGE_SIZE : Math.min(size, RECHARGE_MAX_SIZE);
         long pg = Math.max(page, 1);
         String orderClause = balanceOrderClause(sortBy, order);
-        long total = balanceMapper.countUserBalances(keyword);
+        String kw = escapeLikeKeyword(keyword);
+        long total = balanceMapper.countUserBalances(kw);
         List<com.superprogrammer.billing.dto.UserBalanceRowVO> records = total == 0
                 ? List.of()
-                : balanceMapper.pageUserBalances(keyword, orderClause, (pg - 1) * sz, sz);
-        java.util.Map<String, Object> t = balanceMapper.platformBalanceTotals(keyword);
+                : balanceMapper.pageUserBalances(kw, orderClause, (pg - 1) * sz, sz);
+        java.util.Map<String, Object> t = balanceMapper.platformBalanceTotals(kw);
         return new com.superprogrammer.billing.dto.UserBalancePageVO(
                 PageResult.of(records, total, pg, sz),
                 toLong(t.get("totalusers")),
@@ -191,6 +194,17 @@ public class BillingQueryService {
         };
         String dir = "asc".equalsIgnoreCase(order) ? "ASC" : "DESC";
         return "ORDER BY " + col + " " + dir + ", u.id ASC";
+    }
+
+    /**
+     * LIKE keyword 前置转义（D 坑点表）：`\` `%` `_` → `\x`，mapper 侧统一声明 {@code ESCAPE '\'}。
+     * 防用户输入 %/_ 当通配符全表命中；null/空白原样返回（=不筛选）。
+     */
+    static String escapeLikeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return keyword;
+        }
+        return keyword.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     private static long toLong(Object o) {

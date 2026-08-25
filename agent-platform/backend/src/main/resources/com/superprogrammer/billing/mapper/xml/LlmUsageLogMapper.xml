@@ -45,14 +45,24 @@
         COUNT(*)                        AS call_count
     </sql>
 
+    <!-- D2（20x-1）：单次 LEFT JOIN users（PK JOIN，非 per-user 循环）带 username/display_name；
+         user_id 可空=系统调用，LEFT JOIN 不丢行。 -->
     <select id="groupByUser" resultType="com.superprogrammer.billing.dto.UsageDimensionVO">
-        SELECT <include refid="dimCols"><property name="dim" value="CAST(user_id AS TEXT)"/></include>
-        FROM llm_usage_logs
+        SELECT CAST(l.user_id AS TEXT) AS dimension_key,
+        u.username,
+        u.name AS display_name,
+        COALESCE(SUM(l.tokens_input), 0)  AS tokens_input,
+        COALESCE(SUM(l.tokens_output), 0) AS tokens_output,
+        COALESCE(SUM(l.cost_yuan), 0)     AS cost_yuan,
+        COALESCE(SUM(l.points_consumed), 0) AS points,
+        COUNT(*)                          AS call_count
+        FROM llm_usage_logs l
+        LEFT JOIN users u ON u.id = l.user_id
         <where>
-            <if test="from != null">created_at &gt;= #{from}</if>
-            <if test="to != null">AND created_at &lt; #{to}</if>
+            <if test="from != null">l.created_at &gt;= #{from}</if>
+            <if test="to != null">AND l.created_at &lt; #{to}</if>
         </where>
-        GROUP BY user_id
+        GROUP BY l.user_id, u.username, u.name
         ORDER BY points DESC NULLS LAST
         LIMIT #{limit}
     </select>

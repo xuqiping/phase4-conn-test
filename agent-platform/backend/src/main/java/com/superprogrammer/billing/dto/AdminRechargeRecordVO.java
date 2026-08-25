@@ -3,10 +3,11 @@ package com.superprogrammer.billing.dto;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
-/** admin 充值记录行（7x#1 六字段 + 用户账号列）。 */
+/** admin 充值记录行（7x#1 六字段 + 用户账号列）。D2（20x-1）：+name（昵称/姓名，可空）。 */
 public record AdminRechargeRecordVO(Long id,
                                     Long userId,
                                     String username,
+                                    String name,
                                     OffsetDateTime createdAt,
                                     String channel,
                                     String payerAccount,

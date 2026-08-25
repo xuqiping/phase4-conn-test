@@ -35,7 +35,7 @@
             <n-data-table :columns="trendColumns" :data="trend" :loading="loading" size="small" :max-height="420" />
           </n-tab-pane>
           <n-tab-pane name="user" tab="用户排行">
-            <n-data-table :columns="dimColumns" :data="byUser" :loading="loading" size="small" :max-height="420" />
+            <n-data-table :columns="userDimColumns" :data="byUser" :loading="loading" size="small" :max-height="420" />
           </n-tab-pane>
           <n-tab-pane name="model" tab="模型排行">
             <n-data-table :columns="dimColumns" :data="byModel" :loading="loading" size="small" :max-height="420" />
@@ -110,7 +110,7 @@
             <div class="billing-admin__detail-filter">
               <n-input
                 v-model:value="rechargeKeyword"
-                placeholder="用户名（回车筛选）"
+                placeholder="用户名/姓名（回车筛选）"
                 clearable
                 style="width: 180px"
                 @keyup.enter="loadRecharges(1)"
@@ -168,13 +168,13 @@
             <div class="billing-admin__detail-filter">
               <n-input
                 v-model:value="balanceKeyword"
-                placeholder="用户名（回车筛选）"
+                placeholder="用户名/姓名（回车筛选）"
                 clearable
                 style="width: 200px"
                 @keyup.enter="loadBalances(1)"
               />
               <n-button size="small" @click="loadBalances(1)">查询</n-button>
-              <span class="billing-admin__balance-hint">合计卡跟随下方用户名筛选（未筛选=全平台；仅统计已支付充值单，管理员发放不计入）</span>
+              <span class="billing-admin__balance-hint">合计卡跟随下方用户/姓名筛选（未筛选=全平台；仅统计已支付充值单，管理员发放不计入）</span>
             </div>
             <n-data-table
               remote
@@ -276,6 +276,19 @@ const trendColumns: DataTableColumns<DailyTrendVO> = [
 
 const dimColumns: DataTableColumns<UsageDimensionVO> = [
   { title: '维度', key: 'dimensionKey' },
+  { title: '调用次数', key: 'callCount' },
+  { title: '输入 Token', key: 'tokensInput' },
+  { title: '输出 Token', key: 'tokensOutput' },
+  { title: '真实金额 ¥', key: 'costYuan', render: r => fmtNum(r.costYuan) },
+  { title: '消耗积分', key: 'points', render: r => fmtNum(r.points) }
+]
+
+/** D2（20x-1）：用户排行显「昵称（账号）」；昵称空回退账号，user_id 空为系统调用 */
+const userDimColumns: DataTableColumns<UsageDimensionVO> = [
+  {
+    title: '用户', key: 'username', width: 170, ellipsis: { tooltip: true },
+    render: r => r.displayName ? `${r.displayName}（${r.username}）` : (r.username || '系统')
+  },
   { title: '调用次数', key: 'callCount' },
   { title: '输入 Token', key: 'tokensInput' },
   { title: '输出 Token', key: 'tokensOutput' },
@@ -442,7 +455,8 @@ const rechargeColumns: DataTableColumns<AdminRechargeRecordVO> = [
     title: '时间', key: 'createdAt', width: 165,
     render: r => r.createdAt ? new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—'
   },
-  { title: '用户', key: 'username', width: 120 },
+  { title: '用户', key: 'username', width: 150, ellipsis: { tooltip: true },
+    render: r => r.name ? `${r.name}（${r.username}）` : r.username },
   {
     title: '渠道', key: 'channel', width: 90,
     render: r => PAYMENT_CHANNEL_LABEL[r.channel] ?? r.channel
@@ -513,7 +527,9 @@ const balanceSortBy = ref<UserBalanceSortBy>('balance')
 const balanceSortOrder = ref<'asc' | 'desc'>('desc')
 
 const balanceColumns: DataTableColumns<UserBalanceRowVO> = [
-  { title: '用户名', key: 'username', width: 160 },
+  /** D2（20x-1）：显「昵称（账号）」；昵称空回退账号 */
+  { title: '用户', key: 'username', width: 170, ellipsis: { tooltip: true },
+    render: r => r.name ? `${r.name}（${r.username}）` : r.username },
   {
     title: '当前余额', key: 'balancePoints', width: 130,
     sorter: true, sortOrder: false,

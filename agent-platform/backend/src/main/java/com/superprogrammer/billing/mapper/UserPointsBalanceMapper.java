@@ -57,20 +57,22 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
             + "WHERE user_id = #{userId} AND debt_points + #{delta} >= 0 RETURNING debt_points")
     BigDecimal adjustDebtReturn(@Param("userId") Long userId, @Param("delta") BigDecimal delta);
 
-    // ==================== admin 用户余额视图（20x#1） ====================
+    // ==================== admin 用户余额视图（20x#1；D2 +name 与 keyword 双字段匹配） ====================
 
-    /** 余额视图总数（keyword 筛选 username；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */
+    /** 余额视图总数（D2：keyword 筛选 username/name 任一命中；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */
     @Select("<script>SELECT COUNT(*) FROM users u "
             + "<where> u.deleted = 0 "
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where></script>")
     long countUserBalances(@Param("keyword") String keyword);
 
     /**
      * 余额视图分页：users LEFT JOIN 钱包 LEFT JOIN PAID 聚合——无钱包行/无充值用户显 0（COALESCE）。
      * <p>排序列由 service 白名单映射后整段传入 orderClause（防注入；只允许白名单列+方向）。
+     * D2（20x-1）：+u.name（昵称/姓名，可空回退 username）；keyword 匹配 username/name。
      */
-    @Select("<script>SELECT u.id AS userId, u.username, "
+    @Select("<script>SELECT u.id AS userId, u.username, u.name, "
             + "COALESCE(b.balance_points, 0) AS balancePoints, "
             + "COALESCE(r.totalPoints, 0) AS totalRechargePoints, "
             + "COALESCE(r.totalAmount, 0) AS totalRechargeAmount, "
@@ -80,7 +82,8 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
             + "LEFT JOIN (SELECT user_id, SUM(points_granted) AS totalPoints, SUM(amount_yuan) AS totalAmount, "
             + "MAX(paid_at) AS lastAt FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
             + "<where> u.deleted = 0 "
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where> ${orderClause} LIMIT #{size} OFFSET #{offset}</script>")
     java.util.List<com.superprogrammer.billing.dto.UserBalanceRowVO> pageUserBalances(
             @Param("keyword") String keyword, @Param("orderClause") String orderClause,
@@ -88,7 +91,7 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
 
     /**
      * 合计卡（7x 反馈：跟随 keyword 筛选——筛选谁就合计谁；keyword 空=全平台口径；与明细行同 JOIN/WHERE 保证 Σ 一致）。
-     * 返回顺序固定：totalUsers / sumBalance / sumRechargePoints / sumRechargeAmount。
+     * D2：keyword 同步双字段匹配（与明细行/总数完全同口径）。返回顺序固定：totalUsers / sumBalance / sumRechargePoints / sumRechargeAmount。
      */
     @Select("<script>SELECT COUNT(*) AS totalUsers, "
             + "COALESCE(SUM(COALESCE(b.balance_points, 0)), 0) AS sumBalance, "
@@ -99,7 +102,8 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
             + "LEFT JOIN (SELECT user_id, SUM(points_granted) AS totalPoints, SUM(amount_yuan) AS totalAmount "
             + "FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
             + "<where> u.deleted = 0 "
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where></script>")
     java.util.Map<String, Object> platformBalanceTotals(@Param("keyword") String keyword);
 }

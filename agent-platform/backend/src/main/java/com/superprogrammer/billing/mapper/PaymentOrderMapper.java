@@ -61,13 +61,14 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
     @Select("SELECT COALESCE(SUM(points_granted), 0) FROM payment_order WHERE user_id = #{userId} AND status = 'PAID'")
     BigDecimal sumPaidPointsByUser(@Param("userId") Long userId);
 
-    // ==================== admin 充值记录（20x#1，筛选项联动聚合同口径） ====================
+    // ==================== admin 充值记录（20x#1，筛选项联动聚合同口径；D2 +name 与 keyword 双字段匹配） ====================
 
-    /** admin 充值记录总数（动态筛选；balanceAfter 不入筛选，无需 JOIN ledger）。 */
+    /** admin 充值记录总数（动态筛选；D2：keyword 匹配 username/name 任一；balanceAfter 不入筛选，无需 JOIN ledger）。 */
     @Select("<script>SELECT COUNT(*) FROM payment_order o JOIN users u ON u.id = o.user_id "
             + "<where>"
             + "<if test='userId != null'> AND o.user_id = #{userId}</if>"
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='channel != null and channel != \"\"'> AND o.channel = #{channel}</if>"
             + "<if test='status != null and status != \"\"'> AND o.status = #{status}</if>"
             + "<if test='from != null'> AND o.created_at &gt;= #{from}</if>"
@@ -79,10 +80,10 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
                              @Param("to") java.time.OffsetDateTime to);
 
     /**
-     * admin 充值记录分页：六字段 + username；balanceAfter 由 points_ledger LEFT JOIN 带出
+     * admin 充值记录分页：六字段 + username + name（D2）；balanceAfter 由 points_ledger LEFT JOIN 带出
      * （uq_ledger_ref 保证一单至多一行，JOIN 不膨胀）；PENDING/FAILED/CLOSED 无流水 → NULL。
      */
-    @Select("<script>SELECT o.id, o.user_id AS userId, u.username, o.created_at AS createdAt, o.channel, "
+    @Select("<script>SELECT o.id, o.user_id AS userId, u.username, u.name, o.created_at AS createdAt, o.channel, "
             + "o.payer_account AS payerAccount, o.amount_yuan AS amountYuan, o.points_granted AS pointsGranted, "
             + "l.balance_after AS balanceAfter, o.status "
             + "FROM payment_order o JOIN users u ON u.id = o.user_id "
@@ -90,7 +91,8 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
             + "AND l.type IN ('RECHARGE','ADMIN_GRANT') "
             + "<where>"
             + "<if test='userId != null'> AND o.user_id = #{userId}</if>"
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='channel != null and channel != \"\"'> AND o.channel = #{channel}</if>"
             + "<if test='status != null and status != \"\"'> AND o.status = #{status}</if>"
             + "<if test='from != null'> AND o.created_at &gt;= #{from}</if>"
@@ -104,14 +106,15 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
             @Param("offset") long offset, @Param("size") long size);
 
     /**
-     * 当前筛选下 Σ已付金额（与分页同 WHERE 口径；仅 PAID 计入）。
+     * 当前筛选下 Σ已付金额（与分页同 WHERE 口径；仅 PAID 计入；D2：keyword 同步双字段匹配）。
      * <p>status 筛选叠加在 PAID 硬条件之上：筛 PENDING/FAILED/CLOSED 时交集为空 → Σ=0
      * （「该筛选下的已付合计」语义，避免「看着 PENDING 列表却显示已付金额」误导）。
      */
     @Select("<script>SELECT COALESCE(SUM(o.amount_yuan), 0) FROM payment_order o JOIN users u ON u.id = o.user_id "
             + "<where> o.status = 'PAID' "
             + "<if test='userId != null'> AND o.user_id = #{userId}</if>"
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='channel != null and channel != \"\"'> AND o.channel = #{channel}</if>"
             + "<if test='status != null and status != \"\"'> AND o.status = #{status}</if>"
             + "<if test='from != null'> AND o.created_at &gt;= #{from}</if>"
@@ -126,7 +129,8 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrderEntity> {
     @Select("<script>SELECT COALESCE(SUM(o.points_granted), 0) FROM payment_order o JOIN users u ON u.id = o.user_id "
             + "<where> o.status = 'PAID' "
             + "<if test='userId != null'> AND o.user_id = #{userId}</if>"
-            + "<if test='keyword != null and keyword != \"\"'> AND u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\'</if>"
+            + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='channel != null and channel != \"\"'> AND o.channel = #{channel}</if>"
             + "<if test='status != null and status != \"\"'> AND o.status = #{status}</if>"
             + "<if test='from != null'> AND o.created_at &gt;= #{from}</if>"
