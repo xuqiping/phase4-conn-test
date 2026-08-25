@@ -555,7 +555,9 @@ export const knowledgeApi = {
     fd.append('file', file)
     appendUploadOptions(fd, opts)
     return request.post<ApiResponse<KnowledgeDocument>>('/knowledge/documents/upload', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // 2x 修复：大文件慢上行会撞全局 15s 超时——放宽到 5min（同 assets.ts 上传）
+      timeout: 300000
     })
   },
   /** POST /api/knowledge/documents/sheets/preview — 阶段1 预读 Excel sheet 名（picker）。 */
@@ -575,7 +577,8 @@ export const knowledgeApi = {
     selectedSheets.forEach(s => fd.append('selectedSheets', s))
     appendUploadOptions(fd, opts)
     return request.post<ApiResponse<KnowledgeDocument>>('/knowledge/documents/upload', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000
     })
   },
   /** GET /api/knowledge/documents/{docId}/asset — 取图片/文件原件（KB 成员可读）。 */

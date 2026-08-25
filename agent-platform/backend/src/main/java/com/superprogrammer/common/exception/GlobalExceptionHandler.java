@@ -6,6 +6,7 @@ import com.superprogrammer.common.security.event.ApplicationSecurityEvent;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -156,6 +157,14 @@ public class GlobalExceptionHandler {
             case "uk_pgm_group_user" -> "该用户已在项目组中，请勿重复添加";
             default -> "数据已存在（唯一约束：" + constraint + "），请勿重复创建";
         };
+    }
+
+    /** 2x 修复：上传超 multipart 上限（60MB/65MB）此前落兜底 500「服务器内部错误」误导——专用 413 + 明确上限文案。 */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<R<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        log.warn("上传超限被拒: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(R.fail(413, "文件超过大小上限（单文件 60MB），请压缩或拆分后重试"));
     }
 
     @ExceptionHandler(Exception.class)

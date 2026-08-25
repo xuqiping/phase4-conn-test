@@ -84,6 +84,7 @@
 </template>
 
 <script setup lang="ts">
+import { uuid } from '@/utils/uuid'
 import { computed, ref, watch } from 'vue'
 import {
   NModal, NForm, NFormItem, NInputNumber, NSelect, NButton, NSpace, NAlert,
@@ -147,7 +148,7 @@ watch(() => props.show, v => {
     formError.value = ''
     emailGateBlocked.value = false
     order.value = null
-    idemKey = crypto.randomUUID()
+    idemKey = uuid()
     if (!channel.value && props.channels.length > 0) {
       channel.value = props.channels[0]
     }

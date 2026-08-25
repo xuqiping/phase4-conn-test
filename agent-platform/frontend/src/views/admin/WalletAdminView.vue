@@ -3,8 +3,19 @@
     <n-card title="积分充值 / 发放">
       <div v-if="!canRecharge" class="wallet-admin__noperm"><n-empty description="无 points:recharge 权限" /></div>
       <n-form v-else ref="formRef" :model="form" :rules="rules" label-placement="left" :label-width="100" style="max-width: 480px">
-        <n-form-item label="用户 ID" path="userId">
-          <n-input-number v-model:value="form.userId" :precision="0" placeholder="充值目标用户 id" style="width: 100%" />
+        <n-form-item label="充值用户" path="userId">
+          <!-- 7x#2：下拉选择（账号+昵称/姓名），远端搜索；替换原手填用户 ID -->
+          <n-select
+            v-model:value="form.userId"
+            filterable
+            remote
+            clearable
+            :loading="userLoading"
+            :options="userOptions"
+            placeholder="搜索账号 / 昵称·姓名"
+            @search="onUserSearch"
+            @focus="onUserSearch('')"
+          />
         </n-form-item>
         <n-form-item label="到账积分" path="points">
           <n-input-number v-model:value="form.points" :precision="2" :min="0.01" placeholder="正数（直接到账，不走阶梯折算）" style="width: 100%" />
@@ -30,8 +41,9 @@
 </template>
 
 <script setup lang="ts">
+import { uuid } from '@/utils/uuid'
 import { computed, reactive, ref } from 'vue'
-import { NCard, NForm, NFormItem, NInputNumber, NInput, NButton, NAlert, NEmpty, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInputNumber, NInput, NSelect, NButton, NAlert, NEmpty, useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { billingApi } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
@@ -45,13 +57,31 @@ const form = reactive<{ userId: number | null; points: number | null; remark: st
   userId: null, points: null, remark: null
 })
 const rules: FormRules = {
-  userId: { required: true, type: 'number', message: '请填用户 ID', trigger: 'blur' },
+  userId: { required: true, type: 'number', message: '请选择充值用户', trigger: 'blur' },
   points: { required: true, type: 'number', message: '请填到账积分', trigger: 'blur' }
 }
 const saving = ref(false)
 const lastResult = ref<{ userId: number; balanceAfter: number } | null>(null)
+
+// 7x#2：用户下拉（远端搜索；label=昵称/姓名（账号），无昵称回落账号）
+const userOptions = ref<{ label: string; value: number }[]>([])
+const userLoading = ref(false)
+async function onUserSearch(q: string) {
+  userLoading.value = true
+  try {
+    const res = await billingApi.rechargeUserOptions(q.trim())
+    userOptions.value = res.data.data.map(u => ({
+      label: u.name && u.name !== u.username ? `${u.name}（${u.username}）` : u.username,
+      value: u.userId
+    }))
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    userLoading.value = false
+  }
+}
 // SEC-FR-121：每开一轮表单生成一把幂等键——双击/网络重试同键只到账一次；成功后换键开新一笔
-const idemKey = ref<string>(crypto.randomUUID())
+const idemKey = ref<string>(uuid())
 
 async function submit() {
   try {
@@ -71,7 +101,7 @@ async function submit() {
     message.success('充值成功')
     form.points = null
     form.remark = null
-    idemKey.value = crypto.randomUUID()
+    idemKey.value = uuid()
   } finally {
     saving.value = false
   }

@@ -162,7 +162,9 @@ export const assetApi = {
     if (extra.description) form.append('description', extra.description)
     if (extra.roleKeys?.length) extra.roleKeys.forEach((k) => form.append('roleKeys', k))
     return request.post<ApiResponse<AssetVO>>(`/assets/projects/${projectId}/upload`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // 2x 修复：单文件上限 60MB，慢上行（2Mbps 传 60MB≈240s）会撞全局 15s 超时——放宽到 5min
+      timeout: 300000
     })
   },
   /** GET /assets/assets/{id} — 详情（带 content+roleKeys+fileId） */
