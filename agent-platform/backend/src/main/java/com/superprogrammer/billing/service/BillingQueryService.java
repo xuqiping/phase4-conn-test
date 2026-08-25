@@ -66,6 +66,8 @@ public class BillingQueryService {
     private final com.superprogrammer.billing.mapper.PaymentOrderMapper paymentOrderMapper;
     /** 20x#1：admin 用户余额视图。 */
     private final com.superprogrammer.billing.mapper.UserPointsBalanceMapper balanceMapper;
+    /** D3（20x-2）：admin 项目组分配视图。 */
+    private final com.superprogrammer.billing.mapper.GroupAllocationMapper groupAllocationMapper;
 
     // ---------- admin ----------
 
@@ -183,6 +185,23 @@ public class BillingQueryService {
                 toBd(t.get("sumbalance")),
                 toBd(t.get("sumrechargepoints")),
                 toBd(t.get("sumrechargeamount")));
+    }
+
+    /**
+     * D3（20x-2）：admin 项目组分配视图分页。
+     * 行=成员活行（quota/used/剩余快照）+ ledger MEMBER_* 聚合（累计被分配/收回/净额/最近分配时间）。
+     * keyword 匹配 username/name（D2 同款转义）；groupId 精确筛选；排序固定 组→用户。
+     */
+    public com.superprogrammer.common.result.PageResult<com.superprogrammer.billing.dto.GroupAllocationRowVO> groupAllocations(
+            String keyword, Long groupId, long page, long size) {
+        long sz = size <= 0 ? RECHARGE_PAGE_SIZE : Math.min(size, RECHARGE_MAX_SIZE);
+        long pg = Math.max(page, 1);
+        String kw = escapeLikeKeyword(keyword);
+        long total = groupAllocationMapper.countGroupAllocations(kw, groupId);
+        List<com.superprogrammer.billing.dto.GroupAllocationRowVO> records = total == 0
+                ? List.of()
+                : groupAllocationMapper.pageGroupAllocations(kw, groupId, (pg - 1) * sz, sz);
+        return PageResult.of(records, total, pg, sz);
     }
 
     /** 余额视图排序白名单映射（仅允许三列 + asc/desc，其余回落默认）。 */

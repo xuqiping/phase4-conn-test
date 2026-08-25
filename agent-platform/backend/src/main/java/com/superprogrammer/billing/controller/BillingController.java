@@ -177,6 +177,20 @@ public class BillingController {
         return ResponseEntity.ok(R.ok(queryService.userBalances(keyword, sortBy, order, page, size)));
     }
 
+    /**
+     * admin 项目组分配视图（D3 · 20x-2）：每用户每组的 quota/used/剩余 + 累计被分配（毛额）/净额/最近分配时间。
+     * keyword 筛 username/name；groupId 精确筛组。
+     */
+    @GetMapping("/admin/group-allocations")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<com.superprogrammer.common.result.PageResult<com.superprogrammer.billing.dto.GroupAllocationRowVO>>> groupAllocations(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Long groupId) {
+        return ResponseEntity.ok(R.ok(queryService.groupAllocations(keyword, groupId, page, size)));
+    }
+
     // ---------- user（ownership = current userId，无外部旁路） ----------
 
     @GetMapping("/me/wallet")

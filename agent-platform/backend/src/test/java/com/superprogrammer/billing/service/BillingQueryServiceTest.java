@@ -45,13 +45,14 @@ class BillingQueryServiceTest {
     @Mock private ProjectGroupMapper groupMapper;
     @Mock private com.superprogrammer.billing.mapper.PaymentOrderMapper paymentOrderMapper;
     @Mock private com.superprogrammer.billing.mapper.UserPointsBalanceMapper balanceMapper;
+    @Mock private com.superprogrammer.billing.mapper.GroupAllocationMapper groupAllocationMapper;
 
     private BillingQueryService service;
 
     @BeforeEach
     void setUp() {
         service = new BillingQueryService(usageLogMapper, ledgerMapper, walletService, groupMapper,
-                paymentOrderMapper, balanceMapper);
+                paymentOrderMapper, balanceMapper, groupAllocationMapper);
     }
 
     @Test
@@ -408,5 +409,37 @@ class BillingQueryServiceTest {
 
         assertEquals(0, vo.page().getTotal());
         verify(paymentOrderMapper).countAdminRecharges(isNull(), eq("小\\_七"), isNull(), isNull(), isNull(), isNull());
+    }
+
+    // ==================== D3（20x-2）：项目组分配视图 ====================
+
+    @Test
+    void groupAllocations_keywordEscaped_groupIdPassed_paged() {
+        var row = new com.superprogrammer.billing.dto.GroupAllocationRowVO(
+                3L, "A 班组", 9L, "stu9", "小九", "MEMBER",
+                new BigDecimal("100"), new BigDecimal("30"), new BigDecimal("70"),
+                new BigDecimal("150"), new BigDecimal("50"), new BigDecimal("100"),
+                OffsetDateTime.parse("2026-08-01T10:00:00+08:00"));
+        when(groupAllocationMapper.countGroupAllocations("小\\%九\\%", 3L)).thenReturn(1L);
+        when(groupAllocationMapper.pageGroupAllocations("小\\%九\\%", 3L, 0L, 20L)).thenReturn(List.of(row));
+
+        var page = service.groupAllocations("小%九%", 3L, 1, 20);
+
+        assertEquals(1, page.getRecords().size());
+        assertEquals(row, page.getRecords().get(0));
+        // page=1 → offset 0；keyword 转义后传 mapper；groupId 原样精确筛
+        verify(groupAllocationMapper).pageGroupAllocations("小\\%九\\%", 3L, 0L, 20L);
+    }
+
+    @Test
+    void groupAllocations_zeroTotalShortCircuits_andSizeCapped() {
+        when(groupAllocationMapper.countGroupAllocations(isNull(), isNull())).thenReturn(0L);
+
+        var result = service.groupAllocations(null, null, 0, 9999);
+
+        assertEquals(0, result.getRecords().size());
+        // size 9999 截到 RECHARGE_MAX_SIZE(100)；count=0 → 不打分页查询
+        assertEquals(100, result.getSize());
+        verify(groupAllocationMapper, never()).pageGroupAllocations(any(), any(), anyLong(), anyLong());
     }
 }

@@ -189,6 +189,42 @@
               @update:sorter="onBalanceSorter"
             />
           </n-tab-pane>
+
+          <!-- D3（20x-2）：项目组分配（每用户每组 quota/used/剩余 + 累计被分配/净额） -->
+          <n-tab-pane name="groupAllocs" tab="项目组分配">
+            <div class="billing-admin__detail-filter">
+              <n-input
+                v-model:value="groupAllocKeyword"
+                placeholder="用户名/姓名（回车筛选）"
+                clearable
+                style="width: 200px"
+                @keyup.enter="loadGroupAllocations(1)"
+              />
+              <n-select
+                v-model:value="groupAllocGroupFilter"
+                :options="groupOptions"
+                placeholder="全部项目组"
+                clearable
+                style="width: 180px"
+              />
+              <n-button size="small" @click="loadGroupAllocations(1)">查询</n-button>
+              <span class="billing-admin__balance-hint">
+                累计被分配=历次授予毛额；净额=毛额−收回；组长行额度=组池直管不设上限
+              </span>
+            </div>
+            <n-data-table
+              remote
+              :columns="groupAllocColumns"
+              :data="groupAllocs"
+              :loading="groupAllocLoading"
+              :pagination="groupAllocPagination"
+              size="small"
+              :max-height="480"
+              :scroll-x="1250"
+              @update:page="onGroupAllocPage"
+              @update:page-size="onGroupAllocPageSize"
+            />
+          </n-tab-pane>
         </n-tabs>
       </template>
     </n-card>
@@ -209,7 +245,7 @@ import {
 import type {
   UsageOverviewVO, UsageDimensionVO, DailyTrendVO, BillingKind, UsageDetailVO, UsageDetailQuery,
   AdminRechargeRecordVO, AdminRechargeQuery, UserBalanceRowVO, UserBalanceQuery, UserBalanceSortBy,
-  PaymentStatus
+  GroupAllocationRowVO, GroupAllocationQuery, PaymentStatus
 } from '@/api/billing'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -429,6 +465,9 @@ function onTabChange(name: string | number) {
   if (name === 'balances' && balances.value.length === 0 && balancePagination.itemCount === 0) {
     loadBalances(1)
   }
+  if (name === 'groupAllocs' && groupAllocs.value.length === 0 && groupAllocPagination.itemCount === 0) {
+    loadGroupAllocations(1)
+  }
 }
 
 // ---------- 20x#1：充值记录 tab ----------
@@ -607,6 +646,77 @@ function onBalanceSorter(sorter: { columnKey?: string; order?: 'ascend' | 'desce
   loadBalances(1)
 }
 
+// ---------- D3（20x-2）：项目组分配 tab ----------
+const groupAllocs = ref<GroupAllocationRowVO[]>([])
+const groupAllocLoading = ref(false)
+const groupAllocPagination = reactive<PaginationProps>({
+  page: 1, pageSize: 20, itemCount: 0, showSizePicker: true, pageSizes: [20, 50, 100]
+})
+const groupAllocKeyword = ref('')
+const groupAllocGroupFilter = ref<number | null>(null)
+
+/** 组内角色 → 中文标签/色调（V139 三角色） */
+const GROUP_ROLE_LABEL: Record<GroupAllocationRowVO['role'], string> = {
+  OWNER: '组长', MANAGER: '管理', MEMBER: '成员'
+}
+const GROUP_ROLE_TAG_TYPE: Record<GroupAllocationRowVO['role'], 'warning' | 'info' | 'default'> = {
+  OWNER: 'warning', MANAGER: 'info', MEMBER: 'default'
+}
+
+const groupAllocColumns: DataTableColumns<GroupAllocationRowVO> = [
+  { title: '项目组', key: 'groupName', width: 130, ellipsis: { tooltip: true } },
+  {
+    title: '用户', key: 'username', width: 160, ellipsis: { tooltip: true },
+    render: r => r.name ? `${r.name}（${r.username}）` : r.username
+  },
+  {
+    title: '角色', key: 'role', width: 80,
+    render: r => h(NTag, {
+      size: 'small', round: true, type: GROUP_ROLE_TAG_TYPE[r.role] ?? 'default'
+    }, { default: () => GROUP_ROLE_LABEL[r.role] ?? r.role })
+  },
+  // 累计上限 null=不限（组长组池直管）
+  { title: '累计上限', key: 'quotaLimit', width: 100, render: r => r.quotaLimit == null ? '不限' : fmtNum(r.quotaLimit) },
+  { title: '已消耗', key: 'usedPoints', width: 100, render: r => fmtNum(r.usedPoints) },
+  // 项目内剩余 null=不限口径无剩余概念
+  { title: '项目内剩余', key: 'remaining', width: 110, render: r => r.remaining == null ? '—' : fmtNum(r.remaining) },
+  { title: '累计被分配', key: 'totalAllocated', width: 110, render: r => fmtNum(r.totalAllocated) },
+  { title: '已收回', key: 'reclaimed', width: 100, render: r => fmtNum(r.reclaimed) },
+  { title: '净额', key: 'netAllocated', width: 100, render: r => fmtNum(r.netAllocated) },
+  {
+    title: '最近分配时间', key: 'lastAllocatedAt', width: 170,
+    render: r => r.lastAllocatedAt ? new Date(r.lastAllocatedAt).toLocaleString('zh-CN', { hour12: false }) : '—'
+  }
+]
+
+async function loadGroupAllocations(page = 1) {
+  if (!canView.value) return
+  groupAllocLoading.value = true
+  try {
+    const q: GroupAllocationQuery = { page, size: groupAllocPagination.pageSize }
+    const kw = groupAllocKeyword.value.trim()
+    if (kw) q.keyword = kw
+    if (groupAllocGroupFilter.value != null) q.groupId = groupAllocGroupFilter.value
+    const res = await billingApi.adminGroupAllocations(q)
+    groupAllocs.value = res.data.data?.records ?? []
+    groupAllocPagination.itemCount = res.data.data?.total ?? 0
+    groupAllocPagination.page = page
+  } catch {
+    groupAllocs.value = []
+    groupAllocPagination.itemCount = 0
+  } finally {
+    groupAllocLoading.value = false
+  }
+}
+
+function onGroupAllocPage(page: number) {
+  loadGroupAllocations(page)
+}
+function onGroupAllocPageSize(pageSize: number) {
+  groupAllocPagination.pageSize = pageSize
+  loadGroupAllocations(1)
+}
+
 /** 用户筛选下拉：取用户列表（需 user 权限；403 容错→空下拉，表格用户名仍由后端 JOIN 返）。 */
 async function loadUserOptions() {
   try {
@@ -633,6 +743,11 @@ async function loadGroupOptions() {
 // 筛选下拉变化 → 回到第 1 页重查（模型名走回车，不在此列）
 watch([userFilter, kindFilter, statusFilter, groupFilter], () => {
   if (activeTab.value === 'detail') loadDetail(1)
+})
+
+// D3：分配 tab 组下拉变化 → 回第 1 页重查（keyword 走回车/查询按钮）
+watch(groupAllocGroupFilter, () => {
+  if (activeTab.value === 'groupAllocs') loadGroupAllocations(1)
 })
 
 onMounted(() => {

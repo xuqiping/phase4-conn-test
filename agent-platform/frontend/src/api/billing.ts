@@ -324,6 +324,35 @@ export interface UserBalanceQuery {
   order?: 'asc' | 'desc'
 }
 
+/**
+ * D3（20x-2）：项目组分配视图行。
+ * quotaLimit null=不限（组长行）；毛额/净额来自组流水 MEMBER_ALLOCATE/MEMBER_RECLAIM 聚合，无流水=0；
+ * lastAllocatedAt null=从未分配过。
+ */
+export interface GroupAllocationRowVO {
+  groupId: number
+  groupName: string
+  userId: number
+  username: string
+  name?: string | null
+  role: 'OWNER' | 'MANAGER' | 'MEMBER'
+  quotaLimit: number | null
+  usedPoints: number
+  remaining: number | null
+  totalAllocated: number
+  reclaimed: number
+  netAllocated: number
+  lastAllocatedAt: string | null
+}
+
+export interface GroupAllocationQuery {
+  page?: number
+  size?: number
+  /** 用户名/姓名模糊 */
+  keyword?: string
+  groupId?: number
+}
+
 /** 支付状态 → 中文 */
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   PENDING: '待支付',
@@ -465,6 +494,10 @@ export const billingApi = {
   /** admin 用户余额视图（分页 + 排序 + 全平台合计卡） */
   adminUserBalances(params: UserBalanceQuery) {
     return request.get<ApiResponse<UserBalancePageVO>>('/billing/admin/user-balances', { params })
+  },
+  /** D3（20x-2）：admin 项目组分配视图（每用户每组 quota/used/剩余 + 累计被分配/净额） */
+  adminGroupAllocations(params: GroupAllocationQuery) {
+    return request.get<ApiResponse<PageResult<GroupAllocationRowVO>>>('/billing/admin/group-allocations', { params })
   },
   // ---- admin 支付渠道配置（7x 追加，payment:config） ----
   /** 两渠道脱敏配置状态（tails 永不含明文） */
