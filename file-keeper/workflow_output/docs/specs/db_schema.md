@@ -5,13 +5,13 @@
 
 ## 核心实体（按域分组）
 
-### 授权与账号域（地基）
+### 身份与历史兼容域
 | 表 | 用途（大白话） | 关键字段 / 约束 |
 |---|---|---|
 | `users` | 注册用户 | id PK IDENTITY；关联 user_devices / entitlements |
 | `user_devices` | 用户绑定的设备（按设备授权） | user_id → users |
-| `user_module_entitlements` | 用户×模块授权（到期时间 / allowed） | `module_code` CHECK 约束含全部已注册模块 |
-| `anonymous_device_trials` | 匿名设备试用记录（7 天试用 + 免费模块选择） | `free_module_code` CHECK |
+| `user_module_entitlements` | 已废弃模块授权兼容数据 | 新功能不得读写，后续按变更计划清理 |
+| `anonymous_device_trials` | 已废弃匿名试用兼容数据 | 新功能不得读写 |
 | `admin_audit_logs` | 高风险操作审计（授权变更 / 设备禁用 …） | — |
 
 ### 工作汇报域（work-report 模块）
@@ -28,6 +28,10 @@
 |---|---|---|
 | ai_config | AI 模型配置 | V10 |
 | system_settings | 全局默认配置 | — |
+
+### Office Pro 与 AI 计量域
+
+详见 [Office 数据规格](Office效率增强功能.db_schema.md)：`office_subscriptions` / `office_ai_wallets` / `office_ai_ledger` / `office_ai_usage` / `office_ai_monthly_grants`。本地另建 `office_tasks.db` 保存任务和恢复信息。
 
 > 完整字段以各 `V<n>__*.sql` 脚本为准（SQL 是结构最终真相，脚本本身带注释）。各模块表的字段用处 / 关联大白话注解见对应 [../feature-map/](../feature-map/) 速查表的「数据库表与 SQL 注解」节。
 
@@ -47,3 +51,4 @@
 | 日期 | 变更 | 原因 |
 |---|---|---|
 | 2026-07-15 | 创建数据模型索引（指向 Flyway） | 引入工作流，确立结构真相源 |
+| 2026-08-25 | 加入 Office Pro、AI 积分与本地任务库规划 | Office Phase 1 |

@@ -47,6 +47,7 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 | `api/` | 17 个：封装后端 HTTP（`fetchR`）+ Tauri Rust 命令（`rustWorkReport` 等），含 `__tests__/` |
 | `stores/` | 12 个 Pinia store（含 `commercialAuthStore` 模块授权门禁） |
 | `components/` | 组件库（含 `work-report/`、`EntitlementStatus.vue`、`FreeModuleSelector.vue`） |
+| `components/office/`（规划） | Office 工作台、向导、预检、冲突确认、任务历史和报告 |
 | `composables/` `plugins/` `styles/` `types/` `utils/` `views/` | 组合式函数 / 插件 / 样式 / 类型 / 工具 / 视图 |
 | `locales/{zh-CN.ts,en.ts}` | 国际化语言包 |
 
@@ -56,6 +57,8 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 |---|---|
 | `main.rs` | Tauri 入口，`invoke_handler` 注册所有命令 |
 | `commands/` | `auth` / `clipboard` / `files` / `icons` / `processes` / `process_management` / `screenshot` / `work_report` |
+| `office/`、`commands/office.rs`（规划） | Office 任务调度、SQLite、扫描、输出事务、Worker 与凭据适配 |
+| `src/bin/office_ooxml_worker.rs`（规划） | 跨平台 OOXML 隔离 Worker |
 | `clipboard/` | 剪贴板内部服务 |
 | `platform/` | 平台适配（`linux/` / `macos/` / `windows_file_matcher`） |
 | `types/` `utils/` | Rust 共享类型 / 工具 |
@@ -70,8 +73,18 @@ file-keeper/                       # 代码根 = 上层 C:/AI Projects monorepo 
 | `audit/` | 审计日志 |
 | `device/` `user/` `settings/` `stats/` `admin/` `ai/` `config/` `bootstrap/` | 设备 / 用户 / 设置 / 统计 / 后台 / AI / 配置 / 启动 |
 | `workreport/` | 工作汇报模块：`controller/`（含 admin）/ `service/`（含 `push/` 飞书推送、`webhook/`、`CredentialEncryptor`）/ `repository/` / `entity/` / `dto/` |
+| `office/`（规划） | Office Pro 实时校验和管理员授予 |
+| `officeai/`（规划） | AI 网关、积分账本、用量、限流和供应商适配 |
 
 迁移脚本：`server/src/main/resources/db/migration/V1..V15`（Flyway，已执行不可改）。
+
+## Office Worker（规划）
+
+| 目录 | 说明 |
+|---|---|
+| `tools/office-worker-windows/` | Windows Office COM/Interop 高保真 Worker，处理旧格式、宏、外链和主题 |
+| `src-tauri/src/bin/office_ooxml_worker.rs` | 标准 OOXML ZIP/XML 安全处理 Worker |
+| 应用数据 `office/office_tasks.db` | 本地任务历史；与剪贴板数据库隔离 |
 
 ## 管理后台 `admin-web/src/`
 

@@ -6,8 +6,8 @@
 
 ## 项目一句话定位
 
-file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：一键打开 / 关闭 / 批量管理常用文件与程序，叠加剪贴板、截图、工作汇报、AI 接入等模块。
-本地模块始终开放且不要求登录；工作汇报、AI 等服务端模块使用账号登录、用户数据隔离和设备禁用，不再按模块、设备数量或时间做商业授权。
+file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：一键打开 / 关闭 / 批量管理常用文件与程序，叠加剪贴板、截图、Office 批处理、工作汇报、AI 接入等模块。
+本地模块始终开放且不要求登录；工作汇报、AI 等服务端模块使用账号登录、用户数据隔离和设备禁用。Office 基础批处理对所有用户开放，超过免费批量额度时必须登录并在线校验 Office Pro；AI 使用服务端积分计量。
 
 ## 技术栈（五件套全栈）
 
@@ -31,13 +31,13 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - 错误码复用 `ErrorCode` 枚举（`FORBIDDEN 403` / `UNPROCESSABLE 422` …）。
 
 ### 前端约定
-- **桌面端 `src/`**：Vue 3 `<script setup>` + TS + **Tailwind**（用已有 dark 类如 `dark:bg-dark-panel`）；**不引入 Naive UI、不引入 vue-router**（单 `App.vue` 架构，Tab 由 `currentTab` ref 控制）。文件、进程、剪贴板、截图始终开放；工作汇报与 AI 只检查登录态。
+- **桌面端 `src/`**：Vue 3 `<script setup>` + TS + **Tailwind**（用已有 dark 类如 `dark:bg-dark-panel`）；**不引入 Naive UI、不引入 vue-router**（单 `App.vue` 架构，Tab 由 `currentTab` ref 控制）。文件、进程、剪贴板、截图和免费规模 Office 任务始终开放；超额 Office 任务实时校验 Office Pro；AI 同时校验登录、套餐和积分。
 - **管理后台 `admin-web/`**：Vue 3 + Naive UI + vue-router，请求走 `admin-web/src/api/request.ts`。
 - 国际化文本进 `src/locales/{zh-CN.ts,en.ts}`，不硬编码中文；状态用 Pinia；调 Tauri 命令走 `src/api/*.ts` 封装。
 
 ### Rust 约定
 - 命令用 `#[tauri::command]`，在 `src-tauri/src/main.rs` 的 `invoke_handler` 注册。
-- 本地原生命令不检查商业授权 Token；必须保留路径、截图区域、PID、窗口句柄、剪贴板敏感内容等业务与安全校验。
+- 本地原生命令不检查旧 moduleCode 商业授权 Token；Office 超额任务在创建执行票据前实时调用服务端校验 Office Pro。本地仍必须保留路径、文件规模、PID、窗口句柄、密码和输出目录等业务与安全校验。
 - 平台差异下沉 `src-tauri/src/platform/`；**绝不用固定屏幕坐标**定位控件。
 
 ### 禁忌（不要做）
@@ -46,6 +46,8 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - ❌ 业务数据（文件路径 / 剪贴板 / 截图 / 进程列表）上传服务端。
 - ❌ 用 `deviceId` 替代 JWT 身份认证；服务端模块必须同时校验登录身份、active 设备和资源归属。
 - ❌ 密码 / 密钥 / JWT secret 明文写进文档或代码。
+- ❌ 将模型供应商 API Key 下发桌面端，或把 Office 密码/正文写入 SQLite、日志、崩溃报告。
+- ❌ AI 输出绕过预览直接执行文件修改、命令或脚本。
 
 ### 偏好（优先这么做）
 - 修 bug 时在注释 / 对话简述理由；不确定先 Read 确认再写。
@@ -74,6 +76,7 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 
 ## 模块级约束（索引）
 - `workflow_output/项目规范约束/新增业务模块规范.md` 与 `新增模块实施指导.md` 中的商业授权接入规则已废弃，待兼容清理阶段重写；新功能不得继续接入 moduleCode、匿名试用或离线 Token。
+- Office Pro 是“批量规模 + AI 积分”权益，不是模块开关；不得复活旧 moduleCode、匿名试用或离线套餐 Token。超额任务每次在线校验，离线降为免费额度。
 - 上层 [`../CLAUDE.md`](../CLAUDE.md) —— 多 Agent 平台通用约定。
 
 ## 参考文档
