@@ -7,12 +7,18 @@ import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Base64;
@@ -35,6 +41,7 @@ public class MediaStorageService {
 
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(5);
     private static final long MAX_DATA_URI_BYTES = 8L * 1024 * 1024; // 参考图 ≤8MB（防超大图打爆 Ark）
     /** 分类型 data URI 上限：图 8MB / 音频 15MB / 视频 50MB（base64 体积 ×4/3，官方参考视频上限 50MB）。
      *  package-private：MediaGenTaskService 提交侧按 meta.size 预检复用同一上限表（单一真相）。 */
@@ -47,7 +54,6 @@ public class MediaStorageService {
 
     private final FileStorageService fileStorageService;
     private final WebClient downloadClient = buildDownloadClient();
-    /** 图片下载专用 client：4K/组图单张可能 >16MB，buffer 抬到 64MB（视频 client 仅 16MB 不够）。 */
     private final WebClient imageDownloadClient = buildImageDownloadClient();
     /** 安全体系 S5（H SSRF）：回源拒绝计数。横切可选依赖，单测无 Bean 直通。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -77,30 +83,18 @@ public class MediaStorageService {
      */
     public String downloadAndStore(String videoUrl, Long userId, String nameHint) {
         assertFetchSafe(videoUrl);   // S5 H SSRF：回源前校验
-        Resource resource;
-        try {
-            // 用 URI 对象传，跳过 WebClient 的 UriBuilderFactory 二次编码——
-            // Ark/ctaigw 返回的 video_url 是预签名 TOS 链接，query 里含 %2F 等已编码字符，
-            // 若用 .uri(String) 会被当 URI 模板再次编码（% → %25），破坏签名 → TOS 返 400 AccessDenied。
-            resource = downloadClient.get()
-                    .uri(URI.create(videoUrl))
-                    .retrieve()
-                    .bodyToMono(Resource.class)
-                    .block(RESPONSE_TIMEOUT);
-        } catch (Exception e) {
-            throw new IllegalStateException("视频下载失败: " + rootMessage(e), e);
-        }
-        if (resource == null) {
-            throw new IllegalStateException("视频下载失败：响应为空");
-        }
+        // 流式落盘（2x 修复）：旧实现 bodyToMono(Resource) 整体进内存，受 maxInMemorySize 16MB 上限，
+        // 15s 视频即超 → Exceeded limit on max bytes to buffer。改 DataBuffer 流 → 临时文件 → storeStream，
+        // 任意时长视频只占常量内存。
+        Path tmp = streamToTempFile(downloadClient, videoUrl, "视频");
         String fileName = deriveName(videoUrl, nameHint);
         String mime = guessVideoMime(fileName);
-        long size;
-        try (InputStream in = resource.getInputStream()) {
-            size = in.available(); // 尽力而为；storeStream 兜底用 copied 字节数
-            return fileStorageService.storeStream(in, fileName, mime, size, userId, StoredFileEntity.SOURCE_MEDIA);
+        try (InputStream in = Files.newInputStream(tmp)) {
+            return fileStorageService.storeStream(in, fileName, mime, Files.size(tmp), userId, StoredFileEntity.SOURCE_MEDIA);
         } catch (Exception e) {
             throw new IllegalStateException("视频落盘失败: " + rootMessage(e), e);
+        } finally {
+            deleteQuietly(tmp);
         }
     }
 
@@ -124,29 +118,56 @@ public class MediaStorageService {
      */
     public String downloadImageAndStore(String imageUrl, Long userId, String nameHint) {
         assertFetchSafe(imageUrl);   // S5 H SSRF：回源前校验（生图 24h 临时链接同视频路径）
-        Resource resource;
-        try {
-            // URI 对象防二次编码（同 downloadAndStore，预签名链接含已编码字符）。
-            resource = imageDownloadClient.get()
-                    .uri(URI.create(imageUrl))
-                    .retrieve()
-                    .bodyToMono(Resource.class)
-                    .block(RESPONSE_TIMEOUT);
-        } catch (Exception e) {
-            throw new IllegalStateException("图片下载失败: " + rootMessage(e), e);
-        }
-        if (resource == null) {
-            throw new IllegalStateException("图片下载失败：响应为空");
-        }
+        // 流式落盘（同 downloadAndStore）：4K/组图单张也可超 64MB 旧内存上限。
+        Path tmp = streamToTempFile(imageDownloadClient, imageUrl, "图片");
         String fileName = deriveImageName(imageUrl, nameHint);
         String mime = guessImageMime(fileName);
-        long size;
-        try (InputStream in = resource.getInputStream()) {
-            size = in.available();
-            return fileStorageService.storeStream(in, fileName, mime, size, userId, StoredFileEntity.SOURCE_MEDIA);
+        try (InputStream in = Files.newInputStream(tmp)) {
+            return fileStorageService.storeStream(in, fileName, mime, Files.size(tmp), userId, StoredFileEntity.SOURCE_MEDIA);
         } catch (Exception e) {
             throw new IllegalStateException("图片落盘失败: " + rootMessage(e), e);
+        } finally {
+            deleteQuietly(tmp);
         }
+    }
+
+    /**
+     * 流式下载 URL → 临时文件（DataBuffer 逐块写盘，不经堆内存聚合，无 maxInMemorySize 上限）。
+     * 用 URI 对象传，跳过 WebClient 的 UriBuilderFactory 二次编码——预签名链接 query 含已编码字符，
+     * 若用 .uri(String) 会被当 URI 模板再次编码，破坏签名 → TOS 返 400 AccessDenied。
+     */
+    private Path streamToTempFile(WebClient client, String url, String label) {
+        Path tmp;
+        try {
+            tmp = Files.createTempFile("media-dl-", ".bin");
+        } catch (Exception e) {
+            throw new IllegalStateException(label + "下载失败: " + rootMessage(e), e);
+        }
+        try {
+            Flux<DataBuffer> body = client.get()
+                    .uri(URI.create(url))
+                    .retrieve()
+                    .bodyToFlux(DataBuffer.class);
+            DataBufferUtils.write(body, tmp, StandardOpenOption.WRITE).block(DOWNLOAD_TIMEOUT);
+            if (Files.size(tmp) == 0) {
+                throw new IllegalStateException(label + "下载失败：响应为空");
+            }
+            return tmp;
+        } catch (Exception e) {
+            deleteQuietly(tmp);
+            if (e instanceof IllegalStateException) {
+                throw (IllegalStateException) e;
+            }
+            throw new IllegalStateException(label + "下载失败: " + rootMessage(e), e);
+        }
+    }
+
+    private void deleteQuietly(Path tmp) {
+        try {
+            if (tmp != null) {
+                Files.deleteIfExists(tmp);
+            }
+        } catch (Exception ignore) { /* 临时文件清理失败不影响主链 */ }
     }
 
     private String deriveImageName(String url, String hint) {
@@ -243,7 +264,7 @@ public class MediaStorageService {
                 .responseTimeout(RESPONSE_TIMEOUT);
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024)) // 视频 buffer 上限
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024)) // 仅聚合型读取生效；流式 DataBuffer 下载不经过此上限
                 .build();
     }
 
@@ -254,7 +275,7 @@ public class MediaStorageService {
                 .responseTimeout(RESPONSE_TIMEOUT);
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(64 * 1024 * 1024)) // 图片 buffer 上限（4K/组图）
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(64 * 1024 * 1024)) // 仅聚合型读取生效；流式下载不经过此上限
                 .build();
     }
 
