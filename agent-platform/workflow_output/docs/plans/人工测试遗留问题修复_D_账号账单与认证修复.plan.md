@@ -21,7 +21,7 @@ created-date: 2026-08-25
 
 ## 实现步骤
 
-- [ ] **D1：用户备注（Q6=A：本人+管理员可改）**
+- [x] **D1：用户备注（Q6=A：本人+管理员可改）**（commit ae8290e9）
   - **目标**：注册/个人信息可填；管理列表可筛可见
   - **动作**：
     - 注册：`RegisterRequest` 增 `remark`（@Size≤64 可选）；`AuthService.registerInternal` 落库；`RegisterModal.vue` 输入框「如：A 班（选填）」
@@ -32,14 +32,14 @@ created-date: 2026-08-25
   - **安全检查**：user:manage 权限不变；LIKE 转义；长度校验
   - **验证**：人工——注册带「A 班」→ 管理列表 keyword「A 班」命中；本人改备注即时反映
 
-- [ ] **D2：账单昵称三处**
+- [x] **D2：账单昵称三处**（commit d20500ca）
   - **目标**：用户余额/充值记录/用户排行 显示 name（username）
   - **动作**：user-balances 与 recharges 的 SQL/VO 增 name（JOIN users）；排行 tab 同理（user_id → 补 username+name）；`BillingAdminView.vue` 三 tab 用户列改 `name（username）`；keyword 筛选同步匹配 name
   - **文件**：`billing/controller/BillingAdminController.java`、对应 Mapper SQL、VO（`UserBalanceRowVO.java` 等）、`frontend/src/views/admin/BillingAdminView.vue`
   - **依赖**：无
   - **验证**：三 tab 均见昵称；筛 name 命中
 
-- [ ] **D3：项目组分配视图（20x-2）**
+- [x] **D3：项目组分配视图（20x-2）**（commit e791c2d5）
   - **目标**：各用户各项目 quota/used/剩余/累计被分配（毛额+净额）
   - **动作**：新端点 `GET /billing/admin/group-allocations`：
     ```
@@ -53,7 +53,7 @@ created-date: 2026-08-25
   - **依赖**：A1（MEMBER_* 流水已有数据）
   - **验证**：人工——A 计划人工测试后，该 tab 累计被分配 = 历次调增之和
 
-- [ ] **D4：划拨对账（20x-3，Q9=A）**
+- [x] **D4：划拨对账（20x-3，Q9=A）**（commit c2cea2ec）
   - **目标**：顶卡「账平/不平」+ 仅列异常组
   - **动作**：新端点 `GET /billing/admin/group-reconcile`：
     ```
@@ -67,7 +67,7 @@ created-date: 2026-08-25
   - **依赖**：无（对账只读现有流水）
   - **验证**：人工——走 划拨→消耗→退款→回收 流程后恒等式平；手工 UPDATE 组池 −10 → 该组标红
 
-- [ ] **D5：找回密码两修复（Q8）**
+- [x] **D5：找回密码两修复（Q8）**（commit 482cd517；偏离记录：带 token 且邮件开关关 → 仍进 EMAIL 表单（token 即凭证，防有效链接被引导页挡死））
   - **目标**：QQ 邮箱链接可复制兜底；直达 reset 页不再落 SMS 死路
   - **动作**：
     - 邮件模板（`EmailService.sendResetEmail` :93-114）：链接按钮下方加纯文本 URL +「若点击无效，请复制此链接到浏览器打开」
@@ -83,7 +83,7 @@ created-date: 2026-08-25
   - **依赖**：无
   - **验证**：人工——发重置邮件见纯文本链接可复制打开；无 token 直达显示引导页（不再露手机号表单）；带 token 正常重置
 
-- [ ] **D6：文档勾销与漂移清理（§1.3、§7、§10）**
+- [x] **D6：文档勾销与漂移清理（§1.3、§7、§10）**（7 文件勾销 + spec 4 处 + feature-map×3 + user-ops×3 + 速查表08；开发进度4.md）
   - **动作**：
     - 7 份人工测试文件未解决项逐条勾销（注明对应规格章节）
     - `UserPointsBalanceEntity` 「可负」注释（B1 已顺手改，此处核销）；`docs/specs/积分计费系统.md` §B6 改口径并记原因
@@ -104,4 +104,4 @@ created-date: 2026-08-25
 
 ## 验证收口
 
-- [ ] D1-D6 全绿；规格 §0 总览 12 项全部闭环可勾销
+- [x] D1-D6 全绿；规格 §0 总览 12 项全部闭环可勾销（后端全量单测 EXIT=0；人工实测归 Phase 4）
