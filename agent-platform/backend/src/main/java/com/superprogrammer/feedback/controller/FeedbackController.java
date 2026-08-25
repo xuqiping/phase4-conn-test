@@ -36,6 +36,7 @@ public class FeedbackController {
 
     private final FeedbackService feedbackService;
     private final com.superprogrammer.feedback.service.FeedbackNotificationService notificationService;
+    private final com.superprogrammer.feedback.service.FeedbackMessageService messageService;
     private final com.superprogrammer.feedback.service.FeedbackQuestionService questionService;
     private final com.superprogrammer.feedback.service.HelpArticleService articleService;
 
@@ -51,6 +52,15 @@ public class FeedbackController {
     public ResponseEntity<R<PageResult<SuggestionVO>>> mySuggestions(@RequestParam(defaultValue = "1") int page,
                                                                      @RequestParam(defaultValue = "10") int size) {
         return ResponseEntity.ok(R.ok(feedbackService.mySuggestions(currentUserId(), page, size)));
+    }
+
+    /** 我的建议留言线程（仅属主可读；他人 404 不泄露）。 */
+    @GetMapping("/suggestions/{id}/messages")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.feedback.dto.FeedbackMessageVO>>> suggestionMessages(
+            @org.springframework.web.bind.annotation.PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(messageService.listMessages(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_SUGGESTION,
+                id, currentUserId(), false)));
     }
 
     // ---------- 站内通知（铃铛三件套） ----------
@@ -93,6 +103,15 @@ public class FeedbackController {
     }
 
     /** 我的提问分页（强制 self；含答案 markdown 原文）。 */
+    /** 我的提问留言线程（仅属主可读；他人 404 不泄露）。 */
+    @GetMapping("/questions/{id}/messages")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.feedback.dto.FeedbackMessageVO>>> questionMessages(
+            @org.springframework.web.bind.annotation.PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(messageService.listMessages(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_QUESTION,
+                id, currentUserId(), false)));
+    }
+
     @GetMapping("/questions/mine")
     public ResponseEntity<R<PageResult<com.superprogrammer.feedback.dto.QuestionVO>>> myQuestions(
             @RequestParam(defaultValue = "1") int page,

@@ -19,6 +19,9 @@ public class FeedbackNotificationEntity extends BaseEntity {
 
     public static final String TYPE_SUGGESTION_REVIEWED = "SUGGESTION_REVIEWED";
     public static final String TYPE_QUESTION_ANSWERED = "QUESTION_ANSWERED";
+    /** V154：admin 留言通知（每条留言都发，与审核/首答的一次性语义不同）。 */
+    public static final String TYPE_SUGGESTION_MESSAGE = "SUGGESTION_MESSAGE";
+    public static final String TYPE_QUESTION_MESSAGE = "QUESTION_MESSAGE";
 
     private Long userId;
 

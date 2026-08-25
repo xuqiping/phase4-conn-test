@@ -93,7 +93,7 @@ export interface UpsertArticlePayload {
   contentMd: string
 }
 
-export type FeedbackNotificationType = 'SUGGESTION_REVIEWED' | 'QUESTION_ANSWERED'
+export type FeedbackNotificationType = 'SUGGESTION_REVIEWED' | 'QUESTION_ANSWERED' | 'SUGGESTION_MESSAGE' | 'QUESTION_MESSAGE'
 
 /** 站内通知行（message 纯文本） */
 export interface FeedbackNotificationVO {
@@ -102,6 +102,14 @@ export interface FeedbackNotificationVO {
   refId: number
   message: string
   readAt: string | null
+  createdAt: string
+}
+
+/** 留言线程行（V154；senderRole 驱动展示：ADMIN→管理员，USER→我） */
+export interface FeedbackMessageVO {
+  id: number
+  senderRole: 'ADMIN' | 'USER'
+  content: string
   createdAt: string
 }
 
@@ -200,6 +208,26 @@ export const feedbackApi = {
   },
   closeQuestion(id: number) {
     return request.post<ApiResponse<null>>(`/feedback/admin/questions/${id}/close`)
+  },
+  // ---- 留言线程（用户：仅属主可读；19x 未解决#1） ----
+  suggestionMessages(id: number) {
+    return request.get<ApiResponse<FeedbackMessageVO[]>>(`/feedback/suggestions/${id}/messages`)
+  },
+  questionMessages(id: number) {
+    return request.get<ApiResponse<FeedbackMessageVO[]>>(`/feedback/questions/${id}/messages`)
+  },
+  // ---- admin 留言（每条发送都通知用户） ----
+  adminSuggestionMessages(id: number) {
+    return request.get<ApiResponse<FeedbackMessageVO[]>>(`/feedback/admin/suggestions/${id}/messages`)
+  },
+  adminQuestionMessages(id: number) {
+    return request.get<ApiResponse<FeedbackMessageVO[]>>(`/feedback/admin/questions/${id}/messages`)
+  },
+  adminMessageSuggestion(id: number, data: { content: string }) {
+    return request.post<ApiResponse<{ id: number }>>(`/feedback/admin/suggestions/${id}/messages`, data)
+  },
+  adminMessageQuestion(id: number, data: { content: string }) {
+    return request.post<ApiResponse<{ id: number }>>(`/feedback/admin/questions/${id}/messages`, data)
   },
   // ---- admin 帮助文章（help:manage） ----
   adminArticles(params: { page?: number; size?: number }) {

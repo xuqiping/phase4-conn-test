@@ -92,6 +92,7 @@
           :autosize="{ minRows: 2, maxRows: 6 }"
         />
         <n-space justify="end" style="margin-top: 12px">
+          <n-button size="small" @click="openMessages('SUGGESTION', sugDetail.id, sugDetail.title)">留言</n-button>
           <template v-if="sugDetail.status !== 'CLOSED'">
             <n-button
               v-if="sugDetail.status !== 'ADOPTED'"
@@ -144,19 +145,44 @@
         <div v-if="answerPreview" class="markdown-body admin-feedback__preview" v-html="renderMarkdown(answerText)" />
 
         <n-space justify="end" style="margin-top: 12px">
+          <n-button size="small" @click="openMessages('QUESTION', answerTarget.id, answerTarget.title)">留言</n-button>
           <n-button type="primary" size="small" :loading="answering" :disabled="!answerText.trim()" @click="submitAnswer">
             {{ answerTarget.status === 'ANSWERED' ? '保存修改' : '提交回答' }}
           </n-button>
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 留言 modal（19x 未解决#1：审核后可持续留言，每条都通知用户） -->
+    <n-modal v-model:show="showMsgModal" preset="card" :title="msgModalTitle" style="width: 520px">
+      <div class="admin-feedback__msg-thread">
+        <n-empty v-if="!msgThread.length" description="暂无留言" size="small" />
+        <div v-for="m in msgThread" :key="m.id" class="admin-feedback__msg-item">
+          <div class="admin-feedback__msg-meta">管理员 · {{ fmt(m.createdAt) }}</div>
+          <div class="admin-feedback__msg-content">{{ m.content }}</div>
+        </div>
+      </div>
+      <n-input
+        v-model:value="msgText"
+        type="textarea"
+        placeholder="给用户留言（每次发送用户都会收到站内通知，≤2000 字）"
+        maxlength="2000"
+        :autosize="{ minRows: 2, maxRows: 5 }"
+        style="margin-top: 12px"
+      />
+      <n-space justify="end" style="margin-top: 12px">
+        <n-button type="primary" size="small" :loading="msgSending" :disabled="!msgText.trim()" @click="sendMessage">
+          发送留言
+        </n-button>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, reactive, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NButton, NCard, NCheckbox, NDataTable, NDivider, NInput, NModal, NSelect, NSpace, NTag, NTabs,
+  NButton, NCard, NCheckbox, NDataTable, NDivider, NEmpty, NInput, NModal, NSelect, NSpace, NTag, NTabs,
   NTabPane, useDialog, useMessage
 } from 'naive-ui'
 import type { DataTableColumns, PaginationProps } from 'naive-ui'
@@ -166,7 +192,7 @@ import {
   QUESTION_STATUS_LABEL, QUESTION_STATUS_TAG_TYPE
 } from '@/api/feedback'
 import type {
-  AdminQuestionVO, AdminSuggestionVO, QuestionStatus, SuggestionStatus
+  AdminQuestionVO, AdminSuggestionVO, FeedbackMessageVO, QuestionStatus, SuggestionStatus
 } from '@/api/feedback'
 import { fetchFilePreview } from '@/api/file'
 import { renderMarkdown } from '@/utils/markdown'
@@ -318,7 +344,7 @@ const qColumns: DataTableColumns<AdminQuestionVO> = [
     render: r => (r.isPublic ? h(NTag, { size: 'tiny', type: 'success', bordered: false }, { default: () => '公开' }) : '—')
   },
   {
-    title: '操作', key: 'op', width: 140,
+    title: '操作', key: 'op', width: 190,
     render: r => h('div', { style: 'display:flex;gap:4px' }, [
       r.status !== 'CLOSED'
         ? h(NButton, { size: 'tiny', quaternary: true, onClick: () => openAnswer(r) },
@@ -327,7 +353,9 @@ const qColumns: DataTableColumns<AdminQuestionVO> = [
       r.status !== 'CLOSED'
         ? h(NButton, { size: 'tiny', quaternary: true, type: 'error', onClick: () => closeQuestion(r) },
             { default: () => '关闭' })
-        : null
+        : null,
+      h(NButton, { size: 'tiny', quaternary: true, onClick: () => openMessages('QUESTION', r.id, r.title) },
+        { default: () => '留言' })
     ])
   }
 ]
@@ -387,6 +415,55 @@ async function closeQuestion(row: AdminQuestionVO) {
   }
 }
 
+// ==================== 留言（19x 未解决#1） ====================
+const showMsgModal = ref(false)
+const msgTargetType = ref<'SUGGESTION' | 'QUESTION'>('SUGGESTION')
+const msgTargetId = ref<number | null>(null)
+const msgTargetTitle = ref('')
+const msgThread = ref<FeedbackMessageVO[]>([])
+const msgText = ref('')
+const msgSending = ref(false)
+const msgModalTitle = computed(() => '留言 - ' + msgTargetTitle.value)
+
+async function openMessages(type: 'SUGGESTION' | 'QUESTION', id: number, title: string) {
+  msgTargetType.value = type
+  msgTargetId.value = id
+  msgTargetTitle.value = title
+  msgText.value = ''
+  showMsgModal.value = true
+  await loadMsgThread()
+}
+
+async function loadMsgThread() {
+  if (msgTargetId.value == null) return
+  try {
+    const res = msgTargetType.value === 'SUGGESTION'
+      ? await feedbackApi.adminSuggestionMessages(msgTargetId.value)
+      : await feedbackApi.adminQuestionMessages(msgTargetId.value)
+    msgThread.value = res.data.data ?? []
+  } catch {
+    msgThread.value = []
+  }
+}
+
+async function sendMessage() {
+  if (msgTargetId.value == null || !msgText.value.trim() || msgSending.value) return
+  msgSending.value = true
+  try {
+    const api = msgTargetType.value === 'SUGGESTION'
+      ? feedbackApi.adminMessageSuggestion
+      : feedbackApi.adminMessageQuestion
+    await api(msgTargetId.value, { content: msgText.value.trim() })
+    message.success('留言已发送并通知用户')
+    msgText.value = ''
+    await loadMsgThread()
+  } catch (e: unknown) {
+    message.error((e as Error)?.message || '留言失败')
+  } finally {
+    msgSending.value = false
+  }
+}
+
 onMounted(() => {
   loadSuggestions(1)
   loadQuestions(1)
@@ -396,7 +473,9 @@ onMounted(() => {
 defineExpose({
   loadSuggestions, loadQuestions, openSugDetail, confirmReview, review,
   openAnswer, submitAnswer, closeQuestion,
-  sugDetail, reviewReply, answerTarget, answerText, answerPublic
+  openMessages, sendMessage, loadMsgThread,
+  sugDetail, reviewReply, answerTarget, answerText, answerPublic,
+  msgThread, msgText, showMsgModal
 })
 </script>
 
@@ -453,6 +532,31 @@ defineExpose({
     border-radius: 6px;
     max-height: 240px;
     overflow-y: auto;
+  }
+
+  &__msg-thread {
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  &__msg-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--color-border-light);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  &__msg-meta {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-bottom: 4px;
+  }
+
+  &__msg-content {
+    white-space: pre-wrap;
+    line-height: 1.7;
   }
 }
 </style>

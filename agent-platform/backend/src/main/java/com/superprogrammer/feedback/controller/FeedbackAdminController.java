@@ -35,6 +35,7 @@ public class FeedbackAdminController {
 
     private final FeedbackService feedbackService;
     private final com.superprogrammer.feedback.service.FeedbackQuestionService questionService;
+    private final com.superprogrammer.feedback.service.FeedbackMessageService messageService;
 
     @GetMapping("/suggestions")
     @RequirePermission("feedback:manage")
@@ -81,6 +82,51 @@ public class FeedbackAdminController {
     public ResponseEntity<R<Void>> closeQuestion(@PathVariable("id") Long id) {
         questionService.closeQuestion(id);
         return ResponseEntity.ok(R.ok("已关闭", null));
+    }
+
+    // ---------- 留言（19x 未解决#1：审核后可继续留言，每条都通知用户） ----------
+
+    @PostMapping("/suggestions/{id}/messages")
+    @RequirePermission("feedback:manage")
+    @AuditLog(module = "feedback", action = "suggestion_message", targetType = "feedback_suggestion")
+    public ResponseEntity<R<java.util.Map<String, Long>>> messageSuggestion(
+            @PathVariable("id") Long id,
+            @Valid @RequestBody com.superprogrammer.feedback.dto.CreateFeedbackMessageRequest req) {
+        Long msgId = messageService.addAdminMessage(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_SUGGESTION,
+                id, req.content(), currentUserId());
+        return ResponseEntity.ok(R.ok("留言已发送", java.util.Map.of("id", msgId)));
+    }
+
+    @PostMapping("/questions/{id}/messages")
+    @RequirePermission("feedback:manage")
+    @AuditLog(module = "feedback", action = "question_message", targetType = "feedback_question")
+    public ResponseEntity<R<java.util.Map<String, Long>>> messageQuestion(
+            @PathVariable("id") Long id,
+            @Valid @RequestBody com.superprogrammer.feedback.dto.CreateFeedbackMessageRequest req) {
+        Long msgId = messageService.addAdminMessage(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_QUESTION,
+                id, req.content(), currentUserId());
+        return ResponseEntity.ok(R.ok("留言已发送", java.util.Map.of("id", msgId)));
+    }
+
+    /** admin 读线程（不受属主限制）。 */
+    @GetMapping("/suggestions/{id}/messages")
+    @RequirePermission("feedback:manage")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.feedback.dto.FeedbackMessageVO>>> suggestionMessages(
+            @PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(messageService.listMessages(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_SUGGESTION,
+                id, currentUserId(), true)));
+    }
+
+    @GetMapping("/questions/{id}/messages")
+    @RequirePermission("feedback:manage")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.feedback.dto.FeedbackMessageVO>>> questionMessages(
+            @PathVariable("id") Long id) {
+        return ResponseEntity.ok(R.ok(messageService.listMessages(
+                com.superprogrammer.feedback.entity.FeedbackMessageEntity.TARGET_QUESTION,
+                id, currentUserId(), true)));
     }
 
     private Long currentUserId() {

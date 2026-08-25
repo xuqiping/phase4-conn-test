@@ -112,14 +112,11 @@
         <n-tab-pane name="help" tab="使用说明">
           <div class="feedback-center__help">
             <div class="feedback-center__help-nav">
+              <!-- 单棵分组树：分类为组头、文章内嵌其下（原双菜单上下割裂 → 合并） -->
               <n-menu
-                :options="categoryOptions"
-                :value="activeCategory"
-                @update:value="onCategoryChange"
-              />
-              <n-menu
-                :options="articleOptions"
+                :options="helpMenuOptions"
                 :value="activeSlug"
+                :expanded-keys="helpExpandedKeys"
                 @update:value="onArticleChange"
               />
             </div>
@@ -150,6 +147,13 @@
             <b>官方回复：</b>{{ sugDetail.reply }}
           </div>
         </template>
+        <n-divider style="margin: 12px 0" />
+        <div class="feedback-center__msg-title">官方留言</div>
+        <n-empty v-if="!sugMessages.length" description="暂无留言" size="small" />
+        <div v-for="m in sugMessages" :key="m.id" class="feedback-center__msg-item">
+          <div class="feedback-center__msg-meta">管理员 · {{ fmt(m.createdAt) }}</div>
+          <div class="feedback-center__msg-content">{{ m.content }}</div>
+        </div>
       </template>
     </n-modal>
 
@@ -166,6 +170,13 @@
           <b>官方回答：</b>
           <div class="markdown-body" v-html="renderMarkdown(qDetail.answer)" />
         </template>
+        <n-divider style="margin: 12px 0" />
+        <div class="feedback-center__msg-title">官方留言</div>
+        <n-empty v-if="!qMessages.length" description="暂无留言" size="small" />
+        <div v-for="m in qMessages" :key="m.id" class="feedback-center__msg-item">
+          <div class="feedback-center__msg-meta">管理员 · {{ fmt(m.createdAt) }}</div>
+          <div class="feedback-center__msg-content">{{ m.content }}</div>
+        </div>
       </template>
     </n-modal>
   </div>
@@ -178,14 +189,14 @@ import {
   NButton, NCard, NDataTable, NDivider, NEmpty, NInput, NMenu, NModal, NSpace, NTag, NTabs,
   NTabPane, NUpload, useMessage
 } from 'naive-ui'
-import type { DataTableColumns, PaginationProps, UploadCustomRequestOptions } from 'naive-ui'
+import type { DataTableColumns, MenuOption, PaginationProps, UploadCustomRequestOptions } from 'naive-ui'
 import {
   feedbackApi, uploadFeedbackFile,
   SUGGESTION_STATUS_LABEL, SUGGESTION_STATUS_TAG_TYPE,
   QUESTION_STATUS_LABEL, QUESTION_STATUS_TAG_TYPE
 } from '@/api/feedback'
 import type {
-  ArticleDetailVO, ArticleListItemVO, FaqVO, QuestionVO, SuggestionVO
+  ArticleDetailVO, ArticleListItemVO, FaqVO, FeedbackMessageVO, QuestionVO, SuggestionVO
 } from '@/api/feedback'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -287,9 +298,15 @@ async function loadSuggestions(page = 1) {
   }
 }
 
+const sugMessages = ref<FeedbackMessageVO[]>([])
+
 function openSugDetail(row: SuggestionVO) {
   sugDetail.value = row
   showSugDetail.value = true
+  sugMessages.value = []
+  feedbackApi.suggestionMessages(row.id)
+    .then(res => { sugMessages.value = res.data.data ?? [] })
+    .catch(() => { sugMessages.value = [] })
 }
 
 // ==================== 提问台 ====================
@@ -349,9 +366,15 @@ async function loadQuestions(page = 1) {
   }
 }
 
+const qMessages = ref<FeedbackMessageVO[]>([])
+
 function openQDetail(row: QuestionVO) {
   qDetail.value = row
   showQDetail.value = true
+  qMessages.value = []
+  feedbackApi.questionMessages(row.id)
+    .then(res => { qMessages.value = res.data.data ?? [] })
+    .catch(() => { qMessages.value = [] })
 }
 
 // ---- FAQ（检索防抖 300ms） ----
@@ -389,25 +412,26 @@ watch(faqKw, () => {
 
 // ==================== 说明台 ====================
 const articles = ref<ArticleListItemVO[]>([])
-const activeCategory = ref<string | null>(null)
 const activeSlug = ref<string | null>(null)
 const articleDetail = ref<ArticleDetailVO | null>(null)
 
-const categoryOptions = computed(() => {
+/** 单棵分组树（19x-2 美化：原「分类菜单+文章菜单」上下两块割裂 → 分类作组头、文章内嵌）。 */
+const helpMenuOptions = computed<MenuOption[]>(() => {
   const cats = [...new Set(articles.value.map(a => a.category))]
-  return cats.map(c => ({ label: c, key: c }))
+  return cats.map(c => ({
+    type: 'group',
+    label: c,
+    key: 'group-' + c,
+    children: articles.value
+      .filter(a => a.category === c)
+      .map(a => ({ label: a.title, key: a.slug }))
+  }))
 })
 
-/** 当前分类下的文章目录（未选分类=全部）。 */
-const articleOptions = computed(() =>
-  articles.value
-    .filter(a => !activeCategory.value || a.category === activeCategory.value)
-    .map(a => ({ label: a.title, key: a.slug }))
+/** 默认全部展开（分类少，平铺免二次点击）。 */
+const helpExpandedKeys = computed(() =>
+  [...new Set(articles.value.map(a => a.category))].map(c => 'group-' + c)
 )
-
-function onCategoryChange(key: string | null) {
-  activeCategory.value = activeCategory.value === key ? null : key
-}
 
 async function onArticleChange(key: string) {
   activeSlug.value = key
@@ -467,18 +491,74 @@ onMounted(() => {
 
   &__help {
     display: flex;
-    gap: 16px;
-    min-height: 400px;
+    gap: 24px;
+    min-height: 420px;
   }
 
   &__help-nav {
-    width: 220px;
+    width: 240px;
     flex-shrink: 0;
+    padding: 4px 8px 4px 0;
+    border-right: 1px solid var(--color-border-light);
+
+    // 组头（一级目录）：小号大写感、与文章拉开层次
+    :deep(.n-menu-item-group-title) {
+      margin-top: 14px;
+      padding-bottom: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: var(--color-text-secondary);
+      border-bottom: 1px solid var(--color-border-light);
+    }
+
+    // 文章项（二级目录）：行高放开，不拥挤
+    :deep(.n-menu .n-menu-item) {
+      height: 38px;
+      margin: 3px 0;
+      border-radius: 6px;
+    }
   }
 
   &__help-body {
     flex: 1;
     min-width: 0;
+    padding: 4px 12px;
+    max-width: 780px;
+
+    h3 {
+      margin-bottom: 12px;
+    }
+
+    // 正文行距拉开（用户反馈「太拥挤」）
+    :deep(.markdown-body) {
+      line-height: 1.9;
+    }
+  }
+
+  &__msg-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  &__msg-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--color-border-light);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  &__msg-meta {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-bottom: 4px;
+  }
+
+  &__msg-content {
+    white-space: pre-wrap;
+    line-height: 1.7;
   }
 }
 </style>
