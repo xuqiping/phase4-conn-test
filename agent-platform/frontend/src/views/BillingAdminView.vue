@@ -174,7 +174,7 @@
                 @keyup.enter="loadBalances(1)"
               />
               <n-button size="small" @click="loadBalances(1)">查询</n-button>
-              <span class="billing-admin__balance-hint">合计卡为全平台口径，不受筛选影响</span>
+              <span class="billing-admin__balance-hint">合计卡跟随下方用户名筛选（未筛选=全平台；仅统计已支付充值单，管理员发放不计入）</span>
             </div>
             <n-data-table
               remote

@@ -333,7 +333,7 @@ class BillingQueryServiceTest {
         totals.put("sumbalance", new BigDecimal("500"));
         totals.put("sumrechargepoints", new BigDecimal("2000"));
         totals.put("sumrechargeamount", new BigDecimal("200.00"));
-        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+        when(balanceMapper.platformBalanceTotals(any())).thenReturn(totals);
 
         var vo = service.userBalances(null, null, null, 1, 20);
 
@@ -351,7 +351,7 @@ class BillingQueryServiceTest {
         when(balanceMapper.countUserBalances(null)).thenReturn(0L);
         java.util.Map<String, Object> totals = new java.util.HashMap<>();
         totals.put("totalusers", 0L);
-        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+        when(balanceMapper.platformBalanceTotals(any())).thenReturn(totals);
 
         service.userBalances(null, "balance_points; DROP TABLE users", "desc", 1, 20);
 
@@ -364,7 +364,7 @@ class BillingQueryServiceTest {
         when(balanceMapper.countUserBalances(null)).thenReturn(0L);
         java.util.Map<String, Object> totals = new java.util.HashMap<>();
         totals.put("totalusers", 0L);
-        when(balanceMapper.platformBalanceTotals()).thenReturn(totals);
+        when(balanceMapper.platformBalanceTotals(any())).thenReturn(totals);
 
         service.userBalances(null, "rechargeAmount", "asc", 1, 20);
 

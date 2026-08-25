@@ -160,7 +160,7 @@ public class BillingQueryService {
     }
 
     /**
-     * admin 用户余额视图分页 + 全平台合计卡（合计不受 keyword 影响，页头恒定全平台口径）。
+     * admin 用户余额视图分页 + 合计卡（7x 反馈：合计卡跟随 keyword 筛选——筛选谁合计谁，未筛选=全平台）。
      * 排序白名单（防注入）：balance（余额）/rechargePoints（累计充值积分）/rechargeAmount（累计充值金额），
      * 缺省按余额降序；方向仅 asc/desc。
      */
@@ -173,7 +173,7 @@ public class BillingQueryService {
         List<com.superprogrammer.billing.dto.UserBalanceRowVO> records = total == 0
                 ? List.of()
                 : balanceMapper.pageUserBalances(keyword, orderClause, (pg - 1) * sz, sz);
-        java.util.Map<String, Object> t = balanceMapper.platformBalanceTotals();
+        java.util.Map<String, Object> t = balanceMapper.platformBalanceTotals(keyword);
         return new com.superprogrammer.billing.dto.UserBalancePageVO(
                 PageResult.of(records, total, pg, sz),
                 toLong(t.get("totalusers")),
