@@ -12,5 +12,7 @@ import java.util.List;
 @Data
 public class UserWalletVO {
     private BigDecimal balance;
+    /** B5（Q10=A）：未偿还欠款（>0 时消费全拦，充值自动冲抵）；无欠款 0。 */
+    private BigDecimal debtPoints;
     private List<LedgerItemVO> recentLedger;
 }

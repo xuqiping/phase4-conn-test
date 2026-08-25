@@ -40,9 +40,23 @@ public class LlmBillingService {
     private final AuditLogService auditLogService;
     /** 9x#7：流式线程无 MDC/SecurityContext，chat_completed 行的 username 按 userId 反查补齐。 */
     private final com.superprogrammer.auth.mapper.UserMapper userMapper;
+    /** B3：组池补扣兜底取组长（组行 owner），媒体 backstop 同口径。 */
+    private final com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
     /** 对话审计开关（audit.chat.enabled）。非 final，Spring @Value 字段注入。 */
     @Value("${audit.chat.enabled:true}")
     private boolean chatAuditEnabled;
+    /** B3（Q4=B）：聊天预扣开关——关=回退现状（预检>0+答完全量后扣）。 */
+    @Value("${billing.chat-hold.enabled:true}")
+    private boolean chatHoldEnabled;
+    /** B2：字符→token 折算系数（1 token ≈ N 字符，中文经验值 1.6）。 */
+    @Value("${billing.chat.char-per-token:1.6}")
+    private double charPerToken;
+    /**
+     * B3：预估输出 token 帽（Q4=B 全额冻结的 est 口径用）——请求 maxTokens 默认 8192，
+     * 按它全额冻结会常态性开局拒；est 取 min(maxTokens, 本帽)，超帽实耗走结算多退少补+DEBT 兜底。
+     */
+    @Value("${billing.chat.hold-est-max-tokens:2048}")
+    private int holdEstMaxTokens;
 
     /**
      * LLM 调用成功：算价→折算→同步扣→异步采。全链吞异常。usage 状态记 SUCCESS。
@@ -119,6 +133,197 @@ public class LlmBillingService {
             log.warn("计费意外异常(吞) userId={} model={} : {}", userId, model, e.toString());
             return null;
         }
+    }
+
+    // ==================== B2/B3：聊天 HOLD 预扣 + 多退少补 + 取消折算（Q2/Q3/Q4=B，镜像媒体 V155） ====================
+
+    /** 预扣开关透传（网关入口判断用）。 */
+    public boolean isChatHoldEnabled() {
+        return chatHoldEnabled && walletService.isEnabled();
+    }
+
+    /**
+     * B3（Q4=B）：聊天开局全额预扣。est = prompt 估算 tokens×入价 + min(maxTokens, est帽)×出价；
+     * 可用（个人余额/组池余额）&lt; est → 抛 INSUFFICIENT_POINTS（带两数，B4 SSE 话术通路）。
+     * <b>不吞异常</b>——开局拦截是本方法存在的目的（区别于结算腿的铁律吞异常）。
+     *
+     * @param ref 稳定调用锚（chat 会话=用户消息 id；无锚调用途径传唯一串）——幂等键 chat-hold-{ref}
+     * @return 预扣额（开关关/系统调用/估价≤0 → null=未预扣，后续走答完后扣现状）
+     */
+    public BigDecimal holdChat(Long userId, Long projectGroupId, Long providerId, String model,
+                               int estInputTokens, Integer requestMaxTokens, String ref) {
+        if (!isChatHoldEnabled() || userId == null) {
+            return null;
+        }
+        int estOut = requestMaxTokens == null ? holdEstMaxTokens : Math.min(requestMaxTokens, holdEstMaxTokens);
+        BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
+                estInputTokens, estOut, 0, 0);
+        BigDecimal est = ratioService.toPoints(yuan);
+        if (est == null || est.signum() <= 0) {
+            return null;
+        }
+        BigDecimal available = projectGroupId != null
+                ? groupWalletService.getGroupBalance(projectGroupId)
+                : walletService.getBalance(userId);
+        if (available == null) {
+            available = BigDecimal.ZERO;
+        }
+        if (available.compareTo(est) < 0) {
+            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.INSUFFICIENT_POINTS,
+                    "积分不足：本次预估上限 " + est.stripTrailingZeros().toPlainString()
+                            + "（上下文+最大输出），当前可用 " + available.stripTrailingZeros().toPlainString()
+                            + "，请先充值或调小 max_tokens");
+        }
+        if (projectGroupId != null) {
+            groupWalletService.chargeGroup(projectGroupId, userId, est, "CHAT-HOLD", ref, "chat-hold-" + ref);
+        } else {
+            walletService.chargeIdempotent(userId, est, "CHAT-HOLD", null,
+                    "聊天预扣（答完按实际用量多退少补）", "chat-hold-" + ref);
+        }
+        log.info("聊天预扣 userId={} gid={} ref={} est={}", userId, projectGroupId, ref, est);
+        return est;
+    }
+
+    /**
+     * B3 正常尾结算：usage 精确实耗 vs 预扣 多退少补（补扣 CONSUME(CHAT) / 退差 REFUND(CHAT)，幂等键 chat-settle-{ref}）。
+     * 组模式补扣失败 → BACKSTOP 扣组长（媒体同口径）；个人补扣失败 → 记 FAILED usage 平台担损（B5 接管为 DEBT）。
+     * usage 采集与 chat_completed 审计与 onSuccess 同口径。吞异常（结算旁路铁律）。
+     *
+     * @return 实耗积分（结算失败返回预扣额——预扣在手不重复 unwind）
+     */
+    public BigDecimal settleChatHeld(Long userId, Long providerId, String providerScope, String model,
+                                     Integer tokensInput, Integer tokensOutput, String status, String sessionId,
+                                     Long projectGroupId, String ref, BigDecimal heldPoints) {
+        try {
+            BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
+                    tokensInput, tokensOutput, 0, 0);
+            BigDecimal actual = yuan == null ? BigDecimal.ZERO : ratioService.toPoints(yuan);
+            settleDiff(userId, projectGroupId, model, ref, actual.subtract(heldPoints));
+            usageCollector.record(userId, providerId, providerScope, model, LlmUsageLogEntity.KIND_CHAT,
+                    tokensInput, tokensOutput, yuan, actual, status, null, null, sessionId, projectGroupId);
+            auditChatCompleted(userId, model, LlmUsageLogEntity.KIND_CHAT, tokensInput, tokensOutput,
+                    actual, AuditLogEntity.RESULT_SUCCESS, null);
+            return actual;
+        } catch (BusinessException e) {
+            usageCollector.record(userId, providerId, providerScope, model, LlmUsageLogEntity.KIND_CHAT,
+                    tokensInput, tokensOutput, null, null, LlmUsageLogEntity.STATUS_FAILED, e.getMessage());
+            log.warn("聊天结算补扣失败(已记FAILED,预扣在手) userId={} model={} ref={} : {}",
+                    userId, model, ref, e.toString());
+            return heldPoints;
+        } catch (Exception e) {
+            log.warn("聊天结算意外异常(吞,预扣在手) userId={} model={} ref={} : {}", userId, model, ref, e.toString());
+            return heldPoints;
+        }
+    }
+
+    /**
+     * B3 取消/中断折算结算（Q3=B）：provider 无 usage（用户停止/流错/完成但未回 usage）时按已产字符折算：
+     * tokens = chars÷系数，实耗 = min(折算积分, 预扣)，差额退（REFUND CHAT-HOLD，幂等键 chat-cancel-{ref}）；
+     * 折算=0（一字未产）全额退。usage 记 ESTIMATED。吞异常。
+     */
+    public void settleChatCancelled(Long userId, Long providerId, String providerScope, String model,
+                                    Long projectGroupId, String ref, BigDecimal heldPoints, long producedChars,
+                                    String sessionId) {
+        if (heldPoints == null || heldPoints.signum() <= 0) {
+            return; // 未预扣（开关关/答完后扣现状）→ 取消时本就没扣
+        }
+        try {
+            long tokensOut = charPerToken <= 0 ? 0 : Math.round(producedChars / charPerToken);
+            BigDecimal actual = BigDecimal.ZERO;
+            if (tokensOut > 0) {
+                BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
+                        null, (int) Math.min(tokensOut, Integer.MAX_VALUE), 0, 0);
+                BigDecimal est = yuan == null ? null : ratioService.toPoints(yuan);
+                if (est != null && est.signum() > 0) {
+                    actual = est.min(heldPoints);
+                }
+            }
+            BigDecimal back = heldPoints.subtract(actual);
+            if (back.signum() > 0) {
+                if (projectGroupId != null) {
+                    groupWalletService.refundGroup(projectGroupId, userId, back, "CHAT-HOLD", ref,
+                            "chat-cancel-" + ref);
+                } else {
+                    walletService.refundIdempotent(userId, back, "CHAT-HOLD", null,
+                            "聊天中止退差（按已产内容折算 " + actual.stripTrailingZeros().toPlainString() + "）",
+                            "chat-cancel-" + ref);
+                }
+            }
+            if (actual.signum() > 0 || producedChars > 0) {
+                usageCollector.record(userId, providerId, providerScope, model, LlmUsageLogEntity.KIND_CHAT,
+                        null, (int) Math.min(tokensOut, Integer.MAX_VALUE), null, actual,
+                        LlmUsageLogEntity.STATUS_ESTIMATED, "cancelled", null, sessionId, projectGroupId);
+            }
+            log.info("聊天中止折算结算 userId={} gid={} ref={} chars={} 实扣={} 退={}",
+                    userId, projectGroupId, ref, producedChars, actual, back.max(BigDecimal.ZERO));
+        } catch (Exception e) {
+            log.warn("聊天中止结算异常(吞) userId={} ref={} : {}", userId, ref, e.toString());
+        }
+    }
+
+    /** B2：PROGRESS 折算——已产字符→估算积分（网关流中报数用；估价失败返 null 不发事件）。 */
+    public BigDecimal estimateCharsPoints(Long providerId, String model, long chars) {
+        try {
+            long tokens = charPerToken <= 0 ? 0 : Math.round(chars / charPerToken);
+            if (tokens <= 0) {
+                return BigDecimal.ZERO;
+            }
+            BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
+                    null, (int) Math.min(tokens, Integer.MAX_VALUE), 0, 0);
+            return yuan == null ? null : ratioService.toPoints(yuan);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** B2：字符→token 折算透传（PROGRESS 事件的 estimatedTokens 字段用，与折算结算同系数）。 */
+    public long foldCharsToTokens(long chars) {
+        return charPerToken <= 0 ? 0 : Math.round(chars / charPerToken);
+    }
+
+    /** 结算差额腿：正=补扣（组池→BACKSTOP 兜底）、负=退差。幂等键 chat-settle-{ref}。 */
+    private void settleDiff(Long userId, Long projectGroupId, String model, String ref, BigDecimal diff) {
+        if (diff.signum() == 0) {
+            return;
+        }
+        if (diff.signum() > 0) {
+            if (projectGroupId != null) {
+                try {
+                    groupWalletService.chargeGroup(projectGroupId, userId, diff, "CHAT", ref, "chat-settle-" + ref);
+                } catch (BusinessException be) {
+                    backstopChat(projectGroupId, diff, ref);
+                    log.warn("聊天结算补扣转兜底 groupId={} userId={} diff={} ref={} : {}",
+                            projectGroupId, userId, diff, ref, be.getMessage());
+                }
+            } else {
+                try {
+                    walletService.chargeIdempotent(userId, diff, "CHAT", null,
+                            "聊天结算补扣（实耗超预估）", "chat-settle-" + ref);
+                } catch (BusinessException be) {
+                    // B5（Q10=A）：个人余额扣不尽 → 差额挂账 DEBT（开关关时 chargeToDebt 自空转=平台担损现状）
+                    walletService.chargeToDebt(userId, diff, "CHAT", null, "聊天结算补扣（余额扣尽差额挂账）");
+                    log.warn("聊天结算补扣转挂账 userId={} diff={} : {}", userId, diff, be.getMessage());
+                }
+            }
+        } else {
+            BigDecimal back = diff.negate();
+            if (projectGroupId != null) {
+                groupWalletService.refundGroup(projectGroupId, userId, back, "CHAT", ref, "chat-settle-" + ref);
+            } else {
+                walletService.refundIdempotent(userId, back, "CHAT", null,
+                        "聊天结算退差（实耗低于预估）", "chat-settle-" + ref);
+            }
+        }
+    }
+
+    /** 组池补扣兜底：差额扣组长个人 + 组流水 BACKSTOP（媒体 backstop 同口径）。 */
+    private void backstopChat(Long groupId, BigDecimal diff, String ref) {
+        var group = groupMapper.selectById(groupId);
+        if (group == null) {
+            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
+                    "项目组已删除，无法兜底 groupId=" + groupId);
+        }
+        groupWalletService.backstop(groupId, group.getOwnerUserId(), false, diff, "CHAT", ref);
     }
 
     /**

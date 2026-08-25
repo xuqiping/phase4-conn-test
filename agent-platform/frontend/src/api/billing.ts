@@ -160,6 +160,8 @@ export interface LedgerItemVO {
 
 export interface UserWalletVO {
   balance: number
+  /** B5（Q10=A）：未偿还欠款（>0 时消费全拦，充值自动冲抵）；老后端无此字段=0 */
+  debtPoints?: number | null
   recentLedger: LedgerItemVO[]
 }
 
@@ -530,7 +532,12 @@ export const LEDGER_TYPE_LABEL: Record<string, string> = {
   CONSUME: '消耗',
   REFUND: '退款',
   ADMIN_GRANT: '管理员发放',
-  RECHARGE: '充值'
+  RECHARGE: '充值',
+  // 计划5 组划拨 + B5 欠款兜底（V157）
+  GROUP_ALLOCATE: '划入项目组',
+  GROUP_RECLAIM: '从项目组回收',
+  DEBT: '欠款挂账',
+  DEBT_REPAY: '欠款冲抵'
 }
 
 /** 调用状态 → 中文（SUCCESS 成功 / FAILED 失败 / ESTIMATED 预估） */

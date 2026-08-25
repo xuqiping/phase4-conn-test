@@ -639,10 +639,14 @@ public class ChatSessionService {
         AtomicBoolean hasError = new AtomicBoolean(false);
         // 5x 四轮 U6（拍板③）：用户停止→部分内容落库防重（cancel 终态理论单次，CAS 兜底三终态互斥红线）
         AtomicBoolean partialPersisted = new AtomicBoolean(false);
+        // B2（Q2=B）：网关尾随 USAGE 内部事件捕获（DONE.data.usage 展示精确值），不透前端
+        AtomicReference<StreamEvent> usageEvt = new AtomicReference<>();
 
         return orchestrationEngine.executeStream(context, request.getMessage())
                 .doOnNext(evt -> {
-                    if ("CHUNK".equals(evt.getType()) && evt.getContent() != null) {
+                    if ("USAGE".equals(evt.getType())) {
+                        usageEvt.set(evt);
+                    } else if ("CHUNK".equals(evt.getType()) && evt.getContent() != null) {
                         fullResponse.append(evt.getContent());
                     } else if ("THINKING".equals(evt.getType()) && evt.getContent() != null) {
                         fullThinking.append(evt.getContent());
@@ -650,6 +654,8 @@ public class ChatSessionService {
                         hasError.set(true);
                     }
                 })
+                // B2：USAGE/内部事件滤除（PROGRESS 透传前端计数跳动）
+                .filter(evt -> !"USAGE".equals(evt.getType()))
                 .concatWith(Flux.defer(() -> {
                     if (hasError.get()) {
                         return Flux.just(StreamEvent.done());
@@ -726,7 +732,10 @@ public class ChatSessionService {
                     if (fileCardsEvt != null) {
                         tail.add(fileCardsEvt);
                     }
-                    tail.add(StreamEvent.done());
+                    // B2（Q2=B）：DONE 携精确 usage（网关 USAGE 事件并入 data.usage；无 usage=纯 DONE）
+                    tail.add(usageEvt.get() == null || usageEvt.get().getData() == null
+                            ? StreamEvent.done()
+                            : StreamEvent.done(usageEvt.get().getData()));
                     return Flux.fromIterable(tail);
                 }).subscribeOn(Schedulers.boundedElastic()))
                 // 5x 四轮 U6（拍板③：停止后部分内容落库）：客户端 abort → controller send 失败 → blockLast

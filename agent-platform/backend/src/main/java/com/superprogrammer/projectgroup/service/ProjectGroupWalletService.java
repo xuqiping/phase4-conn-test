@@ -172,7 +172,16 @@ public class ProjectGroupWalletService {
                          String refType, String refId) {
         requireOwner(groupId, leaderUserId, admin);
         requirePositive(shortfall, "兜底差额必须大于0");
-        pointsWallet.charge(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId, "组池不足·组长兜底"); // 锁①个人
+        // B5（Q10=A）：组长余额不足时不走 charge（内层 REQUIRED 事务加入本方法事务，抛 INSUFFICIENT 会
+        // 把本事务标 rollback-only，吞不掉），预判后直接扣尽挂账——实付 min(balance, shortfall)+差额进欠款，
+        // 语义与「charge 失败转挂账」等价且无事务毒化；并发残余竞态（预判后余额被抽走）由上游计费层吞。
+        if (pointsWallet.getBalance(leaderUserId).compareTo(shortfall) >= 0) {
+            pointsWallet.charge(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId, "组池不足·组长兜底"); // 锁①个人
+        } else {
+            pointsWallet.chargeToDebt(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId,
+                    "组池不足·组长兜底");
+            log.warn("兜底转挂账 groupId={} leader={} shortfall={}", groupId, leaderUserId, shortfall);
+        }
         ProjectGroupWalletEntity w = walletMapper.selectByGroupIdForUpdate(groupId); // 锁②组池（只读锁，取一致 balance_after）
         if (w == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);

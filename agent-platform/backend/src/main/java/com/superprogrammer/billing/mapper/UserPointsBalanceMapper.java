@@ -42,6 +42,21 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
     @Select("SELECT * FROM user_points_balance WHERE user_id = #{userId}")
     UserPointsBalanceEntity selectByUserId(@Param("userId") Long userId);
 
+    /**
+     * B5（Q10=A）：行锁读余额+欠款（挂账/冲抵事务内先锁行再算 pay/repay，防并发窗口）。
+     * 须在调用方 @Transactional 内使用；锁序恒为「钱包行最后」（与 backstop 锁序兼容）。
+     */
+    @Select("SELECT * FROM user_points_balance WHERE user_id = #{userId} FOR UPDATE")
+    UserPointsBalanceEntity selectByUserIdForUpdate(@Param("userId") Long userId);
+
+    /**
+     * B5：欠款列原子调（正=挂账/负=冲抵）。守卫 {@code debt_points + delta >= 0}（V157 CHECK 同口径），
+     * 违反返 null（service 层按业务错处理）；RETURNING 新欠款值。
+     */
+    @Select("UPDATE user_points_balance SET debt_points = debt_points + #{delta}, updated_at = NOW() "
+            + "WHERE user_id = #{userId} AND debt_points + #{delta} >= 0 RETURNING debt_points")
+    BigDecimal adjustDebtReturn(@Param("userId") Long userId, @Param("delta") BigDecimal delta);
+
     // ==================== admin 用户余额视图（20x#1） ====================
 
     /** 余额视图总数（keyword 筛选 username；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */

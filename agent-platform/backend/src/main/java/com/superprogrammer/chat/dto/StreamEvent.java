@@ -39,6 +39,39 @@ public class StreamEvent {
     public static StreamEvent done() {
         return StreamEvent.builder().type("DONE").build();
     }
+    /** B2（Q2=B）：DONE 携精确 usage（老客户端忽略 data 未知字段，前向兼容）。usage 可空。 */
+    public static StreamEvent done(java.util.Map<String, Object> usage) {
+        return StreamEvent.builder().type("DONE").data(usage == null ? null : java.util.Map.of("usage", usage)).build();
+    }
+    /**
+     * B2（Q2=B）：流中实时报数（PROGRESS）。网关按累计字符折算估算 tokens/积分，
+     * 每 32 chunk 或 ≥1s 发一条；前端计数跳动，DONE.usage 到达后以精确值为准。
+     */
+    public static StreamEvent progress(long chars, long estimatedTokens, java.math.BigDecimal estimatedPoints) {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("chars", chars);
+        data.put("estimatedTokens", estimatedTokens);
+        data.put("estimatedPoints", estimatedPoints);
+        return StreamEvent.builder().type("PROGRESS").data(data).build();
+    }
+    /**
+     * B3：HOLD/结算内部事件（不透前端）——网关在流首/流尾发出，ChatSessionService 捕获后滤除：
+     * 流首 BILLING 携 {ref, heldPoints}（取消折算结算依据），流尾 USAGE 携 {promptTokens, completionTokens, points}
+     * （并入服务层 DONE.data.usage 展示精确值）。
+     */
+    public static StreamEvent billing(String ref, java.math.BigDecimal heldPoints) {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("ref", ref);
+        data.put("heldPoints", heldPoints);
+        return StreamEvent.builder().type("BILLING").data(data).build();
+    }
+    public static StreamEvent usage(long promptTokens, long completionTokens, java.math.BigDecimal points) {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("promptTokens", promptTokens);
+        data.put("completionTokens", completionTokens);
+        data.put("points", points);
+        return StreamEvent.builder().type("USAGE").data(data).build();
+    }
     public static StreamEvent error(String message) {
         return StreamEvent.builder().type("ERROR").content(message).build();
     }

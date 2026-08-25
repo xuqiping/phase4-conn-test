@@ -51,4 +51,7 @@ public class User extends BaseEntity {
 
     /** 微信开放平台 openId（应用内标识） */
     private String wechatOpenid;
+
+    /** 账号备注（≤128 字，V157/D1）：注册/个人资料/管理员三处可维护，管理列表 keyword 可筛 */
+    private String remark;
 }

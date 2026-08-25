@@ -29,6 +29,10 @@ public class PointsLedgerEntity {
     public static final String TYPE_GROUP_ALLOCATE = "GROUP_ALLOCATE";
     /** type：从项目组池回收（正 delta）。 */
     public static final String TYPE_GROUP_RECLAIM = "GROUP_RECLAIM";
+    /** type：欠款挂账（V157/B5，Q10=A：余额扣尽后的未付差额；delta=0 不动余额，金额在 remark，账记 debt_points 列）。 */
+    public static final String TYPE_DEBT = "DEBT";
+    /** type：欠款偿还（充值/发放自动冲抵欠款；delta=0 不动余额，实付仍落原充值类型腿）。 */
+    public static final String TYPE_DEBT_REPAY = "DEBT_REPAY";
 
     /** ref_type：对话。 */
     public static final String REF_CHAT = "CHAT";

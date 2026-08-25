@@ -12,6 +12,10 @@
       </n-statistic>
       <n-space style="margin-top: 12px">
         <n-tag :type="balanceTagType">{{ balanceHint }}</n-tag>
+        <!-- B5（Q10=A）：欠款警示——充值自动冲抵，还清前消费全拦 -->
+        <n-tag v-if="(wallet?.debtPoints ?? 0) > 0" type="error">
+          未偿还欠款 {{ fmtNum(wallet?.debtPoints) }} 积分：充值将自动偿还，还清前暂停消费
+        </n-tag>
       </n-space>
     </n-card>
 

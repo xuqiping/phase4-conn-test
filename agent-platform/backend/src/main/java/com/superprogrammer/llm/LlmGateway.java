@@ -83,6 +83,11 @@ public class LlmGateway {
         // 余额复用：返回值直接喂给闸门，省一次重复查库
         // 计划5 Step4：带 projectGroupId → 组池预检（非成员 403/组池尽 40201），组池计费
         java.math.BigDecimal balance = requireAffordableFor(uid, gid, LlmUsageLogEntity.KIND_CHAT);
+        // B3（Q4=B）：开局全额预扣（est=上下文估算+min(maxTokens,2048) 出量）。开关关/系统调用返 null 走现状。
+        // 抛 INSUFFICIENT_POINTS=开局拦截（此时闸门未 acquire、provider 未调，直接外抛，B4/SSE 上层分流）。
+        String holdRef = "chat-" + java.util.UUID.randomUUID();
+        java.math.BigDecimal heldPoints = billingService.holdChat(uid, gid, provider.getId(),
+                request.getModel(), estimateInputTokens(request), request.getMaxTokens(), holdRef);
         // L7 低余额并行闸门：低余额用户超在途上限在此抛 42902；held=true 须 finally release
         boolean held = inflightGate.acquire(uid, balance);
         long startNanos = System.nanoTime();
@@ -100,9 +105,16 @@ public class LlmGateway {
                 out = 0;
                 status = LlmUsageLogEntity.STATUS_ESTIMATED;
             }
-            billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
-                    request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status,
-                    request.getSessionId(), gid);
+            if (heldPoints != null) {
+                // B3：预扣在手 → 精确 usage 多退少补（结算失败吞异常，预扣不重复 unwind）
+                billingService.settleChatHeld(uid, provider.getId(), provider.getProviderScope(),
+                        request.getModel(), in, out, status, request.getSessionId(), gid,
+                        holdRef, heldPoints);
+            } else {
+                billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
+                        request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status,
+                        request.getSessionId(), gid);
+            }
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             ragCall.succeed(response.getContent(), in, out);
             // 安全体系 S3：出口净化（null bean/异常均透传原文，见 OutputSanitizer）
@@ -110,6 +122,11 @@ public class LlmGateway {
             return response;
         } catch (RuntimeException e) {
             ragCall.fail(e.getMessage());
+            if (heldPoints != null) {
+                // B3：provider 失败一字未产 → 全额退预扣（chars=0 走取消折算路径）
+                billingService.settleChatCancelled(uid, provider.getId(), provider.getProviderScope(),
+                        request.getModel(), gid, holdRef, heldPoints, 0L, request.getSessionId());
+            }
             billingService.onFailure(uid, provider.getId(), provider.getProviderScope(),
                     request.getModel(), LlmUsageLogEntity.KIND_CHAT, e.getMessage());
             recordLlmTerminal(provider.getName(), request.getModel(), BizMetrics.RESULT_FAIL, startNanos);
@@ -163,19 +180,49 @@ public class LlmGateway {
             // 立即恢复订阅线程，后续每个 usage/terminal 回调按快照短暂恢复同一 RAG Trace。
             ragCall.detach();
             java.util.concurrent.atomic.AtomicReference<TokenUsage> ragUsage = new java.util.concurrent.atomic.AtomicReference<>();
+            // B2/B3（Q2/Q3/Q4=B）：已产字符（净化后口径=用户实见）、PROGRESS 节流序号/时间戳、
+            // 预扣结算守卫（usage sink 结算成功后，终态取消折算不再跑——钱已按精确实耗收讫）。
+            java.util.concurrent.atomic.AtomicLong producedChars = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong progressSeq = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong lastProgressAt = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicBoolean usageSettled = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<java.math.BigDecimal> settledPoints =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             // 安全体系 S3：每订阅一个流式净化器（carry 状态不可跨流复用）；null bean → 直通
             final com.superprogrammer.common.security.ai.OutputSanitizer.StreamMasker masker =
                     outputSanitizer == null ? null : outputSanitizer.openStream(uid);
             final Flux<StreamEvent> inner;
+            // B3：稳定调用锚（结算/退款幂等键挂它）
+            final String holdRef = "cs-" + java.util.UUID.randomUUID();
             try {
+                // B3（Q4=B）：开局全额预扣。抛 INSUFFICIENT_POINTS → 下方 catch 释放闸门槽位后
+                // 转 Flux.error（此刻未产任何 chunk，B4 按「未开局」分流回 ERROR 事件）。
+                final java.math.BigDecimal holdPoints = billingService.holdChat(uid, gid, providerId, model,
+                        estimateInputTokens(request), request.getMaxTokens(), holdRef);
+                final Runnable cancelSettle = () -> {
+                    if (holdPoints != null && !usageSettled.get()) {
+                        billingService.settleChatCancelled(uid, providerId, providerScope, model, gid,
+                                holdRef, holdPoints, producedChars.get(), request.getSessionId());
+                    }
+                };
                 inner = provider.chatStream(request, usage -> {
                             ragCall.runWithContext(() -> {
                                 ragUsage.set(usage);
-                                billingService.onSuccess(uid, providerId, providerScope,
-                                        model, LlmUsageLogEntity.KIND_CHAT,
-                                        usage.getPromptTokens(), usage.getCompletionTokens(),
-                                        LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
-                                        gid);
+                                if (holdPoints != null) {
+                                    // B3：预扣在手 → 精确 usage 多退少补；返回实耗积分给 USAGE 事件展示
+                                    settledPoints.set(billingService.settleChatHeld(uid, providerId,
+                                            providerScope, model,
+                                            usage.getPromptTokens(), usage.getCompletionTokens(),
+                                            LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
+                                            gid, holdRef, holdPoints));
+                                    usageSettled.set(true);
+                                } else {
+                                    billingService.onSuccess(uid, providerId, providerScope,
+                                            model, LlmUsageLogEntity.KIND_CHAT,
+                                            usage.getPromptTokens(), usage.getCompletionTokens(),
+                                            LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
+                                            gid);
+                                }
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
                                         usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_OUT,
@@ -190,23 +237,65 @@ public class LlmGateway {
                                 ragCall.succeed(null, usage == null ? null : usage.getPromptTokens(),
                                         usage == null ? null : usage.getCompletionTokens());
                             });
+                            // B3：正常完流但 provider 未回 usage → 按已产字符折算结算
+                            cancelSettle.run();
                         })
-                        .doOnError(e -> ragCall.runWithContext(() -> {
-                            recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos);
-                            ragCall.fail(e.getMessage());
-                        }))
-                        .doOnCancel(() -> ragCall.runWithContext(() -> {
-                            recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos);
-                            ragCall.cancel();
-                        }))
+                        .doOnError(e -> {
+                            ragCall.runWithContext(() -> {
+                                recordLlmTerminal(providerName, model, BizMetrics.RESULT_FAIL, startNanos);
+                                ragCall.fail(e.getMessage());
+                            });
+                            cancelSettle.run();
+                        })
+                        .doOnCancel(() -> {
+                            ragCall.runWithContext(() -> {
+                                recordLlmTerminal(providerName, model, BizMetrics.RESULT_CANCEL, startNanos);
+                                ragCall.cancel();
+                            });
+                            cancelSettle.run();
+                        })
                         // 安全体系 S3：CHUNK/THINKING 过净化器（40 字符 carry）；终态事件前补发尾段
                         .concatMap(evt -> sanitizeStreamEvent(evt, masker))
+                        // B2（Q2=B）：流中实时报数——净化后 CHUNK 累计字符，每 32 chunk 或 ≥1s 发一条
+                        // PROGRESS（chars/估算 tokens/估算积分，前端计数跳动，DONE.usage 到达后以精确值为准）。
+                        .concatMap(evt -> {
+                            if (!"CHUNK".equals(evt.getType()) || evt.getContent() == null) {
+                                return Flux.just(evt);
+                            }
+                            long chars = producedChars.addAndGet(evt.getContent().length());
+                            long seq = progressSeq.incrementAndGet();
+                            long now = System.nanoTime();
+                            long last = lastProgressAt.get();
+                            if ((seq & 31L) != 0 && now - last < 1_000_000_000L) {
+                                return Flux.just(evt);
+                            }
+                            if (!lastProgressAt.compareAndSet(last, now)) {
+                                return Flux.just(evt);
+                            }
+                            java.math.BigDecimal pts = billingService.estimateCharsPoints(providerId, model, chars);
+                            return pts == null ? Flux.just(evt)
+                                    : Flux.just(evt, StreamEvent.progress(chars,
+                                            billingService.foldCharsToTokens(chars), pts));
+                        })
                         // 2026-08-17 实测④续：chat 流的 DONE 由服务层在网关流之后追加——净化器靠
                         // 「非 CHUNK 事件」触发的 flush 分支永不执行，末 ≤40 字符扣留段（含
                         // max_tokens 截断标记 chunk）被整体吞掉。此处流终结统一补发扣留尾段。
+                        // B2（Q2=B）：尾随 USAGE 内部事件（provider 精确 usage + B3 结算实耗积分），
+                        // ChatSessionService 捕获后并入 DONE.data.usage，不透前端。
                         .concatWith(Flux.defer(() -> {
                             String rest = masker == null ? "" : masker.flush();
-                            return rest.isEmpty() ? Flux.empty() : Flux.just(StreamEvent.chunk(rest));
+                            TokenUsage usage = ragUsage.get();
+                            java.util.List<StreamEvent> tail = new java.util.ArrayList<>(2);
+                            if (!rest.isEmpty()) {
+                                tail.add(StreamEvent.chunk(rest));
+                            }
+                            if (usage != null) {
+                                tail.add(StreamEvent.usage(
+                                        usage.getPromptTokens() == null ? 0 : usage.getPromptTokens(),
+                                        usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens(),
+                                        settledPoints.get()));
+                            }
+                            return tail.isEmpty() ? Flux.empty() : Flux.fromIterable(tail);
                         }));
             } catch (RuntimeException e) {
                 // 组装期抛异常 → doFinally 尚未注册，此处配对释放

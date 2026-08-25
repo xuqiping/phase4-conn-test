@@ -49,6 +49,9 @@ public class PointsWalletService {
     /** 失败是否退款，默认 true。 */
     @Value("${billing.refund-on-fail:true}")
     private boolean refundOnFail;
+    /** B5（Q10=A）：欠款兜底开关——关=挂账腿不落（补扣失败回到 FAILED usage 平台担损现状）。 */
+    @Value("${billing.debt-collect.enabled:true}")
+    private boolean debtCollectEnabled;
 
     /**
      * 11x 加固 P3-C9：扣点咽喉发 KIND_POINTS_USAGE（积分滥用规则消费）。
@@ -68,6 +71,12 @@ public class PointsWalletService {
             return null;
         }
         UserPointsBalanceEntity b = balanceMapper.selectByUserId(userId);
+        // B5（Q10=A）：欠款未清 → 拦全部个人消费入口（充值/发放自动冲抵，清零自动恢复）
+        if (b != null && b.getDebtPoints() != null && b.getDebtPoints().signum() > 0) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS,
+                    "有未偿还欠款 " + b.getDebtPoints().stripTrailingZeros().toPlainString()
+                            + " 积分，充值后将自动偿还，还清前暂停消费");
+        }
         if (b == null || b.getBalancePoints() == null || b.getBalancePoints().signum() <= 0) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS);
         }
@@ -229,6 +238,86 @@ public class PointsWalletService {
     }
 
     /**
+     * B5（Q10=A）· 扣尽挂账：余额付 min(balance, cost)，差额进 debt_points。
+     * 两腿流水：CONSUME(实付，delta=−pay) + DEBT(挂账，delta=0 金额在 remark——不动 Σdelta 对账恒等式)。
+     * <p>用途：实耗已发生、普通扣减因余额不足落败时的最后收款腿（聊天/媒体结算补扣、组兜底组长侧）。
+     * 开关关（debt-collect.enabled=false）→ 不动任何账（回到「记 FAILED usage 平台担损」现状）。
+     * <b>不抛异常</b>——调用方已在吞异常上下文里，失败只 log（此时确属平台担损，DB 问题另行排障）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void chargeToDebt(Long userId, BigDecimal cost, String refType, Long refId, String remark) {
+        if (!enabled || !debtCollectEnabled || userId == null || cost == null || cost.signum() <= 0) {
+            return;
+        }
+        try {
+            balanceMapper.insertIfAbsent(userId);
+            UserPointsBalanceEntity b = balanceMapper.selectByUserIdForUpdate(userId);
+            if (b == null) {
+                log.warn("挂账失败：钱包行缺失 userId={}", userId);
+                return;
+            }
+            BigDecimal balance = b.getBalancePoints() == null ? BigDecimal.ZERO : b.getBalancePoints();
+            BigDecimal pay = balance.min(cost);
+            BigDecimal debtAdd = cost.subtract(pay);
+            if (pay.signum() > 0) {
+                adjust(userId, pay.negate(), PointsLedgerEntity.TYPE_CONSUME, null, refType, refId,
+                        remark, "欠款结算实付");
+            }
+            if (debtAdd.signum() > 0) {
+                balanceMapper.adjustDebtReturn(userId, debtAdd);
+                PointsLedgerEntity leg = new PointsLedgerEntity();
+                leg.setUserId(userId);
+                leg.setType(PointsLedgerEntity.TYPE_DEBT);
+                leg.setDeltaPoints(BigDecimal.ZERO);
+                leg.setRefType(refType);
+                leg.setRefId(refId);
+                leg.setBalanceAfter(balance.subtract(pay));
+                leg.setRemark("欠款挂账 " + debtAdd.stripTrailingZeros().toPlainString() + "（余额扣尽）");
+                ledgerMapper.insert(leg);
+                log.warn("欠款挂账 userId={} pay={} debt={} ref={}:{}", userId, pay, debtAdd, refType, refId);
+            }
+        } catch (Exception e) {
+            log.warn("挂账异常(吞,平台担损) userId={} cost={} : {}", userId, cost, e.toString());
+        }
+    }
+
+    /** B5：欠款查询（用户钱包页欠款行；无行/无欠款返 0）。 */
+    public BigDecimal getDebt(Long userId) {
+        if (userId == null) {
+            return BigDecimal.ZERO;
+        }
+        UserPointsBalanceEntity b = balanceMapper.selectByUserId(userId);
+        return b != null && b.getDebtPoints() != null ? b.getDebtPoints() : BigDecimal.ZERO;
+    }
+
+    /**
+     * B5：充值/发放自动冲抵欠款（credit 前置腿）——repay=min(debt, points)，DEBT_REPAY 流水（delta=0，
+     * ref 同充值单：uq_ledger_ref 含 type 维度，与 RECHARGE 主腿不撞键），返回冲抵后应入余额的部分。
+     * 行锁事务内调用（须在 credit 的 @Transactional 里）。
+     */
+    private BigDecimal repayDebtFromCredit(Long userId, BigDecimal points, String refType, Long refId) {
+        UserPointsBalanceEntity b = balanceMapper.selectByUserIdForUpdate(userId);
+        BigDecimal debt = b == null || b.getDebtPoints() == null ? BigDecimal.ZERO : b.getDebtPoints();
+        if (debt.signum() <= 0) {
+            return points;
+        }
+        BigDecimal repay = debt.min(points);
+        balanceMapper.adjustDebtReturn(userId, repay.negate());
+        BigDecimal balanceAfter = b.getBalancePoints() == null ? BigDecimal.ZERO : b.getBalancePoints();
+        PointsLedgerEntity leg = new PointsLedgerEntity();
+        leg.setUserId(userId);
+        leg.setType(PointsLedgerEntity.TYPE_DEBT_REPAY);
+        leg.setDeltaPoints(BigDecimal.ZERO);
+        leg.setRefType(refType);
+        leg.setRefId(refId);
+        leg.setBalanceAfter(balanceAfter);
+        leg.setRemark("充值自动冲抵欠款 " + repay.stripTrailingZeros().toPlainString());
+        ledgerMapper.insert(leg);
+        log.info("充值冲抵欠款 userId={} repay={} debtRemain={}", userId, repay, debt.subtract(repay));
+        return points.subtract(repay);
+    }
+
+    /**
      * 充值（admin grant MVP / Phase2 支付回调 PAID）。
      * <p>建 payment_order(PAID) + 余额涨 + 流水。不看 billing.enabled（运维核心能力恒开）。
      *
@@ -276,8 +365,17 @@ public class PointsWalletService {
         String type = PaymentOrderEntity.CHANNEL_ADMIN.equals(order.getChannel())
                 ? PointsLedgerEntity.TYPE_ADMIN_GRANT
                 : PointsLedgerEntity.TYPE_RECHARGE;
-        return adjust(userId, points, type, moneyYuan, PointsLedgerEntity.REF_PAYMENT,
-                order.getId(), remark != null && !remark.isBlank() ? remark : "充值", "积分充值");
+        // B5（Q10=A）：入账前自动冲抵欠款——repay 腿(DEBT_REPAY, delta=0)先落，余额只涨 toBalance
+        //（主腿 delta=toBalance 保 Σdelta=balance 恒等式；repay=全额时主腿 delta=0 仅留单据痕）。
+        BigDecimal toBalance = repayDebtFromCredit(userId, points, PointsLedgerEntity.REF_PAYMENT, order.getId());
+        BigDecimal repaid = points.subtract(toBalance);
+        String ledgerRemark = remark != null && !remark.isBlank() ? remark : "充值";
+        if (repaid.signum() > 0) {
+            ledgerRemark = ledgerRemark + "（冲抵欠款 " + repaid.stripTrailingZeros().toPlainString()
+                    + "，到账 " + toBalance.stripTrailingZeros().toPlainString() + "）";
+        }
+        return adjust(userId, toBalance, type, moneyYuan, PointsLedgerEntity.REF_PAYMENT,
+                order.getId(), ledgerRemark, "积分充值");
     }
 
     /**
@@ -323,9 +421,17 @@ public class PointsWalletService {
         if (userId == null || points == null || points.signum() <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "入账积分必须大于0");
         }
-        return adjust(userId, points, PointsLedgerEntity.TYPE_RECHARGE, moneyYuan,
-                PointsLedgerEntity.REF_PAYMENT, orderId,
-                remark != null && !remark.isBlank() ? remark : "自助充值", "支付入账").getBalanceAfter();
+        balanceMapper.insertIfAbsent(userId);
+        // B5（Q10=A）：自助充值同样先冲抵欠款（与 grant 同口径）
+        BigDecimal toBalance = repayDebtFromCredit(userId, points, PointsLedgerEntity.REF_PAYMENT, orderId);
+        BigDecimal repaid = points.subtract(toBalance);
+        String ledgerRemark = remark != null && !remark.isBlank() ? remark : "自助充值";
+        if (repaid.signum() > 0) {
+            ledgerRemark = ledgerRemark + "（冲抵欠款 " + repaid.stripTrailingZeros().toPlainString()
+                    + "，到账 " + toBalance.stripTrailingZeros().toPlainString() + "）";
+        }
+        return adjust(userId, toBalance, PointsLedgerEntity.TYPE_RECHARGE, moneyYuan,
+                PointsLedgerEntity.REF_PAYMENT, orderId, ledgerRemark, "支付入账").getBalanceAfter();
     }
 
     /** 查余额（用户钱包页）。无行返 0。 */

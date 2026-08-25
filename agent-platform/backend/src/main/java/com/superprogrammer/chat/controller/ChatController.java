@@ -284,6 +284,8 @@ public class ChatController {
         // 审计 #7：裸线程不继承 ThreadLocal，手工快照请求线程 MDC（traceId/userId/username/clientIp），
         // 线程内恢复——否则流式审计 fromMdc 读 username/userId 全 null（REST 路径走 Tomcat 线程不受影响）。
         java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
+        // B4：已发过 chunk 标记——业务异常分流话术用（半途中断≠开局拦截）；try 外声明供 catch 读
+        AtomicBoolean sentChunk = new AtomicBoolean(false);
 
         new Thread(() -> {
             try {
@@ -299,6 +301,8 @@ public class ChatController {
                             try {
                                 if ("DONE".equals(evt.getType())) {
                                     sentDone.set(true);
+                                } else if ("CHUNK".equals(evt.getType())) {
+                                    sentChunk.set(true);
                                 }
                                 emitter.send(SseEmitter.event().data(evt));
                             } catch (Exception sendError) {
@@ -318,6 +322,22 @@ public class ChatController {
                     // U6 停止场景同理——上游已随 blockLast 取消，部分内容由 service doOnCancel 落库）
                     log.warn("SSE 超时/客户端断开（不重答）session={} messageLen={}",
                             request.getSessionId(), request.getMessage() == null ? 0 : request.getMessage().length());
+                    return;
+                }
+                // B3/B4：业务异常（开局预扣拦截 INSUFFICIENT_POINTS/组池预检等）——直接回业务话术+DONE，
+                // 不走 sendMessage 同步重答：重答=二次预扣双倍计费，且拦截原因未消除注定再拒。
+                // 已发过 chunk（半途中断）加前缀；未发 chunk（开局拦截）原话术直给。
+                if (findBusinessException(e) != null) {
+                    com.superprogrammer.common.exception.BusinessException be = findBusinessException(e);
+                    log.warn("SSE 业务异常（不重答）session={} : {}", request.getSessionId(), be.getMessage());
+                    try {
+                        emitter.send(SseEmitter.event().data(
+                                com.superprogrammer.chat.dto.StreamEvent.error(
+                                        sentChunk.get() ? "回答中断：" + be.getMessage() : be.getMessage())));
+                        emitter.send(SseEmitter.event().data(
+                                com.superprogrammer.chat.dto.StreamEvent.done()));
+                        emitter.complete();
+                    } catch (Exception ignored) {}
                     return;
                 }
                 // Streaming failed or timed out — fall back to sync REST
@@ -353,5 +373,17 @@ public class ChatController {
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (Long) auth.getPrincipal();
+    }
+
+    /** B4：沿 cause 链找 BusinessException（React 封装/Runnable 包裹下还原业务话术）；找不到返 null。 */
+    private com.superprogrammer.common.exception.BusinessException findBusinessException(Throwable e) {
+        Throwable t = e;
+        while (t != null) {
+            if (t instanceof com.superprogrammer.common.exception.BusinessException) {
+                return (com.superprogrammer.common.exception.BusinessException) t;
+            }
+            t = t.getCause();
+        }
+        return null;
     }
 }

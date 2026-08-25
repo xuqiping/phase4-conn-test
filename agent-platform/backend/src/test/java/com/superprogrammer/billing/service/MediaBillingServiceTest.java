@@ -355,7 +355,8 @@ class MediaBillingServiceTest {
 
     @Test
     void settleMediaSuccess_supplementFails_recordsFailedReturnsHeld() {
-        // 补扣时余额被并发耗尽：实耗已发生 → FAILED usage 平台可见缺口，返预扣额（worker 据此 unwind）
+        // B5（Q10=A）后语义：补扣余额耗尽 → chargeToDebt 挂账接管（不再落 FAILED），
+        // 返实耗 80（worker unwind 按实耗退）。挂账腿本身在 PointsWalletServiceTest 覆盖，此处验编排。
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(anyString(), anyLong(), anyString(),
                 anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.800000"));
@@ -368,10 +369,14 @@ class MediaBillingServiceTest {
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p",
                 new BigDecimal("50"));
 
-        assertEquals(new BigDecimal("50"), actual);
+        assertEquals(new BigDecimal("80"), actual);
+        verify(walletService).chargeToDebt(eq(100L), eq(new BigDecimal("30")), eq(LlmUsageLogEntity.KIND_VIDEO),
+                eq(9L), anyString());
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
-                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L));
+                eq(new BigDecimal("0.800000")), eq(new BigDecimal("80")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(9L),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test

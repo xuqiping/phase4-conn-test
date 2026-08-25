@@ -40,6 +40,9 @@ class ProjectGroupWalletServiceIT {
     private ProjectGroupService groupService;
     @Autowired
     private ProjectGroupWalletService walletService;
+    /** B5：充值冲抵欠款验证用。 */
+    @Autowired
+    private com.superprogrammer.billing.service.PointsWalletService pointsWallet;
     @Autowired
     private ProjectGroupLedgerMapper ledgerMapper;
     @Autowired
@@ -94,7 +97,8 @@ class ProjectGroupWalletServiceIT {
                 .orderByAsc(ProjectGroupLedgerEntity::getId));
     }
 
-    /** V133 对账模板①：末行 balance_after == 钱包余额；正向重建 Σdelta（BACKSTOP 不动组池，剔除）。 */
+    /** V133 对账模板①：末行 balance_after == 钱包余额；正向重建 Σdelta。
+     *  剔除不动组池的腿：BACKSTOP（差额记组长个人）+ MEMBER_*（配额授予历史，非资金腿，A1）。 */
     private void assertLedgerWalletReconcile() {
         List<ProjectGroupLedgerEntity> rows = groupLedger();
         assertThat(rows).isNotEmpty();
@@ -102,6 +106,7 @@ class ProjectGroupWalletServiceIT {
                 .isEqualByComparingTo(walletBalance());
         BigDecimal sum = rows.stream()
                 .filter(r -> !ProjectGroupLedgerEntity.TYPE_BACKSTOP.equals(r.getType()))
+                .filter(r -> !r.getType().startsWith("MEMBER_"))
                 .map(ProjectGroupLedgerEntity::getDeltaPoints)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         assertThat(sum).isEqualByComparingTo(walletBalance());
@@ -273,6 +278,37 @@ class ProjectGroupWalletServiceIT {
                 "SELECT used_points FROM project_group_members WHERE group_id = ? AND user_id = ?",
                 BigDecimal.class, groupId, MEMBER);
         assertThat(used).isEqualByComparingTo(BigDecimal.ZERO);
+        assertLedgerWalletReconcile();
+    }
+
+    @Test
+    void backstop_组长个人不足_转挂账_欠款拦消费_充值自动冲抵_B5() {
+        fundOwner("3");   // 组长个人 3、组池 0
+        // 兜底 5：个人实付 3 → 差额 2 挂账（B5/Q10=A），BACKSTOP 组流水照落
+        walletService.backstop(groupId, OWNER, false, new BigDecimal("5"),
+                ProjectGroupLedgerEntity.REF_MEDIA, "t-debt");
+        assertThat(personalBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+        BigDecimal debt = jdbc.queryForObject(
+                "SELECT debt_points FROM user_points_balance WHERE user_id = ?", BigDecimal.class, OWNER);
+        assertThat(debt).isEqualByComparingTo(new BigDecimal("2"));
+        assertThat(groupLedger()).extracting(ProjectGroupLedgerEntity::getType)
+                .containsExactly(ProjectGroupLedgerEntity.TYPE_BACKSTOP);
+
+        // 欠款未清 → 拦全部个人消费入口
+        assertThatThrownBy(() -> pointsWallet.requireAffordable(OWNER))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("欠款");
+
+        // 充值 4 → 先冲抵 2（DEBT_REPAY 腿），到账 2；欠款清零、消费恢复
+        pointsWallet.grant(OWNER, new BigDecimal("4"), BigDecimal.ONE, "ADMIN", null);
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("2"));
+        assertThat(jdbc.queryForObject(
+                "SELECT debt_points FROM user_points_balance WHERE user_id = ?", BigDecimal.class, OWNER))
+                .isEqualByComparingTo(BigDecimal.ZERO);
+        String repayType = jdbc.queryForObject(
+                "SELECT type FROM points_ledger WHERE user_id = ? AND type = 'DEBT_REPAY'", String.class, OWNER);
+        assertThat(repayType).isEqualTo("DEBT_REPAY");
+        assertThat(pointsWallet.requireAffordable(OWNER)).isEqualByComparingTo(new BigDecimal("2"));
         assertLedgerWalletReconcile();
     }
 

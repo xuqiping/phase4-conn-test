@@ -207,6 +207,7 @@ public class BillingQueryService {
     public UserWalletVO userWallet(Long userId) {
         UserWalletVO vo = new UserWalletVO();
         vo.setBalance(walletService.getBalance(userId));
+        vo.setDebtPoints(walletService.getDebt(userId));
         LambdaQueryWrapper<PointsLedgerEntity> w = new LambdaQueryWrapper<PointsLedgerEntity>()
                 .eq(PointsLedgerEntity::getUserId, userId)
                 .orderByDesc(PointsLedgerEntity::getCreatedAt)

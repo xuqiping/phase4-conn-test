@@ -262,8 +262,15 @@ public class MediaBillingService {
                                 projectGroupId, userId, diff, refId, be.getMessage());
                     }
                 } else {
-                    walletService.chargeIdempotent(userId, diff, kind, refId,
-                            "媒体任务预估补扣（实耗超预估）", "media-settle-" + refId);
+                    try {
+                        walletService.chargeIdempotent(userId, diff, kind, refId,
+                                "媒体任务预估补扣（实耗超预估）", "media-settle-" + refId);
+                    } catch (BusinessException be) {
+                        // B5（Q10=A）：个人余额扣不尽 → 差额挂账 DEBT（同聊天结算口径）
+                        walletService.chargeToDebt(userId, diff, kind, refId, "媒体结算补扣（余额扣尽差额挂账）");
+                        log.warn("媒体结算补扣转挂账 userId={} kind={} refId={} diff={} : {}",
+                                userId, kind, refId, diff, be.getMessage());
+                    }
                 }
             } else if (diff.signum() < 0) {
                 // 实耗低于预估 → 退差额
@@ -360,6 +367,14 @@ public class MediaBillingService {
             log.warn("媒体预扣退款异常(吞) userId={} kind={} refId={} gid={} : {}",
                     userId, kind, refId, projectGroupId, e.toString());
         }
+    }
+
+    /**
+     * 计费开关透传（worker 第二层 fail-closed 闸用）：结算返回 null 时区分「计费关/系统调用」
+     * 与「扣费彻底失败」——后者须退预扣、标 FAILED、不交付产物。
+     */
+    public boolean billingEnabled() {
+        return walletService.isEnabled();
     }
 
     /**

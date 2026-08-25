@@ -381,4 +381,137 @@ class PointsWalletServiceTest {
         b.setBalancePoints(new BigDecimal(points));
         return b;
     }
+
+    // ---------- B5（Q10=A）：欠款拦截 / 扣尽挂账 / 充值冲抵 ----------
+
+    /** 欠款>0 → 拦全部个人消费入口，话术带欠款数与「充值后自动偿还」。 */
+    @Test
+    void requireAffordable_debtPositive_blocksWithMessage() {
+        UserPointsBalanceEntity b = balance("100.00");
+        b.setDebtPoints(new BigDecimal("50.00"));
+        when(balanceMapper.selectByUserId(1L)).thenReturn(b);
+
+        assertThatThrownBy(() -> wallet.requireAffordable(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("50")
+                .hasMessageContaining("自动偿还");
+    }
+
+    /** 扣尽挂账：余额30 扣100 → 实付30（CONSUME 腿）+ 挂账70（DEBT 腿 delta=0 不动 Σdelta）。 */
+    @Test
+    void chargeToDebt_partialPay_consumeLegPlusDebtLeg() {
+        ReflectionTestUtils.setField(wallet, "debtCollectEnabled", true);
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenReturn(balance("30.00"));
+        when(balanceMapper.adjustBalanceReturn(eq(1L), eq(new BigDecimal("-30.00"))))
+                .thenReturn(BigDecimal.ZERO);
+        when(balanceMapper.adjustDebtReturn(eq(1L), eq(new BigDecimal("70.00"))))
+                .thenReturn(new BigDecimal("70.00"));
+
+        wallet.chargeToDebt(1L, new BigDecimal("100.00"), PointsLedgerEntity.REF_CHAT, null, "补扣");
+
+        java.util.List<PointsLedgerEntity> legs = capturedLegs(2);
+        assertThat(legs.get(0).getType()).isEqualTo(PointsLedgerEntity.TYPE_CONSUME);
+        assertThat(legs.get(0).getDeltaPoints()).isEqualByComparingTo("-30.00");
+        assertThat(legs.get(1).getType()).isEqualTo(PointsLedgerEntity.TYPE_DEBT);
+        assertThat(legs.get(1).getDeltaPoints()).isEqualByComparingTo("0.00");
+        assertThat(legs.get(1).getRemark()).contains("70");
+    }
+
+    /** 余额够付（调用方兜底路径误入）→ 全额 CONSUME，不挂账。 */
+    @Test
+    void chargeToDebt_balanceCovers_noDebtLeg() {
+        ReflectionTestUtils.setField(wallet, "debtCollectEnabled", true);
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenReturn(balance("200.00"));
+        when(balanceMapper.adjustBalanceReturn(eq(1L), eq(new BigDecimal("-100.00"))))
+                .thenReturn(new BigDecimal("100.00"));
+
+        wallet.chargeToDebt(1L, new BigDecimal("100.00"), PointsLedgerEntity.REF_CHAT, null, "补扣");
+
+        java.util.List<PointsLedgerEntity> legs = capturedLegs(1);
+        assertThat(legs.get(0).getType()).isEqualTo(PointsLedgerEntity.TYPE_CONSUME);
+        verify(balanceMapper, org.mockito.Mockito.never()).adjustDebtReturn(any(), any());
+    }
+
+    /** 开关关 → 不动任何账（回到 FAILED usage 平台担损现状）。 */
+    @Test
+    void chargeToDebt_disabled_noop() {
+        ReflectionTestUtils.setField(wallet, "debtCollectEnabled", false);
+        wallet.chargeToDebt(1L, new BigDecimal("100.00"), PointsLedgerEntity.REF_CHAT, null, "补扣");
+        verify(balanceMapper, org.mockito.Mockito.never()).adjustBalanceReturn(any(), any());
+        verify(ledgerMapper, org.mockito.Mockito.never()).insert(any());
+    }
+
+    /** 挂账异常吞掉不外抛（调用方已在吞异常上下文）。 */
+    @Test
+    void chargeToDebt_exceptionSwallowed() {
+        ReflectionTestUtils.setField(wallet, "debtCollectEnabled", true);
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenThrow(new RuntimeException("db down"));
+        assertThatCode(() -> wallet.chargeToDebt(1L, new BigDecimal("100.00"),
+                PointsLedgerEntity.REF_CHAT, null, "补扣")).doesNotThrowAnyException();
+    }
+
+    /** 充值冲抵：欠50 充100 → DEBT_REPAY 腿50 + 主腿只入余额50（保 Σdelta=balance 恒等式）。 */
+    @Test
+    void grant_withDebt_repaysFirstThenCreditsRemainder() {
+        UserPointsBalanceEntity b = balance("0.00");
+        b.setDebtPoints(new BigDecimal("50.00"));
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenReturn(b);
+        when(balanceMapper.adjustDebtReturn(eq(1L), eq(new BigDecimal("-50.00"))))
+                .thenReturn(BigDecimal.ZERO);
+        when(balanceMapper.adjustBalanceReturn(eq(1L), eq(new BigDecimal("50.00"))))
+                .thenReturn(new BigDecimal("50.00"));
+
+        wallet.grant(1L, new BigDecimal("100.00"), new BigDecimal("10.00"),
+                PaymentOrderEntity.CHANNEL_ADMIN, null);
+
+        java.util.List<PointsLedgerEntity> legs = capturedLegs(2);
+        assertThat(legs.get(0).getType()).isEqualTo(PointsLedgerEntity.TYPE_DEBT_REPAY);
+        assertThat(legs.get(0).getDeltaPoints()).isEqualByComparingTo("0.00");
+        assertThat(legs.get(1).getType()).isEqualTo(PointsLedgerEntity.TYPE_ADMIN_GRANT);
+        assertThat(legs.get(1).getDeltaPoints()).isEqualByComparingTo("50.00");
+        assertThat(legs.get(1).getRemark()).contains("冲抵欠款 50");
+    }
+
+    /** 无欠款充值：无 DEBT_REPAY 腿，主腿全额入账（现状不变）。 */
+    @Test
+    void grant_noDebt_singleFullLeg() {
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenReturn(balance("0.00"));
+        when(balanceMapper.adjustBalanceReturn(eq(1L), eq(new BigDecimal("100.00"))))
+                .thenReturn(new BigDecimal("100.00"));
+
+        wallet.grant(1L, new BigDecimal("100.00"), new BigDecimal("10.00"),
+                PaymentOrderEntity.CHANNEL_ADMIN, null);
+
+        java.util.List<PointsLedgerEntity> legs = capturedLegs(1);
+        assertThat(legs.get(0).getType()).isEqualTo(PointsLedgerEntity.TYPE_ADMIN_GRANT);
+        assertThat(legs.get(0).getDeltaPoints()).isEqualByComparingTo("100.00");
+    }
+
+    /** 自助充值回调同样先冲抵：欠100 充100 → 主腿 delta=0 仅留单据痕，余额不动。 */
+    @Test
+    void creditRechargeForOrder_fullSwallowedByDebt() {
+        UserPointsBalanceEntity b = balance("0.00");
+        b.setDebtPoints(new BigDecimal("100.00"));
+        when(balanceMapper.selectByUserIdForUpdate(1L)).thenReturn(b);
+        when(balanceMapper.adjustDebtReturn(eq(1L), eq(new BigDecimal("-100.00"))))
+                .thenReturn(BigDecimal.ZERO);
+        when(balanceMapper.adjustBalanceReturn(eq(1L), eq(new BigDecimal("0.00"))))
+                .thenReturn(new BigDecimal("0.00"));
+
+        BigDecimal after = wallet.creditRechargeForOrder(1L, new BigDecimal("100.00"),
+                new BigDecimal("10.00"), 88L, null);
+
+        assertThat(after).isEqualByComparingTo(BigDecimal.ZERO);
+        java.util.List<PointsLedgerEntity> legs = capturedLegs(2);
+        assertThat(legs.get(0).getType()).isEqualTo(PointsLedgerEntity.TYPE_DEBT_REPAY);
+        assertThat(legs.get(1).getType()).isEqualTo(PointsLedgerEntity.TYPE_RECHARGE);
+        assertThat(legs.get(1).getDeltaPoints()).isEqualByComparingTo("0.00");
+    }
+
+    /** 捕获 n 条流水并按插入序断言用。 */
+    private java.util.List<PointsLedgerEntity> capturedLegs(int expected) {
+        ArgumentCaptor<PointsLedgerEntity> cap = ArgumentCaptor.forClass(PointsLedgerEntity.class);
+        verify(ledgerMapper, org.mockito.Mockito.times(expected)).insert(cap.capture());
+        return cap.getAllValues();
+    }
 }
