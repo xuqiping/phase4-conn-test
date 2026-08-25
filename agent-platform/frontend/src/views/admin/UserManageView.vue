@@ -4,13 +4,35 @@
       <h2>用户管理</h2>
     </div>
 
-    <!-- 用户表格 -->
+    <!-- D1（12x-1）：搜索框（username/name/remark 三字段模糊）+ 状态筛选 -->
+    <div class="user-manage__toolbar">
+      <n-input
+        v-model:value="keyword"
+        clearable
+        placeholder="搜索用户名 / 姓名 / 备注（如：A 班）"
+        style="width: 260px"
+        @keyup.enter="search"
+        @clear="search"
+      />
+      <n-select
+        v-model:value="statusFilter"
+        :options="statusOptions"
+        clearable
+        placeholder="状态"
+        style="width: 130px"
+        @update:value="search"
+      />
+      <n-button type="primary" secondary @click="search">搜索</n-button>
+    </div>
+
+    <!-- 用户表格（remote=服务端分页：缺它会客户端再切一刀，第2页起永远空——16x id 1-100 老用户翻不到） -->
     <n-data-table
+      remote
       :columns="columns"
       :data="users"
       :loading="loading"
       :pagination="pagination"
-      :scroll-x="1000"
+      :scroll-x="1200"
       @update:page="loadUsers"
       striped
     />
@@ -58,6 +80,23 @@
         <n-button type="error" :loading="saving" :disabled="!statusReason.trim()" @click="confirmStatusChange">确认变更</n-button>
       </template>
     </n-modal>
+    <!-- D1：管理员改备注（Q6=A 本人+管理员可改；空=清除） -->
+    <n-modal v-model:show="showRemarkModal" preset="card" title="修改备注" style="max-width:440px">
+      <p style="margin-bottom:12px;color:var(--color-text-secondary)">
+        用户：<strong>{{ remarkTarget?.name || remarkTarget?.username }}</strong>
+      </p>
+      <n-input
+        v-model:value="remarkInput"
+        maxlength="128"
+        show-count
+        clearable
+        placeholder="如：A 班（留空=清除备注）"
+      />
+      <template #action>
+        <n-button @click="showRemarkModal = false">取消</n-button>
+        <n-button type="primary" :loading="saving" @click="saveRemark">保存</n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -65,7 +104,7 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import {
   NDataTable, NButton, NModal, NCheckboxGroup, NCheckbox, NSpace, NTag, NAlert,
-  NRadioGroup, NRadio, NInput, useMessage
+  NRadioGroup, NRadio, NInput, NSelect, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { adminApi, type UserVO, type Role } from '@/api/admin'
@@ -87,6 +126,21 @@ const statusReason = ref('')
 
 const pagination = reactive({ page: 1, pageSize: 10, itemCount: 0 })
 
+// D1：keyword（username/name/remark 三字段模糊）+ 状态筛选
+const keyword = ref('')
+const statusFilter = ref<string | null>(null)
+const statusOptions = [
+  { label: '正常', value: 'ACTIVE' },
+  { label: '禁用', value: 'DISABLED' },
+  { label: '锁定', value: 'LOCKED' },
+  { label: '封号', value: 'BANNED' }
+]
+
+// D1：管理员改备注弹窗
+const showRemarkModal = ref(false)
+const remarkTarget = ref<UserVO | null>(null)
+const remarkInput = ref('')
+
 const statusMap: Record<string, { type: 'success' | 'warning' | 'error'; label: string }> = {
   ACTIVE: { type: 'success', label: '正常' },
   DISABLED: { type: 'warning', label: '禁用' },
@@ -103,6 +157,8 @@ const columns: DataTableColumns<UserVO> = [
   },
   { title: '部门', key: 'primaryDepartmentName', width: 140, ellipsis: { tooltip: true },
     render: (row) => row.primaryDepartmentName || '-' },
+  { title: '备注', key: 'remark', width: 120, ellipsis: { tooltip: true },
+    render: (row) => row.remark || '-' },
   { title: '邮箱', key: 'email', width: 180, ellipsis: { tooltip: true } },
   {
     title: '状态', key: 'status', width: 80,
@@ -121,9 +177,10 @@ const columns: DataTableColumns<UserVO> = [
     render: (row) => row.lastLoginAt ? new Date(row.lastLoginAt).toLocaleString('zh-CN') : '-'
   },
   {
-    title: '操作', key: 'actions', width: 200, fixed: 'right',
+    title: '操作', key: 'actions', width: 260, fixed: 'right',
     render: (row) => h(NSpace, { size: 8 }, () => [
       h(NButton, { size: 'small', onClick: () => openRoleModal(row) }, () => '分配角色'),
+      h(NButton, { size: 'small', onClick: () => openRemarkModal(row) }, () => '备注'),
       row.status === 'ACTIVE'
         ? h(NButton, { size: 'small', type: 'warning', onClick: () => openStatusModal(row) }, () => '变更状态')
         : h(NButton, { size: 'small', type: 'success', onClick: () => toggleStatus(row, 'ACTIVE') }, () => '启用')
@@ -134,7 +191,7 @@ const columns: DataTableColumns<UserVO> = [
 async function loadUsers(page = 1) {
   loading.value = true
   try {
-    const res = await adminApi.listUsers(page, pagination.pageSize)
+    const res = await adminApi.listUsers(page, pagination.pageSize, keyword.value.trim() || undefined, statusFilter.value || undefined)
     users.value = res.data.data.records
     pagination.itemCount = res.data.data.total
     pagination.page = page
@@ -142,6 +199,33 @@ async function loadUsers(page = 1) {
     message.error('加载用户列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+/** D1：搜索（回筛选第 1 页；清空 keyword/状态=取消筛选） */
+function search() {
+  loadUsers(1)
+}
+
+function openRemarkModal(user: UserVO) {
+  remarkTarget.value = user
+  remarkInput.value = user.remark ?? ''
+  showRemarkModal.value = true
+}
+
+async function saveRemark() {
+  if (!remarkTarget.value) return
+  saving.value = true
+  try {
+    const trimmed = remarkInput.value.trim()
+    await adminApi.updateUserRemark(remarkTarget.value.id, trimmed === '' ? null : trimmed)
+    message.success('备注已保存')
+    showRemarkModal.value = false
+    await loadUsers(pagination.page)
+  } catch (e: any) {
+    message.error(e?.response?.data?.msg || '备注保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -226,6 +310,12 @@ onMounted(() => {
       margin: 0;
       color: var(--color-text-primary);
     }
+  }
+
+  &__toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: var(--spacing-3);
   }
 }
 

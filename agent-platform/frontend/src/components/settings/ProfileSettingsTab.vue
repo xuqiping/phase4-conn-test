@@ -1,5 +1,6 @@
 <template>
-  <!-- 17x：个人信息（昵称/姓名 users.name）——项目组/账单/充值下拉等展示用；空=回落账号名 -->
+  <!-- 17x：昵称/姓名 users.name（项目组/账单等展示用，空=回落账号名）
+       D1（12x-1）：备注 users.remark（如「A 班」，管理列表可筛；空=清除） -->
   <div class="profile-tab">
     <n-form label-placement="left" :label-width="100" style="max-width: 480px">
       <n-form-item label="账号">
@@ -12,6 +13,15 @@
           show-count
           clearable
           placeholder="项目组/账单等处展示用；留空则显示账号名"
+        />
+      </n-form-item>
+      <n-form-item label="备注">
+        <n-input
+          v-model:value="remark"
+          maxlength="128"
+          show-count
+          clearable
+          placeholder="如：A 班（选填）；管理员可在用户管理中搜索"
         />
       </n-form-item>
       <n-form-item :label="' '">
@@ -30,21 +40,37 @@ const authStore = useAuthStore()
 const message = useMessage()
 
 const name = ref(authStore.userInfo?.name ?? '')
+const remark = ref(authStore.userInfo?.remark ?? '')
 const saving = ref(false)
 /** 与已存值比对（null 与 '' 视为同值——空即清除） */
-const dirty = computed(() => (name.value.trim() || '') !== (authStore.userInfo?.name ?? ''))
+const dirty = computed(
+  () =>
+    (name.value.trim() || '') !== (authStore.userInfo?.name ?? '') ||
+    (remark.value.trim() || '') !== (authStore.userInfo?.remark ?? '')
+)
 
 // 外部刷新（fetchUserInfo/重新登录）→ 回填，但编辑中不覆盖
-watch(() => authStore.userInfo?.name, v => {
-  if (!dirty.value) name.value = v ?? ''
-})
+watch(
+  () => [authStore.userInfo?.name, authStore.userInfo?.remark],
+  ([n, r]) => {
+    if (!dirty.value) {
+      name.value = n ?? ''
+      remark.value = r ?? ''
+    }
+  }
+)
 
 async function save() {
   saving.value = true
   try {
-    const trimmed = name.value.trim()
-    await authStore.updateProfileName(trimmed === '' ? null : trimmed)
-    name.value = trimmed
+    const trimmedName = name.value.trim()
+    const trimmedRemark = remark.value.trim()
+    await authStore.updateProfile(
+      trimmedName === '' ? null : trimmedName,
+      trimmedRemark === '' ? null : trimmedRemark
+    )
+    name.value = trimmedName
+    remark.value = trimmedRemark
     message.success('已保存')
   } finally {
     saving.value = false

@@ -7,6 +7,8 @@ export interface UserVO {
   id: number
   username: string
   name?: string | null
+  /** 账号备注（D1/12x-1，≤128 字）：注册/资料/管理员可维护，keyword 可筛 */
+  remark?: string | null
   primaryDepartmentName?: string | null
   email: string | null
   avatar: string | null
@@ -47,14 +49,21 @@ export interface PageResult<T> {
 
 export const adminApi = {
   // 用户管理
-  listUsers(page = 1, size = 10) {
-    return request.get<ApiResponse<PageResult<UserVO>>>('/users', { params: { page, size } })
+  /** D1：keyword 对 username/name/remark 三字段模糊 OR；status 等值筛选 */
+  listUsers(page = 1, size = 10, keyword?: string, status?: string) {
+    return request.get<ApiResponse<PageResult<UserVO>>>('/users', {
+      params: { page, size, keyword: keyword || undefined, status: status || undefined }
+    })
   },
   getUser(id: number) {
     return request.get<ApiResponse<UserVO>>(`/users/${id}`)
   },
   updateUserStatus(id: number, status: string, reason?: string) {
     return request.put<ApiResponse<void>>(`/users/${id}/status`, { status, reason })
+  },
+  /** D1（Q6=A）：管理员改用户备注（空串=清除） */
+  updateUserRemark(id: number, remark: string | null) {
+    return request.put<ApiResponse<void>>(`/users/${id}/remark`, { remark })
   },
   assignRoles(id: number, roleIds: number[]) {
     return request.put<ApiResponse<void>>(`/users/${id}/roles`, roleIds)

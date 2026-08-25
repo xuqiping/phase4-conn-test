@@ -18,6 +18,8 @@ public class UserVO {
     private Long id;
     private String username;
     private String name;
+    /** 账号备注（D1/12x-1，≤128 字：注册/资料/管理员可维护，管理列表 keyword 命中） */
+    private String remark;
     private String primaryDepartmentName;
     private String email;
     private String avatar;

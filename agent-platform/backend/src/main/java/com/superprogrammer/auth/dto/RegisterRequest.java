@@ -38,6 +38,10 @@ public class RegisterRequest {
     @Size(max = 2048)
     private String captchaVerification;
 
+    /** D1（12x-1）：账号备注（选填，如「A 班」；本人/管理员后续可改，管理列表 keyword 可筛）。 */
+    @Size(max = 64, message = "备注最长 64 字")
+    private String remark;
+
     /** 协议勾选（合规要求：注册前必须同意《用户协议》《隐私政策》）。 */
     @AssertTrue(message = "请先阅读并同意《用户协议》和《隐私政策》")
     private Boolean agreeTerms;

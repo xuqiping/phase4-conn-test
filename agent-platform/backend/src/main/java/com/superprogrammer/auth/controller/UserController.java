@@ -43,11 +43,21 @@ public class UserController {
     @PreAuthorize("hasAuthority('user:manage')")
     public ResponseEntity<R<PageResult<UserVO>>> listUsers(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        Page<User> userPage = userMapper.selectPage(
-                new Page<>(page, size),
-                new LambdaQueryWrapper<User>().orderByDesc(User::getCreatedAt)
-        );
+            @RequestParam(defaultValue = "10") int size,
+            /** D1（12x-1）：keyword 对 username/name/remark 三字段模糊 OR（管理列表定位用户用） */
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String status) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().orderByDesc(User::getCreatedAt);
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = escapeLike(keyword.trim());
+            wrapper.and(w -> w.like(User::getUsername, kw)
+                    .or().like(User::getName, kw)
+                    .or().like(User::getRemark, kw));
+        }
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(User::getStatus, status);
+        }
+        Page<User> userPage = userMapper.selectPage(new Page<>(page, size), wrapper);
 
         var vos = userPage.getRecords().stream().map(user ->
                 authService.getCurrentUser(user.getId())
@@ -56,6 +66,43 @@ public class UserController {
         PageResult<UserVO> result = PageResult.of(
                 vos, userPage.getTotal(), page, size);
         return ResponseEntity.ok(R.ok(result));
+    }
+
+    /**
+     * LIKE 通配符前置转义（D1 坑表）：`\` `%` `_` → `\x`。
+     * PostgreSQL LIKE 默认转义符即反斜杠，MP like() 生成 `LIKE '%kw%'` 无需 ESCAPE 子句。
+     * `#{}` 预编译防注入；转义防「输入 % 全表命中」型语义攻击。
+     */
+    static String escapeLike(String input) {
+        return input.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    /**
+     * D1（12x-1，Q6=A：本人+管理员可改）：管理员修改任意用户备注。
+     * 空串/纯空白 = 清除。审计留痕。
+     */
+    @PutMapping("/{id}/remark")
+    @PreAuthorize("hasAuthority('user:manage')")
+    @AuditLog(module = "user", action = "update_remark", targetType = "user")
+    public ResponseEntity<R<Void>> updateUserRemark(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> body) {
+        String remark = body.get("remark");
+        if (remark != null && remark.length() > REASON_MAX_LEN) {
+            return ResponseEntity.badRequest()
+                    .body(R.fail(400, "备注长度超限（≤" + REASON_MAX_LEN + " 字符）"));
+        }
+        User user = userMapper.selectById(id);
+        if (user == null) {
+            return ResponseEntity.status(404).body(R.fail(404, "用户不存在"));
+        }
+        String trimmed = remark == null ? null : remark.trim();
+        String newRemark = trimmed == null || trimmed.isEmpty() ? null : trimmed;
+        // LambdaUpdateWrapper.set 显式写——清除（null）不能走 updateById 的 NOT_NULL 策略
+        userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getId, id)
+                .set(User::getRemark, newRemark));
+        return ResponseEntity.ok(R.ok("备注已更新", null));
     }
 
     @GetMapping("/{id}")

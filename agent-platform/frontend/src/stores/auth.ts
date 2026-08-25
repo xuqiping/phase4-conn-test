@@ -19,6 +19,8 @@ export interface UserInfo {
   username: string
   /** 显示名/真实姓名（钉钉 nick），为空时回退 username */
   name?: string | null
+  /** 账号备注（D1/12x-1，≤128 字）：注册/资料/管理员可维护，管理列表 keyword 可筛 */
+  remark?: string | null
   /** 主部门名（右上角/用户列表显示「部门 - 姓名」用），为空时不显示部门 */
   primaryDepartmentName?: string | null
   email: string | null
@@ -47,6 +49,8 @@ export interface RegisterParams {
   emailCode?: string
   /** 12x B2：同 IP 连续失败 ≥2 次后必填（滑块 token） */
   captchaVerification?: string
+  /** D1（12x-1）：账号备注（选填，如「A 班」，≤64 字） */
+  remark?: string
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -252,9 +256,9 @@ export const useAuthStore = defineStore('auth', () => {
     return userInfo.value?.permissions?.includes(permission) ?? false
   }
 
-  /** 17x：保存昵称/姓名（后端回最新 UserInfo，同步本地态+持久化；空串=清除回落 username） */
-  async function updateProfileName(name: string | null) {
-    const res = await authApi.updateMe({ name })
+  /** 17x + D1：保存昵称/姓名与备注（后端回最新 UserInfo，同步本地态+持久化；空串=清除） */
+  async function updateProfile(name: string | null, remark?: string | null) {
+    const res = await authApi.updateMe({ name, remark })
     userInfo.value = res.data.data
     setStorage(STORAGE_KEYS.USER_INFO, res.data.data)
     return res.data.data
@@ -280,6 +284,6 @@ export const useAuthStore = defineStore('auth', () => {
     loginBySms,
     loginByWechatToken,
     hasPermission,
-    updateProfileName
+    updateProfile
   }
 })

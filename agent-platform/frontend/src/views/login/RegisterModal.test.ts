@@ -105,4 +105,26 @@ describe('RegisterModal（12x 开关回退：邮箱验证总开关）', () => {
     expect(payload.email).toBe('opt@b.com')
     expect(payload.emailCode).toBeUndefined()
   })
+
+  // D1（12x-1）：注册备注选填——填了随 payload 提交（trim），空白不传
+  it('备注：填「A 班」提交 remark；留空不传字段', async () => {
+    const wrapper = mountModal(false)
+    await flushPromises()
+    const vm = (await fillAndSubmit(wrapper)) as unknown as {
+      form: { remark: string }
+      handleRegister: () => Promise<void>
+    }
+    vm.form.remark = '  A 班  '
+    await vm.handleRegister()
+    await flushPromises()
+    let payload = registerMock.mock.calls[registerMock.mock.calls.length - 1]?.[0] as Record<string, unknown>
+    expect(payload.remark).toBe('A 班')
+
+    // 留空（纯空白）→ undefined（后端落 null）
+    vm.form.remark = '   '
+    await vm.handleRegister()
+    await flushPromises()
+    payload = registerMock.mock.calls[registerMock.mock.calls.length - 1]?.[0] as Record<string, unknown>
+    expect(payload.remark).toBeUndefined()
+  })
 })

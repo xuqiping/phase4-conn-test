@@ -26,6 +26,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -246,6 +247,76 @@ class AuthServiceTest {
 
         assertEquals(400, e.getCode());
         verify(userMapper, never()).insert(any(User.class));
+    }
+
+    // ===== D1（12x-1）：注册备注 =====
+
+    @Test
+    void register_remarkTrimmed_persisted() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
+        when(userMapper.insert(any(User.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        registerRequest.setRemark("  A 班  ");
+
+        authService.register(registerRequest);
+
+        verify(userMapper).insert(argThat(user -> "A 班".equals(user.getRemark())));
+    }
+
+    @Test
+    void register_remarkBlank_null() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(passwordEncoder.encode("Str0ng#Pass")).thenReturn("$2a$10$encoded");
+        when(userMapper.insert(any(User.class))).thenReturn(1);
+        when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        registerRequest.setRemark("   ");
+
+        authService.register(registerRequest);
+
+        verify(userMapper).insert(argThat(user -> user.getRemark() == null));
+    }
+
+    // ===== D1：本人改备注（与昵称同链路 updateProfile） =====
+
+    @Test
+    void updateProfile_remarkAndName_trimmedAndCleared() {
+        testUser.setRemark("旧备注");
+        // 第一次 selectById=updateProfile 读旧值；第二次=getCurrentUser 回读「已更新」行
+        User updated = new User();
+        updated.setId(1L);
+        updated.setUsername("testuser");
+        updated.setName("新名字");
+        updated.setRemark("B 班");
+        updated.setStatus("ACTIVE");
+        when(userMapper.selectById(1L)).thenReturn(testUser, updated);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(List.of("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(List.of());
+        when(departmentService.getPrimaryDepartmentName(1L)).thenReturn(null);
+
+        com.superprogrammer.auth.dto.UserVO vo = authService.updateProfile(1L, " 新名字 ", "  B 班  ");
+
+        assertEquals("B 班", vo.getRemark());
+        assertEquals("新名字", vo.getName());
+    }
+
+    @Test
+    void updateProfile_remarkBlank_cleared() {
+        testUser.setName("老名字");
+        testUser.setRemark("旧备注");
+        User updated = new User();
+        updated.setId(1L);
+        updated.setUsername("testuser");
+        updated.setName("老名字");
+        updated.setStatus("ACTIVE");
+        when(userMapper.selectById(1L)).thenReturn(testUser, updated);
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(List.of("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(List.of());
+        when(departmentService.getPrimaryDepartmentName(1L)).thenReturn(null);
+
+        com.superprogrammer.auth.dto.UserVO vo = authService.updateProfile(1L, "老名字", "   ");
+
+        assertNull(vo.getRemark());
     }
 
     @Test

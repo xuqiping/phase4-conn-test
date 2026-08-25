@@ -31,6 +31,15 @@
         </n-input>
       </n-form-item>
 
+      <!-- D1（12x-1）：账号备注（选填，管理员可据此筛选） -->
+      <n-form-item path="remark" label="备注">
+        <n-input v-model:value="form.remark" placeholder="如：A 班（选填）" size="large" maxlength="64">
+          <template #prefix>
+            <n-icon :component="BookmarkOutline" color="var(--color-text-tertiary)" />
+          </template>
+        </n-input>
+      </n-form-item>
+
       <n-form-item path="email" label="邮箱">
         <n-input
           v-model:value="form.email"
@@ -154,7 +163,7 @@
 import { ref, reactive, watch, computed, onBeforeUnmount } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, useMessage } from 'naive-ui'
-import { PersonOutline, MailOutline, LockClosedOutline, IdCardOutline } from '@vicons/ionicons5'
+import { PersonOutline, MailOutline, LockClosedOutline, IdCardOutline, BookmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import SliderCaptcha from './SliderCaptcha.vue'
@@ -181,6 +190,7 @@ const showTerms = ref(false)
 const form = reactive({
   username: '',
   name: '',
+  remark: '',
   email: '',
   emailCode: '',
   password: '',
@@ -271,6 +281,9 @@ const rules = computed<FormRules>(() => ({
       trigger: 'blur'
     }
   ],
+  remark: [
+    { max: 64, message: '备注最长 64 字', trigger: 'blur' }
+  ],
   // 12x 开关回退：总开关开 → 邮箱必填；关 → 选填（填了仍校验格式）
   email: [
     ...(props.emailCodeRequired ? [{ required: true, message: '请输入邮箱', trigger: 'blur' as const }] : []),
@@ -318,6 +331,7 @@ watch(
     if (!v) {
       form.username = ''
       form.name = ''
+      form.remark = ''
       form.email = ''
       form.emailCode = ''
       form.password = ''
@@ -344,6 +358,8 @@ async function handleRegister() {
     await authStore.register({
       username: form.username,
       name: form.name.trim(),
+      // D1：备注选填，空白不传
+      remark: form.remark.trim() || undefined,
       email: form.email.trim() || undefined,
       password: form.password,
       // 12x 开关回退：总开关关时不传码（后端忽略）

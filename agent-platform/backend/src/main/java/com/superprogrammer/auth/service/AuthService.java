@@ -158,6 +158,9 @@ public class AuthService {
         user.setUsername(request.getUsername());
         // 17x：昵称/姓名（必填，DTO 已 @NotBlank；trim 防空白尾）
         user.setName(request.getName() == null ? null : request.getName().trim());
+        // D1（12x-1）：注册备注（选填；trim 后空白→null 不落库）
+        String remark = request.getRemark() == null ? null : request.getRemark().trim();
+        user.setRemark(remark == null || remark.isEmpty() ? null : remark);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(email.isBlank() ? null : email);
         user.setStatus("ACTIVE");
@@ -974,22 +977,26 @@ public class AuthService {
     }
 
     /**
-     * 17x：本人修改昵称/姓名（users.name）。空串/纯空白 → null（清除，各展示处回落 username）。
+     * 17x + D1：本人修改昵称/姓名（users.name）与账号备注（users.remark）。
+     * 空串/纯空白 → null（清除；name 清除后各展示处回落 username）。
      * 不改 username（登录凭证），仅展示层字段；改完返回最新 UserVO 供前端刷新本地用户信息。
      */
-    public UserVO updateProfile(Long userId, String name) {
+    public UserVO updateProfile(Long userId, String name, String remark) {
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
         String trimmed = name == null ? null : name.trim();
         String newName = trimmed == null || trimmed.isEmpty() ? null : trimmed;
-        // LambdaUpdateWrapper.set 显式写——updateById 对 null 字段按 NOT_NULL 策略跳过，「清空昵称」会静默不生效
+        String trimmedRemark = remark == null ? null : remark.trim();
+        String newRemark = trimmedRemark == null || trimmedRemark.isEmpty() ? null : trimmedRemark;
+        // LambdaUpdateWrapper.set 显式写——updateById 对 null 字段按 NOT_NULL 策略跳过，「清空」会静默不生效
         userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
                 .eq(User::getId, userId)
-                .set(User::getName, newName));
+                .set(User::getName, newName)
+                .set(User::getRemark, newRemark));
         auditAuth("profile_updated", userId, user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
-        log.info("用户修改昵称/姓名 userId={} name={}", userId, newName);
+        log.info("用户修改个人信息 userId={} name={} remark={}", userId, newName, newRemark);
         return getCurrentUser(userId);
     }
 
@@ -1006,6 +1013,7 @@ public class AuthService {
                 .id(user.getId())
                 .username(user.getUsername())
                 .name(user.getName())
+                .remark(user.getRemark())
                 .primaryDepartmentName(departmentService.getPrimaryDepartmentName(userId))
                 .email(user.getEmail())
                 .avatar(user.getAvatar())

@@ -113,10 +113,10 @@ public class AuthController {
         return ResponseEntity.ok(R.ok(userVO));
     }
 
-    /** 17x：本人改昵称/姓名（users.name；项目组/账单/充值下拉等展示用）。 */
+    /** 17x + D1：本人改昵称/姓名（users.name）与备注（users.remark）。 */
     @PutMapping("/me")
     public ResponseEntity<R<UserVO>> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
-        UserVO vo = authService.updateProfile(currentUserId(), request.getName());
+        UserVO vo = authService.updateProfile(currentUserId(), request.getName(), request.getRemark());
         return ResponseEntity.ok(R.ok("保存成功", vo));
     }
 
