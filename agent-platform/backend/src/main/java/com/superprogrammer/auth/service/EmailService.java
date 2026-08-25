@@ -393,11 +393,18 @@ public class EmailService {
                 + "</div>";
     }
 
+    /**
+     * 重置邮件模板（D5 · Q8-1）：按钮下方带纯文本 URL + 复制提示——
+     * QQ 邮箱等客户端会拦截邮件内按钮跳转，纯文本链接是可复制的兜底路径。
+     */
     private String buildResetEmailHtml(String resetLink) {
         return "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;'>"
                 + "<h2 style='color:#333;'>重置密码</h2>"
                 + "<p>您正在重置多Agent智能体平台账号的密码。请点击下方链接设置新密码：</p>"
                 + "<p><a href='" + resetLink + "' style='display:inline-block;padding:12px 24px;background:#E74C3C;color:#fff;text-decoration:none;border-radius:4px;'>重置密码</a></p>"
+                + "<p style='color:#666;font-size:14px;'>若点击无效，请复制此链接到浏览器打开：</p>"
+                + "<p style='background:#f5f5f5;padding:10px 12px;border-radius:4px;word-break:break-all;"
+                + "font-size:13px;color:#333;'>" + resetLink + "</p>"
                 + "<p style='color:#999;font-size:12px;'>链接 30 分钟内有效。若非本人操作，请忽略本邮件并立即修改密码。</p>"
                 + "</div>";
     }

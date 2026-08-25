@@ -22,6 +22,28 @@
         </n-button>
       </div>
 
+      <!-- D5（Q8-2）：无 token 引导页（不再落 SMS 死路表单） -->
+      <div v-else-if="status === 'guide'" class="reset-pwd-card__result">
+        <div class="reset-pwd-card__icon reset-pwd-card__icon--info">!</div>
+        <p v-if="guideKind === 'email'" class="reset-pwd-card__msg">
+          请通过重置邮件中的链接进入本页设置新密码。<br />
+          还没收到邮件？可在登录页使用「忘记密码」重新发送。
+        </p>
+        <p v-else class="reset-pwd-card__msg">
+          当前未开启邮件找回通道，请联系管理员重置密码。
+        </p>
+        <n-button
+          v-if="guideKind === 'email'"
+          type="primary"
+          size="large"
+          block
+          class="reset-pwd-card__btn"
+          @click="goLogin"
+        >
+          去登录页重新发送
+        </n-button>
+      </div>
+
       <!-- 重置表单 -->
       <n-form v-else ref="formRef" :model="form" :rules="rules" @submit.prevent="handleReset">
         <!-- 短信渠道：需输入手机号 + 重置码 -->
@@ -86,15 +108,18 @@ import type { FormInst, FormRules } from 'naive-ui'
 import { NForm, NFormItem, NInput, NButton, NIcon, NSpin, useMessage } from 'naive-ui'
 import { LockClosedOutline, CallOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import { authApi } from '@/api/auth'
+import type { AuthChannels } from '@/api/auth'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 
-type Status = 'form' | 'loading' | 'success'
-const status = ref<Status>('form')
+type Status = 'form' | 'loading' | 'success' | 'guide'
+const status = ref<Status>('loading')
 const submitting = ref(false)
+/** D5（Q8-2）：引导页两种形态——email=重发邮件指引；admin=无任何自助通道 */
+const guideKind = ref<'email' | 'admin'>('email')
 
 const formRef = ref<FormInst | null>(null)
 const form = reactive({
@@ -160,22 +185,41 @@ function goLogin() {
   router.push('/login')
 }
 
-onMounted(() => {
+/**
+ * D5（Q8-2）分支（读认证通道开关，不再无脑落 SMS 表单）：
+ * ① channel=SMS 且短信开 → SMS 表单；
+ * ② 有 token → EMAIL 表单（token 本身即一次性凭证，即便邮件开关已关表单仍可用——
+ *    持有效链接者被引导页挡死是反直觉死路，提交侧后端照常校验 token）；
+ * ③ 无 token（或 SMS 通道已关）：邮件开 → 引导页「从邮件链接进入/去登录页重发」；
+ *    邮件关 → 「请联系管理员重置」。
+ * channels 接口失败按全开兜底（不砖页面，提交侧后端仍强校验）。
+ */
+onMounted(async () => {
   const token = (route.query.token as string) || ''
   const ch = (route.query.channel as string) || ''
-  if (ch.toUpperCase() === 'SMS') {
+  let channels: AuthChannels
+  try {
+    channels = (await authApi.getChannels()).data.data
+  } catch {
+    channels = {
+      passwordEnabled: true, emailEnabled: true, smsEnabled: true,
+      wechatEnabled: false, registerEmailCodeRequired: false
+    }
+  }
+  if (ch.toUpperCase() === 'SMS' && channels.smsEnabled) {
     channel.value = 'SMS'
-  } else if (token) {
+    status.value = 'form'
+    return
+  }
+  if (token) {
     channel.value = 'EMAIL'
     emailToken = token
-  } else {
-    // 无 token 无 channel → 默认短信表单（手动输入码）
-    channel.value = 'SMS'
+    status.value = 'form'
+    return
   }
+  guideKind.value = channels.emailEnabled ? 'email' : 'admin'
+  status.value = 'guide'
 })
-
-// loading 状态占位（预留异步校验 token 有效性）
-void status
 </script>
 
 <style lang="scss" scoped>
@@ -231,6 +275,7 @@ void status
   color: #fff;
   margin: 0 auto 16px;
   &--success { background: #18a058; }
+  &--info { background: var(--color-primary, #4a90d9); }
 }
 .reset-pwd-card__msg {
   font-size: var(--font-size-md);
