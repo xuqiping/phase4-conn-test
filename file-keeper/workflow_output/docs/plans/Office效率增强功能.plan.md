@@ -24,7 +24,7 @@
 
 ## 2. Chunk 0：技术尖峰与兼容矩阵
 
-- [ ] **目标：验证高保真路线，禁止凭库文档直接承诺兼容。**
+- [x] **目标：验证高保真路线，禁止凭库文档直接承诺兼容。**
   - 动作：建立最小样本集；分别验证 OOXML 透传与 Office Worker；记录文件前后结构、宏、公式、母版和链接差异。
   - 涉及文件（≤20）：`workflow_output/docs/测试方案/Office兼容样本矩阵.md`、`src-tauri/tests/fixtures/office/README.md`、`tools/office-worker-windows/README.md`、`src-tauri/src/bin/office_ooxml_worker.rs`（尖峰分支）。
   - 依赖：测试机具备至少两代 Microsoft Office；准备无敏感内容样本。
@@ -32,6 +32,7 @@
   - 验证：`.xlsm/.pptm` 宏部件可保留；复杂文件未达到标准时自动路由或阻止；源哈希不变。
 
 - [ ] **检查点 0：用户确认支持矩阵后，才进入生产代码。**
+  - 当前状态：等待补齐第二代 Office 与真实 `.xlsm/.pptm` 宏样本复验，并等待用户确认；不得进入 Chunk 1。
 
 ## 3. 集成 Chunk
 
