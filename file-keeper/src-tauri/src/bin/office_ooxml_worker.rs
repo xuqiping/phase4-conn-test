@@ -1,10 +1,14 @@
+use quick_xml::encoding::Decoder;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::Reader;
+use quick_xml::name::ResolveResult;
+use quick_xml::reader::NsReader;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 const SAFE_OOXML: &str = "SAFE_OOXML";
 const HIGH_FIDELITY_REQUIRED: &str = "HIGH_FIDELITY_REQUIRED";
@@ -13,7 +17,17 @@ const BLOCKED: &str = "BLOCKED";
 const LEGACY_EXTENSIONS: &[&str] = &["xls", "doc", "ppt"];
 const MACRO_EXTENSIONS: &[&str] = &["xlsm", "docm", "pptm"];
 const STANDARD_EXTENSIONS: &[&str] = &["xlsx", "docx", "pptx"];
-const RELATIONSHIP_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const REQUEST_MAX_BYTES: usize = 1024 * 1024;
+const SOURCE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const ZIP_ENTRY_MAX_COUNT: usize = 100_000;
+const XML_ENTRY_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const XML_TOTAL_MAX_BYTES: u64 = 6 * 1024 * 1024;
+const ZIP_COMPRESSION_RATIO_MAX: u64 = 1_000;
+const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+const CONTENT_TYPES_NAMESPACE: &[u8] =
+    b"http://schemas.openxmlformats.org/package/2006/content-types";
+const RELATIONSHIPS_NAMESPACE: &[u8] =
+    b"http://schemas.openxmlformats.org/package/2006/relationships";
 const KNOWN_MAIN_PARTS: &[&str] = &[
     "xl/workbook.xml",
     "word/document.xml",
@@ -28,6 +42,7 @@ struct OoxmlPackageSpec {
 enum XmlEntryReadError {
     TooLarge,
     Invalid,
+    Timeout,
 }
 
 struct RelationshipScan {
@@ -39,6 +54,16 @@ struct RelationshipAttributes {
     target: Option<String>,
     relationship_type: Option<String>,
     target_mode: Option<String>,
+}
+
+struct SourceSnapshot {
+    len: u64,
+    modified: SystemTime,
+}
+
+enum HashError {
+    Io,
+    Timeout,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,12 +106,66 @@ fn main() {
     }
 
     let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let response = match line {
-            Ok(line) => inspect_line(&line),
-            Err(_) => InspectResponse::blocked(None, "OFFICE_STDIN_READ_FAILED"),
-        };
-        write_response(&response);
+    let mut input = stdin.lock();
+    loop {
+        match read_bounded_line(&mut input, REQUEST_MAX_BYTES) {
+            Ok(Some(Ok(line))) => {
+                let response = match std::str::from_utf8(&line) {
+                    Ok(line) => inspect_line(line),
+                    Err(_) => InspectResponse::blocked(None, "OFFICE_INVALID_REQUEST_JSON"),
+                };
+                write_response(&response);
+            }
+            Ok(Some(Err(()))) => {
+                write_response(&InspectResponse::blocked(None, "OFFICE_REQUEST_TOO_LARGE"))
+            }
+            Ok(None) => break,
+            Err(_) => {
+                write_response(&InspectResponse::blocked(None, "OFFICE_STDIN_READ_FAILED"));
+                break;
+            }
+        }
+    }
+}
+
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> io::Result<Option<Result<Vec<u8>, ()>>> {
+    let mut line = Vec::new();
+    let mut too_large = false;
+    let mut saw_bytes = false;
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return if !saw_bytes {
+                Ok(None)
+            } else if too_large {
+                Ok(Some(Err(())))
+            } else {
+                Ok(Some(Ok(line)))
+            };
+        }
+        saw_bytes = true;
+        let newline = buffer.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(buffer.len(), |index| index + 1);
+        let content_len = newline.unwrap_or(buffer.len());
+        if !too_large {
+            let remaining = max_bytes.saturating_sub(line.len());
+            if content_len > remaining {
+                too_large = true;
+            } else {
+                line.extend_from_slice(&buffer[..content_len]);
+            }
+        }
+        reader.consume(consumed);
+        if newline.is_some() {
+            return if too_large {
+                Ok(Some(Err(())))
+            } else {
+                Ok(Some(Ok(line)))
+            };
+        }
     }
 }
 
@@ -124,17 +203,36 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
         None => return InspectResponse::blocked(Some(request_id), "OFFICE_UNSUPPORTED_EXTENSION"),
     };
 
-    let before_hash = match sha256_file(path) {
-        Ok(hash) => hash,
+    let mut file = match File::open(path) {
+        Ok(file) => file,
         Err(_) => return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED"),
+    };
+    let source_snapshot = match source_snapshot(&file) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED"),
+    };
+    if source_snapshot.len > SOURCE_MAX_BYTES {
+        return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_TOO_LARGE");
+    }
+    let deadline = Instant::now() + SCAN_TIMEOUT;
+    let before_hash = match sha256_file(&mut file, deadline) {
+        Ok(hash) => hash,
+        Err(HashError::Timeout) => {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT")
+        }
+        Err(HashError::Io) => {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED")
+        }
     };
 
     if LEGACY_EXTENSIONS.contains(&extension.as_str()) {
         return finish_inspection(
             request_id,
-            path,
+            file,
+            source_snapshot,
             before_hash,
             vec!["OFFICE_LEGACY_BINARY_FORMAT"],
+            deadline,
         );
     }
 
@@ -149,10 +247,9 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
         risk_codes.push("OFFICE_MACRO_EXTENSION");
     }
 
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(_) => return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED"),
-    };
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED");
+    }
     let mut archive = match zip::ZipArchive::new(file) {
         Ok(archive) => archive,
         Err(_) => return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_ZIP"),
@@ -161,22 +258,58 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
     let mut has_vba = false;
     let mut has_signature = false;
     let mut has_external_relationship = false;
-    let package_spec = ooxml_package_spec(&extension).expect("validated OOXML extension");
+    if archive.len() > ZIP_ENTRY_MAX_COUNT {
+        return InspectResponse::blocked(Some(request_id), "OFFICE_ZIP_ENTRY_LIMIT_EXCEEDED");
+    }
+    let package_spec = match ooxml_package_spec(&extension) {
+        Some(spec) => spec,
+        None => return InspectResponse::blocked(Some(request_id), "OFFICE_INTERNAL_ROUTE_ERROR"),
+    };
     let mut content_types_xml = None;
     let mut root_relationships_xml = None;
     let mut has_expected_main_part = false;
     let mut has_other_known_main_part = false;
+    let mut normalized_names = HashSet::with_capacity(archive.len());
+    let mut xml_total_bytes = 0_u64;
     for index in 0..archive.len() {
+        if Instant::now() >= deadline {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT");
+        }
         let mut entry = match archive.by_index(index) {
             Ok(entry) => entry,
             Err(_) => {
                 return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_ZIP_ENTRY")
             }
         };
-        let name = entry.name().replace('\\', "/").to_ascii_lowercase();
+        let raw_name = entry.name();
+        if !is_canonical_zip_entry_name(raw_name) {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_ZIP_ENTRY_NAME");
+        }
+        let name = raw_name.to_ascii_lowercase();
+        if !normalized_names.insert(name.clone()) {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_DUPLICATE_ZIP_ENTRY");
+        }
+        if compression_ratio_exceeded(entry.size(), entry.compressed_size()) {
+            return InspectResponse::blocked(
+                Some(request_id),
+                "OFFICE_ZIP_COMPRESSION_RATIO_EXCEEDED",
+            );
+        }
+        let is_xml_resource = name.ends_with(".xml") || name.ends_with(".rels");
+        if is_xml_resource {
+            xml_total_bytes = match xml_total_bytes.checked_add(entry.size()) {
+                Some(total) if total <= XML_TOTAL_MAX_BYTES => total,
+                _ => {
+                    return InspectResponse::blocked(Some(request_id), "OFFICE_XML_BUDGET_EXCEEDED")
+                }
+            };
+        }
         if name == "[content_types].xml" {
-            content_types_xml = match read_xml_entry(&mut entry) {
+            content_types_xml = match read_xml_entry(&mut entry, deadline) {
                 Ok(xml) => Some(xml),
+                Err(XmlEntryReadError::Timeout) => {
+                    return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT")
+                }
                 Err(_) => {
                     return InspectResponse::blocked(
                         Some(request_id),
@@ -198,7 +331,7 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
             || name == "vbaprojectsignature.bin";
 
         if name.ends_with(".rels") {
-            let relationship_xml = match read_xml_entry(&mut entry) {
+            let relationship_xml = match read_xml_entry(&mut entry, deadline) {
                 Ok(xml) => xml,
                 Err(XmlEntryReadError::TooLarge) => {
                     return InspectResponse::blocked(
@@ -211,6 +344,9 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
                         Some(request_id),
                         "OFFICE_RELATIONSHIP_READ_FAILED",
                     )
+                }
+                Err(XmlEntryReadError::Timeout) => {
+                    return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT")
                 }
             };
             let scan = match scan_relationships(
@@ -269,20 +405,42 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
         risk_codes.push("OFFICE_EXTERNAL_RELATIONSHIP_PRESENT");
     }
 
-    finish_inspection(request_id, path, before_hash, risk_codes)
+    let file = archive.into_inner();
+    finish_inspection(
+        request_id,
+        file,
+        source_snapshot,
+        before_hash,
+        risk_codes,
+        deadline,
+    )
 }
 
 fn finish_inspection(
     request_id: String,
-    path: &Path,
+    mut file: File,
+    before_snapshot: SourceSnapshot,
     before_hash: String,
     risk_codes: Vec<&'static str>,
+    deadline: Instant,
 ) -> InspectResponse {
-    let after_hash = match sha256_file(path) {
+    let after_hash = match sha256_file(&mut file, deadline) {
         Ok(hash) => hash,
+        Err(HashError::Timeout) => {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT")
+        }
+        Err(HashError::Io) => {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED")
+        }
+    };
+    let after_snapshot = match source_snapshot(&file) {
+        Ok(snapshot) => snapshot,
         Err(_) => return InspectResponse::blocked(Some(request_id), "OFFICE_SOURCE_READ_FAILED"),
     };
-    if before_hash != after_hash {
+    if before_hash != after_hash
+        || before_snapshot.len != after_snapshot.len
+        || before_snapshot.modified != after_snapshot.modified
+    {
         return InspectResponse::blocked(
             Some(request_id),
             "OFFICE_SOURCE_CHANGED_DURING_INSPECTION",
@@ -302,18 +460,50 @@ fn finish_inspection(
     }
 }
 
-fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = File::open(path)?;
+fn source_snapshot(file: &File) -> io::Result<SourceSnapshot> {
+    let metadata = file.metadata()?;
+    Ok(SourceSnapshot {
+        len: metadata.len(),
+        modified: metadata.modified()?,
+    })
+}
+
+fn sha256_file(file: &mut File, deadline: Instant) -> Result<String, HashError> {
+    file.seek(SeekFrom::Start(0)).map_err(|_| HashError::Io)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let count = file.read(&mut buffer)?;
+        if Instant::now() >= deadline {
+            return Err(HashError::Timeout);
+        }
+        let count = file.read(&mut buffer).map_err(|_| HashError::Io)?;
         if count == 0 {
             break;
         }
         hasher.update(&buffer[..count]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn is_canonical_zip_entry_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.contains('\\')
+        || name.starts_with('/')
+        || name.as_bytes().get(1) == Some(&b':')
+    {
+        return false;
+    }
+    name.split('/').all(|segment| {
+        !segment.is_empty() && segment != "." && segment != ".." && !segment.contains(':')
+    })
+}
+
+fn compression_ratio_exceeded(size: u64, compressed_size: u64) -> bool {
+    size > 0
+        && (compressed_size == 0
+            || compressed_size
+                .checked_mul(ZIP_COMPRESSION_RATIO_MAX)
+                .is_some_and(|maximum_size| size > maximum_size))
 }
 
 fn ooxml_package_spec(extension: &str) -> Option<OoxmlPackageSpec> {
@@ -349,17 +539,31 @@ fn ooxml_package_spec(extension: &str) -> Option<OoxmlPackageSpec> {
     }
 }
 
-fn read_xml_entry(entry: &mut zip::read::ZipFile<'_>) -> Result<String, XmlEntryReadError> {
-    if entry.size() > RELATIONSHIP_MAX_BYTES {
+fn read_xml_entry(
+    entry: &mut zip::read::ZipFile<'_>,
+    deadline: Instant,
+) -> Result<String, XmlEntryReadError> {
+    if entry.size() > XML_ENTRY_MAX_BYTES {
         return Err(XmlEntryReadError::TooLarge);
     }
-    let mut bytes = Vec::new();
-    entry
-        .by_ref()
-        .take(RELATIONSHIP_MAX_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| XmlEntryReadError::Invalid)?;
-    if bytes.len() as u64 > RELATIONSHIP_MAX_BYTES {
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(XmlEntryReadError::Timeout);
+        }
+        let count = entry
+            .read(&mut buffer)
+            .map_err(|_| XmlEntryReadError::Invalid)?;
+        if count == 0 {
+            break;
+        }
+        if bytes.len() + count > XML_ENTRY_MAX_BYTES as usize {
+            return Err(XmlEntryReadError::TooLarge);
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    if bytes.len() as u64 > XML_ENTRY_MAX_BYTES {
         return Err(XmlEntryReadError::TooLarge);
     }
     String::from_utf8(bytes).map_err(|_| XmlEntryReadError::Invalid)
@@ -367,14 +571,14 @@ fn read_xml_entry(entry: &mut zip::read::ZipFile<'_>) -> Result<String, XmlEntry
 
 fn attribute_value(
     element: &BytesStart<'_>,
-    reader: &Reader<&[u8]>,
+    decoder: Decoder,
     wanted: &[u8],
 ) -> Result<Option<String>, ()> {
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| ())?;
-        if attribute.key.local_name().as_ref() == wanted {
+        if attribute.key.as_ref() == wanted {
             return attribute
-                .decode_and_unescape_value(reader.decoder())
+                .decode_and_unescape_value(decoder)
                 .map(|value| Some(value.into_owned()))
                 .map_err(|_| ());
         }
@@ -384,12 +588,12 @@ fn attribute_value(
 
 fn relationship_values(
     element: &BytesStart<'_>,
-    reader: &Reader<&[u8]>,
+    decoder: Decoder,
 ) -> Result<RelationshipAttributes, ()> {
     Ok(RelationshipAttributes {
-        target: attribute_value(element, reader, b"Target")?,
-        relationship_type: attribute_value(element, reader, b"Type")?,
-        target_mode: attribute_value(element, reader, b"TargetMode")?,
+        target: attribute_value(element, decoder, b"Target")?,
+        relationship_type: attribute_value(element, decoder, b"Type")?,
+        target_mode: attribute_value(element, decoder, b"TargetMode")?,
     })
 }
 
@@ -397,55 +601,209 @@ fn scan_relationships(xml: &str, expected_target: Option<&str>) -> Result<Relati
     const OFFICE_DOCUMENT_RELATIONSHIP: &str =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 
-    let mut reader = Reader::from_str(xml);
+    let mut reader = NsReader::from_str(xml);
     let mut scan = RelationshipScan {
         has_expected_office_document: false,
         has_external: false,
     };
+    let mut depth = 0_usize;
+    let mut root_seen = false;
+    let mut root_closed = false;
+    let mut root_is_normative = false;
 
     loop {
-        match reader.read_event().map_err(|_| ())? {
-            Event::Start(element) | Event::Empty(element)
-                if element.local_name().as_ref() == b"Relationship" =>
-            {
-                let attributes = relationship_values(&element, &reader)?;
-                scan.has_external |= attributes.target_mode.as_deref() == Some("External");
-                scan.has_expected_office_document |= expected_target.is_some_and(|expected| {
-                    attributes.target.as_deref() == Some(expected)
-                        && attributes.relationship_type.as_deref()
-                            == Some(OFFICE_DOCUMENT_RELATIONSHIP)
-                });
+        let (namespace, event) = reader.read_resolved_event().map_err(|_| ())?;
+        match event {
+            Event::Start(element) => {
+                if root_closed {
+                    return Err(());
+                }
+                if depth == 0 {
+                    if root_seen {
+                        return Err(());
+                    }
+                    root_seen = true;
+                    root_is_normative = element.local_name().as_ref() == b"Relationships"
+                        && namespace_matches(&namespace, RELATIONSHIPS_NAMESPACE);
+                } else if depth == 1
+                    && root_is_normative
+                    && element.local_name().as_ref() == b"Relationship"
+                    && namespace_matches(&namespace, RELATIONSHIPS_NAMESPACE)
+                {
+                    update_relationship_scan(
+                        &mut scan,
+                        &element,
+                        reader.decoder(),
+                        expected_target,
+                        OFFICE_DOCUMENT_RELATIONSHIP,
+                    )?;
+                }
+                depth += 1;
+            }
+            Event::Empty(element) => {
+                if root_closed {
+                    return Err(());
+                }
+                if depth == 0 {
+                    if root_seen {
+                        return Err(());
+                    }
+                    root_seen = true;
+                    root_closed = true;
+                    root_is_normative = element.local_name().as_ref() == b"Relationships"
+                        && namespace_matches(&namespace, RELATIONSHIPS_NAMESPACE);
+                } else if depth == 1
+                    && root_is_normative
+                    && element.local_name().as_ref() == b"Relationship"
+                    && namespace_matches(&namespace, RELATIONSHIPS_NAMESPACE)
+                {
+                    update_relationship_scan(
+                        &mut scan,
+                        &element,
+                        reader.decoder(),
+                        expected_target,
+                        OFFICE_DOCUMENT_RELATIONSHIP,
+                    )?;
+                }
+            }
+            Event::End(_) => {
+                depth = depth.checked_sub(1).ok_or(())?;
+                if depth == 0 {
+                    root_closed = true;
+                }
             }
             Event::DocType(_) => return Err(()),
-            Event::Eof => return Ok(scan),
+            Event::Text(text)
+                if depth == 0 && !text.decode().map_err(|_| ())?.trim().is_empty() =>
+            {
+                return Err(())
+            }
+            Event::Eof => {
+                return if root_seen && root_closed && depth == 0 {
+                    Ok(scan)
+                } else {
+                    Err(())
+                }
+            }
             _ => {}
         }
     }
 }
 
+fn namespace_matches(namespace: &ResolveResult<'_>, expected: &[u8]) -> bool {
+    matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == expected)
+}
+
+fn update_relationship_scan(
+    scan: &mut RelationshipScan,
+    element: &BytesStart<'_>,
+    decoder: Decoder,
+    expected_target: Option<&str>,
+    office_document_relationship: &str,
+) -> Result<(), ()> {
+    let attributes = relationship_values(element, decoder)?;
+    scan.has_external |= attributes.target_mode.as_deref() == Some("External");
+    scan.has_expected_office_document |= expected_target.is_some_and(|expected| {
+        attributes.target.as_deref() == Some(expected)
+            && attributes.relationship_type.as_deref() == Some(office_document_relationship)
+    });
+    Ok(())
+}
+
 fn content_types_match(xml: &str, package_spec: &OoxmlPackageSpec) -> Result<bool, ()> {
-    let mut reader = Reader::from_str(xml);
+    let mut reader = NsReader::from_str(xml);
     let expected_part_name = format!("/{}", package_spec.main_part);
     let mut has_expected_override = false;
+    let mut depth = 0_usize;
+    let mut root_seen = false;
+    let mut root_closed = false;
+    let mut root_is_normative = false;
 
     loop {
-        match reader.read_event().map_err(|_| ())? {
-            Event::Start(element) | Event::Empty(element)
-                if element.local_name().as_ref() == b"Override" =>
-            {
-                let part_name = attribute_value(&element, &reader, b"PartName")?;
-                let content_type = attribute_value(&element, &reader, b"ContentType")?;
-                if part_name.as_deref() == Some(expected_part_name.as_str())
-                    && content_type.is_some_and(|value| {
-                        value.eq_ignore_ascii_case(package_spec.main_content_type)
-                    })
+        let (namespace, event) = reader.read_resolved_event().map_err(|_| ())?;
+        match event {
+            Event::Start(element) => {
+                if root_closed {
+                    return Err(());
+                }
+                if depth == 0 {
+                    if root_seen {
+                        return Err(());
+                    }
+                    root_seen = true;
+                    root_is_normative = element.local_name().as_ref() == b"Types"
+                        && namespace_matches(&namespace, CONTENT_TYPES_NAMESPACE);
+                } else if depth == 1
+                    && root_is_normative
+                    && element.local_name().as_ref() == b"Override"
+                    && namespace_matches(&namespace, CONTENT_TYPES_NAMESPACE)
                 {
-                    has_expected_override = true;
+                    has_expected_override |= override_matches(
+                        &element,
+                        reader.decoder(),
+                        &expected_part_name,
+                        package_spec.main_content_type,
+                    )?;
+                }
+                depth += 1;
+            }
+            Event::Empty(element) => {
+                if root_closed {
+                    return Err(());
+                }
+                if depth == 0 {
+                    if root_seen {
+                        return Err(());
+                    }
+                    root_seen = true;
+                    root_closed = true;
+                    root_is_normative = element.local_name().as_ref() == b"Types"
+                        && namespace_matches(&namespace, CONTENT_TYPES_NAMESPACE);
+                } else if depth == 1
+                    && root_is_normative
+                    && element.local_name().as_ref() == b"Override"
+                    && namespace_matches(&namespace, CONTENT_TYPES_NAMESPACE)
+                {
+                    has_expected_override |= override_matches(
+                        &element,
+                        reader.decoder(),
+                        &expected_part_name,
+                        package_spec.main_content_type,
+                    )?;
+                }
+            }
+            Event::End(_) => {
+                depth = depth.checked_sub(1).ok_or(())?;
+                if depth == 0 {
+                    root_closed = true;
                 }
             }
             Event::DocType(_) => return Err(()),
-            Event::Eof => return Ok(has_expected_override),
+            Event::Text(text)
+                if depth == 0 && !text.decode().map_err(|_| ())?.trim().is_empty() =>
+            {
+                return Err(())
+            }
+            Event::Eof => {
+                return if root_seen && root_closed && depth == 0 {
+                    Ok(root_is_normative && has_expected_override)
+                } else {
+                    Err(())
+                }
+            }
             _ => {}
         }
     }
+}
+
+fn override_matches(
+    element: &BytesStart<'_>,
+    decoder: Decoder,
+    expected_part_name: &str,
+    expected_content_type: &str,
+) -> Result<bool, ()> {
+    let part_name = attribute_value(element, decoder, b"PartName")?;
+    let content_type = attribute_value(element, decoder, b"ContentType")?;
+    Ok(part_name.as_deref() == Some(expected_part_name)
+        && content_type.is_some_and(|value| value.eq_ignore_ascii_case(expected_content_type)))
 }

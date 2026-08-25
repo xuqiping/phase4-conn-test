@@ -57,6 +57,32 @@ fn run_worker(lines: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+fn run_worker_raw(input: &[u8]) -> Vec<Value> {
+    let mut child = worker_command()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn office worker");
+    child
+        .stdin
+        .as_mut()
+        .expect("worker stdin")
+        .write_all(input)
+        .expect("write raw JSONL requests");
+    let output = child.wait_with_output().expect("wait for worker");
+    assert!(
+        output.status.success(),
+        "worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("UTF-8 stdout")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object per stdout line"))
+        .collect()
+}
+
 fn create_ooxml(path: &Path, extra_entries: &[(&str, &[u8])], relationships: Option<&str>) {
     let package_extension = path
         .extension()
@@ -188,6 +214,22 @@ fn create_xlsx_with_metadata(path: &Path, content_types: &str, root_relationship
         archive.write_all(bytes).expect("metadata content");
     }
     archive.finish().expect("finish custom metadata fixture");
+}
+
+fn relationship_document_xml(extra_body: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{extra_body}</Relationships>"#
+    )
+}
+
+fn incompressible_ascii(length: usize) -> String {
+    let mut state = 0x1234_5678_u32;
+    (0..length)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (b'a' + ((state >> 24) % 26) as u8) as char
+        })
+        .collect()
 }
 
 fn sha256(path: &Path) -> String {
@@ -421,6 +463,168 @@ fn dtd_after_a_valid_override_is_rejected() {
 
     assert_eq!(response["classification"], "BLOCKED");
     assert_eq!(response["errorCode"], "OFFICE_INVALID_OOXML_PACKAGE");
+}
+
+#[test]
+fn metadata_requires_normative_root_namespace_and_direct_children() {
+    let dir = TestDir::new();
+    let root_relationships = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+    let wrong_namespace = dir.path().join("wrong-namespace.xlsx");
+    let wrong_root = dir.path().join("wrong-root.xlsx");
+    let nested_override = dir.path().join("nested-override.xlsx");
+    let nested_relationship = dir.path().join("nested-relationship.xlsx");
+    create_xlsx_with_metadata(
+        &wrong_namespace,
+        r#"<?xml version="1.0"?><Types xmlns="urn:not-opc"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>"#,
+        root_relationships,
+    );
+    create_xlsx_with_metadata(
+        &wrong_root,
+        r#"<?xml version="1.0"?><NotTypes xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></NotTypes>"#,
+        root_relationships,
+    );
+    create_xlsx_with_metadata(
+        &nested_override,
+        r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Wrapper><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Wrapper></Types>"#,
+        root_relationships,
+    );
+    create_xlsx_with_metadata(
+        &nested_relationship,
+        r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>"#,
+        r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Wrapper><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Wrapper></Relationships>"#,
+    );
+
+    let responses = run_worker(&[
+        inspect_request("wrong-namespace", &wrong_namespace),
+        inspect_request("wrong-root", &wrong_root),
+        inspect_request("nested-override", &nested_override),
+        inspect_request("nested-relationship", &nested_relationship),
+    ]);
+
+    for response in responses {
+        assert_eq!(response["classification"], "BLOCKED");
+        assert_eq!(response["errorCode"], "OFFICE_OOXML_TYPE_MISMATCH");
+    }
+}
+
+#[test]
+fn multiple_xml_roots_and_trailing_elements_are_rejected() {
+    let dir = TestDir::new();
+    let path = dir.path().join("multiple-roots.xlsx");
+    let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types><Trailing/>"#;
+    let root_relationships = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+    create_xlsx_with_metadata(&path, content_types, root_relationships);
+
+    let response = run_worker(&[inspect_request("multiple-roots", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_INVALID_OOXML_PACKAGE");
+}
+
+#[test]
+fn non_canonical_zip_entry_names_are_blocked() {
+    let dir = TestDir::new();
+    let backslash = dir.path().join("backslash-main.xlsx");
+    let point_segment = dir.path().join("point-segment.xlsx");
+    create_ooxml_package(
+        &backslash,
+        "xlsx",
+        &[("xl\\workbook.xml", b"synthetic")],
+        None,
+        false,
+        true,
+    );
+    create_ooxml(
+        &point_segment,
+        &[("xl/../unexpected.xml", b"synthetic")],
+        None,
+    );
+
+    let responses = run_worker(&[
+        inspect_request("backslash", &backslash),
+        inspect_request("point-segment", &point_segment),
+    ]);
+
+    for response in responses {
+        assert_eq!(response["classification"], "BLOCKED");
+        assert_eq!(response["errorCode"], "OFFICE_INVALID_ZIP_ENTRY_NAME");
+    }
+}
+
+#[test]
+fn duplicate_zip_entry_names_are_blocked_after_ascii_case_folding() {
+    let dir = TestDir::new();
+    let path = dir.path().join("duplicate-content-types.xlsx");
+    let duplicate = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>"#;
+    create_ooxml(&path, &[("[content_types].XML", duplicate)], None);
+
+    let response = run_worker(&[inspect_request("duplicate", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_DUPLICATE_ZIP_ENTRY");
+}
+
+#[test]
+fn worker_recovers_across_valid_invalid_and_valid_json_lines() {
+    let dir = TestDir::new();
+    let first = dir.path().join("first.xlsx");
+    let second = dir.path().join("second.xlsx");
+    create_ooxml(&first, &[], None);
+    create_ooxml(&second, &[], None);
+    let input = format!(
+        "{}\n{{bad-json\n{}\n",
+        inspect_request("first", &first),
+        inspect_request("second", &second)
+    );
+
+    let responses = run_worker_raw(input.as_bytes());
+
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["requestId"], "first");
+    assert_eq!(responses[0]["classification"], "SAFE_OOXML");
+    assert_eq!(responses[1]["errorCode"], "OFFICE_INVALID_REQUEST_JSON");
+    assert_eq!(responses[2]["requestId"], "second");
+    assert_eq!(responses[2]["classification"], "SAFE_OOXML");
+}
+
+#[test]
+fn oversized_json_line_is_drained_before_processing_the_next_request() {
+    let dir = TestDir::new();
+    let path = dir.path().join("after-large.xlsx");
+    create_ooxml(&path, &[], None);
+    let mut input = vec![b'x'; 1024 * 1024 + 1];
+    input.push(b'\n');
+    input.extend_from_slice(inspect_request("after-large", &path).to_string().as_bytes());
+    input.push(b'\n');
+
+    let responses = run_worker_raw(&input);
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["errorCode"], "OFFICE_REQUEST_TOO_LARGE");
+    assert_eq!(responses[1]["requestId"], "after-large");
+    assert_eq!(responses[1]["classification"], "SAFE_OOXML");
+}
+
+#[test]
+fn cumulative_xml_budget_is_enforced_without_large_fixture_files() {
+    let dir = TestDir::new();
+    let path = dir.path().join("xml-budget.xlsx");
+    let padding = incompressible_ascii(3_300_000);
+    let first = relationship_document_xml(&format!("<!--{padding}-->"));
+    let second = relationship_document_xml(&format!("<!--{padding}-->"));
+    create_ooxml(
+        &path,
+        &[
+            ("xl/_rels/one.xml.rels", first.as_bytes()),
+            ("xl/_rels/two.xml.rels", second.as_bytes()),
+        ],
+        None,
+    );
+
+    let response = run_worker(&[inspect_request("xml-budget", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_XML_BUDGET_EXCEEDED");
 }
 
 #[test]
