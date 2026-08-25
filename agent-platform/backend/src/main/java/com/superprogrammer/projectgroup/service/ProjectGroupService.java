@@ -46,6 +46,7 @@ public class ProjectGroupService {
     private final ProjectGroupWalletMapper walletMapper;
     private final com.superprogrammer.projectgroup.mapper.ProjectGroupLedgerMapper ledgerMapper;
     private final UserMapper userMapper;
+    private final MemberBudgetService budgetService;
 
     /**
      * 建组：组行 + 组长成员行（quota NULL=不限）+ 组池 0 行，三写同事务。
@@ -114,19 +115,22 @@ public class ProjectGroupService {
     @Transactional(rollbackFor = Exception.class)
     public void addMember(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
         requireOwner(groupId, actorUserId, admin);
-        insertMemberRow(groupId, memberUserId, quotaLimitPoints);
+        insertMemberRow(groupId, memberUserId, quotaLimitPoints, actorUserId);
         log.info("加成员 groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
     }
 
     /**
-     * 落成员行（V138 抽公共；V139 复活两段式修 17x#1）：重复入组 CONFLICT、用户须存在、quota 非负。
+     * 落成员行（V138 抽公共；V139 复活两段式修 17x#1；V156 层级额度：allocatedBy + 管理预算硬卡）。
      * <p>两段式：①先条件 UPDATE 复活软删残留行（移除后再邀请/公共池再批准路径——
      * uk_pgm_group_user 是全量唯一，软删行仍占位，直接 INSERT 必撞 409）；
-     * 复活命中即重置 quota/used=0/role=MEMBER/开关/覆盖，记 ADMIN_ADJUST 流水留痕后返回；
+     * 复活命中即重置 quota/used=0/role=MEMBER/开关/覆盖/allocated_by，记 ADMIN_ADJUST 流水留痕后返回；
      * ②未命中走活行探针 + 新插。并发双接受：复活条件 UPDATE 互斥，恰一方成功。
      * 调用方自行完成授权判定（组长 requireOwner / 邀请接受=被邀请人本人 / 公共池审批=组长）。
+     *
+     * @param allocatedByUserId 额度分配人（V156）：邀请=邀请人；公共池=审批人；直加=操作人。
+     *                          分配人是「被限额管理」且 quota 非空 → 预算硬卡（锁管理行，可分配不足 400）
      */
-    public void insertMemberRow(Long groupId, Long memberUserId, BigDecimal quotaLimitPoints) {
+    public void insertMemberRow(Long groupId, Long memberUserId, BigDecimal quotaLimitPoints, Long allocatedByUserId) {
         if (memberUserId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成员用户不能为空");
         }
@@ -136,8 +140,21 @@ public class ProjectGroupService {
         if (userMapper.selectById(memberUserId) == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
+        // V156 预算硬卡：分配人是被限额管理 → 新成员预留（quota，used=0）须 ≤ 其可分配。
+        // 锁管理行 FOR UPDATE 与 updateQuota/管理本人消耗互斥——并发双接受/边分边花打不穿。
+        if (allocatedByUserId != null && quotaLimitPoints != null) {
+            ProjectGroupMemberEntity mgr = memberMapper.selectByGroupUserForUpdate(groupId, allocatedByUserId);
+            if (mgr != null && ProjectGroupMemberEntity.ROLE_MANAGER.equals(mgr.getRole())
+                    && mgr.getQuotaLimitPoints() != null) {
+                BigDecimal available = budgetService.allocatable(groupId, mgr, null);
+                if (available != null && quotaLimitPoints.compareTo(available) > 0) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "分配人（管理）可分配额度不足：剩余可分配 " + available + "，本次需要 " + quotaLimitPoints);
+                }
+            }
+        }
         // ① 复活优先（软删残留行）
-        if (memberMapper.reviveRow(groupId, memberUserId, quotaLimitPoints) > 0) {
+        if (memberMapper.reviveRow(groupId, memberUserId, quotaLimitPoints, allocatedByUserId) > 0) {
             ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
             com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity l =
                     new com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity();
@@ -150,6 +167,7 @@ public class ProjectGroupService {
             l.setRefId(String.valueOf(memberUserId));
             l.setRemark("成员回归复活：used 清零，限额/角色/功能开关/可见性覆盖重置默认");
             ledgerMapper.insert(l);
+            recordMemberQuotaLedger(groupId, allocatedByUserId, memberUserId, null, quotaLimitPoints, "成员回归复活配额");
             log.info("成员复活 groupId={} member={} quota={}", groupId, memberUserId, quotaLimitPoints);
             return;
         }
@@ -162,7 +180,9 @@ public class ProjectGroupService {
         m.setUserId(memberUserId);
         m.setQuotaLimitPoints(quotaLimitPoints);
         m.setRole(ProjectGroupMemberEntity.ROLE_MEMBER);
+        m.setAllocatedByUserId(allocatedByUserId);
         memberMapper.insert(m);
+        recordMemberQuotaLedger(groupId, allocatedByUserId, memberUserId, null, quotaLimitPoints, "成员配额落行");
     }
 
     /** 移除成员（组长/管理/admin）：组长自身不可移除；MANAGER/OWNER 行不可被运营移除；used>0 照移（历史流水留痕）。 */
@@ -177,28 +197,101 @@ public class ProjectGroupService {
         log.info("移除成员 groupId={} member={} actor={}", groupId, memberUserId, actorUserId);
     }
 
-    /** 调整成员限额（组长/管理/admin）：null=改为不限；调低不追偿（V133 列注释口径），仅约束后续消耗。 */
+    /**
+     * 调整成员限额（V156 层级额度版，取代 V139 仅 MEMBER 行口径）：
+     * <ul>
+     *   <li><b>组长/admin</b>：目标 MEMBER 或 MANAGER 行。目标 MANAGER=给管理定预算：
+     *       新额度非空时须 ≥ 已占用（子树已耗+下级预留）且管理下无「不限额」下级；
+     *       目标 MEMBER：直接定并改挂组长（allocated_by=组长，离开原管理预算）。</li>
+     *   <li><b>管理</b>：目标仅 MEMBER 行；自己有额度（非空）时新限额必填且新增预留 ≤ 自己可分配
+     *       （管理行 FOR UPDATE 串行化，并发双分配打不穿）；allocated_by=自己。
+     *       自己不限额时可配任意值（含 null=不限）。</li>
+     * </ul>
+     * 调低不追溯已耗（V133 列注释口径），仅约束后续消耗。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void updateQuota(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
-        requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         if (quotaLimitPoints != null && quotaLimitPoints.signum() < 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成员限额不能为负");
         }
-        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
-        m.setQuotaLimitPoints(quotaLimitPoints);
-        memberMapper.updateById(m);
-        log.info("调限额 groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
+        ProjectGroupMemberEntity target = requireMember(groupId, memberUserId);
+        String targetRole = target.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : target.getRole();
+        if (ProjectGroupMemberEntity.ROLE_OWNER.equals(targetRole)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长行不可调限额（组长预算=组池本身）");
+        }
+        boolean ownerSide = admin || g.getOwnerUserId().equals(actorUserId);
+        if (ownerSide) {
+            if (ProjectGroupMemberEntity.ROLE_MANAGER.equals(targetRole)) {
+                // 给管理定预算：锁管理行（与管理的分配操作互斥），下限=已占用
+                ProjectGroupMemberEntity mgr = memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);
+                if (quotaLimitPoints != null) {
+                    if (budgetService.hasUnboundedChild(groupId, memberUserId, null)) {
+                        throw new BusinessException(ErrorCode.BAD_REQUEST,
+                                "该管理下有限额为空的成员，请先把这些成员收编（改挂组长或补限额）再定额度");
+                    }
+                    BigDecimal occupied = budgetService.occupied(groupId, mgr, null);
+                    if (quotaLimitPoints.compareTo(occupied) < 0) {
+                        throw new BusinessException(ErrorCode.BAD_REQUEST,
+                                "新额度低于该管理当前已占用 " + occupied + "（子树已耗+下级预留），请先下调其成员限额或重置已用");
+                    }
+                }
+                BigDecimal mgrOldQuota = mgr.getQuotaLimitPoints();
+                mgr.setQuotaLimitPoints(quotaLimitPoints);
+                mgr.setAllocatedByUserId(g.getOwnerUserId());
+                memberMapper.updateById(mgr);
+                recordMemberQuotaLedger(groupId, actorUserId, memberUserId, mgrOldQuota, quotaLimitPoints, "组长调管理预算");
+            } else {
+                BigDecimal oldQuota = target.getQuotaLimitPoints();
+                target.setQuotaLimitPoints(quotaLimitPoints);
+                target.setAllocatedByUserId(g.getOwnerUserId());
+                memberMapper.updateById(target);
+                recordMemberQuotaLedger(groupId, actorUserId, memberUserId, oldQuota, quotaLimitPoints, "组长调成员限额");
+            }
+            log.info("调限额(组长侧) groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
+            return;
+        }
+        // 管理侧：目标仅 MEMBER 行；锁自己行算可分配
+        if (!ProjectGroupMemberEntity.ROLE_MEMBER.equals(targetRole)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅可管理普通成员（MEMBER）");
+        }
+        ProjectGroupMemberEntity mgr = memberMapper.selectByGroupUserForUpdate(groupId, actorUserId);
+        if (mgr == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非本项目组成员");
+        }
+        if (mgr.getQuotaLimitPoints() != null && quotaLimitPoints == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "你的额度为 " + mgr.getQuotaLimitPoints() + "（有限），给成员配限额须填具体数值，不能不限");
+        }
+        if (quotaLimitPoints != null) {
+            budgetService.requireWithinBudget(groupId, mgr, target, quotaLimitPoints);
+        }
+        BigDecimal oldQuota = target.getQuotaLimitPoints();
+        target.setQuotaLimitPoints(quotaLimitPoints);
+        target.setAllocatedByUserId(actorUserId);
+        memberMapper.updateById(target);
+        recordMemberQuotaLedger(groupId, actorUserId, memberUserId, oldQuota, quotaLimitPoints, "管理调成员限额");
+        log.info("调限额(管理侧) groupId={} member={} quota={} actor={}", groupId, memberUserId, quotaLimitPoints, actorUserId);
     }
 
     /**
-     * 重置成员 used（组长/admin）：used→0 + 组流水 ADMIN_ADJUST（delta=0，balance_after=组池现值，
+     * 重置成员 used（组长/管理/admin）：used→0 + 组流水 ADMIN_ADJUST（delta=0，balance_after=组池现值，
      * remark 记前后值留痕）。quota 不动。重置后若有迟到退款，GREATEST 落 0，
      * Σ(CONSUME−REFUND) 与 used 会偏差——罕见，对账黄灯人工核（V133 模板注）。
+     * <p>V156：目标 MEMBER 行=组长/管理均可；目标 MANAGER 行=仅组长/admin（重置管理已用=释放其可分配）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void resetUsed(Long groupId, Long actorUserId, boolean admin, Long memberUserId) {
-        requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
-        ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
+        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        String targetRole = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+        if (ProjectGroupMemberEntity.ROLE_OWNER.equals(targetRole)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "组长行不可重置");
+        }
+        boolean ownerSide = admin || g.getOwnerUserId().equals(actorUserId);
+        if (ProjectGroupMemberEntity.ROLE_MANAGER.equals(targetRole) && !ownerSide) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "管理行仅组长可重置已用");
+        }
         BigDecimal before = m.getUsedPoints();
         m.setUsedPoints(BigDecimal.ZERO);
         memberMapper.updateById(m);
@@ -257,12 +350,16 @@ public class ProjectGroupService {
             // V139：身份取成员行 role（OWNER/MANAGER/MEMBER）；组长恒 OWNER（兜底行缺失场景）
             String myRole = owner ? ProjectGroupMemberEntity.ROLE_OWNER
                     : (myRow != null && myRow.getRole() != null ? myRow.getRole() : ProjectGroupMemberEntity.ROLE_MEMBER);
+            // V156：管理视角给「我可分配额度」（选择器徽标/组卡片展示；不限额→null）
+            BigDecimal myAllocatable = ProjectGroupMemberEntity.ROLE_MANAGER.equals(myRole) && myRow != null
+                    ? budgetService.allocatable(g.getId(), myRow, null) : null;
             result.add(new ProjectGroupMineVO(
                     g.getId(), g.getName(), g.getDescription(), g.getOwnerUserId(),
                     myRole,
                     w != null ? w.getBalancePoints() : BigDecimal.ZERO,
                     myRow != null ? myRow.getQuotaLimitPoints() : null,
                     myRow != null ? myRow.getUsedPoints() : BigDecimal.ZERO,
+                    myAllocatable,
                     memberCount.intValue(), g.getCreatedAt()));
         }
         return result;
@@ -287,16 +384,22 @@ public class ProjectGroupService {
 
         List<ProjectGroupMemberVO> members = rows.stream().map(m -> {
             User u = users.get(m.getUserId());
+            String role = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+            // V156：管理行算可分配额度（额度−子树已耗−下级预留；不限额→null）；管理行数少，逐行算可接受
+            BigDecimal allocatable = ProjectGroupMemberEntity.ROLE_MANAGER.equals(role)
+                    ? budgetService.allocatable(groupId, m, null) : null;
             return new ProjectGroupMemberVO(
                     m.getUserId(),
                     u != null ? u.getUsername() : null,
                     u != null && u.getName() != null ? u.getName() : (u != null ? u.getUsername() : null),
                     m.getUserId().equals(g.getOwnerUserId()),
-                    m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole(),
+                    role,
                     MemberAllowedKinds.parse(m.getAllowedKinds()),
                     ProjectGroupVisibilityService.parseOverrides(m.getMemberVisibilityOverrides()),
                     m.getQuotaLimitPoints(),
                     m.getUsedPoints(),
+                    m.getAllocatedByUserId(),
+                    allocatable,
                     m.getCreatedAt());
         }).toList();
 
@@ -325,7 +428,7 @@ public class ProjectGroupService {
         int limit = safeKeyword.isEmpty() ? 50 : 20;
         return userMapper.searchActiveCandidates(safeKeyword, new ArrayList<>(excluded), limit)
                 .stream().limit(limit)
-                .map(u -> new com.superprogrammer.projectgroup.dto.ProjectGroupCandidateVO(u.getId(), u.getUsername()))
+                .map(u -> new com.superprogrammer.projectgroup.dto.ProjectGroupCandidateVO(u.getId(), u.getUsername(), u.getName()))
                 .toList();
     }
 
@@ -356,13 +459,46 @@ public class ProjectGroupService {
         if (g.getOwnerUserId().equals(memberUserId)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长角色不可变更");
         }
-        ProjectGroupMemberEntity m = requireMember(groupId, memberUserId);
+        // 17x-1：行锁读——降职要动 quota，与 updateQuota/doChargeGroup 的成员行锁同序互斥，防「边降职边消耗/边调限额」竞态
+        ProjectGroupMemberEntity m = requireMemberForUpdate(groupId, memberUserId);
         String cur = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
         if (ProjectGroupMemberEntity.ROLE_OWNER.equals(cur)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长角色不可变更");
         }
         if (role.equals(cur)) {
             return;
+        }
+        // V156：管理降回成员 → 其额度下级统一改挂组长（预算不悬空；降职后该行为 MEMBER 不再参与子树口径）
+        if (ProjectGroupMemberEntity.ROLE_MANAGER.equals(cur) && ProjectGroupMemberEntity.ROLE_MEMBER.equals(role)) {
+            // 下级快照须在持有本行 FOR UPDATE 事务内读（子级配额变更必先锁本管理行，快照一致）
+            List<ProjectGroupMemberEntity> children = memberMapper.selectChildren(groupId, memberUserId);
+            int reparented = memberMapper.reparentChildren(groupId, memberUserId, g.getOwnerUserId());
+            if (reparented > 0) {
+                log.info("管理降职下级改挂组长 groupId={} exManager={} count={}", groupId, memberUserId, reparented);
+            }
+            // 17x-1 缩额：下级带着自己的 quota 离开后，ex-manager 限额须同步收缩，堵「quota 200、下级分走 100、行还在 200 → 组内总额 300」超发。
+            // 任一下级不限额（quota NULL）→ 差额不可算，保守取 used（与 allocatable 对不限额下级按 0 可分配同向）。ex-manager 本身不限额则不动。
+            if (m.getQuotaLimitPoints() != null) {
+                BigDecimal oldQuota = m.getQuotaLimitPoints();
+                BigDecimal used = m.getUsedPoints() == null ? BigDecimal.ZERO : m.getUsedPoints();
+                BigDecimal quotaNew;
+                boolean hasUnboundedChild = children.stream()
+                        .anyMatch(c -> c.getQuotaLimitPoints() == null);
+                if (hasUnboundedChild) {
+                    quotaNew = used;
+                } else {
+                    BigDecimal childReserved = children.stream()
+                            .map(ProjectGroupMemberEntity::getQuotaLimitPoints)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    quotaNew = oldQuota.subtract(childReserved).max(used);
+                }
+                if (quotaNew.compareTo(oldQuota) != 0) {
+                    m.setQuotaLimitPoints(quotaNew);
+                    recordMemberQuotaLedger(groupId, actorUserId, memberUserId, oldQuota, quotaNew, "管理降职缩额");
+                    log.info("管理降职缩额 groupId={} exManager={} quota {}->{} used={} 下级数={}",
+                            groupId, memberUserId, oldQuota, quotaNew, used, children.size());
+                }
+            }
         }
         m.setRole(role);
         memberMapper.updateById(m);
@@ -390,6 +526,68 @@ public class ProjectGroupService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "该用户不是组成员");
         }
         return m;
+    }
+
+    /**
+     * 行锁版 {@link #requireMember}（17x-1 降职缩额专用）：
+     * 只在降职/配额写入路径用，与 selectByGroupUserForUpdate 同串行化点，
+     * 防「边降职边消耗/边调限额」读到过期 quota/used。锁序与 doChargeGroup 一致（成员行），无环。
+     */
+    private ProjectGroupMemberEntity requireMemberForUpdate(Long groupId, Long userId) {
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUserForUpdate(groupId, userId);
+        if (m == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "该用户不是组成员");
+        }
+        return m;
+    }
+
+    /**
+     * 成员配额流水留痕（20x-2「累计被分配」数据源；17x-1 降职缩额留痕）。
+     * 非资金腿（不动组池余额，balance_after 只照抄当前池余额做快照），对账等式在 D4 白名单显式排除。
+     * <ul>
+     *   <li>old==new：无变化不落行</li>
+     *   <li>new==null：限额→不限，QUOTA_ADJUST delta=0 记边界</li>
+     *   <li>old==null：首次授予/落行，ALLOCATE delta=new</li>
+     *   <li>d=new−old：d&gt;0 ALLOCATE（毛额口径），d&lt;0 RECLAIM（净额=ΣALLOCATE−ΣRECLAIM）</li>
+     * </ul>
+     */
+    private void recordMemberQuotaLedger(Long groupId, Long actorUserId, Long memberUserId,
+                                         BigDecimal oldQuota, BigDecimal newQuota, String cause) {
+        String type;
+        BigDecimal delta;
+        if (Objects.equals(oldQuota, newQuota)) {
+            return;
+        }
+        if (newQuota == null) {
+            type = com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_MEMBER_QUOTA_ADJUST;
+            delta = BigDecimal.ZERO;
+        } else if (oldQuota == null) {
+            type = com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE;
+            delta = newQuota;
+        } else {
+            BigDecimal d = newQuota.subtract(oldQuota);
+            if (d.signum() == 0) {
+                return;
+            }
+            type = d.signum() > 0
+                    ? com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE
+                    : com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_MEMBER_RECLAIM;
+            delta = d;
+        }
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
+        com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity l =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity();
+        l.setGroupId(groupId);
+        l.setActorUserId(actorUserId);
+        l.setType(type);
+        l.setDeltaPoints(delta);
+        l.setBalanceAfter(w != null ? w.getBalancePoints() : BigDecimal.ZERO);
+        l.setRefType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.REF_MEMBER);
+        l.setRefId(String.valueOf(memberUserId));
+        l.setRemark(cause + (newQuota == null
+                ? "：限额 " + oldQuota + "→不限"
+                : "：限额 " + (oldQuota == null ? "不限" : oldQuota) + "→" + newQuota));
+        ledgerMapper.insert(l);
     }
 
     /**

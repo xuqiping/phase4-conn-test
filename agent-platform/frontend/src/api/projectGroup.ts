@@ -24,6 +24,8 @@ export interface ProjectGroupMineVO {
   myQuota: number | null
   /** 我已消耗（限额口径） */
   myUsed: number
+  /** 我作为管理的可分配额度（V156 层级额度；null=不适用或不限） */
+  myAllocatable: number | null
   memberCount: number
   createdAt: string
 }
@@ -42,6 +44,10 @@ export interface ProjectGroupMemberVO {
   memberVisibilityOverrides: Record<string, 'OWN' | 'ALL'> | null
   quotaLimitPoints: number | null
   usedPoints: number
+  /** 额度分配人（V156 层级额度）：null=组长行；组长 id=组池直管；管理 id=占该管理预算 */
+  allocatedByUserId: number | null
+  /** 管理可分配额度（V156，仅 MANAGER 行有值；null=不限/不适用） */
+  allocatablePoints: number | null
   joinedAt: string
 }
 
@@ -100,6 +106,8 @@ export interface ProjectGroupOutputVO {
   createdAt: string
   userId: number | null
   username: string | null
+  /** 17x#2：昵称/姓名（空回落 username） */
+  displayName: string | null
   /** CHAT/EMBED/RERANK/IMAGE/VIDEO */
   kind: string
   model: string | null
@@ -113,6 +121,8 @@ export interface ProjectGroupOutputVO {
   resultFileId: string | null
   /** 图片产物 fileId 列表（17x#1） */
   imageFileIds: string[] | null
+  /** 17x-2026-08-25：CHAT 行最新 assistant 回复（预览列展示生成结果） */
+  chatResult: string | null
 }
 
 /** 组邀请行（ProjectGroupInviteVO，17x#3）。 */
@@ -199,7 +209,7 @@ export const projectGroupApi = {
 
   /** GET /project-groups/{id}/members/candidates — 候选用户搜索。 */
   candidates(id: number, keyword = '') {
-    return request.get<ApiResponse<{ userId: number; username: string }[]>>(
+    return request.get<ApiResponse<{ userId: number; username: string; name: string | null }[]>>(
       `/project-groups/${id}/members/candidates`, { params: { keyword } })
   },
 

@@ -30,6 +30,12 @@ public class ProjectGroupLedgerEntity {
     public static final String TYPE_ADMIN_ADJUST = "ADMIN_ADJUST";
     /** type：组池不足组长兜底差额。 */
     public static final String TYPE_BACKSTOP = "BACKSTOP";
+    /** type：成员额度授予（配额落行/调增；delta=授予额，20x-2 毛额口径）。非资金腿，不进组池对账等式。 */
+    public static final String TYPE_MEMBER_ALLOCATE = "MEMBER_ALLOCATE";
+    /** type：成员额度收回（调减/降职缩额；delta=收回额，净额=毛额−Σ此）。非资金腿。 */
+    public static final String TYPE_MEMBER_RECLAIM = "MEMBER_RECLAIM";
+    /** type：成员限额边界留痕（限额↔不限互转；delta=0 记前后值，不进毛额/净额聚合）。 */
+    public static final String TYPE_MEMBER_QUOTA_ADJUST = "MEMBER_QUOTA_ADJUST";
 
     /** ref_type：对话。 */
     public static final String REF_CHAT = "CHAT";
@@ -45,6 +51,8 @@ public class ProjectGroupLedgerEntity {
     public static final String REF_GROUP = "GROUP";
     /** ref_type：管理员操作。 */
     public static final String REF_ADMIN = "ADMIN";
+    /** ref_type：成员额度操作（MEMBER_* 类流水，ref_id=成员 userId）。 */
+    public static final String REF_MEMBER = "MEMBER";
 
     @TableId(type = IdType.AUTO)
     private Long id;

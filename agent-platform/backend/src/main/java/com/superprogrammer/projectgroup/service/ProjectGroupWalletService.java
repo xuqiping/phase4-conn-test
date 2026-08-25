@@ -47,6 +47,7 @@ public class ProjectGroupWalletService {
     private final ProjectGroupLedgerMapper ledgerMapper;
     private final PointsWalletService pointsWallet;
     private final IdempotencyKeyMapper idemMapper;
+    private final MemberBudgetService budgetService;
 
     /** 组长划拨：个人 -points（GROUP_ALLOCATE 流水）→ 组池 +points（ALLOCATE 流水）。admin 越组长代管放行（审计在 Controller @AuditLog）。 */
     @Transactional(rollbackFor = Exception.class)
@@ -110,7 +111,21 @@ public class ProjectGroupWalletService {
         if (walletMapper.deduct(groupId, cost) == 0) {                              // 锁①组池
             throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足");
         }
-        if (memberMapper.addUsed(groupId, memberUserId, cost) == 0) {               // 锁②成员行（quota 守卫）
+        // V156 层级额度：管理本人消耗硬卡——可分配（额度−子树已耗−下级预留）须 ≥ 本次消耗，
+        // 否则管理能吃掉已预留给下级的预算。锁管理行（锁序：组池→成员行，与既有 addUsed 同向），
+        // 与 updateQuota/邀请接受落行的 FOR UPDATE 互斥——边花边分并发打不穿。
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity chargeRow =
+                memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);     // 锁②成员行
+        if (chargeRow != null
+                && com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER.equals(chargeRow.getRole())
+                && chargeRow.getQuotaLimitPoints() != null) {
+            BigDecimal available = budgetService.allocatable(groupId, chargeRow, null);
+            if (available != null && cost.compareTo(available) > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "超出你的可分配额度：剩余可分配 " + available + "（下级预留须保留），本次需 " + cost);
+            }
+        }
+        if (memberMapper.addUsed(groupId, memberUserId, cost) == 0) {               // 条件加（quota 守卫）
             throw new BusinessException(ErrorCode.BAD_REQUEST, "超出组长配置的成员限额");
         }
         ProjectGroupWalletEntity w = requireWallet(groupId);                        // 行已被本事务 UPDATE 锁定
@@ -187,6 +202,8 @@ public class ProjectGroupWalletService {
     /**
      * 组池预检 + 成员功能开关（17x#2，V139 重载）：kind 非空且被成员 allowed_kinds 白名单排除 → 400。
      * 入口体验层拦截（真防线在 {@link #doChargeGroup} 同事务校验）。
+     * <p>17x 安全审计补漏（V156）：原预检不查成员限额——成员超限额后结算硬卡被计费铁律吞掉
+     * （usage 记 FAILED 但模型已调用=免费用），此处补齐 成员 used≥quota 与 管理可分配≤0 两道预检。
      */
     public BigDecimal requireAffordableGroup(Long groupId, Long userId, String kind) {
         if (userId == null) {
@@ -204,6 +221,20 @@ public class ProjectGroupWalletService {
         }
         if (!MemberAllowedKinds.isAllowed(m.getAllowedKinds(), kind)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长已限制你在本组使用该类模型（" + kind + "）");
+        }
+        // 审计补漏①：成员限额预检（与 addUsed 硬卡同口径；预估口径 used≥quota 即拦）
+        if (m.getQuotaLimitPoints() != null && m.getUsedPoints() != null
+                && m.getUsedPoints().compareTo(m.getQuotaLimitPoints()) >= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "超出组长配置的成员限额");
+        }
+        // 审计补漏②：管理可分配预检（与 doChargeGroup 预算硬卡同口径；>0 放行，非精确估价）
+        if (com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER.equals(m.getRole())
+                && m.getQuotaLimitPoints() != null) {
+            BigDecimal available = budgetService.allocatable(groupId, m, null);
+            if (available != null && available.signum() <= 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "你的可分配额度已用尽（下级预留须保留），请找组长调整");
+            }
         }
         ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
         if (w == null || w.getBalancePoints().signum() <= 0) {

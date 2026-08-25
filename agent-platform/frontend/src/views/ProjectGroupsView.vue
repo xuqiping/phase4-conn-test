@@ -84,6 +84,11 @@
                 · 我的限额 {{ g.myQuota === null ? '不限' : fmt(g.myQuota) }}
                 · 已用 {{ fmt(g.myUsed) }}
               </template>
+              <!-- 17x 未解决#1（V156）：管理卡片显自己的额度与剩余可分配 -->
+              <template v-else-if="g.myRole === 'MANAGER'">
+                · 我的额度 {{ g.myQuota === null ? '不限' : fmt(g.myQuota) }}
+                · 可分配 {{ g.myAllocatable === null ? '不限' : fmt(g.myAllocatable) }}
+              </template>
             </div>
           </div>
         </div>
@@ -113,6 +118,11 @@
         </template>
         <span v-else class="pg-view__balance-chip">
           组池 {{ fmt(selected.balancePoints) }} 分
+          <!-- 17x 未解决#1（V156）：管理随时可见自己的剩余可分配额度 -->
+          <template v-if="isManager">
+            · 我的额度 {{ selected.myQuota === null ? '不限' : fmt(selected.myQuota) }}
+            · 可分配 {{ selected.myAllocatable === null ? '不限' : fmt(selected.myAllocatable) }}
+          </template>
         </span>
       </div>
 
@@ -443,14 +453,17 @@ import {
   visFormFromOverrides, overridesFromVisForm,
   type KindsForm, type VisForm, type VisChoice, type GroupKind
 } from '@/utils/groupPerms'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * 计划5 Step7：项目组推进页。
  * 我的组卡片 → 组详情：组长（成员管理/组池流水/划拨回收/全员产出）+ 成员（仅自己产出行，拍板边界）。
  * 权限：菜单/接口 gated project-group:manage（后端再 requireOwner/成员校验兜底）。
+ * 17x 未解决#3：平台 admin 代管视角——admin 即使在组里只是 MEMBER 也给管理页签（后端本就 admin 放行）。
  */
 const message = useMessage()
 const dialog = useDialog()
+const auth = useAuthStore()
 
 const groups = ref<ProjectGroupMineVO[]>([])
 const loading = ref(false)
@@ -496,7 +509,8 @@ const outputFilter = ref<{
 const isOwner = computed(() => selected.value?.myRole === 'OWNER')
 /** 17x#2（V139）：MANAGER 管人不管钱——可见成员/流水（只读）/审批 tab，不见设置 tab 与划拨回收按钮。 */
 const isManager = computed(() => selected.value?.myRole === 'MANAGER')
-const canManage = computed(() => isOwner.value || isManager.value)
+/** 17x 未解决#3：平台 admin 代管视角——组内身份即使是 MEMBER 也给管理页签（后端 admin 恒放行）。 */
+const canManage = computed(() => isOwner.value || isManager.value || auth.isAdmin)
 const ROLE_LABEL: Record<string, string> = { OWNER: '组长', MANAGER: '管理', MEMBER: '成员' }
 const hasFilters = computed(() =>
   outputFilter.value.memberUserId != null || !!outputFilter.value.kind || !!outputFilter.value.range)
@@ -536,7 +550,7 @@ async function loadGroups() {
 
 function openGroup(g: ProjectGroupMineVO) {
   selected.value = g
-  tab.value = (g.myRole === 'OWNER' || g.myRole === 'MANAGER') ? 'members' : 'outputs'
+  tab.value = (g.myRole === 'OWNER' || g.myRole === 'MANAGER' || auth.isAdmin) ? 'members' : 'outputs'
   invites.value = []
   joinRequests.value = []
   onTabChange()
@@ -894,12 +908,20 @@ const KIND_LABEL: Record<string, string> = { CHAT: '对话', VIDEO: '视频', IM
 
 const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
   { title: '时间', key: 'createdAt', width: 140, render: r => fmtTime(r.createdAt) },
-  { title: '成员', key: 'username', width: 110, render: r => r.username ?? (r.userId != null ? `#${r.userId}` : '-') },
+  { title: '成员', key: 'username', width: 130, render: r => {
+    // 17x#2：昵称/姓名优先，账号括注（无昵称回落账号）
+    const uname = r.username ?? (r.userId != null ? `#${r.userId}` : '-')
+    return r.displayName && r.displayName !== r.username ? `${r.displayName}（${uname}）` : uname
+  } },
   { title: '类型', key: 'kind', width: 70, render: r => KIND_LABEL[r.kind] ?? r.kind },
   { title: '模型', key: 'model', width: 150, ellipsis: { tooltip: true }, render: r => r.model ?? '-' },
   {
-    title: '内容', key: 'mediaPrompt', ellipsis: { tooltip: true },
-    render: r => r.mediaPrompt ?? (r.kind === 'CHAT' ? '对话消耗' : '-')
+    title: '内容', key: 'mediaPrompt', width: 260,
+    // 17x 未解决#3：媒体行=prompt；CHAT 行=该次调用的用户提问（后端按轮配对）——不再显「对话消耗」占位
+    render: r => {
+      const text = r.mediaPrompt ?? '-'
+      return h('div', { class: 'pg-output-cell' }, text)
+    }
   },
   {
     title: '任务状态', key: 'mediaStatus', width: 100,
@@ -914,8 +936,11 @@ const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
 ]
 
 const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
-  { title: '用户', key: 'username', width: 140, render: r => {
-    const name = r.displayName || r.username || `#${r.userId}`
+  { title: '用户', key: 'username', width: 170, render: r => {
+    // 17x#2：昵称/姓名（账号）双显——无名回落账号
+    const base = r.displayName || r.username || `#${r.userId}`
+    const name = r.displayName && r.username && r.displayName !== r.username
+      ? `${r.displayName}（${r.username}）` : base
     return h('span', null, [
       name,
       r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null
@@ -941,13 +966,27 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
   } },
   { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限' : fmt(r.quotaLimitPoints) },
   { title: '已用', key: 'usedPoints', width: 100, render: r => fmt(r.usedPoints) },
+  // 17x 未解决#1（V156 层级额度）：管理行显「可分配」=额度−子树已耗−下级预留——管理自己随时知道还能分多少
+  { title: '可分配', key: 'allocatablePoints', width: 100, render: r => {
+    if (r.role !== 'MANAGER') return '-'
+    if (r.quotaLimitPoints == null) return '不限'
+    return fmt(r.allocatablePoints ?? 0)
+  } },
   { title: '加入时间', key: 'joinedAt', width: 140, render: r => fmtTime(r.joinedAt) },
   {
     title: '操作', key: 'actions', width: 320,
     render: r => {
       if (r.owner) return h('span', { class: 'pg-members__hint' }, '—')
-      // 后端 requireOperatableMember：quota/重置/移除/开关/可见性仅作用 MEMBER 行；MANAGER 行只有组长任免（角色列）
-      if (r.role !== 'MEMBER') return h('span', { class: 'pg-members__hint' }, '管理行：仅组长可任免')
+      // V156：MANAGER 行——组长可调预算/重置已用（任免走角色列）；管理视角只读
+      if (r.role !== 'MEMBER') {
+        if (!isOwner.value) return h('span', { class: 'pg-members__hint' }, '管理行：仅组长可任免/调额')
+        const btn = (label: string, onClick: () => void, type: 'primary' | 'default' = 'default') =>
+          h(NButton, { size: 'tiny', quaternary: true, type, onClick }, () => label)
+        return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap' }, [
+          btn('调额度', () => openQuota(r), 'primary'),
+          btn('重置已用', () => confirmResetUsed(r))
+        ])
+      }
       const btn = (label: string, onClick: () => void, type: 'primary' | 'default' | 'error' = 'default') =>
         h(NButton, { size: 'tiny', quaternary: true, type, onClick }, () => label)
       return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap' }, [
@@ -963,10 +1002,22 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
 
 // ==================== 成员管理 ====================
 
+/** 我（管理视角）在成员表里的行——取自己的可分配额度（V156）。 */
+const selfMemberRow = computed(() =>
+  (overview.value?.group.members ?? []).find(m => m.userId === auth.userInfo?.id) ?? null)
+
 function openQuota(m: ProjectGroupMemberVO) {
+  // V156 层级额度：按「目标角色 × 我的角色」给预算上下文提示
+  let content = '输入新限额（留空=改为不限）。调低不追溯已耗，仅约束后续消耗。'
+  if (m.role === 'MANAGER') {
+    content = `给管理定预算额度（留空=不限）。其下级消耗与已分配预留都会占用该额度；当前可分配 ${m.allocatablePoints == null ? '不限' : fmt(m.allocatablePoints)}，新额度不得低于已占用。`
+  } else if (isManager.value) {
+    const avail = selfMemberRow.value?.allocatablePoints
+    content = `输入新限额。你当前剩余可分配 ${avail == null ? '不限' : fmt(avail)}（自己的额度 − 子树已耗 − 成员预留），分配不可超出；调低不追溯已耗。`
+  }
   dialog.warning({
-    title: `调整 ${m.displayName || m.username || '#' + m.userId} 的限额`,
-    content: '输入新限额（留空=改为不限）。调低不追溯已耗，仅约束后续消耗。',
+    title: `调整 ${m.displayName || m.username || '#' + m.userId} 的${m.role === 'MANAGER' ? '预算额度' : '限额'}`,
+    content,
     positiveText: '保存',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -1117,7 +1168,11 @@ async function searchCandidates(q: string) {
   loadingCandidates.value = true
   try {
     const res = await projectGroupApi.candidates(selected.value!.id, q)
-    candidateOptions.value = res.data.data.map(c => ({ label: c.username, value: c.userId }))
+    // 17x#2：候选下拉展示「昵称/姓名（账号）」——无昵称回落账号
+    candidateOptions.value = res.data.data.map(c => ({
+      label: c.name && c.name !== c.username ? `${c.name}（${c.username}）` : c.username,
+      value: c.userId
+    }))
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -1516,5 +1571,15 @@ onMounted(() => {
   width: 48px;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
+}
+
+/* 17x-2026-08-25：产出「内容」列完整展示——限高+纵向滚动条，长文不截断 */
+:deep(.pg-output-cell) {
+  max-height: 96px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
 }
 </style>

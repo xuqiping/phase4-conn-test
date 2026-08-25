@@ -12,7 +12,16 @@
       <NButton v-if="row.resultFileId" size="tiny" quaternary type="primary" @click="openVideo">▶ 播放</NButton>
       <span v-else class="group-output-preview__none">-</span>
     </template>
+    <!-- 17x-2026-08-25：对话行——查看生成结果弹窗（完整回复，滚动展示） -->
+    <template v-else-if="row.kind === 'CHAT'">
+      <NButton v-if="row.chatResult" size="tiny" quaternary type="primary" @click="showChat = true">查看结果</NButton>
+      <span v-else class="group-output-preview__none">-</span>
+    </template>
     <span v-else class="group-output-preview__none">-</span>
+
+    <NModal v-model:show="showChat" preset="card" title="对话生成结果" style="max-width: 720px">
+      <div class="group-output-preview__chat">{{ row.chatResult }}</div>
+    </NModal>
 
     <NModal v-model:show="showVideo" preset="card" title="视频产物" style="max-width: 80vw">
       <video v-if="videoUrl" :src="videoUrl" controls autoplay class="group-output-preview__video" />
@@ -36,6 +45,7 @@ import type { ProjectGroupOutputVO } from '@/api/projectGroup'
 const props = defineProps<{ row: ProjectGroupOutputVO }>()
 
 const showVideo = ref(false)
+const showChat = ref(false)
 const videoUrl = ref<string | null>(null)
 const videoLoading = ref(false)
 
@@ -68,5 +78,14 @@ async function openVideo() {
   max-height: 70vh;
   border-radius: 6px;
   background: #000;
+}
+
+.group-output-preview__chat {
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

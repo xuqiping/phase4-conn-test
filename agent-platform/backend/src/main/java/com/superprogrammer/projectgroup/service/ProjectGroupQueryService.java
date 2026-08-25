@@ -6,6 +6,8 @@ import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.billing.entity.LlmUsageLogEntity;
 import com.superprogrammer.billing.mapper.LlmUsageLogMapper;
+import com.superprogrammer.chat.entity.ChatMessage;
+import com.superprogrammer.chat.mapper.ChatMessageMapper;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.result.PageResult;
@@ -61,6 +63,7 @@ public class ProjectGroupQueryService {
     private final LlmUsageLogMapper usageLogMapper;
     private final MediaGenTaskMapper mediaTaskMapper;
     private final UserMapper userMapper;
+    private final ChatMessageMapper chatMessageMapper;
     private final ProjectGroupService groupService;
     private final ProjectGroupVisibilityService visibilityService;
 
@@ -177,10 +180,16 @@ public class ProjectGroupQueryService {
                 .map(LlmUsageLogEntity::getUserId)
                 .filter(Objects::nonNull)
                 .toList());
+        Map<Long, String> displayNames = displayNameMap(rows.stream()
+                .map(LlmUsageLogEntity::getUserId)
+                .filter(Objects::nonNull)
+                .toList());
         Map<Long, MediaGenTask> tasks = mediaTaskMap(rows.stream()
                 .map(LlmUsageLogEntity::getTaskId)
                 .filter(Objects::nonNull)
                 .toList());
+        // 17x 未解决#3：CHAT 行按轮配对——内容列=该次调用的用户提问，预览列=紧接的 assistant 回复
+        Map<Long, String[]> chatTurns = chatTurnMap(rows);
 
         final String finalViewerRole = viewerRole;
         List<ProjectGroupOutputVO> vos = rows.stream()
@@ -199,13 +208,19 @@ public class ProjectGroupQueryService {
                     return new ProjectGroupOutputVO(
                             u.getId(), u.getCreatedAt(), u.getUserId(),
                             u.getUserId() != null ? names.get(u.getUserId()) : null,
+                            u.getUserId() != null ? displayNames.get(u.getUserId()) : null,
                             u.getKind(), u.getModel(), u.getPointsConsumed(), u.getStatus(),
                             u.getTaskId(),
                             t != null ? t.getStatus() : null,
+                            // 内容列：媒体行=requestConfig.prompt；CHAT 行=该次调用的用户提问（17x 未解决#3）
                             t != null && t.getRequestConfig() != null
-                                    ? truncate(extractPrompt(t.getRequestConfig())) : null,
+                                    ? extractPrompt(t.getRequestConfig())
+                                    : ("CHAT".equals(u.getKind()) && chatTurns.containsKey(u.getId())
+                                            ? chatTurns.get(u.getId())[0] : null),
                             canSeeFiles ? t.getResultFileId() : null,
-                            canSeeFiles ? extractImageFileIds(t.getResultMeta()) : null);
+                            canSeeFiles ? extractImageFileIds(t.getResultMeta()) : null,
+                            "CHAT".equals(u.getKind()) && chatTurns.containsKey(u.getId())
+                                    ? chatTurns.get(u.getId())[1] : null);
                 })
                 .toList();
         return PageResult.of(vos, p.getTotal(), safePage, safeSize);
@@ -221,6 +236,18 @@ public class ProjectGroupQueryService {
         }
         return userMapper.selectBatchIds(distinct).stream()
                 .collect(Collectors.toMap(User::getId, User::getUsername, (a, b) -> a));
+    }
+
+    /** 17x#2：批量取显示名（name 非空用 name，否则回落 username）。 */
+    private Map<Long, String> displayNameMap(List<Long> ids) {
+        Set<Long> distinct = ids.stream().collect(Collectors.toSet());
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        return userMapper.selectBatchIds(distinct).stream()
+                .collect(Collectors.toMap(User::getId,
+                        u -> u.getName() != null && !u.getName().isBlank() ? u.getName() : u.getUsername(),
+                        (a, b) -> a));
     }
 
     /** 批量取媒体任务（usage.taskId → 概要）。 */
@@ -267,11 +294,82 @@ public class ProjectGroupQueryService {
         }
     }
 
-    /** 摘要截断（列表展示口径，防宽行）。 */
-    private String truncate(String s) {
-        if (s == null) {
-            return null;
+    /**
+     * 17x 未解决#3：CHAT 行按轮配对（usage.sessionId=chat_sessions.id 字符串）。
+     * 一次 IN 查回相关会话全部消息按 id 升序，逐 usage 行配对：
+     * 提问=created_at ≤ 该行扣费时间的最后一条 user 消息（兜底=会话首条 user 消息）；
+     * 回复=提问之后第一条 assistant 消息（兜底=会话最新 assistant）。
+     *
+     * @return key=usage_log.id，value=[用户提问, assistant 回复]（元素可空）
+     */
+    private Map<Long, String[]> chatTurnMap(List<LlmUsageLogEntity> rows) {
+        List<LlmUsageLogEntity> chatRows = rows.stream()
+                .filter(u -> "CHAT".equals(u.getKind()) && u.getSessionId() != null && !u.getSessionId().isBlank())
+                .toList();
+        Set<Long> sessionIds = chatRows.stream()
+                .map(u -> {
+                    try {
+                        return Long.parseLong(u.getSessionId().trim());
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (sessionIds.isEmpty()) {
+            return Map.of();
         }
-        return s.length() <= 60 ? s : s.substring(0, 60) + "…";
+        List<ChatMessage> msgs = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .in(ChatMessage::getSessionId, sessionIds)
+                .orderByAsc(ChatMessage::getId));
+        Map<Long, List<ChatMessage>> bySession = msgs.stream()
+                .collect(Collectors.groupingBy(ChatMessage::getSessionId));
+        Map<Long, String[]> out = new java.util.HashMap<>();
+        for (LlmUsageLogEntity u : chatRows) {
+            long sid;
+            try {
+                sid = Long.parseLong(u.getSessionId().trim());
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            List<ChatMessage> sessionMsgs = bySession.getOrDefault(sid, List.of());
+            ChatMessage question = null;
+            ChatMessage firstUser = null;
+            ChatMessage latestAssistant = null;
+            for (ChatMessage m : sessionMsgs) {
+                String role = m.getRole() == null ? "" : m.getRole().toLowerCase();
+                if ("user".equals(role)) {
+                    if (firstUser == null) {
+                        firstUser = m;
+                    }
+                    if (u.getCreatedAt() == null || m.getCreatedAt() == null
+                            || !m.getCreatedAt().isAfter(u.getCreatedAt())) {
+                        question = m; // id 升序遍历，满足时间条件的最后一条=该次调用的提问
+                    }
+                } else if ("assistant".equals(role)) {
+                    latestAssistant = m;
+                }
+            }
+            if (question == null) {
+                question = firstUser;
+            }
+            ChatMessage reply = null;
+            if (question != null) {
+                for (ChatMessage m : sessionMsgs) {
+                    if (m.getId() > question.getId()
+                            && "assistant".equalsIgnoreCase(m.getRole() == null ? "" : m.getRole())) {
+                        reply = m;
+                        break;
+                    }
+                }
+            }
+            if (reply == null) {
+                reply = latestAssistant;
+            }
+            out.put(u.getId(), new String[]{
+                    question != null ? question.getContent() : null,
+                    reply != null ? reply.getContent() : null});
+        }
+        return out;
     }
 }

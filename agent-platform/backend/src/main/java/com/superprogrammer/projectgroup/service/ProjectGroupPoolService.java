@@ -210,7 +210,7 @@ public class ProjectGroupPoolService {
         if (r == null || (r.getDeleted() != null && r.getDeleted() != 0)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "申请不存在");
         }
-        groupService.requireRole(r.getGroupId(), actorUserId, admin,
+        ProjectGroupEntity g = groupService.requireRole(r.getGroupId(), actorUserId, admin,
                 com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER);
         if (!ProjectGroupJoinRequestEntity.STATUS_PENDING.equals(r.getStatus())) {
             throw new BusinessException(ErrorCode.CONFLICT, "申请已处理，请刷新查看");
@@ -226,7 +226,8 @@ public class ProjectGroupPoolService {
             throw new BusinessException(ErrorCode.CONFLICT, "申请状态已被并发变更，请刷新重试");
         }
         if (approve && memberMapper.selectByGroupUser(r.getGroupId(), r.getUserId()) == null) {
-            groupService.insertMemberRow(r.getGroupId(), r.getUserId(), null);
+            // V156：公共池入组 quota NULL（不限），预算挂组长（组池直管）——若挂审批管理会成「不限额下级」毒化其可分配
+            groupService.insertMemberRow(r.getGroupId(), r.getUserId(), null, g.getOwnerUserId());
         }
         log.info("公共池申请审批 requestId={} groupId={} target={} actor={}", requestId, r.getGroupId(), target, actorUserId);
         insertNotification(r.getUserId(), NOTIFY_TYPE_GROUP_JOIN_RESULT, r.getId(),

@@ -17,6 +17,8 @@ public record ProjectGroupOutputVO(
         OffsetDateTime createdAt,
         Long userId,
         String username,
+        /** 17x#2：昵称/姓名（users.name，空回落 username；用户已删 null）。 */
+        String displayName,
         /** CHAT/EMBED/RERANK/IMAGE/VIDEO。 */
         String kind,
         String model,
@@ -32,5 +34,7 @@ public record ProjectGroupOutputVO(
         /** 视频产物 fileId（→ stored_files.file_id；无产物/不可见 null）。 */
         String resultFileId,
         /** 图片产物 fileId 列表（无产物/不可见 null）。 */
-        List<String> imageFileIds) {
+        List<String> imageFileIds,
+        /** 17x-2026-08-25：CHAT 行会话最新 assistant 回复（预览列展示生成结果；非 CHAT null）。 */
+        String chatResult) {
 }

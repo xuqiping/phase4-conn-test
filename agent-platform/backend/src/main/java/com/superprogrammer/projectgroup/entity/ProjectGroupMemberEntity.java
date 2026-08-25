@@ -50,4 +50,10 @@ public class ProjectGroupMemberEntity extends BaseEntity {
     /** 成员级产出可见性稀疏覆盖 JSONB（V139）：{"VIDEO":"OWN"}；NULL=无覆盖回落组级。 */
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String memberVisibilityOverrides;
+
+    /**
+     * 额度分配人（V156 层级额度）：NULL=组长行；组长 id=组池直管；管理 id=占该管理预算。
+     * 管理可分配 = 自己额度 − (自己已用+Σ下级已用) − Σ下级 GREATEST(quota−used,0)。
+     */
+    private Long allocatedByUserId;
 }

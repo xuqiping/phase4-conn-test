@@ -55,10 +55,12 @@ onMounted(async () => {
     options.value = [
       { label: '个人（默认）', value: 0 },
       ...groups.map(g => ({
-        // 余额徽标进选项文案（下拉即见组池余量；我的限额余量对成员更关键）
+        // 余额徽标进选项文案（下拉即见组池余量；我的限额余量对成员更关键；管理显可分配——17x V156）
         label: g.myRole === 'OWNER'
           ? `${g.name}（组长 · 余 ${fmt(g.balancePoints)} 分）`
-          : `${g.name}（余 ${fmt(g.balancePoints)} 分${g.myQuota === null ? '' : ` · 限剩 ${fmt(Math.max(0, g.myQuota - g.myUsed))}`}）`,
+          : g.myRole === 'MANAGER'
+            ? `${g.name}（管理 · 可分配 ${g.myAllocatable === null ? '不限' : fmt(g.myAllocatable)}）`
+            : `${g.name}（余 ${fmt(g.balancePoints)} 分${g.myQuota === null ? '' : ` · 限剩 ${fmt(Math.max(0, g.myQuota - g.myUsed))}`}）`,
         value: g.id
       }))
     ]

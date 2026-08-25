@@ -53,6 +53,7 @@ public class ProjectGroupInviteService {
     private final ProjectGroupService groupService;
     private final UserMapper userMapper;
     private final MemoryNotificationMapper notificationMapper;
+    private final MemberBudgetService budgetService;
 
     /** 发起邀请（组长/管理/admin，V139 放宽 MANAGER）。 */
     @Transactional(rollbackFor = Exception.class)
@@ -73,6 +74,24 @@ public class ProjectGroupInviteService {
         }
         if (memberMapper.selectByGroupUser(groupId, inviteeUserId) != null) {
             throw new BusinessException(ErrorCode.CONFLICT, "该用户已是组成员");
+        }
+        // V156 层级额度预检（体验层，真防线在 accept→insertMemberRow 锁管理行硬卡）：
+        // 邀请人是被限额管理 → 邀请限额必填且 ≤ 当前可分配；管理自己不限额则任意。
+        boolean ownerSide = admin || g.getOwnerUserId().equals(actorUserId);
+        if (!ownerSide) {
+            com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity mgr =
+                    memberMapper.selectByGroupUser(groupId, actorUserId);
+            if (mgr != null && mgr.getQuotaLimitPoints() != null) {
+                if (quotaLimitPoints == null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "你的额度为 " + mgr.getQuotaLimitPoints() + "（有限），邀请成员须填限额，不能不限");
+                }
+                java.math.BigDecimal available = budgetService.allocatable(groupId, mgr, null);
+                if (available != null && quotaLimitPoints.compareTo(available) > 0) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "超出你的可分配额度：剩余可分配 " + available + "，本次邀请需 " + quotaLimitPoints);
+                }
+            }
         }
 
         ProjectGroupInviteEntity existing = findRow(groupId, inviteeUserId);
@@ -119,16 +138,42 @@ public class ProjectGroupInviteService {
         return toVOs(rows);
     }
 
-    /** 接受邀请（被邀请人本人）：PENDING→ACCEPTED + 落成员行（已入组则幂等跳过）。 */
+    /** 接受邀请（被邀请人本人）：PENDING→ACCEPTED + 落成员行（已入组则幂等跳过）。
+     *  V156：落行带 allocated_by=邀请人；邀请人是被限额管理 → insertMemberRow 内预算硬卡
+     *  （同事务回滚翻转，邀请留 PENDING 可候管理额度宽裕后重试）。
+     *  17x-1 次生洞收口：邀请 PENDING 期间邀请人被降职/移除（或本就是组外 admin 代发）→
+     *  allocated_by 不得挂在已是 MEMBER/不存在的行下，统一改挂组长（组长侧无预算上限，硬卡天然跳过）。 */
     @Transactional(rollbackFor = Exception.class)
     public void accept(Long inviteId, Long userId) {
         ProjectGroupInviteEntity inv = requirePendingOf(inviteId, userId);
         transition(inv, ProjectGroupInviteEntity.STATUS_ACCEPTED);
         if (memberMapper.selectByGroupUser(inv.getGroupId(), userId) == null) {
-            groupService.insertMemberRow(inv.getGroupId(), userId, inv.getQuotaLimitPoints());
+            Long allocatedBy = resolveAllocatedBy(inv);
+            groupService.insertMemberRow(inv.getGroupId(), userId, inv.getQuotaLimitPoints(), allocatedBy);
         }
         log.info("组邀请接受 inviteId={} groupId={} invitee={}", inviteId, inv.getGroupId(), userId);
         notifyInviter(inv, "「" + userName(userId) + "」已接受邀请，加入项目组「" + groupName(inv.getGroupId()) + "」");
+    }
+
+    /** 落行归属解析：邀请人仍是在任 MANAGER → 归其预算；否则（降职/移除/admin 代发）改挂组长。 */
+    private Long resolveAllocatedBy(ProjectGroupInviteEntity inv) {
+        Long inviterId = inv.getInviterUserId();
+        ProjectGroupEntity g = groupMapper.selectById(inv.getGroupId());
+        if (g != null && inviterId != null && inviterId.equals(g.getOwnerUserId())) {
+            return inviterId;
+        }
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity allocRow =
+                inviterId == null ? null : memberMapper.selectByGroupUser(inv.getGroupId(), inviterId);
+        if (allocRow != null && com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER
+                .equals(allocRow.getRole())) {
+            return inviterId;
+        }
+        if (g == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
+        }
+        log.info("邀请人已非在任管理，落行改挂组长 groupId={} inviter={} owner={}",
+                inv.getGroupId(), inviterId, g.getOwnerUserId());
+        return g.getOwnerUserId();
     }
 
     /** 拒绝邀请（被邀请人本人）：PENDING→DECLINED。 */
