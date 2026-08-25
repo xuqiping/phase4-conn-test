@@ -1,4 +1,4 @@
----
+﻿---
 description: "子计划 C：预估个人口径 + 画布预估 + 图片比例推导（规格 §3、§5，Q5 拍板 7 比例）"
 created-date: 2026-08-25
 ---
@@ -21,7 +21,7 @@ created-date: 2026-08-25
 
 ## 实现步骤
 
-- [ ] **C1：estimatePreview 个人口径（后端）**
+- [x] **C1：estimatePreview 个人口径（后端）**
   - **目标**：gid 模式返回成员/管理双卡可用
   - **动作**：`MediaGenTaskService.estimatePreview`（:786-793）扩展：
     ```
@@ -40,7 +40,7 @@ created-date: 2026-08-25
   - **文件**：`media/service/MediaGenTaskService.java`、复用 `projectgroup/service/MemberBudgetService.java`
   - **验证**：单测三算例（限额成员卡 MEMBER / 不限额卡 POOL / 管理双卡取 min）
 
-- [ ] **C2：生成页红字分层 + 画布预估（前端）**
+- [x] **C2：生成页红字分层 + 画布预估（前端）**
   - **目标**：三处统一显示；2x 画布缺口补上
   - **动作**：
     - `ImageGenView.vue:164-172`、`VideoGenView.vue:254-262`：红字按 bindingConstraint 分层——MEMBER：「项目内剩余 X 不足（限额 Y−已用 Z）」；POOL：「项目组池剩余 X 不足」；affordableMember=false 且池够时也提示项目内不足
@@ -50,7 +50,7 @@ created-date: 2026-08-25
   - **依赖**：C1
   - **验证**：人工——限额成员组池充足时生成页/画布均点名「项目内剩余不足」；画布提交前可见预估且与生成页一致
 
-- [ ] **C3：图片比例推导（后端，Q5=7 比例）**
+- [x] **C3：图片比例推导（后端，Q5=7 比例）**
   - **目标**：平台层「比例+档位同传」→ 推导 WxH 走方式2
   - **动作**：
     - capability JSON 增可选字段：`ratios`（默认 `["1:1","4:3","3:4","16:9","9:16","3:2","2:3"]`）、`minTotalPixels/maxTotalPixels`（默认 3686400/16777216）；`MediaModelCapabilityService` 解析带缺省
@@ -68,14 +68,14 @@ created-date: 2026-08-25
   - **依赖**：无
   - **验证**：单测 7×3 档全矩阵落区间；1K+任意比例 → 明确报错；ratio+size 同传 400
 
-- [ ] **C4：比例 UI（前端两处）**
+- [x] **C4：比例 UI（前端两处）**
   - **目标**：生成页+画布统一「比例+清晰度（推荐）/ 自定义宽×高」两模式
   - **动作**：`frontend/src/utils/imageSize.ts`（新）：RATIOS/档位预算/derive()；`ImageGenView.vue`（:71-90,:373-378）与 `PropertyPanel.vue`（:146-154,:971-976）接同一工具——比例选中时实时显示推导 WxH 预览；1K/1.5K 档+比例 → 红字禁提交；不选比例=现状档位模式
   - **文件**：`frontend/src/utils/imageSize.ts`（新）、`ImageGenView.vue`、`PropertyPanel.vue`
   - **依赖**：C3
   - **验证**：人工——16:9+2K 生成 → 下载图实宽高比 16:9；画布同参一致；不选比例回归现状
 
-- [ ] **C5：测试与实测**
+- [x] **C5：测试与实测**
   - 单测见各步；人工测试点：规格 §3.5、§5.6 全过
 
 ## 功能联动点清单
@@ -90,4 +90,4 @@ created-date: 2026-08-25
 
 ## 验证收口
 
-- [ ] C1-C5 全绿；画布/生成页/画布属性面板三处预估一致
+- [x] C1-C5 全绿；画布/生成页/画布属性面板三处预估一致
