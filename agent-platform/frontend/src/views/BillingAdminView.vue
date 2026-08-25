@@ -225,6 +225,33 @@
               @update:page-size="onGroupAllocPageSize"
             />
           </n-tab-pane>
+
+          <!-- D4（20x-3）：组池对账（顶部状态卡 + 仅异常组表；只读不自动修账） -->
+          <n-tab-pane name="groupReconcile" tab="项目组对账">
+            <div class="billing-admin__detail-filter">
+              <n-tag :type="groupReconcile?.balanced ? 'success' : 'error'" size="medium" round>
+                {{ groupReconcile?.balanced ? '账平' : '发现异常组' }}
+              </n-tag>
+              <n-button size="small" :loading="groupReconcileLoading" @click="loadGroupReconcile">刷新</n-button>
+              <span class="billing-admin__balance-hint">
+                恒等式：组池余额 = 划入净额 + 退款 − 消耗；双账本差=组账本 vs 组长个人账本 GROUP 腿
+              </span>
+            </div>
+            <n-grid :cols="5" :x-gap="12" responsive="screen" style="margin-bottom: 12px">
+              <n-gi><n-card size="small"><n-statistic label="划拨净额合计" :value="fmtNum(groupReconcile?.totals.netAllocated)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="消耗合计" :value="fmtNum(groupReconcile?.totals.consumed)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="退款合计" :value="fmtNum(groupReconcile?.totals.refunded)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="组池余额合计" :value="fmtNum(groupReconcile?.totals.balance)" /></n-card></n-gi>
+              <n-gi><n-card size="small"><n-statistic label="差值合计" :value="fmtNum(groupReconcile?.totals.diff)" /></n-card></n-gi>
+            </n-grid>
+            <n-data-table
+              :columns="groupReconcileColumns"
+              :data="groupReconcile?.abnormalGroups ?? []"
+              :loading="groupReconcileLoading"
+              size="small"
+              :max-height="360"
+            />
+          </n-tab-pane>
         </n-tabs>
       </template>
     </n-card>
@@ -245,7 +272,7 @@ import {
 import type {
   UsageOverviewVO, UsageDimensionVO, DailyTrendVO, BillingKind, UsageDetailVO, UsageDetailQuery,
   AdminRechargeRecordVO, AdminRechargeQuery, UserBalanceRowVO, UserBalanceQuery, UserBalanceSortBy,
-  GroupAllocationRowVO, GroupAllocationQuery, PaymentStatus
+  GroupAllocationRowVO, GroupAllocationQuery, GroupReconcileRowVO, GroupReconcileVO, PaymentStatus
 } from '@/api/billing'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -467,6 +494,9 @@ function onTabChange(name: string | number) {
   }
   if (name === 'groupAllocs' && groupAllocs.value.length === 0 && groupAllocPagination.itemCount === 0) {
     loadGroupAllocations(1)
+  }
+  if (name === 'groupReconcile' && groupReconcile.value == null) {
+    loadGroupReconcile()
   }
 }
 
@@ -715,6 +745,39 @@ function onGroupAllocPage(page: number) {
 function onGroupAllocPageSize(pageSize: number) {
   groupAllocPagination.pageSize = pageSize
   loadGroupAllocations(1)
+}
+
+// ---------- D4（20x-3）：项目组对账 tab（顶卡 + 仅异常组） ----------
+const groupReconcile = ref<GroupReconcileVO | null>(null)
+const groupReconcileLoading = ref(false)
+
+/** 差值列：0 显 0 不标色；正=池里钱比流水多，负=流水比池里多（兜底排查方向提示在 title） */
+function renderDiffCell(v: number) {
+  return h('span', { title: '正=组池余额多于流水推算；负=流水推算多于组池余额' }, fmtNum(v))
+}
+
+const groupReconcileColumns: DataTableColumns<GroupReconcileRowVO> = [
+  { title: '项目组', key: 'groupName', width: 140, ellipsis: { tooltip: true } },
+  { title: '划入净额', key: 'netAllocated', width: 110, render: r => fmtNum(r.netAllocated) },
+  { title: '消耗', key: 'consumed', width: 100, render: r => fmtNum(r.consumed) },
+  { title: '退款', key: 'refunded', width: 100, render: r => fmtNum(r.refunded) },
+  { title: '期望余额', key: 'expected', width: 110, render: r => fmtNum(r.expected) },
+  { title: '实际组池', key: 'balance', width: 110, render: r => fmtNum(r.balance) },
+  { title: '差值', key: 'diff', width: 100, render: r => renderDiffCell(r.diff) },
+  { title: '双账本差', key: 'crossDiff', width: 100, render: r => renderDiffCell(r.crossDiff) }
+]
+
+async function loadGroupReconcile() {
+  if (!canView.value) return
+  groupReconcileLoading.value = true
+  try {
+    const res = await billingApi.adminGroupReconcile()
+    groupReconcile.value = res.data.data
+  } catch {
+    groupReconcile.value = null
+  } finally {
+    groupReconcileLoading.value = false
+  }
 }
 
 /** 用户筛选下拉：取用户列表（需 user 权限；403 容错→空下拉，表格用户名仍由后端 JOIN 返）。 */

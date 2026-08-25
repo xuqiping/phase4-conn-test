@@ -146,6 +146,17 @@ public class BillingController {
     }
 
     /**
+     * 组池划拨对账（D4 · 20x-3，Q9=A）：总体平/不平 + 仅异常组明细 + 双账本交叉校验。
+     * 恒等式=划入净额+退款−消耗 vs 组池余额；type 白名单排除 MEMBER_*、BACKSTOP、ADMIN_ADJUST。
+     * 只读，不自动修账；异常组已写安全审计 + ERROR 日志。
+     */
+    @GetMapping("/admin/group-reconcile")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<com.superprogrammer.billing.dto.GroupReconcileVO>> groupReconcile() {
+        return ResponseEntity.ok(R.ok(reconcileService.groupReconcile()));
+    }
+
+    /**
      * admin 充值记录（20x#1）：六字段分页 + 用户/渠道/状态/日期筛选 + 当前筛选下 Σ金额/Σ积分。
      */
     @GetMapping("/admin/recharges")

@@ -32,6 +32,8 @@ class BillingReconcileServiceTest {
     private PointsLedgerMapper ledgerMapper;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private com.superprogrammer.billing.mapper.GroupReconcileMapper groupReconcileMapper;
 
     @InjectMocks
     private BillingReconcileService reconcile;
@@ -82,5 +84,91 @@ class BillingReconcileServiceTest {
         List<ReconcileDiffVO> diffs = reconcile.reconcile();
 
         assertThat(diffs).hasSize(1);
+    }
+
+    // ==================== D4（20x-3）：组池划拨对账 ====================
+
+    /** raw 行构造（null sum 即 mapper COALESCE 语义之外的手拼防御路径，仍应按 0 处理）。 */
+    private static com.superprogrammer.billing.dto.GroupReconcileRawVO raw(
+            long groupId, String name, String balance,
+            String alloc, String reclaim, String consume, String refund, String personalNetOut) {
+        return new com.superprogrammer.billing.dto.GroupReconcileRawVO(groupId, name,
+                balance == null ? null : new BigDecimal(balance),
+                alloc == null ? null : new BigDecimal(alloc),
+                reclaim == null ? null : new BigDecimal(reclaim),
+                consume == null ? null : new BigDecimal(consume),
+                refund == null ? null : new BigDecimal(refund),
+                personalNetOut == null ? null : new BigDecimal(personalNetOut));
+    }
+
+    // 全平：恒等式 + 双账本交叉均 0 → balanced=true、无异常行、不写审计
+    @Test
+    void groupReconcile_allBalanced() {
+        // 组1：净额70(100−30) + 退款5 − 消耗20 = 期望55 = 余额55；个人净流出70 = 组净额70
+        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+                raw(1, "A 组", "55", "100", "-30", "-20", "5", "70"),
+                raw(2, "空组", "0", null, null, null, null, null)));
+
+        var vo = reconcile.groupReconcile();
+
+        assertThat(vo.balanced()).isTrue();
+        assertThat(vo.abnormalGroups()).isEmpty();
+        assertThat(vo.totals().netAllocated()).isEqualByComparingTo("70");
+        assertThat(vo.totals().balance()).isEqualByComparingTo("55");
+        assertThat(vo.totals().diff()).isEqualByComparingTo("0");
+        verify(auditLogService, never()).record(any());
+    }
+
+    // 恒等式不平（组池比流水少 10）→ 该组入异常行 + 写审计；合计 diff 累计
+    @Test
+    void groupReconcile_identityDiff_flagsAndAudits() {
+        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+                raw(3, "B 组", "90", "100", "0", "0", "0", "100")));
+        when(auditLogService.fromMdc(eq("billing"), eq("group_reconcile_diff"),
+                eq("project_group"), eq("3"), anyString(), eq("FAIL")))
+                .thenReturn(new AuditLogEntity());
+
+        var vo = reconcile.groupReconcile();
+
+        assertThat(vo.balanced()).isFalse();
+        assertThat(vo.abnormalGroups()).hasSize(1);
+        var row = vo.abnormalGroups().get(0);
+        assertThat(row.expected()).isEqualByComparingTo("100");
+        assertThat(row.diff()).isEqualByComparingTo("-10");
+        assertThat(row.crossDiff()).isEqualByComparingTo("0");
+        assertThat(vo.totals().diff()).isEqualByComparingTo("-10");
+        verify(auditLogService).record(any(AuditLogEntity.class));
+    }
+
+    // 双账本交叉不平（组账本净额 100 vs 个人账本净流出 60）→ 该组入异常行
+    @Test
+    void groupReconcile_crossBookDiff_flags() {
+        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+                raw(4, "C 组", "100", "100", "0", "0", "0", "60")));
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new AuditLogEntity());
+
+        var vo = reconcile.groupReconcile();
+
+        assertThat(vo.balanced()).isFalse();
+        assertThat(vo.abnormalGroups()).hasSize(1);
+        assertThat(vo.abnormalGroups().get(0).diff()).isEqualByComparingTo("0");
+        assertThat(vo.abnormalGroups().get(0).crossDiff()).isEqualByComparingTo("40");
+    }
+
+    // 【钉死假警报坑】SQL type 白名单只含四类资金腿——MEMBER_*/BACKSTOP/ADMIN_ADJUST 混入等式会永久报不平
+    @Test
+    void groupReconcileSql_whitelistExcludesNonFundingLegs() throws Exception {
+        String sql = com.superprogrammer.billing.mapper.GroupReconcileMapper.class
+                .getMethod("selectGroupRawRows")
+                .getAnnotation(org.apache.ibatis.annotations.Select.class)
+                .value()[0];
+        assertThat(sql).contains("IN ('ALLOCATE', 'RECLAIM', 'CONSUME', 'REFUND')");
+        // 组流水侧白名单绝不能混入非资金腿
+        assertThat(sql).doesNotContain("MEMBER_");
+        assertThat(sql).doesNotContain("BACKSTOP");
+        assertThat(sql).doesNotContain("ADMIN_ADJUST");
+        // 个人账本交叉腿只取 GROUP_ALLOCATE/GROUP_RECLAIM
+        assertThat(sql).contains("IN ('GROUP_ALLOCATE', 'GROUP_RECLAIM')");
     }
 }

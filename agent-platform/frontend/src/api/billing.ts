@@ -353,6 +353,37 @@ export interface GroupAllocationQuery {
   groupId?: number
 }
 
+/**
+ * D4（20x-3）：组池对账异常组行（仅返回不平组）。
+ * expected=划入净额+退款−消耗；diff=balance−expected（正=池里钱比流水多）；
+ * crossDiff=组账本净额−个人账本 GROUP 腿净流出（双账本交叉，0=一致）。
+ */
+export interface GroupReconcileRowVO {
+  groupId: number
+  groupName: string
+  netAllocated: number
+  consumed: number
+  refunded: number
+  expected: number
+  balance: number
+  diff: number
+  crossDiff: number
+}
+
+/** D4：组池对账总览（顶卡合计=全量组口径；balanced=全平） */
+export interface GroupReconcileVO {
+  balanced: boolean
+  totals: {
+    netAllocated: number
+    consumed: number
+    refunded: number
+    balance: number
+    diff: number
+    crossDiff: number
+  }
+  abnormalGroups: GroupReconcileRowVO[]
+}
+
 /** 支付状态 → 中文 */
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   PENDING: '待支付',
@@ -498,6 +529,10 @@ export const billingApi = {
   /** D3（20x-2）：admin 项目组分配视图（每用户每组 quota/used/剩余 + 累计被分配/净额） */
   adminGroupAllocations(params: GroupAllocationQuery) {
     return request.get<ApiResponse<PageResult<GroupAllocationRowVO>>>('/billing/admin/group-allocations', { params })
+  },
+  /** D4（20x-3）：组池划拨对账（总体平/不平 + 仅异常组 + 双账本交叉） */
+  adminGroupReconcile() {
+    return request.get<ApiResponse<GroupReconcileVO>>('/billing/admin/group-reconcile')
   },
   // ---- admin 支付渠道配置（7x 追加，payment:config） ----
   /** 两渠道脱敏配置状态（tails 永不含明文） */
