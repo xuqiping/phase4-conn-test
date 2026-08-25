@@ -105,3 +105,7 @@
 ## 4x 第二轮修复增补（2026-08-14）
 - **下载缓存**：`MediaGenController.serveFile` 返回 `Cache-Control: no-cache, private` + `ETag(fileId+size)`；Spring MVC 自动处理 If-None-Match → 304 零 body。审计不受影响（请求仍进控制器）。前端 `fetchVideoBlob/fetchMediaBlob` 增加会话内 LRU blob 缓存（6 条/256MB，缓存 Blob 各自 createObjectURL，revoke 语义不变）。
 - **视频入库**：`MediaImportRequest` 新增 `mediaKind`（IMAGE 默认兼容/VIDEO）；`AssetMediaBridgeService` VIDEO 分支复用 `loadForDownload` 咽喉按 `result_file_id` 建 VIDEO 资产 v1。前端新增 `SaveVideoToAssetDialog`，成功播放区+历史行「入库」按钮，入库成功可一键跳 `/assets`。
+
+## 2x 修复增补（2026-08-25，`82999162`）
+- **大视频下载落盘改流式**：根因=下载用 bodyToMono(Resource) 聚合读取，受 WebClient maxInMemorySize(16MB) 上限，15 秒视频超 16MB 即报「Exceeded limit on max bytes to buffer : 16777216」（无限画布生视频节点同路径同病）。改 bodyToFlux(DataBuffer) 流式写临时文件→FileInputStream→storeStream，彻底移除体积上限；图片下载同法改造
+- **预估消耗预览**（随积分计费 V155）：生成页按所选模型/时长/分辨率/参考视频实时显示「预估消耗 X 积分」+余额不足红字；提交即预扣、完工多退少补（详见积分计费系统.feature-map.md 2026-08-25 V155 条目）
