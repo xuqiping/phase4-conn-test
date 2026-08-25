@@ -26,6 +26,9 @@ vi.mock('@/components/settings/WebSearchSettingsTab.vue', () => ({
 vi.mock('@/components/settings/SecuritySettingsTab.vue', () => ({
   default: { template: '<div/>' }
 }))
+vi.mock('@/components/settings/ProfileSettingsTab.vue', () => ({
+  default: { template: '<div data-testid="profile-tab"/>' }
+}))
 
 describe('SettingsView（问题 10x-1 / 16x 大模型配置员）', () => {
   beforeEach(() => setActivePinia(createPinia()))

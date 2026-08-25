@@ -22,6 +22,15 @@
         </n-input>
       </n-form-item>
 
+      <!-- 17x：昵称/姓名（必填，项目组/账单等处展示用） -->
+      <n-form-item path="name" label="昵称/姓名">
+        <n-input v-model:value="form.name" placeholder="请输入昵称/姓名（≤32 字，展示用）" size="large" maxlength="32">
+          <template #prefix>
+            <n-icon :component="IdCardOutline" color="var(--color-text-tertiary)" />
+          </template>
+        </n-input>
+      </n-form-item>
+
       <n-form-item path="email" label="邮箱">
         <n-input
           v-model:value="form.email"
@@ -145,7 +154,7 @@
 import { ref, reactive, watch, computed, onBeforeUnmount } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, useMessage } from 'naive-ui'
-import { PersonOutline, MailOutline, LockClosedOutline } from '@vicons/ionicons5'
+import { PersonOutline, MailOutline, LockClosedOutline, IdCardOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import SliderCaptcha from './SliderCaptcha.vue'
@@ -171,6 +180,7 @@ const formRef = ref<FormInst | null>(null)
 const showTerms = ref(false)
 const form = reactive({
   username: '',
+  name: '',
   email: '',
   emailCode: '',
   password: '',
@@ -250,6 +260,17 @@ const rules = computed<FormRules>(() => ({
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 3, max: 20, message: '用户名长度3-20个字符', trigger: 'blur' }
   ],
+  name: [
+    { required: true, message: '请输入昵称/姓名', trigger: 'blur' },
+    { max: 32, message: '昵称/姓名最长 32 字', trigger: 'blur' },
+    {
+      validator: (_rule, value) => {
+        if (typeof value === 'string' && value.trim() === '') return new Error('昵称/姓名不能为空白')
+        return true
+      },
+      trigger: 'blur'
+    }
+  ],
   // 12x 开关回退：总开关开 → 邮箱必填；关 → 选填（填了仍校验格式）
   email: [
     ...(props.emailCodeRequired ? [{ required: true, message: '请输入邮箱', trigger: 'blur' as const }] : []),
@@ -296,6 +317,7 @@ watch(
   (v) => {
     if (!v) {
       form.username = ''
+      form.name = ''
       form.email = ''
       form.emailCode = ''
       form.password = ''
@@ -321,6 +343,7 @@ async function handleRegister() {
   try {
     await authStore.register({
       username: form.username,
+      name: form.name.trim(),
       email: form.email.trim() || undefined,
       password: form.password,
       // 12x 开关回退：总开关关时不传码（后端忽略）

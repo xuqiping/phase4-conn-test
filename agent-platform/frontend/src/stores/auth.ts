@@ -38,6 +38,8 @@ export interface LoginParams {
 /** 注册请求参数 */
 export interface RegisterParams {
   username: string
+  /** 17x：昵称/姓名（必填，项目组/账单等处展示用，≤32 字） */
+  name: string
   /** 12x 开关回退：总开关开时必填；关时可选填 */
   email?: string
   password: string
@@ -250,6 +252,14 @@ export const useAuthStore = defineStore('auth', () => {
     return userInfo.value?.permissions?.includes(permission) ?? false
   }
 
+  /** 17x：保存昵称/姓名（后端回最新 UserInfo，同步本地态+持久化；空串=清除回落 username） */
+  async function updateProfileName(name: string | null) {
+    const res = await authApi.updateMe({ name })
+    userInfo.value = res.data.data
+    setStorage(STORAGE_KEYS.USER_INFO, res.data.data)
+    return res.data.data
+  }
+
   return {
     // 状态
     accessToken,
@@ -269,6 +279,7 @@ export const useAuthStore = defineStore('auth', () => {
     loginByDingTalk,
     loginBySms,
     loginByWechatToken,
-    hasPermission
+    hasPermission,
+    updateProfileName
   }
 })

@@ -4,6 +4,10 @@
       <h2>设置</h2>
     </div>
     <n-tabs type="line" animated>
+      <!-- 17x：所有登录用户——个人信息（昵称/姓名） -->
+      <n-tab-pane name="profile" tab="个人信息">
+        <ProfileSettingsTab />
+      </n-tab-pane>
       <!-- 所有登录用户：安全设置（绑定/解绑凭证、修改密码），认证系统增强 Chunk F/G -->
       <n-tab-pane name="security" tab="安全设置">
         <SecuritySettingsTab />
@@ -47,6 +51,7 @@ import BillingSettingsTab from '@/components/settings/BillingSettingsTab.vue'
 import RagRecallSettingsTab from '@/components/settings/RagRecallSettingsTab.vue'
 import WebSearchSettingsTab from '@/components/settings/WebSearchSettingsTab.vue'
 import SecuritySettingsTab from '@/components/settings/SecuritySettingsTab.vue'
+import ProfileSettingsTab from '@/components/settings/ProfileSettingsTab.vue'
 
 const authStore = useAuthStore()
 /** 16x：仅持 llm:config 的大模型配置员可见「全局模型供应商」tab（admin 刻意不授该码） */

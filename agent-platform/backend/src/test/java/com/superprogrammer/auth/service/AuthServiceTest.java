@@ -125,6 +125,7 @@ class AuthServiceTest {
 
         registerRequest = new RegisterRequest();
         registerRequest.setUsername("newuser");
+        registerRequest.setName("新人");
         registerRequest.setPassword("Str0ng#Pass");
         registerRequest.setEmail("new@example.com");
         registerRequest.setEmailCode("123456");
@@ -856,5 +857,67 @@ class AuthServiceTest {
 
         assertEquals(400, e.getCode());
         verify(userMapper, never()).updateById(any(User.class));
+    }
+
+    @Test
+    void login_withEmailCredential_success() {
+        // 12x 邮箱登录：EMAIL 凭证（大小写不敏感）解析出账号 → 同密码登录；计数归并规范账号键
+        com.superprogrammer.auth.entity.UserCredential cred = new com.superprogrammer.auth.entity.UserCredential();
+        cred.setUserId(1L);
+        cred.setCredentialType(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL);
+        when(credentialService.findForLoginIgnoreCase(
+                eq(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL), anyString())).thenReturn(cred);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+        loginRequest.setUsername("Test@Example.com");
+
+        TokenResponse response = authService.login(loginRequest);
+
+        assertNotNull(response);
+        assertEquals("access-token", response.getAccessToken());
+        // 失败计数/滑块归并规范账号键（非邮箱原文键）
+        verify(captchaGuard).clear("login", "testuser");
+    }
+
+    @Test
+    void login_withUsersEmailColumnFallback_success() {
+        // 12x 邮箱登录：无 EMAIL 凭证 → users.email 列兜底（存量账号），大小写不敏感
+        when(credentialService.findForLoginIgnoreCase(anyString(), anyString())).thenReturn(null);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+        when(systemSettingService.getAccessTokenExpirationMs()).thenReturn(300000L);
+        when(jwtUtil.generateAccessToken(eq(1L), eq("testuser"), anyList(), eq(300000L), any())).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(eq(1L), any())).thenReturn("refresh-token");
+        when(userMapper.selectRoleCodesByUsername("testuser")).thenReturn(Arrays.asList("user"));
+        when(userMapper.selectPermissionCodesByUserId(1L)).thenReturn(Arrays.asList("agent:read"));
+        when(userMapper.updateById(any(User.class))).thenReturn(1);
+        loginRequest.setUsername("TEST@example.COM");
+
+        TokenResponse response = authService.login(loginRequest);
+
+        assertNotNull(response);
+        assertEquals("access-token", response.getAccessToken());
+    }
+
+    @Test
+    void login_withEmail_wrongPassword_recordsCanonicalKey() {
+        // 12x 邮箱登录：密码错 → 失败/滑块计数挂规范账号键 testuser（防换标识摊薄绕过账号锁）
+        com.superprogrammer.auth.entity.UserCredential cred = new com.superprogrammer.auth.entity.UserCredential();
+        cred.setUserId(1L);
+        cred.setCredentialType(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL);
+        when(credentialService.findForLoginIgnoreCase(anyString(), anyString())).thenReturn(cred);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(false);
+        loginRequest.setUsername("test@example.com");
+
+        assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        verify(captchaGuard).recordFailure("login", "testuser");
     }
 }

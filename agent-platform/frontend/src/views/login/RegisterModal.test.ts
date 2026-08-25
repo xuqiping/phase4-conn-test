@@ -35,10 +35,11 @@ function mountModal(emailCodeRequired: boolean) {
 
 async function fillAndSubmit(wrapper: ReturnType<typeof mountModal>) {
   const vm = wrapper.vm as unknown as {
-    form: { username: string; email: string; password: string; confirmPassword: string; agreeTerms: boolean }
+    form: { username: string; name: string; email: string; password: string; confirmPassword: string; agreeTerms: boolean }
     handleRegister: () => Promise<void>
   }
   vm.form.username = 'newbie'
+  vm.form.name = '新人' // 17x：昵称/姓名必填，漏填表单校验拦截不触达 register
   vm.form.password = 'Str0ng#Pass'
   vm.form.confirmPassword = 'Str0ng#Pass'
   vm.form.agreeTerms = true

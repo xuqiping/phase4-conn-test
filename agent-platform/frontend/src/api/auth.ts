@@ -75,7 +75,7 @@ export const authApi = {
    * 12x 开关回退：总开关关时 email/emailCode 均可省（邮箱选填、不验码）
    * 12x B2：同 IP 连续失败 ≥2 次后 captchaVerification 必填
    */
-  register(params: { username: string; email?: string; password: string; emailCode?: string; captchaVerification?: string }) {
+  register(params: { username: string; name: string; email?: string; password: string; emailCode?: string; captchaVerification?: string }) {
     return request.post<ApiResponse<void>>('/auth/register', params)
   },
 
@@ -120,6 +120,14 @@ export const authApi = {
    */
   getMe() {
     return request.get<ApiResponse<UserInfo>>('/auth/me')
+  },
+
+  /**
+   * 17x：本人改昵称/姓名（users.name；空串=清除回落 username）
+   * PUT /api/auth/me
+   */
+  updateMe(params: { name: string | null }) {
+    return request.put<ApiResponse<UserInfo>>('/auth/me', params)
   },
 
   // ==================== 认证系统增强（多通道） ====================

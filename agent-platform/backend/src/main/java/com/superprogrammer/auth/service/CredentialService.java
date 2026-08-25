@@ -65,6 +65,17 @@ public class CredentialService {
     }
 
     /**
+     * 12x 邮箱登录：大小写不敏感按 (类型+标识) 查凭证。
+     * 建凭证时未强制小写归一化（存量大小写混合），登录侧 LOWER 比对兼容。
+     */
+    public UserCredential findForLoginIgnoreCase(String credentialType, String identifier) {
+        if (identifier == null || identifier.isBlank()) {
+            return null;
+        }
+        return credentialMapper.findByTypeAndIdentifierIgnoreCase(credentialType, identifier);
+    }
+
+    /**
      * 建凭证。并发同一 (类型+标识) 注册/绑定 → DB 唯一约束抛 DuplicateKeyException → 转 CONFLICT。
      *
      * @param secret     仅 PASSWORD 类型传 BCrypt 哈希；其余类型传 null

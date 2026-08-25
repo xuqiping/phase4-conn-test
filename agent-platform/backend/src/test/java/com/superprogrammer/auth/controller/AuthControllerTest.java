@@ -49,6 +49,7 @@ class AuthControllerTest {
     void register_success_returns201() throws Exception {
         RegisterRequest request = new RegisterRequest();
         request.setUsername("newuser");
+        request.setName("新人");
         request.setPassword("password123");
         request.setEmail("new@example.com");
         request.setEmailCode("123456");

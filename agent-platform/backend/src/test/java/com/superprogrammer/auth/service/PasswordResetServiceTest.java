@@ -1,6 +1,7 @@
 // agent-platform/backend/src/test/java/com/superprogrammer/auth/service/PasswordResetServiceTest.java
 package com.superprogrammer.auth.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.entity.UserCredential;
@@ -37,6 +38,7 @@ class PasswordResetServiceTest {
     @Mock private ValueOperations<String, String> valueOps;
     @Mock private SessionService sessionService;
     @Mock private ProgressiveCaptchaGuard captchaGuard;
+    @Mock private AuthChannelSettingService channelSettings;
 
     private PasswordResetService service;
 
@@ -51,8 +53,10 @@ class PasswordResetServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new PasswordResetService(userMapper, credentialService, emailService,
-                smsService, passwordEncoder, redisTemplate, sessionService, captchaGuard);
+                smsService, passwordEncoder, redisTemplate, sessionService, captchaGuard, channelSettings);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        // 12x 开关回退：默认开（保持原严校验语义）；「关」场景由专项用例覆盖
+        lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
     }
 
     @Test
@@ -152,5 +156,63 @@ class PasswordResetServiceTest {
         service.reset("valid", "NewPass123!", "EMAIL", null);
 
         verify(emailService, never()).sendPasswordResetAlertEmail(anyString(), anyString());
+    }
+
+    @Test
+    void forgot_unverifiedEmailSwitchOff_sendsResetMail() {
+        // 12x 开关回退：验证总开关=关 → 未验证 EMAIL 凭证也可收重置信
+        lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("testuser");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(user);
+        UserCredential emailCred = new UserCredential();
+        emailCred.setCredentialType(UserCredential.TYPE_EMAIL);
+        emailCred.setIdentifier("unv@x.com");
+        emailCred.setVerified(false);
+        when(credentialService.findByUserIdRaw(1L)).thenReturn(java.util.List.of(emailCred));
+
+        String msg = service.forgot("testuser", "EMAIL", "127.0.0.1", null);
+
+        assertEquals("若账号存在，重置链接/码已发送", msg);
+        verify(emailService).sendResetEmail(1L, "unv@x.com");
+    }
+
+    @Test
+    void forgot_usersEmailFallbackSwitchOff_sendsResetMail() {
+        // 12x 开关回退：无 EMAIL 凭证 → users.email 列兜底收信
+        lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(false);
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("testuser");
+        user.setEmail("legacy@x.com");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(user);
+        when(credentialService.findByUserIdRaw(1L)).thenReturn(java.util.List.of());
+
+        String msg = service.forgot("testuser", "EMAIL", "127.0.0.1", null);
+
+        assertEquals("若账号存在，重置链接/码已发送", msg);
+        verify(emailService).sendResetEmail(1L, "legacy@x.com");
+    }
+
+    @Test
+    void forgot_unverifiedEmailSwitchOn_neverSends() {
+        // 验证总开关=开 → 未验证 EMAIL 凭证不收信（原严语义保留）
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("testuser");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(user);
+        UserCredential emailCred = new UserCredential();
+        emailCred.setCredentialType(UserCredential.TYPE_EMAIL);
+        emailCred.setIdentifier("unv@x.com");
+        emailCred.setVerified(false);
+        when(credentialService.findByUserIdRaw(1L)).thenReturn(java.util.List.of(emailCred));
+
+        service.forgot("testuser", "EMAIL", "127.0.0.1", null);
+
+        verify(emailService, never()).sendResetEmail(anyLong(), anyString());
     }
 }

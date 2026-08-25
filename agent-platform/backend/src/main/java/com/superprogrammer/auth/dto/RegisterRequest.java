@@ -15,6 +15,11 @@ public class RegisterRequest {
     @Size(min = 3, max = 50, message = "用户名长度必须在3-50之间")
     private String username;
 
+    /** 17x：昵称/姓名（users.name，必填——项目组/账单/充值下拉等处展示用）。 */
+    @NotBlank(message = "昵称/姓名不能为空")
+    @Size(max = 32, message = "昵称/姓名最长 32 字")
+    private String name;
+
     @NotBlank(message = "密码不能为空")
     @Size(min = 6, max = 100, message = "密码长度必须在6-100之间")
     private String password;

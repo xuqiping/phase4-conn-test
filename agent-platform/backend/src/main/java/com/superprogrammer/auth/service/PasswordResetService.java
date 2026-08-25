@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>统一话术："若账号存在，重置链接/码已发送"（防账号枚举）</li>
  *   <li>reset token 用 SecureRandom，用完即删（防重放）</li>
- *   <li>未验证的 EMAIL 凭证不可用于找回（verified=FALSE 不发）</li>
+ *   <li>已验证 EMAIL 凭证恒可找回；验证总开关=关的人工测试期放宽到未验证凭证/users.email 列（12x 开关回退）</li>
  *   <li>新旧密码不可相同</li>
  *   <li>重置后踢该用户所有会话（直接 delete session:userId，重置是主动放弃所有会话的强语义）</li>
  *   <li>限流：同账号 3 次/h、同 IP 10 次/h</li>
@@ -50,6 +50,8 @@ public class PasswordResetService {
     private final SessionService sessionService;
     /** 12x B2：渐进式滑块门槛（同 IP 连续失败/探测 ≥2 次强制滑块）。 */
     private final ProgressiveCaptchaGuard captchaGuard;
+    /** 12x 开关回退：邮箱验证总开关（关=人工测试期，找回放宽到未验证邮箱/users.email 列）。 */
+    private final AuthChannelSettingService channelSettings;
 
     private static final String RESET_LIMIT_ACCOUNT_PREFIX = "reset:limit:account:";
     private static final String RESET_LIMIT_IP_PREFIX = "reset:limit:ip:";
@@ -97,13 +99,14 @@ public class PasswordResetService {
             // TODO: SmsService 加 sendResetCode 方法用 templateCodeReset 模板
             log.info("发起短信找回密码 userId={} phone={}", user.getId(), maskPhone(user.getPhone()));
         } else {
-            // 邮件找回：需用户绑了已验证邮箱
-            UserCredential emailCredential = findVerifiedEmailCredential(user.getId());
-            if (emailCredential == null) {
+            // 邮件找回：已验证邮箱优先；12x 开关回退——验证总开关=关（人工测试期）放宽到
+            // 未验证 EMAIL 凭证 / users.email 列（链接仍只发登记邮箱不扩大面；开关开回即恢复严校验）
+            String resetEmail = findResettableEmail(user);
+            if (resetEmail == null) {
                 captchaGuard.recordFailure("forgot", clientIp);
-                return "若账号存在，重置链接/码已发送"; // 未验证邮箱 → 不发但仍返统一话术
+                return "若账号存在，重置链接/码已发送"; // 无可用邮箱 → 不发但仍返统一话术
             }
-            emailService.sendResetEmail(user.getId(), emailCredential.getIdentifier());
+            emailService.sendResetEmail(user.getId(), resetEmail);
         }
 
         captchaGuard.clear("forgot", clientIp);
@@ -207,6 +210,29 @@ public class PasswordResetService {
                 .filter(c -> UserCredential.TYPE_EMAIL.equals(c.getCredentialType()) && Boolean.TRUE.equals(c.getVerified()))
                 .findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * 12x 开关回退：可收重置信件的邮箱。已验证 EMAIL 凭证恒可用；
+     * 验证总开关=关（真实邮箱通道接入前的人工测试期）放宽到未验证 EMAIL 凭证 → users.email 列。
+     */
+    private String findResettableEmail(User user) {
+        UserCredential verified = findVerifiedEmailCredential(user.getId());
+        if (verified != null) {
+            return verified.getIdentifier();
+        }
+        if (!channelSettings.isEmailVerificationRequired()) {
+            java.util.Optional<UserCredential> any = credentialService.findByUserIdRaw(user.getId()).stream()
+                    .filter(c -> UserCredential.TYPE_EMAIL.equals(c.getCredentialType()))
+                    .findFirst();
+            if (any.isPresent() && any.get().getIdentifier() != null && !any.get().getIdentifier().isBlank()) {
+                return any.get().getIdentifier();
+            }
+            if (user.getEmail() != null && !user.getEmail().isBlank()) {
+                return user.getEmail();
+            }
+        }
+        return null;
     }
 
     /** 校验邮件重置 token。 */

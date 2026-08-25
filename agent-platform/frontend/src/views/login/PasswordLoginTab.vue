@@ -7,10 +7,10 @@
     :rules="rules"
     @submit.prevent="handleLogin"
   >
-    <n-form-item path="username" label="用户名">
+    <n-form-item path="username" label="用户名/邮箱">
       <n-input
         v-model:value="form.username"
-        placeholder="请输入用户名"
+        placeholder="请输入用户名或邮箱"
         size="large"
         :input-props="{ autocomplete: 'username' }"
       >

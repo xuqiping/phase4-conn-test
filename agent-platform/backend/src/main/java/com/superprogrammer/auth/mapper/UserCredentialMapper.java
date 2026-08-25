@@ -26,6 +26,14 @@ public interface UserCredentialMapper extends BaseMapper<UserCredential> {
         return selectOne(wrapper);
     }
 
+    /** 12x 邮箱登录：大小写不敏感按 (类型+标识) 查凭证（LOWER 比对；凭证表体量小，全扫可接受）。 */
+    default UserCredential findByTypeAndIdentifierIgnoreCase(String credentialType, String identifier) {
+        LambdaQueryWrapper<UserCredential> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(UserCredential::getCredentialType, credentialType)
+                .apply("LOWER(identifier) = LOWER({0})", identifier);
+        return selectOne(wrapper);
+    }
+
     /** 设置页：列出该用户所有可用凭证。命中 idx_credential_user 索引。 */
     default List<UserCredential> findByUserId(Long userId) {
         LambdaQueryWrapper<UserCredential> wrapper = new LambdaQueryWrapper<>();

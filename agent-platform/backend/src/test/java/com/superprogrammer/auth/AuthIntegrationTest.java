@@ -78,6 +78,7 @@ class AuthIntegrationTest {
                 java.time.Duration.ofMinutes(10));
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
+        request.setName("集成用户");
         request.setPassword("Str0ng#Pass");
         request.setEmail("integration@test.com");
         request.setEmailCode("654321");
@@ -95,6 +96,7 @@ class AuthIntegrationTest {
         // 用户名查重在校验码之前——重复用户名直接 409，不消耗验证码（emailCode 服务端判，不重先查库）
         RegisterRequest request = new RegisterRequest();
         request.setUsername("integrationuser");
+        request.setName("集成用户");
         request.setPassword("Str0ng#Pass");
         request.setEmail("integration@test.com");
         request.setEmailCode("000000");

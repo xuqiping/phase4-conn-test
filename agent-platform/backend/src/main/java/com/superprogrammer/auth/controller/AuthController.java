@@ -113,6 +113,13 @@ public class AuthController {
         return ResponseEntity.ok(R.ok(userVO));
     }
 
+    /** 17x：本人改昵称/姓名（users.name；项目组/账单/充值下拉等展示用）。 */
+    @PutMapping("/me")
+    public ResponseEntity<R<UserVO>> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
+        UserVO vo = authService.updateProfile(currentUserId(), request.getName());
+        return ResponseEntity.ok(R.ok("保存成功", vo));
+    }
+
     /**
      * 安全体系 S5 · SEC-FR-100（J2 注销）：本人+密码确认 → 软删匿名化。
      * 成功响应即代表当前 token 已拉黑——前端收到后应清本地态并跳登录页。

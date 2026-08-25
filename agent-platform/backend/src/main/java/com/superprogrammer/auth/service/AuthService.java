@@ -156,6 +156,8 @@ public class AuthService {
         // 创建用户
         User user = new User();
         user.setUsername(request.getUsername());
+        // 17x：昵称/姓名（必填，DTO 已 @NotBlank；trim 防空白尾）
+        user.setName(request.getName() == null ? null : request.getName().trim());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(email.isBlank() ? null : email);
         user.setStatus("ACTIVE");
@@ -262,19 +264,52 @@ public class AuthService {
         return false;
     }
 
+    /**
+     * 12x 邮箱登录：解析登录标识对应的用户。
+     * 用户名精确查；含 @ 依次按 EMAIL 凭证（大小写不敏感）→ users.email 列（存量未建 EMAIL 凭证账号）
+     * → 用户名兜底（历史用户名未禁 @）。密码校验与用户名登录同口径（同密码）。
+     */
+    private User findUserForLogin(String identifier) {
+        if (identifier == null || identifier.isBlank()) {
+            return null;
+        }
+        String id = identifier.trim();
+        if (id.contains("@")) {
+            com.superprogrammer.auth.entity.UserCredential cred = credentialService.findForLoginIgnoreCase(
+                    com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL, id);
+            if (cred != null) {
+                return userMapper.selectById(cred.getUserId());
+            }
+            LambdaQueryWrapper<User> emailWrapper = new LambdaQueryWrapper<>();
+            emailWrapper.apply("LOWER(email) = LOWER({0})", id);
+            User byEmail = userMapper.selectOne(emailWrapper);
+            if (byEmail != null) {
+                return byEmail;
+            }
+        }
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getUsername, id);
+        return userMapper.selectOne(wrapper);
+    }
+
     @Transactional
     public TokenResponse login(LoginRequest request) {
         // SEC-FR-001 防爆破前置闸：命中账号锁/IP 封禁 → 固定话术拒绝（不区分「密码错」与「已锁定」）
-        String usernameKey = request.getUsername() == null ? "" : request.getUsername().toLowerCase(java.util.Locale.ROOT);
+        String rawKey = request.getUsername() == null ? "" : request.getUsername().toLowerCase(java.util.Locale.ROOT);
         String clientIp = currentClientIp();
-        assertLoginAllowed(usernameKey, clientIp);
+        assertLoginAllowed(rawKey, clientIp);
         // 12x B2：同账号连续失败 ≥2 次 → 必须先过滑块
-        captchaGuard.check("login", usernameKey, request.getCaptchaVerification());
+        captchaGuard.check("login", rawKey, request.getCaptchaVerification());
 
-        // 查询用户
-        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(User::getUsername, request.getUsername());
-        User user = userMapper.selectOne(wrapper);
+        // 查询用户（12x：支持邮箱+密码登录，与账号同密码）
+        User user = findUserForLogin(request.getUsername());
+        // 规范账号键：邮箱登录解析出真实用户名后，失败计数/账号锁/滑块统一归并到账号键——
+        // 防攻击者交替「用户名/邮箱」两条标识通道摊薄失败计数绕过账号锁
+        String usernameKey = user != null ? user.getUsername().toLowerCase(java.util.Locale.ROOT) : rawKey;
+        if (!usernameKey.equals(rawKey)) {
+            assertLoginAllowed(usernameKey, clientIp);
+            captchaGuard.check("login", usernameKey, request.getCaptchaVerification());
+        }
 
         if (user == null) {
             // Phase4 审查修正：不存在用户也做一次 dummy bcrypt 比对——否则响应时间差（跳过 ~100ms 哈希）
@@ -936,6 +971,26 @@ public class AuthService {
 
         auditAuth("account_deleted", userId, oldUsername, AuditLogEntity.RESULT_SUCCESS, null);
         log.info("用户注销完成(软删匿名化) userId={}", userId);
+    }
+
+    /**
+     * 17x：本人修改昵称/姓名（users.name）。空串/纯空白 → null（清除，各展示处回落 username）。
+     * 不改 username（登录凭证），仅展示层字段；改完返回最新 UserVO 供前端刷新本地用户信息。
+     */
+    public UserVO updateProfile(Long userId, String name) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        String trimmed = name == null ? null : name.trim();
+        String newName = trimmed == null || trimmed.isEmpty() ? null : trimmed;
+        // LambdaUpdateWrapper.set 显式写——updateById 对 null 字段按 NOT_NULL 策略跳过，「清空昵称」会静默不生效
+        userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getId, userId)
+                .set(User::getName, newName));
+        auditAuth("profile_updated", userId, user.getUsername(), AuditLogEntity.RESULT_SUCCESS, null);
+        log.info("用户修改昵称/姓名 userId={} name={}", userId, newName);
+        return getCurrentUser(userId);
     }
 
     public UserVO getCurrentUser(Long userId) {

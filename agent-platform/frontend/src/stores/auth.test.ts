@@ -142,7 +142,7 @@ describe('auth store', () => {
     mockedRegister.mockResolvedValue({ data: { code: 200, message: 'ok' } } as any)
     const store = useAuthStore()
     // 12x B1：注册参数含邮箱验证码
-    await store.register({ username: 'new', email: 'new@test.com', password: 'pass', emailCode: '123456' })
-    expect(mockedRegister).toHaveBeenCalledWith({ username: 'new', email: 'new@test.com', password: 'pass', emailCode: '123456' })
+    await store.register({ username: 'new', name: '新人', email: 'new@test.com', password: 'pass', emailCode: '123456' })
+    expect(mockedRegister).toHaveBeenCalledWith({ username: 'new', name: '新人', email: 'new@test.com', password: 'pass', emailCode: '123456' })
   })
 })

@@ -169,6 +169,7 @@ class AuthServiceAuditTest {
 
         RegisterRequest req = new RegisterRequest();
         req.setUsername("newbie");
+        req.setName("新手");
         req.setPassword("Str0ng#Pass");
         req.setEmail("n@e.com");
         req.setEmailCode("123456");
