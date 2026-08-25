@@ -545,15 +545,26 @@ class PricingConfigServiceTest {
     }
 
     @Test
-    void createPricingRule_secondWithEstYuan_throws() {
+    void createPricingRule_secondWithEst_throws() {
         // 预估秒价仅 TOKEN 用（SECOND 估价直接走秒价）→ SECOND 配了即 400
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
         req.setPricePerSecond(new BigDecimal("0.10"));
-        req.setEstYuanPerSecond(new BigDecimal("0.20"));
+        req.setEstPerResolution(java.util.Map.of("720p", new BigDecimal("0.20")));
         assertThatThrownBy(() -> service.createPricingRule(req))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("estYuanPerSecond");
+                .hasMessageContaining("estPerResolution");
+    }
+
+    @Test
+    void createPricingRule_estBadKey_throws() {
+        // 预估键非支持集（general/480p/720p/1080p/4k）→ 400
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setEstPerResolution(java.util.Map.of("8k", new BigDecimal("0.20")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("estPerResolution");
     }
 
     @Test
@@ -592,21 +603,25 @@ class PricingConfigServiceTest {
     }
 
     @Test
-    void createPricingRule_tokenWithEstYuan_ok() {
-        // TOKEN + 预估秒价：合法，落库保留 estYuanPerSecond、resolution=null
+    void createPricingRule_tokenWithEstPerResolution_ok() {
+        // TOKEN + 多分辨率预估：合法，落库 JSON（键归一小写、剔空档）、resolution=null
         when(llmProviderMapper.selectByIdForUpdate(4L))
                 .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
-        req.setEstYuanPerSecond(new BigDecimal("0.20"));
+        java.util.Map<String, BigDecimal> est = new java.util.LinkedHashMap<>();
+        est.put("general", new BigDecimal("0.10"));
+        est.put("720p", new BigDecimal("0.20"));
+        est.put("1080p", null); // 空档剔除
+        req.setEstPerResolution(est);
 
         service.createPricingRule(req);
 
         org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
                 org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
         org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
-        org.assertj.core.api.Assertions.assertThat(captor.getValue().getEstYuanPerSecond())
-                .isEqualByComparingTo(new BigDecimal("0.20"));
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getEstPerResolution())
+                .contains("0.10").contains("0.20").doesNotContain("1080p");
         org.assertj.core.api.Assertions.assertThat(captor.getValue().getResolution()).isNull();
     }
 

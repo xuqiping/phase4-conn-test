@@ -160,12 +160,42 @@ public class PricingService {
             return rule.getPricePerSecond().multiply(BigDecimal.valueOf(seconds))
                     .setScale(6, RoundingMode.HALF_UP);
         }
-        // TOKEN 模式：预估秒价 × 时长（仅估价，不参与真实扣费）
-        if (rule.getEstYuanPerSecond() == null) {
+        // TOKEN 模式：预估秒价（按分辨率参数，V153）× 时长（仅估价，不参与真实扣费）
+        BigDecimal est = resolveEstPerSecond(rule.getEstPerResolution(),
+                normalizeResolution(resolution));
+        if (est == null) {
             return BigDecimal.ZERO;
         }
-        return rule.getEstYuanPerSecond().multiply(BigDecimal.valueOf(seconds))
-                .setScale(6, RoundingMode.HALF_UP);
+        return est.multiply(BigDecimal.valueOf(seconds)).setScale(6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 7x-2（V153）：从 est_per_resolution JSON 取「任务分辨率对应预估值」——
+     * 精确分辨率键 → general 兜底键 → null（未配置=不可估，caller 按 0 放行）。
+     * JSON 损坏/值非法 → null + WARN（估价旁路绝不阻断提交）。
+     */
+    private static BigDecimal resolveEstPerSecond(String estPerResolutionJson, String resolution) {
+        if (estPerResolutionJson == null || estPerResolutionJson.isBlank()) {
+            return null;
+        }
+        try {
+            java.util.Map<String, Object> map = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(estPerResolutionJson,
+                            new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { });
+            Object v = resolution != null ? map.get(resolution) : null;
+            if (v == null) {
+                v = map.get("general");
+            }
+            if (v == null) {
+                return null;
+            }
+            BigDecimal est = new BigDecimal(String.valueOf(v));
+            return est.signum() >= 0 ? est : null;
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(PricingService.class)
+                    .warn("est_per_resolution 解析失败按不可估处理: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** 文本/embed 询价。billOutput=false（embed）时忽略 output。 */

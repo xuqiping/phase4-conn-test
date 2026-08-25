@@ -88,11 +88,19 @@
           <span class="pricing-config__hint" style="margin-left: 8px">不同分辨率可各配一行（分有无参考）；「通用」兜底未单列的分辨率</span>
         </n-form-item>
         <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'SECOND'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
-        <!-- 7x-2（V152）：TOKEN 模式提交期无 token 维度，预估秒价供余额预检（不参与真实扣费） -->
-        <n-form-item label="预估秒价 ¥/秒" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'TOKEN'">
-          <n-input-number v-model:value="pricingForm.estYuanPerSecond" :precision="6" />
-          <span class="pricing-config__hint" style="margin-left: 8px">仅提交前余额预检用（预估=秒价×时长）；真实扣费仍按 token</span>
-        </n-form-item>
+        <!-- 7x-2（V153）：TOKEN 模式提交期无 token 维度，预估秒价按分辨率一行配齐，供余额预检（不参与真实扣费） -->
+        <template v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'TOKEN'">
+          <n-form-item
+            v-for="slot in estSlots"
+            :key="slot.key"
+            :label="'预估秒价 ¥/秒 · ' + slot.label"
+          >
+            <n-input-number v-model:value="estForm[slot.key]" :precision="6" clearable placeholder="留空=不预估该档" />
+          </n-form-item>
+          <n-form-item label=" ">
+            <span class="pricing-config__hint">仅提交前余额预检用（预估=对应分辨率秒价×时长，未单列的按「通用」估）；真实扣费仍按 token</span>
+          </n-form-item>
+        </template>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
       </n-form>
       <template #footer>
@@ -159,6 +167,28 @@ function resolutionLabel(resolution: string | null | undefined): string {
   return resolution === '4k' ? '4K' : resolution
 }
 
+// 7x-2（V153）：TOKEN 预估秒价档位（一行配齐；值留空=该档不预估，回落「通用」）
+const estSlots = [
+  { key: 'general', label: '通用（未单列分辨率的兜底）' },
+  { key: '480p', label: '480p' },
+  { key: '720p', label: '720p' },
+  { key: '1080p', label: '1080p' },
+  { key: '4k', label: '4K' }
+]
+const estForm = reactive<Record<string, number | null>>({
+  general: null, '480p': null, '720p': null, '1080p': null, '4k': null
+})
+function resetEstForm(map?: Record<string, number> | null) {
+  for (const slot of estSlots) estForm[slot.key] = map?.[slot.key] ?? null
+}
+/** 列表预估列渲染：{720p:0.2,general:0.1} → "720p 0.2 / 通用 0.1" */
+function fmtEst(map?: Record<string, number> | null): string {
+  if (!map) return '—'
+  const parts = estSlots.filter(slot => map[slot.key] != null)
+    .map(slot => `${slot.key === 'general' ? '通用' : resolutionLabel(slot.key)} ${map[slot.key]}`)
+  return parts.length ? parts.join(' / ') : '—'
+}
+
 const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '类型', key: 'kind', render: r => KIND_LABEL[r.kind] ?? r.kind },
   { title: 'providerId', key: 'providerId', render: r => r.providerId == null ? '全局' : String(r.providerId) },
@@ -166,12 +196,15 @@ const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '参考视频', key: 'hasReference', render: r => r.kind === 'VIDEO' ? (r.hasReference ? '有参考' : '无参考') : '—' },
   // 7x-1（V152）：VIDEO SECOND 分辨率行；null=通用兜底
   { title: '分辨率', key: 'resolution', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'SECOND' ? resolutionLabel(r.resolution) : '—' },
-  // 7x-2（V152）：VIDEO TOKEN 预估秒价（仅预检）
-  { title: '预估秒价 ¥', key: 'estYuanPerSecond', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'TOKEN' ? fmt(r.estYuanPerSecond) : '—' },
-  { title: '输入价 ¥/百万', key: 'priceInputPerMillion', render: r => fmt(r.priceInputPerMillion) },
-  { title: '输出价 ¥/百万', key: 'priceOutputPerMillion', render: r => fmt(r.priceOutputPerMillion) },
-  { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => fmt(r.pricePerSecond) },
-  { title: '图片单价 ¥', key: 'pricePerImage', render: r => fmt(r.pricePerImage) },
+  // 7x-2（V153）：VIDEO TOKEN 预估秒价（按分辨率参数，仅预检）
+  { title: '预估秒价 ¥/秒', key: 'estPerResolution', render: r =>
+      r.kind === 'VIDEO' && r.videoBillingMode === 'TOKEN' ? fmtEst(r.estPerResolution) : '—' },
+  // 7x 反馈：价格列按归属过滤——TOKEN 行不显秒价、非 CHAT 不显输出价，防串味误导
+  { title: '输入价 ¥/百万', key: 'priceInputPerMillion', render: r =>
+      (r.kind !== 'VIDEO' && r.kind !== 'IMAGE') || (r.kind === 'VIDEO' && r.videoBillingMode === 'TOKEN') ? fmt(r.priceInputPerMillion) : '—' },
+  { title: '输出价 ¥/百万', key: 'priceOutputPerMillion', render: r => r.kind === 'CHAT' ? fmt(r.priceOutputPerMillion) : '—' },
+  { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'SECOND' ? fmt(r.pricePerSecond) : '—' },
+  { title: '图片单价 ¥', key: 'pricePerImage', render: r => r.kind === 'IMAGE' ? fmt(r.pricePerImage) : '—' },
   { title: '生效时间', key: 'effectiveFrom', render: r => new Date(r.effectiveFrom).toLocaleString('zh-CN', { hour12: false }) },
   {
     title: '操作', key: 'op', width: 110,
@@ -214,7 +247,7 @@ function fmt(n: number | null | undefined): string {
 // 价表表单
 const pricingShow = ref(false)
 const pricingEditId = ref<number | null>(null)
-const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estYuanPerSecond: null })
+const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estPerResolution: null })
 const availableModels = ref<AvailablePricingModelVO[]>([])
 const candidateLoading = ref(false)
 const candidateError = ref('')
@@ -262,12 +295,14 @@ async function openPricingModal(rule?: PricingRuleVO) {
       priceInputPerMillion: rule.priceInputPerMillion, priceOutputPerMillion: rule.priceOutputPerMillion,
       videoBillingMode: rule.videoBillingMode ?? 'TOKEN', pricePerSecond: rule.pricePerSecond, pricePerImage: rule.pricePerImage,
       hasReference: rule.hasReference ?? false,
-      resolution: rule.resolution ?? '', estYuanPerSecond: rule.estYuanPerSecond ?? null
+      resolution: rule.resolution ?? '', estPerResolution: rule.estPerResolution ?? null
     })
+    resetEstForm(rule.estPerResolution)
   } else {
     pricingEditId.value = null
     selectedCandidateKey.value = null
-    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estYuanPerSecond: null })
+    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: '', estPerResolution: null })
+    resetEstForm(null)
   }
   pricingShow.value = true
   if (!rule) await loadAvailableModels()
@@ -293,18 +328,24 @@ function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
     out.pricePerSecond = null
     out.hasReference = false
     out.resolution = null
-    out.estYuanPerSecond = null
+    out.estPerResolution = null
   } else {
     out.hasReference = out.hasReference === true
-    // 7x-1/2（V152）：模式联动——TOKEN 清秒价/分辨率（token 价用 priceInputPerMillion）；
-    // SECOND 清 token 价/预估秒价（SECOND 估价直接用秒价）；'' 分辨率归一为 null（=通用行）
+    // 7x-1/2（V152/V153）：模式联动——TOKEN 清秒价/分辨率（token 价用 priceInputPerMillion，
+    // 预估取 estForm 非空档组成 map，全空=null）；SECOND 清 token 价/预估（估价直接用秒价）；
+    // '' 分辨率归一为 null（=通用行）
     if (out.videoBillingMode === 'TOKEN') {
       out.pricePerSecond = null
       out.resolution = null
+      const est: Record<string, number> = {}
+      for (const slot of estSlots) {
+        if (estForm[slot.key] != null) est[slot.key] = estForm[slot.key] as number
+      }
+      out.estPerResolution = Object.keys(est).length ? est : null
     } else {
       out.priceInputPerMillion = null
       out.priceOutputPerMillion = null
-      out.estYuanPerSecond = null
+      out.estPerResolution = null
       out.resolution = out.resolution ? out.resolution : null
     }
   }

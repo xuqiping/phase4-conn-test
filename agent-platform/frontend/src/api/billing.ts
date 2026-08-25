@@ -47,8 +47,8 @@ export interface PricingRuleVO {
   hasReference: boolean
   /** 7x-1（V152）：VIDEO SECOND 分辨率行（null=通用兜底）；其他行恒 null */
   resolution?: string | null
-  /** 7x-2（V152）：VIDEO TOKEN 提交期预估秒价 ¥/秒（仅预检，不计费）；其他行恒 null */
-  estYuanPerSecond?: number | null
+  /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null */
+  estPerResolution?: Record<string, number> | null
   effectiveFrom: string
 }
 
@@ -66,8 +66,8 @@ export interface PricingRuleRequest {
   hasReference?: boolean | null
   /** 7x-1（V152）：分辨率定价维度，仅 VIDEO SECOND 有效（480p/720p/1080p/4k；null=通用行） */
   resolution?: string | null
-  /** 7x-2（V152）：提交期预估秒价 ¥/秒，仅 VIDEO TOKEN 有效（余额预检用，不参与真实扣费） */
-  estYuanPerSecond?: number | null
+  /** 7x-2（V153）：提交期预估秒价（一行多分辨率参数），仅 VIDEO TOKEN 有效（余额预检用，不参与真实扣费）；general=通用兜底 */
+  estPerResolution?: Record<string, number | null> | null
   effectiveFrom?: string | null
 }
 
@@ -91,8 +91,8 @@ export interface PricingRuleExportItem {
   hasReference?: boolean | null
   /** 7x-1（V152）：仅 VIDEO SECOND 有意义（480p/720p/1080p/4k；null=通用行），upsert 匹配键之一 */
   resolution?: string | null
-  /** 7x-2（V152）：仅 VIDEO TOKEN 有意义——提交期预估秒价 ¥/秒（仅预检，不计费） */
-  estYuanPerSecond?: number | null
+  /** 7x-2（V153）：仅 VIDEO TOKEN 有意义——提交期预估秒价（general/分辨率 → ¥/秒，仅预检） */
+  estPerResolution?: Record<string, number> | null
   priceInputPerMillion?: number | null
   priceOutputPerMillion?: number | null
   videoBillingMode?: VideoBillingMode | null

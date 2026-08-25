@@ -1,6 +1,8 @@
 package com.superprogrammer.billing.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -15,7 +17,7 @@ import java.time.OffsetDateTime;
  * <p>不继承 BaseEntity：配置行 append（同 MediaGenTask 先例）。
  */
 @Data
-@TableName("pricing_rule")
+@TableName(value = "pricing_rule", autoResultMap = true)
 public class PricingRuleEntity {
 
     public static final String KIND_CHAT = "CHAT";
@@ -37,15 +39,21 @@ public class PricingRuleEntity {
 
     private String model;
 
+    /** ALWAYS：清空（null）也落库——模式/类型切换后不留对面字段残值（下同）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal priceInputPerMillion;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal priceOutputPerMillion;
 
     /** 视频：TOKEN|SECOND。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String videoBillingMode;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal pricePerSecond;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal pricePerImage;
 
     /**
@@ -59,14 +67,18 @@ public class PricingRuleEntity {
      * NULL=通用行（未单列分辨率的任务回落此行，与 has_reference=false 兜底同范式）。
      * CHAT/EMBED/RERANK/IMAGE/VIDEO TOKEN 行恒 NULL。
      */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String resolution;
 
     /**
-     * 7x-2（V152）：仅 VIDEO TOKEN 模式有意义——提交期预估秒价（¥/秒）。
-     * TOKEN 模式提交期无 token 维度，估价预检（余额≥预估才放行）用本字段×时长估算；
+     * 7x-2（V152→V153）：仅 VIDEO TOKEN 模式有意义——提交期预估秒价，JSONB 一行多分辨率参数：
+     * {@code {"general":0.1,"720p":0.2,"1080p":0.3}}，键 ⊆ general/480p/720p/1080p/4k，
+     * general=未单列分辨率的兜底。TOKEN 提交期无 token 维度，估价预检用「任务分辨率对应值×时长」；
      * 真实扣费仍按 Ark 返的 total_tokens，本字段不参与计费。
      */
-    private java.math.BigDecimal estYuanPerSecond;
+    @TableField(typeHandler = com.superprogrammer.common.typehandler.JsonbStringTypeHandler.class,
+            updateStrategy = FieldStrategy.ALWAYS)
+    private String estPerResolution;
 
     private OffsetDateTime effectiveFrom;
 }

@@ -53,12 +53,12 @@ public class PricingRuleRequest {
     private String resolution;
 
     /**
-     * 7x-2（V152）：提交期预估秒价（¥/秒），仅 VIDEO TOKEN 模式有效——TOKEN 提交期无 token
-     * 维度，余额预检用本字段×时长估价；真实扣费仍按 total_tokens。其他 kind/SECOND 必须为 null。
+     * 7x-2（V153）：提交期预估秒价（一行多分辨率参数），仅 VIDEO TOKEN 模式有效——TOKEN
+     * 提交期无 token 维度，余额预检用「任务分辨率对应值×时长」估价；真实扣费仍按 total_tokens。
+     * 键 ⊆ general/480p/720p/1080p/4k（general=通用兜底；大小写不敏感，落库统一小写），值须≥0。
+     * 其他 kind/SECOND 必须为 null（SECOND 估价直接用秒价行）。
      */
-    @DecimalMin(value = "0", message = "estYuanPerSecond 须≥0")
-    @DecimalMax(value = "100000000", message = "estYuanPerSecond 超出上限")
-    private BigDecimal estYuanPerSecond;
+    private java.util.Map<String, BigDecimal> estPerResolution;
 
     private OffsetDateTime effectiveFrom;
 }

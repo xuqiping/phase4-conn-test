@@ -230,16 +230,34 @@ class PricingServiceTest {
     // ---------------- 7x-2（V152）：estimateVideoYuan 提交期估价 ----------------
 
     @Test
-    void estimateVideoYuan_tokenMode_usesEstYuanPerSecond() {
-        // TOKEN 提交期无 token 维度 → 预估秒价×时长（0.2×5=1.0），与真实扣费字段无关
+    void estimateVideoYuan_tokenMode_picksResolutionEst() {
+        // 7x-2（V153）：TOKEN 预估按任务分辨率取值——1080p 任务用 1080p 档（0.3×5=1.5）
         PricingRuleEntity row = rule("VIDEO");
         row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
-        row.setEstYuanPerSecond(new BigDecimal("0.2"));
+        row.setEstPerResolution("{\"general\":0.1,\"720p\":0.2,\"1080p\":0.3}");
+        // TOKEN 行 resolution 恒 NULL：精确(1080p) 查不到 → 回落通用(NULL)行命中（同真实链路）
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "1080p"))
+                .thenReturn(null);
         when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
                 .thenReturn(row);
 
-        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
-                .isEqualByComparingTo("1.000000");
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, "1080p", false))
+                .isEqualByComparingTo("1.500000");
+    }
+
+    @Test
+    void estimateVideoYuan_tokenMode_unlistedResolution_fallsBackToGeneral() {
+        // 480p 未单列 → 「通用」档兜底（0.1×5=0.5）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        row.setEstPerResolution("{\"general\":0.1,\"720p\":0.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "480p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, "480p", false))
+                .isEqualByComparingTo("0.500000");
     }
 
     @Test
