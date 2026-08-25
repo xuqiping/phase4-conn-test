@@ -1472,7 +1472,13 @@ function buildImageRequest(
   if (refFileIds.length > 0) req.refFileIds = refFileIds
   const cap = imageCapOf(model)
   if (cap) {
-    if (data.size === '__custom__') {
+    // C4（6x/Q5）：比例模式（ratio+档位，后端推导 WxH 覆盖 size）；与自定义宽x高互斥
+    if (typeof data.ratio === 'string' && data.ratio) {
+      req.ratio = data.ratio
+      if (typeof data.size === 'string' && data.size && data.size !== '__custom__') {
+        req.size = data.size
+      }
+    } else if (data.size === '__custom__') {
       const custom = typeof data.customSize === 'string' ? data.customSize.trim() : ''
       if (custom) req.size = custom
     } else if (typeof data.size === 'string' && data.size) {

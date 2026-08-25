@@ -130,7 +130,7 @@
           />
         </div>
 
-        <!-- 2x-3：按所选模型 capability 驱动的生成参数（与图片生成模块同源能力） -->
+        <!-- 2x-3：按所选模型 capability 驱动的生成参数（与图片生成模块同源能力）；C4：+比例模式 -->
         <template v-if="imageCap">
           <div class="prop-panel__field">
             <label>尺寸</label>
@@ -140,10 +140,23 @@
               size="small"
               clearable
               placeholder="模型默认"
-              @update:value="(v: string | null) => { if (node) { node.data.size = v ?? undefined; if (v !== '__custom__') node.data.customSize = undefined; emit('data-changed') } }"
+              @update:value="onImageSizeChange"
             />
           </div>
-          <div v-if="(node.data.size as string) === '__custom__'" class="prop-panel__field">
+          <div class="prop-panel__field">
+            <label>比例（可选，与清晰度组合）</label>
+            <n-select
+              :value="(node.data.ratio as string) || null"
+              :options="imgRatioOptions"
+              size="small"
+              clearable
+              placeholder="不指定（按档位）"
+              @update:value="(v: string | null) => { if (node) { node.data.ratio = v ?? undefined; emit('data-changed') } }"
+            />
+            <div v-if="imgRatioPreview" class="prop-panel__hint">{{ imgRatioPreview }}</div>
+            <div v-else-if="imgRatioError" class="prop-panel__error">{{ imgRatioError }}</div>
+          </div>
+          <div v-if="(node.data.size as string) === '__custom__' && !(node.data.ratio as string)" class="prop-panel__field">
             <label>自定义宽x高</label>
             <n-input
               :value="(node.data.customSize as string) || ''"
@@ -228,7 +241,7 @@
           type="primary"
           block
           :loading="running"
-          :disabled="!(node.data.prompt as string)?.trim() || !(node.data.model as string)?.trim()"
+          :disabled="!(node.data.prompt as string)?.trim() || !(node.data.model as string)?.trim() || !!imgRatioError"
           @click="emit('run', node)"
         >
           <template #icon><n-icon :component="SparklesOutline" /></template>
@@ -739,6 +752,7 @@ import MediaLightbox from '../media/MediaLightbox.vue'
 import ReferencePreview from './ReferencePreview.vue'
 import type { CanvasReferenceItem } from '@/utils/canvasVideoAttachments'
 import { uniqueLabel } from '@/utils/interpolate'
+import { RATIOS, deriveWh } from '@/utils/imageSize'
 
 /** 2x 四轮 S6：五种确定性变换按钮（label/title 面板展示，op 直传后端白名单枚举）。 */
 const IMAGE_TRANSFORMS: ReadonlyArray<{ op: ImageTransformOp; label: string; title: string }> = [
@@ -1076,6 +1090,36 @@ const imgSizeOptions = computed(() => {
   return opts
 })
 
+/** C4（6x/Q5）：比例模式——切自定义宽x高清比例（互斥），切档位清自定义原文。 */
+function onImageSizeChange(v: string | null) {
+  const node = props.node
+  if (!node) return
+  node.data.size = v ?? undefined
+  if (v !== '__custom__') node.data.customSize = undefined
+  if (v === '__custom__') node.data.ratio = undefined
+  emit('data-changed')
+}
+
+// C4：比例+档位 → 推导 WxH 预览（utils/imageSize 与后端 ImageSizeDeriver 同算法）
+const imgRatioOptions = RATIOS.map(r => ({ label: r, value: r }))
+const imgRatioDerive = computed(() => {
+  if (props.node?.type !== 'image') return null
+  const ratio = props.node.data.ratio as string | undefined
+  if (!ratio) return null
+  const size = props.node.data.size as string | undefined
+  return deriveWh(ratio, size === '__custom__' ? null : size)
+})
+const imgRatioPreview = computed(() => {
+  const d = imgRatioDerive.value
+  if (!d || !('w' in d)) return ''
+  const tier = (props.node?.data.size as string) || '2K'
+  return `按比例推导：${d.w}x${d.h}（${tier} 档等面积；预估与比例无关）`
+})
+const imgRatioError = computed(() => {
+  const d = imgRatioDerive.value
+  return d && 'error' in d ? d.error : ''
+})
+
 function toUpperOptions(arr: string[]) {
   return arr.map(v => ({ label: v.toUpperCase(), value: v }))
 }
@@ -1089,11 +1133,12 @@ function onImageModelChange(model: string | null) {
   if (!node) return
   node.data.model = model ?? undefined
   const c = model ? imageModels.value.find(m => m.modelId === model)?.capability : undefined
-  const staleKeys = ['size', 'customSize', 'outputFormat', 'optimizeMode', 'guidanceScale',
+  const staleKeys = ['size', 'customSize', 'ratio', 'outputFormat', 'optimizeMode', 'guidanceScale',
     'sequential', 'maxImages', 'watermark', 'webSearch']
   if (c) {
     node.data.size = c.sizePresets[0] ?? undefined
     node.data.customSize = undefined
+    node.data.ratio = undefined
     node.data.outputFormat = c.outputFormats[0] ?? undefined
     node.data.optimizeMode = c.optimizeModes[0] ?? undefined
     node.data.guidanceScale = c.supportsGuidanceScale

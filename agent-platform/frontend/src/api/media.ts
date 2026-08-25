@@ -188,6 +188,8 @@ export interface ImageSubmitRequest {
   refFileIds?: string[]
   /** size 预设或自定义宽x高 */
   size?: string
+  /** C3（6x/Q5）：比例模式（7 预设）——与档位 size 同传按档位预算推导宽x高；与显式宽x高互斥 */
+  ratio?: string
   /** 输出格式 jpeg/png */
   outputFormat?: string
   watermark?: boolean

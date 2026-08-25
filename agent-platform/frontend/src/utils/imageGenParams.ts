@@ -26,6 +26,8 @@ export interface ImageRestorePatch {
   size: string
   /** 自定义 WxH 原文（size='__custom__' 时非空） */
   customSize: string
+  /** C3：比例模式原值（submittedRequest.ratio；非空时 size 为档位、customSize 空） */
+  ratio: string
   outputFormat: string
   optimizeMode: string
   guidanceScale: number
@@ -64,10 +66,14 @@ export function parseImageRestore(
 
   // size：命中预设直接选；支持自定义的模型遇非预设值 → __custom__ 回填原文；
   // 不支持自定义的模型遇非预设值 → 回退首个预设 + 告警；模型下线（无能力清单）→ 原样回填（表单隐藏不展示）
+  // C3：比例模式任务（ratio 非空）——size 已被后端推导成 WxH，还原为 比例+默认2K 档（原档位未留痕）
+  const ratio = str(cfg.ratio)
   const rawSize = str(cfg.size)
   let size = ''
   let customSize = ''
-  if (rawSize) {
+  if (ratio) {
+    size = cap?.sizePresets[0] ?? ''
+  } else if (rawSize) {
     if (!cap) {
       size = rawSize
     } else if (cap.sizePresets.includes(rawSize)) {
@@ -96,6 +102,7 @@ export function parseImageRestore(
     prompt: str(cfg.prompt),
     size,
     customSize,
+    ratio,
     outputFormat: str(cfg.outputFormat) || cap?.outputFormats[0] || '',
     optimizeMode: str(cfg.optimizeMode) || cap?.optimizeModes[0] || '',
     guidanceScale: num(cfg.guidanceScale,

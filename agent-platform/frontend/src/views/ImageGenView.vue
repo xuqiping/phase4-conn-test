@@ -68,17 +68,25 @@
                 <div class="hint">支持格式：{{ cap.refImageFormats.join(' / ') }}</div>
               </NFormItem>
 
-              <!-- 尺寸（预设下拉 + 自定义宽x高） -->
+              <!-- 尺寸（预设/比例/自定义宽x高；C4：比例+档位 → 推导 WxH 预览） -->
               <NFormItem label="尺寸" class="form-item">
                 <NSpace>
                   <NSelect
                     v-model:value="form.size"
                     :options="sizeOptions"
                     placeholder="尺寸"
-                    style="width: 160px"
+                    style="width: 120px"
                     @update:value="onSizePresetChange"
                   />
-                  <template v-if="cap.supportsWhSize && form.size === '__custom__'">
+                  <!-- C4（6x/Q5）：比例可选；选中后与档位组合推导宽x高（不选=现状档位模式） -->
+                  <NSelect
+                    v-model:value="form.ratio"
+                    :options="ratioOptions"
+                    placeholder="比例（可选）"
+                    clearable
+                    style="width: 140px"
+                  />
+                  <template v-if="cap.supportsWhSize && form.size === '__custom__' && !form.ratio">
                     <NInput
                       v-model:value="customSize"
                       placeholder="宽x高 如 1024x1024"
@@ -87,6 +95,8 @@
                     />
                   </template>
                 </NSpace>
+                <div v-if="ratioPreview" class="hint">{{ ratioPreview }}</div>
+                <div v-else-if="ratioError" class="error">{{ ratioError }}</div>
               </NFormItem>
 
               <!-- 输出格式 -->
@@ -318,6 +328,7 @@ import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog
 import MediaTaskImageThumb from '@/components/media/MediaTaskImageThumb.vue'
 import MediaTaskRequestDetails from '@/components/media/MediaTaskRequestDetails.vue'
 import { parseImageRestore } from '@/utils/imageGenParams'
+import { RATIOS, deriveWh } from '@/utils/imageSize'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import type { AssetFilePicked } from '@/types/asset'
@@ -340,6 +351,8 @@ const form = reactive({
   model: '',
   prompt: '',
   size: '' as string,
+  /** C4（6x/Q5）：比例模式（''=不选，现状档位；选中与档位组合推导 WxH）。 */
+  ratio: '' as string,
   outputFormat: '' as string,
   optimizeMode: '' as string,
   guidanceScale: 5,
@@ -387,11 +400,30 @@ function toOptions(arr: string[]) {
   return arr.map(v => ({ label: v.toUpperCase(), value: v }))
 }
 function onSizePresetChange(v: string) {
-  if (v !== '__custom__') customSize.value = ''
+  // C4 联动：切自定义宽x高 → 清比例（互斥）；切档位 → 清自定义原文
+  if (v === '__custom__') form.ratio = ''
+  else customSize.value = ''
 }
 function syncCustomSize() {
   // 自定义模式：size 实际提交值 = customSize（宽x高）
 }
+
+// ---- C4（6x/Q5）：比例+档位 → 推导 WxH 预览（utils/imageSize 与后端同算法） ----
+const ratioOptions = RATIOS.map(r => ({ label: r, value: r }))
+const ratioDerive = computed(() => {
+  if (!form.ratio) return null
+  const tier = form.size === '__custom__' ? null : form.size
+  return deriveWh(form.ratio, tier)
+})
+const ratioPreview = computed(() => {
+  const d = ratioDerive.value
+  if (!d || !('w' in d)) return ''
+  return `按比例推导：${d.w}x${d.h}（${form.size || '2K'} 档等面积；预估与比例无关）`
+})
+const ratioError = computed(() => {
+  const d = ratioDerive.value
+  return d && 'error' in d ? d.error : ''
+})
 
 // 模型切换 → 按能力重置各字段默认值
 function onModelChange() {
@@ -399,6 +431,7 @@ function onModelChange() {
   const c = cap.value
   if (!c) return
   form.size = c.sizePresets[0] ?? ''
+  form.ratio = ''
   form.outputFormat = c.outputFormats[0] ?? ''
   form.optimizeMode = c.optimizeModes[0] ?? ''
   form.guidanceScale = Math.round((c.guidanceMin + c.guidanceMax) / 2)
@@ -463,7 +496,7 @@ function removeRef(i: number) {
 // ---- 提交 ----
 const submitting = ref(false)
 const errorMsg = ref('')
-const canSubmit = computed(() => canGen.value && !!form.model && !!form.prompt?.trim())
+const canSubmit = computed(() => canGen.value && !!form.model && !!form.prompt?.trim() && !ratioError.value)
 
 /** 计划5 Step6 → 7x 统一入口：参与项目改全局 store（页顶 AppHeader 唯一选择器），
  * 随提交携带（null=个人钱包）；挂载时一次性收养旧入口遗留的 localStorage 选择。 */
@@ -478,8 +511,11 @@ function buildRequest(): ImageSubmitRequest {
   }
   if (projectGroupId.value != null) req.projectGroupId = projectGroupId.value
   if (refImages.value.length) req.refFileIds = refImages.value.map(r => r.fileId)
-  // size：预设直接用；自定义用 customSize
-  if (form.size === '__custom__') {
+  // size：预设直接用；自定义用 customSize；C4 比例模式发 ratio+档位（后端推导覆盖 size）
+  if (form.ratio) {
+    req.ratio = form.ratio
+    if (form.size && form.size !== '__custom__') req.size = form.size
+  } else if (form.size === '__custom__') {
     if (customSize.value.trim()) req.size = customSize.value.trim()
   } else if (form.size) {
     req.size = form.size
@@ -727,6 +763,7 @@ function restoreForm(task: MediaTaskVO) {
   form.prompt = patch.prompt
   form.size = patch.size
   customSize.value = patch.customSize
+  form.ratio = patch.ratio
   form.outputFormat = patch.outputFormat
   form.optimizeMode = patch.optimizeMode
   form.guidanceScale = patch.guidanceScale
