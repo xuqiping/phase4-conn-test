@@ -58,15 +58,90 @@ fn run_worker(lines: &[Value]) -> Vec<Value> {
 }
 
 fn create_ooxml(path: &Path, extra_entries: &[(&str, &[u8])], relationships: Option<&str>) {
+    let package_extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .expect("fixture extension");
+    create_ooxml_package(
+        path,
+        package_extension,
+        extra_entries,
+        relationships,
+        true,
+        true,
+    );
+}
+
+fn create_ooxml_package(
+    path: &Path,
+    package_extension: &str,
+    extra_entries: &[(&str, &[u8])],
+    relationships: Option<&str>,
+    include_main_part: bool,
+    include_root_relationships: bool,
+) {
+    let (main_part, main_content_type, part_relationships) = match package_extension {
+        "xlsx" => (
+            "xl/workbook.xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+            "xl/_rels/workbook.xml.rels",
+        ),
+        "xlsm" => (
+            "xl/workbook.xml",
+            "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+            "xl/_rels/workbook.xml.rels",
+        ),
+        "docx" => (
+            "word/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+            "word/_rels/document.xml.rels",
+        ),
+        "docm" => (
+            "word/document.xml",
+            "application/vnd.ms-word.document.macroEnabled.main+xml",
+            "word/_rels/document.xml.rels",
+        ),
+        "pptx" => (
+            "ppt/presentation.xml",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+            "ppt/_rels/presentation.xml.rels",
+        ),
+        "pptm" => (
+            "ppt/presentation.xml",
+            "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+            "ppt/_rels/presentation.xml.rels",
+        ),
+        other => panic!("unsupported synthetic package extension: {other}"),
+    };
     let file = File::create(path).expect("create OOXML fixture");
     let mut archive = zip::ZipWriter::new(file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     archive
         .start_file("[Content_Types].xml", options)
         .expect("content types entry");
-    archive
-        .write_all(br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#)
-        .expect("content types content");
+    write!(
+        archive,
+        r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/{main_part}" ContentType="{main_content_type}"/></Types>"#
+    )
+    .expect("content types content");
+    if include_root_relationships {
+        archive
+            .start_file("_rels/.rels", options)
+            .expect("root relationship entry");
+        write!(
+            archive,
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="{main_part}"/></Relationships>"#
+        )
+        .expect("root relationship content");
+    }
+    if include_main_part {
+        archive
+            .start_file(main_part, options)
+            .expect("main document part");
+        archive
+            .write_all(b"<?xml version=\"1.0\"?><synthetic/>")
+            .expect("main document content");
+    }
     archive
         .start_file("docProps/core.xml", options)
         .expect("synthetic metadata entry");
@@ -75,7 +150,7 @@ fn create_ooxml(path: &Path, extra_entries: &[(&str, &[u8])], relationships: Opt
         .expect("metadata content");
     if let Some(rels) = relationships {
         archive
-            .start_file("_rels/.rels", options)
+            .start_file(part_relationships, options)
             .expect("relationship entry");
         archive
             .write_all(rels.as_bytes())
@@ -235,6 +310,58 @@ fn zip_without_ooxml_content_types_is_blocked_as_an_invalid_package() {
 
     assert_eq!(response["classification"], "BLOCKED");
     assert_eq!(response["errorCode"], "OFFICE_INVALID_OOXML_PACKAGE");
+}
+
+#[test]
+fn missing_extension_specific_main_part_is_blocked_with_stable_code() {
+    let dir = TestDir::new();
+    let path = dir.path().join("missing-main.xlsx");
+    create_ooxml_package(&path, "xlsx", &[], None, false, true);
+
+    let response = run_worker(&[inspect_request("missing-main", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_OOXML_MAIN_PART_MISSING");
+}
+
+#[test]
+fn extension_and_package_type_mismatch_is_blocked_with_stable_code() {
+    let dir = TestDir::new();
+    let path = dir.path().join("mismatched.xlsx");
+    create_ooxml_package(&path, "docx", &[], None, true, true);
+
+    let response = run_worker(&[inspect_request("mismatched", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_OOXML_TYPE_MISMATCH");
+}
+
+#[test]
+fn missing_root_relationships_is_blocked_as_an_invalid_package() {
+    let dir = TestDir::new();
+    let path = dir.path().join("missing-root-rels.docx");
+    create_ooxml_package(&path, "docx", &[], None, true, false);
+
+    let response = run_worker(&[inspect_request("missing-root-rels", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_INVALID_OOXML_PACKAGE");
+}
+
+#[test]
+fn oversized_relationship_part_is_blocked_instead_of_silently_truncated() {
+    let dir = TestDir::new();
+    let path = dir.path().join("oversized-rels.xlsx");
+    let padding = "a".repeat(4 * 1024 * 1024);
+    let relationships = format!(
+        r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><!--{padding}--><Relationship Id="external" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="https://example.invalid/tail.xlsx" TargetMode="External"/></Relationships>"#
+    );
+    create_ooxml(&path, &[], Some(&relationships));
+
+    let response = run_worker(&[inspect_request("oversized-rels", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_RELATIONSHIP_TOO_LARGE");
 }
 
 #[test]

@@ -6,33 +6,34 @@
 
 | 判定 | 含义 | 当前自动规则 |
 |---|---|---|
-| `SAFE_OOXML` | 标准 OOXML 可交给跨平台 Worker 的安全子集 | 合法 `.xlsx/.docx/.pptx` ZIP，未发现 VBA、数字签名或外部关系 |
+| `SAFE_OOXML` | 通过技术尖峰最小结构校验的标准 OOXML 候选，可交给跨平台 Worker 的安全子集 | ZIP 可读；存在 `[Content_Types].xml`、根 `_rels/.rels` 和扩展对应主部件；根关系及内容类型与主部件基本一致；未发现 VBA、数字签名或外部关系 |
 | `HIGH_FIDELITY_REQUIRED` | 必须交给安装 Office 的 Windows Worker 或等待人工确认 | `.xls/.doc/.ppt`、`.xlsm/.docm/.pptm`、包内 `vbaProject.bin`、数字签名或 `TargetMode=External` |
-| `BLOCKED` | 当前不能安全处理 | 不支持扩展、损坏 OOXML ZIP、不可读源、请求/关系读取失败、扫描期间源变化 |
+| `BLOCKED` | 当前不能安全处理 | 不支持扩展、损坏 ZIP、缺根关系/主部件、扩展与包类型错配、关系 XML 解压后超过 4 MiB、不可读源或扫描期间源变化 |
 
-路由器只读 ZIP entries 与 `.rels`，不解压、不重写源包，不输出密码或文档正文。每次检查前后计算 SHA-256；不一致则阻止。
+路由器只读 ZIP entries 与 `.rels`，不落盘解压、不重写源包，不输出密码或文档正文。每次检查前后计算 SHA-256；不一致则阻止。这里的“最小结构校验通过”只证明路由所需骨架自洽，不等于 Microsoft Office 已实际打开验证，也不代表公式、样式、宏或母版保真。
 
 ## 2. 完整样本矩阵
 
 | 应用/场景 | 样本 | 预期 | 自动步骤 | 真实 Office 人工步骤 | 当前状态 |
 |---|---|---|---|---|---|
-| Excel 标准 | `.xlsx` 基础结构 | SAFE | JSONL inspect；核对码与源哈希 | 打开/另存/重开；核对 Sheet/样式 | 合成 ZIP 自动通过；真实样本待测 |
+| Excel 标准 | `.xlsx` 基础结构 | SAFE | JSONL inspect；核对最小包结构、码与源哈希 | 打开/另存/重开；核对 Sheet/样式 | 合成最小自洽包自动通过；真实样本待测 |
 | Excel 公式 | 跨 Sheet、命名区域、数组公式 | SAFE 或按复杂度升级 | 扫描结构与关系 | 核对公式文本和计算结果 | 待真实样本 |
 | Excel 外链 | 外部工作簿关系 | HIGH | 检出 External relationship | 换源/刷新前后核对 | 合成关系自动通过；真实待测 |
 | Excel 宏 | `.xlsm`、包内 VBA | HIGH | 扩展/VBA 风险码 | 禁宏打开；核对工程、引用、签名 | 合成结构自动通过；真实宏待测 |
 | Excel 签名/密码宏 | 签名或受保护 VBA | HIGH/阻断冲突 | 检出签名部件 | 核对签名失效提示；不破解密码 | 待真实样本 |
 | Excel 旧格式 | `.xls` | HIGH | 按扩展路由，不解析二进制 | Office 打开/另存/重开 | 自动路由通过；真实待测 |
 | Excel 富结构 | 条件格式、合并、表格、图表、隐藏 Sheet | SAFE 或 HIGH | 基础路由 | 逐项结构和视觉比较 | 待真实样本 |
-| Word 标准 | `.docx` 基础结构 | SAFE | JSONL inspect；源哈希 | 打开/另存/重开 | 合成 ZIP 自动通过；真实待测 |
+| Word 标准 | `.docx` 基础结构 | SAFE | JSONL inspect；最小包结构与源哈希 | 打开/另存/重开 | 合成最小自洽包自动通过；真实待测 |
 | Word 范围 | 跨 Run、表格、页眉页脚、脚注尾注、文本框 | SAFE/HIGH | 基础路由 | 逐 Story Range 肉眼核对 | 待真实样本 |
 | Word 排除内容 | 批注、修订 | SAFE/HIGH | 基础路由 | 确认内容不变且报告说明排除 | 待真实样本 |
 | Word 宏/旧格式 | `.docm/.doc` | HIGH | 扩展路由 | 禁宏打开/另存/重开 | 自动路由通过；真实待测 |
-| PowerPoint 标准 | `.pptx` 基础结构 | SAFE | JSONL inspect；源哈希 | 打开/放映/重开 | 合成 ZIP 自动通过；真实待测 |
+| PowerPoint 标准 | `.pptx` 基础结构 | SAFE | JSONL inspect；最小包结构与源哈希 | 打开/放映/重开 | 合成最小自洽包自动通过；真实待测 |
 | PPT 主题 | 多母版、版式、字体缺失、图表 | SAFE/HIGH | 基础路由 | 逐页视觉比较与字体检查 | 待真实样本 |
 | PPT Excel 外链 | 图表/对象外部关系 | HIGH | 检出 External relationship | 用户确认换源后刷新核对 | 合成关系自动通过；真实待测 |
 | PPT 嵌入对象 | 内嵌 Excel/OLE | SAFE/HIGH | 不把内嵌对象误报为外链 | 确认对象可打开且不换源 | 待真实样本 |
 | PPT 宏/旧格式 | `.pptm/.ppt` | HIGH | 扩展/VBA 风险码 | 禁宏打开；核对工程/签名 | 自动路由通过；真实 `.pptm` 待测 |
-| 通用损坏 | 损坏 `.xlsx/.docx/.pptx` ZIP | BLOCKED | 核对 `OFFICE_INVALID_OOXML_ZIP` | Office 修复提示不得被自动接受 | 自动通过 |
+| 通用损坏/错配 | 损坏 ZIP、缺主部件、扩展与包类型错配 | BLOCKED | 核对 `OFFICE_INVALID_OOXML_ZIP`、`OFFICE_OOXML_MAIN_PART_MISSING`、`OFFICE_OOXML_TYPE_MISMATCH` | Office 修复提示不得被自动接受 | 自动通过 |
+| 超大关系 | 解压后超过 4 MiB 的 `.rels` | BLOCKED | 核对 `OFFICE_RELATIONSHIP_TOO_LARGE`，禁止截断后判 SAFE | 大文件按风险报告人工处置 | 自动通过 |
 | 通用不支持 | `.txt/.pdf` 等 | BLOCKED | 核对 `OFFICE_UNSUPPORTED_EXTENSION` | 无 | 自动通过 |
 | 通用路径 | 中文、Emoji、超长路径、网络盘、符号链接 | SAFE/HIGH/BLOCKED | JSONL 与路径边界测试 | 网络断开/重连与实际打开 | 待安全底座与真实环境 |
 | 通用文件状态 | 只读、占用、磁盘不足、扫描中变化 | BLOCKED 或明确降级 | 哈希变化/读取错误注入 | Office 占用、磁盘故障验证 | 哈希不变自动通过；其余待测 |
@@ -43,8 +44,10 @@
 1. 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test office_ooxml_worker_contract`。
 2. 测试运行时生成无敏感合成 OOXML ZIP，不提交大文件。
 3. 通过 stdin 连续写入 JSONL 请求，断言 stdout 每行一条 JSON，且请求 ID 对应。
-4. 断言风险码/错误码稳定，响应不回显无效输入中的正文标记。
-5. 对每个样本在执行前后独立计算 SHA-256，必须一致。
+4. 断言内容类型、根关系和扩展对应主部件一致；缺失或错配必须 BLOCKED。
+5. 关系 entry 解压后超过 4 MiB 必须返回 `OFFICE_RELATIONSHIP_TOO_LARGE`，不得静默截断。
+6. 断言风险码/错误码稳定，响应不回显无效输入中的正文标记。
+7. 对每个样本在执行前后独立计算 SHA-256，必须一致。
 
 ## 4. 人工执行步骤
 
@@ -56,7 +59,7 @@
 
 ## 5. 当前实测证据与缺口（2026-08-25）
 
-- 自动契约测试 7/7 通过：JSONL、安全 OOXML、VBA/签名/外链、宏扩展/旧格式、损坏/不支持、伪装普通 ZIP、源哈希不变。
+- 自动契约测试 11/11 通过：JSONL、最小 OOXML 结构一致性、缺主部件、类型错配、缺根关系、超大关系阻断、VBA/签名/外链、宏扩展/旧格式、损坏/不支持和源哈希不变。
 - 本机 Excel/Word/PowerPoint COM 均可创建并退出；Office 为 2019 x64，版本 `16.0.20416.20004`（应用 Build 20416）。
 - 本机无可用 .NET SDK，因此尚未实现 .NET COM Worker。
 - 只有一代 Office，计划要求的至少两代 Office 依赖未满足。
