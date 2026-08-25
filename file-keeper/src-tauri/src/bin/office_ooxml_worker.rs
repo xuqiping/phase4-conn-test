@@ -270,7 +270,7 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
     let mut has_expected_main_part = false;
     let mut has_other_known_main_part = false;
     let mut normalized_names = HashSet::with_capacity(archive.len());
-    let mut xml_total_bytes = 0_u64;
+    let mut metadata_xml_total_bytes = 0_u64;
     for index in 0..archive.len() {
         if Instant::now() >= deadline {
             return InspectResponse::blocked(Some(request_id), "OFFICE_SCAN_TIMEOUT");
@@ -295,9 +295,9 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
                 "OFFICE_ZIP_COMPRESSION_RATIO_EXCEEDED",
             );
         }
-        let is_xml_resource = name.ends_with(".xml") || name.ends_with(".rels");
-        if is_xml_resource {
-            xml_total_bytes = match xml_total_bytes.checked_add(entry.size()) {
+        let is_scanned_xml_metadata = name == "[content_types].xml" || name.ends_with(".rels");
+        if is_scanned_xml_metadata {
+            metadata_xml_total_bytes = match metadata_xml_total_bytes.checked_add(entry.size()) {
                 Some(total) if total <= XML_TOTAL_MAX_BYTES => total,
                 _ => {
                     return InspectResponse::blocked(Some(request_id), "OFFICE_XML_BUDGET_EXCEEDED")
@@ -679,7 +679,7 @@ fn scan_relationships(xml: &str, expected_target: Option<&str>) -> Result<Relati
                 return Err(())
             }
             Event::Eof => {
-                return if root_seen && root_closed && depth == 0 {
+                return if root_seen && root_closed && root_is_normative && depth == 0 {
                     Ok(scan)
                 } else {
                     Err(())

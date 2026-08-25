@@ -628,6 +628,49 @@ fn cumulative_xml_budget_is_enforced_without_large_fixture_files() {
 }
 
 #[test]
+fn every_relationship_part_requires_the_normative_root_and_namespace() {
+    let dir = TestDir::new();
+    let wrong_root = dir.path().join("wrong-non-root-rels.xlsx");
+    let wrong_namespace = dir.path().join("wrong-non-root-rels-namespace.xlsx");
+    create_ooxml(&wrong_root, &[], Some(r#"<?xml version="1.0"?><evil/>"#));
+    create_ooxml(
+        &wrong_namespace,
+        &[],
+        Some(r#"<?xml version="1.0"?><Relationships xmlns="urn:not-opc"/>"#),
+    );
+
+    let responses = run_worker(&[
+        inspect_request("wrong-root-rels", &wrong_root),
+        inspect_request("wrong-namespace-rels", &wrong_namespace),
+    ]);
+
+    for response in responses {
+        assert_eq!(response["classification"], "BLOCKED");
+        assert_eq!(response["errorCode"], "OFFICE_RELATIONSHIP_READ_FAILED");
+    }
+}
+
+#[test]
+fn large_unread_worksheet_xml_does_not_consume_the_metadata_budget() {
+    let dir = TestDir::new();
+    let path = dir.path().join("large-worksheet.xlsx");
+    let payload = incompressible_ascii(6 * 1024 * 1024 + 128 * 1024);
+    let worksheet = format!(
+        r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c t="inlineStr"><is><t>{payload}</t></is></c></row></sheetData></worksheet>"#
+    );
+    create_ooxml(
+        &path,
+        &[("xl/worksheets/sheet1.xml", worksheet.as_bytes())],
+        None,
+    );
+
+    let response = run_worker(&[inspect_request("large-worksheet", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "SAFE_OOXML");
+    assert_eq!(response["errorCode"], Value::Null);
+}
+
+#[test]
 fn invalid_json_line_is_reported_without_echoing_input_content() {
     let secret_marker = "DO_NOT_ECHO_DOCUMENT_BODY";
     let mut child = worker_command()

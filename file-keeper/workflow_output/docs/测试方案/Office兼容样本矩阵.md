@@ -40,7 +40,8 @@
 | XML 结构/命名空间 | wrong-root、wrong-namespace、嵌套伪元素、多根、尾随元素 | BLOCKED | 根和直接子级必须使用 OPC 规范命名空间；不接受任意层级 local-name 命中 | 无 | 自动通过 |
 | ZIP entry 名 | 反斜杠、前导 `/`、空段、`.`/`..`、drive-like、ASCII 大小写归一后重名 | BLOCKED | 返回 `OFFICE_INVALID_ZIP_ENTRY_NAME` 或 `OFFICE_DUPLICATE_ZIP_ENTRY` | 无 | 自动通过反斜杠、点段、重复关键 entry |
 | JSONL 恢复 | 合法→坏 JSON→合法；超大行→合法 | 逐行独立响应 | 单行最多 1 MiB；超限排空到换行并继续下一请求 | 无 | 自动通过 |
-| ZIP 资源预算 | entry 过多、累计 XML、压缩比炸弹、超时、超大源 | BLOCKED | 10 万 entries、累计 XML 6 MiB、单 XML 4 MiB、1000:1、30 秒、源 2 GiB | 无 | 累计 XML 自动通过；其余代码边界 |
+| ZIP 资源预算 | entry 过多、扫描元数据累计超限、压缩比炸弹、超时、超大源 | BLOCKED | 10 万 entries、实际读取的 `[Content_Types].xml` + 全部 `.rels` 累计 6 MiB、单项 4 MiB、1000:1、30 秒、源 2 GiB；未读取的 worksheet/body/slide XML 不占元数据预算 | 无 | 累计元数据与大 worksheet 自动通过；其余代码边界 |
+| 非根关系结构 | `xl/_rels/workbook.xml.rels` wrong-root/wrong-namespace | BLOCKED | 每个 `.rels` 都必须是 OPC Relationships 根和规范命名空间，不只校验根 `_rels/.rels` | 无 | 自动通过 |
 | 通用不支持 | `.txt/.pdf` 等 | BLOCKED | 核对 `OFFICE_UNSUPPORTED_EXTENSION` | 无 | 自动通过 |
 | 通用路径 | 中文、Emoji、超长路径、网络盘、符号链接 | SAFE/HIGH/BLOCKED | JSONL 与路径边界测试 | 网络断开/重连与实际打开 | 待安全底座与真实环境 |
 | 通用文件状态 | 只读、占用、磁盘不足、扫描中变化 | BLOCKED 或明确降级 | 哈希变化/读取错误注入 | Office 占用、磁盘故障验证 | 哈希不变自动通过；其余待测 |
@@ -66,7 +67,7 @@
 
 ## 5. 当前实测证据与缺口（2026-08-25）
 
-- 自动契约测试 21/21 通过：JSONL 顺序恢复/超大行排空、严格 XML 根/命名空间/层级/单根、非法与重复 ZIP entry、累计 XML 预算，以及既有 OOXML 路由、风险码和源哈希不变。
+- 自动契约测试 23/23 通过：新增所有 `.rels` 规范根校验和大 worksheet 不占元数据预算；其余覆盖 JSONL 恢复、严格 XML、ZIP entry、累计元数据预算、OOXML 路由、风险码和源哈希不变。
 - 本机 Excel/Word/PowerPoint COM 均可创建并退出；Office 为 2019 x64，版本 `16.0.20416.20004`（应用 Build 20416）。
 - 本机无可用 .NET SDK，因此尚未实现 .NET COM Worker。
 - 只有一代 Office，计划要求的至少两代 Office 依赖未满足。
