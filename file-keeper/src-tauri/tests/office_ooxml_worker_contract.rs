@@ -175,6 +175,21 @@ fn create_non_ooxml_zip(path: &Path) {
     archive.finish().expect("finish non-OOXML fixture");
 }
 
+fn create_xlsx_with_metadata(path: &Path, content_types: &str, root_relationships: &str) {
+    let file = File::create(path).expect("create custom metadata fixture");
+    let mut archive = zip::ZipWriter::new(file);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_bytes()),
+        ("_rels/.rels", root_relationships.as_bytes()),
+        ("xl/workbook.xml", b"<?xml version=\"1.0\"?><synthetic/>"),
+    ] {
+        archive.start_file(name, options).expect("metadata entry");
+        archive.write_all(bytes).expect("metadata content");
+    }
+    archive.finish().expect("finish custom metadata fixture");
+}
+
 fn sha256(path: &Path) -> String {
     let mut file = File::open(path).expect("open fixture for hashing");
     let mut hasher = Sha256::new();
@@ -362,6 +377,50 @@ fn oversized_relationship_part_is_blocked_instead_of_silently_truncated() {
 
     assert_eq!(response["classification"], "BLOCKED");
     assert_eq!(response["errorCode"], "OFFICE_RELATIONSHIP_TOO_LARGE");
+}
+
+#[test]
+fn commented_fake_override_and_relationship_do_not_validate_the_package() {
+    let dir = TestDir::new();
+    let path = dir.path().join("comment-forgery.xlsx");
+    let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><!-- <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/> --></Types>"#;
+    let root_relationships = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><!-- <Relationship Id="fake" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/> --></Relationships>"#;
+    create_xlsx_with_metadata(&path, content_types, root_relationships);
+
+    let response = run_worker(&[inspect_request("comment-forgery", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_OOXML_TYPE_MISMATCH");
+}
+
+#[test]
+fn character_reference_decoded_to_external_routes_to_high_fidelity() {
+    let dir = TestDir::new();
+    let path = dir.path().join("encoded-external.xlsx");
+    let relationships = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="encoded" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="https://example.invalid/encoded.xlsx" TargetMode="Extern&#97;l"/></Relationships>"#;
+    create_ooxml(&path, &[], Some(relationships));
+
+    let response = run_worker(&[inspect_request("encoded-external", &path)]).remove(0);
+    let risks = response["riskCodes"].as_array().expect("risk code array");
+
+    assert_eq!(response["classification"], "HIGH_FIDELITY_REQUIRED");
+    assert!(risks
+        .iter()
+        .any(|risk| risk == "OFFICE_EXTERNAL_RELATIONSHIP_PRESENT"));
+}
+
+#[test]
+fn dtd_after_a_valid_override_is_rejected() {
+    let dir = TestDir::new();
+    let path = dir.path().join("content-types-with-dtd.xlsx");
+    let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><!DOCTYPE Types [<!ENTITY external SYSTEM "file:///never-read">]></Types>"#;
+    let root_relationships = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+    create_xlsx_with_metadata(&path, content_types, root_relationships);
+
+    let response = run_worker(&[inspect_request("content-types-dtd", &path)]).remove(0);
+
+    assert_eq!(response["classification"], "BLOCKED");
+    assert_eq!(response["errorCode"], "OFFICE_INVALID_OOXML_PACKAGE");
 }
 
 #[test]

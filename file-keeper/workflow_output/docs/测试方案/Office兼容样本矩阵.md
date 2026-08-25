@@ -6,9 +6,9 @@
 
 | 判定 | 含义 | 当前自动规则 |
 |---|---|---|
-| `SAFE_OOXML` | 通过技术尖峰最小结构校验的标准 OOXML 候选，可交给跨平台 Worker 的安全子集 | ZIP 可读；存在 `[Content_Types].xml`、根 `_rels/.rels` 和扩展对应主部件；根关系及内容类型与主部件基本一致；未发现 VBA、数字签名或外部关系 |
+| `SAFE_OOXML` | 通过技术尖峰最小结构校验的标准 OOXML 候选，可交给跨平台 Worker 的安全子集 | ZIP 可读；存在 `[Content_Types].xml`、根 `_rels/.rels` 和扩展对应主部件；安全解析真实 XML 元素后，根关系及内容类型与主部件基本一致；未发现 VBA、数字签名或外部关系 |
 | `HIGH_FIDELITY_REQUIRED` | 必须交给安装 Office 的 Windows Worker 或等待人工确认 | `.xls/.doc/.ppt`、`.xlsm/.docm/.pptm`、包内 `vbaProject.bin`、数字签名或 `TargetMode=External` |
-| `BLOCKED` | 当前不能安全处理 | 不支持扩展、损坏 ZIP、缺根关系/主部件、扩展与包类型错配、关系 XML 解压后超过 4 MiB、不可读源或扫描期间源变化 |
+| `BLOCKED` | 当前不能安全处理 | 不支持扩展、损坏 ZIP、缺根关系/主部件、扩展与包类型错配、XML 含 DTD/格式无效、关系 XML 解压后超过 4 MiB、不可读源或扫描期间源变化 |
 
 路由器只读 ZIP entries 与 `.rels`，不落盘解压、不重写源包，不输出密码或文档正文。每次检查前后计算 SHA-256；不一致则阻止。这里的“最小结构校验通过”只证明路由所需骨架自洽，不等于 Microsoft Office 已实际打开验证，也不代表公式、样式、宏或母版保真。
 
@@ -34,6 +34,9 @@
 | PPT 宏/旧格式 | `.pptm/.ppt` | HIGH | 扩展/VBA 风险码 | 禁宏打开；核对工程/签名 | 自动路由通过；真实 `.pptm` 待测 |
 | 通用损坏/错配 | 损坏 ZIP、缺主部件、扩展与包类型错配 | BLOCKED | 核对 `OFFICE_INVALID_OOXML_ZIP`、`OFFICE_OOXML_MAIN_PART_MISSING`、`OFFICE_OOXML_TYPE_MISMATCH` | Office 修复提示不得被自动接受 | 自动通过 |
 | 超大关系 | 解压后超过 4 MiB 的 `.rels` | BLOCKED | 核对 `OFFICE_RELATIONSHIP_TOO_LARGE`，禁止截断后判 SAFE | 大文件按风险报告人工处置 | 自动通过 |
+| XML 元数据伪造 | 注释内伪造 `Override/Relationship` | BLOCKED | 只识别真实 XML 元素，注释不得使残缺包通过 | 无 | 自动通过 |
+| XML 字符引用 | `TargetMode="Extern&#97;l"` | HIGH | 解码字符引用后检出 External relationship | 核对外链处置提示 | 自动通过 |
+| XML DTD | 合法 `Override` 后追加 DTD | BLOCKED | 必须扫描至 EOF 并拒绝 DTD，不得找到合法元素后提前放行 | 无 | 自动通过 |
 | 通用不支持 | `.txt/.pdf` 等 | BLOCKED | 核对 `OFFICE_UNSUPPORTED_EXTENSION` | 无 | 自动通过 |
 | 通用路径 | 中文、Emoji、超长路径、网络盘、符号链接 | SAFE/HIGH/BLOCKED | JSONL 与路径边界测试 | 网络断开/重连与实际打开 | 待安全底座与真实环境 |
 | 通用文件状态 | 只读、占用、磁盘不足、扫描中变化 | BLOCKED 或明确降级 | 哈希变化/读取错误注入 | Office 占用、磁盘故障验证 | 哈希不变自动通过；其余待测 |
@@ -44,8 +47,8 @@
 1. 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test office_ooxml_worker_contract`。
 2. 测试运行时生成无敏感合成 OOXML ZIP，不提交大文件。
 3. 通过 stdin 连续写入 JSONL 请求，断言 stdout 每行一条 JSON，且请求 ID 对应。
-4. 断言内容类型、根关系和扩展对应主部件一致；缺失或错配必须 BLOCKED。
-5. 关系 entry 解压后超过 4 MiB 必须返回 `OFFICE_RELATIONSHIP_TOO_LARGE`，不得静默截断。
+4. 使用安全 XML 事件解析断言内容类型、根关系和扩展对应主部件一致；注释内伪元素不得命中，字符引用必须解码，DTD 必须拒绝。
+5. 缺失或错配必须 BLOCKED；关系 entry 解压后超过 4 MiB 必须返回 `OFFICE_RELATIONSHIP_TOO_LARGE`，不得静默截断。
 6. 断言风险码/错误码稳定，响应不回显无效输入中的正文标记。
 7. 对每个样本在执行前后独立计算 SHA-256，必须一致。
 
@@ -59,7 +62,7 @@
 
 ## 5. 当前实测证据与缺口（2026-08-25）
 
-- 自动契约测试 11/11 通过：JSONL、最小 OOXML 结构一致性、缺主部件、类型错配、缺根关系、超大关系阻断、VBA/签名/外链、宏扩展/旧格式、损坏/不支持和源哈希不变。
+- 自动契约测试 14/14 通过：JSONL、最小 OOXML 结构一致性、缺主部件、类型错配、缺根关系、超大关系阻断、真实元素/注释隔离、字符引用外链识别、DTD 拒绝、VBA/签名/外链、宏扩展/旧格式、损坏/不支持和源哈希不变。
 - 本机 Excel/Word/PowerPoint COM 均可创建并退出；Office 为 2019 x64，版本 `16.0.20416.20004`（应用 Build 20416）。
 - 本机无可用 .NET SDK，因此尚未实现 .NET COM Worker。
 - 只有一代 Office，计划要求的至少两代 Office 依赖未满足。

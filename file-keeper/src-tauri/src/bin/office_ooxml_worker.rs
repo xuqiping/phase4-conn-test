@@ -1,3 +1,5 @@
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -23,9 +25,20 @@ struct OoxmlPackageSpec {
     main_content_type: &'static str,
 }
 
-enum RelationshipReadError {
+enum XmlEntryReadError {
     TooLarge,
     Invalid,
+}
+
+struct RelationshipScan {
+    has_expected_office_document: bool,
+    has_external: bool,
+}
+
+struct RelationshipAttributes {
+    target: Option<String>,
+    relationship_type: Option<String>,
+    target_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,11 +175,15 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
         };
         let name = entry.name().replace('\\', "/").to_ascii_lowercase();
         if name == "[content_types].xml" {
-            let mut xml = String::new();
-            if entry.read_to_string(&mut xml).is_err() {
-                return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_PACKAGE");
-            }
-            content_types_xml = Some(xml);
+            content_types_xml = match read_xml_entry(&mut entry) {
+                Ok(xml) => Some(xml),
+                Err(_) => {
+                    return InspectResponse::blocked(
+                        Some(request_id),
+                        "OFFICE_INVALID_OOXML_PACKAGE",
+                    )
+                }
+            };
         }
         if KNOWN_MAIN_PARTS.contains(&name.as_str()) {
             if name == package_spec.main_part {
@@ -181,34 +198,44 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
             || name == "vbaprojectsignature.bin";
 
         if name.ends_with(".rels") {
-            let relationship_xml = match read_relationship_entry(&mut entry) {
+            let relationship_xml = match read_xml_entry(&mut entry) {
                 Ok(xml) => xml,
-                Err(RelationshipReadError::TooLarge) => {
+                Err(XmlEntryReadError::TooLarge) => {
                     return InspectResponse::blocked(
                         Some(request_id),
                         "OFFICE_RELATIONSHIP_TOO_LARGE",
                     )
                 }
-                Err(RelationshipReadError::Invalid) => {
+                Err(XmlEntryReadError::Invalid) => {
                     return InspectResponse::blocked(
                         Some(request_id),
                         "OFFICE_RELATIONSHIP_READ_FAILED",
                     )
                 }
             };
-            let compact_xml = compact_xml(&relationship_xml);
+            let scan = match scan_relationships(
+                &relationship_xml,
+                (name == "_rels/.rels").then_some(package_spec.main_part),
+            ) {
+                Ok(scan) => scan,
+                Err(_) => {
+                    return InspectResponse::blocked(
+                        Some(request_id),
+                        "OFFICE_RELATIONSHIP_READ_FAILED",
+                    )
+                }
+            };
             if name == "_rels/.rels" {
-                root_relationships_xml = Some(relationship_xml);
+                root_relationships_xml = Some(scan.has_expected_office_document);
             }
-            has_external_relationship |= compact_xml.contains("targetmode=\"external\"")
-                || compact_xml.contains("targetmode='external'");
+            has_external_relationship |= scan.has_external;
         }
     }
 
     let Some(content_types_xml) = content_types_xml else {
         return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_PACKAGE");
     };
-    let Some(root_relationships_xml) = root_relationships_xml else {
+    let Some(root_relationships_match) = root_relationships_xml else {
         return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_PACKAGE");
     };
     if !has_expected_main_part {
@@ -222,26 +249,12 @@ fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
         );
     }
 
-    let expected_part_name = format!("/{}", package_spec.main_part);
-    let content_types_match = has_xml_element_with_attributes(
-        &content_types_xml,
-        "override",
-        &[
-            ("partname", &expected_part_name),
-            ("contenttype", package_spec.main_content_type),
-        ],
-    );
-    let root_relationships_match = has_xml_element_with_attributes(
-        &root_relationships_xml,
-        "relationship",
-        &[
-            ("target", package_spec.main_part),
-            (
-                "type",
-                "http://schemas.openxmlformats.org/officedocument/2006/relationships/officedocument",
-            ),
-        ],
-    );
+    let content_types_match = match content_types_match(&content_types_xml, &package_spec) {
+        Ok(matches) => matches,
+        Err(_) => {
+            return InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_OOXML_PACKAGE")
+        }
+    };
     if !content_types_match || !root_relationships_match {
         return InspectResponse::blocked(Some(request_id), "OFFICE_OOXML_TYPE_MISMATCH");
     }
@@ -336,46 +349,103 @@ fn ooxml_package_spec(extension: &str) -> Option<OoxmlPackageSpec> {
     }
 }
 
-fn read_relationship_entry(
-    entry: &mut zip::read::ZipFile<'_>,
-) -> Result<String, RelationshipReadError> {
+fn read_xml_entry(entry: &mut zip::read::ZipFile<'_>) -> Result<String, XmlEntryReadError> {
     if entry.size() > RELATIONSHIP_MAX_BYTES {
-        return Err(RelationshipReadError::TooLarge);
+        return Err(XmlEntryReadError::TooLarge);
     }
     let mut bytes = Vec::new();
     entry
         .by_ref()
         .take(RELATIONSHIP_MAX_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| RelationshipReadError::Invalid)?;
+        .map_err(|_| XmlEntryReadError::Invalid)?;
     if bytes.len() as u64 > RELATIONSHIP_MAX_BYTES {
-        return Err(RelationshipReadError::TooLarge);
+        return Err(XmlEntryReadError::TooLarge);
     }
-    String::from_utf8(bytes).map_err(|_| RelationshipReadError::Invalid)
+    String::from_utf8(bytes).map_err(|_| XmlEntryReadError::Invalid)
 }
 
-fn compact_xml(xml: &str) -> String {
-    xml.to_ascii_lowercase().split_ascii_whitespace().collect()
+fn attribute_value(
+    element: &BytesStart<'_>,
+    reader: &Reader<&[u8]>,
+    wanted: &[u8],
+) -> Result<Option<String>, ()> {
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| ())?;
+        if attribute.key.local_name().as_ref() == wanted {
+            return attribute
+                .decode_and_unescape_value(reader.decoder())
+                .map(|value| Some(value.into_owned()))
+                .map_err(|_| ());
+        }
+    }
+    Ok(None)
 }
 
-fn has_xml_attribute(compact_xml: &str, name: &str, value: &str) -> bool {
-    let double_quoted = format!("{name}=\"{value}\"");
-    let single_quoted = format!("{name}='{value}'");
-    compact_xml.contains(&double_quoted) || compact_xml.contains(&single_quoted)
+fn relationship_values(
+    element: &BytesStart<'_>,
+    reader: &Reader<&[u8]>,
+) -> Result<RelationshipAttributes, ()> {
+    Ok(RelationshipAttributes {
+        target: attribute_value(element, reader, b"Target")?,
+        relationship_type: attribute_value(element, reader, b"Type")?,
+        target_mode: attribute_value(element, reader, b"TargetMode")?,
+    })
 }
 
-fn has_xml_element_with_attributes(
-    xml: &str,
-    element_name: &str,
-    attributes: &[(&str, &str)],
-) -> bool {
-    xml.split('<')
-        .filter_map(|fragment| fragment.split_once('>').map(|(tag, _)| tag))
-        .any(|tag| {
-            let compact_tag = compact_xml(tag);
-            compact_tag.starts_with(element_name)
-                && attributes
-                    .iter()
-                    .all(|(name, value)| has_xml_attribute(&compact_tag, name, value))
-        })
+fn scan_relationships(xml: &str, expected_target: Option<&str>) -> Result<RelationshipScan, ()> {
+    const OFFICE_DOCUMENT_RELATIONSHIP: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+
+    let mut reader = Reader::from_str(xml);
+    let mut scan = RelationshipScan {
+        has_expected_office_document: false,
+        has_external: false,
+    };
+
+    loop {
+        match reader.read_event().map_err(|_| ())? {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"Relationship" =>
+            {
+                let attributes = relationship_values(&element, &reader)?;
+                scan.has_external |= attributes.target_mode.as_deref() == Some("External");
+                scan.has_expected_office_document |= expected_target.is_some_and(|expected| {
+                    attributes.target.as_deref() == Some(expected)
+                        && attributes.relationship_type.as_deref()
+                            == Some(OFFICE_DOCUMENT_RELATIONSHIP)
+                });
+            }
+            Event::DocType(_) => return Err(()),
+            Event::Eof => return Ok(scan),
+            _ => {}
+        }
+    }
+}
+
+fn content_types_match(xml: &str, package_spec: &OoxmlPackageSpec) -> Result<bool, ()> {
+    let mut reader = Reader::from_str(xml);
+    let expected_part_name = format!("/{}", package_spec.main_part);
+    let mut has_expected_override = false;
+
+    loop {
+        match reader.read_event().map_err(|_| ())? {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"Override" =>
+            {
+                let part_name = attribute_value(&element, &reader, b"PartName")?;
+                let content_type = attribute_value(&element, &reader, b"ContentType")?;
+                if part_name.as_deref() == Some(expected_part_name.as_str())
+                    && content_type.is_some_and(|value| {
+                        value.eq_ignore_ascii_case(package_spec.main_content_type)
+                    })
+                {
+                    has_expected_override = true;
+                }
+            }
+            Event::DocType(_) => return Err(()),
+            Event::Eof => return Ok(has_expected_override),
+            _ => {}
+        }
+    }
 }
