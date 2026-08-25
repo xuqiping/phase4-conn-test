@@ -102,6 +102,10 @@
           </n-form-item>
         </template>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
+        <!-- 7x（V155）：图片预估价说明——预估=张价×张数派生，无需单独配预估列；提交按所选张数预估管控，完工按实际张数多退少补 -->
+        <n-form-item v-if="pricingForm.kind === 'IMAGE'" label="预估价">
+          <span class="pricing-config__hint">预估 = 图片单价 × 张数（按实际产出张数结算，多退少补）。提交任务时按所选张数预估并预扣，无需单独配置预估价。</span>
+        </n-form-item>
       </n-form>
       <template #footer>
         <n-space justify="end">

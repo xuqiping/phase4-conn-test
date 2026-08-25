@@ -75,6 +75,8 @@ class MediaGenTaskServiceTest {
     private com.superprogrammer.billing.service.PricingService pricingService;
     @Mock
     private com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
+    @Mock
+    private com.superprogrammer.billing.service.MediaBillingService mediaBillingService;
 
     private MediaGenTaskService service;
     private LlmProviderEntity provider;
@@ -94,7 +96,8 @@ class MediaGenTaskServiceTest {
                 new MediaModelCapabilityService(new ObjectMapper()),
                 fileStorageService, properties, new ObjectMapper(), assetService, walletService,
                 inflightGate, mediaInflightGate, bizMetrics, auditLogService,
-                groupWalletService, projectGroupService, pricingService, pointsRatioService);
+                groupWalletService, projectGroupService, pricingService, pointsRatioService,
+                mediaBillingService);
 
         // 默认：指定模型可路由到 seedance provider；附件元数据归属当前用户
         lenient().when(mediaModelService.resolveProviderByModel(SEEDANCE_2)).thenReturn(provider);

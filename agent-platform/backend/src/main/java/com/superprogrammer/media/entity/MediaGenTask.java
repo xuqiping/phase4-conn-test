@@ -81,4 +81,7 @@ public class MediaGenTask {
      * 回收在途上限 = Σ(status∈PENDING/RUNNING) 的此列（仅组任务计入）。
      */
     private BigDecimal estimatedCost;
+
+    /** V155（7x 预扣）：提交期预估预扣是否已发生；TRUE=worker 差额结算/失败退预扣，FALSE=原全量结算。 */
+    private Boolean holdApplied;
 }

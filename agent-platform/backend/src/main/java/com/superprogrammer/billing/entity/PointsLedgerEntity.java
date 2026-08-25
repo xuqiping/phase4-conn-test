@@ -42,7 +42,7 @@ public class PointsLedgerEntity {
     public static final String REF_PAYMENT = "PAYMENT";
     /** ref_type：管理员操作。 */
     public static final String REF_ADMIN = "ADMIN";
-    /** ref_type：项目组划拨/回收（ref_id=project_groups.id）。 */
+    /** ref_type：项目组划拨/回收（ref_id=project_groups.id；V151 起不参与 uq_ledger_ref 唯一锚——划拨无天然幂等键，一次操作一笔流水）。 */
     public static final String REF_GROUP = "GROUP";
 
     @TableId(type = IdType.AUTO)

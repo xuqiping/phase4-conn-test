@@ -161,6 +161,15 @@
               >
                 生成图片
               </NButton>
+              <!-- 7x（V155）：预估消耗实时预览（张价×张数，防抖 400ms）；余额不足红字（提交侧同口径拦截兜底） -->
+              <div v-if="estimate && estimate.estimatedPoints > 0" class="image-gen__estimate">
+                <NTag size="small" :type="estimate.affordable ? 'info' : 'error'" :bordered="false">
+                  预估消耗 {{ estimate.estimatedPoints }} 积分
+                </NTag>
+                <span v-if="!estimate.affordable" class="image-gen__estimate-warn">
+                  {{ projectGroupId != null ? '组池' : '钱包' }}余额不足（余 {{ estimate.balance }}）
+                </span>
+              </div>
               <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
             </template>
           </NForm>
@@ -294,7 +303,7 @@ import {
   mediaApi, fetchMediaBlob, buildHistoryQuery,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
   type ImageModelVO, type ImageModelCapability,
-  type ImageSubmitRequest, type MediaTaskVO
+  type ImageSubmitRequest, type MediaTaskVO, type MediaEstimateVO
 } from '@/api/media'
 import { fetchFilePreview } from '@/api/file'
 import { getStorage, STORAGE_KEYS } from '@/utils/storage'
@@ -498,6 +507,35 @@ async function onSubmit() {
     errorMsg.value = e?.response?.data?.message ?? e?.message ?? '提交失败'
   } finally {
     submitting.value = false
+  }
+}
+
+// ---- 7x（V155）：预估消耗实时预览（张价×张数；防抖 400ms；失败静默提交侧兜底） ----
+const estimate = ref<MediaEstimateVO | null>(null)
+let estimateTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => [form.model, form.sequential, form.maxImages, projectGroupId.value],
+  () => {
+    if (estimateTimer) clearTimeout(estimateTimer)
+    estimateTimer = setTimeout(() => void loadEstimate(), 400)
+  },
+  { immediate: true }
+)
+async function loadEstimate() {
+  if (!form.model) {
+    estimate.value = null
+    return
+  }
+  try {
+    const { data } = await mediaApi.estimatePreview({
+      kind: 'IMAGE',
+      model: form.model,
+      imageCount: form.sequential === 'auto' ? (form.maxImages || 1) : 1,
+      projectGroupId: projectGroupId.value ?? undefined
+    })
+    estimate.value = data.data
+  } catch {
+    estimate.value = null
   }
 }
 
@@ -763,5 +801,16 @@ onUnmounted(() => {
     width: 56px; height: 56px; flex: none; display: flex; align-items: center; justify-content: center;
     border-radius: 6px; background: var(--bg-color-2, #1a1a1e); color: var(--text-color-3);
   }
+}
+.image-gen__estimate {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-gen__estimate-warn {
+  font-size: 12px;
+  color: var(--color-error, #d03050);
 }
 </style>

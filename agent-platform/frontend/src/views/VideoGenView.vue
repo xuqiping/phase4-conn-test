@@ -251,6 +251,15 @@
               附件上传中（{{ uploadingCount }}）…
             </span>
           </n-space>
+          <!-- 7x（V155）：预估消耗实时预览（输入防抖 400ms）；余额不足红字（提交侧同口径拦截兜底） -->
+          <div v-if="estimate && estimate.estimatedPoints > 0" class="video-gen__estimate">
+            <n-tag size="small" :type="estimate.affordable ? 'info' : 'error'" :bordered="false">
+              预估消耗 {{ estimate.estimatedPoints }} 积分
+            </n-tag>
+            <span v-if="!estimate.affordable" class="video-gen__estimate-warn">
+              {{ projectGroupId != null ? '组池' : '钱包' }}余额不足（余 {{ estimate.balance }}）
+            </span>
+          </div>
         </n-form>
       </n-card>
 
@@ -422,6 +431,7 @@
 </template>
 
 <script setup lang="ts">
+import { uuid } from '@/utils/uuid'
 import { h, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NForm, NFormItem, NInput,
@@ -437,7 +447,8 @@ import {
   mediaApi, fetchVideoBlob, buildHistoryQuery,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
   type MediaTaskVO, type MediaResolution, type MediaRatio,
-  type MediaModelVO, type AttachmentKind, type AttachmentRef
+  type MediaModelVO, type AttachmentKind, type AttachmentRef,
+  type MediaEstimateVO
 } from '@/api/media'
 import AssetFilePicker from '@/components/asset/AssetFilePicker.vue'
 import { getStorage, STORAGE_KEYS } from '@/utils/storage'
@@ -629,7 +640,7 @@ function onUseScriptForGen(payload: { promptText: string; sourceFileId?: string;
         }
         const maxVideos = capability.value?.maxVideos ?? 0
         if (videos.value.length < maxVideos) {
-          const id = crypto.randomUUID()
+          const id = uuid()
           videos.value.push({ id, fileId: payload.sourceFileId, name: payload.sourceName || '反推源视频' })
           void previewAsset(id, 'video', payload.sourceFileId)
         } else {
@@ -818,7 +829,7 @@ function onAssetPicked(payload: AssetFilePicked[]) {
     if (!p) return
     const slot = t === 'first' ? firstFrame : lastFrame
     revokeFrame(slot.value)
-    const id = crypto.randomUUID()
+    const id = uuid()
     slot.value = { id, fileId: p.fileId, name: p.name, assetId: p.assetId }
     void previewFrame(t, id, p.fileId)
     return
@@ -826,7 +837,7 @@ function onAssetPicked(payload: AssetFilePicked[]) {
   const list = kindList(t)
   for (const p of payload) {
     if (list.value.some(a => a.assetId === p.assetId)) continue
-    const id = crypto.randomUUID()
+    const id = uuid()
     list.value.push({ id, fileId: p.fileId, name: p.name, assetId: p.assetId })
     // 异步拉预览：成功填 objectURL；期间已被移除则立即释放防泄漏
     void previewAsset(id, t, p.fileId)
@@ -970,6 +981,37 @@ async function onSubmit() {
     /* 拦截器已提示 */
   } finally {
     submitting.value = false
+  }
+}
+
+// === 7x（V155）：预估消耗实时预览（输入防抖 400ms；est=0 无价表不显示；失败静默提交侧兜底） ===
+const estimate = ref<MediaEstimateVO | null>(null)
+let estimateTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => [form.model, form.duration, form.resolution, videos.value.length, projectGroupId.value],
+  () => {
+    if (estimateTimer) clearTimeout(estimateTimer)
+    estimateTimer = setTimeout(() => void loadEstimate(), 400)
+  },
+  { immediate: true }
+)
+async function loadEstimate() {
+  if (!form.model) {
+    estimate.value = null
+    return
+  }
+  try {
+    const { data } = await mediaApi.estimatePreview({
+      kind: 'VIDEO',
+      model: form.model,
+      videoSeconds: form.duration,
+      resolution: form.resolution,
+      hasReference: videos.value.length > 0,
+      projectGroupId: projectGroupId.value ?? undefined
+    })
+    estimate.value = data.data
+  } catch {
+    estimate.value = null
   }
 }
 
@@ -1599,5 +1641,16 @@ onUnmounted(() => {
   .video-gen__header {
     flex-wrap: wrap;
   }
+}
+.video-gen__estimate {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.video-gen__estimate-warn {
+  font-size: 12px;
+  color: var(--color-error, #d03050);
 }
 </style>

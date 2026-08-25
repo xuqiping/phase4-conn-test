@@ -168,6 +168,12 @@ public class ProjectGroupWalletService {
                 groupId, leaderUserId, shortfall, refType, refId, w.getBalancePoints());
     }
 
+    /** 组池余额（不抛版，预估预览用）；组池行缺失 → ZERO。 */
+    public BigDecimal getGroupBalance(Long groupId) {
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
+        return w != null && w.getBalancePoints() != null ? w.getBalancePoints() : BigDecimal.ZERO;
+    }
+
     /**
      * 组池预检（计划5 Step4 网关入口）：非成员 FORBIDDEN；组池≤0 INSUFFICIENT_POINTS。
      * 镜像个人 {@code PointsWalletService.requireAffordable} 语义（>0 放行，非精确估价）。

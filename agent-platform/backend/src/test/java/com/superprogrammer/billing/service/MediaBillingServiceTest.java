@@ -12,7 +12,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -236,5 +239,230 @@ class MediaBillingServiceTest {
         verify(groupWalletService).refundGroup(eq(5L), eq(100L), eq(new BigDecimal("50")),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"), eq("media-refund-9"));
         verify(walletService, never()).refund(anyLong(), any(), anyString(), anyLong(), anyString());
+    }
+
+    // ==================== 7x（V155）预扣 + 多退少补 ====================
+
+    @Test
+    void holdMediaEstimated_personal_chargesHoldLeg() {
+        when(walletService.isEnabled()).thenReturn(true);
+
+        boolean held = service.holdMediaEstimated(100L, new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null);
+
+        assertTrue(held);
+        verify(walletService).chargeIdempotent(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO + "-HOLD"), eq(9L), anyString(), eq("media-hold-9"));
+    }
+
+    @Test
+    void holdMediaEstimated_group_chargesGroupPool() {
+        when(walletService.isEnabled()).thenReturn(true);
+
+        boolean held = service.holdMediaEstimated(100L, new BigDecimal("30"),
+                LlmUsageLogEntity.KIND_IMAGE, 9L, 5L);
+
+        assertTrue(held);
+        verify(groupWalletService).chargeGroup(eq(5L), eq(100L), eq(new BigDecimal("30")),
+                eq(LlmUsageLogEntity.KIND_IMAGE + "-HOLD"), eq("9"), eq("media-hold-9"));
+        verify(walletService, never()).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                anyString(), anyString());
+    }
+
+    @Test
+    void holdMediaEstimated_disabledOrZero_returnsFalse() {
+        when(walletService.isEnabled()).thenReturn(false);
+        assertFalse(service.holdMediaEstimated(100L, new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null));
+        // est=0/null 不扣（无价表口径，与预检一致）
+        when(walletService.isEnabled()).thenReturn(true);
+        assertFalse(service.holdMediaEstimated(100L, BigDecimal.ZERO,
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null));
+        assertFalse(service.holdMediaEstimated(100L, null,
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null));
+        verify(walletService, never()).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                anyString(), anyString());
+    }
+
+    @Test
+    void holdMediaEstimated_insufficient_throws() {
+        // 预检后被并发耗尽 → 预扣失败直抛（提交侧删任务行拒绝，不吞）
+        when(walletService.isEnabled()).thenReturn(true);
+        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "积分不足"))
+                .when(walletService).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                        anyString(), anyString());
+
+        assertThrows(BusinessException.class, () -> service.holdMediaEstimated(100L,
+                new BigDecimal("50"), LlmUsageLogEntity.KIND_VIDEO, 9L, null));
+    }
+
+    @Test
+    void settleMediaSuccess_actualGreater_supplementsDiff() {
+        // 实耗 80 > 预扣 50 → 补扣 30（kind 腿，幂等键 media-settle-{refId}），返实耗
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq(LlmUsageLogEntity.KIND_VIDEO), eq(7L), eq("seedance"),
+                eq(200000), eq(null), eq(5), eq(0), anyBoolean(), any())).thenReturn(new BigDecimal("0.800000"));
+        when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p",
+                new BigDecimal("50"));
+
+        assertEquals(new BigDecimal("80"), actual);
+        verify(walletService).chargeIdempotent(eq(100L), eq(new BigDecimal("30")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(9L), anyString(), eq("media-settle-9"));
+        verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
+                eq(new BigDecimal("0.800000")), eq(new BigDecimal("80")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(9L), isNull(), isNull());
+    }
+
+    @Test
+    void settleMediaSuccess_actualLess_refundsDiff() {
+        // 实耗 30 < 预扣 50 → 退差 20（kind REFUND 腿），返实耗
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
+                anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.300000"));
+        when(ratioService.toPoints(new BigDecimal("0.300000"))).thenReturn(new BigDecimal("30"));
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p",
+                new BigDecimal("50"));
+
+        assertEquals(new BigDecimal("30"), actual);
+        verify(walletService).refundIdempotent(eq(100L), eq(new BigDecimal("20")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(9L), anyString(), eq("media-settle-9"));
+    }
+
+    @Test
+    void settleMediaSuccess_equal_noop() {
+        // 实耗 == 预扣 → 不动钱包，仍记 usage
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
+                anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.500000"));
+        when(ratioService.toPoints(new BigDecimal("0.500000"))).thenReturn(new BigDecimal("50"));
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p",
+                new BigDecimal("50"));
+
+        assertEquals(new BigDecimal("50"), actual);
+        verify(walletService, never()).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                anyString(), anyString());
+        verify(walletService, never()).refundIdempotent(anyLong(), any(), anyString(), anyLong(),
+                anyString(), anyString());
+    }
+
+    @Test
+    void settleMediaSuccess_supplementFails_recordsFailedReturnsHeld() {
+        // 补扣时余额被并发耗尽：实耗已发生 → FAILED usage 平台可见缺口，返预扣额（worker 据此 unwind）
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
+                anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.800000"));
+        when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
+        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "积分不足"))
+                .when(walletService).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
+                        anyString(), anyString());
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p",
+                new BigDecimal("50"));
+
+        assertEquals(new BigDecimal("50"), actual);
+        verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
+                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L));
+    }
+
+    @Test
+    void settleMediaSuccess_groupSupplementFails_backstopToOwner() {
+        // 组任务补扣：组池尽 → BACKSTOP 差额扣组长个人（同 chargeMedia 口径）
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
+                anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.800000"));
+        when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
+        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足"))
+                .when(groupWalletService).chargeGroup(anyLong(), anyLong(), any(), anyString(),
+                        anyString(), anyString());
+        var group = new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
+        group.setOwnerUserId(200L);
+        when(groupMapper.selectById(5L)).thenReturn(group);
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L, "720p",
+                new BigDecimal("50"));
+
+        assertEquals(new BigDecimal("80"), actual);
+        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(false), eq(new BigDecimal("30")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"));
+    }
+
+    @Test
+    void settleMediaSuccess_noHold_delegatesFullCharge() {
+        // 存量在途任务（hold_applied=false → held=null）：走原 chargeMedia 全量扣
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
+                anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.500000"));
+        when(ratioService.toPoints(new BigDecimal("0.500000"))).thenReturn(new BigDecimal("50"));
+
+        BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
+                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, null, "720p", null);
+
+        assertEquals(new BigDecimal("50"), actual);
+        verify(walletService).charge(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(9L), anyString());
+    }
+
+    @Test
+    void refundMediaCharged_twoLegs_refundsHoldAndSupplement() {
+        // 落库失败撤销（实耗 80，预扣 50）：预扣腿 50 退 VIDEO-HOLD + 补扣腿 30 退 VIDEO，幂等键独立
+        service.refundMediaCharged(100L, new BigDecimal("80"), new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null);
+
+        verify(walletService).refundIdempotent(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO + "-HOLD"), eq(9L), anyString(), eq("media-hold-refund-9"));
+        verify(walletService).refundIdempotent(eq(100L), eq(new BigDecimal("30")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(9L), anyString(), eq("media-settle-refund-9"));
+    }
+
+    @Test
+    void refundMediaCharged_chargedBelowHold_refundsSingleHoldLeg() {
+        // 补扣失败场景（实耗=预扣 50）：supLeg=0 只退预扣腿
+        service.refundMediaCharged(100L, new BigDecimal("50"), new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null);
+
+        verify(walletService).refundIdempotent(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO + "-HOLD"), eq(9L), anyString(), eq("media-hold-refund-9"));
+        verify(walletService, never()).refundIdempotent(eq(100L), any(),
+                eq(LlmUsageLogEntity.KIND_VIDEO), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    void refundMediaCharged_noHold_delegatesLegacyRefund() {
+        // 存量任务（held=null）：原 refundMedia 单腿（个人 refund 直退）
+        service.refundMediaCharged(100L, new BigDecimal("50"), null,
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null);
+
+        verify(walletService).refund(eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(9L), anyString());
+    }
+
+    @Test
+    void refundMediaHold_group_refundsHoldLeg() {
+        service.refundMediaHold(100L, new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, 5L);
+
+        verify(groupWalletService).refundGroup(eq(5L), eq(100L), eq(new BigDecimal("50")),
+                eq(LlmUsageLogEntity.KIND_VIDEO + "-HOLD"), eq("9"), eq("media-hold-refund-9"));
+    }
+
+    @Test
+    void refundMediaHold_swallowsExceptions() {
+        // 吞异常不阻塞 worker 终态
+        doThrow(new RuntimeException("DB 抖动")).when(walletService)
+                .refundIdempotent(anyLong(), any(), anyString(), anyLong(), anyString(), anyString());
+
+        service.refundMediaHold(100L, new BigDecimal("50"),
+                LlmUsageLogEntity.KIND_VIDEO, 9L, null); // 不抛即过
     }
 }

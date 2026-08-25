@@ -78,10 +78,11 @@ class MediaGenTaskWorkerTest {
         // Chunk F：成功路径扣减计费（kind=VIDEO，refId=taskId，视频伪-token=200000）
         // 7x-3：chargeMedia 现为 10 参（带 hasReference）；计划5 Step5 再加 projectGroupId（11 参）
         // 7x-1（V152）：chargeMedia 12 参（+resolution）
-        verify(mediaBillingService).chargeMedia(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
+        // 7x（V155）：worker 改调 settleMediaSuccess（13 参 +heldPoints；未预扣任务 held=null 走原全量扣）
+        verify(mediaBillingService).settleMediaSuccess(eq(100L), any(), anyString(), eq(LlmUsageLogEntity.KIND_VIDEO),
                 eq(200000), eq(5), eq(0), eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(1L), anyBoolean(),
-                isNull(), any());
-        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong(), any());
+                isNull(), any(), isNull());
+        verify(mediaBillingService, never()).refundMediaCharged(anyLong(), any(), any(), anyString(), anyLong(), any());
         // 指标：成功终态正好一次（kind=video,result=success）+ 端到端耗时
         verify(bizMetrics).mediaTaskTerminal("video", "success");
         verify(bizMetrics).mediaTaskDuration(eq("video"), any());
@@ -93,20 +94,21 @@ class MediaGenTaskWorkerTest {
 
     @Test
     void succeeded_marksSucceededWhenBillingDisabled() {
-        // 计费禁用/系统调用：chargeMedia 返 null（未扣），仍正常 markSucceeded，不退款
+        // 计费禁用/系统调用：settleMediaSuccess 返 null（未扣），仍正常 markSucceeded，不退款
         MediaGenTask task = pendingTask(1L, 100L, "cct-1");
         when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
         when(taskMapper.selectById(1L)).thenReturn(task);
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 200000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
-        when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any())).thenReturn(null);
+        when(mediaBillingService.settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any(), any()))
+                .thenReturn(null);
 
         worker.poll();
 
         verify(txService).markSucceeded(eq(1L), eq("fid-1"), eq(200000), eq(MediaGenTask.FLAG_SUCCESS));
-        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong(), any());
+        verify(mediaBillingService, never()).refundMediaCharged(anyLong(), any(), any(), anyString(), anyLong(), any());
     }
 
     @Test
@@ -118,15 +120,15 @@ class MediaGenTaskWorkerTest {
         when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
                 "https://ark/v.mp4", 1000L, null));
         when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
-        when(mediaBillingService.chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any()))
+        when(mediaBillingService.settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any(), any()))
                 .thenReturn(new BigDecimal("50"));
         doThrow(new IllegalStateException("DB 抖动")).when(txService)
                 .markSucceeded(anyLong(), anyString(), anyInt(), anyString());
 
         worker.poll();
 
-        verify(mediaBillingService).refundMedia(eq(100L), eq(new BigDecimal("50")),
+        verify(mediaBillingService).refundMediaCharged(eq(100L), eq(new BigDecimal("50")), isNull(),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(1L), isNull());
         verify(txService).markFailed(eq(1L), contains("DB"));
     }
@@ -146,9 +148,9 @@ class MediaGenTaskWorkerTest {
         // 指标：失败终态正好一次（result=fail），不记成功
         verify(bizMetrics).mediaTaskTerminal("video", "fail");
         verify(bizMetrics, never()).mediaTaskTerminal(anyString(), eq("success"));
-        verify(mediaBillingService, never()).chargeMedia(anyLong(), any(), anyString(), anyString(),
-                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any());
-        verify(mediaBillingService, never()).refundMedia(anyLong(), any(), anyString(), anyLong(), any());
+        verify(mediaBillingService, never()).settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any(), any());
+        verify(mediaBillingService, never()).refundMediaCharged(anyLong(), any(), any(), anyString(), anyLong(), any());
     }
 
     @Test

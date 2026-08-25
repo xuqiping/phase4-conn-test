@@ -116,6 +116,24 @@ public class MediaGenController {
     }
 
     /**
+     * 7x（V155）：提交前预估预览——按当前所选参数实时估积分 + 返余额 + affordable，
+     * 前端输入防抖调用；不落库不预扣。est=0（无价表）时 affordable=true 不拦（与提交侧同口径）。
+     */
+    @GetMapping("/estimate")
+    @RequirePermission("media:gen")
+    public ResponseEntity<R<Map<String, Object>>> estimate(
+            @RequestParam String kind,
+            @RequestParam(required = false) String model,
+            @RequestParam(required = false) Integer videoSeconds,
+            @RequestParam(required = false) String resolution,
+            @RequestParam(required = false, defaultValue = "false") boolean hasReference,
+            @RequestParam(required = false) Integer imageCount,
+            @RequestParam(required = false) Long projectGroupId) {
+        return ResponseEntity.ok(R.ok(taskService.estimatePreview(kind, model, videoSeconds,
+                resolution, hasReference, imageCount, getCurrentUserId(), projectGroupId)));
+    }
+
+    /**
      * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
      * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
      * 权限与 /api/llm/providers 管理端点一致（16x 起 llm:config 独立码），非 media:gen。

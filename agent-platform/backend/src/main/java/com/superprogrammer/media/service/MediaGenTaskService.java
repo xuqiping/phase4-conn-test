@@ -76,6 +76,8 @@ public class MediaGenTaskService {
     /** 计划5 Step5：提交时估价快照（estimated_cost，回收在途上限用）。 */
     private final com.superprogrammer.billing.service.PricingService pricingService;
     private final com.superprogrammer.billing.service.PointsRatioService pointsRatioService;
+    /** 7x（V155）：提交即预扣预估积分，完工按实多退少补。 */
+    private final com.superprogrammer.billing.service.MediaBillingService mediaBillingService;
 
     /**
      * 提交生成任务。
@@ -269,6 +271,23 @@ public class MediaGenTaskService {
         task.setEstimatedCost(estimatedPoints);
         taskMapper.insert(task);
 
+        // 7x（V155）：提交即按预估积分预扣（完工按实多退少补）——防多任务并行「预检都过、结算不够扣」。
+        // 预扣失败（预检后被并发耗尽余额/组池）→ 删任务行并拒绝（语义同预检不足）；est=0（无价表）不扣不拦。
+        if (estimatedPoints != null && estimatedPoints.signum() > 0) {
+            try {
+                boolean held = mediaBillingService.holdMediaEstimated(userId, estimatedPoints,
+                        com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_VIDEO,
+                        task.getId(), projectGroupId);
+                task.setHoldApplied(held);
+                if (held) {
+                    taskMapper.updateById(task);
+                }
+            } catch (BusinessException be) {
+                taskMapper.deleteById(task.getId());
+                throw be;
+            }
+        }
+
         // 问题修复 #8：submit 编程式落审计，targetId=taskId（与 worker 终态行关联）
         Map<String, Object> submitDetail = new LinkedHashMap<>();
         submitDetail.put("model", resolvedModel);
@@ -412,6 +431,22 @@ public class MediaGenTaskService {
         }
         task.setEstimatedCost(estimatedPoints);
         taskMapper.insert(task);
+
+        // 7x（V155）：提交即按预估积分预扣（与视频同口径，完工按实多退少补）。
+        if (estimatedPoints != null && estimatedPoints.signum() > 0) {
+            try {
+                boolean held = mediaBillingService.holdMediaEstimated(userId, estimatedPoints,
+                        com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
+                        task.getId(), projectGroupId);
+                task.setHoldApplied(held);
+                if (held) {
+                    taskMapper.updateById(task);
+                }
+            } catch (BusinessException be) {
+                taskMapper.deleteById(task.getId());
+                throw be;
+            }
+        }
 
         // 问题修复 #8：submit 编程式落审计，targetId=taskId
         Map<String, Object> submitDetail = new LinkedHashMap<>();
@@ -701,6 +736,49 @@ public class MediaGenTaskService {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "附件类型不符: 声明 " + kind + "，实际 " + mime + "（" + meta.getOriginalName() + "）");
         }
+    }
+
+    /**
+     * 7x（V155）：提交前预估预览（不落库不预扣，前端输入防抖实时询）。返回 estimatedPoints
+     * （积分，无价表/模型不可解析记 0）、balance（个人钱包/组池可用）、affordable（est≤0 或余额够）。
+     */
+    public Map<String, Object> estimatePreview(String kind, String model, Integer videoSeconds,
+                                               String resolution, boolean hasReference, Integer imageCount,
+                                               Long userId, Long projectGroupId) {
+        java.math.BigDecimal est = java.math.BigDecimal.ZERO;
+        try {
+            if ("IMAGE".equalsIgnoreCase(kind)) {
+                LlmProviderEntity provider = mediaModelService.resolveImageProviderByModel(model);
+                if (provider != null) {
+                    est = estimateImagePoints(provider.getId(), model,
+                            imageCount == null || imageCount <= 0 ? 1 : imageCount);
+                }
+            } else {
+                LlmProviderEntity provider;
+                String resolvedModel;
+                if (model == null || model.isBlank()) {
+                    provider = mediaModelService.defaultProvider();
+                    resolvedModel = provider == null ? null : mediaModelService.firstModelOf(provider);
+                } else {
+                    provider = mediaModelService.resolveProviderByModel(model);
+                    resolvedModel = model;
+                }
+                if (provider != null && resolvedModel != null) {
+                    est = estimateVideoPoints(provider.getId(), resolvedModel,
+                            videoSeconds, hasReference, resolution);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("预估预览失败记0 kind={} model={} : {}", kind, model, e.getMessage());
+        }
+        java.math.BigDecimal balance = projectGroupId != null
+                ? groupWalletService.getGroupBalance(projectGroupId)
+                : (userId == null ? java.math.BigDecimal.ZERO : walletService.getBalance(userId));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("estimatedPoints", est);
+        out.put("balance", balance);
+        out.put("affordable", est.signum() <= 0 || balance.compareTo(est) >= 0);
+        return out;
     }
 
     /**

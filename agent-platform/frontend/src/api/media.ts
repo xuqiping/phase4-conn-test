@@ -358,6 +358,24 @@ export interface LocalizeResult {
   warning: string | null
 }
 
+/** 7x（V155）：提交前预估预览查询（kind VIDEO/IMAGE；视频带 videoSeconds/resolution/hasReference，图片带 imageCount）。 */
+export interface MediaEstimateQuery {
+  kind: 'VIDEO' | 'IMAGE'
+  model?: string
+  videoSeconds?: number
+  resolution?: string
+  hasReference?: boolean
+  imageCount?: number
+  projectGroupId?: number
+}
+
+/** 7x（V155）：预估预览结果（积分口径；estimatedPoints=0 表无价表未配，affordable 恒 true 不拦）。 */
+export interface MediaEstimateVO {
+  estimatedPoints: number
+  balance: number
+  affordable: boolean
+}
+
 // === API 函数 ===
 
 export const mediaApi = {
@@ -396,6 +414,11 @@ export const mediaApi = {
   /** POST /api/media/image — 提交生图任务，返 {id,status}（media:gen，按张计费） */
   submitImage(data: ImageSubmitRequest) {
     return request.post<ApiResponse<MediaSubmitResult>>('/media/image', data)
+  },
+
+  /** GET /api/media/estimate — 7x（V155）提交前预估预览：估积分+余额+affordable（不落库不预扣，前端防抖询） */
+  estimatePreview(params: MediaEstimateQuery) {
+    return request.get<ApiResponse<MediaEstimateVO>>('/media/estimate', { params })
   },
 
   /** POST /api/files/upload — multipart 上传参考附件（图/视频/音频），返 fileId（登录用户） */

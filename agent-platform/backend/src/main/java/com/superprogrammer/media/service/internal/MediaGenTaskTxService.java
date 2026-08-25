@@ -2,12 +2,15 @@ package com.superprogrammer.media.service.internal;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.superprogrammer.billing.entity.LlmUsageLogEntity;
+import com.superprogrammer.billing.service.MediaBillingService;
 import com.superprogrammer.common.audit.AuditLogEntity;
 import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +36,9 @@ public class MediaGenTaskTxService {
     private final MediaGenTaskMapper taskMapper;
     /** 审计：媒体终态失败落库（问题修复 #1，markFailed/markDownloadFailed 咽喉覆盖全部失败路径）。 */
     private final AuditLogService auditLogService;
+    /** 7x（V155）：失败终态退预扣。字段注入+required=false——单测手工 new 不传不炸。 */
+    @Autowired(required = false)
+    private MediaBillingService mediaBillingService;
 
     /**
      * 认领一批待处理任务（PENDING 或 RUNNING 且锁过期）。认领即置 RUNNING + attempt+1 + lockedUntil。
@@ -149,6 +155,9 @@ public class MediaGenTaskTxService {
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
         boolean transitioned = taskMapper.update(null, u) > 0;
+        if (transitioned) {
+            refundHoldQuietly(taskId);
+        }
         auditFail(taskId, "gen_fail", truncate(errorMsg, 200));
         return transitioned;
     }
@@ -168,8 +177,35 @@ public class MediaGenTaskTxService {
                 .set(MediaGenTask::getLockedUntil, null)
                 .set(MediaGenTask::getUpdatedAt, OffsetDateTime.now());
         boolean transitioned = taskMapper.update(null, u) > 0;
+        if (transitioned) {
+            refundHoldQuietly(taskId);
+        }
         auditFail(taskId, "download_failed", truncate(errorMsg, 200));
         return transitioned;
+    }
+
+    /**
+     * 7x（V155）：失败终态退预扣（全额退 kind-HOLD 腿）。hold_applied=false（存量任务）/未注入计费 → 跳过。
+     * 幂等键与 worker 落库失败撤销的预扣腿相同（media-hold-refund-{taskId}）——两条失败路径互斥，
+     * 撞键即幂等跳过，绝不双退。
+     */
+    private void refundHoldQuietly(Long taskId) {
+        if (mediaBillingService == null) {
+            return;
+        }
+        try {
+            MediaGenTask task = taskMapper.selectById(taskId);
+            if (task == null || !Boolean.TRUE.equals(task.getHoldApplied())) {
+                return;
+            }
+            String kind = (MediaGenTask.TYPE_TEXT2IMAGE.equals(task.getTaskType())
+                    || MediaGenTask.TYPE_IMAGE2IMAGE.equals(task.getTaskType()))
+                    ? LlmUsageLogEntity.KIND_IMAGE : LlmUsageLogEntity.KIND_VIDEO;
+            mediaBillingService.refundMediaHold(task.getUserId(), task.getEstimatedCost(), kind,
+                    taskId, task.getProjectGroupId());
+        } catch (Exception e) {
+            log.warn("媒体失败退预扣异常(吞) taskId={}: {}", taskId, e.toString());
+        }
     }
 
     /**

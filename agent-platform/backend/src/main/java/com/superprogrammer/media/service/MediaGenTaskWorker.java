@@ -251,17 +251,19 @@ public class MediaGenTaskWorker {
         boolean hasReference = hasReferenceVideo(request);
         // 计费扣减（返回实扣积分；null=未扣，disabled/系统调用/计费失败均吞不抛）
         // 7x-1（V152）：透传任务实际分辨率——SECOND 模式按分辨率价行计价（未单列回落通用行）
-        BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
+        // 7x（V155）：预扣任务走多退少补结算（实耗 vs 预扣 补差/退差）；存量在途任务（hold_applied=false）走原全量扣减
+        BigDecimal heldVideo = Boolean.TRUE.equals(task.getHoldApplied()) ? task.getEstimatedCost() : null;
+        BigDecimal chargedPoints = mediaBillingService.settleMediaSuccess(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
                 request.getDuration(), 0, usageStatus(flag), taskId, hasReference,
-                task.getProjectGroupId(), request.getResolution());
+                task.getProjectGroupId(), request.getResolution(), heldVideo);
         boolean transitioned;
         try {
             transitioned = txService.markSucceeded(taskId, fileId, tokensCost, flag);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
-            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_VIDEO, taskId,
-                    task.getProjectGroupId());
+            mediaBillingService.refundMediaCharged(task.getUserId(), chargedPoints, heldVideo,
+                    LlmUsageLogEntity.KIND_VIDEO, taskId, task.getProjectGroupId());
             throw e;
         }
         // 问题修复 #1 #7：视频生成成功落审计，带模型+实扣积分（关联键 targetId=taskId，与 submit 行对应）
@@ -317,16 +319,18 @@ public class MediaGenTaskWorker {
         Long outputTokens = result.getOutputTokens();
         String resultMeta = buildImageResultMeta(fileIds, imageCount, outputTokens);
         // 按张计费扣减（返回实扣积分；null=未扣/系统调用/计费失败均吞不抛）
-        BigDecimal chargedPoints = mediaBillingService.chargeMedia(task.getUserId(), task.getProviderId(),
+        // 7x（V155）：预扣任务走多退少补结算（实耗张数 vs 预扣）；存量在途任务走原全量扣减
+        BigDecimal heldImage = Boolean.TRUE.equals(task.getHoldApplied()) ? task.getEstimatedCost() : null;
+        BigDecimal chargedPoints = mediaBillingService.settleMediaSuccess(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_IMAGE, null, 0, imageCount,
-                LlmUsageLogEntity.STATUS_SUCCESS, taskId, false, task.getProjectGroupId());
+                LlmUsageLogEntity.STATUS_SUCCESS, taskId, false, task.getProjectGroupId(), null, heldImage);
         boolean transitioned;
         try {
             transitioned = txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);
         } catch (RuntimeException e) {
             // 扣了却落库失败：撤销已扣（防对账黑洞），再抛交 process()→markFailed
-            mediaBillingService.refundMedia(task.getUserId(), chargedPoints, LlmUsageLogEntity.KIND_IMAGE, taskId,
-                    task.getProjectGroupId());
+            mediaBillingService.refundMediaCharged(task.getUserId(), chargedPoints, heldImage,
+                    LlmUsageLogEntity.KIND_IMAGE, taskId, task.getProjectGroupId());
             throw e;
         }
         // 问题修复 #1 #7：图片生成成功落审计，带模型+实扣积分+张数
