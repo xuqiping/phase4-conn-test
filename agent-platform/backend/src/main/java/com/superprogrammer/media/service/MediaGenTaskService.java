@@ -337,14 +337,14 @@ public class MediaGenTaskService {
                             String sequential, Integer maxImages, Boolean webSearch,
                             String model, Long userId, boolean admin) {
         return submitImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale, optimizeMode,
-                sequential, maxImages, webSearch, model, userId, admin, null);
+                sequential, maxImages, webSearch, model, userId, admin, null, null);
     }
 
-    /** 计划5 Step5：+projectGroupId 组池计费版本（null=个人钱包，现状）。 */
+    /** 计划5 Step5：+projectGroupId 组池计费版本（null=个人钱包，现状）。C3（6x/Q5）：+ratio 比例模式。 */
     public Long submitImage(String prompt, List<String> refFileIds, String size, String outputFormat,
                             Boolean watermark, Double guidanceScale, String optimizeMode,
                             String sequential, Integer maxImages, Boolean webSearch,
-                            String model, Long userId, boolean admin, Long projectGroupId) {
+                            String model, Long userId, boolean admin, Long projectGroupId, String ratio) {
         if (!properties.isGenEnabled()) {
             throw new BusinessException(ErrorCode.UNPROCESSABLE, "图片生成功能未开启");
         }
@@ -359,7 +359,7 @@ public class MediaGenTaskService {
             mediaHeld = mediaInflightGate.acquire(userId, MediaInflightGateService.KIND_IMAGE);
             return doSubmitImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale,
                     optimizeMode, sequential, maxImages, webSearch, model, userId, admin,
-                    projectGroupId, poolBalance);
+                    projectGroupId, poolBalance, ratio);
         } catch (RuntimeException e) {
             if (mediaHeld) {
                 mediaInflightGate.release(userId, MediaInflightGateService.KIND_IMAGE);
@@ -372,7 +372,7 @@ public class MediaGenTaskService {
                                Boolean watermark, Double guidanceScale, String optimizeMode,
                                String sequential, Integer maxImages, Boolean webSearch,
                                String model, Long userId, boolean admin,
-                               Long projectGroupId, java.math.BigDecimal poolBalance) {
+                               Long projectGroupId, java.math.BigDecimal poolBalance, String ratio) {
 
         // 解析 IMAGE provider（指定 model 跨 IMAGE provider 反查；图片任务无默认 provider 回退）
         LlmProviderEntity provider = mediaModelService.resolveImageProviderByModel(model);
@@ -382,6 +382,17 @@ public class MediaGenTaskService {
                             + "请先在「全局模型供应商」建一条 IMAGE 类 provider 并配置该模型）");
         }
         ImageModelCapability cap = capabilityService.resolveImage(model, provider.getConfig());
+
+        // C3（6x/Q5）：比例模式——与显式宽x高互斥；比例+档位 → 推导 WxH 覆盖 size 后走既有链路
+        String requestedRatio = null;
+        if (ratio != null && !ratio.isBlank()) {
+            if (size != null && size.matches("\\d+\\s*[xX×]\\s*\\d+")) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "ratio 与自定义宽x高 size 互斥（二选一：选比例则 size 留空或传档位 2K/3K/…）");
+            }
+            size = ImageSizeDeriver.derive(ratio, size, cap);
+            requestedRatio = ratio.trim();
+        }
 
         // 参数校验（提示词 + 参考图 + 各模型特性字段）
         validateImage(prompt, refFileIds, size, outputFormat, watermark, guidanceScale, optimizeMode,
@@ -394,6 +405,8 @@ public class MediaGenTaskService {
         Map<String, Object> config = new HashMap<>();
         config.put("prompt", prompt == null ? "" : prompt);
         if (size != null && !size.isBlank()) config.put("size", size);
+        // C3：原始比例留痕（size 已是推导后宽x高，审计/参数回显用）
+        if (requestedRatio != null) config.put("ratio", requestedRatio);
         if (outputFormat != null && !outputFormat.isBlank()) config.put("outputFormat", outputFormat);
         config.put("watermark", watermark == null ? cap.isWatermarkDefault() : watermark);
         if (guidanceScale != null) config.put("guidanceScale", guidanceScale);

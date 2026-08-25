@@ -148,6 +148,10 @@ public class MediaModelCapabilityService {
                 .refImageMax(intOr(o, "refImageMax", base.getRefImageMax()))
                 .refImageFormats(listOr(o, "refImageFormats", base.getRefImageFormats()))
                 .sizePresets(listOr(o, "sizePresets", base.getSizePresets()))
+                // C3（6x/Q5）：比例模式白名单 + 像素上下限（未配 → null，派生器用默认）
+                .ratios(listOr(o, "ratios", base.getRatios()))
+                .minTotalPixels(longOrNull(o, "minTotalPixels"))
+                .maxTotalPixels(longOrNull(o, "maxTotalPixels"))
                 .supportsWhSize(boolOr(o, "supportsWhSize", base.isSupportsWhSize()))
                 .supportsSequential(boolOr(o, "supportsSequential", base.isSupportsSequential()))
                 .maxSequentialImages(intOr(o, "maxSequentialImages", base.getMaxSequentialImages()))
@@ -224,6 +228,12 @@ public class MediaModelCapabilityService {
     private int intOr(JsonNode o, String field, int dft) {
         JsonNode n = o.get(field);
         return n != null && n.isInt() ? n.asInt() : dft;
+    }
+
+    /** C3：像素上下限用 Long（null=未覆盖，保留默认；0/负数视为未配）。 */
+    private Long longOrNull(JsonNode o, String field) {
+        JsonNode n = o.get(field);
+        return n != null && n.isNumber() && n.asLong() > 0 ? n.asLong() : null;
     }
 
     private boolean boolOr(JsonNode o, String field, boolean dft) {

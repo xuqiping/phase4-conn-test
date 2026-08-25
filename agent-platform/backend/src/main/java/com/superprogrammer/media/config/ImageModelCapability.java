@@ -32,6 +32,18 @@ public class ImageModelCapability {
     /** size 预设枚举（下拉候选）：lite=[2K,3K,4K]，pro=[2K,3K]。 */
     private List<String> sizePresets;
 
+    /**
+     * C3（6x/Q5）：比例模式白名单（null=派生默认 7 比例）。
+     * 比例+档位 → {@link com.superprogrammer.media.service.ImageSizeDeriver} 推导 WxH。
+     */
+    private List<String> ratios;
+
+    /** C3：比例模式总像素下限（null=默认 3686400；1K/1.5K 档低于此值 → 拒比例模式）。 */
+    private Long minTotalPixels;
+
+    /** C3：比例模式总像素上限（null=默认 16777216=4K²）。 */
+    private Long maxTotalPixels;
+
     /** 是否支持自定义「宽x高」size 模式（lite+pro 均支持）。 */
     private boolean supportsWhSize;
 

@@ -30,6 +30,11 @@ public class ImageSubmitRequest {
     private List<String> refFileIds;
     /** size 预设或宽x高。 */
     private String size;
+    /**
+     * C3（6x/Q5）：比例模式（"16:9" 等 7 预设）——与档位 size（2K/3K/…）同传则按档位预算推导
+     * 宽x高覆盖 size；与显式宽x高 size 互斥（都传 400）。
+     */
+    private String ratio;
     /** 输出格式 jpeg/png。 */
     private String outputFormat;
     /** 水印开关。 */

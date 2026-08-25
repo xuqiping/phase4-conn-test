@@ -101,7 +101,8 @@ public class MediaGenController {
                 request.getPrompt(), request.getRefFileIds(), request.getSize(), request.getOutputFormat(),
                 request.getWatermark(), request.getGuidanceScale(), request.getOptimizeMode(),
                 request.getSequential(), request.getMaxImages(), request.getWebSearch(),
-                request.getModel(), getCurrentUserId(), isAdmin(), request.getProjectGroupId());
+                request.getModel(), getCurrentUserId(), isAdmin(), request.getProjectGroupId(),
+                request.getRatio());
         return ResponseEntity.ok(R.ok("任务已提交", Map.of("id", taskId, "status", MediaGenTask.STATUS_PENDING)));
     }
 
@@ -116,8 +117,8 @@ public class MediaGenController {
     }
 
     /**
-     * 7x（V155）：提交前预估预览——按当前所选参数实时估积分 + 返余额 + affordable，
-     * 前端输入防抖调用；不落库不预扣。est=0（无价表）时 affordable=true 不拦（与提交侧同口径）。
+     * 7x（V155）+C1：提交前预估预览——按当前所选参数实时估积分 + 返余额 + affordable，
+     * 前端输入防抖调用；不落库不预扣。fail-closed：估价失败 est=0 且 affordable=false（与提交侧同口径拒）。
      */
     @GetMapping("/estimate")
     @RequirePermission("media:gen")

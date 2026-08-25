@@ -719,4 +719,85 @@ class MediaGenTaskServiceTest {
         assertEquals(Boolean.TRUE, out.get("affordable"));
         assertNull(out.get("personalScope"));
     }
+
+    // ---------- C3（6x/Q5）：图片比例模式（ratio→推导 WxH 覆盖 size） ----------
+
+    private static final String SEEDREAM_LITE = "doubao-seedream-5.0-lite";
+
+    private void stubImageEstimate(java.math.BigDecimal points) {
+        lenient().when(walletService.requireAffordable(USER_ID))
+                .thenReturn(new java.math.BigDecimal("1000"));
+        lenient().when(mediaInflightGate.acquire(USER_ID,
+                com.superprogrammer.media.service.internal.MediaInflightGateService.KIND_IMAGE))
+                .thenReturn(true);
+        lenient().when(mediaModelService.resolveImageProviderByModel(SEEDREAM_LITE)).thenReturn(provider);
+        lenient().when(pricingService.computeCost(
+                com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE, 7L, SEEDREAM_LITE,
+                null, null, null, 1, false))
+                .thenReturn(new java.math.BigDecimal("0.5"));
+        lenient().when(pointsRatioService.toPoints(new java.math.BigDecimal("0.5"))).thenReturn(points);
+    }
+
+    @Test
+    void submitImage_ratioWithCustomWhSize_400Mutex() {
+        // C3：ratio 与显式宽x高互斥（都传 400），推导前拦——不建任务
+        stubImageEstimate(new java.math.BigDecimal("50"));
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submitImage("p", null, "2048x1152", null, null, null, null,
+                        null, null, null, SEEDREAM_LITE, USER_ID, false, null, "16:9"));
+        assertTrue(e.getMessage().contains("互斥"), e.getMessage());
+        verify(taskMapper, never()).insert(any());
+    }
+
+    @Test
+    void submitImage_ratioPlusTier_derivesWhAndStampsRatio() {
+        // C3：16:9+2K → 推导 2731x1536 覆盖 size（等面积），原始 ratio 留痕 config
+        stubImageEstimate(new java.math.BigDecimal("50"));
+        lenient().when(mediaBillingService.holdMediaEstimated(
+                org.mockito.ArgumentMatchers.eq(USER_ID), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(true);
+
+        service.submitImage("p", null, "2K", null, null, null, null,
+                null, null, null, SEEDREAM_LITE, USER_ID, false, null, "16:9");
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        String cfg = captor.getValue().getRequestConfig();
+        assertTrue(cfg.contains("\"size\":\"2731x1536\""), cfg);
+        assertTrue(cfg.contains("\"ratio\":\"16:9\""), cfg);
+        assertEquals(0, captor.getValue().getEstimatedCost()
+                .compareTo(new java.math.BigDecimal("50")));
+    }
+
+    @Test
+    void submitImage_ratioOnly_defaultsTier2K() {
+        // C3：ratio 带、size 空 → 默认 2K 档推导
+        stubImageEstimate(new java.math.BigDecimal("50"));
+        lenient().when(mediaBillingService.holdMediaEstimated(
+                org.mockito.ArgumentMatchers.eq(USER_ID), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(true);
+
+        service.submitImage("p", null, null, null, null, null, null,
+                null, null, null, SEEDREAM_LITE, USER_ID, false, null, "16:9");
+
+        ArgumentCaptor<MediaGenTask> captor = ArgumentCaptor.forClass(MediaGenTask.class);
+        verify(taskMapper).insert(captor.capture());
+        assertTrue(captor.getValue().getRequestConfig().contains("\"size\":\"2731x1536\""),
+                captor.getValue().getRequestConfig());
+    }
+
+    @Test
+    void submitImage_lowTierRatio_400WithGuidance() {
+        // C3：1K 档像素预算低于下限 → 明确报错指引（pro 模型 1K 预设场景）
+        stubImageEstimate(new java.math.BigDecimal("50"));
+        BusinessException e = assertThrows(BusinessException.class, () ->
+                service.submitImage("p", null, "1K", null, null, null, null,
+                        null, null, null, SEEDREAM_LITE, USER_ID, false, null, "16:9"));
+        assertTrue(e.getMessage().contains("不支持比例模式"), e.getMessage());
+        verify(taskMapper, never()).insert(any());
+    }
 }
