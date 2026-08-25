@@ -234,6 +234,13 @@
           <template #icon><n-icon :component="SparklesOutline" /></template>
           AI 生图
         </n-button>
+        <!-- C2（17x-2/2x）：提交旁预估 chip「预估 X · 项目内剩余 Y」+ 不足红字（与生成页同口径） -->
+        <div v-if="estimateText" class="prop-panel__estimate">
+          <n-tag size="small" :type="estimate?.affordable ? 'info' : 'error'" :bordered="false">
+            {{ estimateText }}
+          </n-tag>
+          <span v-if="estimateWarn" class="prop-panel__estimate-warn">{{ estimateWarn }}</span>
+        </div>
         <n-button
           size="small"
           block
@@ -340,6 +347,13 @@
           <template #icon><n-icon :component="PlayOutline" /></template>
           提交视频生成
         </n-button>
+        <!-- C2（17x-2/2x）：提交旁预估 chip（同图片节点数据源/口径） -->
+        <div v-if="estimateText" class="prop-panel__estimate">
+          <n-tag size="small" :type="estimate?.affordable ? 'info' : 'error'" :bordered="false">
+            {{ estimateText }}
+          </n-tag>
+          <span v-if="estimateWarn" class="prop-panel__estimate-warn">{{ estimateWarn }}</span>
+        </div>
         <div class="prop-panel__field">
           <label>视频模型</label>
           <n-select
@@ -705,7 +719,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCheckbox, NCheckboxGroup, NIcon, NInput, NInputNumber, NModal, NSelect, NSpace, NSwitch, NTag, NUpload
 } from 'naive-ui'
@@ -718,7 +732,7 @@ import type { ReverseMode } from '@/api/media'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
-import type { ImageModelCapability, ImageModelVO } from '@/api/media'
+import type { ImageModelCapability, ImageModelVO, MediaEstimateVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
 import MediaLightbox from '../media/MediaLightbox.vue'
@@ -752,12 +766,15 @@ const props = withDefaults(defineProps<{
   imageAncestorOptions?: { label: string; value: string }[]
   /** 2x 四轮 S8：参考媒体预览列表（首尾帧/图N/视频N 徽标缩略；CanvasView 同源解析装配）。 */
   references?: CanvasReferenceItem[]
+  /** C2（17x-2/2x）：参与项目组 id（组池计费口径；null=个人钱包）。 */
+  projectGroupId?: number | null
 }>(), {
   candidates: () => [],
   brokenMentions: () => [],
   allLabels: () => [],
   imageAncestorOptions: () => [],
-  references: () => []
+  references: () => [],
+  projectGroupId: null
 })
 
 const emit = defineEmits<{
@@ -811,6 +828,90 @@ const frameSecond = ref<number | null>(null)
 /** C12 截取起止秒输入值。 */
 const clipStart = ref<number | null>(null)
 const clipEnd = ref<number | null>(null)
+
+// ---------- C2（17x-2/2x）：画布提交旁预估条（只读；500ms 防抖询 /media/estimate） ----------
+const estimate = ref<MediaEstimateVO | null>(null)
+let estimateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 参数指纹（模型/时长/分辨率/组图/参考数/项目组任一变 → 重询）。 */
+const estimateFingerprint = computed(() => {
+  const d = (props.node?.data ?? {}) as Record<string, unknown>
+  return [
+    props.node?.id, props.node?.type, d.model, d.duration, d.resolution,
+    d.sequential, d.maxImages, props.references?.length, props.projectGroupId
+  ].join('|')
+})
+
+watch(estimateFingerprint, () => {
+  if (estimateTimer) clearTimeout(estimateTimer)
+  estimateTimer = setTimeout(() => void loadEstimate(), 500)
+}, { immediate: true })
+
+async function loadEstimate() {
+  const node = props.node
+  if (!node || (node.type !== 'image' && node.type !== 'video')) {
+    estimate.value = null
+    return
+  }
+  const d = node.data as Record<string, unknown>
+  // 图片必选模型；视频可回退 provider 默认
+  if (node.type === 'image' && !d.model) {
+    estimate.value = null
+    return
+  }
+  try {
+    const { data } = await mediaApi.estimatePreview(node.type === 'image'
+      ? {
+          kind: 'IMAGE',
+          model: d.model as string,
+          imageCount: d.sequential === 'auto' ? ((d.maxImages as number) || 1) : 1,
+          projectGroupId: props.projectGroupId ?? undefined
+        }
+      : {
+          kind: 'VIDEO',
+          model: (d.model as string) || undefined,
+          videoSeconds: Number(d.duration ?? 5),
+          resolution: (d.resolution as string) || '720p',
+          hasReference: (props.references?.length ?? 0) > 0,
+          projectGroupId: props.projectGroupId ?? undefined
+        })
+    estimate.value = data.data
+  } catch {
+    estimate.value = null
+  }
+}
+
+onBeforeUnmount(() => {
+  if (estimateTimer) clearTimeout(estimateTimer)
+})
+
+/** chip 文案：组内优先点名「项目内剩余」（个人限额卡口径），不限额成员/个人看池/钱包。 */
+const estimateText = computed<string | null>(() => {
+  const e = estimate.value
+  if (!e || e.estimatedPoints <= 0) return null
+  const scope = e.personalScope
+  const tail = scope
+    ? (scope.inProjectAvailable != null
+        ? `项目内剩余 ${scope.inProjectAvailable}`
+        : `项目组池余 ${e.balance}`)
+    : `钱包余 ${e.balance}`
+  return `预估 ${e.estimatedPoints} · ${tail}（预估与比例无关）`
+})
+
+/** 不足红字：与生成页同分层（个人限额卡 / 组池卡 / 钱包）。 */
+const estimateWarn = computed<string | null>(() => {
+  const e = estimate.value
+  if (!e || e.affordable) return null
+  const scope = e.personalScope
+  if (scope && !scope.affordableMember) {
+    const quotaTxt = scope.quota != null ? `（限额 ${scope.quota}−已用 ${scope.used}）` : ''
+    return `项目内剩余 ${scope.inProjectAvailable ?? 0} 不足${quotaTxt}`
+  }
+  if (e.balance < e.estimatedPoints) {
+    return scope ? `项目组池剩余 ${e.balance} 不足` : `钱包余额不足（余 ${e.balance}）`
+  }
+  return null
+})
 
 // ---------- 计划6 视频反推 / 本土化转绘 ----------
 
@@ -1136,6 +1237,20 @@ function onImageModelChange(model: string | null) {
     padding: var(--spacing-1) var(--spacing-2);
     background: rgba(250, 204, 21, 0.1);
     border-radius: var(--radius-base);
+    word-break: break-all;
+  }
+
+  /* C2（17x-2/2x）：提交按钮旁预估条（chip + 不足红字分层） */
+  &__estimate {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-1);
+    margin-top: var(--spacing-1);
+  }
+
+  &__estimate-warn {
+    font-size: var(--font-size-xs);
+    color: #f87171;
     word-break: break-all;
   }
 

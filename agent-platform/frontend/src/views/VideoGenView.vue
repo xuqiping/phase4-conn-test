@@ -251,14 +251,17 @@
               附件上传中（{{ uploadingCount }}）…
             </span>
           </n-space>
-          <!-- 7x（V155）：预估消耗实时预览（输入防抖 400ms）；余额不足红字（提交侧同口径拦截兜底） -->
+          <!-- 7x（V155）+C2（17x-2）：预估消耗实时预览（输入防抖 400ms）；
+               不足红字按卡点分层（个人限额卡/组池卡），提交侧同口径拦截兜底 -->
           <div v-if="estimate && estimate.estimatedPoints > 0" class="video-gen__estimate">
             <n-tag size="small" :type="estimate.affordable ? 'info' : 'error'" :bordered="false">
               预估消耗 {{ estimate.estimatedPoints }} 积分
             </n-tag>
-            <span v-if="!estimate.affordable" class="video-gen__estimate-warn">
-              {{ projectGroupId != null ? '组池' : '钱包' }}余额不足（余 {{ estimate.balance }}）
-            </span>
+            <span
+              v-for="w in estimateWarnings"
+              :key="w"
+              class="video-gen__estimate-warn"
+            >{{ w }}</span>
           </div>
         </n-form>
       </n-card>
@@ -1014,6 +1017,24 @@ async function loadEstimate() {
     estimate.value = null
   }
 }
+
+/** C2（17x-2）：不足提示按卡点分层——个人限额卡点名「项目内剩余/限额/已用」，组池卡点名池余。 */
+const estimateWarnings = computed<string[]>(() => {
+  const e = estimate.value
+  if (!e || e.affordable) return []
+  const out: string[] = []
+  const scope = e.personalScope
+  if (scope && !scope.affordableMember) {
+    const quotaTxt = scope.quota != null ? `（限额 ${scope.quota}−已用 ${scope.used}）` : ''
+    out.push(`项目内剩余 ${scope.inProjectAvailable ?? 0} 不足${quotaTxt}`)
+  }
+  const poolShort = e.balance < e.estimatedPoints
+  if (poolShort) {
+    out.push(scope ? `项目组池剩余 ${e.balance} 不足` : `钱包余额不足（余 ${e.balance}）`)
+  }
+  if (!out.length) out.push(scope ? '项目内或组池不足' : `钱包余额不足（余 ${e.balance}）`)
+  return out
+})
 
 // === 轮询 + 视频播放 ===
 const activeTask = ref<MediaTaskVO | null>(null)

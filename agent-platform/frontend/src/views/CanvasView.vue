@@ -205,6 +205,7 @@
           :all-labels="otherLabels"
           :image-ancestor-options="imageAncestorOptions"
           :references="referenceList"
+          :project-group-id="projectGroupId"
           @run="onRunNode"
           @split-storyboard="onSplitStoryboard"
           @upload="onUploadFile"
@@ -698,12 +699,41 @@ const selectedAncestors = computed<Set<string>>(() => {
 const mentionCandidates = computed<MentionCandidate[]>(() => {
   const nodes = boardRef.value?.getNodes() ?? []
   const groups = boardRef.value?.getGroups() ?? []
-  return expandGroupCandidates(
+  const base = expandGroupCandidates(
     selectedAncestors.value,
     nodes,
     groups,
     (n) => String((n.data as Record<string, unknown>).label ?? n.id)
   )
+  // 2x 六轮 #1：标注图节点展开「子序号」候选——`节点名:序号1-红色`，
+  // 选中插入 @token + 字面后缀「：序号1（红色）框」（解析时 token→图N，后缀原文保留给模型）
+  const byId = new Map(nodes.map(n => [n.id, n]))
+  const out: MentionCandidate[] = []
+  for (const c of base) {
+    out.push(c)
+    if (c.kind !== 'node') continue
+    const nd = byId.get(c.id)?.data as Record<string, unknown> | undefined
+    let boxes = nd?.annotateBoxes
+    // 兼容旧标注节点（只有 annotateCount 无颜色明细）→ 合成无名色序号
+    if ((!Array.isArray(boxes) || boxes.length === 0) && typeof nd?.annotateCount === 'number' && nd.annotateCount > 0) {
+      boxes = Array.from({ length: nd.annotateCount as number }, (_, i) => ({ index: i + 1, color: '' }))
+    }
+    if (!Array.isArray(boxes) || boxes.length === 0) continue
+    for (const b of boxes as { index?: unknown; color?: unknown }[]) {
+      const idx = typeof b.index === 'number' ? b.index : null
+      const colorKey = typeof b.color === 'string' ? b.color : ''
+      const colorName = (ANNOTATE_COLOR_NAMES as Record<string, string>)[colorKey] ?? colorKey
+      if (idx == null) continue
+      const seg = colorName ? `序号${idx}（${colorName}）框` : `序号${idx}框`
+      out.push({
+        kind: 'node',
+        id: c.id,
+        label: `${c.label}:${seg}`,
+        insertSuffix: `：${seg}`
+      })
+    }
+  }
+  return out
 })
 
 // ---- 2x 四轮 S9：建组/组改名（结构变更由 Board emit structure-changed → scheduleSave 落库） ----
@@ -984,7 +1014,8 @@ async function annotateSubmit(src: CanvasNode, payload: AnnotateConfirmPayload):
   const res = await canvasApi.annotateImage(editingId.value!, src.id, payload.boxes)
   const f = res.data.data
   const previewUrl = await fetchCanvasPreview(f.fileId)
-  boardRef.value!.addNode({
+  // 2x 六轮 #2：用 addNode 返回 id 反查节点（旧版取 getNodes 末位，同步时序下可能拿错节点 → 下游定位/连线张冠李戴）
+  const createdId = boardRef.value!.addNode({
     type: 'image',
     position: { x: (src.position?.x ?? 0) + 260, y: (src.position?.y ?? 0) + 120 },
     data: {
@@ -994,11 +1025,12 @@ async function annotateSubmit(src: CanvasNode, payload: AnnotateConfirmPayload):
       parentFileId: (src.data as Record<string, unknown>).fileId as string | undefined,
       sourceNodeId: src.id,
       annotateCount: payload.boxes.length,
+      // 2x 六轮 #1：逐框序号+颜色落节点——@候选子序号（`节点名:序号1-红色`）数据源
+      annotateBoxes: payload.instructions.map(i => ({ index: i.index, color: i.color })),
       status: 'success'
     }
   })
-  const nodes = boardRef.value!.getNodes()
-  const created = nodes[nodes.length - 1]
+  const created = boardRef.value!.getNode(createdId)
   if (created) boardRef.value!.addEdge(src.id, created.id)
   return created ?? null
 }
@@ -1038,7 +1070,7 @@ async function onAnnotateAi(payload: AnnotateConfirmPayload) {
     const annotated = await annotateSubmit(src, payload)
     if (!annotated) throw new Error('标注节点创建失败')
     const instructionList = payload.instructions
-      .map(i => `第${i.index}（${ANNOTATE_COLOR_NAMES[i.color]}）框：${i.text || '按图示区域优化'}`)
+      .map(i => `序号${i.index}（${ANNOTATE_COLOR_NAMES[i.color]}）框：${i.text || '按图示区域优化'}`)
       .join('；')
     // 复制源节点已配的生图参数（AI 节点继承尺寸/格式等 capability 字段）
     const GEN_PARAM_KEYS = ['model', 'size', 'customSize', 'outputFormat', 'optimizeMode',
@@ -1048,27 +1080,47 @@ async function onAnnotateAi(payload: AnnotateConfirmPayload) {
       const v = (src.data as Record<string, unknown>)[k]
       if (v !== undefined) genParams[k] = v
     }
-    boardRef.value.addNode({
+    // 2x 修复（AI 修改衍生图空节点根因）：源节点没配 model（上传图/库图常见）→ 旧逻辑建而不跑永远空。
+    // 兜底链：画布上其他图片节点已用 model → 模型目录首个；仍无 → 节点挂常驻 errorMsg 不静默
+    if (!genParams.model) {
+      const sibling = boardRef.value.getNodes()
+        .find(n => n.type === 'image' && n.id !== src.id && (n.data as Record<string, unknown>).model)
+      const fallback = ((sibling?.data as Record<string, unknown> | undefined)?.model as string | undefined)
+        ?? imageModels.value[0]?.modelId
+      if (fallback) genParams.model = fallback
+    }
+    // 2x 六轮 #3：标注框/序号徽标只是位置指示——prompt 显式要求输出干净画面（否则模型把框和序号画进结果图）
+    const aiNodeId = boardRef.value.addNode({
       type: 'image',
-      position: { x: (annotated.position?.x ?? 0) + 260, y: annotated.position?.y ?? 0 },
+      position: { x: (annotated.position?.x ?? 0) + 320, y: annotated.position?.y ?? 0 },
       data: {
         label: `${nodeLabelOf(src)}·AI修改`,
-        prompt: `@{{node:${src.id}}} @{{node:${annotated.id}}}\n参考图1为原图，参考图2为标注图。按标注图序号逐框修改：${instructionList}`,
+        prompt: `@{{node:${src.id}}} @{{node:${annotated.id}}}
+参考图1为原图，参考图2为标注图（带彩色框+序号徽标，仅用于指示修改位置）。按标注图序号逐框修改：${instructionList}。重要：输出图片必须是干净自然的完整画面，不得保留任何标注框、序号徽标、色块、文字标记或涂抹痕迹`,
         ...genParams,
         sourceNodeId: annotated.id,
         aiFromAnnotate: true
       }
     })
-    const nodes = boardRef.value.getNodes()
-    const aiNode = nodes[nodes.length - 1]
+    // 2x 六轮 #2：用返回 id 反查（修「AI 节点建错对象/定位错」），并把视图平移到新节点——
+    // 旧版取 getNodes 末位 + 不移动视图，新节点在视口外/拿错节点时用户以为「没建出来」
+    const aiNode = boardRef.value.getNode(aiNodeId)
     if (aiNode) boardRef.value.addEdge(annotated.id, aiNode.id)
     boardRef.value.updateNodeData(src.id, { status: 'success', errorMsg: '' })
     annotateNode.value = null
     scheduleSave()
+    if (aiNode) boardRef.value.focusNodeById(aiNode.id)
     if (aiNode && genParams.model) {
       message.info('已建 AI 修改节点并提交生成…')
       void onRunImage(aiNode)
     } else {
+      // 2x 修复：无模型可兜底 → 节点挂常驻错误态（旧版只弹瞬时 toast，节点永远空用户无感知）
+      if (aiNode) {
+        boardRef.value.updateNodeData(aiNode.id, {
+          status: 'failed',
+          errorMsg: '未配置生图模型：请在属性面板选择图片模型后点「AI 生图」运行'
+        })
+      }
       message.warning('已建 AI 修改节点，选择图片模型后点「AI 生图」运行')
     }
   } catch (e: unknown) {
@@ -1465,12 +1517,14 @@ async function pollImageTask(nodeId: string, taskId: number): Promise<string | n
       backfillNodeLabel(nodeId, detail.prompt)
       message.success('图片生成完成')
   } else {
+      // 2x 修复：透传后端真因（原写死「图片生成失败」，refImageMax 拒双参考图等真因被吞）
+      const failMsg = detail.errorMsg || '图片生成失败'
       boardRef.value?.updateNodeData(nodeId, {
         status: 'failed',
         mediaStatus: detail.status,
-        errorMsg: '图片生成失败'
+        errorMsg: failMsg
       })
-      message.error('图片生成失败')
+      message.error(failMsg)
   }
   scheduleSave()
   return detail.status

@@ -369,11 +369,22 @@ export interface MediaEstimateQuery {
   projectGroupId?: number
 }
 
-/** 7x（V155）：预估预览结果（积分口径；estimatedPoints=0 表无价表未配，affordable 恒 true 不拦）。 */
+/** C1（17x-2）：组内预估个人口径——balance 是组池（全组共享），成员另有自己的限额卡。 */
+export interface MediaEstimatePersonalScope {
+  quota: number | null
+  used: number
+  inProjectAvailable: number | null
+  affordableMember: boolean
+  /** 卡点归因：MEMBER=个人限额卡 / POOL=组池卡 / NONE=都够（非成员无本结构） */
+  bindingConstraint: 'MEMBER' | 'POOL' | 'NONE'
+}
+
+/** 7x（V155）+C1：预估预览结果（积分口径；fail-closed：估价失败 estimatedPoints=0 且 affordable=false，提交侧同拒）。 */
 export interface MediaEstimateVO {
   estimatedPoints: number
   balance: number
   affordable: boolean
+  personalScope?: MediaEstimatePersonalScope | null
 }
 
 // === API 函数 ===
