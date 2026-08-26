@@ -137,9 +137,11 @@ public class PricingService {
     /**
      * 7x-2（V152）：视频提交期估价（¥ 口径，caller 折积分）。
      * SECOND 模式 = 命中行 pricePerSecond × 时长（分辨率精确/通用兜底同真实扣费链）；
-     * TOKEN 模式提交期无 token 维度 = 命中行 estYuanPerSecond × 时长（未配 → 0，caller 记 WARN
-     * 按「不可估」放行，与计划5 坑表「预检容忍 0」口径一致）。
-     * 无价表行抛 {@link ErrorCode#PRICING_NOT_FOUND}（caller catch 记 0+WARN）。
+     * TOKEN 模式提交期无 token 维度 = 命中行 estYuanPerSecond × 时长。
+     * 无价表行 / SECOND 秒价未配 / TOKEN 预估秒价未配 → 抛 {@link ErrorCode#PRICING_NOT_FOUND}
+     * （2026-08-25 fail-closed：估不出价不许静默记 0——估价 0 会跳过预检与预扣放白嫖，
+     *  提交侧必须拒单，caller 不得吞；预估预览除外，catch 记 0）。
+     * 显式配 0 价（免费模型）返 0，由提交侧硬闸统一拒（免费请配极小正值）。
      */
     public BigDecimal estimateVideoYuan(Long providerId, String model,
                                         Integer seconds, String resolution, boolean hasReference) {
@@ -155,7 +157,8 @@ public class PricingService {
         }
         if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(rule.getVideoBillingMode())) {
             if (rule.getPricePerSecond() == null) {
-                return BigDecimal.ZERO;
+                throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
+                        "VIDEO SECOND 模式未配置 price_per_second: model=" + model);
             }
             return rule.getPricePerSecond().multiply(BigDecimal.valueOf(seconds))
                     .setScale(6, RoundingMode.HALF_UP);
@@ -164,7 +167,9 @@ public class PricingService {
         BigDecimal est = resolveEstPerSecond(rule.getEstPerResolution(),
                 normalizeResolution(resolution));
         if (est == null) {
-            return BigDecimal.ZERO;
+            throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
+                    "VIDEO TOKEN 模式未配置 est_per_resolution 预估秒价: model=" + model
+                            + " hasReference=" + hasReference + " resolution=" + resolution);
         }
         return est.multiply(BigDecimal.valueOf(seconds)).setScale(6, RoundingMode.HALF_UP);
     }

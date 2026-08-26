@@ -274,15 +274,30 @@ class PricingServiceTest {
     }
 
     @Test
-    void estimateVideoYuan_tokenWithoutEst_returnsZero() {
-        // TOKEN 未配预估秒价 → 0（caller 记 WARN 按「不可估」放行，口径同计划5 坑表）
+    void estimateVideoYuan_tokenWithoutEst_throwsPricingNotFound() {
+        // 2026-08-25 fail-closed：TOKEN 未配预估秒价 → 抛 PRICING_NOT_FOUND（不再静默记 0，
+        // 估价 0 会跳过提交预检与预扣，余额不足用户可白嫖真实生成）
         PricingRuleEntity row = rule("VIDEO");
         row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
         when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
                 .thenReturn(row);
 
-        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
-                .isEqualByComparingTo("0");
+        assertThatThrownBy(() -> pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("est_per_resolution");
+    }
+
+    @Test
+    void estimateVideoYuan_secondWithoutPrice_throwsPricingNotFound() {
+        // 2026-08-25 fail-closed：SECOND 未配秒价 → 抛 PRICING_NOT_FOUND（同上口径）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        assertThatThrownBy(() -> pricingService.estimateVideoYuan(7L, "seedance", 5, null, false))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("price_per_second");
     }
 
     @Test
