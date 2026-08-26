@@ -34,6 +34,7 @@ import java.util.Arrays;
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final ChatWebSocketHandler chatWebSocketHandler;
+    private final com.superprogrammer.chat.websocket.EventsWebSocketHandler eventsWebSocketHandler;
     private final WebSocketAuthInterceptor webSocketAuthInterceptor;
 
     /** 逗号分隔的精确 Origin 白名单；空 = dev 宽松模式（与 CORS 同源配置，一处配置两处生效）。 */
@@ -43,6 +44,10 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(chatWebSocketHandler, "/ws/chat")
+                .addInterceptors(webSocketAuthInterceptor)
+                .setAllowedOrigins(resolveAllowedOrigins(allowedOrigins));
+        // 7x-3（计划 E2）：积分实时推送通道——同款鉴权拦截器 + Origin 白名单，独立 Handler 不共享 session
+        registry.addHandler(eventsWebSocketHandler, "/ws/events")
                 .addInterceptors(webSocketAuthInterceptor)
                 .setAllowedOrigins(resolveAllowedOrigins(allowedOrigins));
     }
