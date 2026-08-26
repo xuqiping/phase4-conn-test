@@ -144,8 +144,10 @@ request.interceptors.response.use(
     if (res.code !== 200 && res.code !== 201 && res.code !== 202) {
       showErrorMessage(res.message || '请求失败')
       // 12x B2：错误对象挂业务码（如 40107 滑块门槛），UI 可据此分支处理
-      const err = new Error(res.message || '请求失败') as Error & { code?: number }
+      // 12x-1 C3：挂业务 data（如 429 附 retryAfterSeconds），组件可据此恢复倒计时
+      const err = new Error(res.message || '请求失败') as Error & { code?: number; data?: unknown }
       err.code = res.code
+      err.data = res.data
       return Promise.reject(err)
     }
 
@@ -208,10 +210,14 @@ request.interceptors.response.use(
     // 用业务 message + code 组装错误对象抛出，UI 才能凭 code 分支弹滑块；
     // 保留 response 引用（batchRunner 等靠 err.response.status 判 429）。
     const bizCode = (error.response?.data as Partial<ApiResponse> | undefined)?.code
-    const coded = new Error(serverMsg || errMsg) as Error & { code?: number; response?: unknown }
+    const coded = new Error(serverMsg || errMsg) as Error & {
+      code?: number; response?: unknown; data?: unknown
+    }
     if (typeof bizCode === 'number') {
       coded.code = bizCode
     }
+    // 12x-1 C3：业务 data 载荷透传（429 附 retryAfterSeconds，组件恢复倒计时用）
+    coded.data = (error.response?.data as Partial<ApiResponse> | undefined)?.data
     coded.response = error.response
     return Promise.reject(coded)
   }

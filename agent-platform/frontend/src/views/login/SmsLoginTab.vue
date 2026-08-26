@@ -62,12 +62,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui'
 import { NForm, NFormItem, NInput, NButton, NIcon, useMessage } from 'naive-ui'
 import { CallOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
+import { saveCooldown, restoreCooldown } from '@/utils/cooldown'
 import SliderCaptcha from './SliderCaptcha.vue'
 
 const emit = defineEmits<{
@@ -112,10 +113,15 @@ function onCaptchaFail(_reason: string) {
   captchaToken.value = ''
 }
 
-// 发码按钮倒计时（60s）
+// 发码按钮倒计时（60s）；12x-1 C3：持久化到 localStorage，刷新后按剩余秒续上
 const sendingCode = ref(false)
 const countdown = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
+
+/** 倒计时 key 带手机号——多号同机互不串扰；换号=换 key。 */
+function cooldownKey(): string {
+  return 'sms:cd:' + form.phone.trim()
+}
 
 const sendBtnText = computed(() => {
   if (sendingCode.value) return '发送中…'
@@ -128,16 +134,46 @@ const canSendCode = computed(
   () => captchaPassed.value && countdown.value === 0 && !sendingCode.value
 )
 
-function startCountdown() {
-  countdown.value = 60
+function startCountdown(seconds: number, persist = true) {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+  countdown.value = seconds
+  if (persist) {
+    saveCooldown(cooldownKey(), seconds)
+  }
   timer = setInterval(() => {
     countdown.value--
     if (countdown.value <= 0 && timer) {
       clearInterval(timer)
       timer = null
+      try { localStorage.removeItem(cooldownKey()) } catch { /* 存储不可用则忽略 */ }
     }
   }, 1000)
 }
+
+/** 12x-1 C3：从 localStorage 恢复（挂载时/换手机号时调用）。 */
+function restoreCountdown() {
+  const remain = restoreCooldown(cooldownKey())
+  if (remain > 0) {
+    startCountdown(remain, false)
+  } else if (timer) {
+    clearInterval(timer)
+    timer = null
+    countdown.value = 0
+  }
+}
+
+onMounted(() => {
+  restoreCountdown()
+})
+
+// 联动：手机号改值 → 按新号查剩余倒计时（旧号倒计时不压新号）
+watch(
+  () => form.phone,
+  () => restoreCountdown()
+)
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
@@ -156,16 +192,28 @@ async function handleSendCode() {
   sendingCode.value = true
   try {
     const res = await authApi.sendSmsCode(form.phone, captchaToken.value)
-    message.success(res.data.data || '验证码已发送')
-    startCountdown()
+    // 12x-1 C3：兼容两态——后端 C4 前同号 5min 未消费码仍返 200+文案，
+    // 文案含「发送过于频繁」时按限流处理（解析剩余秒恢复倒计时），不再当成功弹绿。
+    const text = res.data.data || '验证码已发送'
+    if (typeof text === 'string' && text.includes('发送过于频繁')) {
+      const m = text.match(/(\d+)\s*秒/)
+      startCountdown(m ? Number(m[1]) : 60)
+      message.warning(text)
+    } else {
+      message.success(text)
+      startCountdown(60)
+    }
     // 滑块 token 单次有效，发码后重置滑块状态（下次需重新滑）
     captchaPassed.value = false
     captchaToken.value = ''
     captchaRef.value?.fetchCaptcha()
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : '发送失败，请稍后重试'
-    message.error(msg)
-    // 滑块校验失败或限流 → 重置滑块让用户重来
+    // 12x-1 C3：429 → 按后端真实剩余秒恢复倒计时；其余错误拦截器已统一 toast，这里只重置滑块
+    const coded = error as { code?: number; data?: { retryAfterSeconds?: number } }
+    if (coded.code === 429) {
+      const retry = typeof coded.data?.retryAfterSeconds === 'number' ? coded.data.retryAfterSeconds : 60
+      startCountdown(retry)
+    }
     captchaPassed.value = false
     captchaToken.value = ''
     captchaRef.value?.fetchCaptcha()

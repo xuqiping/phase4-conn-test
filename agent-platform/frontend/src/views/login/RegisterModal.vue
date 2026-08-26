@@ -166,6 +166,7 @@ import { NModal, NForm, NFormItem, NInput, NButton, NIcon, NCheckbox, NAlert, us
 import { PersonOutline, MailOutline, LockClosedOutline, IdCardOutline, BookmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
+import { saveCooldown, restoreCooldown } from '@/utils/cooldown'
 import SliderCaptcha from './SliderCaptcha.vue'
 
 const props = withDefaults(defineProps<{
@@ -199,9 +200,15 @@ const form = reactive({
 })
 
 // 12x B1：发码按钮 60s 倒计时（与后端 regcode:resend 60s 窗口一致）
+// 12x-1 C3：倒计时持久化到 localStorage——刷新/重开弹窗按截止时间戳续上，而不是重新可点
 const codeSending = ref(false)
 const codeCountdown = ref(0)
 let codeTimer: ReturnType<typeof setInterval> | null = null
+
+/** 倒计时 key 带邮箱（小写）——多账号同机互不串扰；换邮箱=换 key。 */
+function cooldownKey(): string {
+  return 'mailcode:cd:' + form.email.trim().toLowerCase()
+}
 
 // 12x B2：渐进式滑块——后端返 40107 才展示；token 单次有效，每次提交后刷新
 const needCaptcha = ref(false)
@@ -221,15 +228,40 @@ function consumeCaptcha() {
   captchaRef.value?.fetchCaptcha()
 }
 
-function startCodeCountdown() {
-  codeCountdown.value = 60
+/**
+ * 启动/续上倒计时。persist=true 时写截止时间戳（发码成功/429 被拒都持久化，
+ * 刷新页面按剩余秒续上）；恢复场景（restoreCooldown 已算出剩余）不重复写。
+ */
+function startCodeCountdown(seconds: number, persist = true) {
+  if (codeTimer) {
+    clearInterval(codeTimer)
+    codeTimer = null
+  }
+  codeCountdown.value = seconds
+  if (persist) {
+    saveCooldown(cooldownKey(), seconds)
+  }
   codeTimer = setInterval(() => {
     codeCountdown.value -= 1
     if (codeCountdown.value <= 0 && codeTimer) {
       clearInterval(codeTimer)
       codeTimer = null
+      // 归零清 key（联动清单：倒计时归零即清，不留本地痕迹）
+      try { localStorage.removeItem(cooldownKey()) } catch { /* 存储不可用则忽略 */ }
     }
   }, 1000)
+}
+
+/** 12x-1 C3：从 localStorage 恢复倒计时（弹窗打开时/邮箱改动时调用）。 */
+function restoreCodeCountdown() {
+  const remain = restoreCooldown(cooldownKey())
+  if (remain > 0) {
+    startCodeCountdown(remain, false)
+  } else if (codeTimer) {
+    clearInterval(codeTimer)
+    codeTimer = null
+    codeCountdown.value = 0
+  }
 }
 
 onBeforeUnmount(() => {
@@ -252,14 +284,19 @@ async function handleSendCode() {
     message.success('验证码已发送，10 分钟内有效')
     needCaptcha.value = false
     captchaToken.value = ''
-    startCodeCountdown()
+    startCodeCountdown(60)
   } catch (error: unknown) {
-    if ((error as { code?: number }).code === 40107) {
+    const coded = error as { code?: number; data?: { retryAfterSeconds?: number } }
+    if (coded.code === 40107) {
       needCaptcha.value = true
     }
+    // 12x-1 C3：429 间隔拒 → 按后端真实剩余秒恢复倒计时（防再点再吃 429）
+    if (coded.code === 429) {
+      const retry = typeof coded.data?.retryAfterSeconds === 'number' ? coded.data.retryAfterSeconds : 60
+      startCodeCountdown(retry)
+    }
     consumeCaptcha()
-    const msg = error instanceof Error ? error.message : '发送失败'
-    message.error(msg)
+    // 12x-1 C3：不再组件层重复弹错（拦截器已统一 toast；此处只恢复状态）
   } finally {
     codeSending.value = false
   }
@@ -324,7 +361,7 @@ const rules = computed<FormRules>(() => ({
   ]
 }))
 
-// 弹窗关闭时重置表单
+// 弹窗关闭时重置表单；重开时按 localStorage 截止时间恢复倒计时（12x-1 C3）
 watch(
   () => props.show,
   (v) => {
@@ -344,6 +381,18 @@ watch(
       codeCountdown.value = 0
       needCaptcha.value = false
       captchaToken.value = ''
+    } else {
+      restoreCodeCountdown()
+    }
+  }
+)
+
+// 12x-1 C3 联动：邮箱输入改值 → 倒计时 key 换，按新邮箱查剩余（旧邮箱倒计时不压新邮箱）
+watch(
+  () => form.email,
+  () => {
+    if (props.show) {
+      restoreCodeCountdown()
     }
   }
 )
