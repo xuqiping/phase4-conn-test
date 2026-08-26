@@ -6,6 +6,7 @@ import com.superprogrammer.chat.service.internal.MemoryProjectRuleService;
 import com.superprogrammer.chat.service.internal.MemoryRosterService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +49,7 @@ public class MemoryProjectRuleController {
 
     /** 保存收录规则（仅 owner/admin；upsert；anchor 同步重算，embed 失败→enabled 强制 false）。 */
     @PutMapping("/rule")
+    @AuditLog(module = "memory", action = "project_rule_set", targetType = "memory_rule")
     public ResponseEntity<R<MemoryProjectRuleVO>> putRule(@PathVariable Long projectId,
                                                           @RequestBody MemoryProjectRuleRequest req) {
         Long operatorId = requireOwnerOrAdmin(projectId);

@@ -5,6 +5,7 @@ import com.superprogrammer.chat.service.internal.MemoryEntryReviewService;
 import com.superprogrammer.chat.service.internal.MemoryRosterService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,6 +57,7 @@ public class MemoryEntryController {
 
     /** 审核：approve → ACTIVE；reject → 软删 + 负例反哺（owner/admin，service 内建校验）。 */
     @PostMapping("/entries/{entryId}/review")
+    @AuditLog(module = "memory", action = "entry_review", targetType = "memory_entry")
     public ResponseEntity<R<Void>> review(@PathVariable Long entryId,
                                           @RequestBody Map<String, String> body) {
         Long operatorId = requireLogin();
@@ -66,6 +68,7 @@ public class MemoryEntryController {
 
     /** 作者撤回自己产生的条目（软删）。 */
     @DeleteMapping("/entries/{entryId}")
+    @AuditLog(module = "memory", action = "entry_delete", targetType = "memory_entry")
     public ResponseEntity<R<Void>> withdraw(@PathVariable Long entryId) {
         Long uid = requireLogin();
         reviewService.withdraw(entryId, uid);

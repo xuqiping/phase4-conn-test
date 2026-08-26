@@ -104,7 +104,7 @@ created-date: 2026-08-26
   - **依赖**：B2
   - **验证**：人工抽查画布新建/资产删除/文件下载 → 日志在
 
-- [ ] **B6：P3 注解补齐（记忆模块写）**
+- [x] **B6：P3 注解补齐（记忆模块写）**（5 Controller 11 注解：标签/条目/生成配置/整合/项目规则）
   - **目标**：记忆标签/条目/配置/整合/项目规则写操作进审计
   - **动作**：MemoryTag（tag_create/update/reclassify）、MemoryEntry（entry_review/entry_delete）、MemoryGenConfig（gen_config_set）、MemoryConsolidation（consolidation_trigger/auto/resolve）、MemoryProjectRule 各写端点加注解
   - **文件**：上列 5 个 Controller

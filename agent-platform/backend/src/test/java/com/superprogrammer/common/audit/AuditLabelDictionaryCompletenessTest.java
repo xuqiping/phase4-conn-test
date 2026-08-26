@@ -90,7 +90,12 @@ class AuditLabelDictionaryCompletenessTest {
                     "user_grant_create", "user_grant_apply", "user_grant_approve",
                     "user_grant_reject", "user_grant_revoke", "pool_toggle",
                     "link_request", "link_approve", "link_reject", "link_revoke",
-                    "link_approve_revoke", "link_reject_revoke", "link_withdraw_revoke"}),
+                    "link_approve_revoke", "link_reject_revoke", "link_withdraw_revoke",
+                    // B6（8x-3 P3）
+                    "tag_create", "tag_update", "tag_reclassify",
+                    "entry_review", "entry_delete", "gen_config_set",
+                    "consolidation_trigger", "consolidation_auto_set", "conflict_resolve",
+                    "project_rule_set"}),
             Map.entry("media", new String[]{
                     "video_submit", "image_submit", "edit_submit",
                     "video_gen_success", "video_gen_fail",
@@ -160,8 +165,8 @@ class AuditLabelDictionaryCompletenessTest {
                 total++;
             }
         }
-        // 防呆：清单意外清空（B5 后 20 模块 / 253 码；B6 只增不减）
-        assertTrue(total >= 253, "KNOWN_CODES 总数异常: " + total);
+        // 防呆：清单意外清空（B6 后 20 模块 / 263 码）
+        assertTrue(total >= 263, "KNOWN_CODES 总数异常: " + total);
         assertTrue(KNOWN_CODES.size() >= 20, "模块数异常: " + KNOWN_CODES.size());
     }
 

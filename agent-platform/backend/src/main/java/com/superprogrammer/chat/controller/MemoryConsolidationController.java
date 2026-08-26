@@ -14,6 +14,7 @@ import com.superprogrammer.chat.service.internal.MemoryConsolidationService.Summ
 import com.superprogrammer.chat.service.internal.MemoryConflictResolutionService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +72,7 @@ public class MemoryConsolidationController {
 
     /** 手动总结触发（多 scope，每 scope backfill raw + 压缩，独立于开关；CAS 锁与定时 worker 互斥）。 */
     @PostMapping("/consolidation/trigger")
+    @AuditLog(module = "memory", action = "consolidation_trigger", targetType = "memory_consolidation")
     public ResponseEntity<R<SummarizeResult>> trigger(@Valid @RequestBody MemoryConsolidationTriggerRequest req) {
         Long uid = requireLogin();
         SummarizeResult r = consolidationService.triggerManual(uid, req);
@@ -97,6 +99,7 @@ public class MemoryConsolidationController {
 
     /** 改自动总结勾选（upsert：PERSONAL 行已存在；PROJECT 新增/翻转 auto_enabled）。 */
     @PutMapping("/consolidation/auto")
+    @AuditLog(module = "memory", action = "consolidation_auto_set", targetType = "memory_consolidation")
     public ResponseEntity<R<Void>> saveAutoScopes(@RequestBody ScopeAutoSaveRequest req) {
         Long uid = requireLogin();
         OffsetDateTime now = OffsetDateTime.now();
@@ -143,6 +146,7 @@ public class MemoryConsolidationController {
 
     /** 四选项裁决（KEEP_BOTH/KEEP_NEW/KEEP_OLD/DISCARD，含 §3.8 级联）。 */
     @PostMapping("/conflicts/{id}/resolve")
+    @AuditLog(module = "memory", action = "conflict_resolve", targetType = "memory_consolidation")
     public ResponseEntity<R<Boolean>> resolve(@PathVariable Long id,
                                               @Valid @RequestBody MemorySummaryConflictResolveRequest req) {
         Long uid = requireLogin();

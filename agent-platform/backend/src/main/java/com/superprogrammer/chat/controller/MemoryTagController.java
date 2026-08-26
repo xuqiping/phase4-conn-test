@@ -11,6 +11,7 @@ import com.superprogrammer.chat.service.internal.MemoryTagAnchorService;
 import com.superprogrammer.chat.service.internal.MemoryTagReclassifyService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -74,6 +75,7 @@ public class MemoryTagController {
      * 同时清掉既有 needs_review（用户主动建此 topic 即认可）——与写时路径①同义，铁律不破。
      */
     @PostMapping
+    @AuditLog(module = "memory", action = "tag_create", targetType = "memory_tag")
     public ResponseEntity<R<MemoryTagVO>> create(@Valid @RequestBody MemoryTagCreateRequest req) {
         Long uid = getCurrentUserId();
         String subject = (req.getSubject() == null || req.getSubject().isBlank()) ? "我" : req.getSubject().trim();
@@ -140,6 +142,7 @@ public class MemoryTagController {
      * 两字段皆可选，但至少一项非空。无 merge/split/re-extract 语义。
      */
     @PutMapping("/{id}")
+    @AuditLog(module = "memory", action = "tag_update", targetType = "memory_tag")
     public ResponseEntity<R<MemoryTagVO>> edit(@PathVariable Long id,
                                                @Valid @RequestBody MemoryTagEditRequest req) {
         Long uid = getCurrentUserId();
@@ -202,6 +205,7 @@ public class MemoryTagController {
      * 归类后总结需用户到总结页签手动点「重新总结」（force 重压链已有，不在本端点耦合）。
      */
     @PostMapping("/{id}/reclassify")
+    @AuditLog(module = "memory", action = "tag_reclassify", targetType = "memory_tag")
     @com.superprogrammer.common.ratelimit.RateLimit(action = "memory_reclassify", max = 3, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<com.superprogrammer.chat.service.internal.MemoryTagReclassifyService.ReclassifyReport>>

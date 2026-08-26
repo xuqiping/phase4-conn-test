@@ -4,6 +4,7 @@ import com.superprogrammer.chat.dto.MemoryGenMatrixItemVO;
 import com.superprogrammer.chat.service.internal.MemoryGenConfigService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,7 @@ public class MemoryGenConfigController {
 
     /** 设 owner 项目级开关（仅项目 OWNER）。 */
     @PutMapping("/projects/{projectId}/owner")
+    @AuditLog(module = "memory", action = "gen_config_set", targetType = "memory_config")
     public ResponseEntity<R<Void>> putOwner(@PathVariable Long projectId,
                                             @RequestBody GenToggleRequest req) {
         Long uid = requireLogin();
@@ -57,6 +59,7 @@ public class MemoryGenConfigController {
 
     /** 设本人会员覆写开关（任意项目成员改自己）。 */
     @PutMapping("/projects/{projectId}/member")
+    @AuditLog(module = "memory", action = "gen_config_set", targetType = "memory_config")
     public ResponseEntity<R<Void>> putMember(@PathVariable Long projectId,
                                              @RequestBody GenToggleRequest req) {
         Long uid = requireLogin();
