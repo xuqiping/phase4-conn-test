@@ -200,7 +200,8 @@ public class ProjectGroupWalletService {
                     groupId, consumerUserId, shortfall, refType, refId);
         }
         appendLedgerRow(w.getBalancePoints(), groupId, leaderUserId,
-                ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId, "组池不足·组长兜底");
+                ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId,
+                "组池不足·补差兜底，差额由组长个人承担（计入成员已用）");
         log.warn("BACKSTOP groupId={} leader={} consumer={} shortfall={} ref={}:{} —— 组池余额 {}",
                 groupId, leaderUserId, consumerUserId, shortfall, refType, refId, w.getBalancePoints());
     }

@@ -276,6 +276,8 @@ class ProjectGroupWalletServiceIT {
                 .containsExactly(ProjectGroupLedgerEntity.TYPE_BACKSTOP);
         assertThat(rows.get(0).getDeltaPoints()).isEqualByComparingTo(new BigDecimal("-3"));
         assertThat(rows.get(0).getBalanceAfter()).isEqualByComparingTo(BigDecimal.ZERO);
+        // A2：兜底行 remark 自解释（差额由组长个人承担+计入成员已用）
+        assertThat(rows.get(0).getRemark()).contains("组长个人承担").contains("计入成员已用");
         // 7x-2 不变量②新口径：BACKSTOP 计入成员 used（used=真实消耗，不论资金来源）
         BigDecimal used = jdbc.queryForObject(
                 "SELECT used_points FROM project_group_members WHERE group_id = ? AND user_id = ?",

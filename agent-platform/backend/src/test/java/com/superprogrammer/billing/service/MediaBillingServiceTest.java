@@ -100,7 +100,8 @@ class MediaBillingServiceTest {
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
-                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L));
+                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
@@ -226,9 +227,11 @@ class MediaBillingServiceTest {
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L);
 
         assertNull(charged);
+        // A2：FAILED 行也带 gid（组任务缺口可按组过滤）
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
-                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L));
+                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L),
+                org.mockito.ArgumentMatchers.isNull(), eq(5L));
     }
 
     @Test

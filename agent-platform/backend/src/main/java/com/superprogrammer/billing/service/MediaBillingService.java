@@ -143,8 +143,10 @@ public class MediaBillingService {
             return points;
         } catch (BusinessException e) {
             // 计费自身失败（价表缺/余额在生成期间被耗尽等）：视频已生成不可逆，记 FAILED usage 让 admin 可见缺口，不抛
+            // A2：FAILED 行也落 gid——组任务缺口可按组过滤（此前仅成功行带 gid）
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId);
+                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId,
+                    null, projectGroupId);
             log.warn("媒体计费失败(已记FAILED,不阻塞媒体出口) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());
             return null;
@@ -297,8 +299,10 @@ public class MediaBillingService {
         } catch (BusinessException e) {
             // 补扣失败（个人差额期间余额耗尽）：实耗已发生，记 FAILED usage 平台可见缺口；
             // 预扣额已确认扣过——返回预扣额供 worker 在 markSucceeded 失败时 unwind
+            // A2：FAILED 行也落 gid——组任务缺口可按组过滤
             usageCollector.record(userId, providerId, LlmUsageLogEntity.SCOPE_GLOBAL, model, kind,
-                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId);
+                    tokensInput, null, null, null, LlmUsageLogEntity.STATUS_FAILED, e.toString(), refId,
+                    null, projectGroupId);
             log.warn("媒体结算补扣失败(已记FAILED,预扣在手) userId={} model={} kind={} refId={} : {}",
                     userId, model, kind, refId, e.toString());
             return heldPoints;
