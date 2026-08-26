@@ -3,7 +3,10 @@
 
 pub mod db;
 pub mod migrations;
+pub mod path_policy;
 pub mod repository;
+pub mod risk;
+pub mod scanner;
 pub mod state_machine;
 pub mod types;
 

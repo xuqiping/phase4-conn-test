@@ -29,12 +29,13 @@
 
 ### Chunk 3：路径扫描与风险预检
 
-- [ ] **目标：在执行前产生完整、可解释的问题清单。**
+- [x] **目标：在执行前产生完整、可解释的问题清单。**
   - 动作：规范化路径、解析符号链接、识别格式/大小/指纹/占用/密码/宏/外链；实现免费额度聚合。
   - 涉及文件：`src-tauri/src/office/scanner.rs`、`src-tauri/src/office/path_policy.rs`、`src-tauri/src/office/risk.rs`、`src-tauri/src/office/tests/scanner_tests.rs`。
   - 依赖：Chunk 2。
   - 伪代码：`scan each path streaming -> append input + issues -> aggregate count/bytes/max`。
   - 验证：目录穿越、软链接越界、输入输出重叠、100/101 文件边界准确。
+  - 当前状态：路径策略、风险扫描和免费额度聚合已实现并通过编译检查；按用户要求，目录穿越/符号链接/额度边界自动化测试留到 Phase 4。
 
 ### Chunk 4：Worker 生命周期与协议
 
