@@ -30,6 +30,19 @@
 | 入库 | `asset/service/AssetMediaBridgeService`、`utils/groupOutputImport.ts` |
 | 画布 | `frontend/src/components/canvas/*`（Lightbox/上游面板/MentionTextarea） |
 
+## 对应功能文档（按功能查，2026-08-26 已同步增补）
+
+| Chunk | feature-map | 用户操作手册 |
+|---|---|---|
+| A/B 欠款/划拨 | [项目组与积分划拨](../../docs/feature-map/项目组与积分划拨.feature-map.md) | [项目组与积分划拨](../../docs/user-ops/项目组与积分划拨用户操作手册.md) |
+| C/D 画布九项 | [无限画布创作页](../../docs/feature-map/无限画布创作页.feature-map.md) | [无限画布创作页](../../docs/user-ops/无限画布创作页用户操作手册.md) |
+| E 解锁/姓名 | [认证系统增强](../../docs/feature-map/认证系统增强.feature-map.md) | [认证系统增强](../../docs/user-ops/认证系统增强用户操作手册.md) |
+| E 批量充值 | [积分计费系统](../../docs/feature-map/积分计费系统.feature-map.md) | [积分计费系统](../../docs/user-ops/积分计费系统用户操作手册.md) |
+| E 审计认人 | [日志系统](../../docs/feature-map/日志系统.feature-map.md) | [日志系统](../../docs/user-ops/日志系统用户操作手册.md) |
+| F 入库判重 | [项目资产库](../../docs/feature-map/项目资产库.feature-map.md) | [项目资产库](../../docs/user-ops/项目资产库用户操作手册.md) |
+
+> 本批次不设独立 user-ops/feature-map（批次名看不出对应功能）；内容已并入上表六套功能文档的「2026-08-26 增补（修复III）」节。
+
 ## 测试与验证
 
 后端 mvn test **2553 全绿**（含真 PG IT 34：瀑布/欠款/还款/退组/解锁）；前端 vitest **822 全绿**+vue-tsc 0。人工测试方案（L1-L10 联动+T1-T5）见 [测试方案](../../docs/测试方案/人工测试遗留问题修复III测试方案.md)。
