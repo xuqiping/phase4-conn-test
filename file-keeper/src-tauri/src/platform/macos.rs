@@ -3,6 +3,8 @@ use std::path::Path;
 use std::process::Command;
 use sysinfo::System;
 
+pub mod office_credentials;
+
 pub struct MacOSProcessMatcher;
 
 impl ProcessMatcher for MacOSProcessMatcher {

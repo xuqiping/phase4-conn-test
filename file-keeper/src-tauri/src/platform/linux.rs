@@ -3,6 +3,8 @@ use std::fs;
 use std::path::Path;
 use sysinfo::System;
 
+pub mod office_credentials;
+
 pub struct LinuxProcessMatcher;
 
 impl ProcessMatcher for LinuxProcessMatcher {
