@@ -98,4 +98,40 @@ class EventsWebSocketHandlerTest {
         verify(s).close(CloseStatus.POLICY_VIOLATION);
         assertThat(handler.stats()).containsEntry("connections", 0L);
     }
+
+    /**
+     * 计划 E7 轻量压测（单测级）：5 用户 × 每人 10 连接 = 50 并发连接，
+     * 每连接 100 次事件推送——无异常抛出、无连接泄漏、计数守恒。
+     */
+    @Test
+    void stress_50Connections_100EventsPerUser_noLeakNoCrash() throws Exception {
+        java.util.List<WebSocketSession> all = new java.util.ArrayList<>();
+        for (long uid = 1; uid <= 5; uid++) {
+            for (int i = 0; i < 10; i++) {
+                WebSocketSession s = mockSession(uid);
+                all.add(s);
+                handler.afterConnectionEstablished(s);
+            }
+        }
+        assertThat(handler.stats()).containsEntry("onlineUsers", 5L).containsEntry("connections", 50L);
+
+        for (int round = 0; round < 100; round++) {
+            for (long uid = 1; uid <= 5; uid++) {
+                handler.push(uid, "{\"round\":" + round + "}");
+            }
+        }
+
+        // 每连接应收满 100 帧（mock sendMessage 无异常 → 无剔除）
+        for (WebSocketSession s : all) {
+            verify(s, org.mockito.Mockito.times(100)).sendMessage(any(TextMessage.class));
+        }
+        assertThat(handler.stats())
+                .containsEntry("connections", 50L)
+                .containsEntry("dropped", 0L)
+                .containsEntry("pushed", 5000L); // 5 用户 × 100 轮 × 每用户 10 连接
+
+        // 全部关闭后索引清零
+        all.forEach(s -> handler.afterConnectionClosed(s, CloseStatus.NORMAL));
+        assertThat(handler.stats()).containsEntry("onlineUsers", 0L).containsEntry("connections", 0L);
+    }
 }
