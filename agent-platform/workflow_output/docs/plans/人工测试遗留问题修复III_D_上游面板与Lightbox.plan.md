@@ -2,6 +2,8 @@
 
 > 规格 §9.8/§9.6（Lightbox 共用）。⚠️ MentionTextarea.vue / mentionLogic.ts 有用户 WIP。
 
+**✅ 已完成**（2026-08-26，commit 0770434c，14 文件 +1063；vitest 795 全绿 + vue-tsc 0 error，见 [开发进度3](../../开发进度/人工测试遗留问题修复III/开发进度3.md)）。**偏离记录**：① D4 镜像 div 废弃——A1 已重写为 contenteditable，原生 `Range.getClientRects()` 直接取光标矩形；② D2 CanvasBoard.vue 零改动——上游数据由 CanvasView computed 供（getNodes/getEdges 响应式追踪，先例 selectedAncestors），规避用户 WIP 冲突；③ D3 画布层冒泡改 PropertyPanel 内 `primaryInputRef` 直连 appendMention。**依赖吸收**：2x 六轮 #1 insertSuffix 三文件（types/canvas.ts/mentionLogic.ts+test，20 行内聚特性；不吸收则 HEAD 编译破坏；先例 5d77a931）。
+
 ## D1. Lightbox.vue 统一预览组件（新建）
 
 - 文件：`frontend/src/components/canvas/Lightbox.vue`（新）
