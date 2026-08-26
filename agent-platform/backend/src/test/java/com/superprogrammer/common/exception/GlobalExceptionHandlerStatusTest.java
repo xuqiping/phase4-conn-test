@@ -21,8 +21,23 @@ class GlobalExceptionHandlerStatusTest {
     private HttpStatus statusOf(ErrorCode code) {
         // request 传 null：FORBIDDEN 会触发 publishAuthzDenied(null)，但空 ObjectProvider
         // getIfAvailable()=null → 安全跳过，不阻码映射断言。
-        ResponseEntity<R<Void>> resp = handler.handleBusinessException(new BusinessException(code), null);
+        ResponseEntity<R<java.util.Map<String, Object>>> resp =
+                handler.handleBusinessException(new BusinessException(code), null);
         return (HttpStatus) resp.getStatusCode();
+    }
+
+    // 12x-1 C1：异常载荷透传——withData 非 null 并入 R.data；无载荷维持现状（data=null）
+    @Test
+    void businessExceptionDataPassedThrough() {
+        ResponseEntity<R<java.util.Map<String, Object>>> withData = handler.handleBusinessException(
+                new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请 35 秒后再试")
+                        .withData(java.util.Map.of("retryAfterSeconds", 35L)), null);
+        assertThat(withData.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(withData.getBody().getData()).containsEntry("retryAfterSeconds", 35L);
+
+        ResponseEntity<R<java.util.Map<String, Object>>> noData = handler.handleBusinessException(
+                new BusinessException(ErrorCode.BAD_REQUEST, "普通业务异常"), null);
+        assertThat(noData.getBody().getData()).isNull();
     }
 
     @Test

@@ -253,6 +253,33 @@ class EmailServiceTest {
                 argThat((java.util.Map<String, Object> m) -> "a@b.com".equals(m.get("email")) && m.containsKey("reason")), eq("FAIL"));
     }
 
+    // 12x-1 C1：429 带真实剩余秒（TTL 直读）
+    @Test
+    void sendRegisterCode_rateLimited_carriesRealRetryAfter() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
+        when(redisTemplate.getExpire("regcode:resend:a@b.com", java.util.concurrent.TimeUnit.SECONDS)).thenReturn(35L);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("35"), "话术含真实剩余秒: " + ex.getMessage());
+        assertEquals(35L, ex.getData().get("retryAfterSeconds"));
+    }
+
+    // 12x-1 C1：TTL 读异常 → 回退常量 60（保守值，不抛错）
+    @Test
+    void sendRegisterCode_rateLimited_ttlError_fallsBack60() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
+        when(redisTemplate.getExpire(eq("regcode:resend:a@b.com"), any()))
+                .thenThrow(new RuntimeException("redis down"));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("60"));
+        assertEquals(60L, ex.getData().get("retryAfterSeconds"));
+    }
+
     @Test
     void sendRegisterCode_success_storesCodeAndSends() {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);

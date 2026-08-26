@@ -42,7 +42,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<R<Void>> handleBusinessException(BusinessException e, HttpServletRequest request) {
+    public ResponseEntity<R<Map<String, Object>>> handleBusinessException(BusinessException e, HttpServletRequest request) {
         log.warn("业务异常: code={}, message={}", e.getCode(), e.getMessage());
         HttpStatus status = resolveHttpStatus(e.getCode());
         // 11x 加固 P4 修复：@RequirePermission 权限不足抛 BusinessException(FORBIDDEN)（非 Spring
@@ -51,7 +51,10 @@ public class GlobalExceptionHandler {
         if (status == HttpStatus.FORBIDDEN) {
             publishAuthzDenied(request);
         }
-        return ResponseEntity.status(status).body(R.fail(e.getCode(), e.getMessage()));
+        // 12x-1 C1：异常携带结构化载荷（429 retryAfterSeconds 等）时并入 R.data；null 维持现状（data 字段缺省）。
+        return ResponseEntity.status(status)
+                .body(e.getData() == null ? R.fail(e.getCode(), e.getMessage())
+                        : R.fail(e.getCode(), e.getMessage(), e.getData()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

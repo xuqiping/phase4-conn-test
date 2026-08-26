@@ -316,7 +316,18 @@ public class EmailService {
                 redisTemplate.expire(resendKey, RESEND_WINDOW_SECONDS, TimeUnit.SECONDS);
             }
             if (n != null && n > 1) {
-                throw new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请 60 秒后再试");
+                // 12x-1 C1：429 带真实剩余秒（TTL 读失败/永生/-2 → 回退常量 60，保守不抛错）
+                long remaining = RESEND_WINDOW_SECONDS;
+                try {
+                    Long ttl = redisTemplate.getExpire(resendKey, TimeUnit.SECONDS);
+                    if (ttl != null && ttl > 0) {
+                        remaining = ttl;
+                    }
+                } catch (Exception ttlEx) {
+                    log.warn("读发码间隔 TTL 失败(回退60s) : {}", ttlEx.toString());
+                }
+                throw new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请 " + remaining + " 秒后再试")
+                        .withData(Map.of("retryAfterSeconds", remaining));
             }
         } catch (BusinessException e) {
             throw e;

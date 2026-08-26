@@ -35,6 +35,11 @@ public class R<T> {
         return new R<>(code, message, null);
     }
 
+    /** 12x-1 C1：带 data 载荷的失败响应（如 429 附 retryAfterSeconds），data 可 null（等价两参版）。 */
+    public static <T> R<T> fail(int code, String message, T data) {
+        return new R<>(code, message, data);
+    }
+
     public static <T> R<T> fail(ErrorCode errorCode, String message) {
         return new R<>(errorCode.getCode(), message, null);
     }
