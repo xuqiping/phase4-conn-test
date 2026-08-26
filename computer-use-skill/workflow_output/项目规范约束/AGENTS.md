@@ -72,3 +72,11 @@
 ## 参考文档
 - 项目结构 → [workflow_output/docs/file_structure.md](../docs/file_structure.md)
 - 需求规格 → [workflow_output/docs/specs/PRD.md](../docs/specs/PRD.md)
+
+## 本项目踩坑沉淀（Phase 3 实测，2026-08-26）
+- **PowerShell 工作进程编码**：含中文的 .ps1 必须 **UTF-8 BOM**（用 Node fs 写 '﻿' 前缀；git-bash printf 会写坏 BOM）；Node 经 stdin 传中文给 PS5.1 必须让 PS 用 `StreamReader(OpenStandardInput, UTF8)` 读，否则按 GBK 解码乱码。
+- **koffi FFI**：类型（struct/proto）必须**先于函数声明注册**；回调注册用 `koffi.register(fn, koffi.pointer(proto))`；GUID* 参数传普通 JS 对象。
+- **窗口操作**：截图/激活前先 `IsIconic` + `ShowWindow(SW_RESTORE)`（最小化窗口 GetClientRect=0x0）；Tauri/Electron 多窗口进程 `MainWindowTitle` 可能为空，需 UIA RootElement 顶层标题兜底枚举。
+- **交互测试前置**：**锁屏状态下 SendInput 不可达任何应用**（前台=锁屏界面）——真机 GUI 测试必须在解锁状态跑；发现输入无效先查前台窗口名。
+- **npm 镜像限制**：镜像源无 audit 端点（NOT_IMPLEMENTED），check_all 中 audit 为 advisory。
+- **截图像素→屏幕坐标**：屏幕坐标 = 窗口原点(bounds) + 截图坐标 × (窗口物理宽 / 截图像素宽)。
