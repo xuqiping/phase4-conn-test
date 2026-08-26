@@ -51,6 +51,11 @@ export interface MentionCandidate {
    * 选择器按组分节显示）。仅 kind='node' 的组员候选携带；散节点无字段。
    */
   groupId?: string
+  /**
+   * 2x 六轮 #1：选中后在占位符 token 之后追加插入的字面文本（不入 token，重命名不断链）。
+   * 标注图子序号候选用——`@{{node:id}}` + `：序号1（红色）框`，解析时 token→图N，后缀文本原样保留。
+   */
+  insertSuffix?: string
   /** 组显示名（分节标题用）。 */
   groupLabel?: string
   /** 组色（分节标题色条用）。 */

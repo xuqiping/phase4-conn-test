@@ -244,3 +244,61 @@ describe('PropertyPanel 计划6 视频反推 / 本土化转绘', () => {
     expect(wrapper.text()).not.toContain('替换清单')
   })
 })
+
+// D2（2x-8）：上游节点面板（BFS 分层卡片 / 双击插 @引用 / 无上游空态）
+describe('PropertyPanel · D2 上游面板', () => {
+  function mkUp(id: string, type: string, label: string, data: Record<string, unknown> = {}) {
+    // label 归入 data（组件模板读 u.node.data.label）
+    return { id, type, data: { label, ...data } }
+  }
+
+  it('无 upstream → 显「无上游节点」空态', () => {
+    const wrapper = mountPanel(mkNode({ prompt: 'x' }))
+    expect(wrapper.text()).toContain('无上游节点')
+  })
+
+  it('直接上游大卡渲染（类型角标+名称+提示词摘要）；更上游默认折叠', () => {
+    const far = mkUp('u-far', 'text', '更上游文案', { outputText: '很早的产出' })
+    const near = mkUp('u-img', 'image', '主视觉图', { prompt: '一个红色屋顶的小屋，冬夜雪景' })
+    const wrapper = mount(PropertyPanel, {
+      props: {
+        node: mkNode({ prompt: 'p' }),
+        upstream: { items: [{ node: near as unknown as CanvasNode, depth: 1 }, { node: far as unknown as CanvasNode, depth: 2 }], truncated: false }
+      }
+    })
+    const text = wrapper.text()
+    expect(text).toContain('主视觉图')
+    expect(text).toContain('图片')
+    expect(text).toContain('一个红色屋顶的小屋')
+    expect(text).toContain('更上游 1 节点')
+    // 折叠态不显更上游卡片
+    expect(text).not.toContain('更上游文案')
+  })
+
+  it('双击直接上游卡 → @token 追加进本节点 prompt', async () => {
+    const node = mkNode({ prompt: '扩写' })
+    const near = mkUp('u-1', 'text', '上游文本', {})
+    const wrapper = mount(PropertyPanel, {
+      props: { node, upstream: { items: [{ node: near as unknown as CanvasNode, depth: 1 }], truncated: false } }
+    })
+    await wrapper.find('.prop-panel__up-card').trigger('dblclick')
+    expect(node.data.prompt).toBe('扩写 @{{node:u-1}} ')
+  })
+
+  it('truncated → 显截断提示', () => {
+    const wrapper = mount(PropertyPanel, {
+      props: { node: mkNode({ prompt: 'p' }), upstream: { items: [], truncated: true } }
+    })
+    expect(wrapper.text()).toContain('已截断')
+  })
+
+  it('图片上游有 previewUrl → 渲染缩略 img 且可点（zoom-in）', () => {
+    const near = mkUp('u-img', 'image', '图', { previewUrl: 'blob:img' })
+    const wrapper = mount(PropertyPanel, {
+      props: { node: mkNode({ prompt: 'p' }), upstream: { items: [{ node: near as unknown as CanvasNode, depth: 1 }], truncated: false } }
+    })
+    const thumb = wrapper.find('.prop-panel__up-thumb')
+    expect(thumb.find('img').attributes('src')).toBe('blob:img')
+    expect(thumb.classes()).toContain('is-clickable')
+  })
+})

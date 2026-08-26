@@ -206,6 +206,7 @@
           :image-ancestor-options="imageAncestorOptions"
           :references="referenceList"
           :project-group-id="projectGroupId"
+          :upstream="upstreamInfo"
           @run="onRunNode"
           @split-storyboard="onSplitStoryboard"
           @upload="onUploadFile"
@@ -389,6 +390,7 @@ import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
+import { collectUpstream } from '@/components/canvas/upstream'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
 import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runDependencyScheduled } from '@/utils/batchRunner'
 import { parseScene, type DirectorSceneData } from '@/director/sceneModel'
@@ -689,6 +691,16 @@ const selectedAncestors = computed<Set<string>>(() => {
   const id = selectedNode.value?.id
   if (!id || !boardRef.value) return new Set<string>()
   return ancestors(id, boardRef.value.getEdges())
+})
+
+/**
+ * D2（2x-8）：选中节点的上游收集（BFS 分层，供属性面板「上游」区）。
+ * 响应式口径同 selectedAncestors（getNodes/getEdges 内部 ref 在 computed 中被追踪）。
+ */
+const upstreamInfo = computed(() => {
+  const id = selectedNode.value?.id
+  if (!id || !boardRef.value) return null
+  return collectUpstream(id, boardRef.value.getNodes(), boardRef.value.getEdges())
 })
 
 /**

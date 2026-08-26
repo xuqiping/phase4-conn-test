@@ -65,9 +65,11 @@ export function insertMention(
   at: number,
   caret: number,
   kind: string,
-  id: string
+  id: string,
+  /** 2x 六轮 #1：token 后追加的字面文本（标注图子序号 `：序号1（红色）框`），尾随空格在其后。 */
+  insertSuffix = ''
 ): { text: string; pos: number } {
-  const token = `@{{${kind}:${id}}}`
+  const token = `@{{${kind}:${id}}}${insertSuffix}`
   const after = text[caret]
   const suffix = after !== undefined && /\s/.test(after) ? '' : ' '
   const next = text.slice(0, at) + token + suffix + text.slice(caret)

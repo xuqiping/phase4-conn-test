@@ -9,6 +9,66 @@
         <n-input v-model:value="(node.data.label as string)" size="small" placeholder="节点名" @blur="onRenameBlur" />
       </div>
 
+      <!-- D2（2x-8）：上游节点面板（BFS 分层；单击媒体 Lightbox 放大，双击卡片插入 @引用到本节点文本框） -->
+      <div v-if="upDirect.length || upFar.length || upstreamTruncated" class="prop-panel__field">
+        <label>上游（双击卡片插入 @引用）</label>
+        <div
+          v-for="u in upDirect"
+          :key="u.node.id"
+          class="prop-panel__up-card"
+          title="双击把该节点插入提示词 @引用"
+          @dblclick="onUpstreamDblClick(u)"
+        >
+          <button
+            type="button"
+            class="prop-panel__up-thumb"
+            :class="{ 'is-clickable': !!upMediaSrc(u) }"
+            :aria-label="upMediaSrc(u) ? `放大查看 ${String(u.node.data.label)}` : String(u.node.data.label)"
+            @click="onUpstreamMediaClick(u)"
+          >
+            <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
+            <span v-else class="prop-panel__up-ph">{{ kindShort(u.node.type) }}</span>
+          </button>
+          <div class="prop-panel__up-meta">
+            <div class="prop-panel__up-name">
+              <span class="prop-panel__up-kind">{{ kindBadge(u.node.type) }}</span>
+              <span class="prop-panel__up-label">{{ u.node.data.label }}</span>
+            </div>
+            <div class="prop-panel__up-prompt">{{ upPromptSnippet(u.node) || '（无文本）' }}</div>
+          </div>
+        </div>
+        <template v-if="upFar.length">
+          <button type="button" class="prop-panel__up-fold" @click="showFarUpstream = !showFarUpstream">
+            {{ showFarUpstream ? '▾' : '▸' }} 更上游 {{ upFar.length }} 节点
+          </button>
+          <div v-if="showFarUpstream" class="prop-panel__up-farlist">
+            <div
+              v-for="u in upFar"
+              :key="u.node.id"
+              class="prop-panel__up-card prop-panel__up-card--far"
+              title="双击把该节点插入提示词 @引用"
+              @dblclick="onUpstreamDblClick(u)"
+            >
+              <div class="prop-panel__up-thumb">
+                <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
+                <span v-else class="prop-panel__up-ph">{{ kindShort(u.node.type) }}</span>
+              </div>
+              <div class="prop-panel__up-meta">
+                <div class="prop-panel__up-name">
+                  <span class="prop-panel__up-kind">{{ kindBadge(u.node.type) }}·{{ u.depth }}</span>
+                  <span class="prop-panel__up-label">{{ u.node.data.label }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div v-if="upstreamTruncated" class="prop-panel__hint">更上游超 50 节点，已截断</div>
+      </div>
+      <div v-else class="prop-panel__field">
+        <label>上游</label>
+        <div class="prop-panel__hint">无上游节点</div>
+      </div>
+
       <!-- S12 资产库打通：入库 / 从库选择 / 已绑定徽标 + 检查更新（L5/L6，所有节点通用） -->
       <div class="prop-panel__field">
         <label>资产库</label>
@@ -51,6 +111,7 @@
         <div class="prop-panel__field">
           <label>提示词</label>
           <MentionTextarea
+            ref="primaryInputRef"
             :model-value="(node.data.prompt as string) || ''"
             :candidates="candidates"
             :broken-mentions="brokenMentions"
@@ -106,6 +167,7 @@
         <div class="prop-panel__field">
           <label>提示词</label>
           <MentionTextarea
+            ref="primaryInputRef"
             :model-value="(node.data.prompt as string) || ''"
             :candidates="candidates"
             :broken-mentions="brokenMentions"
@@ -298,6 +360,7 @@
         <div class="prop-panel__field">
           <label>提示词</label>
           <MentionTextarea
+            ref="primaryInputRef"
             :model-value="(node.data.prompt as string) || ''"
             :candidates="candidates"
             :broken-mentions="brokenMentions"
@@ -562,6 +625,7 @@
         <div class="prop-panel__field">
           <label>分镜描述</label>
           <MentionTextarea
+            ref="primaryInputRef"
             :model-value="(node.data.description as string) || ''"
             :candidates="candidates"
             :broken-mentions="brokenMentions"
@@ -591,6 +655,7 @@
         <div class="prop-panel__field">
           <label>剧本</label>
           <MentionTextarea
+            ref="primaryInputRef"
             :model-value="(node.data.synopsis as string) || ''"
             :candidates="candidates"
             :broken-mentions="brokenMentions"
@@ -682,6 +747,14 @@
 
     <!-- 2x 四轮 S8：参考缩略点击 → 图片 MediaLightbox 全屏 / 视频播放弹窗（blob objectURL） -->
     <MediaLightbox :src="lightboxSrc" :alt="lightboxAlt" @close="lightboxSrc = null" />
+    <!-- D1（2x-8）：上游媒体放大（图片可缩放拖拽 / 视频播放） -->
+    <Lightbox
+      :open="!!upView"
+      :kind="upView?.kind ?? 'image'"
+      :src="upView?.src"
+      :alt="upView?.alt"
+      @close="upView = null"
+    />
     <n-modal
       v-model:show="playOpen"
       preset="card"
@@ -747,6 +820,8 @@ import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
 import type { ImageModelCapability, ImageModelVO, MediaEstimateVO } from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
+import Lightbox from './Lightbox.vue'
+import type { UpstreamItem } from './upstream'
 import MediaTaskRequestDetails from '../media/MediaTaskRequestDetails.vue'
 import MediaLightbox from '../media/MediaLightbox.vue'
 import ReferencePreview from './ReferencePreview.vue'
@@ -782,13 +857,16 @@ const props = withDefaults(defineProps<{
   references?: CanvasReferenceItem[]
   /** C2（17x-2/2x）：参与项目组 id（组池计费口径；null=个人钱包）。 */
   projectGroupId?: number | null
+  /** D2（2x-8）：上游节点收集结果（CanvasView computed 供给；null=未选节点）。 */
+  upstream?: { items: UpstreamItem[]; truncated: boolean } | null
 }>(), {
   candidates: () => [],
   brokenMentions: () => [],
   allLabels: () => [],
   imageAncestorOptions: () => [],
   references: () => [],
-  projectGroupId: null
+  projectGroupId: null,
+  upstream: null
 })
 
 const emit = defineEmits<{
@@ -835,6 +913,67 @@ const assetBound = computed(() => props.node?.data.assetId != null)
 const assetName = computed(() => (props.node?.data.assetName as string | undefined) ?? '资产')
 const assetVersion = computed(() => (props.node?.data.assetVersion as number | undefined) ?? 1)
 const assetHasUpdate = computed(() => Boolean(props.node?.data.assetHasUpdate))
+
+// ---------- D2（2x-8）：上游节点面板（直接上游大卡 + 更上游折叠小卡） ----------
+
+/** 各节点型的「主文本框」（双击上游卡 @引用插入目标；各分支唯一渲染，同名 ref 安全）。 */
+const primaryInputRef = ref<InstanceType<typeof MentionTextarea> | null>(null)
+
+/** 直接上游（depth=1）/ 更上游（depth>1，默认折叠）。 */
+const upDirect = computed(() => (props.upstream?.items ?? []).filter(u => u.depth === 1))
+const upFar = computed(() => (props.upstream?.items ?? []).filter(u => u.depth > 1))
+const upstreamTruncated = computed(() => props.upstream?.truncated ?? false)
+const showFarUpstream = ref(false)
+// 切节点重置折叠（新节点的更上游不沿用上一节点的展开态）
+watch(() => props.node?.id, () => { showFarUpstream.value = false })
+
+const KIND_BADGE: Record<string, string> = {
+  text: '文本', image: '图片', video: '视频', audio: '音频',
+  script: '脚本', storyboard: '分镜', director: '导演'
+}
+function kindBadge(t: string): string {
+  return KIND_BADGE[t] ?? t
+}
+/** 无缩略图占位（一个字）。 */
+function kindShort(t: string): string {
+  return (KIND_BADGE[t] ?? '节').slice(0, 1)
+}
+
+/** 缩略图：图片→previewUrl，视频→封面 coverPreviewUrl；无媒体返 null。 */
+function upThumbSrc(u: UpstreamItem): string | null {
+  const d = u.node.data
+  if (u.node.type === 'image') return (d.previewUrl as string | undefined) ?? null
+  if (u.node.type === 'video') return (d.coverPreviewUrl as string | undefined) ?? null
+  return null
+}
+
+/** 可放大的媒体源（单击开 Lightbox）：图片→图 URL，视频→video objectURL；无则 null。 */
+function upMediaSrc(u: UpstreamItem): string | null {
+  const d = u.node.data
+  if (u.node.type === 'image') return (d.previewUrl as string | undefined) ?? null
+  if (u.node.type === 'video') return (d.previewUrl as string | undefined) ?? null
+  return null
+}
+
+/** 提示词两行摘要（@token 原样显示——上游节点引用即其产出入口，提示来源比纯文本更可读）。 */
+function upPromptSnippet(n: CanvasNode): string {
+  const d = n.data as Record<string, unknown>
+  const raw = String(d.prompt ?? d.description ?? d.synopsis ?? d.outputText ?? '')
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
+/** 上游媒体单击 → Lightbox 放大（图片缩放 / 视频播放）。 */
+const upView = ref<{ kind: 'image' | 'video'; src: string; alt: string } | null>(null)
+function onUpstreamMediaClick(u: UpstreamItem) {
+  const src = upMediaSrc(u)
+  if (!src) return
+  upView.value = { kind: u.node.type === 'video' ? 'video' : 'image', src, alt: String(u.node.data.label) }
+}
+
+/** 双击上游卡 → @引用追加到本节点主文本框末尾（音频等无文本框节点静默忽略）。 */
+function onUpstreamDblClick(u: UpstreamItem) {
+  primaryInputRef.value?.appendMention({ kind: 'node', id: u.node.id })
+}
 
 /** C11 抽帧「指定秒」输入值（AT 模式用）。 */
 const frameSecond = ref<number | null>(null)
@@ -1205,6 +1344,120 @@ function onImageModelChange(model: string | null) {
     display: flex;
     flex-wrap: wrap;
     gap: var(--spacing-1);
+  }
+
+  /* D2（2x-8）：上游卡片（缩略 + 名称 + 提示词两行截断；间距 8、卡内紧凑） */
+  &__up-card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-1);
+    padding: var(--spacing-1);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-base);
+    cursor: default; // 双击才插入 @引用；单击无卡片级动作
+    user-select: none;
+
+    & + & { margin-top: var(--spacing-1); }
+
+    &:hover { border-color: var(--color-primary); }
+  }
+
+  &__up-thumb {
+    position: relative;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-small);
+    background: var(--color-bg);
+    border: 0;
+    padding: 0;
+    overflow: visible; // hover 放大出卡外
+    color: var(--color-text-tertiary);
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: var(--radius-small);
+      transition: transform 0.12s var(--ease-in-out);
+      transform-origin: center;
+    }
+
+    // hover 媒体放大预览（1.6x 出卡外，需放大看的直观提示）
+    &:hover img { transform: scale(1.6); z-index: 2; position: relative; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
+
+    &.is-clickable { cursor: zoom-in; }
+  }
+
+  &__up-ph {
+    font-size: var(--font-size-sm);
+  }
+
+  &__up-meta {
+    flex: 1;
+    min-width: 0; // 让截断在卡内生效
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__up-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  &__up-kind {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    padding: 0 3px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-small);
+    color: var(--color-text-tertiary);
+  }
+
+  &__up-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__up-prompt {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    word-break: break-all;
+  }
+
+  /* 更上游折叠开关 + 小卡列表（缩进区分层级） */
+  &__up-fold {
+    margin-top: var(--spacing-1);
+    padding: 2px var(--spacing-1);
+    background: transparent;
+    border: 0;
+    color: var(--color-text-tertiary);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+    text-align: left;
+
+    &:hover { color: var(--color-primary); }
+  }
+
+  &__up-farlist {
+    margin-top: 2px;
+    padding-left: 12px; // 层级缩进
+    border-left: 2px solid var(--color-border-light);
   }
 
   /* 2x 四轮 S6：确定性变换按钮排（五个小按钮挤一行，超出换行） */

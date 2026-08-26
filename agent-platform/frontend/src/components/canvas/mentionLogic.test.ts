@@ -77,6 +77,17 @@ describe('mentionLogic · insertMention', () => {
     const r = insertMention('@', 0, 1, 'image', 'a1')
     expect(r.text).toBe('@{{image:a1}} ')
   })
+
+  it('2x 六轮 #1：insertSuffix 追加在 token 后、尾随空格之前（标注图子序号）', () => {
+    const r = insertMention('改 @', 2, 3, 'node', 'n9', '：序号1（红色）框')
+    expect(r.text).toBe('改 @{{node:n9}}：序号1（红色）框 ')
+    expect(r.pos).toBe('改 @{{node:n9}}：序号1（红色）框 '.length)
+  })
+
+  it('2x 六轮 #1：insertSuffix + 光标后紧邻空白 → 不补双空格', () => {
+    const r = insertMention('改 @ 完', 2, 3, 'node', 'n9', '：序号2框')
+    expect(r.text).toBe('改 @{{node:n9}}：序号2框 完')
+  })
 })
 
 describe('mentionLogic · escapeHtml', () => {

@@ -26,7 +26,8 @@
       @compositionend="onCompositionEnd"
     ></div>
     <span v-if="maxlength" class="mention-ta__count">{{ modelValue.length }}/{{ maxlength }}</span>
-    <div v-if="open && filtered.length" class="mention-ta__popover">
+    <!-- D4（2x-9）：弹层锚在光标处（popoverStyle 内联覆盖 left/top；空对象回落类静态定位） -->
+    <div v-if="open && filtered.length" ref="popoverRef" class="mention-ta__popover" :style="popoverStyle">
       <div class="mention-ta__hint">@ 引用祖先节点（拓扑保证其先跑）</div>
       <template v-for="row in popRows" :key="row.type === 'header' ? row.key : `${row.c.kind}:${row.c.id}`">
         <!-- 2x 四轮 S9：组分节头（组内任一祖先命中→组全员可 @；头随成员过滤自动隐现） -->
@@ -46,16 +47,17 @@
         </button>
       </template>
     </div>
-    <div v-else-if="open && !filtered.length" class="mention-ta__popover">
+    <div v-else-if="open && !filtered.length" ref="popoverRef" class="mention-ta__popover" :style="popoverStyle">
       <div class="mention-ta__empty">{{ emptyHint }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { MentionCandidate } from '@/types/canvas'
 import { detectAnchor, escapeHtml, insertMention, parseSegments } from './mentionLogic'
+import { caretViewportRect, placePopover } from './caret'
 
 const props = withDefaults(defineProps<{
   /** 文本（含 `@{{kind:id}}` 占位符，v-model 双向）。 */
@@ -101,6 +103,9 @@ const query = ref('')
 const activeIndex = ref(0)
 /** IME 合成中（不触发 @唤起/序列化，防中文输入法误触）。 */
 const composing = ref(false)
+/** D4：候选弹层元素 + 光标锚定定位（空对象=回落类静态「输入框下方」）。 */
+const popoverRef = ref<HTMLDivElement | null>(null)
+const popoverStyle = ref<Record<string, string>>({})
 
 /**
  * chip 显名映射：kind:id → label（由 candidates 派生，响应式——改节点名 chip 同步）。
@@ -284,6 +289,47 @@ function onCompositionEnd() {
   onInput()
 }
 
+// ---- D4（2x-9）：@候选弹层光标锚定 ----
+
+/**
+ * 弹层定位到当前光标处：contenteditable 原生 Range 光标矩形（视口坐标）→
+ * 换算根容器相对坐标 → placePopover（上方优先，越上界翻转下方；左右夹容器内）。
+ * 光标矩形探测失败（jsdom 无布局/异常态）→ 清空内联样式，回落 CSS 静态「输入框下方」。
+ */
+function repositionPopover() {
+  const root = rootRef.value
+  const editor = editRef.value
+  if (!root || !editor || !open.value) return
+  const cr = caretViewportRect(editor)
+  if (!cr) {
+    popoverStyle.value = {}
+    return
+  }
+  const rootRect = root.getBoundingClientRect()
+  const pop = popoverRef.value
+  const popW = Math.min(240, rootRect.width || 240)
+  const popH = pop?.offsetHeight ?? 0
+  const pos = placePopover({
+    caretX: cr.left - rootRect.left,
+    caretY: cr.top - rootRect.top,
+    caretH: cr.height,
+    rootW: rootRect.width || popW,
+    popW,
+    popH
+  })
+  popoverStyle.value = { left: `${pos.left}px`, top: `${pos.top}px`, width: `${popW}px` }
+}
+
+/** 开合/查询串/候选过滤变化后重定位（nextTick 等弹层渲染出实高再算）。 */
+watch([open, query, filtered], () => nextTick(repositionPopover))
+
+/** 视口 resize/浏览器缩放 → 开着弹层就重算坐标。 */
+function onWinResize() {
+  if (open.value) repositionPopover()
+}
+onMounted(() => window.addEventListener('resize', onWinResize))
+onUnmounted(() => window.removeEventListener('resize', onWinResize))
+
 function onKeydown(e: KeyboardEvent) {
   if (open.value) {
     if (e.key === 'Escape') {
@@ -344,7 +390,7 @@ function selectCandidate(c: MentionCandidate) {
   const cur = lastEmitted.value
   const caret = caretCharOffset()
   const at = anchor.value >= 0 ? anchor.value : caret
-  const { text, pos } = insertMention(cur, at, caret, c.kind, c.id)
+  const { text, pos } = insertMention(cur, at, caret, c.kind, c.id, c.insertSuffix ?? '')
   emitValue(text)
   render(text) // 立即重建（chip 要显示；lastEmitted 已更新故 watch 回声会跳过重复 render）
   open.value = false
@@ -354,6 +400,26 @@ function selectCandidate(c: MentionCandidate) {
     editRef.value?.focus()
     setCaretCharOffset(pos)
   })
+}
+
+/**
+ * D3（2x-8）：外部程序化追加 @引用到文本末尾（上游面板双击卡片触发）。
+ * 序列化复用既有 token 格式；末尾非空白先补一个空格再接 token，token 后恒跟尾随空格。
+ * 禁用态（生成中）返回 false 不动文本（调用方决定提示）；成功后聚焦并把光标落到引用之后。
+ */
+function appendMention(c: Pick<MentionCandidate, 'kind' | 'id' | 'insertSuffix'>): boolean {
+  if (props.disabled) return false
+  const cur = lastEmitted.value
+  const gap = cur && !/\s/.test(cur.slice(-1)) ? ' ' : ''
+  const token = `@{{${c.kind}:${c.id}}}${c.insertSuffix ?? ''}`
+  const next = `${cur}${gap}${token} `
+  emitValue(next)
+  render(next)
+  nextTick(() => {
+    editRef.value?.focus()
+    setCaretCharOffset(next.length)
+  })
+  return true
 }
 
 // 外部 modelValue 变更（父加载/切节点）→ 重建；自身 emit 回声（=== lastEmitted）→ 跳过保光标。
@@ -394,7 +460,7 @@ onMounted(() => {
   render(props.modelValue)
 })
 
-defineExpose({ open, anchor, query, filtered, selectCandidate, detectAnchor, render, serialize })
+defineExpose({ open, anchor, query, filtered, selectCandidate, appendMention, detectAnchor, render, serialize })
 </script>
 
 <style lang="scss" scoped>

@@ -217,3 +217,68 @@ describe('MentionTextarea · 序列化往返（存 token）', () => {
     expect((wrapper.vm as unknown as { text: string }).text).toBe('前 @{{node:n1}} 后')
   })
 })
+
+describe('MentionTextarea · D3 appendMention 程序化追加（上游面板双击）', () => {
+  it('空文本 → 追加 token + 尾随空格', async () => {
+    const wrapper = mountHost('')
+    const mt = wrapper.findComponent(MentionTextarea)
+    const ok = (mt.vm as unknown as { appendMention: (c: { kind: string; id: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n1' })
+    expect(ok).toBe(true)
+    expect((wrapper.vm as unknown as { text: string }).text).toBe('@{{node:n1}} ')
+  })
+
+  it('末尾非空白 → 先补一空格再接 token', async () => {
+    const wrapper = mountHost('扩写')
+    const mt = wrapper.findComponent(MentionTextarea)
+    ;(mt.vm as unknown as { appendMention: (c: { kind: string; id: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n2' })
+    expect((wrapper.vm as unknown as { text: string }).text).toBe('扩写 @{{node:n2}} ')
+  })
+
+  it('末尾已是空白 → 不双补空格', async () => {
+    const wrapper = mountHost('扩写\n')
+    const mt = wrapper.findComponent(MentionTextarea)
+    ;(mt.vm as unknown as { appendMention: (c: { kind: string; id: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n1' })
+    expect((wrapper.vm as unknown as { text: string }).text).toBe('扩写\n@{{node:n1}} ')
+  })
+
+  it('追加后 chip 渲染显名（token 进入 labelMap 解析链）', async () => {
+    const wrapper = mountHost('')
+    const mt = wrapper.findComponent(MentionTextarea)
+    ;(mt.vm as unknown as { appendMention: (c: { kind: string; id: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n1' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.mention-ta__chip').text()).toBe('人物设定')
+  })
+
+  it('禁用态（生成中）→ 返回 false 不动文本', () => {
+    const wrapper = mount(MentionTextarea, {
+      props: { modelValue: '原文', candidates: cands, disabled: true }
+    })
+    const ok = (wrapper.vm as unknown as { appendMention: (c: { kind: string; id: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n1' })
+    expect(ok).toBe(false)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('insertSuffix 跟随 token（标注图子序号候选）', () => {
+    const wrapper = mountHost('')
+    const mt = wrapper.findComponent(MentionTextarea)
+    ;(mt.vm as unknown as { appendMention: (c: { kind: string; id: string; insertSuffix?: string }) => boolean })
+      .appendMention({ kind: 'node', id: 'n1', insertSuffix: '：序号1（红色）框' })
+    expect((wrapper.vm as unknown as { text: string }).text)
+      .toBe('@{{node:n1}}：序号1（红色）框 ')
+  })
+})
+
+describe('MentionTextarea · D4 弹层光标锚定兜底', () => {
+  it('jsdom 无布局 → 内联定位回落空对象（CSS 静态输入框下方），弹层仍渲染', async () => {
+    const wrapper = mountHost()
+    await typeInto(wrapper, '@')
+    const pop = wrapper.find('.mention-ta__popover')
+    expect(pop.exists()).toBe(true)
+    expect((pop.attributes('style') ?? '').includes('left:')).toBe(false)
+  })
+})
