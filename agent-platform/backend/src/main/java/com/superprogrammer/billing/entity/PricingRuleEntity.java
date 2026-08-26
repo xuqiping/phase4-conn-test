@@ -80,5 +80,24 @@ public class PricingRuleEntity {
             updateStrategy = FieldStrategy.ALWAYS)
     private String estPerResolution;
 
+    // ==================== 人工测试遗留问题修复II D（V160）：闲时价 + 缓存价 ====================
+    // 全 NULL 默认 = 存量计费逐分不变：off_peak_*=NULL → 取忙时列；price_cached=NULL → 缓存价=输入价。
+
+    /** 闲时输入价 ¥/1M；NULL=同忙时（priceInputPerMillion）。仅 CHAT/EMBED/RERANK。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal offPeakInputPerMillion;
+
+    /** 闲时输出价 ¥/1M；NULL=同忙时。仅 CHAT。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal offPeakOutputPerMillion;
+
+    /** 闲时缓存命中价 ¥/1M；NULL=回落 priceCachedPerMillion→输入价链。仅 CHAT。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal offPeakCachedPerMillion;
+
+    /** 缓存命中读 token 价 ¥/1M；NULL=同输入价（缓存不省钱则不单配）。仅 CHAT。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal priceCachedPerMillion;
+
     private OffsetDateTime effectiveFrom;
 }

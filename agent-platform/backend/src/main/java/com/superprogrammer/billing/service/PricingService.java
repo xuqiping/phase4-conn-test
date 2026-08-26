@@ -33,6 +33,8 @@ public class PricingService {
     private static final BigDecimal ONE_MILLION = new BigDecimal("1000000");
 
     private final PricingRuleMapper pricingRuleMapper;
+    /** 7x-5（V160 D2）：闲时时段配置读取（每请求实时查，与 daily-cap 同哲学）。 */
+    private final com.superprogrammer.system.service.SystemSettingService systemSettingService;
 
     /**
      * 计算单次调用真实金额（¥）。
@@ -79,6 +81,36 @@ public class PricingService {
                                   Integer tokensInput, Integer tokensOutput,
                                   Integer videoSeconds, Integer imageCount,
                                   boolean hasReference, String resolution) {
+        return computeCost(kind, providerId, model, tokensInput, tokensOutput,
+                videoSeconds, imageCount, hasReference, resolution, null);
+    }
+
+    /**
+     * 9x-1（V160 D2）：+cachedTokens 版本——缓存命中读 token 作第三腿单独计价。
+     * 口径（规格 §6.3，两家协议已在 Provider 层归一）：
+     * tokensInput=未命中输入（OpenAI=prompt−cached；Claude=input+cache_creation）；
+     * cachedTokens=命中读（OpenAI=cached_tokens；Claude=cache_read_input_tokens）。
+     * cachedTokens=null/0 → 计费退化为输入+输出两腿（老链路与老价表逐分一致）。
+     */
+    public BigDecimal computeCost(String kind, Long providerId, String model,
+                                  Integer tokensInput, Integer tokensOutput,
+                                  Integer videoSeconds, Integer imageCount,
+                                  boolean hasReference, String resolution,
+                                  Long cachedTokens) {
+        return computeCostAt(kind, providerId, model, tokensInput, tokensOutput,
+                videoSeconds, imageCount, hasReference, resolution, cachedTokens, null);
+    }
+
+    /**
+     * 7x-5（V160 D2）：+moment 版本（单测/回算用显式时刻判闲时；null=now）。
+     * 闲时判定读 system_settings 键 billing.off-peak.schedule（每请求实时查，与 daily-cap 同哲学；
+     * 计费频次=结算频次（低频），不加缓存）。
+     */
+    public BigDecimal computeCostAt(String kind, Long providerId, String model,
+                                    Integer tokensInput, Integer tokensOutput,
+                                    Integer videoSeconds, Integer imageCount,
+                                    boolean hasReference, String resolution,
+                                    Long cachedTokens, java.time.LocalDateTime moment) {
         boolean isVideo = PricingRuleEntity.KIND_VIDEO.equals(kind);
         boolean effectiveHasRef = isVideo && hasReference;
         String effectiveResolution = isVideo ? normalizeResolution(resolution) : null;
@@ -89,13 +121,14 @@ public class PricingService {
                             + " model=" + model + " hasReference=" + hasReference
                             + " resolution=" + resolution);
         }
+        java.time.LocalDateTime at = moment != null ? moment : java.time.LocalDateTime.now();
         return switch (kind) {
             case PricingRuleEntity.KIND_CHAT ->
-                    textCost(rule, tokensInput, tokensOutput, true);
+                    textCost(rule, tokensInput, cachedTokens, tokensOutput, true, at);
             case PricingRuleEntity.KIND_EMBED ->
-                    textCost(rule, tokensInput, tokensOutput, false);
+                    textCost(rule, tokensInput, null, tokensOutput, false, at);
             case PricingRuleEntity.KIND_RERANK ->
-                    textCost(rule, tokensInput, tokensOutput, false);
+                    textCost(rule, tokensInput, null, tokensOutput, false, at);
             case PricingRuleEntity.KIND_VIDEO -> videoCost(rule, tokensInput, videoSeconds);
             // resolution 已在 resolveRule 命中行时体现（SECOND 分辨率行/通用行），计价本身只看行内价格
             case PricingRuleEntity.KIND_IMAGE -> imageCost(rule, imageCount);
@@ -203,16 +236,141 @@ public class PricingService {
         }
     }
 
-    /** 文本/embed 询价。billOutput=false（embed）时忽略 output。 */
-    private BigDecimal textCost(PricingRuleEntity rule, Integer in, Integer out, boolean billOutput) {
+    /**
+     * 文本/embed/rerank 询价（V160 D2 三腿 + 闲时）：
+     * in×pIn + cached×pCache + out×pOut（各腿价按时刻挑忙/闲列）。
+     * billOutput=false（embed/rerank）忽略 output；cached=null/0 时第三腿消失（两腿，老口径）。
+     * 闲时价列 NULL → 取对应忙时列（存量价表逐分不变的保证）。
+     */
+    private BigDecimal textCost(PricingRuleEntity rule, Integer in, Long cached, Integer out,
+                                boolean billOutput, java.time.LocalDateTime moment) {
+        boolean offPeak = isOffPeak(moment);
         BigDecimal cost = BigDecimal.ZERO;
-        if (in != null && in > 0 && rule.getPriceInputPerMillion() != null) {
-            cost = cost.add(price(rule.getPriceInputPerMillion(), in));
+        if (in != null && in > 0) {
+            BigDecimal pIn = pickPrice(offPeak,
+                    rule.getPriceInputPerMillion(), rule.getOffPeakInputPerMillion());
+            if (pIn != null) {
+                cost = cost.add(price(pIn, in));
+            }
         }
-        if (billOutput && out != null && out > 0 && rule.getPriceOutputPerMillion() != null) {
-            cost = cost.add(price(rule.getPriceOutputPerMillion(), out));
+        if (cached != null && cached > 0) {
+            // 缓存价回落链：闲时缓存价 →（忙时）缓存价 → 当前输入价（含闲时输入价）
+            BigDecimal pCache = pickPrice(offPeak,
+                    rule.getPriceCachedPerMillion(), rule.getOffPeakCachedPerMillion());
+            if (pCache == null) {
+                pCache = pickPrice(offPeak,
+                        rule.getPriceInputPerMillion(), rule.getOffPeakInputPerMillion());
+            }
+            if (pCache != null) {
+                cost = cost.add(price(pCache, cached.intValue()));
+            }
+        }
+        if (billOutput && out != null && out > 0) {
+            BigDecimal pOut = pickPrice(offPeak,
+                    rule.getPriceOutputPerMillion(), rule.getOffPeakOutputPerMillion());
+            if (pOut != null) {
+                cost = cost.add(price(pOut, out));
+            }
         }
         return cost;
+    }
+
+    /** 闲时取闲列，忙时（或闲列 NULL）取忙列。 */
+    private static BigDecimal pickPrice(boolean offPeak, BigDecimal busy, BigDecimal offPeakPrice) {
+        if (offPeak && offPeakPrice != null) {
+            return offPeakPrice;
+        }
+        return busy;
+    }
+
+    // ==================== 7x-5（V160 D2）：闲时时段判定 ====================
+
+    /** system_settings 键（D8 配置页同键读写）。 */
+    public static final String OFF_PEAK_SCHEDULE_KEY = "billing.off-peak.schedule";
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper OFF_PEAK_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * 时刻是否落在闲时窗口。配置缺失/enabled=false/JSON 非法 → false（回退忙时，宁多收不少收）。
+     * 周末判定按 Asia/Shanghai（业务时区）；跨零点窗口（end<=start，如 22:00-08:00）拆
+     * [start,24:00)+[00:00,end) 两段判断。
+     */
+    boolean isOffPeak(java.time.LocalDateTime moment) {
+        String json;
+        try {
+            json = systemSettingService.getSettingValue(OFF_PEAK_SCHEDULE_KEY);
+        } catch (Exception e) {
+            log.warn("读闲时配置失败(回退忙时) : {}", e.toString());
+            return false;
+        }
+        if (json == null || json.isBlank()) {
+            return false;
+        }
+        try {
+            OffPeakSchedule cfg = OFF_PEAK_MAPPER.readValue(json, OffPeakSchedule.class);
+            if (cfg == null || !cfg.enabled || cfg.weekday == null || cfg.weekday.isEmpty()) {
+                return false;
+            }
+            java.time.ZonedDateTime shanghai = moment.atZone(java.time.ZoneId.of("Asia/Shanghai"));
+            boolean weekend = shanghai.getDayOfWeek() == java.time.DayOfWeek.SATURDAY
+                    || shanghai.getDayOfWeek() == java.time.DayOfWeek.SUNDAY;
+            java.util.List<OffPeakWindow> windows = weekend ? cfg.weekend : cfg.weekday;
+            if (windows == null || windows.isEmpty()) {
+                // 周末没配 → 用工作日窗口（常见：周末全天闲时另配，否则沿用）
+                windows = cfg.weekday;
+            }
+            int minute = shanghai.getHour() * 60 + shanghai.getMinute();
+            for (OffPeakWindow w : windows) {
+                Integer start = parseHm(w.start);
+                Integer end = parseHm(w.end);
+                if (start == null || end == null) {
+                    continue;
+                }
+                if (end <= start) {
+                    // 跨零点：[start,24:00) ∪ [00:00,end)
+                    if (minute >= start || minute < end) {
+                        return true;
+                    }
+                } else if (minute >= start && minute < end) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            log.warn("闲时配置解析失败(回退忙时) : {}", e.toString());
+            return false;
+        }
+    }
+
+    /** "HH:mm" → 当日分钟数；非法返 null。 */
+    private static Integer parseHm(String hm) {
+        if (hm == null) {
+            return null;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})$").matcher(hm.trim());
+        if (!m.matches()) {
+            return null;
+        }
+        int h = Integer.parseInt(m.group(1));
+        int min = Integer.parseInt(m.group(2));
+        if (h > 24 || min > 59) {
+            return null;
+        }
+        return h * 60 + min;
+    }
+
+    /** 闲时配置 JSON 形（D8 配置页读写同构）。 */
+    public static class OffPeakSchedule {
+        public boolean enabled;
+        public String timezone;
+        public java.util.List<OffPeakWindow> weekday;
+        public java.util.List<OffPeakWindow> weekend;
+    }
+
+    public static class OffPeakWindow {
+        public String start;
+        public String end;
     }
 
     /** 视频询价：TOKEN 模式按 token（×priceInputPerMillion），SECOND 模式按秒。 */

@@ -322,4 +322,154 @@ class PricingServiceTest {
         // 忽略 hasReference，按 false 查到 → 1M × 1 = 1
         assertThat(cost).isEqualByComparingTo("1.000000");
     }
+
+    // ==================== 人工测试遗留问题修复II D2（V160）：缓存三腿 + 闲时 ====================
+
+    @Mock
+    private com.superprogrammer.system.service.SystemSettingService systemSettingService;
+
+    /** 闲时配置 JSON（22:00-08:00 跨零点；周末全天）。 */
+    private static final String OFF_PEAK_JSON =
+            "{\"enabled\":true,\"timezone\":\"Asia/Shanghai\","
+                    + "\"weekday\":[{\"start\":\"22:00\",\"end\":\"08:00\"}],"
+                    + "\"weekend\":[{\"start\":\"00:00\",\"end\":\"24:00\"}]}";
+
+    private PricingRuleEntity chatRule() {
+        PricingRuleEntity r = rule("CHAT");
+        r.setPriceInputPerMillion(new BigDecimal("1.00"));
+        r.setPriceOutputPerMillion(new BigDecimal("2.00"));
+        return r;
+    }
+
+    @Test
+    void chat_cachedThirdLeg_pricedSeparately() {
+        PricingRuleEntity r = chatRule();
+        r.setPriceCachedPerMillion(new BigDecimal("0.50"));
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+
+        // 忙时（无配置 → isOffPeak=false）：1M in×1 + 1M cached×0.5 + 0 out = 1.50
+        BigDecimal cost = pricingService.computeCost("CHAT", 1L, "gpt",
+                1_000_000, 0, null, null, false, null, 1_000_000L);
+        assertThat(cost).isEqualByComparingTo("1.50");
+    }
+
+    @Test
+    void chat_cachedPriceNull_fallsBackInputPrice() {
+        PricingRuleEntity r = chatRule();
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+
+        // priceCached=NULL → 缓存价=输入价：1M in + 1M cached 均 ×1 = 2.00
+        BigDecimal cost = pricingService.computeCost("CHAT", 1L, "gpt",
+                1_000_000, 0, null, null, false, null, 1_000_000L);
+        assertThat(cost).isEqualByComparingTo("2.00");
+    }
+
+    @Test
+    void chat_cachedNull_degeneratesTwoLeg_sameAsBefore() {
+        // 硬门槛：cachedTokens=null → 与老两腿口径逐分一致
+        PricingRuleEntity r = chatRule();
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+
+        BigDecimal legacy = pricingService.computeCost("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false);
+        BigDecimal withNullCached = pricingService.computeCost("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false, null, null);
+        assertThat(withNullCached).isEqualByComparingTo(legacy);
+        assertThat(withNullCached).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    void chat_offPeak_usesOffPeakColumns() {
+        PricingRuleEntity r = chatRule();
+        r.setOffPeakInputPerMillion(new BigDecimal("0.50"));
+        r.setOffPeakOutputPerMillion(new BigDecimal("1.00"));
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+        when(systemSettingService.getSettingValue(PricingService.OFF_PEAK_SCHEDULE_KEY))
+                .thenReturn(OFF_PEAK_JSON);
+
+        // 周三 23:30（跨零点窗口内）：1M in×0.5 + 1M out×1 = 1.50
+        BigDecimal night = pricingService.computeCostAt("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false, null, null,
+                java.time.LocalDateTime.of(2026, 8, 26, 23, 30));
+        assertThat(night).isEqualByComparingTo("1.50");
+
+        // 周三 12:00（窗口外）→ 忙时价 3.00
+        BigDecimal noon = pricingService.computeCostAt("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false, null, null,
+                java.time.LocalDateTime.of(2026, 8, 26, 12, 0));
+        assertThat(noon).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    void chat_offPeakColumnNull_fallsBackBusy() {
+        PricingRuleEntity r = chatRule();
+        // 只配闲时输出价，输入价 NULL → 夜间输入仍走忙时
+        r.setOffPeakOutputPerMillion(new BigDecimal("1.00"));
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+        when(systemSettingService.getSettingValue(PricingService.OFF_PEAK_SCHEDULE_KEY))
+                .thenReturn(OFF_PEAK_JSON);
+
+        BigDecimal night = pricingService.computeCostAt("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false, null, null,
+                java.time.LocalDateTime.of(2026, 8, 26, 23, 30));
+        // in 忙 1.0 + out 闲 1.0 = 2.00
+        assertThat(night).isEqualByComparingTo("2.00");
+    }
+
+    @Test
+    void chat_offPeakCached_chain() {
+        PricingRuleEntity r = chatRule();
+        r.setPriceCachedPerMillion(new BigDecimal("0.50"));
+        r.setOffPeakCachedPerMillion(new BigDecimal("0.10"));
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(r);
+        when(systemSettingService.getSettingValue(PricingService.OFF_PEAK_SCHEDULE_KEY))
+                .thenReturn(OFF_PEAK_JSON);
+
+        // 夜间：in×1（无闲时输入价）+ cached×0.10（闲时缓存价）
+        BigDecimal night = pricingService.computeCostAt("CHAT", 1L, "gpt",
+                1_000_000, 0, null, null, false, null, 1_000_000L,
+                java.time.LocalDateTime.of(2026, 8, 26, 23, 30));
+        assertThat(night).isEqualByComparingTo("1.10");
+
+        // 白天：cached×0.50（忙时缓存价）
+        BigDecimal day = pricingService.computeCostAt("CHAT", 1L, "gpt",
+                1_000_000, 0, null, null, false, null, 1_000_000L,
+                java.time.LocalDateTime.of(2026, 8, 26, 12, 0));
+        assertThat(day).isEqualByComparingTo("1.50");
+    }
+
+    @Test
+    void isOffPeak_matrix() {
+        when(systemSettingService.getSettingValue(PricingService.OFF_PEAK_SCHEDULE_KEY))
+                .thenReturn(OFF_PEAK_JSON);
+        // 2026-08-26 周三 / 2026-08-29 周六
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 26, 22, 0))).isTrue();   // 边界起点含
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 27, 7, 59))).isTrue();  // 次日 07:59（周四凌晨仍在窗）
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 27, 8, 0))).isFalse();   // 08:00 整出窗
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 26, 12, 0))).isFalse(); // 工作日午间
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 29, 10, 0))).isTrue();  // 周六全天
+    }
+
+    @Test
+    void isOffPeak_disabledOrBroken_fallsBackBusy() {
+        when(systemSettingService.getSettingValue(PricingService.OFF_PEAK_SCHEDULE_KEY))
+                .thenReturn("{\"enabled\":false}")
+                .thenReturn("not-json{")
+                .thenReturn(null);
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 26, 23, 30))).isFalse();
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 26, 23, 30))).isFalse();
+        assertThat(pricingService.isOffPeak(java.time.LocalDateTime.of(2026, 8, 26, 23, 30))).isFalse();
+    }
+
+    @Test
+    void embed_ignoresCachedTokens() {
+        // EMBED/RERANK：缓存腿不参与（传了也按 null 处理）
+        PricingRuleEntity r = rule("EMBED");
+        r.setPriceInputPerMillion(new BigDecimal("0.50"));
+        when(pricingRuleMapper.findEffectiveWithResolution("EMBED", null, "e", false, null)).thenReturn(r);
+
+        BigDecimal cost = pricingService.computeCost("EMBED", null, "e",
+                2_000_000, 0, null, null, false, null, 999_999L);
+        assertThat(cost).isEqualByComparingTo("1.00");
+    }
 }
