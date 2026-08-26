@@ -29,12 +29,12 @@ afterAll(async () => {
 });
 
 describe("MCP 工具层（FR-017）", () => {
-  it("AC-021: tools/list 返回 11 个工具", async () => {
+  it("AC-021: tools/list 返回 13 个工具（升级v2 增 memory_list/memory_forget）", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(11);
+    expect(res.tools).toHaveLength(13);
     const names = res.tools.map((t) => t.name).sort();
     expect(names).toEqual(
-      ["click", "confirm_app", "double_click", "drag", "key", "move", "scroll", "skyshot", "tree", "type", "wait"].sort()
+      ["click", "confirm_app", "double_click", "drag", "key", "memory_forget", "memory_list", "move", "scroll", "skyshot", "tree", "type", "wait"].sort()
     );
   });
 

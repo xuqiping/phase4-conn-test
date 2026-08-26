@@ -13,7 +13,8 @@ import { NeedsFallback, uiaClick, uiaType } from "../driver/win/uiaActions.js";
 import { activate, clickAt, cursorPos, dragPath, keyCombo, moveTo, scrollAt, typeText, typeViaClipboard, waitSeconds } from "../driver/win/input.js";
 import { foregroundProcessName, findWindow } from "../driver/win/window.js";
 import { postClick } from "../driver/win/postmsg.js";
-import { ScreenToClient } from "../driver/win/ffi.js";
+import { ClientToScreen, GetClientRect, ScreenToClient } from "../driver/win/ffi.js";
+import * as anchors from "../memory/anchors.js";
 import { changed } from "../driver/win/verify.js";
 import { confirmApp, requireAllowed } from "../safety/whitelist.js";
 import { requireNotBlocked } from "../safety/blacklist.js";
@@ -61,6 +62,63 @@ async function twoLayer(uiaTry: () => Promise<ActionResult>, fallback: () => Pro
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 窗口指纹上下文（升级v2 记忆命中/沉淀用）：标题@客户区尺寸 + hwnd + 客户区原点(屏幕系) */
+function windowCtxOf(app: string): { fp: string; w: number; h: number; hwnd: unknown; origin: { x: number; y: number } } {
+  const win = findWindow(app);
+  const rc = { left: 0, top: 0, right: 0, bottom: 0 };
+  GetClientRect(win.hwnd as never, rc as never);
+  const w = rc.right - rc.left;
+  const h = rc.bottom - rc.top;
+  const origin = { x: 0, y: 0 };
+  ClientToScreen(win.hwnd as never, origin as never);
+  return { fp: anchors.fingerprint(win.title, w, h), w, h, hwnd: win.hwnd, origin };
+}
+
+/** 锚点归一化坐标 → 屏幕坐标 */
+function anchorToScreen(ctx: ReturnType<typeof windowCtxOf>, relX: number, relY: number): { x: number; y: number } {
+  return { x: Math.round(ctx.origin.x + relX * ctx.w), y: Math.round(ctx.origin.y + relY * ctx.h) };
+}
+
+/** 屏幕坐标 → 锚点归一化坐标 */
+function screenToAnchor(ctx: ReturnType<typeof windowCtxOf>, x: number, y: number): { relX: number; relY: number } {
+  return { relX: (x - ctx.origin.x) / Math.max(ctx.w, 1), relY: (y - ctx.origin.y) / Math.max(ctx.h, 1) };
+}
+
+/**
+ * 记忆命中执行（FR-111）：按锚点 method 直接操作 + 截图验证；失败 fail+1 返回 false（调用方走正常流程，FR-112）
+ */
+async function memoryClickAttempt(
+  app: string, name: string,
+  opts: { button?: "left" | "right"; count?: number }
+): Promise<ActionResult | null> {
+  if (!loadConfig().memoryEnabled) return null;
+  const ctx = windowCtxOf(app);
+  const anchor = anchors.hit(app, ctx.fp, name);
+  if (!anchor) return null;
+  const pt = anchorToScreen(ctx, anchor.relX, anchor.relY);
+  // 按锚点记录的成功方式执行；记忆点击本身也要验证（截图前后比对）
+  const before = await capture({ app, mode: "window" });
+  let r: ActionResult;
+  if (anchor.method === "postmessage") {
+    const c = { x: pt.x, y: pt.y };
+    ScreenToClient(ctx.hwnd as never, c as never);
+    r = postClick(ctx.hwnd, c.x, c.y, opts);
+  } else {
+    activate(app);
+    r = await clickAt(pt.x, pt.y, opts);
+  }
+  await sleep(300);
+  const after = await capture({ app, mode: "window" });
+  const v = changed(before.pngBase64 as string, after.pngBase64 as string);
+  if (v.verified) {
+    anchors.save(app, { windowFingerprint: ctx.fp, clientW: ctx.w, clientH: ctx.h, semanticName: name, relX: anchor.relX, relY: anchor.relY, method: anchor.method, verifyHash: `ratio:${v.changedRatio}` });
+    return { ...r, via: "memory", detail: `锚点命中 ${anchor.id} okCount+1` };
+  }
+  anchors.fail(app, anchor.id); // FR-112：作废计数，连续2次删除
+  audit({ ts: new Date().toISOString(), tool: "memory", targetApp: redact(app), ok: false, errCode: "ANCHOR_STALE", detail: name });
+  return null;
+}
 
 /** 层2 后台点击（FR-100/102/103）：PostMessage→截图验证；verified=false 记审计并返回 null 交层3 降级 */
 async function layer2Click(
@@ -152,23 +210,34 @@ export function registerTools(server: McpServer): void {
       return { nodes: t.nodes, truncated: t.truncated, elapsedMs: t.elapsedMs };
     }));
 
-  // 3/4. click / double_click（FR-004/005；升级v2 走三层：UIA→PostMessage后台→SendInput）
-  const clickHandler = (count: number) => async (a: { locator: z.infer<typeof locatorSchema>; button?: "left" | "right"; keys?: string[] }) =>
+  // 3/4. click / double_click（FR-004/005；升级v2：记忆命中→三层执行；name=语义名，成功自动沉淀锚点）
+  const clickHandler = (count: number) => async (a: { locator: z.infer<typeof locatorSchema>; button?: "left" | "right"; keys?: string[]; name?: string }) =>
     run(count > 1 ? "double_click" : "click", a.locator.app, async () => {
       safetyGates(a.locator.app);
       const { el, x, y } = await resolveLocator(a.locator);
-      return threeLayerClick(
+      const target = el ? center(el) : { x: x!, y: y! };
+      // 记忆命中优先（FR-111）：跳过定位直接按锚点执行+验证
+      if (a.name) {
+        const mem = await memoryClickAttempt(a.locator.app, a.name, { button: a.button, count });
+        if (mem) return mem;
+      }
+      const r = await threeLayerClick(
         a.locator.app, el, x!, y!,
         { button: a.button, count, keys: a.keys },
         () => uiaClick(a.locator.app, el!, { button: a.button, count, keys: a.keys }),
-        async () => {
-          const c = el ? center(el) : { x: x!, y: y! };
-          activate(a.locator.app);
-          return clickAt(c.x, c.y, { button: a.button, count });
-        }
+        async () => { activate(a.locator.app); return clickAt(target.x, target.y, { button: a.button, count }); }
       );
+      // 成功即自动沉淀（FR-110）：以实际执行方式记锚点
+      if (a.name) {
+        try {
+          const ctx = windowCtxOf(a.locator.app);
+          const rel = screenToAnchor(ctx, target.x, target.y);
+          anchors.save(a.locator.app, { windowFingerprint: ctx.fp, clientW: ctx.w, clientH: ctx.h, semanticName: a.name, relX: rel.relX, relY: rel.relY, method: r.via === "postmessage" ? "postmessage" : "sendinput", verifyHash: `via:${r.via}` });
+        } catch { /* 沉淀失败不影响操作结果 */ }
+      }
+      return r;
     });
-  server.tool("click", "单击元素（FR-004，UIA 零激活优先）", { locator: locatorSchema, button: z.enum(["left", "right"]).default("left"), keys: z.array(z.string()).optional() }, clickHandler(1));
+  server.tool("click", "单击元素（FR-004；升级v2：传 name 语义名可命中学习记忆秒操作）", { locator: locatorSchema, button: z.enum(["left", "right"]).default("left"), keys: z.array(z.string()).optional(), name: z.string().optional() }, clickHandler(1));
   server.tool("double_click", "双击元素（FR-005，SendInput 前台）", { locator: locatorSchema }, clickHandler(2));
 
   // 5. type（FR-006）
@@ -223,4 +292,10 @@ export function registerTools(server: McpServer): void {
   // 11. confirm_app（FR-013）
   server.tool("confirm_app", "白名单外 App 的放行确认（FR-013）", { appId: z.string(), remember: z.boolean().default(true) },
     async (a) => run("confirm_app", a.appId, () => Promise.resolve(confirmApp(a.appId, a.remember))));
+
+  // 12/13. memory_list / memory_forget（升级v2 FR-113）
+  server.tool("memory_list", "列出学习记忆锚点（FR-113；不传 app 列全部）", { app: z.string().optional() },
+    async (a) => run("memory_list", a.app, () => Promise.resolve({ apps: anchors.list(a.app) })));
+  server.tool("memory_forget", "删除记忆锚点（FR-113；id 省略或 all=true 清空该 app 全部）", { app: z.string(), id: z.string().optional(), all: z.boolean().default(false) },
+    async (a) => run("memory_forget", a.app, () => Promise.resolve({ removed: anchors.forget(a.app, a.id, a.all) })));
 }
