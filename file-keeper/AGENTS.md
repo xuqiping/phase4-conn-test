@@ -83,6 +83,7 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - Office Worker 的 JSON Lines、握手、PID、取消、stderr 脱敏和进程回收遵守 [`workflow_output/项目规范约束/Office Worker协议约束.md`](workflow_output/项目规范约束/Office%20Worker协议约束.md)。
 - Office 临时目录、空间预算、校验、原子发布、发布凭证、恢复和替换原件遵守 [`workflow_output/项目规范约束/Office输出事务约束.md`](workflow_output/项目规范约束/Office输出事务约束.md)。
 - Office 密码的系统保险库、指纹绑定、内存清零、错误脱敏和删除遵守 [`workflow_output/项目规范约束/Office凭据保险库约束.md`](workflow_output/项目规范约束/Office凭据保险库约束.md)。
+- Office 工作台的 Tauri 命令、阻断项展示、排队边界、恢复和历史遵守 [`workflow_output/项目规范约束/Office工作台与Tauri API约束.md`](workflow_output/项目规范约束/Office工作台与Tauri%20API约束.md)。
 - 上层 [`../CLAUDE.md`](../CLAUDE.md) —— 多 Agent 平台通用约定。
 
 ## 参考文档

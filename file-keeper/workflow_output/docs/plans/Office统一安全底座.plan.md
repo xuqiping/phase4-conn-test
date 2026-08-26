@@ -68,15 +68,17 @@
 
 ### Chunk 7：Tauri API 与可访问向导
 
-- [ ] **目标：前端能创建、预检、确认、执行、取消、恢复和查看历史。**
+- [x] **目标：前端能创建、预检、确认、执行、取消、恢复和查看历史。**
   - 动作：注册命令/API/store；制作分步向导、问题列表、确认页、进度页和历史页；所有控件具备 label、焦点和键盘顺序。
   - 涉及文件：`src-tauri/src/commands/office.rs`、`src-tauri/src/commands/mod.rs`、`src-tauri/src/main.rs`、`src/api/office.ts`、`src/stores/officeTaskStore.ts`、`src/components/office/OfficeWorkspace.vue`、`src/components/office/OfficeTaskWizard.vue`、`src/components/office/OfficeIssueList.vue`、`src/components/office/OfficeTaskHistory.vue`、`src/locales/zh-CN.ts`、`src/locales/en.ts`。
   - 依赖：Chunk 1–6。
   - 验证：Vitest + cargo test；键盘完成全流程；取消/返回不会丢失已确认规则；批量问题支持筛选但不隐藏阻断项。
+  - 当前状态：Tauri 状态/命令、本地数据库启动、Vue 工作台、分步向导、阻断项常显筛选、确认入队、取消、恢复提示、历史和中英文文案已实现；执行命令在具体处理器未接入时稳定拒绝，禁止伪造成功。编译检查通过，交互与自动化测试留到 Phase 4。
 
 ### Chunk 8：文档检查点
 
-- [ ] 更新底座 Feature Map、人工测试方案、用户手册与开发进度；运行 `npm test`、`cargo test`；创建只含本 Chunk 文件的存档提交。
+- [x] 更新底座 Feature Map、人工测试方案、用户手册与开发进度；运行 `npm test`、`cargo test`；创建只含本 Chunk 文件的存档提交。
+  - 当前状态：README、Feature Map、人工测试方案、用户操作手册、开发进度和规范均已同步；按用户明确要求，Phase 3 只执行 `npm build` 与两个 `cargo check`，`npm test`、`cargo test` 及集中审查统一转入 Phase 4。
 
 ## 术语表
 
