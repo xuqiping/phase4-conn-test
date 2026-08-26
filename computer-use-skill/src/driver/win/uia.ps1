@@ -11,7 +11,17 @@ $script:counter = 0
 function Find-Root([string]$app) {
   # 按进程名或标题包含匹配顶层窗口；找不到返回 $null
   $procs = Get-Process | Where-Object { $_.MainWindowTitle -and ($_.ProcessName -like "*$app*" -or $_.MainWindowTitle -like "*$app*") }
-  if (-not $procs) { return $null }
+  if (-not $procs) {
+    # 兜底：MainWindowTitle 为空的进程（Tauri/Electron 多窗口特征）按 UIA 顶层标题匹配
+    $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $app)
+    $wins = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
+    if ($wins.Count -eq 0) { return $null }
+    $el = $wins[0]
+    $procId = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ProcessIdProperty)
+    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($proc -and $script:terminals -contains ($proc.ProcessName.ToLower() + '.exe')) { throw "TARGET_BLOCKED: $($proc.ProcessName)" }
+    return @{ Root = $el; ProcName = if ($proc) { $proc.ProcessName.ToLower() + '.exe' } else { "pid:$procId" } }
+  }
   $proc = @($procs)[0]
   if ($script:terminals -contains ($proc.ProcessName.ToLower() + '.exe')) { throw "TARGET_BLOCKED: $($proc.ProcessName)" }
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
