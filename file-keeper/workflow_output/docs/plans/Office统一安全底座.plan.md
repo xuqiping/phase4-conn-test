@@ -59,11 +59,12 @@
 
 ### Chunk 6：系统凭据保险库
 
-- [ ] **目标：支持记住 Office 密码且不落普通存储。**
+- [x] **目标：支持记住 Office 密码且不落普通存储。**
   - 动作：实现跨平台凭据接口；绑定规范化路径+文件指纹；文件变化后要求重新确认；设置页可删除。
   - 涉及文件：`src-tauri/src/office/credentials.rs`、`src-tauri/src/platform/windows/office_credentials.rs`、`src-tauri/src/platform/macos/office_credentials.rs`、`src-tauri/src/platform/linux/office_credentials.rs`、`src-tauri/src/office/tests/credentials_tests.rs`。
   - 依赖：Chunk 3。
   - 验证：SQLite/日志无密码；删除后不可恢复；指纹变化不自动使用旧密码。
+  - 当前状态：跨平台接口、Windows Credential Manager、macOS Keychain、Linux Secret Service、密码内存清零、路径与文件指纹摘要绑定、访问前后复核和删除能力已实现并通过两个 Rust 二进制编译检查；真实系统保险库与敏感字符串扫描留到 Phase 4。
 
 ### Chunk 7：Tauri API 与可访问向导
 
