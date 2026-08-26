@@ -146,14 +146,18 @@ public class BillingController {
     }
 
     /**
-     * 组池划拨对账（D4 · 20x-3，Q9=A）：总体平/不平 + 仅异常组明细 + 双账本交叉校验。
+     * 组池划拨对账（D4 · 20x-3，Q9=A + 7x-1 下钻）：总体平/不平 + 明细 + 双账本交叉校验。
      * 恒等式=划入净额+退款−消耗 vs 组池余额；type 白名单排除 MEMBER_*、BACKSTOP、ADMIN_ADJUST。
      * 只读，不自动修账；异常组已写安全审计 + ERROR 日志。
+     * <p>7x-1 参数：groupId=选中组（groups=该组行含平组，totals=该组聚合，单组优先）；
+     * includeAll=true 且无 groupId=全组行含平组（totals=全平台）；都不传=Q9=A 现状仅异常组。
      */
     @GetMapping("/admin/group-reconcile")
     @RequirePermission("usage:view")
-    public ResponseEntity<R<com.superprogrammer.billing.dto.GroupReconcileVO>> groupReconcile() {
-        return ResponseEntity.ok(R.ok(reconcileService.groupReconcile()));
+    public ResponseEntity<R<com.superprogrammer.billing.dto.GroupReconcileVO>> groupReconcile(
+            @RequestParam(required = false) Long groupId,
+            @RequestParam(required = false, defaultValue = "false") boolean includeAll) {
+        return ResponseEntity.ok(R.ok(reconcileService.groupReconcile(groupId, includeAll)));
     }
 
     /**

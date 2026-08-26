@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -105,7 +106,7 @@ class BillingReconcileServiceTest {
     @Test
     void groupReconcile_allBalanced() {
         // 组1：净额70(100−30) + 退款5 − 消耗20 = 期望55 = 余额55；个人净流出70 = 组净额70
-        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+        when(groupReconcileMapper.selectGroupRawRows(isNull())).thenReturn(List.of(
                 raw(1, "A 组", "55", "100", "-30", "-20", "5", "70"),
                 raw(2, "空组", "0", null, null, null, null, null)));
 
@@ -113,6 +114,7 @@ class BillingReconcileServiceTest {
 
         assertThat(vo.balanced()).isTrue();
         assertThat(vo.abnormalGroups()).isEmpty();
+        assertThat(vo.groups()).isNull();                        // 默认口径：groups 不填（Q9=A 原状）
         assertThat(vo.totals().netAllocated()).isEqualByComparingTo("70");
         assertThat(vo.totals().balance()).isEqualByComparingTo("55");
         assertThat(vo.totals().diff()).isEqualByComparingTo("0");
@@ -122,7 +124,7 @@ class BillingReconcileServiceTest {
     // 恒等式不平（组池比流水少 10）→ 该组入异常行 + 写审计；合计 diff 累计
     @Test
     void groupReconcile_identityDiff_flagsAndAudits() {
-        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+        when(groupReconcileMapper.selectGroupRawRows(isNull())).thenReturn(List.of(
                 raw(3, "B 组", "90", "100", "0", "0", "0", "100")));
         when(auditLogService.fromMdc(eq("billing"), eq("group_reconcile_diff"),
                 eq("project_group"), eq("3"), anyString(), eq("FAIL")))
@@ -143,7 +145,7 @@ class BillingReconcileServiceTest {
     // 双账本交叉不平（组账本净额 100 vs 个人账本净流出 60）→ 该组入异常行
     @Test
     void groupReconcile_crossBookDiff_flags() {
-        when(groupReconcileMapper.selectGroupRawRows()).thenReturn(List.of(
+        when(groupReconcileMapper.selectGroupRawRows(isNull())).thenReturn(List.of(
                 raw(4, "C 组", "100", "100", "0", "0", "0", "60")));
         when(auditLogService.fromMdc(anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(new AuditLogEntity());
@@ -160,7 +162,7 @@ class BillingReconcileServiceTest {
     @Test
     void groupReconcileSql_whitelistExcludesNonFundingLegs() throws Exception {
         String sql = com.superprogrammer.billing.mapper.GroupReconcileMapper.class
-                .getMethod("selectGroupRawRows")
+                .getMethod("selectGroupRawRows", Long.class)
                 .getAnnotation(org.apache.ibatis.annotations.Select.class)
                 .value()[0];
         assertThat(sql).contains("IN ('ALLOCATE', 'RECLAIM', 'CONSUME', 'REFUND')");
@@ -170,5 +172,66 @@ class BillingReconcileServiceTest {
         assertThat(sql).doesNotContain("ADMIN_ADJUST");
         // 个人账本交叉腿只取 GROUP_ALLOCATE/GROUP_RECLAIM
         assertThat(sql).contains("IN ('GROUP_ALLOCATE', 'GROUP_RECLAIM')");
+        // 7x-1 下钻：groupId 动态过滤在（防 SQL 静态化后丢条件）
+        assertThat(sql).contains("groupId != null");
+    }
+
+    // ==================== 7x-1（A4）：按组下钻 / 全组视图 ====================
+
+    // groupId 选中 → mapper 按组过滤；groups=该组行（含平组）；totals=该组聚合
+    @Test
+    void groupReconcile_groupId_scopesRowsAndTotals() {
+        when(groupReconcileMapper.selectGroupRawRows(eq(7L))).thenReturn(List.of(
+                raw(7, "选中组", "55", "100", "-30", "-20", "5", "70")));
+
+        var vo = reconcile.groupReconcile(7L, false);
+
+        verify(groupReconcileMapper).selectGroupRawRows(eq(7L));
+        assertThat(vo.groups()).hasSize(1);
+        assertThat(vo.groups().get(0).groupId()).isEqualTo(7L);
+        assertThat(vo.groups().get(0).diff()).isEqualByComparingTo("0");
+        assertThat(vo.balanced()).isTrue();
+        // totals=该组聚合（非全平台）
+        assertThat(vo.totals().netAllocated()).isEqualByComparingTo("70");
+        assertThat(vo.totals().balance()).isEqualByComparingTo("55");
+        assertThat(vo.abnormalGroups()).isEmpty();
+    }
+
+    // includeAll 且无 groupId → groups=全组行含平组（空组也进）
+    @Test
+    void groupReconcile_includeAll_listsBalancedGroups() {
+        when(groupReconcileMapper.selectGroupRawRows(isNull())).thenReturn(List.of(
+                raw(1, "A 组", "55", "100", "-30", "-20", "5", "70"),
+                raw(2, "空组", "0", null, null, null, null, null)));
+
+        var vo = reconcile.groupReconcile(null, true);
+
+        assertThat(vo.groups()).hasSize(2);                      // 含平组
+        assertThat(vo.groups()).extracting(r -> r.groupId()).containsExactly(1L, 2L);
+        assertThat(vo.balanced()).isTrue();
+        assertThat(vo.totals().balance()).isEqualByComparingTo("55");
+    }
+
+    // groupId 未命中（组已删/不存在）→ 空行 + totals 全 0，balanced=true
+    @Test
+    void groupReconcile_groupIdMiss_emptyScope() {
+        when(groupReconcileMapper.selectGroupRawRows(eq(99L))).thenReturn(List.of());
+
+        var vo = reconcile.groupReconcile(99L, false);
+
+        assertThat(vo.groups()).isEmpty();
+        assertThat(vo.balanced()).isTrue();
+        assertThat(vo.totals().balance()).isEqualByComparingTo("0");
+    }
+
+    // groupId 与 includeAll 同时给 → 单组优先（mapper 只收 groupId）
+    @Test
+    void groupReconcile_groupIdTakesPrecedenceOverIncludeAll() {
+        when(groupReconcileMapper.selectGroupRawRows(eq(7L))).thenReturn(List.of(
+                raw(7, "选中组", "55", "100", "-30", "-20", "5", "70")));
+
+        reconcile.groupReconcile(7L, true);
+
+        verify(groupReconcileMapper).selectGroupRawRows(eq(7L));
     }
 }

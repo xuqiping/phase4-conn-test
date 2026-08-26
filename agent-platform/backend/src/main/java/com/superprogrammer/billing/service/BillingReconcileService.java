@@ -80,7 +80,21 @@ public class BillingReconcileService {
      * 绝不自动修账（修账须人工，防对账程序成为新的篡改面）。
      */
     public com.superprogrammer.billing.dto.GroupReconcileVO groupReconcile() {
-        List<com.superprogrammer.billing.dto.GroupReconcileRawVO> raws = groupReconcileMapper.selectGroupRawRows();
+        return groupReconcile(null, false);
+    }
+
+    /**
+     * 组池对账下钻版（7x-1）：参数语义（plan A4 写死）——
+     * <ul>
+     * <li>groupId 选中 → groups=[该组行(含平)]，totals=该组聚合（单组优先，includeAll 无效）</li>
+     * <li>includeAll=true 且无 groupId → groups=全组行(含平组)，totals=全平台</li>
+     * <li>都不传 → Q9=A 现状：groups=null，abnormalGroups=仅异常组，totals=全平台</li>
+     * </ul>
+     * balanced/totals 跟随本响应口径（非恒全平台）；异常行审计/ERROR 与默认口径同路径。
+     */
+    public com.superprogrammer.billing.dto.GroupReconcileVO groupReconcile(Long groupId, boolean includeAll) {
+        List<com.superprogrammer.billing.dto.GroupReconcileRawVO> raws = groupReconcileMapper.selectGroupRawRows(groupId);
+        boolean scoped = groupId != null || includeAll;
         java.math.BigDecimal netAllocatedSum = java.math.BigDecimal.ZERO;
         java.math.BigDecimal consumedSum = java.math.BigDecimal.ZERO;
         java.math.BigDecimal refundedSum = java.math.BigDecimal.ZERO;
@@ -88,6 +102,7 @@ public class BillingReconcileService {
         java.math.BigDecimal diffSum = java.math.BigDecimal.ZERO;
         java.math.BigDecimal crossDiffSum = java.math.BigDecimal.ZERO;
         java.util.List<com.superprogrammer.billing.dto.GroupReconcileRowVO> abnormal = new java.util.ArrayList<>();
+        java.util.List<com.superprogrammer.billing.dto.GroupReconcileRowVO> scopedRows = new java.util.ArrayList<>();
         for (com.superprogrammer.billing.dto.GroupReconcileRawVO raw : raws) {
             // 派生（写入侧约定：reclaimSum/consumeSum ≤ 0）
             java.math.BigDecimal netAllocated = nvl(raw.allocSum()).add(nvl(raw.reclaimSum()));
@@ -103,11 +118,14 @@ public class BillingReconcileService {
             balanceSum = balanceSum.add(balance);
             diffSum = diffSum.add(diff);
             crossDiffSum = crossDiffSum.add(crossDiff);
+            com.superprogrammer.billing.dto.GroupReconcileRowVO row =
+                    new com.superprogrammer.billing.dto.GroupReconcileRowVO(
+                            raw.groupId(), raw.groupName(), netAllocated, consumed, refunded,
+                            expected, balance, diff, crossDiff);
+            if (scoped) {
+                scopedRows.add(row);
+            }
             if (diff.signum() != 0 || crossDiff.signum() != 0) {
-                com.superprogrammer.billing.dto.GroupReconcileRowVO row =
-                        new com.superprogrammer.billing.dto.GroupReconcileRowVO(
-                                raw.groupId(), raw.groupName(), netAllocated, consumed, refunded,
-                                expected, balance, diff, crossDiff);
                 abnormal.add(row);
                 auditGroupDiff(row);
                 log.error("组池对账不平: groupId={} name={} netAllocated={} consumed={} refunded={} "
@@ -117,7 +135,8 @@ public class BillingReconcileService {
             }
         }
         if (abnormal.isEmpty()) {
-            log.info("组池对账全平: 组数={} 余额合计={}", raws.size(), balanceSum);
+            log.info("组池对账全平: 口径={} 组数={} 余额合计={}", scoped ? "scoped(gid=" + groupId + ",all=" + includeAll + ")" : "default",
+                    raws.size(), balanceSum);
         } else {
             log.warn("组池对账异常组数={}/{}", abnormal.size(), raws.size());
         }
@@ -125,7 +144,8 @@ public class BillingReconcileService {
                 abnormal.isEmpty(),
                 new com.superprogrammer.billing.dto.GroupReconcileVO.Totals(
                         netAllocatedSum, consumedSum, refundedSum, balanceSum, diffSum, crossDiffSum),
-                java.util.List.copyOf(abnormal));
+                java.util.List.copyOf(abnormal),
+                scoped ? java.util.List.copyOf(scopedRows) : null);
     }
 
     private static java.math.BigDecimal nvl(java.math.BigDecimal v) {

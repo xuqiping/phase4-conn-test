@@ -33,7 +33,7 @@ import java.util.function.Supplier;
  * <p><b>对账不变量（V133 运维模板）</b>：①末行 ledger.balance_after == wallets.balance_points
  * （BACKSTOP 不动组池，行锁读保证一致）；②成员 Σ(CONSUME−REFUND+BACKSTOP) == used_points
  * （7x-2 修复：BACKSTOP 计入 member.used——used=真实消耗，不论资金来源；组池 balance 不含
- * BACKSTOP，资金出自组长个人。存量差异由 V158 一次性回填）。
+ * BACKSTOP，资金出自组长个人。存量差异由 V159 一次性回填）。
  *
  * <p><b>幂等</b>：chargeGroup/refundGroup 复用 idempotency_key（scope=group.charge/group.refund，
  * result_ref=组流水 id），媒体链路幂等键=taskId（Step5）。同键同额静默重放，同键异额 CONFLICT。

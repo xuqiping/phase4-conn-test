@@ -1,6 +1,7 @@
 package com.superprogrammer.billing.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -22,8 +23,9 @@ public interface GroupReconcileMapper {
      * <p>行源=project_groups 活行（无钱包行 balance=0，无流水各 sum=0）；
      * 个人账本侧 points_ledger.ref_id 为 BIGINT（=groupId），直接等值 JOIN。
      * 派生 expected/diff/crossDiff 与异常过滤在 service（SQL 保持哑聚合，便于单测钉口径）。
+     * <p>7x-1 下钻：groupId 非空 → 只取该组（选中组 totals=该组聚合）；null → 全量。
      */
-    @Select("SELECT g.id AS groupId, g.name AS groupName, "
+    @Select("<script>SELECT g.id AS groupId, g.name AS groupName, "
             + "COALESCE(w.balance_points, 0) AS balance, "
             + "COALESCE(gl.alloc_sum, 0) AS allocSum, "
             + "COALESCE(gl.reclaim_sum, 0) AS reclaimSum, "
@@ -50,6 +52,8 @@ public interface GroupReconcileMapper {
             + "  WHERE ref_type = 'GROUP' AND type IN ('GROUP_ALLOCATE', 'GROUP_RECLAIM') "
             + "  GROUP BY ref_id"
             + ") pl ON pl.group_id = g.id "
-            + "WHERE g.deleted = 0 ORDER BY g.id ASC")
-    List<com.superprogrammer.billing.dto.GroupReconcileRawVO> selectGroupRawRows();
+            + "WHERE g.deleted = 0 "
+            + "<if test='groupId != null'>AND g.id = #{groupId} </if>"
+            + "ORDER BY g.id ASC</script>")
+    List<com.superprogrammer.billing.dto.GroupReconcileRawVO> selectGroupRawRows(@Param("groupId") Long groupId);
 }
