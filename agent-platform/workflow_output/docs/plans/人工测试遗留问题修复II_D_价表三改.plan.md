@@ -110,7 +110,7 @@ created-date: 2026-08-26
   - **依赖**：D2、D3
   - **验证**：单测——hold 未命中/结算命中的多退少补数值；回归 HOLD 幂等键路径
 
-- [ ] **D6：配置面去分辨率（后端）**
+- [x] **D6：配置面去分辨率（后端）**（9b6fd509；44/44。候选=参考面×2（hint 报新增面）；判重/询价 3 维 (provider,model,hasRef)；SECOND+resolution 拒绝「resolution 须留空」；导入忽略旧 resolution 字段（老导出可导入）；stale 带分辨率行禁编辑（identity 守卫 resolution!=null）；VIDEO_RESOLUTION_SLOTS→EST_RESOLUTION_SLOTS 仅 est 校验用；findEffectiveWithResolution 保留作在途结算兜底）
   - **目标**：候选/判重/校验不再有 SECOND 分辨率维度
   - **动作**：
     ```
@@ -125,7 +125,7 @@ created-date: 2026-08-26
   - **依赖**：D1
   - **验证**：单测——候选 2 槽位；判重不看 resolution；带 resolution 的旧导出导入成功且被忽略；老结算请求（带 resolution）命中通用行
 
-- [ ] **D7：价表前端表单（三改合一）**
+- [x] **D7：价表前端表单（三改合一）**（6898526a；44/44 + vue-tsc 0。偏差：后端 Request/VO/ExportItem 三 DTO 先补四列映射（D2 只落了 entity），前端才有字段可用。表单四输入闲时入/闲时出（CHAT/EMBED/RERANK）、缓存价/闲时缓存价（CHAT，placeholder 留空回落）；分辨率下拉删；表格「闲时/缓存价」摘要列；sanitize 非文本清四列+SECOND resolution 置 null）
   - **目标**：视频两行制；文本类闲时/缓存输入
   - **动作**：
     ```
@@ -139,7 +139,7 @@ created-date: 2026-08-26
   - **依赖**：D6
   - **验证**：人工——新增 Cdance2.0 只有两行（有/无参考）；文本模型配闲时价保存回显；留空行为=改前
 
-- [ ] **D8：闲时时段配置页**
+- [x] **D8：闲时时段配置页**（af78fc95；39/39 + vue-tsc 0。读写不对称：读侧缺失/损坏→disabled 空窗（计费宁多收不少收），写侧 HH:mm 00:00-24:00+每日≤4 段拒保存；timezone 强制 Asia/Shanghai；并入 GET/PUT /api/settings/billing offPeak 部分更新；BillingSettingsTab 闲时段卡 time-picker 增删行+半填拦截+24:00 显示层收敛 23:59）
   - **目标**：admin 可配每日闲忙时段（分工作日/周末）
   - **动作**：
     ```
@@ -157,7 +157,7 @@ created-date: 2026-08-26
   - **依赖**：D2（读侧同键）
   - **验证**：单测 JSON 校验（格式/段数/跨零点合法）；人工——改配置即时生效（闲时发起聊天按闲时价）
 
-- [ ] **D9：est 偏差校准提示（附带项，规格 §1.4-5）**
+- [x] **D9：est 偏差校准提示（附带项，规格 §1.4-5）**（18076939；44/44 + vue-tsc 0。SQL 内聚合（Σ实耗/Σ预估−1，样本<3 不出行），GET /pricing/est-deviation；价表弹窗 TOKEN est 槽位旁 tag 偏高/偏低 N%+样本数，偏差<5% 隐藏；SQL 本地库实测 0 行=tag 隐藏路径）
   - **目标**：TOKEN 模式 est 输入旁显示近 7 天偏差
   - **动作**：PricingConfigService 增轻量聚合（近 7 天同 kind/model/hasRef 的实耗 vs 预估均值偏差%），价表页 TOKEN est 槽位旁 tag 显示「近7天实耗偏高 N%」；查询走 SQL AVG 不拉明细
   - **文件**：`billing/service/PricingConfigService.java`、`PricingConfigView.vue`
@@ -180,4 +180,4 @@ created-date: 2026-08-26
 
 ## 验证收口
 
-- [ ] D1-D10 全绿；7x-4/7x-5/9x-1 三项可勾销；老价表零变化回归矩阵是放行前提
+- [x] D1-D10 全绿（fdf1c9f 硬门槛回归矩阵：老价表六 kind 逐分一致；收口套件 250/250）；7x-4/7x-5/9x-1 三项可勾销（人工项落测试方案待功能级收尾执行）；老价表零变化回归矩阵已锁死（legacy_pricing_allNewColumnsNull_matrix_sameAsBefore）
