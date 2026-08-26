@@ -91,6 +91,7 @@ import type {
   RechargeRecordVO, RechargePageVO, PaymentOrderVO
 } from '@/api/billing'
 import { projectGroupApi } from '@/api/projectGroup'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 import RechargeDialog from '@/components/billing/RechargeDialog.vue'
 
 const message = useMessage()
@@ -245,6 +246,18 @@ onMounted(() => {
   loadPayChannels()
   loadRecharges(1)
 })
+
+// 计划 E5（7x-3）：积分事件驱动刷新——徽标已由 store 秒级更新，此处刷新余额/流水列表；
+// 防抖 1s 合并 HOLD+结算连发的事件风暴；页签不可见跳过（回前台手动切查询，或下次事件触发）
+{
+  const pgStore = useProjectGroupStore()
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  watch(() => pgStore.lastEvent, evt => {
+    if (!evt || document.visibilityState !== 'visible') return
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => { void load() }, 1000)
+  })
+}
 </script>
 
 <style lang="scss" scoped>

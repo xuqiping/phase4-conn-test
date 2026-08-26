@@ -454,6 +454,7 @@ import {
   type KindsForm, type VisForm, type VisChoice, type GroupKind
 } from '@/utils/groupPerms'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectGroupStore } from '@/stores/projectGroup'
 
 /**
  * 计划5 Step7：项目组推进页。
@@ -1237,6 +1238,18 @@ onMounted(() => {
   void loadMyInvites()
   void loadMyJoinRequests()
 })
+
+// 计划 E5（7x-3）：组池/成员积分事件驱动刷新——组卡片余额已由 store 秒级更新，
+// 此处刷新组列表（限额/used 等）；防抖 1s 合并连发事件；页签不可见跳过
+{
+  const pgStore = useProjectGroupStore()
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  watch(() => pgStore.lastEvent, evt => {
+    if (!evt || document.visibilityState !== 'visible') return
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => { void loadGroups() }, 1000)
+  })
+}
 </script>
 
 <style lang="scss" scoped>
