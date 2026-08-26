@@ -46,6 +46,8 @@ export const PostMessageW = user32.func("bool __stdcall PostMessageW(HWND hwnd, 
 export const SendMessageW = user32.func("intptr_t __stdcall SendMessageW(HWND hwnd, uint32 msg, uintptr_t wparam, intptr_t lparam)");
 export const ClientToScreen = user32.func("bool __stdcall ClientToScreen(HWND hwnd, _Inout_ POINT* pt)");
 export const ScreenToClient = user32.func("bool __stdcall ScreenToClient(HWND hwnd, _Inout_ POINT* pt)");
+/** 找子窗口（层2 向实际处理消息的控件发消息，如老记事本的 Edit） */
+export const FindWindowExW = user32.func("HWND __stdcall FindWindowExW(HWND parent, HWND after, str16 cls, str16 title)");
 // 简化输入注入：legacy mouse_event/keybd_event（原型简单，行为与 SendInput 等价）
 export const mouse_event = user32.func(
   "void __stdcall mouse_event(uint32 flags, uint32 dx, uint32 dy, uint32 data, void* extra)"
