@@ -60,6 +60,19 @@ public class AuthChannelSettingService {
                         text(MAIL + "smtp-from-alias", smtpFromAliasFallback)));
     }
 
+    /**
+     * 12x-1 C2：注册发码间隔秒数（system_settings 键 auth.channel.mail.resend-interval-seconds，默认 60）。
+     * 每请求实时读（与 daily-cap 同款）——改配置即时生效，无需重启。
+     */
+    public long resendIntervalSeconds() {
+        try {
+            long v = settings.getLong(MAIL + "resend-interval-seconds", 60L);
+            return v > 0 ? v : 60L;
+        } catch (Exception e) {
+            return 60L;
+        }
+    }
+
     public SmsSnapshot smsSnapshot() {
         return new SmsSnapshot(
                 bool(SMS + "enabled", smsEnabledFallback),

@@ -282,7 +282,11 @@ public class EmailService {
             try {
                 doSendRegisterCode(email, clientIp);
             } catch (BusinessException e) {
-                captchaGuard.recordFailure("mailcode", clientIp);
+                // 12x-1 C2：间隔限流拒不计滑块失败——正常用户连点不该被逼出强制滑块；
+                // 其他异常仍记（那是可疑行为）。
+                if (e.getCode() != ErrorCode.RATE_LIMIT.getCode()) {
+                    captchaGuard.recordFailure("mailcode", clientIp);
+                }
                 throw e;
             }
             captchaGuard.clear("mailcode", clientIp);
@@ -307,24 +311,25 @@ public class EmailService {
             throw new BusinessException(ErrorCode.CONFLICT, "该邮箱已被注册，请直接登录或使用找回密码");
         }
 
-        mailQuota.checkIpHourly(clientIp);
-
+        // 12x-1 C2：间隔窗口前移到 IP 配额之前——被间隔拒的请求不耗 IP 每小时配额
+        //（原顺序：先 checkIpHourly 计数、再间隔拒 → 用户连点既吃 429 又白耗配额）。
+        long resendWindow = channelSettings.resendIntervalSeconds();
         String resendKey = REG_RESEND_PREFIX + normalized;
         try {
             Long n = redisTemplate.opsForValue().increment(resendKey);
             if (n != null && n == 1L) {
-                redisTemplate.expire(resendKey, RESEND_WINDOW_SECONDS, TimeUnit.SECONDS);
+                redisTemplate.expire(resendKey, resendWindow, TimeUnit.SECONDS);
             }
             if (n != null && n > 1) {
-                // 12x-1 C1：429 带真实剩余秒（TTL 读失败/永生/-2 → 回退常量 60，保守不抛错）
-                long remaining = RESEND_WINDOW_SECONDS;
+                // 12x-1 C1：429 带真实剩余秒（TTL 读失败/永生/-2 → 回退窗口值，保守不抛错）
+                long remaining = resendWindow;
                 try {
                     Long ttl = redisTemplate.getExpire(resendKey, TimeUnit.SECONDS);
                     if (ttl != null && ttl > 0) {
                         remaining = ttl;
                     }
                 } catch (Exception ttlEx) {
-                    log.warn("读发码间隔 TTL 失败(回退60s) : {}", ttlEx.toString());
+                    log.warn("读发码间隔 TTL 失败(回退窗口值) : {}", ttlEx.toString());
                 }
                 throw new BusinessException(ErrorCode.RATE_LIMIT, "发送过于频繁，请 " + remaining + " 秒后再试")
                         .withData(Map.of("retryAfterSeconds", remaining));
@@ -334,6 +339,8 @@ public class EmailService {
         } catch (Exception e) {
             log.warn("注册发码限流 Redis 失败(降级放行) : {}", e.toString());
         }
+
+        mailQuota.checkIpHourly(clientIp);
 
         String code = String.format("%06d", secureRandom.nextInt(1_000_000));
         try {

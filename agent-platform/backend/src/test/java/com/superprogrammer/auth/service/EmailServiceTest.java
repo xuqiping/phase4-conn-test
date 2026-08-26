@@ -67,6 +67,8 @@ class EmailServiceTest {
                 "ALIYUN", null));
         // 12x 开关回退：默认开（保持 B1 既有语义）；「关」场景由专项用例覆盖
         lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
+        // 12x-1 C2：间隔改读配置（默认 60；专项用例覆写验证可配）
+        lenient().when(channelSettings.resendIntervalSeconds()).thenReturn(60L);
     }
 
     @Test
@@ -278,6 +280,53 @@ class EmailServiceTest {
         assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("60"));
         assertEquals(60L, ex.getData().get("retryAfterSeconds"));
+    }
+
+    // ==================== 12x-1 C2：次生修正 ====================
+
+    // 间隔内连点 → 不计滑块失败（正常用户不该被逼出强制滑块）；其他异常仍记
+    @Test
+    void sendRegisterCode_rateLimited_doesNotRecordCaptchaFailure() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
+        assertThrows(BusinessException.class, () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        verify(captchaGuard, never()).recordFailure(anyString(), anyString());
+    }
+
+    @Test
+    void sendRegisterCode_otherFailure_stillRecordsCaptchaFailure() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
+        // Redis 存码失败 → BAD_REQUEST（可疑/异常行为，仍计滑块）
+        doThrow(new RuntimeException("redis down"))
+                .when(valueOps).set(eq("regcode:email:a@b.com"), anyString(), anyLong(), any());
+        assertThrows(BusinessException.class, () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        verify(captchaGuard).recordFailure("mailcode", "1.2.3.4");
+    }
+
+    // 间隔拒发生在 IP 配额之前 → 被拒不耗 IP 每小时配额
+    @Test
+    void sendRegisterCode_rateLimited_skipsIpQuota() {
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(2L);
+        assertThrows(BusinessException.class, () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        verify(mailQuota, never()).checkIpHourly(anyString());
+    }
+
+    // 间隔可配：改配置即时生效（窗口 expire 用配置值）
+    @Test
+    void sendRegisterCode_intervalConfigurable_appliedImmediately() {
+        com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of(aliyun));
+
+        when(channelSettings.resendIntervalSeconds()).thenReturn(120L);
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
+
+        assertDoesNotThrow(() -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        verify(redisTemplate).expire("regcode:resend:a@b.com", 120L, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     @Test
