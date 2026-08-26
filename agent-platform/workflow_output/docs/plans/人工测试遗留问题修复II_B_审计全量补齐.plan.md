@@ -111,9 +111,16 @@ created-date: 2026-08-26
   - **依赖**：B2
   - **验证**：人工抽查改标签 → 日志在
 
-- [ ] **B7：收口验证**
-  - sweep 复查：grep 全 Controller 写方法（POST/PUT/DELETE）无注解且不在免审清单 → 清零或列入免审理由
-  - 人工：规格 §7.5 四项全过；审计页无任何英文模块/动作显示（抽 50 行）
+- [x] **B7：收口验证（sweep 清零 + 10 漏网注解补齐）**
+  - 双向窗口 sweep（注解在 mapping 上 6 行/下 12 行内算命中，兼容上下两种摆放与全限定名）：49 真实缺口 → 10 实补 + 39 免审
+  - **10 补齐**（7 Controller）：MemoryNotification ack→memory:notification_ack；MemoryRecall scope→recall_scope_set；MemoryTurn delete/batch→turn_delete/raw_batch_delete；Feedback notifications/read→notification_read；KnowledgeAdmin backfill_tokens/backfill_l1_embeddings；RagRetrievalLog delete×2→rag_log_delete；MediaGen providers/test→llm:provider_test（复用）
+  - **免审清单（39，理由四类）**：
+    - 服务层手工行（防双记）：AuthController 全部（auditAuth+Mfa B1）；EmailVerify:62/PasswordReset:32,42/SmsAuth:33,42/DingTalk:25；PaymentController create/cancel + PaymentNotify:30；ChatController send/stream/attachment 相关 4 处（ChatSessionService）
+    - 读操作：MemoryRecall:64 preview；KnowledgeAsk:50/KnowledgeRetrieve:31/KnowledgeDocument:41 sheets-preview
+    - 高频运行类（注解会随每次执行刷行）：CanvasController nodes/run；WorkflowController run/run-stream
+    - 低敏/遗留/内部：ChatController:203 inclusion-confirm；CaptchaController:39,46（公开滑块无账号语义）；ExecutionController:35 startExecution（legacy 无前端）；RuntimeCallbackController:18（内部回调无 JWT）
+  - 字典 +8 码（memory 4/feedback 1/kb 3），KNOWN_CODES 271；测试 15/15 后端 + 3/3 前端绿
+  - 人工：规格 §7.5 四项全过；审计页无任何英文模块/动作显示（抽 50 行）→ 归入功能级收尾人工清单
 
 ## 功能联动点清单
 

@@ -9,6 +9,7 @@ import com.superprogrammer.chat.service.internal.MemoryRecallPipeline;
 import com.superprogrammer.chat.service.internal.MemoryRecallScopePreferenceService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.project.entity.Project;
 import com.superprogrammer.project.mapper.ProjectMapper;
@@ -136,6 +137,7 @@ public class MemoryRecallController {
 
     /** 保存 scope 偏好（跨会话沿用）。 */
     @PutMapping("/scope")
+    @AuditLog(module = "memory", action = "recall_scope_set", targetType = "memory_config")
     public ResponseEntity<R<Void>> saveScope(@RequestBody(required = false) MemoryRecallScopeRequest req) {
         Long uid = requireLogin();
         prefService.saveScope(uid, req);

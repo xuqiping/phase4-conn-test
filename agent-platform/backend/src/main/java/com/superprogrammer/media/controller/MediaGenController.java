@@ -140,6 +140,7 @@ public class MediaGenController {
      * 权限与 /api/llm/providers 管理端点一致（16x 起 llm:config 独立码），非 media:gen。
      */
     @PostMapping("/providers/{id}/test")
+    @AuditLog(module = "llm", action = "provider_test", targetType = "llm_provider")
     @RequirePermission("llm:config")
     public ResponseEntity<R<com.superprogrammer.llm.dto.TestConnectionResult>> testMediaProvider(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok(arkSeedanceProvider.testConnection(id)));

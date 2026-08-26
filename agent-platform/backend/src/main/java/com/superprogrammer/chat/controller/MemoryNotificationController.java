@@ -5,6 +5,7 @@ import com.superprogrammer.chat.entity.MemoryNotification;
 import com.superprogrammer.chat.service.internal.MemoryNotificationService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +58,7 @@ public class MemoryNotificationController {
 
     /** ACK 单条通知（置 resolved_at=now）；他人通知 → 403。 */
     @PostMapping("/{id}/ack")
+    @AuditLog(module = "memory", action = "notification_ack", targetType = "memory_notification")
     public ResponseEntity<R<Void>> ack(@PathVariable Long id) {
         Long uid = requireLogin();
         notificationService.ack(uid, id);

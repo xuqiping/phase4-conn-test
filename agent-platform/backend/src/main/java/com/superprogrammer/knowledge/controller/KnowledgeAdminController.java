@@ -35,6 +35,7 @@ public class KnowledgeAdminController {
     private final com.superprogrammer.knowledge.service.KnowledgeBaseService knowledgeBaseService;
 
     @PostMapping("/backfill-tokens")
+    @AuditLog(module = "kb", action = "backfill_tokens", targetType = "kb_document")
     @RequirePermission("knowledge:manage")
     public ResponseEntity<R<Integer>> backfillTokens() {
         int updated = knowledgeNodeService.backfillContentTokens();
@@ -42,6 +43,7 @@ public class KnowledgeAdminController {
     }
 
     @PostMapping("/backfill-l1-embeddings")
+    @AuditLog(module = "kb", action = "backfill_l1_embeddings", targetType = "kb_document")
     @RequirePermission("knowledge:manage")
     public ResponseEntity<R<Integer>> backfillL1Embeddings() {
         int enqueued = knowledgeNodeService.backfillL1Embeddings();

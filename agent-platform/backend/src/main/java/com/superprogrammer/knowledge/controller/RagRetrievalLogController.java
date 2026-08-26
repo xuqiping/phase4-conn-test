@@ -67,6 +67,7 @@ public class RagRetrievalLogController {
     }
 
     @DeleteMapping("/{id}")
+    @AuditLog(module = "kb", action = "rag_log_delete", targetType = "rag_log")
     @RequirePermission("knowledge:manage")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         boolean ok = ragRetrievalLogService.delete(id);
@@ -74,6 +75,7 @@ public class RagRetrievalLogController {
     }
 
     @DeleteMapping
+    @AuditLog(module = "kb", action = "rag_log_delete", targetType = "rag_log")
     @RequirePermission("knowledge:manage")
     public ResponseEntity<R<Integer>> deleteBefore(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime before) {

@@ -150,7 +150,11 @@ public final class AuditLabelDictionary {
                     Map.entry("rag_trace_view", "查看调用链"),
                     Map.entry("rag_trace_reverse_lookup", "反查调用链"),
                     Map.entry("ranking_config_update", "修改排序配置"),
-                    Map.entry("ranking_default_update", "修改默认排序"))),
+                    Map.entry("ranking_default_update", "修改默认排序"),
+                    // B7（8x-3 sweep）：管理端回填/检索日志清理
+                    Map.entry("backfill_tokens", "回填Token统计"),
+                    Map.entry("backfill_l1_embeddings", "回填L1向量"),
+                    Map.entry("rag_log_delete", "删除检索日志"))),
             Map.entry("system", Map.ofEntries(
                     Map.entry("update_auth_settings", "修改认证设置"),
                     Map.entry("update_billing_settings", "修改计费设置"),
@@ -249,7 +253,12 @@ public final class AuditLabelDictionary {
                     Map.entry("consolidation_trigger", "手动触发记忆整合"),
                     Map.entry("consolidation_auto_set", "设置自动整合范围"),
                     Map.entry("conflict_resolve", "解决记忆冲突"),
-                    Map.entry("project_rule_set", "设置项目记忆规则"))),
+                    Map.entry("project_rule_set", "设置项目规则"),
+                    // B7（8x-3 sweep）
+                    Map.entry("notification_ack", "确认记忆通知"),
+                    Map.entry("recall_scope_set", "保存召回范围"),
+                    Map.entry("turn_delete", "删除对话轮次"),
+                    Map.entry("raw_batch_delete", "批量删除原始轮次"))),
             Map.entry("media", Map.ofEntries(
                     Map.entry("video_submit", "提交视频生成"),
                     Map.entry("image_submit", "提交图片生成"),
@@ -330,7 +339,9 @@ public final class AuditLabelDictionary {
                     Map.entry("help_article_create", "新建帮助文章"),
                     Map.entry("help_article_update", "修改帮助文章"),
                     Map.entry("help_article_publish", "发布帮助文章"),
-                    Map.entry("help_article_delete", "删除帮助文章"))),
+                    Map.entry("help_article_delete", "删除帮助文章"),
+                    // B7（8x-3 sweep）
+                    Map.entry("notification_read", "标记通知已读"))),
             Map.entry("project-group", Map.ofEntries(
                     Map.entry("group_create", "创建项目组"),
                     Map.entry("group_rename", "重命名项目组"),

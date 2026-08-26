@@ -59,7 +59,8 @@ class AuditLabelDictionaryCompletenessTest {
                     "rag_feedback_reject", "rag_index_rebuild", "rag_index_rebuild_cancel",
                     "rag_index_rollback", "rag_index_switch", "rag_rollout_update",
                     "rag_rollout_rollback", "rag_trace_view", "rag_trace_reverse_lookup",
-                    "ranking_config_update", "ranking_default_update"}),
+                    "ranking_config_update", "ranking_default_update",
+                    "backfill_tokens", "backfill_l1_embeddings", "rag_log_delete"}),
             Map.entry("system", new String[]{
                     "update_auth_settings", "update_auth_channels", "update_billing_settings",
                     "update_llm_model_defaults", "update_rag_memory_settings",
@@ -95,7 +96,8 @@ class AuditLabelDictionaryCompletenessTest {
                     "tag_create", "tag_update", "tag_reclassify",
                     "entry_review", "entry_delete", "gen_config_set",
                     "consolidation_trigger", "consolidation_auto_set", "conflict_resolve",
-                    "project_rule_set"}),
+                    "project_rule_set", "notification_ack", "recall_scope_set",
+                    "turn_delete", "raw_batch_delete"}),
             Map.entry("media", new String[]{
                     "video_submit", "image_submit", "edit_submit",
                     "video_gen_success", "video_gen_fail",
@@ -133,7 +135,7 @@ class AuditLabelDictionaryCompletenessTest {
                     "suggestion_submit", "suggestion_review", "suggestion_message",
                     "question_submit", "question_answer", "question_close", "question_message",
                     "help_article_create", "help_article_update",
-                    "help_article_publish", "help_article_delete"}),
+                    "help_article_publish", "help_article_delete", "notification_read"}),
             Map.entry("project-group", new String[]{
                     "group_create", "group_rename", "group_delete",
                     "member_invite", "member_remove", "member_role", "member_quota",
@@ -165,8 +167,8 @@ class AuditLabelDictionaryCompletenessTest {
                 total++;
             }
         }
-        // 防呆：清单意外清空（B6 后 20 模块 / 263 码）
-        assertTrue(total >= 263, "KNOWN_CODES 总数异常: " + total);
+        // 防呆：清单意外清空（B7 收口 20 模块 / 271 码）
+        assertTrue(total >= 271, "KNOWN_CODES 总数异常: " + total);
         assertTrue(KNOWN_CODES.size() >= 20, "模块数异常: " + KNOWN_CODES.size());
     }
 

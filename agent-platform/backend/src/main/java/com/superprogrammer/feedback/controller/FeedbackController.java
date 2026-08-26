@@ -80,6 +80,7 @@ public class FeedbackController {
 
     /** 标记已读（幂等；非本人静默）。 */
     @PostMapping("/notifications/{id}/read")
+    @AuditLog(module = "feedback", action = "notification_read", targetType = "notification")
     public ResponseEntity<R<Void>> markRead(@org.springframework.web.bind.annotation.PathVariable("id") Long id) {
         notificationService.markRead(currentUserId(), id);
         return ResponseEntity.ok(R.ok("已读", null));

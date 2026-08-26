@@ -9,6 +9,7 @@ import com.superprogrammer.chat.mapper.MemoryTurnMapper;
 import com.superprogrammer.chat.service.internal.MemoryTurnViewService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -86,6 +87,7 @@ public class MemoryTurnController {
 
     /** 软删单条流水账（作者本人，向量 7）。12h + summary 级联留 E。 */
     @DeleteMapping("/{id}")
+    @AuditLog(module = "memory", action = "turn_delete", targetType = "memory_turn")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         Long uid = getCurrentUserId();
         if (uid == null) {
@@ -109,6 +111,7 @@ public class MemoryTurnController {
 
     /** 批量软删 raw（向量 13：wrapper 强制 user_id=self，返实际有权删除条数）。 */
     @PostMapping("/raw/batch-delete")
+    @AuditLog(module = "memory", action = "raw_batch_delete", targetType = "memory_turn")
     public ResponseEntity<R<Integer>> batchDeleteRaw(@Valid @RequestBody MemoryRawBatchDeleteRequest req) {
         Long uid = getCurrentUserId();
         if (uid == null) {
