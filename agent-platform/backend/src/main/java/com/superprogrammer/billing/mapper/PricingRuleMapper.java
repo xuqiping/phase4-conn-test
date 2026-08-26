@@ -28,6 +28,8 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
     /**
      * 7x-3：判重带 has_reference 维度。VIDEO 同模型可合法配两行（false+true 不冲突）；
      * 其他 kind 一律按 false 查（无重复）。历史全局价（provider_id IS NULL）仍视为占用。
+     * <p>D6（V160）：行身份去 resolution 维（SECOND 分辨率行已合并为通用行），
+     * 本方法即唯一判重口径；带 resolution 的旧 SQL 已随维度一并移除。
      */
     @Select("""
             SELECT COUNT(*) FROM pricing_rule
@@ -38,22 +40,6 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
     long countConflictingProviderModelHasRef(@Param("providerId") Long providerId,
                                              @Param("model") String model,
                                              @Param("hasReference") boolean hasReference);
-
-    /**
-     * 7x-1（V152）：判重再加 resolution 维度——VIDEO SECOND 同模型同参考面可按分辨率配多行。
-     * resolution 归一化（trim，空串视 null）后按 IS NOT DISTINCT FROM 语义比对（NULL=通用行）。
-     */
-    @Select("""
-            SELECT COUNT(*) FROM pricing_rule
-            WHERE model = #{model}
-              AND (provider_id = #{providerId} OR provider_id IS NULL)
-              AND has_reference = #{hasReference}
-              AND resolution IS NOT DISTINCT FROM #{resolution}
-            """)
-    long countConflictingProviderModelHasRefResolution(@Param("providerId") Long providerId,
-                                                       @Param("model") String model,
-                                                       @Param("hasReference") boolean hasReference,
-                                                       @Param("resolution") String resolution);
 
     /**
      * 询价取生效价表（含 has_reference 精确匹配）。

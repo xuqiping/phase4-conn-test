@@ -170,7 +170,7 @@ class PricingConfigServiceTest {
         // AC-F20-01：供应商行锁内复查重复，防止并发穿透候选列表。
         when(llmProviderMapper.selectByIdForUpdate(1L))
                 .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(1L, "chat-model", false, null)).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
 
         assertThatThrownBy(() -> service.createPricingRule(
                 pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
@@ -204,7 +204,7 @@ class PricingConfigServiceTest {
                 provider(4L, "视频", "VIDEO", "video-model")));
         var result = service.availablePricingModels();
 
-        // 7x-1（V152）：VIDEO 模型展开为 (参考面×分辨率槽位) 2×5=10 条候选；非 VIDEO 仍一模型一条
+        // D6（V160）：VIDEO 模型展开为 参考面×2=2 条候选（去分辨率档）；非 VIDEO 仍一模型一条
         org.assertj.core.api.Assertions.assertThat(result)
                 .filteredOn(c -> !"VIDEO".equals(c.getKind()))
                 .extracting("providerId", "model", "kind")
@@ -214,7 +214,7 @@ class PricingConfigServiceTest {
                         org.assertj.core.groups.Tuple.tuple(3L, "image-model", "IMAGE"));
         org.assertj.core.api.Assertions.assertThat(result)
                 .filteredOn(c -> "VIDEO".equals(c.getKind()))
-                .hasSize(10);
+                .hasSize(2);
     }
 
     @Test
@@ -250,7 +250,7 @@ class PricingConfigServiceTest {
     void createPricingRule_duplicateCheckIncludesGlobalRule() {
         when(llmProviderMapper.selectByIdForUpdate(1L))
                 .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(1L, "chat-model", false, null)).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
 
         assertThatThrownBy(() -> service.createPricingRule(
                 pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT)))
@@ -273,8 +273,8 @@ class PricingConfigServiceTest {
         when(pricingRuleMapper.selectList(any())).thenReturn(List.of(configured));
 
         var result = service.availablePricingModels();
-        // 7x-1（V152）：(false,通用) 已配 → 占 1 槽位，余 9 候选；「有参考·通用」必须在列（带身份提示）
-        org.assertj.core.api.Assertions.assertThat(result).hasSize(9);
+        // D6（V160）：(false) 面已配 → 余 1 候选；「有参考」必须在列（带身份提示）
+        org.assertj.core.api.Assertions.assertThat(result).hasSize(1);
         org.assertj.core.api.Assertions.assertThat(result)
                 .filteredOn(c -> Boolean.TRUE.equals(c.getHasReference()) && c.getResolution() == null)
                 .hasSize(1);
@@ -302,28 +302,28 @@ class PricingConfigServiceTest {
         withRef.setHasReference(true);
         when(pricingRuleMapper.selectList(any())).thenReturn(List.of(noRef, withRef));
 
-        // 7x-1（V152）：两面通用行配齐后，分辨率槽位候选仍在（4 槽×2 面=8）；全槽配齐才消失
-        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).hasSize(8);
+        // D6（V160）：两面配齐后候选消失（与非 VIDEO 行为对齐）
+        org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
     }
 
     @Test
-    void availablePricingModels_videoAllSlotsConfigured_excluded() {
-        // 7x-1（V152）：(2 参考面 × 5 槽位) 全配齐 → 候选消失
+    void availablePricingModels_videoLegacyResolutionRows_occupySide() {
+        // D6（V160）：残留带 resolution 的历史行（迁移前数据）同占参考面身份 → 候选消失
         when(llmProviderMapper.selectList(any())).thenReturn(List.of(
                 provider(4L, "视频", "VIDEO", "seedance")));
-        java.util.List<PricingRuleEntity> rules = new java.util.ArrayList<>();
-        for (boolean side : new boolean[]{false, true}) {
-            for (String res : new String[]{null, "480p", "720p", "1080p", "4k"}) {
-                PricingRuleEntity e = new PricingRuleEntity();
-                e.setProviderId(4L);
-                e.setModel("seedance");
-                e.setKind(PricingRuleEntity.KIND_VIDEO);
-                e.setHasReference(side);
-                e.setResolution(res);
-                rules.add(e);
-            }
-        }
-        when(pricingRuleMapper.selectList(any())).thenReturn(rules);
+        PricingRuleEntity noRef = new PricingRuleEntity();
+        noRef.setProviderId(4L);
+        noRef.setModel("seedance");
+        noRef.setKind(PricingRuleEntity.KIND_VIDEO);
+        noRef.setHasReference(false);
+        noRef.setResolution(null);
+        PricingRuleEntity legacy = new PricingRuleEntity();
+        legacy.setProviderId(4L);
+        legacy.setModel("seedance");
+        legacy.setKind(PricingRuleEntity.KIND_VIDEO);
+        legacy.setHasReference(true);
+        legacy.setResolution("720p"); // 迁移未并的残留分辨率行
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(noRef, legacy));
 
         org.assertj.core.api.Assertions.assertThat(service.availablePricingModels()).isEmpty();
     }
@@ -355,7 +355,7 @@ class PricingConfigServiceTest {
         // 7x-3：同一 VIDEO 模型可配 false 和 true 两行（不冲突），admin 分别定价。
         when(llmProviderMapper.selectByIdForUpdate(4L))
                 .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(4L, "seedance", true, null)).thenReturn(0L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "seedance", true)).thenReturn(0L);
 
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
@@ -472,7 +472,7 @@ class PricingConfigServiceTest {
         item.setPriceInputPerMillion(new BigDecimal("2"));
         item.setPriceOutputPerMillion(new BigDecimal("3"));
         when(llmProviderMapper.selectById(1L)).thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(1L, "chat-model", false, null)).thenReturn(0L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(0L);
 
         var result = service.importAll(List.of(item));
         org.assertj.core.api.Assertions.assertThat(result.getCreated()).isEqualTo(1);
@@ -488,13 +488,13 @@ class PricingConfigServiceTest {
         item.setModel("chat-model");
         item.setPriceInputPerMillion(new BigDecimal("5"));
         when(llmProviderMapper.selectById(1L)).thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(1L, "chat-model", false, null)).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(1L, "chat-model", false)).thenReturn(1L);
         PricingRuleEntity existing = new PricingRuleEntity();
         existing.setId(10L);
         existing.setKind(PricingRuleEntity.KIND_CHAT);
         existing.setProviderId(1L);
         existing.setModel("chat-model");
-        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "chat-model", false, null)).thenReturn(existing);
+        when(pricingRuleMapper.findEffective("CHAT", 1L, "chat-model", false)).thenReturn(existing);
 
         var result = service.importAll(List.of(item));
         org.assertj.core.api.Assertions.assertThat(result.getUpdated()).isEqualTo(1);
@@ -568,34 +568,27 @@ class PricingConfigServiceTest {
     }
 
     @Test
-    void createPricingRule_secondResolutionNormalizedToLowercase() {
-        // 大写 4K 归一化为 4k（与任务侧 resolution 归一化对齐，防 IS NOT DISTINCT FROM 失配）
-        when(llmProviderMapper.selectByIdForUpdate(4L))
-                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+    void createPricingRule_secondWithLegacySlotResolution_throws() {
+        // D6（V160）：旧合法档（4K 等）也拒绝——SECOND 已不按分辨率计价（校验先行，无需 provider 桩）
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
         req.setPricePerSecond(new BigDecimal("0.10"));
         req.setResolution("4K");
 
-        service.createPricingRule(req);
-
-        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
-                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
-        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
-        org.assertj.core.api.Assertions.assertThat(captor.getValue().getResolution()).isEqualTo("4k");
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("须留空");
     }
 
     @Test
-    void createPricingRule_sameResolutionDuplicate_throws() {
-        // 同 (provider, model, hasRef, resolution) 已配 → 409；不同分辨率行不冲突（dup=0 不拦）
+    void createPricingRule_secondDuplicate_throws() {
+        // D6（V160）：同 (provider, model, hasRef) 已配 → 409（判重已去 resolution 维）
         when(llmProviderMapper.selectByIdForUpdate(4L))
                 .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
-        when(pricingRuleMapper.countConflictingProviderModelHasRefResolution(
-                4L, "seedance", false, "720p")).thenReturn(1L);
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "seedance", false)).thenReturn(1L);
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
         req.setPricePerSecond(new BigDecimal("0.10"));
-        req.setResolution("720p");
 
         assertThatThrownBy(() -> service.createPricingRule(req))
                 .isInstanceOf(BusinessException.class)
@@ -626,8 +619,8 @@ class PricingConfigServiceTest {
     }
 
     @Test
-    void updatePricingRule_resolutionChange_throws() {
-        // resolution 是身份字段：编辑不可改（通用行 → 720p 行视同改身份）
+    void updatePricingRule_staleResolutionRow_throws() {
+        // D6（V160）：残留非 null resolution 行视同身份异常，拒绝编辑（提示走重新配置）
         PricingRuleEntity existing = new PricingRuleEntity();
         existing.setId(6L);
         existing.setProviderId(4L);
@@ -635,17 +628,37 @@ class PricingConfigServiceTest {
         existing.setKind(PricingRuleEntity.KIND_VIDEO);
         existing.setHasReference(false);
         existing.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
-        existing.setResolution(null);
+        existing.setResolution("720p"); // 迁移未并的残留行
         when(pricingRuleMapper.selectById(6L)).thenReturn(existing);
 
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
         req.setPricePerSecond(new BigDecimal("0.10"));
-        req.setResolution("720p");
 
         assertThatThrownBy(() -> service.updatePricingRule(6L, req))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不可修改");
+    }
+
+    @Test
+    void importAll_legacyResolutionField_ignored() {
+        // D6（V160）：旧导出带 resolution 字段 → 导入忽略，落库通用行（resolution=null）
+        com.superprogrammer.billing.dto.PricingRuleExportItem item = new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_VIDEO);
+        item.setProviderId(4L);
+        item.setModel("seedance");
+        item.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        item.setPricePerSecond(new BigDecimal("0.10"));
+        item.setResolution("1080p"); // 旧导出残留字段
+        when(llmProviderMapper.selectById(4L)).thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "seedance", false)).thenReturn(0L);
+
+        var result = service.importAll(List.of(item));
+        org.assertj.core.api.Assertions.assertThat(result.getCreated()).isEqualTo(1);
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getResolution()).isNull();
     }
 
     // helpers
