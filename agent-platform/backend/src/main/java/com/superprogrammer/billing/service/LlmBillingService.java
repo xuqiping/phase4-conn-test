@@ -40,8 +40,6 @@ public class LlmBillingService {
     private final AuditLogService auditLogService;
     /** 9x#7：流式线程无 MDC/SecurityContext，chat_completed 行的 username 按 userId 反查补齐。 */
     private final com.superprogrammer.auth.mapper.UserMapper userMapper;
-    /** B3：组池补扣兜底取组长（组行 owner），媒体 backstop 同口径。 */
-    private final com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
     /** 对话审计开关（audit.chat.enabled）。非 final，Spring @Value 字段注入。 */
     @Value("${audit.chat.enabled:true}")
     private boolean chatAuditEnabled;
@@ -120,8 +118,9 @@ public class LlmBillingService {
             BigDecimal points = ratioService.toPoints(yuan);
             BigDecimal after;
             if (projectGroupId != null && userId != null) {
-                // 组池：成员身份入口已验；此处超限/池尽（残余竞态）按铁律吞→FAILED usage
-                after = groupWalletService.chargeGroup(projectGroupId, userId, points, kind, model, null);
+                // 组池：成员身份入口已验；V161 allowDebt=true——真实消耗走瀑布（池→名下→组长兜底），
+                // 溢出转成员欠款；仅系统级错误按铁律吞→FAILED usage
+                after = groupWalletService.chargeGroup(projectGroupId, userId, points, kind, model, null, true);
             } else {
                 // refType = kind（CHAT/EMBED，与 ledger REF_* 同串）；refId 暂无单次调用 id
                 after = walletService.charge(userId, points, kind, null, model);
@@ -187,7 +186,7 @@ public class LlmBillingService {
                             + "，请先充值或调小 max_tokens");
         }
         if (projectGroupId != null) {
-            groupWalletService.chargeGroup(projectGroupId, userId, est, "CHAT-HOLD", ref, "chat-hold-" + ref);
+            groupWalletService.chargeGroup(projectGroupId, userId, est, "CHAT-HOLD", ref, "chat-hold-" + ref, false);
         } else {
             walletService.chargeIdempotent(userId, est, "CHAT-HOLD", null,
                     "聊天预扣（答完按实际用量多退少补）", "chat-hold-" + ref);
@@ -198,7 +197,7 @@ public class LlmBillingService {
 
     /**
      * B3 正常尾结算：usage 精确实耗 vs 预扣 多退少补（补扣 CONSUME(CHAT) / 退差 REFUND(CHAT)，幂等键 chat-settle-{ref}）。
-     * 组模式补扣失败 → BACKSTOP 扣组长（媒体同口径）；个人补扣失败 → 记 FAILED usage 平台担损（B5 接管为 DEBT）。
+     * V161：组模式补差走瀑布（池→名下→组长兜底）扣到底；个人补扣不足 → chargeToDebt 挂账（B5/Q10=A）。
      * usage 采集与 chat_completed 审计与 onSuccess 同口径。吞异常（结算旁路铁律）。
      *
      * @return 实耗积分（结算失败返回预扣额——预扣在手不重复 unwind）
@@ -305,20 +304,16 @@ public class LlmBillingService {
         return charPerToken <= 0 ? 0 : Math.round(chars / charPerToken);
     }
 
-    /** 结算差额腿：正=补扣（组池→BACKSTOP 兜底）、负=退差。幂等键 chat-settle-{ref}。 */
+    /** 结算差额腿：正=补扣（V161 瀑布 池→名下→组长兜底，allowDebt=true）、负=退差。幂等键 chat-settle-{ref}。 */
     private void settleDiff(Long userId, Long projectGroupId, String model, String ref, BigDecimal diff) {
         if (diff.signum() == 0) {
             return;
         }
         if (diff.signum() > 0) {
             if (projectGroupId != null) {
-                try {
-                    groupWalletService.chargeGroup(projectGroupId, userId, diff, "CHAT", ref, "chat-settle-" + ref);
-                } catch (BusinessException be) {
-                    backstopChat(projectGroupId, userId, diff, ref);
-                    log.warn("聊天结算补扣转兜底 groupId={} userId={} diff={} ref={} : {}",
-                            projectGroupId, userId, diff, ref, be.getMessage());
-                }
+                // V161 修复III 瀑布：补差扣到底（池→名下→组长兜底），超限额溢出转成员欠款，
+                // 不再「限额守卫失败整单回滚→组长全额垫」（缺陷1根除）。系统级错误上抛由调用侧铁律吞
+                groupWalletService.chargeGroup(projectGroupId, userId, diff, "CHAT", ref, "chat-settle-" + ref, true);
             } else {
                 try {
                     walletService.chargeIdempotent(userId, diff, "CHAT", null,
@@ -338,16 +333,6 @@ public class LlmBillingService {
                         "聊天结算退差（实耗低于预估）", "chat-settle-" + ref);
             }
         }
-    }
-
-    /** 组池补扣兜底：差额扣组长个人 + 组流水 BACKSTOP + 计入消费成员 used（7x-2，媒体 backstop 同口径）。 */
-    private void backstopChat(Long groupId, Long consumerUserId, BigDecimal diff, String ref) {
-        var group = groupMapper.selectById(groupId);
-        if (group == null) {
-            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
-                    "项目组已删除，无法兜底 groupId=" + groupId);
-        }
-        groupWalletService.backstop(groupId, group.getOwnerUserId(), consumerUserId, false, diff, "CHAT", ref);
     }
 
     /**

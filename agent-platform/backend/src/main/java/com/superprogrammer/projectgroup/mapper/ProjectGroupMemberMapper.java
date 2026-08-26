@@ -95,6 +95,31 @@ public interface ProjectGroupMemberMapper extends BaseMapper<ProjectGroupMemberE
     int subtractUsed(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("cost") BigDecimal cost);
 
     /**
+     * 条件扣名下余额（V161 修复III 瀑布第②腿）：余额够才扣，返 0 行=名下不足（转下一腿）。
+     * 组池同款条件 UPDATE 模式，防两名下并发双花。
+     */
+    @Update("UPDATE project_group_members SET self_points = self_points - #{cost}, updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0 AND self_points >= #{cost}")
+    int deductSelf(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("cost") BigDecimal cost);
+
+    /** 名下入账（划拨余款/名下退款）：无条件加（CHECK>=0 兜底）。 */
+    @Update("UPDATE project_group_members SET self_points = self_points + #{amount}, updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0")
+    int creditSelf(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("amount") BigDecimal amount);
+
+    /**
+     * 欠款增减（V161）：delta 可正可负，调用方须先持成员行锁（selectByGroupUserForUpdate）并在
+     * Java 侧校验减后 ≥0——CHECK 兜底防负。两字段分开记：还款先 debt_leader 后 debt_pool。
+     */
+    @Update("UPDATE project_group_members SET debt_leader_points = debt_leader_points + #{delta}, updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0")
+    int adjustDebtLeader(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("delta") BigDecimal delta);
+
+    @Update("UPDATE project_group_members SET debt_pool_points = debt_pool_points + #{delta}, updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0")
+    int adjustDebtPool(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("delta") BigDecimal delta);
+
+    /**
      * 复活软删成员行（17x#1 修 uk_pgm_group_user 409）：回归即重置——
      * quota=新邀请值、used=0（限额周期重新起算，历史消耗在组流水/usage_log 仍可查）、
      * role=MEMBER、allowed_kinds/member_visibility_overrides 清空（不继承移除前状态）、

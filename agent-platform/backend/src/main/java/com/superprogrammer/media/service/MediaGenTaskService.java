@@ -814,9 +814,16 @@ public class MediaGenTaskService {
                 java.math.BigDecimal quota = row.getQuotaLimitPoints();
                 java.math.BigDecimal used = row.getUsedPoints() == null
                         ? java.math.BigDecimal.ZERO : row.getUsedPoints();
+                // V161（修复III A5）：欠款冻结口径——有未抵扣欠款（组长垫+组池垫）时组内可用=0，
+                // 划拨或组长调限额抵清后才恢复；无欠款时可用=max(0, quota−used)（钳 0 防
+                // 兜底时代 used>quota 存量行显示负数可用）。名下余额不算「限额内可用」（它是
+                // 第二腿资金源，不占限额），单列 selfPoints 供前端展示。
+                java.math.BigDecimal debtLeader = nz(row.getDebtLeaderPoints());
+                java.math.BigDecimal debtPool = nz(row.getDebtPoolPoints());
+                java.math.BigDecimal debtTotal = debtLeader.add(debtPool);
                 java.math.BigDecimal avail = null;
                 if (quota != null) {
-                    avail = quota.subtract(used);
+                    avail = quota.subtract(used).max(java.math.BigDecimal.ZERO);
                     // 管理双卡：限额卡之外还有「可分配额度」硬卡（子树预留须保留），取两者更紧者
                     if (com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER
                             .equals(row.getRole())) {
@@ -827,13 +834,23 @@ public class MediaGenTaskService {
                         }
                     }
                 }
-                affordableMember = avail == null || avail.compareTo(est) >= 0;
-                String bindingConstraint = !affordableMember ? "MEMBER"
+                boolean debtFrozen = debtTotal.signum() > 0;
+                if (debtFrozen) {
+                    avail = java.math.BigDecimal.ZERO;
+                }
+                affordableMember = !debtFrozen && (avail == null || avail.compareTo(est) >= 0);
+                // 卡点归因：DEBT 欠款冻结（先于此层展示）> MEMBER 限额卡 > POOL 组池卡 > NONE
+                String bindingConstraint = debtFrozen ? "DEBT"
+                        : !affordableMember ? "MEMBER"
                         : balance.compareTo(est) < 0 ? "POOL" : "NONE";
                 personalScope = new LinkedHashMap<>();
                 personalScope.put("quota", quota);
                 personalScope.put("used", used);
                 personalScope.put("inProjectAvailable", avail);
+                personalScope.put("selfPoints", nz(row.getSelfPoints()));
+                personalScope.put("debtPoolPoints", debtPool);
+                personalScope.put("debtLeaderPoints", debtLeader);
+                personalScope.put("debtTotalPoints", debtTotal);
                 personalScope.put("affordableMember", affordableMember);
                 personalScope.put("bindingConstraint", bindingConstraint);
             }
@@ -875,6 +892,11 @@ public class MediaGenTaskService {
                 com.superprogrammer.billing.entity.LlmUsageLogEntity.KIND_IMAGE,
                 providerId, model, null, null, null, imageCount, false);
         return pointsRatioService.toPoints(yuan);
+    }
+
+    /** V161（修复III A5）：null→0（成员行三新列老行可能 NULL 视图读出前的防御）。 */
+    private static java.math.BigDecimal nz(java.math.BigDecimal v) {
+        return v == null ? java.math.BigDecimal.ZERO : v;
     }
 
     private String toJson(Map<String, Object> config) {

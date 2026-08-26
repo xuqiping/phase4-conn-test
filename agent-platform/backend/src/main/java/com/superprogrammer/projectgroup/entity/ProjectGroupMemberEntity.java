@@ -56,4 +56,13 @@ public class ProjectGroupMemberEntity extends BaseEntity {
      * 管理可分配 = 自己额度 − (自己已用+Σ下级已用) − Σ下级 GREATEST(quota−used,0)。
      */
     private Long allocatedByUserId;
+
+    /** 组内名下余额（V161 修复III）：成员从个人钱包划入、记在自己成员行上的钱，组长回收/调限额碰不到。 */
+    private BigDecimal selfPoints;
+
+    /** 欠款·组池垫付（V161 修复III）：超限额溢出中由组池垫付的部分，还款回组池。 */
+    private BigDecimal debtPoolPoints;
+
+    /** 欠款·组长垫付（V161 修复III）：超限额溢出中由组长个人兜底的部分，还款优先退组长。 */
+    private BigDecimal debtLeaderPoints;
 }

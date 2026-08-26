@@ -707,6 +707,37 @@ class MediaGenTaskServiceTest {
     }
 
     @Test
+    void estimate_groupMemberDebtFrozen_debtConstraint_V161() {
+        // V161 欠款冻结口径：debt_leader 2 + debt_pool 3 → 组内可用=0、卡点 DEBT（先于限额/池展示）；
+        // 名下余额 selfPoints 不算限额内可用（第二腿资金源），单列透出
+        stubEstimate(new java.math.BigDecimal("50"));
+        when(groupWalletService.getGroupBalance(5L)).thenReturn(new java.math.BigDecimal("1000"));
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity member =
+                new com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity();
+        member.setRole(com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MEMBER);
+        member.setQuotaLimitPoints(new java.math.BigDecimal("60"));
+        member.setUsedPoints(new java.math.BigDecimal("10"));
+        member.setSelfPoints(new java.math.BigDecimal("8"));
+        member.setDebtPoolPoints(new java.math.BigDecimal("3"));
+        member.setDebtLeaderPoints(new java.math.BigDecimal("2"));
+        when(memberMapper.selectByGroupUser(5L, USER_ID)).thenReturn(member);
+
+        java.util.Map<String, Object> out = service.estimatePreview("VIDEO", SEEDANCE_2, 5, "720p",
+                false, null, USER_ID, 5L);
+
+        assertEquals(Boolean.FALSE, out.get("affordable"));
+        java.util.Map<String, Object> scope = scopeOf(out);
+        assertEquals("DEBT", scope.get("bindingConstraint"));
+        assertEquals(Boolean.FALSE, scope.get("affordableMember"));
+        assertEquals(0, ((java.math.BigDecimal) scope.get("inProjectAvailable"))
+                .compareTo(java.math.BigDecimal.ZERO));
+        assertEquals(0, ((java.math.BigDecimal) scope.get("debtTotalPoints"))
+                .compareTo(new java.math.BigDecimal("5")));
+        assertEquals(0, ((java.math.BigDecimal) scope.get("selfPoints"))
+                .compareTo(new java.math.BigDecimal("8")));
+    }
+
+    @Test
     void estimate_groupNoMemberRow_noPersonalScope() {
         // 非成员（行缺失，理论走不到——上游已 403）：退化为只看池，兼容旧口径
         stubEstimate(new java.math.BigDecimal("50"));

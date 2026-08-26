@@ -37,8 +37,6 @@ public class MediaBillingService {
     private final PointsWalletService walletService;
     /** 计划5 Step5：组池结算分支（chargeGroup/refundGroup/backstop）。 */
     private final com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
-    /** 计划5 Step5：BACKSTOP 兜底取组长（组行 owner）。 */
-    private final com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
     private final UsageCollector usageCollector;
 
     /**
@@ -117,15 +115,10 @@ public class MediaBillingService {
                     tokensInput, null, videoSeconds, imageCount, hasReference, resolution);
             BigDecimal points = ratioService.toPoints(yuan);
             if (projectGroupId != null && userId != null && points != null && points.signum() > 0) {
-                try {
-                    groupWalletService.chargeGroup(projectGroupId, userId, points, kind,
-                            String.valueOf(refId), "media-charge-" + refId);
-                } catch (BusinessException be) {
-                    // BACKSTOP：组长兜底全差额（be=组池尽/超限额残余竞态）；再失败（组长也尽）抛给外层 FAILED
-                    backstopMedia(projectGroupId, userId, points, kind, refId);
-                    log.warn("媒体组结算转兜底 groupId={} userId={} points={} ref={} : {}",
-                            projectGroupId, userId, points, refId, be.getMessage());
-                }
+                // V161 修复III：allowDebt=true——真实消耗走瀑布（池→名下→组长兜底），溢出转成员欠款；
+                // 仅系统级错误（组已删/行缺失）抛给外层 FAILED 记缺口
+                groupWalletService.chargeGroup(projectGroupId, userId, points, kind,
+                        String.valueOf(refId), "media-charge-" + refId, true);
             } else {
                 // refType=kind(VIDEO/IMAGE)，refId=任务 id；charge 内部已 insertIfAbsent+行锁+流水(CONSUME)
                 walletService.charge(userId, points, kind, refId, model);
@@ -214,7 +207,7 @@ public class MediaBillingService {
         }
         if (projectGroupId != null) {
             groupWalletService.chargeGroup(projectGroupId, userId, estimatedPoints, kind + "-HOLD",
-                    String.valueOf(taskId), "media-hold-" + taskId);
+                    String.valueOf(taskId), "media-hold-" + taskId, false);
         } else {
             walletService.chargeIdempotent(userId, estimatedPoints, kind + "-HOLD", taskId,
                     "媒体任务预估预扣（完工按实多退少补）", "media-hold-" + taskId);
@@ -255,15 +248,10 @@ public class MediaBillingService {
             if (diff.signum() > 0) {
                 // 实耗超预估 → 补扣差额
                 if (projectGroupId != null) {
-                    try {
-                        groupWalletService.chargeGroup(projectGroupId, userId, diff, kind,
-                                String.valueOf(refId), "media-settle-" + refId);
-                    } catch (BusinessException be) {
-                        // BACKSTOP：组池尽/超限额残余竞态 → 差额扣组长个人（同 chargeMedia 口径）
-                        backstopMedia(projectGroupId, userId, diff, kind, refId);
-                        log.warn("媒体结算补扣转兜底 groupId={} userId={} diff={} ref={} : {}",
-                                projectGroupId, userId, diff, refId, be.getMessage());
-                    }
+                    // V161 修复III 瀑布：补差扣到底（池→名下→组长兜底），超限额溢出转成员欠款；
+                    // 不再「限额守卫失败整单回滚→组长全额垫」（缺陷1根除）。系统级错误由外层 FAILED 兜
+                    groupWalletService.chargeGroup(projectGroupId, userId, diff, kind,
+                            String.valueOf(refId), "media-settle-" + refId, true);
                 } else {
                     try {
                         walletService.chargeIdempotent(userId, diff, kind, refId,
@@ -382,17 +370,4 @@ public class MediaBillingService {
         return walletService.isEnabled();
     }
 
-    /**
-     * 计划5 Step5：媒体结算兜底——差额扣组长个人（组行 owner），并计入消费成员 used（7x-2）。
-     * 组已删/组长钱包不足由 {@code backstop} 自身抛 BusinessException → 外层记 FAILED usage（平台可见缺口）。
-     */
-    private void backstopMedia(Long groupId, Long consumerUserId, BigDecimal points, String kind, Long refId) {
-        var group = groupMapper.selectById(groupId);
-        if (group == null) {
-            throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
-                    "项目组已删除，无法兜底 groupId=" + groupId);
-        }
-        groupWalletService.backstop(groupId, group.getOwnerUserId(), consumerUserId, false, points,
-                kind, String.valueOf(refId));
-    }
 }

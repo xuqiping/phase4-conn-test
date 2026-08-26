@@ -240,7 +240,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"), isNull(), isNull());
+                eq("CHAT"), eq(100), eq(50), eq("SUCCESS"), isNull(), isNull(), isNull());
     }
 
     @Test
@@ -257,7 +257,7 @@ class LlmGatewayTest {
         gateway.chat(request, 42L);
 
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"), isNull(), isNull());
+                eq("CHAT"), eq(1), eq(0), eq("ESTIMATED"), isNull(), isNull(), isNull());
     }
 
     @Test
@@ -292,7 +292,7 @@ class LlmGatewayTest {
 
         verify(walletService).requireAffordable(42L);
         verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(20), eq(10), eq("SUCCESS"), isNull(), isNull());
+                eq("CHAT"), eq(20), eq(10), eq("SUCCESS"), isNull(), isNull(), isNull());
         verify(modelCallScope).detach();
         verify(modelCallScope, atLeast(2)).runWithContext(any(Runnable.class));
     }
@@ -350,7 +350,7 @@ class LlmGatewayTest {
 
             verify(walletService).requireAffordable(42L);   // uid 取自 BillingContext
             verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull());
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull(), isNull());
         } finally {
             BillingContext.clear();
         }
@@ -373,7 +373,7 @@ class LlmGatewayTest {
         // uid=null → requireAffordable(null) 短路（不扣），onSuccess(null,...) 仅采集不扣费
         verify(walletService).requireAffordable(null);
         verify(billingService).onSuccess(isNull(), eq(7L), any(), eq("deepseek-chat"),
-                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull());
+                eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), isNull(), isNull());
     }
 
     // ===== OPS-FR-03 LLM 指标埋点（正好一次，不重不漏）=====
@@ -487,7 +487,7 @@ class LlmGatewayTest {
         verify(groupWalletService).requireAffordableGroup(5L, 42L, "CHAT");
         verify(walletService, never()).requireAffordable(any());
         verify(billingService).onSuccess(eq(42L), eq(7L), eq("GLOBAL"), eq("deepseek-chat"),
-                eq("CHAT"), eq(10), eq(5), eq("SUCCESS"), isNull(), eq(5L));
+                eq("CHAT"), eq(10), eq(5), eq("SUCCESS"), isNull(), eq(5L), isNull());
     }
 
     /** 非成员带 gid → 组池预检抛 403 透传前端；provider 不被调用（未调用不记 FAILED）。 */
@@ -527,7 +527,7 @@ class LlmGatewayTest {
 
             verify(groupWalletService).requireAffordableGroup(9L, 42L, "CHAT");
             verify(billingService).onSuccess(eq(42L), eq(7L), any(), eq("deepseek-chat"),
-                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), eq(9L));
+                    eq("CHAT"), eq(8), eq(4), eq("SUCCESS"), isNull(), eq(9L), isNull());
         } finally {
             com.superprogrammer.billing.context.BillingContext.clear();
         }

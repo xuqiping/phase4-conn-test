@@ -36,6 +36,16 @@ public class ProjectGroupLedgerEntity {
     public static final String TYPE_MEMBER_RECLAIM = "MEMBER_RECLAIM";
     /** type：成员限额边界留痕（限额↔不限互转；delta=0 记前后值，不进毛额/净额聚合）。 */
     public static final String TYPE_MEMBER_QUOTA_ADJUST = "MEMBER_QUOTA_ADJUST";
+    /** type：个人划拨入组（V161 修复III：还款后余款进名下；delta=划拨总额，组池仅回购池垫部分才变）。 */
+    public static final String TYPE_SELF_ALLOCATE = "SELF_ALLOCATE";
+    /** type：消耗扣名下余额（瀑布第②腿；delta=扣减额，不动组池）。 */
+    public static final String TYPE_SELF_CONSUME = "SELF_CONSUME";
+    /** type：名下退款/退组退回个人钱包（delta=退回额，不动组池）。 */
+    public static final String TYPE_SELF_REFUND = "SELF_REFUND";
+    /** type：还款（先组长垫后退组池垫；delta=回组池部分，组长腿 delta=0 备注写金额）。 */
+    public static final String TYPE_SELF_REPAY = "SELF_REPAY";
+    /** type：欠款核销/调限额豁免（债清无资金流动；delta=0 备注写核销额）。 */
+    public static final String TYPE_DEBT_WRITEOFF = "DEBT_WRITEOFF";
 
     /** ref_type：对话。 */
     public static final String REF_CHAT = "CHAT";

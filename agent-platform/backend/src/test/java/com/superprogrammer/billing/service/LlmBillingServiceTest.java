@@ -39,8 +39,6 @@ class LlmBillingServiceTest {
     @Mock private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
     @Mock private UsageCollector usageCollector;
     @Mock private AuditLogService auditLogService;
-    /** B3：backstop 兜底取组长用。 */
-    @Mock private com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
 
     @InjectMocks private LlmBillingService billing;
 
@@ -204,13 +202,13 @@ class LlmBillingServiceTest {
                 eq(100), eq(50), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
         when(groupWalletService.chargeGroup(eq(5L), eq(1L), eq(new BigDecimal("0.3")),
-                eq("CHAT"), eq("gpt-4"), isNull())).thenReturn(new BigDecimal("49.7"));
+                eq("CHAT"), eq("gpt-4"), isNull(), eq(true))).thenReturn(new BigDecimal("49.7"));
 
         BigDecimal after = billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 100, 50,
                 LlmUsageLogEntity.STATUS_SUCCESS, null, 5L);
 
         assertThat(after).isEqualByComparingTo("49.7");
-        verify(groupWalletService).chargeGroup(5L, 1L, new BigDecimal("0.3"), "CHAT", "gpt-4", null);
+        verify(groupWalletService).chargeGroup(5L, 1L, new BigDecimal("0.3"), "CHAT", "gpt-4", null, true);
         verify(walletService, never()).charge(any(), any(), any(), any(), any());
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
@@ -218,18 +216,18 @@ class LlmBillingServiceTest {
     }
 
     /**
-     * 限额残余竞态（入口预检已过、chargeGroup 时超限）→ 铁律吞不回归出口，
+     * 组扣费抛（V161 后资金不足已不抛，此为系统级错误：组已删/行缺失）→ 铁律吞不回归出口，
      * 记 FAILED usage 让 admin 可见缺口。
      */
     @Test
-    void onSuccess_withGroup_quotaRaceOnCharge_swallowedAsFailedUsage() {
+    void onSuccess_withGroup_chargeGroupThrows_swallowedAsFailedUsage() {
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
                 anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.3"));
-        when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.BAD_REQUEST, "成员积分限额已用尽"));
+        when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失"));
 
         assertThatCode(() -> billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 100, 50,
                 LlmUsageLogEntity.STATUS_SUCCESS, null, 5L))
@@ -252,7 +250,7 @@ class LlmBillingServiceTest {
         billing.onSuccess(null, 7L, "GLOBAL", "embed-v1", "EMBED", 10, 0,
                 LlmUsageLogEntity.STATUS_SUCCESS, null, 5L);
 
-        verify(groupWalletService, never()).chargeGroup(any(), any(), any(), any(), any(), any());
+        verify(groupWalletService, never()).chargeGroup(any(), any(), any(), any(), any(), any(), anyBoolean());
         verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
                 any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
                 any(), any(), eq(5L), any());
@@ -305,7 +303,7 @@ class LlmBillingServiceTest {
         when(ratioService.toPoints(new BigDecimal("0.01"))).thenReturn(new BigDecimal("100"));
         when(groupWalletService.getGroupBalance(5L)).thenReturn(new BigDecimal("300"));
         when(groupWalletService.chargeGroup(eq(5L), eq(1L), eq(new BigDecimal("100")),
-                eq("CHAT-HOLD"), eq("r1"), eq("chat-hold-r1"))).thenReturn(new BigDecimal("200"));
+                eq("CHAT-HOLD"), eq("r1"), eq("chat-hold-r1"), eq(false))).thenReturn(new BigDecimal("200"));
 
         assertThat(billing.holdChat(1L, 5L, 7L, "gpt-4", 500, 100, "r1")).isEqualByComparingTo("100");
         verify(walletService, never()).chargeIdempotent(any(), any(), any(), any(), any(), any());
@@ -374,26 +372,22 @@ class LlmBillingServiceTest {
                 isNull(), any());
     }
 
-    /** 组池补扣失败 → BACKSTOP 扣组长（组长=组行 owner），组流水留痕。 */
+    /** 组补差抛（V161 后资金不足已不抛，此为系统级错误）→ 吞掉记 FAILED usage、返预扣额（预扣在手）。 */
     @Test
-    void settleChatHeld_groupTopupFail_backstopsOwner() {
+    void settleChatHeld_groupSystemError_returnsHeld_V161() {
         enableChatHold();
-        com.superprogrammer.projectgroup.entity.ProjectGroupEntity g =
-                new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
-        g.setOwnerUserId(9L);
         when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
                 eq(600), eq(400), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.01"));
         when(ratioService.toPoints(new BigDecimal("0.01"))).thenReturn(new BigDecimal("500"));
-        when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS));
-        when(groupMapper.selectById(5L)).thenReturn(g);
+        when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失"));
 
         BigDecimal actual = billing.settleChatHeld(1L, 7L, "GLOBAL", "gpt-4", 600, 400,
                 LlmUsageLogEntity.STATUS_SUCCESS, null, 5L, "r1", new BigDecimal("300"));
 
-        assertThat(actual).isEqualByComparingTo("500");
-        verify(groupWalletService).backstop(eq(5L), eq(9L), eq(1L), eq(false),
-                eq(new BigDecimal("200")), eq("CHAT"), eq("r1"));
+        assertThat(actual).isEqualByComparingTo("300");
+        verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
+                eq(600), eq(400), eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), any());
     }
 
     // ---------- B3（Q3=B）：取消折算 settleChatCancelled ----------

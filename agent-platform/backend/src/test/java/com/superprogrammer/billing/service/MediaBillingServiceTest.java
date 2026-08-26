@@ -40,7 +40,6 @@ class MediaBillingServiceTest {
     @Mock private PointsWalletService walletService;
     /** 计划5 Step5：组池结算分支 mock。 */
     @Mock private com.superprogrammer.projectgroup.service.ProjectGroupWalletService groupWalletService;
-    @Mock private com.superprogrammer.projectgroup.mapper.ProjectGroupMapper groupMapper;
     @Mock private UsageCollector usageCollector;
 
     private MediaBillingService service;
@@ -48,7 +47,7 @@ class MediaBillingServiceTest {
     @BeforeEach
     void setUp() {
         service = new MediaBillingService(pricingService, ratioService, walletService,
-                groupWalletService, groupMapper, usageCollector);
+                groupWalletService, usageCollector);
     }
 
     @Test
@@ -174,7 +173,7 @@ class MediaBillingServiceTest {
 
         assertEquals(new BigDecimal("50"), charged);
         verify(groupWalletService).chargeGroup(eq(5L), eq(100L), eq(new BigDecimal("50")),
-                eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"), eq("media-charge-9"));
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"), eq("media-charge-9"), eq(true));
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
         // usage 行带 gid（账单/项目推进唯一事实源）
         verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
@@ -184,44 +183,15 @@ class MediaBillingServiceTest {
     }
 
     @Test
-    void chargeMedia_groupPoolExhausted_backstopsLeader() {
-        // 残余竞态（提交预检已过、结算时组池尽/超限额）→ 组长个人兜底全额；视频已生成不可逆
+    void chargeMedia_groupSystemError_recordsFailedUsage_V161() {
+        // V161：资金不足已不再抛（瀑布池→名下→组长兜底扣到底）；chargeGroup 抛=系统级错误
+        // （组已删/成员行缺失）→ 外层记 FAILED usage（平台缺口 admin 可见），返回 null 不抛
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(anyString(), anyLong(), anyString(),
                 anyInt(), any(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.500000"));
         when(ratioService.toPoints(new BigDecimal("0.500000"))).thenReturn(new BigDecimal("50"));
-        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS)).when(groupWalletService)
-                .chargeGroup(anyLong(), anyLong(), any(), anyString(), anyString(), anyString());
-        com.superprogrammer.projectgroup.entity.ProjectGroupEntity group =
-                new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
-        group.setOwnerUserId(200L);
-        when(groupMapper.selectById(5L)).thenReturn(group);
-
-        BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
-                200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L);
-
-        assertEquals(new BigDecimal("50"), charged);
-        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(100L), eq(false), eq(new BigDecimal("50")),
-                eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"));
-        // 兜底成功仍返回实扣值（worker 退款链路完整），且不动个人 charge
-        verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
-    }
-
-    @Test
-    void chargeMedia_backstopAlsoFails_recordsFailedUsage() {
-        // 组长个人也不足/组已删 → 兜底抛 → 外层记 FAILED usage（平台缺口 admin 可见），返回 null 不抛
-        when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(anyString(), anyLong(), anyString(),
-                anyInt(), any(), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.500000"));
-        when(ratioService.toPoints(new BigDecimal("0.500000"))).thenReturn(new BigDecimal("50"));
-        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS)).when(groupWalletService)
-                .chargeGroup(anyLong(), anyLong(), any(), anyString(), anyString(), anyString());
-        com.superprogrammer.projectgroup.entity.ProjectGroupEntity group =
-                new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
-        group.setOwnerUserId(200L);
-        when(groupMapper.selectById(5L)).thenReturn(group);
-        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS)).when(groupWalletService)
-                .backstop(anyLong(), anyLong(), any(), anyBoolean(), any(), anyString(), anyString());
+        doThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失")).when(groupWalletService)
+                .chargeGroup(anyLong(), anyLong(), any(), anyString(), anyString(), anyString(), anyBoolean());
 
         BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L);
@@ -267,7 +237,7 @@ class MediaBillingServiceTest {
 
         assertTrue(held);
         verify(groupWalletService).chargeGroup(eq(5L), eq(100L), eq(new BigDecimal("30")),
-                eq(LlmUsageLogEntity.KIND_IMAGE + "-HOLD"), eq("9"), eq("media-hold-9"));
+                eq(LlmUsageLogEntity.KIND_IMAGE + "-HOLD"), eq("9"), eq("media-hold-9"), eq(false));
         verify(walletService, never()).chargeIdempotent(anyLong(), any(), anyString(), anyLong(),
                 anyString(), anyString());
     }
@@ -383,26 +353,26 @@ class MediaBillingServiceTest {
     }
 
     @Test
-    void settleMediaSuccess_groupSupplementFails_backstopToOwner() {
-        // 组任务补扣：组池尽 → BACKSTOP 差额扣组长个人（同 chargeMedia 口径）
+    void settleMediaSuccess_groupSystemError_returnsHeld_V161() {
+        // V161：组补差扣到底不再因资金不足抛；chargeGroup 抛=系统级错误 → 记 FAILED usage、
+        // 返回预扣额（worker 在 markSucceeded 失败时按预扣额 unwind）
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(anyString(), anyLong(), anyString(),
                 anyInt(), eq(null), anyInt(), anyInt(), anyBoolean(), any())).thenReturn(new BigDecimal("0.800000"));
         when(ratioService.toPoints(new BigDecimal("0.800000"))).thenReturn(new BigDecimal("80"));
-        doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足"))
+        doThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失"))
                 .when(groupWalletService).chargeGroup(anyLong(), anyLong(), any(), anyString(),
-                        anyString(), anyString());
-        var group = new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
-        group.setOwnerUserId(200L);
-        when(groupMapper.selectById(5L)).thenReturn(group);
+                        anyString(), anyString(), anyBoolean());
 
         BigDecimal actual = service.settleMediaSuccess(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L, "720p",
                 new BigDecimal("50"));
 
-        assertEquals(new BigDecimal("80"), actual);
-        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(100L), eq(false), eq(new BigDecimal("30")),
-                eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"));
+        assertEquals(new BigDecimal("50"), actual);
+        verify(usageCollector).record(eq(100L), eq(7L), eq(LlmUsageLogEntity.SCOPE_GLOBAL), eq("seedance"),
+                eq(LlmUsageLogEntity.KIND_VIDEO), eq(200000), eq(null),
+                eq(null), eq(null), eq(LlmUsageLogEntity.STATUS_FAILED), anyString(), eq(9L),
+                org.mockito.ArgumentMatchers.isNull(), eq(5L));
     }
 
     @Test

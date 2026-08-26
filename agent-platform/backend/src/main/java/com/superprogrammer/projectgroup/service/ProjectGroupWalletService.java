@@ -23,17 +23,18 @@ import java.math.BigDecimal;
 import java.util.function.Supplier;
 
 /**
- * 组池钱包服务（计划5 Step2 核心账务）：allocate / reclaim / chargeGroup / refundGroup / backstop。
+ * 组池钱包服务（计划5 Step2 核心账务 + V161 修复III 瀑布/欠款）：allocate / reclaim /
+ * chargeGroup / refundGroup / selfTransfer（Chunk B）。
  *
- * <p><b>锁序（plan §坑点 双钱包死锁）</b>：凡个人↔组池双向操作（allocate/reclaim/backstop）固定
+ * <p><b>锁序（plan §坑点 双钱包死锁）</b>：凡个人↔组池双向操作（allocate/reclaim/划拨）固定
  * <b>先个人行后组池行</b>；纯组内操作（chargeGroup/refundGroup）固定先组池后成员行。
- * 两序无交叉环：chargeGroup 只碰 组池→成员，双向操作只碰 个人→组池（backstop 兼计 used 时
- * 组池→成员与 chargeGroup 同向），并发混跑无死锁。
+ * 组长兜底腿在瀑布内（组池/名下之后），窄 AB-BA 窗口与 PG 死锁自愈见 doChargeGroup 注释。
  *
- * <p><b>对账不变量（V133 运维模板）</b>：①末行 ledger.balance_after == wallets.balance_points
- * （BACKSTOP 不动组池，行锁读保证一致）；②成员 Σ(CONSUME−REFUND+BACKSTOP) == used_points
- * （7x-2 修复：BACKSTOP 计入 member.used——used=真实消耗，不论资金来源；组池 balance 不含
- * BACKSTOP，资金出自组长个人。存量差异由 V159 一次性回填）。
+ * <p><b>对账不变量（V133 运维模板 + V161 扩容）</b>：①末行 ledger.balance_after ==
+ * wallets.balance_points（行锁读保证一致）；②成员 Σ(CONSUME+SELF_CONSUME+BACKSTOP
+ * −REFUND−SELF_REFUND) == used_points + debt_pool + debt_leader（V161：used 无条件累加真实
+ * 消耗，超限额溢出按垫付方拆欠款——组长垫/组池垫各回各家，名下垫是自己的钱不记欠款；
+ * 调限额豁免/重置/核销走 DEBT_WRITEOFF 调整腿）。
  *
  * <p><b>幂等</b>：chargeGroup/refundGroup 复用 idempotency_key（scope=group.charge/group.refund，
  * result_ref=组流水 id），媒体链路幂等键=taskId（Step5）。同键同额静默重放，同键异额 CONFLICT。
@@ -102,45 +103,148 @@ public class ProjectGroupWalletService {
      */
     @Transactional(rollbackFor = Exception.class)
     public BigDecimal chargeGroup(Long groupId, Long memberUserId, BigDecimal cost,
-                                  String refType, String refId, String idemKey) {
+                                  String refType, String refId, String idemKey, boolean allowDebt) {
         requirePositive(cost, "消耗积分必须大于0");
         if (idemKey != null && !idemKey.isBlank()) {
             return runIdempotent(idemKey, groupId, memberUserId, "group.charge", cost,
-                    () -> doChargeGroup(groupId, memberUserId, cost, refType, refId));
+                    () -> doChargeGroup(groupId, memberUserId, cost, refType, refId, allowDebt));
         }
-        return doChargeGroup(groupId, memberUserId, cost, refType, refId);
+        return doChargeGroup(groupId, memberUserId, cost, refType, refId, allowDebt);
     }
 
+    /**
+     * V161 修复III 瀑布（规格 §3.2）：组池 → 名下余额 → 组长兜底，三腿各自独立条件扣；
+     * 成员 used 无条件累加（真实消耗），超限额溢出按垫付方拆 debt_leader/debt_pool（尾部倒推）。
+     *
+     * <p><b>缺陷1根除</b>：旧实现「组池先扣 → addUsed 撞 quota 守卫 → 整单回滚 → 上层全额转
+     * 组长兜底」——组池富余也分文未动、组长白付。现 quota 只在 allowDebt=false（HOLD 预扣，
+     * 预扣不进欠款）时前置拒绝；结算补差（allowDebt=true）一路扣到底，业务性不足不抛不回滚。
+     *
+     * <p><b>锁序</b>：组池 → 成员行（与 updateQuota/退款同向）。组长个人腿在两腿之后才锁个人
+     * （金额依赖前两腿结果）——与「个人→组池」类操作（allocate/reclaim）理论上有窄 AB-BA 窗口
+     * （成员补差兜底 与 组长划拨/回收 恰好并发交叠），PG 死锁检测器会中止一方（报错可重试，
+     * 媒体/聊天链路幂等键兜住不双扣）。窗口极窄且旧路径同样存在，不为它牺牲三腿结构。
+     *
+     * @param allowDebt false=HOLD 预扣（欠款冻结+限额硬卡，超即拒）；true=结算补差（真实消耗，
+     *                  扣到底，溢出转欠款）
+     */
     private BigDecimal doChargeGroup(Long groupId, Long memberUserId, BigDecimal cost,
-                                     String refType, String refId) {
+                                     String refType, String refId, boolean allowDebt) {
         enforceKindAllowed(groupId, memberUserId, refType);                          // 17x#2 功能开关（先拦，不动钱包）
-        if (walletMapper.deduct(groupId, cost) == 0) {                              // 锁①组池
-            throw new BusinessException(ErrorCode.INSUFFICIENT_POINTS, "项目组积分不足");
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity row =
+                memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);      // 锁成员行
+        if (row == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非项目组成员，不可使用组池计费");
         }
-        // V156 层级额度：管理本人消耗硬卡——可分配（额度−子树已耗−下级预留）须 ≥ 本次消耗，
-        // 否则管理能吃掉已预留给下级的预算。锁管理行（锁序：组池→成员行，与既有 addUsed 同向），
-        // 与 updateQuota/邀请接受落行的 FOR UPDATE 互斥——边花边分并发打不穿。
-        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity chargeRow =
-                memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);     // 锁②成员行
-        if (chargeRow != null
-                && com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER.equals(chargeRow.getRole())
-                && chargeRow.getQuotaLimitPoints() != null) {
-            BigDecimal available = budgetService.allocatable(groupId, chargeRow, null);
+        java.math.BigDecimal quota = row.getQuotaLimitPoints();
+        java.math.BigDecimal usedBefore = nz(row.getUsedPoints());
+        java.math.BigDecimal debtTotal = nz(row.getDebtPoolPoints()).add(nz(row.getDebtLeaderPoints()));
+        if (!allowDebt) {                                                            // HOLD 预扣闸（规格 §3.2）
+            if (debtTotal.signum() > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "你有未抵扣欠款 " + debtTotal.stripTrailingZeros().toPlainString()
+                                + "，暂停组内消费（划拨或组长调限额抵清后恢复）");
+            }
+            if (quota != null && usedBefore.add(cost).compareTo(quota) > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "超出组长配置的成员限额");
+            }
+        }
+        // V156 层级额度：管理本人消耗硬卡保留（超可分配=动下级预留，属配置越权非真实消耗，两路径同卡）
+        if (com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity.ROLE_MANAGER.equals(row.getRole())
+                && quota != null) {
+            BigDecimal available = budgetService.allocatable(groupId, row, null);
             if (available != null && cost.compareTo(available) > 0) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
                         "超出你的可分配额度：剩余可分配 " + available + "（下级预留须保留），本次需 " + cost);
             }
         }
-        if (memberMapper.addUsed(groupId, memberUserId, cost) == 0) {               // 条件加（quota 守卫）
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "超出组长配置的成员限额");
+        // ---- 资金瀑布：①组池 ②名下 ③组长兜底（各腿独立，业务性不足转下腿）----
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupIdForUpdate(groupId);  // 锁组池
+        if (w == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);
         }
-        ProjectGroupWalletEntity w = requireWallet(groupId);                        // 行已被本事务 UPDATE 锁定
-        appendLedgerRow(w.getBalancePoints(), groupId, memberUserId,
-                ProjectGroupLedgerEntity.TYPE_CONSUME, cost.negate(), refType, refId, null);
-        publishGroupChanged(groupId, w.getBalancePoints(), cost.negate(), refType + ":" + refId);
+        BigDecimal poolPart = w.getBalancePoints().min(cost);
+        if (poolPart.signum() > 0 && walletMapper.deduct(groupId, poolPart) == 0) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池条件扣失败（并发防护触发）groupId=" + groupId);
+        }
+        BigDecimal rest = cost.subtract(poolPart);
+        BigDecimal selfPart = BigDecimal.ZERO;
+        if (rest.signum() > 0 && nz(row.getSelfPoints()).signum() > 0) {
+            selfPart = nz(row.getSelfPoints()).min(rest);
+            if (memberMapper.deductSelf(groupId, memberUserId, selfPart) == 0) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "名下余额条件扣失败（并发防护触发）");
+            }
+            rest = rest.subtract(selfPart);
+        }
+        BigDecimal shortfall = rest;
+        if (shortfall.signum() > 0) {
+            settleShortfallByLeader(groupId, memberUserId, shortfall, refType, refId);
+        }
+        // ---- 成员记账：used 无条件累加；溢出按瀑布尾部资金来源拆欠款（组长垫=最后一段）----
+        memberMapper.addUsedUnconditional(groupId, memberUserId, cost);
+        BigDecimal overflow = quota == null ? BigDecimal.ZERO
+                : usedBefore.add(cost).subtract(quota).max(BigDecimal.ZERO);
+        if (overflow.signum() > 0) {
+            BigDecimal leaderTail = overflow.min(shortfall);
+            BigDecimal rem = overflow.subtract(leaderTail);
+            BigDecimal selfTail = rem.min(selfPart);   // 名下垫的超帽段=自己的钱，不记欠款
+            BigDecimal poolTail = rem.subtract(selfTail);
+            if (leaderTail.signum() > 0) {
+                memberMapper.adjustDebtLeader(groupId, memberUserId, leaderTail);
+            }
+            if (poolTail.signum() > 0) {
+                memberMapper.adjustDebtPool(groupId, memberUserId, poolTail);
+            }
+            log.warn("成员超限额欠款 groupId={} member={} overflow={}（组长垫 {} / 组池垫 {} / 名下垫 {}）ref={}:{}",
+                    groupId, memberUserId, overflow, leaderTail, poolTail, selfTail, refType, refId);
+        }
+        // ---- 流水腿（>0 才落）----
+        BigDecimal balanceAfter = requireWallet(groupId).getBalancePoints();
+        if (poolPart.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId,
+                    ProjectGroupLedgerEntity.TYPE_CONSUME, poolPart.negate(), refType, refId, null);
+        }
+        if (selfPart.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId,
+                    ProjectGroupLedgerEntity.TYPE_SELF_CONSUME, selfPart.negate(), refType, refId,
+                    "扣成员名下余额（不动组池）");
+        }
+        publishGroupChanged(groupId, balanceAfter, cost.negate(), refType + ":" + refId);
         publishMemberUsed(groupId, memberUserId, cost, refType + ":" + refId);
-        log.info("组消耗 groupId={} member={} cost={} ref={}:{}", groupId, memberUserId, cost, refType, refId);
-        return w.getBalancePoints();
+        log.info("组消耗瀑布 groupId={} member={} cost={}（池 {}/名下 {}/兜底 {}）used {}→{} ref={}:{}",
+                groupId, memberUserId, cost, poolPart, selfPart, shortfall,
+                usedBefore, usedBefore.add(cost), refType, refId);
+        return balanceAfter;
+    }
+
+    /** null 安全转零（V161 欠款/名下字段旧行可能为 null 前置态，防御读）。 */
+    private static java.math.BigDecimal nz(java.math.BigDecimal v) {
+        return v == null ? java.math.BigDecimal.ZERO : v;
+    }
+
+    /**
+     * 瀑布第③腿：组池+名下皆尽后的缺口由组长个人承担（扣尽挂账，B5/Q10=A 口径）+ BACKSTOP 流水腿。
+     * 旧 public backstop()（整额兜底+addUsedUnconditional）随瀑布重构删除——结算不再「限额不足→回滚→组长全额垫」。
+     */
+    private void settleShortfallByLeader(Long groupId, Long consumerUserId, BigDecimal shortfall,
+                                         String refType, String refId) {
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组已删除，无法兜底 groupId=" + groupId);
+        }
+        if (pointsWallet.getBalance(g.getOwnerUserId()).compareTo(shortfall) >= 0) {
+            pointsWallet.charge(g.getOwnerUserId(), shortfall, PointsLedgerEntity.REF_GROUP, groupId,
+                    "组池+名下皆尽·组长兜底");                                       // 锁组长个人
+        } else {
+            pointsWallet.chargeToDebt(g.getOwnerUserId(), shortfall, PointsLedgerEntity.REF_GROUP, groupId,
+                    "组池+名下皆尽·组长兜底");
+            log.warn("兜底转挂账 groupId={} leader={} shortfall={}", groupId, g.getOwnerUserId(), shortfall);
+        }
+        appendLedgerRow(requireWallet(groupId).getBalancePoints(), groupId, g.getOwnerUserId(),
+                ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId,
+                "组池+名下皆尽·差额由组长个人承担（计入成员已用，超限额部分转成员欠款·组长垫）");
+        log.warn("BACKSTOP groupId={} leader={} consumer={} shortfall={} ref={}:{}",
+                groupId, g.getOwnerUserId(), consumerUserId, shortfall, refType, refId);
     }
 
     /**
@@ -157,67 +261,93 @@ public class ProjectGroupWalletService {
         return doRefundGroup(groupId, memberUserId, points, refType, refId);
     }
 
+    /**
+     * 成员退款（V161 修复III 按腿反冲）：按该任务原始瀑布腿比例拆退款——
+     * 组池腿→组池、名下腿→名下、兜底腿→组长个人钱包；成员记账先还欠款（组长垫→组池垫）再回减 used。
+     * 无腿记录的老任务回落原行为（全额退组池+回减 used）。幂等由外层 refundGroup idemKey 兜。
+     */
     private BigDecimal doRefundGroup(Long groupId, Long memberUserId, BigDecimal points,
                                      String refType, String refId) {
-        if (walletMapper.credit(groupId, points) == 0) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);
-        }
-        memberMapper.subtractUsed(groupId, memberUserId, points);                   // GREATEST 落 0
-        ProjectGroupWalletEntity w = requireWallet(groupId);
-        appendLedgerRow(w.getBalancePoints(), groupId, memberUserId,
-                ProjectGroupLedgerEntity.TYPE_REFUND, points, refType, refId, null);
-        publishGroupChanged(groupId, w.getBalancePoints(), points, refType + ":" + refId);
-        publishMemberUsed(groupId, memberUserId, points.negate(), refType + ":" + refId);
-        log.info("组退款 groupId={} member={} points={} ref={}:{}", groupId, memberUserId, points, refType, refId);
-        return w.getBalancePoints();
-    }
-
-    /**
-     * BACKSTOP（结算兜底）：组池不足的差额扣组长<b>个人</b>，组池不动（保 CHECK>=0）。
-     * 两账本各记一行：个人 CONSUME(ref=GROUP) + 组流水 BACKSTOP(delta=-差额, balance_after=组池现值)。
-     * <p>7x-2 修复：差额同时计入<b>消费成员</b> used（{@code addUsedUnconditional}，无 quota 守卫）——
-     * used=真实消耗，与账单汇合（见类注释不变量②）。成员已退组（返 0 行）只 WARN 不回滚——
-     * 组长扣款是既成事实，used 无处可记非致命。存量历史行由 V158 迁移回填。
-     *
-     * @param consumerUserId 触发消耗的成员（used 记账主体；与扣款人 leaderUserId 区分）
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void backstop(Long groupId, Long leaderUserId, Long consumerUserId, boolean admin,
-                         BigDecimal shortfall, String refType, String refId) {
-        requireOwner(groupId, leaderUserId, admin);
-        requirePositive(shortfall, "兜底差额必须大于0");
-        // B5（Q10=A）：组长余额不足时不走 charge（内层 REQUIRED 事务加入本方法事务，抛 INSUFFICIENT 会
-        // 把本事务标 rollback-only，吞不掉），预判后直接扣尽挂账——实付 min(balance, shortfall)+差额进欠款，
-        // 语义与「charge 失败转挂账」等价且无事务毒化；并发残余竞态（预判后余额被抽走）由上游计费层吞。
-        if (pointsWallet.getBalance(leaderUserId).compareTo(shortfall) >= 0) {
-            pointsWallet.charge(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId, "组池不足·组长兜底"); // 锁①个人
-        } else {
-            pointsWallet.chargeToDebt(leaderUserId, shortfall, PointsLedgerEntity.REF_GROUP, groupId,
-                    "组池不足·组长兜底");
-            log.warn("兜底转挂账 groupId={} leader={} shortfall={}", groupId, leaderUserId, shortfall);
-        }
-        ProjectGroupWalletEntity w = walletMapper.selectByGroupIdForUpdate(groupId); // 锁②组池（只读锁，取一致 balance_after）
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupIdForUpdate(groupId);  // 锁组池
         if (w == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);
         }
-        // 锁③成员行（锁序：个人→组池→成员，单向无环——与 chargeGroup 的 组池→成员 同向衔接，
-        // 不构成 AB-BA）。组长侧结局（全额扣/挂 DEBT）不影响 used 计入
-        if (consumerUserId != null
-                && memberMapper.addUsedUnconditional(groupId, consumerUserId, shortfall) == 0) {
-            log.warn("BACKSTOP 成员 used 记账落空（已退组？）groupId={} consumer={} shortfall={} ref={}:{}",
-                    groupId, consumerUserId, shortfall, refType, refId);
+        // 原始腿收集（同 ref 任务的三腿；排除 REFUND 系防自污染）
+        java.util.List<ProjectGroupLedgerEntity> legs = ledgerMapper.selectList(
+                new LambdaQueryWrapper<ProjectGroupLedgerEntity>()
+                        .eq(ProjectGroupLedgerEntity::getGroupId, groupId)
+                        .eq(ProjectGroupLedgerEntity::getRefId, refId)
+                        .eq(ProjectGroupLedgerEntity::getRefType, refType)
+                        .in(ProjectGroupLedgerEntity::getType, java.util.List.of(
+                                ProjectGroupLedgerEntity.TYPE_CONSUME,
+                                ProjectGroupLedgerEntity.TYPE_SELF_CONSUME,
+                                ProjectGroupLedgerEntity.TYPE_BACKSTOP)));
+        BigDecimal base = legs.stream().map(l -> nz(l.getDeltaPoints()).abs())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal poolLeg = points, selfLeg = BigDecimal.ZERO, leadLeg = BigDecimal.ZERO;
+        if (!legs.isEmpty() && base.signum() > 0) {
+            selfLeg = points.multiply(legSum(legs, ProjectGroupLedgerEntity.TYPE_SELF_CONSUME))
+                    .divide(base, 2, java.math.RoundingMode.HALF_UP);
+            leadLeg = points.multiply(legSum(legs, ProjectGroupLedgerEntity.TYPE_BACKSTOP))
+                    .divide(base, 2, java.math.RoundingMode.HALF_UP);
+            poolLeg = points.subtract(selfLeg).subtract(leadLeg).max(BigDecimal.ZERO);  // 舍入差兜底入池
         }
-        appendLedgerRow(w.getBalancePoints(), groupId, leaderUserId,
-                ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId,
-                "组池不足·补差兜底，差额由组长个人承担（计入成员已用）");
-        // E1：组池余额未动（balance_after=现值），但 BACKSTOP 流水对全员可见——仍广播；
-        // 组长个人腿的 PERSONAL 事件已由 PointsWalletService.adjust/chargeToDebt 发布
-        publishGroupChanged(groupId, w.getBalancePoints(), shortfall.negate(), refType + ":" + refId);
-        if (consumerUserId != null) {
-            publishMemberUsed(groupId, consumerUserId, shortfall, refType + ":" + refId);
+        if (poolLeg.signum() > 0 && walletMapper.credit(groupId, poolLeg) == 0) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);
         }
-        log.warn("BACKSTOP groupId={} leader={} consumer={} shortfall={} ref={}:{} —— 组池余额 {}",
-                groupId, leaderUserId, consumerUserId, shortfall, refType, refId, w.getBalancePoints());
+        // 成员记账（锁成员行；组池→成员既有锁序）：先还欠款（组长垫→组池垫），余量回减 used
+        com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity row =
+                memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);
+        if (row != null) {
+            BigDecimal dLeader = nz(row.getDebtLeaderPoints()).min(points);
+            BigDecimal dPool = nz(row.getDebtPoolPoints()).min(points.subtract(dLeader));
+            if (dLeader.signum() > 0) {
+                memberMapper.adjustDebtLeader(groupId, memberUserId, dLeader.negate());
+            }
+            if (dPool.signum() > 0) {
+                memberMapper.adjustDebtPool(groupId, memberUserId, dPool.negate());
+            }
+            memberMapper.subtractUsed(groupId, memberUserId, points.subtract(dLeader).subtract(dPool));
+            if (selfLeg.signum() > 0) {
+                memberMapper.creditSelf(groupId, memberUserId, selfLeg);
+            }
+        } else {
+            log.warn("退款成员行缺失（已退组？）组池腿照退 groupId={} member={} ref={}:{}",
+                    groupId, memberUserId, refType, refId);
+        }
+        // 兜底腿退组长个人（钱出组长钱包，退还本人）
+        if (leadLeg.signum() > 0) {
+            ProjectGroupEntity g = groupMapper.selectById(groupId);
+            if (g != null) {
+                pointsWallet.refund(g.getOwnerUserId(), leadLeg, PointsLedgerEntity.REF_GROUP, groupId,
+                        "组池退款·退组长兜底垫付 ref=" + refType + ":" + refId);
+            }
+        }
+        BigDecimal balanceAfter = requireWallet(groupId).getBalancePoints();
+        if (poolLeg.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId,
+                    ProjectGroupLedgerEntity.TYPE_REFUND, poolLeg, refType, refId, null);
+        }
+        if (selfLeg.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId,
+                    ProjectGroupLedgerEntity.TYPE_SELF_REFUND, selfLeg, refType, refId, "退成员名下余额（不动组池）");
+        }
+        if (leadLeg.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId,
+                    ProjectGroupLedgerEntity.TYPE_REFUND, BigDecimal.ZERO, refType, refId,
+                    "退组长兜底垫付 " + leadLeg.stripTrailingZeros().toPlainString() + "（不动组池）");
+        }
+        publishGroupChanged(groupId, balanceAfter, points, refType + ":" + refId);
+        publishMemberUsed(groupId, memberUserId, points.negate(), refType + ":" + refId);
+        log.info("组退款(按腿) groupId={} member={} points={}（池 {}/名下 {}/退兜底 {}）ref={}:{}",
+                groupId, memberUserId, points, poolLeg, selfLeg, leadLeg, refType, refId);
+        return balanceAfter;
+    }
+
+    /** 同 ref 同 type 腿绝对值合计（退款按腿分摊比例用）。 */
+    private BigDecimal legSum(java.util.List<ProjectGroupLedgerEntity> legs, String type) {
+        return legs.stream().filter(l -> type.equals(l.getType()))
+                .map(l -> nz(l.getDeltaPoints()).abs()).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** 组池余额（不抛版，预估预览用）；组池行缺失 → ZERO。 */
@@ -258,6 +388,13 @@ public class ProjectGroupWalletService {
         }
         if (!MemberAllowedKinds.isAllowed(m.getAllowedKinds(), kind)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长已限制你在本组使用该类模型（" + kind + "）");
+        }
+        // V161 修复III：欠款冻结预检（与 doChargeGroup HOLD 闸同口径——欠款未抵扣即暂停组内消费）
+        java.math.BigDecimal debtTotal = nz(m.getDebtPoolPoints()).add(nz(m.getDebtLeaderPoints()));
+        if (debtTotal.signum() > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "你有未抵扣欠款 " + debtTotal.stripTrailingZeros().toPlainString()
+                            + "，暂停组内消费（划拨或组长调限额抵清后恢复）");
         }
         // 审计补漏①：成员限额预检（与 addUsed 硬卡同口径；预估口径 used≥quota 即拦）
         if (m.getQuotaLimitPoints() != null && m.getUsedPoints() != null
