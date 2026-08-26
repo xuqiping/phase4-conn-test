@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.auth.config.AliyunMailConfig;
 import com.superprogrammer.auth.dto.CredentialVO;
 import com.superprogrammer.auth.entity.UserCredential;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -43,6 +44,8 @@ class EmailServiceTest {
     private com.superprogrammer.auth.service.mail.MailSendQuotaService mailQuota;
     @Mock
     private ProgressiveCaptchaGuard captchaGuard;
+    @Mock
+    private AuditLogService auditLogService;
 
     private EmailService service;
 
@@ -55,7 +58,7 @@ class EmailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of());
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of());
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         lenient().when(mailQuota.tryConsumeDaily()).thenReturn(true);
         lenient().when(channelSettings.mailSnapshot()).thenReturn(new AuthChannelSettingService.MailSnapshot(
@@ -87,6 +90,9 @@ class EmailServiceTest {
         when(valueOps.get(startsWith("verify:email:"))).thenReturn(null);
         BusinessException ex = assertThrows(BusinessException.class, () -> service.verifyEmail("bad-token"));
         assertEquals("链接无效或已过期", ex.getMessage());
+        // B1（8x-1）：token 无效 → email_verify FAIL 行
+        verify(auditLogService).fromMdc(eq("auth"), eq("email_verify"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "token_invalid".equals(m.get("reason"))), eq("FAIL"));
     }
 
     @Test
@@ -102,6 +108,9 @@ class EmailServiceTest {
         assertDoesNotThrow(() -> service.verifyEmail("valid-token"));
         verify(credentialService).markVerifiedByIdentifier(UserCredential.TYPE_EMAIL, "a@b.com");
         verify(redisTemplate).delete("verify:email:valid-token");
+        // B1（8x-1）：email_verify SUCCESS 行——detail 带解出的邮箱
+        verify(auditLogService).fromMdc(eq("auth"), eq("email_verify"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "a@b.com".equals(m.get("email"))), eq("SUCCESS"));
     }
 
     @Test
@@ -109,6 +118,10 @@ class EmailServiceTest {
         when(valueOps.increment(startsWith("resend:email:"))).thenReturn(2L);
         String msg = service.resendVerifyEmail("a@b.com", "1.2.3.4");
         assertTrue(msg.contains("发送过于频繁"));
+        // B1（8x-1）：重发限流 → resend_email FAIL + reason=rate_limited + email/ip
+        verify(auditLogService).fromMdc(eq("auth"), eq("resend_email"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "a@b.com".equals(m.get("email")) && "1.2.3.4".equals(m.get("ip"))
+                        && "rate_limited".equals(m.get("reason"))), eq("FAIL"));
     }
 
     @Test
@@ -146,7 +159,7 @@ class EmailServiceTest {
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(smtp.provider()).thenReturn("SMTP");
         when(smtp.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun, smtp));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of(aliyun, smtp));
 
         var cfg = new AuthChannelSettingService.MailSnapshot(
                 true, "", "", "", "", "", null, "https://t.com/v", "",
@@ -170,7 +183,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of(aliyun));
 
         // enabled=false 也应能测试（先测通再开开关）
         var cfg = new AuthChannelSettingService.MailSnapshot(
@@ -187,7 +200,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(mailQuota.tryConsumeDaily()).thenReturn(false);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of(aliyun));
 
         var cfg = new AuthChannelSettingService.MailSnapshot(
                 true, "cn-hangzhou", "ak", "sk", "noreply@t.com", "测", null, "", "", "ALIYUN", null);
@@ -235,6 +248,9 @@ class EmailServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
         assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+        // B1（8x-1）：发码限流 → send_register_code FAIL + email/ip/reason
+        verify(auditLogService).fromMdc(eq("auth"), eq("send_register_code"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "a@b.com".equals(m.get("email")) && m.containsKey("reason")), eq("FAIL"));
     }
 
     @Test
@@ -242,7 +258,7 @@ class EmailServiceTest {
         com.superprogrammer.auth.service.mail.MailSender aliyun = mock(com.superprogrammer.auth.service.mail.MailSender.class);
         when(aliyun.provider()).thenReturn("ALIYUN");
         when(aliyun.send(any(), anyString(), anyString(), anyString())).thenReturn(true);
-        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, List.of(aliyun));
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota, captchaGuard, auditLogService, List.of(aliyun));
 
         when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
         when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
@@ -253,6 +269,10 @@ class EmailServiceTest {
         verify(valueOps).set(eq("regcode:try:a@b.com"), eq("0"), eq(600L), any());
         verify(mailQuota).checkIpHourly("1.2.3.4");
         verify(aliyun).send(any(), eq("a@b.com"), contains("注册验证码"), anyString());
+        // B1（8x-1）：发码成功 → send_register_code SUCCESS + email/ip
+        verify(auditLogService).fromMdc(eq("auth"), eq("send_register_code"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "a@b.com".equals(m.get("email")) && "1.2.3.4".equals(m.get("ip")) && !m.containsKey("reason")),
+                eq("SUCCESS"));
     }
 
     @Test

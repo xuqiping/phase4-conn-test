@@ -4,6 +4,7 @@ package com.superprogrammer.auth.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.auth.dto.MfaBindResponse;
 import com.superprogrammer.auth.totp.TotpService;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,11 +38,14 @@ class MfaServiceTest {
     @Mock
     private TotpService totpService;
 
+    @Mock
+    private AuditLogService auditLogService;
+
     private MfaService mfaService;
 
     @BeforeEach
     void setUp() {
-        mfaService = new MfaService(systemSettingService, totpService, new ObjectMapper());
+        mfaService = new MfaService(systemSettingService, totpService, new ObjectMapper(), auditLogService);
     }
 
     @Test
@@ -79,12 +83,18 @@ class MfaServiceTest {
         // pending 存加密 KV（确认前不转正）
         verify(systemSettingService).upsertEncrypted(eq(PENDING_KEY), eq("NEWSECRET"), contains("u1"));
         verify(systemSettingService, never()).upsertEncrypted(eq(SECRET_KEY), anyString(), anyString());
+        // B1（8x-1）：mfa_bind SUCCESS
+        verify(auditLogService).fromMdc(eq("auth"), eq("mfa_bind"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> Long.valueOf(1L).equals(m.get("userId"))), eq("SUCCESS"));
     }
 
     @Test
     void startBind_alreadyBound_conflict() {
         when(systemSettingService.getDecryptedValue(SECRET_KEY)).thenReturn("EXISTING");
         assertThrows(BusinessException.class, () -> mfaService.startBind(1L, "admin"));
+        // B1（8x-1）：已绑定重复发起 → mfa_bind FAIL already_bound
+        verify(auditLogService).fromMdc(eq("auth"), eq("mfa_bind"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "already_bound".equals(m.get("reason"))), eq("FAIL"));
     }
 
     @Test
@@ -115,6 +125,9 @@ class MfaServiceTest {
 
         assertThrows(BusinessException.class, () -> mfaService.confirmBind(1L, "000000"));
         verify(systemSettingService, never()).upsertEncrypted(eq(SECRET_KEY), anyString(), anyString());
+        // B1（8x-1）：码错 → mfa_bind_confirm FAIL code_wrong
+        verify(auditLogService).fromMdc(eq("auth"), eq("mfa_bind_confirm"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "code_wrong".equals(m.get("reason"))), eq("FAIL"));
     }
 
     @Test
@@ -167,6 +180,9 @@ class MfaServiceTest {
         assertDoesNotThrow(() -> mfaService.unbind(1L, "123456"));
         verify(systemSettingService).clearSettingValue(SECRET_KEY);
         verify(systemSettingService).clearSettingValue(RECOVERY_KEY);
+        // B1（8x-1）：解绑成功 → mfa_unbind SUCCESS
+        verify(auditLogService).fromMdc(eq("auth"), eq("mfa_unbind"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> !m.containsKey("reason")), eq("SUCCESS"));
     }
 
     @Test
@@ -177,5 +193,8 @@ class MfaServiceTest {
 
         assertThrows(BusinessException.class, () -> mfaService.unbind(1L, "000000"));
         verify(systemSettingService, never()).clearSettingValue(anyString());
+        // B1（8x-1）：码错解绑拒 → mfa_unbind FAIL code_wrong
+        verify(auditLogService).fromMdc(eq("auth"), eq("mfa_unbind"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "code_wrong".equals(m.get("reason"))), eq("FAIL"));
     }
 }

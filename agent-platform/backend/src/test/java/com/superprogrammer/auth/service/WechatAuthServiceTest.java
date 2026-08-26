@@ -8,6 +8,7 @@ import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.auth.mapper.RoleMapper;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import me.chanjar.weixin.common.bean.WxOAuth2UserInfo;
@@ -47,6 +48,7 @@ class WechatAuthServiceTest {
     @Mock private CredentialService credentialService;
     @Mock private WxMpService wxMpService;
     @Mock private WxOAuth2Service oAuth2Service;
+    @Mock private AuditLogService auditLogService;
 
     private WechatAuthService service;
 
@@ -63,7 +65,7 @@ class WechatAuthServiceTest {
     @BeforeEach
     void setUp() {
         service = new WechatAuthService(userMapper, roleMapper, userRoleMapper, passwordEncoder,
-                redisTemplate, authService, credentialService);
+                redisTemplate, authService, credentialService, auditLogService);
         ReflectionTestUtils.setField(service, "wxMpService", wxMpService);
         ReflectionTestUtils.setField(service, "wechatEnabled", true);
         ReflectionTestUtils.setField(service, "redirectUri", "https://test.com/api/auth/login/wechat/callback");
@@ -94,6 +96,9 @@ class WechatAuthServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.handleCallback("code", "bad-state"));
         assertEquals(ErrorCode.UNAUTHORIZED.getCode(), ex.getCode());
+        // B1（8x-1）：state 无效 → wechat_login FAIL
+        verify(auditLogService).fromMdc(eq("auth"), eq("wechat_login"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> m.containsKey("reason")), eq("FAIL"));
     }
 
     @Test
@@ -121,6 +126,9 @@ class WechatAuthServiceTest {
         assertNotNull(response);
         verify(credentialService).createCredential(eq(1L), eq(UserCredential.TYPE_WECHAT), eq("union-123"), isNull(), eq(true));
         verify(redisTemplate).delete("wechat:state:valid-state");
+        // B1（8x-1）：扫码登录成功 → wechat_login SUCCESS + openid 全量进 detail
+        verify(auditLogService).fromMdc(eq("auth"), eq("wechat_login"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "openid-abc".equals(m.get("openid"))), eq("SUCCESS"));
     }
 
     @Test

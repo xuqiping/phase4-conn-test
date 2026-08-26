@@ -57,4 +57,29 @@ class AuditLogServiceTest {
         assertThatCode(() -> service.record(service.fromMdc("role", "x", null, null, "{}", "SUCCESS")))
                 .doesNotThrowAnyException();
     }
+
+    // ==================== B1（8x-1）：detail-Map 重载 ====================
+
+    @Test
+    void fromMdcMapOverload_serializesDetailJson() {
+        AuditLogEntity row = service.fromMdc("auth", "send_register_code", "user", null,
+                AuditLogService.detail("email", "a@b.com", "ip", "1.2.3.4", "reason", null),
+                AuditLogEntity.RESULT_SUCCESS);
+        // null 值键剔除（reason=null 不进 JSON），非 null 序列化
+        assertThat(row.getDetailJson()).isEqualTo("{\"email\":\"a@b.com\",\"ip\":\"1.2.3.4\"}");
+    }
+
+    @Test
+    void fromMdcMapOverload_nullOrEmptyDetailFallsBackToEmptyJson() {
+        assertThat(service.fromMdc("auth", "x", null, null, (java.util.Map<String, Object>) null, "SUCCESS")
+                .getDetailJson()).isEqualTo("{}");
+        assertThat(service.fromMdc("auth", "x", null, null, java.util.Map.of(), "SUCCESS").getDetailJson())
+                .isEqualTo("{}");
+    }
+
+    @Test
+    void detailBuilder_skipsNullKeyAndValue() {
+        java.util.Map<String, Object> d = AuditLogService.detail("a", 1, null, "x", "b", null);
+        assertThat(d).containsOnlyKeys("a").containsEntry("a", 1);
+    }
 }

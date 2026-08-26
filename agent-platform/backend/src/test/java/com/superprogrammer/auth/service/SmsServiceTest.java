@@ -9,6 +9,7 @@ import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.auth.mapper.RoleMapper;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -44,6 +45,7 @@ class SmsServiceTest {
     @Mock private UserMapper userMapper;
     @Mock private RoleMapper roleMapper;
     @Mock private UserRoleMapper userRoleMapper;
+    @Mock private AuditLogService auditLogService;
 
     private SmsService service;
 
@@ -60,7 +62,7 @@ class SmsServiceTest {
     @BeforeEach
     void setUp() {
         service = new SmsService(channelSettings, redisTemplate, credentialService, captchaService,
-                authService, passwordEncoder, userMapper, roleMapper, userRoleMapper);
+                authService, passwordEncoder, userMapper, roleMapper, userRoleMapper, auditLogService);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         lenient().when(channelSettings.smsSnapshot()).thenReturn(new AuthChannelSettingService.SmsSnapshot(
                 true, "cn-hangzhou", "test-ak", "test-sk", "测试签名", "SMS_TEST", "SMS_RESET", 5, 10, 30));
@@ -94,6 +96,10 @@ class SmsServiceTest {
         // 阿里云发送失败 → 删 Redis 码 + 抛 INTERNAL_ERROR
         assertEquals(ErrorCode.INTERNAL_ERROR.getCode(), ex.getCode());
         verify(captchaService).verify("captcha-token");
+        // B1（8x-1）：发送失败 → sms_code_send FAIL + phone/ip/reason
+        verify(auditLogService).fromMdc(eq("auth"), eq("sms_code_send"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "13800138000".equals(m.get("phone")) && "127.0.0.1".equals(m.get("ip"))
+                        && m.containsKey("reason")), eq("FAIL"));
     }
 
     @Test
@@ -147,6 +153,9 @@ class SmsServiceTest {
         assertEquals("jwt-token", response.getAccessToken());
         verify(credentialService).createCredential(eq(1L), eq(UserCredential.TYPE_PHONE), eq("13800138000"), isNull(), eq(true));
         verify(redisTemplate).delete("sms:code:13800138000");
+        // B1（8x-1）：验码登录成功 → sms_login SUCCESS + targetId + phone
+        verify(auditLogService).fromMdc(eq("auth"), eq("sms_login"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> "13800138000".equals(m.get("phone"))), eq("SUCCESS"));
     }
 
     @Test

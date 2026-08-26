@@ -10,6 +10,8 @@ import com.aliyuncs.profile.IClientProfile;
 import com.superprogrammer.auth.dto.TokenResponse;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.entity.UserCredential;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +54,8 @@ public class SmsService {
     private final com.superprogrammer.auth.mapper.UserMapper userMapper;
     private final com.superprogrammer.auth.mapper.RoleMapper roleMapper;
     private final com.superprogrammer.auth.mapper.UserRoleMapper userRoleMapper;
+    /** P0 手工审计（8x-1）：公开端点无 JWT，fromMdc 取 MDC ip；异常全吞不阻断发码/登录主流程。 */
+    private final AuditLogService auditLogService;
 
     /** 验证码 Redis 前缀。 */
     private static final String SMS_CODE_PREFIX = "sms:code:";
@@ -78,7 +82,8 @@ public class SmsService {
                       AuthService authService, PasswordEncoder passwordEncoder,
                       com.superprogrammer.auth.mapper.UserMapper userMapper,
                       com.superprogrammer.auth.mapper.RoleMapper roleMapper,
-                      com.superprogrammer.auth.mapper.UserRoleMapper userRoleMapper) {
+                      com.superprogrammer.auth.mapper.UserRoleMapper userRoleMapper,
+                      AuditLogService auditLogService) {
         this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
@@ -88,6 +93,20 @@ public class SmsService {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
+        this.auditLogService = auditLogService;
+    }
+
+    /**
+     * P0 手工审计行（8x-1）：公开端点无 JWT，fromMdc 从 MDC 取 ip/traceId。
+     * detail 记完整手机号（审计=安全数据，风控聚类需要；业务日志侧仍走 maskPhone）。
+     * 对应 Controller 方法不加 @AuditLog 注解，防双记。异常全吞。
+     */
+    private void audit(String action, String targetId, java.util.Map<String, Object> detail, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", action, "user", targetId, detail, result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action={} : {}", action, e.toString());
+        }
     }
 
     /**
@@ -99,6 +118,18 @@ public class SmsService {
      * @return 统一话术（"验证码已发送"），不泄露手机号是否注册
      */
     public String sendCode(String phone, String captchaToken, String clientIp) {
+        try {
+            return doSendCode(phone, captchaToken, clientIp);
+        } catch (BusinessException e) {
+            // 未开启/滑块拒/格式错/限流/发送失败全记（8x-1）
+            audit("sms_code_send", null,
+                    AuditLogService.detail("phone", phone, "ip", clientIp, "reason", e.getMessage()),
+                    AuditLogEntity.RESULT_FAIL);
+            throw e;
+        }
+    }
+
+    private String doSendCode(String phone, String captchaToken, String clientIp) {
         var config = channelSettings.smsSnapshot();
         if (!config.enabled() || config.accessKeyId() == null || config.accessKeyId().isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "短信服务未开启");
@@ -119,6 +150,9 @@ public class SmsService {
         String codeKey = SMS_CODE_PREFIX + phone;
         try {
             if (Boolean.TRUE.equals(redisTemplate.hasKey(codeKey))) {
+                audit("sms_code_send", null,
+                        AuditLogService.detail("phone", phone, "ip", clientIp, "reason", "code_active"),
+                        AuditLogEntity.RESULT_FAIL);
                 return "验证码已发送，请 5 分钟后再试";
             }
         } catch (Exception e) {
@@ -147,6 +181,8 @@ public class SmsService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "发送失败，请稍后重试");
         }
 
+        audit("sms_code_send", null,
+                AuditLogService.detail("phone", phone, "ip", clientIp), AuditLogEntity.RESULT_SUCCESS);
         return "验证码已发送";
     }
 
@@ -159,6 +195,17 @@ public class SmsService {
      */
     @Transactional
     public TokenResponse verifyAndLogin(String phone, String code) {
+        try {
+            TokenResponse resp = doVerifyAndLogin(phone, code);
+            return resp;
+        } catch (BusinessException e) {
+            audit("sms_login", null,
+                    AuditLogService.detail("phone", phone, "reason", e.getMessage()), AuditLogEntity.RESULT_FAIL);
+            throw e;
+        }
+    }
+
+    private TokenResponse doVerifyAndLogin(String phone, String code) {
         // 校验码匹配 + 未过期 + 错误次数<5
         validateCode(phone, code);
 
@@ -190,7 +237,10 @@ public class SmsService {
         }
 
         // 发 JWT（复用 AuthService 现有发 token 逻辑）
-        return authService.issueTokensForSms(user);
+        TokenResponse resp = authService.issueTokensForSms(user);
+        audit("sms_login", String.valueOf(user.getId()),
+                AuditLogService.detail("phone", phone), AuditLogEntity.RESULT_SUCCESS);
+        return resp;
     }
 
     // ==================== 内部方法 ====================

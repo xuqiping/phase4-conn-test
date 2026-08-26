@@ -4,6 +4,8 @@ package com.superprogrammer.auth.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.auth.dto.MfaBindResponse;
 import com.superprogrammer.auth.totp.TotpService;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.system.service.SystemSettingService;
@@ -38,6 +40,19 @@ public class MfaService {
     private final SystemSettingService systemSettingService;
     private final TotpService totpService;
     private final ObjectMapper objectMapper;
+    /** P0 手工审计（8x-1）：绑定流敏感安全操作。异常全吞。 */
+    private final AuditLogService auditLogService;
+
+    /** MFA 审计行（8x-1）：detail 只带 userId（码值/secret 严禁进审计）。 */
+    private void audit(String action, Long userId, String reason, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", action, "user",
+                    userId == null ? null : String.valueOf(userId),
+                    AuditLogService.detail("userId", userId, "reason", reason), result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action={} : {}", action, e.toString());
+        }
+    }
 
     /**
      * 是否已绑定（secret 存在且非空）。登录流据此分流两步登录。
@@ -61,12 +76,14 @@ public class MfaService {
     /** 发起绑定：生成新 secret 存 pending（确认前不生效），返回 secret + otpauth URI。 */
     public MfaBindResponse startBind(Long userId, String username) {
         if (isBound(userId)) {
+            audit("mfa_bind", userId, "already_bound", AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.CONFLICT, "已绑定TOTP，请先解绑后再重新绑定");
         }
         String secret = totpService.generateSecret();
         systemSettingService.upsertEncrypted(PENDING_KEY_PREFIX + userId, secret,
                 "TOTP绑定中secret(确认后转正) u" + userId);
         log.info("TOTP绑定发起 userId={} username={}", userId, username);
+        audit("mfa_bind", userId, null, AuditLogEntity.RESULT_SUCCESS);
         return MfaBindResponse.builder()
                 .secret(secret)
                 .otpauthUri(totpService.buildOtpauthUri(secret, username == null ? String.valueOf(userId) : username, OTPAUTH_ISSUER))
@@ -80,9 +97,11 @@ public class MfaService {
     public MfaBindResponse confirmBind(Long userId, String code) {
         String pending = systemSettingService.getDecryptedValue(PENDING_KEY_PREFIX + userId);
         if (pending == null || pending.isBlank()) {
+            audit("mfa_bind_confirm", userId, "no_pending", AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "请先调用绑定接口获取secret");
         }
         if (!totpService.verify(pending, code, System.currentTimeMillis())) {
+            audit("mfa_bind_confirm", userId, "code_wrong", AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "验证码错误，请确认验证器时间同步后重试");
         }
         systemSettingService.upsertEncrypted(SECRET_KEY_PREFIX + userId, pending,
@@ -92,6 +111,7 @@ public class MfaService {
         List<String> codes = totpService.generateRecoveryCodes();
         saveRecoveryHashes(userId, codes);
         log.info("TOTP绑定确认成功 userId={}", userId);
+        audit("mfa_bind_confirm", userId, null, AuditLogEntity.RESULT_SUCCESS);
         return MfaBindResponse.builder().recoveryCodes(codes).build();
     }
 
@@ -100,14 +120,17 @@ public class MfaService {
      */
     public void unbind(Long userId, String code) {
         if (!isBound(userId)) {
+            audit("mfa_unbind", userId, "not_bound", AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "未绑定TOTP");
         }
         if (!verifyAndConsume(userId, code, false)) {
+            audit("mfa_unbind", userId, "code_wrong", AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "验证码错误，解绑失败");
         }
         systemSettingService.clearSettingValue(SECRET_KEY_PREFIX + userId);
         systemSettingService.clearSettingValue(RECOVERY_KEY_PREFIX + userId);
         log.info("TOTP解绑 userId={}", userId);
+        audit("mfa_unbind", userId, null, AuditLogEntity.RESULT_SUCCESS);
     }
 
     /**

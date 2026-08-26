@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.auth.mapper.UserMapper;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -39,6 +40,7 @@ class PasswordResetServiceTest {
     @Mock private SessionService sessionService;
     @Mock private ProgressiveCaptchaGuard captchaGuard;
     @Mock private AuthChannelSettingService channelSettings;
+    @Mock private AuditLogService auditLogService;
 
     private PasswordResetService service;
 
@@ -53,7 +55,7 @@ class PasswordResetServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new PasswordResetService(userMapper, credentialService, emailService,
-                smsService, passwordEncoder, redisTemplate, sessionService, captchaGuard, channelSettings);
+                smsService, passwordEncoder, redisTemplate, sessionService, captchaGuard, channelSettings, auditLogService);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         // 12x 开关回退：默认开（保持原严校验语义）；「关」场景由专项用例覆盖
         lenient().when(channelSettings.isEmailVerificationRequired()).thenReturn(true);
@@ -66,6 +68,10 @@ class PasswordResetServiceTest {
         String msg = service.forgot("nonexistent", "EMAIL", "127.0.0.1", null);
         assertEquals("若账号存在，重置链接/码已发送", msg);
         verify(emailService, never()).sendResetEmail(anyLong(), anyString());
+        // B1（8x-1）：探测（号不存在）→ SUCCESS 话术 + hit=false 只进审计
+        verify(auditLogService).fromMdc(eq("auth"), eq("password_forgot"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "nonexistent".equals(m.get("identifier")) && Boolean.FALSE.equals(m.get("hit"))),
+                eq("SUCCESS"));
     }
 
     @Test
@@ -74,6 +80,9 @@ class PasswordResetServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.forgot("someone", "EMAIL", "127.0.0.1", null));
         assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+        // B1（8x-1）：限流拒 → password_forgot FAIL + reason（联动表口径）
+        verify(auditLogService).fromMdc(eq("auth"), eq("password_forgot"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> m.containsKey("reason")), eq("FAIL"));
     }
 
     @Test
@@ -82,6 +91,9 @@ class PasswordResetServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.reset("bad", "NewPass123!", "EMAIL", null));
         assertEquals(ErrorCode.RESET_TOKEN_INVALID.getCode(), ex.getCode());
+        // B1（8x-1）：token 无效 → password_reset FAIL（userId 尚未解出为 null）
+        verify(auditLogService).fromMdc(eq("auth"), eq("password_reset"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> m.containsKey("reason")), eq("FAIL"));
     }
 
     @Test
@@ -101,6 +113,10 @@ class PasswordResetServiceTest {
         // Chunk G：踢会话改走 SessionService.kickAllSessions（修原 session: 错前缀 bug）
         verify(sessionService).kickAllSessions(1L);
         verify(redisTemplate).delete(EmailService.RESET_TOKEN_PREFIX + "valid");
+        // B1（8x-1）：重置成功 → password_reset SUCCESS + targetId/channel
+        verify(auditLogService).fromMdc(eq("auth"), eq("password_reset"), eq("user"), eq("1"),
+                argThat((java.util.Map<String, Object> m) -> Long.valueOf(1L).equals(m.get("userId")) && "EMAIL".equals(m.get("channel"))),
+                eq("SUCCESS"));
     }
 
     @Test
@@ -177,6 +193,9 @@ class PasswordResetServiceTest {
 
         assertEquals("若账号存在，重置链接/码已发送", msg);
         verify(emailService).sendResetEmail(1L, "unv@x.com");
+        // B1（8x-1）：命中账号并发信 → hit=true
+        verify(auditLogService).fromMdc(eq("auth"), eq("password_forgot"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> Boolean.TRUE.equals(m.get("hit")) && !m.containsKey("reason")), eq("SUCCESS"));
     }
 
     @Test

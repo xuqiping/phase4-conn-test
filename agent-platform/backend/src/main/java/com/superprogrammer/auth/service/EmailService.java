@@ -3,6 +3,8 @@ package com.superprogrammer.auth.service;
 
 import com.superprogrammer.auth.service.mail.MailSendQuotaService;
 import com.superprogrammer.auth.service.mail.MailSender;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +37,7 @@ public class EmailService {
     private final CredentialService credentialService;
     private final MailSendQuotaService mailQuota;
     private final ProgressiveCaptchaGuard captchaGuard;
+    private final AuditLogService auditLogService;
     private final Map<String, MailSender> senders;
 
     private static final String VERIFY_TOKEN_PREFIX = "verify:email:";
@@ -56,13 +59,28 @@ public class EmailService {
 
     public EmailService(AuthChannelSettingService channelSettings, StringRedisTemplate redisTemplate,
                         CredentialService credentialService, MailSendQuotaService mailQuota,
-                        ProgressiveCaptchaGuard captchaGuard, List<MailSender> mailSenders) {
+                        ProgressiveCaptchaGuard captchaGuard, AuditLogService auditLogService,
+                        List<MailSender> mailSenders) {
         this.channelSettings = channelSettings;
         this.redisTemplate = redisTemplate;
         this.credentialService = credentialService;
         this.mailQuota = mailQuota;
         this.captchaGuard = captchaGuard;
+        this.auditLogService = auditLogService;
         this.senders = mailSenders.stream().collect(Collectors.toMap(MailSender::provider, Function.identity()));
+    }
+
+    /**
+     * P0 手工审计行（人工测试遗留问题修复II B1 · 8x-1）：公开端点无 JWT，
+     * fromMdc 从 MDC 取 ip/traceId（userId 可空，邮箱在 detail 补）。异常全吞——审计绝不阻断发信主流程。
+     * <p>对应 Controller 方法<b>不加</b> {@code @AuditLog} 注解，防双记。
+     */
+    private void audit(String action, String targetId, Map<String, Object> detail, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", action, "user", targetId, detail, result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action={} : {}", action, e.toString());
+        }
     }
 
     /** 发验证邮件（注册时调用）。 */
@@ -116,6 +134,7 @@ public class EmailService {
     /** 校验验证邮件 token（激活链接落地页调）。 */
     public void verifyEmail(String token) {
         if (token == null || token.isBlank()) {
+            audit("email_verify", null, AuditLogService.detail("reason", "token_blank"), AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "链接无效");
         }
 
@@ -124,19 +143,24 @@ public class EmailService {
             userIdStr = redisTemplate.opsForValue().get(VERIFY_TOKEN_PREFIX + token);
         } catch (Exception e) {
             log.error("验证 token 查 Redis 失败 : {}", e.toString());
+            audit("email_verify", null, AuditLogService.detail("reason", "redis_error"), AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "链接无效或已过期");
         }
 
         if (userIdStr == null) {
+            audit("email_verify", null, AuditLogService.detail("reason", "token_invalid"), AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "链接无效或已过期");
         }
 
         Long userId = Long.parseLong(userIdStr);
+        String email = findEmailByUserId(userId);
         boolean marked = credentialService.markVerifiedByIdentifier(com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL,
-                findEmailByUserId(userId));
+                email);
         if (!marked) {
             log.warn("验证邮件时未找到 EMAIL 凭证 userId={}", userId);
         }
+        audit("email_verify", String.valueOf(userId), AuditLogService.detail("email", email),
+                AuditLogEntity.RESULT_SUCCESS);
 
         try {
             redisTemplate.delete(VERIFY_TOKEN_PREFIX + token);
@@ -145,9 +169,10 @@ public class EmailService {
         }
     }
 
-    /** 重发验证邮件（限流：同邮箱 60s + 同 IP 10 封/h〔12x B3〕）。统一话术防枚举。 */
+    /** 重发验证邮件（限流：同邮箱 60s + 同 IP 10 封/h〔12x B3〕）。统一话术防枚举（hit 只进审计不外泄）。 */
     public String resendVerifyEmail(String email, String clientIp) {
         if (email == null || email.isBlank()) {
+            audit("resend_email", null, AuditLogService.detail("reason", "email_blank"), AuditLogEntity.RESULT_FAIL);
             return "若该邮箱已注册且未验证，验证邮件已发送";
         }
 
@@ -161,6 +186,9 @@ public class EmailService {
                 redisTemplate.expire(limitKey, RESEND_WINDOW_SECONDS, TimeUnit.SECONDS);
             }
             if (n != null && n > 1) {
+                audit("resend_email", null,
+                        AuditLogService.detail("email", email, "ip", clientIp, "reason", "rate_limited"),
+                        AuditLogEntity.RESULT_FAIL);
                 return "发送过于频繁，请 60 秒后再试";
             }
         } catch (Exception e) {
@@ -173,16 +201,24 @@ public class EmailService {
                 Thread.sleep(200 + secureRandom.nextInt(300));
             } catch (InterruptedException ignored) {
             }
+            audit("resend_email", null,
+                    AuditLogService.detail("email", email, "ip", clientIp, "hit", false), AuditLogEntity.RESULT_SUCCESS);
             return "若该邮箱已注册且未验证，验证邮件已发送";
         }
 
         boolean alreadyVerified = credentialService.markVerifiedByIdentifier(
                 com.superprogrammer.auth.entity.UserCredential.TYPE_EMAIL, email) == false;
         if (!alreadyVerified) {
+            audit("resend_email", String.valueOf(userId),
+                    AuditLogService.detail("email", email, "ip", clientIp, "hit", false, "reason", "already_verified"),
+                    AuditLogEntity.RESULT_SUCCESS);
             return "若该邮箱已注册且未验证，验证邮件已发送";
         }
 
         boolean sent = sendVerifyEmail(userId, email);
+        audit("resend_email", String.valueOf(userId),
+                AuditLogService.detail("email", email, "ip", clientIp, "hit", sent),
+                sent ? AuditLogEntity.RESULT_SUCCESS : AuditLogEntity.RESULT_FAIL);
         return sent ? "若该邮箱已注册且未验证，验证邮件已发送" : "发送失败，请稍后重试";
     }
 
@@ -236,16 +272,29 @@ public class EmailService {
     public void sendRegisterCode(String email, String clientIp, String captchaVerification) {
         // 12x 开关回退：邮箱验证总开关关闭时注册不验码，发码端点直接拒（前端不展示该入口）
         if (!channelSettings.isEmailVerificationRequired()) {
+            audit("send_register_code", null,
+                    AuditLogService.detail("email", email, "ip", clientIp, "reason", "verification_off"),
+                    AuditLogEntity.RESULT_FAIL);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前注册无需邮箱验证码，请直接填写注册信息");
         }
-        captchaGuard.check("mailcode", clientIp, captchaVerification);
         try {
-            doSendRegisterCode(email, clientIp);
+            captchaGuard.check("mailcode", clientIp, captchaVerification);
+            try {
+                doSendRegisterCode(email, clientIp);
+            } catch (BusinessException e) {
+                captchaGuard.recordFailure("mailcode", clientIp);
+                throw e;
+            }
+            captchaGuard.clear("mailcode", clientIp);
+            audit("send_register_code", null,
+                    AuditLogService.detail("email", email, "ip", clientIp), AuditLogEntity.RESULT_SUCCESS);
         } catch (BusinessException e) {
-            captchaGuard.recordFailure("mailcode", clientIp);
+            // 限流/已注册/通道未开/发送失败等失败分支全记（reason=话术，风控可按频次聚类）
+            audit("send_register_code", null,
+                    AuditLogService.detail("email", email, "ip", clientIp, "reason", e.getMessage()),
+                    AuditLogEntity.RESULT_FAIL);
             throw e;
         }
-        captchaGuard.clear("mailcode", clientIp);
     }
 
     private void doSendRegisterCode(String email, String clientIp) {

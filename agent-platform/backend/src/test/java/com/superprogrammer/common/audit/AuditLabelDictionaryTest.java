@@ -60,4 +60,13 @@ class AuditLabelDictionaryTest {
         assertEquals("媒体生成", vo.getModuleLabel());
         assertEquals("图片生成成功", vo.getActionLabel());
     }
+
+    // B1（8x-1）：P0 手工行新码全命中中文
+    @Test
+    void actionLabel_p0NewAuthCodes_returnsChinese() {
+        assertEquals("发注册验证码", AuditLabelDictionary.actionLabel("auth", "send_register_code"));
+        assertEquals("绑定TOTP", AuditLabelDictionary.actionLabel("auth", "mfa_bind"));
+        assertEquals("确认绑定TOTP", AuditLabelDictionary.actionLabel("auth", "mfa_bind_confirm"));
+        assertEquals("解绑TOTP", AuditLabelDictionary.actionLabel("auth", "mfa_unbind"));
+    }
 }

@@ -170,7 +170,7 @@ class PaymentOrderServiceTest {
         PaymentOrderEntity existing = pendingOrder(42L);
         existing.setIdemKey("idem-1");
         when(orderMapper.selectByIdemKey(UID, "idem-1")).thenReturn(existing);
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThatThrownBy(() -> service.createOrder(UID, new BigDecimal("20.00"), "MOCK", "idem-1"))
@@ -214,7 +214,7 @@ class PaymentOrderServiceTest {
 
         PaymentOrderService service2 = service;
         when(orderMapper.cancelIfPending(43L, UID)).thenReturn(1);
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
         service2.cancel(UID, 43L); // 不抛即过
     }
@@ -232,7 +232,7 @@ class PaymentOrderServiceTest {
         when(orderMapper.markPaidIfPending(eq(42L), any())).thenReturn(1);
         when(walletService.creditRechargeForOrder(eq(UID), any(), any(), eq(42L), any()))
                 .thenReturn(new BigDecimal("2000"));
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThat(service.handleNotify("MOCK", notifyParams(o, true))).isTrue();
@@ -249,7 +249,7 @@ class PaymentOrderServiceTest {
         o.setStatus(PaymentOrderEntity.STATUS_PAID); // 抢态后内存态（真实链路第二三次查到 PAID）
         when(walletService.creditRechargeForOrder(anyLong(), any(), any(), anyLong(), any()))
                 .thenReturn(new BigDecimal("2000"));
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThat(service.handleNotify("MOCK", notifyParams(o, true))).isTrue();
@@ -266,7 +266,7 @@ class PaymentOrderServiceTest {
         // 渠道侧金额被改：构造 20.00 的合法签名回调（mock 密钥在服务端=测试可造）
         PaymentOrderEntity tampered = pendingOrder(42L);
         tampered.setAmountYuan(new BigDecimal("20.00"));
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThat(service.handleNotify("MOCK", notifyParams(tampered, true))).isFalse();
@@ -296,7 +296,7 @@ class PaymentOrderServiceTest {
         o.setStatus(PaymentOrderEntity.STATUS_CLOSED);
         when(orderMapper.selectByChannelOrder("MOCK", "MOCK-42")).thenReturn(o);
         when(orderMapper.markPaidIfPending(eq(42L), any())).thenReturn(0);
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThat(service.handleNotify("MOCK", notifyParams(o, true))).isTrue(); // ack 止重推
@@ -308,7 +308,7 @@ class PaymentOrderServiceTest {
         PaymentOrderEntity o = pendingOrder(42L);
         when(orderMapper.selectByChannelOrder("MOCK", "MOCK-42")).thenReturn(o);
         when(orderMapper.markFailedIfPending(42L)).thenReturn(1);
-        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), any(), anyString()))
+        when(auditLogService.fromMdc(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(new com.superprogrammer.common.audit.AuditLogEntity());
 
         assertThat(service.handleNotify("MOCK", notifyParams(o, false))).isTrue();

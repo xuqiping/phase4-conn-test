@@ -15,6 +15,7 @@ import java.lang.annotation.Target;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -59,7 +60,7 @@ class AuditLogAspectTest {
 
     @Test
     void successRecordsSuccessWithTargetIdAndMaskedDetail() throws Throwable {
-        when(service.fromMdc(any(), any(), any(), any(), any(), any()))
+        when(service.fromMdc(any(), any(), any(), any(), anyString(), anyString()))
                 .thenAnswer(inv -> {
                     AuditLogEntity e = new AuditLogEntity();
                     e.setModule(inv.getArgument(0));
@@ -87,7 +88,7 @@ class AuditLogAspectTest {
 
     @Test
     void failureRecordsFailAndRethrows() throws Throwable {
-        when(service.fromMdc(any(), any(), any(), any(), any(), any()))
+        when(service.fromMdc(any(), any(), any(), any(), anyString(), anyString()))
                 .thenAnswer(inv -> {
                     AuditLogEntity e = new AuditLogEntity();
                     e.setResult(inv.getArgument(5));
@@ -111,7 +112,7 @@ class AuditLogAspectTest {
         // record 自身不抛（队列满已在 service 内吞），此处验证 proceed 一定执行
         ProceedingJoinPoint pjp = pjp(1L, "n");
         when(pjp.proceed()).thenReturn("done");
-        when(service.fromMdc(any(), any(), any(), any(), any(), any())).thenReturn(new AuditLogEntity());
+        when(service.fromMdc(any(), any(), any(), any(), anyString(), anyString())).thenReturn(new AuditLogEntity());
         Object result = aspect.around(pjp, annotation());
         assertThat(result).isEqualTo("done");
         verify(pjp).proceed();

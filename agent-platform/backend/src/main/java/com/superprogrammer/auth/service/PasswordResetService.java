@@ -6,6 +6,8 @@ import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.entity.UserCredential;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.security.PasswordPolicy;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +54,8 @@ public class PasswordResetService {
     private final ProgressiveCaptchaGuard captchaGuard;
     /** 12x 开关回退：邮箱验证总开关（关=人工测试期，找回放宽到未验证邮箱/users.email 列）。 */
     private final AuthChannelSettingService channelSettings;
+    /** P0 手工审计（8x-1）：公开端点无 JWT，fromMdc 取 MDC ip；异常全吞不阻断找回主流程。 */
+    private final AuditLogService auditLogService;
 
     private static final String RESET_LIMIT_ACCOUNT_PREFIX = "reset:limit:account:";
     private static final String RESET_LIMIT_IP_PREFIX = "reset:limit:ip:";
@@ -72,6 +76,16 @@ public class PasswordResetService {
      * @return 统一话术"若账号存在，重置链接/码已发送"
      */
     public String forgot(String identifier, String channel, String clientIp, String captchaVerification) {
+        try {
+            return doForgot(identifier, channel, clientIp, captchaVerification);
+        } catch (BusinessException e) {
+            // 限流/滑块拒等异常分支：FAIL + reason（联动表：发码被限流拒 → FAIL+RATE_LIMIT）
+            auditForgot(identifier, clientIp, false, e.getMessage(), AuditLogEntity.RESULT_FAIL);
+            throw e;
+        }
+    }
+
+    private String doForgot(String identifier, String channel, String clientIp, String captchaVerification) {
         captchaGuard.check("forgot", clientIp, captchaVerification);
         // 限流
         try {
@@ -83,8 +97,9 @@ public class PasswordResetService {
 
         User user = findUserByIdentifier(identifier);
         if (user == null) {
-            // 统一话术：不泄露账号是否存在（防枚举）；探测计数（B2）
+            // 统一话术：不泄露账号是否存在（防枚举）；探测计数（B2）；hit=false 只进审计不外泄
             captchaGuard.recordFailure("forgot", clientIp);
+            auditForgot(identifier, clientIp, false, "user_not_found", AuditLogEntity.RESULT_SUCCESS);
             return "若账号存在，重置链接/码已发送";
         }
 
@@ -93,6 +108,7 @@ public class PasswordResetService {
             UserCredential phoneCredential = credentialService.findForLogin(UserCredential.TYPE_PHONE, user.getPhone());
             if (phoneCredential == null || !Boolean.TRUE.equals(phoneCredential.getVerified()) || user.getPhone() == null) {
                 captchaGuard.recordFailure("forgot", clientIp);
+                auditForgot(identifier, clientIp, false, "no_verified_phone", AuditLogEntity.RESULT_SUCCESS);
                 return "若账号存在，重置链接/码已发送"; // 未绑手机/未验证 → 不发但仍返统一话术
             }
             // 发短信重置码（复用 SmsService 的发码能力，但用 reset 模板）
@@ -104,13 +120,29 @@ public class PasswordResetService {
             String resetEmail = findResettableEmail(user);
             if (resetEmail == null) {
                 captchaGuard.recordFailure("forgot", clientIp);
+                auditForgot(identifier, clientIp, false, "no_resettable_email", AuditLogEntity.RESULT_SUCCESS);
                 return "若账号存在，重置链接/码已发送"; // 无可用邮箱 → 不发但仍返统一话术
             }
             emailService.sendResetEmail(user.getId(), resetEmail);
         }
 
         captchaGuard.clear("forgot", clientIp);
+        auditForgot(identifier, clientIp, true, null, AuditLogEntity.RESULT_SUCCESS);
         return "若账号存在，重置链接/码已发送";
+    }
+
+    /**
+     * 找回密码审计行（8x-1）：detail 带 identifier 原文 + ip + hit（防枚举话术对外，hit 只进审计）。
+     * Controller 不加 @AuditLog 注解，防双记。异常全吞。
+     */
+    private void auditForgot(String identifier, String clientIp, boolean hit, String reason, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", "password_forgot", "user", null,
+                    AuditLogService.detail("identifier", identifier, "ip", clientIp, "hit", hit, "reason", reason),
+                    result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action=password_forgot : {}", e.toString());
+        }
     }
 
     /**
@@ -122,6 +154,17 @@ public class PasswordResetService {
      */
     @Transactional
     public void reset(String token, String newPassword, String channel, String phone) {
+        Long userId = null;
+        try {
+            userId = doReset(token, newPassword, channel, phone);
+            auditReset(userId, channel, null, AuditLogEntity.RESULT_SUCCESS);
+        } catch (BusinessException e) {
+            auditReset(userId, channel, e.getMessage(), AuditLogEntity.RESULT_FAIL);
+            throw e;
+        }
+    }
+
+    private Long doReset(String token, String newPassword, String channel, String phone) {
         Long userId;
         if ("SMS".equals(channel)) {
             // 短信重置：校验 6 位码
@@ -173,6 +216,19 @@ public class PasswordResetService {
             }
         } catch (Exception e) {
             log.warn("重置告警信发送失败(已吞,不影响重置结果) userId={} : {}", userId, e.toString());
+        }
+        return userId;
+    }
+
+    /** 重置密码审计行（8x-1）：token 无效等失败分支 userId 可能为 null。异常全吞。 */
+    private void auditReset(Long userId, String channel, String reason, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", "password_reset", "user",
+                    userId == null ? null : String.valueOf(userId),
+                    AuditLogService.detail("userId", userId, "channel", channel, "reason", reason),
+                    result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action=password_reset : {}", e.toString());
         }
     }
 

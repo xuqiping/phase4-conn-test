@@ -60,7 +60,12 @@ public final class AuditLabelDictionary {
                     Map.entry("geo_login_alert", "异地登录提醒"),
                     Map.entry("credential_bind", "绑定凭证"),
                     Map.entry("credential_unbind", "解绑凭证"),
-                    Map.entry("password_change", "修改密码"))),
+                    Map.entry("password_change", "修改密码"),
+                    // 人工测试遗留问题修复II B1（8x-1 P0 手工行新码）
+                    Map.entry("send_register_code", "发注册验证码"),
+                    Map.entry("mfa_bind", "绑定TOTP"),
+                    Map.entry("mfa_bind_confirm", "确认绑定TOTP"),
+                    Map.entry("mfa_unbind", "解绑TOTP"))),
             Map.entry("user", Map.ofEntries(
                     Map.entry("update_status", "修改用户状态"),
                     Map.entry("assign_roles", "分配角色"))),

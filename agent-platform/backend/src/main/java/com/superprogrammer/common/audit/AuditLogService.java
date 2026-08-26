@@ -1,5 +1,6 @@
 package com.superprogrammer.common.audit;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.common.logging.CompositeTaskDecorator;
 import com.superprogrammer.common.logging.MdcContextTaskDecorator;
 import com.superprogrammer.billing.context.BillingContextTaskDecorator;
@@ -10,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,6 +29,8 @@ public class AuditLogService {
 
     private final AuditHashChainService hashChainService;
     private final Executor auditTaskExecutor;
+    /** detail Map→JSON 序列化用（线程安全静态实例，避免每个调用方注入 ObjectMapper）。 */
+    private static final ObjectMapper DETAIL_MAPPER = new ObjectMapper();
 
     /** 落库失败/队列满丢弃累计数（可观测性：WARN 日志带此计数）。 */
     private final AtomicLong droppedCount = new AtomicLong();
@@ -76,6 +80,45 @@ public class AuditLogService {
         row.setDetailJson(detailJson);
         row.setResult(result);
         return row;
+    }
+
+    /**
+     * fromMdc 的 detail-Map 版（人工测试遗留问题修复II B1 · 8x-1）：公开端点手工建行统一走此重载，
+     * Map 由 ObjectMapper 序列化（杜绝手拼 JSON 转义 bug）；null 值键剔除（HashMap 容忍 null，
+     * 但 detail 里塞 null 无信息量）；序列化失败回落 "{}"——审计 detail 构造绝不外抛阻断认证主流程。
+     */
+    public AuditLogEntity fromMdc(String module, String action, String targetType, String targetId,
+                                  Map<String, ?> detail, String result) {
+        return fromMdc(module, action, targetType, targetId, toDetailJson(detail), result);
+    }
+
+    /** Map→detailJson：null 剔除 + 异常回落 "{}"（防枚举字段/风控标记均可安全放）。 */
+    private static String toDetailJson(Map<String, ?> detail) {
+        if (detail == null || detail.isEmpty()) {
+            return "{}";
+        }
+        try {
+            Map<String, Object> safe = new java.util.LinkedHashMap<>();
+            detail.forEach((k, v) -> {
+                if (k != null && v != null) {
+                    safe.put(k, v);
+                }
+            });
+            return DETAIL_MAPPER.writeValueAsString(safe);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    /** kv 交替构建 detail Map（null 键/值自动剔除）：{@code detail("email", e, "ip", ip)}。 */
+    public static Map<String, Object> detail(Object... kv) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        for (int i = 0; kv != null && i + 1 < kv.length; i += 2) {
+            if (kv[i] != null && kv[i + 1] != null) {
+                m.put(String.valueOf(kv[i]), kv[i + 1]);
+            }
+        }
+        return m;
     }
 
     /**

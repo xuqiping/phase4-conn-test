@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -268,7 +269,7 @@ class PointsWalletServiceTest {
         when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
         when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
         when(ledgerMapper.selectById(42L)).thenReturn(first);
-        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), any(), eq("FAIL")))
+        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), anyString(), eq("FAIL")))
                 .thenReturn(new AuditLogEntity());
 
         BigDecimal result = wallet.chargeIdempotent(1L, new BigDecimal("1.00"), // 金额被改
@@ -340,7 +341,7 @@ class PointsWalletServiceTest {
         existing.setResultRef("42");
         when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
         when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
-        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), any(), eq("FAIL")))
+        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), anyString(), eq("FAIL")))
                 .thenReturn(new AuditLogEntity());
 
         assertThatThrownBy(() -> wallet.chargeIdempotent(1L, new BigDecimal("50.00"),
@@ -363,7 +364,7 @@ class PointsWalletServiceTest {
         existing.setResultRef("42");
         when(idempotencyKeyMapper.tryOccupy("k1", 1L, "billing.charge")).thenReturn(0);
         when(idempotencyKeyMapper.selectByKey("k1")).thenReturn(existing);
-        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), any(), eq("FAIL")))
+        when(auditLogService.fromMdc(eq("billing"), eq("idempotency_conflict"), any(), eq("k1"), anyString(), eq("FAIL")))
                 .thenReturn(new AuditLogEntity());
 
         assertThatThrownBy(() -> wallet.chargeIdempotent(1L, new BigDecimal("50.00"),

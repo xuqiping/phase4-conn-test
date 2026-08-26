@@ -33,7 +33,8 @@ public class EmailVerifyController {
 
     /**
      * 邮箱激活（用户点激活链接后前端调）。
-     * 审计：EmailService.verifyEmail 内部手工建行（认证类无注解范式，detail 只带 reason 码）。
+     * 审计：EmailService.verifyEmail 内部手工建行（auth/email_verify，detail 带 email+reason 码；
+     * 公开端点无 JWT，userId 可空）。本方法<b>不加</b> @AuditLog 注解，防双记。
      */
     @PostMapping("/verify/email")
     public ResponseEntity<R<Void>> verifyEmail(@Valid @RequestBody EmailVerifyRequest request) {
@@ -44,7 +45,8 @@ public class EmailVerifyController {
     /**
      * 重发验证邮件（注册后未收到/链接过期时）。
      * 统一话术：不泄露邮箱是否已注册、是否已验证（防枚举）。
-     * 审计：EmailService.resendVerifyEmail 内部手工建行。
+     * 审计：EmailService.resendVerifyEmail 内部手工建行（auth/resend_email，detail 带
+     * email+ip+hit；hit 只进审计不外泄）。本方法<b>不加</b> @AuditLog 注解，防双记。
      */
     @PostMapping("/resend/email")
     public ResponseEntity<R<String>> resendEmail(@Valid @RequestBody ResendEmailRequest request,

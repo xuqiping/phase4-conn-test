@@ -9,6 +9,8 @@ import com.superprogrammer.auth.entity.UserRole;
 import com.superprogrammer.auth.mapper.RoleMapper;
 import com.superprogrammer.auth.mapper.UserMapper;
 import com.superprogrammer.auth.mapper.UserRoleMapper;
+import com.superprogrammer.common.audit.AuditLogEntity;
+import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +57,8 @@ public class WechatAuthService {
     private final StringRedisTemplate redisTemplate;
     private final AuthService authService;
     private final CredentialService credentialService;
+    /** P0 手工审计（8x-1）：回调公开端点无 JWT，fromMdc 取 MDC ip。 */
+    private final AuditLogService auditLogService;
 
     /** WxMpService 仅在 wechat.enabled=true 时存在，用 required=false 注入。 */
     @Autowired(required = false)
@@ -72,7 +76,8 @@ public class WechatAuthService {
 
     public WechatAuthService(UserMapper userMapper, RoleMapper roleMapper, UserRoleMapper userRoleMapper,
                              PasswordEncoder passwordEncoder, StringRedisTemplate redisTemplate,
-                             AuthService authService, CredentialService credentialService) {
+                             AuthService authService, CredentialService credentialService,
+                             AuditLogService auditLogService) {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
@@ -80,6 +85,17 @@ public class WechatAuthService {
         this.redisTemplate = redisTemplate;
         this.authService = authService;
         this.credentialService = credentialService;
+        this.auditLogService = auditLogService;
+    }
+
+    /** P0 手工审计（8x-1）：openid 全量进 detail（审计=安全数据）。异常全吞。 */
+    private void audit(String action, String targetId, String openid, String reason, String result) {
+        try {
+            auditLogService.record(auditLogService.fromMdc("auth", action, "user", targetId,
+                    AuditLogService.detail("openid", openid, "reason", reason), result));
+        } catch (Exception e) {
+            log.warn("审计建行失败(已吞) action={} : {}", action, e.toString());
+        }
     }
 
     /** 是否启用（前端据此显隐微信登录 Tab）。 */
@@ -116,6 +132,15 @@ public class WechatAuthService {
      */
     @Transactional
     public TokenResponse handleCallback(String code, String state) {
+        try {
+            return doHandleCallback(code, state);
+        } catch (BusinessException e) {
+            audit("wechat_login", null, null, e.getMessage(), AuditLogEntity.RESULT_FAIL);
+            throw e;
+        }
+    }
+
+    private TokenResponse doHandleCallback(String code, String state) {
         if (!isEnabled()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "微信登录未开启");
         }
@@ -159,6 +184,7 @@ public class WechatAuthService {
         }
 
         log.info("微信扫码登录成功: unionId={} userId={}", maskIdentifier(unionid), user.getId());
+        audit("wechat_login", String.valueOf(user.getId()), openid, null, AuditLogEntity.RESULT_SUCCESS);
         return authService.issueTokensForSms(user);
     }
 
