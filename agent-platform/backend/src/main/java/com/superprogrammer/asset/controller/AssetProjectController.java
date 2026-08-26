@@ -7,6 +7,7 @@ import com.superprogrammer.asset.dto.TransferRequest;
 import com.superprogrammer.asset.service.AssetMemberService;
 import com.superprogrammer.asset.service.AssetProjectService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +54,7 @@ public class AssetProjectController {
     private final com.superprogrammer.asset.service.AssetService assetService;
 
     @PostMapping
+    @AuditLog(module = "asset", action = "project_create", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<ProjectVO>> create(@RequestBody ProjectCreateRequest req) {
         return ResponseEntity.ok(R.ok("项目已创建", projectService.create(getCurrentUserId(), req)));
@@ -71,12 +73,14 @@ public class AssetProjectController {
     }
 
     @PutMapping("/{id}")
+    @AuditLog(module = "asset", action = "project_update", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<ProjectVO>> update(@PathVariable Long id, @RequestBody ProjectUpdateRequest req) {
         return ResponseEntity.ok(R.ok("项目已更新", projectService.update(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     @DeleteMapping("/{id}")
+    @AuditLog(module = "asset", action = "project_delete", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         projectService.delete(id, getCurrentUserId(), isAdmin());
@@ -85,6 +89,7 @@ public class AssetProjectController {
 
     /** 转让所有者（旧 owner 降 editor，仅 owner 可操作）。 */
     @PostMapping("/{id}/transfer")
+    @AuditLog(module = "asset", action = "project_transfer", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> transfer(@PathVariable Long id, @RequestBody TransferRequest req) {
         memberService.transfer(id, getCurrentUserId(), isAdmin(), req);

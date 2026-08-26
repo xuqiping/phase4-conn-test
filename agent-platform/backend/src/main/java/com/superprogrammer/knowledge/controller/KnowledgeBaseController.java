@@ -43,6 +43,7 @@ public class KnowledgeBaseController {
     }
 
     @PostMapping
+    @AuditLog(module = "kb", action = "kb_create", targetType = "knowledge_base")
     @RequirePermission("knowledge:write")
     public ResponseEntity<R<KnowledgeBaseVO>> create(@Valid @RequestBody KnowledgeBaseRequest request) {
         return ResponseEntity.ok(R.ok("创建成功",

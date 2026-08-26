@@ -1,5 +1,6 @@
 package com.superprogrammer.project.controller;
 
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.project.dto.ProjectCreateRequest;
 import com.superprogrammer.project.dto.ProjectMemberVO;
@@ -36,16 +37,19 @@ public class ProjectController {
     }
 
     @PostMapping
+    @AuditLog(module = "project", action = "project_create", targetType = "project")
     public ResponseEntity<R<ProjectVO>> create(@RequestBody ProjectCreateRequest body) {
         return ResponseEntity.ok(R.ok("项目创建成功", projectService.create(body, getOperatorId())));
     }
 
     @PutMapping("/{id}")
+    @AuditLog(module = "project", action = "project_update", targetType = "project")
     public ResponseEntity<R<ProjectVO>> update(@PathVariable Long id, @RequestBody ProjectCreateRequest body) {
         return ResponseEntity.ok(R.ok(projectService.update(id, body, getOperatorId(), isAdmin())));
     }
 
     @DeleteMapping("/{id}")
+    @AuditLog(module = "project", action = "project_delete", targetType = "project")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         projectService.delete(id, getOperatorId(), isAdmin());
         return ResponseEntity.ok(R.ok("项目删除成功", null));
@@ -57,12 +61,14 @@ public class ProjectController {
     }
 
     @PostMapping("/{id}/members")
+    @AuditLog(module = "project", action = "project_member_add", targetType = "project")
     public ResponseEntity<R<ProjectMemberVO>> addMember(@PathVariable Long id,
                                                         @RequestBody ProjectShareRequest body) {
         return ResponseEntity.ok(R.ok("共享成功", projectService.addMember(id, body, getOperatorId(), isAdmin())));
     }
 
     @DeleteMapping("/{id}/members/{memberId}")
+    @AuditLog(module = "project", action = "project_member_remove", targetType = "project")
     public ResponseEntity<R<Void>> removeMember(@PathVariable Long id, @PathVariable Long memberId) {
         projectService.removeMember(id, memberId, getOperatorId(), isAdmin());
         return ResponseEntity.ok(R.ok("已移除成员", null));

@@ -40,7 +40,9 @@ public final class AuditLabelDictionary {
             Map.entry("project-group", "项目组"),
             Map.entry("audit", "审计链"),
             // B4（8x-3 P1）：Workflow/Execution 写操作新模块
-            Map.entry("workflow", "工作流")
+            Map.entry("workflow", "工作流"),
+            // B5（8x-3 P2）：legacy /api/projects 协作项目
+            Map.entry("project", "协作项目")
     );
 
     /** 动作码 → 中文名，按模块分组（key=module, value=action 码表）。未命中回落原码。 */
@@ -118,6 +120,8 @@ public final class AuditLabelDictionary {
                     Map.entry("execution_reject", "审批驳回"),
                     Map.entry("execution_input_submit", "提交执行输入"))),
             Map.entry("kb", Map.ofEntries(
+                    // B5（8x-3 P2）：KnowledgeBaseController
+                    Map.entry("kb_create", "新建知识库"),
                     Map.entry("kb_delete", "删除知识库"),
                     Map.entry("document_delete", "删除文档"),
                     Map.entry("document_upload", "上传文档"),
@@ -183,7 +187,9 @@ public final class AuditLabelDictionary {
                     Map.entry("payment_order_failed", "支付失败"),
                     Map.entry("payment_idem_conflict", "支付幂等冲突"),
                     Map.entry("payment_notify_amount_mismatch", "回调金额不符"),
-                    Map.entry("payment_notify_terminal_order", "回调终态订单"))),
+                    Map.entry("payment_notify_terminal_order", "回调终态订单"),
+                    // B5（8x-3 P2）：PaymentController（create/cancel 由服务层手工行覆盖，防双记）
+                    Map.entry("mock_trigger", "模拟支付回调"))),
             Map.entry("asset", Map.ofEntries(
                     Map.entry("public_pool_publish", "发布到公共池"),
                     Map.entry("public_pool_unpublish", "撤出公共池"),
@@ -193,7 +199,32 @@ public final class AuditLabelDictionary {
                     Map.entry("asset_upload", "上传资产"),
                     Map.entry("save_to_library", "存入资产库"),
                     // B2（8x-2）：资产复制补翻
-                    Map.entry("asset_copy", "复制资产"))),
+                    Map.entry("asset_copy", "复制资产"),
+                    // B5（8x-3 P2）：AssetController
+                    Map.entry("asset_create", "新建资产"),
+                    Map.entry("asset_update", "修改资产"),
+                    Map.entry("asset_delete", "删除资产"),
+                    Map.entry("asset_version_create", "存资产版本"),
+                    Map.entry("asset_lock", "锁定资产"),
+                    Map.entry("asset_unlock", "解锁资产"),
+                    Map.entry("asset_archive", "归档资产"),
+                    Map.entry("asset_unarchive", "取消归档"),
+                    Map.entry("consistency_pack_save", "保存一致性包"),
+                    Map.entry("asset_breakdown", "剧本分解"),
+                    Map.entry("storyboard_save", "保存分镜"),
+                    Map.entry("storyboard_breakdown", "生成分镜"),
+                    Map.entry("asset_score", "资产评分"),
+                    // B5（8x-3 P2）：AssetProject/AssetMember/AssetCanvasBridge
+                    Map.entry("project_create", "新建项目"),
+                    Map.entry("project_update", "修改项目"),
+                    Map.entry("project_delete", "删除项目"),
+                    Map.entry("project_transfer", "转移项目"),
+                    Map.entry("project_settings", "修改项目设置"),
+                    Map.entry("project_member_add", "添加项目成员"),
+                    Map.entry("project_member_update", "修改项目成员角色"),
+                    Map.entry("project_member_remove", "移除项目成员"),
+                    Map.entry("canvas_import", "从画布导入资产"),
+                    Map.entry("asset_resolve", "解析资产引用"))),
             Map.entry("memory", Map.ofEntries(
                     Map.entry("user_grant_create", "发起用户授权"),
                     Map.entry("user_grant_apply", "申请用户授权"),
@@ -239,9 +270,37 @@ public final class AuditLabelDictionary {
             Map.entry("chat", Map.ofEntries(
                     Map.entry("send_message", "发送消息"),
                     Map.entry("chat_completed", "对话完成"),
-                    Map.entry("upload_attachment", "上传附件"))),
+                    Map.entry("upload_attachment", "上传附件"),
+                    // B5（8x-3 P2）：ChatController 会话/附件管理
+                    Map.entry("session_create", "新建会话"),
+                    Map.entry("session_delete", "删除会话"),
+                    Map.entry("target_update", "更换对话对象"),
+                    Map.entry("attachment_retry", "重试附件解析"),
+                    Map.entry("attachment_delete", "删除附件"))),
             Map.entry("canvas", Map.ofEntries(
-                    Map.entry("canvas_upload", "画布上传"))),
+                    Map.entry("canvas_upload", "画布上传"),
+                    // B5（8x-3 P2）：CanvasController CRUD/版本/编辑
+                    Map.entry("canvas_create", "新建画布"),
+                    Map.entry("canvas_update", "保存画布"),
+                    Map.entry("canvas_rename", "重命名画布"),
+                    Map.entry("canvas_delete", "删除画布"),
+                    Map.entry("canvas_version_create", "存画布版本"),
+                    Map.entry("canvas_version_restore", "恢复画布版本"),
+                    Map.entry("canvas_version_delete", "删除画布版本"),
+                    Map.entry("frame_write", "写入帧"),
+                    Map.entry("image_crop", "图片裁剪"),
+                    Map.entry("image_transform", "图片变换"),
+                    Map.entry("video_clip", "视频剪切"),
+                    Map.entry("video_concat", "分镜拼接"))),
+            // B5（8x-3 P2）：FileController 下载（file 模块首个动作）+ legacy ProjectController
+            Map.entry("file", Map.ofEntries(
+                    Map.entry("file_download", "下载文件"))),
+            Map.entry("project", Map.ofEntries(
+                    Map.entry("project_create", "新建项目"),
+                    Map.entry("project_update", "修改项目"),
+                    Map.entry("project_delete", "删除项目"),
+                    Map.entry("project_member_add", "添加项目成员"),
+                    Map.entry("project_member_remove", "移除项目成员"))),
             // ===== B2（8x-2）：存量已有写入、字典整体缺失的 4 模块 =====
             Map.entry("security", Map.ofEntries(
                     Map.entry("ip_block", "封禁IP"),

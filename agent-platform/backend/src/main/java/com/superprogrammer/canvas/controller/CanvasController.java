@@ -83,6 +83,7 @@ public class CanvasController {
 
     @PostMapping
     @RequirePermission("canvas:write")
+    @AuditLog(module = "canvas", action = "canvas_create", targetType = "canvas")
     public ResponseEntity<R<CanvasVO>> create(@Valid @RequestBody(required = false) CanvasCreateRequest req) {
         Long userId = getCurrentUserId();
         String name = req == null ? null : req.getName();
@@ -104,6 +105,7 @@ public class CanvasController {
 
     @PutMapping("/{id}")
     @RequirePermission("canvas:write")
+    @AuditLog(module = "canvas", action = "canvas_update", targetType = "canvas")
     public ResponseEntity<R<CanvasVO>> save(@PathVariable Long id,
                                             @Valid @RequestBody CanvasSaveRequest req) {
         Canvas c = canvasService.save(id, getCurrentUserId(), isAdmin(), req);
@@ -112,6 +114,7 @@ public class CanvasController {
 
     @PatchMapping("/{id}/rename")
     @RequirePermission("canvas:write")
+    @AuditLog(module = "canvas", action = "canvas_rename", targetType = "canvas")
     public ResponseEntity<R<CanvasVO>> rename(@PathVariable Long id, @RequestBody Map<String, String> body) {
         Canvas c = canvasService.rename(id, getCurrentUserId(), isAdmin(), body.get("name"));
         return ResponseEntity.ok(R.ok("已重命名", toVO(c, false)));
@@ -119,6 +122,7 @@ public class CanvasController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("canvas:write")
+    @AuditLog(module = "canvas", action = "canvas_delete", targetType = "canvas")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         canvasService.delete(id, getCurrentUserId(), isAdmin());
         return ResponseEntity.ok(R.ok("已删除", null));
@@ -128,6 +132,7 @@ public class CanvasController {
 
     /** 存版本：snapshot 缺省=定格服务端当前快照（自动保存 800ms 防抖后近乎实时）。 */
     @PostMapping("/{id}/versions")
+    @AuditLog(module = "canvas", action = "canvas_version_create", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<CanvasVersionVO>> createVersion(@PathVariable Long id,
                                                             @Valid @RequestBody(required = false) CanvasVersionCreateRequest req) {
@@ -157,6 +162,7 @@ public class CanvasController {
      * 前端收到 CanvasVO 后 loadSnapshot 重建画布（撤销栈清空=新时间线）。
      */
     @PostMapping("/{id}/versions/{versionId}/restore")
+    @AuditLog(module = "canvas", action = "canvas_version_restore", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<CanvasVO>> restoreVersion(@PathVariable Long id,
                                                       @PathVariable Long versionId) {
@@ -166,6 +172,7 @@ public class CanvasController {
 
     /** 删版本（软删）。 */
     @DeleteMapping("/{id}/versions/{versionId}")
+    @AuditLog(module = "canvas", action = "canvas_version_delete", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<Void>> deleteVersion(@PathVariable Long id,
                                                  @PathVariable Long versionId) {
@@ -221,6 +228,7 @@ public class CanvasController {
      * 失败不产空文件（plan 边界）：service 抛 → 端点直接返错误，不落 stored_files。
      */
     @PostMapping("/{id}/nodes/{nodeId}/frames")
+    @AuditLog(module = "canvas", action = "frame_write", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<FrameExtractVO>> extractFrame(@PathVariable Long id,
                                                           @PathVariable String nodeId,
@@ -263,6 +271,7 @@ public class CanvasController {
      * 失败不产空文件（plan 边界）：service 抛 → 端点直接返错误，不落 stored_files。
      */
     @PostMapping("/{id}/nodes/{nodeId}/crop-image")
+    @AuditLog(module = "canvas", action = "image_crop", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<ImageCropVO>> cropImage(@PathVariable Long id,
                                                     @PathVariable String nodeId,
@@ -307,6 +316,7 @@ public class CanvasController {
      * op 白名单枚举校验（TransformOp.parse），非法值 BAD_REQUEST。
      */
     @PostMapping("/{id}/nodes/{nodeId}/transform-image")
+    @AuditLog(module = "canvas", action = "image_transform", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<ImageTransformVO>> transformImage(@PathVariable Long id,
                                                               @PathVariable String nodeId,
@@ -362,6 +372,7 @@ public class CanvasController {
      * 临时 mp4 文件由 try-finally 兜底删（storeStream 成败都删，防磁盘泄漏）。
      */
     @PostMapping("/{id}/nodes/{nodeId}/clip")
+    @AuditLog(module = "canvas", action = "video_clip", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<VideoClipVO>> clipVideo(@PathVariable Long id,
                                                     @PathVariable String nodeId,
@@ -416,6 +427,7 @@ public class CanvasController {
      * 失败不产空文件（plan 边界）；临时 mp4 try-finally 删。
      */
     @PostMapping("/{id}/storyboard/concat")
+    @AuditLog(module = "canvas", action = "video_concat", targetType = "canvas")
     @RequirePermission("canvas:write")
     public ResponseEntity<R<StoryboardConcatVO>> concatStoryboard(@PathVariable Long id,
                                                                   @Valid @RequestBody StoryboardConcatRequest req) {
@@ -531,11 +543,11 @@ public class CanvasController {
             throw new BusinessException(ErrorCode.NOT_FOUND, "节点不存在: " + nodeId);
         }
         if (!CanvasNodeDTO.TYPE_IMAGE.equals(target.path("type").asText())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅图片节点可裁剪");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅图片节点可执行该操作");
         }
         String fileId = target.path("data").path("fileId").asText(null);
         if (fileId == null || fileId.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片节点无源文件，无法裁剪");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片节点无源文件（刚上传/生成完请稍候再试）");
         }
         return fileId;
     }

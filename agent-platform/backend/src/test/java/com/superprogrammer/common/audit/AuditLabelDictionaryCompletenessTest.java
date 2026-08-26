@@ -50,7 +50,7 @@ class AuditLabelDictionaryCompletenessTest {
                     "execution_retry", "execution_resume", "execution_approve",
                     "execution_reject", "execution_input_submit"}),
             Map.entry("kb", new String[]{
-                    "kb_delete", "kb_update", "kb_grant", "kb_revoke",
+                    "kb_create", "kb_delete", "kb_update", "kb_grant", "kb_revoke",
                     "document_delete", "document_upload", "document_metadata_update",
                     "document_unquarantine", "document_version_create",
                     "document_version_activate", "document_version_revoke",
@@ -73,11 +73,19 @@ class AuditLabelDictionaryCompletenessTest {
                     "payment_order_create", "payment_order_cancel", "payment_order_paid",
                     "payment_order_failed", "payment_idem_conflict",
                     "payment_notify_amount_mismatch", "payment_notify_terminal_order",
-                    "inflight_rejected", "reconcile_diff", "group_reconcile_diff"}),
+                    "inflight_rejected", "reconcile_diff", "group_reconcile_diff", "mock_trigger"}),
             Map.entry("asset", new String[]{
                     "asset_upload", "asset_copy", "save_to_library",
                     "public_pool_publish", "public_pool_unpublish",
-                    "public_access_request", "public_access_decision", "public_access_revoke"}),
+                    "public_access_request", "public_access_decision", "public_access_revoke",
+                    // B5（8x-3 P2）
+                    "asset_create", "asset_update", "asset_delete", "asset_version_create",
+                    "asset_lock", "asset_unlock", "asset_archive", "asset_unarchive",
+                    "consistency_pack_save", "asset_breakdown", "storyboard_save",
+                    "storyboard_breakdown", "asset_score",
+                    "project_create", "project_update", "project_delete", "project_transfer",
+                    "project_settings", "project_member_add", "project_member_update",
+                    "project_member_remove", "canvas_import", "asset_resolve"}),
             Map.entry("memory", new String[]{
                     "user_grant_create", "user_grant_apply", "user_grant_approve",
                     "user_grant_reject", "user_grant_revoke", "pool_toggle",
@@ -96,8 +104,23 @@ class AuditLabelDictionaryCompletenessTest {
                     "provider_create", "provider_update", "provider_delete",
                     "provider_test", "provider_reload",
                     "user_provider_save", "user_provider_delete", "user_provider_test"}),
-            Map.entry("chat", new String[]{"send_message", "chat_completed", "upload_attachment"}),
-            Map.entry("canvas", new String[]{"canvas_upload"}),
+            Map.entry("chat", new String[]{
+                    "send_message", "chat_completed", "upload_attachment",
+                    // B5（8x-3 P2）
+                    "session_create", "session_delete", "target_update",
+                    "attachment_retry", "attachment_delete"}),
+            Map.entry("canvas", new String[]{
+                    "canvas_upload",
+                    // B5（8x-3 P2）
+                    "canvas_create", "canvas_update", "canvas_rename", "canvas_delete",
+                    "canvas_version_create", "canvas_version_restore", "canvas_version_delete",
+                    "frame_write", "image_crop", "image_transform",
+                    "video_clip", "video_concat"}),
+            // B5（8x-3 P2）：FileController 下载 + legacy ProjectController
+            Map.entry("file", new String[]{"file_download"}),
+            Map.entry("project", new String[]{
+                    "project_create", "project_update", "project_delete",
+                    "project_member_add", "project_member_remove"}),
             Map.entry("security", new String[]{
                     "ip_block", "ip_unblock", "rule_config_update",
                     "event_ack", "event_batch_delete"}),
@@ -137,9 +160,9 @@ class AuditLabelDictionaryCompletenessTest {
                 total++;
             }
         }
-        // 防呆：清单意外清空（B4 后 18 模块 / 205 码；B5-B6 只增不减）
-        assertTrue(total >= 205, "KNOWN_CODES 总数异常: " + total);
-        assertTrue(KNOWN_CODES.size() >= 18, "模块数异常: " + KNOWN_CODES.size());
+        // 防呆：清单意外清空（B5 后 20 模块 / 253 码；B6 只增不减）
+        assertTrue(total >= 253, "KNOWN_CODES 总数异常: " + total);
+        assertTrue(KNOWN_CODES.size() >= 20, "模块数异常: " + KNOWN_CODES.size());
     }
 
     @Test

@@ -67,6 +67,7 @@ public class ChatController {
 
     /** FAILED 文件记忆手动重试（二期 P3 Step 2，FR-202；retry_count 硬卡上限）。 */
     @PostMapping("/attachments/{memoryId}/retry")
+    @AuditLog(module = "chat", action = "attachment_retry", targetType = "memory_asset")
     public ResponseEntity<R<Void>> retryAttachment(@PathVariable Long memoryId) {
         Long userId = getCurrentUserId();
         memoryAssetIngestService.retry(memoryId, userId);
@@ -83,6 +84,7 @@ public class ChatController {
 
     /** 删除我的文件记忆（二期 P3 Step 4，FR-204：项目 FILE 条目同步失效 + 原文件硬删）。 */
     @DeleteMapping("/attachments/{memoryId}")
+    @AuditLog(module = "chat", action = "attachment_delete", targetType = "memory_asset")
     public ResponseEntity<R<Void>> deleteAttachment(@PathVariable Long memoryId) {
         Long userId = getCurrentUserId();
         memoryAssetIngestService.delete(memoryId, userId);
@@ -90,6 +92,7 @@ public class ChatController {
     }
 
     @PostMapping("/sessions")
+    @AuditLog(module = "chat", action = "session_create", targetType = "chat_session")
     @com.superprogrammer.common.ratelimit.RateLimit(action = "chat_send", max = 20, windowSeconds = 60,
             algo = com.superprogrammer.common.ratelimit.RateLimit.RateLimitAlgo.SLIDING)
     public ResponseEntity<R<SessionVO>> createSession(@Valid @RequestBody ChatRequest request) {
@@ -121,6 +124,7 @@ public class ChatController {
 
     /** 批量删除会话（ownership 过滤，只删本人）。返实删条数。 */
     @DeleteMapping("/sessions/batch")
+    @AuditLog(module = "chat", action = "session_delete", targetType = "chat_session")
     public ResponseEntity<R<Integer>> deleteSessionsBatch(@RequestBody List<Long> ids) {
         Long userId = getCurrentUserId();
         int deleted = chatSessionService.deleteSessions(userId, ids);
@@ -128,6 +132,7 @@ public class ChatController {
     }
 
     @PutMapping("/sessions/{id}/target")
+    @AuditLog(module = "chat", action = "target_update", targetType = "chat_session")
     public ResponseEntity<R<SessionVO>> updateSessionTarget(
             @PathVariable Long id,
             @Valid @RequestBody ChatRequest request) {
@@ -137,6 +142,7 @@ public class ChatController {
     }
 
     @DeleteMapping("/sessions/{id}")
+    @AuditLog(module = "chat", action = "session_delete", targetType = "chat_session")
     public ResponseEntity<R<Void>> deleteSession(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         chatSessionService.deleteSession(userId, id);

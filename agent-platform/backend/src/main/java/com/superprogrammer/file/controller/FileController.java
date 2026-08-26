@@ -68,6 +68,7 @@ public class FileController {
      * ETag=fileId+size：文件被替换（size 变）或换文件（fileId 变）缓存自动失效。
      */
     @GetMapping("/{fileId}")
+    @AuditLog(module = "file", action = "file_download", targetType = "file")
     public ResponseEntity<Resource> get(@PathVariable String fileId) {
         Long userId = getCurrentUserId();
         Resource resource = fileStorageService.load(fileId, userId, isAdmin());

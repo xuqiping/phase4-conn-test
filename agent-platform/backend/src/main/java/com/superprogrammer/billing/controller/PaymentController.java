@@ -9,6 +9,7 @@ import com.superprogrammer.billing.service.channel.PaymentChannelRouter;
 import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.common.ratelimit.RateLimit;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
@@ -91,6 +92,7 @@ public class PaymentController {
      * 测的就是真链路；密钥永不出服务端。仅限本人 PENDING 的 MOCK 单。
      */
     @PostMapping("/mock/trigger")
+    @AuditLog(module = "billing", action = "mock_trigger", targetType = "payment_order")
     @RateLimit(action = "payment_mock_trigger", max = 20, windowSeconds = 60)
     public ResponseEntity<R<Map<String, Object>>> mockTrigger(@Valid @RequestBody MockTriggerRequest req) {
         if (!mockEnabled) {

@@ -7,6 +7,7 @@ import com.superprogrammer.asset.dto.ResolveRequest;
 import com.superprogrammer.asset.dto.ResolveVO;
 import com.superprogrammer.asset.service.AssetCanvasBridgeService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,7 @@ public class AssetCanvasBridgeController {
 
     /** 画布节点产出入库（画布→库）。requireWrite（viewer 不可入库）。 */
     @PostMapping("/canvas-import")
+    @AuditLog(module = "asset", action = "canvas_import", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<CanvasImportVO>> importFromCanvas(@RequestBody CanvasImportRequest req) {
         return ResponseEntity.ok(R.ok("已处理",
@@ -53,6 +55,7 @@ public class AssetCanvasBridgeController {
 
     /** 引用解析（库→画布）。loadAccessible（viewer 可读引用，安全清单防 fileId 遍历）。 */
     @PostMapping("/assets/{id}/resolve")
+    @AuditLog(module = "asset", action = "asset_resolve", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<ResolveVO>> resolve(@PathVariable Long id,
                                                 @RequestBody(required = false) ResolveRequest req) {

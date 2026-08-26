@@ -63,6 +63,7 @@ public class AssetController {
     private final com.superprogrammer.asset.service.AssetScoreService scoreService;
 
     @PostMapping("/projects/{id}/assets")
+    @AuditLog(module = "asset", action = "asset_create", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> create(@PathVariable("id") Long id, @RequestBody AssetCreateRequest req) {
         return ResponseEntity.ok(R.ok("资产已创建", assetService.create(id, getCurrentUserId(), isAdmin(), req)));
@@ -106,12 +107,14 @@ public class AssetController {
     }
 
     @PutMapping("/assets/{id}")
+    @AuditLog(module = "asset", action = "asset_update", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> update(@PathVariable Long id, @RequestBody AssetUpdateRequest req) {
         return ResponseEntity.ok(R.ok("资产已更新", assetService.update(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     @DeleteMapping("/assets/{id}")
+    @AuditLog(module = "asset", action = "asset_delete", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         assetService.delete(id, getCurrentUserId(), isAdmin());
@@ -133,6 +136,7 @@ public class AssetController {
     }
 
     @PostMapping("/assets/{id}/versions")
+    @AuditLog(module = "asset", action = "asset_version_create", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Integer>> createVersion(@PathVariable Long id, @RequestBody VersionCreateRequest req) {
         int newVer = versionService.createVersion(id, getCurrentUserId(), isAdmin(), req);
@@ -142,24 +146,28 @@ public class AssetController {
     // ---------- 状态机（plan §S5 / FR-006，L2/L3） ----------
 
     @PostMapping("/assets/{id}/lock")
+    @AuditLog(module = "asset", action = "asset_lock", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> lock(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok("已定稿", assetService.lock(id, getCurrentUserId(), isAdmin())));
     }
 
     @PostMapping("/assets/{id}/unlock")
+    @AuditLog(module = "asset", action = "asset_unlock", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> unlock(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok("已回退草稿", assetService.unlock(id, getCurrentUserId(), isAdmin())));
     }
 
     @PostMapping("/assets/{id}/archive")
+    @AuditLog(module = "asset", action = "asset_archive", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> archive(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok("已归档", assetService.archive(id, getCurrentUserId(), isAdmin())));
     }
 
     @PostMapping("/assets/{id}/unarchive")
+    @AuditLog(module = "asset", action = "asset_unarchive", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> unarchive(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok("已恢复", assetService.unarchive(id, getCurrentUserId(), isAdmin())));
@@ -168,6 +176,7 @@ public class AssetController {
     // ---------- 一致性包（plan §S5 / FR-007，设计方案 §五） ----------
 
     @PutMapping("/assets/{id}/consistency-pack")
+    @AuditLog(module = "asset", action = "consistency_pack_save", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> saveConsistencyPack(@PathVariable Long id,
                                                           @RequestBody ConsistencyPackRequest req) {
@@ -178,6 +187,7 @@ public class AssetController {
     // ---------- 剧本拆分场（plan §S6 / FR-010） ----------
 
     @PostMapping("/assets/{id}/breakdown")
+    @AuditLog(module = "asset", action = "asset_breakdown", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<ScriptBreakdownVO>> breakdown(@PathVariable Long id,
                                                           @RequestBody(required = false) ScriptBreakdownRequest req) {
@@ -188,6 +198,7 @@ public class AssetController {
     // ---------- 分镜字段保存（S18） ----------
 
     @PutMapping("/assets/{id}/storyboard")
+    @AuditLog(module = "asset", action = "storyboard_save", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<AssetVO>> saveStoryboard(@PathVariable Long id,
                                                      @RequestBody com.superprogrammer.asset.dto.StoryboardSaveRequest req) {
@@ -198,6 +209,7 @@ public class AssetController {
     // ---------- 一键分镜（S19，plan §S19 / 1_8.6计划 第 11 点） ----------
 
     @PostMapping("/assets/{id}/breakdown-storyboard")
+    @AuditLog(module = "asset", action = "storyboard_breakdown", targetType = "asset")
     @RequirePermission("asset:write")
     public ResponseEntity<R<StoryboardBreakdownVO>> breakdownStoryboard(@PathVariable Long id,
                                                                         @RequestBody(required = false) StoryboardBreakdownRequest req) {

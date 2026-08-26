@@ -7,6 +7,7 @@ import com.superprogrammer.asset.dto.MemberVO;
 import com.superprogrammer.asset.dto.TransferRequest;
 import com.superprogrammer.asset.service.AssetMemberService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -65,12 +66,14 @@ public class AssetMemberController {
     }
 
     @PostMapping
+    @AuditLog(module = "asset", action = "project_member_add", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<MemberVO>> invite(@PathVariable("id") Long id, @RequestBody MemberAddRequest req) {
         return ResponseEntity.ok(R.ok("成员已添加", memberService.invite(id, getCurrentUserId(), isAdmin(), req)));
     }
 
     @PutMapping("/{userId}")
+    @AuditLog(module = "asset", action = "project_member_update", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> changeRole(@PathVariable("id") Long id,
                                               @PathVariable Long userId,
@@ -80,6 +83,7 @@ public class AssetMemberController {
     }
 
     @DeleteMapping("/{userId}")
+    @AuditLog(module = "asset", action = "project_member_remove", targetType = "asset_project")
     @RequirePermission("asset:write")
     public ResponseEntity<R<Void>> remove(@PathVariable("id") Long id, @PathVariable Long userId) {
         memberService.remove(id, getCurrentUserId(), isAdmin(), userId);

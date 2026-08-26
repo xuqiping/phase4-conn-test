@@ -132,7 +132,9 @@ const moduleOptions = [
   { label: '项目组', value: 'project-group' },
   { label: '审计链', value: 'audit' },
   // 8x-3 B4：工作流写操作新模块
-  { label: '工作流', value: 'workflow' }
+  { label: '工作流', value: 'workflow' },
+  // 8x-3 B5：协作项目（legacy /api/projects）
+  { label: '协作项目', value: 'project' }
 ]
 
 const resultOptions = [
