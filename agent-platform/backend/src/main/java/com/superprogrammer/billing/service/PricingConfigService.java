@@ -64,6 +64,14 @@ public class PricingConfigService {
                 .stream().map(PricingConfigService::toVO).toList();
     }
 
+    /**
+     * D9（V160）：TOKEN est 近 7 天偏差（实耗 vs 预估，管理员校准 est 槽位用）。
+     * <p>纯聚合查询（SQL 内 SUM/ROUND），无明细拉取；无历史数据的组不出行，前端隐藏 tag。
+     */
+    public List<com.superprogrammer.billing.dto.EstDeviationVO> videoEstDeviation() {
+        return pricingRuleMapper.selectVideoEstDeviation7d();
+    }
+
     // ---------------- 7x-2：价表导出 / 模板 / 导入 ----------------
 
     /**

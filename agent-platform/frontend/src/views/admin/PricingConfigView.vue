@@ -116,6 +116,13 @@
           <n-form-item label=" ">
             <span class="pricing-config__hint">仅提交前余额预检用（预估=对应分辨率秒价×时长，未单列的按「通用」估）；真实扣费仍按 token</span>
           </n-form-item>
+          <!-- D9（V160）：近 7 天实耗 vs 预估偏差提示——校准 est 槽位收窄多退少补幅度；无数据/偏差<5% 隐藏 -->
+          <n-form-item v-if="estDeviationTag" label=" ">
+            <n-tag :type="estDeviationTag.type" size="small">{{ estDeviationTag.text }}</n-tag>
+            <span class="pricing-config__hint" style="margin-left: 8px">
+              样本 {{ estDeviationTag.count }} 个任务；按偏差校准上方预估秒价可收窄多退少补幅度
+            </span>
+          </n-form-item>
         </template>
         <n-form-item label="图片单价 ¥" v-if="pricingForm.kind === 'IMAGE'"><n-input-number v-model:value="pricingForm.pricePerImage" :precision="6" /></n-form-item>
         <!-- 7x（V155）：图片预估价说明——预估=张价×张数派生，无需单独配预估列；提交按所选张数预估管控，完工按实际张数多退少补 -->
@@ -151,11 +158,11 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
-  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, useMessage, useDialog
+  NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, NTag, useMessage, useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { billingApi, KIND_LABEL } from '@/api/billing'
-import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, PricingRuleExportItem, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode } from '@/api/billing'
+import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, PricingRuleExportItem, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode, EstDeviationVO } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -167,6 +174,20 @@ const pricingRules = ref<PricingRuleVO[]>([])
 const ratioTiers = ref<RatioTierVO[]>([])
 const loading = ref(false)
 const saving = ref(false)
+
+// D9（V160）：近 7 天 est 偏差（无数据空数组 → tag 隐藏）
+const estDeviations = ref<EstDeviationVO[]>([])
+const estDeviationTag = computed<{ type: 'warning' | 'success'; text: string; count: number } | null>(() => {
+  if (pricingForm.kind !== 'VIDEO' || !pricingForm.model) return null
+  const hit = estDeviations.value.find(d =>
+    d.model === pricingForm.model
+    && !!d.hasReference === !!pricingForm.hasReference
+    && (pricingForm.providerId == null || d.providerId === pricingForm.providerId))
+  if (!hit || Math.abs(hit.deviationPct) < 5) return null
+  return hit.deviationPct > 0
+    ? { type: 'warning', text: `近7天实耗偏高 ${hit.deviationPct}%`, count: hit.sampleCount }
+    : { type: 'success', text: `近7天实耗偏低 ${Math.abs(hit.deviationPct)}%`, count: hit.sampleCount }
+})
 
 const kindOptions = (Object.keys(KIND_LABEL) as BillingKind[]).map(k => ({ label: KIND_LABEL[k], value: k }))
 const modeOptions: { label: string; value: VideoBillingMode }[] = [
@@ -578,9 +599,12 @@ async function removeRatio(id: number) {
 async function load() {
   loading.value = true
   try {
-    const [p, r] = await Promise.all([billingApi.listPricingRules(), billingApi.listRatioTiers()])
+    const [p, r, d] = await Promise.all([
+      billingApi.listPricingRules(), billingApi.listRatioTiers(), billingApi.videoEstDeviation()
+    ])
     pricingRules.value = p.data.data ?? []
     ratioTiers.value = r.data.data ?? []
+    estDeviations.value = d.data.data ?? []
   } finally {
     loading.value = false
   }

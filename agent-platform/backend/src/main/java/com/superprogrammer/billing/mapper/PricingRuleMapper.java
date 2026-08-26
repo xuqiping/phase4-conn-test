@@ -87,4 +87,36 @@ public interface PricingRuleMapper extends BaseMapper<PricingRuleEntity> {
     default PricingRuleEntity findEffective(String kind, Long providerId, String model) {
         return findEffective(kind, providerId, model, false);
     }
+
+    /**
+     * D9（V160）：TOKEN est 预估秒价近 7 天偏差聚合（SQL AVG/SUM 不拉明细）。
+     * <p>口径：近 7 天 SUCCEEDED 视频任务（estimated_cost&gt;0），实耗取 llm_usage_logs
+     * 该任务 SUCCESS 行 points_consumed 之和（预扣结算/直接扣同源）；偏差 = Σ实耗/Σ预估−1，
+     * 按 (provider_id, model, has_reference) 聚合；样本 &lt; 3 的组不出行。
+     * <p>has_reference 由 task_type 派生：IMAGE2VIDEO=有参考，TEXT2VIDEO=无参考。
+     */
+    @Select("""
+            WITH t AS (
+                SELECT m.provider_id, m.model,
+                       (m.task_type = 'IMAGE2VIDEO') AS has_ref,
+                       m.estimated_cost AS est,
+                       (SELECT COALESCE(SUM(u.points_consumed), 0) FROM llm_usage_logs u
+                         WHERE u.task_id = m.id AND u.status = 'SUCCESS') AS actual
+                FROM media_gen_tasks m
+                WHERE m.task_type IN ('TEXT2VIDEO', 'IMAGE2VIDEO')
+                  AND m.status = 'SUCCEEDED'
+                  AND m.estimated_cost > 0
+                  AND m.created_at >= NOW() - INTERVAL '7 days'
+            )
+            SELECT provider_id      AS "providerId",
+                   model            AS "model",
+                   has_ref          AS "hasReference",
+                   ROUND((SUM(actual) / SUM(est) - 1) * 100) AS "deviationPct",
+                   COUNT(*)         AS "sampleCount"
+            FROM t
+            WHERE actual > 0
+            GROUP BY provider_id, model, has_ref
+            HAVING COUNT(*) >= 3
+            """)
+    java.util.List<com.superprogrammer.billing.dto.EstDeviationVO> selectVideoEstDeviation7d();
 }

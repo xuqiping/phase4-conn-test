@@ -32,6 +32,16 @@ export interface AvailablePricingModelVO {
   resolution?: string | null
 }
 
+/** D9（V160）：TOKEN est 近 7 天偏差（实耗 vs 预估；样本 <3 后端不出行） */
+export interface EstDeviationVO {
+  providerId: number
+  model: string
+  hasReference: boolean
+  /** 偏差百分比：正=实耗偏高（est 需上调），负=实耗偏低 */
+  deviationPct: number
+  sampleCount: number
+}
+
 /** 价表行（GET /billing/pricing） */
 export interface PricingRuleVO {
   id: number
@@ -435,6 +445,11 @@ export const billingApi = {
   },
   availablePricingModels() {
     return request.get<ApiResponse<AvailablePricingModelVO[]>>('/billing/pricing/available-models')
+  },
+
+  /** D9（V160）：TOKEN est 近 7 天偏差（无数据返空数组，前端隐藏 tag） */
+  videoEstDeviation() {
+    return request.get<ApiResponse<EstDeviationVO[]>>('/billing/pricing/est-deviation')
   },
   createPricingRule(data: PricingRuleRequest) {
     return request.post<ApiResponse<PricingRuleVO>>('/billing/pricing', data)

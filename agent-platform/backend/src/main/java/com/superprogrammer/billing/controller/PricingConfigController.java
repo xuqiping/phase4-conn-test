@@ -45,6 +45,12 @@ public class PricingConfigController {
         return ResponseEntity.ok(R.ok(pricingConfigService.listPricingRules()));
     }
 
+    @GetMapping("/pricing/est-deviation")
+    @RequirePermission("pricing:manage")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.billing.dto.EstDeviationVO>>> videoEstDeviation() {
+        return ResponseEntity.ok(R.ok(pricingConfigService.videoEstDeviation()));
+    }
+
     @GetMapping("/pricing/available-models")
     @RequirePermission("pricing:manage")
     public ResponseEntity<R<List<AvailablePricingModelVO>>> availablePricingModels() {
