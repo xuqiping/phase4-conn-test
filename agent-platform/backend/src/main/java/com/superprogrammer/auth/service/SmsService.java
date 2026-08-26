@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -146,15 +147,26 @@ public class SmsService {
         // 限流三档
         checkRateLimit(phone, clientIp, config);
 
-        // 同号 5min 内已发未用 → 拒重发（防刷量）
+        // 同号 5min 内已发未用 → 拒重发（防刷量）。
+        // 12x-1 C4：与邮箱同语义——429 + retryAfterSeconds（码 TTL 剩多少拒多少），
+        // 不再 HTTP 200+文案伪装成功；FAIL 审计行由 sendCode 的 catch 统一记（reason=话术含剩余秒）。
         String codeKey = SMS_CODE_PREFIX + phone;
         try {
             if (Boolean.TRUE.equals(redisTemplate.hasKey(codeKey))) {
-                audit("sms_code_send", null,
-                        AuditLogService.detail("phone", phone, "ip", clientIp, "reason", "code_active"),
-                        AuditLogEntity.RESULT_FAIL);
-                return "验证码已发送，请 5 分钟后再试";
+                long remaining = 300;
+                try {
+                    Long ttl = redisTemplate.getExpire(codeKey, TimeUnit.SECONDS);
+                    if (ttl != null && ttl > 0) {
+                        remaining = ttl;
+                    }
+                } catch (Exception ttlEx) {
+                    log.warn("读验证码 TTL 失败(回退300s) phone={} : {}", phone, ttlEx.toString());
+                }
+                throw new BusinessException(ErrorCode.RATE_LIMIT, "验证码已发送，请 " + remaining + " 秒后再试")
+                        .withData(Map.of("retryAfterSeconds", remaining));
             }
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("查验证码存在性 Redis 失败(降级放行) phone={} : {}", phone, e.toString());
         }

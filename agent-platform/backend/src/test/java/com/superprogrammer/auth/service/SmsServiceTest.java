@@ -84,6 +84,23 @@ class SmsServiceTest {
         assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
+    // 12x-1 C4：同号 5min 未消费 → 429 + retryAfterSeconds（不再 200 文案伪装成功）
+    @Test
+    void sendCode_codeActive_throws429WithRetryAfter() {
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        when(redisTemplate.hasKey("sms:code:13800138000")).thenReturn(true);
+        when(redisTemplate.getExpire(eq("sms:code:13800138000"), any())).thenReturn(213L);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendCode("13800138000", "captcha-token", "127.0.0.1"));
+        assertEquals(ErrorCode.RATE_LIMIT.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("213"), "话术含真实剩余秒: " + ex.getMessage());
+        assertEquals(213L, ex.getData().get("retryAfterSeconds"));
+        // FAIL 审计行由 sendCode catch 统一记（reason=话术，含剩余秒）
+        verify(auditLogService).fromMdc(eq("auth"), eq("sms_code_send"), eq("user"), isNull(),
+                argThat((java.util.Map<String, Object> m) -> "13800138000".equals(m.get("phone"))
+                        && String.valueOf(m.get("reason")).contains("213")), eq("FAIL"));
+    }
+
     @Test
     void sendCode_valid_sendsCode() {
         when(valueOps.increment(anyString())).thenReturn(1L);
