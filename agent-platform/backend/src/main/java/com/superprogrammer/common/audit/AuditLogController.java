@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -72,7 +73,33 @@ public class AuditLogController {
         // 8x-1：username 写入侧快照缺失（worker/异步线程审计、refresh 早期写入"-"占位）时，
         // 查询侧按 userId 批量回填——每页最多 100 行一次 in 查询，不逐行回查 users 表
         backfillUsernames(vos);
+        // 修复III E2/E3（12x#3/#4）：详情层补操作人现姓名/备注（同页一次 in 查询，列表列仍显 username 快照）
+        enrichOperatorMeta(vos);
         return R.ok(PageResult.of(vos, entityPage.getTotal(), page, safeSize));
+    }
+
+    /**
+     * 修复III E2/E3：按 userId 批量 JOIN 现值 name/remark 进 VO（仅显示层）。
+     * 审计 username 列维持写入侧快照语义（证据链不随改名漂移）；姓名/备注仅供详情弹窗背景信息，
+     * 用户已删（软删仍可查到）/未登录系统行为为 null，前端兜底不显。
+     */
+    private void enrichOperatorMeta(List<AuditLogVO> vos) {
+        Set<Long> ids = vos.stream()
+                .map(AuditLogVO::getUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, User> users = userMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
+        for (AuditLogVO vo : vos) {
+            User u = vo.getUserId() == null ? null : users.get(vo.getUserId());
+            if (u != null) {
+                vo.setOperatorName(u.getName() != null && !u.getName().isBlank() ? u.getName() : null);
+                vo.setOperatorRemark(u.getRemark() != null && !u.getRemark().isBlank() ? u.getRemark() : null);
+            }
+        }
     }
 
     /**

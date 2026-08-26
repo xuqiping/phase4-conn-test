@@ -12,11 +12,17 @@ import java.util.List;
 @Mapper
 public interface UserMapper extends BaseMapper<User> {
 
-    /** 资产域邀请候选：只查启用用户的 id/username，并由调用方传入排除集合。 */
+    /**
+     * 选人候选搜索：启用用户的 id/username/name/remark，调用方传排除集合。
+     * 修复III E3（12x#4）：keyword 三字段模糊（username/name/remark）——按备注「A 班」筛全班；
+     * LIKE 转义由调用方预处理（同 UserController.escapeLike 口径），ESCAPE '\' 防 %/_ 语义攻击。
+     */
     @Select({"<script>",
-            "SELECT id, username FROM users WHERE deleted = 0 AND status = 'ACTIVE' ",
+            "SELECT id, username, name, remark FROM users WHERE deleted = 0 AND status = 'ACTIVE' ",
             "<if test='keyword != null and keyword != &quot;&quot;'>",
-            "AND username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' ",
+            "AND (username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' ",
+            "  OR name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' ",
+            "  OR remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\') ",
             "</if>",
             "<if test='excludedIds != null and !excludedIds.isEmpty()'>",
             "AND id NOT IN ",

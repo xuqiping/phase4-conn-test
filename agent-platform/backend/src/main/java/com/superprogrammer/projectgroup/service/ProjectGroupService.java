@@ -477,6 +477,7 @@ public class ProjectGroupService {
                     m.getUserId(),
                     u != null ? u.getUsername() : null,
                     u != null && u.getName() != null ? u.getName() : (u != null ? u.getUsername() : null),
+                    u != null ? u.getRemark() : null,
                     m.getUserId().equals(g.getOwnerUserId()),
                     role,
                     MemberAllowedKinds.parse(m.getAllowedKinds()),
@@ -516,7 +517,8 @@ public class ProjectGroupService {
         int limit = safeKeyword.isEmpty() ? 50 : 20;
         return userMapper.searchActiveCandidates(safeKeyword, new ArrayList<>(excluded), limit)
                 .stream().limit(limit)
-                .map(u -> new com.superprogrammer.projectgroup.dto.ProjectGroupCandidateVO(u.getId(), u.getUsername(), u.getName()))
+                .map(u -> new com.superprogrammer.projectgroup.dto.ProjectGroupCandidateVO(
+                        u.getId(), u.getUsername(), u.getName(), u.getRemark()))
                 .toList();
     }
 

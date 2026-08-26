@@ -65,6 +65,14 @@ export const adminApi = {
   updateUserRemark(id: number, remark: string | null) {
     return request.put<ApiResponse<void>>(`/users/${id}/remark`, { remark })
   },
+  /** 修复III E1（12x#2）：管理员提前解锁暴破自动锁（仅 LOCKED+lockedUntil 行；封禁/禁用走启用） */
+  unlockUser(id: number) {
+    return request.put<ApiResponse<void>>(`/users/${id}/unlock`)
+  },
+  /** 修复III E2（12x#3）：管理员改用户姓名（空串=清除） */
+  updateUserName(id: number, name: string | null) {
+    return request.put<ApiResponse<void>>(`/users/${id}/name`, { name })
+  },
   assignRoles(id: number, roleIds: number[]) {
     return request.put<ApiResponse<void>>(`/users/${id}/roles`, roleIds)
   },

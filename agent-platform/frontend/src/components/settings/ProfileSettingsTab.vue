@@ -9,7 +9,7 @@
       <n-form-item label="昵称/姓名">
         <n-input
           v-model:value="name"
-          maxlength="32"
+          maxlength="64"
           show-count
           clearable
           placeholder="项目组/账单等处展示用；留空则显示账号名"

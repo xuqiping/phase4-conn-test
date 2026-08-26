@@ -113,6 +113,17 @@ class AuthServiceTest {
     private RegisterRequest registerRequest;
     private LoginRequest loginRequest;
 
+    @org.junit.jupiter.api.BeforeAll
+    static void initTableInfo() {
+        // 修复III E1：LambdaUpdateWrapper.set/LambdaQueryWrapper.eq 需 MP lambda 缓存
+        // （沉淀规范：纯 Mockito 测须 initTableInfo；此前 updateProfile 用例靠全量跑时
+        // 其他测试先注册 User 表信息，单跑本类即红）
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                User.class);
+    }
+
     @BeforeEach
     void setUp() {
         testUser = new User();
@@ -432,16 +443,20 @@ class AuthServiceTest {
     // ===== 安全体系 S1 · SEC-FR-001 登录防爆破 =====
 
     // AC-SEC-FR-001：账号失败计数 ≥5 → 前置闸拒绝，固定话术，连库都不查
+    // AC-SEC-FR-001（修复III E1 12x#2 演进）：前置闸命中 → 落库锁号才显详细话术；
+    // 未落库（本用例查库 miss）维持固定话术——绝不泄露账号存在性
     @Test
-    void login_accountLocked_rejectedBeforeDb() {
+    void login_accountLocked_notInDb_fixedMessage() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("login:fail:u:testuser")).thenReturn("5");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
         BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
 
         assertEquals(40103, e.getCode());   // LOGIN_LOCKED
+        assertEquals(ErrorCode.LOGIN_LOCKED.getMessage(), e.getMessage());   // 固定话术
+        assertNull(e.getData());
         verify(bizMetrics).authLoginLocked("account");
-        verify(userMapper, never()).selectOne(any(LambdaQueryWrapper.class));
     }
 
     // AC-SEC-FR-001：第 5 次失败跃迁 → 写 login_locked 安全审计（仅跃迁一次）
@@ -990,5 +1005,91 @@ class AuthServiceTest {
         assertThrows(BusinessException.class, () -> authService.login(loginRequest));
 
         verify(captchaGuard).recordFailure("login", "testuser");
+    }
+
+    // ===== 修复III E1（12x#2）：锁定话术可见 + 管理员解锁 =====
+
+    @Test
+    void login_accountLockedInDb_showsUnlockTime() {
+        // 前置闸命中（Redis 计数≥5）+ DB 暴破锁号（LOCKED+locked_until）→ 详细话术 + data.lockedUntil
+        testUser.setStatus("LOCKED");
+        testUser.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("login:fail:u:testuser")).thenReturn("5");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        assertEquals(40103, e.getCode());
+        assertTrue(e.getMessage().contains("自动解锁"), "话术应含自动解锁时间: " + e.getMessage());
+        assertTrue(e.getMessage().contains("联系管理员"));
+        assertNotNull(e.getData());
+        assertNotNull(e.getData().get("lockedUntil"));
+    }
+
+    @Test
+    void login_passwordOkButAccountLocked_showsUnlockTime() {
+        // Redis 计数已清（降级/过期）但 DB 仍锁 → 密码验过（本人带密码尝试）→ status 分支详细话术
+        testUser.setStatus("LOCKED");
+        testUser.setLockedUntil(OffsetDateTime.now().plusMinutes(10));
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        assertEquals(40103, e.getCode());
+        assertTrue(e.getMessage().contains("自动解锁"));
+        assertNotNull(e.getData().get("lockedUntil"));
+    }
+
+    @Test
+    void login_banned_keepsUnifiedMessage() {
+        // 封禁/禁用不显锁定话术（语义分离——管理端走「启用」不走「解锁」）
+        testUser.setStatus("BANNED");
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testUser);
+        when(passwordEncoder.matches("password123", testUser.getPassword())).thenReturn(true);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.login(loginRequest));
+
+        assertEquals("用户已被禁用或锁定", e.getMessage());
+        assertNull(e.getData());
+    }
+
+    @Test
+    void unlockUser_autoLocked_clearsDbRedisBan() {
+        testUser.setStatus("LOCKED");
+        testUser.setLockedUntil(OffsetDateTime.now().plusMinutes(15));
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+        when(userMapper.update(isNull(), any())).thenReturn(1);
+
+        authService.unlockUser(1L);
+
+        verify(userMapper).update(isNull(), argThat(w -> true));
+        verify(redisTemplate).delete("login:fail:u:testuser");
+        verify(banService).restore(1L);
+    }
+
+    @Test
+    void unlockUser_banned_rejected400() {
+        testUser.setStatus("BANNED");
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.unlockUser(1L));
+
+        assertEquals(400, e.getCode());
+        assertTrue(e.getMessage().contains("启用"));
+        verify(banService, never()).restore(anyLong());
+    }
+
+    @Test
+    void unlockUser_manualLockedWithoutUntil_rejected400() {
+        // 管理员手动锁定（无 locked_until）不走解锁——语义分离防绕过
+        testUser.setStatus("LOCKED");
+        testUser.setLockedUntil(null);
+        when(userMapper.selectById(1L)).thenReturn(testUser);
+
+        BusinessException e = assertThrows(BusinessException.class, () -> authService.unlockUser(1L));
+
+        assertEquals(400, e.getCode());
     }
 }

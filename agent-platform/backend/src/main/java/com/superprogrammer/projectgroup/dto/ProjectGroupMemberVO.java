@@ -16,6 +16,7 @@ public record ProjectGroupMemberVO(
         Long userId,
         String username,
         String displayName,
+        String remark,
         boolean owner,
         String role,
         List<String> allowedKinds,

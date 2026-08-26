@@ -73,16 +73,19 @@ public class WalletAdminController {
     public ResponseEntity<R<List<RechargeUserOptionVO>>> userOptions(
             @RequestParam(required = false) String keyword) {
         String kw = keyword == null ? "" : keyword.trim();
+        // 修复III E3：LIKE 通配符前置转义（同 UserController.escapeLike 口径，防 %/_ 语义攻击）
+        String safeKw = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
         LambdaQueryWrapper<User> qw = new LambdaQueryWrapper<User>()
                 .eq(User::getStatus, "ACTIVE")
-                .select(User::getId, User::getUsername, User::getName)
+                .select(User::getId, User::getUsername, User::getName, User::getRemark)
                 .orderByAsc(User::getId)
                 .last("LIMIT 20");
         if (!kw.isEmpty()) {
-            qw.and(w -> w.like(User::getUsername, kw).or().like(User::getName, kw));
+            // 修复III E3（12x#4）：+remark 模糊——按备注「A 班」筛全班批量充值
+            qw.and(w -> w.like(User::getUsername, safeKw).or().like(User::getName, safeKw).or().like(User::getRemark, safeKw));
         }
         List<RechargeUserOptionVO> options = userMapper.selectList(qw).stream()
-                .map(u -> new RechargeUserOptionVO(u.getId(), u.getUsername(), u.getName()))
+                .map(u -> new RechargeUserOptionVO(u.getId(), u.getUsername(), u.getName(), u.getRemark()))
                 .toList();
         return ResponseEntity.ok(R.ok(options));
     }

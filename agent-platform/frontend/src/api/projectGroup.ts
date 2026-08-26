@@ -41,6 +41,8 @@ export interface ProjectGroupMemberVO {
   userId: number
   username: string | null
   displayName: string | null
+  /** 修复III E3（12x#4）：成员备注（组长视角认人；null=无） */
+  remark: string | null
   owner: boolean
   /** OWNER/MANAGER/MEMBER（V139；OWNER 恒为组长行） */
   role: 'OWNER' | 'MANAGER' | 'MEMBER'
@@ -219,9 +221,9 @@ export const projectGroupApi = {
     return request.post<ApiResponse<number>>('/project-groups', { name, description })
   },
 
-  /** GET /project-groups/{id}/members/candidates — 候选用户搜索。 */
+  /** GET /project-groups/{id}/members/candidates — 候选用户搜索（修复III E3：+remark 备注筛选/展示）。 */
   candidates(id: number, keyword = '') {
-    return request.get<ApiResponse<{ userId: number; username: string; name: string | null }[]>>(
+    return request.get<ApiResponse<{ userId: number; username: string; name: string | null; remark: string | null }[]>>(
       `/project-groups/${id}/members/candidates`, { params: { keyword } })
   },
 

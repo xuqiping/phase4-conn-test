@@ -12,8 +12,8 @@ import lombok.Data;
 @Data
 public class UpdateProfileRequest {
 
-    /** 昵称/姓名（去空白落库；空=清除）。 */
-    @Size(max = 32, message = "昵称/姓名最长 32 字")
+    /** 昵称/姓名（去空白落库；空=清除）。修复III E2（12x#3）：32→64，与管理端改名端点/列宽统一。 */
+    @Size(max = 64, message = "昵称/姓名最长 64 字")
     private String name;
 
     /** 账号备注（去空白落库；空=清除；管理列表 keyword 可筛）。 */

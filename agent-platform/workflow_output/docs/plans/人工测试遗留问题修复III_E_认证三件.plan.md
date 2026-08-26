@@ -1,8 +1,9 @@
 # Chunk E · 认证三件（12x-2/3/4）
 
 > 规格 §10。后端 auth/ + 前端 admin/个人中心。
+> **已完成（2026-08-26）**：E1 话术+解锁端点+管理端按钮；E2 管理端改名端点+姓名弹窗+displayName util+个人中心限长统一 64（17x 已有编辑）；E3 UserPicker+三处替换+备注展示两处。权限码 `user:manage`（与 UserController 全端点一致，plan 写 user:update 为笔误）。验证：AuthServiceTest 53、UserUnlockIT 3、UserPicker+displayName vitest 10、字典完整性 3、合约测试同步更新；全量后端 mvn test + 前端 816/vue-tsc 0。见 [开发进度5](../../开发进度/人工测试遗留问题修复III/开发进度5.md)。
 
-## E1. 账号锁定可见 + 管理员解锁（12x#2）
+## E1. 账号锁定可见 + 管理员解锁（12x#2）✅
 
 - 文件：`auth/service/AuthService.java`（登录锁定话术）、`auth/controller/UserController.java`（unlock 端点）、`views/admin/UserManageView.vue`（解锁按钮）
 - 伪代码：
@@ -16,7 +17,7 @@
   ```
 - 验证：IT——锁 30s 内登录显解锁时间；unlock 后立即可登；BANNED 行 unlock 400；审计行落。单测话术分支。
 
-## E2. 姓名编辑与全站 displayName（12x#3）
+## E2. 姓名编辑与全站 displayName（12x#3）✅
 
 - 文件：`auth/entity/User.java`（name 已有）、资料接口（个人中心 profile 所在 controller/service）、`views/SettingsView.vue`（资料设置加姓名输入 ≤64 字）、`views/admin/UserManageView.vue`（姓名列+行内编辑）、`frontend/src/utils/displayName.ts`（新）
 - 伪代码：
@@ -28,7 +29,7 @@
   ```
 - 验证：IT keyword 含 name 命中；vue-tsc；手工个人中心改名→成员表即显新名。
 
-## E3. UserPicker 统一选人组件 + 备注批量（12x#4）
+## E3. UserPicker 统一选人组件 + 备注批量（12x#4）✅
 
 - 文件：`frontend/src/components/common/UserPicker.vue`（新）、后端用户搜索接口（复用用户列表 keyword，确认 name/remark 均匹配——12x-1 已含 remark，E2 补 name）、替换三处：`views/ProjectGroupsView.vue`（邀请成员/批量拉组）、`views/admin/WalletAdminView.vue`（批量充值选人）、备注展示：`ProjectGroupsView.vue` 成员表、`views/admin/logs/AuditLogView.vue` 详情、产出用户列（F 联动）
 - 伪代码：

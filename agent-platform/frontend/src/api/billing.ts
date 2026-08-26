@@ -489,7 +489,7 @@ export const billingApi = {
   // 充值
   /** 7x#2：admin 充值页用户下拉选项（账号+昵称/姓名，远端搜索，限 20 条） */
   rechargeUserOptions(keyword = '') {
-    return request.get<ApiResponse<{ userId: number; username: string; name: string | null }[]>>(
+    return request.get<ApiResponse<{ userId: number; username: string; name: string | null; remark: string | null }[]>>(
       '/billing/admin/user-options', { params: { keyword } })
   },
 

@@ -338,6 +338,17 @@ public class AuthService {
 
         // 检查用户状态
         if (!"ACTIVE".equals(user.getStatus())) {
+            // 修复III E1（12x#2）：暴破自动锁（密码已验过=本人带密码尝试）→ 详细话术带自动解锁时间；
+            // 封禁/禁用维持原统一话术（语义分离，前端管理端分别显「启用」/「解锁」入口）
+            if ("LOCKED".equals(user.getStatus()) && user.getLockedUntil() != null) {
+                auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_locked");
+                bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
+                String until = user.getLockedUntil()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                throw new BusinessException(ErrorCode.LOGIN_LOCKED,
+                        "账号已锁定，将于 " + until + " 自动解锁，可联系管理员提前解锁")
+                        .withData(java.util.Map.of("lockedUntil", user.getLockedUntil().toString()));
+            }
             auditAuth("login", user.getId(), user.getUsername(), AuditLogEntity.RESULT_FAIL, "user_disabled");
             bizMetrics.authLogin(com.superprogrammer.common.metrics.BizMetrics.RESULT_FAIL);
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户已被禁用或锁定");
@@ -507,7 +518,9 @@ public class AuthService {
                 String fails = redisTemplate.opsForValue().get(LOGIN_FAIL_USER_PREFIX + usernameKey);
                 if (fails != null && Long.parseLong(fails) >= LOGIN_LOCK_MAX_FAILS) {
                     bizMetrics.authLoginLocked("account");
-                    throw new BusinessException(ErrorCode.LOGIN_LOCKED);
+                    // 修复III E1（12x#2）：DB 已落暴破锁号（LOCKED+locked_until）→ 详细话术带自动解锁时间；
+                    // 其余（未落库的纯 Redis 计数锁/用户不存在）维持 SEC-FR-001 固定话术，防爆破侧不放松
+                    throw lockedException(usernameKey);
                 }
             }
             if (ip != null && !ip.isBlank()) {
@@ -522,6 +535,30 @@ public class AuthService {
         } catch (Exception e) {
             log.warn("登录防爆破 Redis 检查失败，降级放行: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 修复III E1（12x#2）：账号锁错误构造。DB 暴破锁号（status=LOCKED 且 locked_until 非空）→
+     * 话术带自动解锁时间 + data.lockedUntil（前端透传）；否则维持固定话术。
+     * 泄露权衡（spec §10.1）：仅已锁账号显示——锁定本身已防爆破，剩余时间不放大风险；
+     * 用户不存在仍固定话术，无账号存在性 oracle。
+     */
+    private BusinessException lockedException(String usernameKey) {
+        try {
+            LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+            wrapper.apply("LOWER(username) = LOWER({0})", usernameKey);
+            User locked = userMapper.selectOne(wrapper);
+            if (locked != null && "LOCKED".equals(locked.getStatus()) && locked.getLockedUntil() != null) {
+                String until = locked.getLockedUntil()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                return new BusinessException(ErrorCode.LOGIN_LOCKED,
+                        "账号已锁定，将于 " + until + " 自动解锁，可联系管理员提前解锁")
+                        .withData(java.util.Map.of("lockedUntil", locked.getLockedUntil().toString()));
+            }
+        } catch (Exception e) {
+            log.warn("锁定话术落库查询失败，回落固定话术: {}", e.getMessage());
+        }
+        return new BusinessException(ErrorCode.LOGIN_LOCKED);
     }
 
     /**
@@ -627,6 +664,40 @@ public class AuthService {
         } catch (Exception e) {
             log.warn("登录成功清零计数 Redis 失败(已吞): {}", e.getMessage());
         }
+    }
+
+    /**
+     * 修复III E1（12x#2）：管理员提前解锁自动锁。仅 status=LOCKED 且 locked_until 非空行
+     * （暴破自动锁号路径落的锁）可解——手动锁定/封禁/禁用走「启用」动作（语义分离，防解锁绕过封禁）。
+     * 解锁三清：DB（条件 UPDATE，同 AccountUnlockScheduler 口径）+ Redis 失败计数 + ban 标记。
+     */
+    @Transactional
+    public void unlockUser(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(404, "用户不存在");
+        }
+        if ("BANNED".equals(user.getStatus()) || "DISABLED".equals(user.getStatus())) {
+            throw new BusinessException(400, "封禁/禁用账号请用「启用」动作恢复，解锁仅针对自动锁定");
+        }
+        if (!"LOCKED".equals(user.getStatus()) || user.getLockedUntil() == null) {
+            throw new BusinessException(400, "该账号未处于自动锁定状态（无 locked_until），无需解锁");
+        }
+        // 条件 UPDATE：并发下与到期自动解锁/状态变更互斥——eq status=LOCKED 抢不到行=已被他路解走
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User> uw =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<>();
+        uw.eq(User::getId, userId)
+                .eq(User::getStatus, "LOCKED")
+                .set(User::getStatus, "ACTIVE")
+                .set(User::getLockedUntil, null)
+                .set(User::getBanReason, null);
+        int rows = userMapper.update(null, uw);
+        if (rows == 0) {
+            throw new BusinessException(409, "解锁失败：该账号状态刚被变更，请刷新后重试");
+        }
+        clearLoginFailure(user.getUsername().toLowerCase(java.util.Locale.ROOT));
+        banService.restore(userId);
+        log.info("管理员提前解锁账号: userId={} username={}", userId, user.getUsername());
     }
 
     /**

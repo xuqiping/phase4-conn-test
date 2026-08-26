@@ -123,7 +123,13 @@
             · 我的额度 {{ selected.myQuota === null ? '不限' : fmt(selected.myQuota) }}
             · 可分配 {{ selected.myAllocatable === null ? '不限' : fmt(selected.myAllocatable) }}
           </template>
+          <!-- V161（修复III B）：我的组内账户——名下余额/欠款，欠款>0 冻结提示 + 自助划拨 -->
+          · 名下 {{ fmt(selected.mySelf) }} 分
+          <template v-if="Number(selected.myDebtPool) + Number(selected.myDebtLeader) > 0">
+            · <span class="pg-debt-red">欠款 {{ fmt(Number(selected.myDebtPool) + Number(selected.myDebtLeader)) }} 分（消费冻结）</span>
+          </template>
         </span>
+        <NButton v-if="!isOwner" size="small" tertiary type="primary" @click="openSelfTransfer">划拨入组</NButton>
       </div>
 
       <NTabs type="line" :value="tab" @update:value="(v: string) => { tab = v; onTabChange() }">
@@ -382,29 +388,53 @@
       </template>
     </NModal>
 
-    <!-- 邀请成员弹窗（17x#3：候选搜索 + 限额；对方同意后才入组） -->
-    <NModal v-model:show="showAddMember" preset="card" title="邀请成员" style="max-width: 400px">
-      <NSelect
-        v-model:value="addMemberId"
-        filterable
-        remote
-        clearable
-        placeholder="搜索用户名"
-        :options="candidateOptions"
-        :loading="loadingCandidates"
-        @search="onSearchCandidates"
+    <!-- V161（修复III B1）：个人划拨至组内名下弹窗——先还欠款（组长垫→组池垫）余款进名下 -->
+    <NModal v-model:show="showSelfTransfer" preset="card" title="划拨至组内名下（个人→组内账户）" style="max-width: 440px">
+      <NInputNumber
+        v-model:value="selfTransferPoints"
+        :min="0.01"
+        :step="10"
+        placeholder="积分"
+        style="width: 100%"
+      />
+      <div class="pg-view__allocate-hint" style="margin-top: 8px">
+        划入积分先还欠款（先退组长垫、后退组池垫，各回各家），余款进「名下余额」——组内消耗时组池扣完后由名下垫付，组长不可回收。
+        <template v-if="selfTransferDebtTotal > 0">
+          <br>当前欠款 {{ fmt(selfTransferDebtTotal) }} 分（组长垫 {{ fmt(selected?.myDebtLeader ?? 0) }} · 组池垫 {{ fmt(selected?.myDebtPool ?? 0) }}）——还清后解除消费冻结。
+        </template>
+        <template v-else>
+          <br>当前无欠款，全部积分将进入名下余额。
+        </template>
+      </div>
+      <template #footer>
+        <div class="pg-view__modal-footer">
+          <NButton size="small" quaternary @click="showSelfTransfer = false">取消</NButton>
+          <NButton size="small" type="primary" :loading="selfTransferring" @click="confirmSelfTransfer">确认划拨</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- 邀请成员弹窗（17x#3 + 修复III E3：UserPicker 多选批量邀请；对方同意后才入组） -->
+    <NModal v-model:show="showAddMember" preset="card" title="邀请成员" style="max-width: 440px">
+      <UserPicker
+        v-model="addMemberIds"
+        multiple
+        placeholder="搜索用户名 / 姓名 / 备注（如：A 班），可多选批量邀请"
+        :search="searchCandidatesForPicker"
       />
       <NInputNumber
         v-model:value="addMemberQuota"
         :min="0"
-        placeholder="积分限额（空=不限）"
+        placeholder="积分限额（空=不限，对每位被邀请人生效）"
         style="width: 100%; margin-top: 8px"
       />
       <div class="pg-view__allocate-hint">发出邀请后，对方在「项目组→我的邀请」同意才入组。</div>
       <template #footer>
         <div class="pg-view__modal-footer">
           <NButton size="small" quaternary @click="showAddMember = false">取消</NButton>
-          <NButton size="small" type="primary" :disabled="!addMemberId" @click="confirmAddMember">发邀请</NButton>
+          <NButton size="small" type="primary" :disabled="!addMemberIds.length" @click="confirmAddMember">
+            发邀请{{ addMemberIds.length > 1 ? `（${addMemberIds.length} 人）` : '' }}
+          </NButton>
         </div>
       </template>
     </NModal>
@@ -432,7 +462,7 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NButton, NCheckbox, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NInputNumber, NModal,
-  NRadio, NRadioGroup, NSelect, NSwitch,
+  NPopover, NRadio, NRadioGroup, NSelect, NSwitch,
   NSpin, NTabs, NTabPane, NTag, useDialog, useMessage,
   type DataTableColumns
 } from 'naive-ui'
@@ -448,6 +478,7 @@ import {
   type ProjectGroupJoinRequestVO
 } from '@/api/projectGroup'
 import GroupOutputPreview from '@/components/projectgroup/GroupOutputPreview.vue'
+import UserPicker from '@/components/common/UserPicker.vue'
 import {
   kindsFormFromAllowed, allowedFromKindsForm,
   visFormFromOverrides, overridesFromVisForm,
@@ -938,13 +969,20 @@ const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
 
 const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
   { title: '用户', key: 'username', width: 170, render: r => {
-    // 17x#2：昵称/姓名（账号）双显——无名回落账号
+    // 17x#2：昵称/姓名（账号）双显——无名回落账号；E3（12x#4）：备注灰 tag 悬浮全文
     const base = r.displayName || r.username || `#${r.userId}`
     const name = r.displayName && r.username && r.displayName !== r.username
       ? `${r.displayName}（${r.username}）` : base
     return h('span', null, [
       name,
-      r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null
+      r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null,
+      r.remark
+        ? h(NPopover, { trigger: 'hover', placement: 'top' }, {
+            trigger: () => h(NTag, { size: 'tiny', bordered: false, style: 'margin-left: 6px; max-width: 90px' },
+              { default: () => r.remark }),
+            default: () => h('span', null, r.remark ?? '')
+          })
+        : null
     ])
   } },
   // 17x#2（V139）：角色列——OWNER 视角可下拉任免（MEMBER↔MANAGER）；MANAGER 只读标签
@@ -967,6 +1005,17 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
   } },
   { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限' : fmt(r.quotaLimitPoints) },
   { title: '已用', key: 'usedPoints', width: 100, render: r => fmt(r.usedPoints) },
+  // V161（修复III B）：名下余额/欠款列——欠款>0 红字，悬浮拆分垫付来源
+  { title: '名下', key: 'selfPoints', width: 90, render: r => Number(r.selfPoints) > 0 ? fmt(r.selfPoints) : '-' },
+  { title: '欠款', key: 'debtPoints', width: 110, render: r => {
+    const total = Number(r.debtPoolPoints ?? 0) + Number(r.debtLeaderPoints ?? 0)
+    if (!(total > 0)) return h('span', { class: 'pg-members__hint' }, '-')
+    return h(NPopover, { trigger: 'hover', placement: 'top' }, {
+      trigger: () => h('span', { class: 'pg-debt-red' }, fmt(total)),
+      default: () => h('span', null,
+        `组长垫 ${fmt(r.debtLeaderPoints)} · 组池垫 ${fmt(r.debtPoolPoints)}——组内消费冻结中（划拨或调限额抵清后恢复）`)
+    })
+  } },
   // 17x 未解决#1（V156 层级额度）：管理行显「可分配」=额度−子树已耗−下级预留——管理自己随时知道还能分多少
   { title: '可分配', key: 'allocatablePoints', width: 100, render: r => {
     if (r.role !== 'MANAGER') return '-'
@@ -1146,50 +1195,35 @@ async function saveMemberVisibility() {
 
 // ---- 加成员 ----
 const showAddMember = ref(false)
-const addMemberId = ref<number | null>(null)
+// 修复III E3（12x#4）：多选批量邀请（UserPicker），备注进候选行
+const addMemberIds = ref<number[]>([])
 const addMemberQuota = ref<number | null>(null)
-const candidateOptions = ref<{ label: string; value: number }[]>([])
-const loadingCandidates = ref(false)
-let candidateTimer: ReturnType<typeof setTimeout> | null = null
 
 function openAddMember() {
-  addMemberId.value = null
+  addMemberIds.value = []
   addMemberQuota.value = null
-  candidateOptions.value = []
   showAddMember.value = true
-  void searchCandidates('')
 }
 
-function onSearchCandidates(q: string) {
-  if (candidateTimer) clearTimeout(candidateTimer)
-  candidateTimer = setTimeout(() => void searchCandidates(q), 300)
-}
-
-async function searchCandidates(q: string) {
-  loadingCandidates.value = true
-  try {
-    const res = await projectGroupApi.candidates(selected.value!.id, q)
-    // 17x#2：候选下拉展示「昵称/姓名（账号）」——无昵称回落账号
-    candidateOptions.value = res.data.data.map(c => ({
-      label: c.name && c.name !== c.username ? `${c.name}（${c.username}）` : c.username,
-      value: c.userId
-    }))
-  } catch {
-    /* 拦截器已提示 */
-  } finally {
-    loadingCandidates.value = false
-  }
+/** E3：UserPicker 数据源——组候选接口（排除组长/已有成员），按备注筛人 */
+async function searchCandidatesForPicker(q: string): Promise<import('@/components/common/UserPicker.vue').PickerUser[]> {
+  const res = await projectGroupApi.candidates(selected.value!.id, q)
+  return res.data.data.map(c => ({ userId: c.userId, username: c.username, name: c.name, remark: c.remark }))
 }
 
 async function confirmAddMember() {
-  if (!addMemberId.value) return
+  if (!addMemberIds.value.length) return
   try {
-    // 17x#3：邀请制——对方同意后入组
-    await projectGroupApi.inviteMember(selected.value!.id, addMemberId.value, addMemberQuota.value)
-    message.success('邀请已发送，待对方同意后入组')
+    // 17x#3 邀请制 + E3 批量：逐个发邀请（串行防限流；对方同意后入组）
+    let ok = 0
+    for (const uid of addMemberIds.value) {
+      await projectGroupApi.inviteMember(selected.value!.id, uid, addMemberQuota.value)
+      ok++
+    }
+    message.success(`已向 ${ok} 人发送邀请，待对方同意后入组`)
     showAddMember.value = false
     void loadInvites()
-  } catch { /* 拦截器已提示 */ }
+  } catch { /* 拦截器已提示（中断处起后续未发，重开弹窗重选即可） */ }
 }
 
 // ==================== 划拨/回收 ====================
@@ -1233,6 +1267,44 @@ async function confirmAllocate() {
 // 划拨/回收后刷新列表态卡片（不影响详情态）
 watch(showAllocate, v => { if (!v) void loadGroups() })
 
+// ==================== V161（修复III B1）：个人划拨至组内名下 ====================
+
+const showSelfTransfer = ref(false)
+const selfTransferPoints = ref<number | null>(null)
+const selfTransferring = ref(false)
+/** 幂等防连点：每次打开弹窗生成新 nonce，重试不吞、双击不双扣（后端 self-transfer-{uid}-{nonce}）。 */
+const selfTransferNonce = ref('')
+
+const selfTransferDebtTotal = computed(() =>
+  Number(selected.value?.myDebtPool ?? 0) + Number(selected.value?.myDebtLeader ?? 0))
+
+function openSelfTransfer() {
+  selfTransferPoints.value = null
+  selfTransferNonce.value = String(Date.now())
+  showSelfTransfer.value = true
+}
+
+async function confirmSelfTransfer() {
+  const pts = selfTransferPoints.value
+  if (!pts || pts <= 0) {
+    message.warning('请输入正数积分')
+    return
+  }
+  if (!selected.value || !auth.userInfo?.id) return
+  selfTransferring.value = true
+  try {
+    await projectGroupApi.selfTransfer(
+      selected.value.id, auth.userInfo.id, pts, selfTransferNonce.value + '-' + pts)
+    message.success('划拨成功')
+    showSelfTransfer.value = false
+    void loadGroups()   // 名下/欠款/组池余额刷新
+  } catch {
+    /* 拦截器已提示（余额不足/非成员等由后端文案） */
+  } finally {
+    selfTransferring.value = false
+  }
+}
+
 onMounted(() => {
   void loadGroups()
   void loadMyInvites()
@@ -1253,6 +1325,12 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+/* V161（修复III B）：欠款红字（成员表「欠款」列 + 详情头冻结提示共用） */
+.pg-debt-red {
+  color: var(--error-color, #e88080);
+  font-weight: 600;
+}
+
 .pg-view {
   height: 100%;
   padding: var(--spacing-4);

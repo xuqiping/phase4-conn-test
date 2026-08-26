@@ -5,5 +5,6 @@ package com.superprogrammer.billing.dto;
  * 7x：admin 充值页用户下拉选项（账号 + 昵称/姓名）。
  * name 可空（未设置时前端回落只显 username）。
  */
-public record RechargeUserOptionVO(Long userId, String username, String name) {
+/** 修复III E3（12x#4）：+remark（批量充值按备注筛人 + 行内 tag 展示）。 */
+public record RechargeUserOptionVO(Long userId, String username, String name, String remark) {
 }

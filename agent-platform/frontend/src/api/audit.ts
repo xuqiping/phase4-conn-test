@@ -27,6 +27,10 @@ export interface AuditLogVO {
   moduleLabel: string | null
   /** 动作中文（后端 AuditLabelDictionary 翻译，显示用） */
   actionLabel: string | null
+  /** 修复III E2（12x#3）：操作人当前姓名（详情层 JOIN 现值；username 列=写入时快照不随改名漂） */
+  operatorName: string | null
+  /** 修复III E2（12x#3）：操作人备注（如「A 班」，认人辅助） */
+  operatorRemark: string | null
 }
 
 /** 查询筛选条件（全部可选；时间段为 ISO 字符串） */

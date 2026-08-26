@@ -97,6 +97,23 @@
         <n-button type="primary" :loading="saving" @click="saveRemark">保存</n-button>
       </template>
     </n-modal>
+    <!-- 修复III E2（12x#3）：管理员改姓名（空=清除，≤64 字；全站 displayName 优先 name） -->
+    <n-modal v-model:show="showNameModal" preset="card" title="修改姓名" style="max-width:440px">
+      <p style="margin-bottom:12px;color:var(--color-text-secondary)">
+        用户：<strong>{{ nameTarget?.username }}</strong>
+      </p>
+      <n-input
+        v-model:value="nameInput"
+        maxlength="64"
+        show-count
+        clearable
+        placeholder="真实姓名（留空=清除，显示回用户名）"
+      />
+      <template #action>
+        <n-button @click="showNameModal = false">取消</n-button>
+        <n-button type="primary" :loading="saving" @click="saveName">保存</n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -104,7 +121,7 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import {
   NDataTable, NButton, NModal, NCheckboxGroup, NCheckbox, NSpace, NTag, NAlert,
-  NRadioGroup, NRadio, NInput, NSelect, useMessage
+  NRadioGroup, NRadio, NInput, NSelect, useMessage, useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { adminApi, type UserVO, type Role } from '@/api/admin'
@@ -140,6 +157,13 @@ const statusOptions = [
 const showRemarkModal = ref(false)
 const remarkTarget = ref<UserVO | null>(null)
 const remarkInput = ref('')
+
+// 修复III E2（12x#3）：管理员改姓名弹窗（同备注交互：空=清除，≤64 字）
+const showNameModal = ref(false)
+const nameTarget = ref<UserVO | null>(null)
+const nameInput = ref('')
+
+const dialog = useDialog()
 
 const statusMap: Record<string, { type: 'success' | 'warning' | 'error'; label: string }> = {
   ACTIVE: { type: 'success', label: '正常' },
@@ -178,13 +202,25 @@ const columns: DataTableColumns<UserVO> = [
   },
   {
     title: '操作', key: 'actions', width: 260, fixed: 'right',
-    render: (row) => h(NSpace, { size: 8 }, () => [
-      h(NButton, { size: 'small', onClick: () => openRoleModal(row) }, () => '分配角色'),
-      h(NButton, { size: 'small', onClick: () => openRemarkModal(row) }, () => '备注'),
-      row.status === 'ACTIVE'
-        ? h(NButton, { size: 'small', type: 'warning', onClick: () => openStatusModal(row) }, () => '变更状态')
-        : h(NButton, { size: 'small', type: 'success', onClick: () => toggleStatus(row, 'ACTIVE') }, () => '启用')
-    ])
+    render: (row) => {
+      // 修复III E1（12x#2）：暴破自动锁（LOCKED+lockedUntil）显「解锁」——提前解除自动锁，
+      // 与封禁/禁用/手动锁的「启用」语义分离（解锁不动封禁语义）
+      const autoLocked = row.status === 'LOCKED' && !!row.lockedUntil
+      return h(NSpace, { size: 8 }, () => [
+        h(NButton, { size: 'small', onClick: () => openRoleModal(row) }, () => '分配角色'),
+        h(NButton, { size: 'small', onClick: () => openNameModal(row) }, () => '姓名'),
+        h(NButton, { size: 'small', onClick: () => openRemarkModal(row) }, () => '备注'),
+        ...(row.status === 'ACTIVE'
+          ? [h(NButton, { size: 'small', type: 'warning', onClick: () => openStatusModal(row) }, () => '变更状态')]
+          : []),
+        ...(autoLocked
+          ? [h(NButton, { size: 'small', type: 'success', onClick: () => confirmUnlock(row) }, () => '解锁')]
+          : []),
+        ...(row.status !== 'ACTIVE' && !autoLocked
+          ? [h(NButton, { size: 'small', type: 'success', onClick: () => toggleStatus(row, 'ACTIVE') }, () => '启用')]
+          : [])
+      ])
+    }
   }
 ]
 
@@ -235,6 +271,49 @@ async function loadRoles() {
     allRoles.value = res.data.data
   } catch {
     message.error('加载角色列表失败')
+  }
+}
+
+/** 修复III E1（12x#2）：解锁确认弹窗——显锁定到期时间，确认调 unlock 端点。 */
+function confirmUnlock(user: UserVO) {
+  const until = user.lockedUntil ? new Date(user.lockedUntil).toLocaleString('zh-CN') : ''
+  dialog.warning({
+    title: '提前解锁账号',
+    content: `用户 ${user.username} 因连续登录失败被自动锁定${until ? `，将于 ${until} 自动解锁` : ''}。确认立即解锁？`,
+    positiveText: '解锁',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await adminApi.unlockUser(user.id)
+        message.success('已解锁，该用户可立即登录')
+        await loadUsers(pagination.page)
+      } catch (e: any) {
+        message.error(e?.response?.data?.message || '解锁失败')
+      }
+    }
+  })
+}
+
+/** 修复III E2（12x#3）：改姓名弹窗（同备注交互） */
+function openNameModal(user: UserVO) {
+  nameTarget.value = user
+  nameInput.value = user.name ?? ''
+  showNameModal.value = true
+}
+
+async function saveName() {
+  if (!nameTarget.value) return
+  saving.value = true
+  try {
+    const trimmed = nameInput.value.trim()
+    await adminApi.updateUserName(nameTarget.value.id, trimmed === '' ? null : trimmed)
+    message.success('姓名已保存')
+    showNameModal.value = false
+    await loadUsers(pagination.page)
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '姓名保存失败')
+  } finally {
+    saving.value = false
   }
 }
 

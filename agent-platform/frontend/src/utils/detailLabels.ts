@@ -135,6 +135,9 @@ export const AUDIT_MODULE_CN: Record<string, string> = {
 export const AUDIT_ACTION_CN: Record<string, string> = {
   update_status: '修改账号状态',
   assign_roles: '分配角色',
+  // 修复III E1/E2（12x#2/#3）
+  unlock: '提前解锁账号',
+  update_name: '修改姓名',
   update_permissions: '修改权限',
   reset_password: '重置密码',
   password_change: '修改密码',
@@ -170,7 +173,6 @@ export const AUDIT_ACTION_CN: Record<string, string> = {
   block: '封禁',
   unblock: '解封',
   ban: '封禁账号',
-  unlock: '解锁账号',
   create: '新建',
   update: '修改',
   delete: '删除'

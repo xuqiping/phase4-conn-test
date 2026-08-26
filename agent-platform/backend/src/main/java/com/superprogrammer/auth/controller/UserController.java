@@ -174,6 +174,46 @@ public class UserController {
         return null;
     }
 
+    /**
+     * 修复III E1（12x#2）：管理员提前解锁暴破自动锁（status=LOCKED+locked_until 非空）。
+     * 三清=DB 锁+Redis 失败计数+ban 标记；封禁/禁用/手动锁定 → 400 语义分离（走「启用」）。
+     */
+    @PutMapping("/{id}/unlock")
+    @PreAuthorize("hasAuthority('user:manage')")
+    @AuditLog(module = "user", action = "unlock", targetType = "user")
+    public ResponseEntity<R<Void>> unlockUser(@PathVariable Long id) {
+        authService.unlockUser(id);
+        return ResponseEntity.ok(R.ok("已解锁，该用户可立即登录", null));
+    }
+
+    /**
+     * 修复III E2（12x#3）：管理员修改任意用户姓名（同备注交互口径）。
+     * trim 后空=清除；≤64 字（对齐 V1 users.name 长度）。审计留痕。
+     */
+    @PutMapping("/{id}/name")
+    @PreAuthorize("hasAuthority('user:manage')")
+    @AuditLog(module = "user", action = "update_name", targetType = "user")
+    public ResponseEntity<R<Void>> updateUserName(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> body) {
+        String name = body.get("name");
+        if (name != null && name.length() > 64) {
+            return ResponseEntity.badRequest()
+                    .body(R.fail(400, "姓名长度超限（≤64 字符）"));
+        }
+        User user = userMapper.selectById(id);
+        if (user == null) {
+            return ResponseEntity.status(404).body(R.fail(404, "用户不存在"));
+        }
+        String trimmed = name == null ? null : name.trim();
+        String newName = trimmed == null || trimmed.isEmpty() ? null : trimmed;
+        // LambdaUpdateWrapper.set 显式写——清除（null）不能走 updateById 的 NOT_NULL 策略（同备注）
+        userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getId, id)
+                .set(User::getName, newName));
+        return ResponseEntity.ok(R.ok("姓名已更新", null));
+    }
+
     @PutMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('user:manage')")
     @Transactional

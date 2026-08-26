@@ -30,6 +30,10 @@ public class AuditLogVO {
     private String moduleLabel;
     /** 动作中文（显示层，不入库）。 */
     private String actionLabel;
+    /** 修复III E2/E3（12x#3/#4）：操作人现姓名（显示层 JOIN，不入库；用户已删为 null）。 */
+    private String operatorName;
+    /** 修复III E3（12x#4）：操作人现备注（显示层 JOIN，不入库；详情悬浮展示）。 */
+    private String operatorRemark;
 
     public static AuditLogVO from(AuditLogEntity e) {
         AuditLogVO vo = new AuditLogVO();

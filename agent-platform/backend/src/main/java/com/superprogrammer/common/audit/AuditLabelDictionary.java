@@ -83,6 +83,9 @@ public final class AuditLabelDictionary {
                     Map.entry("update_status", "修改用户状态"),
                     Map.entry("assign_roles", "分配角色"),
                     Map.entry("update_remark", "修改备注"),
+                    // 修复III E1/E2（12x#2/#3）
+                    Map.entry("unlock", "提前解锁账号"),
+                    Map.entry("update_name", "修改姓名"),
                     // B4（8x-3 P1）：DepartmentController
                     Map.entry("dept_create", "创建部门"),
                     Map.entry("dept_update", "修改部门"),

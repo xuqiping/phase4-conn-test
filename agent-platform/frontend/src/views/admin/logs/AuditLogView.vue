@@ -36,6 +36,14 @@
 
       <!-- detailJson 查看弹窗（8x-2：键值中文渲染，不再堆原始 JSON） -->
       <n-modal v-model:show="showDetail" preset="card" title="审计详情" style="max-width:640px">
+        <!-- 修复III E2（12x#3）：操作人现值行——账号=写入快照（证据链），括注当前姓名/备注（改名后仍能认人） -->
+        <div v-if="detailRow" class="audit-log__operator">
+          <span class="audit-log__operator-label">操作人</span>
+          <span>{{ detailRow.username || (detailRow.userId ? `用户#${detailRow.userId}` : '系统') }}<template v-if="detailRow.operatorName">（{{ detailRow.operatorName }}）</template></span>
+          <n-tag v-if="detailRow.operatorRemark" size="small" :bordered="false" class="audit-log__operator-remark">
+            {{ detailRow.operatorRemark }}
+          </n-tag>
+        </div>
         <DetailKvView :raw="detailText" />
         <!-- 8x Chunk7：模型调用动作 → 一键跳「账单总览·调用明细」查同请求模型/token/积分明细 -->
         <div v-if="drillUrl" class="audit-log__drill">
@@ -262,6 +270,28 @@ onMounted(() => {
   &__drill-hint {
     font-size: 12px;
     color: var(--color-text-secondary);
+  }
+
+  &__operator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+    font-size: 13px;
+  }
+
+  &__operator-label {
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+  }
+
+  &__operator-remark {
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 </style>
