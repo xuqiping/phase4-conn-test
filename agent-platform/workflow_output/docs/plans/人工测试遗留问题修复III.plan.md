@@ -16,7 +16,7 @@
 
 A→B 严格串行（B 的还款依赖 A 的 debt 字段与流水腿）。C/D/E/F 相互独立可并行；实施序 **A→B→D→C→E→F**（D1 Lightbox 先行供 C6 复用；E/F 收尾）。
 
-进度：**A 已完成**（2026-08-26，V161+瀑布+退款反冲+冻结闸+15 IT 全绿，见 [开发进度1](../../开发进度/人工测试遗留问题修复III/开发进度1.md)；偏离记录：锁序窄窗接受、LlmGatewayTest D5 遗留顺手修复）。**B 已完成**（2026-08-26，self-transfer/豁免/重置清欠/退组结算+组页前端+19 IT 全绿，见 [开发进度2](../../开发进度/人工测试遗留问题修复III/开发进度2.md)；偏离记录：B3 锁序改与 chargeGroup 同序、PricingConfigView.test D6 遗留顺手修复）。**D 已完成**（2026-08-26，commit 0770434c，Lightbox+上游面板+@弹层光标锚定，vitest 795 全绿+vue-tsc 0 error，见 [开发进度3](../../开发进度/人工测试遗留问题修复III/开发进度3.md)；偏离记录：contenteditable 原生光标矩形替代镜像 div / CanvasView computed 替代 CanvasBoard 传参 / primaryInputRef 直连替代画布冒泡；依赖吸收 2x 六轮 #1 insertSuffix 三文件）。**C 已完成**（2026-08-26，commit 5453e59b，画布七小件 2x-1~2x-7，后端 2544+前端 806 全绿+vue-tsc 0，见 [开发进度4](../../开发进度/人工测试遗留问题修复III/开发进度4.md)；C1 复验补 resize 落库链、C2 默认标记走媒体列表接口、C5 定型收口 updateNodeData；CanvasBoard 吸收用户 WIP 六轮#2 对账兜底）。**E 已完成**（2026-08-26，锁定话术+解锁端点/姓名编辑+displayName/audit enrich+UserPicker 三处替换+批量充值，后端 2550+前端 816 全绿+vue-tsc 0，见 [开发进度5](../../开发进度/人工测试遗留问题修复III/开发进度5.md)；偏离：权限码 user:manage、审计用户列保快照改详情层括注、user-options 补 LIKE 转义、ProjectGroupsView 吸收 B 轮 WIP）。F 进行中。
+进度：**A 已完成**（2026-08-26，V161+瀑布+退款反冲+冻结闸+15 IT 全绿，见 [开发进度1](../../开发进度/人工测试遗留问题修复III/开发进度1.md)；偏离记录：锁序窄窗接受、LlmGatewayTest D5 遗留顺手修复）。**B 已完成**（2026-08-26，self-transfer/豁免/重置清欠/退组结算+组页前端+19 IT 全绿，见 [开发进度2](../../开发进度/人工测试遗留问题修复III/开发进度2.md)；偏离记录：B3 锁序改与 chargeGroup 同序、PricingConfigView.test D6 遗留顺手修复）。**D 已完成**（2026-08-26，commit 0770434c，Lightbox+上游面板+@弹层光标锚定，vitest 795 全绿+vue-tsc 0 error，见 [开发进度3](../../开发进度/人工测试遗留问题修复III/开发进度3.md)；偏离记录：contenteditable 原生光标矩形替代镜像 div / CanvasView computed 替代 CanvasBoard 传参 / primaryInputRef 直连替代画布冒泡；依赖吸收 2x 六轮 #1 insertSuffix 三文件）。**C 已完成**（2026-08-26，commit 5453e59b，画布七小件 2x-1~2x-7，后端 2544+前端 806 全绿+vue-tsc 0，见 [开发进度4](../../开发进度/人工测试遗留问题修复III/开发进度4.md)；C1 复验补 resize 落库链、C2 默认标记走媒体列表接口、C5 定型收口 updateNodeData；CanvasBoard 吸收用户 WIP 六轮#2 对账兜底）。**E 已完成**（2026-08-26，锁定话术+解锁端点/姓名编辑+displayName/audit enrich+UserPicker 三处替换+批量充值，后端 2550+前端 816 全绿+vue-tsc 0，见 [开发进度5](../../开发进度/人工测试遗留问题修复III/开发进度5.md)；偏离：权限码 user:manage、审计用户列保快照改详情层括注、user-options 补 LIKE 转义、ProjectGroupsView 吸收 B 轮 WIP）。**F 已完成**（2026-08-26，from-media 同项目判重+exists-by-source 批量端点+产出「入库」列复用三弹窗+已入库 tag，AssetMediaBridgeServiceTest 8+groupOutputImport 6+前端 822 全绿+vue-tsc 0+后端全量绿，见 [开发进度6](../../开发进度/人工测试遗留问题修复III/开发进度6.md)；偏离：资产桥无 IT 先例走单测覆盖、多图任务默认第 1 张、CHAT 无判重）。全部 chunk 完成，进入收尾（测试方案/README/Feature Map/User-Ops/勾销）。
 
 ## 技术坑点预判（全轮通用）
 
@@ -31,13 +31,13 @@ A→B 严格串行（B 的还款依赖 A 的 debt 字段与流水腿）。C/D/E/
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] self-transfer：`@RequirePermission` + 本人且为该组在册成员（deleted=0）校验；金额>0、BigDecimal、幂等键；不得操作他人。
-- [ ] 解锁端点：`user:update` 权限 + @AuditLog；只清自动锁（locked_until+失败计数），封禁/禁用状态不可被解锁动作绕过。
-- [ ] UserPicker 搜索：keyword LIKE 通配符转义（复用 12x-1 既有转义）。
-- [ ] 上游面板提示词：卡片/悬浮**纯文本渲染**（禁 v-html），防存量数据注入；Lightbox 媒体 URL 仅接受任务产物已存 URL。
-- [ ] @ 引用插入：走 mentionLogic 既有序列化（已防注入），插入位置转义。
-- [ ] 入库（F）：目标项目须为当前用户 OWNER/EDITOR（服务端校验，前端过滤只是体验）；from-media 幂等判重。
-- [ ] 审计：self-transfer / unlock / 入库 / 退组结算 / 欠款核销 / 调限额豁免 全量 @AuditLog；新动作码进 18 模块字典（四改同步防字典完整性单测红）。
+- [x] self-transfer：`@RequirePermission` + 本人且为该组在册成员（deleted=0）校验；金额>0、BigDecimal、幂等键；不得操作他人。（B 轮落实）
+- [x] 解锁端点：`user:manage` 权限 + @AuditLog；只清自动锁（locked_until+失败计数），封禁/禁用状态不可被解锁动作绕过。（E 轮落实，权限码与 UserController 全端点一致）
+- [x] UserPicker 搜索：keyword LIKE 通配符转义（复用 12x-1 既有转义）。（E 轮落实——candidates 调用方转义/user-options 补转义）
+- [x] 上游面板提示词：卡片/悬浮**纯文本渲染**（禁 v-html），防存量数据注入；Lightbox 媒体 URL 仅接受任务产物已存 URL。（D 轮落实）
+- [x] @ 引用插入：走 mentionLogic 既有序列化（已防注入），插入位置转义。（D 轮落实）
+- [x] 入库（F）：目标项目须为当前用户 OWNER/EDITOR（服务端校验——requireWrite 既有咽喉），前端过滤只是体验；from-media 幂等判重（genMeta taskId+imageIdx 同项目判重）。（F 轮落实）
+- [x] 审计：self-transfer / unlock / 入库 / 退组结算 / 欠款核销 / 调限额豁免 全量 @AuditLog；新动作码进 18 模块字典（四改同步防字典完整性单测红）。（unlock/update_name 已进字典且单测绿；入库走既有 save_to_library）
 
 ## 运维考量清单（7 类落字）
 

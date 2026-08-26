@@ -420,6 +420,8 @@ export interface MediaImportRequest {
 /** 生图入库结果（无画布节点 → 无重复入库三态，created 恒 true）。 */
 export interface MediaImportVO {
   created: boolean
+  /** 修复III F1（17x#1）：true=同项目已入库该任务产物（created=false，复用既有 assetId）。 */
+  duplicate?: boolean
   assetId?: number
   name?: string
   mediaType?: string

@@ -6,16 +6,18 @@ import lombok.Data;
 /**
  * 媒体产物入库结果（POST /api/assets/from-media 响应）。
  *
- * <p>生图入库无画布节点绑定，不存在「重复入库三态」——同一张图可多次入库为独立资产
- * （用户可能想把同一张图存进不同项目）。故 {@link #created} 恒 true（校验通过即建），
- * 字段集是 {@link CanvasImportVO} 的无重复检测子集。
+ * <p>修复III F1（17x#1）：同项目判重——同 (projectId, taskId, imageIdx) 已入库则不重复建资产，
+ * 返回 created=false + duplicate=true + 既有 assetId；不同项目仍可各自入库（同一张图存多个项目语义保留）。
  */
 @Data
 @Builder
 public class MediaImportVO {
 
-    /** 是否入库成功。 */
+    /** 是否入库成功（false=命中同项目判重，复用既有资产）。 */
     private boolean created;
+    /** 修复III F1：true=同项目已存在该任务产物（duplicate 分支，created=false）。 */
+    @Builder.Default
+    private boolean duplicate = false;
     /** 新建资产 id。 */
     private Long assetId;
     /** 资产名。 */

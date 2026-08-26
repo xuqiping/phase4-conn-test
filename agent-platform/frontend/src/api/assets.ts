@@ -313,9 +313,20 @@ export const assetBridgeApi = {
   /**
    * POST /assets/from-media — 生图结果某张图入库（生成→库）。
    * 复用 SOURCE_MEDIA fileId（不拷贝）；genMeta.source=MEDIA 标来源。
-   * requireWrite（viewer 不可入库）。无画布节点 → 无重复检测三态，created 恒 true。
+   * requireWrite（viewer 不可入库）。修复III F1（17x#1）：同项目同任务判重——
+   * 命中返回 created=false+duplicate=true+既有 assetId（不同项目仍可各自入库）。
    */
   importFromMedia(data: MediaImportRequest) {
     return request.post<ApiResponse<MediaImportVO>>('/assets/from-media', data)
+  },
+
+  /**
+   * GET /assets/exists-by-source — 批量查媒体任务已入库状态（修复III F2，17x#1）。
+   * 返回 taskId→首个 assetId（跨项目；JSON 键为字符串）。组产出 tab「已入库」tag 数据源，一条 IN 防逐行 N+1。
+   */
+  existsBySource(taskIds: number[]) {
+    return request.get<ApiResponse<Record<string, number>>>('/assets/exists-by-source', {
+      params: { taskIds: taskIds.join(',') }
+    })
   }
 }

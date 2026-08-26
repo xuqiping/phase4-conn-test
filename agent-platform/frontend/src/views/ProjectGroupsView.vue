@@ -455,6 +455,27 @@
         </div>
       </template>
     </NModal>
+
+    <!-- 修复III F2（17x#1）：产出一键入库三弹窗（复用生成页/对话页入库组件，不自建表单）。
+         媒体入库同项目判重由后端 F1 兜底（duplicate 返回既有资产 id）；图片多图任务默认第 1 张。 -->
+    <SaveImageToAssetDialog
+      v-model:show="showImportImage"
+      :task-id="importTaskId"
+      :image-idx="0"
+      :default-name="importName"
+      @imported="onMediaImported"
+    />
+    <SaveVideoToAssetDialog
+      v-model:show="showImportVideo"
+      :task-id="importTaskId"
+      :default-name="importName"
+      @imported="onMediaImported"
+    />
+    <SaveChatToAssetDialog
+      v-model:show="showImportChat"
+      :content="chatContent"
+      :default-name="importName"
+    />
   </div>
 </template>
 
@@ -479,6 +500,11 @@ import {
 } from '@/api/projectGroup'
 import GroupOutputPreview from '@/components/projectgroup/GroupOutputPreview.vue'
 import UserPicker from '@/components/common/UserPicker.vue'
+import SaveImageToAssetDialog from '@/components/imagegen/SaveImageToAssetDialog.vue'
+import SaveVideoToAssetDialog from '@/components/media/SaveVideoToAssetDialog.vue'
+import SaveChatToAssetDialog from '@/components/chat/SaveChatToAssetDialog.vue'
+import { assetBridgeApi } from '@/api/assets'
+import { isImportable, parseImportedSet } from '@/utils/groupOutputImport'
 import {
   kindsFormFromAllowed, allowedFromKindsForm,
   visFormFromOverrides, overridesFromVisForm,
@@ -546,6 +572,16 @@ const canManage = computed(() => isOwner.value || isManager.value || auth.isAdmi
 const ROLE_LABEL: Record<string, string> = { OWNER: '组长', MANAGER: '管理', MEMBER: '成员' }
 const hasFilters = computed(() =>
   outputFilter.value.memberUserId != null || !!outputFilter.value.kind || !!outputFilter.value.range)
+
+// ---- 修复III F2（17x#1）：产出一键入库（组长/管理；媒体复用生成页入库桥，CHAT 复用对话入库弹窗） ----
+/** 本页媒体任务已入库集合（taskId 维度，跨项目；加载产出后一条 IN 查询回填，防逐行 N+1）。 */
+const importedTaskIds = ref<Set<number>>(new Set())
+const showImportImage = ref(false)
+const showImportVideo = ref(false)
+const showImportChat = ref(false)
+const importTaskId = ref<number | null>(null)
+const importName = ref('')
+const chatContent = ref('')
 
 const kindOptions = [
   { label: '对话', value: 'CHAT' },
@@ -852,11 +888,46 @@ async function loadOutputs() {
       size: outputSize.value
     })
     outputs.value = res.data.data
+    void refreshImported()
   } catch {
     message.error('产出列表加载失败')
   } finally {
     loadingOutputs.value = false
   }
+}
+
+/** 修复III F2：回填本页媒体行「已入库」态（一条 IN 查询；无权限/失败静默=不显 tag）。 */
+async function refreshImported() {
+  const ids = (outputs.value?.records ?? [])
+    .map(r => r.taskId)
+    .filter((t): t is number => t != null)
+  if (!canManage.value || !ids.length) {
+    importedTaskIds.value = new Set()
+    return
+  }
+  try {
+    const res = await assetBridgeApi.existsBySource(ids)
+    importedTaskIds.value = parseImportedSet(res.data.data)
+  } catch {
+    importedTaskIds.value = new Set()
+  }
+}
+
+/** 修复III F2：行「入库」按钮——IMAGE 走图弹窗（多图任务默认第 1 张，整组其余张去生成页逐张入库）、
+ *  VIDEO 走视频弹窗、CHAT 走对话弹窗（预填该轮 assistant 回复）。 */
+function openImport(r: ProjectGroupOutputVO) {
+  importTaskId.value = r.taskId
+  chatContent.value = r.chatResult ?? ''
+  const raw = (r.mediaPrompt ?? r.chatResult ?? '').trim()
+  importName.value = raw.slice(0, 30) || (r.kind === 'VIDEO' ? '视频产出' : r.kind === 'CHAT' ? '对话产出' : '图片产出')
+  if (r.kind === 'CHAT') showImportChat.value = true
+  else if (r.kind === 'VIDEO') showImportVideo.value = true
+  else showImportImage.value = true
+}
+
+/** 媒体入库成功回调：本页行置「已入库」（弹窗自身已 toast 新建/判重两种话术，此处不重复）。 */
+function onMediaImported() {
+  if (importTaskId.value != null) importedTaskIds.value.add(importTaskId.value)
 }
 
 function onTabChange() {
@@ -964,6 +1035,19 @@ const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
   {
     title: '预览', key: 'preview', width: 130,
     render: r => h(GroupOutputPreview, { row: r })
+  },
+  // 修复III F2（17x#1）：一键入库——组长/管理可见；已入库显 tag；CHAT 预填该轮回复
+  {
+    title: '入库', key: 'import', width: 90, fixed: 'right',
+    render: r => {
+      if (!canManage.value) return '-'
+      if (r.taskId != null && importedTaskIds.value.has(r.taskId)) {
+        return h(NTag, { size: 'small', type: 'success', bordered: false }, () => '已入库')
+      }
+      // 与预览列同口径：媒体行按产物文件在否（SUCCEEDED 才有 fileId），CHAT 按有回复
+      if (!isImportable(r)) return '-'
+      return h(NButton, { size: 'small', quaternary: true, onClick: () => openImport(r) }, () => '入库')
+    }
   }
 ]
 
