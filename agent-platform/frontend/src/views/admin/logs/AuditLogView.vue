@@ -130,7 +130,9 @@ const moduleOptions = [
   { label: '安全管理', value: 'security' },
   { label: '公告建议台', value: 'feedback' },
   { label: '项目组', value: 'project-group' },
-  { label: '审计链', value: 'audit' }
+  { label: '审计链', value: 'audit' },
+  // 8x-3 B4：工作流写操作新模块
+  { label: '工作流', value: 'workflow' }
 ]
 
 const resultOptions = [

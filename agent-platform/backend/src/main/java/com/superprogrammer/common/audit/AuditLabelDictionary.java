@@ -38,7 +38,9 @@ public final class AuditLabelDictionary {
             Map.entry("security", "安全管理"),
             Map.entry("feedback", "公告建议台"),
             Map.entry("project-group", "项目组"),
-            Map.entry("audit", "审计链")
+            Map.entry("audit", "审计链"),
+            // B4（8x-3 P1）：Workflow/Execution 写操作新模块
+            Map.entry("workflow", "工作流")
     );
 
     /** 动作码 → 中文名，按模块分组（key=module, value=action 码表）。未命中回落原码。 */
@@ -78,11 +80,43 @@ public final class AuditLabelDictionary {
             Map.entry("user", Map.ofEntries(
                     Map.entry("update_status", "修改用户状态"),
                     Map.entry("assign_roles", "分配角色"),
-                    Map.entry("update_remark", "修改备注"))),
+                    Map.entry("update_remark", "修改备注"),
+                    // B4（8x-3 P1）：DepartmentController
+                    Map.entry("dept_create", "创建部门"),
+                    Map.entry("dept_update", "修改部门"),
+                    Map.entry("dept_delete", "删除部门"),
+                    Map.entry("dept_member_add", "添加部门成员"),
+                    Map.entry("dept_member_remove", "移除部门成员"))),
             Map.entry("role", Map.ofEntries(
                     Map.entry("update_permissions", "修改角色权限"))),
             Map.entry("agent", Map.ofEntries(
-                    Map.entry("publish", "发布智能体"))),
+                    Map.entry("publish", "发布智能体"),
+                    // B4（8x-3 P1）：AgentController
+                    Map.entry("agent_create", "新建智能体"),
+                    Map.entry("agent_update", "修改智能体"),
+                    Map.entry("agent_delete", "删除智能体"),
+                    Map.entry("agent_copy", "复制智能体"),
+                    Map.entry("agent_sync", "同步智能体"),
+                    Map.entry("permission_set", "设置智能体权限"),
+                    Map.entry("kb_binding_set", "设置知识库绑定"),
+                    Map.entry("rag_enabled_set", "设置记忆模式开关"),
+                    Map.entry("skill_set", "配置智能体能力"),
+                    Map.entry("skill_update", "修改智能体能力"),
+                    Map.entry("skill_delete", "删除智能体能力"))),
+            // B4（8x-3 P1）：WorkflowController + ExecutionController
+            Map.entry("workflow", Map.ofEntries(
+                    Map.entry("workflow_create", "新建工作流"),
+                    Map.entry("workflow_update", "修改工作流"),
+                    Map.entry("workflow_delete", "删除工作流"),
+                    Map.entry("workflow_duplicate", "复制工作流"),
+                    Map.entry("workflow_import", "导入工作流"),
+                    Map.entry("kb_binding_set", "设置知识库绑定"),
+                    Map.entry("rag_enabled_set", "设置记忆模式开关"),
+                    Map.entry("execution_retry", "重试执行"),
+                    Map.entry("execution_resume", "恢复执行"),
+                    Map.entry("execution_approve", "审批通过"),
+                    Map.entry("execution_reject", "审批驳回"),
+                    Map.entry("execution_input_submit", "提交执行输入"))),
             Map.entry("kb", Map.ofEntries(
                     Map.entry("kb_delete", "删除知识库"),
                     Map.entry("document_delete", "删除文档"),
@@ -123,7 +157,9 @@ public final class AuditLabelDictionary {
                     // B2（8x-2）：系统设置存量码补翻
                     Map.entry("mail_channel_test", "测试邮件通道"),
                     Map.entry("update_auth_channels", "修改登录通道"),
-                    Map.entry("update_llm_model_defaults", "修改模型默认配置"))),
+                    Map.entry("update_llm_model_defaults", "修改模型默认配置"),
+                    // B4（8x-3 P1）
+                    Map.entry("web_search_test", "测试联网搜索"))),
             Map.entry("billing", Map.ofEntries(
                     Map.entry("admin_recharge", "管理员充值"),
                     Map.entry("pricing_create", "新建计价规则"),
@@ -190,7 +226,16 @@ public final class AuditLabelDictionary {
                     Map.entry("reverse_localize", "视频反推本地化"))),
             Map.entry("llm", Map.ofEntries(
                     Map.entry("provider_export", "导出供应商配置"),
-                    Map.entry("provider_import", "导入供应商配置"))),
+                    Map.entry("provider_import", "导入供应商配置"),
+                    // B4（8x-3 P1）：LlmController + UserLlmController
+                    Map.entry("provider_create", "新建供应商"),
+                    Map.entry("provider_update", "修改供应商"),
+                    Map.entry("provider_delete", "删除供应商"),
+                    Map.entry("provider_test", "测试供应商连通"),
+                    Map.entry("provider_reload", "重载供应商配置"),
+                    Map.entry("user_provider_save", "保存用户级密钥"),
+                    Map.entry("user_provider_delete", "删除用户级密钥"),
+                    Map.entry("user_provider_test", "测试用户级密钥"))),
             Map.entry("chat", Map.ofEntries(
                     Map.entry("send_message", "发送消息"),
                     Map.entry("chat_completed", "对话完成"),

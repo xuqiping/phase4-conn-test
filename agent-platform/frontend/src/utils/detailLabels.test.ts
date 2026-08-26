@@ -7,15 +7,15 @@
 import { describe, expect, it } from 'vitest'
 import { AUDIT_MODULE_CN, DETAIL_KEY_CN, DETAIL_VALUE_CN } from './detailLabels'
 
-/** 与后端 AuditLabelDictionaryCompletenessTest.KNOWN_CODES 模块集同源（18 模块）。 */
+/** 与后端 AuditLabelDictionaryCompletenessTest.KNOWN_CODES 模块集同源（B4 后 19 模块）。 */
 const KNOWN_MODULES = [
   'auth', 'user', 'role', 'agent', 'kb', 'system', 'billing', 'asset',
   'memory', 'media', 'llm', 'chat', 'canvas', 'file',
-  'security', 'feedback', 'project-group', 'audit'
+  'security', 'feedback', 'project-group', 'audit', 'workflow'
 ]
 
 describe('8x-2 B3 审计字典对齐', () => {
-  it('AUDIT_MODULE_CN 覆盖全部 18 个后端模块且无幽灵码', () => {
+  it('AUDIT_MODULE_CN 覆盖全部 19 个后端模块且无幽灵码', () => {
     expect(Object.keys(AUDIT_MODULE_CN).sort()).toEqual([...KNOWN_MODULES].sort())
   })
 

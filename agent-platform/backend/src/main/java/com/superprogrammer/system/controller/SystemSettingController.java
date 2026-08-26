@@ -265,6 +265,7 @@ public class SystemSettingController {
     /** 测试连通：调 active provider 搜 "test"，返回结果数 + 实际命中 provider（验证降级链）。 */
     @PostMapping("/web-search/test")
     @RequirePermission("role:manage")
+    @AuditLog(module = "system", action = "web_search_test", targetType = "system_setting")
     public ResponseEntity<R<java.util.Map<String, Object>>> testWebSearch() {
         java.util.List<com.superprogrammer.search.dto.SearchResult> results = webSearchService.search("test");
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();

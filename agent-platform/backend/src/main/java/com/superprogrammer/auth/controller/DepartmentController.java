@@ -4,6 +4,7 @@ import com.superprogrammer.auth.dto.DepartmentRequest;
 import com.superprogrammer.auth.dto.DepartmentVO;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.auth.service.DepartmentService;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class DepartmentController {
 
     @PostMapping
     @RequirePermission("role:manage")
+    @AuditLog(module = "user", action = "dept_create", targetType = "department")
     public ResponseEntity<R<DepartmentVO>> create(@Valid @RequestBody DepartmentRequest request) {
         return ResponseEntity.ok(R.ok("创建成功",
                 departmentService.create(request, getCurrentUserId())));
@@ -43,6 +45,7 @@ public class DepartmentController {
 
     @PutMapping("/{id}")
     @RequirePermission("role:manage")
+    @AuditLog(module = "user", action = "dept_update", targetType = "department")
     public ResponseEntity<R<DepartmentVO>> update(@PathVariable Long id,
                                                   @Valid @RequestBody DepartmentRequest request) {
         return ResponseEntity.ok(R.ok(departmentService.update(id, request)));
@@ -50,6 +53,7 @@ public class DepartmentController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("role:manage")
+    @AuditLog(module = "user", action = "dept_delete", targetType = "department")
     public ResponseEntity<R<Void>> delete(@PathVariable Long id) {
         departmentService.delete(id);
         return ResponseEntity.ok(R.ok("删除成功", null));
@@ -57,6 +61,7 @@ public class DepartmentController {
 
     @PostMapping("/members")
     @RequirePermission("role:manage")
+    @AuditLog(module = "user", action = "dept_member_add", targetType = "department")
     public ResponseEntity<R<Void>> assignMember(@RequestParam Long userId,
                                                 @RequestParam Long departmentId,
                                                 @RequestParam(defaultValue = "false") boolean isPrimary) {
@@ -66,6 +71,7 @@ public class DepartmentController {
 
     @DeleteMapping("/members")
     @RequirePermission("role:manage")
+    @AuditLog(module = "user", action = "dept_member_remove", targetType = "department")
     public ResponseEntity<R<Void>> removeMember(@RequestParam Long userId,
                                                 @RequestParam Long departmentId) {
         departmentService.removeMember(userId, departmentId);

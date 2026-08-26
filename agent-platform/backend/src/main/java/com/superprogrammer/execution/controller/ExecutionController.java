@@ -4,6 +4,7 @@ package com.superprogrammer.execution.controller;
 import com.superprogrammer.auth.security.RequirePermission;
 import com.superprogrammer.auth.entity.User;
 import com.superprogrammer.auth.mapper.UserMapper;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.execution.entity.ExecutionLog;
 import com.superprogrammer.execution.service.ExecutionLogService;
@@ -87,6 +88,7 @@ public class ExecutionController {
 
     @PostMapping("/{id}/retry")
     @RequirePermission("execution:run")
+    @AuditLog(module = "workflow", action = "execution_retry", targetType = "execution")
     public ResponseEntity<R<List<ExecutionEvent>>> retryExecution(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         List<ExecutionEvent> events = runtimeExecutionService.retryWorkflowExecution(id, userId)
@@ -97,6 +99,7 @@ public class ExecutionController {
 
     @PostMapping("/resume")
     @RequirePermission("execution:run")
+    @AuditLog(module = "workflow", action = "execution_resume", targetType = "execution")
     public ResponseEntity<R<List<ExecutionEvent>>> resumeExecution(@RequestParam String checkpointRef) {
         Long userId = getCurrentUserId();
         List<ExecutionEvent> events = runtimeExecutionService.resumeWorkflowFromCheckpoint(checkpointRef, userId)
@@ -107,6 +110,7 @@ public class ExecutionController {
 
     @PostMapping("/{id}/approve")
     @RequirePermission("execution:run")
+    @AuditLog(module = "workflow", action = "execution_approve", targetType = "execution")
     public ResponseEntity<R<List<ExecutionEvent>>> approveExecution(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         List<ExecutionEvent> events = runtimeExecutionService.approveWorkflowExecution(id, userId)
@@ -120,6 +124,7 @@ public class ExecutionController {
      */
     @PostMapping("/{id}/input")
     @RequirePermission("execution:run")
+    @AuditLog(module = "workflow", action = "execution_input_submit", targetType = "execution")
     public ResponseEntity<R<List<ExecutionEvent>>> submitInput(
             @PathVariable Long id,
             @RequestBody java.util.Map<String, Object> body) {
@@ -136,6 +141,7 @@ public class ExecutionController {
 
     @PostMapping("/{id}/reject")
     @RequirePermission("execution:run")
+    @AuditLog(module = "workflow", action = "execution_reject", targetType = "execution")
     public ResponseEntity<R<Void>> rejectExecution(
             @PathVariable Long id,
             @RequestParam(defaultValue = "rejected") String reason) {

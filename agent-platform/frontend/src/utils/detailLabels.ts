@@ -127,7 +127,7 @@ export const AUDIT_MODULE_CN: Record<string, string> = {
   billing: '计费积分', llm: '模型供应', media: '媒体生成', kb: '知识库',
   agent: '智能体', asset: '资产库', canvas: '无限画布',
   chat: '智能对话', memory: '记忆库', system: '系统设置', file: '文件',
-  feedback: '公告建议台', 'project-group': '项目组', audit: '审计链'
+  feedback: '公告建议台', 'project-group': '项目组', audit: '审计链', workflow: '工作流'
 }
 
 /** 13x-1：action 单词 → 中文（含全部会触发特权变更的敏感动作）。 */

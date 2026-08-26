@@ -80,6 +80,7 @@ public class AgentController {
 
     @PutMapping("/agents/{id}/permissions")
     @RequirePermission("agent:update")
+    @AuditLog(module = "agent", action = "permission_set", targetType = "agent")
     public ResponseEntity<R<Void>> saveAgentPermissions(
             @PathVariable Long id,
             @RequestBody List<com.superprogrammer.agent.dto.AgentPermissionSaveRequest> body) {
@@ -99,6 +100,7 @@ public class AgentController {
 
     @PutMapping("/agents/{id}/kb-bindings")
     @RequirePermission("agent:update")
+    @AuditLog(module = "agent", action = "kb_binding_set", targetType = "agent")
     public ResponseEntity<R<Void>> saveAgentKbBindings(
             @PathVariable Long id,
             @RequestBody List<Long> kbIds) {
@@ -110,6 +112,7 @@ public class AgentController {
     /** Agent 级记忆模式开关（V26，写 Agent.config ragEnabled）。body={"enabled":true/false/null}。 */
     @PutMapping("/agents/{id}/rag-enabled")
     @RequirePermission("agent:update")
+    @AuditLog(module = "agent", action = "rag_enabled_set", targetType = "agent")
     public ResponseEntity<R<Void>> setAgentRagEnabled(
             @PathVariable Long id,
             @RequestBody Map<String, Boolean> body) {
@@ -121,6 +124,7 @@ public class AgentController {
 
     @PostMapping("/agents/{id}/copy")
     @RequirePermission("agent:read")
+    @AuditLog(module = "agent", action = "agent_copy", targetType = "agent")
     public ResponseEntity<R<AgentDetailVO>> copyAgent(
             @PathVariable Long id,
             @RequestBody(required = false) com.superprogrammer.agent.dto.AgentCopyRequest body) {
@@ -131,6 +135,7 @@ public class AgentController {
 
     @PostMapping("/agents/{id}/skills")
     @RequirePermission("skill:manage")
+    @AuditLog(module = "agent", action = "skill_set", targetType = "skill")
     public ResponseEntity<R<SkillDetailVO>> createSkill(
             @PathVariable Long id,
             @RequestBody SkillSaveRequest body) {
@@ -140,6 +145,7 @@ public class AgentController {
 
     @PutMapping("/skills/{id}")
     @RequirePermission("skill:manage")
+    @AuditLog(module = "agent", action = "skill_update", targetType = "skill")
     public ResponseEntity<R<SkillDetailVO>> updateSkill(
             @PathVariable Long id,
             @RequestBody SkillSaveRequest body) {
@@ -149,6 +155,7 @@ public class AgentController {
 
     @DeleteMapping("/skills/{id}")
     @RequirePermission("skill:manage")
+    @AuditLog(module = "agent", action = "skill_delete", targetType = "skill")
     public ResponseEntity<R<Void>> deleteSkill(@PathVariable Long id) {
         skillService.deleteSkill(id);
         return ResponseEntity.ok(R.ok("能力删除成功", null));
@@ -156,6 +163,7 @@ public class AgentController {
 
     @PostMapping("/agents")
     @RequirePermission("agent:create")
+    @AuditLog(module = "agent", action = "agent_create", targetType = "agent")
     public ResponseEntity<R<AgentVO>> createAgent(@RequestBody AgentCreateRequest body) {
         Long operatorId = getOperatorId();
         Agent agent = new Agent();
@@ -172,6 +180,7 @@ public class AgentController {
 
     @PutMapping("/agents/{id}")
     @RequirePermission("agent:update")
+    @AuditLog(module = "agent", action = "agent_update", targetType = "agent")
     public ResponseEntity<R<AgentVO>> updateAgent(@PathVariable Long id, @RequestBody AgentCreateRequest body) {
         Long operatorId = getOperatorId();
         Agent agent = new Agent();
@@ -189,6 +198,7 @@ public class AgentController {
 
     @DeleteMapping("/agents/{id}")
     @RequirePermission("agent:delete")
+    @AuditLog(module = "agent", action = "agent_delete", targetType = "agent")
     public ResponseEntity<R<Void>> deleteAgent(@PathVariable Long id) {
         agentService.deleteAgent(id);
         return ResponseEntity.ok(R.ok(null));
@@ -205,6 +215,7 @@ public class AgentController {
 
     @PostMapping("/agents/sync")
     @RequirePermission("agent:create")
+    @AuditLog(module = "agent", action = "agent_sync", targetType = "agent")
     public ResponseEntity<R<Integer>> syncFromMarkdown() {
         Long operatorId = getOperatorId();
         int count = markdownSyncService.syncAll(operatorId);

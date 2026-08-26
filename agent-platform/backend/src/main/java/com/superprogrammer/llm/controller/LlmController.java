@@ -46,6 +46,7 @@ public class LlmController {
 
     @PostMapping("/providers")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_create", targetType = "llm_provider")
     public ResponseEntity<R<LlmProviderVO>> createProvider(
             @Valid @RequestBody LlmProviderCreateRequest request) {
         LlmProviderEntity entity = toEntity(request);
@@ -58,6 +59,7 @@ public class LlmController {
 
     @PutMapping("/providers/{id}")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_update", targetType = "llm_provider")
     public ResponseEntity<R<LlmProviderVO>> updateProvider(
             @PathVariable Long id,
             @Valid @RequestBody LlmProviderCreateRequest request) {
@@ -70,6 +72,7 @@ public class LlmController {
 
     @DeleteMapping("/providers/{id}")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_delete", targetType = "llm_provider")
     public ResponseEntity<R<Void>> deleteProvider(@PathVariable Long id) {
         providerService.delete(id);
         return ResponseEntity.ok(R.ok());
@@ -77,6 +80,7 @@ public class LlmController {
 
     @PostMapping("/providers/{id}/test")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_test", targetType = "llm_provider")
     public ResponseEntity<R<TestConnectionResult>> testConnection(@PathVariable Long id) {
         TestConnectionResult result = providerService.testConnection(id);
         return ResponseEntity.ok(R.ok(result));
@@ -84,6 +88,7 @@ public class LlmController {
 
     @PostMapping("/providers/{id}/test-embed")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_test", targetType = "llm_provider")
     public ResponseEntity<R<TestConnectionResult>> testEmbedding(@PathVariable Long id) {
         TestConnectionResult result = providerService.testEmbedding(id);
         return ResponseEntity.ok(R.ok(result));
@@ -91,12 +96,14 @@ public class LlmController {
 
     @PostMapping("/providers/{id}/test-rerank")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_test", targetType = "llm_provider")
     public ResponseEntity<R<TestConnectionResult>> testRerank(@PathVariable Long id) {
         return ResponseEntity.ok(R.ok(providerService.testRerank(id)));
     }
 
     @PostMapping("/providers/reload")
     @RequirePermission("llm:config")
+    @AuditLog(module = "llm", action = "provider_reload", targetType = "llm_provider")
     public ResponseEntity<R<Void>> reloadProviders() {
         llmConfig.reload();
         return ResponseEntity.ok(R.ok());

@@ -30,9 +30,25 @@ class AuditLabelDictionaryCompletenessTest {
                     "password_forgot", "password_reset",
                     "mfa_bind", "mfa_bind_confirm", "mfa_unbind",
                     "credential_bind", "credential_unbind", "password_change"}),
-            Map.entry("user", new String[]{"update_status", "assign_roles", "update_remark"}),
+            Map.entry("user", new String[]{
+                    "update_status", "assign_roles", "update_remark",
+                    // B4（8x-3 P1）：DepartmentController
+                    "dept_create", "dept_update", "dept_delete",
+                    "dept_member_add", "dept_member_remove"}),
             Map.entry("role", new String[]{"update_permissions"}),
-            Map.entry("agent", new String[]{"publish"}),
+            Map.entry("agent", new String[]{
+                    "publish",
+                    // B4（8x-3 P1）：AgentController
+                    "agent_create", "agent_update", "agent_delete", "agent_copy", "agent_sync",
+                    "permission_set", "kb_binding_set", "rag_enabled_set",
+                    "skill_set", "skill_update", "skill_delete"}),
+            // B4（8x-3 P1）：WorkflowController + ExecutionController（新模块 workflow）
+            Map.entry("workflow", new String[]{
+                    "workflow_create", "workflow_update", "workflow_delete",
+                    "workflow_duplicate", "workflow_import",
+                    "kb_binding_set", "rag_enabled_set",
+                    "execution_retry", "execution_resume", "execution_approve",
+                    "execution_reject", "execution_input_submit"}),
             Map.entry("kb", new String[]{
                     "kb_delete", "kb_update", "kb_grant", "kb_revoke",
                     "document_delete", "document_upload", "document_metadata_update",
@@ -48,7 +64,7 @@ class AuditLabelDictionaryCompletenessTest {
                     "update_auth_settings", "update_auth_channels", "update_billing_settings",
                     "update_llm_model_defaults", "update_rag_memory_settings",
                     "update_rag_recall_settings", "update_web_search_settings",
-                    "upload_file", "mail_channel_test"}),
+                    "upload_file", "mail_channel_test", "web_search_test"}),
             Map.entry("billing", new String[]{
                     "admin_recharge", "pricing_create", "pricing_update", "pricing_delete",
                     "pricing_export", "pricing_import", "pricing_template_download",
@@ -74,7 +90,12 @@ class AuditLabelDictionaryCompletenessTest {
                     "video_edit_success", "video_edit_fail",
                     "download_video", "download_image", "download_edit_video",
                     "reverse_analyze", "reverse_localize"}),
-            Map.entry("llm", new String[]{"provider_export", "provider_import"}),
+            Map.entry("llm", new String[]{
+                    "provider_export", "provider_import",
+                    // B4（8x-3 P1）
+                    "provider_create", "provider_update", "provider_delete",
+                    "provider_test", "provider_reload",
+                    "user_provider_save", "user_provider_delete", "user_provider_test"}),
             Map.entry("chat", new String[]{"send_message", "chat_completed", "upload_attachment"}),
             Map.entry("canvas", new String[]{"canvas_upload"}),
             Map.entry("security", new String[]{
@@ -116,9 +137,9 @@ class AuditLabelDictionaryCompletenessTest {
                 total++;
             }
         }
-        // 防呆：清单意外清空（B2 基线 17 模块 / 168 码；B4-B6 只增不减）
-        assertTrue(total >= 168, "KNOWN_CODES 总数异常: " + total);
-        assertTrue(KNOWN_CODES.size() >= 17, "模块数异常: " + KNOWN_CODES.size());
+        // 防呆：清单意外清空（B4 后 18 模块 / 205 码；B5-B6 只增不减）
+        assertTrue(total >= 205, "KNOWN_CODES 总数异常: " + total);
+        assertTrue(KNOWN_CODES.size() >= 18, "模块数异常: " + KNOWN_CODES.size());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.superprogrammer.workflow.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.runtime.dto.ExecutionEvent;
 import com.superprogrammer.runtime.service.RuntimeExecutionService;
@@ -51,6 +52,7 @@ public class WorkflowController {
 
     @PostMapping
     @RequirePermission("workflow:create")
+    @AuditLog(module = "workflow", action = "workflow_create", targetType = "workflow")
     public ResponseEntity<R<WorkflowVO>> createWorkflow(@Valid @RequestBody WorkflowCreateRequest request) {
         Long userId = getCurrentUserId();
         WorkflowVO workflow = workflowService.createWorkflow(request, userId);
@@ -66,6 +68,7 @@ public class WorkflowController {
 
     @PutMapping("/{id}")
     @RequirePermission("workflow:update")
+    @AuditLog(module = "workflow", action = "workflow_update", targetType = "workflow")
     public ResponseEntity<R<WorkflowVO>> updateWorkflow(
             @PathVariable Long id,
             @Valid @RequestBody WorkflowCreateRequest request) {
@@ -76,6 +79,7 @@ public class WorkflowController {
 
     @DeleteMapping("/{id}")
     @RequirePermission("workflow:delete")
+    @AuditLog(module = "workflow", action = "workflow_delete", targetType = "workflow")
     public ResponseEntity<R<Void>> deleteWorkflow(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         workflowService.deleteWorkflow(id, userId);
@@ -84,6 +88,7 @@ public class WorkflowController {
 
     @PostMapping("/{id}/duplicate")
     @RequirePermission("workflow:create")
+    @AuditLog(module = "workflow", action = "workflow_duplicate", targetType = "workflow")
     public ResponseEntity<R<WorkflowVO>> duplicateWorkflow(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         WorkflowVO workflow = workflowService.duplicateWorkflow(id, userId);
@@ -136,6 +141,7 @@ public class WorkflowController {
 
     @PostMapping("/import")
     @RequirePermission("workflow:create")
+    @AuditLog(module = "workflow", action = "workflow_import", targetType = "workflow")
     public ResponseEntity<R<WorkflowVO>> importWorkflow(@Valid @RequestBody WorkflowCreateRequest request) {
         Long userId = getCurrentUserId();
         WorkflowVO workflow = workflowService.createWorkflow(request, userId);
@@ -152,6 +158,7 @@ public class WorkflowController {
 
     @PutMapping("/{id}/kb-bindings")
     @RequirePermission("workflow:update")
+    @AuditLog(module = "workflow", action = "kb_binding_set", targetType = "workflow")
     public ResponseEntity<R<Void>> saveWorkflowKbBindings(
             @PathVariable Long id,
             @RequestBody List<Long> kbIds) {
@@ -162,6 +169,7 @@ public class WorkflowController {
     /** Workflow 级记忆模式开关（V26，写 workflow.rag_enabled）。body={"enabled":true/false/null}。 */
     @PutMapping("/{id}/rag-enabled")
     @RequirePermission("workflow:update")
+    @AuditLog(module = "workflow", action = "rag_enabled_set", targetType = "workflow")
     public ResponseEntity<R<Void>> setWorkflowRagEnabled(
             @PathVariable Long id,
             @RequestBody Map<String, Boolean> body) {

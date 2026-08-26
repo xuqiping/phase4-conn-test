@@ -1,6 +1,7 @@
 package com.superprogrammer.llm.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superprogrammer.common.audit.AuditLog;
 import com.superprogrammer.common.result.R;
 import com.superprogrammer.llm.dto.AvailableModelVO;
 import com.superprogrammer.llm.dto.TestConnectionResult;
@@ -38,6 +39,7 @@ public class UserLlmController {
     }
 
     @PostMapping("/providers")
+    @AuditLog(module = "llm", action = "user_provider_save", targetType = "user_provider")
     public ResponseEntity<R<UserLlmProviderVO>> createProvider(
             @Valid @RequestBody UserLlmProviderRequest request) {
         Long userId = getCurrentUserId();
@@ -53,6 +55,7 @@ public class UserLlmController {
     }
 
     @DeleteMapping("/providers/{id}")
+    @AuditLog(module = "llm", action = "user_provider_delete", targetType = "user_provider")
     public ResponseEntity<R<Void>> deleteProvider(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         userLlmProviderService.delete(userId, id);
@@ -60,6 +63,7 @@ public class UserLlmController {
     }
 
     @PostMapping("/providers/{id}/test")
+    @AuditLog(module = "llm", action = "user_provider_test", targetType = "user_provider")
     public ResponseEntity<R<TestConnectionResult>> testConnection(@PathVariable Long id) {
         Long userId = getCurrentUserId();
         UserLlmProviderEntity userEntity = userLlmProviderService.findByUserAndProviderName(
