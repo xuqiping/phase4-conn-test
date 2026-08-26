@@ -42,4 +42,9 @@ public class PricingRuleExportItem {
     private BigDecimal pricePerSecond;
     /** 图片：每张价（¥） */
     private BigDecimal pricePerImage;
+    /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义） */
+    private BigDecimal offPeakInputPerMillion;
+    private BigDecimal offPeakOutputPerMillion;
+    private BigDecimal offPeakCachedPerMillion;
+    private BigDecimal priceCachedPerMillion;
 }

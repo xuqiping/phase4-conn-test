@@ -202,6 +202,10 @@ public class PricingConfigService {
         req.setVideoBillingMode(item.getVideoBillingMode());
         req.setPricePerSecond(item.getPricePerSecond());
         req.setPricePerImage(item.getPricePerImage());
+        req.setOffPeakInputPerMillion(item.getOffPeakInputPerMillion());
+        req.setOffPeakOutputPerMillion(item.getOffPeakOutputPerMillion());
+        req.setOffPeakCachedPerMillion(item.getOffPeakCachedPerMillion());
+        req.setPriceCachedPerMillion(item.getPriceCachedPerMillion());
         return req;
     }
 
@@ -217,6 +221,10 @@ public class PricingConfigService {
         item.setVideoBillingMode(e.getVideoBillingMode());
         item.setPricePerSecond(e.getPricePerSecond());
         item.setPricePerImage(e.getPricePerImage());
+        item.setOffPeakInputPerMillion(e.getOffPeakInputPerMillion());
+        item.setOffPeakOutputPerMillion(e.getOffPeakOutputPerMillion());
+        item.setOffPeakCachedPerMillion(e.getOffPeakCachedPerMillion());
+        item.setPriceCachedPerMillion(e.getPriceCachedPerMillion());
         return item;
     }
 
@@ -432,6 +440,19 @@ public class PricingConfigService {
         nonNegative(req.getPriceOutputPerMillion(), "priceOutputPerMillion");
         nonNegative(req.getPricePerSecond(), "pricePerSecond");
         nonNegative(req.getPricePerImage(), "pricePerImage");
+        // D（V160）：闲时/缓存四新列——仅文本类（CHAT/EMBED/RERANK）有效，值≥0，全可空（NULL=回落语义）
+        nonNegative(req.getOffPeakInputPerMillion(), "offPeakInputPerMillion");
+        nonNegative(req.getOffPeakOutputPerMillion(), "offPeakOutputPerMillion");
+        nonNegative(req.getOffPeakCachedPerMillion(), "offPeakCachedPerMillion");
+        nonNegative(req.getPriceCachedPerMillion(), "priceCachedPerMillion");
+        boolean textKind = PricingRuleEntity.KIND_CHAT.equals(req.getKind())
+                || PricingRuleEntity.KIND_EMBED.equals(req.getKind())
+                || PricingRuleEntity.KIND_RERANK.equals(req.getKind());
+        if (!textKind && (req.getOffPeakInputPerMillion() != null || req.getOffPeakOutputPerMillion() != null
+                || req.getOffPeakCachedPerMillion() != null || req.getPriceCachedPerMillion() != null)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "闲时/缓存价仅 CHAT/EMBED/RERANK 有效（IMAGE/VIDEO 按张/秒计价无此维度）");
+        }
         // 7x-2（V153）：estPerResolution 键/值校验（键归一小写；general+四档分辨率；值≥0）
         java.util.Map<String, BigDecimal> canonicalEst = canonicalizeEst(req.getEstPerResolution());
         // 7x-1（V152）：resolution 归一化（trim+小写，空串→null）
@@ -556,6 +577,14 @@ public class PricingConfigService {
         e.setHasReference(effectiveHasReference(req));
         // D6（V160）：计价行不再落 resolution（历史分辨率行已合并；estPerResolution 仅 VIDEO TOKEN 保留）
         e.setResolution(null);
+        // D（V160）：闲时/缓存四新列透传（非文本类 validatePricingRule 已拒绝，此处双保险清 null）
+        boolean textKind = PricingRuleEntity.KIND_CHAT.equals(req.getKind())
+                || PricingRuleEntity.KIND_EMBED.equals(req.getKind())
+                || PricingRuleEntity.KIND_RERANK.equals(req.getKind());
+        e.setOffPeakInputPerMillion(textKind ? req.getOffPeakInputPerMillion() : null);
+        e.setOffPeakOutputPerMillion(textKind ? req.getOffPeakOutputPerMillion() : null);
+        e.setOffPeakCachedPerMillion(textKind ? req.getOffPeakCachedPerMillion() : null);
+        e.setPriceCachedPerMillion(textKind ? req.getPriceCachedPerMillion() : null);
         java.util.Map<String, BigDecimal> est = canonicalizeEst(req.getEstPerResolution());
         e.setEstPerResolution(PricingRuleEntity.KIND_VIDEO.equals(req.getKind())
                 && PricingRuleEntity.VIDEO_MODE_TOKEN.equals(req.getVideoBillingMode())
@@ -574,6 +603,10 @@ public class PricingConfigService {
                 .hasReference(e.getHasReference() != null && e.getHasReference())
                 .resolution(e.getResolution())
                 .estPerResolution(readEstJson(e.getEstPerResolution()))
+                .offPeakInputPerMillion(e.getOffPeakInputPerMillion())
+                .offPeakOutputPerMillion(e.getOffPeakOutputPerMillion())
+                .offPeakCachedPerMillion(e.getOffPeakCachedPerMillion())
+                .priceCachedPerMillion(e.getPriceCachedPerMillion())
                 .effectiveFrom(e.getEffectiveFrom())
                 .build();
     }

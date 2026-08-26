@@ -661,6 +661,42 @@ class PricingConfigServiceTest {
         org.assertj.core.api.Assertions.assertThat(captor.getValue().getResolution()).isNull();
     }
 
+    @Test
+    void createPricingRule_imageWithOffPeakPrice_throws() {
+        // D（V160）：闲时/缓存四新列仅文本类有效，IMAGE 带 → 400
+        PricingRuleRequest req = pricingReq(3L, "image-model", PricingRuleEntity.KIND_IMAGE);
+        req.setPricePerImage(new BigDecimal("0.05"));
+        req.setOffPeakInputPerMillion(new BigDecimal("1"));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅 CHAT/EMBED/RERANK");
+    }
+
+    @Test
+    void createPricingRule_chatOffPeakAndCached_passthrough() {
+        // D（V160）：文本类四新列透传落库（NULL 语义=回落，由计费侧处理）
+        when(llmProviderMapper.selectByIdForUpdate(1L))
+                .thenReturn(provider(1L, "聊天", "CHAT", "chat-model"));
+        PricingRuleRequest req = pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT);
+        req.setPriceOutputPerMillion(new BigDecimal("2"));
+        req.setOffPeakInputPerMillion(new BigDecimal("0.5"));
+        req.setOffPeakOutputPerMillion(new BigDecimal("1"));
+        req.setPriceCachedPerMillion(new BigDecimal("0.1"));
+
+        service.createPricingRule(req);
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getOffPeakInputPerMillion())
+                .isEqualByComparingTo("0.5");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getOffPeakOutputPerMillion())
+                .isEqualByComparingTo("1");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getPriceCachedPerMillion())
+                .isEqualByComparingTo("0.1");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getOffPeakCachedPerMillion()).isNull();
+    }
+
     // helpers
 
     private PointsRatioTierEntity tier(BigDecimal min, BigDecimal max, String ratio) {

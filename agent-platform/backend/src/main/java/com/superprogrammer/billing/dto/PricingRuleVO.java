@@ -28,5 +28,10 @@ public class PricingRuleVO {
     private String resolution;
     /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null。 */
     private java.util.Map<String, BigDecimal> estPerResolution;
+    /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义）。 */
+    private BigDecimal offPeakInputPerMillion;
+    private BigDecimal offPeakOutputPerMillion;
+    private BigDecimal offPeakCachedPerMillion;
+    private BigDecimal priceCachedPerMillion;
     private OffsetDateTime effectiveFrom;
 }

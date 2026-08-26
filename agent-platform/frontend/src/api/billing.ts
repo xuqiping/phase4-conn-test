@@ -28,7 +28,7 @@ export interface AvailablePricingModelVO {
   hint?: string
   /** 7x-1（V152）：VIDEO 候选的参考视频维度（true=本候选配「有参考」价行）；非 VIDEO 恒 false */
   hasReference?: boolean
-  /** 7x-1（V152）：VIDEO 候选的分辨率槽位（null=通用行；480p/720p/1080p/4k）；非 VIDEO 恒 null */
+  /** 兼容字段：D6（V160）后端候选已去分辨率档，恒不下发；保留仅为旧类型引用不断链 */
   resolution?: string | null
 }
 
@@ -49,6 +49,11 @@ export interface PricingRuleVO {
   resolution?: string | null
   /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null */
   estPerResolution?: Record<string, number> | null
+  /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义） */
+  offPeakInputPerMillion?: number | null
+  offPeakOutputPerMillion?: number | null
+  offPeakCachedPerMillion?: number | null
+  priceCachedPerMillion?: number | null
   effectiveFrom: string
 }
 
@@ -68,6 +73,11 @@ export interface PricingRuleRequest {
   resolution?: string | null
   /** 7x-2（V153）：提交期预估秒价（一行多分辨率参数），仅 VIDEO TOKEN 有效（余额预检用，不参与真实扣费）；general=通用兜底 */
   estPerResolution?: Record<string, number | null> | null
+  /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 有效，全可空（留空=同忙时/同输入价） */
+  offPeakInputPerMillion?: number | null
+  offPeakOutputPerMillion?: number | null
+  offPeakCachedPerMillion?: number | null
+  priceCachedPerMillion?: number | null
   effectiveFrom?: string | null
 }
 
@@ -98,6 +108,11 @@ export interface PricingRuleExportItem {
   videoBillingMode?: VideoBillingMode | null
   pricePerSecond?: number | null
   pricePerImage?: number | null
+  /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 有意义 */
+  offPeakInputPerMillion?: number | null
+  offPeakOutputPerMillion?: number | null
+  offPeakCachedPerMillion?: number | null
+  priceCachedPerMillion?: number | null
 }
 
 /** 7x-2：价表批量导入结果 */

@@ -60,5 +60,25 @@ public class PricingRuleRequest {
      */
     private java.util.Map<String, BigDecimal> estPerResolution;
 
+    /**
+     * D（V160）闲时/缓存四新列，仅 CHAT/EMBED/RERANK 有效（IMAGE/VIDEO 必须为 null）。
+     * 全部可空：NULL=回落语义（闲时列空=同忙时价；缓存价空=同输入价）。
+     */
+    @DecimalMin(value = "0", message = "offPeakInputPerMillion 须≥0")
+    @DecimalMax(value = "100000000", message = "offPeakInputPerMillion 超出上限")
+    private BigDecimal offPeakInputPerMillion;
+
+    @DecimalMin(value = "0", message = "offPeakOutputPerMillion 须≥0")
+    @DecimalMax(value = "100000000", message = "offPeakOutputPerMillion 超出上限")
+    private BigDecimal offPeakOutputPerMillion;
+
+    @DecimalMin(value = "0", message = "offPeakCachedPerMillion 须≥0")
+    @DecimalMax(value = "100000000", message = "offPeakCachedPerMillion 超出上限")
+    private BigDecimal offPeakCachedPerMillion;
+
+    @DecimalMin(value = "0", message = "priceCachedPerMillion 须≥0")
+    @DecimalMax(value = "100000000", message = "priceCachedPerMillion 超出上限")
+    private BigDecimal priceCachedPerMillion;
+
     private OffsetDateTime effectiveFrom;
 }
