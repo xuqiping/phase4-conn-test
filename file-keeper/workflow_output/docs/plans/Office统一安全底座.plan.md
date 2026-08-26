@@ -8,9 +8,9 @@
 
 ---
 
-### Chunk 1：领域类型与失败用例
+### Chunk 1：领域类型与失败用例（已完成）
 
-- [ ] **目标：先用测试锁定状态和安全不变量。**
+- [x] **目标：先用测试锁定状态和安全不变量。**
   - 动作：定义任务/输入/输出/问题/引擎/状态类型；编写状态跳转、源只读、单输出全有或全无、多输出部分成功的失败测试。
   - 涉及文件：`src/types/office.ts`、`src-tauri/src/office/types.rs`、`src-tauri/src/office/state_machine.rs`、`src-tauri/src/office/tests/state_machine_tests.rs`、`src-tauri/src/office/mod.rs`。
   - 依赖：技术尖峰。

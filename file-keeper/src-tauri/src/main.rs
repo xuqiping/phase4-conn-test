@@ -3,6 +3,7 @@
 
 mod clipboard;
 mod commands;
+mod office;
 mod platform;
 mod types;
 mod utils;

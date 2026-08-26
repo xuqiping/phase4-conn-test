@@ -31,8 +31,8 @@
   - 伪代码：`for sample -> scan -> process copy -> reopen -> compare invariant set -> classify SAFE/HIGH_FIDELITY/BLOCKED`。
   - 验证：`.xlsm/.pptm` 宏部件可保留；复杂文件未达到标准时自动路由或阻止；源哈希不变。
 
-- [ ] **检查点 0：用户确认支持矩阵后，才进入生产代码。**
-  - 当前状态：等待补齐第二代 Office 与真实 `.xlsm/.pptm` 宏样本复验，并等待用户确认；不得进入 Chunk 1。
+- [x] **检查点 0：用户确认支持矩阵后，才进入生产代码。**
+  - 当前状态：用户于 2026-08-26 批准限缩支持矩阵，可进入统一安全底座 Chunk 1；未验证的旧格式、宏和高保真场景仍为 `BLOCKED`，本次批准不代表这些场景已受支持。
 
 ## 3. 集成 Chunk
 
