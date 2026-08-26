@@ -19,12 +19,13 @@
 
 ### Chunk 2：SQLite 任务库
 
-- [ ] **目标：任务可分页、重启恢复且不存敏感正文。**
+- [x] **目标：任务可分页、重启恢复且不存敏感正文。**
   - 动作：创建 `office_tasks.db` 迁移、Repository、分页查询和 90 天清理；规则/问题使用版本化 JSON。
   - 涉及文件：`src-tauri/src/office/db.rs`、`src-tauri/src/office/repository.rs`、`src-tauri/src/office/migrations.rs`、`src-tauri/src/office/tests/repository_tests.rs`。
   - 依赖：Chunk 1。
   - 伪代码：`transaction(save task + inputs + issues); query summary page; never persist password/body/key`。
   - 验证：10,000 任务分页；中断重开恢复；敏感字符串扫描为零。
+  - 当前状态：实现与编译检查已完成；按用户要求，分页规模、恢复和敏感字段自动化测试统一留到 Phase 4。
 
 ### Chunk 3：路径扫描与风险预检
 

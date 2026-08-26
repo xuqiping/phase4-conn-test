@@ -78,6 +78,7 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - `workflow_output/项目规范约束/新增业务模块规范.md` 与 `新增模块实施指导.md` 中的商业授权接入规则已废弃，待兼容清理阶段重写；新功能不得继续接入 moduleCode、匿名试用或离线 Token。
 - Office Pro 是“批量规模 + AI 积分”权益，不是模块开关；不得复活旧 moduleCode、匿名试用或离线套餐 Token。超额任务每次在线校验，离线降为免费额度。
 - Office 任务状态、输出计数与安全错误码遵守 [`workflow_output/项目规范约束/Office任务状态机约束.md`](workflow_output/项目规范约束/Office任务状态机约束.md)。
+- Office 本地任务库迁移、敏感字段和分页清理遵守 [`workflow_output/项目规范约束/Office任务持久化约束.md`](workflow_output/项目规范约束/Office任务持久化约束.md)。
 - 上层 [`../CLAUDE.md`](../CLAUDE.md) —— 多 Agent 平台通用约定。
 
 ## 参考文档

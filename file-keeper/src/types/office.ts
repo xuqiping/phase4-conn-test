@@ -24,6 +24,8 @@ export type OfficeTaskType =
 
 export type OfficeSourceAccess = 'readOnly'
 
+export type OfficeInputStatus = 'pending' | 'scanned' | 'ready' | 'failed'
+
 export type OfficeOutputStatus = 'planned' | 'validating' | 'published' | 'failed'
 
 export type OfficeIssueScope = 'task' | 'input' | 'output'

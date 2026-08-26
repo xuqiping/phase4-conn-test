@@ -18,6 +18,12 @@ impl OfficeTaskId {
     }
 }
 
+impl Display for OfficeTaskId {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, formatter)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct OfficeRequestId(Uuid);
@@ -27,6 +33,12 @@ impl OfficeRequestId {
         Uuid::parse_str(value)
             .map(Self)
             .map_err(|_| DomainError::new(DomainErrorCode::InvalidRequestId))
+    }
+}
+
+impl Display for OfficeRequestId {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, formatter)
     }
 }
 
@@ -81,6 +93,15 @@ pub enum RequestedSourceAccess {
     ReadWrite,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OfficeInputStatus {
+    Pending,
+    Scanned,
+    Ready,
+    Failed,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OfficeInput {
@@ -122,6 +143,18 @@ impl OfficeInput {
 
     pub const fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    pub fn input_id(&self) -> &str {
+        &self.input_id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
     }
 }
 
