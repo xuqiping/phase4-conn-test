@@ -5,7 +5,7 @@ description: 操作 Windows 本机桌面应用——截图看界面、读元素�
 
 # Computer Use Skill（Windows 本机）
 
-通过 MCP Server `computer-use-skill` 提供的 11 个工具操作本机 GUI。
+通过 MCP Server `computer-use-skill` 提供的 13 个工具操作本机 GUI。
 
 ## 工具速查
 
@@ -13,19 +13,20 @@ description: 操作 Windows 本机桌面应用——截图看界面、读元素�
 |------|------|------|
 | `skyshot` | 截图（PNG base64） | 验证界面状态的标准手段 |
 | `tree` | 读 UIA 元素树 | 返回 index/role/name/bounds/actions；**先 tree 再用 index 定位** |
-| `click` / `double_click` | 单击/双击 | locator={app, by:"index"/"xy", value} |
+| `click` / `double_click` | 单击/双击 | locator={app, by:"index"/"xy", value}；**传 `name` 语义名可命中学习记忆秒操作，成功自动记忆** |
 | `type` | 输入文本 | 中文自动走剪贴板；含 locator 时先聚焦元素 |
 | `key` | 组合键 | xdotool 风格：`ctrl+shift+a` |
 | `scroll` | 滚动 | dir + pages |
 | `drag` | 拖拽 | path=[{x,y}...] ≥2 点 |
 | `move` / `wait` | 移光标 / 等待 | wait ≤10s |
 | `confirm_app` | 白名单放行 | 见下方安全流 |
+| `memory_list` / `memory_forget` | 查看/删除学习记忆锚点 | forget 可清空某 app 全部 |
 
 ## 标准操作循环
 
 1. `skyshot` 或 `tree` 看当前界面
-2. 用 **index 定位**目标元素（name/automationId 也返回在 tree 里，但动作参数用 index）
-3. `click`/`type` 执行（UIA 零激活优先，复杂控件自动降级前台 SendInput——结果里的 `via` 字段会告知）
+2. 用 **index 定位**目标元素（name/automationId 也返回在 tree 里，但动作参数用 index）；视觉定位的坐标点击**带上 `name`**（你给按钮起的语义名，如"实时转写标签"）——第二次起命中记忆直接执行（`via:"memory"`），界面改版自动重学
+3. `click`/`type` 执行。执行优先级（结果 `via` 字段告知）：**记忆命中 → UIA 零激活 → PostMessage 后台（不抢你前台，截图验证无效自动放弃）→ SendInput 前台**
 4. 再 `skyshot` 验证变化；未达预期则重新 `tree`（旧索引 60 秒过期，报 `STALE_TREE` 就重读）
 
 ## 安全规范（强制）

@@ -14,6 +14,9 @@
 | 黑名单 | 014 | safety/blacklist.ts | 终端类应用 + 宿主 Agent 自身永远拒绝（防"AI 自动化 AI"失控） |
 | 审计+脱敏 | 015/016 | safety/audit.ts | 每个动作记 JSONL 日志（10MB×3 轮转）；密码类字段打码，截图绝不入日志 |
 | SKILL.md | 018 | skill/SKILL.md | 教 Agent 怎么用这套工具 + 安全规范（提示注入防御等） |
+| 层2 后台执行 | 100~103（升级v2） | src/driver/win/postmsg.ts | 给窗口"寄信"（PostMessage 投递鼠标/键盘消息），窗口在后台也收到——对老 Win32 软件真实有效；Chromium 系忽略，靠截图验证发现无效后自动退回前台 SendInput |
+| 截图验证 | 102（升级v2） | src/driver/win/verify.ts | 执行前后各拍一张，逐像素比差异（阈值0.2%防光标闪烁误报）——判定层2是否真的生效 |
+| 学习记忆 | 110~113（升级v2） | src/memory/anchors.ts | 给控件办"记忆卡"（语义名+比例坐标+成功方式），操作成功自动记；下次点名直接秒执行；连续2次失效自动作废重学 |
 
 ## 验证锚点
 test/（29 用例：AC-005/006 断的是 MockDriver 路径；AC-001~004 真机断言在 capture.integ，需 CU_INTEG=1）｜scripts/integ_notepad_run.mjs + phase4_smoke.mjs（真机）｜docs/测试方案/证据/（截图，含 phase4/）
