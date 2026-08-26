@@ -472,4 +472,59 @@ class PricingServiceTest {
                 2_000_000, 0, null, null, false, null, 999_999L);
         assertThat(cost).isEqualByComparingTo("1.00");
     }
+
+    /**
+     * D10 硬门槛回归矩阵：老价表（四个新列全 NULL + 闲时配置未启用）六 kind 计费
+     * 与改前逐分一致。期望值即 V159 之前的口径，任何一行变动=老价表回归破坏。
+     */
+    @Test
+    void legacy_pricing_allNewColumnsNull_matrix_sameAsBefore() {
+        // CHAT：1M in×1 + 1M out×2
+        PricingRuleEntity chat = chatRule();
+        when(pricingRuleMapper.findEffectiveWithResolution("CHAT", 1L, "gpt", false, null)).thenReturn(chat);
+        assertThat(pricingService.computeCost("CHAT", 1L, "gpt",
+                1_000_000, 1_000_000, null, null, false, null, null))
+                .isEqualByComparingTo("3.00");
+
+        // EMBED：2M×0.5（output/缓存均忽略）
+        PricingRuleEntity embed = rule("EMBED");
+        embed.setPriceInputPerMillion(new BigDecimal("0.50"));
+        when(pricingRuleMapper.findEffectiveWithResolution("EMBED", null, "e", false, null)).thenReturn(embed);
+        assertThat(pricingService.computeCost("EMBED", null, "e",
+                2_000_000, 999_999, null, null, false, null, 999_999L))
+                .isEqualByComparingTo("1.00");
+
+        // RERANK：2M×0.8
+        PricingRuleEntity rerank = rule("RERANK");
+        rerank.setPriceInputPerMillion(new BigDecimal("0.80"));
+        when(pricingRuleMapper.findEffectiveWithResolution("RERANK", 9L, "r", false, null)).thenReturn(rerank);
+        assertThat(pricingService.computeCost("RERANK", 9L, "r",
+                2_000_000, 0, null, null, false, null, null))
+                .isEqualByComparingTo("1.60");
+
+        // VIDEO TOKEN：1M×3（秒数不看）
+        PricingRuleEntity vt = rule("VIDEO");
+        vt.setPriceInputPerMillion(new BigDecimal("3.00"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null)).thenReturn(vt);
+        assertThat(pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 10, null, false))
+                .isEqualByComparingTo("3.00");
+
+        // VIDEO SECOND：通用行 0.5¥/秒 × 10s（带 resolution 的在途请求也命中通用行）
+        PricingRuleEntity vs = rule("VIDEO");
+        vs.setVideoBillingMode("SECOND");
+        vs.setPricePerSecond(new BigDecimal("0.50"));
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null)).thenReturn(vs);
+        assertThat(pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 10, null, false))
+                .isEqualByComparingTo("5.00");
+
+        // IMAGE：3 张 × 0.1
+        PricingRuleEntity img = rule("IMAGE");
+        img.setPricePerImage(new BigDecimal("0.10"));
+        when(pricingRuleMapper.findEffectiveWithResolution("IMAGE", 2L, "seedream", false, null)).thenReturn(img);
+        assertThat(pricingService.computeCost("IMAGE", 2L, "seedream",
+                null, null, null, 3, false))
+                .isEqualByComparingTo("0.30");
+    }
 }
