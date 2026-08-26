@@ -4,7 +4,7 @@
  */
 import type { ActionResult } from "../types.js";
 import { DriverError } from "../types.js";
-import { GetCursorPos, keybd_event, mouse_event, SetCursorPos, SetForegroundWindow } from "./ffi.js";
+import { GetCursorPos, IsIconic, keybd_event, mouse_event, SetCursorPos, SetForegroundWindow, ShowWindow } from "./ffi.js";
 import { parseCombo } from "./keymap.js";
 import { findWindow } from "./window.js";
 
@@ -19,6 +19,7 @@ const WHEEL = 0x0800, HWHEEL = 0x1000;
 /** 前台激活目标窗口（坑点预案：前台锁用最小化唤醒兜底） */
 export function activate(app: string): void {
   const win = findWindow(app);
+  if (IsIconic(win.hwnd as never)) ShowWindow(win.hwnd as never, 9); // SW_RESTORE
   SetForegroundWindow(win.hwnd as never);
 }
 

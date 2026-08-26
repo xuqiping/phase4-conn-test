@@ -20,6 +20,8 @@ import {
   GdipSaveImageToFile,
   GetClientRect,
   initWinFfi,
+  IsIconic,
+  ShowWindow,
   PNG_CLSID,
   PrintWindow,
   ReleaseDC,
@@ -36,6 +38,10 @@ export async function capture(opts: ScreenshotOpts): Promise<Screenshot> {
     if (opts.mode === "window" && opts.app) {
       const win = findWindow(opts.app);
       hwnd = win.hwnd;
+      if (IsIconic(hwnd as never)) {
+        ShowWindow(hwnd as never, 9); // SW_RESTORE：最小化窗口先还原（锁屏期间可能被最小化）
+        await new Promise((r) => setTimeout(r, 200));
+      }
       const rect = {};
       if (!GetClientRect(hwnd as never, rect as never)) {
         throw new DriverError("DRIVER_ERROR", "GetClientRect 失败");
