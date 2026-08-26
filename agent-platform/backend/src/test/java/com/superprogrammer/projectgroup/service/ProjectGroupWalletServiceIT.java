@@ -69,7 +69,9 @@ class ProjectGroupWalletServiceIT {
         jdbc.update("DELETE FROM project_group_ledger WHERE group_id IN (SELECT id FROM project_groups WHERE owner_user_id = ?)", OWNER);
         jdbc.update("DELETE FROM project_groups WHERE owner_user_id = ?", OWNER);
         jdbc.update("DELETE FROM user_points_balance WHERE user_id = ?", OWNER);
-        jdbc.update("DELETE FROM points_ledger WHERE user_id = ? AND ref_type = 'GROUP'", OWNER);
+        // OWNER id 测试专用：全量清个人流水（GROUP 腿 + fundOwner 的 ADMIN 腿 + B5 的 DEBT_REPAY 腿，
+        // 后者曾跨 run 残留导致 IncorrectResultSize）
+        jdbc.update("DELETE FROM points_ledger WHERE user_id = ?", OWNER);
         jdbc.update("DELETE FROM media_gen_tasks WHERE project_group_id IS NOT NULL AND model = 'it-pg-wallet'");
         jdbc.update("DELETE FROM payment_order WHERE user_id = ?", OWNER);
         jdbc.update("DELETE FROM idempotency_keys WHERE user_id IN (?, ?)", OWNER, MEMBER);
@@ -263,9 +265,10 @@ class ProjectGroupWalletServiceIT {
     }
 
     @Test
-    void backstop_差额扣组长组池不动() {
+    void backstop_差额扣组长组池不动_计入成员used_7x2() {
         fundOwner("10");   // 组池留 0
-        walletService.backstop(groupId, OWNER, false, new BigDecimal("3"), ProjectGroupLedgerEntity.REF_MEDIA, "t9");
+        walletService.backstop(groupId, OWNER, MEMBER, false, new BigDecimal("3"),
+                ProjectGroupLedgerEntity.REF_MEDIA, "t9");
         assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("7"));   // 组长个人被扣
         assertThat(walletBalance()).isEqualByComparingTo(BigDecimal.ZERO);          // 组池不动
         List<ProjectGroupLedgerEntity> rows = groupLedger();
@@ -273,19 +276,35 @@ class ProjectGroupWalletServiceIT {
                 .containsExactly(ProjectGroupLedgerEntity.TYPE_BACKSTOP);
         assertThat(rows.get(0).getDeltaPoints()).isEqualByComparingTo(new BigDecimal("-3"));
         assertThat(rows.get(0).getBalanceAfter()).isEqualByComparingTo(BigDecimal.ZERO);
-        // 成员 used 不受兜底影响（不变量②）
+        // 7x-2 不变量②新口径：BACKSTOP 计入成员 used（used=真实消耗，不论资金来源）
         BigDecimal used = jdbc.queryForObject(
                 "SELECT used_points FROM project_group_members WHERE group_id = ? AND user_id = ?",
                 BigDecimal.class, groupId, MEMBER);
-        assertThat(used).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(used).isEqualByComparingTo(new BigDecimal("3"));
         assertLedgerWalletReconcile();
+    }
+
+    @Test
+    void backstop_quota耗尽_used仍计入_无条件累加_7x2() {
+        fundOwner("10");   // 组池留 0
+        // 成员 quota=2 且 used 已顶格——条件版 addUsed 会返 0 行静默失败，兜底腿必须无条件计入
+        groupService.updateQuota(groupId, OWNER, false, MEMBER, new BigDecimal("2"));
+        jdbc.update("UPDATE project_group_members SET used_points = 2 WHERE group_id = ? AND user_id = ?",
+                groupId, MEMBER);
+        walletService.backstop(groupId, OWNER, MEMBER, false, new BigDecimal("3"),
+                ProjectGroupLedgerEntity.REF_MEDIA, "t-quota");
+        BigDecimal used = jdbc.queryForObject(
+                "SELECT used_points FROM project_group_members WHERE group_id = ? AND user_id = ?",
+                BigDecimal.class, groupId, MEMBER);
+        assertThat(used).isEqualByComparingTo(new BigDecimal("5"));   // 2+3，越过 quota 仍计入
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("7"));
     }
 
     @Test
     void backstop_组长个人不足_转挂账_欠款拦消费_充值自动冲抵_B5() {
         fundOwner("3");   // 组长个人 3、组池 0
         // 兜底 5：个人实付 3 → 差额 2 挂账（B5/Q10=A），BACKSTOP 组流水照落
-        walletService.backstop(groupId, OWNER, false, new BigDecimal("5"),
+        walletService.backstop(groupId, OWNER, MEMBER, false, new BigDecimal("5"),
                 ProjectGroupLedgerEntity.REF_MEDIA, "t-debt");
         assertThat(personalBalance()).isEqualByComparingTo(BigDecimal.ZERO);
         BigDecimal debt = jdbc.queryForObject(
@@ -293,6 +312,11 @@ class ProjectGroupWalletServiceIT {
         assertThat(debt).isEqualByComparingTo(new BigDecimal("2"));
         assertThat(groupLedger()).extracting(ProjectGroupLedgerEntity::getType)
                 .containsExactly(ProjectGroupLedgerEntity.TYPE_BACKSTOP);
+        // 组长侧挂账不影响成员 used 计入（7x-2：used=5 全额）
+        BigDecimal used = jdbc.queryForObject(
+                "SELECT used_points FROM project_group_members WHERE group_id = ? AND user_id = ?",
+                BigDecimal.class, groupId, MEMBER);
+        assertThat(used).isEqualByComparingTo(new BigDecimal("5"));
 
         // 欠款未清 → 拦全部个人消费入口
         assertThatThrownBy(() -> pointsWallet.requireAffordable(OWNER))

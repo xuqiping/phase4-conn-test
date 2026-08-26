@@ -384,7 +384,7 @@ class LlmBillingServiceTest {
                 LlmUsageLogEntity.STATUS_SUCCESS, null, 5L, "r1", new BigDecimal("300"));
 
         assertThat(actual).isEqualByComparingTo("500");
-        verify(groupWalletService).backstop(eq(5L), eq(9L), eq(false),
+        verify(groupWalletService).backstop(eq(5L), eq(9L), eq(1L), eq(false),
                 eq(new BigDecimal("200")), eq("CHAT"), eq("r1"));
     }
 

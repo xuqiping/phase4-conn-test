@@ -291,7 +291,7 @@ public class LlmBillingService {
                 try {
                     groupWalletService.chargeGroup(projectGroupId, userId, diff, "CHAT", ref, "chat-settle-" + ref);
                 } catch (BusinessException be) {
-                    backstopChat(projectGroupId, diff, ref);
+                    backstopChat(projectGroupId, userId, diff, ref);
                     log.warn("聊天结算补扣转兜底 groupId={} userId={} diff={} ref={} : {}",
                             projectGroupId, userId, diff, ref, be.getMessage());
                 }
@@ -316,14 +316,14 @@ public class LlmBillingService {
         }
     }
 
-    /** 组池补扣兜底：差额扣组长个人 + 组流水 BACKSTOP（媒体 backstop 同口径）。 */
-    private void backstopChat(Long groupId, BigDecimal diff, String ref) {
+    /** 组池补扣兜底：差额扣组长个人 + 组流水 BACKSTOP + 计入消费成员 used（7x-2，媒体 backstop 同口径）。 */
+    private void backstopChat(Long groupId, Long consumerUserId, BigDecimal diff, String ref) {
         var group = groupMapper.selectById(groupId);
         if (group == null) {
             throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
                     "项目组已删除，无法兜底 groupId=" + groupId);
         }
-        groupWalletService.backstop(groupId, group.getOwnerUserId(), false, diff, "CHAT", ref);
+        groupWalletService.backstop(groupId, group.getOwnerUserId(), consumerUserId, false, diff, "CHAT", ref);
     }
 
     /**

@@ -200,7 +200,7 @@ class MediaBillingServiceTest {
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L);
 
         assertEquals(new BigDecimal("50"), charged);
-        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(false), eq(new BigDecimal("50")),
+        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(100L), eq(false), eq(new BigDecimal("50")),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"));
         // 兜底成功仍返回实扣值（worker 退款链路完整），且不动个人 charge
         verify(walletService, never()).charge(anyLong(), any(), anyString(), anyLong(), anyString());
@@ -220,7 +220,7 @@ class MediaBillingServiceTest {
         group.setOwnerUserId(200L);
         when(groupMapper.selectById(5L)).thenReturn(group);
         doThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS)).when(groupWalletService)
-                .backstop(anyLong(), anyLong(), anyBoolean(), any(), anyString(), anyString());
+                .backstop(anyLong(), anyLong(), any(), anyBoolean(), any(), anyString(), anyString());
 
         BigDecimal charged = service.chargeMedia(100L, 7L, "seedance", LlmUsageLogEntity.KIND_VIDEO,
                 200000, 5, 0, LlmUsageLogEntity.STATUS_SUCCESS, 9L, false, 5L);
@@ -398,7 +398,7 @@ class MediaBillingServiceTest {
                 new BigDecimal("50"));
 
         assertEquals(new BigDecimal("80"), actual);
-        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(false), eq(new BigDecimal("30")),
+        verify(groupWalletService).backstop(eq(5L), eq(200L), eq(100L), eq(false), eq(new BigDecimal("30")),
                 eq(LlmUsageLogEntity.KIND_VIDEO), eq("9"));
     }
 

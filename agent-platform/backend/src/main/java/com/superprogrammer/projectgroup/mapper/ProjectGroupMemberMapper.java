@@ -72,6 +72,17 @@ public interface ProjectGroupMemberMapper extends BaseMapper<ProjectGroupMemberE
     int addUsed(@Param("groupId") Long groupId, @Param("userId") Long userId, @Param("cost") BigDecimal cost);
 
     /**
+     * 无条件累加 used（7x-2 BACKSTOP 补差）：兜底差额也计真实消耗——used 语义=「成员耗掉了多少」，
+     * 不论资金出自组池还是组长个人。不带 quota 守卫（兜底时钱已实际扣组长，quota 卡住会静默丢账；
+     * quota 超限本应由 chargeGroup 拦，走到兜底即残余竞态）。返 0 行=成员已退组（used 无处可记，
+     * 上层 WARN 不回滚——组长扣款是既成事实）。
+     */
+    @Update("UPDATE project_group_members SET used_points = used_points + #{delta}, updated_at = NOW(), version = version + 1 "
+            + "WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0")
+    int addUsedUnconditional(@Param("groupId") Long groupId, @Param("userId") Long userId,
+                             @Param("delta") BigDecimal delta);
+
+    /**
      * 退款回减 used：GREATEST 落 0（防负，CHECK ck_pgm_used_nonneg 兜底）。
      * 注：若组长已重置 used（迟到退款），Σ(CONSUME-REFUND) 会小于 used——对账模板该行会黄，属罕见运维人工核对项。
      */

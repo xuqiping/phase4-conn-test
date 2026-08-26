@@ -27,11 +27,13 @@ import java.util.function.Supplier;
  *
  * <p><b>锁序（plan §坑点 双钱包死锁）</b>：凡个人↔组池双向操作（allocate/reclaim/backstop）固定
  * <b>先个人行后组池行</b>；纯组内操作（chargeGroup/refundGroup）固定先组池后成员行。
- * 两序无交叉环：chargeGroup 只碰 组池→成员，双向操作只碰 个人→组池，并发混跑无死锁。
+ * 两序无交叉环：chargeGroup 只碰 组池→成员，双向操作只碰 个人→组池（backstop 兼计 used 时
+ * 组池→成员与 chargeGroup 同向），并发混跑无死锁。
  *
  * <p><b>对账不变量（V133 运维模板）</b>：①末行 ledger.balance_after == wallets.balance_points
- * （BACKSTOP 不动组池，行锁读保证一致）；②成员 Σ(CONSUME−REFUND) == used_points
- * （BACKSTOP 不计 member.used——差额由组长个人承担，非成员配额内消耗）。
+ * （BACKSTOP 不动组池，行锁读保证一致）；②成员 Σ(CONSUME−REFUND+BACKSTOP) == used_points
+ * （7x-2 修复：BACKSTOP 计入 member.used——used=真实消耗，不论资金来源；组池 balance 不含
+ * BACKSTOP，资金出自组长个人。存量差异由 V158 一次性回填）。
  *
  * <p><b>幂等</b>：chargeGroup/refundGroup 复用 idempotency_key（scope=group.charge/group.refund，
  * result_ref=组流水 id），媒体链路幂等键=taskId（Step5）。同键同额静默重放，同键异额 CONFLICT。
@@ -165,11 +167,15 @@ public class ProjectGroupWalletService {
     /**
      * BACKSTOP（结算兜底）：组池不足的差额扣组长<b>个人</b>，组池不动（保 CHECK>=0）。
      * 两账本各记一行：个人 CONSUME(ref=GROUP) + 组流水 BACKSTOP(delta=-差额, balance_after=组池现值)。
-     * 对账口径：BACKSTOP 不进组池余额重建、不计成员 used（见类注释不变量②）。
+     * <p>7x-2 修复：差额同时计入<b>消费成员</b> used（{@code addUsedUnconditional}，无 quota 守卫）——
+     * used=真实消耗，与账单汇合（见类注释不变量②）。成员已退组（返 0 行）只 WARN 不回滚——
+     * 组长扣款是既成事实，used 无处可记非致命。存量历史行由 V158 迁移回填。
+     *
+     * @param consumerUserId 触发消耗的成员（used 记账主体；与扣款人 leaderUserId 区分）
      */
     @Transactional(rollbackFor = Exception.class)
-    public void backstop(Long groupId, Long leaderUserId, boolean admin, BigDecimal shortfall,
-                         String refType, String refId) {
+    public void backstop(Long groupId, Long leaderUserId, Long consumerUserId, boolean admin,
+                         BigDecimal shortfall, String refType, String refId) {
         requireOwner(groupId, leaderUserId, admin);
         requirePositive(shortfall, "兜底差额必须大于0");
         // B5（Q10=A）：组长余额不足时不走 charge（内层 REQUIRED 事务加入本方法事务，抛 INSUFFICIENT 会
@@ -186,10 +192,17 @@ public class ProjectGroupWalletService {
         if (w == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "组池钱包行缺失 groupId=" + groupId);
         }
+        // 锁③成员行（锁序：个人→组池→成员，单向无环——与 chargeGroup 的 组池→成员 同向衔接，
+        // 不构成 AB-BA）。组长侧结局（全额扣/挂 DEBT）不影响 used 计入
+        if (consumerUserId != null
+                && memberMapper.addUsedUnconditional(groupId, consumerUserId, shortfall) == 0) {
+            log.warn("BACKSTOP 成员 used 记账落空（已退组？）groupId={} consumer={} shortfall={} ref={}:{}",
+                    groupId, consumerUserId, shortfall, refType, refId);
+        }
         appendLedgerRow(w.getBalancePoints(), groupId, leaderUserId,
                 ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId, "组池不足·组长兜底");
-        log.warn("BACKSTOP groupId={} leader={} shortfall={} ref={}:{} —— 组池余额 {}",
-                groupId, leaderUserId, shortfall, refType, refId, w.getBalancePoints());
+        log.warn("BACKSTOP groupId={} leader={} consumer={} shortfall={} ref={}:{} —— 组池余额 {}",
+                groupId, leaderUserId, consumerUserId, shortfall, refType, refId, w.getBalancePoints());
     }
 
     /** 组池余额（不抛版，预估预览用）；组池行缺失 → ZERO。 */

@@ -90,8 +90,9 @@ public class MediaBillingService {
      * 计划5 Step5：+projectGroupId 组池结算版本。gid 非空且 uid 非空 →
      * {@code chargeGroup}（幂等键=media-charge-{taskId}，429 退避重投不双扣）；残余竞态
      * （提交预检已过、结算时组池尽/超限额）→ <b>BACKSTOP 兜底</b>：成本已真实发生（视频已生成），
-     * 差额扣组长个人 + 组流水 BACKSTOP（不动组池、不计 used，V133 对账口径）——与「记 FAILED 让
-     * 平台亏钱」二选一，媒体语义取兜底；组长个人也不足才落 FAILED usage。gid 空 → 个人 charge 现状。
+     * 差额扣组长个人 + 组流水 BACKSTOP + 计入消费成员 used（7x-2：used=真实消耗，不论资金来源；
+     * 组池 balance 不含 BACKSTOP）——与「记 FAILED 让平台亏钱」二选一，媒体语义取兜底；
+     * 组长个人也不足才落 FAILED usage。gid 空 → 个人 charge 现状。
      */
     public BigDecimal chargeMedia(Long userId, Long providerId, String model, String kind,
                                   Integer tokensInput, Integer videoSeconds, Integer imageCount,
@@ -121,7 +122,7 @@ public class MediaBillingService {
                             String.valueOf(refId), "media-charge-" + refId);
                 } catch (BusinessException be) {
                     // BACKSTOP：组长兜底全差额（be=组池尽/超限额残余竞态）；再失败（组长也尽）抛给外层 FAILED
-                    backstopMedia(projectGroupId, points, kind, refId);
+                    backstopMedia(projectGroupId, userId, points, kind, refId);
                     log.warn("媒体组结算转兜底 groupId={} userId={} points={} ref={} : {}",
                             projectGroupId, userId, points, refId, be.getMessage());
                 }
@@ -257,7 +258,7 @@ public class MediaBillingService {
                                 String.valueOf(refId), "media-settle-" + refId);
                     } catch (BusinessException be) {
                         // BACKSTOP：组池尽/超限额残余竞态 → 差额扣组长个人（同 chargeMedia 口径）
-                        backstopMedia(projectGroupId, diff, kind, refId);
+                        backstopMedia(projectGroupId, userId, diff, kind, refId);
                         log.warn("媒体结算补扣转兜底 groupId={} userId={} diff={} ref={} : {}",
                                 projectGroupId, userId, diff, refId, be.getMessage());
                     }
@@ -378,16 +379,16 @@ public class MediaBillingService {
     }
 
     /**
-     * 计划5 Step5：媒体结算兜底——差额扣组长个人（组行 owner）。组已删/组长钱包不足由
-     * {@code backstop} 自身抛 BusinessException → 外层记 FAILED usage（平台可见缺口）。
+     * 计划5 Step5：媒体结算兜底——差额扣组长个人（组行 owner），并计入消费成员 used（7x-2）。
+     * 组已删/组长钱包不足由 {@code backstop} 自身抛 BusinessException → 外层记 FAILED usage（平台可见缺口）。
      */
-    private void backstopMedia(Long groupId, BigDecimal points, String kind, Long refId) {
+    private void backstopMedia(Long groupId, Long consumerUserId, BigDecimal points, String kind, Long refId) {
         var group = groupMapper.selectById(groupId);
         if (group == null) {
             throw new BusinessException(com.superprogrammer.common.exception.ErrorCode.NOT_FOUND,
                     "项目组已删除，无法兜底 groupId=" + groupId);
         }
-        groupWalletService.backstop(groupId, group.getOwnerUserId(), false, points,
+        groupWalletService.backstop(groupId, group.getOwnerUserId(), consumerUserId, false, points,
                 kind, String.valueOf(refId));
     }
 }
