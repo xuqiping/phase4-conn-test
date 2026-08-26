@@ -39,6 +39,11 @@ use commands::clipboard::{
 };
 use commands::screenshot::{capture_screenshot_region, get_screenshot_ocr_status};
 use commands::work_report::{fetch_git_logs, show_work_report_notification, export_report_markdown};
+use commands::office::{
+    office_cancel_task, office_confirm_task, office_create_preflight, office_delete_credential,
+    office_list_tasks, office_recover_tasks, office_save_credential, office_start_task,
+    OfficeCommandState,
+};
 use clipboard::ClipboardService;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -56,6 +61,11 @@ fn main() {
             let clipboard_service = ClipboardService::new(database_path)
                 .map_err(|err| Box::<dyn std::error::Error>::from(err))?;
             app.manage(clipboard_service);
+            let app_data_directory = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&app_data_directory)?;
+            let office_state = OfficeCommandState::open(&app_data_directory.join("office_tasks.db"))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            app.manage(office_state);
             // Build tray menu
             let show_item = MenuItemBuilder::with_id("show", "显示窗口").build(app)?;
             let hide_item = MenuItemBuilder::with_id("hide", "隐藏窗口").build(app)?;
@@ -148,7 +158,15 @@ fn main() {
             get_screenshot_ocr_status,
             fetch_git_logs,
             show_work_report_notification,
-            export_report_markdown
+            export_report_markdown,
+            office_create_preflight,
+            office_confirm_task,
+            office_start_task,
+            office_cancel_task,
+            office_list_tasks,
+            office_recover_tasks,
+            office_save_credential,
+            office_delete_credential
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -142,7 +142,8 @@ impl std::fmt::Debug for OfficeIssueWriteModel {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OfficeTaskSummary {
     pub task_id: OfficeTaskId,
     pub task_type: OfficeTaskType,
@@ -176,7 +177,8 @@ impl std::fmt::Debug for OfficeTaskSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OfficeTaskPage {
     pub items: Vec<OfficeTaskSummary>,
     pub total: u64,
@@ -392,6 +394,57 @@ impl OfficeTaskRepository {
             .optional()
             .map_err(|_| OfficeRepositoryError::InvalidJson)?
             .ok_or(OfficeRepositoryError::RecordNotFound)
+    }
+
+    pub fn has_unresolved_blocking_issues(
+        &self,
+        task_id: OfficeTaskId,
+    ) -> Result<bool, OfficeRepositoryError> {
+        let count: i64 = self
+            .connection
+            .query_row(
+                r#"SELECT COUNT(*) FROM office_task_issues
+                    WHERE task_id = ?1 AND severity = ?2 AND resolved = 0"#,
+                params![
+                    task_id.to_string(),
+                    enum_to_db(&OfficeIssueSeverity::Blocking)?
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|_| OfficeRepositoryError::DatabaseUnavailable)?;
+        Ok(count > 0)
+    }
+
+    pub fn update_task_status(
+        &mut self,
+        task_id: OfficeTaskId,
+        expected: OfficeTaskStatus,
+        next: OfficeTaskStatus,
+        started_at: Option<i64>,
+        finished_at: Option<i64>,
+    ) -> Result<(), OfficeRepositoryError> {
+        let changed = self
+            .connection
+            .execute(
+                r#"UPDATE office_tasks
+                    SET status = ?1,
+                        started_at = COALESCE(?2, started_at),
+                        finished_at = COALESCE(?3, finished_at)
+                    WHERE id = ?4 AND status = ?5"#,
+                params![
+                    enum_to_db(&next)?,
+                    started_at,
+                    finished_at,
+                    task_id.to_string(),
+                    enum_to_db(&expected)?,
+                ],
+            )
+            .map_err(|_| OfficeRepositoryError::DatabaseUnavailable)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(OfficeRepositoryError::RecordNotFound)
+        }
     }
 
     pub fn cleanup_finished_before(

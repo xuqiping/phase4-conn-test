@@ -125,6 +125,15 @@
           <div v-if="currentTab === 'clipboard'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
         </button>
         <button
+          @click="switchTab('office')"
+          :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
+                   currentTab === 'office' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
+        >
+          <FileSpreadsheet :size="16" />
+          <span>{{ t('office.tab') }}</span>
+          <div v-if="currentTab === 'office'" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-t-full"></div>
+        </button>
+        <button
           @click="switchTab('work-report')"
           :class="['py-3 px-4 text-sm font-medium relative transition-colors flex items-center space-x-2',
                    currentTab === 'work-report' ? 'text-primary' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200']"
@@ -492,6 +501,11 @@
       <ClipboardManagement />
     </div>
 
+    <!-- Office Workspace Tab -->
+    <div v-if="currentTab === 'office'" class="flex-1 overflow-hidden flex flex-col min-h-0">
+      <OfficeWorkspace />
+    </div>
+
     <!-- Work Report Management Tab -->
     <div v-if="currentTab === 'work-report'" class="flex-1 overflow-hidden flex flex-col min-h-0">
       <WorkReportManagement v-if="authStore.isAuthenticated" />
@@ -803,6 +817,7 @@ import {
   Trash2,
   MoreVertical,
   FileText,
+  FileSpreadsheet,
   Folder,
   Image,
   Code,
@@ -835,6 +850,7 @@ import ProcessManagement from './components/ProcessManagement.vue'
 import ClipboardManagement from './components/ClipboardManagement.vue'
 import ClipboardQuickPanel from './components/ClipboardQuickPanel.vue'
 import WorkReportManagement from './components/work-report/WorkReportManagement.vue'
+import OfficeWorkspace from './components/office/OfficeWorkspace.vue'
 import { deriveIconFromExt, resolveGroupId } from './utils/file'
 import { highlightText } from './utils/highlight'
 import { useSortableFiles } from './composables/useSortableFiles'
@@ -854,11 +870,12 @@ const { t, locale, toggleLocale } = useI18n()
 const commercialServerUrl = import.meta.env.VITE_FILE_KEEPER_SERVER_URL || 'http://localhost:8088'
 
 // Current tab state
-const currentTab = ref<'files' | 'processes' | 'clipboard' | 'work-report'>('files')
+type AppTab = 'files' | 'processes' | 'clipboard' | 'office' | 'work-report'
+const currentTab = ref<AppTab>('files')
 const showAuthDialog = ref(false)
 const accountLabel = computed(() => authStore.user?.email || authStore.user?.phone || '账号')
 
-function switchTab(tab: 'files' | 'processes' | 'clipboard' | 'work-report') {
+function switchTab(tab: AppTab) {
   currentTab.value = tab
 }
 

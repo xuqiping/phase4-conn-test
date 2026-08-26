@@ -36,6 +36,20 @@ impl OfficeTaskStateMachine {
         }
     }
 
+    pub(crate) fn restore(
+        task_id: OfficeTaskId,
+        request_id: Option<OfficeRequestId>,
+        output_policy: OutputPolicy,
+        status: OfficeTaskStatus,
+    ) -> Self {
+        Self {
+            task_id,
+            request_id,
+            output_policy,
+            status,
+        }
+    }
+
     pub const fn status(&self) -> OfficeTaskStatus {
         self.status
     }

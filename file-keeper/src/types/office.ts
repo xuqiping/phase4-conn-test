@@ -79,3 +79,63 @@ export interface OfficeOutputSummary {
   published: number
   failed: number
 }
+
+export interface OfficeCreateTaskRequest {
+  taskType: OfficeTaskType
+  outputPolicy: OfficeOutputPolicy
+  inputPaths: string[]
+  outputDirectory: string
+}
+
+export interface OfficePreflightInput {
+  inputId: string
+  path: string
+  format: string
+  sizeBytes: number
+  risks: string[]
+}
+
+export interface OfficePreflightIssue {
+  issueId: string
+  severity: OfficeIssueSeverity
+  code: string
+  messageKey: string
+  inputId?: string
+}
+
+export interface OfficePreflightResponse {
+  taskId: string
+  status: OfficeTaskStatus
+  engine: OfficeEngine
+  outputPolicy: OfficeOutputPolicy
+  outputDirectory: string
+  inputs: OfficePreflightInput[]
+  issues: OfficePreflightIssue[]
+  withinFreeQuota: boolean
+  canConfirm: boolean
+}
+
+export interface OfficeTaskSummary {
+  taskId: string
+  taskType: OfficeTaskType
+  status: OfficeTaskStatus
+  engine?: OfficeEngine
+  outputPolicy: OfficeOutputPolicy
+  inputCount: number
+  totalBytes: number
+  outputDir?: string
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+}
+
+export interface OfficeTaskPage {
+  items: OfficeTaskSummary[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface OfficeCredentialReference {
+  bindingId: string
+}

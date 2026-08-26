@@ -480,6 +480,67 @@ export default {
       fileCopy: 'File history stores copies by default and is limited by storage and extension rules.'
     }
   },
+  office: {
+    tab: 'Office Workspace',
+    eyebrow: 'LOCAL OFFICE OPERATIONS',
+    title: 'Safe Office Batch Workspace',
+    description: 'Scan risks before confirming rules. Source files stay read-only; paths, content, and passwords are not uploaded.',
+    tabs: { newTask: 'New Task', history: 'Task History' },
+    steps: { label: 'Office task steps', select: 'Select', review: 'Preflight', queue: 'Confirm' },
+    form: {
+      taskType: 'Task Type', outputPolicy: 'Output Policy', inputs: 'Input Files',
+      inputsHint: 'Select multiple Office files. Legacy, macro, and unverified high-fidelity cases remain blocked.',
+      outputDirectory: 'Separate Output Directory', notSelected: 'No output directory selected'
+    },
+    taskType: {
+      excelSplit: 'Split Excel', excelMerge: 'Merge Excel', wordBatchReplace: 'Batch Replace Word',
+      powerPointMerge: 'Merge PowerPoint', powerPointRelink: 'Repair PowerPoint Links'
+    },
+    outputPolicy: { multipleIndependent: 'Publish each output independently', singleAtomic: 'Single output, all or nothing' },
+    engine: { ooxmlWorker: 'Cross-platform OOXML Worker', windowsOfficeWorker: 'Windows Office Worker' },
+    actions: {
+      chooseFiles: 'Choose Files', chooseDirectory: 'Choose Directory', scanning: 'Scanning safely…',
+      preflight: 'Run Safety Preflight', back: 'Back to Edit', confirmQueue: 'Confirm and Queue',
+      cancel: 'Cancel Task', refresh: 'Refresh', newTask: 'New Task'
+    },
+    review: {
+      engine: 'Engine', files: 'Files', quota: 'Quota', freeQuota: 'Within free quota',
+      proRequired: 'Office Pro online check required before execution', readOnlyTitle: 'Read-only source promise',
+      readOnlyDescription: 'The task only reads source files. Results are validated in a temporary directory before atomic publication to the separate output directory.',
+      queuedTitle: 'Task queued safely',
+      queuedDescription: 'The foundation stored the confirmed state. Excel, Word, and PowerPoint processors will consume this queue when connected; no success output is fabricated now.',
+      finishedDescription: 'This task has ended. Return to create another safely preflighted task.'
+    },
+    issues: {
+      title: 'Issues and Risks', blockingAlwaysVisible: 'Blocking issues are always visible and cannot be hidden by filters.',
+      filterLabel: 'Issue filter', all: 'All', none: 'No issues require attention'
+    },
+    severity: { info: 'Info', warning: 'Warning', error: 'Error', blocking: 'Blocking' },
+    safety: {
+      title: 'Four safety gates', readOnly: 'Source files remain read-only; replacement is a separate confirmed action.',
+      local: 'File paths, document content, and passwords are not uploaded.', atomic: 'Outputs are validated and published atomically.',
+      password: 'Remembered passwords only enter the operating system credential vault.'
+    },
+    recovery: { title: 'Recoverable tasks found', count: '{count} local tasks are in preflight, confirmation, queued, or running states.' },
+    history: { title: 'Local Task History', count: '{count} tasks', files: 'Files', size: 'Size', created: 'Created', empty: 'No Office tasks yet' },
+    status: {
+      draft: 'Draft', preflight: 'Preflight', awaitingConfirmation: 'Awaiting confirmation', queued: 'Queued', running: 'Running',
+      partialSuccess: 'Partial success', succeeded: 'Succeeded', failed: 'Failed', cancelled: 'Cancelled'
+    },
+    risk: {
+      legacyBinaryFormat: 'A legacy binary format requires the Windows Office Worker.',
+      macroEnabledFormat: 'A macro-enabled format requires macro-preserving high-fidelity processing.',
+      vbaProjectPresent: 'The file contains a VBA project; the safety foundation never executes macros.',
+      digitalSignaturePresent: 'The file is digitally signed and edits may invalidate the signature.',
+      externalRelationshipPresent: 'The file contains external links that require confirmed mapping.',
+      passwordProtectedPackage: 'The file is password protected and needs a temporary or confirmed saved credential.',
+      readOnlySource: 'The source has a read-only attribute and will still only be opened for reading.',
+      fileLocked: 'Another program has the file exclusively open. Close it and retry.',
+      invalidPackage: 'The Office package is invalid or damaged.', relationshipTooLarge: 'Relationship metadata exceeds the safe scan limit.',
+      highFidelityBlocked: 'The compatibility matrix has not approved this high-fidelity case, so it is safely blocked.',
+      officeProRequired: 'This task exceeds free limits. Sign in and validate Office Pro online before execution.'
+    }
+  },
   screenshot: {
     dragHint: 'Drag to select a screenshot region. Press Esc to cancel.',
     shortcut: 'Screenshot Shortcut',

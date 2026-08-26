@@ -480,6 +480,67 @@ export default {
       fileCopy: '文件历史默认保存副本，并受到空间上限和后缀规则限制。'
     }
   },
+  office: {
+    tab: 'Office 工作台',
+    eyebrow: 'LOCAL OFFICE OPERATIONS',
+    title: 'Office 安全批处理工作台',
+    description: '先扫描风险，再确认规则。源文件默认只读，路径、正文和密码不上传服务端。',
+    tabs: { newTask: '新建任务', history: '任务历史' },
+    steps: { label: 'Office 任务步骤', select: '选择', review: '预检', queue: '确认' },
+    form: {
+      taskType: '任务类型', outputPolicy: '输出策略', inputs: '输入文件',
+      inputsHint: '可多选 Office 文件；旧格式、宏和高保真场景当前仍会阻止。',
+      outputDirectory: '独立输出目录', notSelected: '尚未选择输出目录'
+    },
+    taskType: {
+      excelSplit: 'Excel 拆分', excelMerge: 'Excel 合并', wordBatchReplace: 'Word 批量替换',
+      powerPointMerge: 'PowerPoint 合并', powerPointRelink: 'PowerPoint 外链修复'
+    },
+    outputPolicy: { multipleIndependent: '多输出逐文件发布', singleAtomic: '单输出全有或全无' },
+    engine: { ooxmlWorker: '跨平台 OOXML Worker', windowsOfficeWorker: 'Windows Office Worker' },
+    actions: {
+      chooseFiles: '选择文件', chooseDirectory: '选择目录', scanning: '正在安全扫描…',
+      preflight: '开始安全预检', back: '返回修改', confirmQueue: '确认并加入队列',
+      cancel: '取消任务', refresh: '刷新', newTask: '新建任务'
+    },
+    review: {
+      engine: '处理引擎', files: '文件数', quota: '额度', freeQuota: '免费额度内',
+      proRequired: '执行前需在线校验 Office Pro', readOnlyTitle: '源文件只读承诺',
+      readOnlyDescription: '任务只会读取源文件；结果先写临时目录并校验，再发布到你选择的独立输出目录。',
+      queuedTitle: '任务已安全入队',
+      queuedDescription: '统一底座已保存确认状态。具体 Excel、Word、PPT 处理器接入后将消费该队列；当前不会伪造成功输出。',
+      finishedDescription: '该任务已结束，可返回创建新的安全预检任务。'
+    },
+    issues: {
+      title: '问题与风险', blockingAlwaysVisible: '阻断项始终显示，不会被筛选隐藏。',
+      filterLabel: '问题筛选', all: '全部', none: '未发现需要处理的问题'
+    },
+    severity: { info: '信息', warning: '警告', error: '错误', blocking: '阻断' },
+    safety: {
+      title: '四道安全闸门', readOnly: '源文件始终只读，替换原件是独立确认操作。',
+      local: '文件路径、正文和密码不上传服务端。', atomic: '输出验货后原子发布，不暴露半成品。',
+      password: '记住的密码只进入操作系统凭据保险库。'
+    },
+    recovery: { title: '发现可恢复任务', count: '本机有 {count} 个预检、待确认、排队或运行中的任务。' },
+    history: { title: '本地任务历史', count: '共 {count} 个任务', files: '文件', size: '体积', created: '创建时间', empty: '还没有 Office 任务' },
+    status: {
+      draft: '草稿', preflight: '预检中', awaitingConfirmation: '待确认', queued: '已排队', running: '运行中',
+      partialSuccess: '部分成功', succeeded: '成功', failed: '失败', cancelled: '已取消'
+    },
+    risk: {
+      legacyBinaryFormat: '检测到旧版二进制格式，需要 Windows Office Worker。',
+      macroEnabledFormat: '检测到启用宏的格式；必须保留宏并走高保真处理。',
+      vbaProjectPresent: '文件包含 VBA 工程，当前安全底座不会执行宏。',
+      digitalSignaturePresent: '文件包含数字签名，任何修改都可能使签名失效。',
+      externalRelationshipPresent: '文件包含外部链接，需要用户确认映射。',
+      passwordProtectedPackage: '文件受密码保护，需要临时输入或使用已确认凭据。',
+      readOnlySource: '源文件带只读属性；任务仍只会以读取方式访问。',
+      fileLocked: '文件正在被其他程序独占，请关闭占用后重试。',
+      invalidPackage: 'Office 包结构无效或已损坏。', relationshipTooLarge: '关系元数据超过安全扫描上限。',
+      highFidelityBlocked: '当前兼容矩阵尚未批准该高保真场景，任务被安全阻止。',
+      officeProRequired: '任务超过免费额度，开始执行前必须登录并在线校验 Office Pro。'
+    }
+  },
   screenshot: {
     dragHint: '拖拽选择截图区域，按 Esc 取消',
     shortcut: '截图快捷键',

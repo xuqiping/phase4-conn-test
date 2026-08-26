@@ -6,3 +6,4 @@ pub mod clipboard;
 pub mod screenshot;
 pub mod auth;
 pub mod work_report;
+pub mod office;

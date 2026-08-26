@@ -11,6 +11,10 @@ pub const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 pub struct OfficeTaskId(Uuid);
 
 impl OfficeTaskId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
     pub fn parse(value: &str) -> Result<Self, DomainError> {
         Uuid::parse_str(value)
             .map(Self)
@@ -29,6 +33,10 @@ impl Display for OfficeTaskId {
 pub struct OfficeRequestId(Uuid);
 
 impl OfficeRequestId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
     pub fn parse(value: &str) -> Result<Self, DomainError> {
         Uuid::parse_str(value)
             .map(Self)
