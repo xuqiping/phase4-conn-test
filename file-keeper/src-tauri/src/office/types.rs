@@ -318,6 +318,7 @@ pub enum DomainErrorCode {
     OutputCountOverflow,
     OutputSummaryInconsistent,
     SingleOutputCardinalityInvalid,
+    PublicationReceiptTaskMismatch,
 }
 
 impl DomainErrorCode {
@@ -332,6 +333,7 @@ impl DomainErrorCode {
             Self::OutputCountOverflow => "OFFICE_OUTPUT_COUNT_OVERFLOW",
             Self::OutputSummaryInconsistent => "OFFICE_OUTPUT_SUMMARY_INCONSISTENT",
             Self::SingleOutputCardinalityInvalid => "OFFICE_SINGLE_OUTPUT_CARDINALITY_INVALID",
+            Self::PublicationReceiptTaskMismatch => "OFFICE_PUBLICATION_RECEIPT_TASK_MISMATCH",
         }
     }
 }

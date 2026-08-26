@@ -1,3 +1,4 @@
+use super::output::PublicationReceipt;
 use super::types::{
     DomainError, DomainErrorCode, OfficeRequestId, OfficeTaskId, OfficeTaskStatus, OutputPolicy,
     OutputSummary, JS_SAFE_INTEGER_MAX,
@@ -75,14 +76,19 @@ impl OfficeTaskStateMachine {
         Ok(next)
     }
 
-    /// Accepts only a summary already validated by the output transaction layer.
-    /// Chunk 5 must replace this trust boundary with a publication receipt.
-    pub(crate) fn complete_with_validated_summary(
+    pub fn complete_with_publication(
         &mut self,
-        summary: OutputSummary,
+        receipt: PublicationReceipt,
     ) -> Result<OfficeTaskStatus, DomainError> {
         if self.status != OfficeTaskStatus::Running {
             return Err(DomainError::new(DomainErrorCode::InvalidStateTransition));
+        }
+
+        let (receipt_task_id, summary) = receipt.into_parts();
+        if receipt_task_id != self.task_id {
+            return Err(DomainError::new(
+                DomainErrorCode::PublicationReceiptTaskMismatch,
+            ));
         }
 
         let next = derive_completion_status(self.output_policy, summary)?;

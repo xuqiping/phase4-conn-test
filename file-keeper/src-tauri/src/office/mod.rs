@@ -3,8 +3,10 @@
 
 pub mod db;
 pub mod migrations;
+pub mod output;
 pub mod path_policy;
 pub mod protocol;
+pub mod recovery;
 pub mod repository;
 pub mod risk;
 pub mod scanner;

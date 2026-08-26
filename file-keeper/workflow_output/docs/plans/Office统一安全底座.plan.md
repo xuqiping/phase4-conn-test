@@ -49,12 +49,13 @@
 
 ### Chunk 5：输出事务与恢复
 
-- [ ] **目标：不暴露半成品，不损坏源文件。**
+- [x] **目标：不暴露半成品，不损坏源文件。**
   - 动作：估算空间、创建临时目录、校验输出、原子发布；由输出事务签发不可由普通调用方伪造的 `PublicationReceipt`（发布凭证），状态机只消费凭证完成任务；实现多输出部分成功和单输出回滚；替换原件独立命令。
   - 涉及文件：`src-tauri/src/office/output.rs`、`src-tauri/src/office/recovery.rs`、`src-tauri/src/office/tests/output_tests.rs`。
   - 依赖：Chunk 2、4。
   - 伪代码：`write temp -> reopen/checksum/invariants -> atomic rename; replace source -> verify fingerprint -> backup -> swap`。
   - 验证：没有有效发布凭证不能把任务标为成功；磁盘不足、目标重名、外部修改、取消和断电模拟不产生伪成功文件。
+  - 当前状态：空间预算、任务临时目录、格式/业务校验、SHA-256 复核、不覆盖原子发布、不可构造发布凭证、部分成功汇总、7 天恢复清理和带备份回滚的独立替换操作已实现并通过编译检查；故障注入与断电模拟留到 Phase 4。
 
 ### Chunk 6：系统凭据保险库
 
