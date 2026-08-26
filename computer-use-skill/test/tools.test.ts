@@ -53,7 +53,7 @@ describe("MCP 工具层（FR-017）", () => {
     expect(r.isError ?? true).toBeTruthy();
   });
 
-  it("AC-011: wait 1s 返回耗时 ∈[0.9,1.5]s", async () => {
+  it("AC-015: wait 1s 返回耗时 ∈[0.9,1.5]s", async () => {
     const r = await client.callTool({ name: "wait", arguments: { seconds: 1 } });
     const parsed = JSON.parse((r.content as { text: string }[])[0].text);
     expect(parsed.elapsedMs).toBeGreaterThanOrEqual(900);

@@ -2,15 +2,32 @@
  * driver/win/window.ts —— 窗口枚举与查找（FR-001 的 APP_NOT_FOUND 候选来源）
  */
 import koffi from "koffi";
+import { execFileSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { DriverError } from "../types.js";
-import { EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, WNDENUMPROC } from "./ffi.js";
+import { EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, WNDENUMPROC } from "./ffi.js";
 
 export interface WinInfo {
   hwnd: unknown;
   title: string;
   className: string;
   pid: number;
+}
+
+/** 当前前台窗口所属进程名（用于 key/drag 等无 app 参数动作的安全闸，FR-014） */
+export function foregroundProcessName(): string | null {
+  const hwnd = GetForegroundWindow();
+  if (!hwnd) return null;
+  const pidBuf = { value: 0 };
+  GetWindowThreadProcessId(hwnd as never, pidBuf as never);
+  const pid = (pidBuf as { value: number }).value;
+  if (!pid) return null;
+  try {
+    const out = execFileSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeout: 3000, encoding: "utf8" }).trim();
+    return out.split('","')[0]?.replace(/^"/, "") || null;
+  } catch {
+    return null;
+  }
 }
 
 /** 枚举所有可见顶层窗口 */

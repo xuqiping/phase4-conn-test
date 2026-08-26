@@ -95,7 +95,7 @@ function Cmd-Act($cmd) {
     'Expand'  { $p=$null; if ($el.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern,[ref]$p)) { $p.Expand(); return @{ok=$true} } }
     'Toggle'  { $p=$null; if ($el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$p)) { $p.Toggle(); return @{ok=$true} } }
     'Select'  { $p=$null; if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$p)) { $p.Select(); return @{ok=$true} } }
-    'SetValue' { $p=$null; if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$p)) { $p.SetValue([string]$cmd.value); return @{ok=$true} } }
+    'SetValue' { $p=$null; if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$p)) { $p.SetValue([string]$cmd.value_set); return @{ok=$true} } }
   }
   return @{ ok = $false; error = 'DRIVER_ERROR'; msg = "元素不支持直控模式 $($cmd.pattern)（Electron 自绘控件？应降级 SendInput）" }
 }

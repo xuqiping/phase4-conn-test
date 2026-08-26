@@ -11,6 +11,7 @@ import { capture } from "../driver/win/capture.js";
 import { uiaTree } from "../driver/win/uia.js";
 import { NeedsFallback, uiaClick, uiaType } from "../driver/win/uiaActions.js";
 import { activate, clickAt, cursorPos, dragPath, keyCombo, moveTo, scrollAt, typeText, typeViaClipboard, waitSeconds } from "../driver/win/input.js";
+import { foregroundProcessName } from "../driver/win/window.js";
 import { confirmApp, requireAllowed } from "../safety/whitelist.js";
 import { requireNotBlocked } from "../safety/blacklist.js";
 import { audit, redact } from "../safety/audit.js";
@@ -26,6 +27,12 @@ const locatorSchema = z.object({
 function safetyGates(app: string): void {
   requireNotBlocked(app);
   requireAllowed(app);
+}
+
+/** 前台闸：key/drag/无 locator type 直打当前前台窗口，须确认前台不是终端/宿主（FR-014） */
+function requireForegroundAllowed(): void {
+  const proc = foregroundProcessName();
+  if (proc) requireNotBlocked(proc);
 }
 
 /** 解析 locator → 节点或坐标（index 走快照；xy 解析坐标） */
@@ -118,12 +125,14 @@ export function registerTools(server: McpServer): void {
           }
         );
       }
-      return /[\x00-\x7f]/.test(a.text) ? typeText(a.text) : typeViaClipboard(a.text);
+      // 无 locator = 直接打向前台窗口：先过前台黑名单闸（FR-014，防向终端/宿主注入）
+      requireForegroundAllowed();
+      return typeText(a.text); // typeText 内部对非 VK 字符自动降级剪贴板
     }));
 
-  // 6. key（FR-007）
+  // 6. key（FR-007）——键盘注入直打前台，必须过前台黑名单闸
   server.tool("key", "组合键，xdotool 风格如 ctrl+shift+a（FR-007）", { combo: z.string() },
-    async (a) => run("key", undefined, () => keyCombo(a.combo)));
+    async (a) => run("key", undefined, () => { requireForegroundAllowed(); return keyCombo(a.combo); }));
 
   // 7. scroll（FR-008）
   server.tool("scroll", "滚动（FR-008）", { locator: locatorSchema, dir: z.enum(["up", "down", "left", "right"]), pages: z.number().int().min(1).max(10).default(1) },
@@ -135,9 +144,9 @@ export function registerTools(server: McpServer): void {
       return scrollAt(c.x, c.y, a.dir, a.pages);
     }));
 
-  // 8. drag（FR-009）
+  // 8. drag（FR-009）——拖拽作用于前台，过前台黑名单闸
   server.tool("drag", "拖拽路径（FR-009，至少 2 点）", { path: z.array(z.object({ x: z.number(), y: z.number() })).min(2) },
-    async (a) => run("drag", undefined, () => dragPath(a.path)));
+    async (a) => run("drag", undefined, () => { requireForegroundAllowed(); return dragPath(a.path); }));
 
   // 9. move（FR-010）
   server.tool("move", "移动光标（FR-010）", { x: z.number(), y: z.number() },

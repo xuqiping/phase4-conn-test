@@ -50,13 +50,17 @@ export async function cursorPos(): Promise<{ x: number; y: number }> {
   return { x: pt.x, y: pt.y };
 }
 
-/** FR-006：逐字符键入（需要目标已有焦点） */
+/** FR-006：逐字符键入（需要目标已有焦点）
+ * 仅支持 VK 可达字符（字母/数字/空格）；含标点/中文等自动降级剪贴板粘贴 */
 export async function typeText(text: string): Promise<ActionResult> {
+  if (![...text].every((ch) => charVkLo(ch) !== undefined || (ch >= "A" && ch <= "Z"))) {
+    return typeViaClipboard(text);
+  }
   const t0 = Date.now();
   for (const ch of text) {
     const code = ch.charCodeAt(0);
-    const upper = code >= 0x41 && code <= 0x5a; // A-Z 需要按住 Shift
-    const vk = upper ? code + 0x20 : charVkLo(ch);
+    const upper = code >= 0x41 && code <= 0x5a; // A-Z：字母 VK 本就不分大小写（=code），Shift 表达大写
+    const vk = upper ? code : charVkLo(ch);
     if (vk === undefined) throw new DriverError("INVALID_ARGUMENT", `无法键入字符: ${JSON.stringify(ch)}`);
     if (upper) keybd_event(0x10, 0, 0, null);
     keybd_event(vk, 0, 0, null);
@@ -79,7 +83,9 @@ export async function typeViaClipboard(text: string): Promise<ActionResult> {
   const t0 = Date.now();
   // 剪贴板写入无原生 FFI 通道时退回 PowerShell（一次性、非热路径）
   const { execFileSync } = await import("node:child_process");
-  const ps = `Set-Clipboard -Value ${JSON.stringify(text).replace(/"/g, `'`)}`;
+  // 文本经 Base64 传输（原字符串拼接会被单引号逃逸注入任意 PowerShell 命令）
+  const b64 = Buffer.from(text, "utf16le").toString("base64");
+  const ps = `$t=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}')); Set-Clipboard -Value $t`;
   execFileSync("powershell.exe", ["-NoProfile", "-Command", ps], { timeout: 3000 });
   const ops = parseCombo("ctrl+v");
   for (const op of ops) keybd_event(op.vk, 0, op.down ? 0 : 2, null);
