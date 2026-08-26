@@ -22,6 +22,10 @@ computer-use-skill/
 │           ├── uiaActions.ts   # UIA 直控动作 + NeedsFallback 判定
 │           ├── input.ts        # SendInput 鼠标键盘/剪贴板中文通道/组合键/滚动/拖拽
 │           └── keymap.ts       # 组合键解析（ctrl+shift+a → VK 序列）
+│       ├── postmsg.ts          # 层2 PostMessage 后台点击/键入（ADR-003，升级v2）
+│       ├── verify.ts           # 前后截图比对验证（层2 降级判定）
+│       └── ...
+│   ├── memory/anchors.ts       # 学习记忆：控件锚点库（ADR-004，升级v2）
 ├── skill/SKILL.md              # Claude Skill 包装层（工具速查+安全规范）
 ├── scripts/                    # check_all 质量门 + integ_notepad_run/phase4_smoke 真机脚本
 ├── test/                       # vitest（29 用例；capture.integ 需 CU_INTEG=1）

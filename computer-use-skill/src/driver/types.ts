@@ -64,11 +64,13 @@ export interface Locator {
   value: string | number;
 }
 
-/** 动作执行结果；via 标记走哪一层（FR-012） */
+/** 动作执行结果；via 标记走哪一层（FR-012；升级v2 增 postmessage/memory） */
 export interface ActionResult {
-  ok: boolean;
-  via: "uia" | "sendinput";
-  elapsedMs: number;
+  ok?: boolean;
+  via: "uia" | "sendinput" | "postmessage" | "memory";
+  elapsedMs?: number;
+  detail?: string;
+  [k: string]: unknown;
 }
 
 export interface FindResult {
