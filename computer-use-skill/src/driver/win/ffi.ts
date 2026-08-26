@@ -45,6 +45,7 @@ export const GetCursorPos = user32.func("bool __stdcall GetCursorPos(_Out_ POINT
 export const PostMessageW = user32.func("bool __stdcall PostMessageW(HWND hwnd, uint32 msg, uintptr_t wparam, intptr_t lparam)");
 export const SendMessageW = user32.func("intptr_t __stdcall SendMessageW(HWND hwnd, uint32 msg, uintptr_t wparam, intptr_t lparam)");
 export const ClientToScreen = user32.func("bool __stdcall ClientToScreen(HWND hwnd, _Inout_ POINT* pt)");
+export const ScreenToClient = user32.func("bool __stdcall ScreenToClient(HWND hwnd, _Inout_ POINT* pt)");
 // 简化输入注入：legacy mouse_event/keybd_event（原型简单，行为与 SendInput 等价）
 export const mouse_event = user32.func(
   "void __stdcall mouse_event(uint32 flags, uint32 dx, uint32 dy, uint32 data, void* extra)"

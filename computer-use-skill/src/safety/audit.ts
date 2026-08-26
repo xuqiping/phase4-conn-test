@@ -16,6 +16,8 @@ export interface AuditEntry {
   ok: boolean;
   errCode?: string;
   elapsedMs?: number;
+  /** 升级v2：层2 降级原因等补充说明（脱敏后的短串） */
+  detail?: string;
 }
 
 /** 敏感标记：role=Password 或名称含关键词（FR-015） */

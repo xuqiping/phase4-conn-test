@@ -11,10 +11,14 @@ import { capture } from "../driver/win/capture.js";
 import { uiaTree } from "../driver/win/uia.js";
 import { NeedsFallback, uiaClick, uiaType } from "../driver/win/uiaActions.js";
 import { activate, clickAt, cursorPos, dragPath, keyCombo, moveTo, scrollAt, typeText, typeViaClipboard, waitSeconds } from "../driver/win/input.js";
-import { foregroundProcessName } from "../driver/win/window.js";
+import { foregroundProcessName, findWindow } from "../driver/win/window.js";
+import { postClick } from "../driver/win/postmsg.js";
+import { ScreenToClient } from "../driver/win/ffi.js";
+import { changed } from "../driver/win/verify.js";
 import { confirmApp, requireAllowed } from "../safety/whitelist.js";
 import { requireNotBlocked } from "../safety/blacklist.js";
 import { audit, redact } from "../safety/audit.js";
+import { loadConfig } from "../safety/config.js";
 
 // ---- locator schema（api/mcp-tools.md §0） ----
 const locatorSchema = z.object({
@@ -56,6 +60,61 @@ async function twoLayer(uiaTry: () => Promise<ActionResult>, fallback: () => Pro
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 层2 后台点击（FR-100/102/103）：PostMessage→截图验证；verified=false 记审计并返回 null 交层3 降级 */
+async function layer2Click(
+  app: string,
+  x: number,
+  y: number,
+  opts: { button?: "left" | "right"; count?: number } = {}
+): Promise<ActionResult | null> {
+  if (!loadConfig().layer2Enabled) return null;
+  let r: ActionResult;
+  try {
+    const win = findWindow(app);
+    const before = await capture({ app, mode: "window" });
+    const pt = { x, y };
+    ScreenToClient(win.hwnd as never, pt as never);
+    r = postClick(win.hwnd, pt.x, pt.y, opts);
+    await sleep(300); // 界面响应窗口
+    const after = await capture({ app, mode: "window" });
+    const v = changed(before.pngBase64 as string, after.pngBase64 as string);
+    if (v.verified) return { ...r, verified: true, changedRatio: v.changedRatio, elapsedMs: 0 };
+    audit({ ts: new Date().toISOString(), tool: "layer2", targetApp: redact(app), ok: false, errCode: "LAYER2_NO_EFFECT", detail: `changedRatio=${v.changedRatio} pixels=${v.changedPixels}` });
+    return null;
+  } catch (e) {
+    // 层2 自身异常（窗口找不到等）不算失败，静默交层3
+    audit({ ts: new Date().toISOString(), tool: "layer2", targetApp: redact(app), ok: false, errCode: "LAYER2_ERROR", detail: String(e) });
+    return null;
+  }
+}
+
+/** 三层执行（升级v2，ADR-003）：层1 UIA → 层2 PostMessage 后台（截图验证）→ 层3 SendInput 前台 */
+async function threeLayerClick(
+  app: string,
+  el: UiNode | undefined,
+  x: number,
+  y: number,
+  opts: { button?: "left" | "right"; count?: number; keys?: string[] },
+  uiaTry: () => Promise<ActionResult>,
+  sendinputFallback: () => Promise<ActionResult>
+): Promise<ActionResult> {
+  if (el) {
+    try {
+      return await uiaTry();
+    } catch (e) {
+      if (!(e instanceof NeedsFallback)) throw e;
+    }
+  }
+  // 层2：屏幕坐标后台点击（el 场景用其中心）
+  const sx = el ? Math.round((el.bounds[0] + el.bounds[2]) / 2) : x;
+  const sy = el ? Math.round((el.bounds[1] + el.bounds[3]) / 2) : y;
+  const r2 = await layer2Click(app, sx, sy, opts);
+  if (r2) return r2;
+  return sendinputFallback();
+}
+
 function center(el: UiNode): { x: number; y: number } {
   const [l, t, r, b] = el.bounds;
   return { x: Math.round((l + r) / 2), y: Math.round((t + b) / 2) };
@@ -93,18 +152,20 @@ export function registerTools(server: McpServer): void {
       return { nodes: t.nodes, truncated: t.truncated, elapsedMs: t.elapsedMs };
     }));
 
-  // 3/4. click / double_click（FR-004/005）
+  // 3/4. click / double_click（FR-004/005；升级v2 走三层：UIA→PostMessage后台→SendInput）
   const clickHandler = (count: number) => async (a: { locator: z.infer<typeof locatorSchema>; button?: "left" | "right"; keys?: string[] }) =>
     run(count > 1 ? "double_click" : "click", a.locator.app, async () => {
       safetyGates(a.locator.app);
       const { el, x, y } = await resolveLocator(a.locator);
-      if (x !== undefined && y !== undefined) {
-        activate(a.locator.app);
-        return clickAt(x, y, { button: a.button, count });
-      }
-      return twoLayer(
+      return threeLayerClick(
+        a.locator.app, el, x!, y!,
+        { button: a.button, count, keys: a.keys },
         () => uiaClick(a.locator.app, el!, { button: a.button, count, keys: a.keys }),
-        async () => { const c = center(el!); activate(a.locator.app); return clickAt(c.x, c.y, { button: a.button, count }); }
+        async () => {
+          const c = el ? center(el) : { x: x!, y: y! };
+          activate(a.locator.app);
+          return clickAt(c.x, c.y, { button: a.button, count });
+        }
       );
     });
   server.tool("click", "单击元素（FR-004，UIA 零激活优先）", { locator: locatorSchema, button: z.enum(["left", "right"]).default("left"), keys: z.array(z.string()).optional() }, clickHandler(1));
