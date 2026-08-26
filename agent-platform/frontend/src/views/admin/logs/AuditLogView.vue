@@ -124,7 +124,13 @@ const moduleOptions = [
   { label: '媒体生成', value: 'media' },
   { label: '模型供应商', value: 'llm' },
   { label: '智能对话', value: 'chat' },
-  { label: '无限画布', value: 'canvas' }
+  { label: '无限画布', value: 'canvas' },
+  // 8x-2 B3：与后端 MODULE_LABEL 键集对齐（AuditLabelDictionaryCompletenessTest 同源）
+  { label: '文件', value: 'file' },
+  { label: '安全管理', value: 'security' },
+  { label: '公告建议台', value: 'feedback' },
+  { label: '项目组', value: 'project-group' },
+  { label: '审计链', value: 'audit' }
 ]
 
 const resultOptions = [

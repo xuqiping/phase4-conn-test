@@ -15,6 +15,15 @@ export const DETAIL_KEY_CN: Record<string, string> = {
   error: '错误信息',
   fails: '连续失败次数',
   distinctAccounts: '尝试的不同账号数',
+  // P0 手工审计行（8x-1 B1：EmailService/SmsService/MfaService 等手工 detail 键）
+  email: '邮箱',
+  phone: '手机号',
+  ip: '来源IP',
+  identifier: '账号标识',
+  hit: '是否命中账号',
+  openid: '微信openid',
+  userId: '用户ID',
+  channel: '重置渠道',
   // 请求路径/防护类（安全事件）
   path: '请求路径',
   max: '阈值上限',
@@ -91,6 +100,18 @@ export const DETAIL_VALUE_CN: Record<string, string> = {
   user_not_active: '账号非活跃状态',
   credential_last_one: '最后一个可用凭证，不允许解绑',
   rate_limited: '触发限流',
+  // B1（8x-1）：P0 手工行 reason 码
+  verification_off: '验证功能未开启',
+  token_blank: '令牌为空',
+  token_invalid: '令牌无效',
+  redis_error: '缓存读取失败',
+  email_blank: '邮箱为空',
+  no_verified_phone: '账号无已验证手机号',
+  no_resettable_email: '账号无可用于重置的邮箱',
+  already_verified: '邮箱已验证',
+  code_active: '验证码已发未过期',
+  code_wrong: '验证码错误',
+  already_bound: '已绑定',
   // 媒体常见 reason
   provider_failed: '服务商调用失败',
   timeout: '超时',
@@ -99,13 +120,14 @@ export const DETAIL_VALUE_CN: Record<string, string> = {
   policy_rejected: '内容安全策略拒绝'
 }
 
-/** 13x-1：@AuditLog module → 中文（与后端 @AuditLog(module=...) 同源盘点）。 */
+/** 13x-1：@AuditLog module → 中文（与后端 @AuditLog(module=...) 同源盘点）。
+ *  8x-2 B3：删幽灵码 workflow/points/project（后端无写入），补 feedback/project-group/audit。 */
 export const AUDIT_MODULE_CN: Record<string, string> = {
   user: '用户管理', role: '角色权限', auth: '认证账号', security: '安全管理',
   billing: '计费积分', llm: '模型供应', media: '媒体生成', kb: '知识库',
-  agent: '智能体', workflow: '工作流', asset: '资产库', canvas: '无限画布',
+  agent: '智能体', asset: '资产库', canvas: '无限画布',
   chat: '智能对话', memory: '记忆库', system: '系统设置', file: '文件',
-  points: '积分', project: '项目'
+  feedback: '公告建议台', 'project-group': '项目组', audit: '审计链'
 }
 
 /** 13x-1：action 单词 → 中文（含全部会触发特权变更的敏感动作）。 */
