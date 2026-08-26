@@ -2,6 +2,8 @@
 
 > 规格 §9.1-§9.7。⚠️ CanvasBoard.vue / CanvasView.vue 工作区有用户 WIP——基于现状续改，提交前逐文件过 diff，不回退不混提。
 
+**✅ 已完成**（2026-08-26，commit 5453e59b，21 文件 +496；后端 2544+前端 806 全绿+vue-tsc 0，见 [开发进度4](../../开发进度/人工测试遗留问题修复III/开发进度4.md)）。**要点**：C1 复验发现 resize 无落库链，补 provide('canvasNodeResized')；C2 默认标记走媒体列表接口（llm-model-defaults 是 llm:config 权限普通用户不可达）；C5 定型收口 updateNodeData 一处；C6 复用 D1 Lightbox；C3 比例独占整行；CanvasBoard 吸收用户 WIP 六轮#2 对账兜底（34 行，先例口径）。
+
 ## C1. 复验 2x-1 节点拉伸（已落 S2 管道）
 
 - 动作：逐节点类型（文本/图片/视频/转绘）核对 NodeResizer 挂载与 dimensions→undo→落库链路；个别类型缺挂则补 `:resizable` 与 handle 样式。
