@@ -377,8 +377,13 @@ export interface MediaEstimatePersonalScope {
   used: number
   inProjectAvailable: number | null
   affordableMember: boolean
-  /** 卡点归因：MEMBER=个人限额卡 / POOL=组池卡 / NONE=都够（非成员无本结构） */
-  bindingConstraint: 'MEMBER' | 'POOL' | 'NONE'
+  /** 卡点归因：DEBT=欠款冻结（V161 最高优先）/ MEMBER=个人限额卡 / POOL=组池卡 / NONE=都够（非成员无本结构） */
+  bindingConstraint: 'DEBT' | 'MEMBER' | 'POOL' | 'NONE'
+  /** V161（修复III）：组内名下余额 + 欠款拆分（合计>0 冻结组内消费） */
+  selfPoints: number
+  debtPoolPoints: number
+  debtLeaderPoints: number
+  debtTotalPoints: number
 }
 
 /** 7x（V155）+C1：预估预览结果（积分口径；fail-closed：估价失败 estimatedPoints=0 且 affordable=false，提交侧同拒）。 */

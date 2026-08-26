@@ -353,6 +353,7 @@ public final class AuditLabelDictionary {
                     Map.entry("member_reset_used", "重置成员用量"),
                     Map.entry("member_kinds", "修改成员类别"),
                     Map.entry("member_visibility", "修改成员可见性"),
+                    Map.entry("member_self_transfer", "个人划拨入组（还款+入名下）"),
                     Map.entry("visibility_update", "修改组可见性"),
                     Map.entry("invite_accept", "接受邀请"),
                     Map.entry("invite_decline", "拒绝邀请"),

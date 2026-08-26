@@ -60,6 +60,8 @@ class ProjectGroupWalletServiceIT {
         jdbc.update("INSERT INTO users (id, username, password, name, status) OVERRIDING SYSTEM VALUE "
                 + "VALUES (?, 'it_pg_member', 'x', 'IT成员', 'ACTIVE')", MEMBER);
         jdbc.update("INSERT INTO user_points_balance (user_id, balance_points) VALUES (?, 0) ON CONFLICT (user_id) DO UPDATE SET balance_points = 0", OWNER);
+        // B 轮起成员也有个人钱包动作（划拨扣款/退组退款）：每次重置防跨 run 残留
+        jdbc.update("INSERT INTO user_points_balance (user_id, balance_points) VALUES (?, 0) ON CONFLICT (user_id) DO UPDATE SET balance_points = 0", MEMBER);
         groupId = groupService.createGroup(OWNER, "IT钱包测试组", null);
         groupService.addMember(groupId, OWNER, false, MEMBER, null);
     }
@@ -70,9 +72,12 @@ class ProjectGroupWalletServiceIT {
         jdbc.update("DELETE FROM project_group_ledger WHERE group_id IN (SELECT id FROM project_groups WHERE owner_user_id = ?)", OWNER);
         jdbc.update("DELETE FROM project_groups WHERE owner_user_id = ?", OWNER);
         jdbc.update("DELETE FROM user_points_balance WHERE user_id = ?", OWNER);
+        jdbc.update("DELETE FROM user_points_balance WHERE user_id = ?", MEMBER);
         // OWNER id 测试专用：全量清个人流水（GROUP 腿 + fundOwner 的 ADMIN 腿 + B5 的 DEBT_REPAY 腿，
         // 后者曾跨 run 残留导致 IncorrectResultSize）
         jdbc.update("DELETE FROM points_ledger WHERE user_id = ?", OWNER);
+        // B 轮成员侧个人流水（划拨 GROUP_ALLOCATE/退组 GROUP_RECLAIM）——防 FK 阻塞 users 清理
+        jdbc.update("DELETE FROM points_ledger WHERE user_id = ?", MEMBER);
         jdbc.update("DELETE FROM media_gen_tasks WHERE project_group_id IS NOT NULL AND model = 'it-pg-wallet'");
         jdbc.update("DELETE FROM payment_order WHERE user_id = ?", OWNER);
         jdbc.update("DELETE FROM idempotency_keys WHERE user_id IN (?, ?)", OWNER, MEMBER);
@@ -133,8 +138,12 @@ class ProjectGroupWalletServiceIT {
     }
 
     /** V133 对账模板①：末行 balance_after == 钱包余额；正向重建 Σdelta。
-     *  剔除不动组池的腿：BACKSTOP（差额记组长个人）+ MEMBER_、SELF_、DEBT_ 前缀系
-     * （配额授予历史、名下余额腿、核销留痕——均非组池资金腿，V161 扩容）。 */
+     *  剔除不动组池的腿：BACKSTOP（差额记组长个人）+ MEMBER_ 前缀系（配额授予历史）+
+     *  SELF_ALLOCATE/SELF_CONSUME/SELF_REFUND（名下余额腿、退组退本人）+ DEBT_ 前缀系（核销留痕 delta=0）。
+     *  SELF_REPAY 是组池资金腿（还组池垫 +rp 实入池），**保留**在 Σ 内——修复III B 后口径。
+     *  运维 SQL 等价模板（V133 注释风格）：
+     *    Σ = SUM(delta) WHERE type IN ('ALLOCATE','RECLAIM','CONSUME','REFUND','SELF_REPAY')
+     *        AND type NOT LIKE 'ADMIN%' ... 应 == wallets.balance_points 末行。 */
     private void assertLedgerWalletReconcile() {
         List<ProjectGroupLedgerEntity> rows = groupLedger();
         assertThat(rows).isNotEmpty();
@@ -143,8 +152,10 @@ class ProjectGroupWalletServiceIT {
         BigDecimal sum = rows.stream()
                 .filter(r -> !ProjectGroupLedgerEntity.TYPE_BACKSTOP.equals(r.getType()))
                 .filter(r -> !r.getType().startsWith("MEMBER_"))
-                .filter(r -> !r.getType().startsWith("SELF_"))
                 .filter(r -> !r.getType().startsWith("DEBT_"))
+                .filter(r -> !ProjectGroupLedgerEntity.TYPE_SELF_ALLOCATE.equals(r.getType()))
+                .filter(r -> !ProjectGroupLedgerEntity.TYPE_SELF_CONSUME.equals(r.getType()))
+                .filter(r -> !ProjectGroupLedgerEntity.TYPE_SELF_REFUND.equals(r.getType()))
                 .map(ProjectGroupLedgerEntity::getDeltaPoints)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         assertThat(sum).isEqualByComparingTo(walletBalance());
@@ -570,5 +581,158 @@ class ProjectGroupWalletServiceIT {
         String type = jdbc.queryForObject(
                 "SELECT type FROM project_group_ledger WHERE group_id = ? AND delta_points = 0", String.class, g2);
         assertThat(type).isEqualTo("ADMIN_ADJUST");
+    }
+
+    // ==================== 修复III B：划拨/还款/豁免/重置/退组结算（V161）====================
+
+    /** 成员个人钱包直充（绕过充值流程）。 */
+    private BigDecimal memberPersonalBalance() {
+        return jdbc.queryForObject("SELECT balance_points FROM user_points_balance WHERE user_id = ?", BigDecimal.class, MEMBER);
+    }
+
+    @Test
+    void 个人划拨_三档还款入名下_幂等_非成员拒_V161() {
+        fundOwner("20");
+        walletService.allocate(groupId, OWNER, false, new BigDecimal("2"), null);   // 池2 组长个人18
+        setMemberCol("quota_limit_points", "5");
+        charge("8", "b1r1");   // 池2+组长垫6；overflow=3 → debt_leader 3；used 8
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(new BigDecimal("3"));
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("12"));
+        jdbc.update("UPDATE user_points_balance SET balance_points = 10 WHERE user_id = ?", MEMBER);
+
+        // 档1：划 2（<欠款3）→ 全还组长垫，不进名下；used 回减 2
+        walletService.selfTransfer(groupId, MEMBER, new BigDecimal("2"), "st-1");
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ONE);
+        assertThat(memberCol("self_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(memberCol("used_points")).isEqualByComparingTo(new BigDecimal("6"));
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("14"));       // 组长 +2
+        assertThat(memberPersonalBalance()).isEqualByComparingTo(new BigDecimal("8"));
+        assertThatThrownBy(() -> hold("1", "b1h1"))                                     // 欠款还剩1 → 冻结仍在
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("暂停组内消费");
+
+        // 档2：划 1（恰等欠款）→ 债清
+        walletService.selfTransfer(groupId, MEMBER, new BigDecimal("1"), "st-2");
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(memberCol("used_points")).isEqualByComparingTo(new BigDecimal("5"));
+        assertThatThrownBy(() -> hold("1", "b1h2"))                                     // 冻结解除，卡的是限额
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("限额");
+
+        // 档3：划 3（无欠款）→ 全入名下
+        walletService.selfTransfer(groupId, MEMBER, new BigDecimal("3"), "st-3");
+        assertThat(memberCol("self_points")).isEqualByComparingTo(new BigDecimal("3"));
+        assertThat(memberPersonalBalance()).isEqualByComparingTo(new BigDecimal("4"));
+
+        // 幂等：同键重放不双扣（SELF_ALLOCATE 末行锚点回放 balanceAfter）
+        walletService.selfTransfer(groupId, MEMBER, BigDecimal.ONE, "st-4");
+        walletService.selfTransfer(groupId, MEMBER, BigDecimal.ONE, "st-4");
+        assertThat(memberCol("self_points")).isEqualByComparingTo(new BigDecimal("4"));
+        assertThat(memberPersonalBalance()).isEqualByComparingTo(new BigDecimal("3"));
+
+        // 个人余额不足拒 + 非成员 403
+        assertThatThrownBy(() -> walletService.selfTransfer(groupId, MEMBER, new BigDecimal("999"), null))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> walletService.selfTransfer(groupId, 991200003L, BigDecimal.ONE, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("非项目组成员");
+        assertLedgerWalletReconcile();
+    }
+
+    @Test
+    void 调限额调高先抵欠款_重置清欠款_V161() {
+        fundOwner("20");
+        walletService.allocate(groupId, OWNER, false, new BigDecimal("2"), null);
+        setMemberCol("quota_limit_points", "5");
+        charge("8", "b2r1");   // debt_leader 3, used 8
+        // 调高 5→7（+2）→ 豁免抵组长垫 2：债 3→1、used 8→6、DEBT_WRITEOFF 留痕
+        groupService.updateQuota(groupId, OWNER, false, MEMBER, new BigDecimal("7"));
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ONE);
+        assertThat(memberCol("used_points")).isEqualByComparingTo(new BigDecimal("6"));
+        assertThat(memberCol("quota_limit_points")).isEqualByComparingTo(new BigDecimal("7"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM project_group_ledger WHERE group_id = ? AND type = 'DEBT_WRITEOFF'",
+                Integer.class, groupId)).isEqualTo(1);
+        // 调低不触发豁免（7→4，债务不动）
+        groupService.updateQuota(groupId, OWNER, false, MEMBER, new BigDecimal("4"));
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ONE);
+        // 重置清欠款：债 1→0、used→0、第二条 DEBT_WRITEOFF、ADMIN_ADJUST 备注含「欠款清零」
+        groupService.resetUsed(groupId, OWNER, false, MEMBER);
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(memberCol("used_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM project_group_ledger WHERE group_id = ? AND type = 'DEBT_WRITEOFF'",
+                Integer.class, groupId)).isEqualTo(2);
+        String remark = jdbc.queryForObject(
+                "SELECT remark FROM project_group_ledger WHERE group_id = ? AND type = 'ADMIN_ADJUST'",
+                String.class, groupId);
+        assertThat(remark).contains("欠款清零");
+        assertLedgerWalletReconcile();
+    }
+
+    @Test
+    void 全链_池垫欠款划拨还款冻结解除退组结算_V161() {
+        fundOwner("20");
+        walletService.allocate(groupId, OWNER, false, new BigDecimal("10"), null);  // 池10 组长10
+        setMemberCol("quota_limit_points", "5");
+        // 池富余：全额池扣，溢出记组池垫（缺陷1 口径）
+        charge("8", "f1");
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("2"));
+        assertThat(memberCol("debt_pool_points")).isEqualByComparingTo(new BigDecimal("3"));
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThatThrownBy(() -> hold("1", "f2"))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("暂停组内消费");
+        jdbc.update("UPDATE user_points_balance SET balance_points = 8 WHERE user_id = ?", MEMBER);
+
+        // 划拨 5：还组池垫 3（池 2→5，SELF_REPAY 资金腿）+ 入名下 2；used 8→5 冻结解除
+        walletService.selfTransfer(groupId, MEMBER, new BigDecimal("5"), "f3");
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("5"));
+        assertThat(memberCol("debt_pool_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(memberCol("self_points")).isEqualByComparingTo(new BigDecimal("2"));
+        assertThat(memberCol("used_points")).isEqualByComparingTo(new BigDecimal("5"));
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("10"));     // 组长分文未动
+        assertThatThrownBy(() -> hold("1", "f4"))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("限额");  // 冻结解除卡限额
+
+        // 退组：名下 2 全退本人（无债 SELF_REFUND）
+        groupService.removeMember(groupId, OWNER, false, MEMBER);
+        assertThat(memberPersonalBalance()).isEqualByComparingTo(new BigDecimal("5")); // 8−5划拨+2退
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM project_group_members WHERE group_id = ? AND user_id = ? AND deleted = 0",
+                Integer.class, groupId, MEMBER)).isZero();
+        assertThat(walletBalance()).isEqualByComparingTo(new BigDecimal("5"));         // 退组不动池
+        String selfRefund = jdbc.queryForObject(
+                "SELECT remark FROM project_group_ledger WHERE group_id = ? AND type = 'SELF_REFUND'",
+                String.class, groupId);
+        assertThat(selfRefund).contains("退本人");
+        assertLedgerWalletReconcile();
+    }
+
+    @Test
+    void 退组结算_名下还组长垫核销残留欠款_V161() {
+        fundOwner("30");
+        walletService.allocate(groupId, OWNER, false, new BigDecimal("2"), null);   // 池2 组长28
+        setMemberCol("quota_limit_points", "5");
+        charge("8", "b3r1");   // 池2+组长垫6 → debt_leader 3；组长 28−6=22
+        jdbc.update("UPDATE user_points_balance SET balance_points = 4 WHERE user_id = ?", MEMBER);
+        walletService.selfTransfer(groupId, MEMBER, new BigDecimal("4"), null);     // 还债3 + 入名下1；组长+3=25
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("25"));
+        charge("3", "b3r2");   // 名下1 + 组长垫2 → debt_leader 2；组长 25−2=23；used 8
+        assertThat(memberCol("self_points")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(memberCol("debt_leader_points")).isEqualByComparingTo(new BigDecimal("2"));
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("23"));
+
+        // 退组：无 self → 欠款 2（组长垫）全额 DEBT_WRITEOFF 核销，组长不追偿
+        groupService.removeMember(groupId, OWNER, false, MEMBER);
+        assertThat(personalBalance()).isEqualByComparingTo(new BigDecimal("23"));
+        String wo = jdbc.queryForObject(
+                "SELECT remark FROM project_group_ledger WHERE group_id = ? AND type = 'DEBT_WRITEOFF'",
+                String.class, groupId);
+        assertThat(wo).contains("退组核销").contains("组长垫");
+        Integer alive = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM project_group_members WHERE group_id = ? AND user_id = ? AND deleted = 0",
+                Integer.class, groupId, MEMBER);
+        assertThat(alive).isZero();
+        assertLedgerWalletReconcile();
     }
 }

@@ -24,6 +24,12 @@ export interface ProjectGroupMineVO {
   myQuota: number | null
   /** 我已消耗（限额口径） */
   myUsed: number
+  /** 组内名下余额（V161：个人划拨入组，记在我成员行上） */
+  mySelf: number
+  /** 我的欠款·组池垫（V161；与 myDebtLeader 合计>0 时组内消费冻结） */
+  myDebtPool: number
+  /** 我的欠款·组长垫（V161） */
+  myDebtLeader: number
   /** 我作为管理的可分配额度（V156 层级额度；null=不适用或不限） */
   myAllocatable: number | null
   memberCount: number
@@ -44,6 +50,12 @@ export interface ProjectGroupMemberVO {
   memberVisibilityOverrides: Record<string, 'OWN' | 'ALL'> | null
   quotaLimitPoints: number | null
   usedPoints: number
+  /** 组内名下余额（V161：成员从个人钱包划入，记在成员行上，组长不可回收） */
+  selfPoints: number
+  /** 欠款·组池垫（V161；与 debtLeaderPoints 合计>0 时该成员组内消费冻结） */
+  debtPoolPoints: number
+  /** 欠款·组长垫（V161；还款退组长个人钱包） */
+  debtLeaderPoints: number
   /** 额度分配人（V156 层级额度）：null=组长行；组长 id=组池直管；管理 id=占该管理预算 */
   allocatedByUserId: number | null
   /** 管理可分配额度（V156，仅 MANAGER 行有值；null=不限/不适用） */
@@ -233,6 +245,15 @@ export const projectGroupApi = {
   /** POST /project-groups/{id}/members/{uid}/reset-used — 重置成员已用。 */
   resetUsed(id: number, uid: number) {
     return request.post<ApiResponse<null>>(`/project-groups/${id}/members/${uid}/reset-used`)
+  },
+
+  /**
+   * POST /project-groups/{id}/members/{uid}/self-transfer — 个人划拨至组内名下（V161，
+   * 仅本人可操作自己）：先还欠款（组长垫→组池垫）余款入名下；remark 兼作幂等防连点。
+   */
+  selfTransfer(id: number, uid: number, points: number, remark?: string) {
+    return request.post<ApiResponse<{ groupId: number; points: number; groupBalance: number }>>(
+      `/project-groups/${id}/members/${uid}/self-transfer`, { points, remark })
   },
 
   // ==================== 17x#2 成员权限（V139）：角色任免 / 功能开关 / 成员级可见性 ====================

@@ -9,6 +9,7 @@ import com.superprogrammer.common.exception.BusinessException;
 import com.superprogrammer.common.exception.ErrorCode;
 import com.superprogrammer.projectgroup.entity.ProjectGroupEntity;
 import com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity;
+import com.superprogrammer.projectgroup.entity.ProjectGroupMemberEntity;
 import com.superprogrammer.projectgroup.entity.ProjectGroupWalletEntity;
 import com.superprogrammer.projectgroup.mapper.ProjectGroupLedgerMapper;
 import com.superprogrammer.projectgroup.mapper.ProjectGroupMapper;
@@ -93,6 +94,157 @@ public class ProjectGroupWalletService {
                 points.negate(), ProjectGroupLedgerEntity.REF_GROUP, String.valueOf(groupId), remark);
         publishGroupChanged(groupId, requireWallet(groupId).getBalancePoints(), points.negate(), remark);
         log.info("组回收 groupId={} owner={} points={}", groupId, actorUserId, points);
+
+    }
+
+    /**
+     * 成员个人划拨至组内名下（V161 修复III B1，规格 §4.1）：本人个人钱包扣款 → 先还欠款
+     * （组长垫→组池垫，真金白银各回各家）→ 余款进名下余额 self_points。还款额同步回减 used
+     * （不变量②：debt 减少必伴随 used 减少；可用空间随之恢复，debt 合计归零即解除消费冻结）。
+     *
+     * <p><b>锁序</b>：本人个人（debit）→ 组长个人（还垫腿，金额=预读计划值）→ 组池 → 成员行。
+     * 「组长个人→组池」与 allocate/reclaim 同向，和瀑布组长腿（池/名下后才锁组长）之间的窄 AB-BA
+     * 窗口与 allocate 同类——PG 死锁检测器自愈 + 幂等键兜底（doChargeGroup 注释同口径留档）。
+     * 锁后复验 debt_leader ≥ 计划值，不等（并发退款/豁免先动了债）整单 CONFLICT 回滚重试。
+     *
+     * @return 划拨后组池余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal selfTransfer(Long groupId, Long userId, BigDecimal points, String idemKey) {
+        requirePositive(points, "划拨积分必须大于0");
+        if (idemKey != null && !idemKey.isBlank()) {
+            return runIdempotent(idemKey, groupId, userId, "group.selftransfer", points,
+                    () -> doSelfTransfer(groupId, userId, points));
+        }
+        return doSelfTransfer(groupId, userId, points);
+    }
+
+    private BigDecimal doSelfTransfer(Long groupId, Long userId, BigDecimal points) {
+        ProjectGroupMemberEntity probe = memberMapper.selectByGroupUser(groupId, userId);
+        if (probe == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非项目组成员，无法划拨至组内名下");
+        }
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
+        }
+        BigDecimal rlPlan = nz(probe.getDebtLeaderPoints()).min(points);   // 预读：还组长垫计划值
+        pointsWallet.debitForGroupAllocate(userId, points, groupId,
+                "划拨至组内名下（先还欠款，余款进名下）");                        // 锁①本人个人
+        if (rlPlan.signum() > 0) {
+            pointsWallet.creditForGroupReclaim(g.getOwnerUserId(), rlPlan, groupId,
+                    "成员还款·退组长垫付 member=" + userId);                     // 锁②组长个人
+        }
+        walletMapper.selectByGroupIdForUpdate(groupId);                       // 锁③组池
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUserForUpdate(groupId, userId);  // 锁④成员
+        if (m == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "成员已退组，划拨失败");
+        }
+        if (nz(m.getDebtLeaderPoints()).compareTo(rlPlan) < 0) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "欠款刚被并发变动（退款/豁免），请刷新后重试");
+        }
+        BigDecimal rl = rlPlan;
+        BigDecimal rp = nz(m.getDebtPoolPoints()).min(points.subtract(rl));
+        BigDecimal toSelf = points.subtract(rl).subtract(rp);
+        if (rp.signum() > 0) {
+            walletMapper.credit(groupId, rp);                                 // 组池垫还款回池（资金腿）
+            memberMapper.adjustDebtPool(groupId, userId, rp.negate());
+        }
+        if (rl.signum() > 0) {
+            memberMapper.adjustDebtLeader(groupId, userId, rl.negate());
+        }
+        if (rl.add(rp).signum() > 0) {
+            memberMapper.subtractUsed(groupId, userId, rl.add(rp));           // 不变量②：债清额回减已用
+        }
+        if (toSelf.signum() > 0) {
+            memberMapper.creditSelf(groupId, userId, toSelf);
+        }
+        BigDecimal balanceAfter = requireWallet(groupId).getBalancePoints();
+        // 腿顺序：SELF_REPAY 先落、SELF_ALLOCATE **最后**落——runIdempotent 以「组内最新一条流水」回填
+        // result_ref 并按其 delta==points 校验重放，SELF_ALLOCATE(delta=+points 总额) 必须是末行。
+        if (rl.signum() > 0 || rp.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, userId, ProjectGroupLedgerEntity.TYPE_SELF_REPAY,
+                    rp, ProjectGroupLedgerEntity.REF_MEMBER, String.valueOf(userId),
+                    "还款（组长垫 " + plain(rl) + " 退组长个人 / 组池垫 " + plain(rp) + " 回组池）");
+        }
+        appendLedgerRow(balanceAfter, groupId, userId, ProjectGroupLedgerEntity.TYPE_SELF_ALLOCATE,
+                points, ProjectGroupLedgerEntity.REF_MEMBER, String.valueOf(userId),
+                "个人划拨入组（还组长垫 " + plain(rl) + " / 还组池垫 " + plain(rp)
+                        + " / 入名下 " + plain(toSelf) + "）");
+        publishGroupChanged(groupId, balanceAfter, rp, "selfTransfer:" + userId);
+        publishMemberUsed(groupId, userId, rl.add(rp).negate(), "selfTransfer:" + userId);
+        log.info("个人划拨入组 groupId={} member={} points={}（还组长垫 {}/还组池垫 {}/入名下 {}）",
+                groupId, userId, points, plain(rl), plain(rp), plain(toSelf));
+        return balanceAfter;
+    }
+
+    /** 千分位无关的紧凑数值文本（流水备注用，stripTrailingZeros 防科学计数法）。 */
+    private static String plain(BigDecimal v) {
+        return v == null ? "0" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * 退组结算（V161 修复III B3，规格 §4.3）：名下余额 self_points 先还欠款（组长垫→组池垫，真金白银
+     * 各回各家），余款原路退本人个人钱包；名下覆盖不了的欠款余额 DEBT_WRITEOFF 核销留痕（人走账清，
+     * 组长垫损失自负——组长的钱垫给谁由组长的邀请决定）。
+     *
+     * <p><b>锁序</b>：组池 → 成员行 →（组长个人、本人个人）——与 doChargeGroup 完全同序
+     * （瀑布组长腿=池/名下之后锁组长个人），不引入新锁窗口。
+     *
+     * <p>由 ProjectGroupService.removeMember 在同一事务内、软删成员行**之前**调用；
+     * 成员行随后软删，used 不回减（不变量②只约束在册行；历史腿留审计）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void settleOnMemberRemoval(Long groupId, Long memberUserId) {
+        walletMapper.selectByGroupIdForUpdate(groupId);                                        // 锁①组池
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);  // 锁②成员
+        if (m == null) {
+            return;  // 已不在册（并发退组/从未加入）——无事可结
+        }
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        BigDecimal self = nz(m.getSelfPoints());
+        BigDecimal rl = self.min(nz(m.getDebtLeaderPoints()));
+        BigDecimal rp = self.subtract(rl).min(nz(m.getDebtPoolPoints()));
+        BigDecimal refund = self.subtract(rl).subtract(rp);
+        BigDecimal woLeader = nz(m.getDebtLeaderPoints()).subtract(rl);
+        BigDecimal woPool = nz(m.getDebtPoolPoints()).subtract(rp);
+        if (rp.signum() > 0) {
+            walletMapper.credit(groupId, rp);                                                 // 名下还组池垫→回池（资金腿）
+        }
+        if (rl.signum() > 0 && g != null) {
+            pointsWallet.creditForGroupReclaim(g.getOwnerUserId(), rl, groupId,
+                    "退组结算·名下还组长垫 member=" + memberUserId);                             // 锁③组长个人
+        }
+        if (refund.signum() > 0) {
+            pointsWallet.creditForGroupReclaim(memberUserId, refund, groupId,
+                    "退组结算·名下余额退本人");                                                 // 锁④本人个人
+        }
+        BigDecimal balanceAfter = requireWallet(groupId).getBalancePoints();
+        if (rl.signum() > 0 || rp.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId, ProjectGroupLedgerEntity.TYPE_SELF_REPAY,
+                    rp, ProjectGroupLedgerEntity.REF_MEMBER, String.valueOf(memberUserId),
+                    "退组还款（组长垫 " + plain(rl) + " 退组长个人 / 组池垫 " + plain(rp) + " 回组池）");
+        }
+        if (refund.signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId, ProjectGroupLedgerEntity.TYPE_SELF_REFUND,
+                    refund, ProjectGroupLedgerEntity.REF_MEMBER, String.valueOf(memberUserId),
+                    "退组·名下余额 " + plain(refund) + " 退本人个人钱包");
+        }
+        if (woLeader.add(woPool).signum() > 0) {
+            appendLedgerRow(balanceAfter, groupId, memberUserId, ProjectGroupLedgerEntity.TYPE_DEBT_WRITEOFF,
+                    BigDecimal.ZERO, ProjectGroupLedgerEntity.REF_MEMBER, String.valueOf(memberUserId),
+                    "退组核销欠款（组长垫 " + plain(woLeader) + " / 组池垫 " + plain(woPool) + "）");
+        }
+        if (woLeader.add(woPool).signum() > 0) {
+            log.warn("退组核销欠款 groupId={} member={}（组长垫 {} / 组池垫 {}）——组长垫损失自负",
+                    groupId, memberUserId, plain(woLeader), plain(woPool));
+        }
+        if (rp.signum() > 0) {
+            publishGroupChanged(groupId, balanceAfter, rp, "settle:" + memberUserId);
+        }
+        log.info("退组结算 groupId={} member={}（还组长垫 {}/还组池垫 {}/退本人 {}/核销 组长垫{}+组池垫{}）",
+                groupId, memberUserId, plain(rl), plain(rp), plain(refund), plain(woLeader), plain(woPool));
     }
 
     /**

@@ -47,6 +47,7 @@ public class ProjectGroupService {
     private final com.superprogrammer.projectgroup.mapper.ProjectGroupLedgerMapper ledgerMapper;
     private final UserMapper userMapper;
     private final MemberBudgetService budgetService;
+    private final ProjectGroupWalletService walletService;
 
     /**
      * 建组：组行 + 组长成员行（quota NULL=不限）+ 组池 0 行，三写同事务。
@@ -185,7 +186,11 @@ public class ProjectGroupService {
         recordMemberQuotaLedger(groupId, allocatedByUserId, memberUserId, null, quotaLimitPoints, "成员配额落行");
     }
 
-    /** 移除成员（组长/管理/admin）：组长自身不可移除；MANAGER/OWNER 行不可被运营移除；used>0 照移（历史流水留痕）。 */
+    /**
+     * 移除成员（组长/管理/admin）：组长自身不可移除；MANAGER/OWNER 行不可被运营移除。
+     * V161 修复III B3：软删前先退组结算——名下余额先还欠款（组长垫→组池垫），余款退本人个人钱包，
+     * 覆盖不了的欠款 DEBT_WRITEOFF 核销留痕（人走账清）。used 照移（历史流水留痕）。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void removeMember(Long groupId, Long actorUserId, boolean admin, Long memberUserId) {
         ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
@@ -193,8 +198,9 @@ public class ProjectGroupService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长不可移除，请先删除组");
         }
         ProjectGroupMemberEntity m = requireOperatableMember(groupId, memberUserId);
+        walletService.settleOnMemberRemoval(groupId, memberUserId);   // 同事务：锁序 组池→成员→个人，与 chargeGroup 同序
         memberMapper.deleteById(m.getId());
-        log.info("移除成员 groupId={} member={} actor={}", groupId, memberUserId, actorUserId);
+        log.info("移除成员（含退组结算）groupId={} member={} actor={}", groupId, memberUserId, actorUserId);
     }
 
     /**
@@ -208,6 +214,9 @@ public class ProjectGroupService {
      *       自己不限额时可配任意值（含 null=不限）。</li>
      * </ul>
      * 调低不追溯已耗（V133 列注释口径），仅约束后续消耗。
+     * <p>V161 修复III B2：调高限额 +X 时先抵欠款（豁免，无资金流动）——债清额回减 used，
+     * 可用空间即时恢复；DEBT_WRITEOFF 腿留痕拆分（组长垫/组池垫）。old=null（原不限额）
+     * 不可能有欠款（溢出仅 quota 有限时产生），天然跳过豁免。
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateQuota(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
@@ -219,6 +228,12 @@ public class ProjectGroupService {
         String targetRole = target.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : target.getRole();
         if (ProjectGroupMemberEntity.ROLE_OWNER.equals(targetRole)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "组长行不可调限额（组长预算=组池本身）");
+        }
+        BigDecimal oldQuotaForExempt = target.getQuotaLimitPoints();
+        if (quotaLimitPoints != null && oldQuotaForExempt != null
+                && quotaLimitPoints.compareTo(oldQuotaForExempt) > 0) {
+            exemptDebtOnQuotaRaise(groupId, actorUserId, memberUserId, oldQuotaForExempt, quotaLimitPoints);
+            target = requireMember(groupId, memberUserId);  // used/版本已被豁免更新，重读防乐观锁静默失配
         }
         boolean ownerSide = admin || g.getOwnerUserId().equals(actorUserId);
         if (ownerSide) {
@@ -279,6 +294,8 @@ public class ProjectGroupService {
      * remark 记前后值留痕）。quota 不动。重置后若有迟到退款，GREATEST 落 0，
      * Σ(CONSUME−REFUND) 与 used 会偏差——罕见，对账黄灯人工核（V133 模板注）。
      * <p>V156：目标 MEMBER 行=组长/管理均可；目标 MANAGER 行=仅组长/admin（重置管理已用=释放其可分配）。
+     * <p>V161 修复III B2：欠款一并清零（人工修脏数据口，运维考量·运维入口）——双欠款归 0 +
+     * DEBT_WRITEOFF 腿留痕（组长垫/组池垫拆分），消费冻结随之解除。
      */
     @Transactional(rollbackFor = Exception.class)
     public void resetUsed(Long groupId, Long actorUserId, boolean admin, Long memberUserId) {
@@ -293,7 +310,14 @@ public class ProjectGroupService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "管理行仅组长可重置已用");
         }
         BigDecimal before = m.getUsedPoints();
+        BigDecimal dl = m.getDebtLeaderPoints() == null ? BigDecimal.ZERO : m.getDebtLeaderPoints();
+        BigDecimal dp = m.getDebtPoolPoints() == null ? BigDecimal.ZERO : m.getDebtPoolPoints();
+        BigDecimal debtTotal = dl.add(dp);
         m.setUsedPoints(BigDecimal.ZERO);
+        if (debtTotal.signum() > 0) {
+            m.setDebtLeaderPoints(BigDecimal.ZERO);
+            m.setDebtPoolPoints(BigDecimal.ZERO);
+        }
         memberMapper.updateById(m);
 
         ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
@@ -305,9 +329,67 @@ public class ProjectGroupService {
         l.setBalanceAfter(w != null ? w.getBalancePoints() : BigDecimal.ZERO);
         l.setRefType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.REF_ADMIN);
         l.setRefId(String.valueOf(memberUserId));
-        l.setRemark("重置成员已用: " + before + "→0");
+        l.setRemark("重置成员已用: " + before + "→0" + (debtTotal.signum() > 0
+                ? " ·欠款清零（组长垫 " + dl + "/组池垫 " + dp + "）" : ""));
         ledgerMapper.insert(l);
-        log.info("重置used groupId={} member={} before={} actor={}", groupId, memberUserId, before, actorUserId);
+        if (debtTotal.signum() > 0) {
+            com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity wo = new com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity();
+            wo.setGroupId(groupId);
+            wo.setActorUserId(actorUserId);
+            wo.setType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_DEBT_WRITEOFF);
+            wo.setDeltaPoints(BigDecimal.ZERO);
+            wo.setBalanceAfter(l.getBalanceAfter());
+            wo.setRefType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.REF_MEMBER);
+            wo.setRefId(String.valueOf(memberUserId));
+            wo.setRemark("重置清欠款（组长垫 " + dl + " / 组池垫 " + dp + "）");
+            ledgerMapper.insert(wo);
+            log.warn("重置清欠款 groupId={} member={}（组长垫 {}/组池垫 {}）actor={}",
+                    groupId, memberUserId, dl, dp, actorUserId);
+        }
+        log.info("重置used groupId={} member={} before={} debt={} actor={}",
+                groupId, memberUserId, before, debtTotal, actorUserId);
+    }
+
+    /**
+     * 调高限额豁免欠款（V161 修复III B2，规格 §4.2）：+X 先抵欠款（组长垫→组池垫），豁免=无资金流动
+     * ——组长调限额即给额度，不必真掏钱；债清额回减 used（不变量②：debt 减必伴 used 减），
+     * 可用空间即时恢复且效果=直接涨 X。DEBT_WRITEOFF 腿（delta=0）留痕拆分。
+     * 锁成员行 FOR UPDATE，与消耗/还款/划拨互斥。
+     */
+    private void exemptDebtOnQuotaRaise(Long groupId, Long actorUserId, Long memberUserId,
+                                        BigDecimal oldQuota, BigDecimal newQuota) {
+        ProjectGroupMemberEntity m = memberMapper.selectByGroupUserForUpdate(groupId, memberUserId);
+        if (m == null) {
+            return;
+        }
+        BigDecimal raise = newQuota.subtract(oldQuota);
+        BigDecimal dl = m.getDebtLeaderPoints() == null ? BigDecimal.ZERO : m.getDebtLeaderPoints();
+        BigDecimal dp = m.getDebtPoolPoints() == null ? BigDecimal.ZERO : m.getDebtPoolPoints();
+        BigDecimal rl = dl.min(raise);
+        BigDecimal rp = dp.min(raise.subtract(rl));
+        if (rl.add(rp).signum() <= 0) {
+            return;
+        }
+        if (rl.signum() > 0) {
+            memberMapper.adjustDebtLeader(groupId, memberUserId, rl.negate());
+        }
+        if (rp.signum() > 0) {
+            memberMapper.adjustDebtPool(groupId, memberUserId, rp.negate());
+        }
+        memberMapper.subtractUsed(groupId, memberUserId, rl.add(rp));
+        ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
+        com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity l = new com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity();
+        l.setGroupId(groupId);
+        l.setActorUserId(actorUserId);
+        l.setType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.TYPE_DEBT_WRITEOFF);
+        l.setDeltaPoints(BigDecimal.ZERO);
+        l.setBalanceAfter(w != null ? w.getBalancePoints() : BigDecimal.ZERO);
+        l.setRefType(com.superprogrammer.projectgroup.entity.ProjectGroupLedgerEntity.REF_MEMBER);
+        l.setRefId(String.valueOf(memberUserId));
+        l.setRemark("限额 " + oldQuota + "→" + newQuota + " 调高额抵欠款（组长垫 " + rl + " / 组池垫 " + rp + "，豁免无资金流动）");
+        ledgerMapper.insert(l);
+        log.warn("调限额豁免欠款 groupId={} member={} raise={}（组长垫 {}/组池垫 {}）actor={}",
+                groupId, memberUserId, raise, rl, rp, actorUserId);
     }
 
     // ==================== Step3：读侧 + 候选 ====================
@@ -359,6 +441,9 @@ public class ProjectGroupService {
                     w != null ? w.getBalancePoints() : BigDecimal.ZERO,
                     myRow != null ? myRow.getQuotaLimitPoints() : null,
                     myRow != null ? myRow.getUsedPoints() : BigDecimal.ZERO,
+                    myRow != null && myRow.getSelfPoints() != null ? myRow.getSelfPoints() : BigDecimal.ZERO,
+                    myRow != null && myRow.getDebtPoolPoints() != null ? myRow.getDebtPoolPoints() : BigDecimal.ZERO,
+                    myRow != null && myRow.getDebtLeaderPoints() != null ? myRow.getDebtLeaderPoints() : BigDecimal.ZERO,
                     myAllocatable,
                     memberCount.intValue(), g.getCreatedAt()));
         }
@@ -398,6 +483,9 @@ public class ProjectGroupService {
                     ProjectGroupVisibilityService.parseOverrides(m.getMemberVisibilityOverrides()),
                     m.getQuotaLimitPoints(),
                     m.getUsedPoints(),
+                    m.getSelfPoints() != null ? m.getSelfPoints() : BigDecimal.ZERO,
+                    m.getDebtPoolPoints() != null ? m.getDebtPoolPoints() : BigDecimal.ZERO,
+                    m.getDebtLeaderPoints() != null ? m.getDebtLeaderPoints() : BigDecimal.ZERO,
                     m.getAllocatedByUserId(),
                     allocatable,
                     m.getCreatedAt());

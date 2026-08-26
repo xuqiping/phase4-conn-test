@@ -1018,12 +1018,17 @@ async function loadEstimate() {
   }
 }
 
-/** C2（17x-2）：不足提示按卡点分层——个人限额卡点名「项目内剩余/限额/已用」，组池卡点名池余。 */
+/** C2（17x-2）：不足提示按卡点分层——个人限额卡点名「项目内剩余/限额/已用」，组池卡点名池余。
+ *  V161（修复III B）：欠款冻结最高优先——DEBT 卡点先说欠款并指路「项目组」页划拨还款。 */
 const estimateWarnings = computed<string[]>(() => {
   const e = estimate.value
   if (!e || e.affordable) return []
   const out: string[] = []
   const scope = e.personalScope
+  if (scope && scope.bindingConstraint === 'DEBT') {
+    out.push(`欠款 ${scope.debtTotalPoints} 分未抵扣，暂停组内消费——去「项目组」划拨还款，或请组长调限额抵清`)
+    return out
+  }
   if (scope && !scope.affordableMember) {
     const quotaTxt = scope.quota != null ? `（限额 ${scope.quota}−已用 ${scope.used}）` : ''
     out.push(`项目内剩余 ${scope.inProjectAvailable ?? 0} 不足${quotaTxt}`)

@@ -29,7 +29,9 @@ vi.mock('@/api/billing', async (importOriginal) => {
       listRatioTiers: vi.fn(),
       createRatioTier: vi.fn(),
       updateRatioTier: vi.fn(),
-      deleteRatioTier: vi.fn()
+      deleteRatioTier: vi.fn(),
+      // D5（V160）：视频预估偏差展示——load 里 Promise.all 三查，缺 mock 会 unhandled rejection
+      videoEstDeviation: vi.fn()
     }
   }
 })
@@ -49,6 +51,9 @@ describe('PricingConfigView FR-F20-01', () => {
       response({ code: 200, message: 'ok', data: [] })
     )
     vi.mocked(billingApi.listRatioTiers).mockResolvedValue(
+      response({ code: 200, message: 'ok', data: [] })
+    )
+    vi.mocked(billingApi.videoEstDeviation).mockResolvedValue(
       response({ code: 200, message: 'ok', data: [] })
     )
     vi.mocked(billingApi.availablePricingModels).mockResolvedValue(
@@ -74,8 +79,8 @@ describe('PricingConfigView FR-F20-01', () => {
     await flushPromises()
     expect(billingApi.availablePricingModels).toHaveBeenCalledOnce()
 
-    // 7x-1（V152）：候选 key 现为 4 段（provider/model/参考面/分辨率槽位）
-    vm.onCandidateChange('7\u0000seed-chat\u00000\u0000')
+    // D6（V160）：候选 key 3 段（provider/model/参考面）——后端已去分辨率档；7x-1 的 4 段口径已废弃
+    vm.onCandidateChange('7\u0000seed-chat\u00000')
     expect(vm.pricingForm).toMatchObject({ providerId: 7, model: 'seed-chat', kind: 'CHAT' })
   })
 

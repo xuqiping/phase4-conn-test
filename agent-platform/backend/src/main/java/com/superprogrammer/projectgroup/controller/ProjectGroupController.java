@@ -289,6 +289,26 @@ public class ProjectGroupController {
         return ResponseEntity.ok(R.ok("成员已用已重置", null));
     }
 
+    /**
+     * 个人划拨至组内名下（V161 修复III B1）：仅本人可操作自己（uid 必须等于当前用户）——
+     * 个人钱包扣款→先还欠款（组长垫→组池垫）→余款入名下余额。remark 兼作幂等键（防连点双扣）。
+     */
+    @PostMapping("/{id}/members/{uid}/self-transfer")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "member_self_transfer", targetType = "project_group_member")
+    public ResponseEntity<R<java.util.Map<String, Object>>> selfTransfer(@PathVariable("id") Long id,
+                                                                         @PathVariable("uid") Long uid,
+                                                                         @RequestBody ProjectGroupAllocateRequest req) {
+        if (!uid.equals(getCurrentUserId())) {
+            return ResponseEntity.status(403).body(R.fail(403, "只能划拨自己的积分"));
+        }
+        java.math.BigDecimal balanceAfter = walletService.selfTransfer(
+                id, uid, req.getPoints(), req.getRemark() == null || req.getRemark().isBlank()
+                        ? null : "self-transfer-" + uid + "-" + req.getRemark().trim());
+        return ResponseEntity.ok(R.ok("划拨成功",
+                java.util.Map.of("groupId", id, "points", req.getPoints(), "groupBalance", balanceAfter)));
+    }
+
     /** 任免组内角色（17x#2，V139，仅组长/admin）：MEMBER↔MANAGER；OWNER 行 400。 */
     @PutMapping("/{id}/members/{uid}/role")
     @RequirePermission("project-group:manage")

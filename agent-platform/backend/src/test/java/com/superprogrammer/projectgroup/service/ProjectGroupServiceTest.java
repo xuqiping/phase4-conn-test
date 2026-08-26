@@ -51,6 +51,8 @@ class ProjectGroupServiceTest {
     @Mock private ProjectGroupLedgerMapper ledgerMapper;
     @Mock private UserMapper userMapper;
     @Mock private MemberBudgetService budgetService;
+    /** V161 修复III B3：removeMember 先退组结算（名下/欠款）——mock 兜注入。 */
+    @Mock private ProjectGroupWalletService walletService;
 
     @InjectMocks
     private ProjectGroupService service;

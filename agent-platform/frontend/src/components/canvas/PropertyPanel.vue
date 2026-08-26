@@ -912,11 +912,15 @@ const estimateText = computed<string | null>(() => {
   return `预估 ${e.estimatedPoints} · ${tail}（预估与比例无关）`
 })
 
-/** 不足红字：与生成页同分层（个人限额卡 / 组池卡 / 钱包）。 */
+/** 不足红字：与生成页同分层（欠款冻结 / 个人限额卡 / 组池卡 / 钱包）。
+ *  V161（修复III B）：DEBT 卡点最高优先——欠款未抵扣先说冻结并指路划拨。 */
 const estimateWarn = computed<string | null>(() => {
   const e = estimate.value
   if (!e || e.affordable) return null
   const scope = e.personalScope
+  if (scope && scope.bindingConstraint === 'DEBT') {
+    return `欠款 ${scope.debtTotalPoints} 分未抵扣，暂停组内消费——去「项目组」划拨还款`
+  }
   if (scope && !scope.affordableMember) {
     const quotaTxt = scope.quota != null ? `（限额 ${scope.quota}−已用 ${scope.used}）` : ''
     return `项目内剩余 ${scope.inProjectAvailable ?? 0} 不足${quotaTxt}`

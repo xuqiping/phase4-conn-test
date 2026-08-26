@@ -140,6 +140,7 @@ class AuditLabelDictionaryCompletenessTest {
                     "group_create", "group_rename", "group_delete",
                     "member_invite", "member_remove", "member_role", "member_quota",
                     "member_reset_used", "member_kinds", "member_visibility",
+                    "member_self_transfer",
                     "visibility_update", "invite_accept", "invite_decline", "invite_cancel",
                     "pool_publish", "pool_unpublish", "pool_apply", "pool_apply_cancel",
                     "pool_decide", "wallet_allocate", "wallet_reclaim"}),

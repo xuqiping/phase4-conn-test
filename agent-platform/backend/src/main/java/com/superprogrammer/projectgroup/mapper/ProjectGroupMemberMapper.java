@@ -123,12 +123,14 @@ public interface ProjectGroupMemberMapper extends BaseMapper<ProjectGroupMemberE
      * 复活软删成员行（17x#1 修 uk_pgm_group_user 409）：回归即重置——
      * quota=新邀请值、used=0（限额周期重新起算，历史消耗在组流水/usage_log 仍可查）、
      * role=MEMBER、allowed_kinds/member_visibility_overrides 清空（不继承移除前状态）、
-     * allocated_by=本次分配人（V156 层级额度）。
+     * allocated_by=本次分配人（V156 层级额度）；V161 名下/欠款三列一并清零
+     * （退组时已结算——名下退个人钱包、欠款核销，回归不继承旧账）。
      * 条件 UPDATE 天然互斥：并发双接受恰一线程命中。
      *
      * @return 1=复活成功；0=无软删残留行（调用方走探针/新插）
      */
     @Update("UPDATE project_group_members SET deleted = 0, quota_limit_points = #{quota}, used_points = 0, "
+            + "self_points = 0, debt_pool_points = 0, debt_leader_points = 0, "
             + "role = 'MEMBER', allowed_kinds = NULL, member_visibility_overrides = NULL, "
             + "allocated_by_user_id = #{allocatedBy}, "
             + "updated_at = NOW(), version = version + 1 "
