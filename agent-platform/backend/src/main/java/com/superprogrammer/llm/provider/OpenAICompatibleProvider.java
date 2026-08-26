@@ -385,17 +385,32 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
         String content = root.at("/choices/0/message/content").asText("");
         String model = root.at("/model").asText("");
 
-        TokenUsage usage = TokenUsage.builder()
-                .promptTokens(root.at("/usage/prompt_tokens").asInt(0))
-                .completionTokens(root.at("/usage/completion_tokens").asInt(0))
-                .totalTokens(root.at("/usage/total_tokens").asInt(0))
-                .build();
+        TokenUsage usage = buildUsage(root.path("usage"));
 
         return LlmResponse.builder()
                 .content(content)
                 .usage(usage)
                 .model(model)
                 .duration(duration)
+                .build();
+    }
+
+    /**
+     * OpenAI 兼容 usage 归一（V160 D3 / 9x-1）：
+     * prompt_tokens_details.cached_tokens → cachedTokens；promptTokens = prompt_tokens − cached
+     * （协议的 prompt 含命中部分，计费要的是未命中输入；cached 字段缺失 → cachedTokens=null，
+     * promptTokens=原值，与老口径逐分一致）。cached 大于 prompt（异常数据）钳 0 不负数。
+     */
+    private static TokenUsage buildUsage(JsonNode usageNode) {
+        int prompt = usageNode.path("prompt_tokens").asInt(0);
+        JsonNode cachedNode = usageNode.path("prompt_tokens_details").path("cached_tokens");
+        Long cached = cachedNode.isNumber() ? cachedNode.asLong() : null;
+        int netPrompt = cached != null ? Math.max(0, prompt - cached.intValue()) : prompt;
+        return TokenUsage.builder()
+                .promptTokens(netPrompt)
+                .completionTokens(usageNode.path("completion_tokens").asInt(0))
+                .totalTokens(usageNode.path("total_tokens").asInt(0))
+                .cachedTokens(cached)
                 .build();
     }
 
@@ -412,11 +427,7 @@ public class OpenAICompatibleProvider implements LlmProviderInterface {
             // side-channel：usage 写 ref（末 chunk，choices 通常空）
             JsonNode usageNode = node.path("usage");
             if (usageNode.isObject() && !usageNode.isEmpty()) {
-                usageRef.set(TokenUsage.builder()
-                        .promptTokens(usageNode.path("prompt_tokens").asInt(0))
-                        .completionTokens(usageNode.path("completion_tokens").asInt(0))
-                        .totalTokens(usageNode.path("total_tokens").asInt(0))
-                        .build());
+                usageRef.set(buildUsage(usageNode));
             }
 
             JsonNode delta = node.at("/choices/0/delta");

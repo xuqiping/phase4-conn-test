@@ -357,4 +357,79 @@ class OpenAICompatibleProviderTest {
         assertTrue(sentBody.contains("\"stream_options\""), "请求体须含 stream_options");
         assertTrue(sentBody.contains("\"include_usage\":true"), "请求体须含 include_usage=true");
     }
+
+    // ==================== 9x-1（V160 D3）：缓存命中口径归一 ====================
+
+    @Test
+    void chat_nonStream_cachedDetails_netPromptAndCachedLeg() throws Exception {
+        // prompt=100 含命中 40 → 计费输入基数 60 + cachedTokens 40；total 取协议原值 130
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""
+                        {"choices":[{"message":{"content":"hi"}}],"model":"deepseek-chat",
+                         "usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":130,
+                                  "prompt_tokens_details":{"cached_tokens":40}}}
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .build();
+
+        LlmResponse response = provider.chat(request);
+        assertEquals(60, response.getUsage().getPromptTokens());
+        assertEquals(40L, response.getUsage().getCachedTokens());
+        assertEquals(130, response.getUsage().getTotalTokens());
+    }
+
+    @Test
+    void chat_nonStream_cachedAbsent_keepsLegacySemantics() throws Exception {
+        // 老响应无 prompt_tokens_details → cachedTokens=null、promptTokens 原值（老口径逐分一致）
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""
+                        {"choices":[{"message":{"content":"hi"}}],"model":"deepseek-chat",
+                         "usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":107}}
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .build();
+
+        LlmResponse response = provider.chat(request);
+        assertEquals(100, response.getUsage().getPromptTokens());
+        assertNull(response.getUsage().getCachedTokens());
+    }
+
+    @Test
+    void chatStream_cachedDetails_netPromptAndCachedLeg() throws Exception {
+        // 流末 usage chunk 带 prompt_tokens_details → side-channel 同口径归一
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        data: {"choices":[{"delta":{"content":"Hi"}}]}
+
+                        data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":8,"total_tokens":138,"prompt_tokens_details":{"cached_tokens":40}}}
+
+                        data: [DONE]
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("deepseek-chat")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        AtomicReference<TokenUsage> captured = new AtomicReference<>();
+        provider.chatStream(request, captured::set)
+                .map(StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        assertNotNull(captured.get());
+        assertEquals(60, captured.get().getPromptTokens());
+        assertEquals(40L, captured.get().getCachedTokens());
+    }
 }

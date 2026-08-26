@@ -268,11 +268,7 @@ public class ClaudeProvider implements LlmProviderInterface {
                     model, duration, content.length());
         }
 
-        TokenUsage usage = TokenUsage.builder()
-                .promptTokens(root.at("/usage/input_tokens").asInt(0))
-                .completionTokens(root.at("/usage/output_tokens").asInt(0))
-                .totalTokens(root.at("/usage/input_tokens").asInt(0) + root.at("/usage/output_tokens").asInt(0))
-                .build();
+        TokenUsage usage = buildUsage(root.path("usage"));
 
         return LlmResponse.builder()
                 .content(content)
@@ -299,21 +295,18 @@ public class ClaudeProvider implements LlmProviderInterface {
             JsonNode node = objectMapper.readTree(data);
             String type = node.at("/type").asText("");
 
-            // side-channel：合并 message_start(input) + message_delta(output)
+            // side-channel：合并 message_start(input+cache) + message_delta(output)
             if ("message_start".equals(type)) {
-                int input = node.at("/message/usage/input_tokens").asInt(0);
-                usageRef.set(TokenUsage.builder()
-                        .promptTokens(input)
-                        .completionTokens(0)
-                        .totalTokens(input)
-                        .build());
+                usageRef.set(buildUsage(node.at("/message/usage")));
             } else if ("message_delta".equals(type)) {
                 int output = node.at("/usage/output_tokens").asInt(0);
                 int input = usageRef.get() != null ? defaultIfNull(usageRef.get().getPromptTokens()) : 0;
+                Long cached = usageRef.get() != null ? usageRef.get().getCachedTokens() : null;
                 usageRef.set(TokenUsage.builder()
                         .promptTokens(input)
                         .completionTokens(output)
                         .totalTokens(input + output)
+                        .cachedTokens(cached)
                         .build());
                 String stopReason = node.at("/delta/stop_reason").asText("");
                 if (!stopReason.isEmpty()) {
@@ -339,6 +332,25 @@ public class ClaudeProvider implements LlmProviderInterface {
 
     private static int defaultIfNull(Integer v) {
         return v == null ? 0 : v;
+    }
+
+    /**
+     * Claude usage 归一（V160 D3 / 9x-1）：
+     * promptTokens = input_tokens + cache_creation_input_tokens（写入溢价按普通输入并入基数，
+     * 1.25 倍不建模——规格取舍）；cachedTokens = cache_read_input_tokens（缺失 → null，退化两腿）。
+     * totalTokens 维持 input+output 信息口径（协议无总字段）。
+     */
+    private static TokenUsage buildUsage(JsonNode usageNode) {
+        int input = usageNode.path("input_tokens").asInt(0);
+        int creation = usageNode.path("cache_creation_input_tokens").asInt(0);
+        int output = usageNode.path("output_tokens").asInt(0);
+        JsonNode readNode = usageNode.path("cache_read_input_tokens");
+        return TokenUsage.builder()
+                .promptTokens(input + creation)
+                .completionTokens(output)
+                .totalTokens(input + output)
+                .cachedTokens(readNode.isNumber() ? readNode.asLong() : null)
+                .build();
     }
 
     /**

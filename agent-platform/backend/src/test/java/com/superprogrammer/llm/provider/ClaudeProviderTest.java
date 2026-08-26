@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.chat.dto.StreamEvent;
 import com.superprogrammer.llm.dto.LlmMessage;
 import com.superprogrammer.llm.dto.LlmRequest;
+import com.superprogrammer.llm.dto.LlmResponse;
 import com.superprogrammer.llm.dto.TokenUsage;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaudeProviderTest {
@@ -237,5 +239,88 @@ class ClaudeProviderTest {
 
         String body = server.takeRequest().getBody().readUtf8();
         assertFalse(body.contains("\"thinking\""), "默认不得带 thinking 参数，实际=" + body);
+    }
+
+    // ==================== 9x-1（V160 D3）：缓存命中口径归一 ====================
+
+    @Test
+    void chat_nonStream_cacheFields_mergedInputAndCachedLeg() throws Exception {
+        // input=100 + cache_creation=10 → 计费输入基数 110；cache_read=50 → cachedTokens 50
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""
+                        {"content":[{"type":"text","text":"hi"}],"model":"k2.6","stop_reason":"end_turn",
+                         "usage":{"input_tokens":100,"cache_creation_input_tokens":10,
+                                  "cache_read_input_tokens":50,"output_tokens":20}}
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .build();
+
+        LlmResponse response = provider.chat(request);
+        assertEquals(110, response.getUsage().getPromptTokens());
+        assertEquals(50L, response.getUsage().getCachedTokens());
+        assertEquals(20, response.getUsage().getCompletionTokens());
+        // totalTokens 维持 input+output 信息口径（120）
+        assertEquals(120, response.getUsage().getTotalTokens());
+    }
+
+    @Test
+    void chat_nonStream_cacheAbsent_keepsLegacySemantics() throws Exception {
+        // 老响应无 cache 字段 → cachedTokens=null、promptTokens=input（老口径逐分一致）
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"model\":\"k2.6\","
+                        + "\"usage\":{\"input_tokens\":100,\"output_tokens\":20}}"));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .build();
+
+        LlmResponse response = provider.chat(request);
+        assertEquals(100, response.getUsage().getPromptTokens());
+        assertNull(response.getUsage().getCachedTokens());
+    }
+
+    @Test
+    void chatStream_cacheFields_mergedAcrossStartAndDelta() throws Exception {
+        // message_start 带 cache_creation/cache_read，message_delta 只带 output → 合并后口径完整
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("""
+                        event: message_start
+                        data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":50,"output_tokens":1}}}
+
+                        event: content_block_delta
+                        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+                        event: message_delta
+                        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}
+
+                        event: message_stop
+                        data: {"type":"message_stop"}
+
+                        """));
+
+        LlmRequest request = LlmRequest.builder()
+                .model("k2.6")
+                .messages(List.of(LlmMessage.builder().role("user").content("Hi").build()))
+                .stream(true)
+                .build();
+
+        AtomicReference<TokenUsage> captured = new AtomicReference<>();
+        List<String> chunks = provider.chatStream(request, captured::set)
+                .map(StreamEvent::getContent)
+                .collectList()
+                .block();
+
+        assertEquals(List.of("hi"), chunks);
+        assertNotNull(captured.get());
+        assertEquals(110, captured.get().getPromptTokens());
+        assertEquals(50L, captured.get().getCachedTokens());
+        assertEquals(20, captured.get().getCompletionTokens());
     }
 }
