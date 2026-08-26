@@ -39,12 +39,13 @@
 
 ### Chunk 4：Worker 生命周期与协议
 
-- [ ] **目标：处理进程崩溃不拖垮主程序。**
+- [x] **目标：处理进程崩溃不拖垮主程序。**
   - 动作：实现 JSON Lines 协议、心跳、进度、取消、超时、PID 归属和 stderr 脱敏；注册 OOXML Worker 骨架。
   - 涉及文件：`src-tauri/src/office/worker.rs`、`src-tauri/src/office/protocol.rs`、`src-tauri/src/bin/office_ooxml_worker.rs`、`src-tauri/src/office/tests/worker_contract_tests.rs`、`src-tauri/Cargo.toml`。
   - 依赖：Chunk 1。
   - 伪代码：`spawn with stdin/stdout pipes -> handshake -> heartbeat -> events; cancel -> graceful 10s -> kill owned pid`。
   - 验证：假 Worker 卡死/崩溃/输出畸形均转换为稳定错误码；用户 Office 进程不受影响。
+  - 当前状态：共享协议、握手/PID 校验、心跳、进度回调、取消、超时、优雅关闭、stderr 脱敏计数和自有子进程终止已实现并通过两个 Rust 二进制编译检查；卡死/崩溃/畸形输出契约测试按用户要求留到 Phase 4。
 
 ### Chunk 5：输出事务与恢复
 

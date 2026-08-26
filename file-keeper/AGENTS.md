@@ -80,6 +80,7 @@ file-keeper 是一款跨平台（Windows / macOS / Linux）桌面效率工具：
 - Office 任务状态、输出计数与安全错误码遵守 [`workflow_output/项目规范约束/Office任务状态机约束.md`](workflow_output/项目规范约束/Office任务状态机约束.md)。
 - Office 本地任务库迁移、敏感字段和分页清理遵守 [`workflow_output/项目规范约束/Office任务持久化约束.md`](workflow_output/项目规范约束/Office任务持久化约束.md)。
 - Office 路径白名单、输出隔离、风险码和免费额度遵守 [`workflow_output/项目规范约束/Office路径与预检约束.md`](workflow_output/项目规范约束/Office路径与预检约束.md)。
+- Office Worker 的 JSON Lines、握手、PID、取消、stderr 脱敏和进程回收遵守 [`workflow_output/项目规范约束/Office Worker协议约束.md`](workflow_output/项目规范约束/Office%20Worker协议约束.md)。
 - 上层 [`../CLAUDE.md`](../CLAUDE.md) —— 多 Agent 平台通用约定。
 
 ## 参考文档

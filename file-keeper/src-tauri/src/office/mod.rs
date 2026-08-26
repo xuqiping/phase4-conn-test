@@ -4,11 +4,13 @@
 pub mod db;
 pub mod migrations;
 pub mod path_policy;
+pub mod protocol;
 pub mod repository;
 pub mod risk;
 pub mod scanner;
 pub mod state_machine;
 pub mod types;
+pub mod worker;
 
 #[cfg(test)]
 #[path = "tests/state_machine_tests.rs"]

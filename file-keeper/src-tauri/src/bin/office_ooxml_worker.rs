@@ -1,23 +1,26 @@
+#[path = "../office/protocol.rs"]
+mod protocol;
+
+use protocol::{
+    WorkerEventKind, WorkerOperation, WorkerProgress, WorkerProgressPhase, WorkerRequest,
+    WorkerResponse, OFFICE_WORKER_LINE_MAX_BYTES, OFFICE_WORKER_PROTOCOL_VERSION,
+};
 use quick_xml::encoding::Decoder;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 const SAFE_OOXML: &str = "SAFE_OOXML";
 const HIGH_FIDELITY_REQUIRED: &str = "HIGH_FIDELITY_REQUIRED";
-const BLOCKED: &str = "BLOCKED";
-
 const LEGACY_EXTENSIONS: &[&str] = &["xls", "doc", "ppt"];
 const MACRO_EXTENSIONS: &[&str] = &["xlsm", "docm", "pptm"];
 const STANDARD_EXTENSIONS: &[&str] = &["xlsx", "docx", "pptx"];
-const REQUEST_MAX_BYTES: usize = 1024 * 1024;
 const SOURCE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const ZIP_ENTRY_MAX_COUNT: usize = 100_000;
 const XML_ENTRY_MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -66,35 +69,7 @@ enum HashError {
     Timeout,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct InspectRequest {
-    request_id: String,
-    operation: String,
-    path: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InspectResponse {
-    request_id: Option<String>,
-    classification: &'static str,
-    risk_codes: Vec<&'static str>,
-    error_code: Option<&'static str>,
-    source_sha256: Option<String>,
-}
-
-impl InspectResponse {
-    fn blocked(request_id: Option<String>, error_code: &'static str) -> Self {
-        Self {
-            request_id,
-            classification: BLOCKED,
-            risk_codes: Vec::new(),
-            error_code: Some(error_code),
-            source_sha256: None,
-        }
-    }
-}
+type InspectResponse = WorkerResponse;
 
 fn main() {
     if std::env::args_os().len() != 1 {
@@ -108,13 +83,19 @@ fn main() {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     loop {
-        match read_bounded_line(&mut input, REQUEST_MAX_BYTES) {
+        match read_bounded_line(&mut input, OFFICE_WORKER_LINE_MAX_BYTES) {
             Ok(Some(Ok(line))) => {
-                let response = match std::str::from_utf8(&line) {
+                let (response, shutdown) = match std::str::from_utf8(&line) {
                     Ok(line) => inspect_line(line),
-                    Err(_) => InspectResponse::blocked(None, "OFFICE_INVALID_REQUEST_JSON"),
+                    Err(_) => (
+                        InspectResponse::blocked(None, "OFFICE_INVALID_REQUEST_JSON"),
+                        false,
+                    ),
                 };
                 write_response(&response);
+                if shutdown {
+                    break;
+                }
             }
             Ok(Some(Err(()))) => {
                 write_response(&InspectResponse::blocked(None, "OFFICE_REQUEST_TOO_LARGE"))
@@ -178,8 +159,8 @@ fn write_response(response: &InspectResponse) {
     }
 }
 
-fn inspect_line(line: &str) -> InspectResponse {
-    let request = match serde_json::from_str::<InspectRequest>(line) {
+fn inspect_line(line: &str) -> (InspectResponse, bool) {
+    let request = match serde_json::from_str::<WorkerRequest>(line) {
         Ok(request) => request,
         Err(error) => {
             let code = if error.is_syntax() || error.is_eof() {
@@ -187,14 +168,90 @@ fn inspect_line(line: &str) -> InspectResponse {
             } else {
                 "OFFICE_INVALID_REQUEST_SCHEMA"
             };
-            return InspectResponse::blocked(None, code);
+            return (InspectResponse::blocked(None, code), false);
         }
     };
 
-    if request.operation != "inspect" {
-        return InspectResponse::blocked(Some(request.request_id), "OFFICE_UNSUPPORTED_OPERATION");
+    let request_id = request.request_id;
+    match request.operation {
+        WorkerOperation::Handshake => {
+            if request.protocol_version != Some(OFFICE_WORKER_PROTOCOL_VERSION) {
+                return (
+                    InspectResponse::blocked(
+                        Some(request_id),
+                        "OFFICE_WORKER_PROTOCOL_VERSION_MISMATCH",
+                    ),
+                    false,
+                );
+            }
+            (
+                InspectResponse::control(
+                    Some(request_id),
+                    WorkerEventKind::Ready,
+                    Some(std::process::id()),
+                ),
+                false,
+            )
+        }
+        WorkerOperation::Heartbeat => (
+            InspectResponse::control(
+                Some(request_id),
+                WorkerEventKind::Heartbeat,
+                Some(std::process::id()),
+            ),
+            false,
+        ),
+        WorkerOperation::Cancel => {
+            let mut response = InspectResponse::control(
+                Some(request_id),
+                WorkerEventKind::Cancelled,
+                Some(std::process::id()),
+            );
+            response.task_id = request.task_id;
+            (response, false)
+        }
+        WorkerOperation::Shutdown => (
+            InspectResponse::control(
+                Some(request_id),
+                WorkerEventKind::ShuttingDown,
+                Some(std::process::id()),
+            ),
+            true,
+        ),
+        WorkerOperation::Inspect => {
+            let Some(path) = request.path else {
+                return (
+                    InspectResponse::blocked(Some(request_id), "OFFICE_INVALID_REQUEST_SCHEMA"),
+                    false,
+                );
+            };
+            if request.task_id.is_some() {
+                write_response(&InspectResponse {
+                    request_id: Some(request_id.clone()),
+                    task_id: request.task_id.clone(),
+                    event: WorkerEventKind::Progress,
+                    protocol_version: Some(OFFICE_WORKER_PROTOCOL_VERSION),
+                    worker_pid: Some(std::process::id()),
+                    progress: Some(WorkerProgress {
+                        phase: WorkerProgressPhase::Inspect,
+                        completed: 0,
+                        total: 1,
+                    }),
+                    classification: None,
+                    risk_codes: Vec::new(),
+                    error_code: None,
+                    source_sha256: None,
+                });
+            }
+            let mut response = inspect_path(request_id, &path);
+            response.task_id = request.task_id;
+            (response, false)
+        }
+        WorkerOperation::Unsupported => (
+            InspectResponse::blocked(Some(request_id), "OFFICE_UNSUPPORTED_OPERATION"),
+            false,
+        ),
     }
-    inspect_path(request.request_id, &request.path)
 }
 
 fn inspect_path(request_id: String, path: &Path) -> InspectResponse {
@@ -449,12 +506,17 @@ fn finish_inspection(
 
     InspectResponse {
         request_id: Some(request_id),
-        classification: if risk_codes.is_empty() {
-            SAFE_OOXML
+        task_id: None,
+        event: WorkerEventKind::Result,
+        protocol_version: Some(OFFICE_WORKER_PROTOCOL_VERSION),
+        worker_pid: Some(std::process::id()),
+        progress: None,
+        classification: Some(if risk_codes.is_empty() {
+            SAFE_OOXML.to_string()
         } else {
-            HIGH_FIDELITY_REQUIRED
-        },
-        risk_codes,
+            HIGH_FIDELITY_REQUIRED.to_string()
+        }),
+        risk_codes: risk_codes.into_iter().map(str::to_string).collect(),
         error_code: None,
         source_sha256: Some(after_hash),
     }
