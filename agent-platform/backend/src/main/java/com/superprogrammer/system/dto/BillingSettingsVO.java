@@ -15,4 +15,7 @@ public class BillingSettingsVO {
 
     /** L7 低余额最大在途任务数（SEC-FR-126），默认 1。 */
     private Long lowBalanceMaxInflight;
+
+    /** D8（V160）：闲时时段（价表闲时列的生效窗口）；null=从未配置（等价 disabled） */
+    private OffPeakScheduleVO offPeak;
 }

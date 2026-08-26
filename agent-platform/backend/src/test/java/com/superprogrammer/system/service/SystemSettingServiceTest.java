@@ -11,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -90,7 +91,7 @@ class SystemSettingServiceTest {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
 
-        service.updateBillingSettings(50L, 2L);
+        service.updateBillingSettings(50L, 2L, null);
 
         verify(mapper).insert(argThat(s ->
                 SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD.equals(s.getSettingKey())
@@ -107,6 +108,84 @@ class SystemSettingServiceTest {
         when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
 
         assertEquals(100L, service.getLong(SystemSettingService.BILLING_LOW_BALANCE_THRESHOLD, 100L));
+    }
+
+    // ---- D8（V160）：闲时时段配置 ----
+
+    @Test
+    void getOffPeakSchedule_missing_returnsDisabledDefault() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        var vo = service.getOffPeakSchedule();
+        assertFalse(vo.getEnabled());
+        assertTrue(vo.getWeekday().isEmpty());
+        assertTrue(vo.getWeekend().isEmpty());
+    }
+
+    @Test
+    void getOffPeakSchedule_corruptJson_returnsDisabledDefault() {
+        SystemSetting setting = new SystemSetting();
+        setting.setSettingKey(SystemSettingService.BILLING_OFF_PEAK_SCHEDULE);
+        setting.setSettingValue("{not-json");
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(setting);
+
+        assertFalse(service.getOffPeakSchedule().getEnabled());
+    }
+
+    @Test
+    void updateOffPeakSchedule_valid_roundtrips() {
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(mapper.insert(any(SystemSetting.class))).thenReturn(1);
+        var captor = org.mockito.ArgumentCaptor.forClass(SystemSetting.class);
+
+        service.updateOffPeakSchedule(
+                com.superprogrammer.system.dto.OffPeakScheduleVO.builder()
+                        .enabled(true)
+                        .weekday(java.util.List.of(com.superprogrammer.system.dto.OffPeakWindowVO.builder()
+                                .start("22:00").end("08:00").build()))
+                        .weekend(java.util.List.of(com.superprogrammer.system.dto.OffPeakWindowVO.builder()
+                                .start("00:00").end("24:00").build()))
+                        .build());
+
+        verify(mapper).insert(captor.capture());
+        String json = captor.getValue().getSettingValue();
+        assertTrue(json.contains("\"enabled\":true"));
+        assertTrue(json.contains("22:00"));
+
+        // 读回：拿落库 JSON 反查，应还原为归一化 VO
+        SystemSetting row = new SystemSetting();
+        row.setSettingKey(SystemSettingService.BILLING_OFF_PEAK_SCHEDULE);
+        row.setSettingValue(json);
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(row);
+        var back = service.getOffPeakSchedule();
+        assertTrue(back.getEnabled());
+        assertEquals("Asia/Shanghai", back.getTimezone());
+        assertEquals(1, back.getWeekday().size());
+        assertEquals("22:00", back.getWeekday().get(0).getStart());
+        assertEquals("24:00", back.getWeekend().get(0).getEnd());
+    }
+
+    @Test
+    void updateOffPeakSchedule_badTimeFormat_throws() {
+        var vo = com.superprogrammer.system.dto.OffPeakScheduleVO.builder()
+                .enabled(true)
+                .weekday(java.util.List.of(com.superprogrammer.system.dto.OffPeakWindowVO.builder()
+                        .start("25:00").end("08:00").build()))
+                .build();
+        assertThrows(com.superprogrammer.common.exception.BusinessException.class,
+                () -> service.updateOffPeakSchedule(vo));
+    }
+
+    @Test
+    void updateOffPeakSchedule_overFourWindows_throws() {
+        java.util.List<com.superprogrammer.system.dto.OffPeakWindowVO> windows = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            windows.add(com.superprogrammer.system.dto.OffPeakWindowVO.builder()
+                    .start("0" + i + ":00").end("0" + (i + 1) + ":00").build());
+        }
+        var vo = com.superprogrammer.system.dto.OffPeakScheduleVO.builder()
+                .enabled(true).weekday(windows).build();
+        assertThrows(com.superprogrammer.common.exception.BusinessException.class,
+                () -> service.updateOffPeakSchedule(vo));
     }
 
     // ============================ V38 LLM_KEY 检索模式 + BOTH 标签语言 ============================

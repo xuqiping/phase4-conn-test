@@ -129,7 +129,8 @@ public class SystemSettingController {
     public ResponseEntity<R<BillingSettingsVO>> updateBillingSettings(
             @Valid @RequestBody BillingSettingsUpdateRequest request) {
         return ResponseEntity.ok(R.ok(service.updateBillingSettings(
-                request.getLowBalanceThreshold(), request.getLowBalanceMaxInflight())));
+                request.getLowBalanceThreshold(), request.getLowBalanceMaxInflight(),
+                request.getOffPeak())));
     }
 
     // ---- RAG/记忆模式全局开关（V26）----

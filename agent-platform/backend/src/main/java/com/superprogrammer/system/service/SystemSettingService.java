@@ -200,11 +200,13 @@ public class SystemSettingService {
         return com.superprogrammer.system.dto.BillingSettingsVO.builder()
                 .lowBalanceThreshold(getLowBalanceThreshold())
                 .lowBalanceMaxInflight(getLowBalanceMaxInflight())
+                .offPeak(getOffPeakSchedule())
                 .build();
     }
 
     public com.superprogrammer.system.dto.BillingSettingsVO updateBillingSettings(
-            Long lowBalanceThreshold, Long lowBalanceMaxInflight) {
+            Long lowBalanceThreshold, Long lowBalanceMaxInflight,
+            com.superprogrammer.system.dto.OffPeakScheduleVO offPeak) {
         if (lowBalanceThreshold != null) {
             upsert(BILLING_LOW_BALANCE_THRESHOLD, String.valueOf(lowBalanceThreshold),
                     "L7 低余额并行闸门阈值（SEC-FR-126）：余额低于此值禁多任务并行");
@@ -213,7 +215,120 @@ public class SystemSettingService {
             upsert(BILLING_LOW_BALANCE_MAX_INFLIGHT, String.valueOf(lowBalanceMaxInflight),
                     "L7 低余额最大在途任务数（SEC-FR-126），默认 1");
         }
+        if (offPeak != null) {
+            updateOffPeakSchedule(offPeak);
+        }
         return getBillingSettings();
+    }
+
+    // ---- D8（V160）：闲时时段配置（与 PricingService.OFF_PEAK_SCHEDULE_KEY 同键同构）----
+
+    /** 闲时时段存储键（读侧 PricingService.isOffPeak 每请求实时查同键）。 */
+    public static final String BILLING_OFF_PEAK_SCHEDULE = "billing.off-peak.schedule";
+
+    private static final int OFF_PEAK_MAX_WINDOWS_PER_DAY = 4;
+    private static final java.util.regex.Pattern HH_MM =
+            java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})$");
+    private static final com.fasterxml.jackson.databind.ObjectMapper OFF_PEAK_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+    /** 读闲时配置：缺失/损坏 → enabled=false 空窗口（计费侧回退忙时，宁多收不少收）。 */
+    public com.superprogrammer.system.dto.OffPeakScheduleVO getOffPeakSchedule() {
+        String json;
+        try {
+            json = getSettingValue(BILLING_OFF_PEAK_SCHEDULE);
+        } catch (Exception e) {
+            return defaultOffPeak();
+        }
+        if (json == null || json.isBlank()) {
+            return defaultOffPeak();
+        }
+        try {
+            com.superprogrammer.system.dto.OffPeakScheduleVO vo =
+                    OFF_PEAK_MAPPER.readValue(json, com.superprogrammer.system.dto.OffPeakScheduleVO.class);
+            if (vo.getEnabled() == null) {
+                vo.setEnabled(false);
+            }
+            if (vo.getWeekday() == null) {
+                vo.setWeekday(java.util.List.of());
+            }
+            if (vo.getWeekend() == null) {
+                vo.setWeekend(java.util.List.of());
+            }
+            vo.setTimezone("Asia/Shanghai");
+            return vo;
+        } catch (Exception e) {
+            return defaultOffPeak();
+        }
+    }
+
+    /**
+     * 写闲时配置：HH:mm 严格校验（00:00-24:00）、每日窗口 ≤4 段，非法抛 BAD_REQUEST
+     * （拒绝保存而非静默回退——防配置写坏后计费悄悄全忙时）。timezone 强制 Asia/Shanghai。
+     */
+    public com.superprogrammer.system.dto.OffPeakScheduleVO updateOffPeakSchedule(
+            com.superprogrammer.system.dto.OffPeakScheduleVO vo) {
+        if (vo == null) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "闲时配置不能为空");
+        }
+        validateOffPeakWindows("weekday", vo.getWeekday());
+        validateOffPeakWindows("weekend", vo.getWeekend());
+        com.superprogrammer.system.dto.OffPeakScheduleVO normalized =
+                com.superprogrammer.system.dto.OffPeakScheduleVO.builder()
+                        .enabled(Boolean.TRUE.equals(vo.getEnabled()))
+                        .timezone("Asia/Shanghai")
+                        .weekday(vo.getWeekday() == null ? java.util.List.of() : vo.getWeekday())
+                        .weekend(vo.getWeekend() == null ? java.util.List.of() : vo.getWeekend())
+                        .build();
+        try {
+            upsert(BILLING_OFF_PEAK_SCHEDULE, OFF_PEAK_MAPPER.writeValueAsString(normalized),
+                    "D8（V160）闲时时段：enabled+工作日/周末窗口（计费闲时列生效范围），跨零点窗口 end<=start");
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("闲时配置序列化失败", e);
+        }
+        return getOffPeakSchedule();
+    }
+
+    private void validateOffPeakWindows(String day,
+            java.util.List<com.superprogrammer.system.dto.OffPeakWindowVO> windows) {
+        if (windows == null) {
+            return;
+        }
+        if (windows.size() > OFF_PEAK_MAX_WINDOWS_PER_DAY) {
+            throw new com.superprogrammer.common.exception.BusinessException(
+                    com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST,
+                    day + " 闲时窗口最多 " + OFF_PEAK_MAX_WINDOWS_PER_DAY + " 段");
+        }
+        for (com.superprogrammer.system.dto.OffPeakWindowVO w : windows) {
+            if (!isValidHm(w.getStart()) || !isValidHm(w.getEnd())) {
+                throw new com.superprogrammer.common.exception.BusinessException(
+                        com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST,
+                        day + " 窗口时间须为 HH:mm（00:00-24:00）: " + w.getStart() + "-" + w.getEnd());
+            }
+        }
+    }
+
+    /** HH:mm 校验：时 0-24、分 00-59（24:00 仅作窗口终点语义，读侧拆跨零点判断兼容）。 */
+    private static boolean isValidHm(String hm) {
+        if (hm == null) {
+            return false;
+        }
+        java.util.regex.Matcher m = HH_MM.matcher(hm.trim());
+        if (!m.matches()) {
+            return false;
+        }
+        int h = Integer.parseInt(m.group(1));
+        int min = Integer.parseInt(m.group(2));
+        return h <= 24 && min <= 59;
+    }
+
+    private static com.superprogrammer.system.dto.OffPeakScheduleVO defaultOffPeak() {
+        return com.superprogrammer.system.dto.OffPeakScheduleVO.builder()
+                .enabled(false).timezone("Asia/Shanghai")
+                .weekday(java.util.List.of()).weekend(java.util.List.of())
+                .build();
     }
 
     // ============================ 安全体系 S3 · AI 安全 ============================

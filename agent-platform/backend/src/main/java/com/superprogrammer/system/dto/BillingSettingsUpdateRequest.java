@@ -15,4 +15,7 @@ public class BillingSettingsUpdateRequest {
     @Min(1)
     @Max(100)
     private Long lowBalanceMaxInflight;
+
+    /** D8（V160）：闲时时段；null=不改动；非法（非 HH:mm / 超 4 段）拒绝保存 */
+    private OffPeakScheduleVO offPeak;
 }

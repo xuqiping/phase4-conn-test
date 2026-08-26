@@ -7,12 +7,28 @@ export interface AuthSettings {
   singleSessionEnabled?: boolean
 }
 
+/** D8（V160）：闲时窗口（HH:mm；24:00 仅可作终点；end<=start 视为跨零点） */
+export interface OffPeakWindow {
+  start: string
+  end: string
+}
+
+/** D8（V160）：闲时时段——价表「闲时」列生效窗口；timezone 固定 Asia/Shanghai（只读回显） */
+export interface OffPeakSchedule {
+  enabled?: boolean
+  timezone?: string
+  weekday?: OffPeakWindow[]
+  weekend?: OffPeakWindow[]
+}
+
 /** L7 低余额并行闸门设置（SEC-FR-126） */
 export interface BillingSettings {
   /** 低余额阈值：余额低于此值禁多任务并行，默认 100 */
   lowBalanceThreshold?: number
   /** 低余额最大在途任务数，默认 1 */
   lowBalanceMaxInflight?: number
+  /** D8（V160）：闲时时段；更新时传 null/缺省=不改动 */
+  offPeak?: OffPeakSchedule
 }
 
 export interface LlmModelDefaults {
