@@ -107,13 +107,14 @@ public class LlmGateway {
             }
             if (heldPoints != null) {
                 // B3：预扣在手 → 精确 usage 多退少补（结算失败吞异常，预扣不重复 unwind）
+                // 9x-1（V160 D5）：缓存腿随真实 usage 进结算（估算兜底分支 usage=null → cached null 两腿）
                 billingService.settleChatHeld(uid, provider.getId(), provider.getProviderScope(),
                         request.getModel(), in, out, status, request.getSessionId(), gid,
-                        holdRef, heldPoints);
+                        holdRef, heldPoints, usage != null ? usage.getCachedTokens() : null);
             } else {
                 billingService.onSuccess(uid, provider.getId(), provider.getProviderScope(),
                         request.getModel(), LlmUsageLogEntity.KIND_CHAT, in, out, status,
-                        request.getSessionId(), gid);
+                        request.getSessionId(), gid, usage != null ? usage.getCachedTokens() : null);
             }
             recordLlmSuccess(provider.getName(), request.getModel(), in, out, startNanos);
             ragCall.succeed(response.getContent(), in, out);
@@ -210,18 +211,19 @@ public class LlmGateway {
                                 ragUsage.set(usage);
                                 if (holdPoints != null) {
                                     // B3：预扣在手 → 精确 usage 多退少补；返回实耗积分给 USAGE 事件展示
+                                    // 9x-1（V160 D5）：缓存腿随真实 usage 进结算
                                     settledPoints.set(billingService.settleChatHeld(uid, providerId,
                                             providerScope, model,
                                             usage.getPromptTokens(), usage.getCompletionTokens(),
                                             LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
-                                            gid, holdRef, holdPoints));
+                                            gid, holdRef, holdPoints, usage.getCachedTokens()));
                                     usageSettled.set(true);
                                 } else {
                                     billingService.onSuccess(uid, providerId, providerScope,
                                             model, LlmUsageLogEntity.KIND_CHAT,
                                             usage.getPromptTokens(), usage.getCompletionTokens(),
                                             LlmUsageLogEntity.STATUS_SUCCESS, request.getSessionId(),
-                                            gid);
+                                            gid, usage.getCachedTokens());
                                 }
                                 bizMetrics.llmTokens(providerName, model, BizMetrics.DIRECTION_IN,
                                         usage.getPromptTokens() == null ? 0 : usage.getPromptTokens());

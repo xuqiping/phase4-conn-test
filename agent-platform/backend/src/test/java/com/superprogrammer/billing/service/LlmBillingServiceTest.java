@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -59,7 +60,7 @@ class LlmBillingServiceTest {
     void onSuccess_happyPath_chargesAndRecords() {
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
-                eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.003"));
+                eq(100), eq(50), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
         when(walletService.charge(eq(1L), eq(new BigDecimal("0.3")), eq("CHAT"),
                 eq(null), eq("gpt-4"))).thenReturn(new BigDecimal("99.7"));
@@ -69,13 +70,14 @@ class LlmBillingServiceTest {
         assertThat(after).isEqualByComparingTo("99.7");
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null), eq(null));
     }
 
     @Test
     void onSuccess_pricingNotFound_recordsFailed_noThrow_noCharge() {
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenThrow(new BusinessException(ErrorCode.PRICING_NOT_FOUND));
 
         // 铁律：计费失败不得抛回出口
@@ -90,7 +92,8 @@ class LlmBillingServiceTest {
     @Test
     void onSuccess_systemUser_chargeNoops_stillRecords() {
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
         when(walletService.charge(eq(null), any(), any(), any(), any())).thenReturn(null); // 系统调用短路
@@ -101,13 +104,14 @@ class LlmBillingServiceTest {
         // 仍采 SUCCESS（采不扣）
         verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
                 any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
-                any(), any(), any());
+                any(), any(), any(), any());
     }
 
     @Test
     void onSuccess_unexpectedException_swallowed() {
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenThrow(new RuntimeException("DB connection lost"));
 
         // 任何意外都吞，不回归出口
@@ -131,7 +135,7 @@ class LlmBillingServiceTest {
         enableChatAudit();
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
-                eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.003"));
+                eq(100), eq(50), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
         when(walletService.charge(eq(1L), eq(new BigDecimal("0.3")), eq("CHAT"),
                 eq(null), eq("gpt-4"))).thenReturn(new BigDecimal("99.7"));
@@ -149,7 +153,8 @@ class LlmBillingServiceTest {
     void onSuccess_embedKind_skipsChatAudit() {
         enableChatAudit();
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
         when(walletService.charge(eq(null), any(), any(), any(), any())).thenReturn(null);
@@ -165,7 +170,8 @@ class LlmBillingServiceTest {
     void onSuccess_chatKind_auditDisabled_skipsAudit() {
         // chatAuditEnabled 默认 false（不调 enableChatAudit）→ 即使 CHAT 也不记
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
         when(walletService.charge(any(), any(), any(), any(), any())).thenReturn(new BigDecimal("100"));
@@ -195,7 +201,7 @@ class LlmBillingServiceTest {
     void onSuccess_withGroup_chargesGroupNotPersonal_usageCarriesGid() {
         when(walletService.isEnabled()).thenReturn(true);
         when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
-                eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.003"));
+                eq(100), eq(50), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
         when(groupWalletService.chargeGroup(eq(5L), eq(1L), eq(new BigDecimal("0.3")),
                 eq("CHAT"), eq("gpt-4"), isNull())).thenReturn(new BigDecimal("49.7"));
@@ -208,7 +214,7 @@ class LlmBillingServiceTest {
         verify(walletService, never()).charge(any(), any(), any(), any(), any());
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(5L));
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(5L), eq(null));
     }
 
     /**
@@ -218,7 +224,8 @@ class LlmBillingServiceTest {
     @Test
     void onSuccess_withGroup_quotaRaceOnCharge_swallowedAsFailedUsage() {
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.003"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.3"));
         when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any()))
@@ -237,7 +244,8 @@ class LlmBillingServiceTest {
     @Test
     void onSuccess_groupWithoutUser_personalNoopStillRecords() {
         when(walletService.isEnabled()).thenReturn(true);
-        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(pricingService.computeCost(any(), any(), any(), any(), any(), anyInt(), anyInt(),
+                anyBoolean(), any(), any()))
                 .thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(any())).thenReturn(new BigDecimal("0.1"));
 
@@ -247,7 +255,7 @@ class LlmBillingServiceTest {
         verify(groupWalletService, never()).chargeGroup(any(), any(), any(), any(), any(), any());
         verify(usageCollector).record(eq(null), any(), any(), any(), eq("EMBED"),
                 any(), any(), any(), any(), eq(LlmUsageLogEntity.STATUS_SUCCESS), any(),
-                any(), any(), eq(5L));
+                any(), any(), eq(5L), any());
     }
 
     // ---------- B3（Q4=B）：开局全额预扣 holdChat ----------
@@ -317,7 +325,7 @@ class LlmBillingServiceTest {
     void settleChatHeld_overEst_chargesDiff() {
         enableChatHold();
         when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
-                eq(600), eq(400), eq(0), eq(0))).thenReturn(new BigDecimal("0.01"));
+                eq(600), eq(400), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.01"));
         when(ratioService.toPoints(new BigDecimal("0.01"))).thenReturn(new BigDecimal("500"));
         when(walletService.chargeIdempotent(eq(1L), eq(new BigDecimal("200")), eq("CHAT"),
                 isNull(), any(), eq("chat-settle-r1"))).thenReturn(new BigDecimal("0"));
@@ -328,7 +336,7 @@ class LlmBillingServiceTest {
         assertThat(actual).isEqualByComparingTo("500");
         verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
                 eq(600), eq(400), eq(new BigDecimal("0.01")), eq(new BigDecimal("500")),
-                eq(LlmUsageLogEntity.STATUS_SUCCESS), any(), any(), any(), any());
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), any(), any(), any(), any(), any());
     }
 
     /** 实耗<预扣 → 退差额。 */
@@ -336,7 +344,7 @@ class LlmBillingServiceTest {
     void settleChatHeld_underEst_refundsDiff() {
         enableChatHold();
         when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
-                eq(100), eq(50), eq(0), eq(0))).thenReturn(new BigDecimal("0.001"));
+                eq(100), eq(50), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.001"));
         when(ratioService.toPoints(new BigDecimal("0.001"))).thenReturn(new BigDecimal("100"));
         when(walletService.refundIdempotent(eq(1L), eq(new BigDecimal("200")), eq("CHAT"),
                 isNull(), any(), eq("chat-settle-r1"))).thenReturn(new BigDecimal("300"));
@@ -353,7 +361,7 @@ class LlmBillingServiceTest {
     void settleChatHeld_personalTopupFail_fallsToDebt() {
         enableChatHold();
         when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
-                eq(600), eq(400), eq(0), eq(0))).thenReturn(new BigDecimal("0.01"));
+                eq(600), eq(400), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.01"));
         when(ratioService.toPoints(new BigDecimal("0.01"))).thenReturn(new BigDecimal("500"));
         when(walletService.chargeIdempotent(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS));
@@ -374,7 +382,7 @@ class LlmBillingServiceTest {
                 new com.superprogrammer.projectgroup.entity.ProjectGroupEntity();
         g.setOwnerUserId(9L);
         when(pricingService.computeCost(eq("CHAT"), eq(7L), eq("gpt-4"),
-                eq(600), eq(400), eq(0), eq(0))).thenReturn(new BigDecimal("0.01"));
+                eq(600), eq(400), eq(0), eq(0), anyBoolean(), isNull(), isNull())).thenReturn(new BigDecimal("0.01"));
         when(ratioService.toPoints(new BigDecimal("0.01"))).thenReturn(new BigDecimal("500"));
         when(groupWalletService.chargeGroup(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ErrorCode.INSUFFICIENT_POINTS));
@@ -430,5 +438,60 @@ class LlmBillingServiceTest {
     void settleChatCancelled_noHold_noop() {
         billing.settleChatCancelled(1L, 7L, "GLOBAL", "gpt-4", null, "r1", null, 500L, null);
         verify(walletService, never()).refundIdempotent(any(), any(), any(), any(), any(), any());
+    }
+
+    // ==================== 9x-1（V160 D5）：缓存腿透传计价 + 落列 ====================
+
+    @Test
+    void onSuccess_cachedTokens_passedToPricingAndRecorded() {
+        when(walletService.isEnabled()).thenReturn(true);
+        // 10 参 computeCost（+hasReference/resolution/cachedTokens）收到 cached=40
+        when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
+                eq(60), eq(8), eq(0), eq(0), eq(false), isNull(), eq(40L)))
+                .thenReturn(new BigDecimal("0.002"));
+        when(ratioService.toPoints(new BigDecimal("0.002"))).thenReturn(new BigDecimal("0.2"));
+        when(walletService.charge(eq(1L), eq(new BigDecimal("0.2")), eq("CHAT"),
+                eq(null), eq("gpt-4"))).thenReturn(new BigDecimal("99.8"));
+
+        billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 60, 8,
+                LlmUsageLogEntity.STATUS_SUCCESS, null, null, 40L);
+
+        // usage 行带 cachedTokens=40（15 参 record）
+        verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
+                eq(60), eq(8), eq(new BigDecimal("0.002")), eq(new BigDecimal("0.2")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null), eq(40L));
+    }
+
+    @Test
+    void onSuccess_legacyOverload_cachedNull_twoLegSemantics() {
+        when(walletService.isEnabled()).thenReturn(true);
+        when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
+                eq(100), eq(50), eq(0), eq(0), eq(false), isNull(), isNull()))
+                .thenReturn(new BigDecimal("0.003"));
+        when(ratioService.toPoints(new BigDecimal("0.003"))).thenReturn(new BigDecimal("0.3"));
+        when(walletService.charge(eq(1L), eq(new BigDecimal("0.3")), eq("CHAT"),
+                eq(null), eq("gpt-4"))).thenReturn(new BigDecimal("99.7"));
+
+        billing.onSuccess(1L, 7L, "GLOBAL", "gpt-4", "CHAT", 100, 50);
+
+        verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
+                eq(100), eq(50), eq(new BigDecimal("0.003")), eq(new BigDecimal("0.3")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null), isNull());
+    }
+
+    @Test
+    void settleChatHeld_cachedTokens_settlePriceIncludesCacheLeg() {
+        when(pricingService.computeCost(eq("CHAT"), anyLong(), eq("gpt-4"),
+                eq(60), eq(8), eq(0), eq(0), eq(false), isNull(), eq(40L)))
+                .thenReturn(new BigDecimal("0.002"));
+        when(ratioService.toPoints(new BigDecimal("0.002"))).thenReturn(new BigDecimal("0.2"));
+
+        BigDecimal actual = billing.settleChatHeld(1L, 7L, "GLOBAL", "gpt-4",
+                60, 8, LlmUsageLogEntity.STATUS_SUCCESS, null, null, "r1", new BigDecimal("0.5"), 40L);
+
+        assertThat(actual).isEqualByComparingTo("0.2");
+        verify(usageCollector).record(eq(1L), eq(7L), eq("GLOBAL"), eq("gpt-4"), eq("CHAT"),
+                eq(60), eq(8), eq(new BigDecimal("0.002")), eq(new BigDecimal("0.2")),
+                eq(LlmUsageLogEntity.STATUS_SUCCESS), eq(null), eq(null), eq(null), eq(null), eq(40L));
     }
 }

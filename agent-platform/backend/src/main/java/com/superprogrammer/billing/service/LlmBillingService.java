@@ -100,12 +100,23 @@ public class LlmBillingService {
     public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
                                 Integer tokensInput, Integer tokensOutput, String status, String sessionId,
                                 Long projectGroupId) {
+        return onSuccess(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, status, sessionId, projectGroupId, null);
+    }
+
+    /**
+     * 9x-1（V160 D5）：+cachedTokens 全参版本——缓存命中腿进计价 + 落 usage 列。
+     * 仅 CHAT 有意义（textCost 对 EMBED/RERANK 强制 null）；估算兜底路径传 null（退化两腿）。
+     */
+    public BigDecimal onSuccess(Long userId, Long providerId, String providerScope, String model, String kind,
+                                Integer tokensInput, Integer tokensOutput, String status, String sessionId,
+                                Long projectGroupId, Long cachedTokens) {
         if (!walletService.isEnabled()) {
             return null;
         }
         try {
             BigDecimal yuan = pricingService.computeCost(kind, providerId, model,
-                    tokensInput, tokensOutput, 0, 0);
+                    tokensInput, tokensOutput, 0, 0, false, null, cachedTokens);
             BigDecimal points = ratioService.toPoints(yuan);
             BigDecimal after;
             if (projectGroupId != null && userId != null) {
@@ -116,7 +127,8 @@ public class LlmBillingService {
                 after = walletService.charge(userId, points, kind, null, model);
             }
             usageCollector.record(userId, providerId, providerScope, model, kind,
-                    tokensInput, tokensOutput, yuan, points, status, null, null, sessionId, projectGroupId);
+                    tokensInput, tokensOutput, yuan, points, status, null, null, sessionId,
+                    projectGroupId, cachedTokens);
             // 8x Chunk4 行2：对话完成审计（单一计算源——复用本帧 tokens/points，不二次算价，坑点 #11）
             auditChatCompleted(userId, model, kind, tokensInput, tokensOutput, points,
                     AuditLogEntity.RESULT_SUCCESS, null);
@@ -194,13 +206,25 @@ public class LlmBillingService {
     public BigDecimal settleChatHeld(Long userId, Long providerId, String providerScope, String model,
                                      Integer tokensInput, Integer tokensOutput, String status, String sessionId,
                                      Long projectGroupId, String ref, BigDecimal heldPoints) {
+        return settleChatHeld(userId, providerId, providerScope, model,
+                tokensInput, tokensOutput, status, sessionId, projectGroupId, ref, heldPoints, null);
+    }
+
+    /**
+     * 9x-1（V160 D5）：+cachedTokens 全参版本——结算价含缓存腿（缓存价 NULL 时与原结算逐分一致）。
+     * hold 侧不传缓存（预扣时命中不可预知，按未命中保守估——见 holdChat）；尾结算用真实命中修正。
+     */
+    public BigDecimal settleChatHeld(Long userId, Long providerId, String providerScope, String model,
+                                     Integer tokensInput, Integer tokensOutput, String status, String sessionId,
+                                     Long projectGroupId, String ref, BigDecimal heldPoints, Long cachedTokens) {
         try {
             BigDecimal yuan = pricingService.computeCost(LlmUsageLogEntity.KIND_CHAT, providerId, model,
-                    tokensInput, tokensOutput, 0, 0);
+                    tokensInput, tokensOutput, 0, 0, false, null, cachedTokens);
             BigDecimal actual = yuan == null ? BigDecimal.ZERO : ratioService.toPoints(yuan);
             settleDiff(userId, projectGroupId, model, ref, actual.subtract(heldPoints));
             usageCollector.record(userId, providerId, providerScope, model, LlmUsageLogEntity.KIND_CHAT,
-                    tokensInput, tokensOutput, yuan, actual, status, null, null, sessionId, projectGroupId);
+                    tokensInput, tokensOutput, yuan, actual, status, null, null, sessionId,
+                    projectGroupId, cachedTokens);
             auditChatCompleted(userId, model, LlmUsageLogEntity.KIND_CHAT, tokensInput, tokensOutput,
                     actual, AuditLogEntity.RESULT_SUCCESS, null);
             return actual;
