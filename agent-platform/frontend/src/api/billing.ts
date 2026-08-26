@@ -370,7 +370,7 @@ export interface GroupReconcileRowVO {
   crossDiff: number
 }
 
-/** D4：组池对账总览（顶卡合计=全量组口径；balanced=全平） */
+/** D4+7x-1：组池对账总览（totals/balanced 跟随响应口径：全平台/单组） */
 export interface GroupReconcileVO {
   balanced: boolean
   totals: {
@@ -382,6 +382,8 @@ export interface GroupReconcileVO {
     crossDiff: number
   }
   abnormalGroups: GroupReconcileRowVO[]
+  /** 7x-1 下钻：groupId/includeAll 请求时=口径内全组行（含平组）；默认请求为 null */
+  groups?: GroupReconcileRowVO[] | null
 }
 
 /** 支付状态 → 中文 */
@@ -530,9 +532,9 @@ export const billingApi = {
   adminGroupAllocations(params: GroupAllocationQuery) {
     return request.get<ApiResponse<PageResult<GroupAllocationRowVO>>>('/billing/admin/group-allocations', { params })
   },
-  /** D4（20x-3）：组池划拨对账（总体平/不平 + 仅异常组 + 双账本交叉） */
-  adminGroupReconcile() {
-    return request.get<ApiResponse<GroupReconcileVO>>('/billing/admin/group-reconcile')
+  /** D4（20x-3）+7x-1 下钻：groupId=单组行+totals=该组；includeAll=全组行含平组；都不传=仅异常组 */
+  adminGroupReconcile(params?: { groupId?: number | null; includeAll?: boolean }) {
+    return request.get<ApiResponse<GroupReconcileVO>>('/billing/admin/group-reconcile', { params })
   },
   // ---- admin 支付渠道配置（7x 追加，payment:config） ----
   /** 两渠道脱敏配置状态（tails 永不含明文） */

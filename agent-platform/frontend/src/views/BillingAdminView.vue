@@ -226,12 +226,23 @@
             />
           </n-tab-pane>
 
-          <!-- D4（20x-3）：组池对账（顶部状态卡 + 仅异常组表；只读不自动修账） -->
+          <!-- D4（20x-3）+7x-1 下钻：组池对账（顶部状态卡 + 明细表；只读不自动修账） -->
           <n-tab-pane name="groupReconcile" tab="项目组对账">
             <div class="billing-admin__detail-filter">
               <n-tag :type="groupReconcile?.balanced ? 'success' : 'error'" size="medium" round>
                 {{ groupReconcile?.balanced ? '账平' : '发现异常组' }}
               </n-tag>
+              <n-select
+                v-model:value="reconcileGroupId"
+                :options="groupOptions"
+                clearable
+                filterable
+                placeholder="按组下钻（默认仅异常组）"
+                size="small"
+                style="width: 220px"
+              />
+              <span class="billing-admin__balance-hint">显示全部组</span>
+              <n-switch v-model:value="reconcileIncludeAll" size="small" :disabled="reconcileGroupId != null" />
               <n-button size="small" :loading="groupReconcileLoading" @click="loadGroupReconcile">刷新</n-button>
               <span class="billing-admin__balance-hint">
                 恒等式：组池余额 = 划入净额 + 退款 − 消耗；双账本差=组账本 vs 组长个人账本 GROUP 腿
@@ -246,7 +257,7 @@
             </n-grid>
             <n-data-table
               :columns="groupReconcileColumns"
-              :data="groupReconcile?.abnormalGroups ?? []"
+              :data="groupReconcileRows"
               :loading="groupReconcileLoading"
               size="small"
               :max-height="360"
@@ -262,7 +273,7 @@
 import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import {
   NCard, NGrid, NGi, NStatistic, NTabs, NTabPane, NDataTable, NDatePicker, NButton, NEmpty,
-  NSelect, NInput, NTag
+  NSelect, NInput, NTag, NSwitch
 } from 'naive-ui'
 import type { DataTableColumns, PaginationProps, SelectOption } from 'naive-ui'
 import {
@@ -747,9 +758,19 @@ function onGroupAllocPageSize(pageSize: number) {
   loadGroupAllocations(1)
 }
 
-// ---------- D4（20x-3）：项目组对账 tab（顶卡 + 仅异常组） ----------
+// ---------- D4（20x-3）+7x-1 下钻：项目组对账 tab（顶卡 + 明细表） ----------
 const groupReconcile = ref<GroupReconcileVO | null>(null)
 const groupReconcileLoading = ref(false)
+/** 7x-1 下钻筛选：groupId=选中组（单组优先）；includeAll=全组行含平组；都不动=仅异常组（Q9=A 原状） */
+const reconcileGroupId = ref<number | null>(null)
+const reconcileIncludeAll = ref(false)
+
+/** 明细单数据源：下钻口径 groups（含平组）优先，默认口径回落 abnormalGroups——防双数据源闪烁 */
+const groupReconcileRows = computed(() =>
+  groupReconcile.value?.groups ?? groupReconcile.value?.abnormalGroups ?? [])
+
+// 筛选变化即重查（groupId 选中时 includeAll 开关已禁用，语义互斥见后端）
+watch([reconcileGroupId, reconcileIncludeAll], () => loadGroupReconcile())
 
 /** 差值列：0 显 0 不标色；正=池里钱比流水多，负=流水比池里多（兜底排查方向提示在 title） */
 function renderDiffCell(v: number) {
@@ -758,6 +779,10 @@ function renderDiffCell(v: number) {
 
 const groupReconcileColumns: DataTableColumns<GroupReconcileRowVO> = [
   { title: '项目组', key: 'groupName', width: 140, ellipsis: { tooltip: true } },
+  { title: '状态', key: 'status', width: 80, render: r => {
+    const ok = Number(r.diff) === 0 && Number(r.crossDiff) === 0
+    return h(NTag, { type: ok ? 'success' : 'error', size: 'small', bordered: false }, { default: () => (ok ? '平' : '异常') })
+  } },
   { title: '划入净额', key: 'netAllocated', width: 110, render: r => fmtNum(r.netAllocated) },
   { title: '消耗', key: 'consumed', width: 100, render: r => fmtNum(r.consumed) },
   { title: '退款', key: 'refunded', width: 100, render: r => fmtNum(r.refunded) },
@@ -771,7 +796,10 @@ async function loadGroupReconcile() {
   if (!canView.value) return
   groupReconcileLoading.value = true
   try {
-    const res = await billingApi.adminGroupReconcile()
+    const res = await billingApi.adminGroupReconcile({
+      groupId: reconcileGroupId.value ?? undefined,
+      includeAll: reconcileGroupId.value == null ? reconcileIncludeAll.value : undefined
+    })
     groupReconcile.value = res.data.data
   } catch {
     groupReconcile.value = null
