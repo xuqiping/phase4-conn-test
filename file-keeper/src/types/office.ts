@@ -13,6 +13,8 @@ export type OfficeEngine = 'ooxmlWorker' | 'windowsOfficeWorker'
 
 export type OfficeOutputPolicy = 'singleAtomic' | 'multipleIndependent'
 
+export const OFFICE_JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER
+
 export type OfficeTaskType =
   | 'excelSplit'
   | 'excelMerge'
@@ -22,11 +24,18 @@ export type OfficeTaskType =
 
 export type OfficeSourceAccess = 'readOnly'
 
+export type OfficeOutputStatus = 'planned' | 'validating' | 'published' | 'failed'
+
+export type OfficeIssueScope = 'task' | 'input' | 'output'
+
+export type OfficeIssueSeverity = 'info' | 'warning' | 'error' | 'blocking'
+
 export interface OfficeTaskInput {
   inputId: string
   /** Local-only path. Never include it in service requests or user-facing error text. */
   path: string
   format: string
+  /** Must not exceed Number.MAX_SAFE_INTEGER. */
   sizeBytes: number
   sourceAccess: OfficeSourceAccess
 }
@@ -34,13 +43,13 @@ export interface OfficeTaskInput {
 export interface OfficeTaskOutput {
   outputId: string
   inputId?: string
-  status: string
+  status: OfficeOutputStatus
 }
 
 export interface OfficeTaskIssue {
   issueId: string
-  scope: string
-  severity: string
+  scope: OfficeIssueScope
+  severity: OfficeIssueSeverity
   code: string
   messageKey: string
   /** Structured metadata only; never store body text, passwords, tokens, or model keys. */
@@ -49,7 +58,9 @@ export interface OfficeTaskIssue {
 }
 
 export interface OfficeTask {
+  /** UUID string. */
   taskId: string
+  /** UUID string used for idempotency/tracing. */
   requestId?: string
   taskType: OfficeTaskType
   status: OfficeTaskStatus
@@ -61,6 +72,7 @@ export interface OfficeTask {
 }
 
 export interface OfficeOutputSummary {
+  /** All counts must not exceed Number.MAX_SAFE_INTEGER. */
   expected: number
   published: number
   failed: number

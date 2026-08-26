@@ -22,9 +22,12 @@
 ## 3. 边界与敏感信息
 
 - Rust/JSON 使用 serde `camelCase`；前端 TypeScript 使用同名 camelCase 字段。
-- `taskId` 是本地任务关联边界，`requestId` 预留给未来服务端幂等与追踪；本约束不提前建立监控系统。
+- `taskId/requestId` 使用 UUID 字符串；`requestId` 预留给未来服务端幂等与追踪，本约束不提前建立监控系统。
+- 跨 Rust/TypeScript 的文件大小和计数不得超过 JavaScript 安全整数 `9_007_199_254_740_991`。
 - 输入可保存仅限本机使用的路径，但领域错误的 `Display/Debug` 只输出稳定错误码，不拼接路径或正文。
 - `messageKey/detailsJson` 只保存结构化诊断元数据；禁止放文档正文、密码、Token 或模型 Key。
+- `OfficeTask` 领域聚合不允许从 JSON 直接反序列化；Chunk 2 必须通过边界 DTO + 校验恢复，禁止绕过状态机拼出伪成功状态。
+- Chunk 1 的完成摘要是内部受信边界；Chunk 5 必须改为消费输出事务签发的发布凭证，普通调用方不得只凭计数把任务标为成功。
 - Chunk 1 是纯领域层，不记录日志；后续持久化和运维能力必须消费这些稳定状态与错误码，不另造冲突枚举。
 
 ## 术语表

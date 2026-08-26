@@ -1,4 +1,7 @@
-use super::types::{DomainError, DomainErrorCode, OfficeTaskStatus, OutputPolicy, OutputSummary};
+use super::types::{
+    DomainError, DomainErrorCode, OfficeRequestId, OfficeTaskId, OfficeTaskStatus, OutputPolicy,
+    OutputSummary, JS_SAFE_INTEGER_MAX,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskEvent {
@@ -12,16 +15,16 @@ pub enum TaskEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfficeTaskStateMachine {
-    task_id: String,
-    request_id: Option<String>,
+    task_id: OfficeTaskId,
+    request_id: Option<OfficeRequestId>,
     output_policy: OutputPolicy,
     status: OfficeTaskStatus,
 }
 
 impl OfficeTaskStateMachine {
     pub fn new(
-        task_id: impl Into<String>,
-        request_id: Option<String>,
+        task_id: OfficeTaskId,
+        request_id: Option<OfficeRequestId>,
         output_policy: OutputPolicy,
     ) -> Self {
         Self {
@@ -36,12 +39,12 @@ impl OfficeTaskStateMachine {
         self.status
     }
 
-    pub fn task_id(&self) -> &str {
-        &self.task_id
+    pub const fn task_id(&self) -> OfficeTaskId {
+        self.task_id
     }
 
-    pub fn request_id(&self) -> Option<&str> {
-        self.request_id.as_deref()
+    pub const fn request_id(&self) -> Option<OfficeRequestId> {
+        self.request_id
     }
 
     pub fn transition(&mut self, event: TaskEvent) -> Result<OfficeTaskStatus, DomainError> {
@@ -72,7 +75,12 @@ impl OfficeTaskStateMachine {
         Ok(next)
     }
 
-    pub fn complete(&mut self, summary: OutputSummary) -> Result<OfficeTaskStatus, DomainError> {
+    /// Accepts only a summary already validated by the output transaction layer.
+    /// Chunk 5 must replace this trust boundary with a publication receipt.
+    pub(crate) fn complete_with_validated_summary(
+        &mut self,
+        summary: OutputSummary,
+    ) -> Result<OfficeTaskStatus, DomainError> {
         if self.status != OfficeTaskStatus::Running {
             return Err(DomainError::new(DomainErrorCode::InvalidStateTransition));
         }
@@ -89,6 +97,12 @@ fn derive_completion_status(
 ) -> Result<OfficeTaskStatus, DomainError> {
     if summary.expected == 0 {
         return Err(DomainError::new(DomainErrorCode::OutputExpectedInvalid));
+    }
+    if summary.expected > JS_SAFE_INTEGER_MAX
+        || summary.published > JS_SAFE_INTEGER_MAX
+        || summary.failed > JS_SAFE_INTEGER_MAX
+    {
+        return Err(DomainError::new(DomainErrorCode::JsSafeIntegerExceeded));
     }
 
     let accounted = summary
