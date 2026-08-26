@@ -35,4 +35,6 @@ public class UsageDetailVO {
     private Long projectGroupId;
     /** 计划5 Step8：所属项目组名（LEFT JOIN project_groups；个人行/组已删时组名仍保留历史值）。 */
     private String projectGroupName;
+    /** 9x-1（V160 D4）：缓存命中读 token；null=协议未上报。tokensInput 为未命中输入口径。 */
+    private Long cachedTokens;
 }

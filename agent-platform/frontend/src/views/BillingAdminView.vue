@@ -402,6 +402,8 @@ const detailColumns: DataTableColumns<UsageDetailVO> = [
   },
   { title: '输入 Token', key: 'tokensInput', width: 100 },
   { title: '输出 Token', key: 'tokensOutput', width: 100 },
+  // 9x-1（V160 D4）：缓存命中列（null=未上报；未命中输入 + 缓存命中 = 完整输入）
+  { title: '缓存命中', key: 'cachedTokens', width: 90, render: r => r.cachedTokens == null ? '—' : r.cachedTokens },
   { title: '真实金额 ¥', key: 'costYuan', width: 110, render: r => fmtNum(r.costYuan) },
   { title: '消耗积分', key: 'pointsConsumed', width: 100, render: r => fmtNum(r.pointsConsumed) },
   {

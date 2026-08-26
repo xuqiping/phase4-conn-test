@@ -7,6 +7,16 @@ import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/sto
 
 const DEFAULT_CHAT_TARGET = 'none'
 
+/** 9x-1（V160 D4）：DONE.data 为网关 USAGE 精确值（promptTokens/completionTokens/points[/cachedTokens]）。
+ *  无 token 字段（纯 DONE / 确认式回复流）→ null，不写 metadata.usage。 */
+function usageFromDone(evt: { data?: Record<string, unknown> }): Record<string, unknown> | null {
+  const d = evt?.data
+  if (d && typeof d === 'object' && ('promptTokens' in d || 'completionTokens' in d)) {
+    return d
+  }
+  return null
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<ChatSession[]>([])
   const currentSessionId = ref<number | null>(null)
@@ -367,7 +377,9 @@ export const useChatStore = defineStore('chat', () => {
                       ...(pendingInput.value ? { pendingInput: pendingInput.value } : {}),
                       ...(pendingInclusionConfirm.value ? { inclusionConfirm: pendingInclusionConfirm.value } : {}),
                       ...(streamingCitations.value ? { citations: streamingCitations.value } : {}),
-                      ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {})
+                      ...(streamingFileCards.value ? { fileCards: streamingFileCards.value } : {}),
+                      // 9x-1（V160 D4）：DONE.data 即网关 USAGE 精确值（promptTokens/completionTokens/points/cachedTokens?）
+                      ...(usageFromDone(evt) ? { usage: usageFromDone(evt) } : {})
                     }),
                     createdAt: new Date().toISOString()
                   })

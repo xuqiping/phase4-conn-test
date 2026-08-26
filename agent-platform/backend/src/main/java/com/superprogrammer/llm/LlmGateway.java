@@ -293,6 +293,7 @@ public class LlmGateway {
                                 tail.add(StreamEvent.usage(
                                         usage.getPromptTokens() == null ? 0 : usage.getPromptTokens(),
                                         usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens(),
+                                        usage.getCachedTokens(),
                                         settledPoints.get()));
                             }
                             return tail.isEmpty() ? Flux.empty() : Flux.fromIterable(tail);

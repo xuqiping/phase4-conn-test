@@ -192,6 +192,8 @@ export interface UsageDetailVO {
   kind: BillingKind
   tokensInput: number
   tokensOutput: number
+  /** 9x-1（V160 D4）：缓存命中读 token；null=协议未上报（tokensInput 为未命中输入口径） */
+  cachedTokens: number | null
   costYuan: number
   pointsConsumed: number
   status: string

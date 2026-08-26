@@ -47,6 +47,8 @@
       <div v-else class="message-bubble__text">{{ message.content }}</div>
       <!-- 5x 四轮 U6：停止生成的部分回答标记 -->
       <div v-if="stoppedFlag" class="message-bubble__stopped">⏹ 已停止生成（上为部分回答）</div>
+      <!-- 9x-1（V160 D4）：DONE 精确消耗行（含缓存命中；无 usage 的消息不显） -->
+      <div v-if="usageLine" class="message-bubble__usage">{{ usageLine }}</div>
       <!-- 5x #7：收录确认点选（PENDING → 需要回答/不用了；已点选 → 静态状态标） -->
       <div v-if="inclusionConfirm" class="message-bubble__inclusion">
         <template v-if="inclusionConfirm.status === 'PENDING'">
@@ -184,6 +186,27 @@ const thinkingText = computed(() => {
   try {
     const meta = JSON.parse(props.message.metadata)
     return meta.thinking || null
+  } catch {
+    return null
+  }
+})
+
+/** 9x-1（V160 D4）：metadata.usage（DONE 精确值）→ 消耗行文案；cachedTokens 缺省不显缓存位。 */
+interface DoneUsage {
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number | null
+  points?: number | string | null
+}
+const usageLine = computed<string | null>(() => {
+  if (!props.message.metadata || props.message.role !== 'ASSISTANT') return null
+  try {
+    const u = (JSON.parse(props.message.metadata).usage || null) as DoneUsage | null
+    if (!u || (u.promptTokens == null && u.completionTokens == null)) return null
+    const total = (u.promptTokens || 0) + (u.completionTokens || 0)
+    const pts = u.points == null ? '' : ` ≈ ${u.points} 积分`
+    const cached = u.cachedTokens != null && u.cachedTokens > 0 ? `（其中缓存命中 ${u.cachedTokens}）` : ''
+    return `本次消耗 ${total} tokens${pts}${cached}`
   } catch {
     return null
   }
@@ -418,6 +441,13 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   color: var(--color-text-tertiary);
   border-top: 1px dashed var(--color-border-light);
   padding-top: 6px;
+}
+
+/* 9x-1（V160 D4）：DONE 精确消耗行（弱化灰阶，不抢正文） */
+.message-bubble__usage {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 
 .message-bubble__citations {

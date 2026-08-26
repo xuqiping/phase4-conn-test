@@ -167,6 +167,7 @@
             l.kind,
             l.tokens_input,
             l.tokens_output,
+            l.cached_tokens,
             l.cost_yuan,
             l.points_consumed,
             l.status,

@@ -122,4 +122,34 @@ class UsageCollectorTest {
             throw new AssertionError("taskId 应=9，实=" + cap.getValue().getTaskId());
         }
     }
+
+    // 9x-1（V160 D4）：cachedTokens 透传落列；老重载链默认 null
+    @Test
+    void record_cachedTokens_stampedOnRow() {
+        collector.record(1L, 7L, "GLOBAL", "gpt-4", LlmUsageLogEntity.KIND_CHAT,
+                60, 8, new BigDecimal("0.002"), new BigDecimal("0.2"),
+                LlmUsageLogEntity.STATUS_SUCCESS, null, null, "sess-1", null, 40L);
+        org.mockito.ArgumentCaptor<LlmUsageLogEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(LlmUsageLogEntity.class);
+        verify(usageLogMapper, timeout(2000)).insert(cap.capture());
+        if (!Long.valueOf(40L).equals(cap.getValue().getCachedTokens())) {
+            throw new AssertionError("cachedTokens 应=40，实=" + cap.getValue().getCachedTokens());
+        }
+        if (!"sess-1".equals(cap.getValue().getSessionId())) {
+            throw new AssertionError("sessionId 应=sess-1，实=" + cap.getValue().getSessionId());
+        }
+    }
+
+    @Test
+    void record_legacyOverload_cachedTokensNull() {
+        collector.record(1L, 7L, "GLOBAL", "gpt-4", LlmUsageLogEntity.KIND_CHAT,
+                100, 8, new BigDecimal("0.002"), new BigDecimal("0.2"),
+                LlmUsageLogEntity.STATUS_SUCCESS, null);
+        org.mockito.ArgumentCaptor<LlmUsageLogEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(LlmUsageLogEntity.class);
+        verify(usageLogMapper, timeout(2000)).insert(cap.capture());
+        if (cap.getValue().getCachedTokens() != null) {
+            throw new AssertionError("老重载 cachedTokens 应=null，实=" + cap.getValue().getCachedTokens());
+        }
+    }
 }

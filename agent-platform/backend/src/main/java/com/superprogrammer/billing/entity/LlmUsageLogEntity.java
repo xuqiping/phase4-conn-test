@@ -93,4 +93,11 @@ public class LlmUsageLogEntity {
      * null=个人计费。
      */
     private Long projectGroupId;
+
+    /**
+     * 缓存命中读 token（9x-1 / V160）：OpenAI=prompt_tokens_details.cached_tokens；
+     * Claude=cache_read_input_tokens。null=协议未上报（计费退化两腿，与老口径一致）。
+     * 注意 tokensInput 已是「未命中输入」口径（Provider 层归一，见 TokenUsage javadoc）。
+     */
+    private Long cachedTokens;
 }

@@ -66,9 +66,18 @@ public class StreamEvent {
         return StreamEvent.builder().type("BILLING").data(data).build();
     }
     public static StreamEvent usage(long promptTokens, long completionTokens, java.math.BigDecimal points) {
+        return usage(promptTokens, completionTokens, null, points);
+    }
+
+    /** 9x-1（V160 D4）：+cachedTokens（缓存命中读 token，协议未上报传 null → map 省略键，前端不显示缓存位）。 */
+    public static StreamEvent usage(long promptTokens, long completionTokens, Long cachedTokens,
+                                    java.math.BigDecimal points) {
         java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("promptTokens", promptTokens);
         data.put("completionTokens", completionTokens);
+        if (cachedTokens != null) {
+            data.put("cachedTokens", cachedTokens);
+        }
         data.put("points", points);
         return StreamEvent.builder().type("USAGE").data(data).build();
     }

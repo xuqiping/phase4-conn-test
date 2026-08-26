@@ -138,6 +138,20 @@ public class UsageCollector {
                        Integer tokensInput, Integer tokensOutput,
                        BigDecimal costYuan, BigDecimal pointsConsumed,
                        String status, String errorMsg, Long taskId, String sessionId, Long projectGroupId) {
+        record(userId, providerId, providerScope, model, kind,
+                tokensInput, tokensOutput, costYuan, pointsConsumed,
+                status, errorMsg, taskId, sessionId, projectGroupId, null);
+    }
+
+    /**
+     * 9x-1（V160 D4）：+cachedTokens 全参版本（缓存命中读 token，协议未上报传 null）。
+     * tokensInput 为 Provider 归一后的「未命中输入」口径（OpenAI=prompt−cached；Claude=input+creation）。
+     */
+    public void record(Long userId, Long providerId, String providerScope, String model, String kind,
+                       Integer tokensInput, Integer tokensOutput,
+                       BigDecimal costYuan, BigDecimal pointsConsumed,
+                       String status, String errorMsg, Long taskId, String sessionId,
+                       Long projectGroupId, Long cachedTokens) {
         if (!enabled) {
             return;
         }
@@ -159,6 +173,7 @@ public class UsageCollector {
         row.setTaskId(taskId);
         row.setSessionId(sessionId);
         row.setProjectGroupId(projectGroupId);
+        row.setCachedTokens(cachedTokens);
         submit(row);
     }
 
