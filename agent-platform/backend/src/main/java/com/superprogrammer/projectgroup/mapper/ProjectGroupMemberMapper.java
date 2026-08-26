@@ -26,6 +26,10 @@ public interface ProjectGroupMemberMapper extends BaseMapper<ProjectGroupMemberE
     @Select("SELECT * FROM project_group_members WHERE group_id = #{groupId} AND user_id = #{userId} AND deleted = 0 FOR UPDATE")
     ProjectGroupMemberEntity selectByGroupUserForUpdate(@Param("groupId") Long groupId, @Param("userId") Long userId);
 
+    /** 组内全部活跃成员 userId（含 OWNER）——计划 E1：GROUP 积分事件按成员集广播。 */
+    @Select("SELECT user_id FROM project_group_members WHERE group_id = #{groupId} AND deleted = 0")
+    java.util.List<Long> selectMemberUserIds(@Param("groupId") Long groupId);
+
     /** Σ 下级已用（V156）：管理子树消耗和（含下级消耗冒泡到管理总额度）。 */
     @Select("SELECT COALESCE(SUM(used_points), 0) FROM project_group_members "
             + "WHERE group_id = #{groupId} AND allocated_by_user_id = #{parentUserId} AND deleted = 0")

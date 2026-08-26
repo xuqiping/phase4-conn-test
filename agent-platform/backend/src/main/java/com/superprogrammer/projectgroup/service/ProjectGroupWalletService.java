@@ -50,6 +50,8 @@ public class ProjectGroupWalletService {
     private final PointsWalletService pointsWallet;
     private final IdempotencyKeyMapper idemMapper;
     private final MemberBudgetService budgetService;
+    /** 计划 E1（7x-3）：组池/成员积分变动事件发布（只投递，推送在监听侧 AFTER_COMMIT）。 */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /** 组长划拨：个人 -points（GROUP_ALLOCATE 流水）→ 组池 +points（ALLOCATE 流水）。admin 越组长代管放行（审计在 Controller @AuditLog）。 */
     @Transactional(rollbackFor = Exception.class)
@@ -62,6 +64,7 @@ public class ProjectGroupWalletService {
         }
         appendLedger(groupId, actorUserId, ProjectGroupLedgerEntity.TYPE_ALLOCATE,
                 points, ProjectGroupLedgerEntity.REF_GROUP, String.valueOf(groupId), remark);
+        publishGroupChanged(groupId, requireWallet(groupId).getBalancePoints(), points, remark);
         log.info("组划拨 groupId={} owner={} points={}", groupId, actorUserId, points);
     }
 
@@ -87,6 +90,7 @@ public class ProjectGroupWalletService {
         }
         appendLedger(groupId, actorUserId, ProjectGroupLedgerEntity.TYPE_RECLAIM,
                 points.negate(), ProjectGroupLedgerEntity.REF_GROUP, String.valueOf(groupId), remark);
+        publishGroupChanged(groupId, requireWallet(groupId).getBalancePoints(), points.negate(), remark);
         log.info("组回收 groupId={} owner={} points={}", groupId, actorUserId, points);
     }
 
@@ -133,6 +137,8 @@ public class ProjectGroupWalletService {
         ProjectGroupWalletEntity w = requireWallet(groupId);                        // 行已被本事务 UPDATE 锁定
         appendLedgerRow(w.getBalancePoints(), groupId, memberUserId,
                 ProjectGroupLedgerEntity.TYPE_CONSUME, cost.negate(), refType, refId, null);
+        publishGroupChanged(groupId, w.getBalancePoints(), cost.negate(), refType + ":" + refId);
+        publishMemberUsed(groupId, memberUserId, cost, refType + ":" + refId);
         log.info("组消耗 groupId={} member={} cost={} ref={}:{}", groupId, memberUserId, cost, refType, refId);
         return w.getBalancePoints();
     }
@@ -160,6 +166,8 @@ public class ProjectGroupWalletService {
         ProjectGroupWalletEntity w = requireWallet(groupId);
         appendLedgerRow(w.getBalancePoints(), groupId, memberUserId,
                 ProjectGroupLedgerEntity.TYPE_REFUND, points, refType, refId, null);
+        publishGroupChanged(groupId, w.getBalancePoints(), points, refType + ":" + refId);
+        publishMemberUsed(groupId, memberUserId, points.negate(), refType + ":" + refId);
         log.info("组退款 groupId={} member={} points={} ref={}:{}", groupId, memberUserId, points, refType, refId);
         return w.getBalancePoints();
     }
@@ -202,6 +210,12 @@ public class ProjectGroupWalletService {
         appendLedgerRow(w.getBalancePoints(), groupId, leaderUserId,
                 ProjectGroupLedgerEntity.TYPE_BACKSTOP, shortfall.negate(), refType, refId,
                 "组池不足·补差兜底，差额由组长个人承担（计入成员已用）");
+        // E1：组池余额未动（balance_after=现值），但 BACKSTOP 流水对全员可见——仍广播；
+        // 组长个人腿的 PERSONAL 事件已由 PointsWalletService.adjust/chargeToDebt 发布
+        publishGroupChanged(groupId, w.getBalancePoints(), shortfall.negate(), refType + ":" + refId);
+        if (consumerUserId != null) {
+            publishMemberUsed(groupId, consumerUserId, shortfall, refType + ":" + refId);
+        }
         log.warn("BACKSTOP groupId={} leader={} consumer={} shortfall={} ref={}:{} —— 组池余额 {}",
                 groupId, leaderUserId, consumerUserId, shortfall, refType, refId, w.getBalancePoints());
     }
@@ -288,6 +302,44 @@ public class ProjectGroupWalletService {
     // ==================== 内部 ====================
 
     /** 组流水落库（balance_after 取当前组池——本事务已持行锁，读即一致）。 */
+    /**
+     * 计划 E1（7x-3）：组池余额变事件——按组员集（含 OWNER）逐个 userId 广播，
+     * 每人一条独立事件（推送按 userId 索引连接）。失败只 WARN，不影响钱包主链。
+     */
+    private void publishGroupChanged(Long groupId, BigDecimal balanceAfter, BigDecimal delta, String reason) {
+        try {
+            java.util.List<Long> members = memberMapper.selectMemberUserIds(groupId);
+            for (Long uid : members) {
+                eventPublisher.publishEvent(com.superprogrammer.billing.event.PointsChangedEvent.builder()
+                        .userId(uid)
+                        .scope(com.superprogrammer.billing.event.PointsChangedEvent.SCOPE_GROUP)
+                        .groupId(groupId)
+                        .balanceAfter(balanceAfter)
+                        .delta(delta)
+                        .reason(reason)
+                        .build());
+            }
+        } catch (Exception e) {
+            log.warn("组池变动事件发布失败(不影响计费) groupId={} delta={}: {}", groupId, delta, e.toString());
+        }
+    }
+
+    /** 计划 E1：成员 used 变事件（组页刷新用；balanceAfter 恒 null——used 无回读）。 */
+    private void publishMemberUsed(Long groupId, Long memberUserId, BigDecimal delta, String reason) {
+        try {
+            eventPublisher.publishEvent(com.superprogrammer.billing.event.PointsChangedEvent.builder()
+                    .userId(memberUserId)
+                    .scope(com.superprogrammer.billing.event.PointsChangedEvent.SCOPE_MEMBER)
+                    .groupId(groupId)
+                    .balanceAfter(null)
+                    .delta(delta)
+                    .reason(reason)
+                    .build());
+        } catch (Exception e) {
+            log.warn("成员 used 事件发布失败(不影响计费) groupId={} userId={}: {}", groupId, memberUserId, e.toString());
+        }
+    }
+
     private void appendLedger(Long groupId, Long actorUserId, String type, BigDecimal delta,
                               String refType, String refId, String remark) {
         ProjectGroupWalletEntity w = requireWallet(groupId);

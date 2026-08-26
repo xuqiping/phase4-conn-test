@@ -49,6 +49,8 @@ class PointsWalletServiceTest {
     private IdempotencyKeyMapper idempotencyKeyMapper;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private PointsWalletService wallet;
@@ -99,6 +101,49 @@ class PointsWalletServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getCode())
                         .isEqualTo(ErrorCode.INTERNAL_ERROR.getCode()));
+    }
+
+    // ---------- 计划 E1（7x-3）：个人余额变事件 ----------
+
+    @Test
+    void charge_publishesPersonalEvent_withBalanceAfter() {
+        when(balanceMapper.adjustBalanceReturn(eq(1L), any())).thenReturn(new BigDecimal("95.00"));
+
+        wallet.charge(1L, new BigDecimal("5.00"), "CHAT", null, "备注");
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        com.superprogrammer.billing.event.PointsChangedEvent evt =
+                (com.superprogrammer.billing.event.PointsChangedEvent) captor.getValue();
+        assertThat(evt.getUserId()).isEqualTo(1L);
+        assertThat(evt.getScope()).isEqualTo(com.superprogrammer.billing.event.PointsChangedEvent.SCOPE_PERSONAL);
+        assertThat(evt.getGroupId()).isNull();
+        assertThat(evt.getDelta()).isEqualByComparingTo("-5.00");
+        assertThat(evt.getBalanceAfter()).isEqualByComparingTo("95.00");
+        assertThat(evt.getReason()).isEqualTo("备注");
+    }
+
+    @Test
+    void refund_publishesPositiveDelta() {
+        when(balanceMapper.adjustBalanceReturn(eq(1L), any())).thenReturn(new BigDecimal("105.00"));
+
+        wallet.refund(1L, new BigDecimal("5.00"), "CHAT", null, "退款");
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        com.superprogrammer.billing.event.PointsChangedEvent evt =
+                (com.superprogrammer.billing.event.PointsChangedEvent) captor.getValue();
+        assertThat(evt.getDelta()).isEqualByComparingTo("5.00");
+        assertThat(evt.getBalanceAfter()).isEqualByComparingTo("105.00");
+    }
+
+    @Test
+    void failedCharge_publishesNoEvent() {
+        when(balanceMapper.adjustBalanceReturn(eq(1L), any())).thenReturn(null);
+
+        assertThatThrownBy(() -> wallet.charge(1L, new BigDecimal("5.00"), "CHAT", null, "m"))
+                .isInstanceOf(BusinessException.class);
+        verify(eventPublisher, org.mockito.Mockito.never()).publishEvent(any(Object.class));
     }
 
     @Test

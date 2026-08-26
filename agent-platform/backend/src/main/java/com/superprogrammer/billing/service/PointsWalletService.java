@@ -41,6 +41,8 @@ public class PointsWalletService {
     private final IdempotencyKeyMapper idempotencyKeyMapper;
     /** SEC-FR-121：同键不同金额等幂等异常写安全审计（异步，绝不阻断计费主链）。 */
     private final com.superprogrammer.common.audit.AuditLogService auditLogService;
+    /** 计划 E1（7x-3）：个人余额变事件发布（只投递，推送在监听侧 AFTER_COMMIT）。 */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /** 计费总闸。关则跳预检+扣减+退款，仅留采集。 */
     @Value("${billing.enabled:true}")
@@ -480,6 +482,25 @@ public class PointsWalletService {
         ledger.setRemark(remark);
         ledgerMapper.insert(ledger);
         log.info("{} userId={} delta={} balanceAfter={} ref={}:{}", logLabel, userId, signedDelta, after, refType, refId);
+        publishPersonalChanged(userId, signedDelta, after, remark);
         return ledger;
+    }
+
+    /**
+     * 计划 E1（7x-3）：个人余额变事件——发布失败只 WARN，绝不影响计费返回值
+     * （DB 流水是真相源，推送是显示层）。实际推送由监听器事务提交后执行。
+     */
+    private void publishPersonalChanged(Long userId, BigDecimal signedDelta, BigDecimal balanceAfter, String reason) {
+        try {
+            eventPublisher.publishEvent(com.superprogrammer.billing.event.PointsChangedEvent.builder()
+                    .userId(userId)
+                    .scope(com.superprogrammer.billing.event.PointsChangedEvent.SCOPE_PERSONAL)
+                    .balanceAfter(balanceAfter)
+                    .delta(signedDelta)
+                    .reason(reason)
+                    .build());
+        } catch (Exception e) {
+            log.warn("积分变动事件发布失败(不影响计费) userId={} delta={}: {}", userId, signedDelta, e.toString());
+        }
     }
 }
