@@ -3,6 +3,7 @@ package com.superprogrammer.media.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
+import com.superprogrammer.system.service.SystemSettingService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.config.MediaModelCapability;
 import com.superprogrammer.media.config.MediaModelCapabilityService;
@@ -33,6 +34,7 @@ public class MediaModelService {
     private final MediaModelCapabilityService capabilityService;
     private final MediaGenProperties properties;
     private final ObjectMapper objectMapper;
+    private final SystemSettingService systemSettingService;
 
     /**
      * 列出全部可选视频模型（跨所有 ACTIVE VIDEO provider，按 sortOrder 顺序）。
@@ -115,6 +117,8 @@ public class MediaModelService {
      * 新增生图模型只需在「全局模型供应商」加一条 IMAGE provider 并配 models。
      */
     public List<ImageModelVO> listImageModels() {
+        // 修复III C2（2x-2）：管理员默认生图模型标记（配置失效/未配 → null，无命中项，前端回落第一个）
+        String defaultImageModel = systemSettingService.getDefaultImageModel();
         List<ImageModelVO> result = new ArrayList<>();
         for (LlmProviderEntity provider : listImageProviders()) {
             for (String model : parseModels(provider.getModels())) {
@@ -123,6 +127,7 @@ public class MediaModelService {
                         .modelId(model)
                         .displayName(buildDisplayName(provider, model))
                         .providerName(provider.getName())
+                        .defaultModel(model.equals(defaultImageModel))
                         .capability(cap)
                         .build());
             }

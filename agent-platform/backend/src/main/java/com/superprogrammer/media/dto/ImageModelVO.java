@@ -22,6 +22,9 @@ public class ImageModelVO {
     private String displayName;
     /** 所属 provider name（分组显示用）。 */
     private String providerName;
+    /** 修复III C2（2x-2）：是否管理员配置的默认生图模型（media.default.image-model）。
+     *  前端初始选中 = localStorage 手选 || defaultModel 项 || 列表第一个。 */
+    private boolean defaultModel;
 
     /** 该模型的能力清单（驱动动态表单）。 */
     private ImageModelCapability capability;

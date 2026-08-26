@@ -9,6 +9,11 @@
         <n-input v-model:value="(node.data.label as string)" size="small" placeholder="节点名" @blur="onRenameBlur" />
       </div>
 
+      <!-- 修复III C4（2x-4）：创建副本——同参数重新生成的起点，不带旧产物/旧任务引用 -->
+      <div class="prop-panel__field">
+        <n-button size="small" block @click="emit('clone-node', node)">创建副本</n-button>
+      </div>
+
       <!-- D2（2x-8）：上游节点面板（BFS 分层；单击媒体 Lightbox 放大，双击卡片插入 @引用到本节点文本框） -->
       <div v-if="upDirect.length || upFar.length || upstreamTruncated" class="prop-panel__field">
         <label>上游（双击卡片插入 @引用）</label>
@@ -373,19 +378,20 @@
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
         </div>
+        <!-- 修复III C3（2x-3）：比例独占整行（原与时长同挤 ~118px 太窄看不全；弹层 teleport 本就不受面板限） -->
+        <div class="prop-panel__field">
+          <label>比例</label>
+          <n-select v-model:value="(node.data.ratio as string)" size="small" :options="ratioOpts" />
+        </div>
         <div class="prop-panel__row">
-          <div class="prop-panel__field">
-            <label>比例</label>
-            <n-select v-model:value="(node.data.ratio as string)" size="small" :options="ratioOpts" />
-          </div>
           <div class="prop-panel__field">
             <label>时长(秒)</label>
             <n-input-number v-model:value="(node.data.duration as number | undefined)" size="small" :min="4" :max="15" />
           </div>
-        </div>
-        <div class="prop-panel__field">
-          <label>分辨率</label>
-          <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
+          <div class="prop-panel__field">
+            <label>分辨率</label>
+            <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
+          </div>
         </div>
         <div class="prop-panel__field">
           <label>首帧（可选，@选上游图节点作开头）</label>
@@ -906,6 +912,8 @@ const emit = defineEmits<{
   (e: 'data-changed'): void
   /** A1 增强：提示词里 @chip 被点击 → 跳转聚焦被引用节点（CanvasView 居中选中该节点）。 */
   (e: 'mention-focus', payload: { kind: string; id: string }): void
+  /** 修复III C4（2x-4）：创建副本（CanvasView cloneNodeForDuplicate → addNode +40/+40）。 */
+  (e: 'clone-node', node: CanvasNode): void
 }>()
 
 /** S12：当前节点已绑定资产（node.data.assetId 存在）。 */
@@ -1197,10 +1205,26 @@ onMounted(async () => {
   try {
     const img = await mediaApi.listImageModels()
     imageModels.value = img.data.data ?? []
+    applyDefaultImageModel()
   } catch {
     // 生图 provider 未配时列表空（下拉空态不崩）
   }
 })
+
+/**
+ * 修复III C2（2x-2）：图片节点未显式选模型时补默认——管理员默认标记项 ?? 列表第一个。
+ * 覆盖所有创建路径（工具条/快连/衍生/上传）；模型列表加载完成与节点切换两个时机各补一次
+ * （先切节点后载列表/新建图片节点都会被兜住），emit data-changed 触发画布防抖落库。
+ */
+function applyDefaultImageModel() {
+  const node = props.node
+  if (!node || node.type !== 'image' || node.data.model) return
+  const fallback = imageModels.value.find(m => m.defaultModel) ?? imageModels.value[0]
+  if (!fallback) return
+  node.data.model = fallback.modelId
+  emit('data-changed')
+}
+watch(() => props.node?.id, () => applyDefaultImageModel())
 /** 按 providerName 分组（与 chat ModelSelector 同范式；结构类型兼容 AvailableModel/ImageModelVO）。 */
 function groupModels(list: { providerName: string; displayName: string; modelId: string }[]) {
   const grouped = new Map<string, { type: 'group'; label: string; key: string; children: { label: string; value: string }[] }>()

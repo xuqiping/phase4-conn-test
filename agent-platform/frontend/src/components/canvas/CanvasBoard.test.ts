@@ -204,3 +204,44 @@ describe('CanvasBoard 撤回/重做', () => {
     expect(undoBtn.attributes('disabled')).toBeUndefined()
   })
 })
+
+// 修复III C5（2x-5）：媒体节点完成定型统一 320×320 盒（收口 updateNodeData；手拉过则尊重）
+describe('CanvasBoard · C5 媒体结果节点定型盒', () => {
+  type BoardVm5 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string; type: string; data: Record<string, unknown> }[] }
+    updateNodeData: (id: string, patch: Record<string, unknown>) => void
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm5
+  const img = (id: string, extra: Record<string, unknown> = {}) =>
+    ({ id, type: 'image', position: { x: 0, y: 0 }, data: { label: '图', ...extra } })
+
+  it('图片/视频完成且未手拉 → 定型 320×320（16:9 与 9:16 同盒）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [img('i1'), { ...img('v1'), type: 'video' }], edges: [] })
+    vm(wrapper).updateNodeData('i1', { status: 'success', previewUrl: 'blob:a' })
+    vm(wrapper).updateNodeData('v1', { status: 'success', previewUrl: 'blob:v' })
+    const nodes = vm(wrapper).getSnapshot().nodes
+    expect(nodes.find(n => n.id === 'i1')!.data.width).toBe(320)
+    expect(nodes.find(n => n.id === 'i1')!.data.height).toBe(320)
+    expect(nodes.find(n => n.id === 'v1')!.data.height).toBe(320)
+  })
+
+  it('用户手拉过（data.height 已存在）→ 完成不覆盖手拉尺寸', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [img('i2', { width: 400, height: 260 })], edges: [] })
+    vm(wrapper).updateNodeData('i2', { status: 'success' })
+    const n = vm(wrapper).getSnapshot().nodes.find(x => x.id === 'i2')!
+    expect(n.data.width).toBe(400)
+    expect(n.data.height).toBe(260)
+  })
+
+  it('文本节点完成不定型（口径仅媒体）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [{ id: 't1', type: 'text', position: { x: 0, y: 0 }, data: { label: 'T' } }], edges: [] })
+    vm(wrapper).updateNodeData('t1', { status: 'success', outputText: '产出' })
+    const n = vm(wrapper).getSnapshot().nodes.find(x => x.id === 't1')!
+    expect(n.data.width).toBeUndefined()
+    expect(n.data.height).toBeUndefined()
+  })
+})

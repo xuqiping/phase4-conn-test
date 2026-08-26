@@ -171,11 +171,38 @@ const {
   getViewport,
   getSelectedNodes,
   onMove,
-  vueFlowRef
+  vueFlowRef,
+  setNodes: vfSetNodes,
+  setEdges: vfSetEdges,
+  getNodes: vfGetNodes,
+  getEdges: vfGetEdges
 } = useVueFlow({ id: 'infinite-canvas' })
 
 const nodes = ref<CanvasNode[]>([])
 const edges = ref<CanvasEdge[]>([])
+
+/**
+ * 2x 六轮 #2：vue-flow v-model 双向同步的「回写暂停窗」丢同步兜底。
+ * useWatchProps 的 store→model 回写（models.nodes.value = [...store.nodes]）会 pauseModel 到 nextTick；
+ * 同一拍内连发的第二次 addNode/addEdge（标注→AI 修改链实测）正落进该窗口 → push 进父数组但
+ * store 永远收不到（节点不渲染、连线不见，删任一节点触发重同步才现形；快照持久化却是全的）。
+ * 每个结构写后挂宏任务对账：宏任务时所有 microtask（含暂停解除/回写）已排空，
+ * store 与本地数组数量不符即整量对齐（正常路径恒等 → no-op）。
+ */
+let storeReconcileScheduled = false
+function scheduleStoreReconcile() {
+  if (storeReconcileScheduled) return
+  storeReconcileScheduled = true
+  setTimeout(() => {
+    storeReconcileScheduled = false
+    try {
+      if (vfGetNodes.value.length !== nodes.value.length) vfSetNodes([...nodes.value])
+      if (vfGetEdges.value.length !== edges.value.length) vfSetEdges([...edges.value])
+    } catch {
+      /* store 未就绪（挂载前）静默跳过——applySnapshot 会走引用替换正常同步 */
+    }
+  }, 0)
+}
 /** 2x 四轮 S9：节点组（框选成组）。成员关系只存组侧，节点 data 零感知。 */
 const groups = ref<CanvasGroup[]>([])
 /** 节点 id 自增序号（防批量 addNode 同毫秒撞 id）。 */
@@ -206,6 +233,8 @@ function setDragMode(mode: DragMode) {
 
 const emit = defineEmits<{
   (e: 'node-selected', node: CanvasNode | null): void
+  /** 修复III C6（2x-6）：单击已有产物的媒体节点 → 父层开 Lightbox 统一预览。 */
+  (e: 'preview-media', payload: { kind: 'image' | 'video'; src: string; poster?: string }): void
   /** 3x-C1：框选结束/清空 → 同步多选集给父（≥2 驱动批量工具条；[] 表示回到单选/空选）。 */
   (e: 'nodes-selected', ids: string[]): void
   /** S12：节点右键 → 父开「存入资产库」弹窗（L5）。 */
@@ -485,6 +514,16 @@ provide('canvasRemoveEdge', (id: string) => {
   if (selectedEdgeId.value === id) selectedEdgeId.value = ''
 })
 
+/**
+ * 修复III C1 复验补缺（2x-1）：节点子组件 CanvasNodeBase 拖角柄 resize-end 只写
+ * data.width/height，此前无保存触发链——拉完尺寸不做别的操作直接关页即丢（快照真源
+ * 已改但 PUT 没跑）。resize 由 node-resizer d3-drag 驱动，不触发 vue-flow node-drag-stop，
+ * 故经 provide/inject 显式通知（同 canvasRemoveEdge 范式）→ structure-changed 落库。
+ */
+provide('canvasNodeResized', () => {
+  emit('structure-changed')
+})
+
 /** 从节点调色板拖入：dataTransfer 带 {label}，落点转画布坐标。 */
 function onDragOver(event: DragEvent) {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
@@ -528,6 +567,7 @@ function onDblClick(event: MouseEvent) {
     const nodeId = nodeEl.dataset.id
     const hit = nodeId ? nodes.value.find(n => n.id === nodeId) : null
     if (hit?.type === 'director' && nodeId) emit('open-director', nodeId)
+    else if (nodeId) focusNodeById(nodeId) // 修复III C6（2x-6）：双击普通节点 = fitView 聚焦（与单击预览不冲突）
     return
   }
   if (
@@ -564,6 +604,7 @@ function addNode(partial: { type?: string; position?: { x: number; y: number }; 
     style: nodeSizeStyle(partial.data)
   }
   nodes.value.push(node)
+  scheduleStoreReconcile()
   return node.id
 }
 
@@ -581,6 +622,7 @@ function onConnect(connection: Connection) {
   }
   edges.value.push(edge)
   justConnected = true
+  scheduleStoreReconcile()
   emit('structure-changed')
 }
 
@@ -633,6 +675,16 @@ function onNodeClick({ node }: NodeMouseEvent) {
   boardRoot.value?.focus()
   // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
   emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
+  // 修复III C6（2x-6）：单击媒体节点（已有产物）→ Lightbox 统一预览。vue-flow 拖动后
+  // 不发射 node-click（库内已区分位移），拖动误触天然规避。
+  const hit = nodes.value.find(n => n.id === node.id)
+  if (hit && (hit.type === 'image' || hit.type === 'video') && hit.data.previewUrl) {
+    emit('preview-media', {
+      kind: hit.type,
+      src: String(hit.data.previewUrl),
+      poster: hit.type === 'video' && hit.data.coverPreviewUrl ? String(hit.data.coverPreviewUrl) : undefined
+    })
+  }
 }
 
 /**
@@ -764,6 +816,7 @@ function removeNodes(nodeIds: string[]) {
   const removeSet = new Set(nodeIds)
   nodes.value = nodes.value.filter(n => !removeSet.has(n.id))
   edges.value = edges.value.filter(e => !removeSet.has(e.source) && !removeSet.has(e.target))
+  scheduleStoreReconcile()
   emit('structure-changed')
 }
 
@@ -771,6 +824,7 @@ function removeEdges(edgeIds: string[]) {
   pushHistory('remove')
   const removeSet = new Set(edgeIds)
   edges.value = edges.value.filter(e => !removeSet.has(e.id))
+  scheduleStoreReconcile()
   emit('structure-changed')
 }
 
@@ -816,6 +870,7 @@ function applySnapshot(snap: CanvasSnapshot) {
   edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
   // 2x 四轮 S9：组（老快照无 groups 字段 = 空数组语义，零报错）
   groups.value = (snap.groups ?? []).map(g => ({ ...g, memberIds: [...(g.memberIds ?? [])] }))
+  scheduleStoreReconcile()
 }
 
 /** 载入快照（从后端加载画布时调）。换画布/恢复版本=新时间线起点，清撤回栈。 */
@@ -927,10 +982,20 @@ function getNodes(): CanvasNode[] {
 /**
  * 合并补丁进 node.data（C4+ 节点运行结果写回用）。
  * 直编数组中真实引用的 data，reactive 即时反映到画布渲染（同 PropertyPanel 范式）。
+ * 修复III C5（2x-5）：媒体节点（image/video）完成定型统一 320×320 盒——仅 data.height
+ * 缺失（用户从未手拉）时写入；手拉过的节点尊重用户尺寸不覆盖。宽度一并带出（旧节点
+ * 可能只写了 height）。收口在此一处 = 覆盖所有完成路径（文本/图片/视频/媒体任务回调）。
  */
 function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
   const n = nodes.value.find(x => x.id === nodeId)
-  if (n) Object.assign(n.data, patch)
+  if (!n) return
+  Object.assign(n.data, patch)
+  if (patch.status === 'success' && (n.type === 'image' || n.type === 'video')
+      && typeof n.data.height !== 'number') {
+    n.data.width = 320
+    n.data.height = 320
+    n.style = { ...nodeSizeStyle(n.data) }
+  }
 }
 
 /** 程序化加边（焦点编辑/抽帧产新节点自动连源用）。 */
@@ -945,6 +1010,7 @@ function addEdge(source: string, target: string) {
     type: 'deletable', // 贝塞尔 + 中点删除按钮（同 defaultEdgeOptions）
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   })
+  scheduleStoreReconcile()
 }
 
 defineExpose({

@@ -100,6 +100,9 @@ public class SystemSettingService {
     public static final String LLM_DEFAULT_CHAT_MODEL = "llm.default.chat-model";
     /** 管理员配置的全局默认向量模型；未配置时返回 null，由调用咽喉明确报错。 */
     public static final String LLM_DEFAULT_EMBEDDING_MODEL = "llm.default.embedding-model";
+    /** 修复III C2（2x-2）：管理员配置的全局默认生图模型。读宽容——未配置/已失效返回 null，
+     *  消费方（媒体模型列表标记 defaultModel）自然回落列表第一个，不在此处猜测兜底模型。 */
+    public static final String MEDIA_DEFAULT_IMAGE_MODEL = "media.default.image-model";
     /** 个人记忆标签「大类」base vocab（JSON 数组，可热调）。有效词表 = 此 ∪ 用户 needs_review=false 的存量 topic。
      *  缺失/非法 JSON 回退 RagConfig.MEMORY_TAG_VOCAB_DEFAULT（13 类）。 */
     public static final String MEMORY_TAG_VOCAB = "memory.tag.vocab";
@@ -715,9 +718,15 @@ public class SystemSettingService {
         return getNullableTrimmed(LLM_DEFAULT_EMBEDDING_MODEL);
     }
 
-    public void updateDefaultModels(String chatModel, String embeddingModel) {
+    public void updateDefaultModels(String chatModel, String embeddingModel, String imageModel) {
         updateNullableModelSetting(LLM_DEFAULT_CHAT_MODEL, chatModel, "管理员配置的全局默认对话模型");
         updateNullableModelSetting(LLM_DEFAULT_EMBEDDING_MODEL, embeddingModel, "管理员配置的全局默认向量模型");
+        updateNullableModelSetting(MEDIA_DEFAULT_IMAGE_MODEL, imageModel, "管理员配置的全局默认生图模型");
+    }
+
+    /** 修复III C2（2x-2）：管理员全局默认生图模型；未配置返回 null（消费方回落列表第一个）。 */
+    public String getDefaultImageModel() {
+        return getNullableTrimmed(MEDIA_DEFAULT_IMAGE_MODEL);
     }
 
     /** 兼容旧记忆调用 API：统一使用管理员全局默认对话模型。 */

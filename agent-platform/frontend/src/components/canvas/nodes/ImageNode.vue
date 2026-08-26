@@ -29,8 +29,18 @@ const assetBadge = useNodeAssetBadge(props.data)
 </script>
 
 <style lang="scss" scoped>
+/* 修复III C5（2x-5）：结果图占满节点盒 contain 居中（16:9/9:16/1:1 同盒不裁切） */
+.image-node__thumb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .image-node__thumb img {
   width: 100%;
+  height: 100%;
+  object-fit: contain;
   border-radius: var(--radius-sm);
   display: block;
 }

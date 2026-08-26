@@ -34,6 +34,8 @@ export interface BillingSettings {
 export interface LlmModelDefaults {
   chatModel?: string | null
   embeddingModel?: string | null
+  /** 修复III C2（2x-2）：默认生图模型（图片节点/独立生图页初始选中） */
+  imageModel?: string | null
 }
 
 export interface RagMemorySettings {

@@ -5,7 +5,9 @@ import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.media.config.MediaGenProperties;
 import com.superprogrammer.media.config.MediaModelCapabilityService;
+import com.superprogrammer.media.dto.ImageModelVO;
 import com.superprogrammer.media.dto.MediaModelVO;
+import com.superprogrammer.system.service.SystemSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +25,7 @@ class MediaModelServiceTest {
     private LlmProviderService llmProviderService;
     private MediaModelService service;
     private MediaGenProperties properties;
+    private SystemSettingService systemSettingService;
 
     @BeforeEach
     void setUp() {
@@ -30,7 +33,9 @@ class MediaModelServiceTest {
         // 能力解析用真实实现（内置前缀默认 + config 覆盖是断言对象）
         MediaModelCapabilityService capabilityService = new MediaModelCapabilityService(new ObjectMapper());
         properties = new MediaGenProperties();
-        service = new MediaModelService(llmProviderService, capabilityService, properties, new ObjectMapper());
+        systemSettingService = mock(SystemSettingService.class);
+        service = new MediaModelService(llmProviderService, capabilityService, properties, new ObjectMapper(),
+                systemSettingService);
     }
 
     private LlmProviderEntity provider(String name, String category, String modelsJson, String config) {
@@ -120,5 +125,39 @@ class MediaModelServiceTest {
         assertNull(service.firstModelOf(provider("b", "VIDEO", "[]", null)));
         assertNull(service.firstModelOf(provider("c", "VIDEO", "not-json", null)));
         assertEquals("m1", service.firstModelOf(provider("d", "VIDEO", "[\"m1\",\"m2\"]", null)));
+    }
+
+    // ---------- 修复III C2（2x-2）：图片模型目录带管理员默认标记 ----------
+
+    private void givenImageProviders() {
+        when(llmProviderService.listActive()).thenReturn(List.of(
+                provider("seedream", "IMAGE", "[\"seedream-4.0\",\"seedream-lite\"]", null)));
+    }
+
+    @Test
+    void listImageModels_configuredDefault_marksMatchingModelOnly() {
+        givenImageProviders();
+        when(systemSettingService.getDefaultImageModel()).thenReturn("seedream-lite");
+        List<ImageModelVO> models = service.listImageModels();
+        assertEquals(2, models.size());
+        assertFalse(models.get(0).isDefaultModel(), "seedream-4.0 非配置默认");
+        assertTrue(models.get(1).isDefaultModel(), "seedream-lite 命中配置默认");
+    }
+
+    @Test
+    void listImageModels_noDefaultConfigured_noModelMarked() {
+        givenImageProviders();
+        when(systemSettingService.getDefaultImageModel()).thenReturn(null);
+        List<ImageModelVO> models = service.listImageModels();
+        assertTrue(models.stream().noneMatch(ImageModelVO::isDefaultModel), "未配置默认 → 无标记，前端回落第一个");
+    }
+
+    @Test
+    void listImageModels_staleDefault_notInCatalog_noModelMarked() {
+        // 读宽容：配置的模型已被下架 → 无命中项，等价未配置
+        givenImageProviders();
+        when(systemSettingService.getDefaultImageModel()).thenReturn("removed-model");
+        List<ImageModelVO> models = service.listImageModels();
+        assertTrue(models.stream().noneMatch(ImageModelVO::isDefaultModel));
     }
 }

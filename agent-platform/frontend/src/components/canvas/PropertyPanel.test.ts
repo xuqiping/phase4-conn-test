@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
 import type { CanvasNode } from '@/types/canvas'
@@ -12,6 +12,21 @@ vi.mock('@/api/llm', () => ({
     listVideoModels: vi.fn().mockResolvedValue({
       data: { data: [{ modelId: 'seedance', displayName: 'Seedance', providerName: 'Ark', source: 'global' }] }
     })
+  }
+}))
+
+// 修复III C2（2x-2）：图片模型目录 mock（defaultModel 标记驱动默认选中；estimate 失败静默不干扰断言）
+vi.mock('@/api/media', () => ({
+  mediaApi: {
+    listImageModels: vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          { modelId: 'seedream-4.0', displayName: 'Seedream 4.0', providerName: 'Ark', capability: {} },
+          { modelId: 'seedream-lite', displayName: 'Seedream Lite', providerName: 'Ark', defaultModel: true, capability: {} }
+        ].map(m => ({ ...m, capability: m.capability as unknown as import('@/api/media').ImageModelCapability }))
+      }
+    }),
+    estimatePreview: vi.fn().mockRejectedValue(new Error('estimate off'))
   }
 }))
 
@@ -300,5 +315,59 @@ describe('PropertyPanel · D2 上游面板', () => {
     const thumb = wrapper.find('.prop-panel__up-thumb')
     expect(thumb.find('img').attributes('src')).toBe('blob:img')
     expect(thumb.classes()).toContain('is-clickable')
+  })
+})
+
+// C2（2x-2）：图片节点未选模型 → 目录加载后补默认（管理员默认标记 ?? 第一个）
+describe('PropertyPanel · C2 默认生图模型', () => {
+  it('未选模型 + 目录含 defaultModel 标记 → 自动选标记项并 emit data-changed', async () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'image'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('seedream-lite')
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('已显式选模型 → 不被默认覆盖', async () => {
+    const node = mkNode({ prompt: 'p', model: 'seedream-4.0' })
+    node.type = 'image'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('seedream-4.0')
+    wrapper.unmount()
+  })
+
+  it('目录无 defaultModel 标记（未配置/失效）→ 回落第一个', async () => {
+    const { mediaApi } = await import('@/api/media')
+    // 运行时形状 {data:{data:[…]}}（axios 拦截器已剥外层 code/message；与声明类型的差异以 cast 对齐）
+    vi.mocked(mediaApi.listImageModels).mockResolvedValueOnce({
+      data: {
+        data: [{
+          modelId: 'only-model', displayName: 'Only', providerName: 'Ark',
+          capability: {} as unknown as import('@/api/media').ImageModelCapability
+        }]
+      }
+    } as unknown as Awaited<ReturnType<typeof mediaApi.listImageModels>>)
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'image'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    expect(node.data.model).toBe('only-model')
+    wrapper.unmount()
+  })
+})
+
+// C4（2x-4）：创建副本按钮
+describe('PropertyPanel · C4 创建副本', () => {
+  it('点击「创建副本」→ emit clone-node 带当前节点', async () => {
+    const node = mkNode({ prompt: 'x' })
+    const wrapper = mountPanel(node)
+    const btn = wrapper.findAll('button').find(b => b.text().includes('创建副本'))!
+    await btn.trigger('click')
+    const events = wrapper.emitted('clone-node')
+    expect(events).toHaveLength(1)
+    expect((events![0][0] as CanvasNode).id).toBe('node-1')
   })
 })

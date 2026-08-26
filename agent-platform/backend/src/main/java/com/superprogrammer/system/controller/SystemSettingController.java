@@ -82,7 +82,9 @@ public class SystemSettingController {
             @RequestBody LlmModelDefaultsUpdateRequest request) {
         validateDefaultModel(request.getChatModel(), LlmProviderService.CATEGORY_CHAT, "对话");
         validateDefaultModel(request.getEmbeddingModel(), LlmProviderService.CATEGORY_EMBEDDING, "向量");
-        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel());
+        // 修复III C2（2x-2）：默认生图模型（media:gen 侧图片节点/独立生图页默认选中）
+        validateDefaultModel(request.getImageModel(), LlmProviderService.CATEGORY_IMAGE, "生图");
+        service.updateDefaultModels(request.getChatModel(), request.getEmbeddingModel(), request.getImageModel());
         return ResponseEntity.ok(R.ok("默认模型已更新", buildLlmModelDefaults()));
     }
 
@@ -98,6 +100,7 @@ public class SystemSettingController {
         return LlmModelDefaultsVO.builder()
                 .chatModel(service.getDefaultChatModel())
                 .embeddingModel(service.getDefaultEmbeddingModel())
+                .imageModel(service.getDefaultImageModel())
                 .build();
     }
 

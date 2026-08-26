@@ -61,6 +61,14 @@
         <n-button :loading="saving" type="primary" @click="onSave(false)">
           <n-icon :component="SaveOutline" /> 保存
         </n-button>
+        <!-- 修复III C7（2x-7）：自动保存状态徽标（dirty/saving/saved(时间)/failed） -->
+        <span
+          class="canvas-view__save-badge"
+          :data-state="saveBadge"
+          role="status"
+          aria-live="polite"
+          :title="saveBadge === 'failed' ? '自动保存失败：检查网络后点「保存」重试' : '任何变动 0.8s 后自动保存'"
+        >{{ saveBadgeText }}</span>
         <n-button :loading="rerunning" :disabled="batchRunning" quaternary @click="onRerunAll" title="按拓扑序重跑全部可生成节点（环检测）">
           <n-icon :component="RefreshOutline" /> 重跑全链
         </n-button>
@@ -137,6 +145,16 @@
           @structure-changed="scheduleSave"
           @group-rename-request="onGroupRenameRequest"
           @open-director="onOpenDirector"
+          @preview-media="onPreviewMedia"
+        />
+
+        <!-- 修复III C6（2x-6）：单击媒体节点 → Lightbox 统一预览（复用 D1 组件） -->
+        <Lightbox
+          :open="!!mediaPreview"
+          :kind="mediaPreview?.kind ?? 'image'"
+          :src="mediaPreview?.src"
+          :poster="mediaPreview?.poster"
+          @close="mediaPreview = null"
         />
 
         <!-- 3x-C1 框选批量工具条（≥2 节点选中时浮于画布顶部） -->
@@ -224,6 +242,7 @@
           @update-asset="onUpdateAsset"
           @data-changed="scheduleSave"
           @mention-focus="onMentionFocus"
+          @clone-node="onCloneNode"
         />
       </div>
 
@@ -391,6 +410,8 @@ import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { collectUpstream } from '@/components/canvas/upstream'
+import { cloneNodeForDuplicate } from '@/components/canvas/nodeClone'
+import Lightbox from '@/components/canvas/Lightbox.vue'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
 import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runDependencyScheduled } from '@/utils/batchRunner'
 import { parseScene, type DirectorSceneData } from '@/director/sceneModel'
@@ -2112,8 +2133,38 @@ async function onUpdateAsset(node: CanvasNode) {
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer)
+  saveBadge.value = 'dirty' // 修复III C7（2x-7）：防抖窗口内即显「待保存」
   saveTimer = setTimeout(() => { onSave() }, 800)
 }
+
+// ---------- 修复III C7（2x-7）：自动保存状态徽标 + 离开确认 ----------
+/** saved=已存(带时间) / dirty=防抖待存 / saving=PUT 进行中 / failed=失败待手动重存。 */
+const saveBadge = ref<'saved' | 'dirty' | 'saving' | 'failed'>('saved')
+const savedAt = ref('')
+function formatNow() {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+}
+const saveBadgeText = computed(() => {
+  switch (saveBadge.value) {
+    case 'dirty': return '待保存…'
+    case 'saving': return '保存中…'
+    case 'failed': return '保存失败·点「保存」重试'
+    case 'saved': return savedAt.value ? `已保存 ${savedAt.value}` : '已保存'
+  }
+})
+/** 未落库变更（dirty/saving/failed）时关页/刷新弹浏览器确认——任务白费的最后防线。 */
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (saveBadge.value !== 'saved') {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
+  if (saveTimer) clearTimeout(saveTimer)
+})
 
 /** 节点调色板（C3 起接入各自属性面板与产出触发；MVP 先通用节点占位）。 */
 const palette = [
@@ -2331,6 +2382,7 @@ function buildPersistSnapshot(snap: CanvasSnapshot): string {
 async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
   if (!editingId.value) return
   saving.value = true
+  saveBadge.value = 'saving'
   try {
     await canvasApi.save(editingId.value, {
       name: currentName.value || '未命名画布',
@@ -2338,9 +2390,14 @@ async function doSaveSnapshot(snap: CanvasSnapshot, silent: boolean) {
     })
     if (!silent) message.success('已保存')
     lastSavedNodeCount = snap.nodes.length
+    saveBadge.value = 'saved'
+    savedAt.value = formatNow() // 修复III C7（2x-7）
     await loadList()
   } catch {
-    if (!silent) message.error('保存失败')
+    // 修复III C7（2x-7）：自动保存失败此前完全静默——用户以为已存，离开即全丢。
+    // 统一 toast（含 silent 路径）+ 徽标转 failed（beforeunload 拦截 + 手动重存入口）。
+    saveBadge.value = 'failed'
+    message.error('画布保存失败（网络/服务异常），可点「保存」重试')
   } finally {
     saving.value = false
   }
@@ -2466,6 +2523,23 @@ function onPaletteDragStart(event: DragEvent, p: { type: string; label: string }
 
 function onPaletteClick(p: { type: string; label: string }) {
   boardRef.value?.addNode({ type: p.type, data: { label: p.label } })
+}
+
+/** 修复III C6（2x-6）：单击媒体节点 → Lightbox 预览载荷（null=关）。 */
+const mediaPreview = ref<{ kind: 'image' | 'video'; src: string; poster?: string } | null>(null)
+function onPreviewMedia(payload: { kind: 'image' | 'video'; src: string; poster?: string }) {
+  mediaPreview.value = payload
+}
+
+/**
+ * 修复III C4（2x-4）：创建副本——纯数据变换（nodeClone.ts：参数深拷贝、生成态清空回
+ * idle、+40/+40 错开；label 撞名由 addNode 内 uniqueLabel 自动追加序号）。
+ * 副本不带边/组关系（平节点口径，现分组结构不支持整组复制）；scheduleSave 立即排程落库。
+ */
+function onCloneNode(node: CanvasNode) {
+  const partial = cloneNodeForDuplicate(node)
+  const newId = boardRef.value?.addNode(partial)
+  if (newId) scheduleSave()
 }
 
 // ---------- C6 双击画布空白处 → 快速加节点搜索框（ComfyUI 式） ----------
@@ -2747,6 +2821,17 @@ function flushPendingSave() {
 
 .canvas-view__name-input {
   max-width: 320px;
+}
+
+/* 修复III C7（2x-7）：自动保存状态徽标——四态色分（failed 红/dirty 黄/saving 蓝/saved 绿灰） */
+.canvas-view__save-badge {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+
+  &[data-state='dirty'] { color: #facc15; }
+  &[data-state='saving'] { color: #38bdf8; }
+  &[data-state='failed'] { color: #f87171; font-weight: 500; }
 }
 
 .canvas-view__main {

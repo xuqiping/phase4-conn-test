@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { Handle, Position, useNode } from '@vue-flow/core'
 import { NodeResizeControl, ResizeControlVariant } from '@vue-flow/node-resizer'
 import '@vue-flow/node-resizer/dist/style.css'
@@ -79,6 +79,9 @@ const nodeCtx = useNode()
 const nodeData = computed(() => nodeCtx?.node?.data as { width?: number; height?: number } | undefined)
 const isResized = computed(() => typeof nodeData.value?.height === 'number')
 const RESIZE_CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const
+// 修复III C1 复验补缺（2x-1）：resize 后通知画布层落库（resize 不触发 node-drag-stop；
+// 裸挂单测无注入，缺省 no-op 守卫）
+const notifyResized = inject<(() => void) | null>('canvasNodeResized', null)
 
 /**
  * 拖角柄松手 → 尺寸落 node.data.width/height（快照持久化真源）。
@@ -89,6 +92,7 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
   if (!nodeData.value) return
   nodeData.value.width = Math.round(params.width)
   nodeData.value.height = Math.round(params.height)
+  notifyResized?.()
 }
 </script>
 

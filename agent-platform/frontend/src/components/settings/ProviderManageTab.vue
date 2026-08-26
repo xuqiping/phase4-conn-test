@@ -20,9 +20,19 @@
             @update:value="saveModelDefaults"
           />
         </n-form-item>
+        <!-- 修复III C2（2x-2）：默认生图模型（画布图片节点/独立生图页初始选中） -->
+        <n-form-item label="默认生图模型">
+          <n-select
+            v-model:value="modelDefaults.imageModel"
+            :options="imageModelOptions"
+            clearable
+            placeholder="未配置：图片生成回落列表第一个模型"
+            @update:value="saveModelDefaults"
+          />
+        </n-form-item>
       </n-form>
       <div class="provider-manage__defaults-hint">
-        业务已显式选择模型时始终使用所选模型；仅未选择时使用这里的管理员默认。无默认且未选择会明确报错。
+        业务已显式选择模型时始终使用所选模型；仅未选择时使用这里的管理员默认。对话/向量无默认且未选择会明确报错；生图未配置默认回落列表第一个。
       </div>
     </n-card>
 
@@ -114,7 +124,7 @@ const showModal = ref(false)
 const editingId = ref<number | null>(null)
 const testingId = ref<number | null>(null)
 const importInputRef = ref<HTMLInputElement | null>(null)
-const modelDefaults = ref<LlmModelDefaults>({ chatModel: null, embeddingModel: null })
+const modelDefaults = ref<LlmModelDefaults>({ chatModel: null, embeddingModel: null, imageModel: null })
 
 const modelsForCategory = (category: ProviderCategory) => providers.value
   .filter(provider => provider.status === 'ACTIVE' && (provider.category ?? 'CHAT') === category)
@@ -129,6 +139,8 @@ const modelsForCategory = (category: ProviderCategory) => providers.value
 
 const chatModelOptions = computed(() => modelsForCategory('CHAT'))
 const embeddingModelOptions = computed(() => modelsForCategory('EMBEDDING'))
+/** 修复III C2（2x-2）：默认生图模型候选 = 启用 IMAGE provider 的模型全集 */
+const imageModelOptions = computed(() => modelsForCategory('IMAGE'))
 
 const form = ref<LlmProviderCreateRequest>({
   name: '',

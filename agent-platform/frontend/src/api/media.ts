@@ -177,6 +177,8 @@ export interface ImageModelVO {
   modelId: string
   displayName: string
   providerName: string
+  /** 修复III C2（2x-2）：是否管理员配置的默认生图模型（未配置/已失效无标记 → 前端回落列表第一个） */
+  defaultModel?: boolean
   capability: ImageModelCapability
 }
 

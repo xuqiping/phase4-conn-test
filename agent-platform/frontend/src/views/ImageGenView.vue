@@ -801,11 +801,19 @@ onMounted(async () => {
     const { data } = await mediaApi.listImageModels()
     models.value = data.data ?? []
     if (models.value.length && !form.model) {
-      form.model = models.value[0].modelId
+      // 修复III C2（2x-2）：初始选中 = 本机手选记忆 || 管理员默认标记 || 列表第一个。
+      // 手选/还原历史的 model 变更经 watch 记入 localStorage，下次进入直接恢复。
+      const remembered = localStorage.getItem('imageGen.selectedModel')
+      const hit = models.value.find(m => m.modelId === remembered)
+      form.model = (hit ?? models.value.find(m => m.defaultModel) ?? models.value[0]).modelId
       onModelChange()
     }
   } catch { /* ignore */ }
   void loadHistory()
+})
+// 手选记忆：form.model 任何变化（选模型/还原历史）都记，恢复项已下架时回落默认链
+watch(() => form.model, m => {
+  if (m) localStorage.setItem('imageGen.selectedModel', m)
 })
 onUnmounted(() => {
   if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)

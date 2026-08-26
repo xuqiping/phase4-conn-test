@@ -59,8 +59,12 @@ const assetBadge = useNodeAssetBadge(props.data)
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* 修复III C5（2x-5）：结果视频占满节点盒 contain 居中（任意比例同盒不裁切） */
 .video-node__clip {
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  object-fit: contain;
   border-radius: var(--radius-sm);
   display: block;
   background: #000;
