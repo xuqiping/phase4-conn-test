@@ -67,7 +67,7 @@ created-date: 2026-08-26
   - **依赖**：D1
   - **验证**：单测——①老价表逐分一致矩阵；②闲时三价组合；③缓存价 NULL 回退；④闲时×缓存正交矩阵；⑤isOffPeak 全矩阵（含跨零点/周末/非法配置回退）
 
-- [ ] **D3：TokenUsage + Provider 解析（口径归一）**
+- [x] **D3：TokenUsage + Provider 解析（口径归一）**（8e914911；30/30。偏差：embed/rerank 响应无缓存字段，两处未加解析——计费侧 D2 已强制 EMBED/RERANK cached=null，语义不变）
   - **目标**：两家协议缓存字段全接上
   - **动作**：
     ```
@@ -85,7 +85,7 @@ created-date: 2026-08-26
   - **依赖**：无
   - **验证**：单测——OpenAI 带/不带 prompt_tokens_details；Claude 带/不带 cache_read/creation；两家口径各自锁数值
 
-- [ ] **D4：usage 落库与协议透传**
+- [x] **D4：usage 落库与协议透传**（e649889c；UsageCollectorTest 8/8 + 67 回归。偏差：batchInsert 死代码未补列；D3 已并做 Provider 侧）
   - **目标**：cached_tokens 进表、进 DONE 消耗显示
   - **动作**：
     ```
@@ -98,7 +98,7 @@ created-date: 2026-08-26
   - **依赖**：D3
   - **验证**：单测 record 透传；人工——同会话第二条消息 cachedTokens>0 且总积分低于无缓存
 
-- [ ] **D5：计费链透传（hold/settle）**
+- [x] **D5：计费链透传（hold/settle）**（daa31f6；26/26。onSuccess/settleChatHeld 重载 +cachedTokens 尾参，旧重载委托 null→老调用两腿语义逐分不变；holdChat/settleChatCancelled/FAILED 路径不动——hold 时缓存命中不可预知，settle 用真实 cachedTokens 多退少补）
   - **目标**：缓存进三腿计价、hold 保守口径落地
   - **动作**：
     ```
