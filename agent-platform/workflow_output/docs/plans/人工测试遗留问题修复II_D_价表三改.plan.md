@@ -25,7 +25,7 @@ created-date: 2026-08-26
 
 ## 实现步骤
 
-- [ ] **D1：V159 迁移（结构+数据）**
+- [x] **D1：V160 迁移（结构+数据）**（实际 V160：V159 已被 A 计划回填占用；物理 DELETE 非 deleted=1——表无 deleted 列，append-only，价差 NOTICE 留痕）
   - **目标**：新列就位、SECOND 分辨率行合并
   - **动作**（纯 SQL Migration）：
     ```
