@@ -282,3 +282,12 @@ describe('MentionTextarea · D4 弹层光标锚定兜底', () => {
     expect((pop.attributes('style') ?? '').includes('left:')).toBe(false)
   })
 })
+
+/** 修复IV C1b（C-4 缺口2）：失焦（非点候选行）→ blur-committed 上抛，父级据此走自动保存。 */
+describe('MentionTextarea · 修复IV C1b blur 提交', () => {
+  it('失焦 → emit blur-committed 恰一次', async () => {
+    const wrapper = mountHost('文本')
+    await wrapper.find('.mention-ta__input').trigger('blur')
+    expect(wrapper.findComponent(MentionTextarea).emitted('blur-committed')).toHaveLength(1)
+  })
+})

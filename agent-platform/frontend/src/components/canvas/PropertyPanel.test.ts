@@ -368,6 +368,44 @@ describe('PropertyPanel · 修复IV B4 面板拖宽', () => {
   })
 })
 
+// 修复IV C1b/C1c（C-4 缺口2/3）：文本失焦报存 + 参数变更即报存
+describe('PropertyPanel · 修复IV C1b/C1c 变更即保存', () => {
+  it('C1b：名称框 blur → emit data-changed（改名即报存，L10 关键档）', async () => {
+    const node = mkNode({ prompt: 'x' })
+    node.data.label = '节点A'
+    const wrapper = mountPanel(node)
+    await wrapper.findComponent(NInput).vm.$emit('blur')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+  })
+
+  it('C1b：MentionTextarea blur-committed 上抛为 data-changed', async () => {
+    const node = mkNode({ prompt: 'p' })
+    const wrapper = mountPanel(node)
+    await wrapper.findComponent({ name: 'MentionTextarea' }).vm.$emit('blur-committed')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+  })
+
+  it('C1c：视频改分辨率 → data 写入 + data-changed 恰一次', async () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'video'
+    node.data.resolution = '720p'
+    const wrapper = mountPanel(node)
+    await flushPromises() // 先让模型目录加载等挂载期 watcher 落定
+    const before = (wrapper.emitted('data-changed') ?? []).length
+    // 定位分辨率下拉：options 含 4K 的唯一 NSelect（比例/来源/模型选项集不同）
+    const { NSelect } = await import('naive-ui')
+    const resSelect = wrapper.findAllComponents(NSelect)
+      .find(s => ((s.props('options') as { value: string }[] | undefined) ?? []).some(o => o.value === '4K'))
+    expect(resSelect).toBeTruthy()
+    await resSelect!.vm.$emit('update:value', '1080p')
+    await wrapper.vm.$nextTick()
+    expect(node.data.resolution).toBe('1080p')
+    expect((wrapper.emitted('data-changed') ?? []).length).toBe(before + 1)
+  })
+})
+
 // C2（2x-2）：图片节点未选模型 → 目录加载后补默认（管理员默认标记 ?? 第一个）
 describe('PropertyPanel · C2 默认生图模型', () => {
   it('未选模型 + 目录含 defaultModel 标记 → 自动选标记项并 emit data-changed', async () => {

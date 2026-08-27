@@ -245,3 +245,37 @@ describe('CanvasBoard · C5 媒体结果节点定型盒', () => {
     expect(n.data.height).toBeUndefined()
   })
 })
+
+/** 修复IV C1a/C2（C-4 缺口1 / C-7）：新增节点即报存 + 媒体节点新建即定型 320×320。 */
+describe('CanvasBoard · 修复IV C1a/C2 新增链', () => {
+  type BoardVm = ReturnType<typeof boardVm> & {
+    addNode: (p: { type?: string; data?: Record<string, unknown> }) => string
+    getSnapshot: () => { nodes: { id: string; type: string; data: Record<string, unknown> }[] }
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm
+
+  it('C1a：addNode → emit structure-changed（三路新增统一进自动保存）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).addNode({ type: 'text', data: { label: '新' } })
+    const events = wrapper.emitted('structure-changed')
+    expect(events?.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('C2：image/video 新建即预置 320×320（data+style 同拍）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).addNode({ type: 'image', data: { label: '图' } })
+    vm(wrapper).addNode({ type: 'video', data: { label: '视' } })
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes[0].data).toMatchObject({ width: 320, height: 320 })
+    expect(snap.nodes[1].data).toMatchObject({ width: 320, height: 320 })
+  })
+
+  it('C2：文本节点不预置（默认 200 自适应）；携带宽高的入口（副本/粘贴）不覆盖', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).addNode({ type: 'text', data: { label: 'T' } })
+    vm(wrapper).addNode({ type: 'image', data: { label: '副本', width: 400, height: 260 } })
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes[0].data.width).toBeUndefined()
+    expect(snap.nodes[1].data).toMatchObject({ width: 400, height: 260 })
+  })
+})

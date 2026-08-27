@@ -104,13 +104,16 @@ export interface CanvasNodeData {
   /** S12：会话级标记——资产已有更高版本（属性面板选中时比对算出，不入快照）。 */
   assetHasUpdate?: boolean
   /**
-   * 2x 四轮 S2：手动调过的节点宽高（px，整数）。拖角柄 resize-end 时写入，
+   * 2x 四轮 S2：手动调过的节点宽高（px，整数）。拖角柄/拖边 resize-end 时写入，
    * 快照持久化；老节点无字段 = 默认宽 200、高随内容（min 64）。
    * 渲染真源是 node.style（vue-flow wrapper），由 loadSnapshot/addNode 从本字段推导，
    * 保存时剥 style 只留 data——单一真相源，不两处漂移。
+   * 修复IV C2（C-7）：image/video 新建即由 addNode 预置 320×320（防生成完成跳变）；
+   * 存量无值媒体节点仍由 updateNodeData 完成分支兜底写入。height 注释口径升级：
+   * 不再只记「用户手拉」一种来源（新建预置/完成定型也是写入方）。
    */
   width?: number
-  /** 同上；仅用户显式拉过高度才存在（未拉过 = 高度自适应内容）。 */
+  /** 同上；写入方=手拉 resize / 媒体节点新建预置 / 存量节点完成定型。 */
   height?: number
   [key: string]: unknown
 }

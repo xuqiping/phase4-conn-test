@@ -89,6 +89,9 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   /** A1 增强：点击 chip → 父组件跳转聚焦被引用对象（画布=选中并居中节点；视频页=滚到附件）。 */
   (e: 'mention-click', payload: { kind: string; id: string; raw: string }): void
+  /** 修复IV C1b（C-4 缺口2）：失焦（非点候选行——候选行 mousedown.prevent 不触发 blur）
+   *  → 父组件据此 emit data-changed 走自动保存；输入后不点别处直接关页签不丢文本。 */
+  (e: 'blur-committed'): void
 }>()
 
 const editRef = ref<HTMLDivElement | null>(null)
@@ -358,6 +361,8 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function onBlur() {
+  // 能走到 blur = 不是点候选行（候选行 mousedown.prevent 不转移焦点）→ 通知父级提交保存
+  emit('blur-committed')
   // 延迟关闭：让 @mousedown.prevent 的候选项点击先触发 selectCandidate
   setTimeout(() => { open.value = false }, 120)
 }

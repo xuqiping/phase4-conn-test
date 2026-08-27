@@ -133,7 +133,7 @@ import { computed, markRaw, nextTick, onMounted, onUnmounted, provide, reactive,
 import { Background } from '@vue-flow/background'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, EdgeMouseEvent, EdgeTypesObject, NodeChange, NodeMouseEvent, NodeTypesObject, OnConnectStartParams } from '@vue-flow/core'
-import type { CanvasEdge, CanvasGroup, CanvasNode, CanvasSnapshot } from '@/types/canvas'
+import type { CanvasEdge, CanvasGroup, CanvasNode, CanvasNodeData, CanvasSnapshot } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
@@ -608,19 +608,32 @@ function addNode(partial: { type?: string; position?: { x: number; y: number }; 
   pushHistory('add') // 2x 五轮撤回（批量建节点同 tag 800ms 合并=一步）
   const baseLabel = String(partial.data?.label ?? '新节点')
   const existing = nodes.value.map((n) => String(n.data.label ?? ''))
+  const type = partial.type ?? 'text'
   // label 放 spread 之后，确保去重值覆盖 partial.data 自带 label（L9 三入口）
+  const data: Record<string, unknown> = { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) }
+  // 修复IV C2（C-7）：媒体节点新建即定型 320×320——生成完成瞬间不再跳变尺寸。
+  // 携带宽高的入口（粘贴/创建副本）不覆盖；存量无值节点仍由 updateNodeData
+  // 完成分支兜底（勿删：老画布节点加载无 data.width/height）。
+  if ((type === 'image' || type === 'video')
+      && typeof data.width !== 'number' && typeof data.height !== 'number') {
+    data.width = 320
+    data.height = 320
+  }
   // id 加 seqCounter 后缀防批量撞：脚本拆分镜同毫秒内连调 N 次 addNode，
   // Date.now() 相同会撞 id → vue-flow 重复告警 + 渲染错乱。
   const node: CanvasNode = {
     id: `node-${Date.now()}-${seqCounter++}`,
-    type: partial.type ?? 'text',
+    type,
     position: partial.position ?? { x: Math.random() * 200 + 80, y: Math.random() * 120 + 80 },
-    data: { ...(partial.data ?? {}), label: uniqueLabel(baseLabel, existing) },
+    data: data as CanvasNodeData,
     // 2x 四轮 S2：默认/携带的宽高落 wrapper style（含粘贴携带 width/height 的场景）
-    style: nodeSizeStyle(partial.data)
+    style: nodeSizeStyle(data)
   }
   nodes.value.push(node)
   scheduleStoreReconcile()
+  // 修复IV C1a（C-4 缺口1）：三路新增（调色板/拖入/快速加）统一进自动保存——此前仅
+  // 连线路径落库（onConnect / CanvasView 有连线分支 scheduleSave），裸新增关页即丢。
+  emit('structure-changed')
   return node.id
 }
 

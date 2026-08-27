@@ -111,6 +111,7 @@
             :rows="4"
             placeholder="文本节点提示词；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
@@ -167,6 +168,7 @@
             :rows="3"
             placeholder="图片生成 prompt；输入 @ 引用上游图节点作参考图"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
@@ -360,6 +362,7 @@
             :rows="3"
             placeholder="视频生成 prompt；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
@@ -369,16 +372,34 @@
         <!-- 修复III C3（2x-3）：比例独占整行（原与时长同挤 ~118px 太窄看不全；弹层 teleport 本就不受面板限） -->
         <div class="prop-panel__field">
           <label>比例</label>
-          <n-select v-model:value="(node.data.ratio as string)" size="small" :options="ratioOpts" />
+          <!-- 修复IV C1c（C-4 缺口3）：v-model 直绑改显式写+data-changed，变更即落库（与离散选择器同模式） -->
+          <n-select
+            :value="(node.data.ratio as string) || null"
+            size="small"
+            :options="ratioOpts"
+            @update:value="(v: string | null) => { if (node) { node.data.ratio = v ?? undefined; emit('data-changed') } }"
+          />
         </div>
         <div class="prop-panel__field">
           <label>时长(秒)</label>
-          <n-input-number v-model:value="(node.data.duration as number | undefined)" size="small" :min="4" :max="15" />
+          <n-input-number
+            :value="(node.data.duration as number | undefined) ?? null"
+            size="small"
+            :min="4"
+            :max="15"
+            @update:value="(v: number | null) => { if (node) { node.data.duration = v ?? undefined; emit('data-changed') } }"
+          />
         </div>
         <!-- 修复IV A5（C-5/2x-5）：分辨率独占整行（原与时长同挤一行被截断，不选中看不到完整档位） -->
         <div class="prop-panel__field">
           <label>分辨率</label>
-          <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
+          <!-- 修复IV C1c（C-4 缺口3）：显式写+data-changed 即落库 -->
+          <n-select
+            :value="(node.data.resolution as string) || null"
+            size="small"
+            :options="resOpts"
+            @update:value="(v: string | null) => { if (node) { node.data.resolution = v ?? undefined; emit('data-changed') } }"
+          />
         </div>
         <div class="prop-panel__field">
           <label>首帧（可选，@选上游图节点作开头）</label>
@@ -592,7 +613,13 @@
       <template v-else-if="node.type === 'audio'">
         <div class="prop-panel__field">
           <label>来源</label>
-          <n-select v-model:value="(node.data.audioMode as string)" size="small" :options="audioModeOpts" />
+          <!-- 修复IV C1c（C-4 缺口3）：显式写+data-changed 即落库 -->
+          <n-select
+            :value="(node.data.audioMode as string) || null"
+            size="small"
+            :options="audioModeOpts"
+            @update:value="(v: string | null) => { if (node) { node.data.audioMode = v ?? undefined; emit('data-changed') } }"
+          />
         </div>
         <n-upload
           v-if="(node.data.audioMode ?? 'upload') === 'upload'"
@@ -625,6 +652,7 @@
             :rows="5"
             placeholder="分镜画面描述；下游图/视频节点 @本节点即注入此描述"
             @update:model-value="(v: string) => { if (node) node.data.description = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
@@ -655,6 +683,7 @@
             :rows="5"
             placeholder="剧本输入；输入 @ 引用上游节点产出，经 LlmGateway 拆分镜"
             @update:model-value="(v: string) => { if (node) node.data.synopsis = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
           <div v-if="brokenMentions.length" class="prop-panel__warn">
@@ -682,6 +711,7 @@
             :rows="2"
             placeholder="如：每镜含景别+运镜；留空则大模型自由发挥"
             @update:model-value="(v: string) => { if (node) node.data.storyboardSpec = v }"
+            @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
         </div>
@@ -1193,6 +1223,8 @@ function onRenameBlur() {
   if (deduped !== node.data.label) {
     node.data.label = deduped
   }
+  // 修复IV C1b（C-4 缺口2）：名称框失焦即报存（查重改写与否都报——防抖层去重）
+  emit('data-changed')
 }
 
 /** A1：提示词 @chip 被点击 → 上抛 mention-focus，CanvasView 居中选中被引用节点。 */
