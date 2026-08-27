@@ -322,6 +322,30 @@ describe('PropertyPanel · D2 上游面板', () => {
     expect(thumb.find('img').attributes('src')).toBe('blob:img')
     expect(thumb.classes()).toContain('is-clickable')
   })
+
+  // 修复V A1（2x-1）：视频上游首帧直出——video 标签替代「视」字占位
+  it('修复V A1：视频上游有 previewUrl → 渲染 video 直出首帧（preload=metadata muted），不再显「视」占位', () => {
+    const near = mkUp('u-vid', 'video', '视频', { previewUrl: 'blob:vid' })
+    const wrapper = mount(PropertyPanel, {
+      props: { node: mkNode({ prompt: 'p' }), upstream: { items: [{ node: near as unknown as CanvasNode, depth: 1 }], truncated: false } }
+    })
+    const thumb = wrapper.find('.prop-panel__up-thumb')
+    expect(thumb.find('video').exists()).toBe(true)
+    expect(thumb.find('video').attributes('src')).toBe('blob:vid')
+    expect(thumb.find('video').attributes('preload')).toBe('metadata')
+    expect(thumb.find('.prop-panel__up-ph').exists()).toBe(false)
+    expect(thumb.classes()).toContain('is-clickable')
+  })
+
+  it('修复V A1：视频上游无媒体源 → 仍回退「视」字占位（无产物节点语义保留）', () => {
+    const near = mkUp('u-vid', 'video', '空视频', {})
+    const wrapper = mount(PropertyPanel, {
+      props: { node: mkNode({ prompt: 'p' }), upstream: { items: [{ node: near as unknown as CanvasNode, depth: 1 }], truncated: false } }
+    })
+    const thumb = wrapper.find('.prop-panel__up-thumb')
+    expect(thumb.find('video').exists()).toBe(false)
+    expect(thumb.find('.prop-panel__up-ph').attributes('data-kind')).toBe('video')
+  })
 })
 
 // 修复IV B4（C-6）：属性面板左缘拖宽 260-560 + localStorage 持久化 + 非法值回落

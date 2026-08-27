@@ -45,6 +45,16 @@
             @click="onUpstreamMediaClick(u)"
           >
             <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
+            <!-- 修复V A1（2x-1）：视频上游直出首帧——video preload=metadata 浏览器取首帧当封面
+                 （coverPreviewUrl 仅导演台封面链路赋值，视频上游恒空——见 upThumbSrc 注释） -->
+            <video
+              v-else-if="u.node.type === 'video' && upMediaSrc(u)"
+              class="prop-panel__up-video"
+              :src="upMediaSrc(u)!"
+              preload="metadata"
+              muted
+              playsinline
+            ></video>
             <span v-else class="prop-panel__up-ph" :data-kind="u.node.type">{{ kindShort(u.node.type) }}</span>
           </button>
           <div class="prop-panel__up-meta">
@@ -960,7 +970,8 @@ function kindShort(t: string): string {
   return (KIND_BADGE[t] ?? '节').slice(0, 1)
 }
 
-/** 缩略图：图片→previewUrl，视频→封面 coverPreviewUrl；无媒体返 null。 */
+/** 缩略图：图片→previewUrl，视频→封面 coverPreviewUrl（仅导演台赋值，生成链恒 null——
+ * 修复V A1：视频上游改模板里 video 标签直出首帧，本函数视频分支只服务导演台封面场景）；无媒体返 null。 */
 function upThumbSrc(u: UpstreamItem): string | null {
   const d = u.node.data
   if (u.node.type === 'image') return (d.previewUrl as string | undefined) ?? null
@@ -1469,8 +1480,21 @@ function onImageModelChange(model: string | null) {
       transform-origin: center;
     }
 
+    // 修复V A1（2x-1）：视频首帧缩略——与 img 同规格；pointer-events:none 让点击冒泡到
+    // 按钮开 Lightbox（video 元素自身吞点击），单击播放手势不变
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: var(--radius-small);
+      pointer-events: none;
+      transition: transform 0.12s var(--ease-in-out);
+      transform-origin: center;
+    }
+
     // hover 媒体放大预览（1.6x 出卡外，需放大看的直观提示）
-    &:hover img { transform: scale(1.6); z-index: 2; position: relative; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
+    &:hover img,
+    &:hover video { transform: scale(1.6); z-index: 2; position: relative; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
 
     &.is-clickable { cursor: zoom-in; }
   }

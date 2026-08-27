@@ -2270,12 +2270,25 @@ function hydratePreviews(nodes: CanvasNode[]) {
   }
 }
 
-/** 视频节点按已终态 taskId 重取视频预览。 */
+/**
+ * 视频节点按已终态 taskId 重取视频预览。
+ * 修复V A2（2x-2）：加 fileId 兜底腿——副本被 nodeClone 清了 taskId（C-8 脱钩）、
+ * 或原任务已删（getTask 404）时，按持久化的 fileId 拉 blob 恢复预览（两调用点
+ * :2250 加载链 / 版本回滚链同生效）。running 节点交 resumePendingTasks，此处跳过防双写。
+ */
 function hydrateVideoPreviews(nodes: CanvasNode[]) {
   for (const n of nodes) {
     if (n.type !== 'video') continue
-    const taskId = (n.data as Record<string, unknown>).taskId as number | undefined
-    const mediaStatus = (n.data as Record<string, unknown>).mediaStatus as string | undefined
+    const data = n.data as Record<string, unknown>
+    const taskId = data.taskId as number | undefined
+    const mediaStatus = data.mediaStatus as string | undefined
+    const fileId = data.fileId as string | undefined
+    const fallbackToFile = () => {
+      if (!fileId || data.previewUrl || data.status === 'running') return
+      fetchCanvasPreview(fileId)
+        .then(url => boardRef.value?.updateNodeData(n.id, { previewUrl: url, status: 'success' }))
+        .catch(() => { /* 静默：fileId 失效保持空壳（现状口径，不阻断加载） */ })
+    }
     if (taskId && mediaStatus === 'SUCCEEDED') {
       mediaApi.getTask(taskId)
         .then(async r => {
@@ -2293,7 +2306,9 @@ function hydrateVideoPreviews(nodes: CanvasNode[]) {
             })
           }
         })
-        .catch(() => { /* 静默 */ })
+        .catch(() => fallbackToFile()) // 任务已查不到 → 落 fileId 兜底（修复V A2）
+    } else if (!taskId) {
+      fallbackToFile()
     }
   }
 }
