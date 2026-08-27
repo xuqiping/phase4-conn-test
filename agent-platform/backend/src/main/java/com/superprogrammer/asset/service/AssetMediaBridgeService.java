@@ -203,15 +203,18 @@ public class AssetMediaBridgeService {
         if (taskIds == null || taskIds.isEmpty()) {
             return Map.of();
         }
-        // Long 逐一校验拼 IN（参数化占位符不支持 IN 列表展开；值域 Long 无注入面）
+        // Long 逐一校验拼 IN（参数化占位符不支持 IN 列表展开；值域 Long 无注入面）。
+        // 值须带引号成文本字面量：gen_meta->>'taskId' 是 text，裸数字会触发 text=integer 无操作符
         String joined = taskIds.stream().filter(java.util.Objects::nonNull)
-                .map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+                .map(id -> "'" + id + "'").collect(java.util.stream.Collectors.joining(","));
         if (joined.isEmpty()) {
             return Map.of();
         }
         List<Asset> rows = assetMapper.selectList(new LambdaQueryWrapper<Asset>()
                 .select(Asset::getId, Asset::getGenMeta)
-                .apply("gen_meta->>'source' = {0} AND gen_meta->>'taskId' IN (" + joined + ")")
+                // 修复III F2 回归（两处叠加，2026-08-27 用户实测发现）：①{0} 占位符必须跟实参——
+                // 漏参时 {0} 原样进 SQL，PG 直接语法错 500；②IN 列表须文本字面量（见上注释）
+                .apply("gen_meta->>'source' = {0} AND gen_meta->>'taskId' IN (" + joined + ")", SOURCE_MEDIA)
                 .orderByAsc(Asset::getId));
         Map<Long, Long> result = new LinkedHashMap<>();
         for (Asset a : rows) {
