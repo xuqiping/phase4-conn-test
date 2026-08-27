@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.superprogrammer.billing.dto.DailyTrendVO;
 import com.superprogrammer.billing.dto.LedgerItemVO;
 import com.superprogrammer.billing.dto.ProjectGroupOptionVO;
+import com.superprogrammer.billing.dto.RemarkSummaryRowVO;
 import com.superprogrammer.billing.dto.UsageDetailVO;
 import com.superprogrammer.billing.dto.UsageDimensionVO;
 import com.superprogrammer.billing.dto.UsageOverviewVO;
@@ -202,6 +203,26 @@ public class BillingQueryService {
                 ? List.of()
                 : groupAllocationMapper.pageGroupAllocations(kw, groupId, (pg - 1) * sz, sz);
         return PageResult.of(records, total, pg, sz);
+    }
+
+    /** 按备注汇总行数上限（与 SQL LIMIT 同值；触顶 log 声明不静默）。 */
+    static final int REMARK_SUMMARY_LIMIT = 1000;
+
+    /**
+     * 修复IV E1（12x-1，决策 4）：admin 按组织备注汇总——同备注用户的
+     * 人数/余额/充值（全量累计）+ 消耗积分/调用次数（查询窗内，同 {@link #clamp} 兜底 30 天/封顶 365 天）。
+     * remark=NULL 与 '' 同桶（SQL COALESCE），前端空值统一显「未填备注」。
+     */
+    public List<RemarkSummaryRowVO> remarkSummary(OffsetDateTime from, OffsetDateTime to) {
+        Window w = clamp(from, to);
+        // 汇总 SQL 的 usage 子查询窗需要明确上界（created_at < to）；clamp 后 to 仍可 null（=查到最新），落 NOW()
+        OffsetDateTime end = w.to() != null ? w.to() : OffsetDateTime.now();
+        List<RemarkSummaryRowVO> rows = balanceMapper.remarkSummary(w.from, end);
+        if (rows.size() >= REMARK_SUMMARY_LIMIT) {
+            log.info("按备注汇总触顶 {} 行已截断（备注桶数超出预期，建议人工核查 remark 取值；from={}, to={})",
+                    REMARK_SUMMARY_LIMIT, w.from, end);
+        }
+        return rows;
     }
 
     /** 余额视图排序白名单映射（仅允许三列 + asc/desc，其余回落默认）。 */

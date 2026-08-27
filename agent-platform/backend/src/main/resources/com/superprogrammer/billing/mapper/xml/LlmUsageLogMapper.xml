@@ -46,11 +46,13 @@
     </sql>
 
     <!-- D2（20x-1）：单次 LEFT JOIN users（PK JOIN，非 per-user 循环）带 username/display_name；
-         user_id 可空=系统调用，LEFT JOIN 不丢行。 -->
+         user_id 可空=系统调用，LEFT JOIN 不丢行。
+         修复IV E2（12x-1）：+u.remark（组织备注，按备注汇总口径透出到排行）。 -->
     <select id="groupByUser" resultType="com.superprogrammer.billing.dto.UsageDimensionVO">
         SELECT CAST(l.user_id AS TEXT) AS dimension_key,
         u.username,
         u.name AS display_name,
+        u.remark,
         COALESCE(SUM(l.tokens_input), 0)  AS tokens_input,
         COALESCE(SUM(l.tokens_output), 0) AS tokens_output,
         COALESCE(SUM(l.cost_yuan), 0)     AS cost_yuan,
@@ -62,7 +64,7 @@
             <if test="from != null">l.created_at &gt;= #{from}</if>
             <if test="to != null">AND l.created_at &lt; #{to}</if>
         </where>
-        GROUP BY l.user_id, u.username, u.name
+        GROUP BY l.user_id, u.username, u.name, u.remark
         ORDER BY points DESC NULLS LAST
         LIMIT #{limit}
     </select>

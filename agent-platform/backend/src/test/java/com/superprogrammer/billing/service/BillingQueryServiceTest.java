@@ -273,7 +273,7 @@ class BillingQueryServiceTest {
     void adminRecharges_pageAndFilteredSums() {
         // 明细六字段行 + 筛选下 Σ（同 WHERE 口径两次聚合）
         var row = new com.superprogrammer.billing.dto.AdminRechargeRecordVO(
-                1L, 7L, "u7", "小七", OffsetDateTime.now(), "MOCK", "138****1234",
+                1L, 7L, "u7", "小七", "三年二班", OffsetDateTime.now(), "MOCK", "138****1234",
                 new BigDecimal("100.00"), new BigDecimal("1000"), new BigDecimal("1500"), "PAID");
         when(paymentOrderMapper.countAdminRecharges(eq(7L), eq("u7"), eq("MOCK"), eq("PAID"), any(), any()))
                 .thenReturn(1L);
@@ -327,7 +327,7 @@ class BillingQueryServiceTest {
     void userBalances_zeroFillAndPlatformTotals() {
         // 无钱包行/无充值用户显 0（SQL COALESCE 出 0，此处验证映射直传 + 合计卡来自全平台聚合）
         var zeroRow = new com.superprogrammer.billing.dto.UserBalanceRowVO(
-                9L, "newbie", null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
+                9L, "newbie", null, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
         when(balanceMapper.countUserBalances(null)).thenReturn(1L);
         when(balanceMapper.pageUserBalances(isNull(), any(), eq(0L), eq(20L))).thenReturn(List.of(zeroRow));
         java.util.Map<String, Object> totals = new java.util.HashMap<>();
@@ -416,7 +416,7 @@ class BillingQueryServiceTest {
     @Test
     void groupAllocations_keywordEscaped_groupIdPassed_paged() {
         var row = new com.superprogrammer.billing.dto.GroupAllocationRowVO(
-                3L, "A 班组", 9L, "stu9", "小九", "MEMBER",
+                3L, "A 班组", 9L, "stu9", "小九", "三年二班", "MEMBER",
                 new BigDecimal("100"), new BigDecimal("30"), new BigDecimal("70"),
                 new BigDecimal("150"), new BigDecimal("50"), new BigDecimal("100"),
                 OffsetDateTime.parse("2026-08-01T10:00:00+08:00"));
@@ -441,5 +441,54 @@ class BillingQueryServiceTest {
         // size 9999 截到 RECHARGE_MAX_SIZE(100)；count=0 → 不打分页查询
         assertEquals(100, result.getSize());
         verify(groupAllocationMapper, never()).pageGroupAllocations(any(), any(), anyLong(), anyLong());
+    }
+
+    // ==================== 修复IV E1（12x-1）：按备注汇总 ====================
+
+    @Test
+    void remarkSummary_rowsMapped_fieldsCarried() {
+        // 同备注一桶：行字段（人数/余额/充值/窗内消耗/调用次数）原样透出；remark='' 即「未填备注」桶（前端判空）
+        var row = new com.superprogrammer.billing.dto.RemarkSummaryRowVO(
+                "三年二班", 7L,
+                new BigDecimal("350.5"), new BigDecimal("2000"), new BigDecimal("200.00"),
+                new BigDecimal("88.8"), 123L);
+        when(balanceMapper.remarkSummary(any(), any())).thenReturn(List.of(row));
+
+        List<com.superprogrammer.billing.dto.RemarkSummaryRowVO> rows =
+                service.remarkSummary(OffsetDateTime.now().minusDays(7), OffsetDateTime.now());
+
+        assertEquals(1, rows.size());
+        assertEquals("三年二班", rows.get(0).remark());
+        assertEquals(7L, rows.get(0).userCount());
+        assertEquals(new BigDecimal("350.5"), rows.get(0).balanceSum());
+        assertEquals(new BigDecimal("88.8"), rows.get(0).consumePointsSum());
+        assertEquals(123L, rows.get(0).callCount());
+    }
+
+    @Test
+    void remarkSummary_nullWindow_defaulted_toFallsToNow() {
+        // from/to=null → clamp 兜底近 30 天；to 须落 NOW()（汇总 SQL usage 子查询需要明确上界，半开区间）
+        when(balanceMapper.remarkSummary(any(), any())).thenReturn(List.of());
+
+        OffsetDateTime before = OffsetDateTime.now();
+        service.remarkSummary(null, null);
+        OffsetDateTime after = OffsetDateTime.now();
+
+        org.mockito.ArgumentCaptor<OffsetDateTime> fromCap = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        org.mockito.ArgumentCaptor<OffsetDateTime> toCap = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(balanceMapper).remarkSummary(fromCap.capture(), toCap.capture());
+        long span = java.time.Duration.between(fromCap.getValue(), toCap.getValue()).toDays();
+        assertEquals(30, span, 1, "null 窗应兜底近 30 天（允许 ±1 抖动）");
+        // to 兜底=调用时刻 NOW()（非 null——SQL created_at < to 不可空）
+        assertTrue(!toCap.getValue().isBefore(before.minusSeconds(1)) && !toCap.getValue().isAfter(after.plusSeconds(1)),
+                "to 兜底应为当前时刻");
+    }
+
+    @Test
+    void remarkSummary_emptyTable_returnsEmpty_noException() {
+        // 空表/无消耗用户：SQL COALESCE 全 0 行或 0 行列表——service 直透不炸
+        when(balanceMapper.remarkSummary(any(), any())).thenReturn(List.of());
+
+        assertTrue(service.remarkSummary(null, null).isEmpty());
     }
 }

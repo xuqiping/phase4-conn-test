@@ -158,11 +158,13 @@ export interface UsageOverviewVO {
 }
 
 /** admin 排行维度行（by-user 的 dimensionKey=user_id，by-model=模型名，by-kind=CHAT 等）
- *  D2（20x-1）：by-user 行附 username/displayName；by-model/by-kind 恒 null */
+ *  D2（20x-1）：by-user 行附 username/displayName；by-model/by-kind 恒 null
+ *  修复IV E2（12x-1）：by-user 行附 remark（组织备注，可空）；其余维度恒 null */
 export interface UsageDimensionVO {
   dimensionKey: string
   username?: string | null
   displayName?: string | null
+  remark?: string | null
   tokensInput: number
   tokensOutput: number
   costYuan: number
@@ -295,11 +297,13 @@ export interface RechargePageVO {
   totalPaidPoints: number
 }
 
-/** admin 充值记录行（六字段 + userId/username/name；D2：name=昵称/姓名可空） */
+/** admin 充值记录行（六字段 + userId/username/name；D2：name=昵称/姓名可空；
+ *  修复IV E2（12x-1）：remark=组织备注可空） */
 export interface AdminRechargeRecordVO extends RechargeRecordVO {
   userId: number
   username: string
   name?: string | null
+  remark?: string | null
 }
 
 /** admin 充值记录分页 + 当前筛选下 Σ（PAID 口径；筛非 PAID 状态自然归 0） */
@@ -321,11 +325,13 @@ export interface AdminRechargeQuery {
   to?: string
 }
 
-/** 用户余额视图行（无钱包行/无充值用户各项为 0；D2：name=昵称/姓名可空） */
+/** 用户余额视图行（无钱包行/无充值用户各项为 0；D2：name=昵称/姓名可空；
+ *  修复IV E2（12x-1）：remark=组织备注可空） */
 export interface UserBalanceRowVO {
   userId: number
   username: string
   name?: string | null
+  remark?: string | null
   balancePoints: number
   totalRechargePoints: number
   totalRechargeAmount: number
@@ -362,6 +368,8 @@ export interface GroupAllocationRowVO {
   userId: number
   username: string
   name?: string | null
+  /** 修复IV E2（12x-1）：组织备注可空 */
+  remark?: string | null
   role: 'OWNER' | 'MANAGER' | 'MEMBER'
   quotaLimit: number | null
   usedPoints: number
@@ -395,6 +403,26 @@ export interface GroupReconcileRowVO {
   balance: number
   diff: number
   crossDiff: number
+}
+
+/**
+ * 修复IV E1（12x-1，决策 4）：按备注汇总行——同组织备注（users.remark）一桶。
+ * 余额/充值=全量累计；消耗积分/调用次数=查询窗内；remark 空串/undefined=未填备注桶。
+ */
+export interface RemarkSummaryRowVO {
+  remark: string
+  userCount: number
+  balanceSum: number
+  rechargePointsSum: number
+  rechargeAmountSum: number
+  consumePointsSum: number
+  callCount: number
+}
+
+/** 按备注汇总查询参数（from/to 可空=近 30 天，上限 365 天） */
+export interface RemarkSummaryQuery {
+  from?: string
+  to?: string
 }
 
 /** D4+7x-1：组池对账总览（totals/balanced 跟随响应口径：全平台/单组） */
@@ -563,6 +591,10 @@ export const billingApi = {
   /** D3（20x-2）：admin 项目组分配视图（每用户每组 quota/used/剩余 + 累计被分配/净额） */
   adminGroupAllocations(params: GroupAllocationQuery) {
     return request.get<ApiResponse<PageResult<GroupAllocationRowVO>>>('/billing/admin/group-allocations', { params })
+  },
+  /** 修复IV E1（12x-1）：admin 按备注汇总（同备注用户 人数/余额/充值 + 窗内消耗/调用次数） */
+  remarkSummary(params: RemarkSummaryQuery) {
+    return request.get<ApiResponse<RemarkSummaryRowVO[]>>('/billing/admin/remark-summary', { params })
   },
   /** D4（20x-3）+7x-1 下钻：groupId=单组行+totals=该组；includeAll=全组行含平组；都不传=仅异常组 */
   adminGroupReconcile(params?: { groupId?: number | null; includeAll?: boolean }) {

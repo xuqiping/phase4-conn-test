@@ -206,6 +206,18 @@ public class BillingController {
         return ResponseEntity.ok(R.ok(queryService.groupAllocations(keyword, groupId, page, size)));
     }
 
+    /**
+     * admin 按备注汇总（修复IV E1 · 12x-1，决策 4）：同组织备注（users.remark）一桶的
+     * 人数/余额合计/充值积分/充值金额（全量）+ 消耗积分/调用次数（窗内，from/to 可空=近 30 天，上限 365 天）。
+     */
+    @GetMapping("/admin/remark-summary")
+    @RequirePermission("usage:view")
+    public ResponseEntity<R<java.util.List<com.superprogrammer.billing.dto.RemarkSummaryRowVO>>> remarkSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
+        return ResponseEntity.ok(R.ok(queryService.remarkSummary(from, to)));
+    }
+
     // ---------- user（ownership = current userId，无外部旁路） ----------
 
     @GetMapping("/me/wallet")

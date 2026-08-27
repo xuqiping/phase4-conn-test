@@ -17,6 +17,8 @@ public class UsageDimensionVO {
     private String username;
     /** by-user 专属：昵称/姓名（users.name，可空回退 username） */
     private String displayName;
+    /** by-user 专属：组织备注（users.remark，修复IV E2 · 12x-1；可空） */
+    private String remark;
     private Long tokensInput;
     private Long tokensOutput;
     private BigDecimal costYuan;

@@ -25,7 +25,8 @@ public interface GroupAllocationMapper {
             + "JOIN project_groups g ON g.id = m.group_id "
             + "<where> m.deleted = 0 AND g.deleted = 0 AND u.deleted = 0 "
             + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
-            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='groupId != null'> AND m.group_id = #{groupId}</if>"
             + "</where></script>")
     long countGroupAllocations(@Param("keyword") String keyword, @Param("groupId") Long groupId);
@@ -39,7 +40,7 @@ public interface GroupAllocationMapper {
      * 排序固定 组 id → 用户 id（翻页稳定）。
      */
     @Select("<script>SELECT m.group_id AS groupId, g.name AS groupName, "
-            + "m.user_id AS userId, u.username, u.name, m.role, "
+            + "m.user_id AS userId, u.username, u.name, u.remark, m.role, "
             + "m.quota_limit_points AS quotaLimit, m.used_points AS usedPoints, "
             + "CASE WHEN m.quota_limit_points IS NULL THEN NULL "
             + "ELSE m.quota_limit_points - m.used_points END AS remaining, "
@@ -61,7 +62,8 @@ public interface GroupAllocationMapper {
             + ") a ON a.group_id = m.group_id AND a.member_user_id = m.user_id "
             + "<where> m.deleted = 0 AND g.deleted = 0 AND u.deleted = 0 "
             + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
-            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "<if test='groupId != null'> AND m.group_id = #{groupId}</if>"
             + "</where> ORDER BY m.group_id ASC, m.user_id ASC LIMIT #{size} OFFSET #{offset}</script>")
     List<com.superprogrammer.billing.dto.GroupAllocationRowVO> pageGroupAllocations(

@@ -59,11 +59,12 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
 
     // ==================== admin 用户余额视图（20x#1；D2 +name 与 keyword 双字段匹配） ====================
 
-    /** 余额视图总数（D2：keyword 筛选 username/name 任一命中；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */
+    /** 余额视图总数（D2：keyword 筛选 username/name/remark 任一命中；users 无软删字段实体但 DB 有 deleted 列，SQL 层过滤）。 */
     @Select("<script>SELECT COUNT(*) FROM users u "
             + "<where> u.deleted = 0 "
             + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
-            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where></script>")
     long countUserBalances(@Param("keyword") String keyword);
 
@@ -71,8 +72,9 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
      * 余额视图分页：users LEFT JOIN 钱包 LEFT JOIN PAID 聚合——无钱包行/无充值用户显 0（COALESCE）。
      * <p>排序列由 service 白名单映射后整段传入 orderClause（防注入；只允许白名单列+方向）。
      * D2（20x-1）：+u.name（昵称/姓名，可空回退 username）；keyword 匹配 username/name。
+     * 修复IV E2（12x-1）：+u.remark；keyword 同步匹配 remark（转义同 UserController 口径）。
      */
-    @Select("<script>SELECT u.id AS userId, u.username, u.name, "
+    @Select("<script>SELECT u.id AS userId, u.username, u.name, u.remark, "
             + "COALESCE(b.balance_points, 0) AS balancePoints, "
             + "COALESCE(r.totalPoints, 0) AS totalRechargePoints, "
             + "COALESCE(r.totalAmount, 0) AS totalRechargeAmount, "
@@ -83,7 +85,8 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
             + "MAX(paid_at) AS lastAt FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
             + "<where> u.deleted = 0 "
             + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
-            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where> ${orderClause} LIMIT #{size} OFFSET #{offset}</script>")
     java.util.List<com.superprogrammer.billing.dto.UserBalanceRowVO> pageUserBalances(
             @Param("keyword") String keyword, @Param("orderClause") String orderClause,
@@ -103,7 +106,41 @@ public interface UserPointsBalanceMapper extends BaseMapper<UserPointsBalanceEnt
             + "FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
             + "<where> u.deleted = 0 "
             + "<if test='keyword != null and keyword != \"\"'> AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
-            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
+            + "OR u.name LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\' "
+            + "OR u.remark LIKE CONCAT('%', #{keyword}, '%') ESCAPE '\\')</if>"
             + "</where></script>")
     java.util.Map<String, Object> platformBalanceTotals(@Param("keyword") String keyword);
+
+    // ==================== 按备注汇总（修复IV E1 · 12x-1，决策 4：独立汇总视图） ====================
+
+    /**
+     * 按组织备注（users.remark）一桶汇总：同备注用户的 人数/余额合计/充值积分/充值金额（全量累计）
+     * + 消耗积分/调用次数（查询窗内）。
+     * <p>与用户余额视图同源口径：users LEFT JOIN 钱包 LEFT JOIN PAID 聚合（1:1 JOIN 无行膨胀，
+     * COUNT(*) 即人数）；消耗腿为 llm_usage_logs 子查询——<b>先 WHERE 时段再 GROUP BY</b>（坑点：
+     * 时段过滤放外层会把无消耗用户整行滤掉/放 JOIN 条件错窗），LEFT JOIN 保证零消耗用户仍进桶（COALESCE 0）。
+     * <p>COALESCE(u.remark,'')：NULL 与 '' 同桶；空备注桶前端显「未填备注」。
+     * LIMIT 1000 兜底（单租户量级全显；超出截断由 service 层 log 声明，不静默）。
+     * 排序：窗内消耗积分降序——运营最关心「哪个组织最近花得最多」。
+     */
+    @Select("<script>SELECT COALESCE(u.remark, '') AS remark, "
+            + "COUNT(*) AS userCount, "
+            + "COALESCE(SUM(COALESCE(b.balance_points, 0)), 0) AS balanceSum, "
+            + "COALESCE(SUM(COALESCE(r.totalPoints, 0)), 0) AS rechargePointsSum, "
+            + "COALESCE(SUM(COALESCE(r.totalAmount, 0)), 0) AS rechargeAmountSum, "
+            + "COALESCE(SUM(COALESCE(c.points, 0)), 0) AS consumePointsSum, "
+            + "COALESCE(SUM(COALESCE(c.calls, 0)), 0) AS callCount "
+            + "FROM users u "
+            + "LEFT JOIN user_points_balance b ON b.user_id = u.id "
+            + "LEFT JOIN (SELECT user_id, SUM(points_granted) AS totalPoints, SUM(amount_yuan) AS totalAmount "
+            + "FROM payment_order WHERE status = 'PAID' GROUP BY user_id) r ON r.user_id = u.id "
+            + "LEFT JOIN (SELECT user_id, SUM(points_consumed) AS points, COUNT(*) AS calls "
+            + "FROM llm_usage_logs WHERE created_at &gt;= #{from} AND created_at &lt; #{to} "
+            + "GROUP BY user_id) c ON c.user_id = u.id "
+            + "WHERE u.deleted = 0 "
+            + "GROUP BY COALESCE(u.remark, '') "
+            + "ORDER BY consumePointsSum DESC "
+            + "LIMIT 1000</script>")
+    java.util.List<com.superprogrammer.billing.dto.RemarkSummaryRowVO> remarkSummary(
+            @Param("from") java.time.OffsetDateTime from, @Param("to") java.time.OffsetDateTime to);
 }

@@ -110,7 +110,7 @@
             <div class="billing-admin__detail-filter">
               <n-input
                 v-model:value="rechargeKeyword"
-                placeholder="用户名/姓名（回车筛选）"
+                placeholder="用户名/姓名/备注（回车筛选）"
                 clearable
                 style="width: 180px"
                 @keyup.enter="loadRecharges(1)"
@@ -149,7 +149,7 @@
               :data="recharges"
               :loading="rechargeLoading"
               :pagination="rechargePagination"
-              :scroll-x="1080"
+              :scroll-x="1200"
               size="small"
               :max-height="480"
               @update:page="onRechargePage"
@@ -168,7 +168,7 @@
             <div class="billing-admin__detail-filter">
               <n-input
                 v-model:value="balanceKeyword"
-                placeholder="用户名/姓名（回车筛选）"
+                placeholder="用户名/姓名/备注（回车筛选）"
                 clearable
                 style="width: 200px"
                 @keyup.enter="loadBalances(1)"
@@ -195,7 +195,7 @@
             <div class="billing-admin__detail-filter">
               <n-input
                 v-model:value="groupAllocKeyword"
-                placeholder="用户名/姓名（回车筛选）"
+                placeholder="用户名/姓名/备注（回车筛选）"
                 clearable
                 style="width: 200px"
                 @keyup.enter="loadGroupAllocations(1)"
@@ -220,7 +220,7 @@
               :pagination="groupAllocPagination"
               size="small"
               :max-height="480"
-              :scroll-x="1250"
+              :scroll-x="1370"
               @update:page="onGroupAllocPage"
               @update:page-size="onGroupAllocPageSize"
             />
@@ -263,6 +263,22 @@
               :max-height="360"
             />
           </n-tab-pane>
+
+          <!-- 修复IV E1（12x-1）：按备注汇总（同组织备注一桶：人数/余额/充值全量 + 消耗/调用窗内） -->
+          <n-tab-pane name="remarkSummary" tab="按备注汇总">
+            <div class="billing-admin__detail-filter">
+              <span class="billing-admin__balance-hint">
+                同备注用户一桶：余额/充值=全量累计，消耗积分/调用次数=顶部日期区间（默认近 30 天）；空备注显「未填备注」
+              </span>
+            </div>
+            <n-data-table
+              :columns="remarkSummaryColumns"
+              :data="remarkSummaryRows"
+              :loading="remarkSummaryLoading"
+              size="small"
+              :max-height="480"
+            />
+          </n-tab-pane>
         </n-tabs>
       </template>
     </n-card>
@@ -283,7 +299,8 @@ import {
 import type {
   UsageOverviewVO, UsageDimensionVO, DailyTrendVO, BillingKind, UsageDetailVO, UsageDetailQuery,
   AdminRechargeRecordVO, AdminRechargeQuery, UserBalanceRowVO, UserBalanceQuery, UserBalanceSortBy,
-  GroupAllocationRowVO, GroupAllocationQuery, GroupReconcileRowVO, GroupReconcileVO, PaymentStatus
+  GroupAllocationRowVO, GroupAllocationQuery, GroupReconcileRowVO, GroupReconcileVO, PaymentStatus,
+  RemarkSummaryRowVO
 } from '@/api/billing'
 import { adminApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -363,6 +380,8 @@ const userDimColumns: DataTableColumns<UsageDimensionVO> = [
     title: '用户', key: 'username', width: 170, ellipsis: { tooltip: true },
     render: r => r.displayName ? `${r.displayName}（${r.username}）` : (r.username || '系统')
   },
+  // 修复IV E2（12x-1）：组织备注列
+  { title: '备注', key: 'remark', width: 120, render: r => renderRemarkTag(r.remark) },
   { title: '调用次数', key: 'callCount' },
   { title: '输入 Token', key: 'tokensInput' },
   { title: '输出 Token', key: 'tokensOutput' },
@@ -425,6 +444,16 @@ function fmtNum(n: number | null | undefined | string): string {
   return n == null ? '—' : Number(n).toFixed(4).replace(/\.?0+$/, '')
 }
 
+/** 修复IV E2（12x-1）：组织备注列（四视图共用）——空显「—」，有值灰 tag + title 悬浮全文。 */
+function renderRemarkTag(remark: string | null | undefined) {
+  if (!remark) return h('span', { style: 'color: var(--color-text-tertiary, rgba(255,255,255,0.45))' }, '—')
+  return h(NTag, {
+    size: 'small', bordered: false,
+    title: remark,
+    style: 'max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis'
+  }, { default: () => remark })
+}
+
 async function loadAll() {
   if (!canView.value) return
   loading.value = true
@@ -445,9 +474,12 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
-  // 日期区间变更后，若明细已展开则同步刷新
+  // 日期区间变更后，若明细/汇总已展开则同步刷新
   if (activeTab.value === 'detail') {
     loadDetail(1)
+  }
+  if (activeTab.value === 'remarkSummary') {
+    loadRemarkSummary()
   }
 }
 
@@ -511,6 +543,10 @@ function onTabChange(name: string | number) {
   if (name === 'groupReconcile' && groupReconcile.value == null) {
     loadGroupReconcile()
   }
+  // 修复IV E1（12x-1）：按备注汇总懒加载
+  if (name === 'remarkSummary' && remarkSummaryRows.value.length === 0) {
+    loadRemarkSummary()
+  }
 }
 
 // ---------- 20x#1：充值记录 tab ----------
@@ -539,6 +575,8 @@ const rechargeColumns: DataTableColumns<AdminRechargeRecordVO> = [
   },
   { title: '用户', key: 'username', width: 150, ellipsis: { tooltip: true },
     render: r => r.name ? `${r.name}（${r.username}）` : r.username },
+  // 修复IV E2（12x-1）：组织备注列
+  { title: '备注', key: 'remark', width: 120, render: r => renderRemarkTag(r.remark) },
   {
     title: '渠道', key: 'channel', width: 90,
     render: r => PAYMENT_CHANNEL_LABEL[r.channel] ?? r.channel
@@ -612,6 +650,8 @@ const balanceColumns: DataTableColumns<UserBalanceRowVO> = [
   /** D2（20x-1）：显「昵称（账号）」；昵称空回退账号 */
   { title: '用户', key: 'username', width: 170, ellipsis: { tooltip: true },
     render: r => r.name ? `${r.name}（${r.username}）` : r.username },
+  // 修复IV E2（12x-1）：组织备注列
+  { title: '备注', key: 'remark', width: 120, render: r => renderRemarkTag(r.remark) },
   {
     title: '当前余额', key: 'balancePoints', width: 130,
     sorter: true, sortOrder: false,
@@ -712,6 +752,8 @@ const groupAllocColumns: DataTableColumns<GroupAllocationRowVO> = [
     title: '用户', key: 'username', width: 160, ellipsis: { tooltip: true },
     render: r => r.name ? `${r.name}（${r.username}）` : r.username
   },
+  // 修复IV E2（12x-1）：组织备注列
+  { title: '备注', key: 'remark', width: 120, render: r => renderRemarkTag(r.remark) },
   {
     title: '角色', key: 'role', width: 80,
     render: r => h(NTag, {
@@ -807,6 +849,46 @@ async function loadGroupReconcile() {
     groupReconcile.value = null
   } finally {
     groupReconcileLoading.value = false
+  }
+}
+
+// ---------- 修复IV E1（12x-1）：按备注汇总 tab ----------
+const remarkSummaryRows = ref<RemarkSummaryRowVO[]>([])
+const remarkSummaryLoading = ref(false)
+
+/** 首列：行首色条 + 备注文本（空=「未填备注」，title 悬浮全文）。 */
+function renderRemarkBucket(remark: string) {
+  const label = remark || '未填备注'
+  return h('div', { style: 'display: flex; align-items: center; gap: 8px; min-width: 0' }, [
+    h('span', { style: 'width: 4px; height: 16px; border-radius: 2px; flex-shrink: 0; background: var(--primary-color, #63e2b7)' }),
+    h('span', {
+      title: label,
+      style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap' + (remark ? '' : '; color: var(--color-text-tertiary, rgba(255,255,255,0.45))')
+    }, label)
+  ])
+}
+
+const remarkSummaryColumns: DataTableColumns<RemarkSummaryRowVO> = [
+  { title: '组织备注', key: 'remark', width: 200, render: r => renderRemarkBucket(r.remark) },
+  { title: '人数', key: 'userCount', width: 80 },
+  { title: '余额合计', key: 'balanceSum', width: 110, render: r => fmtNum(r.balanceSum) },
+  { title: '充值积分', key: 'rechargePointsSum', width: 110, render: r => fmtNum(r.rechargePointsSum) },
+  { title: '充值金额 ¥', key: 'rechargeAmountSum', width: 110, render: r => fmtNum(r.rechargeAmountSum) },
+  { title: '消耗积分', key: 'consumePointsSum', width: 110, render: r => fmtNum(r.consumePointsSum) },
+  { title: '调用次数', key: 'callCount', width: 90, render: r => fmtNum(r.callCount) }
+]
+
+/** 汇总跟随顶部日期区间（消耗/调用=窗内口径；余额/充值恒全量，区间不影响）。 */
+async function loadRemarkSummary() {
+  if (!canView.value) return
+  remarkSummaryLoading.value = true
+  try {
+    const res = await billingApi.remarkSummary(queryParams.value)
+    remarkSummaryRows.value = res.data.data ?? []
+  } catch {
+    remarkSummaryRows.value = []
+  } finally {
+    remarkSummaryLoading.value = false
   }
 }
 
