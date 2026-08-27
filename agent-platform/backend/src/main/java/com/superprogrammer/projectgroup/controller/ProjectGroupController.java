@@ -360,8 +360,9 @@ public class ProjectGroupController {
     // ==================== Step7：推进查询（overview 组长总览 / outputs 产出列表） ====================
 
     /**
-     * 组长总览（组长/admin）：组详情 + 组池流水倒序分页。
-     * 普通成员 403（service requireOwner 口径，管理页组长专属）。
+     * 组总览（组长/管理/admin 全量）：组详情 + 组池流水倒序分页。
+     * 修复IV D3（17x-4）：普通成员可开——组详情/流水同口径裁剪（流水仅本人行、余额不透出）；
+     * 非成员 403（service getDetail 口径）。
      */
     @GetMapping("/{id}/overview")
     @RequirePermission("project-group:manage")

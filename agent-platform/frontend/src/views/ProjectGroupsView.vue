@@ -133,37 +133,38 @@
       </div>
 
       <NTabs type="line" :value="tab" @update:value="(v: string) => { tab = v; onTabChange() }">
-        <!-- 成员/流水/审批：组长+管理可见（管理只读流水、无资金与设置权）；普通成员只有产出 tab -->
-        <template v-if="canManage">
-          <NTabPane name="members" tab="成员">
-            <div class="pg-members">
-              <div class="pg-members__toolbar">
-                <NButton size="small" type="primary" @click="openAddMember">邀请成员</NButton>
-                <span class="pg-members__hint">
-                  17x#3：邀请制——对方在「项目组→我的邀请」同意后才入组。限额=成员累计消耗上限（空=不限）
+        <!-- 修复IV D4（17x-4，决策 6）：成员 tab 对组内在册成员开放（组织信息可见，受限列集）；
+             邀请/流水/审批/设置仍管理专属（后端 MEMBER 视角流水仅本人行+余额不透出） -->
+        <NTabPane name="members" tab="成员">
+          <div class="pg-members">
+            <div v-if="canManage" class="pg-members__toolbar">
+              <NButton size="small" type="primary" @click="openAddMember">邀请成员</NButton>
+              <span class="pg-members__hint">
+                17x#3：邀请制——对方在「项目组→我的邀请」同意后才入组；新邀请不填额度=0（修复IV D2，不限已停用），进组后在下方表格调限额
+              </span>
+            </div>
+            <NDataTable
+              size="small"
+              :columns="memberColumns"
+              :data="overview?.group.members ?? []"
+              :loading="loadingOverview"
+              :row-key="(r: ProjectGroupMemberVO) => r.userId"
+              :max-height="420"
+            />
+            <!-- 17x#3：邀请管理（PENDING 可取消）；null=修复IV 前发出的遗留不限邀请 -->
+            <div v-if="canManage && invites.length" class="pg-invites">
+              <div class="pg-invites__title">待同意邀请（{{ invites.length }}）</div>
+              <div v-for="inv in invites" :key="inv.id" class="pg-invites__row">
+                <span>{{ inv.inviteeName || `#${inv.inviteeUserId}` }}</span>
+                <span class="pg-invites__meta">
+                  限额 {{ inv.quotaLimitPoints == null ? '不限（遗留）' : fmt(inv.quotaLimitPoints) }} · {{ fmtTime(inv.createdAt) }}
                 </span>
-              </div>
-              <NDataTable
-                size="small"
-                :columns="memberColumns"
-                :data="overview?.group.members ?? []"
-                :loading="loadingOverview"
-                :row-key="(r: ProjectGroupMemberVO) => r.userId"
-                :max-height="420"
-              />
-              <!-- 17x#3：邀请管理（PENDING 可取消） -->
-              <div v-if="invites.length" class="pg-invites">
-                <div class="pg-invites__title">待同意邀请（{{ invites.length }}）</div>
-                <div v-for="inv in invites" :key="inv.id" class="pg-invites__row">
-                  <span>{{ inv.inviteeName || `#${inv.inviteeUserId}` }}</span>
-                  <span class="pg-invites__meta">
-                    限额 {{ inv.quotaLimitPoints == null ? '不限' : fmt(inv.quotaLimitPoints) }} · {{ fmtTime(inv.createdAt) }}
-                  </span>
-                  <NButton size="tiny" quaternary type="error" @click="cancelInvite(inv)">取消邀请</NButton>
-                </div>
+                <NButton size="tiny" quaternary type="error" @click="cancelInvite(inv)">取消邀请</NButton>
               </div>
             </div>
-          </NTabPane>
+          </div>
+        </NTabPane>
+        <template v-if="canManage">
           <NTabPane name="ledger" tab="组池流水">
             <NDataTable
               remote
@@ -425,10 +426,13 @@
       <NInputNumber
         v-model:value="addMemberQuota"
         :min="0"
-        placeholder="积分限额（空=不限，对每位被邀请人生效）"
+        placeholder="积分限额（不填默认 0，对每位被邀请人生效）"
         style="width: 100%; margin-top: 8px"
       />
-      <div class="pg-view__allocate-hint">发出邀请后，对方在「项目组→我的邀请」同意才入组。</div>
+      <div class="pg-view__allocate-hint">
+        修复IV D2：不限额度已停用，不填=0 分——对方同意入组后由组长/管理在成员表「调限额」配额方可消耗。
+        发出邀请后，对方在「项目组→我的邀请」同意才入组。
+      </div>
       <template #footer>
         <div class="pg-view__modal-footer">
           <NButton size="small" quaternary @click="showAddMember = false">取消</NButton>
@@ -618,7 +622,8 @@ async function loadGroups() {
 
 function openGroup(g: ProjectGroupMineVO) {
   selected.value = g
-  tab.value = (g.myRole === 'OWNER' || g.myRole === 'MANAGER' || auth.isAdmin) ? 'members' : 'outputs'
+  // 修复IV D4（17x-4）：成员 tab 对组内在册成员开放，默认落地成员 tab（原 MEMBER 落产出 tab）
+  tab.value = 'members'
   invites.value = []
   joinRequests.value = []
   onTabChange()
@@ -759,7 +764,8 @@ async function loadJoinRequests() {
 async function decideJoin(r: ProjectGroupJoinRequestVO, approve: boolean) {
   try {
     await projectGroupApi.decideJoinRequest(r.id, approve)
-    message.success(approve ? '已通过，申请人已入组' : '已拒绝')
+    // 修复IV D2（决策 7）：池入组默认额度 0——提醒配额后可用
+    message.success(approve ? '已通过：该成员当前额度 0，请在成员表调限额后可用' : '已拒绝')
     await loadJoinRequests()
     if (approve) void loadOverview()
   } catch {
@@ -859,7 +865,8 @@ async function confirmCreate() {
 
 async function loadOverview() {
   const g = selected.value
-  if (!g || !canManage.value) return
+  // 修复IV D4（17x-4）：MEMBER 也可拉总览——后端同口径裁剪（流水仅本人行/余额与他人额度不透出）
+  if (!g) return
   loadingOverview.value = true
   try {
     const res = await projectGroupApi.overview(g.id, ledgerPage.value, ledgerSize.value)
@@ -936,9 +943,10 @@ function onTabChange() {
     void loadOutputs()
   } else if (tab.value === 'approvals') {
     void loadJoinRequests()
-  } else if (canManage.value) {
+  } else {
+    // 修复IV D4：members tab MEMBER 也拉总览（受限数据）；邀请列表仍管理专属
     void loadOverview()
-    if (tab.value === 'members') void loadInvites()
+    if (tab.value === 'members' && canManage.value) void loadInvites()
   }
 }
 
@@ -1051,43 +1059,68 @@ const outputColumns: DataTableColumns<ProjectGroupOutputVO> = [
   }
 ]
 
-const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
-  { title: '用户', key: 'username', width: 170, render: r => {
-    // 17x#2：昵称/姓名（账号）双显——无名回落账号；E3（12x#4）：备注灰 tag 悬浮全文
-    const base = r.displayName || r.username || `#${r.userId}`
-    const name = r.displayName && r.username && r.displayName !== r.username
-      ? `${r.displayName}（${r.username}）` : base
-    return h('span', null, [
-      name,
-      r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null,
-      r.remark
-        ? h(NPopover, { trigger: 'hover', placement: 'top' }, {
-            trigger: () => h(NTag, { size: 'tiny', bordered: false, style: 'margin-left: 6px; max-width: 90px' },
-              { default: () => r.remark }),
-            default: () => h('span', null, r.remark ?? '')
-          })
-        : null
-    ])
-  } },
+/** 成员表「用户」列渲染（管理/成员视角共用）：姓名（账号）+组长标+备注悬浮。 */
+function renderMemberUser(r: ProjectGroupMemberVO) {
+  // 17x#2：昵称/姓名（账号）双显——无名回落账号；E3（12x#4）：备注灰 tag 悬浮全文
+  const base = r.displayName || r.username || `#${r.userId}`
+  const name = r.displayName && r.username && r.displayName !== r.username
+    ? `${r.displayName}（${r.username}）` : base
+  return h('span', null, [
+    name,
+    r.owner ? h(NTag, { size: 'tiny', type: 'primary', bordered: false, style: 'margin-left: 6px' }, () => '组长') : null,
+    r.remark
+      ? h(NPopover, { trigger: 'hover', placement: 'top' }, {
+          trigger: () => h(NTag, { size: 'tiny', bordered: false, style: 'margin-left: 6px; max-width: 90px' },
+            { default: () => r.remark }),
+          default: () => h('span', null, r.remark ?? '')
+        })
+      : null
+  ])
+}
+
+/** 成员表「角色」列渲染（共用）：组长标签；OWNER 视角可下拉任免（MEMBER↔MANAGER）；其余只读标签。 */
+function renderMemberRole(r: ProjectGroupMemberVO) {
+  if (r.owner) return h(NTag, { size: 'tiny', type: 'primary', bordered: false }, () => '组长')
+  if (isOwner.value) {
+    return h(NSelect, {
+      size: 'tiny',
+      style: 'width: 88px',
+      value: r.role,
+      options: [
+        { label: '成员', value: 'MEMBER' },
+        { label: '管理', value: 'MANAGER' }
+      ],
+      onUpdateValue: (v: string) => void changeRole(r, v as 'MEMBER' | 'MANAGER')
+    })
+  }
+  return h(NTag, { size: 'tiny', bordered: false, type: r.role === 'MANAGER' ? 'warning' : 'default' },
+    () => ROLE_LABEL[r.role] ?? r.role)
+}
+
+const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => {
+  // 修复IV D4（17x-4，决策 6）：普通成员=受限列集（组织信息：用户/角色/加入时间）+ 本人行额度内联；
+  // 他人行额度类字段后端已裁 null，此处显 '-'（勿与管理视角「不限（遗留）」共用一个格式化）
+  if (!canManage.value) {
+    const myId = auth.userInfo?.id
+    return [
+      { title: '用户', key: 'username', width: 200, render: renderMemberUser },
+      { title: '角色', key: 'role', width: 110, render: renderMemberRole },
+      {
+        title: '额度', key: 'quotaLimitPoints', width: 170, render: r => {
+          if (r.userId !== myId) return '-'
+          const quota = r.quotaLimitPoints == null ? '不限（遗留）' : fmt(r.quotaLimitPoints)
+          return `${quota} · 已用 ${fmt(r.usedPoints)}`
+        }
+      },
+      { title: '加入时间', key: 'joinedAt', width: 140, render: r => fmtTime(r.joinedAt) }
+    ]
+  }
+  return [
+  { title: '用户', key: 'username', width: 170, render: renderMemberUser },
   // 17x#2（V139）：角色列——OWNER 视角可下拉任免（MEMBER↔MANAGER）；MANAGER 只读标签
-  { title: '角色', key: 'role', width: 110, render: r => {
-    if (r.owner) return h(NTag, { size: 'tiny', type: 'primary', bordered: false }, () => '组长')
-    if (isOwner.value) {
-      return h(NSelect, {
-        size: 'tiny',
-        style: 'width: 88px',
-        value: r.role,
-        options: [
-          { label: '成员', value: 'MEMBER' },
-          { label: '管理', value: 'MANAGER' }
-        ],
-        onUpdateValue: (v: string) => void changeRole(r, v as 'MEMBER' | 'MANAGER')
-      })
-    }
-    return h(NTag, { size: 'tiny', bordered: false, type: r.role === 'MANAGER' ? 'warning' : 'default' },
-      () => ROLE_LABEL[r.role] ?? r.role)
-  } },
-  { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限' : fmt(r.quotaLimitPoints) },
+  { title: '角色', key: 'role', width: 110, render: renderMemberRole },
+  // 修复IV D2：null=存量不限（遗留）——新写入已冻结，不再产生
+  { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限（遗留）' : fmt(r.quotaLimitPoints) },
   { title: '已用', key: 'usedPoints', width: 100, render: r => fmt(r.usedPoints) },
   // V161（修复III B）：名下余额/欠款列——欠款>0 红字，悬浮拆分垫付来源
   { title: '名下', key: 'selfPoints', width: 90, render: r => Number(r.selfPoints) > 0 ? fmt(r.selfPoints) : '-' },
@@ -1132,7 +1165,8 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => [
       ])
     }
   }
-])
+  ]
+})
 
 // ==================== 成员管理 ====================
 
@@ -1142,12 +1176,14 @@ const selfMemberRow = computed(() =>
 
 function openQuota(m: ProjectGroupMemberVO) {
   // V156 层级额度：按「目标角色 × 我的角色」给预算上下文提示
-  let content = '输入新限额（留空=改为不限）。调低不追溯已耗，仅约束后续消耗。'
+  // 修复IV D2（17x-3）：不限冻结——必填数值，不再支持「留空=不限」；存量 null 显「不限（遗留）」
+  const cur = m.quotaLimitPoints == null ? '不限（遗留）' : fmt(m.quotaLimitPoints)
+  let content = '输入新限额（必填数值，不限额度已停用；存量不限成员不受影响）。调低不追溯已耗，仅约束后续消耗。'
   if (m.role === 'MANAGER') {
-    content = `给管理定预算额度（留空=不限）。其下级消耗与已分配预留都会占用该额度；当前可分配 ${m.allocatablePoints == null ? '不限' : fmt(m.allocatablePoints)}，新额度不得低于已占用。`
+    content = `给管理定预算额度（必填数值）。其下级消耗与已分配预留都会占用该额度；当前可分配 ${m.allocatablePoints == null ? '不限' : fmt(m.allocatablePoints)}，新额度不得低于已占用。`
   } else if (isManager.value) {
     const avail = selfMemberRow.value?.allocatablePoints
-    content = `输入新限额。你当前剩余可分配 ${avail == null ? '不限' : fmt(avail)}（自己的额度 − 子树已耗 − 成员预留），分配不可超出；调低不追溯已耗。`
+    content = `输入新限额（必填数值）。你当前剩余可分配 ${avail == null ? '不限' : fmt(avail)}（自己的额度 − 子树已耗 − 成员预留），分配不可超出；调低不追溯已耗。`
   }
   dialog.warning({
     title: `调整 ${m.displayName || m.username || '#' + m.userId} 的${m.role === 'MANAGER' ? '预算额度' : '限额'}`,
@@ -1156,11 +1192,17 @@ function openQuota(m: ProjectGroupMemberVO) {
     negativeText: '取消',
     onPositiveClick: async () => {
       const input = window.prompt(
-        `新限额（当前 ${m.quotaLimitPoints == null ? '不限' : fmt(m.quotaLimitPoints)}，输入数字或留空=不限）`,
+        `新限额（当前 ${cur}，输入非负数字——不限额度已停用）`,
         m.quotaLimitPoints == null ? '' : String(m.quotaLimitPoints))
       if (input === null) return
-      const val = input.trim() === '' ? null : Number(input)
-      if (val != null && (!Number.isFinite(val) || val < 0)) {
+      const trimmed = input.trim()
+      // 修复IV D2：空=不限已停用——本地先拦，后端 400 双保险
+      if (trimmed === '') {
+        message.error('请输入具体额度（不限额度已停用，存量不限成员不受影响）')
+        return
+      }
+      const val = Number(trimmed)
+      if (!Number.isFinite(val) || val < 0) {
         message.error('限额须为非负数字')
         return
       }
@@ -1285,7 +1327,7 @@ const addMemberQuota = ref<number | null>(null)
 
 function openAddMember() {
   addMemberIds.value = []
-  addMemberQuota.value = null
+  addMemberQuota.value = 0   // 修复IV D2：默认 0（不限已停用）
   showAddMember.value = true
 }
 

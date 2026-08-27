@@ -226,8 +226,10 @@ public class ProjectGroupPoolService {
             throw new BusinessException(ErrorCode.CONFLICT, "申请状态已被并发变更，请刷新重试");
         }
         if (approve && memberMapper.selectByGroupUser(r.getGroupId(), r.getUserId()) == null) {
-            // V156：公共池入组 quota NULL（不限），预算挂组长（组池直管）——若挂审批管理会成「不限额下级」毒化其可分配
-            groupService.insertMemberRow(r.getGroupId(), r.getUserId(), null, g.getOwnerUserId());
+            // V156：预算挂组长（组池直管）——挂审批管理会占用其预算，语义不符。
+            // 修复IV D2（17x-3，决策 7）：quota 从 NULL（不限）改为 0——有界额度不再
+            // 「不限额下级」毒化顾虑；批后请在成员表配额方可消耗。
+            groupService.insertMemberRow(r.getGroupId(), r.getUserId(), java.math.BigDecimal.ZERO, g.getOwnerUserId());
         }
         log.info("公共池申请审批 requestId={} groupId={} target={} actor={}", requestId, r.getGroupId(), target, actorUserId);
         insertNotification(r.getUserId(), NOTIFY_TYPE_GROUP_JOIN_RESULT, r.getId(),

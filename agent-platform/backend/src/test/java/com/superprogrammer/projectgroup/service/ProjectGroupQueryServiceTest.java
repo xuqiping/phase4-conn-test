@@ -156,6 +156,67 @@ class ProjectGroupQueryServiceTest {
         assertThat(cap.getValue().getSize()).isEqualTo(50);
     }
 
+    // ==================== 修复IV D3：17x-4 overview 成员同口径裁剪 ====================
+
+    @Test
+    void overview_memberView_ledgerOwnRowsOnly_balanceAfterNulled() {
+        when(groupService.getDetail(GROUP_ID, MEMBER, false)).thenReturn(new ProjectGroupDetailVO(
+                GROUP_ID, "组A", null, OWNER, "owner", null, null,
+                List.of(), OffsetDateTime.now(), "OWN", null, false));
+        ProjectGroupMemberEntity viewer = memberRow(MEMBER);
+        viewer.setRole(ProjectGroupMemberEntity.ROLE_MEMBER);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(viewer);
+        ProjectGroupLedgerEntity l = new ProjectGroupLedgerEntity();
+        l.setId(7L);
+        l.setGroupId(GROUP_ID);
+        l.setActorUserId(MEMBER);
+        l.setType(ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE);
+        l.setDeltaPoints(BigDecimal.TEN);
+        l.setBalanceAfter(new BigDecimal("90"));
+        Page<ProjectGroupLedgerEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(l));
+        page.setTotal(1);
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ProjectGroupLedgerEntity>> cap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        when(ledgerMapper.selectPage(any(), cap.capture())).thenReturn(page);
+        when(userMapper.selectBatchIds(anyCollection())).thenReturn(List.of(user(MEMBER, "m2")));
+
+        ProjectGroupOverviewVO vo = service.overview(GROUP_ID, MEMBER, false, 1, 10);
+
+        // 成员视角：流水行 balanceAfter（组余额快照）不透出
+        assertThat(vo.ledger().getRecords()).hasSize(1);
+        assertThat(vo.ledger().getRecords().get(0).balanceAfter()).isNull();
+        assertThat(vo.ledger().getRecords().get(0).actorUsername()).isEqualTo("m2");
+    }
+
+    @Test
+    void overview_managerView_fullLedgerWithBalance() {
+        when(groupService.getDetail(GROUP_ID, MEMBER, false)).thenReturn(new ProjectGroupDetailVO(
+                GROUP_ID, "组A", null, OWNER, "owner", BigDecimal.ZERO, BigDecimal.ZERO,
+                List.of(), OffsetDateTime.now(), "OWN", null, false));
+        ProjectGroupMemberEntity mgr = memberRow(MEMBER);
+        mgr.setRole(ProjectGroupMemberEntity.ROLE_MANAGER);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(mgr);
+        ProjectGroupLedgerEntity l = new ProjectGroupLedgerEntity();
+        l.setId(7L);
+        l.setGroupId(GROUP_ID);
+        l.setActorUserId(OWNER);
+        l.setType(ProjectGroupLedgerEntity.TYPE_ALLOCATE);
+        l.setDeltaPoints(BigDecimal.TEN);
+        l.setBalanceAfter(new BigDecimal("90"));
+        Page<ProjectGroupLedgerEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(l));
+        page.setTotal(1);
+        when(ledgerMapper.selectPage(any(), any())).thenReturn(page);
+        when(userMapper.selectBatchIds(anyCollection())).thenReturn(List.of(user(OWNER, "owner")));
+
+        ProjectGroupOverviewVO vo = service.overview(GROUP_ID, MEMBER, false, 1, 10);
+
+        // 管理视角：他人行也可见且 balanceAfter 透出（不回归）
+        assertThat(vo.ledger().getRecords()).hasSize(1);
+        assertThat(vo.ledger().getRecords().get(0).balanceAfter()).isEqualByComparingTo(new BigDecimal("90"));
+    }
+
     // ==================== outputs 可见性 ====================
 
     @Test

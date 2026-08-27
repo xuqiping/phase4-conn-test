@@ -39,10 +39,11 @@ import java.util.stream.Collectors;
 /**
  * 项目组推进查询服务（计划5 Step7）：组长总览（组详情+组池流水分页）与组产出列表。
  *
- * <p>可见性（拍板边界：不做成员报表）：
+ * <p>可见性（修复IV D3，17x-4 放宽后口径）：
  * <ul>
- *   <li>组长/admin：overview 全量 + outputs 可看全部成员行、可按 memberUserId 筛选。</li>
- *   <li>普通成员：overview 403（管理页组长专属）；outputs 仅自己的行（忽略传入筛选强制 self）。</li>
+ *   <li>组长/管理/admin：overview 全量（流水全员）+ outputs 可看全部成员行、可按 memberUserId 筛选。</li>
+ *   <li>普通成员：overview 可开（组织信息可见）——流水仅本人行且 balanceAfter 置 null（余额=管理数据）；
+ *       outputs 仅自己的行（忽略传入筛选强制 self）。</li>
  *   <li>非成员：两接口均 403。</li>
  * </ul>
  *
@@ -68,18 +69,34 @@ public class ProjectGroupQueryService {
     private final ProjectGroupVisibilityService visibilityService;
 
     /**
-     * 组长总览：组详情（requireOwner 复用）+ 组池流水倒序分页（actor 用户名批量补齐）。
+     * 组总览：组详情（getDetail 复用，MEMBER+ 可开）+ 组池流水倒序分页（actor 用户名批量补齐）。
+     * 修复IV D3（17x-4）：普通成员同口径裁剪——流水只看本人行、balanceAfter 不透出（余额=管理数据）。
      */
     public ProjectGroupOverviewVO overview(Long groupId, Long actorUserId, boolean admin, int page, int size) {
         ProjectGroupDetailVO detail = groupService.getDetail(groupId, actorUserId, admin);
 
+        // 管理视角判定（getDetail 已保证 viewer ∈ 成员/组长/admin，此处不再重复权限判断）
+        boolean mgr = admin;
+        if (!mgr) {
+            ProjectGroupEntity g = groupMapper.selectById(groupId);
+            mgr = g != null && g.getOwnerUserId() != null && g.getOwnerUserId().equals(actorUserId);
+            if (!mgr && actorUserId != null) {
+                ProjectGroupMemberEntity viewerRow = memberMapper.selectByGroupUser(groupId, actorUserId);
+                mgr = viewerRow != null && ProjectGroupMemberEntity.ROLE_MANAGER.equals(viewerRow.getRole());
+            }
+        }
+        final boolean managerView = mgr;
+
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        LambdaQueryWrapper<ProjectGroupLedgerEntity> lw = new LambdaQueryWrapper<ProjectGroupLedgerEntity>()
+                .eq(ProjectGroupLedgerEntity::getGroupId, groupId);
+        if (!managerView) {
+            // 修复IV D3（17x-4，决策 6）：普通成员流水=仅本人行
+            lw.eq(ProjectGroupLedgerEntity::getActorUserId, actorUserId);
+        }
         Page<ProjectGroupLedgerEntity> p = ledgerMapper.selectPage(
-                new Page<>(safePage, safeSize),
-                new LambdaQueryWrapper<ProjectGroupLedgerEntity>()
-                        .eq(ProjectGroupLedgerEntity::getGroupId, groupId)
-                        .orderByDesc(ProjectGroupLedgerEntity::getId));
+                new Page<>(safePage, safeSize), lw.orderByDesc(ProjectGroupLedgerEntity::getId));
         List<ProjectGroupLedgerEntity> rows = p.getRecords();
 
         Map<Long, String> names = usernameMap(rows.stream()
@@ -91,7 +108,8 @@ public class ProjectGroupQueryService {
                 .map(l -> new ProjectGroupLedgerRowVO(
                         l.getId(), l.getCreatedAt(), l.getActorUserId(),
                         l.getActorUserId() != null ? names.get(l.getActorUserId()) : null,
-                        l.getType(), l.getDeltaPoints(), l.getBalanceAfter(),
+                        l.getType(), l.getDeltaPoints(),
+                        managerView ? l.getBalanceAfter() : null, // 修复IV D3：成员视角余额不透出
                         l.getRefType(), l.getRefId(), l.getRemark()))
                 .toList();
         return new ProjectGroupOverviewVO(detail,

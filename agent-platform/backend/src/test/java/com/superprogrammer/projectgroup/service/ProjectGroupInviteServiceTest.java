@@ -161,4 +161,55 @@ class ProjectGroupInviteServiceTest {
         assertThatCode(() -> service.accept(77L, 123L))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("本人");
     }
+
+    // ==================== 修复IV D2：17x-3 新邀请默认 0（决策 2） ====================
+
+    @Test
+    void 邀请_组长不填额度_新邀请默认落0() {
+        when(groupService.requireRole(eq(GROUP_ID), eq(OWNER), eq(false), any())).thenReturn(group);
+        when(userMapper.selectById(INVITEE)).thenReturn(new com.superprogrammer.auth.entity.User());
+        when(memberMapper.selectByGroupUser(GROUP_ID, INVITEE)).thenReturn(null);
+        when(inviteMapper.selectOne(any())).thenReturn(null);
+
+        assertThatCode(() -> service.invite(GROUP_ID, OWNER, false, INVITEE, null))
+                .doesNotThrowAnyException();
+
+        org.mockito.ArgumentCaptor<ProjectGroupInviteEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ProjectGroupInviteEntity.class);
+        verify(inviteMapper).insert(cap.capture());
+        assertThat(cap.getValue().getQuotaLimitPoints()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void 邀请_被限额管理不填额度_仍先报须填限额() {
+        when(groupService.requireRole(eq(GROUP_ID), eq(MANAGER_UID), eq(false), any())).thenReturn(group);
+        when(userMapper.selectById(INVITEE)).thenReturn(new com.superprogrammer.auth.entity.User());
+        when(memberMapper.selectByGroupUser(GROUP_ID, INVITEE)).thenReturn(null);
+        ProjectGroupMemberEntity mgrRow = new ProjectGroupMemberEntity();
+        mgrRow.setRole(ProjectGroupMemberEntity.ROLE_MANAGER);
+        mgrRow.setQuotaLimitPoints(new BigDecimal("500"));
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID)).thenReturn(mgrRow);
+
+        // 归一化放 V156 预检之后：管理有限额 → null 仍先报「须填限额」，不得被默认 0 吞掉
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.invite(GROUP_ID, MANAGER_UID, false, INVITEE, null))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("须填限额");
+        verify(inviteMapper, never()).insert(any(ProjectGroupInviteEntity.class));
+    }
+
+    @Test
+    void 接受_存量PENDING邀请quota为null_兜底落0() {
+        invite.setQuotaLimitPoints(null);
+        when(inviteMapper.selectById(77L)).thenReturn(invite);
+        stubTransitionOk();
+        when(memberMapper.selectByGroupUser(GROUP_ID, INVITEE)).thenReturn(null);
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        ProjectGroupMemberEntity mgrRow = new ProjectGroupMemberEntity();
+        mgrRow.setRole(ProjectGroupMemberEntity.ROLE_MANAGER);
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID)).thenReturn(mgrRow);
+
+        assertThatCode(() -> service.accept(77L, INVITEE)).doesNotThrowAnyException();
+
+        verify(groupService).insertMemberRow(GROUP_ID, INVITEE, BigDecimal.ZERO, MANAGER_UID);
+    }
 }

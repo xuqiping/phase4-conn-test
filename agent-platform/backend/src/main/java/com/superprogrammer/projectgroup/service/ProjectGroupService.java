@@ -210,9 +210,10 @@ public class ProjectGroupService {
      *       新额度非空时须 ≥ 已占用（子树已耗+下级预留）且管理下无「不限额」下级；
      *       目标 MEMBER：直接定并改挂组长（allocated_by=组长，离开原管理预算）。</li>
      *   <li><b>管理</b>：目标仅 MEMBER 行；自己有额度（非空）时新限额必填且新增预留 ≤ 自己可分配
-     *       （管理行 FOR UPDATE 串行化，并发双分配打不穿）；allocated_by=自己。
-     *       自己不限额时可配任意值（含 null=不限）。</li>
+     *       （管理行 FOR UPDATE 串行化，并发双分配打不穿）；allocated_by=自己。</li>
      * </ul>
+     * 修复IV D2（17x-3，决策 2）：新限额 null 一律 400（不限冻结）——组内不再产生新的不限额行；
+     * 存量 null（不限）成员行行为不变（消耗/降职/移除链不动）。
      * 调低不追溯已耗（V133 列注释口径），仅约束后续消耗。
      * <p>V161 修复III B2：调高限额 +X 时先抵欠款（豁免，无资金流动）——债清额回减 used，
      * 可用空间即时恢复；DEBT_WRITEOFF 腿留痕拆分（组长垫/组池垫）。old=null（原不限额）
@@ -221,7 +222,11 @@ public class ProjectGroupService {
     @Transactional(rollbackFor = Exception.class)
     public void updateQuota(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
         ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
-        if (quotaLimitPoints != null && quotaLimitPoints.signum() < 0) {
+        // 修复IV D2（17x-3，决策 2）：不限额度停用——调额必填数值；存量 null（不限）成员行不受影响
+        if (quotaLimitPoints == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "不限额度已停用，请填写具体额度（存量不限成员不受影响）");
+        }
+        if (quotaLimitPoints.signum() < 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成员限额不能为负");
         }
         ProjectGroupMemberEntity target = requireMember(groupId, memberUserId);
@@ -451,11 +456,27 @@ public class ProjectGroupService {
     }
 
     /**
-     * 组详情（组长/管理/admin，管理页）：组基本信息 + 组池余额/在途占用 + 成员列表（含 username/role/used/quota）。
+     * 组详情：组基本信息 + 组池余额/在途占用 + 成员列表（含 username/role/used/quota）。
      * V139 放宽 MANAGER 可读（管理页成员/流水/审批 tab 数据源）；写操作仍按各自闸口。
+     * 修复IV D3（17x-4，决策 5）：权限再放宽为「组内在册成员（MEMBER+）或组长/admin」；
+     * MEMBER 视角单点裁剪——他人行的额度/欠款/可分配/分配人/功能开关/可见性覆盖置 null，
+     * 本人行完整；组池余额与在途占用（组级财务）置 null。username/name/role/joinedAt/remark
+     * 保留（组织信息可见）。鉴权与裁剪共用同一次成员行查询（不重复走 requireRole 两查）。
      */
     public ProjectGroupDetailVO getDetail(Long groupId, Long actorUserId, boolean admin) {
-        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g == null || (g.getDeleted() != null && g.getDeleted() != 0)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目组不存在");
+        }
+        ProjectGroupMemberEntity viewerRow = admin ? null : memberMapper.selectByGroupUser(groupId, actorUserId);
+        boolean ownerView = admin || g.getOwnerUserId().equals(Objects.requireNonNull(actorUserId, "actorUserId"));
+        if (!ownerView && viewerRow == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "非本项目组成员");
+        }
+        String viewerRole = viewerRow == null || viewerRow.getRole() == null
+                ? ProjectGroupMemberEntity.ROLE_MEMBER : viewerRow.getRole();
+        boolean memberView = !ownerView && ProjectGroupMemberEntity.ROLE_MEMBER.equals(viewerRole);
+
         ProjectGroupWalletEntity w = walletMapper.selectByGroupId(groupId);
         BigDecimal inflight = walletMapper.sumInflightEstimated(groupId);
 
@@ -467,11 +488,14 @@ public class ProjectGroupService {
                 : userMapper.selectBatchIds(userIds).stream()
                         .collect(Collectors.toMap(User::getId, Function.identity()));
 
+        final Long viewerId = actorUserId;
         List<ProjectGroupMemberVO> members = rows.stream().map(m -> {
             User u = users.get(m.getUserId());
             String role = m.getRole() == null ? ProjectGroupMemberEntity.ROLE_MEMBER : m.getRole();
+            // MEMBER 视角他人行：额度类/配置类全裁（决策 5）
+            boolean crop = memberView && !m.getUserId().equals(viewerId);
             // V156：管理行算可分配额度（额度−子树已耗−下级预留；不限额→null）；管理行数少，逐行算可接受
-            BigDecimal allocatable = ProjectGroupMemberEntity.ROLE_MANAGER.equals(role)
+            BigDecimal allocatable = !crop && ProjectGroupMemberEntity.ROLE_MANAGER.equals(role)
                     ? budgetService.allocatable(groupId, m, null) : null;
             return new ProjectGroupMemberVO(
                     m.getUserId(),
@@ -480,14 +504,14 @@ public class ProjectGroupService {
                     u != null ? u.getRemark() : null,
                     m.getUserId().equals(g.getOwnerUserId()),
                     role,
-                    MemberAllowedKinds.parse(m.getAllowedKinds()),
-                    ProjectGroupVisibilityService.parseOverrides(m.getMemberVisibilityOverrides()),
-                    m.getQuotaLimitPoints(),
-                    m.getUsedPoints(),
-                    m.getSelfPoints() != null ? m.getSelfPoints() : BigDecimal.ZERO,
-                    m.getDebtPoolPoints() != null ? m.getDebtPoolPoints() : BigDecimal.ZERO,
-                    m.getDebtLeaderPoints() != null ? m.getDebtLeaderPoints() : BigDecimal.ZERO,
-                    m.getAllocatedByUserId(),
+                    crop ? null : MemberAllowedKinds.parse(m.getAllowedKinds()),
+                    crop ? null : ProjectGroupVisibilityService.parseOverrides(m.getMemberVisibilityOverrides()),
+                    crop ? null : m.getQuotaLimitPoints(),
+                    crop ? null : m.getUsedPoints(),
+                    crop ? null : (m.getSelfPoints() != null ? m.getSelfPoints() : BigDecimal.ZERO),
+                    crop ? null : (m.getDebtPoolPoints() != null ? m.getDebtPoolPoints() : BigDecimal.ZERO),
+                    crop ? null : (m.getDebtLeaderPoints() != null ? m.getDebtLeaderPoints() : BigDecimal.ZERO),
+                    crop ? null : m.getAllocatedByUserId(),
                     allocatable,
                     m.getCreatedAt());
         }).toList();
@@ -496,8 +520,8 @@ public class ProjectGroupService {
         return new ProjectGroupDetailVO(
                 g.getId(), g.getName(), g.getDescription(),
                 g.getOwnerUserId(), owner != null ? owner.getUsername() : null,
-                w != null ? w.getBalancePoints() : BigDecimal.ZERO,
-                inflight,
+                memberView ? null : (w != null ? w.getBalancePoints() : BigDecimal.ZERO),
+                memberView ? null : inflight,
                 members, g.getCreatedAt(),
                 g.getMemberOutputVisibility(), g.getModuleVisibilityOverrides(), g.getPublicPool());
     }

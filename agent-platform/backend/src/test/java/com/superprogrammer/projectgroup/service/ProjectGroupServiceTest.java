@@ -376,9 +376,9 @@ class ProjectGroupServiceTest {
         when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(memberRow);
         when(memberMapper.selectByGroupUserForUpdate(GROUP_ID, MANAGER_UID)).thenReturn(mgrRow);
 
-        // 被限额管理配 null=不限 → 拒
+        // null=不限 → 修复IV D2 冻结：组长/管理/不限额管理一律 400「不限额度已停用」（原 V156「不能不限」被前置涵盖）
         assertThatThrownBy(() -> service.updateQuota(GROUP_ID, MANAGER_UID, false, MEMBER, null))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("不能不限");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不限额度已停用");
         // 预算硬卡（mock 抛超发）→ 拒
         org.mockito.Mockito.doThrow(new BusinessException(
                         com.superprogrammer.common.exception.ErrorCode.BAD_REQUEST, "超出你的可分配额度"))
@@ -487,7 +487,7 @@ class ProjectGroupServiceTest {
     }
 
     @Test
-    void 成员流水_调增ALLOCATE_调减RECLAIM_转不限QUOTA_ADJUST_不变不落() {
+    void 成员流水_调增ALLOCATE_调减RECLAIM_null拒400_不变不落() {
         when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
         when(walletMapper.selectByGroupId(GROUP_ID)).thenReturn(null);
         ProjectGroupMemberEntity memberRow = roleRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER);
@@ -498,21 +498,19 @@ class ProjectGroupServiceTest {
         service.updateQuota(GROUP_ID, OWNER, false, MEMBER, new BigDecimal("100"));
         // 调减 100→40：RECLAIM(−60)
         service.updateQuota(GROUP_ID, OWNER, false, MEMBER, new BigDecimal("40"));
-        // 转 null=不限：QUOTA_ADJUST(delta=0)
-        service.updateQuota(GROUP_ID, OWNER, false, MEMBER, null);
-        // 不变（null→null）：不落行
-        service.updateQuota(GROUP_ID, OWNER, false, MEMBER, null);
+        // 修复IV D2（17x-3）：null=不限 → 400，不再产生 QUOTA_ADJUST「→不限」流水
+        assertThatThrownBy(() -> service.updateQuota(GROUP_ID, OWNER, false, MEMBER, null))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不限额度已停用");
+        // 不变（40→40）：不落行
+        service.updateQuota(GROUP_ID, OWNER, false, MEMBER, new BigDecimal("40"));
 
         org.mockito.ArgumentCaptor<ProjectGroupLedgerEntity> cap =
                 org.mockito.ArgumentCaptor.forClass(ProjectGroupLedgerEntity.class);
-        verify(ledgerMapper, org.mockito.Mockito.times(3)).insert(cap.capture());
+        verify(ledgerMapper, org.mockito.Mockito.times(2)).insert(cap.capture());
         assertThat(cap.getAllValues().get(0).getType()).isEqualTo(ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE);
         assertThat(cap.getAllValues().get(0).getDeltaPoints()).isEqualByComparingTo(new BigDecimal("50"));
         assertThat(cap.getAllValues().get(1).getType()).isEqualTo(ProjectGroupLedgerEntity.TYPE_MEMBER_RECLAIM);
         assertThat(cap.getAllValues().get(1).getDeltaPoints()).isEqualByComparingTo(new BigDecimal("-60"));
-        assertThat(cap.getAllValues().get(2).getType()).isEqualTo(ProjectGroupLedgerEntity.TYPE_MEMBER_QUOTA_ADJUST);
-        assertThat(cap.getAllValues().get(2).getDeltaPoints()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(cap.getAllValues().get(2).getRemark()).contains("→不限");
     }
 
     @Test
@@ -522,5 +520,122 @@ class ProjectGroupServiceTest {
                 .thenReturn(roleRow(OWNER, ProjectGroupMemberEntity.ROLE_OWNER));
         assertThatThrownBy(() -> service.updateQuota(GROUP_ID, OWNER, false, OWNER, BigDecimal.TEN))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("组长行不可调限额");
+    }
+
+    // ==================== 修复IV D3：17x-4 组织信息可见（MEMBER+ 可读 + 单点裁剪） ====================
+
+    private ProjectGroupMemberEntity fullRow(long userId, String role, BigDecimal quota) {
+        ProjectGroupMemberEntity m = roleRow(userId, role);
+        m.setQuotaLimitPoints(quota);
+        m.setUsedPoints(new BigDecimal("12"));
+        m.setSelfPoints(new BigDecimal("5"));
+        m.setDebtPoolPoints(BigDecimal.ZERO);
+        m.setDebtLeaderPoints(BigDecimal.ZERO);
+        m.setAllocatedByUserId(OWNER);
+        m.setAllowedKinds("[\"CHAT\"]");
+        return m;
+    }
+
+    private User user(long id, String uname, String remark) {
+        User u = new User();
+        u.setId(id);
+        u.setUsername(uname);
+        u.setName(uname + "名");
+        u.setRemark(remark);
+        return u;
+    }
+
+    private List<ProjectGroupMemberEntity> stubDetailMembers() {
+        List<ProjectGroupMemberEntity> rows = List.of(
+                fullRow(OWNER, ProjectGroupMemberEntity.ROLE_OWNER, null),
+                fullRow(MANAGER_UID, ProjectGroupMemberEntity.ROLE_MANAGER, new BigDecimal("5000")),
+                fullRow(MEMBER, ProjectGroupMemberEntity.ROLE_MEMBER, new BigDecimal("100")));
+        when(groupMapper.selectById(GROUP_ID)).thenReturn(group);
+        when(walletMapper.selectByGroupId(GROUP_ID)).thenReturn(null);
+        when(walletMapper.sumInflightEstimated(GROUP_ID)).thenReturn(new BigDecimal("7"));
+        when(memberMapper.selectList(any())).thenReturn(rows);
+        when(userMapper.selectBatchIds(anyList())).thenReturn(List.of(
+                user(OWNER, "owner", "组长备注"),
+                user(MANAGER_UID, "manager", "管理备注"),
+                user(MEMBER, "member", "成员备注")));
+        return rows;
+    }
+
+    @Test
+    void 受限视图_MEMBER可读_他人行额度类裁空_本人行完整_组财务不透出() {
+        List<ProjectGroupMemberEntity> rows = stubDetailMembers();
+        when(memberMapper.selectByGroupUser(GROUP_ID, MEMBER)).thenReturn(rows.get(2));
+
+        var d = service.getDetail(GROUP_ID, MEMBER, false);
+
+        // 组级财务（管理数据）不透出
+        assertThat(d.balancePoints()).isNull();
+        assertThat(d.inflightPoints()).isNull();
+        assertThat(d.members()).hasSize(3);
+        // MANAGER 行=他人：额度/欠款/可分配/分配人/功能开关/可见性覆盖全裁
+        var other = d.members().get(1);
+        assertThat(other.quotaLimitPoints()).isNull();
+        assertThat(other.usedPoints()).isNull();
+        assertThat(other.selfPoints()).isNull();
+        assertThat(other.debtPoolPoints()).isNull();
+        assertThat(other.debtLeaderPoints()).isNull();
+        assertThat(other.allocatedByUserId()).isNull();
+        assertThat(other.allowedKinds()).isNull();
+        assertThat(other.memberVisibilityOverrides()).isNull();
+        assertThat(other.allocatablePoints()).isNull();
+        // 组织信息保留（决策 6）：username/角色/备注/加入时间
+        assertThat(other.username()).isEqualTo("manager");
+        assertThat(other.displayName()).isEqualTo("manager名");
+        assertThat(other.role()).isEqualTo(ProjectGroupMemberEntity.ROLE_MANAGER);
+        assertThat(other.remark()).isEqualTo("管理备注");
+        assertThat(other.joinedAt()).isNull(); // 实体未设 createdAt，null 本身即未裁剪信号（裁剪不动该字段）
+        // 本人行完整
+        var own = d.members().get(2);
+        assertThat(own.quotaLimitPoints()).isEqualByComparingTo(new BigDecimal("100"));
+        assertThat(own.usedPoints()).isEqualByComparingTo(new BigDecimal("12"));
+        assertThat(own.selfPoints()).isEqualByComparingTo(new BigDecimal("5"));
+        assertThat(own.allowedKinds()).containsExactly("CHAT");
+    }
+
+    @Test
+    void 受限视图_MANAGER视角_全显不裁() {
+        List<ProjectGroupMemberEntity> rows = stubDetailMembers();
+        when(memberMapper.selectByGroupUser(GROUP_ID, MANAGER_UID)).thenReturn(rows.get(1));
+        lenient().when(budgetService.allocatable(eq(GROUP_ID), any(), any()))
+                .thenReturn(new BigDecimal("300"));
+
+        var d = service.getDetail(GROUP_ID, MANAGER_UID, false);
+
+        assertThat(d.balancePoints()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(d.inflightPoints()).isEqualByComparingTo(new BigDecimal("7"));
+        var member = d.members().get(2);
+        assertThat(member.quotaLimitPoints()).isEqualByComparingTo(new BigDecimal("100"));
+        assertThat(member.usedPoints()).isEqualByComparingTo(new BigDecimal("12"));
+        assertThat(d.members().get(1).allocatablePoints()).isEqualByComparingTo(new BigDecimal("300"));
+    }
+
+    @Test
+    void 受限视图_组长视角_全显不裁() {
+        stubDetailMembers(); // 组长无成员行也通（ownerView 直接放行）
+
+        var d = service.getDetail(GROUP_ID, OWNER, false);
+
+        assertThat(d.balancePoints()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(d.inflightPoints()).isEqualByComparingTo(new BigDecimal("7"));
+        assertThat(d.members().get(2).quotaLimitPoints()).isEqualByComparingTo(new BigDecimal("100"));
+        assertThat(d.members().get(2).allocatedByUserId()).isEqualTo(OWNER);
+    }
+
+    @Test
+    void 受限视图_admin视角_全显_无需成员行() {
+        stubDetailMembers();
+        lenient().when(budgetService.allocatable(eq(GROUP_ID), any(), any()))
+                .thenReturn(new BigDecimal("300"));
+
+        var d = service.getDetail(GROUP_ID, OUTSIDER, true);
+
+        assertThat(d.balancePoints()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(d.members().get(1).quotaLimitPoints()).isEqualByComparingTo(new BigDecimal("5000"));
+        assertThat(d.members().get(2).remark()).isEqualTo("成员备注");
     }
 }

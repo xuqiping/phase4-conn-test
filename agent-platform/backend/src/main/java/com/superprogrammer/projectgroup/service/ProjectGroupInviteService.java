@@ -95,17 +95,20 @@ public class ProjectGroupInviteService {
         }
 
         ProjectGroupInviteEntity existing = findRow(groupId, inviteeUserId);
+        // 修复IV D2（17x-3，决策 2）：新邀请取消「不限」——归一化放 V156 预检之后
+        // （管理有限额时 null 仍先报「须填限额」），组长/admin 与不限额管理发的不填=默认 0
+        BigDecimal quotaOrDefault = quotaLimitPoints != null ? quotaLimitPoints : java.math.BigDecimal.ZERO;
         if (existing != null) {
             if (ProjectGroupInviteEntity.STATUS_PENDING.equals(existing.getStatus())) {
                 throw new BusinessException(ErrorCode.CONFLICT, "已有待同意的邀请，勿重复发送");
             }
-            revive(existing, actorUserId, quotaLimitPoints);
+            revive(existing, actorUserId, quotaOrDefault);
         } else {
             ProjectGroupInviteEntity inv = new ProjectGroupInviteEntity();
             inv.setGroupId(groupId);
             inv.setInviterUserId(actorUserId);
             inv.setInviteeUserId(inviteeUserId);
-            inv.setQuotaLimitPoints(quotaLimitPoints);
+            inv.setQuotaLimitPoints(quotaOrDefault);
             inv.setStatus(ProjectGroupInviteEntity.STATUS_PENDING);
             try {
                 inviteMapper.insert(inv);
@@ -149,7 +152,10 @@ public class ProjectGroupInviteService {
         transition(inv, ProjectGroupInviteEntity.STATUS_ACCEPTED);
         if (memberMapper.selectByGroupUser(inv.getGroupId(), userId) == null) {
             Long allocatedBy = resolveAllocatedBy(inv);
-            groupService.insertMemberRow(inv.getGroupId(), userId, inv.getQuotaLimitPoints(), allocatedBy);
+            // 修复IV D2（17x-3，决策 2）：接受侧兜底归一——存量 PENDING 邀请 quota 为 null
+            //（修复IV 前发出）也落 0，新成员行不再产生「不限」
+            BigDecimal quotaOnAccept = inv.getQuotaLimitPoints() != null ? inv.getQuotaLimitPoints() : BigDecimal.ZERO;
+            groupService.insertMemberRow(inv.getGroupId(), userId, quotaOnAccept, allocatedBy);
         }
         log.info("组邀请接受 inviteId={} groupId={} invitee={}", inviteId, inv.getGroupId(), userId);
         notifyInviter(inv, "「" + userName(userId) + "」已接受邀请，加入项目组「" + groupName(inv.getGroupId()) + "」");
