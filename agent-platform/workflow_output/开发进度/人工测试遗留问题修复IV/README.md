@@ -1,6 +1,6 @@
 # 人工测试遗留问题修复IV · README
 
-> 2026-08-27 全 chunk 完成（A→B→C→D→E→F）。规格 [IV 设计](../../docs/specs/人工测试遗留问题修复IV设计.md) · master [plan](../../docs/plans/人工测试遗留问题修复IV.plan.md) · 进度 1-6。
+> 2026-08-27 全 chunk 完成（A→B→C→D→E→F）。规格 [IV 设计](../../docs/specs/人工测试遗留问题修复IV设计.md) · master [plan](../../docs/plans/人工测试遗留问题修复IV.plan.md) · 进度 1-7（7=Phase4 运行验证）。
 
 ## 用户地图（谁用/场景/效益）
 
@@ -11,14 +11,14 @@
 | 组成员（学员） | 看本组组织（谁在/角色/备注）、自己的额度 | 组织信息可见、他人钱包不可见；自己额度透明 |
 | 财务（usage:view） | 按组织备注对账（A 班全班充值/消耗/余额） | 「按备注汇总」一屏看桶，免逐人加；四视图备注列认人 |
 | 画布用户 | 两段式点节点、四角四边拖尺寸、面板拖宽、失焦即存、副本独立操作 | 不再一碰就弹窗；手柄点得中；副本重生成/入库不伤原件 |
-| 平台管理员 | 审计列表直接认人 | 列表即显「姓名（账号）+备注」，不用点详情 |
+| 平台管理员 | 审计列表直接认人 | 列表即显「账号（现姓名）+备注」，不用点详情 |
 
 ## 技术说明（一屏版）
 
 - **A 前端小件**（`58f64beb`）：审计列显姓名备注（AuditLogView，账号快照留详情）；UserPicker 全选/反选（结果快照作用域+请求中禁用）与下拉时机（聚焦/输入才拉候选）；候选接口 requireOwner→requireRole(MANAGER)（只放宽读）；分辨率选择器整行。
-- **B 画布交互**（`b88f61fb`）：两段式点击 composable useMediaPreviewClick（选中态才开 Lightbox）；上游面板全直显按类型分色；resize 角热区 12px+四边 Line 控件（热区收内侧不挡连线）；面板拖宽 localStorage `canvas.propPanel.width`（NaN/越界回落 260）。
+- **B 画布交互**（`b88f61fb`）：两段式点击 composable useMediaPreviewClick（选中态才开 Lightbox）；上游面板全直显按类型分色；resize 角热区约 22px（视觉 8px+外扩）+四边 Line 控件（热区收内侧不挡连线）；面板拖宽 localStorage `canvas.propPanel.width`（NaN/越界回落 260）。
 - **C 保存与副本**（`d843b8a6`）：structure-changed 补发——新增节点即入防抖保存链；文本失焦保存（blur 延迟后未点候选才触发）；新建 image/video 节点即定型尺寸；副本完全独立（nodeClone 产物 fileId 拷贝/新引用，与原件零共享——用户决策）。
-- **D 项目组**（`75920ed0`）：进组默认 0 三口堵（新邀请/池审批/存量 PENDING 接受兜底）；updateQuota 拒 null→400「不限额度已停用」（新写入不再产生 NULL 态，存量 NULL 冻结显「不限（遗留）」，建组组长行豁免）；MEMBER 受限视图（getDetail 单点裁剪：他人行额度字段隐藏、组财务不透出、流水仅本人；detail/overview 两读口放行，其余端点不动）。
+- **D 项目组**（`75920ed0`）：进组默认 0 三口堵（新邀请/池审批/存量 PENDING 接受兜底）；updateQuota 拒 null→400「不限额度已停用」（新写入不再产生 NULL 态，存量 NULL 冻结显「不限（遗留）」，建组组长行豁免）；MEMBER 受限视图（getDetail 单点裁剪：他人行额度字段隐藏、detail/overview 组级余额/在途置 null、流水仅本人行；detail/overview 两读口放行，其余端点不动。已知边界：页顶「组池」徽标沿用既有 mine 口径——/mine 选择器数据源自 V139 起对成员含组池余额，未在本轮裁剪范围）。
 - **E 备注汇总**（`98d0eaf2`）：GET /billing/admin/remark-summary（usage:view）：users LEFT JOIN 余额/PAID 充值/**窗内**消耗，GROUP BY COALESCE(remark,'')（NULL/'' 同桶），LIMIT 1000；余额/充值=全量累计、消耗/调用=查询窗（默认 30 天/上限 365）；四视图 +remark 列；9 处 keyword 块扩备注 LIKE 转义。
 - **迁移**：**零迁移零数据订正**（决策 1 不迁移存量 NULL），全部改动代码级可回滚。
 

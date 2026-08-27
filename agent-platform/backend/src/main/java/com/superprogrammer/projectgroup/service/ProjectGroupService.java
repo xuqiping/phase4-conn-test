@@ -112,7 +112,10 @@ public class ProjectGroupService {
         log.info("删组(软) groupId={} actor={}", groupId, actorUserId);
     }
 
-    /** 加成员（组长/admin）：quota null=不限。用户须存在；重复入组 CONFLICT。 */
+    /**
+     * 加成员（组长/admin）：quota null=不限（存量语义；测试/内部辅助用——生产入组走邀请制/公共池，
+     * 两口已在修复IV D2 落 0，不再产生新 NULL 行）。用户须存在；重复入组 CONFLICT。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void addMember(Long groupId, Long actorUserId, boolean admin, Long memberUserId, BigDecimal quotaLimitPoints) {
         requireOwner(groupId, actorUserId, admin);
@@ -224,6 +227,7 @@ public class ProjectGroupService {
         ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         // 修复IV D2（17x-3，决策 2）：不限额度停用——调额必填数值；存量 null（不限）成员行不受影响
         if (quotaLimitPoints == null) {
+            log.warn("updateQuota 拒绝不限额度（修复IV D2）groupId={} actor={} member={}", groupId, actorUserId, memberUserId);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "不限额度已停用，请填写具体额度（存量不限成员不受影响）");
         }
         if (quotaLimitPoints.signum() < 0) {

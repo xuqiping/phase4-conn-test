@@ -50,9 +50,9 @@ import java.util.Map;
  * GET    /{id}/members/candidates             候选用户搜索（排除组长/已有成员）
  * PUT    /{id}                                改名
  * DELETE /{id}                                删组（软删，组池须 0）
- * POST   /{id}/members                        加成员（可带限额）
+ * POST   /{id}/members                        邀请成员（17x#3 邀请制；额度不填=0，接受侧兜底归一）
  * DELETE /{id}/members/{uid}                  移除成员
- * PUT    /{id}/members/{uid}/quota            调限额（null=不限）
+ * PUT    /{id}/members/{uid}/quota            调限额（null=400「不限额度已停用」，修复IV D2）
  * POST   /{id}/members/{uid}/reset-used       重置成员已用（ADMIN_ADJUST delta=0 留痕）
  * POST   /{id}/allocate                       划拨（个人→组池）
  * POST   /{id}/reclaim                        回收（组池→个人，在途上限校验）
