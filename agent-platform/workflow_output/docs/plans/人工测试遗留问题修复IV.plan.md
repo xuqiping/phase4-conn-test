@@ -12,7 +12,7 @@
 | C | ✅ 画布保存与副本三项：自动保存补缺 / 新建即定型尺寸 / 副本完全独立（C-4/7/8） | — | [C_画布保存与副本三项](人工测试遗留问题修复IV_C_画布保存与副本三项.plan.md) |
 | D | ✅ 项目组：默认 0+不限冻结 / 普通成员受限视图（17x-3/4） | — | [D_项目组默认额度与成员可见](人工测试遗留问题修复IV_D_项目组默认额度与成员可见.plan.md) |
 | E | ✅ 按备注汇总统计（12x-1：独立视图+备注列+keyword）——commit 98d0eaf2 | — | [E_备注汇总统计](人工测试遗留问题修复IV_E_备注汇总统计.plan.md) |
-| F | 文档收尾：三份问题文档勾销 + feature-map/user-ops「修复IV 增补」+ 测试方案 | A-E | [F_文档收尾勾销](人工测试遗留问题修复IV_F_文档收尾勾销.plan.md) |
+| F | ✅ 文档收尾：三份问题文档勾销 + feature-map/user-ops「修复IV 增补」+ 测试方案（12 手册+测试方案+README） | A-E | [F_文档收尾勾销](人工测试遗留问题修复IV_F_文档收尾勾销.plan.md) |
 
 **同文件交叉是本轮主要冲突面**：PropertyPanel.vue（A5→B2/B4→C1）、CanvasBoard.vue（B1→C1/C2）、ProjectGroupsView.vue（A 邀请区→D 全域）、UserPicker.vue（A2/A3）。**实施序 A→B→C→D→E→F 严格串行**，每 chunk 绿即 commit，避免同文件并行改。
 
@@ -33,12 +33,12 @@
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] updateQuota 拒 null：null→400 话术「不限额度已停用」；@AuditLog(member_quota) 既有不动（D 轮）
-- [ ] getDetail 放宽后逐接口核对清单落地（D 轮，§D3 步骤 1）
-- [ ] candidates requireOwner→requireRole(MANAGER)：只放宽读候选，写权限不变（A 轮）
+- [x] updateQuota 拒 null：null→400 话术「不限额度已停用」；@AuditLog(member_quota) 既有不动（D 轮 ✅ ProjectGroupService.updateQuota，WARN 含操作人；测试 ProjectGroupServiceTest 覆盖）
+- [x] getDetail 放宽后逐接口核对清单落地（D 轮 ✅ 只放宽 detail/overview 两读口，其余端点级别未动，见开发进度4）
+- [x] candidates requireOwner→requireRole(MANAGER)：只放宽读候选，写权限不变（A 轮 ✅ `58f64beb` ProjectGroupService 4 行，L3 用例覆盖 MEMBER 403）
 - [x] remark-summary 端点 usage:view 权限 + LIMIT + LIKE 转义（E 轮 ✅ usage:view 注解 + LIMIT 1000 + escapeLikeKeyword 复用）
 - [x] 三 mapper keyword 扩 remark 均转义（E 轮 ✅ 9 处 keyword 块同 ESCAPE '\\' 口径，单测 keywordWildcards_escaped 已覆盖转义函数）
-- [ ] 审计列/成员列表新增显示均为纯文本渲染，无 v-html（A/D 轮）
+- [x] 审计列/成员列表新增显示均为纯文本渲染，无 v-html（A/D 轮 ✅ AuditLogView/ProjectGroupsView 均模板插值+n-tag，无 v-html）
 
 ## 运维考量清单（7 类落字）
 
