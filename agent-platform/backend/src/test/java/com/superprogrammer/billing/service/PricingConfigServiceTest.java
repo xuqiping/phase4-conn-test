@@ -697,6 +697,170 @@ class PricingConfigServiceTest {
         org.assertj.core.api.Assertions.assertThat(captor.getValue().getOffPeakCachedPerMillion()).isNull();
     }
 
+    // ---------------- V162：TOKEN 每百万价分档槽位 ----------------
+
+    @Test
+    void createPricingRule_tokenWithSlots_ok() {
+        // V162：TOKEN + 分档槽位合法——键归一小写（4K→4k）、剔空档、resolution 恒 null
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        java.util.Map<String, BigDecimal> slots = new java.util.LinkedHashMap<>();
+        slots.put("4K", new BigDecimal("111.2")); // 大写归一
+        slots.put("480p", new BigDecimal("6.5"));
+        slots.put("720p", null); // 空档剔除
+        req.setTokenPricePerResolution(slots);
+
+        service.createPricingRule(req);
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution())
+                .contains("\"4k\":111.2").contains("\"480p\":6.5").doesNotContain("720p");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getResolution()).isNull();
+    }
+
+    @Test
+    void createPricingRule_emptySlotsMap_storedNull() {
+        // {} = 显式清空语义：归一后空 → 落库 NULL（=未配档，结算回落通用价）
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setTokenPricePerResolution(new java.util.LinkedHashMap<>());
+
+        service.createPricingRule(req);
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution()).isNull();
+    }
+
+    @Test
+    void createPricingRule_tokenSlotsGeneralKey_throws() {
+        // 无 general 键——通用价走 priceInputPerMillion 列
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setTokenPricePerResolution(java.util.Map.of("general", new BigDecimal("1")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("480p/720p/1080p/4k");
+    }
+
+    @Test
+    void createPricingRule_tokenSlotsZero_throws() {
+        // 槽位价须>0（与「免费请配极小正值」口径一致；0/负拒）
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setTokenPricePerResolution(java.util.Map.of("480p", BigDecimal.ZERO));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("须>0");
+    }
+
+    @Test
+    void createPricingRule_secondWithTokenSlots_throws() {
+        // SECOND 按秒价计价无档位维度
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        req.setPricePerSecond(new BigDecimal("0.1"));
+        req.setTokenPricePerResolution(java.util.Map.of("4k", new BigDecimal("1")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅 VIDEO TOKEN 模式有效");
+    }
+
+    @Test
+    void createPricingRule_nonVideoWithTokenSlots_throws() {
+        PricingRuleRequest req = pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT);
+        req.setTokenPricePerResolution(java.util.Map.of("4k", new BigDecimal("1")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅 VIDEO kind 有效");
+    }
+
+    private com.superprogrammer.billing.dto.PricingRuleExportItem tokenSlotImportItem(
+            java.util.Map<String, BigDecimal> slots) {
+        com.superprogrammer.billing.dto.PricingRuleExportItem item =
+                new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_VIDEO);
+        item.setProviderId(4L);
+        item.setModel("seedance");
+        item.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        item.setPriceInputPerMillion(new BigDecimal("12"));
+        item.setTokenPricePerResolution(slots);
+        return item;
+    }
+
+    private PricingRuleEntity existingTokenRow(String slotsJson) {
+        PricingRuleEntity existing = new PricingRuleEntity();
+        existing.setId(10L);
+        existing.setKind(PricingRuleEntity.KIND_VIDEO);
+        existing.setProviderId(4L);
+        existing.setModel("seedance");
+        existing.setHasReference(false);
+        existing.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        existing.setTokenPricePerResolution(slotsJson);
+        return existing;
+    }
+
+    private void stubVideoImportSeedance() {
+        when(llmProviderMapper.selectById(4L)).thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "seedance", false)).thenReturn(1L);
+        when(pricingRuleMapper.findEffective(PricingRuleEntity.KIND_VIDEO, 4L, "seedance", false))
+                .thenReturn(existingTokenRow("{\"4k\":111.2}"));
+    }
+
+    @Test
+    void importAll_slotsAbsent_preservesExistingSlots() {
+        // 三态①：item 不带槽位字段（旧导出文件）→ 库中现有档原样保留（防误清）
+        stubVideoImportSeedance();
+        com.superprogrammer.billing.dto.PricingRuleExportItem item = tokenSlotImportItem(null);
+
+        var result = service.importAll(List.of(item));
+
+        org.assertj.core.api.Assertions.assertThat(result.getUpdated()).isEqualTo(1);
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).updateById(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution())
+                .isEqualTo("{\"4k\":111.2}");
+    }
+
+    @Test
+    void importAll_slotsEmptyMap_clearsExistingSlots() {
+        // 三态②：{} = 显式清空 → 落库 NULL
+        stubVideoImportSeedance();
+        com.superprogrammer.billing.dto.PricingRuleExportItem item =
+                tokenSlotImportItem(new java.util.LinkedHashMap<>());
+
+        service.importAll(List.of(item));
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).updateById(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution()).isNull();
+    }
+
+    @Test
+    void importAll_slotsPresent_overwritesWhole() {
+        // 三态③：非空 = 整体覆盖（未列档被清——{"4k":…} 覆盖后 480p 档不复存在）
+        stubVideoImportSeedance();
+        com.superprogrammer.billing.dto.PricingRuleExportItem item =
+                tokenSlotImportItem(java.util.Map.of("480p", new BigDecimal("6.5")));
+
+        service.importAll(List.of(item));
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).updateById(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution())
+                .isEqualTo("{\"480p\":6.5}");
+    }
+
     // helpers
 
     private PointsRatioTierEntity tier(BigDecimal min, BigDecimal max, String ratio) {

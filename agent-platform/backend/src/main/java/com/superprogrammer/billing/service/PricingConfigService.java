@@ -100,6 +100,12 @@ public class PricingConfigService {
                     item.setModel(c.getModel());
                     // 7x-3：VIDEO 候选带参考面身份（upsert 匹配键）；D6/V160：不再带 resolution
                     item.setHasReference(Boolean.TRUE.equals(c.getHasReference()));
+                    // V162：VIDEO 候选预填 4 档空骨架（null 值导入被归一剔除=不动，仅作填写提示）
+                    if (PricingRuleEntity.KIND_VIDEO.equals(c.getKind())) {
+                        java.util.Map<String, BigDecimal> slots = new java.util.LinkedHashMap<>();
+                        EST_RESOLUTION_SLOTS.forEach(s -> slots.put(s, null));
+                        item.setTokenPricePerResolution(slots);
+                    }
                     // 价格字段全留 null（由用户填）
                     return item;
                 })
@@ -184,7 +190,12 @@ public class PricingConfigService {
                 result.incCreated();
                 return;
             }
+            // V162：导入槽位三态——item 字段缺失/null=不动库中现有档（防旧导出误清），{}=清空，非空=整体覆盖
+            String existingTokenSlots = existing.getTokenPricePerResolution();
             applyRequest(req, existing);
+            if (item.getTokenPricePerResolution() == null) {
+                existing.setTokenPricePerResolution(existingTokenSlots);
+            }
             existing.setEffectiveFrom(OffsetDateTime.now());
             pricingRuleMapper.updateById(existing);
             result.incUpdated();
@@ -205,6 +216,7 @@ public class PricingConfigService {
         req.setHasReference(item.getHasReference());
         // D6（V160）：导入忽略 resolution 字段（旧导出带值也并入通用行，不报错不落库）
         req.setEstPerResolution(item.getEstPerResolution());
+        req.setTokenPricePerResolution(item.getTokenPricePerResolution());
         req.setPriceInputPerMillion(item.getPriceInputPerMillion());
         req.setPriceOutputPerMillion(item.getPriceOutputPerMillion());
         req.setVideoBillingMode(item.getVideoBillingMode());
@@ -223,7 +235,8 @@ public class PricingConfigService {
         item.setProviderId(e.getProviderId());
         item.setModel(e.getModel());
         item.setHasReference(e.getHasReference() != null && e.getHasReference());
-        item.setEstPerResolution(readEstJson(e.getEstPerResolution()));
+        item.setEstPerResolution(readJsonMap(e.getEstPerResolution()));
+        item.setTokenPricePerResolution(readJsonMap(e.getTokenPricePerResolution()));
         item.setPriceInputPerMillion(e.getPriceInputPerMillion());
         item.setPriceOutputPerMillion(e.getPriceOutputPerMillion());
         item.setVideoBillingMode(e.getVideoBillingMode());
@@ -463,6 +476,8 @@ public class PricingConfigService {
         }
         // 7x-2（V153）：estPerResolution 键/值校验（键归一小写；general+四档分辨率；值≥0）
         java.util.Map<String, BigDecimal> canonicalEst = canonicalizeEst(req.getEstPerResolution());
+        // V162：token 档位槽校验（仅 VIDEO+TOKEN；键⊆4 档无 general；值>0）
+        java.util.Map<String, BigDecimal> canonicalTokenSlots = canonicalizeTokenSlots(req.getTokenPricePerResolution());
         // 7x-1（V152）：resolution 归一化（trim+小写，空串→null）
         req.setResolution(PricingService.normalizeResolution(req.getResolution()));
         if (PricingRuleEntity.KIND_VIDEO.equals(req.getKind())) {
@@ -482,6 +497,10 @@ public class PricingConfigService {
                     throw new BusinessException(ErrorCode.BAD_REQUEST,
                             "estPerResolution 仅 VIDEO TOKEN 模式有效（SECOND 估价直接用秒价）");
                 }
+                if (canonicalTokenSlots != null) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST,
+                            "tokenPricePerResolution 仅 VIDEO TOKEN 模式有效（SECOND 按秒价计价无此维度）");
+                }
             } else {
                 // TOKEN 模式：不按分辨率计价，resolution 强制 null；预估秒价可选（提交期预检用）
                 if (req.getResolution() != null) {
@@ -489,9 +508,9 @@ public class PricingConfigService {
                             "TOKEN 模式不按分辨率计价，resolution 须留空");
                 }
             }
-        } else if (req.getResolution() != null || canonicalEst != null) {
+        } else if (req.getResolution() != null || canonicalEst != null || canonicalTokenSlots != null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "resolution/estPerResolution 仅 VIDEO kind 有效");
+                    "resolution/estPerResolution/tokenPricePerResolution 仅 VIDEO kind 有效");
         }
         if (PricingRuleEntity.KIND_IMAGE.equals(req.getKind())
                 && (req.getPricePerImage() == null || req.getPricePerImage().signum() < 0)) {
@@ -511,18 +530,18 @@ public class PricingConfigService {
         return Boolean.TRUE.equals(req.getHasReference());
     }
 
-    /** est JSON 读写（toVO 静态上下文共用，独立 static mapper）。 */
+    /** est/槽位 JSON 读写（toVO 静态上下文共用，独立 static mapper）。 */
     private static final ObjectMapper EST_MAPPER = new ObjectMapper();
 
-    private static String writeEstJson(java.util.Map<String, BigDecimal> est) {
+    private static String writeJsonMap(java.util.Map<String, BigDecimal> map) {
         try {
-            return EST_MAPPER.writeValueAsString(est);
+            return EST_MAPPER.writeValueAsString(map);
         } catch (Exception e) {
-            throw new IllegalStateException("estPerResolution 序列化失败", e);
+            throw new IllegalStateException("价表 JSON 字段序列化失败", e);
         }
     }
 
-    private static java.util.Map<String, BigDecimal> readEstJson(String json) {
+    private static java.util.Map<String, BigDecimal> readJsonMap(String json) {
         if (json == null || json.isBlank()) {
             return null;
         }
@@ -530,7 +549,7 @@ public class PricingConfigService {
             return EST_MAPPER.readValue(json,
                     new TypeReference<java.util.Map<String, BigDecimal>>() { });
         } catch (Exception e) {
-            log.warn("est_per_resolution 读取解析失败按未配置处理: {}", e.getMessage());
+            log.warn("价表 JSON 字段读取解析失败按未配置处理: {}", e.getMessage());
             return null;
         }
     }
@@ -573,6 +592,38 @@ public class PricingConfigService {
         EST_KEYS = java.util.Collections.unmodifiableSet(keys);
     }
 
+    /** token_price_per_resolution 允许键（V162：仅 4 分辨率档，无 general——通用价走 priceInputPerMillion 列）。 */
+    private static final java.util.Set<String> TOKEN_SLOT_KEYS = java.util.Set.copyOf(EST_RESOLUTION_SLOTS);
+
+    /**
+     * V162：tokenPricePerResolution 归一化——键 trim+小写（4K→4k）、剔除 null 值、
+     * 拒绝未知键/general 键/非正数；全空 → null（=未配档，结算回落通用价）。null 入 → null 出。
+     */
+    private java.util.Map<String, BigDecimal> canonicalizeTokenSlots(
+            java.util.Map<String, BigDecimal> slots) {
+        if (slots == null) {
+            return null;
+        }
+        java.util.Map<String, BigDecimal> out = new java.util.LinkedHashMap<>();
+        for (var entry : slots.entrySet()) {
+            if (entry.getValue() == null) {
+                continue;
+            }
+            String key = PricingService.normalizeResolution(entry.getKey());
+            if (key == null || !TOKEN_SLOT_KEYS.contains(key)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "tokenPricePerResolution 键须为 480p/720p/1080p/4k（通用价用 priceInputPerMillion），实际: "
+                                + entry.getKey());
+            }
+            if (entry.getValue().signum() <= 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "tokenPricePerResolution[" + key + "] 须>0（免费请配极小正值）");
+            }
+            out.put(key, entry.getValue());
+        }
+        return out.isEmpty() ? null : out;
+    }
+
     private void applyRequest(PricingRuleRequest req, PricingRuleEntity e) {
         e.setKind(req.getKind());
         e.setProviderId(req.getProviderId());
@@ -596,7 +647,12 @@ public class PricingConfigService {
         java.util.Map<String, BigDecimal> est = canonicalizeEst(req.getEstPerResolution());
         e.setEstPerResolution(PricingRuleEntity.KIND_VIDEO.equals(req.getKind())
                 && PricingRuleEntity.VIDEO_MODE_TOKEN.equals(req.getVideoBillingMode())
-                && est != null ? writeEstJson(est) : null);
+                && est != null ? writeJsonMap(est) : null);
+        // V162：TOKEN 分档每百万价槽（非 VIDEO+TOKEN 时 validatePricingRule 已拒，此处双保险清 null）
+        java.util.Map<String, BigDecimal> tokenSlots = canonicalizeTokenSlots(req.getTokenPricePerResolution());
+        e.setTokenPricePerResolution(PricingRuleEntity.KIND_VIDEO.equals(req.getKind())
+                && PricingRuleEntity.VIDEO_MODE_TOKEN.equals(req.getVideoBillingMode())
+                && tokenSlots != null ? writeJsonMap(tokenSlots) : null);
         e.setEffectiveFrom(req.getEffectiveFrom() != null ? req.getEffectiveFrom() : OffsetDateTime.now());
     }
 
@@ -610,7 +666,8 @@ public class PricingConfigService {
                 .pricePerImage(e.getPricePerImage())
                 .hasReference(e.getHasReference() != null && e.getHasReference())
                 .resolution(e.getResolution())
-                .estPerResolution(readEstJson(e.getEstPerResolution()))
+                .estPerResolution(readJsonMap(e.getEstPerResolution()))
+                .tokenPricePerResolution(readJsonMap(e.getTokenPricePerResolution()))
                 .offPeakInputPerMillion(e.getOffPeakInputPerMillion())
                 .offPeakOutputPerMillion(e.getOffPeakOutputPerMillion())
                 .offPeakCachedPerMillion(e.getOffPeakCachedPerMillion())
