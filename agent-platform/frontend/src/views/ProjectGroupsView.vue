@@ -83,6 +83,7 @@
               <template v-if="g.myRole === 'MEMBER'">
                 · 我的限额 {{ g.myQuota === null ? '不限' : fmt(g.myQuota) }}
                 · 已用 {{ fmt(g.myUsed) }}
+                · 剩余可用 {{ g.myQuota === null ? '不限' : fmt(Math.max(g.myQuota - g.myUsed, 0)) }}
               </template>
               <!-- 17x 未解决#1（V156）：管理卡片显自己的额度与剩余可分配 -->
               <template v-else-if="g.myRole === 'MANAGER'">
@@ -1106,10 +1107,12 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => {
       { title: '用户', key: 'username', width: 200, render: renderMemberUser },
       { title: '角色', key: 'role', width: 110, render: renderMemberRole },
       {
-        title: '额度', key: 'quotaLimitPoints', width: 170, render: r => {
+        title: '额度', key: 'quotaLimitPoints', width: 240, render: r => {
           if (r.userId !== myId) return '-'
           const quota = r.quotaLimitPoints == null ? '不限（遗留）' : fmt(r.quotaLimitPoints)
-          return `${quota} · 已用 ${fmt(r.usedPoints)}`
+          // 17x 新增：本人行同显组内剩余可用（quota−used，透支显 0——欠款另有渠道）
+          const left = r.quotaLimitPoints == null ? '不限' : fmt(Math.max(r.quotaLimitPoints - r.usedPoints, 0))
+          return `${quota} · 已用 ${fmt(r.usedPoints)} · 剩余可用 ${left}`
         }
       },
       { title: '加入时间', key: 'joinedAt', width: 140, render: r => fmtTime(r.joinedAt) }
@@ -1122,6 +1125,15 @@ const memberColumns = computed<DataTableColumns<ProjectGroupMemberVO>>(() => {
   // 修复IV D2：null=存量不限（遗留）——新写入已冻结，不再产生
   { title: '限额', key: 'quotaLimitPoints', width: 110, render: r => r.quotaLimitPoints == null ? '不限（遗留）' : fmt(r.quotaLimitPoints) },
   { title: '已用', key: 'usedPoints', width: 100, render: r => fmt(r.usedPoints) },
+  // 17x 新增（用户提）：组内剩余可用列——quota−used，透支显 0（欠款列另有拆分）；null=不限/组长直管行显「不限」
+  {
+    title: '剩余可用', key: 'remainingPoints', width: 100, render: r => {
+      if (r.quotaLimitPoints == null) return h('span', { class: 'pg-members__hint' }, '不限')
+      const left = Math.max(r.quotaLimitPoints - r.usedPoints, 0)
+      if (left === 0) return h('span', { class: 'pg-debt-red' }, '0')
+      return fmt(left)
+    }
+  },
   // V161（修复III B）：名下余额/欠款列——欠款>0 红字，悬浮拆分垫付来源
   { title: '名下', key: 'selfPoints', width: 90, render: r => Number(r.selfPoints) > 0 ? fmt(r.selfPoints) : '-' },
   { title: '欠款', key: 'debtPoints', width: 110, render: r => {
