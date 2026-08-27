@@ -15,9 +15,13 @@
          外扩（8px 视觉 + ::before 隐形扩 ~14px）。边线两端各缩 16px 且 z-index 压低——
          左右边缘中点的连线 Handle（S3 左入右出）命中优先，拖连线不被拖边抢走。 -->
     <template v-if="selected">
+      <!-- 修复IV P4 回归修复（2x-3）：裸用 ResizeControl 不像 NodeResizer 有 NodeIdInjection
+           兜底——nodeId 未传时组件 watchEffect 早退、d3-drag 根本不绑（III/B 轮手柄可见但拖不动
+           的真因）。必须显式传 useNode() 的节点 id。 -->
       <NodeResizeControl
         v-for="pos in RESIZE_EDGES"
         :key="`line-${pos}`"
+        :node-id="nodeCtx?.node?.id"
         :variant="ResizeControlVariant.Line"
         :position="pos"
         :min-width="160"
@@ -27,6 +31,7 @@
       <NodeResizeControl
         v-for="pos in RESIZE_CORNERS"
         :key="pos"
+        :node-id="nodeCtx?.node?.id"
         :variant="ResizeControlVariant.Handle"
         :position="pos"
         :min-width="160"
@@ -122,7 +127,9 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
   background: linear-gradient(145deg, rgba(8, 18, 34, 0.98), rgba(17, 28, 47, 0.96));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  overflow: hidden;
+  // 修复IV P4 回归修复（2x-3）：根元素不裁剪——node-resizer 的角柄按库定位
+  // 悬在节点框外（bottom/right:-8px），overflow:hidden 会连渲染带命中一起裁掉
+  // （III/B 轮「手柄可见但拖不动」的第二真因）。圆角裁剪下放给 accent/body 各自兜。
   cursor: pointer;
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   transition: border-color var(--duration-fast) var(--ease-in-out),
@@ -138,6 +145,8 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
 
 .canvas-node__accent {
   height: 3px;
+  // 修复IV P4 回归修复：根不再 overflow:hidden，顶部圆角由本条自裁
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: linear-gradient(90deg, var(--color-primary), var(--color-gradient-end));
 }
 
@@ -230,6 +239,8 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  // 修复IV P4 回归修复：根不再 overflow:hidden，底部圆角由 body 自裁
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   padding: 4px 10px 10px;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
