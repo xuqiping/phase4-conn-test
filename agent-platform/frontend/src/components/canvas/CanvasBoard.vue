@@ -524,6 +524,22 @@ provide('canvasNodeResized', () => {
   emit('structure-changed')
 })
 
+/**
+ * 修复IV B1（C-1 两段式）：媒体节点子组件在「已选中」后二段点击时回调此处 → 弹 Lightbox。
+ * provide/inject 同 canvasNodeResized 范式；payload 口径与原 onNodeClick 直弹分支一致
+ * （修复III C6 的 kind/src/poster 不变，只换触发时机）。
+ */
+provide('canvasMediaPreview', (nodeId: string) => {
+  const hit = nodes.value.find(n => n.id === nodeId)
+  if (hit && (hit.type === 'image' || hit.type === 'video') && hit.data.previewUrl) {
+    emit('preview-media', {
+      kind: hit.type,
+      src: String(hit.data.previewUrl),
+      poster: hit.type === 'video' && hit.data.coverPreviewUrl ? String(hit.data.coverPreviewUrl) : undefined
+    })
+  }
+})
+
 /** 从节点调色板拖入：dataTransfer 带 {label}，落点转画布坐标。 */
 function onDragOver(event: DragEvent) {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
@@ -675,16 +691,9 @@ function onNodeClick({ node }: NodeMouseEvent) {
   boardRoot.value?.focus()
   // emit 数组中的真实 CanvasNode 引用，供属性面板直编 data（reactive 即时反映到画布）
   emit('node-selected', nodes.value.find(n => n.id === node.id) ?? null)
-  // 修复III C6（2x-6）：单击媒体节点（已有产物）→ Lightbox 统一预览。vue-flow 拖动后
-  // 不发射 node-click（库内已区分位移），拖动误触天然规避。
-  const hit = nodes.value.find(n => n.id === node.id)
-  if (hit && (hit.type === 'image' || hit.type === 'video') && hit.data.previewUrl) {
-    emit('preview-media', {
-      kind: hit.type,
-      src: String(hit.data.previewUrl),
-      poster: hit.type === 'video' && hit.data.coverPreviewUrl ? String(hit.data.coverPreviewUrl) : undefined
-    })
-  }
+  // 修复IV B1（C-1 两段式，决策 6）：单击不再直接弹 Lightbox——未选中第一击只选中（本函数），
+  // 已选中后再点媒体本体（Image/Video 节点 inject canvasMediaPreview）才弹。原先「点节点即弹」
+  // 打断拖动/看属性（修复III C6 复验反馈，2x-1）。
 }
 
 /**
@@ -1039,6 +1048,8 @@ defineExpose({
     height: 10px;
     border: 2px solid var(--color-bg);
     background: var(--color-primary);
+    // 修复IV B3（C-3）：连线命中优先于节点拖边热区（与 CanvasNodeBase 内 line z-index:2 成对）
+    z-index: 4;
   }
 
   :deep(.vue-flow__edge-text) {

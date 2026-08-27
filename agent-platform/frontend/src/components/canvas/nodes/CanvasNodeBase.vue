@@ -11,9 +11,19 @@
       }
     ]"
   >
-    <!-- 2x 四轮 S2：选中时显四角拖柄（只角落不四边——边线会压住上下连线 Handle 的热区）。
-         拖动由 node-resizer 走 d3-drag + noDragClassName，不会触发节点拖动/画布平移。 -->
+    <!-- 2x 四轮 S2：选中时显四角拖柄。修复IV B3（C-3）：补四边 Line 单轴拖边，并把角柄热区
+         外扩（8px 视觉 + ::before 隐形扩 ~14px）。边线两端各缩 16px 且 z-index 压低——
+         左右边缘中点的连线 Handle（S3 左入右出）命中优先，拖连线不被拖边抢走。 -->
     <template v-if="selected">
+      <NodeResizeControl
+        v-for="pos in RESIZE_EDGES"
+        :key="`line-${pos}`"
+        :variant="ResizeControlVariant.Line"
+        :position="pos"
+        :min-width="160"
+        :min-height="64"
+        @resize-end="onResizeEnd"
+      />
       <NodeResizeControl
         v-for="pos in RESIZE_CORNERS"
         :key="pos"
@@ -79,6 +89,8 @@ const nodeCtx = useNode()
 const nodeData = computed(() => nodeCtx?.node?.data as { width?: number; height?: number } | undefined)
 const isResized = computed(() => typeof nodeData.value?.height === 'number')
 const RESIZE_CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const
+// 修复IV B3（C-3）：四边单轴 resize（top/bottom=拉高，left/right=拉宽）
+const RESIZE_EDGES = ['top', 'bottom', 'left', 'right'] as const
 // 修复III C1 复验补缺（2x-1）：resize 后通知画布层落库（resize 不触发 node-drag-stop；
 // 裸挂单测无注入，缺省 no-op 守卫）
 const notifyResized = inject<(() => void) | null>('canvasNodeResized', null)
@@ -222,5 +234,71 @@ function onResizeEnd({ params }: { params: { width: number; height: number } }) 
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   word-break: break-word;
+}
+
+/* 修复IV B3（C-3）：resize 命中可点性——角柄 8px 视觉 + ::before 隐形外扩（~22px 命中）；
+   四边 Line 单轴拖边 = 1px 视线 + ::before 内侧 10px 热带。边线两端各缩 16px 且
+   z-index 低于连线 Handle（连线命中优先，拖边不抢左右中点的连线手势——CanvasBoard
+   :deep(.vue-flow__handle) 处配 z-index:4 成对出现，改一处须同步另一处）。 */
+:deep(.vue-flow__resize-control.handle) {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #fff;
+  border-radius: 2px;
+  background: var(--color-primary);
+  z-index: 3;
+}
+:deep(.vue-flow__resize-control.handle::before) {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+:deep(.vue-flow__resize-control.line) {
+  border-color: rgba(var(--color-primary-rgb), 0.9);
+  z-index: 2;
+}
+// 覆盖库 width/height:100%——两端缩进，避开角柄热区与左右中点连线 Handle
+:deep(.vue-flow__resize-control.line.top),
+:deep(.vue-flow__resize-control.line.bottom) {
+  left: 16px;
+  right: 16px;
+  width: auto;
+}
+:deep(.vue-flow__resize-control.line.left),
+:deep(.vue-flow__resize-control.line.right) {
+  top: 16px;
+  bottom: 16px;
+  height: auto;
+}
+:deep(.vue-flow__resize-control.line.top::before),
+:deep(.vue-flow__resize-control.line.bottom::before),
+:deep(.vue-flow__resize-control.line.left::before),
+:deep(.vue-flow__resize-control.line.right::before) {
+  content: '';
+  position: absolute;
+}
+:deep(.vue-flow__resize-control.line.top::before) {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 10px;
+}
+:deep(.vue-flow__resize-control.line.bottom::before) {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10px;
+}
+:deep(.vue-flow__resize-control.line.left::before) {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+}
+:deep(.vue-flow__resize-control.line.right::before) {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 10px;
 }
 </style>

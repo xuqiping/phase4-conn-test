@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { NInput } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
@@ -272,7 +272,7 @@ describe('PropertyPanel · D2 上游面板', () => {
     expect(wrapper.text()).toContain('无上游节点')
   })
 
-  it('直接上游大卡渲染（类型角标+名称+提示词摘要）；更上游默认折叠', () => {
+  it('修复IV B2：上游全直显——depth>1 不折叠，卡带 ·N 层级号与类型配色 data-kind', () => {
     const far = mkUp('u-far', 'text', '更上游文案', { outputText: '很早的产出' })
     const near = mkUp('u-img', 'image', '主视觉图', { prompt: '一个红色屋顶的小屋，冬夜雪景' })
     const wrapper = mount(PropertyPanel, {
@@ -285,9 +285,15 @@ describe('PropertyPanel · D2 上游面板', () => {
     expect(text).toContain('主视觉图')
     expect(text).toContain('图片')
     expect(text).toContain('一个红色屋顶的小屋')
-    expect(text).toContain('更上游 1 节点')
-    // 折叠态不显更上游卡片
-    expect(text).not.toContain('更上游文案')
+    // 更上游同区直显（不再折叠按钮/隐藏）
+    expect(text).toContain('更上游文案')
+    expect(text).toContain('文本·2')
+    const cards = wrapper.findAll('.prop-panel__up-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[1].classes()).toContain('prop-panel__up-card--far')
+    // 类型徽标配色（data-kind 着色钩子）
+    expect(cards[0].find('.prop-panel__up-kind').attributes('data-kind')).toBe('image')
+    expect(cards[1].find('.prop-panel__up-kind').attributes('data-kind')).toBe('text')
   })
 
   it('双击直接上游卡 → @token 追加进本节点 prompt', async () => {
@@ -315,6 +321,50 @@ describe('PropertyPanel · D2 上游面板', () => {
     const thumb = wrapper.find('.prop-panel__up-thumb')
     expect(thumb.find('img').attributes('src')).toBe('blob:img')
     expect(thumb.classes()).toContain('is-clickable')
+  })
+})
+
+// 修复IV B4（C-6）：属性面板左缘拖宽 260-560 + localStorage 持久化 + 非法值回落
+describe('PropertyPanel · 修复IV B4 面板拖宽', () => {
+  const KEY = 'canvas.propPanel.width'
+  const widthOf = (w: ReturnType<typeof mountPanel>) => w.find('.prop-panel').attributes('style') ?? ''
+
+  beforeEach(() => localStorage.removeItem(KEY))
+  afterEach(() => localStorage.removeItem(KEY))
+
+  it('无存储值 → 默认 260px；separator 角色与 aria 阈值齐', () => {
+    const wrapper = mountPanel(mkNode({ prompt: 'p' }))
+    expect(widthOf(wrapper)).toContain('width: 260px')
+    const gutter = wrapper.find('.prop-panel__gutter')
+    expect(gutter.attributes('role')).toBe('separator')
+    expect(gutter.attributes('aria-valuemin')).toBe('260')
+    expect(gutter.attributes('aria-valuemax')).toBe('560')
+  })
+
+  it('拖左缘向左 100px → 360px；松手写 localStorage', async () => {
+    const wrapper = mountPanel(mkNode({ prompt: 'p' }))
+    await wrapper.find('.prop-panel__gutter').trigger('pointerdown', { clientX: 500 })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 400 })) // dx=-100 → 变宽
+    await wrapper.vm.$nextTick()
+    expect(widthOf(wrapper)).toContain('width: 360px')
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    expect(localStorage.getItem(KEY)).toBe('360')
+  })
+
+  it('拖出界钳制：dx=-9999 → 封顶 560，不越下界', async () => {
+    const wrapper = mountPanel(mkNode({ prompt: 'p' }))
+    await wrapper.find('.prop-panel__gutter').trigger('pointerdown', { clientX: 500 })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 9999 })) // dx=+9499 → 压到下界 260
+    await wrapper.vm.$nextTick()
+    expect(widthOf(wrapper)).toContain('width: 260px')
+    window.dispatchEvent(new MouseEvent('pointerup'))
+  })
+
+  it('存储非法/越界值 → 挂载即回落 260/560', () => {
+    localStorage.setItem(KEY, 'abc')
+    expect(widthOf(mountPanel(mkNode({ prompt: 'p' })))).toContain('width: 260px')
+    localStorage.setItem(KEY, '9999')
+    expect(widthOf(mountPanel(mkNode({ prompt: 'p' })))).toContain('width: 560px')
   })
 })
 

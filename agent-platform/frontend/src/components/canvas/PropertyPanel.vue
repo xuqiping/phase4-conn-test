@@ -1,5 +1,16 @@
 <template>
-  <aside class="prop-panel">
+  <aside class="prop-panel" :style="{ width: `${panelWidth}px` }">
+    <!-- 修复IV B4（C-6）：左缘拖拽条调宽 260-560，localStorage 持久化 -->
+    <div
+      class="prop-panel__gutter"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖拽调整属性面板宽度"
+      aria-valuemin="260"
+      aria-valuemax="560"
+      :aria-valuenow="panelWidth"
+      @pointerdown="onGutterDown"
+    ></div>
     <div class="prop-panel__title">属性</div>
     <div v-if="!node" class="prop-panel__empty">选中一个节点编辑其属性</div>
     <template v-else>
@@ -14,13 +25,15 @@
         <n-button size="small" block @click="emit('clone-node', node)">创建副本</n-button>
       </div>
 
-      <!-- D2（2x-8）：上游节点面板（BFS 分层；单击媒体 Lightbox 放大，双击卡片插入 @引用到本节点文本框） -->
-      <div v-if="upDirect.length || upFar.length || upstreamTruncated" class="prop-panel__field">
+      <!-- D2（2x-8）：上游节点面板（BFS 分层；单击媒体 Lightbox 放大，双击卡片插入 @引用到本节点文本框）。
+           修复IV B2（C-2）：depth>1 不再折叠，与直接上游同区直显（类型徽标配色区分），保留 ·N 层级号与 50 截断提示 -->
+      <div v-if="upItems.length || upstreamTruncated" class="prop-panel__field">
         <label>上游（双击卡片插入 @引用）</label>
         <div
-          v-for="u in upDirect"
+          v-for="u in upItems"
           :key="u.node.id"
           class="prop-panel__up-card"
+          :class="{ 'prop-panel__up-card--far': u.depth > 1 }"
           title="双击把该节点插入提示词 @引用"
           @dblclick="onUpstreamDblClick(u)"
         >
@@ -32,41 +45,16 @@
             @click="onUpstreamMediaClick(u)"
           >
             <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
-            <span v-else class="prop-panel__up-ph">{{ kindShort(u.node.type) }}</span>
+            <span v-else class="prop-panel__up-ph" :data-kind="u.node.type">{{ kindShort(u.node.type) }}</span>
           </button>
           <div class="prop-panel__up-meta">
             <div class="prop-panel__up-name">
-              <span class="prop-panel__up-kind">{{ kindBadge(u.node.type) }}</span>
+              <span class="prop-panel__up-kind" :data-kind="u.node.type">{{ kindBadge(u.node.type) }}<template v-if="u.depth > 1">·{{ u.depth }}</template></span>
               <span class="prop-panel__up-label">{{ u.node.data.label }}</span>
             </div>
             <div class="prop-panel__up-prompt">{{ upPromptSnippet(u.node) || '（无文本）' }}</div>
           </div>
         </div>
-        <template v-if="upFar.length">
-          <button type="button" class="prop-panel__up-fold" @click="showFarUpstream = !showFarUpstream">
-            {{ showFarUpstream ? '▾' : '▸' }} 更上游 {{ upFar.length }} 节点
-          </button>
-          <div v-if="showFarUpstream" class="prop-panel__up-farlist">
-            <div
-              v-for="u in upFar"
-              :key="u.node.id"
-              class="prop-panel__up-card prop-panel__up-card--far"
-              title="双击把该节点插入提示词 @引用"
-              @dblclick="onUpstreamDblClick(u)"
-            >
-              <div class="prop-panel__up-thumb">
-                <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
-                <span v-else class="prop-panel__up-ph">{{ kindShort(u.node.type) }}</span>
-              </div>
-              <div class="prop-panel__up-meta">
-                <div class="prop-panel__up-name">
-                  <span class="prop-panel__up-kind">{{ kindBadge(u.node.type) }}·{{ u.depth }}</span>
-                  <span class="prop-panel__up-label">{{ u.node.data.label }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </template>
         <div v-if="upstreamTruncated" class="prop-panel__hint">更上游超 50 节点，已截断</div>
       </div>
       <div v-else class="prop-panel__field">
@@ -926,13 +914,9 @@ const assetHasUpdate = computed(() => Boolean(props.node?.data.assetHasUpdate))
 /** 各节点型的「主文本框」（双击上游卡 @引用插入目标；各分支唯一渲染，同名 ref 安全）。 */
 const primaryInputRef = ref<InstanceType<typeof MentionTextarea> | null>(null)
 
-/** 直接上游（depth=1）/ 更上游（depth>1，默认折叠）。 */
-const upDirect = computed(() => (props.upstream?.items ?? []).filter(u => u.depth === 1))
-const upFar = computed(() => (props.upstream?.items ?? []).filter(u => u.depth > 1))
+/** 上游列表（upstream.ts BFS 已按 depth 升序）。修复IV B2（C-2）：depth>1 不再折叠，同区直显。 */
+const upItems = computed<UpstreamItem[]>(() => props.upstream?.items ?? [])
 const upstreamTruncated = computed(() => props.upstream?.truncated ?? false)
-const showFarUpstream = ref(false)
-// 切节点重置折叠（新节点的更上游不沿用上一节点的展开态）
-watch(() => props.node?.id, () => { showFarUpstream.value = false })
 
 const KIND_BADGE: Record<string, string> = {
   text: '文本', image: '图片', video: '视频', audio: '音频',
@@ -981,6 +965,47 @@ function onUpstreamMediaClick(u: UpstreamItem) {
 function onUpstreamDblClick(u: UpstreamItem) {
   primaryInputRef.value?.appendMention({ kind: 'node', id: u.node.id })
 }
+
+// ---------- 修复IV B4（C-6）：面板宽度拖拽 260-560，localStorage 持久化 ----------
+const PROP_PANEL_WIDTH_KEY = 'canvas.propPanel.width'
+const PANEL_MIN_WIDTH = 260
+const PANEL_MAX_WIDTH = 560
+
+/** 存储值非法/越界回落 260（NaN、0、9999 等一律钳到区间内）。 */
+function clampPanelWidth(w: number): number {
+  return Number.isFinite(w) ? Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, Math.round(w))) : 260
+}
+
+const panelWidth = ref(clampPanelWidth(parseInt(localStorage.getItem(PROP_PANEL_WIDTH_KEY) ?? '', 10)))
+
+let gutterDrag: { startX: number; startWidth: number } | null = null
+
+function onGutterDown(e: PointerEvent) {
+  e.stopPropagation() // 不下传画布（防拖宽起点被解读为画布手势）
+  gutterDrag = { startX: e.clientX, startWidth: panelWidth.value }
+  document.body.style.userSelect = 'none' // 拖拽期间不选中文本
+  window.addEventListener('pointermove', onGutterMove)
+  window.addEventListener('pointerup', onGutterUp, { once: true })
+}
+
+function onGutterMove(e: PointerEvent) {
+  if (!gutterDrag) return
+  // 面板贴右侧，拖左缘向左（dx 负）= 变宽
+  panelWidth.value = clampPanelWidth(gutterDrag.startWidth - (e.clientX - gutterDrag.startX))
+}
+
+function onGutterUp() {
+  gutterDrag = null
+  document.body.style.userSelect = ''
+  window.removeEventListener('pointermove', onGutterMove)
+  localStorage.setItem(PROP_PANEL_WIDTH_KEY, String(panelWidth.value))
+}
+
+// 卸载兜底：拖拽中卸载不残留全局监听/禁选样式
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', onGutterMove)
+  document.body.style.userSelect = ''
+})
 
 /** C11 抽帧「指定秒」输入值（AT 模式用）。 */
 const frameSecond = ref<number | null>(null)
@@ -1324,6 +1349,7 @@ function onImageModelChange(model: string | null) {
 
 <style lang="scss" scoped>
 .prop-panel {
+  position: relative; // 修复IV B4：左缘拖宽条 __gutter 的定位锚
   width: 260px;
   flex-shrink: 0;
   padding: var(--spacing-2);
@@ -1444,6 +1470,32 @@ function onImageModelChange(model: string | null) {
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-small);
     color: var(--color-text-tertiary);
+    background: rgba(148, 163, 184, 0.1);
+  }
+
+  /* 修复IV B2（C-2）：类型徽标/缩略占位按节点型着色（hue 字面量，同节点状态色风格） */
+  &__up-kind,
+  &__up-ph {
+    &[data-kind='text'] { color: #94a3b8; }
+    &[data-kind='image'] { color: #38bdf8; }
+    &[data-kind='video'] { color: #a78bfa; }
+    &[data-kind='audio'] { color: #fbbf24; }
+    &[data-kind='script'] { color: #34d399; }
+    &[data-kind='storyboard'] { color: #f472b6; }
+    &[data-kind='director'] { color: #fb923c; }
+  }
+
+  &__up-kind[data-kind='image'] { background: rgba(56, 189, 248, 0.12); }
+  &__up-kind[data-kind='video'] { background: rgba(167, 139, 250, 0.12); }
+  &__up-kind[data-kind='audio'] { background: rgba(251, 191, 36, 0.12); }
+  &__up-kind[data-kind='script'] { background: rgba(52, 211, 153, 0.12); }
+  &__up-kind[data-kind='storyboard'] { background: rgba(244, 114, 182, 0.12); }
+  &__up-kind[data-kind='director'] { background: rgba(251, 146, 60, 0.12); }
+
+  /* 修复IV B2（C-2）：更上游直显小卡——左缩进+连线区分层级（替代原折叠列表） */
+  &__up-card--far {
+    margin-left: 12px;
+    border-left: 2px solid rgba(var(--color-primary-rgb), 0.35);
   }
 
   &__up-label {
@@ -1465,24 +1517,30 @@ function onImageModelChange(model: string | null) {
     word-break: break-all;
   }
 
-  /* 更上游折叠开关 + 小卡列表（缩进区分层级） */
-  &__up-fold {
-    margin-top: var(--spacing-1);
-    padding: 2px var(--spacing-1);
-    background: transparent;
-    border: 0;
-    color: var(--color-text-tertiary);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-    text-align: left;
+  /* 修复IV B4（C-6）：左缘拖宽条——视觉 4px 高亮线 + 10px 命中热区，hover/拖拽显主题色 */
+  &__gutter {
+    position: absolute;
+    left: -5px;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    cursor: col-resize;
+    z-index: 5;
 
-    &:hover { color: var(--color-primary); }
-  }
+    &::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      border-radius: 2px;
+      background: transparent;
+      transition: background var(--duration-fast) var(--ease-in-out);
+    }
 
-  &__up-farlist {
-    margin-top: 2px;
-    padding-left: 12px; // 层级缩进
-    border-left: 2px solid var(--color-border-light);
+    &:hover::after,
+    &:active::after { background: var(--color-primary); }
   }
 
   /* 2x 四轮 S6：确定性变换按钮排（五个小按钮挤一行，超出换行） */

@@ -1,7 +1,12 @@
 <template>
   <CanvasNodeBase kind="image" kind-label="图片" :label="data.label" :status="data.status" :selected="selected" :asset-badge="assetBadge">
     <template #icon><ImageOutline /></template>
-    <div v-if="data.previewUrl" class="image-node__thumb">
+    <div
+      v-if="data.previewUrl"
+      class="image-node__thumb"
+      @pointerdown="onPointerDown"
+      @click="onMediaClick"
+    >
       <img :src="data.previewUrl" alt="节点图" />
     </div>
     <div v-else class="image-node__empty">
@@ -18,6 +23,8 @@ import CanvasNodeBase from './CanvasNodeBase.vue'
 // 见 VideoNode：关 vue-flow $attrs 透传，防 `label:undefined` 覆盖显式 :label。
 defineOptions({ inheritAttrs: false })
 import { useNodeAssetBadge } from './useNodeAssetBadge'
+// 修复IV B1（C-1 两段式）：已选中后再点缩略图才弹 Lightbox（第一击只选中）
+import { useMediaPreviewClick } from './useMediaPreviewClick'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
 const props = defineProps<{
@@ -26,6 +33,7 @@ const props = defineProps<{
 }>()
 
 const assetBadge = useNodeAssetBadge(props.data)
+const { onPointerDown, onMediaClick } = useMediaPreviewClick(() => props.selected === true)
 </script>
 
 <style lang="scss" scoped>

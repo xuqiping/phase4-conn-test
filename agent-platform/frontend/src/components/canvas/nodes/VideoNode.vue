@@ -7,6 +7,8 @@
       :src="data.previewUrl"
       controls
       muted
+      @pointerdown="onPointerDown"
+      @click="onMediaClick"
     />
     <div v-else class="video-node__prompt">{{ data.prompt || '视频节点（面板配置 prompt/比例/时长）' }}</div>
     <div v-if="data.ratio || data.duration" class="video-node__meta">
@@ -29,6 +31,9 @@ import CanvasNodeBase from './CanvasNodeBase.vue'
 // 关闭透传：仅显式绑定进 CNB，vue-flow 垃圾 attr 不污染（定位由外层 .vue-flow__node 包裹层负责）。
 defineOptions({ inheritAttrs: false })
 import { useNodeAssetBadge } from './useNodeAssetBadge'
+// 修复IV B1（C-1 两段式）：已选中后再点视频本体才弹 Lightbox（第一击只选中；
+// 选中后行内播放控件让位，播放控制走 Lightbox——决策 6 严格两段式）
+import { useMediaPreviewClick } from './useMediaPreviewClick'
 import type { CanvasNodeStatus } from '@/types/canvas'
 
 const props = defineProps<{
@@ -46,6 +51,7 @@ const props = defineProps<{
 }>()
 
 const assetBadge = useNodeAssetBadge(props.data)
+const { onPointerDown, onMediaClick } = useMediaPreviewClick(() => props.selected === true)
 </script>
 
 <style lang="scss" scoped>
