@@ -227,6 +227,110 @@ class PricingServiceTest {
         assertThat(cost).isEqualByComparingTo("0.500000");
     }
 
+    // ---------------- V162：TOKEN 每百万价分档槽位（token_price_per_resolution） ----------------
+
+    @Test
+    void video_token_resolutionSlot_used() {
+        // 4K 任务命中 4k 槽（111.2/百万 × 1M = 111.2）；"4K" 大写经 normalizeResolution 归一取键
+        PricingRuleEntity row = rule("VIDEO");
+        row.setPriceInputPerMillion(new BigDecimal("12"));
+        row.setTokenPricePerResolution("{\"480p\":6.5,\"4k\":111.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "4k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 5, 0, false, "4K");
+
+        assertThat(cost).isEqualByComparingTo("111.200000");
+    }
+
+    @Test
+    void video_token_unlistedSlot_fallsBackToGeneral() {
+        // 720p 未配槽 → 回落通用价 12（Q2 决策：未配档=通用价，零迁移兼容）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setPriceInputPerMillion(new BigDecimal("12"));
+        row.setTokenPricePerResolution("{\"480p\":6.5,\"4k\":111.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "720p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 5, 0, false, "720p");
+
+        assertThat(cost).isEqualByComparingTo("12.000000");
+    }
+
+    @Test
+    void video_token_slotAndGeneralBothMissing_zeroCost() {
+        // 行在但槽+通用价全空 → 0 元交付（缺价=0 元现状口径钉死，规格 VTR-2）
+        PricingRuleEntity row = rule("VIDEO");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "4k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 5, 0, false, "4k");
+
+        assertThat(cost).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void video_token_resolutionNull_ignoresSlots() {
+        // 分辨率未传（旧链路/无参兜底）→ 不进槽，直取通用价
+        PricingRuleEntity row = rule("VIDEO");
+        row.setPriceInputPerMillion(new BigDecimal("12"));
+        row.setTokenPricePerResolution("{\"4k\":111.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, null, null, false);
+
+        assertThat(cost).isEqualByComparingTo("12.000000");
+    }
+
+    @Test
+    void video_token_dirtySlotJson_fallsBackToGeneral() {
+        // 脏 JSON → WARN + 回落通用价，不炸结算（fail-open：脏价表不废任务）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setPriceInputPerMillion(new BigDecimal("12"));
+        row.setTokenPricePerResolution("{bad json");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "4k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 5, 0, false, "4k");
+
+        assertThat(cost).isEqualByComparingTo("12.000000");
+    }
+
+    @Test
+    void video_token_hasRefFallback_usesFallbackRowSlots() {
+        // 只配无参考行（带 4k 槽）→ 带参考任务 fallback 命中该行，槽也取该行的（不跨行拼价，VTR-3）
+        PricingRuleEntity noRefRow = rule("VIDEO");
+        noRefRow.setPriceInputPerMillion(new BigDecimal("20"));
+        noRefRow.setTokenPricePerResolution("{\"4k\":222}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", true, "4k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", true, null))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "4k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(noRefRow);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                1_000_000, null, 5, 0, true, "4k");
+
+        assertThat(cost).isEqualByComparingTo("222.000000");
+    }
+
     // ---------------- 7x-2（V152）：estimateVideoYuan 提交期估价 ----------------
 
     @Test
