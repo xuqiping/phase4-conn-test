@@ -59,6 +59,8 @@ export interface PricingRuleVO {
   resolution?: string | null
   /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null */
   estPerResolution?: Record<string, number> | null
+  /** V162：VIDEO TOKEN 每百万价分辨率档（480p/720p/1080p/4k → ¥/百万，无 general）；未配档结算回落通用价；其他行恒 null */
+  tokenPricePerResolution?: Record<string, number> | null
   /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义） */
   offPeakInputPerMillion?: number | null
   offPeakOutputPerMillion?: number | null
@@ -83,6 +85,8 @@ export interface PricingRuleRequest {
   resolution?: string | null
   /** 7x-2（V153）：提交期预估秒价（一行多分辨率参数），仅 VIDEO TOKEN 有效（余额预检用，不参与真实扣费）；general=通用兜底 */
   estPerResolution?: Record<string, number | null> | null
+  /** V162：TOKEN 每百万价分辨率档（480p/720p/1080p/4k → ¥/百万），仅 VIDEO+TOKEN 有效；未配档回落 priceInputPerMillion；其他 kind/SECOND 须 null */
+  tokenPricePerResolution?: Record<string, number | null> | null
   /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 有效，全可空（留空=同忙时/同输入价） */
   offPeakInputPerMillion?: number | null
   offPeakOutputPerMillion?: number | null
@@ -113,6 +117,8 @@ export interface PricingRuleExportItem {
   resolution?: string | null
   /** 7x-2（V153）：仅 VIDEO TOKEN 有意义——提交期预估秒价（general/分辨率 → ¥/秒，仅预检） */
   estPerResolution?: Record<string, number> | null
+  /** V162：仅 VIDEO TOKEN 有意义——每百万价分辨率档（480p/720p/1080p/4k → ¥/百万）。导入三态：缺失/null=不动现有档，{}=清空，非空=整体覆盖 */
+  tokenPricePerResolution?: Record<string, number> | null
   priceInputPerMillion?: number | null
   priceOutputPerMillion?: number | null
   videoBillingMode?: VideoBillingMode | null
