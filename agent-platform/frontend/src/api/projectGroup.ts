@@ -219,11 +219,13 @@ export const projectGroupApi = {
     })
   },
 
-  /** GET /project-groups/{id}/ledger/export — 修复V B2（17x#1）：流水 CSV 导出（blob 下载；仅组长/管理/admin）。 */
+  /** GET /project-groups/{id}/ledger/export — 修复V B2（17x#1）：流水 CSV 导出（blob 下载；仅组长/管理/admin）。
+   *  timeout 120s：全局 15s 会掐断 5 万行大导出（媒体文件下载同款加长先例）。 */
   exportLedger(id: number, q: GroupLedgerQuery = {}) {
     return request.get<Blob>(`/project-groups/${id}/ledger/export`, {
       params: q,
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 120000
     })
   },
 

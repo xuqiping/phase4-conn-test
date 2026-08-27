@@ -50,7 +50,7 @@
             <video
               v-else-if="u.node.type === 'video' && upMediaSrc(u)"
               class="prop-panel__up-video"
-              :src="upMediaSrc(u)!"
+              :src="upMediaSrc(u)! + '#t=0.1'"
               preload="metadata"
               muted
               playsinline

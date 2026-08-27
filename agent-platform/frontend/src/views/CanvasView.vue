@@ -2293,18 +2293,18 @@ function hydrateVideoPreviews(nodes: CanvasNode[]) {
       mediaApi.getTask(taskId)
         .then(async r => {
           const url = r.data.data.videoUrl
-          if (url) {
-            const obj = await fetchVideoBlob(url)
-            boardRef.value?.updateNodeData(n.id, {
-              previewUrl: obj,
-              status: 'success',
-              fileId: r.data.data.resultFileId ?? undefined,
-              // 7x-4：hydrate 时也补审计字段（旧快照节点缺失时回填）
-              submittedRequest: r.data.data.submittedRequest ?? undefined,
-              providerRequestSnapshot: r.data.data.providerRequestSnapshot ?? undefined,
-              hasReference: r.data.data.hasReference ?? undefined
-            })
-          }
+          if (!url) { fallbackToFile(); return } // 任务在但产物 URL 空（异常态）→ 同落 fileId 兜底（P4 review）
+          const obj = await fetchVideoBlob(url)
+          boardRef.value?.updateNodeData(n.id, {
+            previewUrl: obj,
+            status: 'success',
+            // 空时勿带 key：Object.assign 会拿 undefined 抹掉既有 fileId，杀死兜底腿（P4 review）
+            ...(r.data.data.resultFileId ? { fileId: r.data.data.resultFileId } : {}),
+            // 7x-4：hydrate 时也补审计字段（旧快照节点缺失时回填）
+            submittedRequest: r.data.data.submittedRequest ?? undefined,
+            providerRequestSnapshot: r.data.data.providerRequestSnapshot ?? undefined,
+            hasReference: r.data.data.hasReference ?? undefined
+          })
         })
         .catch(() => fallbackToFile()) // 任务已查不到 → 落 fileId 兜底（修复V A2）
     } else if (!taskId) {

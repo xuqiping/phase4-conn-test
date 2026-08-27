@@ -1080,8 +1080,16 @@ async function exportLedgerCsv() {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
     message.success('流水已导出（按当前筛选，上限 5 万行）')
-  } catch {
-    /* 拦截器已 toast（403 仅管理侧可导在拦截器报错） */
+  } catch (err) {
+    /* blob 响应拦截器读不到 JSON message（error.response.data 是 Blob）——此处解文本取后端话术
+       （403「仅组长/管理员可导出组池流水」等），解析失败沉默交拦截器兜底 toast（P4 review） */
+    const data = (err as { response?: { data?: unknown } })?.response?.data
+    if (data instanceof Blob) {
+      try {
+        const j = JSON.parse(await data.text()) as { message?: string }
+        if (j?.message) message.error(j.message)
+      } catch { /* 非 JSON 体（网关错误页等） */ }
+    }
   } finally {
     exportingLedger.value = false
   }
