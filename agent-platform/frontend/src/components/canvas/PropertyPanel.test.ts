@@ -334,6 +334,8 @@ describe('PropertyPanel · D2 上游面板', () => {
     // #t=0.1 时间锚：强制各引擎解码并绘制首帧（WebKit 仅 preload=metadata 不 reliably 出画面）
     expect(thumb.find('video').attributes('src')).toBe('blob:vid#t=0.1')
     expect(thumb.find('video').attributes('preload')).toBe('metadata')
+    // P4 后续（用户反馈）：首帧上叠 ▶ 播放标——缺「可点播」信号易被当静态图
+    expect(thumb.find('.prop-panel__up-play').exists()).toBe(true)
     expect(thumb.find('.prop-panel__up-ph').exists()).toBe(false)
     expect(thumb.classes()).toContain('is-clickable')
   })

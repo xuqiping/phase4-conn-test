@@ -46,15 +46,18 @@
           >
             <img v-if="upThumbSrc(u)" :src="upThumbSrc(u)!" alt="" />
             <!-- 修复V A1（2x-1）：视频上游直出首帧——video preload=metadata 浏览器取首帧当封面
-                 （coverPreviewUrl 仅导演台封面链路赋值，视频上游恒空——见 upThumbSrc 注释） -->
-            <video
-              v-else-if="u.node.type === 'video' && upMediaSrc(u)"
-              class="prop-panel__up-video"
-              :src="upMediaSrc(u)! + '#t=0.1'"
-              preload="metadata"
-              muted
-              playsinline
-            ></video>
+                 （coverPreviewUrl 仅导演台封面链路赋值，视频上游恒空——见 upThumbSrc 注释）。
+                 P4 后续（用户反馈）：叠 ▶ 播放标——首帧易被当成静态图，缺「可点播」信号 -->
+            <template v-else-if="u.node.type === 'video' && upMediaSrc(u)">
+              <video
+                class="prop-panel__up-video"
+                :src="upMediaSrc(u)! + '#t=0.1'"
+                preload="metadata"
+                muted
+                playsinline
+              ></video>
+              <span class="prop-panel__up-play" aria-hidden="true">▶</span>
+            </template>
             <span v-else class="prop-panel__up-ph" :data-kind="u.node.type">{{ kindShort(u.node.type) }}</span>
           </button>
           <div class="prop-panel__up-meta">
@@ -1497,6 +1500,21 @@ function onImageModelChange(model: string | null) {
     &:hover video { transform: scale(1.6); z-index: 2; position: relative; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
 
     &.is-clickable { cursor: zoom-in; }
+  }
+
+  // P4 后续（用户反馈）：视频首帧上的 ▶ 播放标——居中覆盖缩略框，z 高于 hover 放大（z2）的 video。
+  // 坑注：必须与 __up-card/__up-meta 平级——嵌进 __up-thumb 会编译成 .prop-panel__up-thumb__up-play，永不命中
+  &__up-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px; // 对齐参考区 ref-preview__play（用户口径「像参考里面的一样」）
+    color: #fff;
+    text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
+    z-index: 3;
   }
 
   &__up-ph {
