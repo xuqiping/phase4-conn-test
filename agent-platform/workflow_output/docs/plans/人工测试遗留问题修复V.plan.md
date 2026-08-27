@@ -135,7 +135,8 @@ A/B 不同文件域可并行，实施序建议 **A→B→C** 串行（B 前后�
   ```
 - **文件**：ProjectGroupsView.vue、api/projectGroup.ts（2 个）
 - **依赖**：B1/B2 后端就绪
-- **验证**：vue-tsc 0；vitest（筛选行渲染 canManage 分流/筛选变更重置分页）；**真 PG IT**（新 ProjectGroupLedgerFilterIT，@Tag integration @ActiveProfiles it，参照 AssetMediaBridgeExistsIT 脚手架）：造 ALLOCATE/CONSUME/BACKSTOP+备注+两 actor 流水 → keyword（流水备注/操作人名）命中与排除 / type 筛选 / actor 筛选 / 时间范围 / MEMBER overview 忽略筛选仍 self / MEMBER export 403 / 导出 CSV BOM+列内容+转义断言 / 超 5 万截断（造 5 万零 1 行过慢——用反射改 EXPORT_ROW_LIMIT 为小值造超限，验证注记行）。
+- **验证**：vue-tsc 0；vitest（筛选行渲染 canManage 分流/筛选变更重置分页）；**真 PG IT**（新 ProjectGroupLedgerFilterIT，@Tag integration @ActiveProfiles it，参照 AssetMediaBridgeExistsIT 脚手架）：造 ALLOCATE/CONSUME/BACKSTOP+备注+两 actor 流水 → keyword（流水备注/操作人名）命中与排除 / type 筛选 / actor 筛选 / 时间范围 / MEMBER overview 忽略筛选仍 self / MEMBER export 403 / 导出 CSV BOM+列内容+转义断言 / 超 5 万截断。
+  > **P3 偏离注记（2026-08-27）**：截断用例原计划反射改 EXPORT_ROW_LIMIT 造超限——实施发现 `static final int` 被 javac **常量内联**进调用点，反射改静态字段对已编译引用无效 → 改回真造 50001 行（jdbc 批插 ~3s 可接受），断言注记行真值。IT 6/6 绿。
 
 **B 坑点**：
 - `.apply`/`inSql` 里 LIKE 值必须走 `#{}` 参数化——inSql 子查询字符串是**静态 SQL 框架**，三处 LIKE 值全部参数化拼接（照 UserPointsBalanceMapper XML 写法，勿字符串拼用户输入）。
@@ -181,11 +182,11 @@ A/B 不同文件域可并行，实施序建议 **A→B→C** 串行（B 前后�
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] type 白名单 400（B1）
-- [ ] keyword LIKE 转义 + 参数化（B1/B2，inSql 子查询三 LIKE 全 `#{}`）
-- [ ] export MEMBER 403 + @AuditLog + 权限注解（B2）
-- [ ] MEMBER 筛选参数后端忽略（不信前端，B1）
-- [ ] CSV 注入（单元格以 = + - @ 开头）：备注是内部字段，**不做**公式前缀转义——落字「内部导出不外发，后续再说」
+- [x] type 白名单 400（B1）
+- [x] keyword LIKE 转义 + 参数化（B1/B2，inSql 子查询三 LIKE 全 `#{}`）
+- [x] export MEMBER 403 + @AuditLog + 权限注解（B2）
+- [x] MEMBER 筛选参数后端忽略（不信前端，B1）
+- [x] CSV 注入（单元格以 = + - @ 开头）：备注是内部字段，**不做**公式前缀转义——落字「内部导出不外发，后续再说」
 
 ## 运维考量清单（7 类落字）
 
