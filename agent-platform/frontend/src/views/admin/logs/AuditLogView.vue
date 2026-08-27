@@ -156,9 +156,18 @@ const columns: DataTableColumns<AuditLogVO> = [
     title: '时间', key: 'createdAt', width: 170,
     render: (row) => row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN') : '-'
   },
-  { title: '用户', key: 'username', width: 110, ellipsis: { tooltip: true },
+  { title: '用户', key: 'username', width: 170, ellipsis: { tooltip: true },
     // 8x-1：后端已按 userId 回填，双空（系统级操作）兜底「系统」，不再显示"-"
-    render: (row) => row.username || (row.userId ? `用户#${row.userId}` : '系统') },
+    // 修复IV A1（12x-2）：列表用户列与详情弹窗同款——username 快照（证据链）+ 现姓名括注 + 备注 tag
+    render: (row) => {
+      const base = row.username || (row.userId ? `用户#${row.userId}` : '系统')
+      const label = row.operatorName ? `${base}（${row.operatorName}）` : base
+      if (!row.operatorRemark) return label
+      return h('span', { style: 'display:inline-flex;align-items:center;gap:4px;min-width:0' }, [
+        h('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, label),
+        h(NTag, { size: 'tiny', bordered: false }, () => row.operatorRemark)
+      ])
+    } },
   { title: '模块', key: 'module', width: 110,
     render: (row) => row.moduleLabel || row.module || '-' },
   { title: '动作', key: 'action', width: 130, ellipsis: { tooltip: true },

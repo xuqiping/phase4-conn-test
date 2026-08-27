@@ -504,10 +504,12 @@ public class ProjectGroupService {
 
     /**
      * 候选用户搜索（复用资产库模式）：排除组长与已有成员；空关键词开箱载 50、输入收窄 20。
+     * 修复IV A4（17x-2b）：权限从 requireOwner 放宽到 MANAGER——与发邀请口径一致
+     * （原组长/admin 才能拉候选，管理打开邀请弹窗直接 403）；只放宽读候选，写权限不变。
      */
     public List<com.superprogrammer.projectgroup.dto.ProjectGroupCandidateVO> searchCandidates(
             Long groupId, Long actorUserId, boolean admin, String keyword) {
-        ProjectGroupEntity g = requireOwner(groupId, actorUserId, admin);
+        ProjectGroupEntity g = requireRole(groupId, actorUserId, admin, ProjectGroupMemberEntity.ROLE_MANAGER);
         Set<Long> excluded = new LinkedHashSet<>();
         excluded.add(g.getOwnerUserId());
         memberMapper.selectList(new LambdaQueryWrapper<ProjectGroupMemberEntity>()

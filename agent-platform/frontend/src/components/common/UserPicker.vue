@@ -23,7 +23,7 @@
       :aria-activedescendant="activeIndex >= 0 ? `user-picker-opt-${activeIndex}` : undefined"
       :placeholder="placeholder ?? (multiple ? '搜索用户名 / 姓名 / 备注' : '搜索用户名 / 姓名 / 备注，回车选择')"
       @input="onInput"
-      @focus="openList"
+      @mousedown="openList"
       @keydown.down.prevent="moveActive(1)"
       @keydown.up.prevent="moveActive(-1)"
       @keydown.enter.prevent="pickActive"
@@ -59,6 +59,14 @@
           class="user-picker__remark"
           :title="u.remark"
         >{{ u.remark }}</span>
+      </li>
+      <!-- 修复IV A2（17x-1）：多选时全选/反选当前候选（搜索中禁用；作用域=当前已加载候选，非全量） -->
+      <li v-if="multiple && options.length && !loading" class="user-picker__bulk" role="group" aria-label="批量选择">
+        <button type="button" class="user-picker__bulk-btn" :disabled="loading" @mousedown.prevent="selectAll">全选</button>
+        <button type="button" class="user-picker__bulk-btn" :disabled="loading" @mousedown.prevent="invertSelection">反选</button>
+        <span class="user-picker__bulk-count">
+          已选 {{ selectedCount }} / 候选 {{ options.length }}{{ options.length >= 50 ? '（已达候选上限）' : '' }}
+        </span>
       </li>
     </ul>
   </div>
@@ -108,6 +116,7 @@ const chips = computed(() =>
     .filter((u): u is PickerUser => !!u))
 
 function onInput() {
+  open.value = true   // 修复IV A3：输入即开（程序获焦不弹，见 openList 注释）
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => void doSearch(), 300)
 }
@@ -118,7 +127,7 @@ async function doSearch() {
   try {
     const list = await props.search(query.value.trim())
     if (mySeq !== seq) return   // 过期响应丢弃（慢请求覆盖快输入）
-    options.value = list.slice(0, 20)
+    options.value = list.slice(0, 50)   // 修复IV A2：20→50 与后端空词上限对齐
     activeIndex.value = options.value.length ? 0 : -1
   } catch {
     if (mySeq === seq) options.value = []
@@ -128,6 +137,8 @@ async function doSearch() {
 }
 
 function openList() {
+  // 修复IV A3（17x-2）：只随「用户交互」打开（mousedown/输入/↓键）；
+  // 程序获焦（弹窗 autofocus）不再弹候选——@focus 已不绑定 openList
   if (!open.value) {
     open.value = true
     if (!options.value.length) void doSearch()
@@ -183,6 +194,37 @@ function removeSelected(id: number) {
   emit('update:modelValue', cur)
 }
 
+// 修复IV A2（17x-1）：全选=当前候选并入（并集，既有选择不丢）；反选=对当前候选逐个翻转
+const selectedCount = computed(() =>
+  props.multiple && Array.isArray(props.modelValue) ? props.modelValue.length : 0)
+
+function selectAll() {
+  if (!props.multiple || loading.value) return
+  const cur = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+  for (const u of options.value) {
+    if (!cur.includes(u.userId)) {
+      cur.push(u.userId)
+      pickedMap.set(u.userId, u)
+    }
+  }
+  emit('update:modelValue', cur)
+}
+
+function invertSelection() {
+  if (!props.multiple || loading.value) return
+  const set = new Set(Array.isArray(props.modelValue) ? props.modelValue : [])
+  for (const u of options.value) {
+    if (set.has(u.userId)) {
+      set.delete(u.userId)
+      pickedMap.delete(u.userId)
+    } else {
+      set.add(u.userId)
+      pickedMap.set(u.userId, u)
+    }
+  }
+  emit('update:modelValue', [...set])
+}
+
 defineExpose({ displayName })
 </script>
 
@@ -195,6 +237,9 @@ defineExpose({ displayName })
     flex-wrap: wrap;
     gap: 4px;
     margin-bottom: 6px;
+    /* 修复IV A2：全选后 chips 可很多——限高滚动防撑爆弹窗 */
+    max-height: 96px;
+    overflow-y: auto;
   }
 
   &__chip {
@@ -294,6 +339,37 @@ defineExpose({ displayName })
     background: rgba(148, 163, 184, 0.16);
     color: var(--color-text-secondary);
     font-size: 11px;
+  }
+
+  &__bulk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--color-border);
+    margin-top: 4px;
+    position: sticky;
+    bottom: 0;
+    background: var(--color-bg-primary, #0f172a);
+  }
+
+  &__bulk-btn {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    padding: 2px 10px;
+    cursor: pointer;
+
+    &:hover:not(:disabled) { color: var(--color-primary); border-color: var(--color-primary); }
+    &:disabled { opacity: 0.5; cursor: not-allowed; }
+  }
+
+  &__bulk-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
   }
 }
 </style>

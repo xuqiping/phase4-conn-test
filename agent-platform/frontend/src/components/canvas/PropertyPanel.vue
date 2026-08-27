@@ -246,7 +246,7 @@
               <label>优化模式</label>
               <n-select
                 :value="(node.data.optimizeMode as string) || null"
-                :options="imageCap.optimizeModes.map(v => ({ label: v, value: v }))"
+                :options="(imageCap.optimizeModes ?? []).map(v => ({ label: v, value: v }))"
                 size="small"
                 @update:value="(v: string | null) => { if (node) { node.data.optimizeMode = v ?? undefined; emit('data-changed') } }"
               />
@@ -383,15 +383,14 @@
           <label>比例</label>
           <n-select v-model:value="(node.data.ratio as string)" size="small" :options="ratioOpts" />
         </div>
-        <div class="prop-panel__row">
-          <div class="prop-panel__field">
-            <label>时长(秒)</label>
-            <n-input-number v-model:value="(node.data.duration as number | undefined)" size="small" :min="4" :max="15" />
-          </div>
-          <div class="prop-panel__field">
-            <label>分辨率</label>
-            <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
-          </div>
+        <div class="prop-panel__field">
+          <label>时长(秒)</label>
+          <n-input-number v-model:value="(node.data.duration as number | undefined)" size="small" :min="4" :max="15" />
+        </div>
+        <!-- 修复IV A5（C-5/2x-5）：分辨率独占整行（原与时长同挤一行被截断，不选中看不到完整档位） -->
+        <div class="prop-panel__field">
+          <label>分辨率</label>
+          <n-select v-model:value="(node.data.resolution as string)" size="small" :options="resOpts" />
         </div>
         <div class="prop-panel__field">
           <label>首帧（可选，@选上游图节点作开头）</label>
@@ -1252,7 +1251,8 @@ const imageCap = computed<ImageModelCapability | null>(() => {
 
 const imgSizeOptions = computed(() => {
   if (!imageCap.value) return []
-  const opts = imageCap.value.sizePresets.map(s => ({ label: s, value: s }))
+  // 修复IV A 顺手修：部分模型 capability 无 sizePresets（存量 3 个 unhandled rejection 根因）
+  const opts = (imageCap.value.sizePresets ?? []).map(s => ({ label: s, value: s }))
   if (imageCap.value.supportsWhSize) opts.push({ label: '自定义宽x高', value: '__custom__' })
   return opts
 })
@@ -1288,7 +1288,8 @@ const imgRatioError = computed(() => {
 })
 
 function toUpperOptions(arr: string[]) {
-  return arr.map(v => ({ label: v.toUpperCase(), value: v }))
+  // 修复IV A 顺手修：capability 缺字段时兜底空数组（存量 unhandled rejection 同根因）
+  return (arr ?? []).map(v => ({ label: v.toUpperCase(), value: v }))
 }
 
 /**
