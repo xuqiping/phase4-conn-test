@@ -129,12 +129,12 @@
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] 端点零新增：create/update 复用 `pricing:manage` + `@AuditLog`（现状不动，回归确认）
-- [ ] 服务层白名单：键 ⊆ 4 档 + 值 >0（防异常键/脏价入 JSONB）
-- [ ] 导入 200 行上限 + 逐行容错现状维持
-- [ ] 全链 BigDecimal（6 位 HALF_UP）防舍入漂移
-- [ ] 无 PII、无新日志敏感字段
-- [ ] 普通用户不可达价表端点（现状 ownership/权限回归）
+- [x] 端点零新增：create/update 复用 `pricing:manage` + `@AuditLog`（现状不动，回归确认）
+- [x] 服务层白名单：键 ⊆ 4 档 + 值 >0（防异常键/脏价入 JSONB）
+- [x] 导入 200 行上限 + 逐行容错现状维持
+- [x] 全链 BigDecimal（6 位 HALF_UP）防舍入漂移
+- [x] 无 PII、无新日志敏感字段
+- [x] 普通用户不可达价表端点（现状 ownership/权限回归）
 
 ## 功能联动点清单（只列正向必漏 bug）
 
