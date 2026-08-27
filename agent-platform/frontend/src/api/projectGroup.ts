@@ -192,6 +192,15 @@ export interface GroupOutputsQuery {
   size?: number
 }
 
+/** 组池流水筛选参数（修复V B1，17x#1：keyword 匹配流水备注 ∪ 操作人账号/姓名/备注）。 */
+export interface GroupLedgerQuery {
+  keyword?: string
+  type?: string
+  actorUserId?: number
+  from?: string
+  to?: string
+}
+
 // === API ===
 
 export const projectGroupApi = {
@@ -200,10 +209,21 @@ export const projectGroupApi = {
     return request.get<ApiResponse<ProjectGroupMineVO[]>>('/project-groups/mine')
   },
 
-  /** GET /project-groups/{id}/overview — 组长总览（组详情+组池流水分页；成员 403 走管理页口径）。 */
-  overview(id: number, page = 1, size = 10) {
+  /**
+   * GET /project-groups/{id}/overview — 组总览（组详情+组池流水分页）。
+   * 修复V B1（17x#1）：管理视角流水筛选（成员路径后端忽略筛选维持本人行）。
+   */
+  overview(id: number, page = 1, size = 10, q: GroupLedgerQuery = {}) {
     return request.get<ApiResponse<ProjectGroupOverviewVO>>(`/project-groups/${id}/overview`, {
-      params: { page, size }
+      params: { page, size, ...q }
+    })
+  },
+
+  /** GET /project-groups/{id}/ledger/export — 修复V B2（17x#1）：流水 CSV 导出（blob 下载；仅组长/管理/admin）。 */
+  exportLedger(id: number, q: GroupLedgerQuery = {}) {
+    return request.get<Blob>(`/project-groups/${id}/ledger/export`, {
+      params: q,
+      responseType: 'blob'
     })
   },
 

@@ -27,7 +27,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -71,29 +74,24 @@ public class ProjectGroupQueryService {
     /**
      * 组总览：组详情（getDetail 复用，MEMBER+ 可开）+ 组池流水倒序分页（actor 用户名批量补齐）。
      * 修复IV D3（17x-4）：普通成员同口径裁剪——流水只看本人行、balanceAfter 不透出（余额=管理数据）。
+     * 修复V B1（17x#1）：管理视角新增流水筛选（keyword/type/actorUserId/时间）——keyword 匹配
+     * 流水备注 ∪ 操作人账号/姓名/备注；MEMBER 路径忽略筛选维持仅本人行（后端强制，不信任前端）。
      */
-    public ProjectGroupOverviewVO overview(Long groupId, Long actorUserId, boolean admin, int page, int size) {
+    public ProjectGroupOverviewVO overview(Long groupId, Long actorUserId, boolean admin,
+                                           String keyword, String type, Long actorUserIdFilter,
+                                           OffsetDateTime from, OffsetDateTime to,
+                                           int page, int size) {
         ProjectGroupDetailVO detail = groupService.getDetail(groupId, actorUserId, admin);
-
-        // 管理视角判定（getDetail 已保证 viewer ∈ 成员/组长/admin，此处不再重复权限判断）
-        boolean mgr = admin;
-        if (!mgr) {
-            ProjectGroupEntity g = groupMapper.selectById(groupId);
-            mgr = g != null && g.getOwnerUserId() != null && g.getOwnerUserId().equals(actorUserId);
-            if (!mgr && actorUserId != null) {
-                ProjectGroupMemberEntity viewerRow = memberMapper.selectByGroupUser(groupId, actorUserId);
-                mgr = viewerRow != null && ProjectGroupMemberEntity.ROLE_MANAGER.equals(viewerRow.getRole());
-            }
-        }
-        final boolean managerView = mgr;
+        final boolean managerView = managerViewOf(groupId, actorUserId, admin);
 
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
-        LambdaQueryWrapper<ProjectGroupLedgerEntity> lw = new LambdaQueryWrapper<ProjectGroupLedgerEntity>()
-                .eq(ProjectGroupLedgerEntity::getGroupId, groupId);
+        LambdaQueryWrapper<ProjectGroupLedgerEntity> lw = baseLedgerWrapper(groupId);
         if (!managerView) {
-            // 修复IV D3（17x-4，决策 6）：普通成员流水=仅本人行
+            // 修复IV D3（17x-4，决策 6）：普通成员流水=仅本人行（筛选参数不生效——无筛选 UI 也不信前端）
             lw.eq(ProjectGroupLedgerEntity::getActorUserId, actorUserId);
+        } else {
+            applyLedgerFilter(lw, normalizeFilter(keyword, type, actorUserIdFilter, from, to));
         }
         Page<ProjectGroupLedgerEntity> p = ledgerMapper.selectPage(
                 new Page<>(safePage, safeSize), lw.orderByDesc(ProjectGroupLedgerEntity::getId));
@@ -114,6 +112,203 @@ public class ProjectGroupQueryService {
                 .toList();
         return new ProjectGroupOverviewVO(detail,
                 PageResult.of(vos, p.getTotal(), safePage, safeSize));
+    }
+
+    // ==================== 修复V B1/B2（17x#1）：流水筛选 + CSV 导出 ====================
+
+    /** 14 种 CHECK 枚举白名单（type 筛选非法值直接 400）。 */
+    private static final Set<String> LEDGER_TYPES = Set.of(
+            ProjectGroupLedgerEntity.TYPE_ALLOCATE, ProjectGroupLedgerEntity.TYPE_RECLAIM,
+            ProjectGroupLedgerEntity.TYPE_CONSUME, ProjectGroupLedgerEntity.TYPE_REFUND,
+            ProjectGroupLedgerEntity.TYPE_ADMIN_ADJUST, ProjectGroupLedgerEntity.TYPE_BACKSTOP,
+            ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE, ProjectGroupLedgerEntity.TYPE_MEMBER_RECLAIM,
+            ProjectGroupLedgerEntity.TYPE_MEMBER_QUOTA_ADJUST, ProjectGroupLedgerEntity.TYPE_SELF_ALLOCATE,
+            ProjectGroupLedgerEntity.TYPE_SELF_CONSUME, ProjectGroupLedgerEntity.TYPE_SELF_REFUND,
+            ProjectGroupLedgerEntity.TYPE_SELF_REPAY, ProjectGroupLedgerEntity.TYPE_DEBT_WRITEOFF);
+
+    /** 导出硬顶（容量护栏）：超限截断 + CSV 尾注记；改值只改这一处（plan 运维口径）。 */
+    static final int EXPORT_ROW_LIMIT = 50_000;
+
+    /** 流水类型 → CSV 中文标签（与前端 LEDGER_TYPE 六项口径一致 + 成员腿八项；前端映射表见
+     * ProjectGroupsView.vue LEDGER_TYPE——两份映射分属两端无共享层，改动需同步，见修复V plan 坑表）。 */
+    private static final Map<String, String> TYPE_LABEL = Map.ofEntries(
+            Map.entry(ProjectGroupLedgerEntity.TYPE_ALLOCATE, "划入"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_RECLAIM, "回收"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_CONSUME, "消耗"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_REFUND, "退款"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_ADMIN_ADJUST, "调整"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_BACKSTOP, "兜底"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_MEMBER_ALLOCATE, "配额划入"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_MEMBER_RECLAIM, "配额回收"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_MEMBER_QUOTA_ADJUST, "限额调整"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_SELF_ALLOCATE, "名下划入"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_SELF_CONSUME, "名下消耗"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_SELF_REFUND, "名下退款"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_SELF_REPAY, "名下还款"),
+            Map.entry(ProjectGroupLedgerEntity.TYPE_DEBT_WRITEOFF, "欠款核销"));
+
+    /** 流水筛选参数包（overview / export 共用）。 */
+    public record LedgerFilter(String keyword, String type, Long actorUserId,
+                               OffsetDateTime from, OffsetDateTime to) {}
+
+    /** 组装基础 wrapper（group 维度）；筛选条件由 {@link #applyLedgerFilter} 追加（两入口共用防漂移）。 */
+    private LambdaQueryWrapper<ProjectGroupLedgerEntity> baseLedgerWrapper(Long groupId) {
+        return new LambdaQueryWrapper<ProjectGroupLedgerEntity>()
+                .eq(ProjectGroupLedgerEntity::getGroupId, groupId);
+    }
+
+    /** type 白名单校验 + keyword 去空归一（空串→null）。 */
+    private LedgerFilter normalizeFilter(String keyword, String type, Long actorUserId,
+                                         OffsetDateTime from, OffsetDateTime to) {
+        String t = type == null || type.isBlank() ? null : type.trim();
+        if (t != null && !LEDGER_TYPES.contains(t)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "非法流水类型: " + t);
+        }
+        String kw = keyword == null || keyword.isBlank() ? null : keyword.trim();
+        return new LedgerFilter(kw, t, actorUserId, from, to);
+    }
+
+    /**
+     * 筛选条件组装（管理视角专用）。keyword 匹配流水 remark ∪ 操作人账号/姓名/备注——
+     * 操作人侧走 users 子查询（inSql 无参数绑定能力，改用 .apply {0} 占位符全参数化；
+     * users 量级小全扫，E 轮 remark 筛选同口径）；LIKE 值先 escapeLikeKeyword 转义
+     * （\ % _ 各自转义，ESCAPE '\' 显式声明——PG 标准转义）。
+     */
+    private void applyLedgerFilter(LambdaQueryWrapper<ProjectGroupLedgerEntity> lw, LedgerFilter f) {
+        if (f == null) {
+            return;
+        }
+        if (f.type() != null) {
+            lw.eq(ProjectGroupLedgerEntity::getType, f.type());
+        }
+        if (f.actorUserId() != null) {
+            lw.eq(ProjectGroupLedgerEntity::getActorUserId, f.actorUserId());
+        }
+        if (f.from() != null) {
+            lw.ge(ProjectGroupLedgerEntity::getCreatedAt, f.from());
+        }
+        if (f.to() != null) {
+            lw.le(ProjectGroupLedgerEntity::getCreatedAt, f.to());
+        }
+        if (f.keyword() != null) {
+            String esc = escapeLikeKeyword(f.keyword());
+            lw.and(w -> w.like(ProjectGroupLedgerEntity::getRemark, esc)
+                    // 子查询 SQL 框架静态、三处 LIKE 值全走 {0} 参数占位符（无字符串拼接用户输入）
+                    .or().apply("actor_user_id IN (SELECT id FROM users WHERE username LIKE ('%' || {0} || '%') ESCAPE '\\'"
+                            + " OR name LIKE ('%' || {0} || '%') ESCAPE '\\'"
+                            + " OR remark LIKE ('%' || {0} || '%') ESCAPE '\\')", esc));
+        }
+    }
+
+    /** LIKE 关键词转义（\ % _ → 前缀反斜杠），截断 50 字符（AssetMemberService:233 同款）。 */
+    private String escapeLikeKeyword(String keyword) {
+        String trimmed = keyword.trim();
+        if (trimmed.length() > 50) {
+            trimmed = trimmed.substring(0, 50);
+        }
+        return trimmed.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
+    /**
+     * 修复V B2（17x#1，决策 2/3/4）：组池流水 CSV 导出——按当前筛选全量（不分页），
+     * 上限 {@link #EXPORT_ROW_LIMIT} 行截断 + 尾注记；UTF-8 带 BOM（Excel 双击直开）。
+     * 权限仅组长/MANAGER/admin——MEMBER 403（比 overview 更紧：overview 成员可读本人行，export 不给）。
+     */
+    public byte[] exportLedger(Long groupId, Long actorUserId, boolean admin,
+                               String keyword, String type, Long actorUserIdFilter,
+                               OffsetDateTime from, OffsetDateTime to) {
+        if (!managerViewOf(groupId, actorUserId, admin)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅组长/管理员可导出组池流水");
+        }
+        LedgerFilter f = normalizeFilter(keyword, type, actorUserIdFilter, from, to);
+        LambdaQueryWrapper<ProjectGroupLedgerEntity> lw = baseLedgerWrapper(groupId);
+        applyLedgerFilter(lw, f);
+        // LIMIT 50001：多取 1 行判截断（值为代码常量，无注入面；条件/orderBy 先组装、last 永远最后）
+        List<ProjectGroupLedgerEntity> rows = ledgerMapper.selectList(
+                lw.orderByDesc(ProjectGroupLedgerEntity::getId).last("LIMIT " + (EXPORT_ROW_LIMIT + 1)));
+        boolean truncated = rows.size() > EXPORT_ROW_LIMIT;
+        if (truncated) {
+            rows = rows.subList(0, EXPORT_ROW_LIMIT);
+        }
+
+        // 操作人三字段（账号/姓名/备注）一次批量补齐（防 N+1）
+        Set<Long> actorIds = rows.stream()
+                .map(ProjectGroupLedgerEntity::getActorUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, User> users = actorIds.isEmpty() ? Map.of()
+                : userMapper.selectBatchIds(actorIds).stream()
+                        .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
+
+        DateTimeFormatter ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault());
+        StringBuilder sb = new StringBuilder(96 * (rows.size() + 2));
+        sb.append('﻿'); // UTF-8 BOM（U+FEFF）：Excel 双击直开不乱码
+        sb.append("时间,类型,操作人,变动积分,变动后组池余额,关联,备注\r\n");
+        for (ProjectGroupLedgerEntity l : rows) {
+            User u = l.getActorUserId() == null ? null : users.get(l.getActorUserId());
+            sb.append(csvCell(l.getCreatedAt() == null ? "" : ts.format(l.getCreatedAt()))).append(',')
+              .append(csvCell(TYPE_LABEL.getOrDefault(l.getType(), l.getType() == null ? "" : l.getType()))).append(',')
+              .append(csvCell(actorCell(l.getActorUserId(), u))).append(',')
+              .append(csvCell(num(l.getDeltaPoints()))).append(',')
+              .append(csvCell(num(l.getBalanceAfter()))).append(',')
+              .append(csvCell(l.getRefType() == null ? "" : l.getRefType() + (l.getRefId() == null ? "" : "#" + l.getRefId()))).append(',')
+              .append(csvCell(l.getRemark() == null ? "" : l.getRemark()))
+              .append("\r\n");
+        }
+        if (truncated) {
+            // 截断真值另起 count 查（同筛选无分页）；仍超限的极端量级下这一次 count 也可接受
+            LambdaQueryWrapper<ProjectGroupLedgerEntity> cw = baseLedgerWrapper(groupId);
+            applyLedgerFilter(cw, f);
+            long total = ledgerMapper.selectCount(cw);
+            sb.append("# 截断：共命中 ").append(total).append(" 行，仅导出前 ").append(EXPORT_ROW_LIMIT).append(" 行\r\n");
+        }
+        log.info("组池流水导出: groupId={} operator={} rows={} truncated={} keyword={} type={} actor={} from={} to={}",
+                groupId, actorUserId, rows.size(), truncated,
+                f.keyword() == null ? "-" : f.keyword(), f.type() == null ? "-" : f.type(),
+                f.actorUserId() == null ? "-" : f.actorUserId(), f.from(), f.to());
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 操作人列：姓名（账号）·备注；无姓名回落账号；无 actor（系统行）→ "-"。 */
+    private String actorCell(Long actorUserId, User u) {
+        if (u == null) {
+            return actorUserId == null ? "-" : "#" + actorUserId;
+        }
+        String base = u.getName() == null || u.getName().isBlank()
+                ? u.getUsername() : u.getName() + "（" + u.getUsername() + "）";
+        return u.getRemark() == null || u.getRemark().isBlank() ? base : base + "·" + u.getRemark();
+    }
+
+    /** BigDecimal → 原值去尾零（1.50→1.5，0.00→0）；null → ""。 */
+    private String num(java.math.BigDecimal v) {
+        return v == null ? "" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /** RFC4180 单元格转义：含 , " \n \r → 双引号包裹 + 内部双引号翻倍。 */
+    private String csvCell(String v) {
+        if (v.indexOf(',') >= 0 || v.indexOf('"') >= 0 || v.indexOf('\n') >= 0 || v.indexOf('\r') >= 0) {
+            return '"' + v.replace("\"", "\"\"") + '"';
+        }
+        return v;
+    }
+
+    /** mgr 视角判定抽单点（overview 裁剪与 export 403 同源，防双处漂移——修复V plan 坑表）。 */
+    private boolean managerViewOf(Long groupId, Long actorUserId, boolean admin) {
+        if (admin) {
+            return true;
+        }
+        ProjectGroupEntity g = groupMapper.selectById(groupId);
+        if (g != null && g.getOwnerUserId() != null && g.getOwnerUserId().equals(actorUserId)) {
+            return true;
+        }
+        if (actorUserId != null) {
+            ProjectGroupMemberEntity row = memberMapper.selectByGroupUser(groupId, actorUserId);
+            return row != null && ProjectGroupMemberEntity.ROLE_MANAGER.equals(row.getRole());
+        }
+        return false;
     }
 
     /**

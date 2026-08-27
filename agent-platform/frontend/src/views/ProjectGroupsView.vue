@@ -167,6 +167,55 @@
         </NTabPane>
         <template v-if="canManage">
           <NTabPane name="ledger" tab="组池流水">
+            <!-- 修复V B1/B3（17x#1）：筛选行+导出（tab 在 canManage template 内，成员不可见——决策 4） -->
+            <div class="pg-outputs__filters">
+              <NInput
+                v-model:value="ledgerFilter.keyword"
+                size="small"
+                clearable
+                placeholder="关键词（备注/操作人）"
+                class="pg-ledger__kw"
+                @keyup.enter="onLedgerFilterChange"
+                @clear="onLedgerFilterChange"
+              />
+              <NSelect
+                v-model:value="ledgerFilter.type"
+                size="small"
+                clearable
+                placeholder="全部类型"
+                :options="ledgerTypeOptions"
+                class="pg-outputs__kind"
+                @update:value="onLedgerFilterChange"
+              />
+              <NSelect
+                v-model:value="ledgerFilter.actorUserId"
+                size="small"
+                clearable
+                placeholder="全部操作人"
+                :options="memberFilterOptions"
+                class="pg-outputs__member"
+                @update:value="onLedgerFilterChange"
+              />
+              <NDatePicker
+                v-model:value="ledgerFilter.range"
+                type="daterange"
+                size="small"
+                clearable
+                :actions="['clear']"
+                close-on-select
+                update-value-on-close
+                class="pg-outputs__range"
+                @update:value="onLedgerFilterChange"
+              />
+              <NButton size="small" quaternary :disabled="!hasLedgerFilters" @click="clearLedgerFilters">清空</NButton>
+              <NButton
+                size="small"
+                type="primary"
+                tertiary
+                :loading="exportingLedger"
+                @click="exportLedgerCsv"
+              >导出 CSV</NButton>
+            </div>
             <NDataTable
               remote
               size="small"
@@ -870,7 +919,8 @@ async function loadOverview() {
   if (!g) return
   loadingOverview.value = true
   try {
-    const res = await projectGroupApi.overview(g.id, ledgerPage.value, ledgerSize.value)
+    // 修复V B1（17x#1）：管理视角带流水筛选；成员路径后端忽略筛选（维持本人行）
+    const res = await projectGroupApi.overview(g.id, ledgerPage.value, ledgerSize.value, ledgerQueryParams())
     overview.value = res.data.data
     syncVisForm()
   } catch {
@@ -977,6 +1027,66 @@ const ledgerPagination = computed(() => ({
   onUpdatePageSize: (s: number) => { ledgerPage.value = 1; ledgerSize.value = s; void loadOverview() }
 }))
 
+// ---- 修复V B1/B3（17x#1）：流水筛选 + CSV 导出（tab 在 canManage template 内，成员零变化） ----
+const ledgerFilter = ref<{
+  keyword: string | null
+  type: string | null
+  actorUserId: number | null
+  range: [number, number] | null
+}>({ keyword: null, type: null, actorUserId: null, range: null })
+
+const hasLedgerFilters = computed(() =>
+  !!ledgerFilter.value.keyword || !!ledgerFilter.value.type
+  || ledgerFilter.value.actorUserId != null || !!ledgerFilter.value.range)
+
+const exportingLedger = ref(false)
+
+function onLedgerFilterChange() {
+  ledgerPage.value = 1
+  void loadOverview()
+}
+
+function clearLedgerFilters() {
+  ledgerFilter.value = { keyword: null, type: null, actorUserId: null, range: null }
+  onLedgerFilterChange()
+}
+
+/** 当前筛选 → query 参数（daterange to=尾日 23:59:59.999，与产出 tab 同口径；undefined 不进 query）。 */
+function ledgerQueryParams(): import('@/api/projectGroup').GroupLedgerQuery {
+  const f = ledgerFilter.value
+  return {
+    keyword: f.keyword?.trim() || undefined,
+    type: f.type ?? undefined,
+    actorUserId: f.actorUserId ?? undefined,
+    from: f.range ? new Date(f.range[0]).toISOString() : undefined,
+    to: f.range ? new Date(f.range[1] + 86399999).toISOString() : undefined
+  }
+}
+
+/** 修复V B2（17x#1）：导出当前筛选全量 CSV（上限 5 万行截断；价表导出 blob 下载同款）。 */
+async function exportLedgerCsv() {
+  const g = selected.value
+  if (!g) return
+  exportingLedger.value = true
+  try {
+    const resp = await projectGroupApi.exportLedger(g.id, ledgerQueryParams())
+    const blob = resp.data as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `group-${g.id}-ledger-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    message.success('流水已导出（按当前筛选，上限 5 万行）')
+  } catch {
+    /* 拦截器已 toast（403 仅管理侧可导在拦截器报错） */
+  } finally {
+    exportingLedger.value = false
+  }
+}
+
 const outputPagination = computed(() => ({
   page: outputPage.value,
   pageSize: outputSize.value,
@@ -995,8 +1105,20 @@ const LEDGER_TYPE: Record<string, { label: string; type: 'default' | 'info' | 's
   CONSUME: { label: '消耗', type: 'info' },
   REFUND: { label: '退款', type: 'default' },
   ADMIN_ADJUST: { label: '调整', type: 'default' },
-  BACKSTOP: { label: '兜底', type: 'error' }
+  BACKSTOP: { label: '兜底', type: 'error' },
+  // 修复V B1：成员腿八类补全中文标签（此前显原始枚举码；与后端导出 TYPE_LABEL 两份映射需同步——见修复V plan 坑表）
+  MEMBER_ALLOCATE: { label: '配额划入', type: 'success' },
+  MEMBER_RECLAIM: { label: '配额回收', type: 'warning' },
+  MEMBER_QUOTA_ADJUST: { label: '限额调整', type: 'default' },
+  SELF_ALLOCATE: { label: '名下划入', type: 'success' },
+  SELF_CONSUME: { label: '名下消耗', type: 'info' },
+  SELF_REFUND: { label: '名下退款', type: 'default' },
+  SELF_REPAY: { label: '名下还款', type: 'success' },
+  DEBT_WRITEOFF: { label: '欠款核销', type: 'error' }
 }
+
+/** 修复V B1：流水类型筛选下拉（全 14 类中文标签）。 */
+const ledgerTypeOptions = Object.entries(LEDGER_TYPE).map(([value, v]) => ({ label: v.label, value }))
 
 const ledgerColumns: DataTableColumns<ProjectGroupLedgerRowVO> = [
   { title: '时间', key: 'createdAt', width: 140, render: r => fmtTime(r.createdAt) },
@@ -1604,6 +1726,8 @@ onMounted(() => {
 
 .pg-ledger__pos { color: var(--color-success, #63e2b7); }
 .pg-ledger__neg { color: var(--color-error, #e88080); }
+/* 修复V B3（17x#1）：流水筛选行关键词输入宽（复用 pg-outputs__filters 布局） */
+.pg-ledger__kw { width: 200px; }
 
 /* 17x#3/#4：列表页通知条（我的邀请/我的申请） */
 .pg-view__header-actions {

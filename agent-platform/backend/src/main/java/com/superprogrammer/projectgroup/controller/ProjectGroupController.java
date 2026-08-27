@@ -363,14 +363,47 @@ public class ProjectGroupController {
      * 组总览（组长/管理/admin 全量）：组详情 + 组池流水倒序分页。
      * 修复IV D3（17x-4）：普通成员可开——组详情/流水同口径裁剪（流水仅本人行、余额不透出）；
      * 非成员 403（service getDetail 口径）。
+     * 修复V B1（17x#1）：管理视角流水筛选参数（keyword/type/actorUserId/from/to）——
+     * keyword 匹配流水备注 ∪ 操作人账号/姓名/备注；成员路径忽略筛选（service 强制 self）。
      */
     @GetMapping("/{id}/overview")
     @RequirePermission("project-group:manage")
     public ResponseEntity<R<ProjectGroupOverviewVO>> overview(
             @PathVariable("id") Long id,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String type,
+            @RequestParam(name = "actorUserId", required = false) Long actorUserId,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
-        return ResponseEntity.ok(R.ok(queryService.overview(id, getCurrentUserId(), isAdmin(), page, size)));
+        return ResponseEntity.ok(R.ok(queryService.overview(id, getCurrentUserId(), isAdmin(),
+                keyword, type, actorUserId, parseTime(from, "from"), parseTime(to, "to"), page, size)));
+    }
+
+    /**
+     * 修复V B2（17x#1，决策 2/3/4）：组池流水 CSV 导出——按当前筛选全量（上限 5 万行截断+尾注记），
+     * UTF-8 BOM（Excel 双击直开）；仅组长/MANAGER/admin（MEMBER 403，比 overview 更紧——决策 4）。
+     */
+    @GetMapping("/{id}/ledger/export")
+    @RequirePermission("project-group:manage")
+    @AuditLog(module = "project-group", action = "ledger_export", targetType = "project_group")
+    public ResponseEntity<byte[]> exportLedger(
+            @PathVariable("id") Long id,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String type,
+            @RequestParam(name = "actorUserId", required = false) Long actorUserId,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        byte[] csv = queryService.exportLedger(id, getCurrentUserId(), isAdmin(),
+                keyword, type, actorUserId, parseTime(from, "from"), parseTime(to, "to"));
+        String filename = "group-" + id + "-ledger-"
+                + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".csv";
+        return ResponseEntity.ok()
+                .header("Content-Type", "text/csv; charset=UTF-8")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .header("Content-Length", String.valueOf(csv.length))
+                .body(csv);
     }
 
     /**
