@@ -14,7 +14,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Base64;
 
-/** 为 Ark 参考视频生成短期、不可猜测的公开下载地址。 */
+/** 为 Ark 参考媒体（视频/图片）生成短期、不可猜测的公开下载地址。 */
 @Service
 @RequiredArgsConstructor
 public class MediaReferenceUrlService {
@@ -26,10 +26,19 @@ public class MediaReferenceUrlService {
         return properties.isReferenceVideoConfigured();
     }
 
+    /** 兼容别名（视频链旧调用方/测试）；实现同 {@link #createMediaUrl}。 */
     public String createVideoUrl(String fileId) {
+        return createMediaUrl(fileId);
+    }
+
+    /**
+     * 修复VI（2x#5）：图片附件与视频同链路——签名公网 URL 传输（替代 base64，消除 ×4/3
+     * 膨胀与「多图撑爆 64MB 请求体」隐雷）。签名/过期/端点与视频完全同参同闸。
+     */
+    public String createMediaUrl(String fileId) {
         if (!isConfigured()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "参考视频功能未配置：请设置 Ark 可访问的 MEDIA_REFERENCE_PUBLIC_BASE_URL（HTTPS）和 MEDIA_REFERENCE_SIGNING_KEY");
+                    "参考媒体功能未配置：请设置 Ark 可访问的 MEDIA_REFERENCE_PUBLIC_BASE_URL（HTTPS）和 MEDIA_REFERENCE_SIGNING_KEY");
         }
         long expires = Instant.now().getEpochSecond() + properties.getReference().getTtlSeconds();
         String signature = sign(fileId, expires);

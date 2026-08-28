@@ -355,7 +355,7 @@ class MediaGenTaskWorkerTest {
     // ---------- buildRequest（附件分支，ReflectionTestUtils 直调私有方法） ----------
 
     @Test
-    void buildRequest_videoUsesSignedHttpsUrl_otherMediaKeepDataUri() {
+    void buildRequest_imageAndVideoUseSignedHttpsUrl_audioKeepsDataUri() {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setProviderId(7L);
         task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
@@ -363,8 +363,10 @@ class MediaGenTaskWorkerTest {
                 + "\"attachments\":[{\"fileId\":\"i1.png\",\"kind\":\"image\"},"
                 + "{\"fileId\":\"v1.mp4\",\"kind\":\"video\"},"
                 + "{\"fileId\":\"a1.mp3\",\"kind\":\"audio\"}]}");
-        when(mediaStorageService.readAsDataUri("i1.png", 100L, "image")).thenReturn("data:image/png;base64,I");
-        when(mediaReferenceUrlService.createVideoUrl("v1.mp4")).thenReturn(
+        // 修复VI 2x#5：图片也走签名 URL（不再 readAsDataUri）
+        when(mediaReferenceUrlService.createMediaUrl("i1.png")).thenReturn(
+                "https://media.example.com/api/media/reference/i1.png?expires=1&sig=i");
+        when(mediaReferenceUrlService.createMediaUrl("v1.mp4")).thenReturn(
                 "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x");
         when(mediaStorageService.readAsDataUri("a1.mp3", 100L, "audio")).thenReturn("data:audio/mpeg;base64,A");
 
@@ -375,9 +377,14 @@ class MediaGenTaskWorkerTest {
         org.junit.jupiter.api.Assertions.assertEquals(3, req.getAttachments().size());
         org.junit.jupiter.api.Assertions.assertEquals("image", req.getAttachments().get(0).getKind());
         org.junit.jupiter.api.Assertions.assertEquals(
+                "https://media.example.com/api/media/reference/i1.png?expires=1&sig=i",
+                req.getAttachments().get(0).getUrl());
+        org.junit.jupiter.api.Assertions.assertEquals(
                 "https://media.example.com/api/media/reference/v1.mp4?expires=1&sig=x",
                 req.getAttachments().get(1).getUrl());
         org.junit.jupiter.api.Assertions.assertEquals("audio", req.getAttachments().get(2).getKind());
+        org.junit.jupiter.api.Assertions.assertEquals("data:audio/mpeg;base64,A",
+                req.getAttachments().get(2).getUrl());
         // providerId 透传（多 MEDIA provider 路由）；attachments 分支不走旧首帧
         org.junit.jupiter.api.Assertions.assertEquals(7L, req.getProviderId());
         org.junit.jupiter.api.Assertions.assertNull(req.getRefImageUrl());
@@ -388,22 +395,26 @@ class MediaGenTaskWorkerTest {
         MediaGenTask task = pendingTask(1L, 100L, null);
         task.setTaskType(MediaGenTask.TYPE_IMAGE2VIDEO);
         task.setRequestConfig("{\"prompt\":\"p\",\"refFileId\":\"legacy.png\"}");
-        when(mediaStorageService.readAsDataUri("legacy.png", 100L)).thenReturn("data:image/png;base64,L");
+        // 修复VI 2x#5：旧版首帧参考图同样切签名 URL
+        when(mediaReferenceUrlService.createMediaUrl("legacy.png")).thenReturn(
+                "https://media.example.com/api/media/reference/legacy.png?expires=1&sig=l");
 
         com.superprogrammer.media.dto.MediaGenRequest req =
                 org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task);
 
         assert req != null;
-        org.junit.jupiter.api.Assertions.assertEquals("data:image/png;base64,L", req.getRefImageUrl());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "https://media.example.com/api/media/reference/legacy.png?expires=1&sig=l",
+                req.getRefImageUrl());
         org.junit.jupiter.api.Assertions.assertNull(req.getAttachments());
     }
 
     @Test
     void buildRequest_attachmentReadFailure_throws() {
         MediaGenTask task = pendingTask(1L, 100L, null);
-        task.setRequestConfig("{\"prompt\":\"p\",\"attachments\":[{\"fileId\":\"big.mp4\",\"kind\":\"video\"}]}");
-        when(mediaReferenceUrlService.createVideoUrl("big.mp4"))
-                .thenThrow(new IllegalStateException("参考视频公网地址未配置"));
+        task.setRequestConfig("{\"prompt\":\"p\",\"attachments\":[{\"fileId\":\"big.png\",\"kind\":\"image\"}]}");
+        when(mediaReferenceUrlService.createMediaUrl("big.png"))
+                .thenThrow(new IllegalStateException("参考媒体公网地址未配置"));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(worker, "buildRequest", task));

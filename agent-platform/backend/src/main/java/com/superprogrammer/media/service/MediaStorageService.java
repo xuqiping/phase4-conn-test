@@ -42,11 +42,15 @@ public class MediaStorageService {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(5);
-    private static final long MAX_DATA_URI_BYTES = 8L * 1024 * 1024; // 参考图 ≤8MB（防超大图打爆 Ark）
-    /** 分类型 data URI 上限：图 8MB / 音频 15MB / 视频 50MB（base64 体积 ×4/3，官方参考视频上限 50MB）。
-     *  package-private：MediaGenTaskService 提交侧按 meta.size 预检复用同一上限表（单一真相）。 */
+    private static final long MAX_DATA_URI_BYTES = 8L * 1024 * 1024; // 未知类型兜底（已知类型走 KIND_MAX_BYTES）
+    /**
+     * 分类型附件上限：图 30MB / 音频 15MB / 视频 50MB。
+     * 修复VI（2x#5）：image 8→30MB 对齐官方「单张 ≤30MB」，且图片附件改签名公网 URL 传输
+     * （MediaReferenceUrlService，不再 base64）——上限管的是入库/引用闸门而非请求体体积。
+     *  package-private：MediaGenTaskService 提交侧按 meta.size 预检复用同一上限表（单一真相）。
+     */
     static final Map<String, Long> KIND_MAX_BYTES = Map.of(
-            "image", 8L * 1024 * 1024,
+            "image", 30L * 1024 * 1024,
             "audio", 15L * 1024 * 1024,
             "video", 50L * 1024 * 1024);
     private static final Map<String, String> KIND_LABEL = Map.of(
@@ -196,8 +200,9 @@ public class MediaStorageService {
     }
 
     /**
-     * 多模态参考附件：stored_files.file_id → data URI（image_url / video_url / audio_url 入参）。
-     * 按类型分别限大小（图 8MB / 音频 15MB / 视频 50MB）。
+     * 多模态参考附件：stored_files.file_id → data URI（audio_url 入参；图片/视频已改签名
+     * 公网 URL 传输，修复VI 2x#5——本方法仅音频与兜底路径仍走 base64）。
+     * 按类型分别限大小（图 30MB / 音频 15MB / 视频 50MB）。
      * F2：先按落库 meta.size 预检再读流——超限文件不再全量进堆后才拒。
      */
     public String readAsDataUri(String fileId, Long userId, String kind) {

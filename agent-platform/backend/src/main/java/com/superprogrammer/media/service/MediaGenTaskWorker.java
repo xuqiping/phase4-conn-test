@@ -543,7 +543,8 @@ public class MediaGenTaskWorker {
                 .watermark(watermark)
                 .generateAudio(generateAudio)
                 .taskType(task.getTaskType());
-        // Ark 的 reference_video 只接受公网 URL；图片/音频仍沿用 data URI。
+        // Ark 的 reference_video/image_url 均接受公网 URL：视频/图片走签名 URL（修复VI 2x#5——
+        // 图片弃 base64，消 ×4/3 膨胀与多图 64MB 请求体隐雷）；音频仍 data URI（官方 audio_url）。
         if (resolveAttachments && !attachments.isEmpty() && task.getUserId() != null) {
             List<MediaGenRequest.ResolvedAttachment> resolved = new java.util.ArrayList<>(attachments.size());
             for (String[] pair : attachments) {
@@ -551,9 +552,9 @@ public class MediaGenTaskWorker {
                     resolved.add(MediaGenRequest.ResolvedAttachment.builder()
                             .kind(pair[1])
                             .fileId(pair[0])
-                            .url("video".equals(pair[1])
-                                    ? mediaReferenceUrlService.createVideoUrl(pair[0])
-                                    : mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1]))
+                            .url("audio".equals(pair[1])
+                                    ? mediaStorageService.readAsDataUri(pair[0], task.getUserId(), pair[1])
+                                    : mediaReferenceUrlService.createMediaUrl(pair[0]))
                             .frameRole(pair.length > 2 ? pair[2] : null)
                             .build());
                 } catch (Exception e) {
@@ -565,10 +566,11 @@ public class MediaGenTaskWorker {
             b.attachments(resolved);
             return b.build();
         }
-        // 旧版 IMAGE2VIDEO：单首帧参考图 file_id → data URI（无 role = 首帧语义）；TEXT2VIDEO 无需。
+        // 旧版 IMAGE2VIDEO：单首帧参考图 file_id → 签名公网 URL（修复VI 2x#5，与多模态附件同链路）；
+        // 无 role = 首帧语义；TEXT2VIDEO 无需。
         if (resolveAttachments && refFileId != null && !refFileId.isBlank() && task.getUserId() != null) {
             try {
-                b.refImageUrl(mediaStorageService.readAsDataUri(refFileId, task.getUserId()));
+                b.refImageUrl(mediaReferenceUrlService.createMediaUrl(refFileId));
                 b.refFileId(refFileId);
                 // C2：参考帧位置（last=尾帧 role:last_frame；first/默认=首帧裸 image_url）
                 b.frameRole(frameRole);
