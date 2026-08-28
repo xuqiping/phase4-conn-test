@@ -51,3 +51,8 @@
 - 效果：权限配置树「Agent管理」「工作流管理」两组消失（RoleManageView 分组数据驱动，死标签已移除）；AgentController/WorkflowController 的对应 `@RequirePermission` 成死闸（无人能过=纵深锁死，刻意）；聊天侧 workflow:read 门恒 false → 工作流对话目标消失。
 - 保留：`execution:*`（执行管理）、`skill:manage`（技能管理）独立分组未删；`agent_admin` 角色未删（现零权限空角色）。
 
+
+## 用户管理分页修复（16x 未解决，2026-08-25）
+- **现象**：系统管理 → 用户管理 只能看到部分用户，id 1~100 的老用户翻不出来。
+- **根因**：[UserManageView.vue](../../frontend/src/views/admin/UserManageView.vue) 的 `n-data-table` 缺 `remote` 属性 → Naive UI 把后端已分页的一页数据再按客户端切片，第 2 页起永远为空；按 created_at 倒序排列时最老的用户（id 1-100）够不到。
+- **修复**：加 `remote` 走纯服务端分页。实测 `page=2` 正常返回 id [175,174,173,172,8,4,3,2,1]。
