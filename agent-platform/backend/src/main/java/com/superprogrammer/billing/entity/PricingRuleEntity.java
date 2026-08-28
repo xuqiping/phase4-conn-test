@@ -63,7 +63,7 @@ public class PricingRuleEntity {
     private Boolean hasReference;
 
     /**
-     * 7x-1（V152）：仅 VIDEO SECOND 行有意义——分辨率定价维度（480p/720p/1080p/4K）；
+     * 7x-1（V152）：仅 VIDEO SECOND 行有意义——分辨率定价维度（480p/720p/768p/1080p/2k/4K）；
      * NULL=通用行（未单列分辨率的任务回落此行，与 has_reference=false 兜底同范式）。
      * CHAT/EMBED/RERANK/IMAGE/VIDEO TOKEN 行恒 NULL。
      */
@@ -72,7 +72,7 @@ public class PricingRuleEntity {
 
     /**
      * 7x-2（V152→V153）：仅 VIDEO TOKEN 模式有意义——提交期预估秒价，JSONB 一行多分辨率参数：
-     * {@code {"general":0.1,"720p":0.2,"1080p":0.3}}，键 ⊆ general/480p/720p/1080p/4k，
+     * {@code {"general":0.1,"720p":0.2,"1080p":0.3}}，键 ⊆ general/480p/720p/768p/1080p/2k/4k，
      * general=未单列分辨率的兜底。TOKEN 提交期无 token 维度，估价预检用「任务分辨率对应值×时长」；
      * 真实扣费仍按 Ark 返的 total_tokens，本字段不参与计费。
      */
@@ -83,7 +83,7 @@ public class PricingRuleEntity {
     /**
      * 视频TOKEN分辨率分档计价（V162）：仅 VIDEO+TOKEN 行有意义——每百万价按分辨率分档，
      * JSONB 一行多档：{@code {"480p":6.5,"720p":12.3,"1080p":27.8,"4k":111.2}}，值=¥/百万 token。
-     * 键 ⊆ 480p/720p/1080p/4k（无 general——通用/兜底价=priceInputPerMillion 列复用）；未配档位回落通用价。
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general——通用/兜底价=priceInputPerMillion 列复用）；未配档位回落通用价。
      * 键归一 trim+小写（4K→4k，配置存/结算取同用 PricingService.normalizeResolution）。
      * SECOND/CHAT/EMBED/RERANK/IMAGE 行恒 NULL；不参与估价（estPerResolution 独立两套）。
      */

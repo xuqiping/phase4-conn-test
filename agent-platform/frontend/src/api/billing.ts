@@ -57,7 +57,21 @@ export interface PricingRuleVO {
   hasReference: boolean
   /** 7x-1（V152）：VIDEO SECOND 分辨率行（null=通用兜底）；其他行恒 null */
   resolution?: string | null
-  /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null */
+  /**
+ * MVR-2：计价分辨率档字典 6 档（与后端 PricingConfigService.EST_RESOLUTION_SLOTS 同源手抄——
+ * 前端无共享构建产物，靠注释互指防漂移；改这里必须同步改后端）。
+ * est 槽/TOKEN 槽/SECOND 槽（RC）三处下拉都由它派生，一处数组三处用。
+ */
+export const PRICING_RESOLUTION_SLOTS = ['480p', '720p', '768p', '1080p', '2k', '4k'] as const
+
+/** 计价档位显示名（4k→4K、2k→2K，其余原样）。 */
+export function pricingResolutionLabel(slot: string): string {
+  if (slot === '4k') return '4K'
+  if (slot === '2k') return '2K'
+  return slot
+}
+
+/** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null */
   estPerResolution?: Record<string, number> | null
   /** V162：VIDEO TOKEN 每百万价分辨率档（480p/720p/1080p/4k → ¥/百万，无 general）；未配档结算回落通用价；其他行恒 null */
   tokenPricePerResolution?: Record<string, number> | null

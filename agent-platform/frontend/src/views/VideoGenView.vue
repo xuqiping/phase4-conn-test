@@ -573,7 +573,8 @@ const RATIO_LABELS: Record<string, string> = {
   '4:3': '4:3', '3:4': '3:4', '21:9': '21:9 超宽', 'adaptive': 'adaptive（沿用参考素材比例）'
 }
 const RES_LABELS: Record<string, string> = {
-  '480p': '480p（省额度）', '720p': '720p（推荐）', '1080p': '1080p（高清）', '4K': '4K（超高清，2.0 全版）'
+  '480p': '480p（省额度）', '720p': '720p（推荐）', '768p': '768p', '1080p': '1080p（高清）',
+  '2k': '2K', '4K': '4K（超高清，2.0 全版）'
 }
 
 const ratioOptions = computed(() =>

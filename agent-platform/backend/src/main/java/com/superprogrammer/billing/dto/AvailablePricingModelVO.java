@@ -15,6 +15,6 @@ public class AvailablePricingModelVO {
     private String hint;
     /** 7x-1（V152）：VIDEO 候选的参考视频维度（true=本候选配「有参考」价行）；非 VIDEO 恒 false。 */
     private Boolean hasReference;
-    /** 7x-1（V152）：VIDEO 候选的分辨率槽位（null=通用行；480p/720p/1080p/4k）；非 VIDEO 恒 null。 */
+    /** 7x-1（V152）：VIDEO 候选的分辨率槽位（null=通用行；480p/720p/768p/1080p/2k/4k）；非 VIDEO 恒 null。 */
     private String resolution;
 }

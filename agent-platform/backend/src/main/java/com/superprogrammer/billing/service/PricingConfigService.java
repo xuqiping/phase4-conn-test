@@ -249,9 +249,13 @@ public class PricingConfigService {
         return item;
     }
 
-    /** D6（V160）：est_per_resolution 预检预估用分辨率档。仅 est 用途——计价行身份已不含分辨率。 */
+    /**
+     * D6（V160）→ MVR-2 扩 6 档：est_per_resolution 预检预估用分辨率档字典
+     * {480p,720p,768p,1080p,2k,4k}。单源——TOKEN 槽校验（TOKEN_SLOT_KEYS）、
+     * 导出骨架、est 键白名单全部由此派生；各模型可见档仍由 capability 限定（语义子集）。
+     */
     private static final List<String> EST_RESOLUTION_SLOTS =
-            List.of("480p", "720p", "1080p", "4k");
+            List.of("480p", "720p", "768p", "1080p", "2k", "4k");
 
     public List<AvailablePricingModelVO> availablePricingModels() {
         // 已配身份集合：provider+model+hasRef（D6/V160：行身份不含 resolution，历史分辨率行已合并）
@@ -571,7 +575,7 @@ public class PricingConfigService {
             String key = PricingService.normalizeResolution(entry.getKey());
             if (key == null || !EST_KEYS.contains(key)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
-                        "estPerResolution 键须为 general/480p/720p/1080p/4k，实际: " + entry.getKey());
+                        "estPerResolution 键须为 general/480p/720p/768p/1080p/2k/4k，实际: " + entry.getKey());
             }
             if (entry.getValue().signum() < 0) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -592,7 +596,7 @@ public class PricingConfigService {
         EST_KEYS = java.util.Collections.unmodifiableSet(keys);
     }
 
-    /** token_price_per_resolution 允许键（V162：仅 4 分辨率档，无 general——通用价走 priceInputPerMillion 列）。 */
+    /** token_price_per_resolution 允许键（V162→MVR-2：6 分辨率档，无 general——通用价走 priceInputPerMillion 列）。 */
     private static final java.util.Set<String> TOKEN_SLOT_KEYS = java.util.Set.copyOf(EST_RESOLUTION_SLOTS);
 
     /**
@@ -612,8 +616,8 @@ public class PricingConfigService {
             String key = PricingService.normalizeResolution(entry.getKey());
             if (key == null || !TOKEN_SLOT_KEYS.contains(key)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
-                        "tokenPricePerResolution 键须为 480p/720p/1080p/4k（通用价用 priceInputPerMillion），实际: "
-                                + entry.getKey());
+                        "tokenPricePerResolution 键须为 " + String.join("/", EST_RESOLUTION_SLOTS)
+                                + "（通用价用 priceInputPerMillion），实际: " + entry.getKey());
             }
             if (entry.getValue().signum() <= 0) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,

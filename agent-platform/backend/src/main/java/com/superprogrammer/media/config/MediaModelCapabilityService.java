@@ -23,6 +23,12 @@ public class MediaModelCapabilityService {
 
     private static final List<String> ALL_RATIOS =
             List.of("21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive");
+    /**
+     * MVR-2：分辨率字典全集 6 档（与计价 EST_RESOLUTION_SLOTS 同集，显示口径 4K 大写）。
+     * 各模型 supportedResolutions 取<b>语义子集</b>——seedance 系不含 768p/2k，
+     * minimax（RE）用 768p/2k；全集常量仅供新适配器/校验参考，不直接下发。
+     */
+    private static final List<String> RES_DICTIONARY = List.of("480p", "720p", "768p", "1080p", "2k", "4K");
     private static final List<String> RES_UPTO_4K = List.of("480p", "720p", "1080p", "4K");
     private static final List<String> RES_UPTO_1080 = List.of("480p", "720p", "1080p");
 

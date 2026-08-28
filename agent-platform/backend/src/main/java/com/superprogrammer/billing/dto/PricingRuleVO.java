@@ -26,9 +26,9 @@ public class PricingRuleVO {
     private Boolean hasReference;
     /** 7x-1（V152）：VIDEO SECOND 分辨率行（null=通用兜底）；其他行恒 null。 */
     private String resolution;
-    /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/1080p/4k → ¥/秒；仅预检，不计费）；其他行恒 null。 */
+    /** 7x-2（V153）：VIDEO TOKEN 提交期预估秒价（general/480p/720p/768p/1080p/2k/4k → ¥/秒；仅预检，不计费）；其他行恒 null。 */
     private java.util.Map<String, BigDecimal> estPerResolution;
-    /** V162：VIDEO TOKEN 每百万价分辨率档（480p/720p/1080p/4k → ¥/百万；未配档回落通用价）；其他行恒 null。 */
+    /** V162：VIDEO TOKEN 每百万价分辨率档（480p/720p/768p/1080p/2k/4k → ¥/百万；未配档回落通用价）；其他行恒 null。 */
     private java.util.Map<String, BigDecimal> tokenPricePerResolution;
     /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义）。 */
     private BigDecimal offPeakInputPerMillion;

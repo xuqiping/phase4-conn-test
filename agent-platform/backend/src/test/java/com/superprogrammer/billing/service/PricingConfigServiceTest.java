@@ -523,7 +523,7 @@ class PricingConfigServiceTest {
 
     @Test
     void createPricingRule_videoSecondBadResolution_throws() {
-        // SECOND 分辨率行：非支持集（480p/720p/1080p/4k）→ 400
+        // SECOND 分辨率行：D6/V160 后 resolution 一律须留空 → 400
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
         req.setPricePerSecond(new BigDecimal("0.10"));
@@ -558,7 +558,7 @@ class PricingConfigServiceTest {
 
     @Test
     void createPricingRule_estBadKey_throws() {
-        // 预估键非支持集（general/480p/720p/1080p/4k）→ 400
+        // 预估键非支持集（general+6 档字典）→ 400
         PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
         req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
         req.setEstPerResolution(java.util.Map.of("8k", new BigDecimal("0.20")));
@@ -747,7 +747,60 @@ class PricingConfigServiceTest {
         req.setTokenPricePerResolution(java.util.Map.of("general", new BigDecimal("1")));
         assertThatThrownBy(() -> service.createPricingRule(req))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("480p/720p/1080p/4k");
+                .hasMessageContaining("480p/720p/768p/1080p/2k/4k");  // MVR-2：错误话术随 6 档字典
+    }
+
+    // ---------------- MVR-2：分辨率字典扩 6 档 ----------------
+
+    @Test
+    void mvr2_tokenSlots_accepts768pAnd2kNormalized() {
+        // 新档 768p/2k 可入槽；大小写归一（2K→2k）；落库键为小写 6 档
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setTokenPricePerResolution(java.util.Map.of(
+                "768p", new BigDecimal("80"), "2K", new BigDecimal("120")));
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        service.createPricingRule(req);
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        // 槽位落库为 JSON 字符串（JsonbStringTypeHandler）——断言含归一后的 768p/2k 键
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution())
+                .contains("\"768p\"").contains("\"2k\"").doesNotContain("\"2K\"");
+    }
+
+    @Test
+    void mvr2_estSlots_accepts2kKey() {
+        // est 预估键白名单同步 6 档（2k 不再 400）
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setEstPerResolution(java.util.Map.of("2k", new BigDecimal("0.20")));
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        service.createPricingRule(req);
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        // estPerResolution 落库为 JSON 字符串（JsonbStringTypeHandler）——断言含归一后的 2k 键
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getEstPerResolution())
+                .contains("\"2k\"");
+    }
+
+    @Test
+    void mvr2_old4kValue_notRegressed() {
+        // 旧档 4K 大小写归一仍落 4k（不因扩档回归）
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setTokenPricePerResolution(java.util.Map.of("4K", new BigDecimal("111.2")));
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "seedance"));
+        service.createPricingRule(req);
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution())
+                .contains("\"4k\"").doesNotContain("\"4K\"");
     }
 
     @Test

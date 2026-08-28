@@ -399,7 +399,7 @@ public class PricingService {
 
     /**
      * V162：从 token_price_per_resolution JSON 取「任务分辨率档位每百万价」——
-     * 键 ⊆ 480p/720p/1080p/4k（无 general 兜底键，回落通用价由 caller 取 priceInputPerMillion）。
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general 兜底键，回落通用价由 caller 取 priceInputPerMillion）。
      * resolution null（未传）/未配档 → null；JSON 损坏 → null + WARN（结算回落通用价，脏价表不废任务）。
      */
     private static BigDecimal resolveTokenPricePerMillion(String tokenPricePerResolutionJson, String resolution) {

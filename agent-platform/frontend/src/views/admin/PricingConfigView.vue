@@ -171,7 +171,7 @@ import {
   NAlert, NCard, NDataTable, NButton, NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NSpace, NPopconfirm, NEmpty, NTag, useMessage, useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { billingApi, KIND_LABEL } from '@/api/billing'
+import { billingApi, KIND_LABEL, PRICING_RESOLUTION_SLOTS, pricingResolutionLabel } from '@/api/billing'
 import type { AvailablePricingModelVO, PricingRuleVO, PricingRuleRequest, PricingRuleExportItem, RatioTierVO, RatioTierRequest, BillingKind, VideoBillingMode, EstDeviationVO } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
 
@@ -208,20 +208,22 @@ const modeOptions: { label: string; value: VideoBillingMode }[] = [
 // D6（V160）：分辨率下拉已删（SECOND 去分辨率档）；est 槽位标签复用此显示函数
 function resolutionLabel(resolution: string | null | undefined): string {
   if (resolution == null || resolution === '') return '通用'
-  return resolution === '4k' ? '4K' : resolution
+  return pricingResolutionLabel(resolution)
 }
+
+// MVR-2：6 档字典派生（api/billing.ts 单源）——est/TOKEN/SECOND（RC）三处槽位共用，防漂移
+const resolutionSlotOptions = PRICING_RESOLUTION_SLOTS.map(key => ({
+  key, label: pricingResolutionLabel(key)
+}))
 
 // 7x-2（V153）：TOKEN 预估秒价档位（一行配齐；值留空=该档不预估，回落「通用」）
 const estSlots = [
   { key: 'general', label: '通用（未单列分辨率的兜底）' },
-  { key: '480p', label: '480p' },
-  { key: '720p', label: '720p' },
-  { key: '1080p', label: '1080p' },
-  { key: '4k', label: '4K' }
+  ...resolutionSlotOptions
 ]
-const estForm = reactive<Record<string, number | null>>({
-  general: null, '480p': null, '720p': null, '1080p': null, '4k': null
-})
+const estForm = reactive<Record<string, number | null>>(
+  Object.fromEntries(estSlots.map(s => [s.key, null]))
+)
 function resetEstForm(map?: Record<string, number> | null) {
   for (const slot of estSlots) estForm[slot.key] = map?.[slot.key] ?? null
 }
@@ -233,16 +235,12 @@ function fmtEst(map?: Record<string, number> | null): string {
   return parts.length ? parts.join(' / ') : '—'
 }
 
-// V162：TOKEN 每百万价档位（真实扣费价）。无 general——通用/兜底价=priceInputPerMillion 列，未配档回落它
-const tokenSlots = [
-  { key: '480p', label: '480p' },
-  { key: '720p', label: '720p' },
-  { key: '1080p', label: '1080p' },
-  { key: '4k', label: '4K' }
-]
-const tokenPriceForm = reactive<Record<string, number | null>>({
-  '480p': null, '720p': null, '1080p': null, '4k': null
-})
+// V162→MVR-2：TOKEN 每百万价档位（真实扣费价，6 档字典派生）。
+// 无 general——通用/兜底价=priceInputPerMillion 列，未配档回落它
+const tokenSlots = resolutionSlotOptions
+const tokenPriceForm = reactive<Record<string, number | null>>(
+  Object.fromEntries(tokenSlots.map(s => [s.key, null]))
+)
 function resetTokenPriceForm(map?: Record<string, number> | null) {
   for (const slot of tokenSlots) tokenPriceForm[slot.key] = map?.[slot.key] ?? null
 }

@@ -29,8 +29,11 @@ export type MediaTaskType =
   | 'TEXT2IMAGE'
   | 'IMAGE2IMAGE'
 
-/** 分辨率白名单（对齐后端校验；4K 仅 SeedDance 2.0 全版） */
-export type MediaResolution = '480p' | '720p' | '1080p' | '4K'
+/**
+ * 分辨率白名单（MVR-2 扩 6 档；各模型可见档由 capability.supportedResolutions 限定——
+ * 768p/2k 为 minimax 档，seedance 系不下发）。
+ */
+export type MediaResolution = '480p' | '720p' | '768p' | '1080p' | '2k' | '4K'
 
 /** 画面比例（官方 ratio 取值；adaptive 图生视频沿用参考图比例） */
 export type MediaRatio = '21:9' | '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | 'adaptive'

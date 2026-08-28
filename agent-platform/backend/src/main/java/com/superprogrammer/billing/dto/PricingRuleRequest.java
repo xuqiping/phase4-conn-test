@@ -46,7 +46,7 @@ public class PricingRuleRequest {
     private Boolean hasReference;
 
     /**
-     * 7x-1（V152）：分辨率定价维度，仅 VIDEO SECOND 有效（480p/720p/1080p/4k，大小写不敏感，
+     * 7x-1（V152）：分辨率定价维度，仅 VIDEO SECOND 有效（480p/720p/768p/1080p/2k/4k，大小写不敏感，
      * 落库统一小写）；null=通用行（未单列分辨率的兜底）。其他 kind / VIDEO TOKEN 必须为 null。
      */
     @Size(max = 16, message = "resolution 长度不能超过 16")
@@ -55,14 +55,14 @@ public class PricingRuleRequest {
     /**
      * 7x-2（V153）：提交期预估秒价（一行多分辨率参数），仅 VIDEO TOKEN 模式有效——TOKEN
      * 提交期无 token 维度，余额预检用「任务分辨率对应值×时长」估价；真实扣费仍按 total_tokens。
-     * 键 ⊆ general/480p/720p/1080p/4k（general=通用兜底；大小写不敏感，落库统一小写），值须≥0。
+     * 键 ⊆ general/480p/720p/768p/1080p/2k/4k（general=通用兜底；大小写不敏感，落库统一小写），值须≥0。
      * 其他 kind/SECOND 必须为 null（SECOND 估价直接用秒价行）。
      */
     private java.util.Map<String, BigDecimal> estPerResolution;
 
     /**
      * V162：TOKEN 每百万价按分辨率分档（一行多档），仅 VIDEO+TOKEN 模式有效——
-     * 键 ⊆ 480p/720p/1080p/4k（无 general——通用/兜底价=priceInputPerMillion 列；大小写不敏感，落库统一小写），
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general——通用/兜底价=priceInputPerMillion 列；大小写不敏感，落库统一小写），
      * 值=¥/百万 token 须>0；未配档位结算回落通用价。其他 kind/SECOND 必须为 null。
      */
     private java.util.Map<String, BigDecimal> tokenPricePerResolution;
