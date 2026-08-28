@@ -55,8 +55,12 @@ export function buildCopySet(
       height: size.height
     }
   })
-  // 诱导边：两端都在集内（自环保留——粘贴体自身成环，同 cloneEdgesForDuplicate 口径）
-  const innerEdges = edges.filter(e => ids.has(e.source) && ids.has(e.target))
+  // 诱导边：两端都在集内（自环保留——粘贴体自身成环，同 cloneEdgesForDuplicate 口径）。
+  // 浅拷贝断响应式链（P4 交叉 review Y1）：存源对象引用会让 remapEdges 在**粘贴时刻**读到
+  // 会话 class（如复制后又点了该边 → 选中态 class 被烤进新边，高亮永久残留）。
+  const innerEdges = edges
+    .filter(e => ids.has(e.source) && ids.has(e.target))
+    .map(e => ({ ...e }))
   const left = Math.min(...items.map(i => i.position.x))
   const top = Math.min(...items.map(i => i.position.y))
   const right = Math.max(...items.map(i => i.position.x + i.width))
@@ -103,7 +107,7 @@ export function planLabels(
 /** 边重映射序号：同毫秒批量克隆（多条边一次入集）防撞。 */
 let remapSeq = 0
 
-/** 诱导边 → 新边（端点换新节点 id；handles/type/style 随展开保留，同 cloneEdgesForDuplicate）。 */
+/** 诱导边 → 新边（端点换新节点 id；handles/type 随展开保留，同 cloneEdgesForDuplicate；class 为会话态不带走）。 */
 export function remapEdges(
   clip: CanvasClipboard,
   keyToNewId: Map<string, string>
@@ -113,8 +117,11 @@ export function remapEdges(
       const source = keyToNewId.get(e.source)
       const target = keyToNewId.get(e.target)
       if (!source || !target) return null // 理论不可达（诱导边端点必在 items），双保险
+      // 剥会话 class（P4 交叉 review Y1 双保险）：复制时刻边可能正处选中/淡化态，
+      // 烤进新边=永久高亮残留（applyVisualClasses 不重算存量边 class）。
+      const { class: _sessionClass, ...rest } = e
       return {
-        ...e,
+        ...rest,
         id: `edge-${source}-${target}-${Date.now()}-${remapSeq++}`,
         source,
         target

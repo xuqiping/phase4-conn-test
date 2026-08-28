@@ -121,4 +121,23 @@ describe('planLabels / remapEdges', () => {
     const out = remapEdges(clip, new Map([['a', 'x'], ['b', 'y']]))
     expect(new Set(out.map(e => e.id)).size).toBe(2)
   })
+
+  it('⑦ P4 review Y1：边快照断引用——复制后改源边对象，剪贴板不受影响', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edge: CanvasEdge = { id: 'old', source: 'a', target: 'b', type: 'deletable' }
+    const clip = buildCopySet(nodes, [edge], ['a', 'b'])!
+    // 复制后源边被点选注入会话 class（粘贴时刻烤进新边的场景）
+    edge.class = 'canvas-edge--selected'
+    const [remapped] = remapEdges(clip, new Map([['a', 'x'], ['b', 'y']]))
+    expect(remapped.class).toBeUndefined()
+  })
+
+  it('⑧ P4 review Y1：remapEdges 剥会话 class（复制时刻即带选中态也一并剥掉）', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edge: CanvasEdge = { id: 'old', source: 'a', target: 'b', type: 'deletable', class: 'canvas-edge--selected' }
+    const clip = buildCopySet(nodes, [edge], ['a', 'b'])!
+    const [remapped] = remapEdges(clip, new Map([['a', 'x'], ['b', 'y']]))
+    expect(remapped.class).toBeUndefined()
+    expect(remapped.type).toBe('deletable')
+  })
 })

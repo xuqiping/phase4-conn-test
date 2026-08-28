@@ -608,7 +608,11 @@ function pasteSubgraph() {
     const item = clip.items[i]
     const id = `node-${Date.now()}-${seqCounter++}`
     keyToNewId.set(item.key, id)
-    const data = { ...item.data, label: labels[i] }
+    // JSON 深拷贝（P4 交叉 review Y2）：浅展开会让同批粘贴体/剪贴板条目共享嵌套对象
+    // （cropRect 等），未来任一嵌套原地写会串写全部副本——违背「副本完全独立」口径。
+    // 同 buildCopySet/nodeClone 的深拷贝范式。
+    const data = JSON.parse(JSON.stringify(item.data)) as CanvasNodeData
+    data.label = labels[i]
     nodes.value.push({
       id,
       type: item.type,
