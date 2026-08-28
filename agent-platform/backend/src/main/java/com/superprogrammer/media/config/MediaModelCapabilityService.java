@@ -31,6 +31,8 @@ public class MediaModelCapabilityService {
     private static final List<String> RES_DICTIONARY = List.of("480p", "720p", "768p", "1080p", "2k", "4K");
     private static final List<String> RES_UPTO_4K = List.of("480p", "720p", "1080p", "4K");
     private static final List<String> RES_UPTO_1080 = List.of("480p", "720p", "1080p");
+    /** MVR-4：fast/mini 档仅 480p/720p（官方参数表——低档位不带 1080p）。 */
+    private static final List<String> RES_FAST_MINI = List.of("480p", "720p");
 
     private final ObjectMapper objectMapper;
 
@@ -177,15 +179,28 @@ public class MediaModelCapabilityService {
         return n != null && n.isNumber() ? n.asDouble() : dft;
     }
 
-    /** 前缀默认值：2.0 系多模态全开；1.0 系仅首帧图；未知模型走保守兜底 + WARN。 */
+    /** 前缀默认值：2.5 全量大关；2.0 系多模态全开（fast/mini 降档）；1.0 系仅首帧图；未知模型走保守兜底 + WARN。 */
     private MediaModelCapability defaultsFor(String modelId) {
         String id = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);
+        // MVR-4：Seedance 2.5（识别 -2-5 / -2.5 两种写法，须先于 2.0 前缀判）——
+        // 30图/10视频/10音频/总50、4-30s、≤4K、音频生成
+        if (id.contains("seedance-2-5") || id.contains("seedance-2.5")) {
+            return MediaModelCapability.builder()
+                    .maxImages(30).maxVideos(10).maxAudios(10).maxAttachments(50)
+                    .supportedRatios(ALL_RATIOS)
+                    .supportedResolutions(RES_UPTO_4K)
+                    .minDuration(4).maxDuration(30)
+                    .supportsGenerateAudio(true)
+                    .videoDataUri(true)
+                    .build();
+        }
         if (id.contains("seedance-2")) {
-            // SeedDance 2.0 全系（standard/fast/mini）：9图/3视频/3音频/总12
+            // SeedDance 2.0 全系（standard/fast/mini）：9图/3视频/3音频/总12；
+            // fast/mini 档仅 480p/720p（MVR-4 官方修正，原误标 1080p）
             return MediaModelCapability.builder()
                     .maxImages(9).maxVideos(3).maxAudios(3).maxAttachments(12)
                     .supportedRatios(ALL_RATIOS)
-                    .supportedResolutions(id.contains("fast") || id.contains("mini") ? RES_UPTO_1080 : RES_UPTO_4K)
+                    .supportedResolutions(id.contains("fast") || id.contains("mini") ? RES_FAST_MINI : RES_UPTO_4K)
                     .minDuration(4).maxDuration(15)
                     .supportsGenerateAudio(true)
                     .videoDataUri(true)

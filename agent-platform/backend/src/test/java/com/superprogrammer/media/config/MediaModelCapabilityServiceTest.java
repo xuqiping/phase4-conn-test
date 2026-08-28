@@ -29,11 +29,38 @@ class MediaModelCapabilityServiceTest {
     }
 
     @Test
-    void seedance2Fast_cappedAt1080p() {
+    void seedance2Fast_cappedAt480p720p() {
+        // MVR-4：fast/mini 档仅 480p/720p（官方参数表修正，原误标 1080p）
         MediaModelCapability cap = service.resolve("doubao-seedance-2-0-fast-260128", null);
         assertEquals(9, cap.getMaxImages());
         assertFalse(cap.getSupportedResolutions().contains("4K"));
-        assertTrue(cap.getSupportedResolutions().contains("1080p"));
+        assertFalse(cap.getSupportedResolutions().contains("1080p"));
+        assertTrue(cap.getSupportedResolutions().contains("480p"));
+        assertTrue(cap.getSupportedResolutions().contains("720p"));
+    }
+
+    // ---------------- MVR-4：Seedance 2.5 前缀默认 ----------------
+
+    @Test
+    void seedance25_dashWriting_fullCapability() {
+        // -2-5 写法：30图/10视频/10音频/总50、4-30s、≤4K、音频生成
+        MediaModelCapability cap = service.resolve("doubao-seedance-2-5-260901", null);
+        assertEquals(30, cap.getMaxImages());
+        assertEquals(10, cap.getMaxVideos());
+        assertEquals(10, cap.getMaxAudios());
+        assertEquals(50, cap.getMaxAttachments());
+        assertEquals(4, cap.getMinDuration());
+        assertEquals(30, cap.getMaxDuration());
+        assertTrue(cap.getSupportedResolutions().contains("4K"));
+        assertTrue(cap.isSupportsGenerateAudio());
+    }
+
+    @Test
+    void seedance25_dotWriting_sameCapability() {
+        // -2.5 写法与 -2-5 同命中（供应商模型 id 两种写法都可能出现）
+        MediaModelCapability cap = service.resolve("doubao-seedance-2.5-pro", null);
+        assertEquals(30, cap.getMaxImages());
+        assertEquals(30, cap.getMaxDuration());
     }
 
     @Test
