@@ -123,6 +123,17 @@
       >
         🔗
       </button>
+      <!-- 修复VII（2x 增补②）：一键整理布局——dagre LR 分层；选中时只排选中子图（组整组拉入） -->
+      <button
+        class="canvas-board__btn"
+        :disabled="!nodes.length"
+        title="一键整理布局：按上游→下游从左到右重排（选中节点时只排选中，Ctrl+Z 可撤回）"
+        aria-label="一键整理布局（从左到右重排，可撤回）"
+        :aria-disabled="!nodes.length"
+        @click="onAutoLayout"
+      >
+        ✨
+      </button>
       <button class="canvas-board__btn" title="放大" @click="() => vfZoomIn()">＋</button>
       <button class="canvas-board__btn" title="缩小" @click="() => vfZoomOut()">－</button>
       <button class="canvas-board__btn" title="适应视图" @click="() => vfFitView()">⤢</button>
@@ -140,6 +151,7 @@ import { uniqueLabel } from '@/utils/interpolate'
 import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
 import { isEditableTarget } from '@/utils/mediaLimits'
+import { computeAutoLayout } from '@/utils/autoLayout'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -1100,6 +1112,40 @@ function appendEdges(list: CanvasEdge[]) {
   for (const e of list) edges.value.push({ ...e })
   scheduleStoreReconcile()
   emit('structure-changed')
+}
+
+/**
+ * 修复VII（2x 增补②）：一键整理布局（LibTV 式，dagre LR 分层，VII-2）。
+ * 范围裁决（Q4）：有选中（多选优先，退单选）→ 只排选中子图；选中含组成员 → 整组拉入
+ * （组员并集，联动点 7）；无选中 → 全图（「只看关联」隐藏节点照排——可见性是会话态，
+ * 布局是结构操作）。一次 pushHistory('layout') + 一次 structure-changed（整理=一步撤回）；
+ * 组 memberIds 零改动（包围盒 rAF 派生自动跟随）；位置直编数组引用（updateNodeData 同款
+ * 响应式范式）；fitView 收尾在 nextTick 后（位置先进渲染周期，防读旧布局，坑 9）。
+ */
+function onAutoLayout() {
+  if (!nodes.value.length) return
+  const selected = multiSelectedIds.value.length
+    ? [...multiSelectedIds.value]
+    : (selectedNodeId.value ? [selectedNodeId.value] : [])
+  let includeIds: Set<string> | undefined
+  if (selected.length) {
+    includeIds = new Set(selected)
+    for (const g of groups.value) {
+      if (g.memberIds.some(id => includeIds.has(id))) {
+        for (const id of g.memberIds) includeIds.add(id)
+      }
+    }
+  }
+  const positions = computeAutoLayout(nodes.value, edges.value, includeIds ? { includeIds } : {})
+  if (!positions.size) return
+  pushHistory('layout')
+  for (const n of nodes.value) {
+    const p = positions.get(n.id)
+    if (p) n.position = { ...p }
+  }
+  scheduleStoreReconcile()
+  emit('structure-changed')
+  nextTick(() => vfFitView({ padding: 0.15, duration: 300 }))
 }
 
 defineExpose({

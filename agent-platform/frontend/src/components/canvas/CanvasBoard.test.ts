@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
 import CanvasBoard from './CanvasBoard.vue'
@@ -13,6 +14,9 @@ const VueFlowStub = vi.hoisted(() => ({
     'node-click', 'node-context-menu', 'node-drag-stop', 'edge-click', 'pane-click'],
   render: () => null
 }))
+// 修复VII Chunk2：onSelectionEnd 读 getSelectedNodes.value（ref 语义），mock 成 ref 形状
+// 并暴露可变源——测试里设选中集再 emit selection-end，驱动多选/单选路径。默认 [] 不影响既有用例。
+const selState = vi.hoisted(() => ({ nodes: [] as { id: string }[] }))
 vi.mock('@vue-flow/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vue-flow/core')>()
   return {
@@ -24,7 +28,7 @@ vi.mock('@vue-flow/core', async (importOriginal) => {
       zoomOut: vi.fn(),
       fitView: vi.fn(),
       getViewport: vi.fn(() => ({ x: 0, y: 0, zoom: 1 })),
-      getSelectedNodes: vi.fn(() => []),
+      getSelectedNodes: { get value() { return selState.nodes } },
       // 2x 四轮 S9：包围盒视口跟踪（真实 onMove 是 vue-flow 事件钩子；测试环境无拖拽，空实现够用）
       onMove: vi.fn(),
       vueFlowRef: { value: null }
@@ -277,5 +281,98 @@ describe('CanvasBoard · 修复IV C1a/C2 新增链', () => {
     const snap = vm(wrapper).getSnapshot()
     expect(snap.nodes[0].data.width).toBeUndefined()
     expect(snap.nodes[1].data).toMatchObject({ width: 400, height: 260 })
+  })
+})
+
+// 修复VII（2x 增补②）：一键整理布局（VII-2）——全图/子图双模式、组整组拉入、单步历史。
+describe('CanvasBoard · 一键整理布局（修复VII VII-2）', () => {
+  type BoardVm7 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => { nodes: { id: string; position: { x: number; y: number } }[] }
+    createGroup: (name: string, memberIds: string[]) => unknown
+    undo: () => void
+    canUndo: boolean
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm7
+  /** A→B→C 链 + 一条自环：初始坐标故意打乱（整理应重排成 LR 序）。 */
+  const chain = () => ({
+    nodes: [
+      { id: 'a', type: 'text', position: { x: 900, y: 20 }, data: { label: 'A' } },
+      { id: 'b', type: 'text', position: { x: 40, y: 340 }, data: { label: 'B' } },
+      { id: 'c', type: 'text', position: { x: 460, y: 660 }, data: { label: 'C' } }
+    ],
+    edges: [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'b', target: 'c' },
+      { id: 'e3', source: 'a', target: 'a' }
+    ]
+  })
+  const posOf = (w: ReturnType<typeof mount>, id: string) =>
+    vm(w).getSnapshot().nodes.find(n => n.id === id)!.position
+  const layoutBtn = (w: ReturnType<typeof mount>) => w.find('button[title^="一键整理布局"]')
+  const emissions = (w: ReturnType<typeof mount>) =>
+    (w.emitted('structure-changed') ?? []).length
+
+  it('① 全图整理：三节点重排为 LR 序（a.x+宽 ≤ b.x ≤ c.x），structure-changed 恰 1 次，可撤回', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(chain())
+    await nextTick() // nodes.length 驱动的 disabled 解除要等重渲染
+    const before = emissions(wrapper)
+    expect(layoutBtn(wrapper).attributes('disabled')).toBeUndefined()
+    await layoutBtn(wrapper).trigger('click')
+    const pa = posOf(wrapper, 'a')
+    const pb = posOf(wrapper, 'b')
+    const pc = posOf(wrapper, 'c')
+    expect(pa.x + 300).toBeLessThanOrEqual(pb.x) // text 默认宽 300（autoLayout 尺寸表）
+    expect(pb.x + 300).toBeLessThanOrEqual(pc.x)
+    expect(emissions(wrapper) - before).toBe(1)
+    expect(vm(wrapper).canUndo).toBe(true)
+  })
+
+  it('② 撤回一步：三个旧坐标全部还原（整理=单历史步）', async () => {
+    const wrapper = mount(CanvasBoard)
+    const src = chain()
+    vm(wrapper).loadSnapshot(src)
+    await nextTick()
+    const old = { a: { ...posOf(wrapper, 'a') }, b: { ...posOf(wrapper, 'b') }, c: { ...posOf(wrapper, 'c') } }
+    await layoutBtn(wrapper).trigger('click')
+    vm(wrapper).undo()
+    expect(posOf(wrapper, 'a')).toEqual(old.a)
+    expect(posOf(wrapper, 'b')).toEqual(old.b)
+    expect(posOf(wrapper, 'c')).toEqual(old.c)
+  })
+
+  it('③ 框选 a、c 子图整理：只 a/c 动、b 原地不动（联动点 5）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(chain())
+    await nextTick()
+    const bBefore = { ...posOf(wrapper, 'b') }
+    selState.nodes = [{ id: 'a' }, { id: 'c' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    await layoutBtn(wrapper).trigger('click')
+    expect(posOf(wrapper, 'b')).toEqual(bBefore)
+    expect(posOf(wrapper, 'a').x).not.toBe(900)
+  })
+
+  it('④ 选中含组成员 → 整组拉入：选 b（与 c 同组）→ c 也被排，a 不动（联动点 7）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(chain())
+    await nextTick()
+    vm(wrapper).createGroup('G1', ['b', 'c'])
+    const aBefore = { ...posOf(wrapper, 'a') }
+    const cBefore = { ...posOf(wrapper, 'c') }
+    selState.nodes = [{ id: 'b' }]
+    wrapper.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+    await layoutBtn(wrapper).trigger('click')
+    expect(posOf(wrapper, 'a')).toEqual(aBefore)
+    expect(posOf(wrapper, 'c').y).not.toBe(cBefore.y)
+  })
+
+  it('⑤ 无节点：按钮禁用（aria-disabled 联动）', () => {
+    const wrapper = mount(CanvasBoard)
+    expect(layoutBtn(wrapper).attributes('disabled')).toBeDefined()
+    expect(layoutBtn(wrapper).attributes('aria-disabled')).toBe('true')
   })
 })
