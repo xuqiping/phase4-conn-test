@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { NInput } from 'naive-ui'
+import { NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
 import PropertyPanel from './PropertyPanel.vue'
 import type { CanvasNode } from '@/types/canvas'
 
@@ -16,6 +16,7 @@ vi.mock('@/api/llm', () => ({
 }))
 
 // 修复III C2（2x-2）：图片模型目录 mock（defaultModel 标记驱动默认选中；estimate 失败静默不干扰断言）
+// 修复VI VE（2x#6）：视频模型目录 mock（listModels 带 capability，驱动视频面板动态参数）
 vi.mock('@/api/media', () => ({
   mediaApi: {
     listImageModels: vi.fn().mockResolvedValue({
@@ -24,6 +25,28 @@ vi.mock('@/api/media', () => ({
           { modelId: 'seedream-4.0', displayName: 'Seedream 4.0', providerName: 'Ark', capability: {} },
           { modelId: 'seedream-lite', displayName: 'Seedream Lite', providerName: 'Ark', defaultModel: true, capability: {} }
         ].map(m => ({ ...m, capability: m.capability as unknown as import('@/api/media').ImageModelCapability }))
+      }
+    }),
+    listModels: vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          {
+            modelId: 'seedance-2.0', displayName: 'Seedance 2.0', providerName: 'Ark',
+            maxImages: 3, maxVideos: 1, maxAudios: 1, maxAttachments: 4,
+            supportedRatios: ['16:9', '9:16', '1:1', '21:9', 'adaptive'],
+            supportedResolutions: ['480p', '720p', '1080p', '4K'],
+            minDuration: 4, maxDuration: 15, supportsGenerateAudio: true,
+            videoDataUri: false, referenceVideoEnabled: true
+          },
+          {
+            modelId: 't2v-only', displayName: 'T2V Only', providerName: 'Ark',
+            maxImages: 0, maxVideos: 0, maxAudios: 0, maxAttachments: 0,
+            supportedRatios: ['16:9', '9:16'],
+            supportedResolutions: ['480p', '720p'],
+            minDuration: 5, maxDuration: 10, supportsGenerateAudio: false,
+            videoDataUri: false, referenceVideoEnabled: false
+          }
+        ] as import('@/api/media').MediaModelVO[]
       }
     }),
     estimatePreview: vi.fn().mockRejectedValue(new Error('estimate off'))
@@ -509,6 +532,102 @@ describe('PropertyPanel · 修复VI 提示词 maxlength（2x#4）', () => {
     const ta = wrapper.findComponent({ name: 'MentionTextarea' })
     expect(ta.props('maxlength')).toBe(8000)
     expect(wrapper.text()).toContain('官方建议 ≤300 汉字 / 600 英文词')
+    wrapper.unmount()
+  })
+})
+
+// 修复VI VE（2x#6）：视频面板参数 capability 驱动（模型目录 /media/models 同源独立视频页）
+describe('PropertyPanel · 修复VI VE 视频参数 capability 对齐（2x#6）', () => {
+  function mkVideo(data: Record<string, unknown> = {}): CanvasNode {
+    const node = mkNode({ prompt: 'p', ...data })
+    node.type = 'video'
+    return node
+  }
+
+  it('选 seedance-2.0 → 比例/分辨率=能力清单，时长 min/max=4/15，音频开关在，首尾帧在', async () => {
+    const node = mkVideo({ model: 'seedance-2.0' })
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const selects = wrapper.findAllComponents(NSelect)
+    const ratio = selects.find(s => ((s.props('options') as { value: string }[] | undefined) ?? []).some(o => o.value === 'adaptive'))
+    expect(ratio).toBeTruthy()
+    expect((ratio!.props('options') as { value: string }[]).map(o => o.value)).toEqual(['16:9', '9:16', '1:1', '21:9', 'adaptive'])
+    const res = selects.find(s => ((s.props('options') as { value: string }[] | undefined) ?? []).some(o => o.value === '4K'))
+    expect(res).toBeTruthy()
+    const dur = wrapper.findComponent(NInputNumber)
+    expect(dur.props('min')).toBe(4)
+    expect(dur.props('max')).toBe(15)
+    const labels = wrapper.findAll('label').map(l => l.text())
+    expect(labels).toContain('生成音频')
+    expect(labels).toContain('首帧（可选，@选上游图节点作开头）')
+    wrapper.unmount()
+  })
+
+  it('选 t2v-only（maxImages=0/无音频）→ 首尾帧隐藏、生成音频隐藏、分辨率仅 480p/720p、时长 5-10', async () => {
+    const node = mkVideo({ model: 't2v-only' })
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const labels = wrapper.findAll('label').map(l => l.text())
+    expect(labels).not.toContain('生成音频')
+    expect(labels.some(l => l.includes('首帧'))).toBe(false)
+    expect(labels.some(l => l.includes('尾帧'))).toBe(false)
+    const selects = wrapper.findAllComponents(NSelect)
+    const res = selects.find(s => ((s.props('options') as { value: string }[] | undefined) ?? []).some(o => o.value === '4K'))
+    expect(res).toBeUndefined() // 该模型无 4K
+    const dur = wrapper.findComponent(NInputNumber)
+    expect(dur.props('min')).toBe(5)
+    expect(dur.props('max')).toBe(10)
+    wrapper.unmount()
+  })
+
+  it('未选模型 → 回落保守兜底档（原硬编码），面板不空', async () => {
+    const node = mkVideo({})
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const selects = wrapper.findAllComponents(NSelect)
+    const res = selects.find(s => ((s.props('options') as { value: string }[] | undefined) ?? []).some(o => o.value === '4K'))
+    expect(res).toBeTruthy()
+    const dur = wrapper.findComponent(NInputNumber)
+    expect(dur.props('min')).toBe(4)
+    expect(dur.props('max')).toBe(15)
+    wrapper.unmount()
+  })
+
+  it('切模型 → 参数收敛进新能力区间（分辨率取最近档、时长夹取、音频关、首尾帧清）', async () => {
+    const node = mkVideo({
+      model: 'seedance-2.0', ratio: '21:9', resolution: '4K', duration: 15,
+      generateAudio: true, firstFrameNodeId: 'img-1'
+    })
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    // 视频模型下拉：options 含 seedance-2.0 的 NSelect
+    const modelSelect = wrapper.findAllComponents(NSelect)
+      .find(s => ((s.props('options') as unknown as { children?: { value: string }[] }[] | undefined) ?? [])
+        .some(o => (o.children ?? []).some(c => c.value === 't2v-only')))
+    expect(modelSelect).toBeTruthy()
+    await modelSelect!.vm.$emit('update:value', 't2v-only')
+    await wrapper.vm.$nextTick()
+    expect(node.data.model).toBe('t2v-only')
+    expect(node.data.ratio).toBe('16:9') // 21:9 不支持 → 默认 16:9
+    expect(node.data.resolution).toBe('720p') // 4K 不支持 → 最近档 720p
+    expect(node.data.duration).toBe(10) // 15 超上限 → 夹到 10
+    expect(node.data.generateAudio).toBe(false)
+    expect(node.data.firstFrameNodeId).toBeUndefined()
+    expect(wrapper.emitted('data-changed')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('生成音频/水印开关 → 写 data + data-changed', async () => {
+    const node = mkVideo({ model: 'seedance-2.0' })
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const switches = wrapper.findAllComponents(NSwitch)
+    expect(switches.length).toBeGreaterThanOrEqual(2)
+    const before = (wrapper.emitted('data-changed') ?? []).length
+    await switches[0]!.vm.$emit('update:value', true)
+    await wrapper.vm.$nextTick()
+    expect([node.data.generateAudio, node.data.watermark]).toContain(true)
+    expect((wrapper.emitted('data-changed') ?? []).length).toBe(before + 1)
     wrapper.unmount()
   })
 })

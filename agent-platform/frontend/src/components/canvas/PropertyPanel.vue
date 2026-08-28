@@ -392,35 +392,55 @@
         <div class="prop-panel__field">
           <label>比例</label>
           <!-- 修复IV C1c（C-4 缺口3）：v-model 直绑改显式写+data-changed，变更即落库（与离散选择器同模式） -->
+          <!-- 修复VI VE（2x#6）：候选=所选模型 capability.supportedRatios（未选/失败回落保守兜底档） -->
           <n-select
             :value="(node.data.ratio as string) || null"
             size="small"
-            :options="ratioOpts"
+            :options="videoRatioOpts"
             @update:value="(v: string | null) => { if (node) { node.data.ratio = v ?? undefined; emit('data-changed') } }"
           />
         </div>
         <div class="prop-panel__field">
           <label>时长(秒)</label>
+          <!-- 修复VI VE（2x#6）：min/max=所选模型能力区间（Seedance 2.5 可到 30s） -->
           <n-input-number
             :value="(node.data.duration as number | undefined) ?? null"
             size="small"
-            :min="4"
-            :max="15"
+            :min="videoCapMinDuration"
+            :max="videoCapMaxDuration"
             @update:value="(v: number | null) => { if (node) { node.data.duration = v ?? undefined; emit('data-changed') } }"
           />
         </div>
         <!-- 修复IV A5（C-5/2x-5）：分辨率独占整行（原与时长同挤一行被截断，不选中看不到完整档位） -->
         <div class="prop-panel__field">
           <label>分辨率</label>
-          <!-- 修复IV C1c（C-4 缺口3）：显式写+data-changed 即落库 -->
+          <!-- 修复IV C1c（C-4 缺口3）：显式写+data-changed 即落库；修复VI VE 候选=capability.supportedResolutions -->
           <n-select
             :value="(node.data.resolution as string) || null"
             size="small"
-            :options="resOpts"
+            :options="videoResOpts"
             @update:value="(v: string | null) => { if (node) { node.data.resolution = v ?? undefined; emit('data-changed') } }"
           />
         </div>
+        <!-- 修复VI VE（2x#6）：生成音频/水印开关（与独立视频页同口径；切模型时按能力收敛） -->
+        <div v-if="videoCap?.supportsGenerateAudio" class="prop-panel__field">
+          <label>生成音频</label>
+          <n-switch
+            :value="(node.data.generateAudio as boolean | undefined) ?? false"
+            size="small"
+            @update:value="(v: boolean) => { if (node) { node.data.generateAudio = v; emit('data-changed') } }"
+          />
+        </div>
         <div class="prop-panel__field">
+          <label>水印</label>
+          <n-switch
+            :value="(node.data.watermark as boolean | undefined) ?? false"
+            size="small"
+            @update:value="(v: boolean) => { if (node) { node.data.watermark = v; emit('data-changed') } }"
+          />
+        </div>
+        <!-- 修复VI VE（2x#6）：首/尾帧仅对支持参考图的模型展示（maxImages=0 如 dashscope 文生视频） -->
+        <div v-if="videoCapMaxImages > 0" class="prop-panel__field">
           <label>首帧（可选，@选上游图节点作开头）</label>
           <n-select
             :value="(node.data.firstFrameNodeId as string | null) ?? null"
@@ -431,7 +451,7 @@
             @update:value="(v: string | null) => { if (node) { node.data.firstFrameNodeId = v ?? undefined; emit('data-changed') } }"
           />
         </div>
-        <div class="prop-panel__field">
+        <div v-if="videoCapMaxImages > 0" class="prop-panel__field">
           <label>尾帧（可选，@选上游图节点作结尾）</label>
           <n-select
             :value="(node.data.lastFrameNodeId as string | null) ?? null"
@@ -471,7 +491,7 @@
             size="small"
             clearable
             placeholder="默认（provider 首个视频模型）"
-            @update:value="(v: string | null) => { if (node) { node.data.model = v ?? undefined; emit('data-changed') } }"
+            @update:value="onVideoModelChange"
           />
         </div>
 
@@ -860,7 +880,9 @@ import type { ReverseMode } from '@/api/media'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
-import type { ImageModelCapability, ImageModelVO, MediaEstimateVO } from '@/api/media'
+import type {
+  ImageModelCapability, ImageModelVO, MediaEstimateVO, MediaModelVO, MediaRatio, MediaResolution
+} from '@/api/media'
 import MentionTextarea from './MentionTextarea.vue'
 import Lightbox from './Lightbox.vue'
 import type { UpstreamItem } from './upstream'
@@ -1216,6 +1238,8 @@ function onRefOpen(payload: { item: CanvasReferenceItem; url: string | null }) {
   if (payload.item.kind === 'image') {
     lightboxAlt.value = payload.item.label
     lightboxSrc.value = payload.url
+  } else if (payload.item.kind === 'audio') {
+    // 修复VI VE（2x#6）：音频已在缩略卡内嵌 audio 条自播，卡片点击不再开视频弹窗
   } else {
     playVideo.value = { label: payload.item.label, url: payload.url }
   }
@@ -1259,8 +1283,6 @@ const sceneCount = computed(() =>
 
 /** 修复VI（2x#4）：提示词长度上限=平台后端 PROMPT_MAX_LEN（>8000 提交即 400）；官方建议值仅文案提示 */
 const PROMPT_MAX_LEN = 8000
-const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
-const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))
 const audioModeOpts = [
   { label: '上传', value: 'upload' },
   { label: 'TTS 语音', value: 'tts' },
@@ -1269,15 +1291,17 @@ const audioModeOpts = [
 
 // ---------- C5 节点选模型（text/script=chat 模型；video=MEDIA 视频模型；image=生图模型） ----------
 const chatModels = ref<AvailableModel[]>([])
-const videoModels = ref<AvailableModel[]>([])
+const videoModels = ref<MediaModelVO[]>([])
 const imageModels = ref<ImageModelVO[]>([])
 onMounted(async () => {
   try {
-    const [c, v] = await Promise.all([llmApi.listAvailableModels(), llmApi.listVideoModels()])
+    const [c, v] = await Promise.all([llmApi.listAvailableModels(), mediaApi.listModels()])
     chatModels.value = c.data.data ?? []
+    // 修复VI VE（2x#6）：视频模型改 /media/models（MediaModelVO 带 capability，与独立视频页同源；
+    // llmApi.listVideoModels 无能力画像，参数只能硬编码——本 chunk 换源）
     videoModels.value = v.data.data ?? []
   } catch {
-    // 模型列表可选，失败静默（下拉空态不崩）
+    // 模型列表可选，失败静默（下拉空态不崩；视频参数回落下方保守兜底档，不白屏）
   }
   // 生图模型独立取：图片 API 与 chat/video 解耦，单独 try 不影响既有模型列表加载
   try {
@@ -1317,6 +1341,87 @@ function groupModels(list: { providerName: string; displayName: string; modelId:
 const chatModelOptions = computed(() => groupModels(chatModels.value))
 const videoModelOptions = computed(() => groupModels(videoModels.value))
 const imageModelOptions = computed(() => groupModels(imageModels.value))
+
+// ---------- 修复VI VE（2x#6）：视频节点参数 capability 驱动（对齐独立视频页 VideoGenView） ----------
+
+/** 保守兜底档：未选模型/列表加载失败/模型已下线时的回落值=原硬编码（画布不因配置缺位瘫痪）。 */
+const VIDEO_CAP_FALLBACK: MediaModelVO = {
+  modelId: '__fallback__',
+  displayName: 'fallback',
+  providerName: 'fallback',
+  maxImages: 1,
+  maxVideos: 0,
+  maxAudios: 0,
+  maxAttachments: 1,
+  supportedRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+  supportedResolutions: ['480p', '720p', '1080p', '4K'],
+  minDuration: 4,
+  maxDuration: 15,
+  supportsGenerateAudio: true,
+  videoDataUri: false,
+  referenceVideoEnabled: false
+}
+
+/** 当前视频节点能力：列表命中 → 该模型 capability；否则兜底档（未选模型也走兜底，参数区可用）。 */
+const videoCap = computed<MediaModelVO>(() => {
+  if (props.node?.type !== 'video') return VIDEO_CAP_FALLBACK
+  const modelId = props.node.data.model as string | undefined
+  return (modelId && videoModels.value.find(m => m.modelId === modelId)) || VIDEO_CAP_FALLBACK
+})
+const videoCapMinDuration = computed(() => videoCap.value.minDuration)
+const videoCapMaxDuration = computed(() => videoCap.value.maxDuration)
+const videoCapMaxImages = computed(() => videoCap.value.maxImages)
+
+/** 与独立视频页同文案（VideoGenView RATIO_LABELS/RES_LABELS 同口径拷贝，未知档位回落原值）。 */
+const VIDEO_RATIO_LABELS: Record<string, string> = {
+  '16:9': '16:9 横屏（推荐）', '9:16': '9:16 竖屏', '1:1': '1:1 方形',
+  '4:3': '4:3', '3:4': '3:4', '21:9': '21:9 超宽', 'adaptive': 'adaptive（沿用参考素材比例）'
+}
+const VIDEO_RES_LABELS: Record<string, string> = {
+  '480p': '480p（省额度）', '720p': '720p（推荐）', '1080p': '1080p（高清）', '4K': '4K（超高清）'
+}
+const videoRatioOpts = computed(() =>
+  videoCap.value.supportedRatios.map(v => ({ label: VIDEO_RATIO_LABELS[v] ?? v, value: v })))
+const videoResOpts = computed(() =>
+  videoCap.value.supportedResolutions.map(v => ({ label: VIDEO_RES_LABELS[v] ?? v, value: v })))
+
+/** 分辨率档位序（收敛「最近合法值」用：4K→新模型仅 480p/720p → 落 720p 而非清空）。键全大写统一比较。 */
+const RES_RANK: Record<string, number> = { '480P': 0, '768P': 1, '720P': 1, '1080P': 2, '2K': 3, '4K': 4 }
+function nearestResolution(current: string | undefined, supported: MediaResolution[]): MediaResolution {
+  if (!supported.length) return (current ?? '720p') as MediaResolution
+  if (current && supported.includes(current as MediaResolution)) return current as MediaResolution
+  const rank = current != null ? (RES_RANK[current.toUpperCase()] ?? 2) : 2
+  return supported.reduce((best, r) =>
+    Math.abs((RES_RANK[r.toUpperCase()] ?? 2) - rank) < Math.abs((RES_RANK[best.toUpperCase()] ?? 2) - rank) ? r : best
+  , supported[0])
+}
+
+/**
+ * 修复VI VE（2x#6）：切换视频模型 → 参数收敛进新能力区间（仿 onImageModelChange +
+ * 独立页 applyCapabilityConstraints）。回落取「最近合法值」不清空（清空丢用户语义）；
+ * 不支持生成音频 → 置 false；maxImages=0 → 清首/尾帧残留（后端对不支持字段传值直接拒绝）。
+ */
+function onVideoModelChange(model: string | null) {
+  const node = props.node
+  if (!node) return
+  node.data.model = model ?? undefined
+  const c = model ? videoModels.value.find(m => m.modelId === model) : undefined
+  if (c) {
+    const ratio = node.data.ratio as MediaRatio | undefined
+    if (!ratio || !c.supportedRatios.includes(ratio)) {
+      node.data.ratio = (c.supportedRatios.includes('16:9' as MediaRatio) ? '16:9' : c.supportedRatios[0])
+    }
+    node.data.resolution = nearestResolution(node.data.resolution as string | undefined, c.supportedResolutions)
+    const dur = Number(node.data.duration ?? 5)
+    node.data.duration = Math.min(Math.max(dur, c.minDuration), c.maxDuration)
+    if (!c.supportsGenerateAudio) node.data.generateAudio = false
+    if (c.maxImages === 0) {
+      delete node.data.firstFrameNodeId
+      delete node.data.lastFrameNodeId
+    }
+  }
+  emit('data-changed')
+}
 
 // ---------- 2x-3：图片节点 capability 驱动参数 ----------
 

@@ -256,3 +256,65 @@ describe('buildCanvasReferenceList', () => {
     expect(list).toEqual([])
   })
 })
+
+// 修复VI VE（2x#6）：@音频节点 → kind:'audio' 参考音频附件，图/视频/音频独立编号
+describe('resolveCanvasVideoAttachments · 音频引用（修复VI VE 2x#6）', () => {
+  function aud(id: string, fileId: string): CanvasVideoNodeLike {
+    return { id, type: 'audio', data: { fileId, label: id } }
+  }
+  function vid(id: string, fileId: string): CanvasVideoNodeLike {
+    return { id, type: 'video', data: { fileId, label: id } }
+  }
+
+  it('@音频 → 音频1 附件 kind=audio；三类各自独立编号不混排', () => {
+    const nodes = [img('a', 'a.png'), vid('v', 'v.mp4'), aud('s', 's.mp3')]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {}, '图 @{{node:a}} 视频 @{{node:v}} 音 @{{node:s}}', nodes, resolver
+    )
+    expect(rewrittenPrompt).toBe('图 图1 视频 视频1 音 音频1')
+    expect(refs).toEqual([
+      { fileId: 'a.png', kind: 'image' },
+      { fileId: 'v.mp4', kind: 'video' },
+      { fileId: 's.mp3', kind: 'audio' }
+    ])
+  })
+
+  it('同一音频多 @ 去重 + 同 fileId 跨类不混序', () => {
+    const nodes = [aud('s1', 's.mp3'), aud('s2', 's.mp3')]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {}, '@{{node:s1}} 和 @{{node:s2}}', nodes, resolver
+    )
+    expect(rewrittenPrompt).toBe('音频1 和 音频1')
+    expect(refs).toEqual([{ fileId: 's.mp3', kind: 'audio' }])
+  })
+
+  it('音频节点无 fileId → 走文本插值/断链（不产附件不崩）', () => {
+    const nodes = [{ id: 'empty', type: 'audio', data: {} }]
+    const { refs, rewrittenPrompt } = resolveCanvasVideoAttachments(
+      {}, '音 @{{node:empty}}', nodes as CanvasVideoNodeLike[], resolver
+    )
+    expect(rewrittenPrompt).toBe('音 【断链】')
+    expect(refs).toEqual([])
+  })
+
+  it('首尾帧与 @音频混用 → 本地拒绝（同互斥口径）', () => {
+    const nodes = [img('first', 'f.png'), aud('s', 's.mp3')]
+    expect(() => resolveCanvasVideoAttachments(
+      { firstFrameNodeId: 'first' }, '音 @{{node:s}}', nodes, resolver
+    )).toThrow('首帧/尾帧不能与参考媒体同时使用')
+  })
+})
+
+describe('buildCanvasReferenceList · 音频徽标（修复VI VE 2x#6）', () => {
+  it('@音频 → 音频N 徽标 kind=audio（与提交序号同源）', () => {
+    const nodes = [
+      { id: 's1', type: 'audio', data: { fileId: 's1.mp3' } },
+      { id: 's2', type: 'audio', data: { fileId: 's2.mp3' } }
+    ]
+    const list = buildCanvasReferenceList({}, '@{{node:s1}} @{{node:s2}}', nodes)
+    expect(list).toEqual([
+      { fileId: 's1.mp3', kind: 'audio', label: '音频1' },
+      { fileId: 's2.mp3', kind: 'audio', label: '音频2' }
+    ])
+  })
+})

@@ -5,6 +5,7 @@
     role="button"
     tabindex="0"
     :title="failed ? '预览加载失败' : `${item.label} · 点击${item.kind === 'video' ? '播放' : '放大'}`"
+    :class="{ 'ref-preview--audio': item.kind === 'audio' }"
     @click="onOpen"
     @keydown.enter.prevent="onOpen"
   >
@@ -21,6 +22,15 @@
       muted
     />
     <span v-else class="ref-preview__thumb ref-preview__placeholder">{{ failed ? '失败' : '…' }}</span>
+    <!-- 修复VI VE（2x#6）：音频——64x48 格内嵌原生 audio 条自播（无画面，点击角标区自开） -->
+    <audio
+      v-if="item.kind === 'audio'"
+      :src="url ?? undefined"
+      class="ref-preview__audio"
+      controls
+      preload="none"
+      @click.stop
+    />
     <!-- 播放角标（视频缩略右上角） -->
     <span v-if="item.kind === 'video'" class="ref-preview__play" aria-hidden="true">▶</span>
     <!-- 帧角色 / 图N / 视频N 徽标（与提交序号化同源） -->
@@ -123,6 +133,21 @@ function onOpen() {
     &[data-kind='video'] {
       background: rgba(30, 110, 255, 0.85);
     }
+
+    &[data-kind='audio'] {
+      background: rgba(0, 160, 120, 0.85);
+    }
+  }
+
+  // 音频卡：audio 条撑满卡位（原生控件暗色下可用；BEM 平级——不嵌 &__badge 内）
+  &--audio {
+    display: flex;
+    align-items: center;
+  }
+
+  &__audio {
+    width: 100%;
+    height: 28px;
   }
 }
 </style>

@@ -7,6 +7,7 @@
 // - 本引擎：画布视频节点专用 —— @{{node:id}} 指向 image 节点 → 收为 reference_image 附件 + 图N；
 //   指向 video 节点 → 收为 reference_video 附件 + 视频N（2x-4：此前 video 节点被降级成
 //   文本插值 "fileId:xxx.mp4" 拼进 prompt，供应商收不到 type:"video" 参数）；
+//   指向 audio 节点 → 收为 reference_audio 附件 + 音频N（修复VI VE 2x#6，三类独立编号）；
 //   其他节点 → 走文本插值；显式 firstFrameNodeId/lastFrameNodeId → 首尾帧附件。
 //
 // 纯函数（无 Vue 依赖），供 CanvasView.onRunVideo 调 + 单测覆盖。
@@ -43,8 +44,9 @@ export function resolveCanvasVideoAttachments(
   textResolve: MentionResolver
 ): { refs: AttachmentRef[]; rewrittenPrompt: string } {
   const c = collectCanvasRefs(nodeData, rawPrompt, nodes, textResolve)
-  if (c.frameNodeIds.size > 0 && (c.refImageFileIds.length > 0 || c.refVideoFileIds.length > 0)) {
-    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图/@参考视频或清空首尾帧')
+  if (c.frameNodeIds.size > 0
+    && (c.refImageFileIds.length > 0 || c.refVideoFileIds.length > 0 || c.refAudioFileIds.length > 0)) {
+    throw new Error('首帧/尾帧不能与参考媒体同时使用，请移除提示词中的 @参考图/@参考视频/@参考音频或清空首尾帧')
   }
   return { refs: c.refs, rewrittenPrompt: c.rewrittenPrompt }
 }
@@ -55,8 +57,8 @@ export function resolveCanvasVideoAttachments(
  */
 export interface CanvasReferenceItem {
   fileId: string
-  kind: 'image' | 'video'
-  /** 徽标文案：首帧/尾帧/图N/视频N（与 rewrittenPrompt 里的序号化写法一致）。 */
+  kind: 'image' | 'video' | 'audio'
+  /** 徽标文案：首帧/尾帧/图N/视频N/音频N（与 rewrittenPrompt 里的序号化写法一致）。 */
   label: string
 }
 
@@ -73,10 +75,13 @@ export function buildCanvasReferenceList(
   const c = collectCanvasRefs(nodeData, rawPrompt, nodes, () => undefined)
   let imgN = 0
   let vidN = 0
+  let audN = 0
   return c.refs.map((r) => {
     if (r.frameRole === 'first_frame') return { fileId: r.fileId, kind: 'image' as const, label: '首帧' }
     if (r.frameRole === 'last_frame') return { fileId: r.fileId, kind: 'image' as const, label: '尾帧' }
     if (r.kind === 'video') return { fileId: r.fileId, kind: 'video' as const, label: `视频${++vidN}` }
+    // 修复VI VE（2x#6）：@音频节点 → 参考音频附件（kind:'audio'，图/视频/音频各自独立编号不混排）
+    if (r.kind === 'audio') return { fileId: r.fileId, kind: 'audio' as const, label: `音频${++audN}` }
     return { fileId: r.fileId, kind: 'image' as const, label: `图${++imgN}` }
   })
 }
@@ -93,6 +98,7 @@ function collectCanvasRefs(
   frameNodeIds: Set<string>
   refImageFileIds: string[]
   refVideoFileIds: string[]
+  refAudioFileIds: string[]
 } {
   const byId = new Map(nodes.map((n) => [n.id, n]))
 
@@ -113,11 +119,14 @@ function collectCanvasRefs(
     refs.push({ fileId, kind: 'image', frameRole: role })
   }
 
-  // 2) @图节点 → 参考图；@视频节点 → 参考视频（按出现顺序去重，排除已是帧的）
+  // 2) @图节点 → 参考图；@视频节点 → 参考视频；@音频节点 → 参考音频（修复VI VE 2x#6；
+  //    按出现顺序去重，排除已是帧的；图/视频/音频三类各自独立编号）
   const refImageFileIds: string[] = [] // 已收参考图 fileId（去重+定序）
   const refVideoFileIds: string[] = [] // 已收参考视频 fileId（去重+定序，2x-4）
+  const refAudioFileIds: string[] = [] // 已收参考音频 fileId（去重+定序，VE）
   const nodeIdToImageIdx = new Map<string, number>() // 节点 id → 图N 序号（0-based）
   const nodeIdToVideoIdx = new Map<string, number>() // 节点 id → 视频N 序号（0-based）
+  const nodeIdToAudioIdx = new Map<string, number>() // 节点 id → 音频N 序号（0-based）
 
   MENTION_RE.lastIndex = 0
   const rewrittenPrompt = rawPrompt.replace(MENTION_RE, (_raw, kind: string, id: string) => {
@@ -132,10 +141,10 @@ function collectCanvasRefs(
       if (fileId) {
         let idx = nodeIdToImageIdx.get(id)
         if (idx === undefined) {
-          // 同 fileId 去重：已被前面的节点引用过则复用序号
+          // 同 fileId 去重：已被前面的节点引用过则复用序号（不重复 push——跨节点同 fileId 只产一条附件）
           const exist = refImageFileIds.indexOf(fileId)
           idx = exist >= 0 ? exist : refImageFileIds.length
-          refImageFileIds.push(fileId)
+          if (exist < 0) refImageFileIds.push(fileId)
           nodeIdToImageIdx.set(id, idx)
         }
         return `图${idx + 1}`
@@ -150,10 +159,24 @@ function collectCanvasRefs(
         if (idx === undefined) {
           const exist = refVideoFileIds.indexOf(fileId)
           idx = exist >= 0 ? exist : refVideoFileIds.length
-          refVideoFileIds.push(fileId)
+          if (exist < 0) refVideoFileIds.push(fileId)
           nodeIdToVideoIdx.set(id, idx)
         }
         return `视频${idx + 1}`
+      }
+    }
+    // 修复VI VE（2x#6）：@音频节点收为 kind=audio 附件（独立编号「音频N」，不混进图/视频序号）。
+    if (n?.type === 'audio' && !frameNodeIds.has(id)) {
+      const fileId = n.data.fileId as string | undefined
+      if (fileId) {
+        let idx = nodeIdToAudioIdx.get(id)
+        if (idx === undefined) {
+          const exist = refAudioFileIds.indexOf(fileId)
+          idx = exist >= 0 ? exist : refAudioFileIds.length
+          if (exist < 0) refAudioFileIds.push(fileId)
+          nodeIdToAudioIdx.set(id, idx)
+        }
+        return `音频${idx + 1}`
       }
     }
     // 其他节点 / 无 fileId → 文本插值（含 prompt+产物元信息）
@@ -161,13 +184,16 @@ function collectCanvasRefs(
     return v === undefined ? '【断链】' : v
   })
 
-  // 参考图/参考视频 attachments 追加在帧之后
+  // 参考图/参考视频/参考音频 attachments 追加在帧之后
   for (const fileId of refImageFileIds) {
     refs.push({ fileId, kind: 'image' })
   }
   for (const fileId of refVideoFileIds) {
     refs.push({ fileId, kind: 'video' })
   }
+  for (const fileId of refAudioFileIds) {
+    refs.push({ fileId, kind: 'audio' })
+  }
 
-  return { refs, rewrittenPrompt, frameNodeIds, refImageFileIds, refVideoFileIds }
+  return { refs, rewrittenPrompt, frameNodeIds, refImageFileIds, refVideoFileIds, refAudioFileIds }
 }
