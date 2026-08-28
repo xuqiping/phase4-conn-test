@@ -4,11 +4,18 @@ import type { ApiResponse } from './request'
 // 类型四分（V60 起，FR-002）：CHAT 对话 / EMBEDDING 向量 / VIDEO 视频 / IMAGE 生图（预留）
 export type ProviderCategory = 'CHAT' | 'EMBEDDING' | 'VIDEO' | 'IMAGE' | 'RERANK'
 
+/**
+ * 协议取值（视频模型扩展 RG 扩宽）：CHAT/EMBEDDING/RERANK 用对话协议（OPENAI_COMPATIBLE/ANTHROPIC）；
+ * VIDEO 用任务型协议 = 后端 MediaGenProvider.getId()（ark/minimax/dashscope，V163 起存量回填 ark，
+ * worker 与测试按钮按此路由适配器）；IMAGE 无协议。
+ */
+export type ProviderProtocol = 'OPENAI_COMPATIBLE' | 'ANTHROPIC' | 'ark' | 'minimax' | 'dashscope'
+
 export interface LlmProvider {
   id: number
   name: string
   displayName: string | null
-  protocol: 'OPENAI_COMPATIBLE' | 'ANTHROPIC'
+  protocol: ProviderProtocol
   apiEndpoint: string | null
   models: string | null
   config: string | null
@@ -23,7 +30,7 @@ export interface LlmProvider {
 export interface LlmProviderCreateRequest {
   name: string
   displayName?: string
-  protocol?: 'OPENAI_COMPATIBLE' | 'ANTHROPIC'
+  protocol?: ProviderProtocol
   apiEndpoint: string
   apiKey?: string
   models?: string
@@ -61,7 +68,7 @@ export interface TestConnectionResult {
 export interface LlmProviderExportItem {
   name: string
   displayName?: string | null
-  protocol?: 'OPENAI_COMPATIBLE' | 'ANTHROPIC' | null
+  protocol?: ProviderProtocol | null
   apiEndpoint: string
   /** 明文 API Key（导出含明文；导入空值则保留原 key） */
   apiKey?: string | null

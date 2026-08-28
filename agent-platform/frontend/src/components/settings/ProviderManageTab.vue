@@ -153,19 +153,38 @@ const form = ref<LlmProviderCreateRequest>({
   category: 'CHAT'
 })
 
-/** 协议仅对 CHAT/EMBEDDING/RERANK 有意义（VIDEO/IMAGE 是任务型协议，走媒体包）；
+/** 协议对 CHAT/EMBEDDING/RERANK 是对话协议；对 VIDEO 是任务型协议（视频模型扩展 RG：
+ * worker/测试按钮按 protocol 路由到 ark/minimax/dashscope 适配器，空回落 ark——
+ * 多渠道并存时必须可选可改）；IMAGE 仍固定走媒体包不显示。
  * EMBEDDING/RERANK 禁选 ANTHROPIC（Claude 无 embed / rerank 接口）。 */
 const showProtocol = computed(() =>
-  form.value.category === 'CHAT' || form.value.category === 'EMBEDDING' || form.value.category === 'RERANK')
+  form.value.category === 'CHAT' || form.value.category === 'EMBEDDING'
+  || form.value.category === 'RERANK' || form.value.category === 'VIDEO')
 const noAnthropic = computed(() =>
   form.value.category === 'EMBEDDING' || form.value.category === 'RERANK')
-const protocolOptions = computed(() => [
-  { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
-  { label: 'Anthropic / Claude', value: 'ANTHROPIC', disabled: noAnthropic.value }
-])
+/** VIDEO 任务协议注册表（=后端 MediaGenProvider.getId() 集合；V163 存量回填 ark）。 */
+const VIDEO_PROTOCOLS = ['ark', 'minimax', 'dashscope']
+const protocolOptions = computed(() => {
+  if (form.value.category === 'VIDEO') {
+    return [
+      { label: 'ark（火山方舟 Seedance）', value: 'ark' },
+      { label: 'minimax（MiniMax/Hailuo）', value: 'minimax' },
+      { label: 'dashscope（阿里百炼 HappyHorse）', value: 'dashscope' }
+    ]
+  }
+  return [
+    { label: 'OpenAI 兼容', value: 'OPENAI_COMPATIBLE' },
+    { label: 'Anthropic / Claude', value: 'ANTHROPIC', disabled: noAnthropic.value }
+  ]
+})
 watch(() => form.value.category, (cat) => {
   if ((cat === 'EMBEDDING' || cat === 'RERANK') && form.value.protocol === 'ANTHROPIC') {
     form.value.protocol = 'OPENAI_COMPATIBLE'
+  }
+  // 切到 VIDEO 且当前是对话协议值（新建默认 OPENAI_COMPATIBLE）→ 重置 ark；
+  // 已是任务协议值（编辑存量行）不动
+  if (cat === 'VIDEO' && !VIDEO_PROTOCOLS.includes(form.value.protocol ?? '')) {
+    form.value.protocol = 'ark'
   }
 })
 
@@ -173,7 +192,13 @@ watch(() => form.value.category, (cat) => {
 const endpointPlaceholder = computed(() => {
   switch (form.value.category) {
     case 'EMBEDDING': return 'https://api.openai.com/v1/embeddings'
-    case 'VIDEO': return 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks'
+    case 'VIDEO':
+      // 视频模型扩展 RG：按所选任务协议给对应官方建任务 URL 示例（全 URL 直发）
+      switch (form.value.protocol) {
+        case 'minimax': return 'https://api.minimax.io/v2/video_generation'
+        case 'dashscope': return 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
+        default: return 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks'
+      }
     case 'IMAGE': return 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
     case 'RERANK': return 'https://api.jina.ai/v1/rerank'
     default: return 'https://api.openai.com/v1/chat/completions'
