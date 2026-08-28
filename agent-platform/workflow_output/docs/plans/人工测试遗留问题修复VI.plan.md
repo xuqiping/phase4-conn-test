@@ -110,11 +110,11 @@ VA~VE 相互独立可并行；VF 收尾。
 
 ## 安全检查清单（P3 逐项验证）
 
-- [ ] paste/drop 上传走既有认证端点（/api/canvas/{id}/upload），无新端点
-- [ ] 文件类型白名单（image/*、video/*、audio/* MIME 判定），未知类型拒
-- [ ] 30MB 服务端闸门维持（前端预检仅体验）；400 话术随 KIND_MAX_BYTES 单源
-- [ ] 签名 URL 同视频链：permitAll+HMAC+TTL 900s，不新增攻击面；Controller 若扩路由仍签名校验
-- [ ] 无 PII 新增日志；副本连线不触碰权限/归属模型
+- [x] paste/drop 上传走既有认证端点（/api/canvas/{id}/upload），无新端点
+- [x] 文件类型白名单（image/*、video/*、audio/* MIME 判定），未知类型拒
+- [x] 30MB 服务端闸门维持（前端预检仅体验）；400 话术随 KIND_MAX_BYTES 单源
+- [x] 签名 URL 同视频链：permitAll+HMAC+TTL 900s，不新增攻击面；Controller 若扩路由仍签名校验
+- [x] 无 PII 新增日志；副本连线不触碰权限/归属模型
 
 ## 功能联动点清单（只列正向必漏 bug）
 
@@ -149,4 +149,4 @@ VA~VE 相互独立可并行；VF 收尾。
 ## 出口
 
 - [ ] VA~VF 全绿 + 人工测试 6 项过 → 勾销 2x 问题单对应未解决项、回写规格变更记录
-- [ ] **硬闸门：未经用户明确许可不写任何实现代码**
+- [x] **硬闸门：未经用户明确许可不写任何实现代码**
