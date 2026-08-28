@@ -257,6 +257,15 @@ public class MediaGenTaskWorker {
                 task.getModel(), LlmUsageLogEntity.KIND_VIDEO, tokensCost,
                 request.getDuration(), 0, usageStatus(flag), taskId, hasReference,
                 task.getProjectGroupId(), request.getResolution(), heldVideo);
+        // 2026-08-25 第二层 fail-closed：结算一分没扣到（余额/组池尽+兜底尽、价表被删等）→
+        // 不交付成功态，退预扣、标 FAILED（FAILED usage 已在计费侧落）。计费关/系统调用跳过。
+        if (chargedPoints == null && task.getUserId() != null && mediaBillingService.billingEnabled()) {
+            mediaBillingService.refundMediaCharged(task.getUserId(), heldVideo, heldVideo,
+                    LlmUsageLogEntity.KIND_VIDEO, taskId, task.getProjectGroupId());
+            boolean t = txService.markFailed(taskId, "结算扣费失败（积分不足或价表缺失），视频未交付");
+            log.warn("视频任务结算未扣分转 FAILED taskId={} userId={}", taskId, task.getUserId());
+            return new Outcome(false, t);
+        }
         boolean transitioned;
         try {
             transitioned = txService.markSucceeded(taskId, fileId, tokensCost, flag);
@@ -324,6 +333,14 @@ public class MediaGenTaskWorker {
         BigDecimal chargedPoints = mediaBillingService.settleMediaSuccess(task.getUserId(), task.getProviderId(),
                 task.getModel(), LlmUsageLogEntity.KIND_IMAGE, null, 0, imageCount,
                 LlmUsageLogEntity.STATUS_SUCCESS, taskId, false, task.getProjectGroupId(), null, heldImage);
+        // 2026-08-25 第二层 fail-closed（同视频）：一分没扣到 → 退预扣、标 FAILED、不交付。
+        if (chargedPoints == null && task.getUserId() != null && mediaBillingService.billingEnabled()) {
+            mediaBillingService.refundMediaCharged(task.getUserId(), heldImage, heldImage,
+                    LlmUsageLogEntity.KIND_IMAGE, taskId, task.getProjectGroupId());
+            boolean t = txService.markFailed(taskId, "结算扣费失败（积分不足或价表缺失），图片未交付");
+            log.warn("生图任务结算未扣分转 FAILED taskId={} userId={}", taskId, task.getUserId());
+            return new Outcome(false, t);
+        }
         boolean transitioned;
         try {
             transitioned = txService.markImageSucceeded(taskId, resultMeta, imageCount, MediaGenTask.FLAG_SUCCESS);

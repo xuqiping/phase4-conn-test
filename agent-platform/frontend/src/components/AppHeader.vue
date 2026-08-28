@@ -167,6 +167,9 @@ async function handleUserMenu(key: string) {
   if (key === 'logout') {
     await authStore.logout()
     router.push('/login')
+  } else if (key === 'profile') {
+    // 17x：个人信息（昵称/姓名）→ 设置页 profile tab（17x-2026-08-25 起全员可进设置）
+    router.push('/settings')
   }
 }
 </script>

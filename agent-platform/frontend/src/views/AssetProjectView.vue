@@ -487,7 +487,14 @@ async function onFileChange(e: Event) {
   showUploadTypePicker.value = true
 }
 
+/** 2x 修复：上传前 60MB 预检（对齐后端 multipart 上限）——超限前端直接拒，省得白传半天被 413。 */
+const UPLOAD_MAX_BYTES = 60 * 1024 * 1024
+
 async function doUpload(file: File, mediaType: string) {
+  if (file.size > UPLOAD_MAX_BYTES) {
+    message.error(`「${file.name}」${(file.size / 1024 / 1024).toFixed(1)}MB 超过单文件 60MB 上限，请压缩或拆分后重试`)
+    return
+  }
   try {
     await assetApi.upload(projectId.value, file, mediaType, { name: file.name })
     message.success('上传成功')

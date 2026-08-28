@@ -1,4 +1,5 @@
 import type { InputAttachmentVO } from '@/api/media'
+import { uuid } from '@/utils/uuid'
 
 export interface RestoredAttachment {
   id: string
@@ -19,7 +20,7 @@ export interface RestoredAttachmentBuckets {
 /** 把详情附件摘要转成表单槽位；不读文件，预览与权限复检由页面按需完成。 */
 export function bucketRestoredAttachments(
   input: InputAttachmentVO[],
-  idFactory: () => string = () => crypto.randomUUID()
+  idFactory: () => string = () => uuid()
 ): RestoredAttachmentBuckets {
   const result: RestoredAttachmentBuckets = {
     firstFrame: null,

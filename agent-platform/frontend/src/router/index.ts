@@ -191,7 +191,8 @@ const routes: RouteRecordRaw[] = [
         name: 'Settings',
         component: () => import('@/views/SettingsView.vue'),
         // 10x-3：设置仅 admin 可见（非 admin 守卫拦截重定向首页）
-        meta: { title: '设置', module: 'settings', requireAdmin: true, requireAnyPerm: ['llm:config'] }
+        // 17x-2026-08-25：放开给所有登录用户——管理类 tab 各自 v-if 自保（个人信息/安全设置全员可用）
+        meta: { title: '设置', module: 'settings' }
       },
       {
         path: 'wallet',

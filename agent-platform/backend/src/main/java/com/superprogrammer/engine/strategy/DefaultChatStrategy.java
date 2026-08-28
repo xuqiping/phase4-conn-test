@@ -28,6 +28,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
         LlmRequest request = LlmRequest.builder()
                 .model(resolveModel(context))
                 .messages(context.getMessageHistory())
+                // 17x-2026-08-25：会话归户——usage 落 session_id（组产出「查看结果」/SUM 封顶用）
+                .sessionId(context.getSessionId() == null ? null : String.valueOf(context.getSessionId()))
                 // 计划5 Step4：组池计费透传（null=个人）
                 .projectGroupId(context.getProjectGroupId())
                 .build();
@@ -50,6 +52,8 @@ public class DefaultChatStrategy implements ExecutionStrategy {
                 .model(resolveModel(context))
                 .messages(context.getMessageHistory())
                 .stream(true)
+                // 17x-2026-08-25：会话归户——usage 落 session_id（组产出「查看结果」/SUM 封顶用）
+                .sessionId(context.getSessionId() == null ? null : String.valueOf(context.getSessionId()))
                 // 计划5 Step4：组池计费透传（null=个人）
                 .projectGroupId(context.getProjectGroupId())
                 .build();

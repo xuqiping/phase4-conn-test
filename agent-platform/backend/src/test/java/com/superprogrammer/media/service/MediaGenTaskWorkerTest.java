@@ -112,6 +112,31 @@ class MediaGenTaskWorkerTest {
     }
 
     @Test
+    void succeeded_settleChargedNothing_marksFailedAndRefundsHold() {
+        // 2026-08-25 第二层 fail-closed：计费开 + 用户任务 + 结算返 null（一分没扣到）→
+        // 不交付：退预扣腿 + markFailed，绝不落 SUCCEEDED（白嫖封堵）
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        task.setHoldApplied(true);
+        task.setEstimatedCost(new BigDecimal("30"));
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(arkProvider.queryTask(eq("cct-1"), any())).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+                "https://ark/v.mp4", 200000L, null));
+        when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-1");
+        when(mediaBillingService.settleMediaSuccess(anyLong(), any(), anyString(), anyString(),
+                anyInt(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean(), any(), any(), any()))
+                .thenReturn(null);
+        when(mediaBillingService.billingEnabled()).thenReturn(true);
+
+        worker.poll();
+
+        verify(txService, never()).markSucceeded(anyLong(), anyString(), anyInt(), anyString());
+        verify(mediaBillingService).refundMediaCharged(eq(100L), eq(new BigDecimal("30")),
+                eq(new BigDecimal("30")), eq(LlmUsageLogEntity.KIND_VIDEO), eq(1L), isNull());
+        verify(txService).markFailed(eq(1L), contains("结算扣费失败"));
+    }
+
+    @Test
     void markSucceededThrows_refundsChargedPointsAndFails() {
         // 扣成功但 markSucceeded 落库失败：撤销已扣 + 抛交 process()→markFailed（spec §联动 失败全退边界）
         MediaGenTask task = pendingTask(1L, 100L, "cct-1");
