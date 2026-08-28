@@ -148,6 +148,7 @@
           @group-rename-request="onGroupRenameRequest"
           @open-director="onOpenDirector"
           @preview-media="onPreviewMedia"
+          @nodes-copied="onNodesCopied"
         />
 
         <!-- 修复III C6（2x-6）：单击媒体节点 → Lightbox 统一预览（复用 D1 组件） -->
@@ -2589,6 +2590,11 @@ function onPaletteClick(p: { type: string; label: string }) {
 const mediaPreview = ref<{ kind: 'image' | 'video'; src: string; poster?: string } | null>(null)
 function onPreviewMedia(payload: { kind: 'image' | 'video'; src: string; poster?: string }) {
   mediaPreview.value = payload
+}
+
+/** 修复VII（2x 增补①）：Ctrl+C 复制节点成功提示（Q1 子图复制，Board 无 message 上下文由本层出）。 */
+function onNodesCopied(count: number) {
+  message.success(`已复制 ${count} 个节点，Ctrl+V 在鼠标处粘贴`)
 }
 
 /**

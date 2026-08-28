@@ -23,7 +23,8 @@ vi.mock('@vue-flow/core', async (importOriginal) => {
     ...actual,
     VueFlow: VueFlowStub,
     useVueFlow: () => ({
-      project: vi.fn(),
+      // 修复VII Chunk4：pasteSubgraph 落点计算调 project（identity 直返，测试可断言落点）
+      project: vi.fn((p: { x: number; y: number }) => p),
       zoomIn: vi.fn(),
       zoomOut: vi.fn(),
       fitView: vi.fn(),
@@ -374,5 +375,147 @@ describe('CanvasBoard · 一键整理布局（修复VII VII-2）', () => {
     const wrapper = mount(CanvasBoard)
     expect(layoutBtn(wrapper).attributes('disabled')).toBeDefined()
     expect(layoutBtn(wrapper).attributes('aria-disabled')).toBe('true')
+  })
+})
+
+// 修复VII（2x 增补①）：节点复制粘贴（VII-1）——多选子图/落点/单步历史/优先级链。
+describe('CanvasBoard · 节点复制粘贴（修复VII VII-1）', () => {
+  type BoardVm8 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes: unknown[]; edges: unknown[] }) => void
+    getSnapshot: () => {
+      nodes: { id: string; position: { x: number; y: number }; data: Record<string, unknown> }[]
+      edges: { id: string; source: string; target: string }[]
+    }
+    undo: () => void
+    canUndo: boolean
+    clipboard: { items: unknown[]; pasteCount: number } | null
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm8
+  const key = (k: string, ctrl = true) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: ctrl, bubbles: true }))
+  /** 两节点一内边一外边（诱导边口径验证素材）。 */
+  const graph = () => ({
+    nodes: [
+      { id: 'a', type: 'text', position: { x: 100, y: 100 }, data: { label: 'A' } },
+      { id: 'b', type: 'text', position: { x: 500, y: 100 }, data: { label: 'B' } },
+      { id: 'out', type: 'text', position: { x: 900, y: 100 }, data: { label: 'OUT' } }
+    ],
+    edges: [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'b', target: 'out' }
+    ]
+  })
+  const select = async (w: ReturnType<typeof mount>, ids: string[]) => {
+    selState.nodes = ids.map(id => ({ id }))
+    w.getComponent(VueFlowStub).vm.$emit('selection-end')
+    await flushPromises()
+  }
+
+  it('① 框选 a、b Ctrl+C → 剪贴板 2 项 + emit nodes-copied(2)', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    expect(vm(wrapper).clipboard).not.toBeNull()
+    expect(vm(wrapper).clipboard!.items).toHaveLength(2)
+    expect(wrapper.emitted('nodes-copied')?.[0]).toEqual([2])
+  })
+
+  it('② Ctrl+V → 节点+2、内边+1 端点重映射到新 id、外边不带；structure-changed 恰 1 次', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    const before = (wrapper.emitted('structure-changed') ?? []).length
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(5) // 3 原有 + 2 粘贴
+    expect(snap.edges).toHaveLength(3) // 2 原有 + 1 内边克隆
+    const newIds = snap.nodes.filter(n => !['a', 'b', 'out'].includes(n.id)).map(n => n.id)
+    const cloned = snap.edges.filter(e => e.id !== 'e1' && e.id !== 'e2')[0]
+    expect(newIds).toContain(cloned.source)
+    expect(newIds).toContain(cloned.target)
+    expect((wrapper.emitted('structure-changed') ?? []).length - before).toBe(1)
+    expect(vm(wrapper).canUndo).toBe(true)
+  })
+
+  it('③ 连按两次 Ctrl+V：第二次整体 +32 错开（Q2）；label 逐次追加序号', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    key('v')
+    key('v')
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(7)
+    const clones = snap.nodes.filter(n => !['a', 'b', 'out'].includes(n.id))
+    // 画布原有 A/B → 第一贴 A 2/B 2、第二贴 A 3/B 3（三级去重：现有+批内）
+    expect(clones.map(n => String(n.data.label)).sort()).toEqual(['A 2', 'A 3', 'B 2', 'B 3'])
+    // 无鼠标记录 → 落点=视口中心（rect 0,0 → 0,0）+ pasteCount*32；两贴同名节点 x 差 32
+    const a1 = clones.find(n => n.data.label === 'A 2')!
+    const a2 = clones.find(n => n.data.label === 'A 3')!
+    expect(Math.abs(a1.position.x - a2.position.x)).toBe(32)
+  })
+
+  it('④ Ctrl+Z 一步整体撤：粘贴的节点+边全消', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    key('v')
+    vm(wrapper).undo()
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.nodes).toHaveLength(3)
+    expect(snap.edges).toHaveLength(2)
+  })
+
+  it('⑤ 焦点在输入框 Ctrl+C/V 放行（不劫持正常文本复制粘贴）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    expect(vm(wrapper).clipboard).not.toBeNull()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true }))
+    // 剪贴板未清、未新粘贴（输入框内两键全放行）
+    expect(vm(wrapper).clipboard).not.toBeNull()
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(3)
+    input.remove()
+  })
+
+  it('⑥ 无选中 Ctrl+C → 清剪贴板（外部图片粘贴通道恢复）；再 Ctrl+V 不建节点', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot(graph())
+    await select(wrapper, ['a', 'b'])
+    key('c')
+    expect(vm(wrapper).clipboard).not.toBeNull()
+    // Esc 清多选后无选中（联动点 1 反向）
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    key('c')
+    expect(vm(wrapper).clipboard).toBeNull()
+    key('v')
+    expect(vm(wrapper).getSnapshot().nodes).toHaveLength(3) // 原生链未拦、未建节点
+  })
+
+  it('⑦ 粘贴节点与原节点产物同显、任务/资产脱钩（buildCopySet 口径直查）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      nodes: [{
+        id: 'a', type: 'image', position: { x: 0, y: 0 },
+        data: { label: '主图', previewUrl: 'blob:x', fileId: 'f1', taskId: 't1', assetId: 7, status: 'success' }
+      }],
+      edges: []
+    })
+    await select(wrapper, ['a'])
+    key('c')
+    key('v')
+    const pasted = vm(wrapper).getSnapshot().nodes.find(n => n.id !== 'a')!
+    expect(pasted.data.previewUrl).toBe('blob:x')
+    expect(pasted.data.taskId).toBeUndefined()
+    expect(pasted.data.assetId).toBeUndefined()
+    expect(pasted.data.status).toBe('success')
   })
 })

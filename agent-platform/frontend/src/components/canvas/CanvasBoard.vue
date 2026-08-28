@@ -152,6 +152,7 @@ import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
 import { isEditableTarget } from '@/utils/mediaLimits'
 import { computeAutoLayout } from '@/utils/autoLayout'
+import { buildCopySet, planLabels, planPastePositions, remapEdges, type CanvasClipboard } from './canvasClipboard'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -275,6 +276,8 @@ const emit = defineEmits<{
   (e: 'pane-drop-files', payload: { files: File[]; position: { x: number; y: number } }): void
   /** 修复VI（2x 未解决①）：画布空白处 Ctrl+V 剪贴板图片 → 抛给父上传建图片节点。 */
   (e: 'pane-paste-files', payload: { files: File[]; position: { x: number; y: number } }): void
+  /** 修复VII（2x 增补①）：Ctrl+C 复制节点成功 → 父层 toast（Board 无 message 上下文）。 */
+  (e: 'nodes-copied', count: number): void
 }>()
 
 /** 导演台节点 → 画布桥：节点组件 inject 调 openEditor，本组件上抛父（Vue Flow 节点 emit 不冒泡）。 */
@@ -520,6 +523,13 @@ function onWindowKeydown(e: KeyboardEvent) {
     clearMultiSelection()
     return
   }
+  // 修复VII（2x 增补①）：Ctrl/Cmd+C 复制 / V 粘贴节点子图（VII-1）。先于 Delete 分支，
+  // 可编辑守卫在各 handler 内（焦点在输入框=正常复制/粘贴文本，联动点 2 半选边界）。
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase()
+    if (k === 'c') { onCopyKeydown(e); return }
+    if (k === 'v') { onPasteKeydown(e); return }
+  }
   if (e.key !== 'Delete' && e.key !== 'Backspace') return
   if (!selectedNodeId.value && !selectedEdgeId.value && !multiSelectedIds.value.length) return
   const t = e.target as HTMLElement | null
@@ -530,6 +540,88 @@ function onWindowKeydown(e: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener('keydown', onWindowKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onWindowKeydown))
+
+// ---- 修复VII（2x 增补①）：节点复制粘贴（VII-1，Q1 多选子图 / Q2 鼠标落点） ----
+
+/** 组件内剪贴板（会话态：重进画布即清，不跨画布——规格 §6/§8）。null=外部图片粘贴通道。 */
+const clipboard = ref<CanvasClipboard | null>(null)
+
+/** 正在打字判定（Delete 守卫同款全集：原生可编辑 + naive 控件 + @输入框，防复制粘贴劫持输入）。
+ * target 可能是 window/document（无 closest）——非 Element 直接按非打字处理。 */
+function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t instanceof HTMLElement ? t : null
+  if (!el) return false
+  return isEditableTarget(el) || !!el.closest('.n-input,.n-base-selection,.mention-ta')
+}
+
+/** Ctrl/Cmd+C：选中集（多选优先退单选）→ buildCopySet；无选中=清剪贴板且不拦（联动点 1 反向恢复）。 */
+function onCopyKeydown(e: KeyboardEvent) {
+  if (isTypingTarget(e.target)) return
+  const selected = multiSelectedIds.value.length
+    ? [...multiSelectedIds.value]
+    : (selectedNodeId.value ? [selectedNodeId.value] : [])
+  if (!selected.length) {
+    clipboard.value = null
+    return
+  }
+  const clip = buildCopySet(nodes.value, edges.value, selected)
+  if (!clip) {
+    clipboard.value = null
+    return
+  }
+  clipboard.value = clip
+  e.preventDefault()
+  emit('nodes-copied', clip.items.length)
+}
+
+/**
+ * Ctrl/Cmd+V：剪贴板非空 → preventDefault + 粘贴子图；为空 → 不拦（原生 paste 事件落
+ * onPaste 图片链，修复VI）。keydown preventDefault 后 paste 事件不再触发——天然防
+ * 「节点+图片双建」（坑 2，三级优先链：内部剪贴板 > 图片文件 > 浏览器默认）。
+ */
+function onPasteKeydown(e: KeyboardEvent) {
+  if (isTypingTarget(e.target)) return
+  if (!clipboard.value) return
+  e.preventDefault()
+  pasteSubgraph()
+}
+
+/**
+ * 成批原子粘贴（坑 1）：**禁走 addNode/appendEdges**（逐个 pushHistory('add')+'edge'
+ * 两次入栈 → 一次粘贴拆两步撤回、中间态「节点没了边还在」）。此处一次 pushHistory
+ * ('paste') + 批写 nodes/edges + 单次 structure-changed = 一步撤回，pasteCount 逐次
+ * +32 错开（Q2），落点=鼠标画布坐标（无记录回落视口中心，onPaste 同款口径）。
+ */
+function pasteSubgraph() {
+  const clip = clipboard.value
+  if (!clip) return
+  const rect = (vueFlowRef.value as HTMLElement | null)?.getBoundingClientRect()
+    ?? { left: 0, top: 0, width: 0, height: 0 }
+  const cx = hasPointer ? lastClient.x : rect.left + rect.width / 2
+  const cy = hasPointer ? lastClient.y : rect.top + rect.height / 2
+  const target = project({ x: cx - rect.left, y: cy - rect.top })
+  const positions = planPastePositions(clip, target)
+  const labels = planLabels(clip, nodes.value.map(n => String(n.data.label ?? '')))
+  pushHistory('paste')
+  const keyToNewId = new Map<string, string>()
+  positions.forEach((p, i) => {
+    const item = clip.items[i]
+    const id = `node-${Date.now()}-${seqCounter++}`
+    keyToNewId.set(item.key, id)
+    const data = { ...item.data, label: labels[i] }
+    nodes.value.push({
+      id,
+      type: item.type,
+      position: { x: p.x, y: p.y },
+      data,
+      style: nodeSizeStyle(data)
+    })
+  })
+  for (const e of remapEdges(clip, keyToNewId)) edges.value.push(e)
+  scheduleStoreReconcile()
+  emit('structure-changed')
+  clip.pasteCount++
+}
 
 /** 暴露给自定义边 DeletableEdge 的删除回调（统一走 removeEdges → emit structure-changed 落库）。 */
 provide('canvasRemoveEdge', (id: string) => {
@@ -1155,7 +1247,9 @@ defineExpose({
   // 2x 四轮 S9：组 CRUD（父组件批量工具条「设为组」/改名弹窗回调/@候选并集）
   createGroup, ungroupGroup, renameGroup, getGroups,
   // 2x 五轮：撤回/重做（版本恢复由父组件 loadSnapshot 承接并清栈）
-  undo, redo, canUndo, canRedo
+  undo, redo, canUndo, canRedo,
+  // 修复VII：子图粘贴（测试/父组件可调）+ 剪贴板态（只读断言用）
+  pasteSubgraph, clipboard
 })
 </script>
 
