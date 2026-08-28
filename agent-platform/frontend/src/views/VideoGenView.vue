@@ -467,6 +467,7 @@ import type { AssetFilePicked } from '@/types/asset'
 import type { MentionCandidate } from '@/types/canvas'
 import { fetchFilePreview } from '@/api/file'
 import { interpolateAttachmentPrompt } from '@/utils/attachmentMention'
+import { KIND_LIMIT_BYTES } from '@/utils/mediaLimits'
 import { bucketRestoredAttachments } from '@/utils/mediaTaskRestore'
 import { canAddVideoAttachment, type VideoAttachmentTarget } from '@/utils/videoAttachmentMode'
 
@@ -672,12 +673,8 @@ function onUseScriptForGen(payload: { promptText: string; sourceFileId?: string;
   })
 }
 
-/** 客户端预检上限（与后端 MediaStorageService 一致；base64 前原始大小） */
-const KIND_MAX_BYTES: Record<AttachmentKind, number> = {
-  image: 8 * 1024 * 1024,
-  video: 50 * 1024 * 1024,
-  audio: 15 * 1024 * 1024
-}
+/** 客户端预检上限（修复VI 单源 utils/mediaLimits，与后端 MediaStorageService 一致；base64 前原始大小） */
+const KIND_MAX_BYTES: Record<AttachmentKind, number> = KIND_LIMIT_BYTES
 const KIND_LABEL: Record<AttachmentKind, string> = { image: '参考图', video: '参考视频', audio: '参考音频' }
 
 const totalAttachments = computed(() => images.value.length + videos.value.length + audios.value.length + frameCount.value)

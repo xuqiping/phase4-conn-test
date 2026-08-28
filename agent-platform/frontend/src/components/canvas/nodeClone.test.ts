@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { cloneNodeForDuplicate } from './nodeClone'
-import type { CanvasNode } from '@/types/canvas'
+import { cloneEdgesForDuplicate, cloneNodeForDuplicate } from './nodeClone'
+import type { CanvasEdge, CanvasNode } from '@/types/canvas'
 
 // C4（2x-4）：节点副本纯函数。修复IV C3（C-8，决策 4「副本完全独立」）：
 // 产物四件保留 + 资产/任务链脱钩 + status 按产物回填。
@@ -68,5 +68,51 @@ describe('cloneNodeForDuplicate', () => {
   it('位置 +40/+40 右下错开', () => {
     const r = cloneNodeForDuplicate(mk({ position: { x: 10, y: 20 }, data: { label: 'x' } }))
     expect(r.position).toEqual({ x: 50, y: 60 })
+  })
+})
+
+// 修复VI（2x 未解决③，决策「连线克隆一份」）：副本连线克隆纯函数。
+function ek(src: Partial<CanvasEdge> & { source: string; target: string }): CanvasEdge {
+  return { id: `e-${src.source}-${src.target}`, ...src } as CanvasEdge
+}
+
+describe('cloneEdgesForDuplicate（修复VI 2x#3）', () => {
+  const A = 'node-a', B = 'node-b', C = 'node-c'
+
+  it('入边+出边各克隆一条指向/发自副本；原边不动（引用层面不篡改原数组）', () => {
+    const inEdge = ek({ source: A, target: B, sourceHandle: 'out-1', style: { stroke: '#fff' } })
+    const outEdge = ek({ source: B, target: C, targetHandle: 'in-2' })
+    const untouched = ek({ source: A, target: C })
+    const edges = [inEdge, outEdge, untouched]
+    const cloned = cloneEdgesForDuplicate(B, 'copy-b', edges)
+    expect(cloned).toHaveLength(2)
+    const clonedIn = cloned.find(e => e.source === A)!
+    expect(clonedIn.target).toBe('copy-b')
+    expect(clonedIn.sourceHandle).toBe('out-1') // handles 随展开保留
+    expect(clonedIn.style).toEqual({ stroke: '#fff' }) // 样式保留
+    const clonedOut = cloned.find(e => e.target === C)!
+    expect(clonedOut.source).toBe('copy-b')
+    expect(clonedOut.targetHandle).toBe('in-2')
+    // 原数组三边原样（原边不动）
+    expect(edges).toEqual([inEdge, outEdge, untouched])
+    expect(edges[0].target).toBe(B)
+  })
+
+  it('自环边（source==target==原）→ 克隆成副本自环', () => {
+    const self = ek({ source: B, target: B })
+    const cloned = cloneEdgesForDuplicate(B, 'copy-b', [self])
+    expect(cloned).toHaveLength(1)
+    expect(cloned[0].source).toBe('copy-b')
+    expect(cloned[0].target).toBe('copy-b')
+  })
+
+  it('与原节点无关的边不带；无任何相关边返回空数组', () => {
+    expect(cloneEdgesForDuplicate(B, 'copy-b', [ek({ source: A, target: C })])).toEqual([])
+  })
+
+  it('新边 id 唯一（同批多条不撞）', () => {
+    const edges = [ek({ source: A, target: B }), ek({ source: C, target: B }), ek({ source: B, target: A })]
+    const ids = cloneEdgesForDuplicate(B, 'copy-b', edges).map(e => e.id)
+    expect(new Set(ids).size).toBe(3)
   })
 })

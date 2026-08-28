@@ -8,6 +8,8 @@
     @drop="onDrop"
     @dblclick="onDblClick"
     @contextmenu.prevent
+    @mousemove="onRootMouseMove"
+    @paste="onPaste"
     @keydown.delete.prevent="deleteSelected"
     @keydown.backspace.prevent="deleteSelected"
     @keydown="onKeydownUndo"
@@ -137,6 +139,7 @@ import type { CanvasEdge, CanvasGroup, CanvasNode, CanvasNodeData, CanvasSnapsho
 import { uniqueLabel } from '@/utils/interpolate'
 import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
+import { isEditableTarget } from '@/utils/mediaLimits'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
 import VideoNode from './nodes/VideoNode.vue'
@@ -252,6 +255,14 @@ const emit = defineEmits<{
   (e: 'group-rename-request', group: CanvasGroup): void
   /** 导演台 Step 7：节点卡片按钮/双击 → 父开导演台 modal（节点 emit 不冒泡，走桥+DOM 双路）。 */
   (e: 'open-director', nodeId: string): void
+  /**
+   * 修复VI（2x 未解决②）：OS 本地文件拖入画布 → 抛给父分流（image/video/audio 各建对应
+   * 节点，未知类型/超限由父 toast 拒）。坐标已转画布坐标系。与 palette 内部拖拽
+   * （application/vueflow MIME）互斥：先查内部 MIME 再查 files。
+   */
+  (e: 'pane-drop-files', payload: { files: File[]; position: { x: number; y: number } }): void
+  /** 修复VI（2x 未解决①）：画布空白处 Ctrl+V 剪贴板图片 → 抛给父上传建图片节点。 */
+  (e: 'pane-paste-files', payload: { files: File[]; position: { x: number; y: number } }): void
 }>()
 
 /** 导演台节点 → 画布桥：节点组件 inject 调 openEditor，本组件上抛父（Vue Flow 节点 emit 不冒泡）。 */
@@ -545,9 +556,52 @@ function onDragOver(event: DragEvent) {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
 }
 
+/**
+ * 修复VI（2x 未解决①）：粘贴落点=最近鼠标的画布坐标（boardRoot 上 mousemove 记录；
+ * 无记录回落视口中心——如刚进页面未动鼠标就 Ctrl+V）。
+ */
+let lastClient = { x: 0, y: 0 }
+let hasPointer = false
+function onRootMouseMove(event: MouseEvent) {
+  lastClient = { x: event.clientX, y: event.clientY }
+  hasPointer = true
+}
+
+/**
+ * 修复VI（2x 未解决①）：画布空白 Ctrl+V 剪贴板图片 → emit 父上传建节点。
+ * 焦点在 input/textarea/contentEditable 时直接 return（事件会冒泡到 board 根，
+ * 不拦=正常粘文本；守卫函数 isEditableTarget 单测覆盖）。
+ */
+function onPaste(event: ClipboardEvent) {
+  if (isEditableTarget(event.target as HTMLElement | null)) return
+  const files = Array.from(event.clipboardData?.items ?? [])
+    .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+    .map(it => it.getAsFile())
+    .filter((f): f is File => !!f)
+  if (!files.length) return
+  const vf = vueFlowRef.value as HTMLElement | null
+  if (!vf) return
+  event.preventDefault()
+  const { left, top, width, height } = vf.getBoundingClientRect()
+  const cx = hasPointer ? lastClient.x : left + width / 2
+  const cy = hasPointer ? lastClient.y : top + height / 2
+  emit('pane-paste-files', { files, position: project({ x: cx - left, y: cy - top }) })
+}
+
 function onDrop(event: DragEvent) {
   const data = event.dataTransfer?.getData('application/vueflow')
-  if (!data) return
+  if (!data) {
+    // 修复VI（2x 未解决②）：无内部拖拽 MIME → OS 本地文件拖入，原样抛父分流建节点
+    const files = Array.from(event.dataTransfer?.files ?? [])
+    if (files.length) {
+      event.preventDefault()
+      const vf = vueFlowRef.value as HTMLElement | null
+      if (!vf) return
+      const { left, top } = vf.getBoundingClientRect()
+      emit('pane-drop-files', { files, position: project({ x: event.clientX - left, y: event.clientY - top }) })
+    }
+    return
+  }
   const parsed = JSON.parse(data)
   const { left, top } = (vueFlowRef.value as HTMLElement).getBoundingClientRect()
   const position = project({ x: event.clientX - left, y: event.clientY - top })
@@ -1035,8 +1089,21 @@ function addEdge(source: string, target: string) {
   scheduleStoreReconcile()
 }
 
+/**
+ * 修复VI（2x 未解决③）：程序化批量追加边（创建副本连线克隆用）。
+ * 与 addEdge 的差异：caller 已备好完整 CanvasEdge（含 handles/样式），直接入集；
+ * 整批一条历史步（副本操作=用户心智一步）；结构变更上抛父落库。
+ */
+function appendEdges(list: CanvasEdge[]) {
+  if (!list.length) return
+  pushHistory('edge')
+  for (const e of list) edges.value.push({ ...e })
+  scheduleStoreReconcile()
+  emit('structure-changed')
+}
+
 defineExpose({
-  addNode, addEdge, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
+  addNode, addEdge, appendEdges, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
   updateNodeData, focusNodeById, dragMode, setDragMode,
   // 2x 四轮 S9：组 CRUD（父组件批量工具条「设为组」/改名弹窗回调/@候选并集）
   createGroup, ungroupGroup, renameGroup, getGroups,

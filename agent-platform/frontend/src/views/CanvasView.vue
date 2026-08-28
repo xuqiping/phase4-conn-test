@@ -143,6 +143,8 @@
           @node-context-menu="onNodeContextMenu"
           @quick-add="onQuickAdd"
           @structure-changed="scheduleSave"
+          @pane-drop-files="onPaneDropFiles"
+          @pane-paste-files="onPaneDropFiles"
           @group-rename-request="onGroupRenameRequest"
           @open-director="onOpenDirector"
           @preview-media="onPreviewMedia"
@@ -410,7 +412,8 @@ import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
 import { collectUpstream } from '@/components/canvas/upstream'
-import { cloneNodeForDuplicate } from '@/components/canvas/nodeClone'
+import { cloneEdgesForDuplicate, cloneNodeForDuplicate } from '@/components/canvas/nodeClone'
+import { kindFromMime, sizeLimitError } from '@/utils/mediaLimits'
 import Lightbox from '@/components/canvas/Lightbox.vue'
 import { buildProposals, applyProposals, textLikeFieldOf, type AssociationProposal, type SkippedNode } from '@/utils/autoAssociate'
 import { BATCH_WINDOW, batchEligibilityOf, inducedTopoOrder, runDependencyScheduled } from '@/utils/batchRunner'
@@ -1674,6 +1677,48 @@ async function onUploadFile(payload: { node: CanvasNode; file: File }) {
 }
 
 /**
+ * 修复VI（2x 未解决①②）：画布空白 Ctrl+V 剪贴板图 / OS 拖文件进来 → 上传落 SOURCE_CANVAS
+ * 并建对应类型节点（image→图片、video→视频、audio→音频 audioMode=upload）。
+ * 未知类型/超限 toast 拒不建节点；多文件 +40/+40 错位；逐文件串行（沿画布上传链口径）；
+ * addNode 内部 emit structure-changed → scheduleSave 落库，失败 toast 后继续下一个。
+ */
+async function onPaneDropFiles(payload: { files: File[]; position: { x: number; y: number } }) {
+  if (!editingId.value) return
+  let placed = 0
+  for (const file of payload.files) {
+    const kind = kindFromMime(file.type)
+    if (!kind) {
+      message.error(`不支持该文件类型：${file.name}（支持拖入图片/视频/音频）`)
+      continue
+    }
+    const limitErr = sizeLimitError(kind, file.size, file.name)
+    if (limitErr) {
+      message.error(limitErr)
+      continue
+    }
+    const position = { x: payload.position.x + placed * 40, y: payload.position.y + placed * 40 }
+    placed++
+    try {
+      const res = await canvasApi.upload(editingId.value, file)
+      const f = res.data.data
+      const previewUrl = await fetchCanvasPreview(f.fileId)
+      const data: Record<string, unknown> = {
+        label: file.name.replace(/\.[^.]+$/, '') || file.name,
+        fileId: f.fileId,
+        previewUrl,
+        mime: f.mimeType,
+        status: 'success'
+      }
+      if (kind === 'audio') data.audioMode = 'upload'
+      boardRef.value?.addNode({ type: kind, position, data })
+    } catch (e: unknown) {
+      const msg = (e as { msg?: string })?.msg || '上传失败'
+      message.error(`${file.name}：${msg}`)
+    }
+  }
+}
+
+/**
  * C11 视频抽帧：调后端抽首/尾/指定秒 → 返新图片 fileId → 产图节点（带 fileId+预览）+ 自动连回视频节点。
  * 失败不产空节点（后端抛 → catch 标红源视频节点，不建图节点，plan 边界）。
  */
@@ -2547,14 +2592,20 @@ function onPreviewMedia(payload: { kind: 'image' | 'video'; src: string; poster?
 }
 
 /**
- * 修复III C4（2x-4）：创建副本——纯数据变换（nodeClone.ts：参数深拷贝、生成态清空回
- * idle、+40/+40 错开；label 撞名由 addNode 内 uniqueLabel 自动追加序号）。
- * 副本不带边/组关系（平节点口径，现分组结构不支持整组复制）；scheduleSave 立即排程落库。
+ * 修复III C4（2x-4）+ 修复VI（2x 未解决③，决策「连线克隆一份」）：创建副本——
+ * nodeClone.ts 参数深拷贝 +40/+40 错开（label 撞名由 addNode uniqueLabel 追加序号）；
+ * **连线克隆**：原节点入边/出边各克隆一条指向/发自副本（原边不动、handles/样式保留、
+ * 自环成副本自环，nodeClone.cloneEdgesForDuplicate）；组员关系仍不带（平节点口径）。
+ * appendEdges 内部 emit structure-changed，此处再 scheduleSave 兜底（无边的副本也立即落库）。
  */
 function onCloneNode(node: CanvasNode) {
   const partial = cloneNodeForDuplicate(node)
   const newId = boardRef.value?.addNode(partial)
-  if (newId) scheduleSave()
+  if (newId) {
+    const cloned = cloneEdgesForDuplicate(node.id, newId, boardRef.value?.getEdges() ?? [])
+    if (cloned.length) boardRef.value?.appendEdges(cloned)
+    scheduleSave()
+  }
 }
 
 // ---------- C6 双击画布空白处 → 快速加节点搜索框（ComfyUI 式） ----------
