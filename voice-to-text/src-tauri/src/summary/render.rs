@@ -10,7 +10,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use crate::summary::{load_summary_file, SummaryDraft};
+use crate::summary::{load_summary_file, FinalSummary, SummaryDraft};
 
 /// 导出的 Markdown 文件名（固定在 session_dir/exports/ 下）。
 pub const EXPORT_MD_NAME: &str = "summary.md";
@@ -35,6 +35,8 @@ pub struct TimelineChapter {
     pub end_ms: i64,
     /// true = 本章是本地兜底产物（LLM 失败降级），前端可打标提示。
     pub local_fallback: bool,
+    /// 章节总结（2026-08-20）：完全遵照选中侧重点生成的本章自由文本总结；可为空串。
+    pub chapter_summary: String,
     pub points: Vec<TimelinePoint>,
 }
 
@@ -49,6 +51,8 @@ pub struct Timeline {
     /// true = 整体或部分走了本地兜底。
     pub fallback: bool,
     pub chapters: Vec<TimelineChapter>,
+    /// 汇总定稿（2026-08-21）：点「汇总定稿」后有值；未汇总为 None。
+    pub final_summary: Option<FinalSummary>,
 }
 
 /// 章节标题：大纲与分段一一对应时取大纲条目，否则退化为「章节 N」。
@@ -88,6 +92,7 @@ pub fn build_timeline(session_dir: &Path) -> Result<Timeline, String> {
             start_ms: seg.start_ms,
             end_ms: seg.end_ms,
             local_fallback: seg.local_fallback,
+            chapter_summary: seg.chapter_summary.clone(),
             points: seg
                 .points
                 .iter()
@@ -106,6 +111,7 @@ pub fn build_timeline(session_dir: &Path) -> Result<Timeline, String> {
         outline: draft.outline.clone(),
         fallback: draft.fallback,
         chapters,
+        final_summary: draft.final_summary.clone(),
     })
 }
 
@@ -136,6 +142,20 @@ pub fn render_markdown(session_id: &str, draft: &SummaryDraft) -> String {
         md.push('\n');
     }
 
+    // 汇总定稿（若有）放在最前——这是去重后的最终版，导出供复习的主产物。
+    if let Some(fin) = &draft.final_summary {
+        md.push_str("## 汇总定稿（去重后最终章节）\n\n");
+        for c in &fin.chapters {
+            md.push_str(&format!(
+                "### {}（{} - {}）\n\n{}\n\n",
+                c.title,
+                fmt_ts(c.start_ms),
+                fmt_ts(c.end_ms),
+                c.summary
+            ));
+        }
+    }
+
     md.push_str("## 章节要点\n\n");
     for (title, seg) in timeline_chapters {
         md.push_str(&format!(
@@ -144,6 +164,9 @@ pub fn render_markdown(session_id: &str, draft: &SummaryDraft) -> String {
             fmt_ts(seg.start_ms),
             fmt_ts(seg.end_ms)
         ));
+        if !seg.chapter_summary.trim().is_empty() {
+            md.push_str(&format!("**章节总结**\n\n{}\n\n", seg.chapter_summary.trim()));
+        }
         for p in &seg.points {
             md.push_str(&format!("- [{}] {}\n", fmt_ts(p.ts_ms), p.text));
             if let Some(frame) = &p.frame_ref {
@@ -173,6 +196,84 @@ pub fn export_markdown(session_dir: &Path, session_id: &str) -> Result<PathBuf, 
     Ok(path)
 }
 
+/// 汇总定稿 Markdown 导出（2026-08-22 用户要求）：
+/// - 文件名 = 全课总标题（清洗非法字符，兜底「网课总结」）；
+/// - 每个最终章节：`## 标题（起 - 止）` + 本章总结 + 带时间戳要点；
+/// - **重复图片只呈现一次**：同一课件帧全课首次出现时贴图，之后仅文字要点。
+/// 落 `exports/<总标题>.md`，返回完整路径。无定稿 → Err。
+pub fn export_final_markdown(session_dir: &Path) -> Result<PathBuf, String> {
+    let draft = load_summary_file(session_dir)
+        .current
+        .ok_or("尚无总结草稿 —— 请先执行总结（summarize）")?;
+    let fin = draft
+        .final_summary
+        .as_ref()
+        .ok_or("尚无汇总定稿 —— 请先点「汇总定稿」")?;
+    let md = render_final_markdown_body(&draft);
+    let exports_dir = session_dir.join("exports");
+    std::fs::create_dir_all(&exports_dir).map_err(|e| format!("create exports dir: {e}"))?;
+    let path = exports_dir.join(format!("{}.md", sanitize_filename(&fin.title)));
+    std::fs::write(&path, md).map_err(|e| format!("write final markdown: {e}"))?;
+    log::info!("[summary] final markdown exported -> {}", path.display());
+    Ok(path)
+}
+
+/// 文件名清洗：去掉 Windows 非法字符与首尾空白，限长 60 字（超长截断）。
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => ' ',
+            _ => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        "网课总结".to_string()
+    } else {
+        cleaned.chars().take(60).collect()
+    }
+}
+
+/// 汇总定稿正文（纯函数，便于测试）。
+fn render_final_markdown_body(draft: &SummaryDraft) -> String {
+    let fin = draft.final_summary.as_ref().expect("caller checked");
+    let segs: std::collections::HashMap<usize, &crate::summary::SegmentSummary> = draft
+        .segments
+        .iter()
+        .map(|s| (s.segment_id, s))
+        .collect();
+    let mut seen_frames = std::collections::HashSet::new();
+    let mut md = String::new();
+    md.push_str(&format!("# {}\n\n", fin.title.trim()));
+    for c in &fin.chapters {
+        md.push_str(&format!(
+            "## {}（{} - {}）\n\n**本章总结**\n\n{}\n\n**要点**\n",
+            c.title,
+            fmt_ts(c.start_ms),
+            fmt_ts(c.end_ms),
+            c.summary.trim()
+        ));
+        for &sid in &c.merged_segment_ids {
+            if let Some(seg) = segs.get(&sid) {
+                for p in &seg.points {
+                    md.push_str(&format!("- [{}] {}\n", fmt_ts(p.ts_ms), p.text));
+                    if let Some(fr) = &p.frame_ref {
+                        if seen_frames.insert(fr.clone()) {
+                            md.push_str(&format!("  ![课件帧](../{fr})\n"));
+                        }
+                    }
+                }
+            }
+        }
+        md.push('\n');
+    }
+    md
+}
+
+
+
 // ---- 预留接口（PRD Should 级：导图 / Anki）----
 
 /// TODO(Should): 渲染 markmap 兼容的层级 Markdown（思维导图）。
@@ -198,12 +299,14 @@ mod tests {
             model: "k3-256k".into(),
             fallback: false,
             outline: vec!["第一章 引入".into(), "第二章 推导".into()],
+            final_summary: None,
             segments: vec![
                 SegmentSummary {
                     segment_id: 0,
                     start_ms: 0,
                     end_ms: 300_000,
                     local_fallback: false,
+                    chapter_summary: "本章围绕考试考点展开，重点是网络分类。".into(),
                     points: vec![SummaryPoint {
                         text: "课程目标介绍".into(),
                         ts_ms: 65_000,
@@ -215,6 +318,7 @@ mod tests {
                     start_ms: 300_000,
                     end_ms: 3_900_000,
                     local_fallback: true,
+                    chapter_summary: String::new(),
                     points: vec![SummaryPoint {
                         text: "公式推导过程".into(),
                         ts_ms: 3_661_000,
@@ -282,6 +386,9 @@ mod tests {
         assert!(md.starts_with("# 网课总结 — sess-1"));
         assert!(md.contains("## 大纲\n\n- 第一章 引入\n- 第二章 推导"));
         assert!(md.contains("### 第一章 引入（00:00 - 05:00）"));
+        // 章节总结输出在章标题下、要点前；空串的章节不输出该块。
+        assert!(md.contains("**章节总结**\n\n本章围绕考试考点展开，重点是网络分类。"));
+        assert!(!md.contains("**章节总结**\n\n\n"));
         assert!(md.contains("- [01:05] 课程目标介绍"));
         assert!(md.contains("![课件帧](../frames/change_0001.jpg)"));
         assert!(md.contains("- [1:01:01] 公式推导过程"));
@@ -295,6 +402,44 @@ mod tests {
         d.fallback = true;
         let md = render_markdown("s", &d);
         assert!(md.contains("⚠️ 本次总结包含本地兜底内容"));
+    }
+
+    /// 汇总定稿 Markdown：文件名 = 总标题（清洗非法字符）；重复帧图只贴一次。
+    #[test]
+    fn export_final_markdown_uses_title_and_dedupes_frames() {
+        let dir = std::env::temp_dir().join(format!("vtt_render_fin_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut d = sample_draft();
+        // 第 2 章要点也引用同一帧 → 验证去重只贴一张。
+        d.segments[1].points[0].frame_ref = Some("frames/change_0001.jpg".into());
+        d.final_summary = Some(crate::summary::FinalSummary {
+            title: "计算机网络：基础与拓扑/进阶".into(),
+            chapters: vec![crate::summary::FinalChapter {
+                title: "第一章合并".into(),
+                start_ms: 0,
+                end_ms: 3_900_000,
+                merged_segment_ids: vec![0, 1],
+                summary: "合并后的全章总结。".into(),
+            }],
+        });
+        save_new_draft(&dir, d).unwrap();
+        let path = export_final_markdown(&dir).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with("计算机网络：基础与拓扑 进阶"), "非法字符被清洗: {name}");
+        assert!(name.ends_with(".md"));
+        let md = std::fs::read_to_string(&path).unwrap();
+        assert!(md.starts_with("# 计算机网络：基础与拓扑/进阶"));
+        assert!(md.contains("## 第一章合并（00:00 - 1:05:00）"));
+        assert!(md.contains("**本章总结**\n\n合并后的全章总结。"));
+        // 两章要点各引用同一帧一次 → 全文只贴一张图。
+        assert_eq!(md.matches("![课件帧]").count(), 1, "重复帧图应只贴一次: {md}");
+        // 无定稿 → Err。
+        let d2 = std::env::temp_dir().join(format!("vtt_render_fin2_{}", std::process::id()));
+        std::fs::create_dir_all(&d2).unwrap();
+        draft_in(&d2);
+        assert!(export_final_markdown(&d2).unwrap_err().contains("尚无汇总定稿"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&d2);
     }
 
     #[test]

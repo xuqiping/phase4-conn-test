@@ -15,6 +15,10 @@ use std::path::PathBuf;
 /// Sample 1 in N frames. At the 30fps cap this is ~2Hz — enough to catch PPT
 /// page flips, cheap enough to never disturb encoding.
 pub const SAMPLE_EVERY: u32 = 15;
+/// 实时预览时间兜底（毫秒）：WGC 只在画面变化时投帧，静态窗口可能几秒
+/// 才来几帧，纯按帧计数采样会让 live.jpg 长时间不更新、前端面板"看不见"。
+/// 距上次采样超过该间隔时，无论帧计数一律补采一次。
+pub const PREVIEW_MIN_INTERVAL_MS: i64 = 500;
 
 /// SAD mean threshold (0-255 gray scale) above which a frame pair is a scene
 /// change. PPT 翻页通常 >> 20；讲师摄像头小窗口微动一般 < 5。
@@ -77,6 +81,25 @@ pub fn sad_mean(a: &[u8], b: &[u8]) -> f64 {
         .sum();
     sum as f64 / a.len() as f64
 }
+
+/// 近黑帧判定阈值（0-255 灰度均值）。2026-08-22 实机锚点 20260822_132246_905：
+/// 录制窗口最小化时 WGC **持续投递纯黑帧**（不是停帧——旧注释认知有误），
+/// 2h 课 237 帧里 126 帧亮度 0.0。真实课件页（含深色模板）均值远高于此。
+pub const BLACK_MEAN_THRESHOLD: f64 = 8.0;
+
+/// 近黑帧判定：灰度栅格均值 < [`BLACK_MEAN_THRESHOLD`]。
+/// 抽帧/翻页判定一律跳过近黑帧（黑屏期间归属上一页），避免黑↔正常来回
+/// 切换被误判成翻页、污染章节划分。
+pub fn is_near_black(grid: &[u8]) -> bool {
+    if grid.is_empty() {
+        return false;
+    }
+    let sum: u64 = grid.iter().map(|&v| v as u64).sum();
+    (sum as f64 / grid.len() as f64) < BLACK_MEAN_THRESHOLD
+}
+
+/// 黑屏持续超过此时长（ms）→ CaptureStatus.picture_lost = true（前端录制中告警）。
+pub const PICTURE_LOST_THRESHOLD_MS: i64 = 3000;
 
 /// 4×4 分块的最大块内 SAD（输入都是 32×32 判页栅格）。局部内容变化的判别器：
 /// 整窗录制时翻页只改课件区那几块，整帧均值被静态区域摊薄，块级最大值不会。
@@ -143,8 +166,44 @@ mod imp {
     use super::*;
     use std::fs::{File, OpenOptions};
     use std::io::Write;
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    use std::sync::Arc;
     use windows_capture::encoder::{ImageEncoder, ImageEncoderPixelFormat, ImageFormat};
     use windows_capture::frame::Frame;
+
+    /// 录制实时观测统计（2026-08-22 新需求「实时视频映射」）：捕获线程采样时
+    /// 写、`ScreenCapture::status` 查询线程读，全部原子无锁。挂在 Arc 上
+    /// 挂在 Arc 上与捕获线程/status 查询线程共享。
+    pub struct TapStats {
+        /// 0 = 画面正常；> 0 = 近黑起始 session 毫秒。
+        pub black_flag: AtomicI64,
+        /// 最近一次 live.jpg 预览落盘的 session 毫秒（0 = 尚无预览）。
+        pub preview_ms: AtomicI64,
+        /// 采样总数（约 2 次/秒）。
+        pub total_samples: AtomicU64,
+        /// 近黑采样数——black_samples/total_samples 即录制全程黑屏占比。
+        pub black_samples: AtomicU64,
+    }
+
+    impl TapStats {
+        pub fn new() -> Self {
+            Self {
+                black_flag: AtomicI64::new(0),
+                preview_ms: AtomicI64::new(0),
+                total_samples: AtomicU64::new(0),
+                black_samples: AtomicU64::new(0),
+            }
+        }
+    }
+
+    impl Default for TapStats {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// 实时预览图宽度（px），高度按画面比例。
+    pub const PREVIEW_W: usize = 480;
 
     /// Lives in the capture handler; samples frames and persists change
     /// thumbnails. All I/O failures degrade to "tap disabled" (O4) — the video/
@@ -158,10 +217,25 @@ mod imp {
         scratch: Vec<u8>,
         disabled: bool,
         trace: String,
+        /// 实时统计（黑屏占比/预览时间戳/black_flag 全在这里，单一共享 Arc）。
+        stats: Arc<TapStats>,
+        /// live.jpg 写入失败只记一次，不降级 tap（预览是观测件，非关键件）。
+        preview_failed: bool,
+        /// 上次采样时间（session 毫秒）：静态画面帧稀疏时按时间兜底补采。
+        last_sample_ts: i64,
     }
 
     impl SceneTap {
-        pub fn new(frames_dir: PathBuf, sample_every: u32, trace: String) -> Result<Self, String> {
+        /// `black_flag` 由调用方（capture::start_item）创建并共享给
+        /// ScreenCapture.status：tap 采样时更新（0=正常，>0=近黑起始 ms）。
+        /// `stats` 同理由 start_item 创建共享：tap 每次采样累计黑屏占比并
+        /// 落 live.jpg 实时预览（约 2 次/秒覆盖写）。
+        pub fn new(
+            frames_dir: PathBuf,
+            sample_every: u32,
+            trace: String,
+            stats: Arc<TapStats>,
+        ) -> Result<Self, String> {
             let changes_log = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -176,7 +250,21 @@ mod imp {
                 scratch: Vec::new(),
                 disabled: false,
                 trace,
+                stats,
+                preview_failed: false,
+                last_sample_ts: 0,
             })
+        }
+
+        /// 采样限速：帧计数（1-in-N）+ 时间兜底双条件——静态画面 WGC 帧稀疏，
+        /// 纯计数会让 live 预览长时间不更新；距上次采样超过
+        /// [`PREVIEW_MIN_INTERVAL_MS`] 时必采一次。
+        fn sample_due(&mut self, ts: i64) -> bool {
+            self.counter += 1;
+            if self.counter % self.sample_every == 0 {
+                return true;
+            }
+            ts - self.last_sample_ts >= PREVIEW_MIN_INTERVAL_MS
         }
 
         /// Called for every captured frame; internally rate-limits to
@@ -185,8 +273,7 @@ mod imp {
             if self.disabled {
                 return;
             }
-            self.counter += 1;
-            if self.counter % self.sample_every != 0 {
+            if !self.sample_due(ts) {
                 return;
             }
             let (w, h) = (frame.width() as usize, frame.height() as usize);
@@ -212,8 +299,7 @@ mod imp {
             if self.disabled {
                 return;
             }
-            self.counter += 1;
-            if self.counter % self.sample_every != 0 {
+            if !self.sample_due(ts) {
                 return;
             }
             if let Err(e) = self.sample_pixels_inner(pixels, w, h, ts) {
@@ -233,6 +319,43 @@ mod imp {
             if gray.is_empty() {
                 return Err(format!("unexpected buffer size {} for {}x{}", pixels.len(), w, h));
             }
+            // 实时统计 + live.jpg 预览（每次采样都做，黑帧也照贴——
+            // 用户要的正是"看清录制画面的实时情况"，黑了就让它黑着显示）。
+            self.stats.total_samples.fetch_add(1, Ordering::Relaxed);
+            self.last_sample_ts = ts;
+            let ph = (PREVIEW_W * h / w).max(1);
+            let preview = downsample_bgra(pixels, w, h, PREVIEW_W, ph);
+            match ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)
+                .and_then(|enc| enc.encode(&preview, PREVIEW_W as u32, ph as u32))
+                .map_err(|e| format!("preview encode: {e}"))
+                .and_then(|jpg| {
+                    std::fs::write(self.frames_dir.join("live.jpg"), jpg)
+                        .map_err(|e| format!("preview write: {e}"))
+                }) {
+                Ok(()) => self.stats.preview_ms.store(ts, Ordering::Relaxed),
+                Err(e) => {
+                    if !self.preview_failed {
+                        self.preview_failed = true;
+                        log::warn!("[screen][{}] live 预览写入失败（后续静默）: {e}", self.trace);
+                    }
+                }
+            }
+
+            // 近黑帧（窗口最小化/后台 → WGC 投纯黑帧）：更新黑屏标志后跳过
+            // 翻页判定（detector 的 last 保持黑屏前的页面，恢复后画面与旧页
+            // SAD 小，不会误报一次"翻页"）。黑帧本身上面已照贴进预览。
+            if is_near_black(&gray) {
+                self.stats.black_samples.fetch_add(1, Ordering::Relaxed);
+                if self.stats.black_flag.load(Ordering::Relaxed) == 0 {
+                    log::warn!(
+                        "[screen][{}] 近黑帧 @{}ms（窗口最小化/后台？），画面判定暂停",
+                        self.trace, ts
+                    );
+                }
+                self.stats.black_flag.store(ts, Ordering::Relaxed);
+                return Ok(());
+            }
+            self.stats.black_flag.store(0, Ordering::Relaxed);
             if !self.detector.push(gray) {
                 return Ok(());
             }
@@ -260,7 +383,7 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::SceneTap;
+pub use imp::{SceneTap, TapStats};
 
 // ---------------------------------------------------------------------------
 // Step 5 精细判页去重 (FR-104)：直方图 BHATTACHARYYA 判页 + pHash 去重 + 去抖。
@@ -497,7 +620,12 @@ impl PageExtractor {
 
     /// 喂一个采样帧的 32×32 灰度栅格；判为新页时返回 Some。
     /// 首帧无条件成为第 1 页（录制开始 = 第一页课件）。
+    /// 近黑帧（窗口最小化时 WGC 投递纯黑帧）直接跳过：不建页、不触发翻页、
+    /// 不污染 last_grid —— 黑屏期间画面归属上一页，恢复后继续正常判页。
     pub fn push(&mut self, ts_ms: i64, grid: &[u8]) -> Option<DetectedPage> {
+        if is_near_black(grid) {
+            return None;
+        }
         if self.last_grid.is_none() {
             self.last_grid = Some(grid.to_vec());
             return self.commit(ts_ms, grid);
@@ -607,6 +735,9 @@ mod pipeline {
     ) -> Result<Vec<FrameEntry>, String> {
         let video_dir = session_dir.join("video");
         let frames_dir = session_dir.join("frames");
+        if let Err(e) = std::fs::create_dir_all(&frames_dir) {
+            return Err(format!("create frames dir: {e}"));
+        }
         let manifest = match std::fs::read_to_string(video_dir.join("manifest.jsonl")) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -760,6 +891,35 @@ mod tests {
     }
 
     #[test]
+    /// 2026-08-22 黑帧防护：近黑帧（窗口最小化 → WGC 投纯黑帧）不建页、
+    /// 不触发翻页；黑屏期间归属上一页，恢复同页不误报新页。
+    #[test]
+    fn extractor_skips_near_black_frames() {
+        let cfg = ExtractConfig::default();
+        let page = grid_texture(1);
+        let other = grid_texture(99);
+        assert!(is_near_black(&vec![0u8; PAGE_GRID * PAGE_GRID]));
+        assert!(!is_near_black(&page));
+
+        // 黑屏夹在两页课件之间：黑帧全部跳过，只有真翻页产生新页。
+        let mut ex = PageExtractor::new(cfg.clone());
+        assert!(ex.push(0, &page).is_some(), "首页");
+        assert!(ex.push(1_000, &vec![0u8; PAGE_GRID * PAGE_GRID]).is_none(), "黑帧跳过");
+        assert!(ex.push(2_000, &vec![3u8; PAGE_GRID * PAGE_GRID]).is_none(), "近黑帧跳过");
+        assert!(ex.push(60_000, &page).is_none(), "恢复同页不新建");
+        assert_eq!(ex.pages().len(), 1);
+        // 黑屏后真翻页仍能检出（变化帧需静置满去抖窗才提交）。
+        assert!(ex.push(120_000, &other).is_none(), "变化帧先挂 pending");
+        assert!(ex.push(123_000, &other).is_some(), "静置满窗提交新页");
+        assert_eq!(ex.pages().len(), 2);
+
+        // 开录即黑屏（最小化状态下开录）：黑帧不成为第 1 页，首个正常帧才是。
+        let mut ex2 = PageExtractor::new(cfg);
+        assert!(ex2.push(0, &vec![0u8; PAGE_GRID * PAGE_GRID]).is_none());
+        assert!(ex2.push(500, &page).is_some());
+        assert_eq!(ex2.pages().len(), 1);
+    }
+
     fn detector_fires_on_page_flip() {
         let mut d = SceneDetector::new(SAD_THRESHOLD);
         d.push(vec![30u8; GRID_W * GRID_H]);

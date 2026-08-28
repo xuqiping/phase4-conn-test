@@ -7,9 +7,14 @@
 //!   [`FrameMeta`] (pixels stay on the GPU; Step 4 will encode them in-handler).
 //! - [`ScreenCapture::stop`] — halt and release.
 //!
-//! Minimized / closed window handling: WGC simply stops delivering frames when
-//! the window is minimized; [`ScreenCapture::status`] reports `stalled = true`
-//! after [`STALL_THRESHOLD_MS`] without a frame so the UI can warn the user.
+//! Minimized / closed window handling: **2026-08-22 实测修正认知**——窗口最小化时
+//! WGC 并不停帧，而是**持续投递纯黑帧**（锚点会话 20260822_132246_905：2h 课
+//! 237 帧里 126 帧亮度 0.0，期间音频/转写正常）。两个对策：
+//! - 抽帧/翻页判定跳过近黑帧（scene_detect::is_near_black），黑屏期间归属上一页；
+//! - [`ScreenCapture::status`] 上报 `picture_lost = true`（黑屏持续 >
+//!   [`PICTURE_LOST_THRESHOLD_MS`](scene_detect::imp::PICTURE_LOST_THRESHOLD_MS)），
+//!   前端录制中即可提醒用户还原窗口。
+//! 若窗口被最小化后彻底无帧（老系统行为），`stalled = true` 仍兜底。
 //! When the window is closed, `on_closed` fires and the capture ends.
 
 use serde::{Deserialize, Serialize};
@@ -68,6 +73,15 @@ pub struct CaptureStatus {
     pub last_frame_ts: i64,
     /// True when no frame arrived within [`STALL_THRESHOLD_MS`] (likely minimized).
     pub stalled: bool,
+    /// True when sampled frames have been near-black for > 3s（2026-08-22：
+    /// 最小化窗口 WGC 投纯黑帧而非停帧）。前端提示用户还原被录窗口。
+    pub picture_lost: bool,
+    /// 最近一次 live.jpg 实时预览落盘的 session 毫秒（0 = 尚无）。
+    /// 前端录制中据此刷新 `sessions/<id>/frames/live.jpg` 的显示
+    /// （2026-08-22「实时视频映射」需求）。
+    pub preview_ms: i64,
+    /// 录制全程近黑采样占比（0.0-1.0）：黑屏多不多一眼可见。
+    pub black_ratio: f64,
 }
 
 /// Video-recording attachment for a capture (plan Step 4). When present, the
@@ -148,6 +162,8 @@ mod imp {
 
     type HandlerError = Box<dyn std::error::Error + Send + Sync>;
 
+    use std::sync::atomic::Ordering;
+
     /// Everything the handler needs, delivered via Settings flags.
     struct CaptureFlags {
         clock: Arc<SessionClock>,
@@ -159,6 +175,10 @@ mod imp {
         record: Option<RecordConfig>,
         /// 区域框选模式：Some = 捕显示器后按矩形裁剪（像素路径喂抽帧/编码）。
         crop: Option<RegionRect>,
+        /// 实时观测统计（black_flag / 黑屏占比 / live 预览时间戳）：
+        /// start_item 创建后两处共享——进 flags 给 handler 建 tap，
+        /// ScreenCapture 留一份供 status 查询。
+        stats: std::sync::Arc<crate::screen::scene_detect::TapStats>,
     }
 
     /// The per-capture callback object living on the WGC thread.
@@ -178,8 +198,15 @@ mod imp {
         encoder_failed: bool,
         /// Step 4 轻量抽帧：SAD 预筛，存变化帧缩略图 + ts（不阻塞录制）。
         scene_tap: Option<SceneTap>,
-        /// 区域裁剪矩形（已按首帧实际尺寸收敛，永不越界）。
+        /// 区域裁剪矩形（原始值只读保留；每帧按实际尺寸算交集副本，
+        /// 不就地改——最小化窗口期间 WGC 帧尺寸会缩小，就地 clamp 会把
+        /// 矩形永久压坏、还原后也无法恢复，2026-08-22 实测踩坑）。
         crop: Option<RegionRect>,
+        /// 裁剪区域连续失效（帧尺寸缩小/越界无交集）状态：true=正在丢画面。
+        crop_lost: bool,
+        /// 实时观测统计（与 SceneTap 共享；crop 失效时 tap 收不到像素，
+        /// 由 handler 直接置 black_flag，否则 picture_lost 告警永远不触发）。
+        stats: std::sync::Arc<crate::screen::scene_detect::TapStats>,
         /// 裁剪帧像素去 padding 的 scratch（复用避免每帧分配）。
         crop_scratch: Vec<u8>,
     }
@@ -194,7 +221,12 @@ mod imp {
             // SAD 预筛 tap：初始化失败只降级自身，不挡录制（O4）。
             let scene_tap = f.record.as_ref().and_then(|rec| {
                 rec.frames_dir.as_ref().and_then(|dir| {
-                    match SceneTap::new(dir.clone(), SAMPLE_EVERY, rec.trace.clone()) {
+                    match SceneTap::new(
+                        dir.clone(),
+                        SAMPLE_EVERY,
+                        rec.trace.clone(),
+                        f.stats.clone(),
+                    ) {
                         Ok(tap) => Some(tap),
                         Err(e) => {
                             log::error!("[screen] {} scene tap disabled (init failed): {e}", f.label);
@@ -216,6 +248,8 @@ mod imp {
                 encoder_failed: false,
                 scene_tap,
                 crop: f.crop,
+                crop_lost: false,
+                stats: f.stats,
                 crop_scratch: Vec::new(),
             })
         }
@@ -241,17 +275,41 @@ mod imp {
             let (mut w, mut h) = (frame.width(), frame.height());
             if self.crop.is_some() {
                 // 区域框选模式：D3D11 裁剪 → 像素路径喂抽帧 + 编码。
-                // 首帧把矩形收敛到实际帧尺寸内（多屏/缩放导致的越界只裁交集）。
-                let rect = self.crop.as_mut().unwrap();
-                rect.width = rect.width.min(w.saturating_sub(rect.x)) & !1;
-                rect.height = rect.height.min(h.saturating_sub(rect.y)) & !1;
-                let rect = *rect;
+                // 每帧按实际尺寸算交集**副本**（多屏/缩放/最小化期间帧变小只裁
+                // 交集）；原始矩形不动，帧尺寸恢复后自动回到完整裁剪。
+                let orig = *self.crop.as_ref().unwrap();
+                let rect = RegionRect {
+                    x: orig.x,
+                    y: orig.y,
+                    width: orig.width.min(w.saturating_sub(orig.x)) & !1,
+                    height: orig.height.min(h.saturating_sub(orig.y)) & !1,
+                };
                 if rect.width < 2 || rect.height < 2 {
-                    log::error!(
-                        "[screen] {} region {:?} outside frame {}x{}, skip frame",
-                        self.label, rect, w, h
-                    );
+                    // 无交集 = 画面丢失（窗口最小化等）：置 black_flag 让
+                    // picture_lost 告警生效；只在进入/退出时各记一条日志，
+                    // 不逐帧刷屏。tap 收不到像素不会清标志，还原后下方清。
+                    self.stats
+                        .black_flag
+                        .compare_exchange(
+                            0,
+                            ts,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        )
+                        .ok();
+                    if !self.crop_lost {
+                        self.crop_lost = true;
+                        log::error!(
+                            "[screen] {} region {:?} outside frame {}x{} (window minimized?), picture lost",
+                            self.label, orig, w, h
+                        );
+                    }
                 } else {
+                    if self.crop_lost {
+                        self.crop_lost = false;
+                        self.stats.black_flag.store(0, Ordering::Relaxed);
+                        log::info!("[screen] {} region crop recovered {}x{}", self.label, rect.width, rect.height);
+                    }
                     // scratch 先 take 成局部变量：pixels 借用它时 self 仍可
                     // 整借给 encode_pixels / scene_tap（否则 E0499）。
                     let mut scratch = std::mem::take(&mut self.crop_scratch);
@@ -517,6 +575,8 @@ mod imp {
         frames_captured: u64,
         last_frame_ts: Option<i64>,
         label: String,
+        /// 实时观测统计（black_flag / 黑屏占比 / live 预览），status() 读。
+        stats: std::sync::Arc<crate::screen::scene_detect::TapStats>,
     }
 
     impl ScreenCapture {
@@ -634,6 +694,7 @@ mod imp {
             let clock = clock.unwrap_or_else(|| Arc::new(SessionClock::new()));
             let started_ts = clock.now_ms();
             let (sender, receiver) = mpsc::channel::<FrameMeta>();
+            let stats = std::sync::Arc::new(crate::screen::scene_detect::TapStats::new());
 
             // 30fps cap only where the platform supports it (IGraphicsCaptureSession5);
             // older Windows builds reject the custom interval, so degrade to the
@@ -654,7 +715,7 @@ mod imp {
                 interval,
                 DirtyRegionSettings::Default,
                 ColorFormat::Bgra8,
-                CaptureFlags { clock: clock.clone(), sender, label: label.clone(), record, crop },
+                CaptureFlags { clock: clock.clone(), sender, label: label.clone(), record, crop, stats: stats.clone() },
             );
 
             let control = CaptureHandler::start_free_threaded(settings)
@@ -669,6 +730,7 @@ mod imp {
                 frames_captured: 0,
                 last_frame_ts: None,
                 label,
+                stats,
             })
         }
 
@@ -684,11 +746,21 @@ mod imp {
             self.drain();
             let now = self.clock.now_ms();
             let finished = self.control.as_ref().map_or(true, |c| c.is_finished());
+            // 黑屏判定：tap 记录的近黑起始时间距今超过阈值 → 画面丢失。
+            let black_since = self.stats.black_flag.load(std::sync::atomic::Ordering::Relaxed);
+            let picture_lost =
+                black_since > 0 && now - black_since > crate::screen::scene_detect::PICTURE_LOST_THRESHOLD_MS;
+            // 实时观测（2026-08-22「实时视频映射」）：live 预览时间戳 + 全程黑屏占比。
+            let total = self.stats.total_samples.load(std::sync::atomic::Ordering::Relaxed);
+            let black = self.stats.black_samples.load(std::sync::atomic::Ordering::Relaxed);
             CaptureStatus {
                 running: !finished,
                 frames_captured: self.frames_captured,
                 last_frame_ts: self.last_frame_ts.unwrap_or(0),
                 stalled: is_stalled(self.last_frame_ts, self.started_ts, now),
+                picture_lost,
+                preview_ms: self.stats.preview_ms.load(std::sync::atomic::Ordering::Relaxed),
+                black_ratio: if total > 0 { black as f64 / total as f64 } else { 0.0 },
             }
         }
 
@@ -757,7 +829,7 @@ mod imp {
             Err("screen capture is only supported on Windows".to_string())
         }
         pub fn status(&mut self) -> CaptureStatus {
-            CaptureStatus { running: false, frames_captured: 0, last_frame_ts: 0, stalled: false }
+            CaptureStatus { running: false, frames_captured: 0, last_frame_ts: 0, stalled: false, picture_lost: false, preview_ms: 0, black_ratio: 0.0 }
         }
         pub fn stop(&mut self) -> Result<(), String> {
             Ok(())
@@ -851,6 +923,42 @@ mod tests {
     /// asserts frames arrive with monotonic timestamps. Ignored by default —
     /// it grabs a real on-screen window, so run it manually on a desktop:
     ///   cargo test -- --ignored real_capture
+    /// Real WGC smoke for 实时视频映射（2026-08-22）：region 录制 ~4s，断言
+    /// `frames/live.jpg` 落盘 + `status().preview_ms > 0` + black_ratio 合法。
+    /// 同样抓真实屏幕，手动跑：cargo test real_capture_writes_live_preview -- --ignored
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "captures the real screen; run manually"]
+    fn real_capture_writes_live_preview() {
+        let dir = std::env::temp_dir().join(format!("vtt_live_preview_{}", std::process::id()));
+        let frames_dir = dir.join("frames");
+        std::fs::create_dir_all(&frames_dir).unwrap();
+        let rect = RegionRect { x: 10, y: 10, width: 320, height: 240 };
+        let record = RecordConfig {
+            video_dir: dir.join("video"),
+            frames_dir: Some(frames_dir.clone()),
+            slice_ms: 60_000,
+            trace: "live_preview_test".into(),
+        };
+        let mut cap = ScreenCapture::start_region(rect, None, Some(record))
+            .expect("region capture should start");
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let status = cap.status();
+        cap.stop().unwrap();
+        let live = frames_dir.join("live.jpg");
+        assert!(live.exists(), "live.jpg 应已落盘: {}", live.display());
+        assert!(status.preview_ms > 0, "preview_ms 应 > 0（实测 {status:?}）");
+        assert!(
+            (0.0..=1.0).contains(&status.black_ratio),
+            "black_ratio 应在 0-1（实测 {:?}）",
+            status.black_ratio
+        );
+        let size = std::fs::metadata(&live).unwrap().len();
+        assert!(size > 1_000, "live.jpg 应是真实 JPEG 而非空文件（{size}B）");
+        eprintln!("live.jpg {size}B, status.preview_ms={}, black_ratio={}", status.preview_ms, status.black_ratio);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "captures a real window; run manually"]

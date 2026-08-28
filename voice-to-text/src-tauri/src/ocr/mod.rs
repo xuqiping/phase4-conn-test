@@ -178,7 +178,8 @@ pub fn process_session_ocr(
             stats.already += 1;
             continue;
         }
-        let img_path = session_dir.join("frames").join(&entry.orig_path);
+        // entry.orig_path 是 session 相对路径，已含 "frames/" 前缀（scene_detect::save_page 契约）。
+        let img_path = session_dir.join(&entry.orig_path);
         if !img_path.exists() {
             stats.failed += 1;
             log::warn!("[ocr][{trace}] 原图缺失，跳过: {}", entry.orig_path);
@@ -273,14 +274,14 @@ mod tests {
         let entries = vec![
             FrameEntry {
                 frame_ts: 0,
-                orig_path: "page_0.jpg".into(),
-                thumb_path: "thumb_0.jpg".into(),
+                orig_path: "frames/page_0.jpg".into(),
+                thumb_path: "frames/thumb_0.jpg".into(),
                 ocr_text: Some("已有文本".into()),
             },
             FrameEntry {
                 frame_ts: 1000,
-                orig_path: "page_1000.jpg".into(), // 不存在 → failed，保持 null
-                thumb_path: "thumb_1000.jpg".into(),
+                orig_path: "frames/page_1000.jpg".into(), // 不存在 → failed，保持 null
+                thumb_path: "frames/thumb_1000.jpg".into(),
                 ocr_text: None,
             },
         ];

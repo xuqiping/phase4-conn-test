@@ -1,0 +1,81 @@
+# ============================================================================
+# ci.yml —— 最小 CI（线上质量门）
+#
+# 设计原则（铁律 #9）：CI = 把本地 `scripts/check_all` 搬到服务器上跑，
+# 检查标准本地与线上完全一致；CI 只追加两件本地不做的事——构建产物 + 供应链扫描。
+#
+# 本项目技术栈：Tauri 2（前端 Vue3 在根目录 + Rust 后端在 src-tauri/）。
+# 触发：push / PR 到 main、develop。全绿才允许发布；任一步骤失败 → 阻断。
+#
+# 维护：CI 只在 Windows runner 上跑桌面端构建（Tauri 跨平台打包对 OS 敏感）。
+# ============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  quality-gate:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 配置 Rust（stable）
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # 1) 本地最小质量门 —— 与本地 `scripts/check_all.sh` 完全同一份（vue-tsc + cargo check + 文档校验）
+      - name: 跑 check_all（本地同一份质量门）
+        run: bash scripts/check_all.sh
+
+      # 1.5) 供应链安全扫描
+      - name: Secret 扫描（gitleaks）
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: false   # 发现泄漏 = 阻断；想先跑非阻断可改 true
+
+      - name: 前端依赖扫描（npm audit，高危阻断）
+        run: npm audit --omit=dev --audit-level=high
+
+      # 2) CI 额外：构建产物（部署要用）
+      - name: 构建前端 dist
+        run: npm run build
+
+      - name: 构建 Rust release（src-tauri）
+        working-directory: src-tauri
+        run: cargo build --release
+        # 注：完整 tauri:build 需 WiX/NSIS 工具且较慢，CI 这里只验证可编译；
+        #     真正安装包在本地或发布工作流用 `npm run tauri:build` 产出。
+
+      - name: 上传构建产物（可选，供下游下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            dist
+            src-tauri/target/release/voice-to-text.exe
+          retention-days: 7
+          if-no-files-found: ignore

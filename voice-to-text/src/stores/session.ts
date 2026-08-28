@@ -2,7 +2,7 @@
 // 状态机：idle(空闲) → source-selected(选源) → recording(录制中) → processing(处理中) → done(完成)
 // 「处理中 → 完成」的推进依赖录后处理 UI（Step 11），本 store 先留出 done 态。
 import { defineStore } from 'pinia'
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -71,7 +71,16 @@ export interface TimelineChapter {
   start_ms: number
   end_ms: number
   local_fallback: boolean
+  /** 章节总结（2026-08-20）：完全遵照选中侧重点生成的自由文本总结；可为空串。 */
+  chapter_summary: string
   points: TimelinePoint[]
+}
+export interface FinalChapter {
+  title: string
+  start_ms: number
+  end_ms: number
+  merged_segment_ids: number[]
+  summary: string
 }
 export interface Timeline {
   version: number
@@ -79,6 +88,8 @@ export interface Timeline {
   outline: string[]
   fallback: boolean
   chapters: TimelineChapter[]
+  /** 汇总定稿（去重后最终章节）；未点「汇总定稿」时为 null。 */
+  final_summary: { chapters: FinalChapter[] } | null
 }
 export interface VideoSlices {
   slice_ms: number
@@ -110,6 +121,46 @@ export const useSessionStore = defineStore('session', () => {
     recording.value ? nowMs.value - startedAt.value : 0
   )
 
+  // ---- 定时停止（2026-08-23，手测问题：可按倒计时或定点时间自动停录）----
+  /** off=不定时；countdown=倒计时分钟数；clock=定点 HH:MM（已过点顺延到明天）。 */
+  const stopTimerMode = ref<'off' | 'countdown' | 'clock'>('off')
+  /** countdown：分钟数（支持小数如 1.5）；clock：HH:MM 24 小时制。 */
+  const stopTimerValue = ref('')
+  /** 录制中的绝对停止时刻（ms 时间戳）；0 = 未生效。录制开始或参数变化时重算。 */
+  const stopAtMs = ref(0)
+  const stopCountdownMs = computed(() =>
+    stopAtMs.value > 0 && recording.value ? Math.max(0, stopAtMs.value - nowMs.value) : 0
+  )
+
+  /** 由当前模式+输入算出停止时刻；非法输入返回 0（不定时）。 */
+  function computeStopAt(): number {
+    // v-model.number 的倒计时输入会直接给 number（空串/非法才是 string），统一转字符串再解析。
+    const v = String(stopTimerValue.value ?? '').trim()
+    if (stopTimerMode.value === 'countdown') {
+      const min = Number(v)
+      return v !== '' && Number.isFinite(min) && min > 0
+        ? Date.now() + min * 60_000
+        : 0
+    }
+    if (stopTimerMode.value === 'clock') {
+      const m = /^(\d{1,2}):(\d{1,2})$/.exec(v)
+      if (!m) return 0
+      const hh = Number(m[1])
+      const mm = Number(m[2])
+      if (hh > 23 || mm > 59) return 0
+      const d = new Date()
+      d.setHours(hh, mm, 0, 0)
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1) // 已过点 → 明天
+      return d.getTime()
+    }
+    return 0
+  }
+
+  // 录制中改模式/改数值 → 立即按新参数重算停止时刻。
+  watch([stopTimerMode, stopTimerValue], () => {
+    if (recording.value) stopAtMs.value = computeStopAt()
+  })
+
   // ---- Step 11: 处理编排 + 学习区状态 ----
   const stages = ref<Stage[]>([
     { key: 'frames', label: '精细抽帧', status: 'pending', detail: '' },
@@ -126,6 +177,36 @@ export const useSessionStore = defineStore('session', () => {
   const vlmOn = ref(false)
   const lastExportPath = ref('')
   let cancelRequested = false
+  /** 录制中画面丢失告警（2026-08-22：最小化窗口 WGC 投纯黑帧，抽帧会跳过这些时段）。 */
+  const pictureLost = ref(false)
+  /** 实时视频映射（2026-08-22）：live.jpg 的 asset URL（preview_ms 变化即刷新）。 */
+  const livePreviewSrc = ref('')
+  /** 录制全程黑屏采样占比（0-1，-1 = 尚无采样）。 */
+  const blackRatio = ref(-1)
+  let lastPreviewMs = 0
+
+  /** 轮询捕获状态（录制中每 500ms）：画面丢失/停帧 → 告警条；
+   * preview_ms 更新 → 刷新 live.jpg 实时预览；black_ratio → 黑屏占比。 */
+  async function pollCaptureStatus() {
+    try {
+      const s = await invoke<{
+        stalled: boolean
+        picture_lost: boolean
+        preview_ms: number
+        black_ratio: number
+      }>('get_capture_status')
+      pictureLost.value = s.picture_lost || s.stalled
+      blackRatio.value = s.black_ratio
+      if (s.preview_ms > 0 && s.preview_ms !== lastPreviewMs) {
+        lastPreviewMs = s.preview_ms
+        // 防缓存查询串必须拼在 convertFileSrc 之后再加——拼在路径里会被
+        // 编码成文件名的一部分（live.jpg%3Ft=…）导致 asset 404（2026-08-23 踩坑）。
+        livePreviewSrc.value = `${convertFileSrc(`${sessionPath.value}/frames/live.jpg`)}?t=${s.preview_ms}`
+      }
+    } catch {
+      pictureLost.value = false
+    }
+  }
 
   function markStage(key: string, status: StageStatus, detail = '') {
     const st = stages.value.find((s) => s.key === key)
@@ -165,8 +246,8 @@ export const useSessionStore = defineStore('session', () => {
         [
           'ocr',
           async () => {
-            const [total, ok] = await invoke<[number, number]>('process_ocr', { sessionId: sid })
-            return `识别 ${ok}/${total} 帧`
+            const [ok, failed] = await invoke<[number, number]>('process_ocr', { sessionId: sid })
+            return failed > 0 ? `OCR 成功 ${ok} 帧（失败 ${failed}）` : `OCR 成功 ${ok} 帧`
           },
         ],
         [
@@ -233,6 +314,47 @@ export const useSessionStore = defineStore('session', () => {
       await loadTimeline()
     } catch (e) {
       errorMessage.value = `重生成失败: ${e}`
+      throw e
+    }
+  }
+
+  /** 汇总定稿（2026-08-21）：去重兜底汇总 + 最终真实章节标题；
+   * 定稿即产 Markdown（文件名 = 全课总标题，重复帧图只贴一次）。 */
+  async function consolidate() {
+    errorMessage.value = ''
+    try {
+      const [, mdPath] = await invoke<[unknown, string | null]>('consolidate_summary', {
+        sessionId: sessionId.value,
+      })
+      markStage('summary', 'done', '已生成汇总定稿')
+      if (mdPath) lastExportPath.value = mdPath
+      await loadTimeline()
+    } catch (e) {
+      errorMessage.value = `汇总定稿失败: ${e}`
+      throw e
+    }
+  }
+
+  /**
+   * 重新分析本会话：删除 frames/aligned/summary 等派生文件，
+   * 把阶段重置为 pending，切回 processing 并重新跑完整流水线。
+   * 用于修复旧会话在解码/OCR bug 修复后需要重新抽帧识别的场景。
+   */
+  async function reprocessFromScratch() {
+    if (!sessionId.value) return
+    errorMessage.value = ''
+    try {
+      await invoke('reset_session_derived', { sessionId: sessionId.value })
+      timeline.value = null
+      slices.value = { slice_ms: 900000, files: [], has_audio: false }
+      for (const st of stages.value) {
+        st.status = 'pending'
+        st.detail = ''
+      }
+      phase.value = 'processing'
+      await runPipeline()
+    } catch (e) {
+      errorMessage.value = `重新分析失败: ${e}`
       throw e
     }
   }
@@ -411,7 +533,17 @@ export const useSessionStore = defineStore('session', () => {
       })
       startedAt.value = Date.now()
       nowMs.value = startedAt.value
-      timer = setInterval(() => (nowMs.value = Date.now()), 500)
+      stopAtMs.value = computeStopAt()
+      timer = setInterval(() => {
+        nowMs.value = Date.now()
+        void pollCaptureStatus()
+        // 定时停止到点：先清 stopAtMs 防下一个 tick 重复触发，再自动停录。
+        if (stopAtMs.value > 0 && nowMs.value >= stopAtMs.value) {
+          stopAtMs.value = 0
+          void stop()
+          return
+        }
+      }, 500)
       phase.value = 'recording'
       region.value = regionToRecord // 恢复显示（reset 清掉了），停止后可直接原样重录
     } catch (e) {
@@ -419,11 +551,19 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  let stopping = false
+
   async function stop() {
+    // 防重入：定时到点时轮询可能连发、用户也可能连点，第二次 invoke 必报
+    // "no capture session running"。stop 全程同步收尾，不需要等待中的二次调用。
+    if (stopping) return
+    stopping = true
     try {
       await invoke('stop_capture_session')
     } catch (e) {
       errorMessage.value = `停止录制失败: ${e}`
+    } finally {
+      stopping = false
     }
     if (stopListen) {
       stopListen()
@@ -433,6 +573,11 @@ export const useSessionStore = defineStore('session', () => {
       clearInterval(timer)
       timer = null
     }
+    pictureLost.value = false
+    stopAtMs.value = 0
+    livePreviewSrc.value = ''
+    blackRatio.value = -1
+    lastPreviewMs = 0
     partial.value = ''
     // 后端 stop 后 session 进入 Processing；录后处理编排 UI 在 Step 11 落地，
     // 那时 processing → done 由处理完成事件驱动。
@@ -478,6 +623,9 @@ export const useSessionStore = defineStore('session', () => {
     errorMessage,
     recording,
     elapsedMs,
+    stopTimerMode,
+    stopTimerValue,
+    stopCountdownMs,
     refreshWindows,
     refreshAudioDevices,
     historySessions,
@@ -502,11 +650,16 @@ export const useSessionStore = defineStore('session', () => {
     sessionPath,
     vlmOn,
     lastExportPath,
+    pictureLost,
+    livePreviewSrc,
+    blackRatio,
     runPipeline,
     cancelPipeline,
     loadTimeline,
     loadSlices,
     regenerate,
+    consolidate,
+    reprocessFromScratch,
     updatePoint,
     exportMarkdown,
   }

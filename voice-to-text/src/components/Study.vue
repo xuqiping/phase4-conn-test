@@ -23,6 +23,28 @@ const pendingSeekSec = ref<number | null>(null)
 const ocrCache = ref<Record<string, string | null>>({})
 const exporting = ref(false)
 const exportError = ref('')
+const reprocessing = ref(false)
+const consolidating = ref(false)
+
+/** 汇总定稿：去重兜底汇总 + 最终真实章节标题（2026-08-21）。 */
+async function doConsolidate() {
+  consolidating.value = true
+  exportError.value = ''
+  try {
+    await store.consolidate()
+  } catch (e) {
+    exportError.value = `${e}`
+  } finally {
+    consolidating.value = false
+  }
+}
+
+/** 毫秒 → m:ss 展示（汇总定稿章节时间区间用）。 */
+function fmtMs(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(s / 60)
+  return `${Math.floor(m / 60) > 0 ? `${Math.floor(m / 60)}:` : ''}${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
 
 onMounted(async () => {
   await Promise.all([store.loadTimeline(), store.loadSlices()])
@@ -126,6 +148,21 @@ async function doExport() {
     exporting.value = false
   }
 }
+
+async function doReprocess() {
+  const ok = window.confirm(
+    '确定要重新分析本会话吗？这会删除当前的抽帧、OCR、对齐和总结结果（旧总结会先备份），然后重新从视频抽帧开始处理。'
+  )
+  if (!ok) return
+  reprocessing.value = true
+  try {
+    await store.reprocessFromScratch()
+  } catch (e) {
+    exportError.value = `重新分析失败: ${e}`
+  } finally {
+    reprocessing.value = false
+  }
+}
 </script>
 
 <template>
@@ -144,6 +181,22 @@ async function doExport() {
         <ul>
           <li v-for="(line, i) in store.timeline.outline" :key="i">{{ line }}</li>
         </ul>
+      </div>
+
+      <div v-if="store.timeline.final_summary" class="final">
+        <h3 class="final-title">汇总定稿（去重后最终章节）</h3>
+        <div
+          v-for="(fc, i) in store.timeline.final_summary.chapters"
+          :key="i"
+          class="final-chapter"
+        >
+          <div class="fc-head">
+            <span class="fc-title">{{ fc.title }}</span>
+            <span class="fc-ts">{{ fmtMs(fc.start_ms) }} - {{ fmtMs(fc.end_ms) }}</span>
+          </div>
+          <p class="fc-summary">{{ fc.summary }}</p>
+          <p class="fc-merged">合并自原章节：{{ fc.merged_segment_ids.map((id) => id + 1).join('、') }}</p>
+        </div>
       </div>
 
       <div class="body">
@@ -183,6 +236,11 @@ async function doExport() {
             本会话无视频切片（可能只录了音频）。
           </p>
 
+          <div v-if="current.chapter_summary?.trim()" class="chapter-summary">
+            <h4 class="cs-title">章节总结</h4>
+            <p class="cs-text">{{ current.chapter_summary }}</p>
+          </div>
+
           <ul class="points">
             <li v-for="(p, pi) in current.points" :key="pi" class="point">
               <button
@@ -216,6 +274,22 @@ async function doExport() {
           <div class="export-row">
             <button class="btn" :disabled="exporting" @click="doExport">
               {{ exporting ? '导出中…' : '导出 Markdown' }}
+            </button>
+            <button
+              class="btn warning"
+              :disabled="reprocessing"
+              title="删除当前抽帧/OCR/对齐/总结结果，从视频重新分析"
+              @click="doReprocess"
+            >
+              {{ reprocessing ? '重新分析中…' : '重新分析视频' }}
+            </button>
+            <button
+              class="btn"
+              :disabled="consolidating"
+              title="把各章总结做最终去重汇总，剔除抽帧不准导致的重复章节，并重新拟真实章节标题；完成后导出的 Markdown 含「汇总定稿」一节"
+              @click="doConsolidate"
+            >
+              {{ consolidating ? '汇总中…' : store.timeline.final_summary ? '重新汇总定稿' : '汇总定稿' }}
             </button>
             <button class="btn ghost" disabled title="思维导图（后续版本提供）">导图</button>
             <button class="btn ghost" disabled title="Anki 卡片（后续版本提供）">Anki</button>
@@ -265,6 +339,50 @@ async function doExport() {
   padding-left: 18px;
   color: #bbb;
   line-height: 1.7;
+}
+.final {
+  background: #141414;
+  border: 1px solid #2f2f2f;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.final-title {
+  font-size: 13px;
+  color: #f0f0f0;
+  margin-bottom: 8px;
+}
+.final-chapter {
+  padding: 8px 0;
+  border-top: 1px solid #232323;
+}
+.final-chapter:first-of-type {
+  border-top: none;
+}
+.fc-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.fc-title {
+  color: #e0e0e0;
+  font-weight: 600;
+}
+.fc-ts {
+  color: #666;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.fc-summary {
+  color: #bbb;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.fc-merged {
+  margin-top: 4px;
+  color: #555;
+  font-size: 12px;
 }
 .body {
   display: flex;
@@ -319,6 +437,23 @@ async function doExport() {
   max-height: 300px;
   background: #000;
   border-radius: 6px;
+}
+.chapter-summary {
+  background: #141a14;
+  border: 1px solid #23402a;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.cs-title {
+  font-size: 12px;
+  color: #4ade80;
+  margin-bottom: 6px;
+}
+.cs-text {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #d5d5d5;
+  white-space: pre-wrap;
 }
 .points {
   list-style: none;
@@ -415,6 +550,14 @@ async function doExport() {
 .btn.ghost {
   background: #222;
   border: 1px solid #333;
+}
+.btn.warning {
+  background: #78350f;
+  border: 1px solid #92400e;
+  color: #fbbf24;
+}
+.btn.warning:hover:not(:disabled) {
+  background: #92400e;
 }
 .btn:focus-visible {
   outline: 2px solid #60a5fa;

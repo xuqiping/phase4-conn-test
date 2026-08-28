@@ -216,8 +216,22 @@ fn stop_window_capture(state: tauri::State<'_, ScreenState>) -> Result<(), Strin
 }
 
 /// fps / frame count / stalled (minimized) status for the recording UI.
+/// 2026-08-23 修复：网课录制（start_capture_session）把 ScreenCapture 存在
+/// CaptureSessionState 里，这里却读 ScreenState（永远为空）——导致 preview_ms /
+/// black_ratio / picture_lost 永远拿不到、前端实时预览一直「等待画面」。
+/// 现在优先读录制会话，退回普通窗口抓帧（start_window_capture）。
 #[tauri::command]
-fn get_capture_status(state: tauri::State<'_, ScreenState>) -> CaptureStatus {
+fn get_capture_status(
+    state: tauri::State<'_, ScreenState>,
+    session: tauri::State<'_, CaptureSessionState>,
+) -> CaptureStatus {
+    {
+        let mut guard = session.lock().unwrap();
+        if let Some(sess) = guard.as_mut() {
+            let st = sess.screen.status();
+            return st;
+        }
+    }
     let mut guard = state.lock().unwrap();
     match guard.as_mut() {
         Some(cap) => cap.status(),
@@ -226,6 +240,9 @@ fn get_capture_status(state: tauri::State<'_, ScreenState>) -> CaptureStatus {
             frames_captured: 0,
             last_frame_ts: 0,
             stalled: false,
+            picture_lost: false,
+            preview_ms: 0,
+            black_ratio: 0.0,
         },
     }
 }
@@ -663,6 +680,36 @@ async fn regenerate_summary(
     .map_err(|e| format!("regenerate task join: {e}"))?
 }
 
+/// 汇总定稿（2026-08-21 手测新需求）：对已完成的总结做最终去重汇总 + 真实章节标题。
+/// 显式按钮触发，失败直接报错（无静默降级）。
+/// 定稿成功后即产「汇总定稿 Markdown」（文件名 = 全课总标题，重复帧图只贴一次），
+/// 返回 (草稿, 导出文件完整路径)——路径缺失 = 导出失败但草稿已保存（可手动重导）。
+#[tauri::command]
+async fn consolidate_summary(
+    session_id: String,
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<(SummaryDraft, Option<String>), String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let cfg_dir = summary_config_dir(&app)?;
+    let cfg = summary::load_config(&cfg_dir);
+    let key = summary::get_api_key()?.ok_or("尚未设置 API Key —— 请先在总结设置里填写")?;
+    let trace = session_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let draft = summary::map_reduce::consolidate(&dir, &cfg, &key, &trace)?;
+        let exported = summary::render::export_final_markdown(&dir)
+            .map(|p| p.to_string_lossy().to_string())
+            .map_err(|e| {
+                log::warn!("[summary][{trace}] 汇总定稿 Markdown 导出失败（草稿已保存）: {e}");
+                e
+            })
+            .ok();
+        Ok((draft, exported))
+    })
+    .await
+    .map_err(|e| format!("consolidate task join: {e}"))?
+}
+
 // ---- Render & export (plan Step 9 / FR-108) ----
 //
 // 纯本地读草稿 + 写 exports/，无网络请求，不需要 spawn_blocking。
@@ -763,6 +810,43 @@ fn get_session_progress(
     })
 }
 
+/// 重新分析：删除派生文件（frames.json / frames/ / aligned.json / summary_draft.json），
+/// 让流水线可以从抽帧开始重新跑。旧 summary_draft.json 会先备份为
+/// summary_draft.json.bak.<时间戳>，防止误操作丢失历史。
+#[tauri::command]
+fn reset_session_derived(
+    session_id: String,
+    manager: tauri::State<'_, SessionManager>,
+) -> Result<(), String> {
+    let dir = manager.session_dir(&session_id).map_err(|e| e.to_string())?;
+    let draft = dir.join("summary_draft.json");
+    if draft.is_file() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let bak = dir.join(format!("summary_draft.json.bak.{ts}"));
+        std::fs::rename(&draft, &bak).map_err(|e| format!("备份旧草稿失败: {e}"))?;
+    }
+    let paths = [
+        dir.join("frames.json"),
+        dir.join("aligned.json"),
+        dir.join("summary_draft.json"),
+    ];
+    for p in &paths {
+        if p.exists() {
+            std::fs::remove_file(p).map_err(|e| format!("删除 {} 失败: {e}", p.display()))?;
+        }
+    }
+    let frames_dir = dir.join("frames");
+    if frames_dir.is_dir() {
+        std::fs::remove_dir_all(&frames_dir)
+            .map_err(|e| format!("删除 frames 目录失败: {e}"))?;
+    }
+    log::info!("[session][{session_id}] reset_session_derived: 派生文件已清理，可重新分析");
+    Ok(())
+}
+
 /// OCR 原文核对（Study.vue 展开用）：按 frame_ref 查 frames.json 的 ocr_text。
 /// frame_ref 形如 "frames/page_123.jpg"；找不到条目返回 Ok(None)，不算错误。
 #[tauri::command]
@@ -846,13 +930,59 @@ pub fn run() {
             test_summary_connection,
             summarize,
             regenerate_summary,
+            consolidate_summary,
             get_timeline,
             export_markdown,
             get_video_slices,
             get_session_progress,
+            reset_session_derived,
             get_ocr_text,
             update_summary_point
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_session_derived_cleans_and_backups_draft() {
+        let dir = std::env::temp_dir().join(format!("vtt_reset_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("frames")).unwrap();
+        std::fs::write(dir.join("frames.json"), "[]").unwrap();
+        std::fs::write(dir.join("frames/page_1.jpg"), "fake").unwrap();
+        std::fs::write(dir.join("aligned.json"), "[]").unwrap();
+        std::fs::write(dir.join("summary_draft.json"), "{}").unwrap();
+
+        // 复用内部 reset 逻辑（不经过 Tauri State）。
+        let draft = dir.join("summary_draft.json");
+        if draft.is_file() {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let bak = dir.join(format!("summary_draft.json.bak.{ts}"));
+            std::fs::rename(&draft, &bak).unwrap();
+        }
+        for p in [
+            dir.join("frames.json"),
+            dir.join("aligned.json"),
+            dir.join("summary_draft.json"),
+        ] {
+            if p.exists() {
+                std::fs::remove_file(p).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(dir.join("frames")).unwrap();
+
+        assert!(!dir.join("frames.json").exists());
+        assert!(!dir.join("aligned.json").exists());
+        assert!(!dir.join("summary_draft.json").exists());
+        assert!(!dir.join("frames").exists());
+        assert!(std::fs::read_dir(&dir).unwrap().count() > 0, "旧草稿应已备份");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

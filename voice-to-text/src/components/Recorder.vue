@@ -67,10 +67,20 @@ function onSelect(e: Event) {
 function onAudioSelect(e: Event) {
   store.selectedAudioDevice = (e.target as HTMLSelectElement).value
 }
+
+const stopTimerHint = '倒计时：到点自动停（分钟，支持小数）；定点：到 HH:MM 自动停（已过点顺延到明天）。仅录制中生效。'
+
 </script>
 
 <template>
   <div class="recorder">
+    <div v-if="store.recording && store.pictureLost" class="pic-lost-banner" role="alert">
+      ⚠️ 画面丢失超过 3 秒——现在录到的是黑屏。请按顺序尝试：
+      ① 还原/置顶被录窗口（最小化必黑屏）；
+      ② 若窗口没最小化、只是被别的程序最大化盖住仍黑屏（部分 Win10 显卡驱动会停止绘制被完全遮挡的窗口），
+      请停止后改用「区域框选」模式录制屏幕区域，遮挡不影响区域模式。
+    </div>
+
     <div class="row">
       <select
         class="window-select"
@@ -138,6 +148,48 @@ function onAudioSelect(e: Event) {
       <span v-if="store.recording" class="timer" aria-live="off">
         {{ fmt(store.elapsedMs) }}
       </span>
+
+      <!-- 定时停止（2026-08-23，手测问题）：不定时/倒计时/定点，录制前后都可设置，
+           录制中修改立即生效（按新参数重算停止时刻）。 -->
+      <label class="stop-timer" :title="stopTimerHint">
+        <span>定时停止</span>
+        <select v-model="store.stopTimerMode" aria-label="定时停止模式">
+          <option value="off">关</option>
+          <option value="countdown">倒计时</option>
+          <option value="clock">定点</option>
+        </select>
+        <input
+          v-if="store.stopTimerMode !== 'off'"
+          v-model="store.stopTimerValue"
+          class="stop-timer-input"
+          :type="store.stopTimerMode === 'countdown' ? 'number' : 'text'"
+          :min="store.stopTimerMode === 'countdown' ? 1 : undefined"
+          :step="store.stopTimerMode === 'countdown' ? 1 : undefined"
+          :placeholder="store.stopTimerMode === 'countdown' ? '分钟' : 'HH:MM'"
+          :aria-label="store.stopTimerMode === 'countdown' ? '倒计时分钟数' : '定点时间 HH:MM'"
+        />
+        <span v-if="store.recording && store.stopCountdownMs > 0" class="stop-timer-left">
+          {{ store.stopCountdownMs < 60_000 ? '⚠' : '' }}{{ fmt(store.stopCountdownMs) }} 后停
+        </span>
+      </label>
+    </div>
+
+    <!-- 实时视频映射（2026-08-22）：录制中每 ~500ms 刷新 live.jpg，
+         黑屏了就让它黑着显示——所见即所录。2026-08-23 移到「开始录制」按钮正下方，
+         并改为录制一开始就显示（首帧未到时显示占位），确保一眼可见。 -->
+    <div v-if="store.recording" class="live-preview">
+      <div class="live-preview-head">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>实时录制画面</span>
+        <span class="live-stats">
+          黑屏占比
+          <b :class="{ bad: store.blackRatio > 0.1 }">
+            {{ store.blackRatio < 0 ? '—' : (store.blackRatio * 100).toFixed(1) + '%' }}
+          </b>
+        </span>
+      </div>
+      <img v-if="store.livePreviewSrc" :src="store.livePreviewSrc" alt="录制画面实时预览" />
+      <div v-else class="live-preview-waiting">等待画面…（正在连接被录窗口）</div>
     </div>
 
     <div class="row">
@@ -192,10 +244,67 @@ function onAudioSelect(e: Event) {
 </template>
 
 <style scoped>
+.pic-lost-banner {
+  font-size: 13px;
+  color: #f87171;
+  background: #2a1111;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
 .recorder {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.live-preview {
+  border: 1px solid #444;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #111;
+}
+.live-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #aaa;
+  padding: 5px 10px;
+  background: #1b1b1b;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: live-blink 1.2s infinite;
+}
+@keyframes live-blink {
+  50% { opacity: 0.25; }
+}
+.live-stats {
+  margin-left: auto;
+}
+.live-stats b {
+  color: #4ade80;
+}
+.live-stats b.bad {
+  color: #f87171;
+}
+.live-preview img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  background: #000;
+}
+.live-preview-waiting {
+  padding: 24px 16px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+  background: #000;
 }
 .row {
   display: flex;
@@ -340,6 +449,38 @@ function onAudioSelect(e: Event) {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: #aaa;
+}
+.stop-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #888;
+  white-space: nowrap;
+}
+.stop-timer select {
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #222;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+.stop-timer-input {
+  width: 72px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #222;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  outline: none;
+}
+.stop-timer-left {
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
 }
 .error {
   font-size: 13px;

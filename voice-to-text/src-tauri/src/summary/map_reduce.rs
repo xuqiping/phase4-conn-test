@@ -13,12 +13,15 @@
 
 use super::cloud_api::{chat_blocking, ChatMessage};
 use super::prompt;
-use super::{save_new_draft, SegmentSummary, SummaryConfig, SummaryDraft, SummaryPoint};
+use super::{
+    save_new_draft, FinalChapter, FinalSummary, SegmentSummary, SummaryConfig, SummaryDraft,
+    SummaryPoint,
+};
 use crate::align::AlignedUnit;
 use serde::Deserialize;
 use std::path::Path;
 
-/// 分段输入：一段 ≤ max_segment_chars 的材料。
+/// 分段输入：2026-08-20 起一段 = 一个关键帧变化页（一页课件对应时段）。
 #[derive(Debug, Clone)]
 pub struct SegmentInput {
     pub segment_id: usize,
@@ -38,72 +41,28 @@ pub struct SegmentPart {
     pub texts: Vec<String>,
 }
 
-fn unit_chars(u: &AlignedUnit) -> usize {
-    u.ocr_text.as_ref().map(|s| s.chars().count()).unwrap_or(0)
-        + u.texts.iter().map(|t| t.chars().count()).sum::<usize>()
+/// 纯逻辑切段（可测，2026-08-20 Phase4 手测未解决问题重写）：
+/// **严格一帧一段** —— 一个 AlignedUnit（一次明显关键帧变化 = 一页课件）独占一段，
+/// 不设字数兜底、不截断（用户拍板：完全按帧变化分段）。
+pub fn build_segments(units: &[AlignedUnit]) -> Vec<SegmentInput> {
+    units
+        .iter()
+        .enumerate()
+        .map(|(i, u)| SegmentInput {
+            segment_id: i,
+            start_ms: u.start_ms,
+            end_ms: u.end_ms,
+            parts: vec![SegmentPart {
+                ts_ms: u.start_ms,
+                frame_ref: u.orig_path.clone(),
+                thumb_ref: u.thumb_path.clone(),
+                ocr_text: u.ocr_text.clone(),
+                texts: u.texts.clone(),
+            }],
+        })
+        .collect()
 }
 
-/// 纯逻辑切段（可测）：按 unit 顺序累积，超限即切。
-/// 单个 unit 超限（罕见：一页 PPT 塞满字）→ 独占一段并截断文本到上限。
-pub fn build_segments(units: &[AlignedUnit], max_chars: usize) -> Vec<SegmentInput> {
-    let mut segments = Vec::new();
-    let mut parts: Vec<SegmentPart> = Vec::new();
-    let mut cur_chars = 0usize;
-    let mut cur_start = 0i64;
-
-    let flush = |parts: &mut Vec<SegmentPart>, segments: &mut Vec<SegmentInput>, start: i64, end: i64| {
-        if !parts.is_empty() {
-            segments.push(SegmentInput {
-                segment_id: segments.len(),
-                start_ms: start,
-                end_ms: end,
-                parts: std::mem::take(parts),
-            });
-        }
-    };
-
-    for u in units {
-        let uc = unit_chars(u);
-        if !parts.is_empty() && cur_chars + uc > max_chars {
-            flush(&mut parts, &mut segments, cur_start, u.start_ms);
-            cur_chars = 0;
-        }
-        if parts.is_empty() {
-            cur_start = u.start_ms;
-        }
-        // 单页超限：截断（保留开头最有信息量的部分）。
-        let (ocr, texts) = if uc > max_chars {
-            let mut budget = max_chars;
-            let o = u.ocr_text.as_ref().map(|s| {
-                let take = s.chars().take(budget).collect::<String>();
-                budget = budget.saturating_sub(take.chars().count());
-                take
-            });
-            let ts = u
-                .texts
-                .iter()
-                .map(|t| t.chars().take(budget).collect::<String>())
-                .take_while(|t| !t.is_empty())
-                .collect::<Vec<_>>();
-            (o, ts)
-        } else {
-            (u.ocr_text.clone(), u.texts.clone())
-        };
-        cur_chars += uc.min(max_chars);
-        parts.push(SegmentPart {
-            ts_ms: u.start_ms,
-            frame_ref: u.orig_path.clone(),
-            thumb_ref: u.thumb_path.clone(),
-            ocr_text: ocr,
-            texts,
-        });
-    }
-    if let Some(first) = parts.first().map(|_| cur_start) {
-        let end = units.last().map(|u| u.end_ms).unwrap_or(first);
-        flush(&mut parts, &mut segments, first, end);
-    }
-    segments
-}
 
 /// 本地抽取式兜底：每段取前几句作为「要点」，标注 local_fallback（可解释：真实出处时间戳）。
 fn local_fallback_points(seg: &SegmentInput) -> Vec<SummaryPoint> {
@@ -234,6 +193,9 @@ fn summarize_segment(
         && p.ocr_text.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true));
     let mut local_fallback = false;
     let mut points = Vec::new();
+    // 章节总结（2026-08-20 Phase4 手测未解决问题）：独立 LLM 调用，自由文本、
+    // 完全遵照选中侧重点；失败 → 空串 + warn，不阻塞（降级后仍有一句话要点可用）。
+    let mut chapter_summary = String::new();
 
     if empty {
         log::info!("[summary][{trace}] segment {} 无内容，跳过 LLM", seg.segment_id);
@@ -242,12 +204,13 @@ fn summarize_segment(
         let text = prompt::segment_user_text(seg);
         let messages = if use_vlm {
             let imgs = load_segment_images(session_dir, seg);
+            let sys = prompt::segment_system(cfg.focus_prompt());
             vec![
-                ChatMessage::system(&prompt::segment_system(&cfg.focus)),
+                ChatMessage::system(&sys),
                 ChatMessage::user_with_images(text, imgs),
             ]
         } else {
-            prompt::segment_messages(seg, &cfg.focus)
+            prompt::segment_messages(seg, cfg.focus_prompt())
         };
         let model = if use_vlm {
             cfg.vlm_model.as_deref().unwrap_or(&cfg.model)
@@ -288,12 +251,31 @@ fn summarize_segment(
         }
     }
 
+    // 章节总结：纯文本调用（不附帧图——隐私红线，VLM 精修仅用于分段要点）。
+    if !empty {
+        let msgs = prompt::chapter_messages(seg, cfg.focus_prompt());
+        match chat_blocking(cfg, api_key, &cfg.model, &msgs) {
+            Ok(raw) => {
+                let t = raw.trim().trim_matches(|c| c == '`').trim();
+                if !t.is_empty() {
+                    chapter_summary = t.to_string();
+                } else {
+                    log::warn!("[summary][{trace}] segment {} 章节总结为空", seg.segment_id);
+                }
+            }
+            Err(e) => {
+                log::warn!("[summary][{trace}] segment {} 章节总结失败: {e}", seg.segment_id);
+            }
+        }
+    }
+
     SegmentSummary {
         segment_id: seg.segment_id,
         start_ms: seg.start_ms,
         end_ms: seg.end_ms,
         points,
         local_fallback,
+        chapter_summary,
     }
 }
 
@@ -309,12 +291,11 @@ pub fn run_summary(
     if units.is_empty() {
         return Err("aligned.json 无内容单元，无法总结".into());
     }
-    let segments = build_segments(&units, cfg.max_segment_chars);
+    let segments = build_segments(&units);
     log::info!(
-        "[summary][{trace}] map-reduce: {} units → {} segments (≤{} 字/段)",
+        "[summary][{trace}] map-reduce: {} units → {} segments（一帧一段，2026-08-20 起）",
         units.len(),
-        segments.len(),
-        cfg.max_segment_chars
+        segments.len()
     );
 
     let mut seg_summaries = Vec::new();
@@ -337,9 +318,109 @@ pub fn run_summary(
         fallback,
         segments: seg_summaries,
         outline,
+        // 内容已重生成，旧汇总定稿作废（需重新点「汇总定稿」）。
+        final_summary: None,
     };
     save_new_draft(session_dir, draft.clone())?;
     Ok(draft)
+}
+
+/// 汇总定稿（2026-08-21 手测新需求）：对已完成的总结做最终兜底汇总——
+/// 把抽帧不准导致的重复章节合并去重，并给最终章节拟真实标题。
+/// 一次 LLM 调用；显式按钮触发，失败直接报错（无静默降级——用户可看重试）。
+pub fn consolidate(
+    session_dir: &Path,
+    cfg: &SummaryConfig,
+    api_key: &str,
+    _trace: &str,
+) -> Result<SummaryDraft, String> {
+    let file = super::load_summary_file(session_dir);
+    let Some(mut draft) = file.current else {
+        return Err("尚无总结草稿可汇总 —— 请先执行总结".into());
+    };
+    if draft.segments.is_empty() {
+        return Err("草稿无章节，无法汇总".into());
+    }
+    let messages = prompt::consolidate_messages(&draft, cfg.focus_prompt());
+    let raw = chat_blocking(cfg, api_key, &cfg.model, &messages)?;
+    let (title, chapters) = parse_consolidate_response(&raw, &draft.segments)?;
+    draft.final_summary = Some(FinalSummary { title, chapters });
+    draft.version += 1;
+    save_new_draft(session_dir, draft.clone())?;
+    Ok(draft)
+}
+#[derive(Debug, Deserialize)]
+struct ConsolidateResponse {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    chapters: Vec<ConsolidateChapterRaw>,
+}
+#[derive(Debug, Deserialize)]
+struct ConsolidateChapterRaw {
+    title: String,
+    #[serde(default)]
+    segment_ids: Vec<usize>,
+    #[serde(default)]
+    summary: String,
+}
+
+/// 解析汇总输出：返回 (全课总标题, 最终章节)；校验 segment_ids 全覆盖原章节
+/// 且无未知 id；时间边界取合并段的最小/最大。title 缺失/为空 → 兜底「网课总结」。
+fn parse_consolidate_response(
+    raw: &str,
+    segments: &[SegmentSummary],
+) -> Result<(String, Vec<FinalChapter>), String> {
+    let json = prompt::extract_json_object(raw).ok_or("响应中未找到 JSON 对象")?;
+    let resp: ConsolidateResponse =
+        serde_json::from_str(&json).map_err(|e| format!("JSON 解析: {e}"))?;
+    if resp.chapters.is_empty() {
+        return Err("chapters 为空".into());
+    }
+    let title = {
+        let t = resp.title.trim();
+        if t.is_empty() { "网课总结".to_string() } else { t.to_string() }
+    };
+    let n = segments.len();
+    let mut covered = vec![false; n];
+    let mut out = Vec::new();
+    for c in resp.chapters {
+        let title = c.title.trim();
+        if title.is_empty() || c.segment_ids.is_empty() {
+            return Err("存在标题为空或 segment_ids 为空的章节".into());
+        }
+        let mut start = i64::MAX;
+        let mut end = i64::MIN;
+        for &id in &c.segment_ids {
+            let Some(seg) = segments.get(id) else {
+                return Err(format!("segment_id {id} 不存在（共 {n} 段）"));
+            };
+            if covered.get(id) == Some(&true) {
+                return Err(format!("segment_id {id} 被重复分配到多个章节"));
+            }
+            covered[id] = true;
+            start = start.min(seg.start_ms);
+            end = end.max(seg.end_ms);
+        }
+        out.push(FinalChapter {
+            title: title.to_string(),
+            start_ms: start,
+            end_ms: end,
+            merged_segment_ids: c.segment_ids,
+            summary: c.summary.trim().to_string(),
+        });
+    }
+    let missing: Vec<usize> = covered
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !**c)
+        .map(|(i, _)| i)
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("以下原章节未被分配到最终章节: {missing:?}"));
+    }
+    out.sort_by_key(|c| c.start_ms);
+    Ok((title, out))
 }
 
 /// 可纠错：segment_id = Some → 只重生成该段（再跑一次合并）；None → 全部重来。
@@ -359,7 +440,7 @@ pub fn regenerate(
         return Err("尚无草稿可纠错，请先 summarize".into());
     };
     let units = read_aligned(session_dir)?;
-    let segments = build_segments(&units, cfg.max_segment_chars);
+    let segments = build_segments(&units);
     let Some(seg) = segments.iter().find(|s| s.segment_id == id) else {
         return Err(format!("segment_id {id} 不存在（共 {} 段）", segments.len()));
     };
@@ -428,33 +509,75 @@ mod tests {
         }
     }
 
+    /// 2026-08-20 一帧一段：一个 unit 独占一段，不管字数多少都不合并/不截断。
     #[test]
-    fn segments_respect_char_budget() {
-        // 每 unit 100 字 ocr，max 250 → 每段最多 2 个 unit。
+    fn segments_one_per_frame_no_char_budget() {
         let units: Vec<_> = (0..5)
             .map(|i| unit(i * 60_000, (i + 1) * 60_000, Some(&"字".repeat(100)), vec![]))
             .collect();
-        let segs = build_segments(&units, 250);
-        assert_eq!(segs.len(), 3); // 2+2+1
-        assert_eq!(segs[0].parts.len(), 2);
-        assert_eq!(segs[2].parts.len(), 1);
+        let segs = build_segments(&units);
+        assert_eq!(segs.len(), 5, "一帧一段");
+        assert_eq!(segs[0].parts.len(), 1);
         assert_eq!(segs[0].segment_id, 0);
-        assert_eq!(segs[1].start_ms, 120_000);
+        assert_eq!(segs[0].start_ms, 0);
+        assert_eq!(segs[0].end_ms, 60_000);
+        assert_eq!(segs[1].start_ms, 60_000);
+        assert_eq!(segs[4].end_ms, 300_000);
     }
 
+    /// 超长单页也不截断（无字数兜底，用户拍板）。
     #[test]
-    fn segments_oversize_unit_truncated() {
+    fn segments_oversize_unit_not_truncated() {
         let units = vec![unit(0, 60_000, Some(&"甲".repeat(500)), vec!["乙".repeat(300).as_str()])];
-        let segs = build_segments(&units, 200);
+        let segs = build_segments(&units);
         assert_eq!(segs.len(), 1);
         let p = &segs[0].parts[0];
-        assert_eq!(p.ocr_text.as_ref().unwrap().chars().count(), 200);
-        assert!(p.texts.is_empty()); // 预算被 OCR 吃完
+        assert_eq!(p.ocr_text.as_ref().unwrap().chars().count(), 500);
+        assert_eq!(p.texts[0].chars().count(), 300);
+    }
+
+    /// 汇总定稿解析：segment_ids 全覆盖、去重、时间边界取合并段极值；非法输入报错。
+    #[test]
+    fn consolidate_parse_merges_and_validates() {
+        let segs = vec![
+            SegmentSummary {
+                segment_id: 0, start_ms: 0, end_ms: 60_000,
+                points: vec![], local_fallback: false, chapter_summary: "A".into(),
+            },
+            SegmentSummary {
+                segment_id: 1, start_ms: 60_000, end_ms: 120_000,
+                points: vec![], local_fallback: false, chapter_summary: "A 重复".into(),
+            },
+            SegmentSummary {
+                segment_id: 2, start_ms: 120_000, end_ms: 200_000,
+                points: vec![], local_fallback: false, chapter_summary: "B".into(),
+            },
+        ];
+        let ok = r#"{"title":"计算机网络基础","chapters":[{"title":"网络分类","segment_ids":[0,1],"summary":"合并后的总结"},{"title":"拓扑结构","segment_ids":[2],"summary":"B 的总结"}]}"#;
+        let (title, out) = parse_consolidate_response(ok, &segs).unwrap();
+        assert_eq!(title, "计算机网络基础");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].start_ms, 0);
+        assert_eq!(out[0].end_ms, 120_000);
+        assert_eq!(out[0].merged_segment_ids, vec![0, 1]);
+        // title 缺失 → 兜底「网课总结」。
+        let ok_notitle = r#"{"chapters":[{"title":"网络分类","segment_ids":[0,1,2],"summary":"s"}]}"#;
+        let (t2, o2) = parse_consolidate_response(ok_notitle, &segs).unwrap();
+        assert_eq!(t2, "网课总结");
+        assert_eq!(o2.len(), 1);
+        // 遗漏章节 / 未知 id / 重复分配 / 非法 JSON 都报错。
+        assert!(parse_consolidate_response(r#"{"chapters":[{"title":"x","segment_ids":[0,1]}]}"#, &segs).is_err(), "遗漏 segment 2");
+        assert!(parse_consolidate_response(r#"{"chapters":[{"title":"x","segment_ids":[9]}]}"#, &segs).is_err(), "未知 id");
+        assert!(parse_consolidate_response(
+            r#"{"chapters":[{"title":"x","segment_ids":[0]},{"title":"y","segment_ids":[0,1,2]}]}"#,
+            &segs
+        ).is_err(), "重复分配");
+        assert!(parse_consolidate_response("垃圾", &segs).is_err());
     }
 
     #[test]
     fn empty_input_no_segments() {
-        assert!(build_segments(&[], 2000).is_empty());
+        assert!(build_segments(&[]).is_empty());
     }
 
     #[test]
