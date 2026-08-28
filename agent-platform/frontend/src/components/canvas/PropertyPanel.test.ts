@@ -486,3 +486,29 @@ describe('PropertyPanel · C4 创建副本', () => {
     expect((events![0][0] as CanvasNode).id).toBe('node-1')
   })
 })
+
+// 修复VI（2x#4）：画布提示词 maxlength=平台 8000 + 官方建议值文案
+describe('PropertyPanel · 修复VI 提示词 maxlength（2x#4）', () => {
+  it('视频节点：maxlength 8000 挂上 + Seedance 官方建议文案', async () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'video'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const ta = wrapper.findComponent({ name: 'MentionTextarea' })
+    expect(ta.exists()).toBe(true)
+    expect(ta.props('maxlength')).toBe(8000)
+    expect(wrapper.text()).toContain('官方建议 ≤500 汉字 / 1000 英文词')
+    wrapper.unmount()
+  })
+
+  it('图片节点：maxlength 8000 挂上 + Seedream 官方建议文案', async () => {
+    const node = mkNode({ prompt: 'p' })
+    node.type = 'image'
+    const wrapper = mount(PropertyPanel, { props: { node } })
+    await flushPromises()
+    const ta = wrapper.findComponent({ name: 'MentionTextarea' })
+    expect(ta.props('maxlength')).toBe(8000)
+    expect(wrapper.text()).toContain('官方建议 ≤300 汉字 / 600 英文词')
+    wrapper.unmount()
+  })
+})

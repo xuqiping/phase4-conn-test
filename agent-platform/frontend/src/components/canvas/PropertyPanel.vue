@@ -179,11 +179,14 @@
             :candidates="candidates"
             :broken-mentions="brokenMentions"
             :rows="3"
+            :maxlength="PROMPT_MAX_LEN"
             placeholder="图片生成 prompt；输入 @ 引用上游图节点作参考图"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
             @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
+          <!-- 修复VI（2x#4）：maxlength=平台后端 8000 硬拦；官方建议值仅提示（超长效果下降不报错） -->
+          <div class="prop-panel__hint">官方建议 ≤300 汉字 / 600 英文词，超长效果下降</div>
           <div v-if="brokenMentions.length" class="prop-panel__warn">
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连）
           </div>
@@ -373,11 +376,14 @@
             :candidates="candidates"
             :broken-mentions="brokenMentions"
             :rows="3"
+            :maxlength="PROMPT_MAX_LEN"
             placeholder="视频生成 prompt；输入 @ 引用上游节点产出"
             @update:model-value="(v: string) => { if (node) node.data.prompt = v }"
             @blur-committed="emit('data-changed')"
             @mention-click="onMentionClick"
           />
+          <!-- 修复VI（2x#4）：maxlength=平台后端 8000 硬拦；官方建议值仅提示（Seedance 超长只降质不报错） -->
+          <div class="prop-panel__hint">官方建议 ≤500 汉字 / 1000 英文词，超长效果下降</div>
           <div v-if="brokenMentions.length" class="prop-panel__warn">
             断链引用：{{ brokenMentions.join(' ') }}（上游被删/断连，运行前请重连或移除）
           </div>
@@ -1251,6 +1257,8 @@ const sceneCount = computed(() =>
   Array.isArray(props.node?.data.scenes) ? (props.node!.data.scenes as unknown[]).length : 0
 )
 
+/** 修复VI（2x#4）：提示词长度上限=平台后端 PROMPT_MAX_LEN（>8000 提交即 400）；官方建议值仅文案提示 */
+const PROMPT_MAX_LEN = 8000
 const ratioOpts = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(v => ({ label: v, value: v }))
 const resOpts = ['480p', '720p', '1080p', '4K'].map(v => ({ label: v, value: v }))
 const audioModeOpts = [
