@@ -182,4 +182,33 @@ class MediaModelCapabilityServiceTest {
         assertEquals(3, cap.getMaxVideos());
         assertEquals(15, cap.getMaxAttachments());
     }
+
+    // ---------------- RF/MVR-6：HappyHorse 1.1 前缀默认 ----------------
+
+    @Test
+    void happyhorse_imageOnlyCapability() {
+        // 纯图生视频：media first_frame 恰 1 张、无视频/音频参考、[3,15]s、480p/720p/1080p。
+        // maxVideos:0 驱动后端拦截链（MediaGenTaskService 参考视频校验）+ 前端禁传。
+        MediaModelCapability cap = service.resolve("happyhorse-1.1-i2v", null);
+        assertEquals(1, cap.getMaxImages());
+        assertEquals(0, cap.getMaxVideos());
+        assertEquals(0, cap.getMaxAudios());
+        assertEquals(1, cap.getMaxAttachments());
+        assertTrue(cap.getSupportedResolutions().contains("480p"));
+        assertTrue(cap.getSupportedResolutions().contains("720p"));
+        assertTrue(cap.getSupportedResolutions().contains("1080p"), "1080P 官方已核实支持");
+        assertEquals(3, cap.getMinDuration());
+        assertEquals(15, cap.getMaxDuration());
+        assertFalse(cap.isSupportsGenerateAudio(), "官方无音频参数（输出无音轨）");
+        assertTrue(cap.isVideoDataUri());
+    }
+
+    @Test
+    void happyhorse10_sameCapability() {
+        // happyhorse-1.0-i2v 同命中（模型族前缀，不分版本）
+        MediaModelCapability cap = service.resolve("happyhorse-1.0-i2v", null);
+        assertEquals(0, cap.getMaxVideos());
+        assertEquals(3, cap.getMinDuration());
+        assertFalse(cap.isSupportsGenerateAudio());
+    }
 }

@@ -196,6 +196,20 @@ public class MediaModelCapabilityService {
                     .videoDataUri(true)
                     .build();
         }
+        // RF/MVR-6：HappyHorse 1.1（阿里百炼/DashScope）——纯图生视频：media first_frame 有且仅有 1 张，
+        // 无视频/音频参考；分辨率 480P/720P/1080P（官方默认 1080P，1080P 已核实支持）；
+        // 时长 [3,15] 默认 5；无 ratio（宽高跟随首帧）；官方无音频生成参数（输出 MP4 无音轨）→
+        // supportsGenerateAudio=false（plan 原写 true 系照抄 RE 模板，P2 核对官方文档后修正）。
+        if (id.contains("happyhorse") || id.contains("dashscope")) {
+            return MediaModelCapability.builder()
+                    .maxImages(1).maxVideos(0).maxAudios(0).maxAttachments(1)
+                    .supportedRatios(ALL_RATIOS)
+                    .supportedResolutions(RES_UPTO_1080)
+                    .minDuration(3).maxDuration(15)
+                    .supportsGenerateAudio(false)
+                    .videoDataUri(true)
+                    .build();
+        }
         // MVR-4：Seedance 2.5（识别 -2-5 / -2.5 两种写法，须先于 2.0 前缀判）——
         // 30图/10视频/10音频/总50、4-30s、≤4K、音频生成
         if (id.contains("seedance-2-5") || id.contains("seedance-2.5")) {
