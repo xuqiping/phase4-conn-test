@@ -34,6 +34,8 @@ public class PricingRuleExportItem {
     private java.util.Map<String, BigDecimal> estPerResolution;
     /** V162：TOKEN 每百万价分辨率档（480p/720p/768p/1080p/2k/4k → ¥/百万，仅 VIDEO TOKEN）。导入三态：字段缺失/null=不动库中现有档，{}=清空，非空=整体覆盖 */
     private java.util.Map<String, BigDecimal> tokenPricePerResolution;
+    /** V164（MVR-3）：SECOND 秒价分辨率档（480p/720p/768p/1080p/2k/4k → ¥/秒，仅 VIDEO SECOND）。导入三态：字段缺失/null=不动库中现有档，{}=清空，非空=整体覆盖 */
+    private java.util.Map<String, BigDecimal> pricePerSecondPerResolution;
     /** 文本/embed 每 1M input token 价（¥） */
     private BigDecimal priceInputPerMillion;
     /** 文本 每 1M output token 价（¥） */

@@ -952,4 +952,140 @@ class PricingConfigServiceTest {
         req.setPriceOutputPerMillion(BigDecimal.ONE);
         return req;
     }
+
+    // ---------------- MVR-3（V164）：SECOND 秒价分档槽位 ----------------
+
+    @Test
+    void mvr3_secondSlots_saveAndNormalize() {
+        // SECOND + 秒价槽合法——键归一（2K→2k）、剔空档；token 槽恒 null
+        when(llmProviderMapper.selectByIdForUpdate(4L))
+                .thenReturn(provider(4L, "视频", "VIDEO", "hailuo"));
+        PricingRuleRequest req = pricingReq(4L, "hailuo", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        req.setPricePerSecond(new BigDecimal("0.1"));
+        java.util.Map<String, BigDecimal> slots = new java.util.LinkedHashMap<>();
+        slots.put("768p", new BigDecimal("0.05"));
+        slots.put("2K", new BigDecimal("0.2")); // 大写归一
+        slots.put("480p", null); // 空档剔除
+        req.setPricePerSecondPerResolution(slots);
+
+        service.createPricingRule(req);
+
+        org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+        org.mockito.Mockito.verify(pricingRuleMapper).insert(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getPricePerSecondPerResolution())
+                .contains("\"768p\":0.05").contains("\"2k\":0.2").doesNotContain("480p");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getTokenPricePerResolution()).isNull();
+    }
+
+    @Test
+    void mvr3_secondSlots_onTokenRow_rejected() {
+        // 秒价槽仅 SECOND 行有意义，TOKEN 行带 → 400
+        PricingRuleRequest req = pricingReq(4L, "seedance", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_TOKEN);
+        req.setPricePerSecondPerResolution(java.util.Map.of("768p", new BigDecimal("0.05")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("pricePerSecondPerResolution 仅 VIDEO SECOND 模式有效");
+    }
+
+    @Test
+    void mvr3_secondSlots_onChatKind_rejected() {
+        // 非 VIDEO kind 带秒价槽 → 400
+        PricingRuleRequest req = pricingReq(1L, "chat-model", PricingRuleEntity.KIND_CHAT);
+        req.setPricePerSecondPerResolution(java.util.Map.of("768p", new BigDecimal("0.05")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅 VIDEO kind 有效");
+    }
+
+    @Test
+    void mvr3_secondSlots_generalKey_throws() {
+        // 无 general 键——通用秒价走 pricePerSecond 列
+        PricingRuleRequest req = pricingReq(4L, "hailuo", PricingRuleEntity.KIND_VIDEO);
+        req.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        req.setPricePerSecond(new BigDecimal("0.1"));
+        req.setPricePerSecondPerResolution(java.util.Map.of("general", new BigDecimal("0.1")));
+        assertThatThrownBy(() -> service.createPricingRule(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("480p/720p/768p/1080p/2k/4k");
+    }
+
+    private com.superprogrammer.billing.dto.PricingRuleExportItem secondSlotImportItem(
+            java.util.Map<String, BigDecimal> slots) {
+        com.superprogrammer.billing.dto.PricingRuleExportItem item =
+                new com.superprogrammer.billing.dto.PricingRuleExportItem();
+        item.setKind(PricingRuleEntity.KIND_VIDEO);
+        item.setProviderId(4L);
+        item.setModel("hailuo");
+        item.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        item.setPricePerSecond(new BigDecimal("0.1"));
+        item.setPricePerSecondPerResolution(slots);
+        return item;
+    }
+
+    private PricingRuleEntity existingSecondRow(String slotsJson) {
+        PricingRuleEntity existing = new PricingRuleEntity();
+        existing.setId(20L);
+        existing.setKind(PricingRuleEntity.KIND_VIDEO);
+        existing.setProviderId(4L);
+        existing.setModel("hailuo");
+        existing.setHasReference(false);
+        existing.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        existing.setPricePerSecond(new BigDecimal("0.1"));
+        existing.setPricePerSecondPerResolution(slotsJson);
+        return existing;
+    }
+
+    @Test
+    void mvr3_importSecondSlots_threeStates() {
+        // 三态：缺失=不动（旧导出防误清）→ {}=清空 → 非空=整体覆盖（未列档被清）
+        for (int state = 1; state <= 3; state++) {
+            org.mockito.Mockito.reset(llmProviderMapper, pricingRuleMapper);
+            when(llmProviderMapper.selectById(4L)).thenReturn(provider(4L, "视频", "VIDEO", "hailuo"));
+            when(pricingRuleMapper.countConflictingProviderModelHasRef(4L, "hailuo", false)).thenReturn(1L);
+            when(pricingRuleMapper.findEffective(PricingRuleEntity.KIND_VIDEO, 4L, "hailuo", false))
+                    .thenReturn(existingSecondRow("{\"768p\":0.05}"));
+
+            com.superprogrammer.billing.dto.PricingRuleExportItem item;
+            String expect;
+            if (state == 1) {
+                item = secondSlotImportItem(null); // 旧导出缺字段
+                expect = "{\"768p\":0.05}";
+            } else if (state == 2) {
+                item = secondSlotImportItem(new java.util.LinkedHashMap<>()); // {} 清空
+                expect = null;
+            } else {
+                item = secondSlotImportItem(java.util.Map.of("2k", new BigDecimal("0.2"))); // 整体覆盖
+                expect = "{\"2k\":0.2}";
+            }
+
+            service.importAll(List.of(item));
+
+            org.mockito.ArgumentCaptor<PricingRuleEntity> captor =
+                    org.mockito.ArgumentCaptor.forClass(PricingRuleEntity.class);
+            org.mockito.Mockito.verify(pricingRuleMapper).updateById(captor.capture());
+            org.assertj.core.api.Assertions.assertThat(captor.getValue().getPricePerSecondPerResolution())
+                    .isEqualTo(expect);
+        }
+    }
+
+    @Test
+    void mvr3_template_secondSkeleton() {
+        // 模板 VIDEO 候选预填 6 档空骨架（null 值导入被归一剔除=不动，仅填写提示）
+        when(llmProviderMapper.selectList(any())).thenReturn(List.of(
+                provider(4L, "视频", "VIDEO", "hailuo")));
+        when(pricingRuleMapper.selectList(any())).thenReturn(List.of());
+
+        var template = service.generateTemplate();
+
+        // VIDEO 候选按 hasReference false/true 扩两行（7x-3），两行都带骨架
+        org.assertj.core.api.Assertions.assertThat(template).hasSize(2);
+        var secondSkeleton = template.get(0).getPricePerSecondPerResolution();
+        org.assertj.core.api.Assertions.assertThat(secondSkeleton).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(secondSkeleton.keySet())
+                .containsExactlyInAnyOrder("480p", "720p", "768p", "1080p", "2k", "4k");
+        org.assertj.core.api.Assertions.assertThat(secondSkeleton.values()).allMatch(java.util.Objects::isNull);
+    }
 }

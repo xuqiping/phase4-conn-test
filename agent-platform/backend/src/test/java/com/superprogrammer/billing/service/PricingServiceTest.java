@@ -631,4 +631,113 @@ class PricingServiceTest {
                 null, null, null, 3, false))
                 .isEqualByComparingTo("0.30");
     }
+
+    // ---------------- V164（MVR-3）：SECOND 秒价分档槽位（price_per_second_per_resolution） ----------------
+
+    @Test
+    void video_second_resolutionSlot_used() {
+        // 2K 任务命中 2k 槽（0.2/秒 × 5s = 1.0）；"2K" 大写经 normalizeResolution 归一取键
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setPricePerSecondPerResolution("{\"768p\":0.05,\"2k\":0.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "2k"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "2K");
+
+        assertThat(cost).isEqualByComparingTo("1.000000");
+    }
+
+    @Test
+    void video_second_unlistedSlot_fallsBackToGeneral() {
+        // 480p 未配槽 → 回落通用秒价 0.1（零迁移兼容，与 V162 token 槽同语义）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setPricePerSecondPerResolution("{\"768p\":0.05,\"2k\":0.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "480p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "480p");
+
+        assertThat(cost).isEqualByComparingTo("0.500000");
+    }
+
+    @Test
+    void video_second_dirtySlotJson_fallsBackToGeneral() {
+        // 脏 JSON → WARN + 回落通用秒价，不炸结算（fail-open：脏价表不废任务）
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setPricePerSecondPerResolution("{bad json");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "768p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "768p");
+
+        assertThat(cost).isEqualByComparingTo("0.500000");
+    }
+
+    @Test
+    void video_second_resolutionNull_ignoresSlots() {
+        // 分辨率未传（旧链路/无参兜底）→ 不进槽，直取通用秒价
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setPricePerSecondPerResolution("{\"2k\":0.2}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, null);
+
+        assertThat(cost).isEqualByComparingTo("0.500000");
+    }
+
+    @Test
+    void video_second_slots_notConfusedWithEstSlots() {
+        // 双 JSONB 撞脸 ×2 用例：est 槽（TOKEN 预估 ¥/秒）与 SECOND 槽（真实扣费 ¥/秒）互不串——
+        // SECOND 行即使误配了 est_per_resolution，扣费/估价都只读 SECOND 槽
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setEstPerResolution("{\"768p\":9.9}");
+        row.setPricePerSecondPerResolution("{\"768p\":0.05}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "768p"))
+                .thenReturn(null);
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, null))
+                .thenReturn(row);
+
+        BigDecimal cost = pricingService.computeCost("VIDEO", 7L, "seedance",
+                null, null, 5, 0, false, "768p");
+        assertThat(cost).isEqualByComparingTo("0.250000"); // 0.05×5，非 9.9×5
+
+        // 估价与扣费同口径（estimateVideoYuan SECOND 分支也取 SECOND 槽）
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, "768p", false))
+                .isEqualByComparingTo("0.250000");
+    }
+
+    @Test
+    void estimateVideoYuan_secondMode_usesSlotPrice() {
+        // 估价 = SECOND 分档槽 ?? 通用秒价
+        PricingRuleEntity row = rule("VIDEO");
+        row.setVideoBillingMode(PricingRuleEntity.VIDEO_MODE_SECOND);
+        row.setPricePerSecond(new BigDecimal("0.1"));
+        row.setPricePerSecondPerResolution("{\"768p\":0.05}");
+        when(pricingRuleMapper.findEffectiveWithResolution("VIDEO", 7L, "seedance", false, "768p"))
+                .thenReturn(row);
+
+        assertThat(pricingService.estimateVideoYuan(7L, "seedance", 5, "768p", false))
+                .isEqualByComparingTo("0.250000");
+    }
 }

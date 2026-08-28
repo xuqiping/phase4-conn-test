@@ -30,6 +30,8 @@ public class PricingRuleVO {
     private java.util.Map<String, BigDecimal> estPerResolution;
     /** V162：VIDEO TOKEN 每百万价分辨率档（480p/720p/768p/1080p/2k/4k → ¥/百万；未配档回落通用价）；其他行恒 null。 */
     private java.util.Map<String, BigDecimal> tokenPricePerResolution;
+    /** V164（MVR-3）：VIDEO SECOND 秒价分辨率档（480p/720p/768p/1080p/2k/4k → ¥/秒；未配档回落通用秒价）；其他行恒 null。 */
+    private java.util.Map<String, BigDecimal> pricePerSecondPerResolution;
     /** D（V160）闲时/缓存四新列；仅 CHAT/EMBED/RERANK 行有意义，其他恒 null（NULL=回落语义）。 */
     private BigDecimal offPeakInputPerMillion;
     private BigDecimal offPeakOutputPerMillion;

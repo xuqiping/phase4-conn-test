@@ -91,6 +91,17 @@ public class PricingRuleEntity {
             updateStrategy = FieldStrategy.ALWAYS)
     private String tokenPricePerResolution;
 
+    /**
+     * 视频SECOND秒价分档（V164/MVR-3）：仅 VIDEO+SECOND 行有意义——每秒价按分辨率分档，
+     * JSONB 一行多档：{@code {"768p":0.05,"2k":0.2}}，值=¥/秒。
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general——通用/兜底秒价=pricePerSecond 列复用）；未配档回落通用秒价。
+     * 键归一 trim+小写（4K→4k，配置存/结算取同用 PricingService.normalizeResolution）。
+     * TOKEN/CHAT/EMBED/RERANK/IMAGE 行恒 NULL；估价（estimateVideoYuan）与真实扣费（videoCost）同口径取本槽。
+     */
+    @TableField(typeHandler = com.superprogrammer.common.typehandler.JsonbStringTypeHandler.class,
+            updateStrategy = FieldStrategy.ALWAYS)
+    private String pricePerSecondPerResolution;
+
     // ==================== 人工测试遗留问题修复II D（V160）：闲时价 + 缓存价 ====================
     // 全 NULL 默认 = 存量计费逐分不变：off_peak_*=NULL → 取忙时列；price_cached=NULL → 缓存价=输入价。
 

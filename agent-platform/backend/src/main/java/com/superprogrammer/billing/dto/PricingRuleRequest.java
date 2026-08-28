@@ -68,6 +68,13 @@ public class PricingRuleRequest {
     private java.util.Map<String, BigDecimal> tokenPricePerResolution;
 
     /**
+     * V164（MVR-3）：SECOND 每秒价按分辨率分档（一行多档），仅 VIDEO+SECOND 模式有效——
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general——通用/兜底秒价=pricePerSecond 列；大小写不敏感，落库统一小写），
+     * 值=¥/秒 须>0；未配档位结算/估价回落通用秒价。其他 kind/TOKEN 必须为 null。
+     */
+    private java.util.Map<String, BigDecimal> pricePerSecondPerResolution;
+
+    /**
      * D（V160）闲时/缓存四新列，仅 CHAT/EMBED/RERANK 有效（IMAGE/VIDEO 必须为 null）。
      * 全部可空：NULL=回落语义（闲时列空=同忙时价；缓存价空=同输入价）。
      */

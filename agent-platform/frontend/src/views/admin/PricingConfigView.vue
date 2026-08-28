@@ -106,6 +106,19 @@
         </n-form-item>
         <!-- D6（V160）：SECOND 已去分辨率档（历史行合并为通用行），不再提供分辨率下拉 -->
         <n-form-item label="视频秒价 ¥" v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'SECOND'"><n-input-number v-model:value="pricingForm.pricePerSecond" :precision="6" /></n-form-item>
+        <!-- V164（MVR-3）：SECOND 秒价分档（真实扣费/估价同口径）；留空档=按上方通用秒价；无「通用」档（通用秒价即 pricePerSecond） -->
+        <template v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'SECOND'">
+          <n-form-item
+            v-for="slot in secondSlots"
+            :key="'sp-' + slot.key"
+            :label="'秒价 ¥/秒 · ' + slot.label"
+          >
+            <n-input-number v-model:value="secondPriceForm[slot.key]" :precision="6" clearable placeholder="留空=按通用秒价" />
+          </n-form-item>
+          <n-form-item label=" ">
+            <span class="pricing-config__hint">按任务分辨率取对应档秒价扣费/估价，未单列档位按上方通用秒价</span>
+          </n-form-item>
+        </template>
         <!-- 7x-2（V153）：TOKEN 模式提交期无 token 维度，预估秒价按分辨率一行配齐，供余额预检（不参与真实扣费） -->
         <template v-if="pricingForm.kind === 'VIDEO' && pricingForm.videoBillingMode === 'TOKEN'">
           <!-- V162：TOKEN 每百万价按分辨率分档（真实扣费价）；留空档=按上方通用价计；无「通用」档（通用价即输入价） -->
@@ -252,6 +265,23 @@ function fmtTokenSlots(map?: Record<string, number> | null): string {
   return parts.length ? parts.join(' / ') : '—'
 }
 
+// V164（MVR-3）：SECOND 秒价档位（真实扣费/估价同口径，6 档字典派生）。
+// 无 general——通用/兜底秒价=pricePerSecond 列，未配档回落它
+const secondSlots = resolutionSlotOptions
+const secondPriceForm = reactive<Record<string, number | null>>(
+  Object.fromEntries(secondSlots.map(s => [s.key, null]))
+)
+function resetSecondPriceForm(map?: Record<string, number> | null) {
+  for (const slot of secondSlots) secondPriceForm[slot.key] = map?.[slot.key] ?? null
+}
+/** V164 列表分档秒价列渲染：{768p:0.05,2k:0.2} → "768p 0.05 / 2K 0.2" */
+function fmtSecondSlots(map?: Record<string, number> | null): string {
+  if (!map) return '—'
+  const parts = secondSlots.filter(slot => map[slot.key] != null)
+    .map(slot => `${resolutionLabel(slot.key)} ${map[slot.key]}`)
+  return parts.length ? parts.join(' / ') : '—'
+}
+
 const pricingColumns: DataTableColumns<PricingRuleVO> = [
   { title: '类型', key: 'kind', render: r => KIND_LABEL[r.kind] ?? r.kind },
   { title: 'providerId', key: 'providerId', render: r => r.providerId == null ? '全局' : String(r.providerId) },
@@ -277,6 +307,9 @@ const pricingColumns: DataTableColumns<PricingRuleVO> = [
       (r.kind !== 'VIDEO' && r.kind !== 'IMAGE') || (r.kind === 'VIDEO' && r.videoBillingMode === 'TOKEN') ? fmt(r.priceInputPerMillion) : '—' },
   { title: '输出价 ¥/百万', key: 'priceOutputPerMillion', render: r => r.kind === 'CHAT' ? fmt(r.priceOutputPerMillion) : '—' },
   { title: '视频秒价 ¥', key: 'pricePerSecond', render: r => r.kind === 'VIDEO' && r.videoBillingMode === 'SECOND' ? fmt(r.pricePerSecond) : '—' },
+  // V164（MVR-3）：VIDEO SECOND 分档秒价（真实扣费/估价同口径；未配档回落通用秒价列）
+  { title: '分档秒价 ¥/秒', key: 'pricePerSecondPerResolution', render: r =>
+      r.kind === 'VIDEO' && r.videoBillingMode === 'SECOND' ? fmtSecondSlots(r.pricePerSecondPerResolution) : '—' },
   { title: '图片单价 ¥', key: 'pricePerImage', render: r => r.kind === 'IMAGE' ? fmt(r.pricePerImage) : '—' },
   { title: '生效时间', key: 'effectiveFrom', render: r => new Date(r.effectiveFrom).toLocaleString('zh-CN', { hour12: false }) },
   {
@@ -320,7 +353,7 @@ function fmt(n: number | null | undefined): string {
 // 价表表单
 const pricingShow = ref(false)
 const pricingEditId = ref<number | null>(null)
-const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: null, estPerResolution: null, tokenPricePerResolution: null, offPeakInputPerMillion: null, offPeakOutputPerMillion: null, offPeakCachedPerMillion: null, priceCachedPerMillion: null })
+const pricingForm = reactive<PricingRuleRequest>({ kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: null, estPerResolution: null, tokenPricePerResolution: null, pricePerSecondPerResolution: null, offPeakInputPerMillion: null, offPeakOutputPerMillion: null, offPeakCachedPerMillion: null, priceCachedPerMillion: null })
 const availableModels = ref<AvailablePricingModelVO[]>([])
 const candidateLoading = ref(false)
 const candidateError = ref('')
@@ -370,6 +403,7 @@ async function openPricingModal(rule?: PricingRuleVO) {
       hasReference: rule.hasReference ?? false,
       resolution: null, estPerResolution: rule.estPerResolution ?? null,
       tokenPricePerResolution: rule.tokenPricePerResolution ?? null,
+      pricePerSecondPerResolution: rule.pricePerSecondPerResolution ?? null,
       offPeakInputPerMillion: rule.offPeakInputPerMillion ?? null,
       offPeakOutputPerMillion: rule.offPeakOutputPerMillion ?? null,
       offPeakCachedPerMillion: rule.offPeakCachedPerMillion ?? null,
@@ -377,12 +411,14 @@ async function openPricingModal(rule?: PricingRuleVO) {
     })
     resetEstForm(rule.estPerResolution)
     resetTokenPriceForm(rule.tokenPricePerResolution)
+    resetSecondPriceForm(rule.pricePerSecondPerResolution)
   } else {
     pricingEditId.value = null
     selectedCandidateKey.value = null
-    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: null, estPerResolution: null, tokenPricePerResolution: null, offPeakInputPerMillion: null, offPeakOutputPerMillion: null, offPeakCachedPerMillion: null, priceCachedPerMillion: null })
+    Object.assign(pricingForm, { kind: 'CHAT', providerId: null, model: null, priceInputPerMillion: null, priceOutputPerMillion: null, videoBillingMode: 'TOKEN', pricePerSecond: null, pricePerImage: null, hasReference: false, resolution: null, estPerResolution: null, tokenPricePerResolution: null, pricePerSecondPerResolution: null, offPeakInputPerMillion: null, offPeakOutputPerMillion: null, offPeakCachedPerMillion: null, priceCachedPerMillion: null })
     resetEstForm(null)
     resetTokenPriceForm(null)
+    resetSecondPriceForm(null)
   }
   pricingShow.value = true
   if (!rule) await loadAvailableModels()
@@ -417,13 +453,16 @@ function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
     out.resolution = null
     out.estPerResolution = null
     out.tokenPricePerResolution = null
+    out.pricePerSecondPerResolution = null
   } else {
     out.hasReference = out.hasReference === true
-    // 7x-1/2 + D6（V160）：模式联动——TOKEN 清秒价（token 价用 priceInputPerMillion，
-    // 预估取 estForm 非空档组成 map，全空=null）；SECOND 清 token 价/预估（估价直接用秒价）；
+    // 7x-1/2 + D6（V160）+ V164（MVR-3）：模式联动——TOKEN 清秒价/秒价槽（token 价用
+    // priceInputPerMillion，预估取 estForm 非空档组成 map，全空=null）；SECOND 清 token 价/
+    // 预估（估价直接用秒价槽），秒价槽恒发对象（全空档={} 即显式清空，同 V162 token 槽语义）；
     // 计费行恒不带 resolution（D6 去分辨率档）
     if (out.videoBillingMode === 'TOKEN') {
       out.pricePerSecond = null
+      out.pricePerSecondPerResolution = null
       out.resolution = null
       const est: Record<string, number> = {}
       for (const slot of estSlots) {
@@ -443,6 +482,13 @@ function sanitizePricingPayload(form: PricingRuleRequest): PricingRuleRequest {
       out.estPerResolution = null
       out.tokenPricePerResolution = null
       out.resolution = null
+      // V164（MVR-3）：SECOND 行恒带 pricePerSecondPerResolution（全空档={} 即显式清空）——
+      // 若省略字段（null），后端编辑/导入的「null=不动」语义会把「清空档位」吞掉
+      const sp: Record<string, number> = {}
+      for (const slot of secondSlots) {
+        if (secondPriceForm[slot.key] != null) sp[slot.key] = secondPriceForm[slot.key] as number
+      }
+      out.pricePerSecondPerResolution = sp
     }
   }
   return out

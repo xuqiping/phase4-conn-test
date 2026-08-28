@@ -189,11 +189,17 @@ public class PricingService {
             return BigDecimal.ZERO;
         }
         if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(rule.getVideoBillingMode())) {
-            if (rule.getPricePerSecond() == null) {
+            // V164（MVR-3）：估价与真实扣费（videoCost）同口径——分档秒价槽 ?? 通用秒价
+            BigDecimal perSecond = resolveSecondPricePerSecond(rule.getPricePerSecondPerResolution(),
+                    normalizeResolution(resolution));
+            if (perSecond == null) {
+                perSecond = rule.getPricePerSecond();
+            }
+            if (perSecond == null) {
                 throw new BusinessException(ErrorCode.PRICING_NOT_FOUND,
                         "VIDEO SECOND 模式未配置 price_per_second: model=" + model);
             }
-            return rule.getPricePerSecond().multiply(BigDecimal.valueOf(seconds))
+            return perSecond.multiply(BigDecimal.valueOf(seconds))
                     .setScale(6, RoundingMode.HALF_UP);
         }
         // TOKEN 模式：预估秒价（按分辨率参数，V153）× 时长（仅估价，不参与真实扣费）
@@ -379,10 +385,15 @@ public class PricingService {
      */
     private BigDecimal videoCost(PricingRuleEntity rule, Integer tokens, Integer seconds, String resolution) {
         if (PricingRuleEntity.VIDEO_MODE_SECOND.equals(rule.getVideoBillingMode())) {
-            if (seconds == null || seconds <= 0 || rule.getPricePerSecond() == null) {
+            // V164（MVR-3）：秒价 = price_per_second_per_resolution[resolution] ?? pricePerSecond（未配档回落通用秒价）
+            BigDecimal perSecond = resolveSecondPricePerSecond(rule.getPricePerSecondPerResolution(), resolution);
+            if (perSecond == null) {
+                perSecond = rule.getPricePerSecond();
+            }
+            if (seconds == null || seconds <= 0 || perSecond == null) {
                 return BigDecimal.ZERO;
             }
-            return rule.getPricePerSecond().multiply(BigDecimal.valueOf(seconds)).setScale(6, RoundingMode.HALF_UP);
+            return perSecond.multiply(BigDecimal.valueOf(seconds)).setScale(6, RoundingMode.HALF_UP);
         }
         // TOKEN 模式（默认）：视频总 token × 每百万价 / 1M。
         // 每百万价 = token_price_per_resolution[resolution] ?? priceInputPerMillion（未配档回落通用价，V162）；
@@ -415,6 +426,28 @@ public class PricingService {
         } catch (Exception e) {
             org.slf4j.LoggerFactory.getLogger(PricingService.class)
                     .warn("token_price_per_resolution 解析失败回落通用价: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * V164（MVR-3）：从 price_per_second_per_resolution JSON 取「任务分辨率档位秒价」——
+     * 键 ⊆ 480p/720p/768p/1080p/2k/4k（无 general 兜底键，回落通用秒价由 caller 取 pricePerSecond）。
+     * resolution null（未传）/未配档 → null；JSON 损坏 → null + WARN（结算/估价回落通用秒价，脏价表不废任务）。
+     */
+    private static BigDecimal resolveSecondPricePerSecond(String pricePerSecondPerResolutionJson, String resolution) {
+        if (pricePerSecondPerResolutionJson == null || pricePerSecondPerResolutionJson.isBlank() || resolution == null) {
+            return null;
+        }
+        try {
+            java.util.Map<String, Object> map = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(pricePerSecondPerResolutionJson,
+                            new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { });
+            Object v = map.get(resolution);
+            return v == null ? null : new BigDecimal(String.valueOf(v));
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(PricingService.class)
+                    .warn("price_per_second_per_resolution 解析失败回落通用秒价: {}", e.getMessage());
             return null;
         }
     }
