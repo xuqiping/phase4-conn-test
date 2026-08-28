@@ -1129,10 +1129,11 @@ function onAutoLayout() {
     : (selectedNodeId.value ? [selectedNodeId.value] : [])
   let includeIds: Set<string> | undefined
   if (selected.length) {
-    includeIds = new Set(selected)
+    const ids: Set<string> = new Set(selected) // const 局部：闭包内保住非空收窄（let 会丢）
+    includeIds = ids
     for (const g of groups.value) {
-      if (g.memberIds.some(id => includeIds.has(id))) {
-        for (const id of g.memberIds) includeIds.add(id)
+      if (g.memberIds.some(id => ids.has(id))) {
+        for (const id of g.memberIds) ids.add(id)
       }
     }
   }
