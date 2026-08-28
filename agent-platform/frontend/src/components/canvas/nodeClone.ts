@@ -11,7 +11,8 @@ import type { CanvasEdge, CanvasNode, CanvasNodeData } from '@/types/canvas'
  * 指向画布内上游节点而非外部资源）；组员关系只存组侧（CanvasBoard groups），副本
  * 天然不归属任何组——平节点口径。
  */
-const RESET_KEYS: (keyof CanvasNodeData | string)[] = [
+/** 修复VII Chunk3 导出：canvasClipboard 子图复制共用同一脱钩口径（两处不漂移）。 */
+export const RESET_KEYS: (keyof CanvasNodeData | string)[] = [
   // 运行态与错误（status 在函数尾部按产物有无重算）
   'status', 'errorMsg',
   // 任务链脱钩：重生成/删除副本绝不牵动原节点任务

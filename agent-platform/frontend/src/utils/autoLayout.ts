@@ -27,11 +27,16 @@ const DEFAULT_SIZE: Record<string, { width: number; height: number }> = {
 }
 const FALLBACK_SIZE = { width: 300, height: 180 }
 
-function nodeSizeOf(node: CanvasNode): { width: number; height: number } {
-  const def = DEFAULT_SIZE[node.type] ?? FALLBACK_SIZE
-  const w = typeof node.data?.width === 'number' && node.data.width > 0 ? node.data.width : def.width
-  const h = typeof node.data?.height === 'number' && node.data.height > 0 ? node.data.height : def.height
+/** 尺寸估算导出（修复VII Chunk3 剪贴板包围盒复用同一张表，两处不漂移）。 */
+export function estimateSize(type: string, data?: { width?: unknown; height?: unknown }): { width: number; height: number } {
+  const def = DEFAULT_SIZE[type] ?? FALLBACK_SIZE
+  const w = typeof data?.width === 'number' && data.width > 0 ? data.width : def.width
+  const h = typeof data?.height === 'number' && data.height > 0 ? data.height : def.height
   return { width: w, height: h }
+}
+
+function nodeSizeOf(node: CanvasNode): { width: number; height: number } {
+  return estimateSize(node.type, node.data)
 }
 
 /** 圈住一组节点的最小矩形（左上角 + 尺寸；dagre 中心点语义已转左上角后再算）。 */
