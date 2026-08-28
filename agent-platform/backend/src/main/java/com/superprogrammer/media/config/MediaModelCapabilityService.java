@@ -33,6 +33,8 @@ public class MediaModelCapabilityService {
     private static final List<String> RES_UPTO_1080 = List.of("480p", "720p", "1080p");
     /** MVR-4：fast/mini 档仅 480p/720p（官方参数表——低档位不带 1080p）。 */
     private static final List<String> RES_FAST_MINI = List.of("480p", "720p");
+    /** RE/MVR-5：MiniMax v2 官方 resolution 枚举仅 768P/2K（字典档小写口径，provider 出参映射大写）。 */
+    private static final List<String> RES_MINIMAX = List.of("768p", "2k");
 
     private final ObjectMapper objectMapper;
 
@@ -182,6 +184,18 @@ public class MediaModelCapabilityService {
     /** 前缀默认值：2.5 全量大关；2.0 系多模态全开（fast/mini 降档）；1.0 系仅首帧图；未知模型走保守兜底 + WARN。 */
     private MediaModelCapability defaultsFor(String modelId) {
         String id = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);
+        // RE/MVR-5：MiniMax（Hailuo 系，v2 端点）——参考上限官方：参考图≤9/参考视频≤3/参考音频≤3
+        // （首尾帧图各≤1 含在图配额内）；分辨率仅 768P/2K、时长 4-15s、默认生成音频。
+        if (id.contains("minimax") || id.contains("hailuo")) {
+            return MediaModelCapability.builder()
+                    .maxImages(9).maxVideos(3).maxAudios(3).maxAttachments(15)
+                    .supportedRatios(ALL_RATIOS)
+                    .supportedResolutions(RES_MINIMAX)
+                    .minDuration(4).maxDuration(15)
+                    .supportsGenerateAudio(true)
+                    .videoDataUri(true)
+                    .build();
+        }
         // MVR-4：Seedance 2.5（识别 -2-5 / -2.5 两种写法，须先于 2.0 前缀判）——
         // 30图/10视频/10音频/总50、4-30s、≤4K、音频生成
         if (id.contains("seedance-2-5") || id.contains("seedance-2.5")) {

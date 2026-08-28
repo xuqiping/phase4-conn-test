@@ -154,4 +154,32 @@ class MediaModelCapabilityServiceTest {
         MediaModelCapability cap = service.resolve("doubao-seedance-2-0-260128", "{not json");
         assertEquals(9, cap.getMaxImages());
     }
+
+    @Test
+    void minimaxHailuo_v2Capability() {
+        // RE/MVR-5：MiniMax v2（Hailuo 系）——参考上限官方（图9/视频3/音频3/总15）、
+        // 分辨率仅 768p/2k（字典档小写，provider 出参映射 768P/2K）、4-15s、默认生成音频。
+        MediaModelCapability cap = service.resolve("MiniMax-H3", null);
+        assertEquals(9, cap.getMaxImages());
+        assertEquals(3, cap.getMaxVideos());
+        assertEquals(3, cap.getMaxAudios());
+        assertEquals(15, cap.getMaxAttachments());
+        assertEquals(2, cap.getSupportedResolutions().size());
+        assertTrue(cap.getSupportedResolutions().contains("768p"));
+        assertTrue(cap.getSupportedResolutions().contains("2k"));
+        assertFalse(cap.getSupportedResolutions().contains("1080p"));
+        assertEquals(4, cap.getMinDuration());
+        assertEquals(15, cap.getMaxDuration());
+        assertTrue(cap.isSupportsGenerateAudio());
+        assertTrue(cap.isVideoDataUri());
+    }
+
+    @Test
+    void hailuoWriting_sameCapability() {
+        // hailuo 写法（MiniMax-Hailuo-02）同命中 minimax 分支
+        MediaModelCapability cap = service.resolve("MiniMax-Hailuo-02", null);
+        assertTrue(cap.getSupportedResolutions().contains("2k"));
+        assertEquals(3, cap.getMaxVideos());
+        assertEquals(15, cap.getMaxAttachments());
+    }
 }

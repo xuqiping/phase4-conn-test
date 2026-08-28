@@ -55,7 +55,9 @@ public class MediaGenController {
     private final MediaGenQueryService queryService;
     private final FileStorageService fileStorageService;
     private final com.superprogrammer.media.service.MediaModelService mediaModelService;
-    private final com.superprogrammer.media.provider.ArkSeedanceProvider arkSeedanceProvider;
+    /** RE/MVR-5：测试按钮按 provider 行 protocol 路由（与 worker 同口径），不再写死 ark。 */
+    private final List<com.superprogrammer.media.provider.MediaGenProvider> mediaGenProviders;
+    private final com.superprogrammer.llm.service.LlmProviderService llmProviderService;
 
     @PostMapping("/video")
     @RequirePermission("media:gen")
@@ -136,14 +138,30 @@ public class MediaGenController {
 
     /**
      * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流到这里）。
-     * 零成本探测：GET 任务端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
+     * 零成本探测：GET 查态端点/不存在id，按状态码判定端点+Key 有效性，不建任务不计费。
+     * RE/MVR-5：按 provider 行 protocol 路由到对应适配器（ark/minimax/…，与 worker 同口径；
+     * protocol 空 回落 ark）——多协议并存时各自查各自 endpoint/key。
      * 权限与 /api/llm/providers 管理端点一致（16x 起 llm:config 独立码），非 media:gen。
      */
     @PostMapping("/providers/{id}/test")
     @AuditLog(module = "llm", action = "provider_test", targetType = "llm_provider")
     @RequirePermission("llm:config")
     public ResponseEntity<R<com.superprogrammer.llm.dto.TestConnectionResult>> testMediaProvider(@PathVariable Long id) {
-        return ResponseEntity.ok(R.ok(arkSeedanceProvider.testConnection(id)));
+        com.superprogrammer.llm.entity.LlmProviderEntity entity = llmProviderService.getById(id);
+        if (entity == null) {
+            return ResponseEntity.ok(R.ok(com.superprogrammer.llm.dto.TestConnectionResult.fail("供应商不存在或已删除")));
+        }
+        String protocol = entity.getProtocol() == null || entity.getProtocol().isBlank()
+                ? com.superprogrammer.media.provider.ArkSeedanceProvider.ID : entity.getProtocol();
+        com.superprogrammer.media.provider.MediaGenProvider provider = mediaGenProviders.stream()
+                .filter(p -> protocol.equals(p.getId()))
+                .findFirst()
+                .orElse(null);
+        if (provider == null) {
+            return ResponseEntity.ok(R.ok(com.superprogrammer.llm.dto.TestConnectionResult.fail(
+                    "视频协议 " + protocol + " 未注册适配器（请检查该 VIDEO 行的 protocol 配置）")));
+        }
+        return ResponseEntity.ok(R.ok(provider.testConnection(id)));
     }
 
     @GetMapping("/tasks/{id}")

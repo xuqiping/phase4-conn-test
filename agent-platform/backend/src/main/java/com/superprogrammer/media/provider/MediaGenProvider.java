@@ -55,4 +55,13 @@ public interface MediaGenProvider {
     default MediaGenResult queryTask(String providerTaskId) {
         return queryTask(providerTaskId, null);
     }
+
+    /**
+     * VIDEO provider 连通性测试（供应商管理页「测试」按钮，category=VIDEO 分流）。
+     * RE/MVR-5：测试入口按 provider 行 protocol 路由（与 worker 同口径），不再写死 ark。
+     * 任务型适配器覆写为各自零成本探测（GET 查态端点/不存在id）；未覆写给明确话术。
+     */
+    default com.superprogrammer.llm.dto.TestConnectionResult testConnection(Long providerId) {
+        return com.superprogrammer.llm.dto.TestConnectionResult.fail("该协议未接入连通性测试");
+    }
 }
