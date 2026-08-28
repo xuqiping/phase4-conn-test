@@ -926,6 +926,17 @@ function syncSelectionFromLibrary() {
       selectedNodeId.value = ids[0]
       selectedEdgeId.value = ''
       emit('node-selected', nodes.value.find(n => n.id === ids[0]) ?? null)
+    } else if (ids.length === 0) {
+      // 修复VII P4 实测缺口：vue-flow 也会自发清空选中（如 Esc），不经过 pane/edge 点击
+      // handler——原「0 选中不处理」让 selectedNodeId 残留（视觉已无选中，属性面板仍挂旧节点、
+      // ✨ 一键整理被隐形单选拉进子图模式）。0 选中同样同步清应用层（幂等，有选中才 emit）。
+      if (selectedNodeId.value || selectedEdgeId.value || multiSelectedIds.value.length) {
+        selectedNodeId.value = ''
+        selectedEdgeId.value = ''
+        multiSelectedIds.value = []
+        emit('node-selected', null)
+        emit('nodes-selected', [])
+      }
     }
   })
 }
