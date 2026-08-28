@@ -14,7 +14,10 @@ import com.superprogrammer.media.dto.PreparedMediaRequest;
 import com.superprogrammer.media.entity.MediaGenTask;
 import com.superprogrammer.media.mapper.MediaGenTaskMapper;
 import com.superprogrammer.media.provider.ArkImageProvider;
+import com.superprogrammer.media.provider.MediaGenProvider;
 import com.superprogrammer.media.provider.ArkSeedanceProvider;
+import com.superprogrammer.llm.entity.LlmProviderEntity;
+import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.common.audit.AuditLogEntity;
 import com.superprogrammer.common.audit.AuditLogService;
 import com.superprogrammer.common.metrics.BizMetrics;
@@ -23,6 +26,7 @@ import com.superprogrammer.media.service.internal.MediaInflightGateService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -53,7 +57,10 @@ public class MediaGenTaskWorker {
 
     private final MediaGenTaskTxService txService;
     private final MediaGenTaskMapper taskMapper;
-    private final ArkSeedanceProvider arkProvider;
+    /** MVR-1：视频协议适配器注册表（protocol → provider bean）；图片同步链仍走 imageProvider 不经此表。 */
+    private final List<MediaGenProvider> mediaGenProviders;
+    private final LlmProviderService llmProviderService;
+    private final Map<String, MediaGenProvider> providersByProtocol = new java.util.HashMap<>();
     private final ArkImageProvider imageProvider;
     private final MediaStorageService mediaStorageService;
     private final MediaReferenceUrlService mediaReferenceUrlService;
@@ -72,7 +79,8 @@ public class MediaGenTaskWorker {
 
     public MediaGenTaskWorker(MediaGenTaskTxService txService,
                               MediaGenTaskMapper taskMapper,
-                              ArkSeedanceProvider arkProvider,
+                              List<MediaGenProvider> mediaGenProviders,
+                              LlmProviderService llmProviderService,
                               ArkImageProvider imageProvider,
                               MediaStorageService mediaStorageService,
                               MediaReferenceUrlService mediaReferenceUrlService,
@@ -86,7 +94,8 @@ public class MediaGenTaskWorker {
                               AuditLogService auditLogService) {
         this.txService = txService;
         this.taskMapper = taskMapper;
-        this.arkProvider = arkProvider;
+        this.mediaGenProviders = mediaGenProviders;
+        this.llmProviderService = llmProviderService;
         this.imageProvider = imageProvider;
         this.mediaStorageService = mediaStorageService;
         this.mediaReferenceUrlService = mediaReferenceUrlService;
@@ -98,6 +107,42 @@ public class MediaGenTaskWorker {
         this.mediaInflightGate = mediaInflightGate;
         this.bizMetrics = bizMetrics;
         this.auditLogService = auditLogService;
+    }
+
+    /** MVR-1：注册表初始化——协议标识冲突属装配错误，启动即炸（fail-fast）优于运行期静默错路由。 */
+    @PostConstruct
+    void initProviderRegistry() {
+        for (MediaGenProvider p : mediaGenProviders) {
+            MediaGenProvider prev = providersByProtocol.put(p.getId(), p);
+            if (prev != null) {
+                throw new IllegalStateException("视频适配器协议标识重复: " + p.getId());
+            }
+        }
+        log.info("视频 provider 协议注册表: {}", providersByProtocol.keySet());
+    }
+
+    /**
+     * MVR-1：按任务 provider 行 protocol 路由到适配器。
+     * 行缺失 → 抛错由 process() catch 转 markFailed（可读话术，不静默卡 PENDING）；
+     * protocol 空（存量行未迁移/旧任务）→ 回落 ark（V163 上线前不炸）。
+     */
+    private MediaGenProvider routeVideoProvider(MediaGenTask task) {
+        String protocol = null;
+        if (task.getProviderId() != null) {
+            LlmProviderEntity row = llmProviderService.getById(task.getProviderId());
+            if (row == null) {
+                throw new IllegalStateException(
+                        "视频 provider 已停用或删除（id=" + task.getProviderId() + "），任务无法续跑");
+            }
+            protocol = row.getProtocol();
+        }
+        String key = (protocol == null || protocol.isBlank()) ? ArkSeedanceProvider.ID : protocol;
+        MediaGenProvider provider = providersByProtocol.get(key);
+        if (provider == null) {
+            throw new IllegalStateException(
+                    "视频协议 " + key + " 未注册适配器（请检查「全局模型供应商」该 VIDEO 行的 protocol 配置）");
+        }
+        return provider;
     }
 
     @Scheduled(fixedDelayString = "${media.poll-ms:5000}")
@@ -145,19 +190,23 @@ public class MediaGenTaskWorker {
             }
             String arkTaskId = task.getArkTaskId();
             if (arkTaskId == null || arkTaskId.isBlank()) {
+                MediaGenProvider provider = routeVideoProvider(task);
                 MediaGenRequest request = buildRequest(task, true);
-                PreparedMediaRequest prepared = arkProvider.prepareCreateRequest(request);
+                PreparedMediaRequest prepared = provider.prepareCreateRequest(request);
                 txService.saveProviderRequestSnapshot(taskId, objectMapper.writeValueAsString(prepared.getSnapshot()));
-                arkTaskId = arkProvider.createPreparedTask(request, prepared);
+                arkTaskId = provider.createPreparedTask(request, prepared);
                 txService.setArkTaskId(taskId, arkTaskId);
                 long delayMs = nextBackoffMs(task);
                 txService.scheduleNextQuery(taskId, delayMs);
                 log.info("媒体任务已创建 taskId={} arkTaskId={} nextQueryMs={}", taskId, arkTaskId, delayMs);
                 return;
             }
+            // MVR-1：路由先于 query-try——协议未注册/provider 删除属永久错误，
+            // 落外层 catch 转 markFailed（放进 query-try 会被当瞬时异常无限退避重试=静默卡 PENDING）
+            MediaGenProvider provider = routeVideoProvider(task);
             MediaGenResult result;
             try {
-                result = arkProvider.queryTask(arkTaskId, task.getProviderId());
+                result = provider.queryTask(arkTaskId, task.getProviderId());
             } catch (Exception queryError) {
                 long delayMs = nextBackoffMs(task);
                 txService.scheduleNextQuery(taskId, delayMs);

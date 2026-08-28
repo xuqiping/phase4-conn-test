@@ -53,7 +53,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ArkSeedanceProvider implements MediaGenProvider {
 
-    public static final String ID = "ark-seedance";
+    public static final String ID = "ark";  // MVR-1：= llm_providers.protocol 取值（worker 路由键）
 
     /** 连通探测用的不存在任务 id（GET 查它不会建任务、不计费）。 */
     private static final String PROBE_TASK_ID = "probe-connectivity-nonexistent";
@@ -134,8 +134,9 @@ public class ArkSeedanceProvider implements MediaGenProvider {
 
     /**
      * 查任务（多 provider 路由版）：providerId 非空时按任务落库的 provider 查，
-     * 否则回退默认 provider（旧行为）。
+     * 否则回退默认 provider（旧行为）。MVR-1：两参版上位为接口方法。
      */
+    @Override
     public MediaGenResult queryTask(String providerTaskId, Long providerId) {
         ResolvedArk ark = resolveArk(providerId);
         String resp;

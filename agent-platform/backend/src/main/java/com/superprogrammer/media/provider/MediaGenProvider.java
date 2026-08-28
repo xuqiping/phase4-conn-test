@@ -2,6 +2,7 @@ package com.superprogrammer.media.provider;
 
 import com.superprogrammer.media.dto.MediaGenRequest;
 import com.superprogrammer.media.dto.MediaGenResult;
+import com.superprogrammer.media.dto.PreparedMediaRequest;
 
 /**
  * 媒体生成 provider 抽象（任务型，video + image 通用）。
@@ -21,7 +22,10 @@ import com.superprogrammer.media.dto.MediaGenResult;
  */
 public interface MediaGenProvider {
 
-    /** provider 标识（如 "ark-seedance"）。 */
+    /**
+     * provider 协议标识（= llm_providers.protocol 的取值域，如 "ark"）。
+     * 视频模型接入扩展 MVR-1：worker 按 provider 行 protocol 路由到本适配器 bean。
+     */
     String getId();
 
     /**
@@ -32,7 +36,23 @@ public interface MediaGenProvider {
     String createTask(MediaGenRequest request);
 
     /**
-     * 查询任务态。未到终态返 PENDING/RUNNING，worker 据此继续退避轮询。
+     * 发送前只构建一次实际 body + 派生审计快照（不含密钥/data URI）。
+     * MVR-1：上位为接口方法——快照落库时机由 worker 统一控制，多协议适配器同口径。
      */
-    MediaGenResult queryTask(String providerTaskId);
+    PreparedMediaRequest prepareCreateRequest(MediaGenRequest request);
+
+    /** 使用已准备的同一个 body 发请求，避免保存快照后又重新推导请求。 */
+    String createPreparedTask(MediaGenRequest request, PreparedMediaRequest prepared);
+
+    /**
+     * 查询任务态。未到终态返 PENDING/RUNNING，worker 据此继续退避轮询。
+     * MVR-1：providerId 上位为接口参数——多 provider 行并存时各持各的密钥/端点，
+     * 查态必须按任务落库的 providerId 走对应行；为空由实现自行回退默认 provider。
+     */
+    MediaGenResult queryTask(String providerTaskId, Long providerId);
+
+    /** 单参便捷版（默认 provider），测试/旧调用方兼容。 */
+    default MediaGenResult queryTask(String providerTaskId) {
+        return queryTask(providerTaskId, null);
+    }
 }

@@ -37,6 +37,7 @@ class MediaGenTaskWorkerTest {
     @Mock private MediaGenTaskTxService txService;
     @Mock private MediaGenTaskMapper taskMapper;
     @Mock private ArkSeedanceProvider arkProvider;
+    @Mock private com.superprogrammer.llm.service.LlmProviderService llmProviderService;
     @Mock private ArkImageProvider imageProvider;
     @Mock private MediaStorageService mediaStorageService;
     @Mock private MediaReferenceUrlService mediaReferenceUrlService;
@@ -55,9 +56,15 @@ class MediaGenTaskWorkerTest {
 
     @BeforeEach
     void setUp() {
-        worker = new MediaGenTaskWorker(txService, taskMapper, arkProvider, imageProvider,
+        worker = new MediaGenTaskWorker(txService, taskMapper, java.util.List.of(arkProvider),
+                llmProviderService, imageProvider,
                 mediaStorageService, mediaReferenceUrlService, properties, objectMapper, directExecutor, mediaBillingService,
                 inflightGate, mediaInflightGate, bizMetrics, auditLogService);
+        // MVR-1：单元测试无 Spring 生命周期，手动初始化协议注册表（mock getId 返 'ark'）
+        stub: {
+            when(arkProvider.getId()).thenReturn("ark");
+        }
+        worker.initProviderRegistry();
     }
 
     @Test
@@ -423,6 +430,83 @@ class MediaGenTaskWorkerTest {
     // ---------- helpers ----------
 
     /** 造 PENDING 任务，requestConfig 含 720p/5s。arkTaskId=null 表示待建任务。 */
+    // ---------- MVR-1：provider protocol 路由 ----------
+
+    @Test
+    void mvr1_protocolHit_routesQueryToArkAdapter() {
+        // provider 行 protocol='ark'（V163 迁移后口径）→ 查态路由到 ark 适配器
+        MediaGenTask task = pendingTask(1L, 100L, "cct-9");
+        task.setProviderId(77L);
+        com.superprogrammer.llm.entity.LlmProviderEntity row =
+                new com.superprogrammer.llm.entity.LlmProviderEntity();
+        row.setId(77L);
+        row.setProtocol("ark");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(llmProviderService.getById(77L)).thenReturn(row);
+        when(arkProvider.queryTask(eq("cct-9"), eq(77L))).thenReturn(result(MediaGenResult.STATUS_SUCCEEDED,
+                "https://ark/v.mp4", 1000L, null));
+        when(mediaStorageService.downloadAndStore(anyString(), eq(100L), anyString())).thenReturn("fid-9");
+
+        worker.poll();
+
+        verify(arkProvider).queryTask("cct-9", 77L);
+        verify(txService).markSucceeded(eq(1L), eq("fid-9"), anyInt(), anyString());
+    }
+
+    @Test
+    void mvr1_blankProtocol_fallsBackToArk() {
+        // 存量行 protocol 为空（V163 未跑/新行漏配）→ 回落 ark 不炸
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        task.setProviderId(88L);
+        com.superprogrammer.llm.entity.LlmProviderEntity row =
+                new com.superprogrammer.llm.entity.LlmProviderEntity();
+        row.setId(88L);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(llmProviderService.getById(88L)).thenReturn(row);
+        when(arkProvider.queryTask(eq("cct-1"), eq(88L))).thenReturn(result(MediaGenResult.STATUS_FAILED,
+                null, null, "Ark 429"));
+
+        worker.poll();
+
+        verify(txService).markFailed(eq(1L), contains("Ark 429"));
+    }
+
+    @Test
+    void mvr1_unregisteredProtocol_marksFailedWithReadableMessage() {
+        // protocol=minimax 但适配器未注册 → 任务 FAILED 带可读话术（不静默卡 PENDING）
+        MediaGenTask task = pendingTask(1L, 100L, null);
+        task.setProviderId(99L);
+        com.superprogrammer.llm.entity.LlmProviderEntity row =
+                new com.superprogrammer.llm.entity.LlmProviderEntity();
+        row.setId(99L);
+        row.setProtocol("ghost-protocol");
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(llmProviderService.getById(99L)).thenReturn(row);
+
+        worker.poll();
+
+        verify(arkProvider, never()).prepareCreateRequest(any());
+        verify(txService).markFailed(eq(1L), contains("视频协议 ghost-protocol 未注册适配器"));
+    }
+
+    @Test
+    void mvr1_providerRowDeleted_marksFailed() {
+        // provider 行被删（getById=null）→ FAILED 可读话术，不静默轮询
+        MediaGenTask task = pendingTask(1L, 100L, "cct-1");
+        task.setProviderId(404L);
+        when(txService.claimBatch(anyInt(), anyInt())).thenReturn(List.of(task));
+        when(taskMapper.selectById(1L)).thenReturn(task);
+        when(llmProviderService.getById(404L)).thenReturn(null);
+
+        worker.poll();
+
+        verify(arkProvider, never()).queryTask(anyString(), any());
+        verify(txService).markFailed(eq(1L), contains("视频 provider 已停用或删除"));
+    }
+
     private MediaGenTask pendingTask(Long id, Long userId, String arkTaskId) {
         MediaGenTask t = new MediaGenTask();
         t.setId(id);
