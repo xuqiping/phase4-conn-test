@@ -1,6 +1,7 @@
 import type { CanvasEdge, CanvasNode, CanvasNodeData } from '@/types/canvas'
 import { uniqueLabel } from '@/utils/interpolate'
 import { estimateSize } from '@/utils/autoLayout'
+import { isGroupEndpoint } from '@/utils/groupEdges'
 import { RESET_KEYS } from './nodeClone'
 
 /**
@@ -56,9 +57,12 @@ export function buildCopySet(
     }
   })
   // 诱导边：两端都在集内（自环保留——粘贴体自身成环，同 cloneEdgesForDuplicate 口径）。
+  // 修复VIII（VIII-1 ⑧）：组边不带出复制粘贴——选中集是节点 id，伪 id 端点天然不在集内，
+  // 此处显式兜底过滤（与「创建副本」/appendEdges 同口径）。
   // 浅拷贝断响应式链（P4 交叉 review Y1）：存源对象引用会让 remapEdges 在**粘贴时刻**读到
   // 会话 class（如复制后又点了该边 → 选中态 class 被烤进新边，高亮永久残留）。
   const innerEdges = edges
+    .filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
     .filter(e => ids.has(e.source) && ids.has(e.target))
     .map(e => ({ ...e }))
   const left = Math.min(...items.map(i => i.position.x))

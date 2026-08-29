@@ -17,6 +17,11 @@ const VueFlowStub = vi.hoisted(() => ({
 // 修复VII Chunk2：onSelectionEnd 读 getSelectedNodes.value（ref 语义），mock 成 ref 形状
 // 并暴露可变源——测试里设选中集再 emit selection-end，驱动多选/单选路径。默认 [] 不影响既有用例。
 const selState = vi.hoisted(() => ({ nodes: [] as { id: string }[] }))
+// 修复VIII：onConnectEnd/组端口松手的坐标换算读 vueFlowRef.value.getBoundingClientRect——
+// hoisted 可变源让用例按需挂假容器（默认 null 维持既有用例的回落分支口径）。
+const vfState = vi.hoisted(() => ({
+  el: null as null | { getBoundingClientRect: () => { left: number; top: number; width: number; height: number } }
+}))
 vi.mock('@vue-flow/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vue-flow/core')>()
   return {
@@ -32,7 +37,10 @@ vi.mock('@vue-flow/core', async (importOriginal) => {
       getSelectedNodes: { get value() { return selState.nodes } },
       // 2x 四轮 S9：包围盒视口跟踪（真实 onMove 是 vue-flow 事件钩子；测试环境无拖拽，空实现够用）
       onMove: vi.fn(),
-      vueFlowRef: { value: null }
+      vueFlowRef: {
+        get value() { return vfState.el },
+        set value(v: unknown) { vfState.el = v as typeof vfState.el }
+      }
     })
   }
 })
@@ -517,5 +525,238 @@ describe('CanvasBoard · 节点复制粘贴（修复VII VII-1）', () => {
     expect(pasted.data.taskId).toBeUndefined()
     expect(pasted.data.assetId).toBeUndefined()
     expect(pasted.data.status).toBe('success')
+  })
+})
+
+// 修复VIII（2x 增补：组整体拉线 + 本体松手直连）——组边数据层接线/级联/撤回/v-model 隔离/连接手势分派。
+describe('CanvasBoard · 组边与本体直连（修复VIII VIII-1/2）', () => {
+  type BoardVm9 = ReturnType<typeof boardVm> & {
+    loadSnapshot: (s: { nodes?: unknown[]; edges?: unknown[]; groups?: unknown[] }) => void
+    getSnapshot: () => { edges: { id: string; source: string; target: string }[]; groups?: { id: string; memberIds: string[] }[] }
+    createGroup: (name: string, ids: string[]) => { ok: boolean }
+    ungroupGroup: (id: string) => void
+    getGroups: () => { id: string; memberIds: string[] }[]
+    getGroupEdges: () => { id: string; source: string; target: string }[]
+    addEdge: (s: string, t: string) => void
+    removeNodes: (ids: string[]) => void
+    undo: () => void
+    canUndo: boolean
+  }
+  const vm = (w: ReturnType<typeof mount>) => boardVm(w) as unknown as BoardVm9
+  const node = (id: string, x = 0, y = 0) => ({ id, type: 'text', position: { x, y }, data: { label: id } })
+  const group = (id: string, memberIds: string[]) => ({ id, name: id, memberIds, color: '#5b8def' })
+  /** v-model prop 须等重渲染落定，读前先 flush 一帧。 */
+  const flowEdgesOf = async (w: ReturnType<typeof mount>) => {
+    await nextTick()
+    return w.getComponent(VueFlowStub).props('edges') as { id: string; source: string; target: string }[]
+  }
+  /** 挂假 vue-flow 容器（project mock=identity → flowPos=clientXY）并返回还原函数，防跨用例泄漏。 */
+  function withFakeVf() {
+    const prev = vfState.el
+    vfState.el = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800 }) }
+    return () => { vfState.el = prev }
+  }
+  /** 真事件实例（clientX/Y+target 俱全）：在 el 上 dispatch 一次让 target 落定，再交 stub emit。 */
+  function pointerEventOn(el: HTMLElement, clientX: number, clientY: number): MouseEvent {
+    const ev = new MouseEvent('pointerup', { clientX, clientY, bubbles: false })
+    el.dispatchEvent(ev)
+    return ev
+  }
+  const nodeEl = (id: string) => {
+    const el = document.createElement('div')
+    el.className = 'vue-flow__node'
+    el.dataset.id = id
+    document.body.appendChild(el)
+    return el
+  }
+  const paneEl = () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    return el
+  }
+  /** 组包围盒（画布坐标）：m1(0,0)+m2(50,50) 默认 200×120 → rect=[-12,-12,262,182]。 */
+  const groupedSnap = () => ({
+    nodes: [node('m1'), node('m2', 50, 50), node('ext', 600, 0)],
+    edges: [],
+    groups: [group('g1', ['m1', 'm2'])]
+  })
+  const rafFlush = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+
+  it('① 快照往返：载入含组边快照 → v-model 只有普通边（坑 1 零伪 id）、getSnapshot 合并还原全量', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      nodes: [node('a'), node('b'), node('c', 400, 0)],
+      edges: [
+        { id: 'e1', source: 'a', target: 'b' },
+        { id: 'ge1', source: 'group:g1', target: 'c' }
+      ],
+      groups: [group('g1', ['a', 'b'])]
+    })
+    expect((await flowEdgesOf(wrapper)).map(e => e.id)).toEqual(['e1'])
+    expect(vm(wrapper).getGroupEdges().map(e => e.id)).toEqual(['ge1'])
+    const snap = vm(wrapper).getSnapshot()
+    expect(snap.edges.map(e => e.id).sort()).toEqual(['e1', 'ge1']) // 合并落库
+    expect(snap.groups).toHaveLength(1)
+  })
+
+  it('② 解散组 → 该组组边级联删；其它组组边保留（VIII-1 ⑦）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      nodes: [node('a'), node('b'), node('c'), node('d'), node('ext', 800, 0)],
+      groups: [group('g1', ['a', 'b']), group('g2', ['c', 'd'])],
+      edges: []
+    })
+    vm(wrapper).addEdge('group:g1', 'ext')
+    vm(wrapper).addEdge('group:g2', 'ext')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(2)
+    vm(wrapper).ungroupGroup('g1')
+    const ge = vm(wrapper).getGroupEdges()
+    expect(ge).toHaveLength(1)
+    expect(ge[0].source).toBe('group:g2')
+    expect(vm(wrapper).getSnapshot().edges.every(e => e.source !== 'group:g1')).toBe(true)
+  })
+
+  it('③ 删对端节点 → 其名下组边级联删；同组其他组边不动（VIII-1 ⑦）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      nodes: [node('a'), node('b'), node('c', 400, 0), node('d', 600, 0)],
+      groups: [group('g1', ['a', 'b'])],
+      edges: []
+    })
+    vm(wrapper).addEdge('group:g1', 'c')
+    vm(wrapper).addEdge('group:g1', 'd')
+    vm(wrapper).removeNodes(['c'])
+    expect(vm(wrapper).getGroupEdges().map(e => e.target)).toEqual(['d'])
+  })
+
+  it('④ 组成员全删 → 组自解散 + 组边级联删（联动点 1）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+    vm(wrapper).addEdge('group:g1', 'ext')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+    vm(wrapper).removeNodes(['m1', 'm2'])
+    await flushPromises()
+    expect(vm(wrapper).getGroups()).toHaveLength(0)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(0)
+  })
+
+  it('⑤ Ctrl+Z 撤回解散组 → 组+组边随快照齐恢复（坑 10 合并口径）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+    expect(vm(wrapper).createGroup('G', ['m1', 'm2']).ok).toBe(true)
+    const gid = vm(wrapper).getGroups()[0].id
+    vm(wrapper).addEdge(`group:${gid}`, 'ext')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+    vm(wrapper).ungroupGroup(gid)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(0)
+    vm(wrapper).undo()
+    expect(vm(wrapper).getGroups()).toHaveLength(1)
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+  })
+
+  it('⑥ 拖拽 onConnect 补校验：自环拒、同向重复拒（VIII-2 顺带收口）', () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ nodes: [node('a'), node('b')], edges: [] })
+    const vf = wrapper.getComponent(VueFlowStub)
+    vf.vm.$emit('connect', { source: 'a', target: 'a' })
+    vf.vm.$emit('connect', { source: 'a', target: 'b' })
+    vf.vm.$emit('connect', { source: 'a', target: 'b' })
+    const edges = vm(wrapper).getSnapshot().edges
+    expect(edges).toHaveLength(1)
+    expect(edges[0]).toMatchObject({ source: 'a', target: 'b' })
+  })
+
+  it('⑦ 本体松手直连（VIII-2）：source 起拖落 B 本体→a→b；target 起拖→b→a；落自身静默不弹窗', () => {
+    const restore = withFakeVf()
+    try {
+      const wrapper = mount(CanvasBoard)
+      vm(wrapper).loadSnapshot({ nodes: [node('a'), node('b')], edges: [] })
+      const vf = wrapper.getComponent(VueFlowStub)
+      const bEl = nodeEl('b')
+      const aEl = nodeEl('a')
+      const fire = (start: { nodeId: string; handleType: string }, el: HTMLElement, x = 1, y = 1) => {
+        vf.vm.$emit('connect-start', start)
+        vf.vm.$emit('connect-end', pointerEventOn(el, x, y))
+      }
+      fire({ nodeId: 'a', handleType: 'source' }, bEl)
+      fire({ nodeId: 'a', handleType: 'target' }, bEl)
+      fire({ nodeId: 'a', handleType: 'source' }, aEl) // 落自身：静默
+      const edges = vm(wrapper).getSnapshot().edges
+      expect(edges).toHaveLength(2)
+      expect(edges.find(e => e.source === 'a' && e.target === 'b')).toBeTruthy()
+      expect(edges.find(e => e.source === 'b' && e.target === 'a')).toBeTruthy()
+      expect(wrapper.emitted('quick-add')).toBeUndefined() // 落自身不触发 quick-add
+    } finally {
+      restore()
+    }
+  })
+
+  it('⑧ 外部→组：source 句柄拖线落组包围盒空白 → 组边；重复落点同向去重；target 起拖落组不建', async () => {
+    const restore = withFakeVf()
+    try {
+      const wrapper = mount(CanvasBoard)
+      vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+      const vf = wrapper.getComponent(VueFlowStub)
+      const pane = paneEl() // 组框体穿透 → target 是 pane，坐标 ∩ 判定（坑 3）
+      const fire = (handleType: string, x: number, y: number) => {
+        vf.vm.$emit('connect-start', { nodeId: 'ext', handleType })
+        vf.vm.$emit('connect-end', pointerEventOn(pane, x, y))
+      }
+      fire('source', 10, 10) // (10,10) ∈ g1 rect [-12,-12,262,182]
+      fire('source', 10, 10) // 同向去重
+      expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+      expect(vm(wrapper).getGroupEdges()[0]).toMatchObject({ source: 'ext', target: 'group:g1' })
+      expect(await flowEdgesOf(wrapper)).toHaveLength(0) // 不进 v-model
+      fire('target', 10, 10) // target 句柄落组：不建反向边
+      expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+    } finally {
+      restore()
+    }
+  })
+
+  it('⑨ 落空白（组外）→ quick-add 现状不变（携起点 id，2x-6 原语义）', () => {
+    const restore = withFakeVf()
+    try {
+      const wrapper = mount(CanvasBoard)
+      vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+      const vf = wrapper.getComponent(VueFlowStub)
+      vf.vm.$emit('connect-start', { nodeId: 'ext', handleType: 'source' })
+      vf.vm.$emit('connect-end', pointerEventOn(paneEl(), 999, 999))
+      expect(wrapper.emitted('quick-add')).toEqual([[{ x: 999, y: 999 }, 'ext']])
+    } finally {
+      restore()
+    }
+  })
+
+  it('⑩ 程序化 addEdge 伪 id 端点 → 入组边集合（quick-add 组→新节点链）+ 同向去重；v-model 零伪 id', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+    vm(wrapper).addEdge('group:g1', 'ext')
+    vm(wrapper).addEdge('group:g1', 'ext')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(1)
+    expect(await flowEdgesOf(wrapper)).toHaveLength(0)
+  })
+
+  it('⑪ 组端口渲染（source/target 各一）+ 组边 SVG 路径 + 中点 × 删除落库（VIII-1 ①⑤）', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({ ...groupedSnap(), edges: [] })
+    await nextTick()      // watch → scheduleGroupBounds
+    await rafFlush()      // rAF 合帧算包围盒/组边几何
+    await nextTick()      // 重渲染
+    const ports = wrapper.findAll('.canvas-board__groupbox-port')
+    expect(ports).toHaveLength(2)
+    expect(ports.filter(p => p.classes().includes('canvas-board__groupbox-port--source'))).toHaveLength(1)
+    expect(ports.filter(p => p.classes().includes('canvas-board__groupbox-port--target'))).toHaveLength(1)
+
+    vm(wrapper).addEdge('group:g1', 'ext')
+    await nextTick()
+    await rafFlush()
+    await nextTick()
+    expect(wrapper.findAll('.canvas-board__groupedge-path')).toHaveLength(1)
+
+    const before = (wrapper.emitted('structure-changed') ?? []).length
+    await wrapper.find('.canvas-board__groupedge-del').trigger('click')
+    expect(vm(wrapper).getGroupEdges()).toHaveLength(0)
+    expect((wrapper.emitted('structure-changed') ?? []).length - before).toBe(1)
   })
 })

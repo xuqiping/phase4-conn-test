@@ -115,4 +115,16 @@ describe('cloneEdgesForDuplicate（修复VI 2x#3）', () => {
     const ids = cloneEdgesForDuplicate(B, 'copy-b', edges).map(e => e.id)
     expect(new Set(ids).size).toBe(3)
   })
+
+  it('修复VIII（VIII-1 ⑧）：组边（伪 id 端点）不带出创建副本——显式兜底过滤', () => {
+    const edges = [
+      ek({ source: 'group:g1', target: B }), // 组→原节点：伪 id source，过滤
+      ek({ source: B, target: 'group:g2' }), // 原节点→组：伪 id target，过滤
+      ek({ source: A, target: B })           // 普通边：保留克隆
+    ]
+    const cloned = cloneEdgesForDuplicate(B, 'copy-b', edges)
+    expect(cloned).toHaveLength(1)
+    expect(cloned[0].source).toBe(A)
+    expect(cloned[0].target).toBe('copy-b')
+  })
 })

@@ -1,5 +1,6 @@
 import dagre from '@dagrejs/dagre'
 import type { CanvasEdge, CanvasNode } from '@/types/canvas'
+import { isGroupEndpoint } from './groupEdges'
 
 /**
  * 修复VII（2x 增补②）：一键优化布局纯函数（LibTV 式，dagre 分层）。
@@ -82,6 +83,9 @@ export function computeAutoLayout(
   for (const n of participating) g.setNode(n.id, { ...sizes.get(n.id)! })
   for (const e of edges) {
     if (e.source === e.target) continue // 自环不参与分层
+    // 修复VIII（VIII-1 ⑧）：组边（伪 id 端点）不参与 dagre——广播/聚合边=N 倍权重会炸
+    // 布局；组内成员自有边拉齐（CanvasBoard 只传普通边，此处显式兜底，口径同克隆/粘贴）
+    if (isGroupEndpoint(e.source) || isGroupEndpoint(e.target)) continue
     if (idSet.has(e.source) && idSet.has(e.target)) g.setEdge(e.source, e.target)
   }
   dagre.layout(g)

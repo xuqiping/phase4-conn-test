@@ -137,7 +137,13 @@ export interface CanvasNode {
 /** 画布连线 */
 export interface CanvasEdge {
   id: string
+  /**
+   * 边端点值域（修复VIII VIII-1 ②）：节点 id | 组伪 id `'group:{groupId}'`。
+   * 含伪 id 端点的边=组边（广播/聚合语义），存 CanvasBoard 独立 groupEdges 集合，
+   * **不进 VueFlow v-model edges**（伪 id 引用不存在节点，进库渲染断裂）；快照 JSON 结构不变。
+   */
   source: string
+  /** 同 source：节点 id | 组伪 id `'group:{groupId}'`。 */
   target: string
   sourceHandle?: string | null
   targetHandle?: string | null

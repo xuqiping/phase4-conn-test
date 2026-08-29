@@ -42,7 +42,8 @@
       <Background :gap="20" :size="1" pattern-color="rgba(255,255,255,0.05)" />
     </VueFlow>
 
-    <!-- 2x 四轮 S9：组包围盒渲染层（rAF 合帧；框体穿透不可点，头部可改名/解组） -->
+    <!-- 2x 四轮 S9：组包围盒渲染层（rAF 合帧；框体穿透不可点，头部可改名/解组）。
+         修复VIII（VIII-1 ①⑤）：组端口（右缘中点=输出/聚合、左缘中点=输入/广播）+ 组边 SVG 层。 -->
     <div class="canvas-board__groups">
       <div
         v-for="b in groupBoxes"
@@ -67,8 +68,56 @@
           >{{ b.name }} · {{ b.count }}</span>
           <button type="button" class="canvas-board__groupbox-x" title="解散分组" @click="ungroupGroup(b.id)">✕</button>
         </div>
+        <!-- 修复VIII（VIII-1 ①）：组端口——pointer-events:auto 同组头（框体其余穿透）；
+             拖线走自绘 overlay（非 vue-flow 连接线，坑 4），松手进 A3 分派。 -->
+        <button
+          type="button"
+          class="canvas-board__groupbox-port canvas-board__groupbox-port--source"
+          :class="{ 'canvas-board__groupbox-port--dragging': isGroupPortDragging(b.id, 'source') }"
+          aria-label="组输出端口"
+          title="组输出端口：从整组向外拖线（聚合：组内全部成员的产物都喂给对端）"
+          :data-group-id="b.id"
+          @pointerdown.prevent="onGroupPortPointerDown($event, b.id, 'source')"
+        ></button>
+        <button
+          type="button"
+          class="canvas-board__groupbox-port canvas-board__groupbox-port--target"
+          :class="{ 'canvas-board__groupbox-port--dragging': isGroupPortDragging(b.id, 'target') }"
+          aria-label="组输入端口"
+          title="组输入端口：从外部拖线到整组（广播：外部输入喂给组内全部成员）"
+          :data-group-id="b.id"
+          @pointerdown.prevent="onGroupPortPointerDown($event, b.id, 'target')"
+        ></button>
       </div>
     </div>
+
+    <!-- 修复VIII（VIII-1 ⑤）：组边 SVG 覆盖层（组层同栈）——贝塞尔 + hover 辉光 + 选中红粗
+         （selectedEdgeId 复用）+ 中点 × 删除（canvasRemoveEdge 同款链）。层容器穿透，
+         仅路径与 × 可点；几何随 scheduleGroupBounds 的 rAF 脏标记重绘（坑 5）。 -->
+    <svg class="canvas-board__groupedges" aria-hidden="true">
+      <g
+        v-for="v in groupEdgeViews"
+        :key="v.id"
+        class="canvas-board__groupedge"
+        :class="{ 'canvas-board__groupedge--selected': v.id === selectedEdgeId }"
+      >
+        <path
+          class="canvas-board__groupedge-path"
+          :d="v.d"
+          @click.stop="onGroupEdgeClick(v.id)"
+        ></path>
+        <g
+          class="canvas-board__groupedge-del"
+          :transform="`translate(${v.mx}, ${v.my})`"
+          @click.stop="onGroupEdgeDelete(v.id)"
+        >
+          <circle r="9"></circle>
+          <text y="3.5" text-anchor="middle">×</text>
+        </g>
+      </g>
+      <!-- 组端口拖线临时贝塞尔（pointer capture 会话；pointercancel 兜底清理，联动点 7） -->
+      <path v-if="groupDragPath" class="canvas-board__groupedge-ghost" :d="groupDragPath"></path>
+    </svg>
 
     <!-- 缩放/适应 工具条 -->
     <div class="canvas-board__toolbar">
@@ -152,6 +201,15 @@ import { relatedClosure, type GraphClosure } from '@/utils/graphClosure'
 import { MAX_GROUP_MEMBERS, nextGroupColor } from '@/utils/groupCandidates'
 import { isEditableTarget } from '@/utils/mediaLimits'
 import { computeAutoLayout } from '@/utils/autoLayout'
+import {
+  decideDropTarget,
+  groupEndpointOf,
+  groupIdOf,
+  isGroupEndpoint,
+  mergeSnapshotEdges,
+  splitSnapshotEdges,
+  type GroupRectLike
+} from '@/utils/groupEdges'
 import { buildCopySet, planLabels, planPastePositions, remapEdges, type CanvasClipboard } from './canvasClipboard'
 import TextNode from './nodes/TextNode.vue'
 import ImageNode from './nodes/ImageNode.vue'
@@ -221,6 +279,14 @@ function scheduleStoreReconcile() {
 }
 /** 2x 四轮 S9：节点组（框选成组）。成员关系只存组侧，节点 data 零感知。 */
 const groups = ref<CanvasGroup[]>([])
+/**
+ * 修复VIII（VIII-1 ②）：组边集合（source/target 含 `group:{groupId}` 伪 id）。
+ * **绝不进 VueFlow v-model edges**——伪 id 引用不存在节点，进库渲染断裂/告警刷屏（坑 1）；
+ * getSnapshot 合并落库、applySnapshot 拆分恢复、历史快照随 getSnapshot 的 merge 口径
+ * 一并定格（坑 10：解散组 Ctrl+Z 组边随快照齐恢复）。组成员增删不动组边（广播/聚合
+ * 随 memberIds 动态生效，VIII-1 ⑦）。
+ */
+const groupEdges = ref<CanvasEdge[]>([])
 /** 节点 id 自增序号（防批量 addNode 同毫秒撞 id）。 */
 let seqCounter = 0
 /** 手选模式（同 FlowCanvas：onNodeClick 跟踪 id，规避 vue-flow Node.selected 联合类型不可达）。 */
@@ -320,6 +386,27 @@ const nodeGroupMap = computed<Map<string, CanvasGroup>>(() => {
   return m
 })
 
+/**
+ * 修复VIII（VIII-1 ⑨）：选中组边 → 端点展开为节点集（组端=全部成员、节点端=该节点）。
+ * 非组边选中（普通边）→ null（走原 relatedClosure 口径，不叠加）。
+ */
+const groupEdgeGlowIds = computed<Set<string> | null>(() => {
+  const id = selectedEdgeId.value
+  if (!id) return null
+  const e = groupEdges.value.find(x => x.id === id)
+  if (!e) return null
+  const ids = new Set<string>()
+  for (const endpoint of [e.source, e.target]) {
+    if (isGroupEndpoint(endpoint)) {
+      const g = groups.value.find(x => x.id === groupIdOf(endpoint))
+      if (g) for (const mid of g.memberIds) ids.add(mid)
+    } else {
+      ids.add(endpoint)
+    }
+  }
+  return ids
+})
+
 function applyVisualClasses() {
   const info = relatedInfo.value
   for (const e of edges.value) {
@@ -330,9 +417,12 @@ function applyVisualClasses() {
         : 'canvas-edge--dimmed'
   }
   const gmap = nodeGroupMap.value
+  // 修复VIII（VIII-1 ⑨）：选中组边 → 组成员+对端节点 related 辉光（端点展开为节点集）
+  const glow = groupEdgeGlowIds.value
   for (const n of nodes.value) {
     const cls: string[] = []
-    if (info && !info.nodeIds.has(n.id)) {
+    if (glow?.has(n.id)) cls.push('canvas-node--related')
+    else if (info && !info.nodeIds.has(n.id)) {
       cls.push('canvas-node--dimmed')
       if (relatedOnly.value) cls.push('canvas-node--hidden')
     }
@@ -344,7 +434,7 @@ function applyVisualClasses() {
     else if (n.style && '--group-color' in n.style) n.style = nodeSizeStyle(n.data)
   }
 }
-watch([selectedNodeId, selectedEdgeId, multiSelectedIds, relatedOnly, relatedInfo, nodeGroupMap], applyVisualClasses)
+watch([selectedNodeId, selectedEdgeId, multiSelectedIds, relatedOnly, relatedInfo, nodeGroupMap, groupEdgeGlowIds], applyVisualClasses)
 
 // ---- 2x 四轮 S9：节点组（建/解/改名 + 成员修剪 + 包围盒渲染层） ----
 
@@ -368,21 +458,67 @@ function createGroup(name: string, memberIds: string[]): { ok: boolean; reason?:
     color: nextGroupColor(groups.value)
   }
   const memberSet = new Set(ids)
+  const emptied: string[] = []
   for (const other of groups.value) {
     if (other.id === g.id) continue
-    other.memberIds = other.memberIds.filter(id => !memberSet.has(id))
+    const next = other.memberIds.filter(id => !memberSet.has(id))
+    if (next.length !== other.memberIds.length) other.memberIds = next
+    if (!next.length) emptied.push(other.id)
   }
   groups.value = groups.value.filter(x => x.memberIds.length > 0) // 掏空即解散
+  dropGroupEdgesOfGroups(emptied) // 修复VIII（VIII-1 ⑦）：连带解散的旧组组边级联删
   groups.value.push(g)
   emit('structure-changed')
   return { ok: true }
 }
 
-/** 解组（包围盒头部 ✕）：删组不删节点。 */
+/**
+ * 修复VIII（VIII-1 ⑦）：组解散/删除 → 该组全部组边级联删（VIII-1 ⑦）。
+ * 选中态正挂被删组边 → 一并清空（Delete/红粗态不悬挂）；返回是否有删动。
+ */
+function dropGroupEdgesOfGroups(groupIds: string[]): boolean {
+  if (!groupIds.length || !groupEdges.value.length) return false
+  const pseudo = new Set(groupIds.map(groupEndpointOf))
+  const kept: CanvasEdge[] = []
+  let removedSelected = false
+  for (const e of groupEdges.value) {
+    if (pseudo.has(e.source) || pseudo.has(e.target)) {
+      if (e.id === selectedEdgeId.value) removedSelected = true
+    } else {
+      kept.push(e)
+    }
+  }
+  if (kept.length === groupEdges.value.length) return false
+  groupEdges.value = kept
+  if (removedSelected) selectedEdgeId.value = ''
+  return true
+}
+
+/** 修复VIII（VIII-1 ⑦）：对端节点删除 → 该节点名下组边级联删（与普通边 removeNodes 同口径）。 */
+function dropGroupEdgesOfNodes(nodeIds: string[]): boolean {
+  if (!nodeIds.length || !groupEdges.value.length) return false
+  const ids = new Set(nodeIds)
+  const kept: CanvasEdge[] = []
+  let removedSelected = false
+  for (const e of groupEdges.value) {
+    if (ids.has(e.source) || ids.has(e.target)) {
+      if (e.id === selectedEdgeId.value) removedSelected = true
+    } else {
+      kept.push(e)
+    }
+  }
+  if (kept.length === groupEdges.value.length) return false
+  groupEdges.value = kept
+  if (removedSelected) selectedEdgeId.value = ''
+  return true
+}
+
+/** 解组（包围盒头部 ✕）：删组不删节点。修复VIII：该组组边级联删（VIII-1 ⑦）。 */
 function ungroupGroup(groupId: string) {
   if (!groups.value.some(g => g.id === groupId)) return
   pushHistory('group')
   groups.value = groups.value.filter(g => g.id !== groupId)
+  dropGroupEdgesOfGroups([groupId])
   emit('structure-changed')
 }
 
@@ -463,11 +599,216 @@ function scheduleGroupBounds() {
       })
     }
     groupBoxes.value = boxes
+    // 修复VIII（VIII-1 ⑤）：组边几何同帧重算（bounds/节点位置/组员变动才会走到这——
+    // 脏标记合帧，静止不重绘，坑 5）；选中/hover 是响应式 class 绑定，不进 rAF。
+    rebuildGroupEdgeViews(boxes)
   })
 }
-watch([nodes, groups, vpTransform], scheduleGroupBounds, { deep: true })
+watch([nodes, groups, vpTransform, groupEdges], scheduleGroupBounds, { deep: true })
+
+// ---- 修复VIII（VIII-1 ⑤）：组边 SVG 覆盖层（几何派生，数据真源=groupEdges） ----
+
+/** 组边渲染视图（rAF 产物：path d + 中点 × 定位；id 对齐 groupEdges 条目）。 */
+interface GroupEdgeView {
+  id: string
+  d: string
+  mx: number
+  my: number
+}
+const groupEdgeViews = ref<GroupEdgeView[]>([])
+
+/** 贝塞尔 path + 中点（控制点水平外伸，观感对齐 DeletableEdge 的 getBezierPath）。 */
+function groupEdgePath(x1: number, y1: number, x2: number, y2: number): { d: string; mx: number; my: number } {
+  const c = Math.max(40, Math.abs(x2 - x1) / 2)
+  const c1x = x1 + c
+  const c2x = x2 - c
+  return {
+    d: `M ${x1},${y1} C ${c1x},${y1} ${c2x},${y2} ${x2},${y2}`,
+    mx: (x1 + 3 * c1x + 3 * c2x + x2) / 8,
+    my: (y1 + y2) / 2
+  }
+}
+
+/**
+ * 端点锚点（board px）：组=包围盒边缘中点（source 右缘=输出端口位、target 左缘=输入端口位，
+ * 与组端口渲染位置一致）；节点=handle 侧中点（position+nodeSizeOf 测量尺寸，同包围盒口径）。
+ * 解析失败（组已散/节点已删）→ null 跳过该边渲染（数据层级联已保证罕见，双保险）。
+ */
+function anchorOf(
+  endpoint: string,
+  side: 'source' | 'target',
+  boxById: Map<string, GroupBox>,
+  nodeById: Map<string, CanvasNode>
+): { x: number; y: number } | null {
+  const vp = vpTransform.value
+  if (isGroupEndpoint(endpoint)) {
+    const b = boxById.get(groupIdOf(endpoint))
+    if (!b) return null
+    return side === 'source'
+      ? { x: b.left + b.width, y: b.top + b.height / 2 }
+      : { x: b.left, y: b.top + b.height / 2 }
+  }
+  const n = nodeById.get(endpoint)
+  if (!n) return null
+  const { w, h } = nodeSizeOf(n)
+  const x = side === 'source' ? n.position.x + w : n.position.x
+  return { x: x * vp.zoom + vp.x, y: (n.position.y + h / 2) * vp.zoom + vp.y }
+}
+
+/** 组边几何重算（rAF 内调用，boxes 已含视口换算）。 */
+function rebuildGroupEdgeViews(boxes: GroupBox[]) {
+  const boxById = new Map(boxes.map(b => [b.id, b]))
+  const nodeById = new Map(nodes.value.map(n => [n.id, n]))
+  const views: GroupEdgeView[] = []
+  for (const e of groupEdges.value) {
+    const p1 = anchorOf(e.source, 'source', boxById, nodeById)
+    const p2 = anchorOf(e.target, 'target', boxById, nodeById)
+    if (!p1 || !p2) continue
+    const { d, mx, my } = groupEdgePath(p1.x, p1.y, p2.x, p2.y)
+    views.push({ id: e.id, d, mx, my })
+  }
+  groupEdgeViews.value = views
+}
+
+/**
+ * 组包围盒（画布坐标系，连线落点 hit 判定用）——与渲染盒同口径（pad 12、nodeSizeOf 尺寸），
+ * 但不乘视口（screenToFlow 后的坐标在 flow 空间）。只在松手一瞬同步计算，频率极低（坑 5 不缓存）。
+ */
+function groupFlowRects(): GroupRectLike[] {
+  const out: GroupRectLike[] = []
+  for (const g of groups.value) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    let count = 0
+    for (const id of g.memberIds) {
+      const n = nodes.value.find(x => x.id === id)
+      if (!n) continue
+      count++
+      const { w, h } = nodeSizeOf(n)
+      minX = Math.min(minX, n.position.x)
+      minY = Math.min(minY, n.position.y)
+      maxX = Math.max(maxX, n.position.x + w)
+      maxY = Math.max(maxY, n.position.y + h)
+    }
+    if (!count) continue
+    const pad = 12
+    out.push({ id: g.id, left: minX - pad, top: minY - pad, right: maxX + pad, bottom: maxY + pad })
+  }
+  return out
+}
+
+/** 组边选中（复用 selectedEdgeId 红粗/关联辉光链；清节点选中同 onEdgeClick 口径）。 */
+function onGroupEdgeClick(id: string) {
+  selectedNodeId.value = ''
+  selectedEdgeId.value = id
+  clearMultiSelection()
+  boardRoot.value?.focus()
+  emit('node-selected', null)
+}
+
+/** 组边中点 × 删除（canvasRemoveEdge 同款链：removeEdges 双集过滤 + 清选中 + structure-changed 落库）。 */
+function onGroupEdgeDelete(id: string) {
+  removeEdges([id])
+  if (selectedEdgeId.value === id) selectedEdgeId.value = ''
+}
+
+// ---- 修复VIII（VIII-1 ③）：组端口拖线会话（自绘 overlay，坑 4；A3 分派收口） ----
+
+/** 拖线会话（pointer capture + window 监听双保险；pointercancel/卸载兜底零残留）。 */
+interface GroupDragState {
+  groupId: string
+  side: 'source' | 'target'
+}
+const groupDrag = ref<GroupDragState | null>(null)
+/** 拖线末端（board px；null=无会话）。 */
+const groupDragPos = ref<{ x: number; y: number } | null>(null)
+
+function isGroupPortDragging(groupId: string, side: 'source' | 'target'): boolean {
+  return groupDrag.value?.groupId === groupId && groupDrag.value.side === side
+}
+
+/** client → board px（临时线/锚点同一坐标空间）。 */
+function pointerToBoardPx(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = boardRoot.value?.getBoundingClientRect()
+  if (!rect) return { x: clientX, y: clientY }
+  return { x: clientX - rect.left, y: clientY - rect.top }
+}
+
+/** 拖线起点锚点（=该组输出/输入端口的渲染位置）。 */
+function groupDragAnchor(st: GroupDragState): { x: number; y: number } | null {
+  const b = groupBoxes.value.find(x => x.id === st.groupId)
+  if (!b) return null
+  return st.side === 'source'
+    ? { x: b.left + b.width, y: b.top + b.height / 2 }
+    : { x: b.left, y: b.top + b.height / 2 }
+}
+
+/** 拖线临时贝塞尔（board px；null=无会话）。 */
+const groupDragPath = computed(() => {
+  const st = groupDrag.value
+  const pos = groupDragPos.value
+  if (!st || !pos) return null
+  const anchor = groupDragAnchor(st)
+  if (!anchor) return null
+  return groupEdgePath(anchor.x, anchor.y, pos.x, pos.y).d
+})
+
+function onGroupPortPointerDown(event: PointerEvent, groupId: string, side: 'source' | 'target') {
+  if (event.button !== 0) return
+  if (groupDrag.value) return
+  groupDrag.value = { groupId, side }
+  groupDragPos.value = pointerToBoardPx(event.clientX, event.clientY)
+  connectingEdge.value = true // 拖线中：淡化节点悬停恢复（CSS 同款口径）
+  try {
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  } catch {
+    /* capture 拿不到不影响：window 监听兜底收 pointerup/cancel */
+  }
+  window.addEventListener('pointermove', onGroupDragMove)
+  window.addEventListener('pointerup', onGroupDragUp)
+  window.addEventListener('pointercancel', onGroupDragCancel)
+  window.addEventListener('blur', onGroupDragCancel) // review 补：窗外松手丢 pointerup 时防悬挂（下次点击幻影建边）
+}
+
+function onGroupDragMove(event: PointerEvent) {
+  if (!groupDrag.value) return
+  event.preventDefault()
+  groupDragPos.value = pointerToBoardPx(event.clientX, event.clientY)
+}
+
+function detachGroupDragListeners() {
+  window.removeEventListener('pointermove', onGroupDragMove)
+  window.removeEventListener('pointerup', onGroupDragUp)
+  window.removeEventListener('pointercancel', onGroupDragCancel)
+  window.removeEventListener('blur', onGroupDragCancel)
+}
+
+/** 拖线取消（pointercancel/组件卸载兜底）：零残留（联动点 7）。 */
+function cancelGroupDrag() {
+  detachGroupDragListeners()
+  groupDrag.value = null
+  groupDragPos.value = null
+  connectingEdge.value = false
+}
+const onGroupDragCancel = () => cancelGroupDrag()
+
+function onGroupDragUp(event: PointerEvent) {
+  const st = groupDrag.value
+  if (!st) {
+    cancelGroupDrag()
+    return
+  }
+  detachGroupDragListeners()
+  groupDrag.value = null
+  groupDragPos.value = null
+  connectingEdge.value = false
+  dispatchGroupPortDrop(st, event)
+}
 onUnmounted(() => {
   if (boundsRaf) cancelAnimationFrame(boundsRaf)
+  cancelGroupDrag() // 修复VIII：组端口拖线会话兜底清理（window 监听不悬挂）
 })
 
 /** 节点渲染尺寸：优先 vue-flow 实测 dimensions，回落 data.width/height（默认 200×120）。 */
@@ -496,16 +837,20 @@ watch(nodes, (list) => {
   }
   if (groups.value.length) {
     let pruned = false
+    const dissolved: string[] = []
     for (const g of groups.value) {
       const next = g.memberIds.filter(id => alive.has(id))
       if (next.length !== g.memberIds.length) {
         g.memberIds = next
         pruned = true
       }
+      if (!next.length) dissolved.push(g.id)
     }
     const before = groups.value.length
     groups.value = groups.value.filter(g => g.memberIds.length > 0)
-    if (pruned || groups.value.length !== before) {
+    // 修复VIII（VIII-1 ⑦）：成员全删自解散 → 该组组边级联删（联动点 1）
+    const droppedEdges = dropGroupEdgesOfGroups(dissolved)
+    if (pruned || groups.value.length !== before || droppedEdges) {
       scheduleGroupBounds()
       emit('structure-changed')
     }
@@ -799,22 +1144,47 @@ function addNode(partial: { type?: string; position?: { x: number; y: number }; 
   return node.id
 }
 
-function onConnect(connection: Connection) {
-  if (!connection.source || !connection.target) return
-  pushHistory('edge')
+/**
+ * 建边统一链（修复VIII 收口，VIII-1 ④ / VIII-2）：自环与同向重复校验（普通边/组边
+ * 各查各池并查，VIII-2 顺带收口——现状拖拽可建自环边）→ pushHistory('edge') → 入对应
+ * 集合（组边绝不进 v-model，坑 1）→ scheduleStoreReconcile + structure-changed 落库。
+ * 校验未过返回 false（不建不弹，静默口径同程序化 addEdge）。
+ */
+function addEdgeInternal(
+  source: string,
+  target: string,
+  handles?: { sourceHandle?: string | null; targetHandle?: string | null }
+): boolean {
+  if (!source || !target) return false
+  if (source === target) return false // 自环：节点连自身 / 组连自己（同伪 id）
+  const isGroup = isGroupEndpoint(source) || isGroupEndpoint(target)
+  const pool = isGroup ? groupEdges.value : edges.value
+  if (pool.some(e => e.source === source && e.target === target)) return false // 同向去重
+  pushHistory('edge') // 校验通过才入栈（失败入栈=无变化垃圾撤回步）
   const edge: CanvasEdge = {
-    id: `edge-${connection.source}-${connection.target}-${Date.now()}`,
-    source: connection.source,
-    target: connection.target,
-    sourceHandle: connection.sourceHandle || undefined,
-    targetHandle: connection.targetHandle || undefined,
+    id: `edge-${source}-${target}-${Date.now()}`,
+    source,
+    target,
+    sourceHandle: handles?.sourceHandle || undefined,
+    targetHandle: handles?.targetHandle || undefined,
     type: 'deletable', // 贝塞尔 + 中点删除按钮（同 defaultEdgeOptions）
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   }
-  edges.value.push(edge)
-  justConnected = true
-  scheduleStoreReconcile()
+  pool.push(edge)
+  if (!isGroup) scheduleStoreReconcile() // 组边不进 v-model，无需 store 对账
   emit('structure-changed')
+  return true
+}
+
+function onConnect(connection: Connection) {
+  if (!connection.source || !connection.target) return
+  // 修复VIII（VIII-2 顺带收口）：拖拽建边补自环/同向重复校验（对齐程序化 addEdge 口径）
+  addEdgeInternal(connection.source, connection.target, {
+    sourceHandle: connection.sourceHandle,
+    targetHandle: connection.targetHandle
+  })
+  // 坑 2 双发防护：无论是否建成，本手势都算「库已处理」——connectEnd 不再走直连/quick-add
+  justConnected = true
 }
 
 /**
@@ -835,28 +1205,96 @@ function onConnectStart(params: OnConnectStartParams) {
   connectingEdge.value = true
 }
 
+/** 落点判定专用坐标：不吸附换算（project() 带 snap-to-grid 16px 量化，组边缘 12px pad 内会误判；仅判定用，建点仍走 project 拿吸附坐标）。 */
+function clientToFlowUnsnapped(clientX: number, clientY: number): { x: number; y: number } | null {
+  const vf = vueFlowRef.value as HTMLElement | null
+  if (!vf) return null
+  const { left, top } = vf.getBoundingClientRect()
+  const vp = getViewport()
+  return { x: (clientX - left - vp.x) / vp.zoom, y: (clientY - top - vp.y) / vp.zoom }
+}
+
 function onConnectEnd(event: MouseEvent | TouchEvent | undefined) {
   const start = connectStartParams.value
   connectStartParams.value = null
   connectingEdge.value = false
   const connected = justConnected
   justConnected = false
-  if (!start || connected) return
-  if (start.handleType !== 'source') return // 只支持从输出句柄向前拉
+  if (!start || connected) return // 坑 2：库已发 connect（handle 命中）→ 防双建
   if (!start.nodeId) return
   const clientX = event instanceof MouseEvent ? event.clientX
     : event && 'changedTouches' in event && event.changedTouches.length ? event.changedTouches[0].clientX : null
   const clientY = event instanceof MouseEvent ? event.clientY
     : event && 'changedTouches' in event && event.changedTouches.length ? event.changedTouches[0].clientY : null
   if (clientX == null || clientY == null) return
-  const tgt = event ? (event.target as HTMLElement | null) : null
-  // 落在节点/句柄上（没对准目标句柄）不开弹窗，按 vue-flow 原语义放弃本次连线
-  if (tgt?.closest('.vue-flow__node') || tgt?.closest('.vue-flow__handle')) return
   const vf = vueFlowRef.value as HTMLElement | null
   if (!vf) return
-  const { left, top } = vf.getBoundingClientRect()
-  const position = project({ x: clientX - left, y: clientY - top })
-  emit('quick-add', position, start.nodeId)
+  const flowPos = clientToFlowUnsnapped(clientX, clientY)
+  if (!flowPos) return
+  // 修复VIII（VIII-2 + VIII-1 ③）：落点分派树——handle→库原路径；节点本体→两方向直连；
+  // 组包围盒（坐标∩判定，坑 3：组框体穿透 target 是 pane）→ 外部→组边；空白→quick-add 不变
+  const drop = decideDropTarget({
+    target: event ? (event.target as HTMLElement | null) : null,
+    flowPos,
+    groupRects: groupFlowRects()
+  })
+  if (drop.kind === 'handle') return // handle 落点：库 onConnect 已处理（或未吸附＝放弃，原语义）
+  if (drop.kind === 'node') {
+    // VIII-2 本体松手直连：落自身本体静默；方向=起拖 handle 类型决定
+    if (drop.nodeId === start.nodeId) return
+    const source = start.handleType === 'source' ? start.nodeId : drop.nodeId
+    const target = start.handleType === 'source' ? drop.nodeId : start.nodeId
+    addEdgeInternal(source, target)
+    return
+  }
+  if (drop.kind === 'group') {
+    // VIII-1 ③ 外部→组：仅 source 句柄起拖（target 句柄落组不建反向边，口径同「向前拉」）
+    if (start.handleType !== 'source') return
+    addEdgeInternal(start.nodeId, groupEndpointOf(drop.groupId))
+    return
+  }
+  // 落空白：维持现状 quick-add（仅输出句柄向前拉建点，2x-6 原语义）
+  if (start.handleType !== 'source') return
+  emit('quick-add', flowPos, start.nodeId)
+}
+
+/**
+ * A3 组端口松手分派（VIII-1 ③ 组→外部）：落节点（本体/handle 均认，口径同 VIII-2）
+ * → 组边；落另一组包围盒 → 组→组边；落自身组 → 静默；落空白 → quick-add 复用现有链
+ * （addEdge 已支持伪 id source=组→新节点；target 端口落空白无「新节点在前」语义 → 静默）。
+ * 落点元素经 elementFromPoint 取——pointer capture 会把事件 target 重定向到端口自身（坑 4）。
+ */
+function dispatchGroupPortDrop(st: GroupDragState, event: PointerEvent) {
+  // review 补：拖线中途组被异步解散（成员批量替换触发自解散等）→ 松手分派前验组存活，防引用死组的组边永久落库
+  if (!groups.value.some(g => g.id === st.groupId)) return
+  const under = document.elementFromPoint(event.clientX, event.clientY)
+  const flowPos = clientToFlowUnsnapped(event.clientX, event.clientY)
+  if (!flowPos) return
+  const drop = decideDropTarget({
+    target: under instanceof HTMLElement ? under : null,
+    flowPos,
+    groupRects: groupFlowRects()
+  })
+  const self = groupEndpointOf(st.groupId)
+  if (drop.kind === 'node' || drop.kind === 'handle') {
+    // 落节点（本体或 handle 均认）：side 决定组端方向
+    const source = st.side === 'source' ? self : drop.nodeId
+    const target = st.side === 'source' ? drop.nodeId : self
+    addEdgeInternal(source, target)
+    return
+  }
+  if (drop.kind === 'group') {
+    if (drop.groupId === st.groupId) return // 落自身组：静默（防组自环）
+    const other = groupEndpointOf(drop.groupId)
+    const source = st.side === 'source' ? self : other
+    const target = st.side === 'source' ? other : self
+    addEdgeInternal(source, target) // 组→组（广播+聚合自然组合，VIII-1 ②）
+    return
+  }
+  if (st.side === 'source') {
+    // 落空白：quick-add 新节点并连 组→新节点（复用现有链，addEdge 传伪 id）
+    emit('quick-add', flowPos, self)
+  }
 }
 
 function onNodeClick({ node }: NodeMouseEvent) {
@@ -1011,6 +1449,8 @@ function removeNodes(nodeIds: string[]) {
   const removeSet = new Set(nodeIds)
   nodes.value = nodes.value.filter(n => !removeSet.has(n.id))
   edges.value = edges.value.filter(e => !removeSet.has(e.source) && !removeSet.has(e.target))
+  // 修复VIII（VIII-1 ⑦）：对端节点名下组边级联删；成员修剪/自解散由 nodes watch 接力
+  dropGroupEdgesOfNodes(nodeIds)
   scheduleStoreReconcile()
   emit('structure-changed')
 }
@@ -1019,6 +1459,8 @@ function removeEdges(edgeIds: string[]) {
   pushHistory('remove')
   const removeSet = new Set(edgeIds)
   edges.value = edges.value.filter(e => !removeSet.has(e.id))
+  // 修复VIII（VIII-1 ⑤）：组边 ×/Delete 走同款删除链（canvasRemoveEdge 语义扩展到双集）
+  groupEdges.value = groupEdges.value.filter(e => !removeSet.has(e.id))
   scheduleStoreReconcile()
   emit('structure-changed')
 }
@@ -1061,8 +1503,11 @@ let resizeGestureOpen = false
 function applySnapshot(snap: CanvasSnapshot) {
   // 2x 四轮 S2：data.width/height → wrapper style（含默认 200 兜底），老快照无字段即默认宽
   nodes.value = (snap.nodes ?? []).map(n => ({ ...n, style: nodeSizeStyle(n.data) }))
-  // 旧画布边为 smoothstep/default 无删除入口 → 统一归一为 deletable（贝塞尔+删除按钮）
-  edges.value = (snap.edges ?? []).map(e => ({ ...e, type: 'deletable' }))
+  // 修复VIII（VIII-1 ②）：快照边按端点拆分——普通边进 v-model（归一 deletable），
+  // 组边进独立集合（伪 id 绝不进 v-model，坑 1）；class 会话态一并剥（防旧选中态烤入）
+  const { flowEdges, groupEdges: gEdges } = splitSnapshotEdges(snap.edges ?? [])
+  edges.value = flowEdges.map(e => ({ ...e, type: 'deletable' }))
+  groupEdges.value = gEdges.map(({ class: _class, ...rest }) => rest as CanvasEdge)
   // 2x 四轮 S9：组（老快照无 groups 字段 = 空数组语义，零报错）
   groups.value = (snap.groups ?? []).map(g => ({ ...g, memberIds: [...(g.memberIds ?? [])] }))
   scheduleStoreReconcile()
@@ -1081,8 +1526,12 @@ function getSnapshot(): CanvasSnapshot {
   return {
     // 2x 四轮 S2/S5：剥 wrapper style 与视觉态 class（均会话态）——持久化真源只有 data
     nodes: nodes.value.map(({ style: _style, class: _class, ...rest }) => rest),
-    // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）
-    edges: edges.value.map(({ class: _class, ...rest }) => rest),
+    // 剥离选中态 class（纯前端视觉，不入库；重载后由 watch 按 selectedEdgeId='' 重置）。
+    // 修复VIII（VIII-1 ②）：组边合并落库（class 同剥；快照 JSON 结构不变、老快照零迁移）
+    edges: mergeSnapshotEdges(
+      edges.value.map(({ class: _class, ...rest }) => rest),
+      groupEdges.value.map(({ class: _class, ...rest }) => rest)
+    ),
     groups: groups.value.map(g => ({ ...g, memberIds: [...g.memberIds] })),
     viewport: { x: vp.x, y: vp.y, zoom: vp.zoom }
   }
@@ -1164,9 +1613,14 @@ function getNode(nodeId: string): CanvasNode | null {
   return nodes.value.find(n => n.id === nodeId) ?? null
 }
 
-/** 取全部连线（C8 数据流解析 + C9 拓扑重跑用）。 */
+/** 取全部连线（C8 数据流解析 + C9 拓扑重跑用）。仅普通边（v-model 集，无伪 id）。 */
 function getEdges(): CanvasEdge[] {
   return edges.value
+}
+
+/** 修复VIII：取组边集合（CanvasView 数据流解析与 getEdges 合并展开用，VIII-1 ⑥）。 */
+function getGroupEdges(): CanvasEdge[] {
+  return groupEdges.value
 }
 
 /** 取全部节点（C9 拓扑重跑用）。 */
@@ -1193,19 +1647,25 @@ function updateNodeData(nodeId: string, patch: Record<string, unknown>) {
   }
 }
 
-/** 程序化加边（焦点编辑/抽帧产新节点自动连源用）。 */
+/**
+ * 程序化加边（焦点编辑/抽帧产新节点自动连源用）。
+ * 修复VIII：端点含组伪 id → 入组边集合（quick-add 组→新节点链传伪 id source，VIII-1 ③）；
+ * 与 addEdgeInternal 的差异：不 emit structure-changed（调用方自带 scheduleSave，维持原契约）。
+ */
 function addEdge(source: string, target: string) {
   if (source === target) return
-  if (edges.value.some(e => e.source === source && e.target === target)) return
+  const isGroup = isGroupEndpoint(source) || isGroupEndpoint(target)
+  const pool = isGroup ? groupEdges.value : edges.value
+  if (pool.some(e => e.source === source && e.target === target)) return
   pushHistory('edge')
-  edges.value.push({
+  pool.push({
     id: `edge-${source}-${target}-${Date.now()}`,
     source,
     target,
     type: 'deletable', // 贝塞尔 + 中点删除按钮（同 defaultEdgeOptions）
     style: { stroke: 'var(--color-primary)', strokeWidth: 1.5 }
   })
-  scheduleStoreReconcile()
+  if (!isGroup) scheduleStoreReconcile() // 组边不进 v-model，无需 store 对账
 }
 
 /**
@@ -1214,9 +1674,11 @@ function addEdge(source: string, target: string) {
  * 整批一条历史步（副本操作=用户心智一步）；结构变更上抛父落库。
  */
 function appendEdges(list: CanvasEdge[]) {
-  if (!list.length) return
+  // 修复VIII（VIII-1 ⑧）：组边不带出「创建副本」（伪 id 端点显式兜底过滤，同 nodeClone 口径）
+  const safe = list.filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
+  if (!safe.length) return
   pushHistory('edge')
-  for (const e of list) edges.value.push({ ...e })
+  for (const e of safe) edges.value.push({ ...e })
   scheduleStoreReconcile()
   emit('structure-changed')
 }
@@ -1258,6 +1720,8 @@ function onAutoLayout() {
 
 defineExpose({
   addNode, addEdge, appendEdges, removeNodes, loadSnapshot, getSnapshot, getNode, getEdges, getNodes,
+  // 修复VIII：组边只读出口（CanvasView resolveEdgesForFlow 合并入口用）
+  getGroupEdges,
   updateNodeData, focusNodeById, dragMode, setDragMode,
   // 2x 四轮 S9：组 CRUD（父组件批量工具条「设为组」/改名弹窗回调/@候选并集）
   createGroup, ungroupGroup, renameGroup, getGroups,
@@ -1336,6 +1800,13 @@ defineExpose({
     border-radius: var(--radius-base);
     box-shadow: 0 0 0 2px var(--group-color, var(--color-primary));
   }
+
+  /* 修复VIII（VIII-1 ⑨）：选中组边 → 组成员+对端节点 related 辉光 */
+  :deep(.vue-flow__node.canvas-node--related) {
+    border-radius: var(--radius-base);
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.55);
+    opacity: 1;
+  }
 }
 
 /* 2x 四轮 S9：组包围盒层（框体 pointer-events:none 穿透；头部可交互改名/解组） */
@@ -1390,6 +1861,112 @@ defineExpose({
   &:hover {
     color: #7f1d1d;
   }
+}
+
+/* 修复VIII（VIII-1 ①）：组端口——右缘中点=输出（聚合）、左缘中点=输入（广播）。
+   pointer-events:auto 同组头；样式对齐 .vue-flow__handle（主色圆点+bg 描边）。 */
+.canvas-board__groupbox-port {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  padding: 0;
+  border: 2px solid var(--color-bg);
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: crosshair;
+  pointer-events: auto;
+  transition: transform var(--duration-instant) var(--ease-in-out),
+    box-shadow var(--duration-instant) var(--ease-in-out);
+
+  &:hover,
+  &--dragging {
+    transform: scale(1.4);
+    box-shadow: 0 0 6px rgba(var(--color-primary-rgb), 0.6);
+  }
+
+  /* 右缘中点（骑在框线上） */
+  &--source {
+    left: calc(100% - 6px);
+  }
+
+  /* 左缘中点（骑在框线上） */
+  &--target {
+    left: -6px;
+  }
+}
+
+/* 修复VIII（VIII-1 ⑤）：组边 SVG 覆盖层（组层同栈；层穿透，仅路径与 × 可点） */
+.canvas-board__groupedges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  overflow: visible;
+}
+
+.canvas-board__groupedge-path {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  pointer-events: stroke;
+  cursor: pointer;
+
+  &:hover {
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 5px rgba(var(--color-primary-rgb), 0.55));
+  }
+}
+
+/* 选中组边红粗（口径同普通边 canvas-edge--selected，selectedEdgeId 复用） */
+.canvas-board__groupedge--selected .canvas-board__groupedge-path {
+  stroke: #ef4444;
+  stroke-width: 3;
+}
+
+.canvas-board__groupedge-del {
+  pointer-events: all;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--duration-instant) var(--ease-in-out);
+
+  circle {
+    fill: var(--color-surface, #1f2937);
+    stroke: var(--color-border, #374151);
+    stroke-width: 1;
+  }
+
+  text {
+    fill: var(--color-text-secondary, #9ca3af);
+    font-size: 13px;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  &:hover {
+    opacity: 1;
+
+    circle {
+      fill: #ef4444;
+      stroke: #ef4444;
+    }
+
+    text {
+      fill: #fff;
+    }
+  }
+}
+
+/* 组端口拖线临时贝塞尔（虚线区分已建边；穿透不挡落点判定） */
+.canvas-board__groupedge-ghost {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
 }
 
 .canvas-board__toolbar {

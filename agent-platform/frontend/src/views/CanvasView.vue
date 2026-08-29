@@ -412,6 +412,7 @@ import AssetPicker from '@/components/canvas/AssetPicker.vue'
 import AutoAssociateDialog from '@/components/canvas/AutoAssociateDialog.vue'
 import type { CropRect } from '@/types/canvas'
 import { ancestors, interpolate, findBrokenMentions, uniqueLabel, type MentionResolver } from '@/utils/interpolate'
+import { mergeSnapshotEdges, resolveEdgesForFlow } from '@/utils/groupEdges'
 import { collectUpstream } from '@/components/canvas/upstream'
 import { cloneEdgesForDuplicate, cloneNodeForDuplicate } from '@/components/canvas/nodeClone'
 import { kindFromMime, sizeLimitError } from '@/utils/mediaLimits'
@@ -708,24 +709,42 @@ function onMentionFocus(payload: { kind: string; id: string }) {
 // ==================== S13 节点 @引用（祖先链候选 + 运行前插值 + 断链检测） ====================
 
 /**
+ * 修复VIII（VIII-1 ⑥）：节点级规范化边集——普通边+组边经 resolveEdgesForFlow 广播/聚合
+ * 展开（外部→组=全员收、组→外部=全员喂、组→组=成员×成员）。上游解析/上游面板/生成
+ * 数据流取输入统一走本函数；批量生成/一键关联按规格 §7 回归口径**不读组边**（原样
+ * getEdges，不动）。computed 内调用：getEdges/getGroupEdges/getGroups 内部 ref 均被
+ * 追踪，组边增删/组员变动自动重算。
+ */
+function resolvedFlowEdges() {
+  const board = boardRef.value
+  if (!board) return []
+  return resolveEdgesForFlow(
+    mergeSnapshotEdges(board.getEdges(), board.getGroupEdges()),
+    board.getGroups()
+  )
+}
+
+/**
  * 选中节点的祖先集（反向 BFS 沿 edges，visited 防环）。
  * 读 boardRef.getEdges()——其内部 `return edges.value` 在 computed 中被响应式追踪，
  * 故增删边/节点会自动重算（无需手动 tick）。
+ * 修复VIII：改走 resolvedFlowEdges——组边展开后 BFS 结果天然含组成员（VIII-1 ⑥）。
  */
 const selectedAncestors = computed<Set<string>>(() => {
   const id = selectedNode.value?.id
   if (!id || !boardRef.value) return new Set<string>()
-  return ancestors(id, boardRef.value.getEdges())
+  return ancestors(id, resolvedFlowEdges())
 })
 
 /**
  * D2（2x-8）：选中节点的上游收集（BFS 分层，供属性面板「上游」区）。
  * 响应式口径同 selectedAncestors（getNodes/getEdges 内部 ref 在 computed 中被追踪）。
+ * 修复VIII：同上改走 resolvedFlowEdges——上游面板按展开后成员列（VIII-1 ⑨）。
  */
 const upstreamInfo = computed(() => {
   const id = selectedNode.value?.id
   if (!id || !boardRef.value) return null
-  return collectUpstream(id, boardRef.value.getNodes(), boardRef.value.getEdges())
+  return collectUpstream(id, boardRef.value.getNodes(), resolvedFlowEdges())
 })
 
 /**
@@ -1581,7 +1600,8 @@ async function onRerunAll() {
     return
   }
   const nodes = boardRef.value.getNodes()
-  const edges = boardRef.value.getEdges()
+  // 修复VIII（VIII-1 ⑥）：生成数据流取输入改走规范化边集（组边广播/聚合展开后拓扑）
+  const edges = resolvedFlowEdges()
   if (!nodes.length) {
     message.warning('画布为空')
     return

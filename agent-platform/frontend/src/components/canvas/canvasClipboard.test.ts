@@ -141,3 +141,20 @@ describe('planLabels / remapEdges', () => {
     expect(remapped.type).toBe('deletable')
   })
 })
+
+// 修复VIII（VIII-1 ⑧）：组边不带出 Ctrl+C/V 复制粘贴——伪 id 端点显式兜底过滤。
+describe('buildCopySet · 修复VIII 组边排除', () => {
+  it('伪 id 端点边不进 innerEdges（选中集是节点 id 天然排除，兜底显式过滤）', () => {
+    const nodes = [mkNode('a'), mkNode('b'), mkNode('ext')]
+    // group:g1→b / b→group:g2 端点含伪 id（就算选中集含 b 也不带）；a→b 普通诱导边保留
+    const edges = [
+      mkEdge('group:g1', 'b'),
+      mkEdge('b', 'group:g2'),
+      mkEdge('a', 'b')
+    ]
+    const clip = buildCopySet(nodes, edges, ['a', 'b'])
+    expect(clip).not.toBeNull()
+    expect(clip!.innerEdges).toHaveLength(1)
+    expect(clip!.innerEdges[0]).toMatchObject({ source: 'a', target: 'b' })
+  })
+})

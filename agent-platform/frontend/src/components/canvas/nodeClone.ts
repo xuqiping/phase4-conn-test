@@ -1,4 +1,5 @@
 import type { CanvasEdge, CanvasNode, CanvasNodeData } from '@/types/canvas'
+import { isGroupEndpoint } from '@/utils/groupEdges'
 
 /**
  * 修复III C4（2x-4）：节点创建副本——纯数据变换（DOM/画布操作留给调用方）。
@@ -48,6 +49,9 @@ let cloneEdgeSeq = 0
  */
 export function cloneEdgesForDuplicate(originalId: string, newId: string, edges: CanvasEdge[]): CanvasEdge[] {
   return edges
+    // 修复VIII（VIII-1 ⑧）：组边不带出「创建副本」——伪 id 端点显式兜底过滤
+    // （Board.getEdges 本就只含普通边，此处与 appendEdges 双保险；口径同 Ctrl+C/V）
+    .filter(e => !isGroupEndpoint(e.source) && !isGroupEndpoint(e.target))
     .filter(e => e.source === originalId || e.target === originalId)
     .map(e => {
       const source = e.source === originalId ? newId : e.source

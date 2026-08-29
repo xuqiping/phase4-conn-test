@@ -113,3 +113,26 @@ describe('computeAutoLayout · 子图模式（includeIds）', () => {
     expect(pos.get('a')!.y + 180).toBeLessThanOrEqual(pos.get('b')!.y)
   })
 })
+
+// 修复VIII（VIII-1 ⑧）：组边不参与 dagre 一键整理（广播边=N 倍权重会炸布局）。
+describe('computeAutoLayout · 修复VIII 组边排除', () => {
+  it('伪 id 端点边全部忽略：布局照常出全量节点，普通边 LR 序不变量保持', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const edges = [
+      mkEdge('a', 'group:g1'),   // 外部→组（广播边）
+      mkEdge('group:g1', 'b'),   // 组→外部（聚合边）
+      mkEdge('group:g1', 'group:g2'), // 组→组
+      mkEdge('a', 'b')           // 普通边：唯一参与分层
+    ]
+    const pos = computeAutoLayout(nodes, edges)
+    expect(pos.size).toBe(2)
+    expect(pos.get('a')!.x + 300).toBeLessThanOrEqual(pos.get('b')!.x)
+  })
+
+  it('只有组边无普通边：两节点互不强制分层（伪 id 边零贡献）', () => {
+    const nodes = [mkNode('a'), mkNode('b')]
+    const pos = computeAutoLayout(nodes, [mkEdge('group:g1', 'a'), mkEdge('group:g1', 'b')])
+    expect(pos.size).toBe(2)
+    expect(Number.isFinite(pos.get('a')!.x)).toBe(true)
+  })
+})
