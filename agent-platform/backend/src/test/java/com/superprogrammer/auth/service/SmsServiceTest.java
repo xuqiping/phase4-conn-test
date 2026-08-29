@@ -213,4 +213,40 @@ class SmsServiceTest {
                 () -> service.verifyAndLogin("13800138000", "123456"));
         assertEquals(ErrorCode.UNAUTHORIZED.getCode(), ex.getCode());
     }
+
+    /**
+     * 修复VIII B3（VIII-4）：验证码明文不进日志——发码全链路（含 sendSms 失败分支）捕获日志，
+     * 断言 Redis 里那份 6 位码不出现在任何日志行。真码调试口径=查 Redis，不放宽日志。
+     * （SmsService.java 原 code={} 是阿里云应答状态码非验证码，已改名 respCode= 消除误读。）
+     */
+    @Test
+    void sendCodeFlow_neverLogsCleartextCode() throws Exception {
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SmsService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            // 无网络环境 sendSms 必失败（INTERNAL_ERROR），但验证码已生成并写 Redis——足够覆盖日志面
+            assertThrows(BusinessException.class,
+                    () -> service.sendCode("13800138000", "captcha-token", "127.0.0.1"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        // 捕获写入 Redis 的 6 位码
+        org.mockito.ArgumentCaptor<String> codeCap = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(valueOps).set(eq("sms:code:13800138000"), codeCap.capture(), anyLong(), any());
+        String code = codeCap.getValue();
+        assertTrue(code != null && code.matches("\\d{6}"), "验证码应为 6 位数字: " + code);
+
+        String logs = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        assertFalse(logs.contains(code), "验证码明文不得进日志。捕获日志:\n" + logs);
+    }
 }

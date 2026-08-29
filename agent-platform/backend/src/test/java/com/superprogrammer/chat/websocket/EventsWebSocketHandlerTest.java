@@ -19,8 +19,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 计划 E2：/ws/events 通道单测——同 uid 多连接全收、坏连接不炸循环、close 后索引清零、
- * 无 uid 拒连。鉴权拒绝（无 token）由 WebSocketAuthInterceptor 保证（同 /ws/chat 拦截器）。
+ * 计划 E2：/ws/events 通道单测——同 uid 多连接全收、坏连接不炸循环、close 后索引清零。
+ * 修复VIII B1（VIII-3）：鉴权改为首消息（WebSocketFirstMessageAuthDecorator），建立时
+ * attributes 尚无 userId——不再拒连，鉴权通过后经 registerAuthenticated 回调注册广播表。
  */
 class EventsWebSocketHandlerTest {
 
@@ -91,12 +92,22 @@ class EventsWebSocketHandlerTest {
         assertThat(handler.stats()).containsEntry("onlineUsers", 0L).containsEntry("connections", 0L);
     }
 
+    /** 修复VIII B1：建立时无 userId（首消息鉴权未完成）→ 不拒连不注册；鉴权通过回调注册后才收推送。 */
     @Test
-    void missingUserId_rejected() throws Exception {
+    void missingUserId_pendingAuth_thenRegisteredViaCallback() throws Exception {
         WebSocketSession s = mockSession(null);
         handler.afterConnectionEstablished(s);
-        verify(s).close(CloseStatus.POLICY_VIOLATION);
+        // 未认证等待期：不 close、不进广播表（5s 超时由装饰器负责 close(4401)）
+        verify(s, never()).close(any(CloseStatus.class));
         assertThat(handler.stats()).containsEntry("connections", 0L);
+
+        // 首消息鉴权通过：attributes 写入 userId → 装饰器回调注册 → 可收推送
+        s.getAttributes().put("userId", 11L);
+        handler.registerAuthenticated(s);
+        assertThat(handler.stats()).containsEntry("connections", 1L);
+        handler.push(11L, "{\"delta\":1}");
+        verify(s).sendMessage(argThat(m -> m instanceof TextMessage t
+                && t.getPayload().contains("delta")));
     }
 
     /**

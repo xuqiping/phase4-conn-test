@@ -9,6 +9,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { projectGroupApi, type ProjectGroupMineVO } from '@/api/projectGroup'
 import { billingApi } from '@/api/billing'
+import { tryRefreshAccessToken, redirectToLogin } from '@/api/request'
 import { getStorage, setStorage, STORAGE_KEYS } from '@/utils/storage'
 
 /** 全局唯一持久化键（区别于旧五入口分键；旧键在 adoptLegacy 收养后不再读）。 */
@@ -103,11 +104,17 @@ export const useProjectGroupStore = defineStore('projectGroup', () => {
   let eventsAttempt = 0
   let eventsStopped = true
 
+  // 修复VIII B2（VIII-3）：首消息鉴权状态——auth_ok 前业务帧忽略；
+  // 4401 后已单飞刷新并重连过一次（auth_ok 成功即复位；再次 4401 → 跳登录）
+  let eventsAuthed = false
+  let eventsAuthRefreshTried = false
+
   function eventsUrl(): string | null {
-    const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN)
-    if (!token) return null
+    // VIII-3：token 不再进 URL（nginx access log 不留痕）；此处仅探测登录态——
+    // 未登录不发起连接（防必然的 4401 噪音），token 改走 open 后首帧载荷
+    if (!getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN)) return null
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws/events?token=${token}`
+    return `${protocol}//${window.location.host}/ws/events`
   }
 
   /** 断线重连退避 1s/2s/5s/30s 封顶（防风暴）；token 已清空 → 循环自终止（登出）。 */
@@ -129,6 +136,8 @@ export const useProjectGroupStore = defineStore('projectGroup', () => {
       eventsStopped = true
       return
     }
+    const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN)
+    eventsAuthed = false
     try {
       eventsWs = new WebSocket(url)
     } catch {
@@ -136,34 +145,60 @@ export const useProjectGroupStore = defineStore('projectGroup', () => {
       return
     }
     eventsWs.onopen = () => {
-      const wasReconnect = eventsAttempt > 0
-      eventsAttempt = 0
-      eventsConnected.value = true
-      // 断线期间可能漏推——重连成功强制全量补拉一次（spec §3.3）
-      if (wasReconnect) {
-        void loadWallet()
-        void loadGroups()
-      }
+      // VIII-3 首消息鉴权：连接不带 token，open 后首帧交令牌（浏览器 WS 无法设 Authorization 头）
+      eventsWs?.send(JSON.stringify({ type: 'auth', token }))
     }
     eventsWs.onmessage = (ev: MessageEvent) => {
       try {
-        const msg = JSON.parse(ev.data) as PointsChangedMsg
-        if (msg?.type !== 'points.changed') return
-        lastEvent.value = msg
+        const msg = JSON.parse(ev.data) as PointsChangedMsg | { type: 'auth_ok' }
+        if (msg?.type === 'auth_ok') {
+          // 首消息鉴权通过：进业务态（原 onopen 的连接就绪/重连补拉移到这里——
+          // 服务端鉴权通过才真正开始推送，补拉才不漏窗口）
+          eventsAuthed = true
+          eventsAuthRefreshTried = false
+          const wasReconnect = eventsAttempt > 0
+          eventsAttempt = 0
+          eventsConnected.value = true
+          // 断线期间可能漏推——鉴权通过后强制全量补拉一次（spec §3.3）
+          if (wasReconnect) {
+            void loadWallet()
+            void loadGroups()
+          }
+          return
+        }
+        if (!eventsAuthed) return
+        const m = msg as PointsChangedMsg
+        if (m?.type !== 'points.changed') return
+        lastEvent.value = m
         // 徽标纯 store 更新（无网络请求，零成本秒跳）
-        if (msg.scope === 'PERSONAL' && msg.balanceAfter != null) {
-          personalPoints.value = msg.balanceAfter
-        } else if (msg.scope === 'GROUP' && msg.groupId != null && msg.balanceAfter != null) {
-          const g = groups.value.find(x => x.id === msg.groupId)
-          if (g) g.balancePoints = msg.balanceAfter
+        if (m.scope === 'PERSONAL' && m.balanceAfter != null) {
+          personalPoints.value = m.balanceAfter
+        } else if (m.scope === 'GROUP' && m.groupId != null && m.balanceAfter != null) {
+          const g = groups.value.find(x => x.id === m.groupId)
+          if (g) g.balancePoints = m.balanceAfter
         }
       } catch {
         // 非 JSON 帧忽略
       }
     }
-    eventsWs.onclose = () => {
+    eventsWs.onclose = (ev: CloseEvent) => {
       eventsConnected.value = false
       eventsWs = null
+      // VIII-3：4401=服务端鉴权拒绝（token 过期/无效）→ 单飞刷新一次重连重走首消息鉴权；
+      // 刷新失败或重连再 4401 → 与 HTTP 401 同口径跳登录（防刷新/重连风暴）。
+      // 其余关闭码维持原退避链；token 已清空（登出）→ scheduleEventsReconnect 自终止
+      if (ev.code === 4401) {
+        if (eventsAuthRefreshTried) {
+          redirectToLogin()
+          return
+        }
+        eventsAuthRefreshTried = true
+        void tryRefreshAccessToken().then((newAt) => {
+          if (newAt) connectEvents()
+          else redirectToLogin()
+        })
+        return
+      }
       scheduleEventsReconnect()
     }
     eventsWs.onerror = () => {

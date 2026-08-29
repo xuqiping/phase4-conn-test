@@ -106,8 +106,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/billing/payment/notify/**").permitAll()
                         // Ark 参考视频回拉：无 JWT，但必须通过 HMAC 签名和短期 expires 校验。
                         .requestMatchers("/api/media/reference/**").permitAll()
-                        // WebSocket端点（通过拦截器认证）
-                        .requestMatchers("/ws/chat").permitAll()
+                        // WebSocket端点：匿名握手放行，鉴权在首消息（修复VIII B1/VIII-3——
+                        // token 走 open 后首帧载荷而非 URL query，握手期无可验凭证；
+                        // /ws/events 原漏放行，浏览器握手无 Authorization 头本就被 401 挡死）
+                        .requestMatchers("/ws/chat", "/ws/events").permitAll()
                         // 运维系统 OPS-FR-01：健康检查/指标端点 permitAll（Prometheus 抓取与部署探活无 JWT）。
                         // 暴露面控制不在这一层——Nginx 不反代 /actuator + 防火墙仅内网（见 application.yml 红线注释）。
                         .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()

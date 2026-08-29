@@ -351,6 +351,50 @@ class EmailServiceTest {
                 eq("SUCCESS"));
     }
 
+    /**
+     * 修复VIII B3（VIII-4）：验证码明文不进日志——发码全链路捕获日志，
+     * 断言邮件正文里那份 6 位码不出现在任何日志行（正文必须含码证明流程真跑通）。
+     * 真码调试口径=查 Redis，不放宽日志。
+     */
+    @Test
+    void sendRegisterCode_emailBodyHasCode_butLogsNeverContainIt() {
+        java.util.concurrent.atomic.AtomicReference<String> bodyRef = new java.util.concurrent.atomic.AtomicReference<>();
+        com.superprogrammer.auth.service.mail.MailSender aliyun =
+                mock(com.superprogrammer.auth.service.mail.MailSender.class);
+        when(aliyun.provider()).thenReturn("ALIYUN");
+        when(aliyun.send(any(), anyString(), anyString(), anyString())).thenAnswer(inv -> {
+            bodyRef.set(inv.getArgument(3));
+            return true;
+        });
+        service = new EmailService(channelSettings, redisTemplate, credentialService, mailQuota,
+                captchaGuard, auditLogService, List.of(aliyun));
+
+        when(credentialService.findForLogin(UserCredential.TYPE_EMAIL, "a@b.com")).thenReturn(null);
+        when(valueOps.increment("regcode:resend:a@b.com")).thenReturn(1L);
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(EmailService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertDoesNotThrow(() -> service.sendRegisterCode("a@b.com", "1.2.3.4", null));
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d{6}")
+                .matcher(String.valueOf(bodyRef.get()));
+        assertTrue(m.find(), "邮件正文应含 6 位验证码（证明流程跑通）");
+        String code = m.group();
+
+        String logs = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        assertFalse(logs.contains(code), "验证码明文不得进日志。捕获日志:\n" + logs);
+    }
+
     @Test
     void verifyRegisterCode_expired_throws() {
         when(valueOps.get("regcode:email:a@b.com")).thenReturn(null);

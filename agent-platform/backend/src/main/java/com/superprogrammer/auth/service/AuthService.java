@@ -1048,6 +1048,30 @@ public class AuthService {
     }
 
     /**
+     * 修复VIII B4（VIII-5）：敏感操作密码二次确认——校验当前登录用户的账号密码。
+     *
+     * <p>与注销（{@link #deleteAccount}）同款校验逻辑（BCrypt matches 对 users.password），
+     * 抽出供「明文 API Key 导出」等敏感入口复用；语义为纯校验、不写审计不踢会话——
+     * 调用方自挂 @AuditLog（失败尝试经 @Around 切面同样落 FAIL 行）。
+     * 空/错密码 → {@link BusinessException}(BAD_REQUEST)；用户不存在 → NOT_FOUND。
+     */
+    public void verifyUserPassword(Long userId, String rawPassword) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        // review 补：与注销同款 ACTIVE 状态检查——封禁/禁用账号即便持有未过期 access token
+        // + 正确密码也不得经此路径导出明文 API Key
+        if (!"ACTIVE".equals(user.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "账号当前状态不允许该操作");
+        }
+        if (rawPassword == null || rawPassword.isBlank()
+                || !passwordEncoder.matches(rawPassword, user.getPassword())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "密码错误");
+        }
+    }
+
+    /**
      * 17x + D1：本人修改昵称/姓名（users.name）与账号备注（users.remark）。
      * 空串/纯空白 → null（清除；name 清除后各展示处回落 username）。
      * 不改 username（登录凭证），仅展示层字段；改完返回最新 UserVO 供前端刷新本地用户信息。

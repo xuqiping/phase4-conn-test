@@ -136,9 +136,10 @@ export const llmApi = {
     return request.post<ApiResponse<TestConnectionResult>>(`/media/providers/${id}/test`)
   },
 
-  // 导出全量供应商（10x-2）：返回 blob 触发浏览器下载，含明文 API Key
-  exportProviders() {
-    return request.get<Blob>('/llm/providers/export', { responseType: 'blob' })
+  // 导出全量供应商（10x-2；修复VIII B4/VIII-5：改 POST + 密码二次确认）：
+  // 返回 blob 触发浏览器下载，含明文 API Key；密码走 body 绝不进 URL（nginx 日志面）
+  exportProviders(password: string) {
+    return request.post<Blob>('/llm/providers/export', { password }, { responseType: 'blob' })
   },
 
   // 批量导入供应商（10x-2）：按 name upsert，返回 created/updated/failed 统计

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { chatApi } from '@/api/chat'
 import type { ChatSession, ChatMessage, ChatResponse, ChatAttachmentRef } from '@/api/chat'
 import type { RecalledFileCard } from '@/api/memory'
+import { tryRefreshAccessToken, redirectToLogin } from '@/api/request'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
 
 const DEFAULT_CHAT_TARGET = 'none'
@@ -573,22 +574,49 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // ============================================================
+  // 修复VIII B2（VIII-3）：WS 首消息鉴权——token 不再进 URL（nginx access log 不留痕）。
+  // onopen 先发 {type:'auth', token}，收到 auth_ok 前：业务帧一律忽略、发送走 REST 回退
+  //（门闩，防服务端未认证期发业务帧被 close(4401)）；服务端鉴权失败/5s 超时同样 close(4401)。
+  // ============================================================
+  let wsAuthed = false
+  /** 4401 后已单飞刷新并重连过一次（auth_ok 成功即复位；再次 4401 → 会话真失效跳登录） */
+  let wsAuthRefreshTried = false
+
   // WebSocket streaming
   function connectWS() {
     const token = getStorage<string>(STORAGE_KEYS.ACCESS_TOKEN)
     if (!token) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/chat?token=${token}`
+    const wsUrl = `${protocol}//${window.location.host}/ws/chat`
 
+    wsAuthed = false
     ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
       wsConnected.value = true
+      // 首消息鉴权：浏览器 WS 无法带 Authorization 头，token 走首帧载荷（唯一不进 URL/日志的通道）
+      ws?.send(JSON.stringify({ type: 'auth', token }))
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev: CloseEvent) => {
       wsConnected.value = false
       ws = null
+      // 4401=服务端鉴权拒绝（token 过期/无效）：单飞刷新一次 → 重连重走首消息鉴权；
+      // 刷新失败或重连再 4401 → 与 HTTP 401 同口径跳登录（防刷新/重连风暴）
+      if (ev.code === 4401) {
+        if (wsAuthRefreshTried) {
+          redirectToLogin()
+          return
+        }
+        wsAuthRefreshTried = true
+        void tryRefreshAccessToken().then((newAt) => {
+          if (newAt) connectWS()
+          else redirectToLogin()
+        })
+        return
+      }
+      // 其余关闭码维持现状语义：不自动重连（ChatView 重挂载时再连）
     }
 
     ws.onerror = () => {
@@ -597,6 +625,14 @@ export const useChatStore = defineStore('chat', () => {
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
+
+      // 首消息鉴权 ack：放行业务收发（此前到达的帧一律忽略——服务端未认证期不会推业务）
+      if (data.type === 'auth_ok') {
+        wsAuthed = true
+        wsAuthRefreshTried = false
+        return
+      }
+      if (!wsAuthed) return
 
       switch (data.type) {
         case 'CHUNK':
@@ -660,8 +696,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function sendWSMessage(content: string, agentId?: number, workflowId?: number, attachments?: ChatAttachmentRef[]) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      // Fallback to REST
+    if (!ws || ws.readyState !== WebSocket.OPEN || !wsAuthed) {
+      // 门闩（修复VIII B2）：首消息鉴权（auth_ok）通过前不走 WS——回退 REST SSE，
+      // 防未认证业务帧被服务端 close(4401)
       return sendMessage(content, agentId, workflowId, undefined, undefined, attachments)
     }
 

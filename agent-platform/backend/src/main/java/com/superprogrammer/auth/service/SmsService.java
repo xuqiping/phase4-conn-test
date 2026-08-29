@@ -410,7 +410,10 @@ public class SmsService {
 
             SendSmsResponse response = client.getAcsResponse(request);
             boolean success = "OK".equals(response.getCode());
-            log.info("短信发送{} phone={} template={} code={} message={}",
+            // 修复VIII B3（VIII-4 排查⑦收口）：此 code 是阿里云应答状态码（OK/isv.*），
+            // 不是 6 位验证码——验证码全链路只进 Redis 不进日志；原字段名 code= 曾被误读为
+            // 验证码明文落日志，改名 respCode= 消除歧义（排障需看真码 → 查 Redis，不放宽日志）。
+            log.info("短信发送{} phone={} template={} respCode={} message={}",
                     success ? "成功" : "失败", maskPhone(phone), templateCode, response.getCode(), response.getMessage());
             return success;
         } catch (Exception e) {

@@ -75,7 +75,12 @@ const ANONYMOUS_AUTH_PATHS = new Set([
   '/auth/channels'
 ])
 
-async function tryRefreshAccessToken(): Promise<string | null> {
+/**
+ * 单飞刷新 access token（并发共享同一 Promise）。
+ * 修复VIII B2（VIII-3）起导出：WS 两 store（chat/projectGroup）收到 close(4401) 后
+ * 复用同一单飞口径刷新一次再重连，防多通道并发刷新轰炸 /auth/refresh。
+ */
+export async function tryRefreshAccessToken(): Promise<string | null> {
   const rt = getStorage<string>(STORAGE_KEYS.REFRESH_TOKEN)
   if (!rt) return null
   if (!refreshPromise) {
@@ -223,7 +228,8 @@ request.interceptors.response.use(
   }
 )
 
-function redirectToLogin() {
+/** 修复VIII B2（VIII-3）起导出：WS 4401 刷新重连仍失败时与 HTTP 401 同口径跳登录。 */
+export function redirectToLogin() {
   clearAuthStorage()
   if (isRedirectingToLogin) return
   isRedirectingToLogin = true

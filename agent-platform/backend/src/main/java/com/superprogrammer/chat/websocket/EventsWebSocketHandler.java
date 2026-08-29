@@ -19,8 +19,8 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * /ws/events 通道（7x-3 · 计划 E2）：按 userId 索引的可广播下行通道。
  *
- * <p>与 /ws/chat 独立 Handler 互不共享 session；鉴权同款 {@code WebSocketAuthInterceptor}
- * （握手校验一次 token，uid 放 attributes）。上行无业务语义——连接只作下行推送靶。
+ * <p>与 /ws/chat 独立 Handler 互不共享 session；鉴权同款 {@code WebSocketFirstMessageAuthDecorator}
+ * （修复VIII B1：握手只验 Origin，token 走首消息鉴权）。上行无业务语义——连接只作下行推送靶。
  *
  * <p>连接管理（plan 坑点③④）：
  * <ul>
@@ -54,14 +54,28 @@ public class EventsWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         Long uid = getUserId(session);
         if (uid == null) {
-            // 防御：拦截器已保证 uid，走到这里=配置漏挂，直接拒绝
-            closeQuietly(session, CloseStatus.POLICY_VIOLATION);
+            // 修复VIII B1：鉴权移到首消息——建立时 attributes 尚无 userId，等待鉴权成功回调注册
+            // （5s 未通过鉴权由装饰器 close(4401)，此处不再拒连）
+            log.info("events WS 连接建立（等待首消息鉴权）: sessionId={}", session.getId());
             return;
+        }
+        // 兼容兜底：attributes 已带 uid（如未来恢复握手期鉴权）直接注册
+        registerAuthenticated(session);
+    }
+
+    /**
+     * 修复VIII B1（VIII-3）：首消息鉴权通过后由 {@code WebSocketFirstMessageAuthDecorator}
+     * 回调注册——attributes.userId 已就位，进 uid 索引广播表。
+     */
+    public void registerAuthenticated(WebSocketSession session) {
+        Long uid = getUserId(session);
+        if (uid == null) {
+            return; // 防御：无 uid 不注册（收不到推送，重连补拉兜底）
         }
         WebSocketSession decorated = decorate(session);
         byUserId.computeIfAbsent(uid, k -> ConcurrentHashMap.newKeySet()).add(decorated);
         sessionUid.put(session.getId(), uid);
-        log.info("events WS 连接建立: userId={}, sessionId={}, 该用户连接数={}",
+        log.info("events WS 鉴权通过注册: userId={}, sessionId={}, 该用户连接数={}",
                 uid, session.getId(), byUserId.get(uid).size());
     }
 

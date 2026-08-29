@@ -63,6 +63,31 @@
 
     <n-data-table :columns="columns" :data="providers" :loading="loading" :scroll-x="1000" :bordered="false" />
 
+    <!-- 修复VIII B4（VIII-5）：导出含明文 API Key——密码二次确认弹窗（错误保留弹窗可重试） -->
+    <n-modal
+      v-model:show="showExportModal"
+      preset="card"
+      title="导出供应商"
+      :style="{ maxWidth: '420px', width: '90vw' }"
+    >
+      <div class="provider-manage__field-hint" style="margin-bottom: 8px">
+        导出文件将包含明文 API Key，请妥善保管。请输入当前登录密码确认导出。
+      </div>
+      <n-input
+        v-model:value="exportPassword"
+        type="password"
+        show-password-on="click"
+        placeholder="当前登录密码"
+        :disabled="exporting"
+        aria-label="导出确认密码"
+        @keydown.enter="confirmExport"
+      />
+      <template #action>
+        <n-button :disabled="exporting" @click="showExportModal = false">取消</n-button>
+        <n-button type="primary" :loading="exporting" aria-label="确认导出" @click="confirmExport">确认导出</n-button>
+      </template>
+    </n-modal>
+
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑供应商' : '添加供应商'" :style="{ maxWidth: '520px', width: '90vw' }">
       <n-form label-placement="left" label-width="100">
         <n-form-item label="名称">
@@ -423,21 +448,26 @@ async function handleReload() {
 
 // ===== 10x-2：导出/导入全局供应商 =====
 
-/** 导出：含明文 API Key，二次确认后下载 JSON 文件。 */
+/** 修复VIII B4（VIII-5）：导出密码确认弹窗（导出含明文 API Key，服务端要求 body 携带密码复验）。 */
+const showExportModal = ref(false)
+const exportPassword = ref('')
+
+/** 导出入口：弹密码确认框（原 dialog 确认改为密码输入——仅确认不够，须凭证复验）。 */
 function handleExport() {
-  dialog.warning({
-    title: '导出供应商',
-    content: '导出文件将包含明文 API Key，请妥善保管。确认导出？',
-    positiveText: '确认导出',
-    negativeText: '取消',
-    onPositiveClick: doExport
-  })
+  exportPassword.value = ''
+  showExportModal.value = true
 }
 
-async function doExport() {
+/** 密码确认导出：密码错/失败保留弹窗可重试；成功关弹窗并下载 JSON 文件。 */
+async function confirmExport() {
+  if (exporting.value) return
+  if (!exportPassword.value) {
+    message.warning('请输入当前登录密码')
+    return
+  }
   exporting.value = true
   try {
-    const res = await llmApi.exportProviders()
+    const res = await llmApi.exportProviders(exportPassword.value)
     // 响应拦截器对 responseType: 'blob' 原样返回 AxiosResponse（跳过业务码解包），
     // 真正的 Blob 在 .data —— 直接把 AxiosResponse 传 createObjectURL 会 TypeError
     // 被下方 catch 静默吞掉，表现为「导出按钮点了但文件永远不下载」（10x 未解决项 1 根因）。
@@ -451,8 +481,11 @@ async function doExport() {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
     message.success('导出成功')
+    showExportModal.value = false
+    exportPassword.value = ''
   } catch {
-    // error handled by interceptor
+    // 密码错误/导出失败：弹窗保留可重试（接口错误已由拦截器提示，这里补口径化文案）
+    message.error('密码错误或导出失败，请重试')
   } finally {
     exporting.value = false
   }

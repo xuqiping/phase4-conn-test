@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useChatStore } from './chat'
 
@@ -26,8 +26,16 @@ vi.mock('@/utils/storage', () => ({
   removeStorage: vi.fn()
 }))
 
+// 修复VIII B2：WS 4401 处理链依赖（单飞刷新/跳登录）——mock 掉不发真请求
+vi.mock('@/api/request', () => ({
+  default: {},
+  tryRefreshAccessToken: vi.fn().mockResolvedValue(null),
+  redirectToLogin: vi.fn()
+}))
+
 import { chatApi } from '@/api/chat'
 import { getStorage, setStorage, removeStorage, STORAGE_KEYS } from '@/utils/storage'
+import { tryRefreshAccessToken, redirectToLogin } from '@/api/request'
 
 function streamResponse(lines: string[]) {
   const encoder = new TextEncoder()
@@ -234,5 +242,218 @@ describe('chat store', () => {
     expect(assistant.role).toBe('ASSISTANT')
     const meta = JSON.parse(assistant.metadata!)
     expect(meta.fileCards).toEqual([card])
+  })
+})
+
+// ============================================================
+// 修复VIII B2（VIII-3）：WS 首消息鉴权——token 出 URL 改走首帧载荷；
+// auth_ok 门闩（业务帧忽略/发送回退 REST）；4401 单飞刷新一次重连、再失败跳登录。
+// ============================================================
+
+/** 测试替身 WebSocket：记录 URL 与已发帧，由测试手动驱动 open/message/close。 */
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = []
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+  url: string
+  readyState = 0
+  sent: string[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((ev: { data: string }) => void) | null = null
+  onclose: ((ev: { code: number }) => void) | null = null
+  onerror: (() => void) | null = null
+
+  constructor(url: string) {
+    this.url = url
+    FakeWebSocket.instances.push(this)
+  }
+
+  send(data: string) {
+    this.sent.push(data)
+  }
+
+  close() {
+    this.readyState = 3
+  }
+
+  // ---- 测试驱动（模拟服务端行为）----
+  open() {
+    this.readyState = 1
+    this.onopen?.()
+  }
+
+  serverMessage(data: unknown) {
+    this.onmessage?.({ data: JSON.stringify(data) })
+  }
+
+  serverClose(code: number) {
+    this.readyState = 3
+    this.onclose?.({ code })
+  }
+}
+
+const mockedRefresh = vi.mocked(tryRefreshAccessToken)
+const mockedRedirect = vi.mocked(redirectToLogin)
+
+describe('chat store WS 首消息鉴权（修复VIII B2）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    // 恢复默认实现（clearAllMocks 只清调用记录，这里显式给默认返回值防串扰）
+    mockedRefresh.mockResolvedValue(null)
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function expectedWsUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${window.location.host}/ws/chat`
+  }
+
+  it('连接 URL 不带 token（不出现在 URL/日志面），open 后首帧发 {type:"auth"}', () => {
+    const store = useChatStore()
+    store.connectWS()
+
+    const sock = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    expect(sock.url).toBe(expectedWsUrl())
+    expect(sock.url).not.toContain('token=')
+
+    sock.open()
+    expect(sock.sent).toHaveLength(1)
+    expect(JSON.parse(sock.sent[0])).toEqual({ type: 'auth', token: 'token' })
+  })
+
+  it('auth_ok 前服务端业务帧一律忽略，sendWSMessage 回退 REST', async () => {
+    // 无 currentSessionId → REST 回退走 sendNewMessage（新会话分支）
+    vi.mocked(chatApi.sendNewMessage).mockResolvedValue({
+      data: { code: 200, msg: 'ok', data: { id: 9, messageId: 9, sessionId: 1, role: 'ASSISTANT', content: '回声', createdAt: '2026-08-29T00:00:00Z' } }
+    } as any)
+    const store = useChatStore()
+    store.connectWS()
+    const sock = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    sock.open()
+
+    // 未认证期到达的业务帧不进流缓冲
+    sock.serverMessage({ type: 'CHUNK', content: '不该出现' })
+    expect(store.streamingContent).toBe('')
+
+    // 门闩：auth_ok 前发送走 REST 回退（防未认证业务帧被服务端 close(4401)）
+    const p = store.sendWSMessage('hello')
+    await p
+    expect(chatApi.sendNewMessage).toHaveBeenCalledWith(expect.objectContaining({ message: 'hello' }))
+    expect(sock.sent.filter((f: string) => !f.includes('"auth"'))).toHaveLength(0)
+  })
+
+  it('auth_ok 后业务帧放行且 sendWSMessage 直走 WS', () => {
+    const store = useChatStore()
+    store.connectWS()
+    const sock = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    sock.open()
+
+    sock.serverMessage({ type: 'auth_ok' })
+    sock.serverMessage({ type: 'CHUNK', content: '流内容' })
+    expect(store.streamingContent).toBe('流内容')
+
+    store.sendWSMessage('hi')
+    const business = sock.sent.filter((f: string) => !f.includes('"auth"'))
+    expect(business).toHaveLength(1)
+    expect(JSON.parse(business[0]).message).toBe('hi')
+    expect(chatApi.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('4401：单飞刷新一次 → 用新 token 重连重走首消息鉴权', async () => {
+    mockedRefresh.mockResolvedValue('fresh-token')
+    const store = useChatStore()
+    store.connectWS()
+    const first = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    first.open()
+    first.serverClose(4401)
+
+    expect(mockedRefresh).toHaveBeenCalledTimes(1)
+    // 刷新成功 → 新 token 已落库，重连后首帧携带新令牌
+    vi.mocked(getStorage).mockImplementation((key: string) =>
+      key === STORAGE_KEYS.ACCESS_TOKEN ? 'fresh-token' : null)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    const second = FakeWebSocket.instances[1]
+    expect(second.url).toBe(expectedWsUrl())
+    expect(second.url).not.toContain('token')
+    second.open()
+    expect(JSON.parse(second.sent[0])).toEqual({ type: 'auth', token: 'fresh-token' })
+    expect(mockedRedirect).not.toHaveBeenCalled()
+  })
+
+  it('刷新成功重连后再次 4401 → 直接跳登录（防刷新/重连风暴）', async () => {
+    mockedRefresh.mockResolvedValue('fresh-token')
+    const store = useChatStore()
+    store.connectWS()
+    const first = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    first.open()
+    first.serverClose(4401)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    FakeWebSocket.instances[1].open()
+    FakeWebSocket.instances[1].serverClose(4401)
+
+    expect(mockedRedirect).toHaveBeenCalledTimes(1)
+    expect(mockedRefresh).toHaveBeenCalledTimes(1)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('4401 刷新失败 → 跳登录且不再重连', async () => {
+    mockedRefresh.mockResolvedValue(null)
+    const store = useChatStore()
+    store.connectWS()
+    const sock = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    sock.open()
+    sock.serverClose(4401)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mockedRedirect).toHaveBeenCalledTimes(1)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  it('重连 auth_ok 复位刷新标记：其后再次 4401 仍走刷新而非跳登录', async () => {
+    mockedRefresh.mockResolvedValue('fresh-token')
+    const store = useChatStore()
+    store.connectWS()
+    const first = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    first.open()
+    first.serverClose(4401)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const second = FakeWebSocket.instances[1]
+    second.open()
+    second.serverMessage({ type: 'auth_ok' })
+    second.serverClose(4401)
+
+    expect(mockedRefresh).toHaveBeenCalledTimes(2)
+    expect(mockedRedirect).not.toHaveBeenCalled()
+  })
+
+  it('非 4401 关闭码：不刷新不跳登录（维持「ChatView 重挂载再连」语义）', async () => {
+    const store = useChatStore()
+    store.connectWS()
+    const sock = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    sock.open()
+    sock.serverClose(1006)
+
+    await Promise.resolve()
+    expect(mockedRefresh).not.toHaveBeenCalled()
+    expect(mockedRedirect).not.toHaveBeenCalled()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(store.wsConnected).toBe(false)
   })
 })

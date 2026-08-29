@@ -6,17 +6,21 @@ import com.superprogrammer.common.result.R;
 import com.superprogrammer.llm.dto.LlmProviderCreateRequest;
 import com.superprogrammer.llm.dto.LlmProviderExportItem;
 import com.superprogrammer.llm.dto.LlmProviderVO;
+import com.superprogrammer.llm.dto.ProviderExportRequest;
 import com.superprogrammer.llm.dto.ProviderImportResult;
 import com.superprogrammer.llm.dto.TestConnectionResult;
 import com.superprogrammer.llm.entity.LlmProviderEntity;
 import com.superprogrammer.llm.service.LlmProviderService;
 import com.superprogrammer.auth.security.RequirePermission;
+import com.superprogrammer.auth.service.AuthService;
 import com.superprogrammer.llm.config.LlmConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
@@ -31,6 +35,8 @@ public class LlmController {
     private final LlmProviderService providerService;
     private final LlmConfig llmConfig;
     private final ObjectMapper objectMapper;
+    /** 修复VIII B4：导出密码二次确认（复用注销同款校验）。 */
+    private final AuthService authService;
 
     @GetMapping("/providers")
     @RequirePermission("llm:config")
@@ -110,14 +116,18 @@ public class LlmController {
     }
 
     /**
-     * 导出全量供应商为 JSON 文件下载（问题 10x-2）。
+     * 导出全量供应商为 JSON 文件下载（问题 10x-2；修复VIII B4/VIII-5 改 POST + 密码二次确认）。
      * <p>持 llm:config 可调（16x 起独立码，admin 不再天然持有）；导出文件含<b>明文 API Key</b>，
-     * 响应头 Content-Disposition 触发浏览器下载；@AuditLog 留痕（明文 key 外流必须可追溯）。
+     * 故 body 必须携带当前登录密码复验（复用注销同款 {@code AuthService.verifyUserPassword}，
+     * BCrypt matches）——密码绝不进 URL query（nginx 日志面），旧 GET 端点直接删除（同仓同发版）。
+     * 密码错/缺失 → BusinessException(BAD_REQUEST)，@AuditLog 的 @Around 切面对失败尝试同样落 FAIL 行；
+     * 响应头 Content-Disposition 触发浏览器下载。
      */
-    @GetMapping("/providers/export")
+    @PostMapping("/providers/export")
     @RequirePermission("llm:config")
     @AuditLog(module = "llm", action = "provider_export", targetType = "llm_provider")
-    public ResponseEntity<byte[]> exportProviders() {
+    public ResponseEntity<byte[]> exportProviders(@RequestBody ProviderExportRequest request) {
+        authService.verifyUserPassword(currentUserId(), request.getPassword());
         var items = providerService.exportAll();
         byte[] body;
         try {
@@ -145,6 +155,12 @@ public class LlmController {
     public ResponseEntity<R<ProviderImportResult>> importProviders(
             @RequestBody List<LlmProviderExportItem> items) {
         return ResponseEntity.ok(R.ok(providerService.importAll(items)));
+    }
+
+    /** 修复VIII B4：当前登录用户 id（JwtAuthenticationFilter 已把 principal 设为 Long userId）。 */
+    private Long currentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return (Long) authentication.getPrincipal();
     }
 
     private LlmProviderEntity toEntity(LlmProviderCreateRequest request) {

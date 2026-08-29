@@ -26,6 +26,11 @@ import java.util.Arrays;
  * </ul>
  * 注意：配置非空但拆分后为空（如误填纯逗号）→ 返回空数组 fail-closed（握手全拒，错配立现），
  * 不静默回退 {@code *}。
+ *
+ * <p>修复VIII B1（VIII-3）：token 鉴权自握手拦截器（原从 URL query/Authorization 头取，
+ * 前端只能 {@code ?token=} 进 nginx access log）移至<b>首消息鉴权</b>——
+ * 见 {@link WebSocketFirstMessageAuthDecorator}。握手层只留 Origin 白名单；
+ * 两个端点均在 SecurityConfig 匿名放行（permitAll），鉴权统一在装饰器内完成。
  */
 @Slf4j
 @Configuration
@@ -35,7 +40,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     private final ChatWebSocketHandler chatWebSocketHandler;
     private final com.superprogrammer.chat.websocket.EventsWebSocketHandler eventsWebSocketHandler;
-    private final WebSocketAuthInterceptor webSocketAuthInterceptor;
+    private final WebSocketFirstMessageAuthDecorator firstMessageAuth;
 
     /** 逗号分隔的精确 Origin 白名单；空 = dev 宽松模式（与 CORS 同源配置，一处配置两处生效）。 */
     @Value("${app.cors.allowed-origins:}")
@@ -43,12 +48,12 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(chatWebSocketHandler, "/ws/chat")
-                .addInterceptors(webSocketAuthInterceptor)
+        registry.addHandler(firstMessageAuth.wrap(chatWebSocketHandler), "/ws/chat")
                 .setAllowedOrigins(resolveAllowedOrigins(allowedOrigins));
-        // 7x-3（计划 E2）：积分实时推送通道——同款鉴权拦截器 + Origin 白名单，独立 Handler 不共享 session
-        registry.addHandler(eventsWebSocketHandler, "/ws/events")
-                .addInterceptors(webSocketAuthInterceptor)
+        // 7x-3（计划 E2）：积分实时推送通道——同款首消息鉴权 + Origin 白名单，独立 Handler 不共享
+        // session；鉴权成功后经回调注册广播表（建立时 userId 尚未写入 attributes）
+        registry.addHandler(firstMessageAuth.wrap(eventsWebSocketHandler,
+                        eventsWebSocketHandler::registerAuthenticated), "/ws/events")
                 .setAllowedOrigins(resolveAllowedOrigins(allowedOrigins));
     }
 
