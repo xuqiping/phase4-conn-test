@@ -17,4 +17,5 @@
 - 计划：`docs/plans/人工测试遗留问题修复VIII.plan.md`
 - 实现：A `4cd830eb`（画布 12 文件）/ B `cf1327df`（传输 24 文件），review 修复含内
 - 人工验证：`docs/测试方案/人工测试遗留问题修复VIII测试方案.md`（M1-M11 画布 / N1-N9 传输）
-- 进度：`开发进度1.md`（本轮全程）；上一轮=修复VII（P4 Playwright 实测全过）
+- 冒烟复测：`docs/run-guide/smoke-viii.mjs`（node 直跑，15 项自动化子集；起服务后 `node smoke-viii.mjs`）
+- 进度：`开发进度1.md`（P1-P3）+ `开发进度2.md`（P4 冒烟 15/15 过，含 3 工装坑+1 库行为备注）；上一轮=修复VII
