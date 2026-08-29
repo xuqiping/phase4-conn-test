@@ -759,4 +759,25 @@ describe('CanvasBoard · 组边与本体直连（修复VIII VIII-1/2）', () => 
     expect(vm(wrapper).getGroupEdges()).toHaveLength(0)
     expect((wrapper.emitted('structure-changed') ?? []).length - before).toBe(1)
   })
+
+  // 修复VIII P4 人工反馈：组→下游节点组边存在时，点下游节点——组成员不得被误判无关而半透明
+  // （闭包输入须含组边展开集，group:{id} 伪端点普通 BFS 摸不到）；无关节点仍正常变暗。
+  it('⑫ 点组边下游节点 → 组成员不半透明（闭包含组边展开），无关节点仍变暗', async () => {
+    const wrapper = mount(CanvasBoard)
+    vm(wrapper).loadSnapshot({
+      ...groupedSnap(),
+      nodes: [...groupedSnap().nodes, node('far', 900, 400)] // 无关节点=反例锚点
+    })
+    vm(wrapper).addEdge('group:g1', 'ext') // 聚合组边：m1/m2 → ext
+    await flushPromises()
+    wrapper.getComponent(VueFlowStub).vm.$emit('node-click', { node: { id: 'ext' } })
+    await flushPromises()
+    await nextTick() // watch(relatedInfo) → applyVisualClasses 重渲染
+    const cls = (wrapper.getComponent(VueFlowStub).props('nodes') as { id: string; class: string }[])
+      .reduce<Record<string, string>>((m, n) => (m[n.id] = n.class ?? '', m), {})
+    expect(cls.m1).not.toContain('canvas-node--dimmed')
+    expect(cls.m2).not.toContain('canvas-node--dimmed')
+    expect(cls.ext).not.toContain('canvas-node--dimmed')
+    expect(cls.far).toContain('canvas-node--dimmed') // 普通边 id 直通口径下无关边/节点照常暗
+  })
 })

@@ -40,6 +40,17 @@ describe('resolveEdgesForFlow · 广播+聚合展开（VIII-1 ⑥）', () => {
     expect(out[0]).toMatchObject({ source: 'a', target: 'b' })
   })
 
+  // 修复VIII P4 人工反馈：id 口径——普通边原样直通（CanvasBoard 关联高亮按 edgeIds.has(e.id)
+  // 匹配，加后缀会让普通边全部误判无关变暗）；组边展开仍加 ~seq 防同源多条撞 id。
+  it('id 口径（P4）：普通边 id 原样直通；组边展开 id 带 ~seq 后缀', () => {
+    const mixed = resolveEdgesForFlow(
+      [edge('a', 'b', 'plain-1'), edge('group:g1', 'ext', 'ge-1')],
+      [group('g1', ['m1', 'm2'])]
+    )
+    expect(mixed.find(e => e.source === 'a' && e.target === 'b')!.id).toBe('plain-1')
+    expect(mixed.filter(e => e.source !== 'a').map(e => e.id).sort()).toEqual(['ge-1~0', 'ge-1~1'])
+  })
+
   it('广播：外部→组 = 组全员各收一条（N 条）', () => {
     const out = resolveEdgesForFlow([edge('ext', 'group:g1')], [group('g1', ['m1', 'm2', 'm3'])])
     expect(out.map(e => [e.source, e.target])).toEqual([

@@ -207,6 +207,7 @@ import {
   groupIdOf,
   isGroupEndpoint,
   mergeSnapshotEdges,
+  resolveEdgesForFlow,
   splitSnapshotEdges,
   type GroupRectLike
 } from '@/utils/groupEdges'
@@ -367,7 +368,13 @@ const relatedInfo = computed<GraphClosure | null>(() => {
   const seeds = multiSelectedIds.value.length
     ? [...multiSelectedIds.value]
     : selectedNodeId.value ? [selectedNodeId.value] : []
-  return relatedClosure(seeds, edges.value)
+  // 修复VIII P4 人工反馈：闭包输入=普通边+组边展开合并集（resolveEdgesForFlow 广播/聚合
+  // 口径，与 CanvasView resolvedFlowEdges 同源）——否则点组边对端节点时组员被误判无关
+  // 而半透明（组边 source/target 是 group:{id} 伪端点，普通 BFS 摸不到）。
+  return relatedClosure(seeds, resolveEdgesForFlow(
+    [...edges.value, ...groupEdges.value],
+    groups.value
+  ))
 })
 
 /** 「只看关联」开关（无关节点 visibility:hidden，可逆；无选中时按钮禁用）。 */
