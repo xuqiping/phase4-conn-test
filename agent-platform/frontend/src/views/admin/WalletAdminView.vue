@@ -1,7 +1,10 @@
 <template>
   <div class="wallet-admin">
-    <n-card title="积分充值 / 发放">
-      <div v-if="!canRecharge" class="wallet-admin__noperm"><n-empty description="无 points:recharge 权限" /></div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="积分充值" sub="管理员直接发放到账（建单 + 涨余额 + 流水，三者同事务）" />
+    <n-card>
+      <div v-if="!canRecharge" class="wallet-admin__noperm"><InkEmptyState type="forbidden" description="无 points:recharge 权限" /></div>
       <n-form v-else ref="formRef" :model="form" :rules="rules" label-placement="left" :label-width="100" style="max-width: 480px">
         <!-- 修复III E3（12x#4）：统一选人 UserPicker（姓名·账号·备注 tag，按备注筛「A 班」）；
              批量模式多选一次给全班充值 -->
@@ -50,10 +53,13 @@
 <script setup lang="ts">
 import { uuid } from '@/utils/uuid'
 import { computed, reactive, ref } from 'vue'
-import { NCard, NForm, NFormItem, NInputNumber, NInput, NButton, NAlert, NEmpty, NSwitch, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInputNumber, NInput, NButton, NAlert, NSwitch, useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { billingApi } from '@/api/billing'
 import { useAuthStore } from '@/stores/auth'
+import InkEmptyState from '@/components/InkEmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 import UserPicker from '@/components/common/UserPicker.vue'
 import type { PickerUser } from '@/components/common/UserPicker.vue'
 

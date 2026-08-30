@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AdminHelpArticlesView from './AdminHelpArticlesView.vue'
 import { feedbackApi } from '@/api/feedback'
 import type { AdminArticleVO } from '@/api/feedback'
@@ -61,6 +62,9 @@ function mountView() {
   const wrapper = mount(AdminHelpArticlesView)
   return { wrapper, vm: wrapper.vm as unknown as Vm }
 }
+
+// 页面含 ModuleScene（useThemeStore），挂载前需活动 pinia
+beforeEach(() => setActivePinia(createPinia()))
 
 describe('AdminHelpArticlesView（19x#3 admin 帮助文章）', () => {
   beforeEach(() => {

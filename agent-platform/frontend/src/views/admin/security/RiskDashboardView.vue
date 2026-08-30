@@ -3,6 +3,9 @@
      权限：security:event:read -->
 <template>
   <div class="risk-dashboard-view">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="风险大盘" sub="24h 安全事件概览 · 严重度分布与类型 TOP" />
     <n-grid :cols="4" :x-gap="12" :y-gap="12">
       <n-grid-item v-for="card in severityCards" :key="card.label">
         <n-card size="small">
@@ -35,6 +38,8 @@
 import { computed, h, onMounted, ref } from 'vue'
 import { NTag, type DataTableColumns } from 'naive-ui'
 import { securityStats, EVENT_TYPE_CN, SEVERITY_CN, type SecurityStats } from '@/api/security'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const stats = ref<SecurityStats | null>(null)
 

@@ -1,8 +1,8 @@
 <template>
   <div class="user-manage">
-    <div class="user-manage__header">
-      <h2>用户管理</h2>
-    </div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="用户管理" />
 
     <!-- D1（12x-1）：搜索框（username/name/remark 三字段模糊）+ 状态筛选 -->
     <div class="user-manage__toolbar">
@@ -125,6 +125,8 @@ import {
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { adminApi, type UserVO, type Role } from '@/api/admin'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const loading = ref(false)
@@ -382,14 +384,6 @@ onMounted(() => {
 <style lang="scss" scoped>
 .user-manage {
   padding: var(--spacing-6);
-
-  &__header {
-    margin-bottom: var(--spacing-4);
-    h2 {
-      margin: 0;
-      color: var(--color-text-primary);
-    }
-  }
 
   &__toolbar {
     display: flex;

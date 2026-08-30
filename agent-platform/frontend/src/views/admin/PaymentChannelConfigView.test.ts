@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import PaymentChannelConfigView from './PaymentChannelConfigView.vue'
 import { billingApi, type PaymentChannelConfigVO } from '@/api/billing'
 
@@ -49,6 +50,9 @@ function mountView() {
   const wrapper = mount(PaymentChannelConfigView)
   return { wrapper, vm: wrapper.vm as unknown as Vm }
 }
+
+// 页面含 ModuleScene（useThemeStore），挂载前需活动 pinia
+beforeEach(() => setActivePinia(createPinia()))
 
 describe('PaymentChannelConfigView（7x 支付渠道网页配置）', () => {
   beforeEach(() => {

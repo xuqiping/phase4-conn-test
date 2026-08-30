@@ -1,8 +1,8 @@
 <template>
   <div class="role-manage">
-    <div class="role-manage__header">
-      <h2>角色权限管理</h2>
-    </div>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="角色权限管理" />
 
     <!-- 角色卡片列表 -->
     <div class="role-manage__cards">
@@ -52,6 +52,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { NCheckboxGroup, NCheckbox, NSpace, NButton, useMessage } from 'naive-ui'
 import { adminApi, type Role, type Permission } from '@/api/admin'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const roles = ref<Role[]>([])
@@ -134,11 +136,6 @@ onMounted(loadData)
 <style lang="scss" scoped>
 .role-manage {
   padding: var(--spacing-6);
-
-  &__header {
-    margin-bottom: var(--spacing-4);
-    h2 { margin: 0; color: var(--color-text-primary); }
-  }
 
   &__cards {
     display: flex;

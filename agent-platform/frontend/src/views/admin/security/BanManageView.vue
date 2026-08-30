@@ -3,6 +3,9 @@
      权限：security:ban:manage -->
 <template>
   <div class="ban-manage-view">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="封禁管理" sub="IP 封禁与用户封号（封号在「用户管理」页操作）" />
     <n-card title="IP 封禁管理" size="small">
       <n-space class="ban-manage-view__bar" wrap>
         <n-input v-model:value="blockForm.ip" placeholder="IP 地址" style="width: 180px" />
@@ -29,6 +32,8 @@
 import { h, onMounted, ref } from 'vue'
 import { NButton, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
 import { blockIp, listIpBlacklist, unblockIp, type IpBlacklistVO } from '@/api/security'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const dialog = useDialog()

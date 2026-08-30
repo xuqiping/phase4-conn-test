@@ -6,10 +6,14 @@
   ============================================================ -->
 <template>
   <div class="admin-help">
-    <n-card title="帮助文章">
-      <template #header-extra>
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="帮助文章">
+      <template #actions>
         <n-button type="primary" size="small" @click="openCreate">新建文章</n-button>
       </template>
+    </PageHeader>
+    <n-card>
       <n-data-table
         remote
         :columns="columns"
@@ -87,6 +91,8 @@ import type { DataTableColumns, PaginationProps } from 'naive-ui'
 import { feedbackApi } from '@/api/feedback'
 import type { AdminArticleVO } from '@/api/feedback'
 import { renderMarkdown } from '@/utils/markdown'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const dialog = useDialog()

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AdminFeedbackView from './AdminFeedbackView.vue'
 import { feedbackApi } from '@/api/feedback'
 import type { AdminQuestionVO, AdminSuggestionVO } from '@/api/feedback'
@@ -84,6 +85,9 @@ function mountView() {
   const wrapper = mount(AdminFeedbackView)
   return { wrapper, vm: wrapper.vm as unknown as Vm }
 }
+
+// 页面含 ModuleScene（useThemeStore），挂载前需活动 pinia
+beforeEach(() => setActivePinia(createPinia()))
 
 describe('AdminFeedbackView（19x admin 反馈处理）', () => {
   beforeEach(() => {

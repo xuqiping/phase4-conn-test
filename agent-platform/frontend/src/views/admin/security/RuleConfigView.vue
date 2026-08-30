@@ -3,7 +3,10 @@
      权限：security:rule:manage -->
 <template>
   <div class="rule-config-view">
-    <n-card title="安全规则配置" size="small">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="安全规则配置" />
+    <n-card size="small">
       <n-alert type="warning" :bordered="false" style="margin-bottom: 12px">
         改动即时生效（Worker 每次求值读最新值）。关「自动处置总闸」= 所有规则只告警不封/锁。
       </n-alert>
@@ -46,6 +49,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { listSecurityRules, updateSecurityRule } from '@/api/security'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const loading = ref(false)

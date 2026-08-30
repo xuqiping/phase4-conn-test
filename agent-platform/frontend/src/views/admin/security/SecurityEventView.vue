@@ -3,7 +3,10 @@
      权限：security:event:read（看）；security:ban:manage（处置/删除） -->
 <template>
   <div class="security-event-view">
-    <n-card title="安全事件中心" size="small">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="安全事件中心" />
+    <n-card size="small">
       <!-- 筛选栏 -->
       <n-space class="security-event-view__filters" wrap>
         <n-select v-model:value="query.eventType" :options="eventTypeOptions" placeholder="事件类型"
@@ -91,6 +94,8 @@ import {
   EVENT_TYPE_CN, SEVERITY_CN, AUTO_ACTION_CN, type SecurityEventVO,
 } from '@/api/security'
 import DetailKvView from '@/components/DetailKvView.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const dialog = useDialog()

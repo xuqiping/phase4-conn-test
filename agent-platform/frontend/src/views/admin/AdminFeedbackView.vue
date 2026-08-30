@@ -6,7 +6,10 @@
   ============================================================ -->
 <template>
   <div class="admin-feedback">
-    <n-card title="反馈处理">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="反馈处理" />
+    <n-card>
       <n-tabs v-model:value="activeTab" type="line" animated>
         <!-- ==================== 建议审核 ==================== -->
         <n-tab-pane name="suggestions" tab="建议审核">
@@ -196,6 +199,8 @@ import type {
 } from '@/api/feedback'
 import { fetchFilePreview } from '@/api/file'
 import { renderMarkdown } from '@/utils/markdown'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const dialog = useDialog()

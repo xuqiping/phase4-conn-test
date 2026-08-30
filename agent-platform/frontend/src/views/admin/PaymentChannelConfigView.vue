@@ -6,6 +6,9 @@
   ============================================================ -->
 <template>
   <div class="pay-channel-config">
+    <!-- 雾中浮岛场景层（ART-DIR-0002R 方向二 admin 淡版，仅 ink 主题渲染） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="支付渠道" />
     <n-alert type="info" :bordered="false" style="margin-bottom: 12px">
       密钥保存后整体加密存储，本页永远只显示尾巴 4 位；留空的字段保持原值不变。
       <b>配置齐全不代表渠道已上线</b>——支付实现接入完成前，用户侧不会出现该渠道。
@@ -53,6 +56,8 @@ import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, NTag, useDial
 import {
   billingApi, PAYMENT_CHANNEL_FIELDS, PAYMENT_CHANNEL_LABEL, type PaymentChannelConfigVO
 } from '@/api/billing'
+import PageHeader from '@/components/PageHeader.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
 
 const message = useMessage()
 const dialog = useDialog()
