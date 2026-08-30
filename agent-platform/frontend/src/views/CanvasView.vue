@@ -1336,7 +1336,9 @@ async function submitVideoOnly(node: CanvasNode, rawPrompt: string): Promise<num
   const attachments = buildVideoAttachments(node, rawPrompt)
   const submit = await mediaApi.submitVideo({
     prompt: attachments.rewrittenPrompt,
-    ratio: (data.ratio as MediaRatioArg) || '16:9',
+    // HHX-7：i2v 官方无 ratio 参数（画布属性面板已隐藏比例并清值）→ 省略不发，
+    // 不再硬补 '16:9'（会被 i2v 能力校验拒：画面比例非法）
+    ratio: (data.ratio as MediaRatioArg) || undefined,
     duration: Number(data.duration ?? 5),
     resolution: (data.resolution as MediaResArg) || '720p',
     watermark: Boolean(data.watermark),

@@ -28,6 +28,10 @@ export type MediaTaskType =
   | 'IMAGE2VIDEO'
   | 'TEXT2IMAGE'
   | 'IMAGE2IMAGE'
+  /** HHX-9：MiniMax Context-IR 提示词增强（文本出参，CHAT 计价） */
+  | 'CONTEXT_IR'
+  /** HHX-10：MiniMax 2K 再生成（输入仅源任务 id） */
+  | 'REGENERATION'
 
 /**
  * 分辨率白名单（MVR-2 扩 6 档；各模型可见档由 capability.supportedResolutions 限定——
@@ -35,8 +39,10 @@ export type MediaTaskType =
  */
 export type MediaResolution = '480p' | '720p' | '768p' | '1080p' | '2k' | '4K'
 
-/** 画面比例（官方 ratio 取值；adaptive 图生视频沿用参考图比例） */
-export type MediaRatio = '21:9' | '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | 'adaptive'
+/** 画面比例（官方 ratio 取值；adaptive 图生视频沿用参考图比例；4:5/5:4/9:21 为 HappyHorse 官方 9 值新增档） */
+export type MediaRatio =
+  | '21:9' | '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | 'adaptive'
+  | '4:5' | '5:4' | '9:21'
 
 /**
  * 媒体任务视图（对应后端 MediaTaskVO）。
@@ -214,7 +220,11 @@ export interface ImageSubmitRequest {
 
 /** 提交请求（对应后端 MediaSubmitRequest；duration/ratio/resolution 按模型能力校验） */
 export interface MediaSubmitRequest {
-  prompt: string
+  /**
+   * 提示词。普通生成/context-ir 必填（后端 service 校验空即拒）；
+   * regeneration 再生成不填（输入只有源任务 id）——HHX-10 起必填校验下放后端分流。
+   */
+  prompt?: string
   /** 画面比例（官方 ratio），默认 16:9 */
   ratio?: MediaRatio
   duration?: number
@@ -234,6 +244,8 @@ export interface MediaSubmitRequest {
   model?: string
   /** 计划5 Step6：参与项目组 id（组池计费+预检；省略=个人钱包）。 */
   projectGroupId?: number
+  /** HHX-10：2K 再生成源任务（平台任务 id；仅模型 id 后缀 -regeneration 时有效） */
+  sourceTaskId?: number
 }
 
 /** 提交响应：{ id, status } */
@@ -374,6 +386,8 @@ export interface MediaEstimateQuery {
   hasReference?: boolean
   imageCount?: number
   projectGroupId?: number
+  /** HHX-9：context-ir 按提示词长度估 CHAT 价（其余 kind 忽略） */
+  promptChars?: number
 }
 
 /** C1（17x-2）：组内预估个人口径——balance 是组池（全组共享），成员另有自己的限额卡。 */
@@ -552,6 +566,17 @@ export async function fetchMediaBlob(downloadPath: string): Promise<string> {
   return URL.createObjectURL(res.data)
 }
 
+/**
+ * HHX-9：拉取 Context-IR 增强文本（.md 落 stored_files，走同一下载端点 /api/media/tasks/{id}/download）。
+ * 与 fetchVideoBlob/fetchMediaBlob（blob→objectURL 给 <video>/<img>）不同：直接取响应文本展示，
+ * 体积小（≤1MB）不进 blob LRU 缓存；后台型请求（断网不弹全局错误）。
+ */
+export async function fetchMediaText(downloadPath: string): Promise<string> {
+  const path = downloadPath.replace(/^\/api/, '')
+  const res = await request.get<string>(path, { responseType: 'text', _background: true })
+  return res.data
+}
+
 /** 任务态 → 中文标签 */
 export const MEDIA_STATUS_LABEL: Record<MediaStatus, string> = {
   PENDING: '排队中',
@@ -573,4 +598,17 @@ export const MEDIA_STATUS_TYPE: Record<MediaStatus, 'default' | 'info' | 'succes
 /** 终态（停止轮询） */
 export function isTerminal(status: MediaStatus): boolean {
   return status === 'SUCCEEDED' || status === 'FAILED' || status === 'DOWNLOAD_FAILED'
+}
+
+/**
+ * HHX-9/10：附属视频模型 id 后缀判定（与后端 MediaGenTaskService/MinimaxVideoProvider 同口径）。
+ * -context-ir = H3 提示词增强（输出文本）；-regeneration = 2K 再生成（输入仅源任务）。
+ * 前端用途：独立视频页分流表单/预估/结果展示；画布视频模型下拉过滤附属档（附属入口只在独立页）。
+ */
+export function isContextIrModelId(modelId: string): boolean {
+  return modelId.endsWith('-context-ir')
+}
+
+export function isRegenerationModelId(modelId: string): boolean {
+  return modelId.endsWith('-regeneration')
 }

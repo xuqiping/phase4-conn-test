@@ -45,7 +45,21 @@
             </n-tag>
           </n-form-item>
 
-          <n-form-item label="提示词">
+          <!-- HHX-10：再生成无提示词/附件——输入只有源任务（源视频 + 提示词/参数全部继承） -->
+          <n-form-item v-if="isRegeneration" label="源任务（已完成的 MiniMax 生成）">
+            <n-select
+              v-model:value="form.sourceTaskId"
+              :options="sourceTaskOptions"
+              :loading="sourceTasksLoading"
+              placeholder="选择要 2K 再生成的源任务（7 天内）"
+              filterable
+            />
+            <div class="video-gen__hint" style="width: 100%">
+              以源任务成片为输入重生成 2K 版；时长继承源任务，分辨率锁定 2K，无需提示词。
+            </div>
+          </n-form-item>
+
+          <n-form-item v-else label="提示词">
             <MentionTextarea
               v-model="form.prompt"
               :candidates="attachmentCandidates"
@@ -56,14 +70,16 @@
               :rows="4"
               :placeholder="hasAnyAttachment
                 ? '描述如何运用参考素材；输入 @ 引用图1/视频1/音频1，如：以 @图1 为产品参考…'
-                : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和（输入 @ 可引用参考附件）'"
+                : isContextIr
+                  ? '输入要增强的原始创意（可附参考图/视频/音频），输出结构化专业提示词'
+                  : '描述你要生成的视频内容，如：一只橘猫在窗台上晒太阳，阳光柔和（输入 @ 可引用参考附件）'"
               @mention-click="onAttachmentMentionClick"
             />
           </n-form-item>
 
-          <!-- 多模态参考附件（按模型能力动态渲染；不上传即文生视频） -->
+          <!-- 多模态参考附件（按模型能力动态渲染；不上传即文生视频；再生成无附件通道） -->
           <div ref="attachAreaRef"></div>
-          <template v-if="capability">
+          <template v-if="capability && !isRegeneration">
             <!-- F2 首帧/尾帧独立槽位（可选，占参考图名额；SeedDance 2.0 role:first_frame/last_frame） -->
             <div v-if="capability.maxImages > 0" class="video-gen__frame-row">
               <div class="video-gen__frame-slot">
@@ -203,35 +219,36 @@
             </n-form-item>
           </template>
 
-          <n-form-item label="画面比例">
+          <!-- HHX-7：比例/分辨率控件按能力隐藏（i2v 官方无 ratio 参数=空列表；再生成/增强无分辨率语义） -->
+          <n-form-item v-if="ratioOptions.length > 0" label="画面比例">
             <n-select
               v-model:value="form.ratio"
               :options="ratioOptions"
             />
           </n-form-item>
 
-          <n-form-item label="时长（秒）">
+          <n-form-item v-if="!isAux" label="时长（秒）">
             <n-select
               v-model:value="form.duration"
               :options="durationOptions"
             />
           </n-form-item>
 
-          <n-form-item label="分辨率">
+          <n-form-item v-if="!isContextIr && resolutionOptions.length > 0" label="分辨率">
             <n-select
               v-model:value="form.resolution"
               :options="resolutionOptions"
             />
           </n-form-item>
 
-          <n-form-item label="水印">
+          <n-form-item v-if="!isAux" label="水印">
             <n-space align="center">
               <n-switch v-model:value="form.watermark" />
               <span class="video-gen__hint">开启后视频带官方水印</span>
             </n-space>
           </n-form-item>
 
-          <n-form-item v-if="capability?.supportsGenerateAudio" label="生成音频">
+          <n-form-item v-if="!isAux && capability?.supportsGenerateAudio" label="生成音频">
             <n-space align="center">
               <n-switch v-model:value="form.generateAudio" />
               <span class="video-gen__hint">同步生成原生音频（2.0 特色）</span>
@@ -303,6 +320,27 @@
             <div v-if="activeTask.status === 'PENDING' || activeTask.status === 'RUNNING'" class="video-gen__loading">
               <n-spin size="large" />
               <p>{{ MEDIA_STATUS_LABEL[activeTask.status] }}…通常需 1-3 分钟，请勿离开本页</p>
+            </div>
+
+            <!-- 完成：HHX-9 Context-IR 增强文本（.md 落库，走同一下载端点拉 blob 转文本展示） -->
+            <div
+              v-else-if="activeTask.status === 'SUCCEEDED' && activeTask.taskType === 'CONTEXT_IR'"
+              class="video-gen__player"
+            >
+              <n-spin v-if="loadingContextIrText" size="small" style="width: 100%; padding: 24px 0" />
+              <pre v-else-if="contextIrText" class="video-gen__ctxir-text">{{ contextIrText }}</pre>
+              <div v-else class="video-gen__placeholder">增强文本加载失败</div>
+              <div class="video-gen__player-actions">
+                <n-button
+                  v-if="contextIrObjectUrl"
+                  size="small" tag="a" :href="contextIrObjectUrl" download @click.stop
+                >
+                  下载 .md
+                </n-button>
+              </div>
+              <div v-if="activeTask.tokensCost" class="video-gen__usage">
+                用量：{{ activeTask.tokensCost.toLocaleString() }} tokens（输入+输出合计）
+              </div>
             </div>
 
             <!-- 完成：播放 + 下载 -->
@@ -447,8 +485,9 @@ import MentionTextarea from '@/components/canvas/MentionTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBreakpoints } from '@/composables/useBreakpoints'
 import {
-  mediaApi, fetchVideoBlob, buildHistoryQuery,
+  mediaApi, fetchVideoBlob, fetchMediaText, buildHistoryQuery,
   MEDIA_STATUS_LABEL, MEDIA_STATUS_TYPE, isTerminal,
+  isContextIrModelId, isRegenerationModelId,
   type MediaTaskVO, type MediaResolution, type MediaRatio,
   type MediaModelVO, type AttachmentKind, type AttachmentRef,
   type MediaEstimateVO
@@ -495,13 +534,20 @@ const form = reactive({
   duration: 5,
   resolution: '720p' as MediaResolution,
   watermark: false,
-  generateAudio: false
+  generateAudio: false,
+  /** HHX-10：2K 再生成源任务（平台任务 id；仅 -regeneration 模型有效） */
+  sourceTaskId: null as number | null
 })
 
 /** 当前选中模型的能力画像 */
 const capability = computed<MediaModelVO | null>(
   () => models.value.find(m => m.modelId === form.model) ?? null
 )
+
+/** HHX-9/10：附属任务模式（模型 id 后缀路由，与后端同口径） */
+const isContextIr = computed(() => isContextIrModelId(form.model))
+const isRegeneration = computed(() => isRegenerationModelId(form.model))
+const isAux = computed(() => isContextIr.value || isRegeneration.value)
 
 /** 模型下拉（按 providerName 分组，照抄 chat ModelSelector 分组模式） */
 const modelOptions = computed<(SelectOption | SelectGroupOption)[]>(() => {
@@ -552,19 +598,68 @@ function onModelChange() {
   audios.value = []
   firstFrame.value = null
   lastFrame.value = null
+  // HHX-10：源任务归属旧模型的 provider，切模型一律清选（防跨 provider 残留）
+  form.sourceTaskId = null
+  if (isRegeneration.value) void loadSourceTasks()
   applyCapabilityConstraints()
 }
 
-/** 把 ratio/duration/resolution 收敛到当前模型能力范围内（越界则回退默认）。 */
+/**
+ * 把 ratio/duration/resolution 收敛到当前模型能力范围内（越界则回退默认）。
+ * HHX-7：回退取「能力清单首项」而非硬编码 16:9/720p——minimax-h3 只有 768p/2k，
+ * 硬编码 720p 会留下表单值∉候选的脏值（下拉空白 + 提交被后端拒）；
+ * ratios 空列表（happyhorse i2v 官方无 ratio 参数）保留现值仅由提交侧省略不发。
+ */
 function applyCapabilityConstraints() {
   const cap = capability.value
   if (!cap) return
-  if (!cap.supportedRatios.includes(form.ratio)) form.ratio = '16:9'
-  if (!cap.supportedResolutions.includes(form.resolution)) form.resolution = '720p'
+  if (cap.supportedRatios.length > 0 && !cap.supportedRatios.includes(form.ratio)) {
+    form.ratio = cap.supportedRatios[0]
+  }
+  if (cap.supportedResolutions.length > 0 && !cap.supportedResolutions.includes(form.resolution)) {
+    form.resolution = cap.supportedResolutions[0]
+  }
   if (form.duration < cap.minDuration || form.duration > cap.maxDuration) {
-    form.duration = Math.min(5, cap.maxDuration)
+    form.duration = Math.min(Math.max(5, cap.minDuration), cap.maxDuration)
   }
   if (!cap.supportsGenerateAudio) form.generateAudio = false
+}
+
+// === HHX-10：再生成源任务清单（本人已完成、同供应商、7 天窗口；后端 requireRegenerationSource 再校验） ===
+const sourceTasks = ref<MediaTaskVO[]>([])
+const sourceTasksLoading = ref(false)
+const sourceTaskOptions = computed(() => sourceTasks.value.map(t => ({
+  label: `#${t.id} · ${t.model ?? ''} · ${t.duration ?? '-'}s · ${(t.prompt ?? '').slice(0, 20)}`,
+  value: t.id
+})))
+/** 已选源任务（估价用其继承时长） */
+const selectedSourceTask = computed(
+  () => sourceTasks.value.find(t => t.id === form.sourceTaskId) ?? null
+)
+
+async function loadSourceTasks() {
+  if (sourceTasksLoading.value || sourceTasks.value.length > 0) return
+  sourceTasksLoading.value = true
+  try {
+    const { data } = await mediaApi.listTasks(buildHistoryQuery({
+      kind: 'VIDEO',
+      rangeType: 'datetime',
+      page: 1,
+      pageSize: 50
+    }))
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+    sourceTasks.value = (data.data?.records ?? []).filter(t =>
+      t.status === 'SUCCEEDED'
+      && !!t.model
+      // 同供应商生成任务：MiniMax 基座（源须非附属任务本身，且 provider 与 -regeneration 同源）
+      && t.model.startsWith('minimax-h3')
+      && !isContextIrModelId(t.model) && !isRegenerationModelId(t.model)
+      && new Date(t.createdAt).getTime() >= weekAgo)
+  } catch {
+    /* 拦截器已提示；下拉空列表=无可再生成源 */
+  } finally {
+    sourceTasksLoading.value = false
+  }
 }
 
 // === 选项（按能力过滤） ===
@@ -937,38 +1032,55 @@ const submitting = ref(false)
 const pgStore = useProjectGroupStore()
 const projectGroupId = computed(() => pgStore.groupId)
 pgStore.adoptLegacy(getStorage<number | null>(STORAGE_KEYS.VIDEO_GEN_PROJECT_GROUP_ID) ?? null)
-/** 提示词非空 + 无附件上传中 + 附件总数未超模型上限 */
+/** 提示词非空 + 无附件上传中 + 附件总数未超模型上限；再生成模式=源任务已选 */
 const canSubmit = computed(
-  () => form.prompt.trim().length > 0
-    && uploadingCount.value === 0
-    && !!form.model
+  () => !!form.model
     && !restoredUnavailableModel.value
-    && !(frameCount.value > 0 && referenceMediaCount.value > 0)
-    && [...images.value, ...videos.value, ...audios.value, firstFrame.value, lastFrame.value]
-      .filter((a): a is UploadedAttachment => a != null)
-      .every(a => a.reusable !== false)
-    && totalAttachments.value <= (capability.value?.maxAttachments ?? 0)
+    && uploadingCount.value === 0
+    && (isRegeneration.value
+      ? form.sourceTaskId != null
+      : form.prompt.trim().length > 0
+        && !(frameCount.value > 0 && referenceMediaCount.value > 0)
+        && [...images.value, ...videos.value, ...audios.value, firstFrame.value, lastFrame.value]
+          .filter((a): a is UploadedAttachment => a != null)
+          .every(a => a.reusable !== false)
+        && totalAttachments.value <= (capability.value?.maxAttachments ?? 0))
 )
 
 async function onSubmit() {
-  // F2 首/尾帧作 image 附件带 frameRole（provider 路由 role:first_frame/last_frame）
-  const attachments: AttachmentRef[] = []
-  if (firstFrame.value) attachments.push({ fileId: firstFrame.value.fileId, kind: 'image', frameRole: 'first_frame', name: firstFrame.value.name })
-  if (lastFrame.value) attachments.push({ fileId: lastFrame.value.fileId, kind: 'image', frameRole: 'last_frame', name: lastFrame.value.name })
-  attachments.push(
-    ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const, name: a.name })),
-    ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const, name: a.name })),
-    ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const, name: a.name }))
-  )
   submitting.value = true
   try {
+    // HHX-10：再生成入参极简——只有模型 + 源任务（时长/分辨率继承源任务，服务端 config 落库）
+    if (isRegeneration.value) {
+      if (form.sourceTaskId == null) return
+      const { data } = await mediaApi.submitVideo({
+        model: form.model,
+        sourceTaskId: form.sourceTaskId,
+        projectGroupId: projectGroupId.value ?? undefined
+      })
+      message.success('再生成任务已提交，正在生成 2K 版…')
+      startPolling(data.data.id)
+      void loadHistory()
+      return
+    }
+    // F2 首/尾帧作 image 附件带 frameRole（provider 路由 role:first_frame/last_frame）
+    const attachments: AttachmentRef[] = []
+    if (firstFrame.value) attachments.push({ fileId: firstFrame.value.fileId, kind: 'image', frameRole: 'first_frame', name: firstFrame.value.name })
+    if (lastFrame.value) attachments.push({ fileId: lastFrame.value.fileId, kind: 'image', frameRole: 'last_frame', name: lastFrame.value.name })
+    attachments.push(
+      ...images.value.map(a => ({ fileId: a.fileId, kind: 'image' as const, name: a.name })),
+      ...videos.value.map(a => ({ fileId: a.fileId, kind: 'video' as const, name: a.name })),
+      ...audios.value.map(a => ({ fileId: a.fileId, kind: 'audio' as const, name: a.name }))
+    )
     const { data } = await mediaApi.submitVideo({
       prompt: interpolateAttachmentPrompt(form.prompt.trim(), images.value, videos.value, audios.value),
-      ratio: form.ratio,
-      duration: form.duration,
-      resolution: form.resolution,
-      watermark: form.watermark,
-      generateAudio: form.generateAudio,
+      // HHX-7：i2v 官方无 ratio 参数（能力清单空）→ 省略不发；context-ir 无分辨率语义 → 省略
+      ratio: ratioOptions.value.length > 0 ? form.ratio : undefined,
+      // context-ir 官方无时长参数；后端校验带要求非空 → 固定发 5（仅过校验，不入出站体）
+      duration: isContextIr.value ? 5 : form.duration,
+      resolution: isContextIr.value ? undefined : (resolutionOptions.value.length > 0 ? form.resolution : undefined),
+      watermark: isContextIr.value ? false : form.watermark,
+      generateAudio: isContextIr.value ? false : form.generateAudio,
       model: form.model,
       attachments: attachments.length > 0 ? attachments : undefined,
       projectGroupId: projectGroupId.value ?? undefined
@@ -986,10 +1098,12 @@ async function onSubmit() {
 }
 
 // === 7x（V155）：预估消耗实时预览（输入防抖 400ms；est=0 无价表不显示；失败静默提交侧兜底） ===
+// HHX-9/10：context-ir 随提示词长度重估（CHAT 公式）；再生成随源任务选择（继承时长×锁 2k 秒价）
 const estimate = ref<MediaEstimateVO | null>(null)
 let estimateTimer: ReturnType<typeof setTimeout> | null = null
 watch(
-  () => [form.model, form.duration, form.resolution, videos.value.length, projectGroupId.value],
+  () => [form.model, form.duration, form.resolution, form.prompt.length, form.sourceTaskId,
+    videos.value.length, projectGroupId.value],
   () => {
     if (estimateTimer) clearTimeout(estimateTimer)
     estimateTimer = setTimeout(() => void loadEstimate(), 400)
@@ -1002,14 +1116,23 @@ async function loadEstimate() {
     return
   }
   try {
-    const { data } = await mediaApi.estimatePreview({
-      kind: 'VIDEO',
-      model: form.model,
-      videoSeconds: form.duration,
-      resolution: form.resolution,
-      hasReference: videos.value.length > 0,
-      projectGroupId: projectGroupId.value ?? undefined
-    })
+    const { data } = await mediaApi.estimatePreview(
+      isContextIr.value
+        ? {
+            kind: 'VIDEO',
+            model: form.model,
+            promptChars: form.prompt.trim().length,
+            projectGroupId: projectGroupId.value ?? undefined
+          }
+        : {
+            kind: 'VIDEO',
+            model: form.model,
+            // 再生成时长继承源任务（未选先按 5s 占位，选中即重估）
+            videoSeconds: isRegeneration.value ? (selectedSourceTask.value?.duration ?? 5) : form.duration,
+            resolution: isRegeneration.value ? '2k' : (resolutionOptions.value.length > 0 ? form.resolution : undefined),
+            hasReference: !isRegeneration.value && videos.value.length > 0,
+            projectGroupId: projectGroupId.value ?? undefined
+          })
     estimate.value = data.data
   } catch {
     estimate.value = null
@@ -1073,11 +1196,42 @@ async function ensureVideo(task: MediaTaskVO) {
   }
 }
 
-/** 设置活动任务（含切换视频释放）。 */
+// === HHX-9：Context-IR 结果=增强文本（.md 落 stored_files，同一鉴权下载端点拉 blob → 文本展示） ===
+const contextIrText = ref<string | null>(null)
+const contextIrObjectUrl = ref<string | null>(null)
+const loadingContextIrText = ref(false)
+
+function revokeContextIr() {
+  contextIrText.value = null
+  if (contextIrObjectUrl.value) {
+    URL.revokeObjectURL(contextIrObjectUrl.value)
+    contextIrObjectUrl.value = null
+  }
+}
+
+async function ensureContextIrText(task: MediaTaskVO) {
+  if (!task.videoUrl || loadingContextIrText.value) return
+  loadingContextIrText.value = true
+  try {
+    const text = await fetchMediaText(task.videoUrl)
+    contextIrText.value = text
+    contextIrObjectUrl.value = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }))
+  } catch {
+    message.error('增强文本加载失败')
+  } finally {
+    loadingContextIrText.value = false
+  }
+}
+
+/** 设置活动任务（含切换视频/增强文本释放）。 */
 function setActiveTask(task: MediaTaskVO) {
   activeTask.value = task
   revokeVideo()
-  if (task.status === 'SUCCEEDED' && task.videoUrl) {
+  revokeContextIr()
+  if (task.status !== 'SUCCEEDED' || !task.videoUrl) return
+  if (task.taskType === 'CONTEXT_IR') {
+    void ensureContextIrText(task)
+  } else {
     void ensureVideo(task)
   }
 }
@@ -1086,8 +1240,13 @@ async function pollOnce(taskId: number) {
   try {
     const { data } = await mediaApi.getTask(taskId)
     activeTask.value = data.data
-    if (data.data.status === 'SUCCEEDED' && data.data.videoUrl && !videoObjectUrl.value) {
-      void ensureVideo(data.data)
+    if (data.data.status === 'SUCCEEDED' && data.data.videoUrl) {
+      // HHX-9：Context-IR 成果是文本（无视频 objectURL）；视频任务沿用去重加载
+      if (data.data.taskType === 'CONTEXT_IR') {
+        if (!contextIrText.value) void ensureContextIrText(data.data)
+      } else if (!videoObjectUrl.value) {
+        void ensureVideo(data.data)
+      }
     }
     if (isTerminal(data.data.status)) {
       clearPolling()
@@ -1213,6 +1372,14 @@ function restoreTaskForm(task: MediaTaskVO) {
   form.resolution = (task.resolution ?? '720p') as MediaResolution
   form.watermark = task.watermark ?? false
   form.generateAudio = task.generateAudio ?? false
+  // HHX-10：回看再生成任务——回填源任务选择并拉源清单（列表里含该源任务即可选中回显）
+  if (task.taskType === 'REGENERATION') {
+    const src = (task.submittedRequest as { sourceTaskId?: number } | null)?.sourceTaskId
+    form.sourceTaskId = typeof src === 'number' ? src : null
+    void loadSourceTasks()
+  }
+  // 回看旧任务参数收敛到当前能力（越界回落首档，防提交侧被拒的脏值）
+  applyCapabilityConstraints()
 
   const restored = bucketRestoredAttachments(task.inputAttachments ?? [])
   firstFrame.value = restored.firstFrame
@@ -1300,9 +1467,12 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
     render: r => new Date(r.createdAt).toLocaleString('zh-CN')
   },
   {
-    title: '视频', key: 'videoPreview', width: 150,
+    title: '结果', key: 'videoPreview', width: 150,
     render: r => r.status === 'SUCCEEDED' && r.videoUrl
-      ? h(MediaTaskVideoPreview, { downloadPath: r.videoUrl })
+      // HHX-9：Context-IR 无视频可预览——标「增强文本」，点行内「查看」展示/下载 .md
+      ? (r.taskType === 'CONTEXT_IR'
+          ? h(NTag, { size: 'small', type: 'success', bordered: false }, () => '增强文本')
+          : h(MediaTaskVideoPreview, { downloadPath: r.videoUrl }))
       : h('span', { class: 'video-gen__preview-placeholder' }, '-')
   },
   {
@@ -1312,8 +1482,8 @@ const historyColumns: DataTableColumns<MediaTaskVO> = [
         size: 'small', quaternary: true,
         onClick: () => void openHistoryTask(r)
       }, () => '查看'),
-      // 4x-2：历史成功任务一键入库资产库
-      ...(r.status === 'SUCCEEDED' ? [h(NButton, {
+      // 4x-2：历史成功任务一键入库资产库（CONTEXT_IR 是文本产物，不走视频入库通道）
+      ...(r.status === 'SUCCEEDED' && r.taskType !== 'CONTEXT_IR' ? [h(NButton, {
         size: 'small', quaternary: true, type: 'primary',
         onClick: () => openSaveToAsset(r)
       }, () => '入库')] : [])
@@ -1328,8 +1498,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer)
+  if (estimateTimer !== null) clearTimeout(estimateTimer)
   clearPolling()
   revokeVideo()
+  revokeContextIr()
   // 释放资产预览 objectURL（防内存泄漏）
   ;[images, videos, audios].forEach(l => l.value.forEach(revokeAttachmentUrl))
   revokeFrame(firstFrame.value)
@@ -1391,6 +1563,21 @@ onUnmounted(() => {
       margin: var(--spacing-3) 0 0;
       font-size: 13px;
     }
+  }
+
+  /* HHX-9：Context-IR 增强文本展示（等宽换行保留，暗色主题变量） */
+  &__ctxir-text {
+    margin: 0;
+    padding: var(--spacing-3);
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-text-primary);
+    background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
+    border-radius: 6px;
   }
 
   &__video {

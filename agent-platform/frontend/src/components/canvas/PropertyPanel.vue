@@ -389,7 +389,8 @@
           </div>
         </div>
         <!-- 修复III C3（2x-3）：比例独占整行（原与时长同挤 ~118px 太窄看不全；弹层 teleport 本就不受面板限） -->
-        <div class="prop-panel__field">
+        <!-- HHX-7：happyhorse i2v 官方无 ratio 参数（capability 空列表）→ 整块隐藏 -->
+        <div v-if="videoRatioOpts.length > 0" class="prop-panel__field">
           <label>比例</label>
           <!-- 修复IV C1c（C-4 缺口3）：v-model 直绑改显式写+data-changed，变更即落库（与离散选择器同模式） -->
           <!-- 修复VI VE（2x#6）：候选=所选模型 capability.supportedRatios（未选/失败回落保守兜底档） -->
@@ -880,6 +881,7 @@ import type { ReverseMode } from '@/api/media'
 import { llmApi } from '@/api/llm'
 import type { AvailableModel } from '@/api/llm'
 import { mediaApi } from '@/api/media'
+import { isContextIrModelId, isRegenerationModelId } from '@/api/media'
 import type {
   ImageModelCapability, ImageModelVO, MediaEstimateVO, MediaModelVO, MediaRatio, MediaResolution
 } from '@/api/media'
@@ -1339,7 +1341,10 @@ function groupModels(list: { providerName: string; displayName: string; modelId:
   return Array.from(grouped.values())
 }
 const chatModelOptions = computed(() => groupModels(chatModels.value))
-const videoModelOptions = computed(() => groupModels(videoModels.value))
+/** HHX-9/10：画布视频节点只列「生成」模型——-context-ir（输出文本）/ -regeneration（输入仅源任务）
+ * 附属档依赖源任务选择器/文本结果展示，画布节点形态不匹配，入口收在独立视频页。 */
+const videoModelOptions = computed(() => groupModels(
+  videoModels.value.filter(m => !isContextIrModelId(m.modelId) && !isRegenerationModelId(m.modelId))))
 const imageModelOptions = computed(() => groupModels(imageModels.value))
 
 // ---------- 修复VI VE（2x#6）：视频节点参数 capability 驱动（对齐独立视频页 VideoGenView） ----------

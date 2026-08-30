@@ -17,8 +17,11 @@ vi.mock('@/api/llm', () => ({
 
 // 修复III C2（2x-2）：图片模型目录 mock（defaultModel 标记驱动默认选中；estimate 失败静默不干扰断言）
 // 修复VI VE（2x#6）：视频模型目录 mock（listModels 带 capability，驱动视频面板动态参数）
-vi.mock('@/api/media', () => ({
-  mediaApi: {
+vi.mock('@/api/media', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/media')>()
+  return {
+    ...actual,
+    mediaApi: {
     listImageModels: vi.fn().mockResolvedValue({
       data: {
         data: [
@@ -50,8 +53,9 @@ vi.mock('@/api/media', () => ({
       }
     }),
     estimatePreview: vi.fn().mockRejectedValue(new Error('estimate off'))
+    }
   }
-}))
+})
 
 function mkNode(data: Record<string, unknown>): CanvasNode {
   return { id: 'node-1', type: 'text', position: { x: 0, y: 0 }, data: { label: 'n', ...data } }
