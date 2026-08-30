@@ -42,6 +42,14 @@ const html = computed(() => renderMarkdown(props.text))
     }
   }
 
+  /* 大标题用平台标题字（霞鹜文楷），与页头/模块标题同源，去掉"默认 markdown 渲染"的割裂感 */
+  :deep(h1),
+  :deep(h2),
+  :deep(h3) {
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+
   :deep(h1) { font-size: 20px; }
   :deep(h2) { font-size: 18px; }
   :deep(h3) { font-size: 16px; }
@@ -61,23 +69,25 @@ const html = computed(() => renderMarkdown(props.text))
     margin: 8px 0;
     padding: 6px 12px;
     border-left: 3px solid var(--color-primary);
-    background: rgba(255, 255, 255, 0.03);
+    background: color-mix(in srgb, var(--color-primary) 5%, transparent);
     color: var(--color-text-secondary);
   }
 
   :deep(code) {
     font-family: Consolas, Monaco, 'Courier New', monospace;
     font-size: 13px;
-    background: rgba(255, 255, 255, 0.08);
+    background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
     border: 1px solid var(--color-border-light);
     border-radius: 4px;
     padding: 1px 5px;
   }
 
+  /* 代码块走语义 surface 层（夜墨=墨锭凹陷 / 宣纸=深一度宣色），
+     原 rgba(0,0,0,.35) 在宣纸下是黑底+墨字不可读 */
   :deep(pre) {
     margin: 8px 0;
     padding: 10px 12px;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--color-surface);
     border: 1px solid var(--color-border-light);
     border-radius: 6px;
     overflow-x: auto;
@@ -115,7 +125,7 @@ const html = computed(() => renderMarkdown(props.text))
   }
 
   :deep(th) {
-    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
   }
 
   :deep(hr) {

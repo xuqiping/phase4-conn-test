@@ -565,7 +565,9 @@ const modelOptions = computed<(SelectOption | SelectGroupOption)[]>(() => {
   const options: (SelectOption | SelectGroupOption)[] = groups.size === 1
     ? [...groups.values()][0]
     : [...groups.entries()].map(([provider, children]) => ({
-    type: 'group' as const, label: provider, key: provider, children
+    // 组 key 加前缀防与子项 value 撞 key（minimax-h3 供应商组 vs minimax-h3 模型项
+    // 曾同 key → naive VirtualList「Duplicate keys」渲染错乱，下拉重复刷行）
+    type: 'group' as const, label: provider, key: `grp:${provider}`, children
   }))
   if (restoredUnavailableModel.value) {
     options.unshift({

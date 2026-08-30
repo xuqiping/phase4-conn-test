@@ -275,7 +275,7 @@ defineExpose({ displayName })
     padding: 6px 10px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--color-border);
-    background: var(--color-bg-secondary, rgba(15, 23, 42, 0.6));
+    background: var(--color-surface);
     color: var(--color-text-primary);
     font-size: 13px;
     outline: none;
@@ -296,8 +296,10 @@ defineExpose({ displayName })
     list-style: none;
     border-radius: var(--radius-sm);
     border: 1px solid var(--color-border);
-    background: var(--color-bg-primary, #0f172a);
-    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
+    /* 原 var(--color-bg-primary,#0f172a)：变量双主题均未定义，恒走深色回退，
+       宣纸下变"黑面板+墨字"看不清（Bug3）。改语义 elevated=浮层层，双主题可读 */
+    background: var(--color-elevated);
+    box-shadow: var(--shadow-lg);
   }
 
   &__hint {
@@ -350,7 +352,7 @@ defineExpose({ displayName })
     margin-top: 4px;
     position: sticky;
     bottom: 0;
-    background: var(--color-bg-primary, #0f172a);
+    background: var(--color-elevated);
   }
 
   &__bulk-btn {

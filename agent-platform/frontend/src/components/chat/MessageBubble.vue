@@ -301,8 +301,10 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   gap: 12px;
   padding: 16px 20px;
 
+  /* 助手气泡不铺底色：surface 比页面底还深，铺出来是"凹陷色带"（割裂感来源），
+     直接排版在页面背景上，靠头像+思考/引用子卡片区分层级，与用户侧对称 */
   &--assistant {
-    background: var(--color-surface);
+    background: transparent;
   }
 }
 
@@ -372,7 +374,7 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 
   &:hover {
     color: var(--color-primary);
-    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
   }
 }
 
@@ -400,14 +402,14 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
   cursor: pointer;
   font-size: 12px;
   color: var(--color-text-tertiary);
   user-select: none;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
   }
 }
 
@@ -455,7 +457,7 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
   padding: 8px 10px;
   border: 1px solid var(--color-border-light);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--color-text-primary) 3%, transparent);
 }
 
 .message-bubble__citations-title {
@@ -542,7 +544,7 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 .message-bubble__attachment {
   border: 1px solid var(--color-border-light);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
   color: var(--color-text-secondary);
   font-size: 11px;
   padding: 3px 10px;
@@ -580,7 +582,7 @@ async function downloadAttachment(a: { fileId: string; name: string }) {
 .message-bubble__inclusion-btn {
   border: 1px solid var(--color-border-light);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
   color: var(--color-text-secondary);
   font-size: 12px;
   padding: 5px 14px;

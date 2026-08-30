@@ -596,8 +596,8 @@ async function handleBatchDeleteSessions(ids: number[]) {
   color: var(--color-text-tertiary);
 
   &--on {
-    background: rgba(82, 196, 26, 0.15);
-    color: #52c41a;
+    background: color-mix(in srgb, var(--color-success) 15%, transparent);
+    color: var(--color-success);
   }
 }
 
@@ -633,7 +633,7 @@ async function handleBatchDeleteSessions(ids: number[]) {
   padding: 4px 20px;
   font-size: 12px;
   border-bottom: 1px solid var(--color-border-light);
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--color-text-primary) 2%, transparent);
 }
 .chat-view__memory-status-item {
   display: inline-flex;
@@ -705,7 +705,7 @@ async function handleBatchDeleteSessions(ids: number[]) {
 .chat-view__streaming-thinking {
   margin: 12px 20px;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
   border-left: 3px solid var(--color-primary);
   border-radius: 4px;
 }
