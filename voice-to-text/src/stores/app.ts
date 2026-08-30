@@ -7,6 +7,9 @@ interface TranscriptionEvent {
   text: string
   is_final: boolean
   partial: string
+  /** ms relative to session t0 (present once Step 4 wires the session clock). */
+  start_ms?: number
+  end_ms?: number
 }
 
 export const useAppStore = defineStore('app', () => {

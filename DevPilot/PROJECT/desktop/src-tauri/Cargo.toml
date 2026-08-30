@@ -1,0 +1,34 @@
+[package]
+name = "devpilot"
+version = "0.1.0"
+description = "DevPilot 桌面客户端（懂开发方法论的 AI 编程合伙人）"
+edition = "2021"
+rust-version = "1.77"
+
+[workspace]
+# Rust 内核按职责拆分（architecture §3），本包仅做装配与 IPC。
+members = ["crates/*"]
+
+[lib]
+name = "devpilot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+core-state = { path = "crates/core-state" }
+core-orchestrator = { path = "crates/core-orchestrator" }
+core-sandbox = { path = "crates/core-sandbox" }
+core-exec = { path = "crates/core-exec" }
+core-meter = { path = "crates/core-meter" }
+core-skills = { path = "crates/core-skills" }
+core-mcp = { path = "crates/core-mcp" }
+core-cli = { path = "crates/core-cli" }
+# P07 S7 附件图片压缩（≤1MB JPEG 存盘）
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

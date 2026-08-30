@@ -1,0 +1,23 @@
+[package]
+name = "core-exec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "进程执行、测试/lint 探测、环境画像、环境一键安装（FR-003/004/005）"
+
+[dependencies]
+tokio = { version = "1", features = ["process", "io-util", "rt", "macros", "time"] }
+sysinfo = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+core-sandbox = { path = "../core-sandbox" }
+core-state = { path = "../core-state" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

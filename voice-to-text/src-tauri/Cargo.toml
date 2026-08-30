@@ -21,12 +21,25 @@ tauri-build = { version = "2.6.0", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.0", features = [] }
+tauri = { version = "2.11.0", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 sherpa-rs = "0.6.8"
 sherpa-rs-sys = "0.6.8"
 cpal = "0.17.1"
 chrono = "0.4"
+image = "0.25"
+# Step 6 (FR-105): 课件 OCR。oar-ocr = PP-OCRv5 ONNX 模型的纯 Rust 推理（ort 后端，
+# 默认可 download-binaries 拉 ONNX Runtime；auto-download 首用从 ModelScope 拉模型到
+# $OAR_HOME —— 国内可达，免打包 20MB 模型）。
+oar-ocr = { version = "0.9", features = ["auto-download"] }
+# Step 8 (FR-107): 云端总结。reqwest blocking + rustls（不引 OpenSSL；调用方 spawn_blocking）；
+# keyring = API Key 存 Windows 凭据管理器（不落盘）；base64 = 多模态精修附图 data URI。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# keyring 必须显式开 windows-native，否则静默回落到内存 mock 后端（set 完 get 不到）。
+keyring = { version = "3", features = ["windows-native"] }
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_Foundation", "Win32_System_Threading", "Win32_Devices_Properties", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell_PropertiesSystem", "Win32_Media_Multimedia", "Win32_System_Variant"] }
+# Step 3 (FR-101): WGC window capture. Windows-only crate → lives in this section.
+windows-capture = "2.0.0"
+windows = { version = "0.61", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_Foundation", "Win32_System_Threading", "Win32_Devices_Properties", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell_PropertiesSystem", "Win32_Media_Multimedia", "Win32_System_Variant", "Win32_Media_MediaFoundation", "Win32_UI_WindowsAndMessaging"] }

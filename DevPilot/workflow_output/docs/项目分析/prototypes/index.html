@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevPilot 高保真原型 · 索引</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  body { overflow: auto; }
+  .gallery { max-width: 960px; margin: 60px auto; padding: 0 30px; }
+  .g-title { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
+  .g-sub { color: var(--text-dim); margin-bottom: 34px; }
+  .g-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .g-card {
+    display: block; text-decoration: none; color: var(--text);
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px; transition: all .25s;
+  }
+  .g-card:hover { border-color: var(--brand1); transform: translateY(-3px); box-shadow: 0 12px 32px rgba(0,0,0,.4); }
+  .g-ico { font-size: 30px; margin-bottom: 12px; }
+  .g-name { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+  .g-desc { font-size: 12.5px; color: var(--text-dim); }
+  .g-note { margin-top: 30px; padding: 14px 18px; border-radius: var(--radius); background: rgba(79,124,255,.08); border: 1px solid rgba(79,124,255,.25); font-size: 12.5px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="gallery">
+  <div class="g-title">DevPilot · 桌面客户端高保真原型</div>
+  <div class="g-sub">v1.1 · 2026-08-13 · 四张核心视图（科技感强化 + 新增驾驶舱）· 设计规范见 <code>3_UI与交互设计.md</code></div>
+  <div class="g-grid" style="grid-template-columns:repeat(2,1fr)">
+    <a class="g-card" href="04_项目驾驶舱.html">
+      <div class="g-ico">🛰️</div>
+      <div class="g-name">④ 项目驾驶舱（新增 · 打开项目默认页）</div>
+      <div class="g-desc">HUD 健康度统计（进度/缺陷/规格覆盖/累计消耗）· 多轮迭代时间线 + chunk 光点格 · 断点续开提示 · Token 消耗报表 · 「继续下一轮」入口</div>
+    </a>
+    <a class="g-card" href="01_建造期主窗口.html">
+      <div class="g-ico">🔨</div>
+      <div class="g-name">① 建造期主窗口</div>
+      <div class="g-desc">阶段管道条 + 进度叙事流 + diff 大白话层 + 存档点时间轴 + 余额仪表 + 系统通知 + 托盘/快捷键提示</div>
+    </a>
+    <a class="g-card" href="02_需求确认卡片流.html">
+      <div class="g-ico">📋</div>
+      <div class="g-name">② 需求确认卡片流</div>
+      <div class="g-desc">功能卡片三态（确认/改一改/这是啥）· 卡片内嵌对话修改 · 主动反问 · 「全部确认才开工」锁定按钮</div>
+    </a>
+    <a class="g-card" href="03_验收点一点.html">
+      <div class="g-ico">✅</div>
+      <div class="g-name">③ 验收点一点</div>
+      <div class="g-desc">自动冒烟 vs 人工点验分流 · 预览元素点选反馈 · 手机扫码真机验 · 安全扫描全绿 + 上线锁定</div>
+    </a>
+  </div>
+  <div class="g-note">💡 评审重点：①管道条是否让你「永远知道在哪一步」②大白话层能否看懂 ③验收流程零代码用户是否真的可操作。反馈后直接改稿，确认后进 Phase 1 写 specs。</div>
+</div>
+</body>
+</html>

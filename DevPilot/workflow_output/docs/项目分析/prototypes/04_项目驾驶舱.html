@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevPilot 原型 ④ 项目驾驶舱（开发进度 · 多轮迭代）</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .round {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 15px 18px; max-width: 980px;
+    backdrop-filter: blur(8px); margin-bottom: 12px;
+  }
+  .round.active { border-left: 3px solid var(--brand1); box-shadow: 0 0 26px rgba(79,124,255,.12); }
+  .round.done { border-left: 3px solid var(--success); }
+  .round-head { display: flex; align-items: center; gap: 10px; }
+  .round-name { font-weight: 700; font-size: 14px; }
+  .round-range { font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
+  .round-body { font-size: 12.5px; color: var(--text-dim); margin-top: 8px; }
+  .chunk-grid { display: flex; gap: 5px; margin-top: 10px; flex-wrap: wrap; }
+  .chunk {
+    width: 26px; height: 10px; border-radius: 3px;
+    background: rgba(120,160,255,.12); border: 1px solid var(--border);
+  }
+  .chunk.ok { background: rgba(52,211,153,.5); border-color: rgba(52,211,153,.6); box-shadow: 0 0 6px rgba(52,211,153,.35); }
+  .chunk.doing { background: var(--brand-grad); border-color: var(--brand2); animation: breathe 2s ease-in-out infinite; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 11.5px; }
+  .bar-row .bl { width: 52px; color: var(--text-faint); font-family: var(--mono); text-align: right; }
+  .bar-track { flex: 1; height: 8px; border-radius: 4px; background: rgba(120,160,255,.08); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; background: var(--brand-grad); box-shadow: 0 0 8px rgba(56,189,248,.45); }
+  .bar-row .bv { width: 64px; font-family: var(--mono); color: var(--text-dim); }
+  .resume-card {
+    max-width: 980px; border-radius: var(--radius); padding: 14px 18px; margin-bottom: 18px;
+    background: linear-gradient(90deg, rgba(167,139,250,.12), rgba(79,124,255,.05));
+    border: 1px solid rgba(167,139,250,.35);
+    display: flex; align-items: center; gap: 13px; font-size: 12.5px; color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <div class="topbar">
+    <div class="logo"><div class="logo-mark">D</div>DevPilot</div>
+    <div class="proj-switch">🗳️ 投票小程序 <span class="caret">▼</span></div>
+    <div class="pipeline">
+      <div class="stage done"><span class="dot">✓</span>想法</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>需求</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>计划</div><span class="stage-sep">›</span>
+      <div class="stage active"><span class="dot">●</span>建造中</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>验收</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>上线</div>
+    </div>
+    <div class="top-actions">
+      <div class="balance" title="Token 余额">
+        <svg class="ring" viewBox="0 0 26 26">
+          <defs><linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4F7CFF"/><stop offset="1" stop-color="#38BDF8"/>
+          </linearGradient></defs>
+          <circle class="ring-bg" cx="13" cy="13" r="10" fill="none" stroke-width="3"/>
+          <circle class="ring-val" cx="13" cy="13" r="10" fill="none" stroke-width="3"
+                  stroke-dasharray="62.8" stroke-dashoffset="18.8" transform="rotate(-90 13 13)"/>
+        </svg>
+        <span><span class="amt">¥163.20</span> <span class="lbl">余额</span></span>
+      </div>
+      <button class="icon-btn">🔔</button>
+      <div class="avatar">徐</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="sidebar">
+      <div class="side-section">
+        <div class="side-title">项目</div>
+        <div class="side-item on"><span class="s-ico">🛰️</span>项目驾驶舱</div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">阶段导航</div>
+        <div class="side-item"><span class="s-ico">💡</span>想法打磨<span class="s-meta">✓</span></div>
+        <div class="side-item"><span class="s-ico">📋</span>需求确认<span class="s-meta">8/8</span></div>
+        <div class="side-item"><span class="s-ico">🗺️</span>施工计划<span class="s-meta">✓</span></div>
+        <div class="side-item"><span class="s-ico">🔨</span>建造任务<span class="s-meta">7/12</span></div>
+        <div class="side-item"><span class="s-ico">✅</span>验收清单</div>
+        <div class="side-item"><span class="s-ico">🚀</span>上线部署</div>
+        <div class="side-item"><span class="s-ico">🔀</span>我要改需求</div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">其他项目</div>
+        <div class="side-item"><span class="s-ico">📦</span>库存小工具<span class="s-meta">已上线</span></div>
+        <div class="side-item"><span class="s-ico">📝</span>周报生成器<span class="s-meta">第1轮</span></div>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="center-scroll">
+        <div class="view-head">
+          <div class="view-title">🛰️ 项目驾驶舱 · 投票小程序</div>
+          <div class="view-sub">创建于 2026-08-10 · 已开发 2 轮 · 上次离开：今天 14:32（进度已自动保存，随时接着干）</div>
+        </div>
+
+        <!-- 断点续开提示 -->
+        <div class="resume-card">
+          <span style="font-size:18px">🔁</span>
+          <span><b style="color:var(--text)">欢迎回来。</b>AI 已凭进度文档接手上次的活，当前正在做第 2 轮「发起投票」。关掉窗口、隔天再来、换台电脑（拷贝项目目录）都不丢进度——进度文档既是给你看的仪表盘，也是给 AI 的接力棒。</span>
+        </div>
+
+        <!-- HUD 统计块 -->
+        <div class="hud-grid">
+          <div class="hud-tile">
+            <div class="hud-label">总进度</div>
+            <div class="hud-num">58%</div>
+            <div class="hud-sub">7 / 12 块 · 第 2 轮进行中</div>
+          </div>
+          <div class="hud-tile">
+            <div class="hud-label">缺陷</div>
+            <div class="hud-num warn">2</div>
+            <div class="hud-sub">规格内 2 · 规格外 0 · 均已修复</div>
+          </div>
+          <div class="hud-tile">
+            <div class="hud-label">规格覆盖</div>
+            <div class="hud-num ok">100%</div>
+            <div class="hud-sub">8 张需求卡全部落到计划</div>
+          </div>
+          <div class="hud-tile">
+            <div class="hud-label">累计消耗</div>
+            <div class="hud-num">¥6.80</div>
+            <div class="hud-sub">334,204 Token · 明细见右栏</div>
+          </div>
+        </div>
+
+        <!-- 轮次时间线 -->
+        <div class="round done">
+          <div class="round-head">
+            <span>🏁</span><span class="round-name">第 1 轮 · MVP 地基</span>
+            <span class="round-range">08-10 → 08-11 · 已完成并验收</span>
+            <span style="margin-left:auto" class="tag ok">v0.1 快照</span>
+          </div>
+          <div class="round-body">项目骨架 + 数据库 + 手机号登录 + 投票列表页。验收 5 项全过。历程总结已归档（展开可查每一轮对话干了什么）。</div>
+          <div class="chunk-grid">
+            <div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div>
+          </div>
+        </div>
+
+        <div class="round active">
+          <div class="round-head">
+            <span>🔨</span><span class="round-name">第 2 轮 · 核心投票流程</span>
+            <span class="round-range">08-12 开始 · 进行中</span>
+            <span style="margin-left:auto" class="tag doing">7/12 块</span>
+          </div>
+          <div class="round-body">发起投票（带图片选项）→ 详情页 → 分享卡片 → 结果统计图。当前：发起投票表单进行中，预计今天完成本轮建造进入验收。</div>
+          <div class="chunk-grid">
+            <div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div>
+            <div class="chunk ok"></div><div class="chunk ok"></div><div class="chunk ok"></div>
+            <div class="chunk doing"></div>
+            <div class="chunk"></div><div class="chunk"></div><div class="chunk"></div><div class="chunk"></div>
+          </div>
+        </div>
+
+        <div class="round" style="opacity:.6;border-style:dashed">
+          <div class="round-head">
+            <span>🗂️</span><span class="round-name">第 3 轮 · 待定</span>
+            <span class="round-range">需求池里有 2 个候选：结果导出 Excel / 小程序版</span>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:12px;margin-top:6px">
+          <button class="btn primary" style="font-size:13.5px;padding:9px 22px">▶ 继续本轮开发</button>
+          <button class="btn" style="font-size:13px">＋ 规划下一轮</button>
+          <button class="btn" style="font-size:13px">🔀 我要改需求</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏：Token 报表 + 文档同步 -->
+    <div class="rightbar">
+      <div class="rtabs">
+        <div class="rtab on">消耗</div>
+        <div class="rtab">文档</div>
+        <div class="rtab">健康度</div>
+      </div>
+      <div class="rbody">
+        <div class="r-card">
+          <h4>🪙 Token 消耗 · 近 5 日</h4>
+          <div class="bar-row"><span class="bl">08-08</span><div class="bar-track"><div class="bar-fill" style="width:22%"></div></div><span class="bv">¥0.42</span></div>
+          <div class="bar-row"><span class="bl">08-09</span><div class="bar-track"><div class="bar-fill" style="width:0%"></div></div><span class="bv">¥0.00</span></div>
+          <div class="bar-row"><span class="bl">08-10</span><div class="bar-track"><div class="bar-fill" style="width:64%"></div></div><span class="bv">¥1.86</span></div>
+          <div class="bar-row"><span class="bl">08-11</span><div class="bar-track"><div class="bar-fill" style="width:48%"></div></div><span class="bv">¥1.91</span></div>
+          <div class="bar-row"><span class="bl">今天</span><div class="bar-track"><div class="bar-fill" style="width:86%"></div></div><span class="bv">¥2.61</span></div>
+          <p style="font-size:11px;margin-top:6px">本月累计 ¥6.80 / 余额 ¥163.20 · <span style="color:var(--brand2);cursor:pointer">查看逐任务明细 →</span></p>
+        </div>
+        <div class="r-card">
+          <h4>⚖️ 消耗构成（本月）</h4>
+          <p>建造任务 62% · 大白话翻译 18% · 需求/计划 12% · 自动测试 8%</p>
+          <p style="font-size:11px;margin-top:6px;color:var(--text-faint)">💡 翻译与摘要走的是便宜的国产模型，已为你省约 61% 费用</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

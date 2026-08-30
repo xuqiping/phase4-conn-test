@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevPilot 原型 ③ 验收点一点</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .accept-banner {
+    max-width: 780px; border-radius: var(--radius);
+    background: linear-gradient(90deg, rgba(79,124,255,.14), rgba(56,189,248,.06));
+    border: 1px solid rgba(79,124,255,.35);
+    padding: 13px 18px; margin-bottom: 18px;
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+  }
+  .ck-item {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 17px; max-width: 780px;
+    display: flex; gap: 13px; align-items: flex-start;
+  }
+  .ck-item.pass { border-left: 3px solid var(--success); opacity: .7; }
+  .ck-item.todo { border-left: 3px solid var(--brand1); }
+  .ck-num {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center; font-size: 12px; font-family: var(--mono);
+    background: rgba(255,255,255,.06); color: var(--text-dim); margin-top: 2px;
+  }
+  .ck-item.pass .ck-num { background: rgba(52,211,153,.15); color: var(--success); }
+  .ck-steps { font-size: 13px; }
+  .ck-steps .step { color: var(--text); margin-bottom: 3px; }
+  .ck-steps .expect { color: var(--text-dim); font-size: 12.5px; }
+  .ck-steps .expect b { color: var(--brand2); font-weight: 600; }
+  .ck-actions { display: flex; gap: 8px; margin-top: 10px; }
+  /* 预览点选模式 */
+  .preview-wrap { position: relative; }
+  .el-outline {
+    position: absolute; border: 2px dashed var(--brand2); border-radius: 8px;
+    background: rgba(56,189,248,.1); cursor: pointer;
+    animation: pulse-el 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse-el { 0%,100% { box-shadow: 0 0 0 0 rgba(56,189,248,.35); } 50% { box-shadow: 0 0 0 6px rgba(56,189,248,0); } }
+  .el-tip {
+    position: absolute; background: var(--bg-glass); backdrop-filter: blur(12px);
+    border: 1px solid var(--brand2); border-radius: 10px; padding: 10px 12px;
+    width: 240px; z-index: 60; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  }
+  .el-tip .et-name { font-size: 12px; font-weight: 700; color: var(--brand2); }
+  .el-tip textarea {
+    width: 100%; margin-top: 7px; background: rgba(255,255,255,.05);
+    border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text);
+    font-family: var(--sans); font-size: 12px; padding: 7px 9px; resize: none; outline: none;
+  }
+  .el-tip .et-actions { display: flex; gap: 7px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <div class="topbar">
+    <div class="logo"><div class="logo-mark">D</div>DevPilot</div>
+    <div class="proj-switch">🗳️ 投票小程序 <span class="caret">▼</span></div>
+    <div class="pipeline">
+      <div class="stage done"><span class="dot">✓</span>想法</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>需求</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>计划</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>建造</div><span class="stage-sep">›</span>
+      <div class="stage active"><span class="dot">●</span>验收</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>上线</div>
+    </div>
+    <div class="top-actions">
+      <div class="balance" title="Token 余额">
+        <svg class="ring" viewBox="0 0 26 26">
+          <defs><linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4F7CFF"/><stop offset="1" stop-color="#38BDF8"/>
+          </linearGradient></defs>
+          <circle class="ring-bg" cx="13" cy="13" r="10" fill="none" stroke-width="3"/>
+          <circle class="ring-val" cx="13" cy="13" r="10" fill="none" stroke-width="3"
+                  stroke-dasharray="62.8" stroke-dashoffset="22" transform="rotate(-90 13 13)"/>
+        </svg>
+        <span><span class="amt">¥158.94</span> <span class="lbl">余额</span></span>
+      </div>
+      <button class="icon-btn">🔔</button>
+      <div class="avatar">徐</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="sidebar">
+      <div class="side-section">
+        <div class="side-title">阶段导航</div>
+        <div class="side-item"><span class="s-ico">💡</span>想法打磨<span class="s-meta">✓</span></div>
+        <div class="side-item"><span class="s-ico">📋</span>需求确认<span class="s-meta">8/8</span></div>
+        <div class="side-item"><span class="s-ico">🗺️</span>施工计划<span class="s-meta">✓</span></div>
+        <div class="side-item"><span class="s-ico">🔨</span>建造任务<span class="s-meta">12/12</span></div>
+        <div class="side-item on"><span class="s-ico">✅</span>验收清单<span class="s-meta">12/15</span></div>
+        <div class="side-item"><span class="s-ico">🚀</span>上线部署</div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">验收进度</div>
+        <div class="side-item"><span class="s-ico">🤖</span>我自动测的<span class="s-meta" style="color:var(--success)">12/12 ✓</span></div>
+        <div class="side-item"><span class="s-ico">👆</span>需要你点的<span class="s-meta" style="color:var(--amber)">0/3</span></div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">安全扫描</div>
+        <div class="side-item"><span class="s-ico">🛡️</span>密钥泄露检查<span class="s-meta" style="color:var(--success)">通过</span></div>
+        <div class="side-item"><span class="s-ico">🛡️</span>登录保护检查<span class="s-meta" style="color:var(--success)">通过</span></div>
+        <div class="side-item"><span class="s-ico">🛡️</span>数据库暴露检查<span class="s-meta" style="color:var(--success)">通过</span></div>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="center-scroll">
+        <div class="view-head">
+          <div class="view-title">✅ 验收：你来点一点，动动手指就行</div>
+          <div class="view-sub">建造全部完成。我自己已经自动测过 12 项（都过了），剩下 3 项需要你用真人的眼睛确认。</div>
+        </div>
+
+        <div class="accept-banner">
+          <span style="font-size:18px">🤖</span>
+          <span>我自动测过的 12 项全部通过（含登录、创建、投票、防刷）。安全扫描 3 项也全绿。<b>剩下 3 项在右边预览里边点边看</b>，觉得不对就圈出来告诉我。</span>
+        </div>
+
+        <div class="flow">
+          <div class="ck-item pass">
+            <div class="ck-num">✓</div>
+            <div>
+              <div class="ck-steps">
+                <div class="step">手机号登录走一遍</div>
+                <div class="expect">应看到：收验证码 → 登录成功进首页 <b>· 已自动通过</b></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ck-item todo">
+            <div class="ck-num">13</div>
+            <div style="flex:1">
+              <div class="ck-steps">
+                <div class="step">① 在右边预览里，点「发起投票」按钮</div>
+                <div class="step">② 随便填一个投票，提交</div>
+                <div class="expect">应看到：跳到你刚建的投票详情页，标题和选项都对</div>
+              </div>
+              <div class="ck-actions">
+                <button class="btn success">✅ 通过</button>
+                <button class="btn ghost-danger">😕 有问题</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="ck-item todo">
+            <div class="ck-num">14</div>
+            <div style="flex:1">
+              <div class="ck-steps">
+                <div class="step">① 用另一个手机号（或退出登录）打开同一个投票</div>
+                <div class="step">② 投一票</div>
+                <div class="expect">应看到：投完后柱状图数字 +1</div>
+              </div>
+              <div class="ck-actions">
+                <button class="btn success">✅ 通过</button>
+                <button class="btn ghost-danger">😕 有问题</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="ck-item todo">
+            <div class="ck-num">15</div>
+            <div style="flex:1">
+              <div class="ck-steps">
+                <div class="step">整体感觉：手机上打开看看（扫右边二维码）</div>
+                <div class="expect">应看到：排版不乱、按钮够大、文字看得清</div>
+              </div>
+              <div class="ck-actions">
+                <button class="btn success">✅ 通过</button>
+                <button class="btn ghost-danger">😕 有问题</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="start-bar" style="display:flex;padding:16px 34px;border-top:1px solid var(--border);background:var(--bg-panel);align-items:center;gap:18px;flex-shrink:0">
+        <button class="btn primary" disabled style="font-size:14px;padding:10px 26px">🔒 验收全过后解锁上线</button>
+        <div class="start-info" style="font-size:12.5px;color:var(--text-dim)">剩余 <b style="color:var(--text);font-family:var(--mono)">3</b> 项 · 有问题的项会自动生成修复任务，修好只回归受影响的几项，不用全部重验</div>
+      </div>
+    </div>
+
+    <!-- 右栏：可点选预览 -->
+    <div class="rightbar">
+      <div class="rtabs">
+        <div class="rtab">规格</div><div class="rtab">变更</div><div class="rtab">日志</div><div class="rtab on">预览</div>
+      </div>
+      <div class="rbody">
+        <div class="r-card" style="padding:0;overflow:visible">
+          <div style="background:#0D1117;padding:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;border-radius:14px 14px 0 0">
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--coral)"></span>
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--amber)"></span>
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--success)"></span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-left:6px">实时预览 · 点选模式已开启 👆</span>
+          </div>
+          <div class="preview-wrap" style="padding:14px;position:relative">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <span style="font-size:14px;font-weight:700">全部投票</span>
+              <!-- 被点选的按钮 -->
+              <span style="font-size:12px;padding:5px 14px;border-radius:8px;background:var(--brand-grad);color:#fff">＋ 发起投票</span>
+            </div>
+            <div style="background:var(--bg-card-hover);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">
+              <div style="height:52px;border-radius:8px;background:linear-gradient(135deg,#2b3654,#1b2233);margin-bottom:8px"></div>
+              <div style="font-size:13px;font-weight:600">团建去哪儿玩？</div>
+              <div style="font-size:11px;color:var(--text-faint);margin-top:3px">👥 23 人参与 · 周五 18:00 截止</div>
+            </div>
+
+            <!-- 点选高亮框 + 反馈气泡（模拟用户点中了「发起投票」按钮） -->
+            <div class="el-outline" style="top:20px;right:16px;width:98px;height:30px"></div>
+            <div class="el-tip" style="top:56px;right:10px">
+              <div class="et-name">你选中了：「发起投票」按钮</div>
+              <textarea rows="2" placeholder="直接说：比如「换成绿色，再大一点」"></textarea>
+              <div class="et-actions">
+                <button class="btn primary" style="padding:4px 12px;font-size:11.5px">生成修改任务</button>
+                <button class="btn" style="padding:4px 12px;font-size:11.5px">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="r-card">
+          <h4>📱 手机上看效果</h4>
+          <div style="display:flex;gap:12px;align-items:center">
+            <div style="width:74px;height:74px;border-radius:10px;background:repeating-conic-gradient(#e6eaf2 0 25%, #1b2130 0 50%) 0 0/18px 18px;border:1px solid var(--border-strong)"></div>
+            <p style="font-size:12px">用手机相机扫码，真机体验（预览链接 10 分钟内有效，仅你可见）。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

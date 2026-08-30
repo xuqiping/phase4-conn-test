@@ -1,0 +1,926 @@
+<!--
+  项目资产库·资产详情抽屉  plan §S10（10a：预览+元数据+状态机+usages+下载）
+  - 预览按 mediaType：PROMPT/SCRIPT 文本；IMAGE/VIDEO/AUDIO fetchCanvasPreview(fileId)→objectURL（卸载/换资产 revoke）
+  - 状态机动作（canEdit，设计 §六 / L2 L3）：DRAFT→[定稿][归档]；LOCKED→[解锁][归档]；ARCHIVED→[取消归档]
+  - 定稿=引用锁定当前版本快照语义（L2）；归档=默认列表隐藏（L3）—— 状态由后端强制，前端按 status 渲染按钮
+  - usages 使用记录（assetBridgeApi.usages，双向追溯，viewer 可读）
+  - 下载（文件类）：/files/{fileId} blob → <a download>
+  - VersionTimeline + ConsistencyPack 编辑区在 10b 接入
+-->
+<template>
+  <n-drawer :show="show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
+    <n-drawer-content :title="asset?.name || '资产详情'" closable>
+      <div v-if="loading" class="asset-detail__loading"><n-spin size="large" /></div>
+
+      <div v-else-if="asset" class="asset-detail">
+        <!-- 状态 + 类型 标签 -->
+        <n-space class="asset-detail__tags">
+          <n-tag size="small" bordered :type="STATUS_TYPE[asset.status]">{{ STATUS_LABEL[asset.status] }}</n-tag>
+          <n-tag size="small" bordered>{{ asset.mediaType }}</n-tag>
+          <n-tag size="small" bordered type="info">v{{ asset.currentVersion }}</n-tag>
+        </n-space>
+
+        <!-- 预览 -->
+        <div class="asset-detail__preview">
+          <template v-if="effectiveCategory === 'IMAGE'">
+            <img v-if="previewUrl" :src="previewUrl" class="asset-detail__media" alt="预览" />
+          </template>
+          <template v-else-if="effectiveCategory === 'VIDEO'">
+            <video v-if="previewUrl" :src="previewUrl" controls class="asset-detail__media" />
+          </template>
+          <template v-else-if="effectiveCategory === 'AUDIO'">
+            <audio v-if="previewUrl" :src="previewUrl" controls />
+          </template>
+          <!-- C3 剧本：正文编辑 + AI 分场 + 分场列表 -->
+          <template v-else-if="asset.mediaType === MEDIA_TYPE.SCRIPT">
+            <div class="asset-detail__script">
+              <n-input
+                v-model:value="synopsis"
+                type="textarea"
+                :rows="6"
+                :maxlength="8000"
+                :readonly="!canModify"
+                placeholder="剧本正文（≤8000 字）；EDITOR 可编辑，保存后点「AI 分场」"
+              />
+              <!-- 拆解模型选择（AI 分场/一键分镜共用，默认空=管理员默认对话模型） -->
+              <div v-if="canModify" class="asset-detail__model-row">
+                <span class="asset-detail__model-label">拆解模型</span>
+                <n-select
+                  v-model:value="scriptModel"
+                  :options="modelOptions"
+                  size="small"
+                  clearable
+                  filterable
+                  placeholder="默认（管理员默认对话模型）"
+                  style="flex: 1"
+                />
+              </div>
+              <div v-if="canModify" class="asset-detail__script-actions">
+                <n-button
+                  size="small"
+                  :loading="savingSynopsis"
+                  :disabled="!synopsisDirty"
+                  @click="saveSynopsis"
+                >
+                  保存正文
+                </n-button>
+                <n-button size="small" type="primary" :loading="breaking" @click="runBreakdown">
+                  AI 分场
+                </n-button>
+                <n-button
+                  size="small"
+                  type="primary"
+                  ghost
+                  :loading="breakingStoryboard"
+                  @click="runStoryboardBreakdown"
+                >
+                  一键分镜
+                </n-button>
+              </div>
+              <!-- S19 拆解规范（可折叠，写 content.template，指导 LLM 拆镜） -->
+              <n-collapse v-if="canModify" :default-expanded-names="templateDirty ? 'tpl' : []">
+                <n-collapse-item title="拆解规范（可选，指导一键分镜）" name="tpl">
+                  <n-input
+                    v-model:value="templateDraft"
+                    type="textarea"
+                    :rows="3"
+                    :maxlength="2000"
+                    placeholder="如：每镜须含景别与运镜；主角出镜优先特写；≤2000 字"
+                  />
+                  <div class="asset-detail__script-actions">
+                    <n-button
+                      size="small"
+                      :loading="savingTemplate"
+                      :disabled="!templateDirty"
+                      @click="saveTemplate"
+                    >
+                      保存规范
+                    </n-button>
+                  </div>
+                </n-collapse-item>
+              </n-collapse>
+              <ScriptScenes v-if="scenes.length" :scenes="scenes" />
+              <n-empty
+                v-else-if="!breaking"
+                size="small"
+                description="未分场，点「AI 分场」拆分（3-10 场）"
+              />
+            </div>
+          </template>
+          <!-- S18 分镜：5 字段编辑（StoryboardFields 子组件） -->
+          <template v-else-if="asset.mediaType === MEDIA_TYPE.STORYBOARD">
+            <StoryboardFields
+              class="asset-detail__storyboard"
+              :asset="asset"
+              :can-edit="canModify"
+              @changed="onStoryboardChanged"
+              @open-parent="(pid: number) => emit('open-asset', pid)"
+            />
+          </template>
+          <!-- S15 非剧本 TEXT（提示词/自定义 TEXT）：正文编辑器（统一 TEXT 编辑入口） -->
+          <template v-else-if="effectiveCategory === 'TEXT'">
+            <div class="asset-detail__text-edit">
+              <n-input
+                v-model:value="textBody"
+                type="textarea"
+                :rows="6"
+                :maxlength="8000"
+                :readonly="!canModify"
+                placeholder="资产正文（≤8000 字）；EDITOR 可编辑，点「保存正文」产新版本"
+              />
+              <div v-if="canModify" class="asset-detail__script-actions">
+                <n-button
+                  size="small"
+                  :loading="savingTextBody"
+                  :disabled="!textBodyDirty"
+                  @click="saveTextBody"
+                >
+                  保存正文
+                </n-button>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <pre class="asset-detail__text">{{ textPreview }}</pre>
+          </template>
+          <n-empty v-if="needsFile && !previewUrl" description="无文件预览" />
+        </div>
+
+        <!-- 元数据 -->
+        <n-descriptions label-placement="left" :column="1" size="small" bordered class="asset-detail__meta">
+          <n-descriptions-item label="描述">{{ asset.description || '—' }}</n-descriptions-item>
+          <n-descriptions-item label="上传者">{{ uploaderLabel }}</n-descriptions-item>
+          <n-descriptions-item label="叙事角色">
+            <n-space v-if="asset.roleKeys?.length" size="small">
+              <n-tag v-for="k in asset.roleKeys" :key="k" size="small">{{ k }}</n-tag>
+            </n-space>
+            <span v-else>—</span>
+          </n-descriptions-item>
+          <n-descriptions-item label="标签">{{ asset.tags?.length ? asset.tags.join('，') : '—' }}</n-descriptions-item>
+          <n-descriptions-item label="创建时间">{{ asset.createdAt }}</n-descriptions-item>
+        </n-descriptions>
+
+        <!-- C7 评分区：双轨聚合恒显（有分时）；打分表单按 canScore 显隐 -->
+        <div v-if="scoreSectionVisible" class="asset-detail__score">
+          <h4 class="asset-detail__section-title">评分</h4>
+          <div class="asset-detail__score-summary">
+            <span v-if="scoreInfo?.ownerScore != null" class="asset-detail__score-val asset-detail__score-val--owner">
+              拥有者 ★{{ scoreInfo.ownerScore }}<b v-if="scoreInfo?.ownerGrade" class="asset-detail__grade">{{ scoreInfo.ownerGrade }}</b>
+            </span>
+            <span v-if="scoreInfo?.memberAvgScore != null" class="asset-detail__score-val">
+              成员均分 {{ scoreInfo.memberAvgScore }} · {{ scoreInfo?.memberCount ?? 0 }}人<b v-if="scoreInfo?.memberAvgGrade" class="asset-detail__grade">{{ scoreInfo.memberAvgGrade }}</b>
+            </span>
+            <span v-if="scoreInfo?.myScore != null" class="asset-detail__score-val">
+              我的评分 {{ scoreInfo.myScore }}<b class="asset-detail__grade">{{ myGradeLabel }}</b>
+            </span>
+            <span v-if="noScoresAtAll" class="asset-detail__score-empty">暂无评分</span>
+          </div>
+          <div v-if="canScore" class="asset-detail__score-form">
+            <n-slider
+              :value="myScoreDraft ?? 50"
+              class="asset-detail__score-slider"
+              :min="0"
+              :max="100"
+              :step="1"
+              :format-tooltip="(v: number) => `${v} 分 · ${gradeFromScore(v) ?? '—'}`"
+              aria-label="我的评分 0 到 100"
+              @update:value="(v: number) => (myScoreDraft = v)"
+            />
+            <span class="asset-detail__score-live" aria-live="polite">当前 {{ myScoreDraft ?? 50 }} 分 · {{ liveGradeLabel }}</span>
+            <n-input-number
+              v-model:value="myScoreDraft"
+              class="asset-detail__score-number"
+              :min="0"
+              :max="100"
+              size="small"
+              :update-value-on-input="false"
+              aria-label="我的评分数值"
+            />
+            <n-button
+              size="small"
+              type="primary"
+              :loading="scoring"
+              :disabled="myScoreDraft == null || myScoreDraft === scoreInfo?.myScore"
+              @click="submitScore"
+            >
+              提交评分
+            </n-button>
+          </div>
+        </div>
+
+        <!-- 下载（文件类；只读操作，不受 PERSONAL 门控） -->
+        <div v-if="needsFile && canEdit" class="asset-detail__actions">
+          <n-button size="small" quaternary @click="download">下载</n-button>
+        </div>
+
+        <!-- 状态机动作（canModify=写权×PERSONAL 本人内容，L2/L3/L6） -->
+        <div v-if="canModify" class="asset-detail__actions">
+          <n-button v-if="asset.status === 'DRAFT'" size="small" type="primary" @click="doAction('lock')">定稿</n-button>
+          <n-button v-if="asset.status === 'LOCKED'" size="small" @click="doAction('unlock')">解锁回退草稿</n-button>
+          <n-button v-if="asset.status !== 'ARCHIVED'" size="small" type="warning" @click="doAction('archive')">归档</n-button>
+          <n-button v-if="asset.status === 'ARCHIVED'" size="small" @click="doAction('unarchive')">取消归档</n-button>
+          <!-- S15 删除（软删；画布引用快照不受影响，L11） -->
+          <n-popconfirm @positive-click="deleteAsset">
+            <template #trigger>
+              <n-button size="small" type="error" ghost :loading="deleting">删除</n-button>
+            </template>
+            确认删除？画布引用快照不受影响。
+          </n-popconfirm>
+        </div>
+
+        <!-- 使用记录（双向追溯，viewer 可读） -->
+        <div class="asset-detail__usages">
+          <h4 class="asset-detail__section-title">使用记录（{{ usages.length }}）</h4>
+          <n-empty v-if="usages.length === 0" description="暂无使用记录" size="small" />
+          <ul v-else class="asset-detail__usage-list">
+            <li v-for="u in usages" :key="u.id">
+              <n-tag size="tiny" bordered :type="u.bindType === 'PRODUCED' ? 'success' : 'info'">
+                {{ u.bindType === 'PRODUCED' ? '产自' : '引用于' }}
+              </n-tag>
+              画布 #{{ u.canvasId ?? '—' }} · 节点 {{ u.nodeId ?? '—' }}
+              <span class="asset-detail__usage-time">{{ u.createdAt }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 一致性包（人物/道具/场景类额染，设计 §五） -->
+        <ConsistencyPack
+          v-if="showConsistency"
+          :asset-id="asset.id"
+          :can-edit="canModify"
+          :initial="consistencyInitial"
+          @saved="onConsistencySaved"
+        />
+
+        <!-- 版本时间线（只读回滚查看） -->
+        <VersionTimeline :asset-id="asset.id" :asset-current-version="asset.currentVersion" />
+      </div>
+    </n-drawer-content>
+  </n-drawer>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import {
+  NButton,
+  NDescriptions,
+  NDescriptionsItem,
+  NDrawer,
+  NDrawerContent,
+  NEmpty,
+  NInput,
+  NInputNumber,
+  NPopconfirm,
+  NSlider,
+  NSpace,
+  NSpin,
+  NTag,
+  useMessage
+} from 'naive-ui'
+import { assetApi, assetBridgeApi, versionApi, scriptApi, scoreApi } from '@/api/assets'
+import { llmApi } from '@/api/llm'
+import { fetchCanvasPreview } from '@/api/canvas'
+import request from '@/api/request'
+import ConsistencyPack, { type ConsistencyPack as ConsistencyPackData } from '@/components/asset/ConsistencyPack.vue'
+import VersionTimeline from '@/components/asset/VersionTimeline.vue'
+import ScriptScenes from '@/components/asset/ScriptScenes.vue'
+import StoryboardFields from '@/components/asset/StoryboardFields.vue'
+import type { AssetScoreVO, AssetStatus, AssetUsageVO, AssetVO, SceneVO } from '@/types/asset'
+import { MEDIA_TYPE } from '@/types/asset'
+import { gradeFromScore } from '@/constants/assetGrade'
+
+/**
+ * 读文本类正文：SCRIPT→content.synopsis；其他 TEXT→content.body；兜底首个字符串值/裸文本。
+ * 用于抽屉编辑器初始化（S15 统一文本编辑入口）。
+ */
+function readTextBody(content: string | null | undefined, mediaType: string): string {
+  if (!content) return ''
+  try {
+    const obj = JSON.parse(content) as Record<string, unknown>
+    const key = mediaType === MEDIA_TYPE.SCRIPT ? 'synopsis' : 'body'
+    if (typeof obj[key] === 'string') return obj[key] as string
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'string') return obj[k] as string
+    }
+    return ''
+  } catch {
+    return content
+  }
+}
+
+/**
+ * 写文本类正文回 content 串：按类型写对应键，保留其他键（scenes/template/consistency 不丢）。
+ * 非合法 JSON 的旧 content 当作空对象重写。
+ */
+function writeTextBody(content: string | null | undefined, mediaType: string, body: string): string {
+  let obj: Record<string, unknown> = {}
+  if (content) {
+    try {
+      obj = JSON.parse(content) as Record<string, unknown>
+    } catch {
+      obj = {}
+    }
+  }
+  const key = mediaType === MEDIA_TYPE.SCRIPT ? 'synopsis' : 'body'
+  obj[key] = body
+  return JSON.stringify(obj)
+}
+
+const props = defineProps<{
+  show: boolean
+  assetId: number | null
+  /** 写权限（viewer=false 隐藏状态机动作，设计 §7.2）；S11 按项目角色传 */
+  canEdit?: boolean
+  /** C7 评分资格：OWNER 恒 true；EDITOR 随项目开关；VIEWER/公共 false（父计算） */
+  canScore?: boolean
+  /** C7 PERSONAL 模式（父已排除 OWNER）：true 时仅 createdBy=当前用户的内容可操作 */
+  personalMode?: boolean
+  /** C7 当前用户 id（PERSONAL 本人内容判定） */
+  currentUserId?: number | null
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:show', v: boolean): void
+  /** 状态变更 → 父重载（矩阵计数/列表态可能变，L2/L3） */
+  (e: 'changed', assetId: number): void
+  /** S18 分镜「源剧本」点击 → 父切到该资产（重开源剧本抽屉） */
+  (e: 'open-asset', assetId: number): void
+}>()
+
+const message = useMessage()
+const asset = ref<AssetVO | null>(null)
+const usages = ref<AssetUsageVO[]>([])
+const loading = ref(false)
+const previewUrl = ref<string | null>(null)
+
+/** C3 剧本：正文草稿 + content 对象 + 分场列表 + 保存/分场态。 */
+const synopsis = ref('')
+const contentObj = ref<Record<string, unknown>>({})
+const scenes = ref<SceneVO[]>([])
+const originalSynopsis = ref('')
+const savingSynopsis = ref(false)
+const breaking = ref(false)
+const synopsisDirty = computed(() => synopsis.value !== originalSynopsis.value)
+/** S19 拆解规范草稿（写 content.template）+ 一键分镜态。 */
+const templateDraft = ref('')
+const originalTemplate = ref('')
+const savingTemplate = ref(false)
+const breakingStoryboard = ref(false)
+const templateDirty = computed(() => templateDraft.value !== originalTemplate.value)
+/** AI 分场/一键分镜模型选择（默认空=管理员默认对话模型；列表来自可用文本模型）。 */
+const scriptModel = ref<string | null>(null)
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
+async function loadScriptModels() {
+  try {
+    const res = await llmApi.listAvailableModels()
+    modelOptions.value = (res.data.data ?? []).map((m) => ({
+      label: m.displayName || m.modelId,
+      value: m.modelId
+    }))
+  } catch {
+    modelOptions.value = []
+  }
+}
+
+/** S15 非剧本 TEXT（提示词/自定义 TEXT）正文草稿 + 保存态。 */
+const textBody = ref('')
+const originalTextBody = ref('')
+const savingTextBody = ref(false)
+const textBodyDirty = computed(() => textBody.value !== originalTextBody.value)
+const deleting = ref(false)
+
+const drawerWidth = computed(() => (window.innerWidth < 768 ? '100%' : 520))
+
+const STATUS_LABEL: Record<AssetStatus, string> = { DRAFT: '草稿', LOCKED: '已定稿', ARCHIVED: '已归档' }
+const STATUS_TYPE: Record<AssetStatus, 'default' | 'success' | 'warning'> = {
+  DRAFT: 'default',
+  LOCKED: 'success',
+  ARCHIVED: 'warning'
+}
+const FILE_CATEGORIES = ['IMAGE', 'VIDEO', 'AUDIO']
+
+/** 处理类别（优先 asset.mediaCategory，V60 后端必返；旧数据兜底按默认 key 推断）。 */
+const effectiveCategory = computed(() => {
+  const c = asset.value?.mediaCategory
+  return c && FILE_CATEGORIES.includes(c) ? c : 'TEXT'
+})
+
+/** 是否文件类（决定预览拉 objectURL；按 category 而非 type，兼容自定义 key）。 */
+const isFileAsset = computed(() => !!asset.value && FILE_CATEGORIES.includes(effectiveCategory.value))
+
+const needsFile = computed(() => props.show && !!asset.value && isFileAsset.value)
+
+// ---------- C7 PERSONAL 门控 + 评分 ----------
+
+/** PERSONAL 下仅本人上传的内容可操作（与后端 requireAssetOperate 对齐；NULL createdBy fail-closed 视为他人）。 */
+const canOperateThis = computed(() => {
+  if (props.personalMode !== true) return true
+  return props.currentUserId != null && asset.value?.createdBy === props.currentUserId
+})
+
+/** 编辑/删除/定稿/归档等写操作门控：项目写权 × PERSONAL 本人内容。 */
+const canModify = computed(() => props.canEdit === true && canOperateThis.value)
+
+/** 上传者显示：username 优先，存量无 username 回退 #id，均无 → —。 */
+const uploaderLabel = computed(() => {
+  const a = asset.value
+  return a?.createdByUsername || (a?.createdBy != null ? `#${a.createdBy}` : '—')
+})
+
+/** 单资产评分态（GET/POST /score 返回；null=接口失败/无数据）。 */
+const scoreInfo = ref<AssetScoreVO | null>(null)
+const myScoreDraft = ref<number | null>(null)
+const scoring = ref(false)
+
+/** 评分区可见：可打分（表单）或已有任一轨评分（展示）。 */
+const scoreSectionVisible = computed(
+  () => props.canScore === true
+    || scoreInfo.value?.ownerScore != null
+    || scoreInfo.value?.memberAvgScore != null
+)
+const noScoresAtAll = computed(
+  () => scoreInfo.value?.ownerScore == null && scoreInfo.value?.memberAvgScore == null && scoreInfo.value?.myScore == null
+)
+
+/** 2x#7 我的评分等级徽章：只看已保存分（不随草稿拖动跳变）。 */
+const myGradeLabel = computed(() => gradeFromScore(scoreInfo.value?.myScore) ?? '—')
+/** 2x#7 打分实时等级：跟草稿走（未评草稿=滑杆默认 50 档；前端常量与后端对齐有单测）。 */
+const liveGradeLabel = computed(() => gradeFromScore(myScoreDraft.value ?? 50) ?? '—')
+
+/** 拉我的评分 + 双轨聚合（失败不阻塞详情，评分区按空态展示）。 */
+async function loadScore(id: number) {
+  try {
+    const res = await scoreApi.mine(id)
+    scoreInfo.value = res.data.data ?? null
+  } catch {
+    scoreInfo.value = null
+  }
+  myScoreDraft.value = scoreInfo.value?.myScore ?? 50
+}
+
+/** 提交/覆盖我的评分（upsert；成功后聚合即时刷新 + 通知父重载列表卡片分，L5）。 */
+async function submitScore() {
+  if (!asset.value || myScoreDraft.value == null || scoring.value) return
+  scoring.value = true
+  try {
+    const res = await scoreApi.submit(asset.value.id, myScoreDraft.value)
+    scoreInfo.value = res.data.data ?? scoreInfo.value
+    message.success('评分已提交')
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('提交评分失败')
+  } finally {
+    scoring.value = false
+  }
+}
+
+/** 一致性包初始值（从 asset.content.consistency 解析；人物/道具/场景类额染） */
+const consistencyInitial = computed<ConsistencyPackData | null>(() => {
+  if (!asset.value?.content) return null
+  try {
+    const parsed = JSON.parse(asset.value.content)
+    return (parsed?.consistency ?? null) as ConsistencyPackData | null
+  } catch {
+    return null
+  }
+})
+
+/** 仅人物/道具/场景类资产渲染一致性包（设计 §五） */
+const showConsistency = computed(() => {
+  const roles = asset.value?.roleKeys ?? []
+  return ['人物', '道具', '场景'].some((r) => roles.includes(r))
+})
+
+/** 文本类预览：content 是 JSON 串，直接展示原文（剧本 scenes 深格式化在 10b） */
+const textPreview = computed(() => {
+  if (!asset.value?.content) return '（无正文）'
+  try {
+    return JSON.stringify(JSON.parse(asset.value.content), null, 2)
+  } catch {
+    return asset.value.content
+  }
+})
+
+watch(
+  () => [props.show, props.assetId] as const,
+  async ([show, id]) => {
+    if (show && id) {
+      await loadAll(id)
+      void loadScriptModels()
+    } else if (!show) {
+      // 关抽屉释放 objectURL
+      revokePreview()
+      asset.value = null
+      usages.value = []
+      scoreInfo.value = null
+      myScoreDraft.value = null
+    }
+  },
+  { immediate: true }
+)
+
+async function loadAll(id: number) {
+  loading.value = true
+  try {
+    // C7：评分聚合与详情并行拉（loadScore 内部 catch，不阻塞详情）
+    const [assetRes, usagesRes] = await Promise.all([
+      assetApi.get(id),
+      assetBridgeApi.usages(id),
+      loadScore(id)
+    ])
+    asset.value = assetRes.data.data
+    usages.value = usagesRes.data.data || []
+    // C3 剧本：解析 content → 正文草稿 + 分场列表
+    if (asset.value?.mediaType === MEDIA_TYPE.SCRIPT) {
+      parseScriptContent(asset.value.content)
+    } else if (asset.value && effectiveCategory.value === 'TEXT') {
+      // S15 非剧本 TEXT（提示词/自定义 TEXT）：解析正文草稿
+      const body = readTextBody(asset.value.content, asset.value.mediaType)
+      textBody.value = body
+      originalTextBody.value = body
+    }
+    // 文件类拉预览 objectURL
+    if (asset.value?.fileId && isFileAsset.value) {
+      try {
+        previewUrl.value = await fetchCanvasPreview(asset.value.fileId)
+      } catch {
+        // 预览失败不阻塞详情
+        previewUrl.value = null
+      }
+    }
+  } catch {
+    message.error('加载资产详情失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function revokePreview() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = null
+  }
+}
+
+/** C3 解析剧本 content（{synopsis, scenes?}）→ 同步正文草稿 + 分场列表。旧态非 JSON 当 synopsis。 */
+function parseScriptContent(raw: string | null | undefined) {
+  let obj: Record<string, unknown> = {}
+  if (raw) {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      obj = { synopsis: raw }
+    }
+  }
+  contentObj.value = obj
+  const syn = typeof obj.synopsis === 'string' ? obj.synopsis : ''
+  synopsis.value = syn
+  originalSynopsis.value = syn
+  scenes.value = Array.isArray(obj.scenes) ? (obj.scenes as SceneVO[]) : []
+  const tpl = typeof obj.template === 'string' ? obj.template : ''
+  templateDraft.value = tpl
+  originalTemplate.value = tpl
+}
+
+/** C3 保存剧本正文 → versionApi.create 写新版本（同步 asset.content，breakdown 即可读最新）。 */
+async function saveSynopsis() {
+  if (!asset.value) return
+  savingSynopsis.value = true
+  try {
+    const next = { ...contentObj.value, synopsis: synopsis.value.trim() }
+    await versionApi.create(asset.value.id, {
+      content: JSON.stringify(next),
+      changeNote: '编辑剧本正文'
+    })
+    message.success('正文已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存正文失败')
+  } finally {
+    savingSynopsis.value = false
+  }
+}
+
+/** C3 AI 分场 → scriptApi.breakdown（读 asset.content.synopsis，产 scenes 新版本）。 */
+async function runBreakdown() {
+  if (!asset.value) return
+  if (synopsisDirty.value) {
+    message.warning('正文有未保存改动，请先点「保存正文」')
+    return
+  }
+  breaking.value = true
+  try {
+    await scriptApi.breakdown(asset.value.id, scriptModel.value ?? undefined)
+    message.success('分场完成')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('分场失败（剧本过长 / LLM 异常）')
+  } finally {
+    breaking.value = false
+  }
+}
+
+/** S19 保存拆解规范 → versionApi.create 写 content.template（保留 synopsis/scenes/其他键）。 */
+async function saveTemplate() {
+  if (!asset.value) return
+  savingTemplate.value = true
+  try {
+    const next = { ...contentObj.value, template: templateDraft.value.trim() }
+    await versionApi.create(asset.value.id, {
+      content: JSON.stringify(next),
+      changeNote: '编辑拆解规范'
+    })
+    message.success('拆解规范已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存拆解规范失败')
+  } finally {
+    savingTemplate.value = false
+  }
+}
+
+/** S19 一键分镜 → scriptApi.breakdownStoryboard（每镜产一个分镜资产，dirty 检查同分场，L13）。 */
+async function runStoryboardBreakdown() {
+  if (!asset.value) return
+  if (synopsisDirty.value) {
+    message.warning('正文有未保存改动，请先点「保存正文」')
+    return
+  }
+  breakingStoryboard.value = true
+  try {
+    const res = await scriptApi.breakdownStoryboard(asset.value.id, scriptModel.value ?? undefined)
+    const count = res.data.data?.count ?? 0
+    message.success(`已生成 ${count} 个分镜资产`)
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('分镜失败（剧本过长 / LLM 异常）')
+  } finally {
+    breakingStoryboard.value = false
+  }
+}
+
+/** S15 保存提示词/自定义 TEXT 正文 → versionApi.create 写 {body} 新版本（保留其他键）。 */
+async function saveTextBody() {
+  if (!asset.value) return
+  savingTextBody.value = true
+  try {
+    const next = writeTextBody(asset.value.content, asset.value.mediaType, textBody.value.trim())
+    await versionApi.create(asset.value.id, { content: next, changeNote: '编辑正文' })
+    message.success('正文已保存')
+    await loadAll(asset.value.id)
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('保存正文失败')
+  } finally {
+    savingTextBody.value = false
+  }
+}
+
+/** S15 删除资产（软删；画布引用快照不受影响，bindings 留存历史）→ 关抽屉 + 通知父重载。 */
+async function deleteAsset() {
+  if (!asset.value) return
+  deleting.value = true
+  try {
+    await assetApi.remove(asset.value.id)
+    message.success('已删除')
+    const deletedId = asset.value.id
+    emit('changed', deletedId)
+    emit('update:show', false)
+  } catch {
+    message.error('删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
+/** 状态机动作分发（L2 定稿/解锁；L3 归档/取消归档） */
+async function doAction(action: 'lock' | 'unlock' | 'archive' | 'unarchive') {
+  if (!asset.value) return
+  try {
+    const res = await versionApi[action](asset.value.id)
+    // 状态机接口返 meta-only（content/fileId=null，懒加载语义）；保留抽屉已加载的正文+文件不丢失
+    const next = res.data.data
+    if (next) {
+      if (next.content == null && asset.value.content != null) next.content = asset.value.content
+      if (next.fileId == null && asset.value.fileId != null) next.fileId = asset.value.fileId
+    }
+    asset.value = next
+    // C3 状态机动作后 content 可能被 meta-only 响应覆盖，重解析剧本正文
+    if (asset.value?.mediaType === MEDIA_TYPE.SCRIPT) {
+      parseScriptContent(asset.value.content)
+    }
+    message.success('操作成功')
+    emit('changed', asset.value.id)
+  } catch {
+    message.error('操作失败')
+  }
+}
+
+/** 下载文件类资产：/files/{fileId} blob → <a download> */
+async function download() {
+  if (!asset.value?.fileId) return
+  try {
+    const res = await request.get<Blob>(`/files/${asset.value.fileId}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${asset.value.name || asset.value.fileId}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch {
+    message.error('下载失败')
+  }
+}
+
+defineExpose({ asset, usages, loading, synopsis, scenes, textBody, doAction, download, loadAll, saveSynopsis, saveTextBody, deleteAsset, runBreakdown, parseScriptContent, canModify, canOperateThis, scoreInfo, myScoreDraft, scoring, submitScore })
+
+/** 一致性包保存后 → 重载资产（content 含新一致性包，产了新版本）+ 通知父 */
+async function onConsistencySaved(assetId: number) {
+  await loadAll(assetId)
+  emit('changed', assetId)
+}
+
+/** S18 分镜字段保存后 → 重载资产（content 含新分镜字段，产新版本）+ 通知父。 */
+async function onStoryboardChanged(assetId: number) {
+  await loadAll(assetId)
+  emit('changed', assetId)
+}
+</script>
+
+<style lang="scss" scoped>
+.asset-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+
+  &__loading {
+    display: flex;
+    justify-content: center;
+    min-height: 200px;
+    align-items: center;
+  }
+
+  &__preview {
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md, 8px);
+    padding: var(--spacing-2);
+    word-break: break-all;
+  }
+
+  &__media {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: var(--radius-md, 8px);
+  }
+
+  &__text {
+    margin: 0;
+    width: 100%;
+    white-space: pre-wrap;
+    font-family: var(--font-family-mono, monospace);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    max-height: 320px;
+    overflow: auto;
+  }
+
+  &__text-edit {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    text-align: left;
+  }
+
+  &__script {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    text-align: left;
+  }
+
+  &__script-actions {
+    display: flex;
+    gap: var(--spacing-2);
+  }
+
+  &__model-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+  }
+
+  &__model-label {
+    flex: 0 0 auto;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    white-space: nowrap;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+  }
+
+  &__section-title {
+    margin: 0 0 var(--spacing-2);
+    font-size: var(--font-size-md);
+    color: var(--color-text-primary);
+  }
+
+  &__score {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+  }
+
+  &__score-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-3);
+    font-size: var(--font-size-sm);
+  }
+
+  &__score-val {
+    color: var(--color-text-secondary);
+
+    &--owner {
+      color: var(--color-warning, #d4a14a);
+    }
+  }
+
+  // 2x#7 等级徽章（数值右侧小胶囊）
+  &__grade {
+    display: inline-block;
+    margin-left: var(--spacing-1);
+    padding: 0 4px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    line-height: 16px;
+  }
+
+  // 2x#7 打分实时等级提示（slider 右侧，跨档位即变，L3）
+  &__score-live {
+    flex-shrink: 0;
+    min-width: 96px;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  &__score-empty {
+    color: var(--color-text-tertiary);
+    font-size: var(--font-size-sm);
+  }
+
+  &__score-form {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+  }
+
+  &__score-slider {
+    flex: 1;
+  }
+
+  &__score-number {
+    width: 110px;
+    flex-shrink: 0;
+  }
+
+  &__usage-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+
+    li {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-secondary);
+    }
+  }
+
+  &__usage-time {
+    color: var(--color-text-tertiary);
+    margin-left: var(--spacing-2);
+    font-size: var(--font-size-xs);
+  }
+}
+</style>

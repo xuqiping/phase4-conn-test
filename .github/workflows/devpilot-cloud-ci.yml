@@ -1,0 +1,37 @@
+# DevPilot 云端 CI：lint + 类型 + 单测 + e2e + npm audit 硬拦截
+# 与桌面 CI（devpilot-ci.yml）同级质量门；本地网络受限的 audit 由这里兜底。
+name: Cloud CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ["DevPilot/PROJECT/cloud/**"]
+  pull_request:
+    paths: ["DevPilot/PROJECT/cloud/**"]
+
+defaults:
+  run:
+    working-directory: DevPilot/PROJECT/cloud
+
+jobs:
+  quality:
+    name: 云端质量门
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: DevPilot/PROJECT/cloud/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: Lint（0 警告容忍）
+        run: npm run lint
+      - name: 类型检查 + 单测 + e2e（PGlite :memory:，无需外部 DB）
+        run: |
+          npx tsc --noEmit
+          npm run test
+          npm run test:e2e
+      - name: 依赖漏洞审计（CI 硬拦截，本地为 WARN）
+        run: npm audit --omit=dev

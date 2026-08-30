@@ -1,0 +1,90 @@
+# DevPilot CI：质量门（双端）+ 出包（双端）
+# 触发：main/develop 推送与 PR。
+# 出包签名/公证需要以下 GitHub Secrets（缺则出未签名包，便于内部测试）：
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD  —— Updater 签名（tauri signer generate）
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY —— Mac 签名
+#   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID                        —— Mac 公证
+#   （可选）Win EV 证书：AZURE_* 或 ssl.com 方案，定了再配
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ["DevPilot/**"]
+  pull_request:
+    paths: ["DevPilot/**"]
+
+defaults:
+  run:
+    working-directory: DevPilot/PROJECT/desktop
+
+jobs:
+  quality:
+    name: 质量门（${{ matrix.os }}）
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: DevPilot/PROJECT/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: 前端：安装 / 类型检查 / 单测 / 构建
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run test
+          npx vite build
+      - name: Rust：fmt / clippy / 全 workspace 测试
+        working-directory: DevPilot/PROJECT/desktop/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: 依赖漏洞审计（CI 硬拦截，本地为 WARN）
+        working-directory: DevPilot/PROJECT/desktop/src-tauri
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - name: 文档规则检查
+        working-directory: DevPilot
+        run: python scripts/check_docs.py --quiet
+
+  bundle:
+    name: 出包（${{ matrix.os }}）
+    needs: quality
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: DevPilot/PROJECT/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Tauri 构建（secrets 齐备时自动签名/公证）
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: DevPilot/PROJECT/desktop
+          tagName: devpilot-v__VERSION__
+          releaseDraft: true

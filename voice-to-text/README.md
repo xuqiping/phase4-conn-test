@@ -1,167 +1,43 @@
-# Voice to Text - 实时语音转文字
+# Voice to Text · 实时语音转文字
 
-一款基于本地 AI 模型的实时语音转文字桌面应用，支持**麦克风输入**和**系统音频内录**，无需联网即可进行中英文语音识别。
+基于 **Tauri 2 + Rust + Vue 3 + sherpa-onnx** 的本地实时语音转文字桌面应用。支持**麦克风输入**与**系统音频内录**（WASAPI Loopback），无需联网即可中英文实时识别——所有语音数据本地处理，隐私零外泄。
 
----
-
-## 功能特性
-
-| 功能 | 说明 |
-|------|------|
-| **实时语音识别** | 边说边转，延迟低，支持中文和英文 |
-| **麦克风输入** | 直接使用电脑麦克风进行语音输入 |
-| **系统音频内录** | 识别电脑播放的音频（如看视频、听播客时实时生成字幕） |
-| **本地运行** | 语音模型完全在本地运行，**无需联网**，保护隐私 |
-| **录音保存** | 可选同时保存为 WAV 音频文件 |
-| **离线可用** | 首次下载模型后，无需网络即可使用 |
-
----
-
-## 系统要求
-
-- **操作系统**：Windows 10 / 11（64位）
-- **内存**：建议 4GB 以上（运行时约占用 300-600MB）
-- **磁盘空间**：约 150MB（程序 25MB + 模型 100MB）
-- **CPU**：支持 x64 的主流处理器即可
-
-> 本程序**不需要独立显卡**，使用 CPU 即可流畅运行。
-
----
-
-## 安装步骤
-
-### 方式一：MSI 安装包（推荐）
-
-1. 下载 `voice-to-text_0.1.0_x64_en-US.msi` 安装包
-2. 双击运行，按提示完成安装
-3. **下载语音模型**（约 100MB）：
-   - 下载地址：https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tree/main
-   - 需要下载以下 4 个文件：
-     - `encoder-epoch-99-avg-1.onnx`
-     - `decoder-epoch-99-avg-1.onnx`
-     - `joiner-epoch-99-avg-1.onnx`
-     - `tokens.txt`
-4. 将下载的模型文件放入安装目录的 `models/` 文件夹中：
-   ```
-   C:\Program Files\voice-to-text\models\
-   └── sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/
-       ├── encoder-epoch-99-avg-1.onnx
-       ├── decoder-epoch-99-avg-1.onnx
-       ├── joiner-epoch-99-avg-1.onnx
-       └── tokens.txt
-   ```
-
-### 方式二：绿色版（免安装）
-
-1. 下载绿色版压缩包并解压
-2. 直接运行 `voice-to-text.exe`
-3. 确保 `models/` 目录与可执行文件在同一文件夹内
-
----
-
-## 使用说明
-
-### 界面介绍
-
-![界面说明](docs/ui-overview.png)
-
-1. **设备选择** — 下拉选择音频输入源
-   - 麦克风设备（如 `Microphone (Realtek Audio)`）
-   - 系统音频（如 `[系统音频] 扬声器 (Realtek Audio)`）
-2. **开始录音 / 停止录音** — 控制识别开关
-3. **同时保存录音** — 勾选后，停止录音时会自动保存 WAV 文件到程序同级目录
-4. **转写结果区** — 实时显示识别文字
-   - 灰色斜体字 = 临时识别结果（可能变化）
-   - 白色正体字 = 已确认结果
-
-### 基础用法：麦克风输入
-
-1. 打开应用，确认设备选择为你的麦克风
-2. 点击 **「开始录音」**
-3. 对着麦克风说话，文字会实时出现在上方
-4. 点击 **「停止录音」** 结束
-
-### 进阶用法：系统音频内录（实时字幕）
-
-1. 在设备选择下拉框中，选择带有 `[系统音频]` 前缀的设备
-2. 点击 **「开始录音」**
-3. 播放任意视频或音频（如 B站、YouTube、本地播放器）
-4. 应用会自动识别电脑播放的声音并转写成文字
-5. 点击 **「停止录音」** 结束
-
-> **提示**：系统音频内录仅限 Windows 平台，且需要电脑有活跃的音频输出设备。
-
-### 保存录音
-
-勾选 **「同时保存录音」** 后，停止录音时会自动生成一个以时间命名的 WAV 文件（如 `recording_20260507_143022.wav`），保存在程序同级目录。
-
----
-
-## 常见问题
-
-### Q1：打开程序提示缺少 DLL 文件？
-
-**原因**：使用了 NSIS 格式的 `.exe` 安装包，该格式存在 DLL 打包缺失问题。
-
-**解决**：请使用 **MSI 格式的安装包**（`.msi`），或下载绿色版直接使用。
-
----
-
-### Q2：点击开始录音后闪退或报错？
-
-**排查步骤**：
-1. 检查 `models/` 目录是否存在，且 4 个模型文件齐全
-2. 确认模型文件没有损坏（可重新下载）
-3. 查看日志：`%APPDATA%\com.ap.voicetotext\logs\`
-
----
-
-### Q3：识别结果一直显示 "[mock] 你好"？
-
-**原因**：模型加载失败，程序回退到了演示模式。
-
-**解决**：检查模型路径是否正确，模型文件是否完整。正确放置后重启应用即可。
-
----
-
-### Q4：系统音频设备列表为空？
-
-**原因**：Windows 音频服务未启动，或没有活跃的音频输出设备。
-
-**解决**：
-- 确保电脑有扬声器或耳机连接
-- 播放一段音频后再打开应用
-- 仅限 Windows 平台支持此功能
-
----
-
-### Q5：识别准确率不够高？
-
-- 确保麦克风音质清晰，避免过多背景噪音
-- 说话时保持正常语速，避免过快或过慢
-- 当前使用的是 small 级别模型，如需更高精度可关注后续模型更新
-
----
-
-## 隐私说明
-
-- 所有语音数据**仅在本地处理**，不会上传到任何服务器
-- 不依赖网络连接，断网环境下可正常使用
-- 不收集任何用户数据
-
----
+> 本项目文档按「编程类可迭代工作流」（Spec → Plan → Implement → Run）组织，全部位于 [workflow_output/](workflow_output/)。下方导航表是入口。
 
 ## 技术栈
 
-- 前端：Vue 3 + Vite
-- 桌面框架：Tauri 2 (Rust)
-- 语音识别：sherpa-onnx (ZipFormer 本地模型)
-- 音频采集：WASAPI / cpal
+| 层 | 技术 |
+|---|---|
+| 前端 | Vue 3 + Pinia + Vite + vue-tsc |
+| 桌面端 / 后端 | Rust + Tauri 2 |
+| 音频采集 | cpal + WASAPI（麦克风 / 系统音频内录） |
+| 语音识别 | sherpa-onnx（ZipFormer 本地流式模型） |
+| 打包 | Tauri CLI（.msi / .exe） |
 
----
+## 文档导航
 
-## 开源协议
+| 想做什么 | 看哪里 |
+|---|---|
+| 了解要做什么、需求清单 | [PRD](workflow_output/docs/specs/PRD.md) |
+| 系统架构、数据流、模块 | [架构规格](workflow_output/docs/specs/architecture.md) |
+| 技术选型为什么这么定 | [项目分析报告](workflow_output/docs/项目分析/项目分析报告.md) |
+| 实现计划、里程碑 | [实现计划](workflow_output/docs/plans/录音转文字.plan.md) |
+| 项目怎么跑起来 | [快速启动速查表](workflow_output/docs/run-guide/快速启动速查表.md) |
+| 打包与分发 | [部署手册](workflow_output/docs/deploy/部署手册.md) |
+| 怎么用（傻瓜式操作） | [用户操作手册](workflow_output/docs/user-ops/录音转文字.用户操作手册.md) |
+| AI / 开发约定 | [AGENTS.md](workflow_output/项目规范约束/AGENTS.md) |
+| 目录结构说明 | [file_structure.md](workflow_output/docs/file_structure.md) |
 
-本项目采用 MIT 许可证。
+## 快速开始
 
-语音模型来源：[k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（Apache 2.0 许可证）
+```bash
+npm install              # 装前端依赖
+npm run download-models  # 下语音模型（约 100MB，首次）
+npm run tauri:dev        # 启动开发（Vite + Tauri 窗口，热重载）
+```
+
+> 完整步骤见 [快速启动速查表](workflow_output/docs/run-guide/快速启动速查表.md)。
+
+## 许可证
+
+MIT。语音模型来源 [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（Apache 2.0）。

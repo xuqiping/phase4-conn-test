@@ -1,0 +1,72 @@
+// ============================================================
+// 夜墨 ye-mo 主题 — 高山流水·暗色（DESIGN-TOKEN-0001）
+// 黛蓝底 + 月白文 + 天青主色 + 朱砂印章点缀
+// 覆盖现有语义 token（组件层零改动）
+// ============================================================
+
+[data-theme="ye-mo"] {
+  // === 主色：天青 ===
+  --color-primary:         #8FBCD4;
+  --color-primary-hover:   #A5CCE0;
+  --color-primary-active:  #7AACC4;
+  --color-primary-light:   rgba(143, 188, 212, 0.14);
+  --color-primary-rgb:     143, 188, 212;
+
+  // === 语义色（状态色独立，不风格化）===
+  --color-secondary:       #9AABBC;
+  --color-success:         #63B98A;  // 竹绿
+  --color-warning:         #D9A45B;  // 赭黄
+  --color-danger:          #D9564A;  // 朱砂红（明度+15%，与品牌朱砂区分）
+  --color-info:            #7FA3CC;  // 靛青
+
+  // === 背景层级：黛蓝 → 鸦青 → 墨锭 ===
+  --color-bg:              #151D29;
+  --color-surface:         #0F151E;
+  --color-card:            #1C2634;
+  --color-elevated:        #24303F;
+  --color-overlay:         rgba(15, 21, 30, 0.8);
+
+  // === 文字：月白 ===
+  --color-text-primary:    #DFE7EE;
+  --color-text-secondary:  #9AABBC;
+  --color-text-tertiary:   #5E6E7E;
+  --color-text-inverse:    #151D29;
+  --color-text-link:       #8FBCD4;
+
+  // === 边框 ===
+  --color-border:          #2A3646;
+  --color-border-light:    #212C3A;
+  --color-border-focus:    #8FBCD4;
+
+  // === 渐变（收敛为同色系：天青 → 石青，禁霓虹）===
+  --color-gradient-start:  #8FBCD4;
+  --color-gradient-end:    #4E7FA6;
+
+  // === 品牌点缀：朱砂印章 ===
+  --color-seal:            #B54434;
+
+  // === 字体 ===
+  --font-family-base: 'Noto Sans SC', 'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+
+  // === 圆角收敛（含蓄小圆角）===
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  // === 阴影：远山叠影（柔、淡、无硬边）===
+  --shadow-sm:      0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-base:    0 2px 10px rgba(0, 0, 0, 0.30);
+  --shadow-md:      0 6px 20px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 10px 32px rgba(0, 0, 0, 0.40);
+  --shadow-xl:      0 16px 48px rgba(0, 0, 0, 0.45);
+  --shadow-primary: 0 4px 16px rgba(143, 188, 212, 0.16);
+  --shadow-glow:    0 0 24px rgba(143, 188, 212, 0.05);
+
+  // === 动效：云雾缓动 ===
+  --duration-fast:    150ms;
+  --duration-normal:  300ms;
+  --duration-slow:    400ms;
+  --duration-slower:  400ms;
+  --ease-out:      cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out:   cubic-bezier(0.22, 0.61, 0.36, 1);
+}

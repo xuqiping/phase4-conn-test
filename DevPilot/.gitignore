@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+dist/
+target/
+src-tauri/target/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
+
+# 密钥与本地配置
+*.pem
+.env
+.env.*
+!.env.example

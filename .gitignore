@@ -59,6 +59,10 @@ docs/
 !agent-platform/workflow_output/docs/**
 !file-keeper/workflow_output/docs/
 !file-keeper/workflow_output/docs/**
+!voice-to-text/workflow_output/docs/
+!voice-to-text/workflow_output/docs/**
+!DevPilot/workflow_output/docs/
+!DevPilot/workflow_output/docs/**
 # 放开 frontnew/docs/（样式预览版功能文档：测试方案/feature-map/user-ops/皮肤层约定需入库）
 !agent-platform/frontnew/docs/
 !agent-platform/frontnew/docs/**

@@ -1,0 +1,8 @@
+[package]
+name = "core-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "CLI 二进制与 devpilot:// 深链参数路由（FR-021/028）"
+
+[dependencies]

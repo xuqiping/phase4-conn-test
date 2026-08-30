@@ -1,0 +1,90 @@
+<!-- ============================================================
+  记忆管理面板（计划12 · H'-4 瘦身版）
+  旧栈「我的记忆 / 冲突 / 预览 / scope」首页签 + 全部 legacy 脚本已删（旧栈后端整体移除）。
+  现 9 页签全是新栈（/api/chat/memory/*）：流水账 / 标签库 / 文件记忆 / 总结 / 冲突裁决 / gen 矩阵 / 收录规则 / 收录审核 / 项目授权。
+  （记忆二期 P1：「项目 ACL」页签随一期 reader×target 矩阵下线，FR-006；
+    新增「收录规则/收录审核」页签，FR-001/FR-005；二期 P2 新增「项目授权」页签，FR-101。
+    5x 四轮 U2：「文件记忆」提序到第 3 位（上传附件高频，末位藏不进横向滚动里没人找得到）。）
+  ============================================================ -->
+<template>
+  <div class="memory-manager">
+    <n-tabs v-model:value="activeTab" type="line" size="small" class="memory-manager__tabs" :tabs-padding="0">
+      <n-tab-pane name="turns" tab="流水账" display-directive="show">
+        <MemoryTurnSection />
+      </n-tab-pane>
+      <n-tab-pane name="tags" tab="标签库" display-directive="show">
+        <MemoryTagLibrary />
+      </n-tab-pane>
+      <n-tab-pane name="assets" tab="文件记忆" display-directive="show">
+        <MemoryAssetMemorySection />
+      </n-tab-pane>
+      <n-tab-pane name="summaries" tab="总结" display-directive="show">
+        <MemorySummarySection />
+      </n-tab-pane>
+      <n-tab-pane name="conflicts" tab="冲突裁决" display-directive="show">
+        <MemoryConflictSection />
+      </n-tab-pane>
+      <n-tab-pane name="gen" tab="gen 矩阵" display-directive="show">
+        <MemoryGenMatrixPanel />
+      </n-tab-pane>
+      <n-tab-pane name="rule" tab="收录规则" display-directive="show">
+        <MemoryRulePanel />
+      </n-tab-pane>
+      <n-tab-pane name="entries" tab="收录审核" display-directive="show">
+        <MemoryEntryReviewPanel />
+      </n-tab-pane>
+      <n-tab-pane name="links" tab="项目授权" display-directive="show">
+        <MemoryProjectLinkPanel />
+      </n-tab-pane>
+    </n-tabs>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { NTabs, NTabPane } from 'naive-ui'
+import MemoryTagLibrary from '@/components/memory/MemoryTagLibrary.vue'
+import MemoryConflictSection from '@/components/memory/MemoryConflictSection.vue'
+import MemoryTurnSection from '@/components/memory/MemoryTurnSection.vue'
+import MemorySummarySection from '@/components/memory/MemorySummarySection.vue'
+import MemoryGenMatrixPanel from '@/components/memory/MemoryGenMatrixPanel.vue'
+import MemoryRulePanel from '@/components/memory/MemoryRulePanel.vue'
+import MemoryEntryReviewPanel from '@/components/memory/MemoryEntryReviewPanel.vue'
+import MemoryProjectLinkPanel from '@/components/memory/MemoryProjectLinkPanel.vue'
+import MemoryAssetMemorySection from '@/components/memory/MemoryAssetMemorySection.vue'
+
+// 默认页签 = 流水账（新栈入口，最贴近日常「我记了什么」）。
+// 二期 P1（FR-006）：「生命周期」页签随 turns 纯个人域下线（F-4b 拉取折叠板已删）；
+// 新增「收录规则」（FR-001）+「收录审核」（FR-005）页签；二期 P2 新增「项目授权」（FR-101）；
+// 二期 P3 新增「文件记忆」（FR-201~205，聊天附件一文件一记忆）。
+const activeTab = ref<'turns' | 'tags' | 'summaries' | 'conflicts' | 'gen' | 'rule' | 'entries' | 'links' | 'assets'>('turns')
+</script>
+
+<style lang="scss" scoped>
+.memory-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+// 页签折行（5x 四轮 U2）：原仅 <640px 视口折行，桌面 720px 抽屉里 9 页签单行溢出，
+// 「文件记忆」藏在横向滚动里找不到。改为无条件折行——任何宽度下页签全部可见/可点，两行内收齐。
+.memory-manager__tabs :deep(.n-tabs-nav-scroll-content) {
+  width: 100% !important;
+  min-width: auto !important;
+}
+
+.memory-manager__tabs :deep(.n-tabs-wrapper) {
+  flex-wrap: wrap !important;
+  width: 100% !important;
+}
+
+.memory-manager__tabs :deep(.n-tabs-tab) {
+  flex: 0 0 auto;
+}
+
+// 折行后禁用 Naive 内部的水平滚动容器，避免截断第二行
+.memory-manager__tabs :deep(.v-x-scroll) {
+  overflow: visible !important;
+}
+</style>

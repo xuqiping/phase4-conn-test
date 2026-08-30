@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevPilot 原型 ① 建造期主窗口</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="window">
+
+  <!-- ===== 顶栏：Logo / 项目切换 / 阶段管道条 / 余额 / 通知 ===== -->
+  <div class="topbar">
+    <div class="logo"><div class="logo-mark">D</div>DevPilot</div>
+    <div class="proj-switch">🗳️ 投票小程序 <span class="caret">▼</span></div>
+
+    <div class="pipeline">
+      <div class="stage done"><span class="dot">✓</span>想法</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>需求</div><span class="stage-sep">›</span>
+      <div class="stage done"><span class="dot">✓</span>计划</div><span class="stage-sep">›</span>
+      <div class="stage active"><span class="dot">●</span>建造中</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>验收</div><span class="stage-sep">›</span>
+      <div class="stage"><span class="dot">○</span>上线</div>
+    </div>
+
+    <div class="top-actions">
+      <div class="balance" title="Token 余额 · 点击查看明细">
+        <svg class="ring" viewBox="0 0 26 26">
+          <defs><linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4F7CFF"/><stop offset="1" stop-color="#38BDF8"/>
+          </linearGradient></defs>
+          <circle class="ring-bg" cx="13" cy="13" r="10" fill="none" stroke-width="3"/>
+          <circle class="ring-val" cx="13" cy="13" r="10" fill="none" stroke-width="3"
+                  stroke-dasharray="62.8" stroke-dashoffset="18.8" transform="rotate(-90 13 13)"/>
+        </svg>
+        <span><span class="amt">¥163.20</span> <span class="lbl">余额</span></span>
+      </div>
+      <button class="icon-btn" title="通知">🔔<span class="badge"></span></button>
+      <div class="avatar">徐</div>
+    </div>
+  </div>
+
+  <!-- ===== 系统通知模拟：任务完成 ===== -->
+  <div class="toast">
+    <div class="t-ico">✅</div>
+    <div>
+      <div class="t-title">「投票列表页」已完成并通过测试</div>
+      <div class="t-body">已自动存档 · 本次消耗 42,318 Token ≈ ¥0.86</div>
+      <div class="t-actions">
+        <button class="btn primary" style="padding:4px 12px;font-size:12px">查看改了什么</button>
+        <button class="btn" style="padding:4px 12px;font-size:12px">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- ===== 左栏 ===== -->
+    <div class="sidebar">
+      <div class="side-section">
+        <div class="side-title">阶段导航</div>
+        <div class="side-item"><span class="s-ico">💡</span>想法打磨<span class="s-meta">✓</span></div>
+        <div class="side-item"><span class="s-ico">📋</span>需求确认<span class="s-meta">8/8</span></div>
+        <div class="side-item"><span class="s-ico">🗺️</span>施工计划<span class="s-meta">12块</span></div>
+        <div class="side-item on"><span class="s-ico">🔨</span>建造任务<span class="s-meta">7/12</span></div>
+        <div class="side-item"><span class="s-ico">✅</span>验收清单</div>
+        <div class="side-item"><span class="s-ico">🚀</span>上线部署</div>
+        <div class="side-item"><span class="s-ico">🔀</span>我要改需求</div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">存档点 · 一键回滚</div>
+        <div class="timeline">
+          <div class="tl-item"><div class="tl-node"></div><div class="tl-body">
+            <div class="tl-name">做好了投票列表页</div><div class="tl-time">14:32 · 刚刚</div></div></div>
+          <div class="tl-item"><div class="tl-node"></div><div class="tl-body">
+            <div class="tl-name">登录功能+手机号验证码</div><div class="tl-time">11:05 · 今天</div></div></div>
+          <div class="tl-item"><div class="tl-node"></div><div class="tl-body">
+            <div class="tl-name">数据库表结构搭好</div><div class="tl-time">昨天 18:40</div></div></div>
+          <div class="tl-item"><div class="tl-node"></div><div class="tl-body">
+            <div class="tl-name">项目骨架初始化</div><div class="tl-time">昨天 15:02</div></div></div>
+        </div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">文档库</div>
+        <div class="side-item"><span class="s-ico">📊</span>项目分析报告</div>
+        <div class="side-item"><span class="s-ico">📄</span>需求说明书 PRD</div>
+        <div class="side-item"><span class="s-ico">🧱</span>功能速查表</div>
+        <div class="side-item"><span class="s-ico">⚙️</span>技能与 MCP<span class="s-meta">3+5</span></div>
+      </div>
+    </div>
+
+    <!-- ===== 中栏：建造期 = 任务流 + 进度叙事 ===== -->
+    <div class="center">
+      <div class="center-scroll">
+        <div class="view-head">
+          <div class="view-title">🔨 建造中 · 里程碑 2「核心投票流程」</div>
+          <div class="view-sub">总进度 7/12 块 · 今天已消耗 128,540 Token ≈ ¥2.61 · 一切正常，有事我会叫你</div>
+        </div>
+
+        <div class="flow">
+          <div class="flow-item done">
+            <div class="flow-ico">✅</div>
+            <div class="flow-body">
+              <div class="flow-name">搭好数据库表结构 <span class="tag ok">已验收点自动通过</span></div>
+              <div class="flow-desc">建好了「用户、投票、选项、记录」4 张表，投票和选项做了关联，以后改需求不用推倒重来。</div>
+              <div class="flow-meta"><span>存档点 #3</span><span>耗时 6 分钟</span><span>31,204 Token</span></div>
+            </div>
+          </div>
+
+          <div class="flow-item done">
+            <div class="flow-ico">✅</div>
+            <div class="flow-body">
+              <div class="flow-name">登录功能（手机号 + 验证码）</div>
+              <div class="flow-desc">用户输入手机号收验证码即可登录，首次登录自动注册。验证码 5 分钟过期，防刷已做。</div>
+              <div class="flow-meta"><span>存档点 #4</span><span>耗时 14 分钟</span><span>55,022 Token</span></div>
+            </div>
+          </div>
+
+          <div class="flow-item done">
+            <div class="flow-ico">✅</div>
+            <div class="flow-body">
+              <div class="flow-name">投票列表页 <span class="tag ok">刚刚完成</span></div>
+              <div class="flow-desc">首页现在能列出所有进行中的投票，按时间倒序，带封面图和参与人数。</div>
+              <div class="flow-meta"><span>存档点 #5</span><span>耗时 9 分钟</span><span>42,318 Token</span></div>
+            </div>
+          </div>
+
+          <div class="flow-item doing">
+            <div class="flow-ico">🔨</div>
+            <div class="flow-body">
+              <div class="flow-name">正在做：发起投票 <span class="tag doing">进行中</span></div>
+              <div class="flow-desc">正在写「创建投票」表单：标题、选项、截止时间、是否匿名。写完后会自动跑测试。</div>
+              <div class="progress-track"><div class="progress-fill" style="width:64%"></div></div>
+              <div class="flow-meta"><span>已进行 4 分 12 秒</span><span>预计还需 3 分钟</span><span>▼ 展开看它正在敲的命令</span></div>
+            </div>
+          </div>
+
+          <div class="flow-item pending">
+            <div class="flow-ico">⏳</div>
+            <div class="flow-body">
+              <div class="flow-name">接下来：投票详情页 → 分享卡片 → 结果统计图</div>
+              <div class="flow-desc">做完这块里程碑就结束了，届时会请你做阶段验收。</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- diff 大白话示例 -->
+        <div style="height:22px"></div>
+        <div class="diff-card">
+          <div class="diff-head">
+            <span>📝</span><span class="fname">投票列表页 · 本次改动</span>
+            <div class="diff-toggle"><span class="on">大白话</span><span>代码原文</span></div>
+          </div>
+          <div class="plain-box">
+            <div class="p-row"><span class="p-ico">➕</span><span>新增了「进行中 / 已结束」两个切换标签，默认展示进行中的投票</span></div>
+            <div class="p-row"><span class="p-ico">➕</span><span>每张投票卡片显示封面、标题、参与人数和截止时间</span></div>
+            <div class="p-row"><span class="p-ico">🛡️</span><span>列表做了<span class="term" data-tip="分页：一次只加载 20 条，滑到底再加载更多，避免投票多了以后页面变卡。">分页</span>，投票多了也不会卡</span></div>
+            <div class="p-row"><span class="p-ico">⚠️</span><span style="color:var(--amber)">注意：封面图目前限制 2MB 以内，超过会提示用户压缩</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部输入条 -->
+      <div class="composer">
+        <div class="composer-box">
+          <textarea rows="1" placeholder="插句话：比如「投票要能传多张图」——我先记下来，不打断当前任务"></textarea>
+          <button class="c-btn" title="附图">🖼️</button>
+          <button class="c-btn" title="按住说话">🎙️</button>
+          <button class="c-btn send" title="发送">➤</button>
+        </div>
+        <div class="c-hint">
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> 全局唤起</span>
+          <span>按住 <kbd>空格</kbd> 语音输入</span>
+          <span>⌫⌫ 连按两下 Esc 回滚到上一存档点</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 右栏：上下文面板 ===== -->
+    <div class="rightbar">
+      <div class="rtabs">
+        <div class="rtab">规格</div>
+        <div class="rtab">变更</div>
+        <div class="rtab">日志</div>
+        <div class="rtab on">预览</div>
+      </div>
+      <div class="rbody">
+        <div class="r-card" style="padding:0;overflow:hidden">
+          <!-- 预览模拟 -->
+          <div style="background:#0D1117;padding:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--coral)"></span>
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--amber)"></span>
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--success)"></span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-left:6px">localhost:5173 · 实时预览</span>
+          </div>
+          <div style="padding:14px">
+            <div style="display:flex;gap:8px;margin-bottom:12px">
+              <span style="font-size:12px;padding:3px 12px;border-radius:999px;background:var(--brand-grad);color:#fff">进行中</span>
+              <span style="font-size:12px;padding:3px 12px;border-radius:999px;border:1px solid var(--border-strong);color:var(--text-dim)">已结束</span>
+            </div>
+            <div style="background:var(--bg-card-hover);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">
+              <div style="height:60px;border-radius:8px;background:linear-gradient(135deg,#2b3654,#1b2233);margin-bottom:9px"></div>
+              <div style="font-size:13px;font-weight:600">团建去哪儿玩？</div>
+              <div style="font-size:11px;color:var(--text-faint);margin-top:3px">👥 23 人参与 · 周五 18:00 截止</div>
+            </div>
+            <div style="background:var(--bg-card-hover);border:1px solid var(--border);border-radius:10px;padding:12px">
+              <div style="height:60px;border-radius:8px;background:linear-gradient(135deg,#3a2b54,#221b33);margin-bottom:9px"></div>
+              <div style="font-size:13px;font-weight:600">新版 Logo 选哪个？</div>
+              <div style="font-size:11px;color:var(--text-faint);margin-top:3px">👥 8 人参与 · 明天 12:00 截止</div>
+            </div>
+          </div>
+        </div>
+        <div class="r-card">
+          <h4>💡 预览小贴士</h4>
+          <p>预览是实时跟着 AI 改动刷新的。看到哪里不对，<b>直接点预览里的元素</b>就能圈出来提意见，不用描述「左上角那个按钮」。</p>
+        </div>
+        <div class="r-card">
+          <h4>🧠 AI 当前在想什么</h4>
+          <p style="font-size:12px">「创建表单需要校验截止时间不能早于现在，我先加校验，再写提交接口……」</p>
+          <p style="font-size:11px;color:var(--text-faint);margin-top:6px">▼ 展开完整终端日志</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
