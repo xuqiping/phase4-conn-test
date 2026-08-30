@@ -1,12 +1,11 @@
 <template>
   <div class="audit-log">
-    <div class="audit-log__header">
-      <h2>审计日志</h2>
-      <span class="audit-log__hint">敏感操作留痕（登录/权限变更/删除/充值/设置修改），只追加不篡改</span>
-    </div>
+    <!-- 高山流水：admin 模块场景（与其他管理页同构，居居高声自远） -->
+    <ModuleScene scene="admin" lite />
+    <PageHeader title="审计日志" sub="敏感操作留痕（登录/权限变更/删除/充值/设置修改），只追加不篡改" />
 
     <!-- 无权限兜底（菜单隐藏 + 路由可达时页内拦截；API 403 为最终防线） -->
-    <n-empty v-if="!canView" description="无 system:audit:read 权限" style="margin-top:80px" />
+    <InkEmptyState v-if="!canView" type="forbidden" description="无 system:audit:read 权限" />
 
     <template v-else>
       <!-- 筛选栏 -->
@@ -60,11 +59,14 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h } from 'vue'
 import {
-  NDataTable, NButton, NInput, NInputNumber, NSelect, NDatePicker, NModal, NEmpty, NTag, useMessage
+  NDataTable, NButton, NInput, NInputNumber, NSelect, NDatePicker, NModal, NTag, useMessage
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { auditApi, type AuditLogVO } from '@/api/audit'
 import DetailKvView from '@/components/DetailKvView.vue'
+import ModuleScene from '@/components/ModuleScene.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import InkEmptyState from '@/components/InkEmptyState.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
@@ -245,20 +247,6 @@ onMounted(() => {
 <style lang="scss" scoped>
 .audit-log {
   padding: 24px;
-
-  &__header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 16px;
-
-    h2 { margin: 0; color: var(--color-text-primary); }
-  }
-
-  &__hint {
-    font-size: 12px;
-    color: var(--color-text-secondary);
-  }
 
   &__filters {
     display: flex;
